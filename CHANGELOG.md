@@ -1,6 +1,162 @@
 # CHANGELOG
 
 
+## v1.75.0 (2026-07-14)
+
+### Chores
+
+- **test**: Widen timing headroom on 2 flaky sidecar-IPC timeout tests (#167)
+  ([#591](https://github.com/oimiragieo/tensor-grep/pull/591),
+  [`fc231ed`](https://github.com/oimiragieo/tensor-grep/commit/fc231edd98674a66efd808d35286429ff2089a95))
+
+Both tests spawn a deliberately-wedged child and assert it gets killed + reported within a bound;
+  under CI load on windows-latest the BOUND (not the product's kill logic) was too tight and
+  false-failed the release gate (run 29338780796, test-rust-core windows-latest/stable, attempt 1).
+
+Confirmed from the actual CI failure log (job 87105987121) which assertion fired in each case:
+
+- test_sidecar_timeout_kills_child_and_reports_error panicked at test_sidecar_ipc.rs:70 with
+  "command timed out after 5s" -- the TEST's own run_with_timeout wait-for-result bound (5s), not
+  the product's kill deadline (TG_SIDECAR_TIMEOUT_MS=300, unchanged). Widened 5s -> 30s.
+
+- test_passthrough_timeout_kills_wedged_child_and_reports_error panicked on its `elapsed <
+  Duration::from_secs(5)` assertion with elapsed=6.44s -- also a TEST-side tolerance window around
+  the unrelated, unchanged 300ms product deadline (TG_PASSTHROUGH_TIMEOUT_MS). The outer
+  run_with_timeout bound (8s) did NOT fire (6.44s < 8s), so this is CI-load slowness, not a missing
+  kill. Widened the outer bound 8s -> 30s and the elapsed assertion 5s -> 15s.
+
+Neither product timeout (TG_SIDECAR_TIMEOUT_MS / TG_PASSTHROUGH_TIMEOUT_MS, both still 300ms in the
+  tests) was touched. Both wedge fixtures have a fixed, known natural-completion time if the kill
+  never fires (10s and ~20s respectively) -- comfortably inside the new bounds, so a genuine
+  kill-logic regression still fails: test 1 via its unchanged stderr "timed out"/"terminated"
+  content assertions, test 2 via both those AND the elapsed assertion (20s natural completion > the
+  new 15s ceiling).
+
+Verified: `cargo test --test test_sidecar_ipc` green across 5 consecutive runs (19/19, then the 2
+  target tests solo x4).
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Reconcile CURRENT STATE to v1.74.4 (#164)
+  ([#592](https://github.com/oimiragieo/tensor-grep/pull/592),
+  [`adf5750`](https://github.com/oimiragieo/tensor-grep/commit/adf57509856b2973fd91a899cb1eb802896c1411))
+
+Rebased onto current origin/main (was branched from a stale local main at v1.74.0, whose uv.lock
+  still had the pre-bump setuptools 82.0.0 -> pip-audit flagged PYSEC-2026-3447; current main ships
+  83.0.0, so the audit now passes).
+
+Records the v1.73.0->v1.74.4 wave (published, one-per-publish, ZERO broken releases): #584/#585
+  (v1.73.0), #131-F3 (v1.74.1, later dead-code), #164 mermaid (v1.74.2), #166 gpu-error (v1.74.3),
+  #164 orient-deweight (v1.74.4), #591 test de-flake (merged, no release). Includes the honest
+  F3-dead-code correction. #592 is now the lone open PR.
+
+### Features
+
+- **orient**: Broaden suggested_ignore to whole vendor/skill trees + wire into tg agent (M1+M2)
+  ([#593](https://github.com/oimiragieo/tensor-grep/pull/593),
+  [`d36da81`](https://github.com/oimiragieo/tensor-grep/commit/d36da81484e39d4b04e50e223765261059ac1a6d))
+
+* feat(orient): broaden suggested_ignore to whole vendor/skill trees + wire into tg agent
+
+M1 (broader whole-tree detection): `_detect_vendored_subtrees`'s STRONG-1 nested-manifest gate
+  missed the CEO-dogfooded case of a broad skill/vendor tree with no manifest of its own (only
+  nested-manifest islands inside it, e.g. `core/skills/use-gemini/conpty-run/package.json`, were
+  ever detected). Two new mechanisms, both preserving de-weight-never-exclude (`_DEWEIGHT_FACTOR` =
+  0.25x, unchanged):
+
+- STRONG-0 promotion for 5 unambiguous vendor/dependency directory names (`node_modules`, `vendor`,
+  `third_party`, `_vendored`, `external_repos`, `_STRONG0_VENDOR_DIR_NAMES`): fire on the exact
+  basename alone, no manifest or import-island required -- same mechanism `_TOOL_CONFIG_DIR_NAMES`
+  (`.claude`) already used. - STRONG-3 shape heuristic for `skills`-named directories (deliberately
+  NOT promoted to STRONG-0: a repo's own feature/plugin package could plausibly be named `skills/`):
+  fires only when most immediate children look like independent leaf skills (own
+  `SKILL.md`/`skill.md`, or no imports crossing out of their own folder,
+  `_child_is_self_contained_leaf`) AND nothing outside the tree imports into it
+  (`_is_skill_leaf_tree`'s false-positive guard). A genuine imported `skills/` package stays
+  un-deweighted regardless of how leaf-shaped its children look.
+
+The whole-tree glob is deduped against narrower nested-manifest islands via the existing
+  outermost-nested-chain pass. Extracted the `suggested_ignore` glob-list builder into a shared
+  `_suggested_ignore_from_deweighted_trees` helper.
+
+M2 (agent capsule parity): `tg agent --json` never surfaced `suggested_ignore` at all (only `tg
+  orient` did), even though `tg agent` already runs the identical de-weight during ranking.
+  `build_agent_capsule_from_map` now recomputes `_detect_vendored_subtrees` against the same
+  (already `--ignore`-filtered) `rm` and reuses orient's exact glob-builder. Additive-only: the key
+  is present only when non-empty, mirroring `suggested_scope`'s convention -- no existing key
+  renamed or removed.
+
+Also fixes a bug caught while testing STRONG-3: the main per-candidate loop's `if not tree_files:
+  continue` guard (tree_files = CODE files only) silently dropped an all-Markdown skill-leaf tree
+  (each leaf only a SKILL.md, no code) even though `_is_skill_leaf_tree` had already validated its
+  shape against the real filesystem -- a very common real-world skill-folder shape. Exempted
+  skill_leaf_dirs from that guard specifically; every other mechanism keeps requiring a non-empty
+  tree_files, matching pre-M1 behavior.
+
+Tests: tests/unit/test_orient_deweight_vendored.py (STRONG-0 vendor promotion, STRONG-3 shape
+  heuristic incl. the all-Markdown regression + below-threshold + flat-package + false-positive
+  guard, de-weight-not-exclude for both new mechanisms), tests/unit/test_orient_suggested_ignore.py
+  (whole-tree glob emission + dedup against a nested manifest island + false-positive guard
+  end-to-end), tests/unit/test_agent_capsule_suggested_ignore.py (new: orient/agent parity, absent
+  when nothing deweighted, false-positive guard, explicit --ignore composition).
+
+Verified: uv run maturin develop (real rust_core build), targeted + broader orient/agent-capsule
+  suite (138 tests) green, ruff check clean, ruff format --preview clean, mypy clean, and manual `tg
+  orient`/`tg agent --json` dogfood against synthetic vendor+skill fixtures.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(orient): close STRONG-3 skills/ false-positive on symbol/subpackage imports (Opus-gate)
+
+The STRONG-3 skill-tree heuristic (this PR) mislabeled a GENUINE product `skills/` package as a
+  de-weightable skill bundle when it is consumed via the common Python idiom `from skills.<subpkg>
+  import <Symbol>`. Root cause: `_code_files_and_import_graph` builds a STEM-only import graph, so a
+  `from skills.auth import Auth` edge -- whose last dotted component is a subpackage dir or a
+  symbol, not a file stem -- never resolves, never enters `reverse_importers`, and the tree looks
+  externally-isolated. The old `_child_is_self_contained_leaf` compounded it: a child with
+  unresolvable imports had empty resolved_imports so its `all(...)` self-contained test passed
+  VACUOUSLY, and a plain `__init__.py` subpackage with no SKILL.md counted as a "leaf". The FP
+  reached the `tg agent`/daemon moat via M2. Only `from skills.plugin_a.handler import run`
+  (leaf-MODULE import, the one form that resolves) was previously tested; the symbol/subpackage form
+  regressed vs pre-STRONG-3 `main` (which returned None).
+
+Belt-and-suspenders fix (a real folder-per-skill bundle passes both; a real Python package fails
+  both): 1. Manifest-required leaf-fraction: a child counts toward the >=0.6 leaf threshold ONLY if
+  it actually contains SKILL.md/skill.md (`_child_has_skill_manifest`, now the SOLE positive leaf
+  signal). Removed the "no imports crossing out / no code files" fallback that satisfied the
+  fraction vacuously. 2. `__init__.py` refusal: STRONG-3 is refused entirely when the candidate tree
+  root OR any immediate child contains `__init__.py` (`_dir_contains_init_py`) -- an unambiguous
+  real-Python- (sub)package marker a skill bundle never has. The best-effort `externally_isolated`
+  guard is kept as a strictly-safer extra signal but is no longer relied on alone.
+
+Also (Opus-gate NIT, Axis 2): dropped `node_modules`, `vendor`, `external_repos` from
+  `_STRONG0_VENDOR_DIR_NAMES` -- all three are already in `repo_map._SKIP_DIR_NAMES` (the walker
+  skips them entirely), so their STRONG-0 promotion was dead code at real-scan time. Kept only the
+  reachable `third_party` + `_vendored`. They still fire as the WEAK `_VENDOR_NAME_PRIOR`
+  tie-breaker if a nested manifest ever surfaces one.
+
+Regression tests (all green in the built venv): -
+  test_skips_skill_package_consumed_via_subpackage_symbol_import (unit) + orient e2e
+  test_suggested_ignore_absent_for_skills_package_via_subpackage_symbol_import + agent e2e
+  test_agent_capsule_suggested_ignore_absent_for_skills_package_via_symbol_import -> None on both. -
+  test_skips_skill_dir_with_init_py_at_root (unit) + orient e2e
+  test_suggested_ignore_absent_for_skills_dir_with_init_py -> None. -
+  test_dropped_vendor_names_are_not_strong0 (honest-set guard for the NIT). - STRONG-0 unit tests
+  re-pointed from node_modules/vendor to the retained third_party/_vendored. - Existing
+  real-skill-tree (SKILL.md per leaf) + all-Markdown-leaf cases stay GREEN (deweighted).
+
+Verified: maturin develop rebuild, 40 targeted + 104 broader orient/agent-capsule tests green in the
+  real venv, ruff check + ruff format --preview + mypy clean, and dogfood of the real built `tg
+  orient`/`tg agent`: product skills/ via `from skills.auth import Auth` -> null/absent on both;
+  real skill bundle -> core/skills/** on both.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.74.4 (2026-07-14)
 
 ### Bug Fixes
