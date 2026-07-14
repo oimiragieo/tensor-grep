@@ -10572,7 +10572,14 @@ def blast_radius(
     # 2026-07-06) so the scan-vs-output-cap contract is defined exactly once.
     incomplete = _scan_incomplete(payload)
 
-    if mermaid_output:
+    if mermaid_output and json_output:
+        # task #164: `--json --mermaid` together used to let mermaid short-circuit json (an
+        # agent asking for both got only the human diagram and a `json.loads` on stdout raised).
+        # Embed, don't refuse: fold the rendered mermaid text into the JSON payload so one call
+        # returns both the machine graph and the diagram.
+        payload["mermaid"] = _render_blast_radius_mermaid(payload)
+        typer.echo(json.dumps(payload, indent=2))
+    elif mermaid_output:
         typer.echo(_render_blast_radius_mermaid(payload))
     elif json_output:
         typer.echo(json.dumps(payload, indent=2))

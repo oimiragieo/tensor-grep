@@ -6,6 +6,7 @@ the data already exists (blast-radius --json), so this is a faithful formatter o
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -97,3 +98,83 @@ def test_blast_radius_command_supports_mermaid_flag(
     assert result.exit_code == 0, result.stdout
     assert "graph TD" in result.stdout
     assert "-->" in result.stdout
+    # `--mermaid` alone must stay prose, never JSON.
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(result.stdout)
+
+
+def test_blast_radius_json_alone_has_no_mermaid_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Preservation: `--json` alone must stay byte-identical to today -- no `mermaid` key
+    # unless `--mermaid` was ALSO requested.
+    monkeypatch.setattr(
+        repo_map,
+        "build_symbol_blast_radius",
+        lambda *a, **k: {
+            "symbol": "Sym",
+            "path": str(tmp_path),
+            "definitions": [],
+            "callers": [{"file": str(tmp_path / "c.py"), "line": 3}],
+            "files": [],
+            "tests": [],
+        },
+    )
+    result = runner.invoke(app, ["blast-radius", str(tmp_path), "Sym", "--json"])
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert "mermaid" not in payload
+
+
+def test_blast_radius_json_and_mermaid_combined_embeds_mermaid_in_json(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # task #164: `--json --mermaid` together must NOT silently drop the JSON (the pre-fix
+    # if/elif let `--mermaid` short-circuit `--json`, so an agent asking for both got only the
+    # human-readable diagram and a `json.loads` on stdout raised). Embed-don't-refuse: the
+    # rendered mermaid text is folded into the JSON payload under a `mermaid` key so one call
+    # returns both the machine graph and the diagram.
+    monkeypatch.setattr(
+        repo_map,
+        "build_symbol_blast_radius",
+        lambda *a, **k: {
+            "symbol": "Sym",
+            "path": str(tmp_path),
+            "definitions": [],
+            "callers": [{"file": str(tmp_path / "c.py"), "line": 3}],
+            "files": [],
+            "tests": [],
+        },
+    )
+    result = runner.invoke(app, ["blast-radius", str(tmp_path), "Sym", "--json", "--mermaid"])
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)  # must be valid JSON -- this is the core regression
+    assert payload.get("callers")  # the machine graph is still present
+    assert isinstance(payload.get("mermaid"), str) and payload["mermaid"]
+    assert payload["mermaid"].startswith("graph TD")
+    assert "-->" in payload["mermaid"]
+
+
+def test_blast_radius_json_and_mermaid_combined_still_honors_not_found_exit_code(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The exit-2 (scan-incomplete) / exit-1 (not_found) contract sits AFTER the output block
+    # (main.py) and must still apply on the both-flags path -- the embed-both fix must not
+    # early-return before it.
+    monkeypatch.setattr(
+        repo_map,
+        "build_symbol_blast_radius",
+        lambda *a, **k: {
+            "symbol": "Ghost",
+            "path": str(tmp_path),
+            "definitions": [],
+            "callers": [],
+            "files": [],
+            "tests": [],
+        },
+    )
+    result = runner.invoke(app, ["blast-radius", str(tmp_path), "Ghost", "--json", "--mermaid"])
+    assert result.exit_code == 1, result.stdout  # not_found still exits 1, not swallowed
+    payload = json.loads(result.stdout)  # the JSON+mermaid embed still happened before the exit
+    assert payload["not_found"] is True
+    assert isinstance(payload.get("mermaid"), str) and payload["mermaid"]
