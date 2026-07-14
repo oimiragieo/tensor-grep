@@ -2552,6 +2552,81 @@ mod tests {
         assert_eq!(gpu_cpu_fallback_unhonorable_flag(&params), None);
     }
 
+    // -- task #165 (fast-follow to #131 F3, Opus-gate finding N1): sidecar flag completeness -----
+    //
+    // F3 fixed the CPU-fallback route's silent drop of these 5 flags via
+    // `gpu_cpu_fallback_unhonorable_flag`. But `handle_gpu_sidecar_search` -- reached whenever
+    // `gpu_native_fallback_reason` (cuda) or `explicit_gpu_sidecar_is_available` (non-cuda) or the
+    // empty-`gpu_device_ids` branch of `handle_gpu_native_search` (cuda) routes here -- hands its
+    // `GpuSearchParams` to the Python sidecar via `gpu_sidecar_search_payload`'s JSON, and the
+    // sidecar's `_gpu_search` (`sidecar.py`) reads NONE of the 5 fields from that payload: its
+    // `SearchConfig(...)` construction has a fixed field allowlist that omits all of
+    // replace/only_matching/max_filesize/color/no_ignore_vcs. So `tg PAT --gpu-device-ids 0
+    // --ignore-case --replace X` (case-insensitive forces sidecar routing per
+    // `gpu_native_fallback_reason`) silently ran WITHOUT `--replace`, exit 0 -- same bug class as
+    // F3, one hop further down the same struct. This test would not even compile against a
+    // codebase missing `gpu_sidecar_unhonorable_flag` -- itself the RED signal, per F3's own
+    // precedent above.
+    #[test]
+    fn gpu_sidecar_unhonorable_flag_detects_each_of_the_five() {
+        let patterns = vec!["needle".to_string()];
+
+        // Preserve case: none of the 5 flags set must still route to the sidecar unchanged.
+        let params = gpu_params_for_patterns(&patterns);
+        assert_eq!(
+            gpu_sidecar_unhonorable_flag(&params),
+            None,
+            "the common case (no unhonorable flags) must still route to the sidecar unchanged"
+        );
+
+        // Unlike `gpu_cpu_fallback_unhonorable_flag`, the sidecar can express NEITHER `replace`
+        // NOR `only_matching` (it has no `NativeSearchConfig`-equivalent escape hatch) -- both
+        // must be unhonorable here even though they are honorable on the CPU-fallback route.
+        let mut params = gpu_params_for_patterns(&patterns);
+        params.replace = Some("REPLACED".to_string());
+        assert_eq!(gpu_sidecar_unhonorable_flag(&params), Some("--replace"));
+
+        let mut params = gpu_params_for_patterns(&patterns);
+        params.only_matching = true;
+        assert_eq!(
+            gpu_sidecar_unhonorable_flag(&params),
+            Some("--only-matching")
+        );
+
+        let mut params = gpu_params_for_patterns(&patterns);
+        params.max_filesize = Some("10M".to_string());
+        assert_eq!(
+            gpu_sidecar_unhonorable_flag(&params),
+            Some("--max-filesize")
+        );
+
+        let mut params = gpu_params_for_patterns(&patterns);
+        params.color = Some("always".to_string());
+        assert_eq!(gpu_sidecar_unhonorable_flag(&params), Some("--color"));
+
+        // N3 parity: `--color never`/`auto` are honorable no-ops here too, identical to
+        // `gpu_cpu_fallback_unhonorable_flag`'s treatment (the sidecar's plain-text emitter never
+        // writes ANSI escapes either, so these two values restate what it already does).
+        let mut params = gpu_params_for_patterns(&patterns);
+        params.color = Some("never".to_string());
+        assert_eq!(gpu_sidecar_unhonorable_flag(&params), None);
+        params.color = Some("auto".to_string());
+        assert_eq!(gpu_sidecar_unhonorable_flag(&params), None);
+        params.color = Some("bogus".to_string());
+        assert_eq!(
+            gpu_sidecar_unhonorable_flag(&params),
+            Some("--color"),
+            "an unrecognized --color value is still unhonorable (fail closed)"
+        );
+
+        let mut params = gpu_params_for_patterns(&patterns);
+        params.no_ignore_vcs = true;
+        assert_eq!(
+            gpu_sidecar_unhonorable_flag(&params),
+            Some("--no-ignore-vcs")
+        );
+    }
+
     #[test]
     fn ripgrep_args_for_gpu_params_carries_every_previously_dropped_flag() {
         let patterns = vec!["needle".to_string(), "second".to_string()];
@@ -10823,7 +10898,82 @@ fn gpu_sidecar_search_payload(params: &GpuSearchParams<'_>) -> serde_json::Value
     })
 }
 
+/// Task #165 (fast-follow to #131 F3, Opus-gate finding N1): mirrors `gpu_cpu_fallback_unhonorable_flag`,
+/// but for the Python GPU sidecar (`handle_gpu_sidecar_search`, below) rather than the native
+/// CPU-fallback engine. `gpu_sidecar_search_payload` (above) has serialized all 5 of these fields
+/// into the sidecar's JSON request payload since F3, but the sidecar's own `_gpu_search`
+/// (`sidecar.py`) reads none of them -- it builds a `SearchConfig` from a fixed field allowlist
+/// (ignore_case/smart_case/fixed_strings/invert_match/count/context/max_count/word_regexp/
+/// no_ignore/hidden/max_depth/text/glob/gpu_device_ids/query_pattern) that omits
+/// replace/only_matching/max_filesize/color/no_ignore_vcs entirely. A `--gpu-device-ids` search
+/// that happens to route to the sidecar (case-insensitive, a regex pattern, `--invert-match`, etc.
+/// all do -- see `gpu_native_fallback_reason`) with one of these 5 set would silently run WITHOUT
+/// it, exit 0: the identical bug class F3 fixed on the CPU-fallback route, one hop further down
+/// the same struct. Unlike the CPU-fallback route (which CAN express replace/only_matching via
+/// `NativeSearchConfig`), the sidecar has no escape hatch for ANY of the 5 -- so this checks all
+/// 5, not just the 3 `gpu_cpu_fallback_unhonorable_flag` checks. `--color never`/`auto` are
+/// excluded as honorable no-ops via the shared `gpu_color_is_unhonorable` (N3 parity: the
+/// sidecar's plain-text emitter never writes ANSI escapes either).
+///
+/// `line_number` is deliberately NOT included here even though `gpu_sidecar_search_payload` also
+/// serializes it and the sidecar's plain-text renderer always emits `file:line:text` (it cannot
+/// suppress line numbers -- see `_gpu_search`'s hardcoded `lines.append(f"{key[0]}:{key[1]}:...")`
+/// in `sidecar.py`). `GpuSearchParams::line_number` is a collapsed `cli.line_number &&
+/// !cli.no_line_number` boolean that defaults to `false` whenever neither `-n` nor `-N` is passed
+/// -- the OVERWHELMING common case (the shared `gpu_params_for_patterns` test fixture bakes in
+/// `line_number: false` as its own baseline). Refusing whenever `line_number == false` would
+/// refuse nearly every sidecar-routed search, not just the rare ones carrying one of the 5 flags
+/// above, breaking the "must still route the common case to the sidecar unchanged" requirement
+/// this fix has to preserve, and the collapsed boolean cannot distinguish "explicit -N" from
+/// "neither flag passed" to narrow that down. It is also a narrower, display-only mismatch (an
+/// extra/missing line-number prefix) rather than the silently-wrong-CONTENT class the 5 flags
+/// above are (a dropped `--replace` transform, an unbounded `--max-filesize`, etc). Left as a
+/// known, documented pre-existing gap rather than blanket-refused here -- flagged in the #165 PR
+/// for the adversarial gate to weigh in on.
+fn gpu_sidecar_unhonorable_flag(params: &GpuSearchParams<'_>) -> Option<&'static str> {
+    if params.replace.is_some() {
+        Some("--replace")
+    } else if params.only_matching {
+        Some("--only-matching")
+    } else if params.max_filesize.is_some() {
+        Some("--max-filesize")
+    } else if gpu_color_is_unhonorable(params.color.as_deref()) {
+        Some("--color")
+    } else if params.no_ignore_vcs {
+        Some("--no-ignore-vcs")
+    } else {
+        None
+    }
+}
+
+/// Fail closed (exit 2, mirrors `exit_gpu_cpu_fallback_flag_unhonorable`'s and
+/// `require_ripgrep_or_exit`'s `--pcre2` convention) when `flag_name` is set on a search that
+/// would otherwise dispatch to the Python GPU sidecar. Unlike the CPU-fallback route, there is no
+/// redirect escape hatch here -- the sidecar has no rg-passthrough equivalent -- so refusing
+/// outright is the only fail-closed option. Never silently drops `flag_name` (Backend Fail-Closed
+/// Contract, same class as `--pcre2`).
+fn exit_gpu_sidecar_flag_unhonorable(flag_name: &str) {
+    eprintln!(
+        "error: {flag_name} is not supported by the native GPU Python sidecar search path; the \
+         sidecar does not read this flag from its request payload and would silently run without \
+         it. Refusing rather than dropping {flag_name}. Drop --gpu-device-ids to use the CPU/rg \
+         backend instead (which supports {flag_name}), or drop {flag_name}."
+    );
+    std::process::exit(2);
+}
+
 fn handle_gpu_sidecar_search(params: GpuSearchParams) -> anyhow::Result<()> {
+    // Task #165 (fast-follow to #131 F3): refuse before dispatch when the sidecar cannot honor a
+    // flag `GpuSearchParams` carries -- see `gpu_sidecar_unhonorable_flag`'s doc comment for why.
+    // This is the single chokepoint every route into the sidecar shares (cuda's
+    // `gpu_native_fallback_reason` path, non-cuda's `explicit_gpu_sidecar_is_available` path, AND
+    // `handle_gpu_native_search`'s empty-`gpu_device_ids` branch all call this function, and this
+    // function alone), so one guard here covers all of them rather than duplicating the check at
+    // each call site.
+    if let Some(flag_name) = gpu_sidecar_unhonorable_flag(&params) {
+        exit_gpu_sidecar_flag_unhonorable(flag_name);
+    }
+
     if params.verbose {
         emit_verbose_metadata(RoutingDecision::gpu_sidecar());
     }
