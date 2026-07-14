@@ -1,6 +1,62 @@
 # CHANGELOG
 
 
+## v1.74.0 (2026-07-14)
+
+### Features
+
+- **cli**: Accept --deadline on source/docs-coverage/blast-radius-plan (+ imports no-op)
+  ([#585](https://github.com/oimiragieo/tensor-grep/pull/585),
+  [`a1502ee`](https://github.com/oimiragieo/tensor-grep/commit/a1502eee602b4d4fe051bf193be77f2bb53e72ed))
+
+CEO v1.72.1 dogfood M1: --deadline was still absent on 4 commands, so passing it Click-exited 2 and
+  burned the agent's turn. Mirrors the shipped #581 pattern
+  (agent/edit-plan/context/map/orient/defs).
+
+- source / blast-radius-plan: true scanning symbol-command siblings of defs/impact/
+  refs/callers/blast-radius. Thread deadline_seconds -> deadline_monotonic into build_symbol_source
+  / build_symbol_blast_radius_plan (+ the plan's _from_map variant, so the caller-scan pass also
+  honors the shared budget), the same thin additive shape build_repo_map already accepts. Neither
+  command has a warm-daemon fast path today, so there is no daemon-skip gate to add. source's exit-2
+  contract comes free from the existing _emit_symbol_command_result gate; blast-radius-plan's comes
+  free from its existing _scan_incomplete gate -- both already check payload["partial"], which the
+  builders now correctly set on a truncated scan.
+
+- docs-coverage (+ --stale): a walk-only repo-scanning command with no prior --deadline or exit-2
+  contract at all. Threads deadline_seconds through build_docs_coverage /
+  build_docs_stale_references into the shared _iter_repo_files walker's existing
+  deadline_monotonic/deadline_hit bound (task #52 loop A), setting partial:true + deadline_limit on
+  truncation (mirrors build_repo_map's own signal shape). The CLI gate is scoped to this NEW
+  `partial` signal only, checked before --check's exit-1 (truncation trumps found) -- the
+  pre-existing --max-repo-files count-cap contract (scan_limit.possibly_truncated) is unchanged and
+  still exits 0, so this is additive-only unless --deadline is explicitly passed.
+
+- imports: single-file O(1) read, no repo scan to bound. Accepts --deadline as a documented no-op
+  (min=0.1 floor still enforced for contract parity) purely so an agent that learned --deadline
+  works elsewhere does not get a Click "No such option" exit-2 here; the value is never threaded
+  anywhere and output is byte-identical with or without it.
+
+TDD: RED tests added to test_cli_deadline_flag.py (registration, sub-floor rejection, CLI-to-builder
+  threading, exit-2 gate on a mocked partial payload guarded against a false-positive "no such
+  option" pass), test_repo_map_deadline.py and test_docs_coverage.py (deterministic
+  already-expired-deadline builder tests, no wall-clock racing), and
+  test_cli_deadline_coverage_gaps.py (real --deadline-0.1-truncation exit-2 cases against the
+  ~80-file src/tensor_grep tree for source/blast-radius-plan, reusing the pattern already proven for
+  defs/map/etc).
+
+docs/CONTRACTS.md: documented the extension to the existing three-state exit-code contract bullet.
+
+Verified: 149 new/modified deadline tests + 599 broader regression-risk tests (only 4 pre-existing,
+  unrelated mcp_server.py rewrite/embedded-fallback failures, confirmed via git stash against clean
+  origin/main) + 99 docs-governance tests, all green. mypy --strict clean on all 3 touched files.
+  ruff format --preview + ruff check clean. Dogfooded end-to-end via genuinely isolated subprocesses
+  through the real tensor_grep.cli.bootstrap:main_entry front door (the actual [project.scripts] tg
+  entry point) for all 4 commands: --deadline acceptance, real threading, sub-floor rejection, and
+  imports' byte-identical no-op parity all confirmed against this worktree's modified source.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.73.0 (2026-07-14)
 
 ### Documentation
