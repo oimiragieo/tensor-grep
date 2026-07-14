@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v1.74.1 (2026-07-14)
+
+### Bug Fixes
+
+- **gpu**: Fail-closed GpuSearchParams flag completeness (#131 F3)
+  ([`f360972`](https://github.com/oimiragieo/tensor-grep/commit/f360972618a840d43b4a2be44d9f9163de37509e))
+
+Adds replace/only_matching/max_filesize/color/no_ignore_vcs to GpuSearchParams (were silently
+  dropped when combined with --gpu-device-ids on the shipped non-CUDA binary, exit 0 = wrong
+  output). Honored natively where NativeSearchConfig supports them (replace/only_matching); the
+  other 3 route to ripgrep passthrough or refuse with exit(2) naming the flag (--pcre2 precedent).
+  Fixes the line_number double-bug. Dual adversarial gate (Opus + codex gpt-5.6-sol) caught + fixed
+  a must-fix: the new rg-redirect builder dropped --context (regression) -> now forwards it. Bundles
+  a setuptools 82->83 bump clearing same-day advisory PYSEC-2026-3447. N1 (cuda/opt-in-sidecar
+  residual) tracked as #165.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.74.0 (2026-07-14)
 
 ### Features
