@@ -2521,6 +2521,21 @@ mod tests {
         params.color = Some("always".to_string());
         assert_eq!(gpu_cpu_fallback_unhonorable_flag(&params), Some("--color"));
 
+        // N3: `--color never`/`auto` are honorable no-ops on the plain-text native engine (mirrors
+        // `index_flag_violations`) -- they must NOT trigger the rg redirect. Only `always` (or an
+        // unrecognized value) does.
+        let mut params = gpu_params_for_patterns(&patterns);
+        params.color = Some("never".to_string());
+        assert_eq!(gpu_cpu_fallback_unhonorable_flag(&params), None);
+        params.color = Some("auto".to_string());
+        assert_eq!(gpu_cpu_fallback_unhonorable_flag(&params), None);
+        params.color = Some("bogus".to_string());
+        assert_eq!(
+            gpu_cpu_fallback_unhonorable_flag(&params),
+            Some("--color"),
+            "an unrecognized --color value is still unhonorable (fail closed)"
+        );
+
         let mut params = gpu_params_for_patterns(&patterns);
         params.no_ignore_vcs = true;
         assert_eq!(
@@ -2549,6 +2564,7 @@ mod tests {
         params.no_ignore_vcs = true;
         params.replace = Some("R".to_string());
         params.only_matching = true;
+        params.context = Some(3); // M1: -C 3 must survive the rg redirect too
 
         let rg_args = ripgrep_args_for_gpu_params(&params);
 
@@ -2567,6 +2583,50 @@ mod tests {
         assert!(rg_args.no_ignore_vcs);
         assert_eq!(rg_args.replace.as_deref(), Some("R"));
         assert!(rg_args.only_matching);
+        // M1 (gate must-fix): the rg redirect must not silently drop -C/-A/-B context. Pre-fix
+        // this field defaulted to None => zero context lines, exit 0 = silent-wrong-output.
+        assert_eq!(
+            rg_args.context,
+            Some(3),
+            "-C 3 must survive the GPU-fallback rg redirect (M1)"
+        );
+    }
+
+    #[test]
+    fn positional_gpu_path_defaults_line_number_off_aligned_with_native() {
+        // N2 (task #131 F3): `tg PAT --gpu-device-ids N` with no -n/-N derives line_number via
+        // `cli.line_number && !cli.no_line_number` at both GpuSearchParams construction sites in
+        // `run_positional_cli`, replacing the old hardcoded `line_number: true`. Because
+        // `PositionalCli::line_number` is `#[arg(short='n')]` (default false), that is a
+        // user-visible flip to line-numbers-OFF -- a DELIBERATE alignment with the sibling
+        // `native_search_config_for_positional` (the CPU fallback it delegates to), which derives
+        // the identical expression. This test locks both the default-off value and the alignment.
+        let cli = parse_positional_cli(&["tg", "PATTERN"]);
+        let derived_line_number = cli.line_number && !cli.no_line_number;
+        assert!(
+            !derived_line_number,
+            "positional GPU path must default line_number OFF with no -n/-N (N2)"
+        );
+
+        // The alignment target: native_search_config_for_positional derives the same value from
+        // the same cli. If a future edit diverges the two paths, this assert fails.
+        let native = native_search_config_for_positional(
+            &cli,
+            "PATTERN",
+            &[".".to_string()],
+            RoutingDecision::native_cpu_gpu_fallback(false, false),
+        );
+        assert_eq!(
+            native.line_number, derived_line_number,
+            "positional GPU line_number must stay aligned with native_search_config_for_positional"
+        );
+
+        // -n flips it back on (both paths honor the explicit request).
+        let cli_n = parse_positional_cli(&["tg", "-n", "PATTERN"]);
+        assert!(
+            cli_n.line_number && !cli_n.no_line_number,
+            "explicit -n must turn line numbers back on"
+        );
     }
 
     #[test]
@@ -5302,6 +5362,13 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
                 patterns: std::slice::from_ref(&pattern),
                 query: &pattern,
                 path: primary_path,
+                // N2 (task #131 F3): deliberately derive line_number the same way as the sibling
+                // `native_search_config_for_positional` (its own `cli.line_number &&
+                // !cli.no_line_number`), replacing the old hardcoded `line_number: true`. Since
+                // `PositionalCli::line_number` is `#[arg(short='n')]` (default false), the positional
+                // GPU path now defaults line numbers OFF, matching the native CPU fallback it
+                // delegates to -- a user-visible alignment fix, locked by
+                // `positional_gpu_path_defaults_line_number_off_aligned_with_native`.
                 line_number: cli.line_number && !cli.no_line_number,
                 ignore_case: cli.ignore_case,
                 smart_case: false,
@@ -9944,6 +10011,16 @@ fn handle_gpu_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
     )
 }
 
+/// N3 (task #131 F3): mirror `index_flag_violations`'s established `--color` rule. The native CPU
+/// engine (`NativeSearchConfig`, which has no `color` field at all) is a plain-text emitter that
+/// never writes ANSI escapes, so `--color never`/`--color auto` restate what it already does and
+/// are honorable no-ops; only `--color always` (or any unrecognized value) demands coloring this
+/// engine cannot produce. Keeping this identical to the index path avoids two divergent `--color`
+/// contracts for the same plain-text emitter.
+fn gpu_color_is_unhonorable(color: Option<&str>) -> bool {
+    matches!(color, Some(mode) if mode != "never" && mode != "auto")
+}
+
 /// Task #131 F3 (Backend Fail-Closed Contract): `NativeSearchConfig` -- the engine backing every
 /// CPU fallback in `handle_gpu_unavailable_cpu_fallback` -- has no field for any of these three
 /// (see its definition in `native_search.rs`), unlike `replace`/`only_matching` which it DOES
@@ -9951,11 +10028,12 @@ fn handle_gpu_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
 /// `NativeSearchConfig` from a `GpuSearchParams` that has one of these three set would run the
 /// search successfully while dropping the flag (exit 0, wrong output). Returns the flag's CLI
 /// spelling so the caller can redirect to the rg passthrough (which DOES carry all three, see
-/// `RipgrepSearchArgs`) or refuse outright -- never silently ignore it.
+/// `RipgrepSearchArgs`) or refuse outright -- never silently ignore it. `--color never`/`auto` are
+/// deliberately excluded as honorable no-ops (see `gpu_color_is_unhonorable`).
 fn gpu_cpu_fallback_unhonorable_flag(params: &GpuSearchParams<'_>) -> Option<&'static str> {
     if params.max_filesize.is_some() {
         Some("--max-filesize")
-    } else if params.color.is_some() {
+    } else if gpu_color_is_unhonorable(params.color.as_deref()) {
         Some("--color")
     } else if params.no_ignore_vcs {
         Some("--no-ignore-vcs")
@@ -10010,6 +10088,16 @@ fn ripgrep_args_for_gpu_params(params: &GpuSearchParams<'_>) -> RipgrepSearchArg
         no_line_number: !params.line_number,
         only_matching: params.only_matching,
         max_count: params.max_count,
+        // M1 (gate must-fix): GpuSearchParams carries the single collapsed `context`
+        // (`search_effective_context(&args)` at the tg-search sites). Forward it here so a
+        // `--gpu-device-ids N -C 3 --color always` search redirected to rg does not silently drop
+        // `-C 3` -- the native CPU fallback honored it via
+        // `native_search_config_for_gpu_params` (before/after_context = params.context.unwrap_or(0)),
+        // so dropping it in this rg redirect would trade a color-drop for a context-drop = the same
+        // silent-wrong-output class this PR closes. Leaving before_context/after_context at their
+        // `None` default mirrors that symmetric native behavior (GpuSearchParams has no separate
+        // before/after; the collapsed value already folds `-A`/`-B` via search_effective_context).
+        context: params.context,
         word_regexp: params.word_regexp,
         globs: params.globs.clone(),
         no_ignore: params.no_ignore,
