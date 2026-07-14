@@ -1,6 +1,8 @@
 import importlib.metadata
 import json
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -522,3 +524,231 @@ def test_mcp_sidecar_env_propagation():
         assert "env" in kwargs
         assert "TG_SIDECAR_PYTHON" in kwargs["env"]
         assert kwargs["env"]["TG_SIDECAR_PYTHON"] == sys.executable
+
+
+# ---------------------------------------------------------------------------
+# GPU-P0-1 (#171): WSL native-binary path-domain bridging
+# ---------------------------------------------------------------------------
+
+
+class TestNativeBinaryTargetsWindows:
+    def test_exe_suffix_is_windows_target(self):
+        assert runtime_paths.native_binary_targets_windows("/mnt/c/Users/x/tg.exe") is True
+        assert runtime_paths.native_binary_targets_windows(Path("/some/path/tg.exe")) is True
+        assert runtime_paths.native_binary_targets_windows("/some/path/TG.EXE") is True
+
+    def test_mnt_drive_mount_without_exe_is_not_windows_target(self):
+        # Opus MF-1: a `/mnt/<drive>/` location is NOT itself a Windows signal. A Linux ELF built
+        # in-place on a Windows-drive checkout lives here (the default resolver returns `tg`, not
+        # `tg.exe`, on Linux) and is same-domain -- flagging it would break a working WSL config.
+        assert runtime_paths.native_binary_targets_windows("/mnt/c/tg") is False
+        assert runtime_paths.native_binary_targets_windows("/mnt/d/tools/tg") is False
+        assert (
+            runtime_paths.native_binary_targets_windows(
+                "/mnt/c/dev/tensor-grep/rust_core/target/release/tg"
+            )
+            is False
+        )
+
+    def test_plain_linux_path_is_not_windows_target(self):
+        assert runtime_paths.native_binary_targets_windows("/usr/local/bin/tg") is False
+        assert (
+            runtime_paths.native_binary_targets_windows(
+                "/home/user/repo/rust_core/target/release/tg"
+            )
+            is False
+        )
+
+
+class TestIsWslHost:
+    def test_true_when_wsl_distro_name_set(self, monkeypatch):
+        monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
+        assert runtime_paths.is_wsl_host() is True
+
+    def test_true_when_wsl_interop_set(self, monkeypatch):
+        monkeypatch.delenv("WSL_DISTRO_NAME", raising=False)
+        monkeypatch.setenv("WSL_INTEROP", "/run/WSL/1_interop")
+        assert runtime_paths.is_wsl_host() is True
+
+    def test_true_when_run_wsl_exists_without_env_signal(self, monkeypatch):
+        monkeypatch.delenv("WSL_DISTRO_NAME", raising=False)
+        monkeypatch.delenv("WSL_INTEROP", raising=False)
+        original_exists = os.path.exists
+        monkeypatch.setattr(
+            runtime_paths.os.path,
+            "exists",
+            lambda p: True if p == "/run/WSL" else original_exists(p),
+        )
+        assert runtime_paths.is_wsl_host() is True
+
+    def test_false_on_plain_linux_without_any_wsl_signal(self, monkeypatch):
+        monkeypatch.delenv("WSL_DISTRO_NAME", raising=False)
+        monkeypatch.delenv("WSL_INTEROP", raising=False)
+        original_exists = os.path.exists
+        monkeypatch.setattr(
+            runtime_paths.os.path,
+            "exists",
+            lambda p: False if p == "/run/WSL" else original_exists(p),
+        )
+        assert runtime_paths.is_wsl_host() is False
+
+
+class TestIsCrossDomainNativeBinary:
+    def test_false_when_binary_is_none(self):
+        assert runtime_paths.is_cross_domain_native_binary(None) is False
+
+    def test_false_on_non_linux_host_even_with_windows_shaped_path(self, monkeypatch):
+        monkeypatch.setattr(runtime_paths.sys, "platform", "win32")
+        monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
+        assert runtime_paths.is_cross_domain_native_binary("/mnt/c/tg.exe") is False
+
+    def test_false_on_bare_linux_ci_runner_without_wsl_signal(self, monkeypatch, tmp_path):
+        """Regression guard: a Linux CI fixture that happens to name a binary `tg.exe` must NOT
+        be misread as a WSL cross-domain binary just because of the host platform -- only a
+        genuine WSL signal (env var or /run/WSL) may trigger cross-domain handling."""
+        monkeypatch.setattr(runtime_paths.sys, "platform", "linux")
+        monkeypatch.delenv("WSL_DISTRO_NAME", raising=False)
+        monkeypatch.delenv("WSL_INTEROP", raising=False)
+        original_exists = os.path.exists
+        monkeypatch.setattr(
+            runtime_paths.os.path,
+            "exists",
+            lambda p: False if p == "/run/WSL" else original_exists(p),
+        )
+        native_tg = tmp_path / "tg.exe"
+        assert runtime_paths.is_cross_domain_native_binary(native_tg) is False
+
+    def test_true_on_wsl_host_with_windows_target_binary(self, monkeypatch):
+        monkeypatch.setattr(runtime_paths.sys, "platform", "linux")
+        monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
+        binary = Path("/mnt/c/Users/x/.tensor-grep/bin/tg.exe")
+        assert runtime_paths.is_cross_domain_native_binary(binary) is True
+
+    def test_false_on_wsl_host_with_native_linux_binary(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(runtime_paths.sys, "platform", "linux")
+        monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
+        native_tg = tmp_path / "rust_core" / "target" / "release" / "tg"
+        assert runtime_paths.is_cross_domain_native_binary(native_tg) is False
+
+    def test_false_on_wsl_host_with_linux_elf_on_windows_drive_mount(self, monkeypatch):
+        """Opus MF-1 regression: the DEFAULT resolver on WSL looks for `tg` (not `tg.exe`), so a
+        repo checked out + built in-place on a Windows drive yields a genuine Linux ELF at
+        `/mnt/c/.../rust_core/target/release/tg`. That binary is same-domain -- it opens a `/tmp`
+        sentinel fine -- so it must NOT be flagged cross-domain (which would translate its `/tmp`
+        path to a UNC path the Linux ELF cannot open, breaking a config that worked pre-PR). CI
+        was green without this test; the earlier `/mnt`-disjunct implementation returned True
+        here."""
+        monkeypatch.setattr(runtime_paths.sys, "platform", "linux")
+        monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
+        linux_elf_on_mount = Path("/mnt/c/dev/tensor-grep/rust_core/target/release/tg")
+        assert runtime_paths.is_cross_domain_native_binary(linux_elf_on_mount) is False
+
+
+class TestTranslatePathForWindowsBinary:
+    def test_returns_translated_path_when_wslpath_succeeds(self, monkeypatch, tmp_path):
+        probe_file = tmp_path / "probe.log"
+        probe_file.write_text("sentinel\n", encoding="utf-8")
+        monkeypatch.setattr(
+            runtime_paths.shutil,
+            "which",
+            lambda name: "/usr/bin/wslpath" if name == "wslpath" else None,
+        )
+
+        def fake_run(command, **_kwargs):
+            assert command[0] == "/usr/bin/wslpath"
+            assert command[1] == "-w"
+            return subprocess.CompletedProcess(
+                command, 0, "C:\\Users\\x\\AppData\\Local\\Temp\\probe.log\r\n", ""
+            )
+
+        monkeypatch.setattr(runtime_paths.subprocess, "run", fake_run)
+
+        translated = runtime_paths.translate_path_for_windows_binary(probe_file)
+        assert translated == "C:\\Users\\x\\AppData\\Local\\Temp\\probe.log"
+
+    def test_returns_none_when_wslpath_absent(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(runtime_paths.shutil, "which", lambda _name: None)
+        assert runtime_paths.translate_path_for_windows_binary(tmp_path / "probe.log") is None
+
+    def test_returns_none_on_nonzero_exit(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(
+            runtime_paths.shutil,
+            "which",
+            lambda name: "/usr/bin/wslpath" if name == "wslpath" else None,
+        )
+        monkeypatch.setattr(
+            runtime_paths.subprocess,
+            "run",
+            lambda command, **_kwargs: subprocess.CompletedProcess(command, 1, "", "no such path"),
+        )
+        assert runtime_paths.translate_path_for_windows_binary(tmp_path / "probe.log") is None
+
+    def test_returns_none_on_timeout(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(
+            runtime_paths.shutil,
+            "which",
+            lambda name: "/usr/bin/wslpath" if name == "wslpath" else None,
+        )
+
+        def raise_timeout(command, **_kwargs):
+            raise subprocess.TimeoutExpired(cmd=command, timeout=2.0)
+
+        monkeypatch.setattr(runtime_paths.subprocess, "run", raise_timeout)
+        assert runtime_paths.translate_path_for_windows_binary(tmp_path / "probe.log") is None
+
+    def test_returns_none_on_os_error(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(
+            runtime_paths.shutil,
+            "which",
+            lambda name: "/usr/bin/wslpath" if name == "wslpath" else None,
+        )
+
+        def raise_os_error(command, **_kwargs):
+            raise OSError("exec format error")
+
+        monkeypatch.setattr(runtime_paths.subprocess, "run", raise_os_error)
+        assert runtime_paths.translate_path_for_windows_binary(tmp_path / "probe.log") is None
+
+
+class TestGpuProbeTimeoutS:
+    def test_default_when_not_cross_domain_and_no_override(self, monkeypatch):
+        monkeypatch.delenv("TENSOR_GREP_GPU_PROBE_TIMEOUT_S", raising=False)
+        assert runtime_paths.gpu_probe_timeout_s(cross_domain=False) == pytest.approx(2.0)
+
+    def test_cross_domain_raises_floor_above_small_default(self, monkeypatch):
+        monkeypatch.delenv("TENSOR_GREP_GPU_PROBE_TIMEOUT_S", raising=False)
+        assert runtime_paths.gpu_probe_timeout_s(cross_domain=True) == pytest.approx(
+            runtime_paths.CROSS_DOMAIN_GPU_PROBE_TIMEOUT_S
+        )
+
+    def test_cross_domain_keeps_a_larger_explicit_default(self, monkeypatch):
+        monkeypatch.delenv("TENSOR_GREP_GPU_PROBE_TIMEOUT_S", raising=False)
+        assert runtime_paths.gpu_probe_timeout_s(
+            cross_domain=True, default_s=30.0
+        ) == pytest.approx(30.0)
+
+    def test_env_override_honored_regardless_of_cross_domain(self, monkeypatch):
+        monkeypatch.setenv("TENSOR_GREP_GPU_PROBE_TIMEOUT_S", "9.5")
+        assert runtime_paths.gpu_probe_timeout_s(cross_domain=False) == pytest.approx(9.5)
+        assert runtime_paths.gpu_probe_timeout_s(cross_domain=True) == pytest.approx(9.5)
+
+    def test_env_override_invalid_value_falls_back_to_default_logic(self, monkeypatch):
+        monkeypatch.setenv("TENSOR_GREP_GPU_PROBE_TIMEOUT_S", "banana")
+        assert runtime_paths.gpu_probe_timeout_s(cross_domain=False) == pytest.approx(2.0)
+
+    def test_env_override_non_positive_value_falls_back_to_default_logic(self, monkeypatch):
+        monkeypatch.setenv("TENSOR_GREP_GPU_PROBE_TIMEOUT_S", "0")
+        assert runtime_paths.gpu_probe_timeout_s(cross_domain=False) == pytest.approx(2.0)
+
+
+@pytest.mark.skipif(
+    shutil.which("wslpath") is None, reason="requires a real WSL host with wslpath on PATH"
+)
+def test_translate_path_for_windows_binary_real_wslpath_smoke(tmp_path):
+    """Integration smoke test against the REAL wslpath binary -- only runs on an actual WSL
+    host; every other test above is fully monkeypatched and platform-independent."""
+    probe_file = tmp_path / "probe.log"
+    probe_file.write_text("sentinel\n", encoding="utf-8")
+    translated = runtime_paths.translate_path_for_windows_binary(probe_file)
+    assert translated is not None
+    assert translated.strip() != ""

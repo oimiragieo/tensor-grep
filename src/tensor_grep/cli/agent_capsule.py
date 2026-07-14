@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import Any
 
 from tensor_grep.cli import repo_map
-from tensor_grep.cli.runtime_paths import resolve_native_tg_binary
+from tensor_grep.cli.runtime_paths import (
+    gpu_probe_timeout_s,
+    is_cross_domain_native_binary,
+    resolve_native_tg_binary,
+    translate_path_for_windows_binary,
+)
 from tensor_grep.core.retrieval_lexical import split_terms
 
 _CAPSULE_LSP_CONFIDENCE_BOOST_ENV = "TG_CAPSULE_LSP_CONFIDENCE_BOOST"
@@ -1344,6 +1349,12 @@ def _agent_gpu_evidence(
             "reason": str(exc),
         }
 
+    # GPU-P0-1 (#171): the agent twin of the doctor's WSL path-domain bug -- tg_command can
+    # resolve to a Windows-target binary that cannot open a Linux TemporaryDirectory path. Share
+    # the same detection/translation/timeout helpers as the doctor probe (no divergent copy).
+    cross_domain = is_cross_domain_native_binary(tg_command)
+    effective_timeout_s = gpu_probe_timeout_s(cross_domain=cross_domain, default_s=timeout_s)
+
     device_arg = ",".join(str(device_id) for device_id in requested_device_ids)
     with tempfile.TemporaryDirectory(prefix="tg-agent-gpu-probe-") as probe_tmp:
         probe_dir = Path(probe_tmp)
@@ -1351,6 +1362,22 @@ def _agent_gpu_evidence(
             "tg agent gpu probe sentinel\n",
             encoding="utf-8",
         )
+        probe_target = str(probe_dir)
+        if cross_domain:
+            translated = translate_path_for_windows_binary(probe_dir)
+            if translated is None:
+                return {
+                    "status": "path_domain_mismatch",
+                    "requested_device_ids": requested_device_ids,
+                    "used_for_evidence": False,
+                    "promotion_claim": False,
+                    "reason": (
+                        "resolved native tg binary targets Windows but this WSL host could not "
+                        "translate the probe path via wslpath (path-domain mismatch, not a GPU "
+                        "capability gap)"
+                    ),
+                }
+            probe_target = translated
         probe_command: list[object] = [
             tg_command,
             "search",
@@ -1359,9 +1386,9 @@ def _agent_gpu_evidence(
             "--json",
             "-F",
             "tg agent gpu probe sentinel",
-            str(probe_dir),
+            probe_target,
         ]
-        probe = _run_agent_gpu_json_command(probe_command, timeout_s=timeout_s)
+        probe = _run_agent_gpu_json_command(probe_command, timeout_s=effective_timeout_s)
 
     if probe["status"] != "ok":
         return {
@@ -1412,7 +1439,7 @@ def _agent_gpu_evidence(
     evidence_command.append(path)
     evidence = _run_agent_gpu_json_command(
         evidence_command,
-        timeout_s=timeout_s,
+        timeout_s=effective_timeout_s,
         valid_return_codes=(0, 1),
     )
     if evidence["status"] != "ok":

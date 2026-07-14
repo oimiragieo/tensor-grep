@@ -2184,6 +2184,128 @@ def test_doctor_gpu_runtime_probe_redacts_temp_probe_path(monkeypatch, tmp_path:
     assert "<doctor-gpu-probe-file>" in probe["command"]
 
 
+# GPU-P0-1 (#171): WSL path-domain bridging for the doctor's GPU runtime probe. These monkeypatch
+# the collaborator functions directly (rather than simulating a real WSL host) so they exercise
+# ONLY the doctor-probe wiring; the cross-domain detection/translation logic itself is unit-tested
+# exhaustively in tests/unit/test_runtime_paths.py.
+def test_doctor_gpu_runtime_probe_cross_domain_translates_probe_path(
+    monkeypatch, tmp_path: Path
+) -> None:
+    native_tg = tmp_path / "tg.exe"
+    native_tg.write_text("native", encoding="utf-8")
+    translated_path = "C:\\Users\\x\\AppData\\Local\\Temp\\tg-doctor-gpu-probe-abc\\probe.log"
+
+    monkeypatch.setattr("tensor_grep.cli.main.is_cross_domain_native_binary", lambda _binary: True)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main.translate_path_for_windows_binary",
+        lambda _path: translated_path,
+    )
+
+    captured_command: list[str] = []
+
+    def _fake_run(command, **_kwargs):
+        captured_command.extend(command)
+        payload = {
+            "routing_backend": "NativeGpuBackend",
+            "routing_reason": "gpu-device-ids-explicit",
+            "sidecar_used": False,
+            "routing_gpu_device_ids": [0],
+        }
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    probe = cli_main._doctor_gpu_search_runtime_probe(native_tg)
+
+    assert probe["status"] == "supported"
+    # The LAST argv element is the sentinel path -- it must be the TRANSLATED Windows path, not
+    # the raw Linux TemporaryDirectory path the sentinel file was actually written under.
+    assert captured_command[-1] == translated_path
+
+
+def test_doctor_gpu_runtime_probe_path_domain_mismatch_when_translation_unavailable(
+    monkeypatch, tmp_path: Path
+) -> None:
+    native_tg = tmp_path / "tg.exe"
+    native_tg.write_text("native", encoding="utf-8")
+
+    monkeypatch.setattr("tensor_grep.cli.main.is_cross_domain_native_binary", lambda _binary: True)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main.translate_path_for_windows_binary", lambda _path: None
+    )
+
+    def _fake_run(command, **_kwargs):
+        raise AssertionError(
+            "must not shell out to the native binary when wslpath translation "
+            "is unavailable -- the path would be unresolvable and misreport as a GPU failure"
+        )
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    probe = cli_main._doctor_gpu_search_runtime_probe(native_tg)
+
+    assert probe["status"] == "path_domain_mismatch"
+    assert probe["error"]
+    assert "wslpath" in probe["error"]
+
+
+def test_doctor_gpu_runtime_probe_same_domain_is_unaffected(monkeypatch, tmp_path: Path) -> None:
+    """Cross-domain detection false (the common case) leaves argv/behavior exactly as before."""
+    native_tg = tmp_path / "tg.exe"
+    native_tg.write_text("native", encoding="utf-8")
+
+    monkeypatch.setattr("tensor_grep.cli.main.is_cross_domain_native_binary", lambda _binary: False)
+
+    def _fail_translate(_path):
+        raise AssertionError("must not be called when cross_domain is False")
+
+    monkeypatch.setattr("tensor_grep.cli.main.translate_path_for_windows_binary", _fail_translate)
+
+    captured_command: list[str] = []
+
+    def _fake_run(command, **_kwargs):
+        captured_command.extend(command)
+        payload = {
+            "routing_backend": "NativeGpuBackend",
+            "routing_reason": "gpu-device-ids-explicit",
+            "sidecar_used": False,
+            "routing_gpu_device_ids": [0],
+        }
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    probe = cli_main._doctor_gpu_search_runtime_probe(native_tg)
+
+    assert probe["status"] == "supported"
+    assert "tg-doctor-gpu-probe-" in captured_command[-1]
+
+
+def test_doctor_gpu_runtime_probe_timeout_env_override_honored(monkeypatch, tmp_path: Path) -> None:
+    native_tg = tmp_path / "tg.exe"
+    native_tg.write_text("native", encoding="utf-8")
+    monkeypatch.setenv("TENSOR_GREP_GPU_PROBE_TIMEOUT_S", "17.5")
+
+    captured_kwargs: dict = {}
+
+    def _fake_run(command, **kwargs):
+        captured_kwargs.update(kwargs)
+        payload = {
+            "routing_backend": "NativeGpuBackend",
+            "routing_reason": "gpu-device-ids-explicit",
+            "sidecar_used": False,
+            "routing_gpu_device_ids": [0],
+        }
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    probe = cli_main._doctor_gpu_search_runtime_probe(native_tg)
+
+    assert probe["status"] == "supported"
+    assert captured_kwargs["timeout"] == pytest.approx(17.5)
+
+
 def test_doctor_json_reports_native_version_mismatch(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "1.8.1")
     monkeypatch.setattr(
