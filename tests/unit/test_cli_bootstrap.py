@@ -827,6 +827,59 @@ def test_main_entry_should_delegate_force_cpu_alias_to_native_tg(monkeypatch):
     assert seen == {"binary_name": "tg.exe", "search_args": ["ERROR", ".", "--force-cpu"]}
 
 
+def test_main_entry_explicit_gpu_device_ids_without_gpu_backend_exits_cleanly(
+    monkeypatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Task #166 finding A (dogfood-caught on the v1.74.1 wheel): `tg PATTERN PATH
+    --gpu-device-ids 0` on a machine with no GPU backend available (no CuDF/Torch) must exit
+    with a clean, single-line `Error: ...` message and exit code 2 -- never a raw Python
+    traceback. `Pipeline.__init__` deliberately raises `ConfigurationError` as its fail-closed
+    explicit-GPU-routing contract (core/pipeline.py's
+    `_raise_explicit_gpu_configuration_error`), but nothing at the CLI boundary
+    (`search_command` in cli/main.py) caught it, so it propagated straight through Typer's
+    `app()` call in `main_entry` as an unhandled exception -- confirmed live via the real
+    console script before this fix: exit code 1 and a raw
+    `tensor_grep.core.pipeline.ConfigurationError` traceback on stderr.
+
+    Explicitly forces the "chunk plan found, but neither CuDF nor Torch is available" branch
+    (the exact shape from the dogfood report) so this test is deterministic regardless of
+    whether the host machine happens to have real GPU hardware/drivers.
+    """
+    target = tmp_path / "f.txt"
+    target.write_text("hello world\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        sys, "argv", ["tg", "search", "hello", str(target), "--gpu-device-ids", "0"]
+    )
+    # Two independent native-delegation gates exist -- bootstrap.py's fast argv-based
+    # pre-check AND cli/main.py's OWN second check inside search_command (cli/main.py:6905,
+    # imported separately at cli/main.py:36) -- so both must be forced off, or a real in-tree
+    # `rust_core/target/{debug,release}/tg[.exe]` (e.g. left over from a local `maturin
+    # develop`/`cargo build`) lets the second gate silently delegate to the native binary and
+    # this test would exercise the Rust CLI's own GPU-fallback behavior instead of the Python
+    # ConfigurationError path this fix targets.
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(cli_main, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(
+        "tensor_grep.core.hardware.memory_manager.MemoryManager.get_device_chunk_plan_mb",
+        lambda self, preferred_ids=None: [(0, 512)],
+    )
+    monkeypatch.setattr("tensor_grep.core.pipeline.CuDFBackend.is_available", lambda self: False)
+    monkeypatch.setattr(
+        "tensor_grep.backends.torch_backend.TorchBackend.is_available", lambda self: False
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        bootstrap.main_entry()
+
+    captured = capsys.readouterr()
+    assert excinfo.value.code == 2, (captured.out, captured.err)
+    assert "Traceback" not in captured.err, captured.err
+    assert "Traceback" not in captured.out, captured.out
+    assert "error" in captured.err.lower(), captured.err
+    assert "GPU" in captured.err, captured.err
+
+
 def test_main_entry_should_delegate_force_cpu_env_to_native_tg(monkeypatch):
     seen: dict[str, object] = {}
 

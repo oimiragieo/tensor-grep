@@ -7022,10 +7022,23 @@ def search_command(
     )
     config.input_total_bytes = _sum_total_bytes(candidate_files_ordered)
 
-    from tensor_grep.core.pipeline import Pipeline
+    from tensor_grep.core.pipeline import ConfigurationError, Pipeline
     from tensor_grep.core.result import SearchResult, merge_runtime_routing
 
-    pipeline = Pipeline(force_cpu=effective_force_cpu, config=config)
+    try:
+        pipeline = Pipeline(force_cpu=effective_force_cpu, config=config)
+    except ConfigurationError as exc:
+        # Task #166 finding A: Pipeline's explicit-routing guards (e.g. --gpu-device-ids with
+        # no GPU backend available, or --pcre2 with no PCRE2-capable rg) deliberately raise
+        # ConfigurationError as a fail-closed signal (core/pipeline.py), but this CLI boundary
+        # previously let it propagate as a raw, uncaught traceback instead of a clean error.
+        # Route it through the same `_exit_search_error` helper this function already uses for
+        # every other expected/clean CLI error (empty_pattern, unsupported_flag, path_not_found,
+        # invalid_regex) so the user gets a single-line `Error: ...` message and exit code 2
+        # instead of a Python stack trace. A genuinely unexpected exception is NOT caught here
+        # (only this specific, deliberate exception type), so a real bug still surfaces loudly.
+        _exit_search_error("configuration_error", str(exc), json_mode=json)
+        raise
     backend = pipeline.get_backend()
     selected_backend_name = getattr(pipeline, "selected_backend_name", backend.__class__.__name__)
     selected_backend_reason = getattr(pipeline, "selected_backend_reason", "unknown")
