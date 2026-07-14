@@ -537,9 +537,18 @@ class TestNativeBinaryTargetsWindows:
         assert runtime_paths.native_binary_targets_windows(Path("/some/path/tg.exe")) is True
         assert runtime_paths.native_binary_targets_windows("/some/path/TG.EXE") is True
 
-    def test_mnt_drive_mount_is_windows_target(self):
-        assert runtime_paths.native_binary_targets_windows("/mnt/c/tg") is True
-        assert runtime_paths.native_binary_targets_windows("/mnt/d/tools/tg") is True
+    def test_mnt_drive_mount_without_exe_is_not_windows_target(self):
+        # Opus MF-1: a `/mnt/<drive>/` location is NOT itself a Windows signal. A Linux ELF built
+        # in-place on a Windows-drive checkout lives here (the default resolver returns `tg`, not
+        # `tg.exe`, on Linux) and is same-domain -- flagging it would break a working WSL config.
+        assert runtime_paths.native_binary_targets_windows("/mnt/c/tg") is False
+        assert runtime_paths.native_binary_targets_windows("/mnt/d/tools/tg") is False
+        assert (
+            runtime_paths.native_binary_targets_windows(
+                "/mnt/c/dev/tensor-grep/rust_core/target/release/tg"
+            )
+            is False
+        )
 
     def test_plain_linux_path_is_not_windows_target(self):
         assert runtime_paths.native_binary_targets_windows("/usr/local/bin/tg") is False
@@ -549,11 +558,6 @@ class TestNativeBinaryTargetsWindows:
             )
             is False
         )
-
-    def test_lookalike_path_without_mnt_prefix_is_not_windows_target(self):
-        # "/mount/c/tg" and "/mnt2/c/tg" must not false-positive on a loose substring match.
-        assert runtime_paths.native_binary_targets_windows("/mount/c/tg") is False
-        assert runtime_paths.native_binary_targets_windows("/mnt2/c/tg") is False
 
 
 class TestIsWslHost:
@@ -625,6 +629,19 @@ class TestIsCrossDomainNativeBinary:
         monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
         native_tg = tmp_path / "rust_core" / "target" / "release" / "tg"
         assert runtime_paths.is_cross_domain_native_binary(native_tg) is False
+
+    def test_false_on_wsl_host_with_linux_elf_on_windows_drive_mount(self, monkeypatch):
+        """Opus MF-1 regression: the DEFAULT resolver on WSL looks for `tg` (not `tg.exe`), so a
+        repo checked out + built in-place on a Windows drive yields a genuine Linux ELF at
+        `/mnt/c/.../rust_core/target/release/tg`. That binary is same-domain -- it opens a `/tmp`
+        sentinel fine -- so it must NOT be flagged cross-domain (which would translate its `/tmp`
+        path to a UNC path the Linux ELF cannot open, breaking a config that worked pre-PR). CI
+        was green without this test; the earlier `/mnt`-disjunct implementation returned True
+        here."""
+        monkeypatch.setattr(runtime_paths.sys, "platform", "linux")
+        monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
+        linux_elf_on_mount = Path("/mnt/c/dev/tensor-grep/rust_core/target/release/tg")
+        assert runtime_paths.is_cross_domain_native_binary(linux_elf_on_mount) is False
 
 
 class TestTranslatePathForWindowsBinary:

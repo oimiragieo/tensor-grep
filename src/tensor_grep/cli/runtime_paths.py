@@ -288,16 +288,24 @@ def resolve_native_tg_binary() -> Path | None:
 
 # --- GPU-P0-1 (#171): WSL native-binary path-domain bridging ----------------------------------
 #
-# On WSL, resolve_native_tg_binary() can return a Windows-target binary (an explicit
-# TG_NATIVE_TG_BINARY override pointing at a `.exe` under `/mnt/<drive>/...`, or an in-tree build
-# produced by a Windows-side `cargo build` against a repo checkout shared over the same mount).
-# The GPU doctor/agent probes write a sentinel file under a Linux TemporaryDirectory (a
-# `/tmp/...`-style path) and pass it as argv to that binary. A Windows PE cannot resolve a
-# `/tmp/...` path -- a different filesystem namespace -- so the probe fails with a structured
-# `path_not_found` from the native binary, which reads as "no GPU support" even when the GPU route
-# itself may be fine. These helpers detect that mismatch and bridge it via `wslpath`, so the
-# doctor probe (cli/main.py) and the agent probe (cli/agent_capsule.py) share ONE implementation
-# instead of two divergent copies.
+# On WSL, resolve_native_tg_binary() can return a Windows-target binary: an explicit
+# TG_NATIVE_TG_BINARY override pointing at a `.exe`, or an in-tree `tg.exe` produced by a
+# Windows-side `cargo build` against a repo checkout shared over a `/mnt/<drive>/...` mount. In
+# EVERY such case the binary carries the `.exe` suffix -- a Windows PE is not executable via the
+# Win32 loader or the WSL binfmt interop handler without it. The GPU doctor/agent probes write a
+# sentinel file under a Linux TemporaryDirectory (a `/tmp/...`-style path) and pass it as argv to
+# that binary. A Windows PE cannot resolve a `/tmp/...` path -- a different filesystem namespace --
+# so the probe fails with a structured `path_not_found` from the native binary, which reads as "no
+# GPU support" even when the GPU route itself may be fine. These helpers detect that mismatch and
+# bridge it via `wslpath`, so the doctor probe (cli/main.py) and the agent probe
+# (cli/agent_capsule.py) share ONE implementation instead of two divergent copies.
+#
+# The detection keys on the `.exe` suffix ALONE, deliberately NOT on a `/mnt/<drive>/` location:
+# a WSL user who checks the repo out on a Windows drive and runs the LINUX `maturin develop` /
+# `cargo build` there gets a genuine Linux ELF at `/mnt/c/.../rust_core/target/release/tg` (no
+# `.exe`), which the default resolver returns (it looks for `tg`, not `tg.exe`, on Linux). That
+# ELF is same-domain -- it opens the `/tmp` sentinel fine -- so translating its path would BREAK a
+# working config. The `.exe` suffix is both necessary and sufficient for a real Windows target.
 
 #: Base GPU probe timeout (seconds) when host and resolved binary share a filesystem domain.
 DEFAULT_GPU_PROBE_TIMEOUT_S = 2.0
@@ -308,8 +316,6 @@ DEFAULT_GPU_PROBE_TIMEOUT_S = 2.0
 CROSS_DOMAIN_GPU_PROBE_TIMEOUT_S = 6.0
 
 _WSLPATH_TRANSLATE_TIMEOUT_S = 2.0
-
-_WINDOWS_DRVFS_MOUNT_RE = re.compile(r"^/mnt/[a-zA-Z](?:/|$)")
 
 
 def is_wsl_host() -> bool:
@@ -329,17 +335,16 @@ def is_wsl_host() -> bool:
 
 
 def native_binary_targets_windows(binary: Path | str) -> bool:
-    """True when `binary`'s path shape looks like a Windows-target executable.
+    """True when `binary` is a Windows-target executable, keyed on the `.exe` suffix ALONE.
 
-    Either signal alone is sufficient: a `.exe` suffix cannot be a native Linux ELF or macOS
-    Mach-O binary regardless of where it lives on disk, and a path rooted at `/mnt/<drive>/` is
-    the WSL2 drvfs mount of a Windows drive -- nothing genuinely native to the WSL Linux
-    filesystem lives there.
+    The `.exe` suffix is both necessary and sufficient: a Windows PE cannot be exec'd via the
+    Win32 loader or the WSL binfmt interop handler without it, and nothing native to a Linux/macOS
+    filesystem carries it. A `/mnt/<drive>/` location is deliberately NOT treated as a Windows
+    signal -- a Linux ELF built in-place on a Windows-drive checkout (the default resolver returns
+    `/mnt/c/.../tg`, no `.exe`) lives there too and is same-domain, so flagging it would break a
+    working WSL config (Opus MF-1).
     """
-    text = str(binary).replace("\\", "/")
-    if text.lower().endswith(".exe"):
-        return True
-    return _WINDOWS_DRVFS_MOUNT_RE.match(text) is not None
+    return str(binary).lower().endswith(".exe")
 
 
 def is_cross_domain_native_binary(binary: Path | str | None) -> bool:
