@@ -18,6 +18,8 @@ EXPECTED_EXAMPLES = {
         "navigation_pack",
         "validation_commands",
         "validation_plan",
+        "confidence",
+        "ask_user_before_editing",
     ),
     "context_render.json": (
         "query",
@@ -407,6 +409,16 @@ def test_harness_api_examples_exist_and_have_unified_envelope() -> None:
                 assert payload["validation_plan"]
                 assert payload["validation_plan"] == payload["edit_plan_seed"]["validation_plan"]
                 assert payload["validation_commands"]
+                # Parity fix (CEO v1.72.1 dogfood): edit-plan's top-level `confidence` /
+                # `ask_user_before_editing` must exist and match the `agent` capsule contract's
+                # shape -- `confidence.overall` non-null, `ask_user_before_editing.required` a
+                # bool with a `reasons` list.
+                assert isinstance(payload["confidence"], dict)
+                assert isinstance(payload["confidence"]["overall"], float)
+                assert isinstance(payload["confidence"]["downgrade_reasons"], list)
+                assert isinstance(payload["ask_user_before_editing"], dict)
+                assert isinstance(payload["ask_user_before_editing"]["required"], bool)
+                assert isinstance(payload["ask_user_before_editing"]["reasons"], list)
             if file_name in {"context_render.json", "blast_radius_render.json"}:
                 assert isinstance(payload["navigation_pack"]["follow_up_reads"], list)
                 assert payload["navigation_pack"]["follow_up_reads"]
