@@ -2294,6 +2294,12 @@ mod tests {
         }
     }
 
+    fn parse_positional_cli(tokens: &[&str]) -> PositionalCli {
+        use clap::Parser;
+        let raw_args = tokens.iter().map(OsString::from).collect::<Vec<_>>();
+        PositionalCli::try_parse_from(&raw_args).expect("expected CLI args to parse")
+    }
+
     fn json_conflicts(tokens: &[&str]) -> Vec<String> {
         let raw_args = tokens.iter().map(OsString::from).collect::<Vec<_>>();
         json_aggregate_render_flag_conflicts(&raw_args)
@@ -2365,7 +2371,9 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "cuda")]
+    // Not cuda-gated (unlike the tests that originally motivated it): task #131 F3 tests against
+    // the non-cuda-gated `gpu_sidecar_search_payload`/`ripgrep_args_for_gpu_params`/
+    // `gpu_cpu_fallback_unhonorable_flag` also need a `GpuSearchParams` fixture.
     fn gpu_params_for_patterns(patterns: &[String]) -> GpuSearchParams<'_> {
         GpuSearchParams {
             patterns,
@@ -2389,6 +2397,11 @@ mod tests {
             json: true,
             ndjson: false,
             verbose: false,
+            replace: None,
+            only_matching: false,
+            max_filesize: None,
+            color: None,
+            no_ignore_vcs: false,
             path_was_implicit: false,
         }
     }
@@ -2433,6 +2446,317 @@ mod tests {
             gpu_native_fallback_reason(&params),
             Some("binary-as-text searches are not yet supported by native GPU routing")
         );
+    }
+
+    // -- task #131 F3 (Backend Fail-Closed Contract: GpuSearchParams flag completeness) --------
+    //
+    // Before this fix, `GpuSearchParams` had no field at all for `--replace`, `--only-matching`,
+    // `--max-filesize`, `--color`, or `--no-ignore-vcs`, and `line_number` was hardcoded at every
+    // construction site -- `tg PAT --gpu-device-ids 0 --replace X` printed "falling back to
+    // native CPU" and then silently ran WITHOUT `--replace`, exit 0. These tests would not even
+    // have COMPILED against that struct (the fields/functions they reference did not exist),
+    // which is itself the clearest possible RED signal for a field-completeness bug.
+
+    #[cfg(feature = "cuda")]
+    #[test]
+    fn gpu_native_route_rejects_previously_unrepresented_flags() {
+        let patterns = vec!["needle".to_string()];
+
+        let mut params = gpu_params_for_patterns(&patterns);
+        params.replace = Some("REPLACED".to_string());
+        assert_eq!(
+            gpu_native_fallback_reason(&params),
+            Some("--replace searches are not yet supported by native GPU routing")
+        );
+
+        let mut params = gpu_params_for_patterns(&patterns);
+        params.only_matching = true;
+        assert_eq!(
+            gpu_native_fallback_reason(&params),
+            Some("--only-matching searches are not yet supported by native GPU routing")
+        );
+
+        let mut params = gpu_params_for_patterns(&patterns);
+        params.max_filesize = Some("10M".to_string());
+        assert_eq!(
+            gpu_native_fallback_reason(&params),
+            Some("--max-filesize is not yet supported by native GPU routing")
+        );
+
+        let mut params = gpu_params_for_patterns(&patterns);
+        params.color = Some("always".to_string());
+        assert_eq!(
+            gpu_native_fallback_reason(&params),
+            Some("--color is not yet supported by native GPU routing")
+        );
+
+        let mut params = gpu_params_for_patterns(&patterns);
+        params.no_ignore_vcs = true;
+        assert_eq!(
+            gpu_native_fallback_reason(&params),
+            Some("--no-ignore-vcs is not yet supported by native GPU routing")
+        );
+
+        // Baseline: none of the 5 set (plus the pre-existing 8 conditions unset) must still fall
+        // through to native-GPU routing, else every GPU search would now wrongly fall back.
+        let params = gpu_params_for_patterns(&patterns);
+        assert_eq!(gpu_native_fallback_reason(&params), None);
+    }
+
+    #[test]
+    fn gpu_cpu_fallback_unhonorable_flag_detects_each_of_the_three() {
+        let patterns = vec!["needle".to_string()];
+
+        let params = gpu_params_for_patterns(&patterns);
+        assert_eq!(gpu_cpu_fallback_unhonorable_flag(&params), None);
+
+        let mut params = gpu_params_for_patterns(&patterns);
+        params.max_filesize = Some("10M".to_string());
+        assert_eq!(
+            gpu_cpu_fallback_unhonorable_flag(&params),
+            Some("--max-filesize")
+        );
+
+        let mut params = gpu_params_for_patterns(&patterns);
+        params.color = Some("always".to_string());
+        assert_eq!(gpu_cpu_fallback_unhonorable_flag(&params), Some("--color"));
+
+        let mut params = gpu_params_for_patterns(&patterns);
+        params.no_ignore_vcs = true;
+        assert_eq!(
+            gpu_cpu_fallback_unhonorable_flag(&params),
+            Some("--no-ignore-vcs")
+        );
+
+        // `replace`/`only_matching` ARE honorable by `NativeSearchConfig` (see
+        // `native_search_config_for_gpu_params`) -- they must NOT trip this redirect-or-refuse
+        // gate, or a plain CPU-fallback search would wrongly detour through rg / refuse.
+        let mut params = gpu_params_for_patterns(&patterns);
+        params.replace = Some("R".to_string());
+        params.only_matching = true;
+        assert_eq!(gpu_cpu_fallback_unhonorable_flag(&params), None);
+    }
+
+    #[test]
+    fn ripgrep_args_for_gpu_params_carries_every_previously_dropped_flag() {
+        let patterns = vec!["needle".to_string(), "second".to_string()];
+        let mut params = gpu_params_for_patterns(&patterns);
+        params.path = "src";
+        params.path_was_implicit = false;
+        params.line_number = false; // -N / --no-line-number
+        params.max_filesize = Some("10M".to_string());
+        params.color = Some("always".to_string());
+        params.no_ignore_vcs = true;
+        params.replace = Some("R".to_string());
+        params.only_matching = true;
+
+        let rg_args = ripgrep_args_for_gpu_params(&params);
+
+        assert_eq!(
+            rg_args.patterns,
+            vec!["needle".to_string(), "second".to_string()]
+        );
+        assert_eq!(rg_args.paths, vec!["src".to_string()]);
+        assert!(
+            !rg_args.line_number,
+            "-N must suppress line numbers on the redirect path too"
+        );
+        assert!(rg_args.no_line_number);
+        assert_eq!(rg_args.max_filesize.as_deref(), Some("10M"));
+        assert_eq!(rg_args.color.as_deref(), Some("always"));
+        assert!(rg_args.no_ignore_vcs);
+        assert_eq!(rg_args.replace.as_deref(), Some("R"));
+        assert!(rg_args.only_matching);
+    }
+
+    #[test]
+    fn gpu_sidecar_search_payload_carries_every_previously_dropped_flag() {
+        // Primary RED test (per the build spec): `handle_gpu_sidecar_search`'s JSON payload used
+        // to omit all 6 of these keys entirely, because `GpuSearchParams` had nowhere to read
+        // them from.
+        let patterns = vec!["needle".to_string()];
+        let mut params = gpu_params_for_patterns(&patterns);
+        params.replace = Some("REPLACED".to_string());
+        params.only_matching = true;
+        params.max_filesize = Some("10M".to_string());
+        params.color = Some("always".to_string());
+        params.no_ignore_vcs = true;
+        params.line_number = false; // -N
+
+        let payload = gpu_sidecar_search_payload(&params);
+
+        assert_eq!(payload["replace"], serde_json::json!("REPLACED"));
+        assert_eq!(payload["only_matching"], serde_json::json!(true));
+        assert_eq!(payload["max_filesize"], serde_json::json!("10M"));
+        assert_eq!(payload["color"], serde_json::json!("always"));
+        assert_eq!(payload["no_ignore_vcs"], serde_json::json!(true));
+        assert_eq!(payload["line_number"], serde_json::json!(false));
+    }
+
+    /// Task #131 F3 recurrence guard. An EXHAUSTIVE destructure (no `..`) of every `SearchArgs`
+    /// field: the moment a new field is added to that struct, THIS FUNCTION STOPS COMPILING until
+    /// a human adds it here and consciously classifies it into one of:
+    ///   - HONORED: threaded into `GpuSearchParams` (directly, or folded into a derived field
+    ///     like `context`/`line_number`) and never silently dropped on any GPU-routed request.
+    ///   - NO-OP: restates a default / has no observable effect on this or any other backend
+    ///     (cross-checked against `index_flag_violations`'s own `PassthroughSafe` bucket for the
+    ///     same flags, e.g. `ignore`/`no_hidden`/`unicode`/`messages`).
+    ///   - MOOT-OR-UNREACHABLE: some earlier, verified gate (an unconditional early return, or
+    ///     `route_search`'s fixed precedence order) makes this field either impossible to reach
+    ///     the GPU branch with, or unable to change which branch is taken once there.
+    ///   - OUT_OF_SCOPE_GAP (a REAL, pre-existing gap this PR does NOT fix): confirmed by reading
+    ///     `search_requires_ripgrep_passthrough`/`search_prefers_ripgrep_passthrough` -- their
+    ///     whole "hard list" is gated behind `!args.json && !args.ndjson`, so combined with
+    ///     `--json`/`--ndjson` (and, for a few of them, combined with nothing at all -- see
+    ///     `format`) the request CAN reach `NativeCpu`/`NativeGpu` today, and `NativeSearchConfig`
+    ///     has no field for it either. This is a general native-engine limitation, not specific to
+    ///     `--gpu-device-ids`, discovered while building #131 F3 and explicitly OUT OF SCOPE for
+    ///     it -- flagged here (not silently left "safe") so it isn't lost, pending its own task.
+    #[cfg(test)]
+    fn assert_search_args_gpu_field_classification_is_exhaustive(args: &SearchArgs) {
+        let SearchArgs {
+            ignore_case: _,      // HONORED
+            fixed_strings: _,    // HONORED
+            no_fixed_strings: _, // NO-OP (hardcoded false in every rg-passthrough builder too)
+            invert_match: _,     // HONORED
+            no_invert_match: _,  // NO-OP (ditto)
+            count: _,            // HONORED
+            count_matches: _,    // OUT_OF_SCOPE_GAP
+            line_number: _,      // HONORED (`line_number && !no_line_number`, task #131 F3)
+            no_line_number: _,   // HONORED (see line_number)
+            column: _,           // OUT_OF_SCOPE_GAP
+            no_column: _,        // NO-OP (moot: `column` itself is never emitted by this engine)
+            replace: _,          // HONORED (task #131 F3)
+            format: _,           // OUT_OF_SCOPE_GAP (only `format=="rg"` is independently
+            // verified unreachable here -- forces rg passthrough
+            // unconditionally; any OTHER non-`rg` value's routing was NOT
+            // independently traced through the Python front door in this
+            // pass, so it is bucketed as a gap rather than asserted safe)
+            sort: _,                // OUT_OF_SCOPE_GAP
+            sort_reverse: _,        // OUT_OF_SCOPE_GAP
+            sort_files: _,          // OUT_OF_SCOPE_GAP
+            null: _,                // OUT_OF_SCOPE_GAP
+            null_data: _,           // OUT_OF_SCOPE_GAP
+            multiline: _,           // OUT_OF_SCOPE_GAP
+            multiline_dotall: _,    // OUT_OF_SCOPE_GAP
+            context: _,             // HONORED (via search_effective_context)
+            after_context: _,       // HONORED (folds into context, see search_effective_context)
+            before_context: _,      // HONORED (ditto)
+            max_count: _,           // HONORED
+            max_depth: _,           // HONORED
+            word_regexp: _,         // HONORED
+            smart_case: _,          // HONORED
+            globs: _,               // HONORED
+            no_ignore: _,           // HONORED
+            ignore: _,              // NO-OP (restates the no_ignore default)
+            no_ignore_dot: _,       // OUT_OF_SCOPE_GAP
+            no_ignore_exclude: _,   // OUT_OF_SCOPE_GAP
+            no_ignore_files: _,     // OUT_OF_SCOPE_GAP
+            no_ignore_global: _,    // OUT_OF_SCOPE_GAP
+            no_ignore_parent: _,    // OUT_OF_SCOPE_GAP
+            hidden: _,              // HONORED
+            no_hidden: _,           // NO-OP (restates the default)
+            follow: _,              // OUT_OF_SCOPE_GAP
+            text: _,                // HONORED
+            files_with_matches: _,  // OUT_OF_SCOPE_GAP
+            files_without_match: _, // OUT_OF_SCOPE_GAP
+            file_type: _,           // OUT_OF_SCOPE_GAP
+            index: _,               // MOOT-OR-UNREACHABLE (route_search checks explicit_index
+            // BEFORE explicit_gpu_device_ids -- TrigramIndex always wins)
+            force_cpu: _, // MOOT-OR-UNREACHABLE (route_search checks
+            // explicit_gpu_device_ids BEFORE force_cpu -- an explicit
+            // --gpu-device-ids always wins the branch regardless of this
+            // field's value, so there is nothing for it to affect here)
+            gpu_device_ids: _, // HONORED (the field that selects this whole path)
+            color: _,          // HONORED (task #131 F3)
+            path_separator: _, // OUT_OF_SCOPE_GAP
+            only_matching: _,  // HONORED (task #131 F3)
+            vimgrep: _,        // OUT_OF_SCOPE_GAP
+            passthru: _,       // OUT_OF_SCOPE_GAP
+            json: _,           // HONORED
+            ndjson: _,         // HONORED
+            verbose: _,        // HONORED
+            regexp: _,         // HONORED (folds into `request.patterns` -> `params.patterns`)
+            pattern: _,        // HONORED (ditto)
+            path: _,           // HONORED (-> params.path / params.path_was_implicit)
+            pcre2: _,          // MOOT-OR-UNREACHABLE (rg available -> routes to
+            // ripgrep_pcre2() before the gpu check in route_search; rg
+            // unavailable -> require_ripgrep_or_exit hard-exits before
+            // route_search is even called)
+            auto_hybrid_regex: _, // OUT_OF_SCOPE_GAP
+            unicode: _,           // NO-OP (restates the Unicode-mode default)
+            pcre2_unicode: _,     // NO-OP (alias of unicode; same reasoning)
+            max_filesize: _,      // HONORED (task #131 F3)
+            no_ignore_vcs: _,     // HONORED (task #131 F3)
+            require_git: _,       // OUT_OF_SCOPE_GAP
+            messages: _,          // NO-OP (restates the default; no diagnostic-message mode here)
+            no_config: _,         // NO-OP (this backend never reads an rg config file either)
+            pcre2_version: _,     // MOOT-OR-UNREACHABLE (early return at the very top of
+            // handle_ripgrep_search, before any routing)
+            type_list: _, // MOOT-OR-UNREACHABLE (ditto)
+            version: _,   // MOOT-OR-UNREACHABLE (ditto)
+        } = args;
+    }
+
+    #[test]
+    fn search_args_gpu_field_classification_covers_a_real_parsed_instance() {
+        // Exercising the exhaustive destructure against a real clap-parsed value keeps this test
+        // from being vacuous; the actual recurrence-guard value is the destructure compiling at
+        // all (see the function's doc comment).
+        let args = parse_search_args(&["tg", "search", "PATTERN"]);
+        assert_search_args_gpu_field_classification_is_exhaustive(&args);
+    }
+
+    /// Sibling guard for `PositionalCli` (the `tg PATTERN` front door). Every one of its fields is
+    /// name-identical to a `SearchArgs` field above (verified by inspection when this was written)
+    /// with the same meaning, so the same classification applies; `run_positional_cli` has no
+    /// `search_requires_ripgrep_passthrough`-equivalent gate at all, so its OUT_OF_SCOPE_GAP
+    /// fields are reachable via `--gpu-device-ids` unconditionally (not only combined with
+    /// `--json`/`--ndjson` as for `SearchArgs`) -- a strictly broader exposure of the same
+    /// pre-existing, out-of-scope gap.
+    #[cfg(test)]
+    fn assert_positional_cli_gpu_field_classification_is_exhaustive(cli: &PositionalCli) {
+        let PositionalCli {
+            pattern: _,           // HONORED
+            path: _,              // HONORED
+            count: _,             // HONORED
+            count_matches: _,     // OUT_OF_SCOPE_GAP
+            line_number: _,       // HONORED (task #131 F3)
+            no_line_number: _,    // HONORED (task #131 F3)
+            column: _,            // OUT_OF_SCOPE_GAP
+            max_count: _,         // HONORED
+            fixed_strings: _,     // HONORED
+            invert_match: _,      // HONORED
+            ignore_case: _,       // HONORED
+            word_regexp: _,       // HONORED
+            replace: _,           // HONORED (task #131 F3)
+            force_cpu: _,         // MOOT-OR-UNREACHABLE (see the SearchArgs bucket above)
+            gpu_device_ids: _,    // HONORED
+            color: _,             // HONORED (task #131 F3)
+            path_separator: _,    // OUT_OF_SCOPE_GAP
+            only_matching: _,     // HONORED (task #131 F3)
+            vimgrep: _,           // OUT_OF_SCOPE_GAP
+            json: _,              // HONORED
+            ndjson: _,            // HONORED
+            verbose: _,           // HONORED
+            pcre2: _,             // MOOT-OR-UNREACHABLE (see the SearchArgs bucket above)
+            auto_hybrid_regex: _, // OUT_OF_SCOPE_GAP
+            unicode: _,           // NO-OP
+            pcre2_unicode: _,     // NO-OP
+            max_filesize: _,      // HONORED (task #131 F3)
+            no_ignore: _,         // HONORED
+            ignore: _,            // NO-OP
+            messages: _,          // NO-OP
+            require_git: _,       // OUT_OF_SCOPE_GAP
+            no_hidden: _,         // NO-OP
+            no_ignore_vcs: _,     // HONORED (task #131 F3)
+        } = cli;
+    }
+
+    #[test]
+    fn positional_cli_gpu_field_classification_covers_a_real_parsed_instance() {
+        let cli = parse_positional_cli(&["tg", "PATTERN"]);
+        assert_positional_cli_gpu_field_classification_is_exhaustive(&cli);
     }
 
     #[test]
@@ -4907,7 +5231,7 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
             patterns: std::slice::from_ref(&pattern),
             query: &pattern,
             path: primary_path,
-            line_number: true,
+            line_number: cli.line_number && !cli.no_line_number,
             ignore_case: cli.ignore_case,
             smart_case: false,
             fixed_strings: cli.fixed_strings,
@@ -4925,6 +5249,11 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
             json: cli.json,
             ndjson: cli.ndjson,
             verbose: cli.verbose,
+            replace: cli.replace.clone(),
+            only_matching: cli.only_matching,
+            max_filesize: cli.max_filesize.clone(),
+            color: cli.color.clone(),
+            no_ignore_vcs: cli.no_ignore_vcs,
             path_was_implicit: cli.path.is_empty(),
         })
         .is_none();
@@ -4973,7 +5302,7 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
                 patterns: std::slice::from_ref(&pattern),
                 query: &pattern,
                 path: primary_path,
-                line_number: true,
+                line_number: cli.line_number && !cli.no_line_number,
                 ignore_case: cli.ignore_case,
                 smart_case: false,
                 fixed_strings: cli.fixed_strings,
@@ -4991,6 +5320,11 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
                 json: cli.json,
                 ndjson: cli.ndjson,
                 verbose: cli.verbose,
+                replace: cli.replace.clone(),
+                only_matching: cli.only_matching,
+                max_filesize: cli.max_filesize.clone(),
+                color: cli.color.clone(),
+                no_ignore_vcs: cli.no_ignore_vcs,
                 path_was_implicit: cli.path.is_empty(),
             };
 
@@ -6158,6 +6492,13 @@ fn native_search_config_for_gpu_params(
         verbose: params.verbose,
         text: params.text,
         line_number: params.line_number,
+        // Task #131 F3: `NativeSearchConfig` already carries `only_matching`/`replace` (see the
+        // sibling `native_search_config_for_command`/`native_search_config_for_positional`, which
+        // set them from `args`/`cli` directly) -- this mapper simply never copied them over, so
+        // the GPU CPU-fallback route silently dropped `-o`/`--replace` even though the CPU engine
+        // it delegates to is fully capable of honoring them.
+        only_matching: params.only_matching,
+        replace: params.replace.clone(),
         // Audit #105: threaded from `GpuSearchParams::path_was_implicit` (see that field's doc
         // comment -- this is the explicit-`--gpu-device-ids`-fallback-to-CPU route, which used to
         // have no way to know whether the PATH was implicit at all).
@@ -6427,7 +6768,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
             patterns: &request.patterns,
             query: &query,
             path: request.primary_path(),
-            line_number: false,
+            line_number: args.line_number && !args.no_line_number,
             ignore_case: args.ignore_case,
             smart_case: args.smart_case,
             fixed_strings: args.fixed_strings,
@@ -6445,6 +6786,11 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
             json: args.json,
             ndjson: args.ndjson,
             verbose: args.verbose,
+            replace: args.replace.clone(),
+            only_matching: args.only_matching,
+            max_filesize: args.max_filesize.clone(),
+            color: args.color.clone(),
+            no_ignore_vcs: args.no_ignore_vcs,
             path_was_implicit: request.path_was_implicit,
         })
         .is_none();
@@ -6496,7 +6842,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                 patterns: &request.patterns,
                 query: &query,
                 path: request.primary_path(),
-                line_number: false,
+                line_number: args.line_number && !args.no_line_number,
                 ignore_case: args.ignore_case,
                 smart_case: args.smart_case,
                 fixed_strings: args.fixed_strings,
@@ -6514,6 +6860,11 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                 json: args.json,
                 ndjson: args.ndjson,
                 verbose: args.verbose,
+                replace: args.replace.clone(),
+                only_matching: args.only_matching,
+                max_filesize: args.max_filesize.clone(),
+                color: args.color.clone(),
+                no_ignore_vcs: args.no_ignore_vcs,
                 path_was_implicit: request.path_was_implicit,
             };
 
@@ -9545,6 +9896,19 @@ struct GpuSearchParams<'a> {
     json: bool,
     ndjson: bool,
     verbose: bool,
+    // Task #131 F3 (Backend Fail-Closed Contract): these 5 fields used to have no home on this
+    // struct at all, so every GPU-routed request silently dropped them -- `tg PAT
+    // --gpu-device-ids 0 --replace X` printed "falling back to native CPU" and ran WITHOUT
+    // --replace, exit 0. `replace`/`only_matching` mirror `NativeSearchConfig`'s own fields (it
+    // CAN express them); `max_filesize`/`color`/`no_ignore_vcs` have no `NativeSearchConfig`
+    // equivalent at all, so the CPU-fallback route must redirect to the rg passthrough or refuse
+    // outright when one of those three is set (see `gpu_cpu_fallback_unhonorable_flag`) -- never
+    // silently run without them.
+    replace: Option<String>,
+    only_matching: bool,
+    max_filesize: Option<String>,
+    color: Option<String>,
+    no_ignore_vcs: bool,
     // Audit #105: whether the caller omitted an explicit PATH positional. Threaded into
     // `native_search_config_for_gpu_params`'s `NativeSearchConfig::path_was_implicit` (and the
     // rg_fallback `RipgrepSearchArgs` in `handle_gpu_native_search`) so the CPU fallback this
@@ -9580,6 +9944,86 @@ fn handle_gpu_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
     )
 }
 
+/// Task #131 F3 (Backend Fail-Closed Contract): `NativeSearchConfig` -- the engine backing every
+/// CPU fallback in `handle_gpu_unavailable_cpu_fallback` -- has no field for any of these three
+/// (see its definition in `native_search.rs`), unlike `replace`/`only_matching` which it DOES
+/// carry (threaded via `native_search_config_for_gpu_params`). Silently building a
+/// `NativeSearchConfig` from a `GpuSearchParams` that has one of these three set would run the
+/// search successfully while dropping the flag (exit 0, wrong output). Returns the flag's CLI
+/// spelling so the caller can redirect to the rg passthrough (which DOES carry all three, see
+/// `RipgrepSearchArgs`) or refuse outright -- never silently ignore it.
+fn gpu_cpu_fallback_unhonorable_flag(params: &GpuSearchParams<'_>) -> Option<&'static str> {
+    if params.max_filesize.is_some() {
+        Some("--max-filesize")
+    } else if params.color.is_some() {
+        Some("--color")
+    } else if params.no_ignore_vcs {
+        Some("--no-ignore-vcs")
+    } else {
+        None
+    }
+}
+
+/// Fail closed (exit 2, mirrors `require_ripgrep_or_exit`'s `--pcre2` convention) when `flag_name`
+/// is set on a `--gpu-device-ids` search that fell back to CPU, `NativeSearchConfig` cannot
+/// express it, and the rg-passthrough escape hatch this fallback would otherwise use is not
+/// usable here. Never silently drops `flag_name` (Backend Fail-Closed Contract, same class as
+/// `--pcre2`).
+fn exit_gpu_cpu_fallback_flag_unhonorable(flag_name: &str, rg_available: bool) {
+    if rg_available {
+        eprintln!(
+            "error: {flag_name} is not supported by native GPU-fallback CPU search, and ripgrep's \
+             output shape cannot represent structured --json/--ndjson output here; refusing rather \
+             than silently ignoring {flag_name}. Drop --json/--ndjson, or drop {flag_name}."
+        );
+    } else {
+        eprintln!(
+            "error: {flag_name} is not supported by native GPU-fallback CPU search, and the \
+             ripgrep (`rg`) backend is unavailable to honor it instead; refusing rather than \
+             silently ignoring {flag_name}. Install `rg`, set TG_RG_PATH, or drop {flag_name}."
+        );
+    }
+    std::process::exit(2);
+}
+
+/// Builds a `RipgrepSearchArgs` from a `GpuSearchParams` for the fail-closed CPU-fallback redirect
+/// (task #131 F3). Every field this function does NOT set is one `GpuSearchParams` itself never
+/// carries -- by construction, any flag with that property already routed the request away from
+/// the GPU branch entirely before `GpuSearchParams` was built (`search_requires_ripgrep_passthrough`
+/// / the disjoint PositionalCli/SearchArgs surfaces), so defaulting them here is not a second
+/// silent drop.
+fn ripgrep_args_for_gpu_params(params: &GpuSearchParams<'_>) -> RipgrepSearchArgs {
+    RipgrepSearchArgs {
+        patterns: params.patterns.to_vec(),
+        paths: if params.path_was_implicit {
+            Vec::new()
+        } else {
+            vec![params.path.to_string()]
+        },
+        path_was_implicit: params.path_was_implicit,
+        ignore_case: params.ignore_case,
+        smart_case: params.smart_case,
+        fixed_strings: params.fixed_strings,
+        invert_match: params.invert_match,
+        count: params.count,
+        line_number: params.line_number,
+        no_line_number: !params.line_number,
+        only_matching: params.only_matching,
+        max_count: params.max_count,
+        word_regexp: params.word_regexp,
+        globs: params.globs.clone(),
+        no_ignore: params.no_ignore,
+        hidden: params.hidden,
+        max_depth: params.max_depth,
+        text: params.text,
+        color: params.color.clone(),
+        replace: params.replace.clone(),
+        no_ignore_vcs: params.no_ignore_vcs,
+        max_filesize: params.max_filesize.clone(),
+        ..RipgrepSearchArgs::default()
+    }
+}
+
 fn handle_gpu_unavailable_cpu_fallback(
     params: GpuSearchParams<'_>,
     warning: &str,
@@ -9587,10 +10031,28 @@ fn handle_gpu_unavailable_cpu_fallback(
     eprintln!(
         "warning: {warning}; falling back to native CPU search; this CPU fallback output is not GPU acceleration proof"
     );
-    let decision = RoutingDecision::native_cpu_gpu_fallback(
-        ripgrep_is_available(),
-        params.json || params.ndjson,
-    );
+    let rg_available = ripgrep_is_available();
+    let decision =
+        RoutingDecision::native_cpu_gpu_fallback(rg_available, params.json || params.ndjson);
+
+    // Task #131 F3: `--max-filesize`/`--color`/`--no-ignore-vcs` cannot be expressed by the
+    // native CPU engine this fallback would otherwise silently run. Redirect to rg (when its
+    // output shape is usable here) or refuse outright -- never drop the flag.
+    if let Some(flag_name) = gpu_cpu_fallback_unhonorable_flag(&params) {
+        if !decision.allow_rg_fallback {
+            exit_gpu_cpu_fallback_flag_unhonorable(flag_name, rg_available);
+        }
+        if params.verbose {
+            emit_verbose_metadata(RoutingDecision::ripgrep());
+        }
+        let rg_args = ripgrep_args_for_gpu_params(&params);
+        let exit_code = execute_ripgrep_search(&rg_args)?;
+        if exit_code != 0 {
+            std::process::exit(exit_code.max(1));
+        }
+        return Ok(());
+    }
+
     let pattern = params.patterns.first().map_or(params.query, String::as_str);
     let cpu_config = native_search_config_for_gpu_params(&params, pattern, decision);
     if cpu_config.verbose {
@@ -9660,6 +10122,19 @@ fn gpu_native_fallback_reason(params: &GpuSearchParams<'_>) -> Option<&'static s
         Some("word-boundary searches are not yet supported by native GPU routing")
     } else if !params.fixed_strings && patterns_require_regex_engine(params.patterns) {
         Some("regex patterns still require the Python GPU sidecar")
+    } else if params.replace.is_some() {
+        // Task #131 F3: `GpuSearchParams` used to have no `replace` field at all, so this check
+        // was structurally impossible before -- any `--replace` combined with `--gpu-device-ids`
+        // silently reached native-GPU routing (or its CPU fallback) with the replacement dropped.
+        Some("--replace searches are not yet supported by native GPU routing")
+    } else if params.only_matching {
+        Some("--only-matching searches are not yet supported by native GPU routing")
+    } else if params.max_filesize.is_some() {
+        Some("--max-filesize is not yet supported by native GPU routing")
+    } else if params.color.is_some() {
+        Some("--color is not yet supported by native GPU routing")
+    } else if params.no_ignore_vcs {
+        Some("--no-ignore-vcs is not yet supported by native GPU routing")
     } else {
         None
     }
@@ -10227,12 +10702,12 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
     }
 }
 
-fn handle_gpu_sidecar_search(params: GpuSearchParams) -> anyhow::Result<()> {
-    if params.verbose {
-        emit_verbose_metadata(RoutingDecision::gpu_sidecar());
-    }
-
-    let payload = serde_json::json!({
+/// Builds the JSON payload sent to the Python GPU sidecar. Extracted to a pure function (task
+/// #131 F3) so a unit test can assert field completeness without spawning the sidecar process --
+/// this used to omit `replace`/`only_matching`/`max_filesize`/`color`/`no_ignore_vcs`/
+/// `line_number` entirely, because `GpuSearchParams` had no fields to read them from.
+fn gpu_sidecar_search_payload(params: &GpuSearchParams<'_>) -> serde_json::Value {
+    serde_json::json!({
         "pattern": params.patterns.first().cloned().unwrap_or_default(),
         "patterns": params.patterns,
         "path": params.path,
@@ -10251,7 +10726,21 @@ fn handle_gpu_sidecar_search(params: GpuSearchParams) -> anyhow::Result<()> {
         "no_ignore": params.no_ignore,
         "gpu_device_ids": params.gpu_device_ids,
         "json": params.json || params.ndjson,
-    });
+        "line_number": params.line_number,
+        "replace": params.replace,
+        "only_matching": params.only_matching,
+        "max_filesize": params.max_filesize,
+        "color": params.color,
+        "no_ignore_vcs": params.no_ignore_vcs,
+    })
+}
+
+fn handle_gpu_sidecar_search(params: GpuSearchParams) -> anyhow::Result<()> {
+    if params.verbose {
+        emit_verbose_metadata(RoutingDecision::gpu_sidecar());
+    }
+
+    let payload = gpu_sidecar_search_payload(&params);
 
     match execute_sidecar_command("gpu_search", vec![], Some(payload)) {
         Ok(result) => {
@@ -10514,16 +11003,6 @@ fn unique_line_matches(matches: &[SearchMatchJson]) -> Vec<SearchMatchJson> {
     unique
 }
 
-// Audit fix #1 (2026-07-11): `run_index_query`'s plain-output arm used to be this function's
-// only non-cuda caller, hardcoding `line_number: true` regardless of `-N`/`--no-line-number`
-// (fold-in b). It now calls `emit_plain_search_matches_with_line_number` directly with the same
-// `line_number && !no_line_number` expression the native/rg-passthrough configs already use, so
-// this wrapper's only remaining caller is the cuda-only `emit_gpu_native_plain_results` below.
-#[cfg(feature = "cuda")]
-fn emit_plain_search_matches(path: &str, matches: &[SearchMatchJson]) {
-    emit_plain_search_matches_with_line_number(path, matches, true);
-}
-
 fn emit_plain_search_matches_with_line_number(
     path: &str,
     matches: &[SearchMatchJson],
@@ -10627,8 +11106,12 @@ fn emit_gpu_native_json_results(
 
 #[cfg(feature = "cuda")]
 fn emit_gpu_native_plain_results(params: &GpuSearchParams<'_>, stats: &GpuNativeSearchStats) {
+    // Task #131 F3: this used to call the now-removed `emit_plain_search_matches`, which
+    // hardcoded `line_number: true` regardless of `-N`/`--no-line-number` -- the double bug
+    // (`GpuSearchParams::line_number` was ALSO hardcoded at every construction site until this
+    // same fix). Thread the real, derived value through instead.
     let matches = gpu_native_match_json_entries(stats);
-    emit_plain_search_matches(params.path, &matches);
+    emit_plain_search_matches_with_line_number(params.path, &matches, params.line_number);
 }
 
 #[cfg(feature = "cuda")]
