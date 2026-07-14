@@ -3601,6 +3601,108 @@ def test_cli_should_fail_fast_on_invalid_gpu_device_ids(monkeypatch):
     assert "Invalid GPU device id 'foo'" in result.output
 
 
+# GPU-P0-3 (#171): honest out-of-range --gpu-device-ids. Today id 99 silently CPU-falls-back
+# indistinguishably from id 0 -- these pin the new Python-side pre-flight WARN (never a hard
+# failure) against a mocked DeviceDetector inventory.
+def test_warn_unavailable_gpu_device_ids_silent_when_all_ids_in_inventory(monkeypatch) -> None:
+    import tensor_grep.core.hardware.device_detect as device_detect_mod
+
+    monkeypatch.setattr(
+        device_detect_mod.DeviceDetector, "enumerate_device_ids", lambda self: [0, 1]
+    )
+    captured: list[str] = []
+    monkeypatch.setattr(
+        cli_main.typer, "echo", lambda message="", **kwargs: captured.append(str(message))
+    )
+
+    cli_main._warn_unavailable_gpu_device_ids([0, 1])
+
+    assert captured == []
+
+
+def test_warn_unavailable_gpu_device_ids_warns_naming_available_ids_when_out_of_range(
+    monkeypatch,
+) -> None:
+    import tensor_grep.core.hardware.device_detect as device_detect_mod
+
+    monkeypatch.setattr(
+        device_detect_mod.DeviceDetector, "enumerate_device_ids", lambda self: [0, 1]
+    )
+    captured: list[str] = []
+    monkeypatch.setattr(
+        cli_main.typer, "echo", lambda message="", **kwargs: captured.append(str(message))
+    )
+
+    cli_main._warn_unavailable_gpu_device_ids([0, 5])
+
+    assert len(captured) == 1
+    assert "5" in captured[0]
+    assert "0, 1" in captured[0]
+
+
+def test_warn_unavailable_gpu_device_ids_silent_when_inventory_cannot_be_enumerated(
+    monkeypatch,
+) -> None:
+    """A CPU-only environment can't enumerate CUDA devices at all (empty inventory) -- warning
+    here would be a FALSE claim that id X is invalid. Silence is the honest move; the native
+    Rust classifier owns the authoritative rejection on an actual CUDA build."""
+    import tensor_grep.core.hardware.device_detect as device_detect_mod
+
+    monkeypatch.setattr(device_detect_mod.DeviceDetector, "enumerate_device_ids", lambda self: [])
+    captured: list[str] = []
+    monkeypatch.setattr(
+        cli_main.typer, "echo", lambda message="", **kwargs: captured.append(str(message))
+    )
+
+    cli_main._warn_unavailable_gpu_device_ids([0, 99])
+
+    assert captured == []
+
+
+def test_warn_unavailable_gpu_device_ids_noop_for_empty_request(monkeypatch) -> None:
+    import tensor_grep.core.hardware.device_detect as device_detect_mod
+
+    def _fail(_self):
+        raise AssertionError("must not probe hardware when no ids were requested")
+
+    monkeypatch.setattr(device_detect_mod.DeviceDetector, "enumerate_device_ids", _fail)
+
+    cli_main._warn_unavailable_gpu_device_ids(None)
+    cli_main._warn_unavailable_gpu_device_ids([])
+
+
+def test_warn_unavailable_gpu_device_ids_never_hard_fails_on_detector_error(monkeypatch) -> None:
+    import tensor_grep.core.hardware.device_detect as device_detect_mod
+
+    def _raise(_self):
+        raise RuntimeError("simulated NVML failure")
+
+    monkeypatch.setattr(device_detect_mod.DeviceDetector, "enumerate_device_ids", _raise)
+
+    # Must not raise -- NEVER hard-fail is the explicit contract.
+    cli_main._warn_unavailable_gpu_device_ids([0])
+
+
+def test_cli_search_warns_when_gpu_device_id_out_of_local_inventory(monkeypatch) -> None:
+    global _FAKE_WALK, _FAKE_BACKEND
+    _FAKE_WALK = {".": ["a.log"]}
+    _FAKE_BACKEND = _FakeBackend(results_by_file={})
+    _patch_cli_dependencies(monkeypatch)
+
+    import tensor_grep.core.hardware.device_detect as device_detect_mod
+
+    monkeypatch.setattr(
+        device_detect_mod.DeviceDetector, "enumerate_device_ids", lambda self: [0, 1]
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "ERROR", ".", "--gpu-device-ids", "5"])
+
+    assert result.exit_code == 0
+    assert "5" in result.output
+    assert "0, 1" in result.output
+
+
 def test_cli_should_delegate_force_cpu_search_to_native_binary(monkeypatch):
     seen: dict[str, object] = {}
 

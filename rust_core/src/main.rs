@@ -2503,6 +2503,52 @@ mod tests {
         assert_eq!(gpu_native_fallback_reason(&params), None);
     }
 
+    // GPU-P0-3 (#171): `validate_requested_cuda_device_ids` (gpu_native.rs) raises "invalid CUDA
+    // device id {id}; available CUDA devices: {..}" for an out-of-range --gpu-device-ids request.
+    // Before this fix, `classify_gpu_route_failure`'s catch-all arm relabeled that message as
+    // "CUDA initialization failed: ..." -- true-sounding but wrong: nothing failed to initialize,
+    // the id was simply invalid. These tests pin the classifier's OWN reason, verbatim, distinct
+    // from the genuine-initialization-failure arms below.
+    #[cfg(feature = "cuda")]
+    #[test]
+    fn classify_gpu_route_failure_reports_invalid_device_id_as_its_own_fatal_reason() {
+        let failure =
+            classify_gpu_route_failure("invalid CUDA device id 99; available CUDA devices: 0, 1");
+
+        assert_eq!(failure.kind, GpuRouteFailureKind::Fatal);
+        assert_eq!(
+            failure.message,
+            "invalid CUDA device id 99; available CUDA devices: 0, 1"
+        );
+    }
+
+    #[cfg(feature = "cuda")]
+    #[test]
+    fn classify_gpu_route_failure_does_not_relabel_invalid_device_id_as_init_failure() {
+        let failure =
+            classify_gpu_route_failure("invalid CUDA device id 3; available CUDA devices: 0, 1, 2");
+
+        assert!(
+            !failure.message.starts_with("CUDA initialization failed"),
+            "message={}",
+            failure.message
+        );
+    }
+
+    #[cfg(feature = "cuda")]
+    #[test]
+    fn classify_gpu_route_failure_still_labels_genuine_init_failures_as_such() {
+        // Baseline: the pre-existing "CUDA initialization failed:" arm must keep working --
+        // the new invalid-device-id arm must not swallow unrelated Fatal messages.
+        let failure = classify_gpu_route_failure("CUDA initialization failed: driver too old");
+
+        assert_eq!(failure.kind, GpuRouteFailureKind::Fatal);
+        assert_eq!(
+            failure.message,
+            "CUDA initialization failed: driver too old"
+        );
+    }
+
     #[test]
     fn gpu_cpu_fallback_unhonorable_flag_detects_each_of_the_three() {
         let patterns = vec!["needle".to_string()];
@@ -10355,6 +10401,17 @@ fn classify_gpu_route_failure(raw_message: &str) -> GpuRouteFailure {
     if raw_message.starts_with("CUDA is unavailable:") {
         return GpuRouteFailure {
             kind: GpuRouteFailureKind::Unavailable,
+            message: raw_message.to_string(),
+        };
+    }
+    // GPU-P0-3 (#171): `validate_requested_cuda_device_ids` raises this exact prefix for an
+    // out-of-range --gpu-device-ids request. It is a Fatal (user-input) reason in its own right
+    // -- catching it here, before the generic "CUDA initialization failed:" arm and the
+    // lowercase-substring fallback below, keeps the catch-all from relabeling it as a driver/
+    // hardware initialization problem it never was.
+    if raw_message.starts_with("invalid CUDA device id") {
+        return GpuRouteFailure {
+            kind: GpuRouteFailureKind::Fatal,
             message: raw_message.to_string(),
         };
     }

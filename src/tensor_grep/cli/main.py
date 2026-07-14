@@ -4779,6 +4779,42 @@ def _parse_gpu_device_ids_cli(raw: str | None) -> list[int] | None:
     return parsed
 
 
+def _warn_unavailable_gpu_device_ids(gpu_device_ids: list[int] | None) -> None:
+    """P0-3 (#171): WARN (never hard-fail) when a requested --gpu-device-ids id is absent from
+    the local DeviceDetector inventory, so id 99 no longer silently CPU-falls-back
+    indistinguishably from id 0.
+
+    This is deliberately advisory only. A CPU-only native `tg` build cannot enumerate CUDA
+    devices at all -- DeviceDetector fails closed to an empty inventory in that case -- and an
+    empty inventory means "cannot verify", not "every id is invalid", so this stays silent
+    rather than warn on every single invocation on a machine with no local NVML/torch signal.
+    The native Rust classifier (classify_gpu_route_failure's "invalid CUDA device id" arm) owns
+    the authoritative rejection on an actual CUDA-enabled build; this is the best-effort,
+    fail-open Python-side signal for everyone else.
+    """
+    if not gpu_device_ids:
+        return
+    try:
+        from tensor_grep.core.hardware.device_detect import DeviceDetector
+
+        available_ids = DeviceDetector().enumerate_device_ids()
+    except Exception:
+        return
+    if not available_ids:
+        return
+    missing_ids = [device_id for device_id in gpu_device_ids if device_id not in available_ids]
+    if not missing_ids:
+        return
+    missing_text = ", ".join(str(device_id) for device_id in missing_ids)
+    available_text = ", ".join(str(device_id) for device_id in available_ids)
+    typer.echo(
+        f"warning: --gpu-device-ids requested {missing_text} not present in the local GPU "
+        f"device inventory (available: {available_text}); the search will still run and may "
+        "silently fall back to CPU for the missing id(s)",
+        err=True,
+    )
+
+
 def _selected_gpu_execution_defaults(
     gpu_device_ids: list[int], gpu_chunk_plan_mb: list[tuple[int, int]]
 ) -> tuple[bool, int]:
@@ -6704,6 +6740,7 @@ def search_command(
     from tensor_grep.core.config import SearchConfig
 
     parsed_gpu_device_ids = _parse_gpu_device_ids_cli(gpu_device_ids)
+    _warn_unavailable_gpu_device_ids(parsed_gpu_device_ids)
 
     effective_force_cpu = cpu or env_flag_enabled("TG_FORCE_CPU")
     implicit_with_filename = (
@@ -8727,6 +8764,7 @@ def agent(
             command_name="agent",
         )
         parsed_gpu_device_ids = _parse_gpu_device_ids_cli(gpu_device_ids)
+        _warn_unavailable_gpu_device_ids(parsed_gpu_device_ids)
         # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on
         # `tg agent` (Click "No such option" exit-2).
         effective_deadline = None if no_deadline else deadline
