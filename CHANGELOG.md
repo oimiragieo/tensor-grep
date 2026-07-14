@@ -1,6 +1,26 @@
 # CHANGELOG
 
 
+## v1.74.4 (2026-07-14)
+
+### Bug Fixes
+
+- **orient**: Deweight .claude tool-config trees + populate suggested_ignore
+  ([#164](https://github.com/oimiragieo/tensor-grep/pull/164),
+  [`cfbfe36`](https://github.com/oimiragieo/tensor-grep/commit/cfbfe36530ae624f2284ea16901befe18b2bddd7))
+
+`tg orient` on any repo using a Claude-Code harness ranked the tooling (`.claude/hooks`,
+  `.claude/lib`, `.claude/tools`) above the real project code (reproduced on agent-studio: 10/10
+  top-10 central_files were `.claude/`). Root cause: `_detect_vendored_subtrees` required a package
+  manifest as a mandatory gate before the name-prior was consulted, so `.claude` (no manifest) never
+  deweighted. Fix: new STRONG-0 `_TOOL_CONFIG_DIR_NAMES={.claude}` signal (name-alone, no
+  manifest/island needed) + populate `suggested_ignore` (`.claude/**`). Deweight, never
+  hard-exclude. Real-corpus validated: agent-studio 10/10 -> 0/10 `.claude` in top-10 (real code
+  rose); tensor-grep top-10 byte-identical (no regression). From the CEO 1.74.0 dogfood (#164).
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.74.3 (2026-07-14)
 
 ### Bug Fixes
