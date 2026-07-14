@@ -605,3 +605,300 @@ def test_orient_capsule_partial_signal_surfaces_informationally(tmp_path: Path) 
     truncated_payload = orient_capsule.build_orient_capsule_from_map(rm)
     assert truncated_payload.get("partial") is True
     assert truncated_payload["deadline_limit"]["deadline_exceeded"] is True
+
+
+# ==================================================================================================
+# CEO v1.72.1 dogfood M1: --deadline was still ABSENT on 4 more commands -- source, docs-coverage,
+# blast-radius-plan, imports -- so passing it Click-exits-2 and burns the agent's turn. Mirrors the
+# #581 pattern above: source/blast-radius-plan are true SCANNING siblings of defs/impact/refs/
+# callers/blast-radius (threaded the same additive way, no --no-deadline companion); imports is a
+# single-file O(1) read with no repo scan to bound, so --deadline is accepted as a documented NO-OP
+# purely for interface parity (an agent that learned --deadline works elsewhere must not get a
+# Click "No such option" exit-2 on `tg imports`).
+# ==================================================================================================
+
+_M1_DEADLINE_COMMANDS = ("source", "docs-coverage", "blast-radius-plan", "imports")
+
+
+def test_deadline_flag_accepted_on_m1_commands() -> None:
+    # Same eager-`--help` registration proof as test_deadline_flag_accepted_on_all_four_graph_commands
+    # above: an UNKNOWN option exits 2 before eager --help fires, so exit_code == 0 proves --deadline
+    # is a registered option without needing to satisfy each command's required positionals.
+    runner = CliRunner()
+    for command in _M1_DEADLINE_COMMANDS:
+        result = runner.invoke(app, [command, "--deadline", "5", "--help"])
+        assert result.exit_code == 0, f"{command} rejected --deadline: {result.output}"
+
+
+def test_m1_commands_reject_sub_floor_deadline(tmp_path: Path) -> None:
+    # min=0.1 on all 4: a sub-floor deadline is a usage error (exit 2) everywhere the flag is
+    # registered, whether or not the value is threaded anywhere downstream (imports included).
+    (tmp_path / "m.py").write_text(
+        "import os\n\n\ndef f():\n    return os.getcwd()\n", encoding="utf-8"
+    )
+    runner = CliRunner()
+    cases = {
+        "source": ["source", str(tmp_path), "f"],
+        "docs-coverage": ["docs-coverage", str(tmp_path)],
+        "blast-radius-plan": ["blast-radius-plan", str(tmp_path), "f"],
+        "imports": ["imports", str(tmp_path / "m.py")],
+    }
+    for command, args in cases.items():
+        result = runner.invoke(app, [*args, "--deadline", "0.001"])
+        assert result.exit_code == 2, f"{command}: {result.output}"
+
+
+def _stub_source_payload(symbol: str, path: str) -> dict:
+    return {
+        "symbol": symbol,
+        "path": str(path),
+        "sources": [],
+        "definitions": [],
+        "files": [],
+        "tests": [],
+        "related_paths": [],
+        "symbols": [],
+        "imports": [],
+        "routing_reason": "symbol-source",
+    }
+
+
+def test_source_deadline_flag_threads_seconds(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    recorded: dict = {}
+
+    def _spy(symbol, path=".", *, deadline_seconds=None, **_kwargs):
+        recorded["deadline_seconds"] = deadline_seconds
+        return _stub_source_payload(symbol, path)
+
+    monkeypatch.setattr(repo_map, "build_symbol_source", _spy)
+    result = CliRunner().invoke(app, ["source", "foo", str(tmp_path), "--deadline", "5", "--json"])
+    assert result.exit_code in (0, 1), result.output
+    assert recorded.get("deadline_seconds") == 5.0
+
+
+def test_source_without_deadline_passes_none(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    recorded: dict = {"deadline_seconds": "sentinel"}
+
+    def _spy(symbol, path=".", *, deadline_seconds=None, **_kwargs):
+        recorded["deadline_seconds"] = deadline_seconds
+        return _stub_source_payload(symbol, path)
+
+    monkeypatch.setattr(repo_map, "build_symbol_source", _spy)
+    result = CliRunner().invoke(app, ["source", "foo", str(tmp_path), "--json"])
+    assert result.exit_code in (0, 1), result.output
+    assert recorded.get("deadline_seconds") is None
+
+
+def _stub_blast_radius_plan_payload(symbol: str, path: str) -> dict:
+    return {
+        "symbol": symbol,
+        "path": str(path),
+        "files": [],
+        "tests": [],
+        "symbols": [],
+    }
+
+
+def test_blast_radius_plan_deadline_flag_threads_seconds(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    recorded: dict = {}
+
+    def _spy(symbol, path=".", *, deadline_seconds=None, **_kwargs):
+        recorded["deadline_seconds"] = deadline_seconds
+        return _stub_blast_radius_plan_payload(symbol, path)
+
+    monkeypatch.setattr(repo_map, "build_symbol_blast_radius_plan", _spy)
+    result = CliRunner().invoke(
+        app, ["blast-radius-plan", "foo", str(tmp_path), "--deadline", "5", "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    assert recorded.get("deadline_seconds") == 5.0
+
+
+def test_blast_radius_plan_without_deadline_passes_none(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    recorded: dict = {"deadline_seconds": "sentinel"}
+
+    def _spy(symbol, path=".", *, deadline_seconds=None, **_kwargs):
+        recorded["deadline_seconds"] = deadline_seconds
+        return _stub_blast_radius_plan_payload(symbol, path)
+
+    monkeypatch.setattr(repo_map, "build_symbol_blast_radius_plan", _spy)
+    result = CliRunner().invoke(app, ["blast-radius-plan", "foo", str(tmp_path), "--json"])
+    assert result.exit_code == 0, result.output
+    assert recorded.get("deadline_seconds") is None
+
+
+def _stub_docs_coverage_payload(path: str, *, max_files: int | None, partial: bool = False) -> dict:
+    payload: dict = {
+        "path": str(path),
+        "totals": {
+            "source_files": 0,
+            "covered": 0,
+            "uncovered": 0,
+            "coverage_pct": 100.0,
+            "doc_files": 0,
+        },
+        "doc_files": [],
+        "uncovered_files": [],
+        "applied_ignore": [],
+        "scan_limit": {
+            "max_files": max_files,
+            "possibly_truncated": False,
+            "truncation_cause": None,
+        },
+        "coverage": {},
+    }
+    if partial:
+        payload["partial"] = True
+        payload["deadline_limit"] = {"deadline_exceeded": True}
+    return payload
+
+
+def test_docs_coverage_deadline_flag_threads_seconds(tmp_path: Path, monkeypatch) -> None:
+    import tensor_grep.cli.docs_coverage as docs_coverage_module
+
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    recorded: dict = {}
+
+    def _spy(path, *, max_files=None, include_details=False, ignore=(), deadline_seconds=None):
+        recorded["deadline_seconds"] = deadline_seconds
+        return _stub_docs_coverage_payload(path, max_files=max_files)
+
+    monkeypatch.setattr(docs_coverage_module, "build_docs_coverage", _spy)
+    result = CliRunner().invoke(app, ["docs-coverage", str(tmp_path), "--deadline", "5", "--json"])
+    assert result.exit_code == 0, result.output
+    assert recorded.get("deadline_seconds") == 5.0
+
+
+def test_docs_coverage_without_deadline_passes_none(tmp_path: Path, monkeypatch) -> None:
+    import tensor_grep.cli.docs_coverage as docs_coverage_module
+
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    recorded: dict = {"deadline_seconds": "sentinel"}
+
+    def _spy(path, *, max_files=None, include_details=False, ignore=(), deadline_seconds=None):
+        recorded["deadline_seconds"] = deadline_seconds
+        return _stub_docs_coverage_payload(path, max_files=max_files)
+
+    monkeypatch.setattr(docs_coverage_module, "build_docs_coverage", _spy)
+    result = CliRunner().invoke(app, ["docs-coverage", str(tmp_path), "--json"])
+    assert result.exit_code == 0, result.output
+    assert recorded.get("deadline_seconds") is None
+
+
+def test_docs_coverage_partial_payload_exits_2(tmp_path: Path, monkeypatch) -> None:
+    # docs-coverage has no _emit_symbol_command_result / _scan_incomplete gate of its own (a bespoke
+    # payload shape), so the new --deadline exit-2 check is a hand-rolled
+    # `if payload.get("partial"): raise typer.Exit(2)`. Prove it fires on a mocked partial:true
+    # payload -- mirrors test_blast_radius_partial_exits_2's mock-spy style above. `calls` guards
+    # against a false-positive pass: without --deadline registered at all, Click's own "No such
+    # option" ALSO exits 2, which would satisfy the bare exit-code assertion for the wrong reason
+    # (the spy never even running) -- asserting the spy WAS invoked closes that gap.
+    import tensor_grep.cli.docs_coverage as docs_coverage_module
+
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    calls: list = []
+
+    def _spy(path, *, max_files=None, include_details=False, ignore=(), deadline_seconds=None):
+        calls.append(deadline_seconds)
+        return _stub_docs_coverage_payload(path, max_files=max_files, partial=True)
+
+    monkeypatch.setattr(docs_coverage_module, "build_docs_coverage", _spy)
+    result = CliRunner().invoke(app, ["docs-coverage", str(tmp_path), "--deadline", "5", "--json"])
+    assert calls == [5.0], f"builder not invoked as expected: {result.output}"
+    assert result.exit_code == 2, result.output
+
+
+def test_docs_coverage_partial_trumps_check_exit_1(tmp_path: Path, monkeypatch) -> None:
+    # Council-verified B precedent (truncation trumps found/not-found, applied here too): a
+    # --deadline-truncated docs-coverage scan must exit 2, never --check's exit 1, even when the
+    # (incomplete) payload also satisfies --check's uncovered>0 condition.
+    import tensor_grep.cli.docs_coverage as docs_coverage_module
+
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    calls: list = []
+
+    def _spy(path, *, max_files=None, include_details=False, ignore=(), deadline_seconds=None):
+        calls.append(deadline_seconds)
+        payload = _stub_docs_coverage_payload(path, max_files=max_files, partial=True)
+        payload["totals"]["uncovered"] = 1
+        payload["uncovered_files"] = ["a.py"]
+        return payload
+
+    monkeypatch.setattr(docs_coverage_module, "build_docs_coverage", _spy)
+    result = CliRunner().invoke(
+        app, ["docs-coverage", str(tmp_path), "--deadline", "5", "--check", "--json"]
+    )
+    assert calls == [5.0], f"builder not invoked as expected: {result.output}"
+    assert result.exit_code == 2, result.output
+
+
+def _stub_docs_stale_payload(path: str, *, max_files: int | None, partial: bool = False) -> dict:
+    payload: dict = {
+        "path": str(path),
+        "totals": {"doc_files": 0, "references_checked": 0, "stale": 0},
+        "stale_references": [],
+        "applied_ignore": [],
+        "scan_limit": {
+            "max_files": max_files,
+            "possibly_truncated": False,
+            "truncation_cause": None,
+        },
+    }
+    if partial:
+        payload["partial"] = True
+        payload["deadline_limit"] = {"deadline_exceeded": True}
+    return payload
+
+
+def test_docs_coverage_stale_deadline_flag_threads_seconds(tmp_path: Path, monkeypatch) -> None:
+    import tensor_grep.cli.docs_coverage as docs_coverage_module
+
+    (tmp_path / "CLAUDE.md").write_text("nothing\n", encoding="utf-8")
+    recorded: dict = {}
+
+    def _spy(path, *, max_files=None, ignore=(), deadline_seconds=None):
+        recorded["deadline_seconds"] = deadline_seconds
+        return _stub_docs_stale_payload(path, max_files=max_files)
+
+    monkeypatch.setattr(docs_coverage_module, "build_docs_stale_references", _spy)
+    result = CliRunner().invoke(
+        app, ["docs-coverage", str(tmp_path), "--stale", "--deadline", "5", "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    assert recorded.get("deadline_seconds") == 5.0
+
+
+def test_docs_coverage_stale_partial_payload_exits_2(tmp_path: Path, monkeypatch) -> None:
+    import tensor_grep.cli.docs_coverage as docs_coverage_module
+
+    (tmp_path / "CLAUDE.md").write_text("See `src/gone.py`.\n", encoding="utf-8")
+    calls: list = []
+
+    def _spy(path, *, max_files=None, ignore=(), deadline_seconds=None):
+        calls.append(deadline_seconds)
+        return _stub_docs_stale_payload(path, max_files=max_files, partial=True)
+
+    monkeypatch.setattr(docs_coverage_module, "build_docs_stale_references", _spy)
+    result = CliRunner().invoke(
+        app, ["docs-coverage", str(tmp_path), "--stale", "--deadline", "5", "--check", "--json"]
+    )
+    assert calls == [5.0], f"builder not invoked as expected: {result.output}"
+    assert result.exit_code == 2, result.output  # truncation trumps --stale --check's exit-1 too
+
+
+def test_imports_accepts_deadline_flag_as_documented_noop(tmp_path: Path) -> None:
+    # Strongest proof of "documented no-op": WITH and WITHOUT --deadline produce byte-identical
+    # output on a real (unmocked) file -- the flag is accepted but genuinely changes nothing.
+    target = tmp_path / "m.py"
+    target.write_text("import os\n\n\ndef f():\n    return os.getcwd()\n", encoding="utf-8")
+    runner = CliRunner()
+    without = runner.invoke(app, ["imports", str(target), "--json"])
+    with_deadline = runner.invoke(app, ["imports", str(target), "--deadline", "5", "--json"])
+    assert without.exit_code == with_deadline.exit_code == 0, (
+        f"without={without.output!r} with_deadline={with_deadline.output!r}"
+    )
+    assert without.output == with_deadline.output

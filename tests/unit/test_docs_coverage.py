@@ -259,3 +259,50 @@ def test_render_text_is_ascii_and_lists_uncovered(tmp_path):
     assert text.isascii()  # cp1252-safe (no emoji/arrows)
     assert "a.py" in text
     assert "Undocumented source files" in text
+
+
+# ==================================================================================================
+# CEO v1.72.1 dogfood M1: docs-coverage was missing --deadline entirely (repo-scanning command like
+# its siblings). Mirrors test_repo_map_deadline.py's "already expired" idiom -- an ALREADY-PAST
+# absolute deadline (deadline_seconds=-1.0 -> time.monotonic() - 1.0) deterministically trips the
+# walk's own deadline check on its very first iteration, with zero wall-clock racing (no dependency
+# on machine speed / repo size, unlike a real --deadline 0.1 CLI invocation against this walk-only,
+# much-cheaper-per-file scan -- see test_cli_deadline_flag.py for the CLI-layer wiring/gate tests).
+# ==================================================================================================
+
+
+def test_deadline_already_expired_returns_partial_immediately(tmp_path):
+    (tmp_path / "src").mkdir()
+    for index in range(6):
+        (tmp_path / "src" / f"m{index}.py").write_text(f"x = {index}\n", encoding="utf-8")
+    result = build_docs_coverage(str(tmp_path), deadline_seconds=-1.0)
+    assert result.get("partial") is True
+    assert result["deadline_limit"]["deadline_exceeded"] is True
+
+
+def test_deadline_none_is_no_op(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    result = build_docs_coverage(str(tmp_path))
+    assert "partial" not in result  # golden-parity: no deadline -> unchanged shape
+    assert "deadline_limit" not in result
+
+
+def test_stale_deadline_already_expired_returns_partial_immediately(tmp_path):
+    (tmp_path / "CLAUDE.md").write_text("See `src/gone.py`.\n", encoding="utf-8")
+    result = build_docs_stale_references(str(tmp_path), deadline_seconds=-1.0)
+    assert result.get("partial") is True
+    assert result["deadline_limit"]["deadline_exceeded"] is True
+
+
+def test_stale_deadline_none_is_no_op(tmp_path):
+    (tmp_path / "CLAUDE.md").write_text("no references here\n", encoding="utf-8")
+    result = build_docs_stale_references(str(tmp_path))
+    assert "partial" not in result
+    assert "deadline_limit" not in result
+
+
+def test_cli_accepts_deadline_flag(tmp_path):
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    result = CliRunner().invoke(app, ["docs-coverage", str(tmp_path), "--deadline", "5", "--json"])
+    assert result.exit_code == 0, result.output
