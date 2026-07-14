@@ -44,15 +44,24 @@ _CENTRAL_NON_CODE_SUFFIXES = _CENTRAL_DOC_SUFFIXES | _CENTRAL_CONFIG_DATA_SUFFIX
 _CENTRAL_FAN_IN_CAP = 12
 _CENTRAL_SYMBOL_DENSITY_CAP = 25
 
-# Auto de-weight (never hard-exclude) bundled vendor/skill/generated CODE subtrees so `tg orient`/
-# `tg agent` surface real product code without a manual `--ignore` (#55 PR6). A subtree fires ONLY on
-# STRONG-1 (nested package manifest) AND (STRONG-2 (import island) OR WEAK (name prior)):
+# Auto de-weight (never hard-exclude) bundled vendor/skill/generated CODE subtrees, AND known
+# AI-coding-harness config directories, so `tg orient`/`tg agent` surface real product code without
+# a manual `--ignore` (#55 PR6; harness dirs added #164). A subtree fires on STRONG-0 (tool-config
+# dir name) ALONE, or on STRONG-1 (nested package manifest) AND (STRONG-2 (import island) OR WEAK
+# (name prior)):
+#   STRONG-0 -- an exact, closed-vocabulary tool/harness config directory name (see
+#     `_TOOL_CONFIG_DIR_NAMES` below, e.g. `.claude`): sufficient BY ITSELF, no manifest and no
+#     import-island required. Dogfood bug (#164): `.claude/hooks|lib|tools` (.cjs harness files)
+#     ranked in `tg orient`'s top-10 central_files on every Claude-Code-harness repo, because such a
+#     directory never carries its own package manifest (no package.json/pyproject.toml -- it's
+#     config, not a buildable nested project), so gating it behind STRONG-1 like the WEAK prior below
+#     meant it could NEVER fire, no matter what name list it was added to.
 #   STRONG-1 -- a directory below the repo root contains its own manifest, reusing the same marker
 #     set `_path_has_project_marker` (main.py) uses for broad-scan workspace-project detection.
 #   STRONG-2 -- an import island: no file OUTSIDE the subtree resolves an import INTO it (computed
 #     from the same resolved-import graph the centrality ranking builds).
 #   WEAK -- a name prior (vendor/, third_party/, skills/, external_repos/, _vendored/, node_modules/):
-#     a TIE-BREAKER only, never sufficient alone.
+#     a TIE-BREAKER only, never sufficient alone (requires STRONG-1).
 # A monorepo subproject that HAS a manifest but IS imported across the repo is protected by STRONG-2
 # (not an island) -- de-weight, never exclude, is what keeps a false positive from hiding real product
 # code (the file can still surface if it is genuinely central even after the multiplier).
@@ -64,6 +73,15 @@ _VENDOR_NAME_PRIOR = frozenset({
     "external_repos",
     "_vendored",
     "node_modules",
+})
+# STRONG-0 tool/harness config directory names (see the comment above `_DEWEIGHT_FACTOR`): matched
+# on the EXACT directory basename (not "any path component", the way `_VENDOR_NAME_PRIOR` is), so
+# only the `.claude` root itself is flagged, not every subdirectory beneath it. Deliberately
+# CONSERVATIVE -- only a name validated by a real-corpus before/after (agent-studio, #164) is
+# listed. `.github`/`.vscode` are plausible future candidates but are NOT included without their
+# own validation pass (over-deweighting a real source directory is worse than missing one).
+_TOOL_CONFIG_DIR_NAMES = frozenset({
+    ".claude",
 })
 
 _ENTRY_NAMES = {
@@ -129,13 +147,15 @@ def _code_files_and_import_graph(
 
 
 def _detect_vendored_subtrees(rm: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Auto-detect bundled vendor/skill/generated CODE subtrees to DE-WEIGHT (never hard-exclude).
+    """Auto-detect bundled vendor/skill/generated CODE subtrees, and known AI-tool/harness config
+    directories, to DE-WEIGHT (never hard-exclude).
 
-    Returns ``{tree_path: {"reasons": [...]}}``. Fires ONLY on STRONG-1 (nested package manifest)
-    AND (STRONG-2 (import island) OR WEAK (name prior)) -- see the module-level comment above
-    ``_DEWEIGHT_FACTOR`` for the full rule. Requires ``rm["path"]`` to point at a real, existing
-    directory (a synthetic/relative-path test fixture with no "path" key returns ``{}`` rather than
-    guessing against the process CWD)."""
+    Returns ``{tree_path: {"reasons": [...], "ignore_glob": "<repo-relative>/**"}}``. Fires on
+    STRONG-0 (tool-config dir name) ALONE, or on STRONG-1 (nested package manifest) AND (STRONG-2
+    (import island) OR WEAK (name prior)) -- see the module-level comment above ``_DEWEIGHT_FACTOR``
+    for the full rule. Requires ``rm["path"]`` to point at a real, existing directory (a
+    synthetic/relative-path test fixture with no "path" key returns ``{}`` rather than guessing
+    against the process CWD)."""
     path_value = rm.get("path")
     if not path_value:
         return {}
@@ -177,13 +197,26 @@ def _detect_vendored_subtrees(rm: dict[str, Any]) -> dict[str, dict[str, Any]]:
                     break
             except OSError:
                 continue
-    if not manifest_dirs:
+
+    # STRONG-0: a closed-vocabulary tool/harness config directory name (`.claude`) is sufficient
+    # evidence entirely on its own -- see the module comment above `_DEWEIGHT_FACTOR`. Matched on
+    # the directory's EXACT basename so only the `.claude` root itself is selected here, not every
+    # descendant of it (`.claude/hooks`, `.claude/hooks/audit`, ...) -- those get covered by the
+    # outermost-nested-chain dedup below via the base `.claude` entry, exactly like a STRONG-1
+    # manifest root covers its own descendants.
+    tool_config_dirs: set[Path] = {
+        rel_dir
+        for rel_dir in candidate_dirs
+        if rel_dir.parts and rel_dir.parts[-1].lower() in _TOOL_CONFIG_DIR_NAMES
+    }
+
+    if not manifest_dirs and not tool_config_dirs:
         return {}
 
-    # Keep only the OUTERMOST manifest directory in any nested chain -- a deeper manifest inside an
-    # already-flagged subtree does not start a second, overlapping subtree.
+    # Keep only the OUTERMOST directory (manifest- or tool-config-matched) in any nested chain -- a
+    # deeper match inside an already-flagged subtree does not start a second, overlapping subtree.
     subtree_rel_roots: list[Path] = []
-    for rel_dir in sorted(manifest_dirs, key=lambda p: len(p.parts)):
+    for rel_dir in sorted(manifest_dirs.keys() | tool_config_dirs, key=lambda p: len(p.parts)):
         if any(
             _repo_map._path_is_relative_to(root / rel_dir, root / existing)
             for existing in subtree_rel_roots
@@ -227,17 +260,22 @@ def _detect_vendored_subtrees(rm: dict[str, Any]) -> dict[str, dict[str, Any]]:
         has_internal_edge = any(reverse_importers.get(f, set()) & tree_files for f in tree_files)
         is_island = externally_isolated and has_internal_edge
         name_hits = sorted({part.lower() for part in rel_dir.parts} & _VENDOR_NAME_PRIOR)
+        is_tool_config = rel_dir in tool_config_dirs
 
-        if not (is_island or name_hits):
+        if not (is_island or name_hits or is_tool_config):
             continue
 
-        reasons = [f"nested-manifest:{manifest_dirs[rel_dir]}"]
+        reasons: list[str] = []
+        if rel_dir in manifest_dirs:
+            reasons.append(f"nested-manifest:{manifest_dirs[rel_dir]}")
         if is_island:
             reasons.append("import-island")
         if name_hits:
             reasons.append(f"name-prior:{name_hits[0]}")
+        if is_tool_config:
+            reasons.append(f"tool-config-name:{rel_dir.parts[-1].lower()}")
 
-        result[str(abs_dir)] = {"reasons": reasons}
+        result[str(abs_dir)] = {"reasons": reasons, "ignore_glob": f"{rel_dir.as_posix()}/**"}
 
     return result
 
@@ -581,6 +619,15 @@ def build_orient_capsule_from_map(
         {"path": tree_path, "reasons": list(info["reasons"])}
         for tree_path, info in sorted(deweighted_trees.items())
     ]
+    # suggested_ignore (#164): when auto-deweight found something, surface the deweighted tree
+    # roots as ready-to-paste `--ignore` globs (e.g. `.claude/**`) so an agent that wants a HARD
+    # exclude (not just a lowered score) doesn't have to hand-derive the glob syntax. Same ordering
+    # as `deweighted_trees_list` (both sorted over `deweighted_trees.items()`). None -- never an
+    # empty list -- when nothing was deweighted, mirroring `suggested_scope`'s never-guess-empty
+    # convention (an agent can branch on `is None`).
+    suggested_ignore = [
+        info["ignore_glob"] for _tree_path, info in sorted(deweighted_trees.items())
+    ] or None
 
     lines: list[str] = [f"# Codebase orientation: {rm['path']}"]
     lines.append("\n## Central files (by import-graph centrality)")
@@ -620,6 +667,7 @@ def build_orient_capsule_from_map(
         "truncated": truncated,
         "scan_limit": effective_max_repo_files,
         "suggested_scope": suggested_scope,
+        "suggested_ignore": suggested_ignore,
         "routing_reason": "orient",
         "deweighted_trees": deweighted_trees_list,
         "auto_deweight": auto_deweight,

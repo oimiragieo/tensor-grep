@@ -1,11 +1,12 @@
 """Tests for auto-de-weighting of bundled vendor/skill/generated CODE subtrees in `tg orient`
-centrality (#132 / #55 PR6).
+centrality (#132 / #55 PR6), and known AI-tool/harness config directories (#164).
 
-A subtree fires ONLY on STRONG-1 (nested package manifest) AND (STRONG-2 (import island) OR WEAK
-(name prior)). The de-weight multiplies a subtree file's composite centrality by
-``_DEWEIGHT_FACTOR`` -- it LOWERS the score, it never EXCLUDES the file, so a genuinely central
-vendored file can still surface. A monorepo subproject that has a manifest but IS imported across
-the repo is protected by the import-island test (de-weight would hide real product code).
+A subtree fires on STRONG-0 (closed-vocabulary tool-config dir NAME, e.g. `.claude`) ALONE, or on
+STRONG-1 (nested package manifest) AND (STRONG-2 (import island) OR WEAK (name prior)). The
+de-weight multiplies a subtree file's composite centrality by ``_DEWEIGHT_FACTOR`` -- it LOWERS the
+score, it never EXCLUDES the file, so a genuinely central vendored file can still surface. A
+monorepo subproject that has a manifest but IS imported across the repo is protected by the
+import-island test (de-weight would hide real product code).
 
 `_detect_vendored_subtrees` reads the real filesystem (it checks ``root.is_dir()`` and each
 candidate directory for a manifest via ``.exists()``), so these tests build real ``tmp_path``
@@ -183,3 +184,77 @@ def test_deeply_nested_subtree_file_counts_as_a_member(tmp_path: Path) -> None:
     trees = _detect_vendored_subtrees(rm)
     assert str(root / "bundled") in trees
     assert "import-island" in trees[str(root / "bundled")]["reasons"]
+
+
+# ---------------------------------------------------------------------------
+# STRONG-0: tool/harness config directory names (#164 dogfood -- `.claude/hooks|lib|tools`
+# ranked as top-10 orient central_files on every Claude-Code-harness repo, because such a
+# directory carries NO manifest of its own, so the old STRONG-1-gated detector could never flag
+# it no matter what name list it was added to).
+# ---------------------------------------------------------------------------
+
+
+def test_fires_on_tool_config_dir_name_without_any_manifest(tmp_path: Path) -> None:
+    # `.claude/hooks/` has NO manifest anywhere in the tree (real agent-studio shape: no
+    # package.json/pyproject.toml directly inside .claude, .claude/hooks, etc.) -- the manifest-
+    # gated STRONG-1 path would never even consider it a candidate. STRONG-0 (exact dir-name
+    # match) must fire on the name alone.
+    root = tmp_path.resolve()
+    (root / ".claude" / "hooks").mkdir(parents=True)
+    rm = _rm(
+        root,
+        [root / "app.py", root / ".claude" / "hooks" / "run-hook.cjs"],
+        {},
+    )
+    trees = _detect_vendored_subtrees(rm)
+    assert str(root / ".claude") in trees
+    info = trees[str(root / ".claude")]
+    assert info["reasons"] == ["tool-config-name:.claude"]
+    assert not any(r.startswith("nested-manifest:") for r in info["reasons"])
+    assert info["ignore_glob"] == ".claude/**"
+
+
+def test_tool_config_dir_deeply_nested_file_counts_as_a_member(tmp_path: Path) -> None:
+    # A file several levels inside `.claude/` (e.g. `.claude/hooks/audit/check.cjs`) must still be
+    # attributed to the `.claude` subtree -- same tuple-prefix membership test as the manifest path.
+    root = tmp_path.resolve()
+    (root / ".claude" / "hooks" / "audit").mkdir(parents=True)
+    rm = _rm(
+        root,
+        [root / "app.py", root / ".claude" / "hooks" / "audit" / "check.cjs"],
+        {},
+    )
+    trees = _detect_vendored_subtrees(rm)
+    assert str(root / ".claude") in trees
+
+
+def test_does_not_fire_on_dirname_without_leading_dot(tmp_path: Path) -> None:
+    # "claude" (no leading dot, not the closed STRONG-0 vocabulary) with no manifest and no vendor
+    # name-prior hit must NOT fire -- guards against an over-broad substring/prefix match.
+    root = tmp_path.resolve()
+    (root / "claude").mkdir()
+    rm = _rm(root, [root / "app.py", root / "claude" / "lib.py"], {})
+    assert _detect_vendored_subtrees(rm) == {}
+
+
+def test_tool_config_dir_deweights_central_files_score_but_keeps_the_file(tmp_path: Path) -> None:
+    # End-to-end through _central_files_from_map (mirrors test_central_files_deweights_but_keeps_
+    # the_file for the manifest path): the composite score of a file under `.claude/` is multiplied
+    # by _DEWEIGHT_FACTOR when auto_deweight is on -- de-weight, never exclude, so the file is still
+    # present in central_files either way.
+    root = tmp_path.resolve()
+    (root / ".claude" / "hooks").mkdir(parents=True)
+    hook = root / ".claude" / "hooks" / "run-hook.cjs"
+    rm = _rm(root, [root / "app.py", hook], {})
+    rm["symbols"] = [{"name": f"Sym{i}", "kind": "function", "file": str(hook)} for i in range(4)]
+
+    raw = _central_files_from_map(rm, max_central_files=10, auto_deweight=False)
+    dew = _central_files_from_map(rm, max_central_files=10, auto_deweight=True)
+
+    hook_str = str(hook)
+    raw_hook = next(f for f in raw if f["file"] == hook_str)
+    dew_hook = next(
+        f for f in dew if f["file"] == hook_str
+    )  # still present -> de-weight, not exclude
+    assert raw_hook["score"] > 0
+    assert dew_hook["score"] == round(raw_hook["score"] * _DEWEIGHT_FACTOR, 6)
