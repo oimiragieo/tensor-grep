@@ -597,7 +597,14 @@ fn test_sidecar_timeout_kills_child_and_reports_error() {
         .env("TG_SIDECAR_SCRIPT", &sleep_script)
         .env("TG_SIDECAR_TIMEOUT_MS", "300");
 
-    let output = run_with_timeout(tg, Duration::from_secs(5));
+    // #167: widened 5s -> 30s. This bound gates the TEST's own wait-for-result window (see
+    // run_with_timeout), not the product's kill deadline (TG_SIDECAR_TIMEOUT_MS=300 above, which
+    // is unchanged) -- a loaded Windows GitHub runner can push tg-spawn + sidecar-spawn + kill +
+    // reap well past 5s even though the actual timeout fires at 300ms. The wedged sidecar sleeps
+    // only 10s if the kill genuinely never fires, so 30s comfortably preserves the regression
+    // signal (a broken kill still shows up via the stderr "timed out"/"terminated" assertions
+    // below, well inside this ceiling) while tolerating CI contention.
+    let output = run_with_timeout(tg, Duration::from_secs(30));
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -878,8 +885,9 @@ fn test_passthrough_timeout_kills_wedged_child_and_reports_error() {
     // exemption list) whose child never exits must be KILLED at the configured deadline and
     // report a clear timeout error, instead of hanging the whole `tg` invocation forever (the
     // pre-fix bug: execute_python_passthrough_command_inner called a raw, unbounded
-    // `child.wait()`). Pre-fix, this test fails by exhausting run_with_timeout's own 8s budget
-    // (a bounded RED failure, per the anti-hang-test-protocol -- it never hangs the suite).
+    // `child.wait()`). Pre-fix, this test fails by exhausting run_with_timeout's own budget
+    // (#167: widened 8s -> 30s for CI-load headroom; see the timing comments below) -- a bounded
+    // RED failure, per the anti-hang-test-protocol -- it never hangs the suite.
     let dir = tempdir().unwrap();
     let pid_file = dir.path().join("wedged_passthrough.pid");
     let wedge_script =
@@ -893,7 +901,12 @@ fn test_passthrough_timeout_kills_wedged_child_and_reports_error() {
         .env("TG_PASSTHROUGH_TIMEOUT_MS", "300");
 
     let started = Instant::now();
-    let output = run_with_timeout(tg, Duration::from_secs(8));
+    // #167: outer wait-for-result cap widened 8s -> 30s so a loaded runner doesn't trip
+    // run_with_timeout's own hang-guard before the process even gets a chance to finish; this
+    // stays well above the elapsed bound asserted below and the wedge's ~20s natural sleep, so a
+    // genuinely wedged child (kill never fires) still completes inside it and fails on content,
+    // not on this cap.
+    let output = run_with_timeout(tg, Duration::from_secs(30));
     let elapsed = started.elapsed();
 
     assert!(
@@ -906,7 +919,14 @@ fn test_passthrough_timeout_kills_wedged_child_and_reports_error() {
     assert!(stderr.contains("timed out"), "stderr={stderr}");
     assert!(stderr.contains("terminated"), "stderr={stderr}");
     assert!(
-        elapsed < Duration::from_secs(5),
+        // #167: widened 5s -> 15s. This is the TEST's own tolerance window around the unrelated,
+        // unchanged 300ms product deadline (TG_PASSTHROUGH_TIMEOUT_MS above) -- CI observed a
+        // legitimate-kill run take elapsed=6.44s under runner contention alone. 15s keeps a
+        // comfortable margin below the wedge's ~20s natural completion (so a REAL "deadline never
+        // fired" regression still lands well outside this bound and fails here, in addition to
+        // the stderr content assertions above) while tolerating much heavier contention than
+        // observed.
+        elapsed < Duration::from_secs(15),
         "TG_PASSTHROUGH_TIMEOUT_MS=300 was not honored -- the wedged child sleeps ~20s, so this \
          elapsed={elapsed:?} is consistent with the deadline never firing (the pre-fix bare \
          child.wait() bug)"
