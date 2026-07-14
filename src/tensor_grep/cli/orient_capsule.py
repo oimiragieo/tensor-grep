@@ -446,6 +446,7 @@ def build_orient_capsule(
     render_profile: str = "compact",
     ignore: tuple[str, ...] = (),
     auto_deweight: bool = True,
+    deadline_seconds: float | None = None,
 ) -> dict[str, Any]:
     """Build a bounded codebase orientation capsule (no API key, no GPU).
 
@@ -457,13 +458,26 @@ def build_orient_capsule(
     Thin cold-path wrapper: build the repo map (the only expensive step, task #108) and delegate
     everything else to ``build_orient_capsule_from_map`` so the warm session-daemon fast path
     (which reuses an already-cached map) shares one code path with the cold path -- parity by
-    construction rather than a second, driftable implementation."""
-    from tensor_grep.cli.repo_map import DEFAULT_AGENT_REPO_MAP_LIMIT
+    construction rather than a second, driftable implementation.
+
+    ``deadline_seconds`` (CLI consistency fix, CEO v1.71.3 dogfood): `--deadline` used to be
+    undefined on `tg orient` (Click "No such option" exit-2). Bounds the underlying
+    ``build_repo_map`` walk/parse the same way the symbol commands do; `tg orient` has NO exit-2
+    contract (docs/CONTRACTS.md), so a truncated scan still surfaces `partial`/`deadline_limit` as
+    INFORMATIONAL fields only (see `build_orient_capsule_from_map`), never a retry signal.
+    """
+    from tensor_grep.cli.repo_map import (
+        DEFAULT_AGENT_REPO_MAP_LIMIT,
+        _deadline_monotonic_from_seconds,
+    )
 
     effective_max_repo_files = (
         max_repo_files if max_repo_files is not None else DEFAULT_AGENT_REPO_MAP_LIMIT
     )
-    rm = _repo_map.build_repo_map(path, max_repo_files=effective_max_repo_files)
+    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
+    rm = _repo_map.build_repo_map(
+        path, max_repo_files=effective_max_repo_files, deadline_monotonic=deadline_monotonic
+    )
     return build_orient_capsule_from_map(
         rm,
         max_central_files=max_central_files,
@@ -593,7 +607,7 @@ def build_orient_capsule_from_map(
     total_token_estimate = _repo_map._estimate_tokens("\n".join(lines))
     truncated = any(s.get("truncated") for s in snippets) or budget_truncated
 
-    return {
+    result = {
         "path": rm["path"],
         "central_files": central_files,
         "entry_points": entry_points,
@@ -610,6 +624,13 @@ def build_orient_capsule_from_map(
         "deweighted_trees": deweighted_trees_list,
         "auto_deweight": auto_deweight,
     }
+    # CLI consistency fix (CEO v1.71.3 dogfood): carry a --deadline truncation forward from `rm`
+    # (mirrors repo_map._copy_partial_signal's shape) so a deadline-bounded scan is never silently
+    # dropped. INFORMATIONAL only -- `tg orient` has NO exit-2 contract (docs/CONTRACTS.md:110), so
+    # this does not change orient's documented always-exit-0 behavior; it only makes a truncated
+    # scan visible in the payload, the same way `scan_limit`/`truncated` already are.
+    _repo_map._copy_partial_signal(result, rm)
+    return result
 
 
 def build_orient_capsule_json(path: str | Path = ".", **kwargs: Any) -> str:

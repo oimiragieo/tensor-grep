@@ -8197,6 +8197,7 @@ def build_context_pack(
     max_files: int | None = None,
     max_repo_files: int | None = None,
     max_tokens: int | None = None,
+    deadline_seconds: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     # Match map/agent/blast-radius: when the caller does not bound the scan,
@@ -8205,14 +8206,22 @@ def build_context_pack(
     # trees that lack a --max-repo-files default at the CLI layer).
     if max_repo_files is None:
         max_repo_files = DEFAULT_AGENT_REPO_MAP_LIMIT
+    # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on `tg context`
+    # (Click "No such option" exit-2). Converted ONCE to an absolute monotonic budget (mirrors
+    # build_symbol_impact's moat P0-6 step-3 pattern) and shared across both the repo-map build AND
+    # the symbol-scoring loop below, so a slow ranking pass on a huge repo cannot itself blow past
+    # the requested budget after the walk/parse phase already finished inside it.
+    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
     payload = build_repo_map(
         path,
         max_repo_files=max_repo_files,
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
     )
     context_payload = build_context_pack_from_map(
         payload,
         query,
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
     )
     limited = apply_repo_map_output_limits(context_payload, max_files=max_files)
@@ -8226,6 +8235,7 @@ def build_context_pack_json(
     max_files: int | None = None,
     max_repo_files: int | None = None,
     max_tokens: int | None = None,
+    deadline_seconds: float | None = None,
 ) -> str:
     return json.dumps(
         build_context_pack(
@@ -8234,6 +8244,7 @@ def build_context_pack_json(
             max_files=max_files,
             max_repo_files=max_repo_files,
             max_tokens=max_tokens,
+            deadline_seconds=deadline_seconds,
         ),
         indent=2,
     )
@@ -12239,12 +12250,18 @@ def build_context_edit_plan(
     max_tokens: int | None = None,
     semantic_provider: str = "native",
     profile: bool = False,
+    deadline_seconds: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
+    # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on `tg edit-plan`
+    # (Click "No such option" exit-2). Converted ONCE (moat P0-6 step-3 pattern) and shared across
+    # the repo-map build AND edit-plan's own symbol-scoring pass in `_from_map` below.
+    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
     repo_map = build_repo_map(
         path,
         max_repo_files=max_repo_files,
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=collector,
     )
     return build_context_edit_plan_from_map(
@@ -12256,6 +12273,7 @@ def build_context_edit_plan(
         max_tokens=max_tokens,
         semantic_provider=semantic_provider,
         profile=profile,
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=collector,
     )
 
@@ -12270,6 +12288,7 @@ def build_context_edit_plan_from_map(
     max_tokens: int | None = None,
     semantic_provider: str = "native",
     profile: bool = False,
+    deadline_monotonic: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
@@ -12277,6 +12296,7 @@ def build_context_edit_plan_from_map(
         repo_map,
         query,
         _test_source_limit=max_files,
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=collector,
     )
     normalized_max_files = max(1, max_files)
@@ -12351,6 +12371,7 @@ def build_context_edit_plan_json(
     max_tokens: int | None = None,
     semantic_provider: str = "native",
     profile: bool = False,
+    deadline_seconds: float | None = None,
 ) -> str:
     return json.dumps(
         build_context_edit_plan(
@@ -12363,6 +12384,7 @@ def build_context_edit_plan_json(
             max_tokens=max_tokens,
             semantic_provider=semantic_provider,
             profile=profile,
+            deadline_seconds=deadline_seconds,
         ),
         indent=2,
     )
@@ -12387,9 +12409,19 @@ def build_context_render(
     _profiling_collector: _ProfileCollector | None = None,
     ignore: tuple[str, ...] = (),
     include_suggested_scope: bool = False,
+    deadline_seconds: float | None = None,
 ) -> dict[str, Any]:
     collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
-    repo_map = build_repo_map(path, max_repo_files=max_repo_files, _profiling_collector=collector)
+    # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on
+    # `tg context-render`/`tg agent` (Click "No such option" exit-2). Converted ONCE (moat P0-6
+    # step-3 pattern) and shared across the repo-map build AND the render's own symbol-scoring pass.
+    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
+    repo_map = build_repo_map(
+        path,
+        max_repo_files=max_repo_files,
+        deadline_monotonic=deadline_monotonic,
+        _profiling_collector=collector,
+    )
     if ignore:
         # Local import avoids a module-level circular import (orient_capsule imports this module);
         # reuses orient's tested glob filter (`tg orient --ignore`, PR #392) so `tg agent --ignore`
@@ -12411,6 +12443,7 @@ def build_context_render(
         render_profile=render_profile,
         semantic_provider=semantic_provider,
         profile=profile,
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=collector,
     )
     if include_suggested_scope:
@@ -13104,12 +13137,14 @@ def build_context_render_from_map(
     render_profile: str = "full",
     semantic_provider: str = "native",
     profile: bool = False,
+    deadline_monotonic: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
     context_payload = build_context_pack_from_map(
         repo_map,
         query,
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=collector,
     )
     normalized_profile = _normalize_render_profile(render_profile, optimize_context)
@@ -13300,6 +13335,7 @@ def build_context_render_json(
     render_profile: str = "full",
     semantic_provider: str = "native",
     profile: bool = False,
+    deadline_seconds: float | None = None,
 ) -> str:
     payload = build_context_render(
         query,
@@ -13314,6 +13350,7 @@ def build_context_render_json(
         optimize_context=optimize_context,
         render_profile=render_profile,
         semantic_provider=semantic_provider,
+        deadline_seconds=deadline_seconds,
         profile=profile,
     )
     if payload.get("render_profile") == "llm":
@@ -14208,11 +14245,22 @@ def build_symbol_defs(
     semantic_provider: str = "native",
     max_repo_files: int | None = None,
     max_tests: int | None = None,
+    deadline_seconds: float | None = None,
 ) -> dict[str, Any]:
-    payload = build_repo_map(path, max_repo_files=max_repo_files)
-    return build_symbol_defs_from_map(
+    # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on `tg defs`
+    # (Click "No such option" exit-2), unlike its true siblings build_symbol_refs/_callers/_impact.
+    # build_repo_map already accepts deadline_monotonic, so this is the same thin thread-through
+    # those wrappers use -- `_copy_partial_signal` below guarantees the signal reaches the top-level
+    # output even though `build_symbol_defs_from_map`'s `dict(repo_map)` copy already carries it.
+    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
+    payload = build_repo_map(
+        path, max_repo_files=max_repo_files, deadline_monotonic=deadline_monotonic
+    )
+    result = build_symbol_defs_from_map(
         payload, symbol, semantic_provider=semantic_provider, max_tests=max_tests
     )
+    _copy_partial_signal(result, payload)
+    return result
 
 
 def build_symbol_defs_from_map(
@@ -14374,6 +14422,7 @@ def build_symbol_defs_json(
     *,
     semantic_provider: str = "native",
     max_repo_files: int | None = None,
+    deadline_seconds: float | None = None,
 ) -> str:
     return json.dumps(
         build_symbol_defs(
@@ -14381,6 +14430,7 @@ def build_symbol_defs_json(
             path,
             semantic_provider=semantic_provider,
             max_repo_files=max_repo_files,
+            deadline_seconds=deadline_seconds,
         ),
         indent=2,
     )

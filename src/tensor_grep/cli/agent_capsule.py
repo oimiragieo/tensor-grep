@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -512,6 +513,7 @@ def _collect_capsule_call_site_evidence(
     max_files: int,
     max_repo_files: int | None,
     seed_confidence: float,
+    deadline_monotonic: float | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if not include_blast_radius:
         return [], {
@@ -541,6 +543,15 @@ def _collect_capsule_call_site_evidence(
         }
 
     max_callers = max(1, min(int(max_files) * 2, 8))
+    # CLI consistency fix (CEO v1.71.3 dogfood): this rescue scan is a SECOND, independent
+    # FS-backed build_repo_map (via build_symbol_blast_radius) over the same `path` -- a `tg agent
+    # --deadline N` request must not let this second scan run unbounded after the shared budget
+    # was already spent on the primary render/ranking pass above. build_symbol_blast_radius already
+    # accepts a RELATIVE deadline_seconds (it is one of the 7 pre-existing deadline'd commands), so
+    # convert the shared ABSOLUTE deadline_monotonic to whatever budget remains at this call site.
+    deadline_seconds_remaining: float | None = None
+    if deadline_monotonic is not None:
+        deadline_seconds_remaining = max(0.1, deadline_monotonic - time.monotonic())
     try:
         radius_payload = repo_map.build_symbol_blast_radius(
             target_symbol,
@@ -549,6 +560,7 @@ def _collect_capsule_call_site_evidence(
             max_repo_files=max_repo_files,
             max_callers=max_callers,
             max_files=max_callers,
+            deadline_seconds=deadline_seconds_remaining,
         )
     except Exception as exc:  # pragma: no cover - defensive evidence side path
         return [], {
@@ -2014,6 +2026,7 @@ def build_agent_capsule(
     gpu_device_ids: list[int] | None = None,
     gpu_timeout_s: float = 5.0,
     ignore: tuple[str, ...] = (),
+    deadline_seconds: float | None = None,
 ) -> dict[str, Any]:
     """Thin cold-path wrapper (task #108): build the repo map (the outer of the two scans this
     capsule used to run independently -- see ``build_agent_capsule_from_map``'s docstring) and
@@ -2027,13 +2040,24 @@ def build_agent_capsule(
     ``daemon_evidence_unreliable`` sentinel, which routes the client back to THIS cold path (see
     ``build_agent_capsule_from_map`` + ``main._maybe_agent_via_running_daemon``). Cost: the cold
     path pays its pre-PR second blast-radius scan again -- ACCEPTED, because recall on a
-    scan-capped repo must not regress and the daemon path (the whole point) keeps the single map."""
-    from tensor_grep.cli.repo_map import DEFAULT_AGENT_REPO_MAP_LIMIT
+    scan-capped repo must not regress and the daemon path (the whole point) keeps the single map.
+
+    ``deadline_seconds`` (CLI consistency fix, CEO v1.71.3 dogfood): `--deadline` used to be
+    undefined on `tg agent` (Click "No such option" exit-2). Converted ONCE (moat P0-6 step-3
+    pattern) and shared across the repo-map build AND the capsule's own render/ranking pass in
+    ``build_agent_capsule_from_map`` below."""
+    from tensor_grep.cli.repo_map import (
+        DEFAULT_AGENT_REPO_MAP_LIMIT,
+        _deadline_monotonic_from_seconds,
+    )
 
     effective_max_repo_files = (
         max_repo_files if max_repo_files is not None else DEFAULT_AGENT_REPO_MAP_LIMIT
     )
-    rm = repo_map.build_repo_map(path, max_repo_files=effective_max_repo_files)
+    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
+    rm = repo_map.build_repo_map(
+        path, max_repo_files=effective_max_repo_files, deadline_monotonic=deadline_monotonic
+    )
     return build_agent_capsule_from_map(
         rm,
         query,
@@ -2047,6 +2071,7 @@ def build_agent_capsule(
         gpu_device_ids=gpu_device_ids,
         gpu_timeout_s=gpu_timeout_s,
         ignore=ignore,
+        deadline_monotonic=deadline_monotonic,
         _rescue_call_site_evidence=True,
     )
 
@@ -2065,6 +2090,7 @@ def build_agent_capsule_from_map(
     gpu_device_ids: list[int] | None = None,
     gpu_timeout_s: float = 5.0,
     ignore: tuple[str, ...] = (),
+    deadline_monotonic: float | None = None,
     _rescue_call_site_evidence: bool = False,
 ) -> dict[str, Any]:
     """Task #108 (Tier-2 daemon moat): the map-based core of ``build_agent_capsule``, taking an
@@ -2120,6 +2146,7 @@ def build_agent_capsule_from_map(
         optimize_context=True,
         render_profile="full",
         semantic_provider=effective_semantic_provider,
+        deadline_monotonic=deadline_monotonic,
     )
     # TRAP B (task #108 design review): `suggested_scope` is computed in the WRAPPER
     # (`build_context_render`, repo_map.py) via `include_suggested_scope=True`, NOT inside
@@ -2458,6 +2485,7 @@ def build_agent_capsule_from_map(
             max_files=max_files,
             max_repo_files=max_repo_files,
             seed_confidence=primary_target_seed_confidence,
+            deadline_monotonic=deadline_monotonic,
         )
         call_site_evidence_daemon_unreliable = False
     else:

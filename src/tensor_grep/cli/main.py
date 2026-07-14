@@ -7505,18 +7505,42 @@ def map(
         min=1,
         help="Maximum repo files to scan before returning. Defaults to the agent-safe 512-file cap.",
     ),
+    deadline: float | None = typer.Option(
+        None,
+        "--deadline",
+        min=0.1,
+        help=(
+            "Stop the underlying repo scan after N seconds and return a partial map "
+            "(partial=true, deadline_limit) with whatever was found so far, instead of running "
+            "unbounded. Unlike `codemap`, no bound is applied by default -- pass --deadline to opt in."
+        ),
+    ),
+    no_deadline: bool = typer.Option(
+        False,
+        "--no-deadline",
+        help="Accepted for command-surface parity with codemap; a no-op since map already "
+        "defaults to an unbounded --deadline.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a deterministic repository map for AI editing workflows."""
     from tensor_grep.cli.repo_map import (
         DEFAULT_AGENT_REPO_MAP_LIMIT,
+        _deadline_monotonic_from_seconds,
         apply_repo_map_output_limits,
         build_repo_map,
     )
 
     try:
         effective_max_repo_files = max_repo_files or DEFAULT_AGENT_REPO_MAP_LIMIT
-        payload = build_repo_map(path, max_repo_files=effective_max_repo_files)
+        # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on `tg map`
+        # (Click "No such option" exit-2) even though build_repo_map already accepts
+        # deadline_monotonic -- this is a pure CLI-layer wiring gap, not a builder gap.
+        effective_deadline = None if no_deadline else deadline
+        deadline_monotonic = _deadline_monotonic_from_seconds(effective_deadline)
+        payload = build_repo_map(
+            path, max_repo_files=effective_max_repo_files, deadline_monotonic=deadline_monotonic
+        )
         payload = apply_repo_map_output_limits(payload, max_files=max_files)
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
@@ -7699,43 +7723,64 @@ def orient(
             "a hard exclude."
         ),
     ),
+    deadline: float | None = typer.Option(
+        None,
+        "--deadline",
+        min=0.1,
+        help=(
+            "Stop the underlying repo scan after N seconds and return a partial capsule with "
+            "whatever was found so far, instead of running unbounded. `tg orient` has NO exit-2 "
+            "contract: a truncated scan still exits 0, surfacing partial/deadline_limit as "
+            "informational fields only (never a retry signal). Pass --no-deadline to keep the "
+            "(already default) unbounded behavior explicit."
+        ),
+    ),
+    no_deadline: bool = typer.Option(
+        False,
+        "--no-deadline",
+        help="Accepted for command-surface parity with codemap; a no-op since orient already "
+        "defaults to an unbounded --deadline.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit the capsule as JSON"),
 ) -> None:
     """Emit a one-call codebase orientation capsule (central files, entry points, AST snippets)."""
-    from tensor_grep.cli.orient_capsule import build_orient_capsule, build_orient_capsule_json
+    from tensor_grep.cli.orient_capsule import build_orient_capsule
+
+    # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on `tg orient`
+    # (Click "No such option" exit-2).
+    effective_deadline = None if no_deadline else deadline
 
     # Task #108 (Tier-2 daemon moat): probe BEFORE the try block -- a daemon hit is already a
     # ready-built dict (no filesystem call left that could raise FileNotFoundError/ValueError), so
     # it does not need the cold path's exception handling. A miss/error/mismatch falls open to the
-    # unchanged cold path below (fail-open contract).
-    daemon_payload = _maybe_orient_via_running_daemon(
-        path=path,
-        max_tokens=max_tokens,
-        max_central_files=max_central_files,
-        ignore=tuple(ignore),
-        auto_deweight=not no_auto_deweight,
+    # unchanged cold path below (fail-open contract). Skipped entirely when a --deadline was
+    # requested (a warm session's cached repo_map cannot honor a fresh per-request scan deadline),
+    # mirroring refs/callers/impact/blast-radius's own daemon gate.
+    daemon_payload = (
+        _maybe_orient_via_running_daemon(
+            path=path,
+            max_tokens=max_tokens,
+            max_central_files=max_central_files,
+            ignore=tuple(ignore),
+            auto_deweight=not no_auto_deweight,
+        )
+        if effective_deadline is None
+        else None
     )
     if daemon_payload is not None:
         payload = daemon_payload
     else:
         try:
-            if json_output:
-                typer.echo(
-                    build_orient_capsule_json(
-                        path,
-                        max_tokens=max_tokens,
-                        max_central_files=max_central_files,
-                        ignore=tuple(ignore),
-                        auto_deweight=not no_auto_deweight,
-                    )
-                )
-                return
+            # Build the payload dict directly (not via build_orient_capsule_json) so json AND text
+            # output share ONE code path -- matches the Cluster B pattern the other repo-scanning
+            # commands use (map/context/context-render/edit-plan/agent).
             payload = build_orient_capsule(
                 path,
                 max_tokens=max_tokens,
                 max_central_files=max_central_files,
                 ignore=tuple(ignore),
                 auto_deweight=not no_auto_deweight,
+                deadline_seconds=effective_deadline,
             )
         except (FileNotFoundError, ValueError) as exc:
             typer.echo(str(exc), err=True)
@@ -7900,6 +7945,22 @@ def context(
         min=0,
         help="Bound the context pack to ~N tokens for prompt injection (0 = unbounded).",
     ),
+    deadline: float | None = typer.Option(
+        None,
+        "--deadline",
+        min=0.1,
+        help=(
+            "Stop the underlying repo scan after N seconds and return a partial pack "
+            "(partial=true, deadline_limit) with whatever was found so far, instead of running "
+            "unbounded. Pass --no-deadline to keep the (already default) unbounded behavior explicit."
+        ),
+    ),
+    no_deadline: bool = typer.Option(
+        False,
+        "--no-deadline",
+        help="Accepted for command-surface parity with codemap; a no-op since context already "
+        "defaults to an unbounded --deadline.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a ranked repository context pack for edit planning."""
@@ -7912,12 +7973,16 @@ def context(
             query_option=query,
             command_name="context",
         )
+        # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on
+        # `tg context` (Click "No such option" exit-2).
+        effective_deadline = None if no_deadline else deadline
         payload = build_context_pack(
             resolved_query,
             resolved_path,
             max_files=max_files,
             max_repo_files=max_repo_files,
             max_tokens=max_tokens,
+            deadline_seconds=effective_deadline,
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
@@ -8304,6 +8369,22 @@ def context_render(
     profile: bool = typer.Option(
         False, "--profile", help="Include per-phase profiling in JSON output."
     ),
+    deadline: float | None = typer.Option(
+        None,
+        "--deadline",
+        min=0.1,
+        help=(
+            "Stop the underlying repo scan after N seconds and return a partial bundle "
+            "(partial=true, deadline_limit) with whatever was found so far, instead of running "
+            "unbounded. Pass --no-deadline to keep the (already default) unbounded behavior explicit."
+        ),
+    ),
+    no_deadline: bool = typer.Option(
+        False,
+        "--no-deadline",
+        help="Accepted for command-surface parity with codemap; a no-op since context-render "
+        "already defaults to an unbounded --deadline.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a prompt-ready repository context bundle for edit planning."""
@@ -8318,20 +8399,30 @@ def context_render(
         )
         resolved_render_profile = render_profile or ("llm" if json_output else "full")
         resolved_optimize_context = optimize_context or (json_output and render_profile is None)
-        daemon_payload = _maybe_context_render_via_running_daemon(
-            path=resolved_path,
-            query=resolved_query,
-            max_files=max_files,
-            max_repo_files=max_repo_files,
-            max_sources=max_sources,
-            max_symbols_per_file=max_symbols_per_file,
-            max_render_chars=max_render_chars,
-            max_tokens=max_tokens,
-            model=model,
-            optimize_context=resolved_optimize_context,
-            render_profile=resolved_render_profile,
-            provider=provider,
-            profile=profile,
+        # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on
+        # `tg context-render` (Click "No such option" exit-2).
+        effective_deadline = None if no_deadline else deadline
+        # Skip the warm-daemon fast path entirely when a --deadline was requested (a warm
+        # session's cached repo_map cannot honor a fresh per-request scan deadline) -- mirrors
+        # refs/callers/impact/blast-radius's own daemon gate.
+        daemon_payload = (
+            _maybe_context_render_via_running_daemon(
+                path=resolved_path,
+                query=resolved_query,
+                max_files=max_files,
+                max_repo_files=max_repo_files,
+                max_sources=max_sources,
+                max_symbols_per_file=max_symbols_per_file,
+                max_render_chars=max_render_chars,
+                max_tokens=max_tokens,
+                model=model,
+                optimize_context=resolved_optimize_context,
+                render_profile=resolved_render_profile,
+                provider=provider,
+                profile=profile,
+            )
+            if effective_deadline is None
+            else None
         )
         if daemon_payload is not None:
             # Output-before-exit (Cluster B, 2026-07-06): the warm-daemon path must honor the same
@@ -8362,6 +8453,7 @@ def context_render(
             render_profile=resolved_render_profile,
             semantic_provider=provider,
             profile=profile,
+            deadline_seconds=effective_deadline,
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
@@ -8439,6 +8531,22 @@ def agent(
             "otherwise rank as the primary target on a harness repo. Repeatable."
         ),
     ),
+    deadline: float | None = typer.Option(
+        None,
+        "--deadline",
+        min=0.1,
+        help=(
+            "Stop the underlying repo scan after N seconds and return a partial capsule "
+            "(partial=true, deadline_limit) with whatever was found so far, instead of running "
+            "unbounded. Pass --no-deadline to keep the (already default) unbounded behavior explicit."
+        ),
+    ),
+    no_deadline: bool = typer.Option(
+        False,
+        "--no-deadline",
+        help="Accepted for command-surface parity with codemap; a no-op since agent already "
+        "defaults to an unbounded --deadline.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return an actionable context capsule for agents before editing."""
@@ -8452,22 +8560,31 @@ def agent(
             command_name="agent",
         )
         parsed_gpu_device_ids = _parse_gpu_device_ids_cli(gpu_device_ids)
+        # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on
+        # `tg agent` (Click "No such option" exit-2).
+        effective_deadline = None if no_deadline else deadline
         # Task #108 (Tier-2 daemon moat): mirrors edit-plan's daemon-payload gate (:8452-8478
         # below) -- print the full daemon payload through the SAME json/text branches and the SAME
         # exit-2-on-scan-truncation contract as the cold path, then return early. A miss/error/
         # mismatch (including the TRAP A `daemon_evidence_unreliable` sentinel) falls open to the
-        # unchanged cold build below.
-        daemon_payload = _maybe_agent_via_running_daemon(
-            path=resolved_path,
-            query=resolved_query,
-            max_files=max_files,
-            max_sources=max_sources,
-            max_tokens=max_tokens,
-            max_repo_files=max_repo_files,
-            model=model,
-            provider=provider,
-            gpu_device_ids=parsed_gpu_device_ids,
-            ignore=tuple(ignore),
+        # unchanged cold build below. Skipped entirely when a --deadline was requested (a warm
+        # session's cached repo_map cannot honor a fresh per-request scan deadline), mirroring
+        # refs/callers/impact/blast-radius's own daemon gate.
+        daemon_payload = (
+            _maybe_agent_via_running_daemon(
+                path=resolved_path,
+                query=resolved_query,
+                max_files=max_files,
+                max_sources=max_sources,
+                max_tokens=max_tokens,
+                max_repo_files=max_repo_files,
+                model=model,
+                provider=provider,
+                gpu_device_ids=parsed_gpu_device_ids,
+                ignore=tuple(ignore),
+            )
+            if effective_deadline is None
+            else None
         )
         if daemon_payload is not None:
             if json_output:
@@ -8515,6 +8632,7 @@ def agent(
             gpu_device_ids=parsed_gpu_device_ids,
             gpu_timeout_s=gpu_timeout_s,
             ignore=tuple(ignore),
+            deadline_seconds=effective_deadline,
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
@@ -8601,6 +8719,22 @@ def edit_plan(
     profile: bool = typer.Option(
         False, "--profile", help="Include per-phase profiling in JSON output."
     ),
+    deadline: float | None = typer.Option(
+        None,
+        "--deadline",
+        min=0.1,
+        help=(
+            "Stop the underlying repo scan after N seconds and return a partial plan "
+            "(partial=true, deadline_limit) with whatever was found so far, instead of running "
+            "unbounded. Pass --no-deadline to keep the (already default) unbounded behavior explicit."
+        ),
+    ),
+    no_deadline: bool = typer.Option(
+        False,
+        "--no-deadline",
+        help="Accepted for command-surface parity with codemap; a no-op since edit-plan already "
+        "defaults to an unbounded --deadline.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a machine-readable edit-planning bundle without rendered source text."""
@@ -8613,16 +8747,26 @@ def edit_plan(
             query_option=query,
             command_name="edit-plan",
         )
-        daemon_payload = _maybe_edit_plan_via_running_daemon(
-            path=resolved_path,
-            query=resolved_query,
-            max_files=max_files,
-            max_repo_files=max_repo_files,
-            max_sources=max_sources,
-            max_tokens=max_tokens,
-            max_symbols=max_symbols,
-            provider=provider,
-            profile=profile,
+        # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on
+        # `tg edit-plan` (Click "No such option" exit-2).
+        effective_deadline = None if no_deadline else deadline
+        # Skip the warm-daemon fast path entirely when a --deadline was requested (a warm
+        # session's cached repo_map cannot honor a fresh per-request scan deadline) -- mirrors
+        # refs/callers/impact/blast-radius's own daemon gate.
+        daemon_payload = (
+            _maybe_edit_plan_via_running_daemon(
+                path=resolved_path,
+                query=resolved_query,
+                max_files=max_files,
+                max_repo_files=max_repo_files,
+                max_sources=max_sources,
+                max_tokens=max_tokens,
+                max_symbols=max_symbols,
+                provider=provider,
+                profile=profile,
+            )
+            if effective_deadline is None
+            else None
         )
         if daemon_payload is not None:
             # Output-before-exit (Cluster B, 2026-07-06): same exit-2-on-scan-truncation contract as
@@ -8650,6 +8794,7 @@ def edit_plan(
             max_symbols=max_symbols,
             semantic_provider=provider,
             profile=profile,
+            deadline_seconds=effective_deadline,
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
@@ -9488,6 +9633,15 @@ def defs(
         min=0,
         help="Approximate maximum payload size in tokens (0 = unbounded).",
     ),
+    deadline: float | None = typer.Option(
+        None,
+        "--deadline",
+        min=0.1,
+        help=(
+            "Stop the underlying repo scan after N seconds and return partial:true JSON with "
+            "whatever was found so far, instead of running unbounded."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return exact definition locations for a symbol."""
@@ -9503,13 +9657,23 @@ def defs(
         # task #94 Part A Tier-1: default-OFF warm-daemon fast path. Fails open to the cold
         # build_symbol_defs(...) call below on any miss/error -- see
         # _maybe_symbol_command_via_running_daemon's docstring for the full contract.
-        payload = _maybe_symbol_command_via_running_daemon(
-            command="defs",
-            path=resolved_path,
-            symbol=resolved_symbol,
-            provider=provider,
-            max_repo_files=max_repo_files,
-            max_tests=max_tests,
+        # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on `tg defs`
+        # (Click "No such option" exit-2) even though its true siblings refs/callers/impact/
+        # blast-radius already had it -- mirrors their exact shape (deadline defaults to None
+        # already, no --no-deadline companion) and their daemon gate (skip the warm fast path
+        # entirely when a --deadline was requested; a warm session's cached repo_map cannot honor
+        # a fresh per-request scan deadline).
+        payload = (
+            _maybe_symbol_command_via_running_daemon(
+                command="defs",
+                path=resolved_path,
+                symbol=resolved_symbol,
+                provider=provider,
+                max_repo_files=max_repo_files,
+                max_tests=max_tests,
+            )
+            if deadline is None
+            else None
         )
         if payload is None:
             payload = build_symbol_defs(
@@ -9518,6 +9682,7 @@ def defs(
                 semantic_provider=provider,
                 max_repo_files=max_repo_files,
                 max_tests=max_tests,
+                deadline_seconds=deadline,
             )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
