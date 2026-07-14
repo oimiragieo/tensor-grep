@@ -1,6 +1,175 @@
 # CHANGELOG
 
 
+## v1.73.0 (2026-07-14)
+
+### Documentation
+
+- **backlog**: Reconcile to v1.72.1 (drop shipped campaign-#142 items, add v1.71.3-v1.72.1)
+  ([#583](https://github.com/oimiragieo/tensor-grep/pull/583),
+  [`888a556`](https://github.com/oimiragieo/tensor-grep/commit/888a5560d8756fc2ffe26f1585a581d29641d977))
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Features
+
+- **edit-plan**: Surface top-level confidence + ask_user_before_editing (agent parity)
+  ([#584](https://github.com/oimiragieo/tensor-grep/pull/584),
+  [`58a5eb1`](https://github.com/oimiragieo/tensor-grep/commit/58a5eb116c9162647fc92ad66fd2f568ad60fbf3))
+
+* feat(edit-plan): surface top-level confidence + ask_user_before_editing (agent parity)
+
+`tg edit-plan --json` had no top-level `confidence`/`ask_user_before_editing` even though `tg agent
+  --json` already surfaces both (CEO v1.72.1 dogfood HIGH, the last edit-plan/agent parity gap after
+  #580's validation_plan fix). `confidence` read as `null` (key absent) and
+  `ask_user_before_editing` was absent entirely.
+
+Computed the SAME way agent does, not a new heuristic: `agent_capsule._confidence` and
+  `_capsule_trust_checks` are reused (not duplicated) via a new bundled helper,
+  `agent_capsule._capsule_confidence_and_ask_without_render`, called from
+  `repo_map._edit_plan_confidence_and_ask` through a deferred import (repo_map is imported by
+  agent_capsule at module load, so a module-level import back would cycle -- same precedent as this
+  module's existing local orient_capsule imports).
+
+Two extraction points make this possible without duplicating agent's logic: - `_confidence`'s
+  `snippets` parameter now accepts `None` as a distinct sentinel from `[]`: `None` means "no snippet
+  contract at all" (edit-plan renders no source text, so the "no snippets -> degrade to 0.55" rule
+  must not apply), while `[]` keeps its existing meaning for agent (snippets ARE part of the
+  contract but none survived rendering). The single existing call site always passes a real list, so
+  this widening does not change agent's output. - The "no validation command evidence" / "confidence
+  below 0.75" ask-reasons are mechanically extracted into `_capsule_validation_evidence_ask_reason`
+  / `_capsule_low_confidence_ask_reason` (same text, same order, same behavior) so both agent and
+  edit-plan derive them from one place.
+
+Render/call-site-evidence-only enrichments agent applies on top (graph-corrobo-rated + token-budget
+  confidence uplifts, LSP confidence boost, alternative-target tie-break, the marker-helper
+  ask-reason) are deliberately NOT reproduced for edit-plan -- it has no rendered snippets or
+  call-site evidence to corroborate against, so faking them would be dishonest rather than "the same
+  way agent does it". `ask_user_before_editing` still correctly gates on scan truncation, absent
+  validation evidence, and confidence < 0.75.
+
+Wired once in `build_context_edit_plan_from_map` (repo_map.py), so cold CLI, MCP `tg_edit_plan`, and
+  the warm session daemon (session_store.py, two call sites) all pick up the fields from a single
+  fix.
+
+Verification: - RED-then-GREEN proven by genuinely swapping the two touched files back to their
+  pre-fix HEAD content (not a PYTHONPATH trick, which pytest's conftest.py overrides) and re-running
+  the new tests: they fail pre-fix, pass post-fix. - Golden parity test pins agent's exact
+  confidence/ask_user_before_editing values (clean + scan-truncated cases) so this refactor cannot
+  silently change them. - Dogfooded all three surfaces directly against this repo
+  (bootstrap.main_entry for cold CLI, mcp_server.tg_edit_plan for MCP): non-null confidence + ask
+  gate on edit-plan, agent's confidence/ask unaffected. - 654 targeted tests green across every
+  agent_capsule/repo_map/CLI/MCP/daemon/ docs file in the blast radius; ruff format/check clean;
+  mypy clean; cargo test --test test_schema_compat green (2/2); cargo fmt/clippy clean.
+
+Governance updated in the same commit: docs/CONTRACTS.md, docs/harness_api.md,
+  docs/examples/edit_plan.json, tests/unit/test_harness_api_docs.py, and
+  rust_core/tests/test_schema_compat.rs (new confidence/ask_user_before_editing assertions for the
+  Edit Plan JSON contract).
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(edit-plan): flag tie/marker ambiguity in ask_user_before_editing (Opus-gate safety parity)
+
+Opus-gate MUST-FIX on c63f509. `_capsule_confidence_and_ask_without_render` omitted the
+  alternative-target-tie downgrade AND the unrequested-marker-helper ask-reason, so `tg edit-plan
+  --json` could report `ask_user_before_editing.required = false` on an ambiguous plan where `tg
+  agent` returns `true`. Since `ask_user_before_editing.required` IS the hard auto-edit safety gate,
+  an agent trusting edit-plan would auto-edit a possibly-wrong ambiguous target without confirming
+  -- a safety under-report in the unsafe direction. Reproduced on a natural 2-file tie fixture:
+  pre-fix edit-plan gave required=false / confidence 0.9 where agent gave required=true / confidence
+  0.74.
+
+Why the original exclusion was wrong: tie-detection and marker-helper detection need only the
+  payload's `candidate_edit_targets`/`file_matches` alternatives + the query (see
+  `_alternative_targets`, which reads neither snippets nor call-site evidence) -- both are present
+  in the edit-plan payload. They are NOT snippet/render-gated, so they must be computed for
+  edit-plan too.
+
+Fix: `_capsule_confidence_and_ask_without_render` now reproduces agent's ambiguity ladder
+  faithfully, reusing agent's OWN helpers against the same payload agent reads (`_primary_target`,
+  `_alternative_targets`, `_prefer_implementation_over_marker_helper`, `_tied_alternative_targets`,
+  `_primary_target_is_unrequested_marker_helper`, `_capsule_validation_alignment`,
+  `_cap_*_confidence`, `_targeted_validation_evidence`), so the alternative-target-tie 0.74
+  confidence cap + tie ask-reason and the marker-helper ask-reason fire IDENTICALLY to `tg agent`.
+  Validation-based tie RESOLUTION is kept (reads edit-plan's own validation_plan) so a tie agent
+  legitimately resolves is not spuriously over-flagged.
+
+Still correctly excluded (genuinely snippet/call-site/LSP-evidence-gated -- edit-plan has no such
+  evidence, faking it would be dishonest, and the coordinator confirmed these stay agent-only): the
+  graph-corroborated + token-budget confidence UPLIFTS, the LSP confidence BOOST and LSP-based tie
+  RESOLUTION, and the snippet-only / rendered-context-consistency ask-reasons. Excluding the latter
+  never under-reports: every ambiguity cause edit-plan CAN have already contributes its own direct
+  ask-reason (trust / tie / marker / scan / no-validation / low-confidence).
+
+The now-inaccurate wording is corrected: the `_capsule_confidence_and_ask_without_render` docstring,
+  docs/CONTRACTS.md, and docs/harness_api.md no longer claim tie-break/marker are uncomputable for
+  edit-plan (they are computed now); they keep the honest note that the snippet/call-site/LSP
+  uplifts remain agent-only.
+
+`_edit_plan_confidence_and_ask` (repo_map.py) simplifies to a thin delegate -- the helper now
+  derives target/alternatives/validation from the payload itself, exactly as agent does.
+
+Verification (all three surfaces route through `build_context_edit_plan_from_map` ->
+  `_edit_plan_confidence_and_ask`, so one fix covers cold CLI + MCP `tg_edit_plan` + warm daemon): -
+  New golden tie-parity test: on a natural tie fixture, edit-plan required == agent required ==
+  true, edit-plan confidence.overall == agent == 0.74, tie ask-reason present. Proven RED on c63f509
+  (edit-plan required=false) via on-disk file-swap, GREEN after. - New agent byte-unchanged golden
+  pins agent's exact confidence/ask on the tie fixture (agent never calls the edit-plan helper;
+  passes on both pre- and post-fix code). - Existing clean-case + scan-truncated + no-validation
+  goldens still green (no spurious tie on the clean fixture). - Dogfooded the real cold CLI front
+  door (bootstrap.main_entry) AND MCP mcp_server. tg_edit_plan on the tie fixture: both now emit
+  confidence 0.74 + required=true. - 216 agent-capsule/edit-plan/token-budget/trust/docs tests
+  green; 487 test_cli_modes green (standalone; the one batch failure is a pre-existing cross-test
+  terminal-width flake in an unrelated `search --help` test, passes in isolation); ruff format/check
+  + mypy clean on all touched files. docs/examples/edit_plan.json unchanged this round, so the Rust
+  schema-compat test is unaffected.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Testing
+
+- **cli**: Close PR #581 --deadline gate gaps (daemon-skip guard, real-truncation exit-2, agent
+  2nd-scan) + CONTRACTS.md nit ([#582](https://github.com/oimiragieo/tensor-grep/pull/582),
+  [`6cb53a4`](https://github.com/oimiragieo/tensor-grep/commit/6cb53a41aa7bc07b56b252ca57d9d7df40676419))
+
+The adversarial Opus gate on PR #581 (--deadline/--no-deadline CLI-consistency fix) shipped SHIP but
+  flagged 3 test-coverage gaps + 1 doc nit. This closes all 4; test + doc only, no production logic
+  changes (verified: `git diff` on src/ is empty).
+
+1. Daemon-skip guard regression coverage (HIGHEST VALUE, was ZERO coverage): for orient/context-
+  render/agent/edit-plan/defs, prove the `if effective_deadline is None: ...` guard before each
+  `_maybe_<cmd>_via_running_daemon` call is bidirectional -- --deadline passed means the probe is
+  never invoked (cold path runs); no --deadline means the probe IS consulted. Mutation-verified:
+  temporarily deleted the guard on orient, confirmed the new test went red, restored it (net diff on
+  main.py is empty).
+
+2. Cold-path exit-2 coverage under a REAL --deadline-truncated scan (not a mocked payload) for
+  map/context/context-render/agent/edit-plan/defs, targeting src/tensor_grep itself so a 0.1s
+  deadline has genuine scan work to truncate against. Plus tg orient's documented exception (stays
+  exit 0, partial surfaces only informationally).
+
+3. tg agent's SECOND (rescue) blast-radius scan: _collect_capsule_call_site_evidence converts the
+  shared absolute deadline to a remaining-seconds budget, floored at 0.1s. Two deterministic CLI-
+  level tests (explicit bounded time.sleep(), not wall-clock racing) prove it never passes a
+  negative/zero deadline downstream and never crashes/hangs, both when a target is resolved (clamps
+  to the floor) and when the whole budget is spent before any target is found (rescue collector
+  gracefully no-ops).
+
+4. docs/CONTRACTS.md:110 -- added `tg context` to the three-state exit-code command list (it was
+  omitted despite already exiting 2 on truncation, now reachable via --deadline). Re-verified docs
+  governance stays green (test_harness_api_docs.py, test_public_docs_governance.py,
+  test_enterprise_docs_governance.py, test_agent_readiness_script.py).
+
+Verified: 178 tests green across test_cli_deadline_flag.py, the new file, test_repo_map_deadline.py,
+  test_render_daemon_exit_codes.py, and test_symbol_daemon_autostart.py. ruff format --preview +
+  ruff check clean.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.72.1 (2026-07-14)
 
 ### Bug Fixes
