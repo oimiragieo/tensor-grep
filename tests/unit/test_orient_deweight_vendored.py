@@ -1,12 +1,17 @@
 """Tests for auto-de-weighting of bundled vendor/skill/generated CODE subtrees in `tg orient`
-centrality (#132 / #55 PR6), and known AI-tool/harness config directories (#164).
+centrality (#132 / #55 PR6), known AI-tool/harness config directories (#164), and the M1 broader
+whole-tree detection (unambiguous STRONG-0 vendor names + STRONG-3 skill-tree shape heuristic).
 
-A subtree fires on STRONG-0 (closed-vocabulary tool-config dir NAME, e.g. `.claude`) ALONE, or on
-STRONG-1 (nested package manifest) AND (STRONG-2 (import island) OR WEAK (name prior)). The
-de-weight multiplies a subtree file's composite centrality by ``_DEWEIGHT_FACTOR`` -- it LOWERS the
-score, it never EXCLUDES the file, so a genuinely central vendored file can still surface. A
-monorepo subproject that has a manifest but IS imported across the repo is protected by the
-import-island test (de-weight would hide real product code).
+A subtree fires on STRONG-0 (closed-vocabulary directory NAME -- a tool-config dir like `.claude`,
+OR an unambiguous vendor/dependency dir like `node_modules`/`vendor`/`third_party`/`_vendored`/
+`external_repos`) ALONE, on STRONG-3 (a `skills`-named directory whose immediate children have the
+SHAPE of independent leaf skills) ALONE, or on STRONG-1 (nested package manifest) AND (STRONG-2
+(import island) OR WEAK (name prior)). The de-weight multiplies a subtree file's composite
+centrality by ``_DEWEIGHT_FACTOR`` -- it LOWERS the score, it never EXCLUDES the file, so a
+genuinely central vendored file can still surface. A monorepo subproject that has a manifest but IS
+imported across the repo is protected by the import-island test (de-weight would hide real product
+code); a `skills`-named directory imported across the repo is protected the same way by STRONG-3's
+own external-import guard (see `_is_skill_leaf_tree`).
 
 `_detect_vendored_subtrees` reads the real filesystem (it checks ``root.is_dir()`` and each
 candidate directory for a manifest via ``.exists()``), so these tests build real ``tmp_path``
@@ -89,12 +94,242 @@ def test_skips_manifest_only_monorepo_subproject(tmp_path: Path) -> None:
     assert trees == {}
 
 
-def test_skips_when_no_manifest(tmp_path: Path) -> None:
-    # `vendor/` matches a name-prior but has NO manifest -> STRONG-1 fails -> never fires. The name
-    # prior is only a tie-breaker, never sufficient on its own.
+def test_skips_neutral_dirname_with_no_manifest_no_island_no_name_prior(tmp_path: Path) -> None:
+    # An arbitrary, non-prior directory name ("helpers") with no manifest and no import-island
+    # evidence must still NOT fire -- the base "no signal at all" contract is unchanged by M1's
+    # STRONG-0 vendor-name promotion (below): a bare, unlisted name is still insufficient alone.
+    root = tmp_path.resolve()
+    (root / "helpers").mkdir()
+    rm = _rm(root, [root / "app.py", root / "helpers" / "lib.py"], {})
+    assert _detect_vendored_subtrees(rm) == {}
+
+
+# ---------------------------------------------------------------------------
+# M1: STRONG-0 unambiguous vendor/dependency directory names (`_STRONG0_VENDOR_DIR_NAMES`) fire on
+# the NAME ALONE, no manifest and no import-island required -- unlike the old WEAK name-prior role
+# of `_VENDOR_NAME_PRIOR`, which only ever broke a STRONG-1-manifest tie. Dogfood gap: a bundled
+# `node_modules/`/`vendor/`/`third_party/`/`_vendored/`/`external_repos/` subtree with no manifest
+# copied into the scanned tree previously required STRONG-1 to even be CONSIDERED a candidate, so
+# the whole tree ranked as "central" alongside real product code. `skills` is deliberately EXCLUDED
+# from this promotion (see the STRONG-3 shape-heuristic tests further below).
+# ---------------------------------------------------------------------------
+
+
+def test_strong0_vendor_name_fires_without_any_manifest(tmp_path: Path) -> None:
+    # M1: `vendor/` (an unambiguous STRONG-0 vendor name) now fires on the name ALONE -- no
+    # manifest required. Supersedes the old "name prior is only a tie-breaker" contract for these 5
+    # unambiguous names specifically.
     root = tmp_path.resolve()
     (root / "vendor").mkdir()
     rm = _rm(root, [root / "app.py", root / "vendor" / "lib.py"], {})
+    trees = _detect_vendored_subtrees(rm)
+    assert str(root / "vendor") in trees
+    info = trees[str(root / "vendor")]
+    assert "vendor-name-strong0:vendor" in info["reasons"]
+    assert not any(r.startswith("nested-manifest:") for r in info["reasons"])
+    assert info["ignore_glob"] == "vendor/**"
+
+
+def test_strong0_node_modules_fires_on_name_alone_task_scenario_a(tmp_path: Path) -> None:
+    # Task scenario (a): a whole `node_modules/` tree with NO nested manifest anywhere must be
+    # de-weighted and its root surfaced as a ready-to-paste `--ignore` glob.
+    root = tmp_path.resolve()
+    pkg_dir = root / "node_modules" / "left-pad"
+    pkg_dir.mkdir(parents=True)
+    lib = pkg_dir / "index.js"
+    lib.write_text("module.exports = () => {};\n")
+    rm = _rm(root, [root / "app.js", lib], {})
+
+    trees = _detect_vendored_subtrees(rm)
+
+    assert str(root / "node_modules") in trees
+    info = trees[str(root / "node_modules")]
+    assert "vendor-name-strong0:node_modules" in info["reasons"]
+    assert info["ignore_glob"] == "node_modules/**"
+
+
+def test_strong0_node_modules_deweights_central_score_but_keeps_the_file(tmp_path: Path) -> None:
+    # De-weight-not-exclude (task scenario d) for the NEW STRONG-0 vendor mechanism: a genuinely
+    # central file inside a bare (no-manifest) `node_modules/` tree still surfaces in central_files,
+    # just at a lowered (`_DEWEIGHT_FACTOR`-multiplied) score.
+    root = tmp_path.resolve()
+    pkg_dir = root / "node_modules" / "left-pad"
+    pkg_dir.mkdir(parents=True)
+    lib = pkg_dir / "index.js"
+    lib.write_text("module.exports = () => {};\n")
+    rm = _rm(root, [root / "app.js", lib], {})
+    rm["symbols"] = [{"name": f"Sym{i}", "kind": "function", "file": str(lib)} for i in range(4)]
+
+    raw = _central_files_from_map(rm, max_central_files=10, auto_deweight=False)
+    dew = _central_files_from_map(rm, max_central_files=10, auto_deweight=True)
+
+    lib_str = str(lib)
+    raw_lib = next(f for f in raw if f["file"] == lib_str)
+    dew_lib = next(
+        f for f in dew if f["file"] == lib_str
+    )  # still present -> de-weight, not exclude
+    assert raw_lib["score"] > 0
+    assert dew_lib["score"] == round(raw_lib["score"] * _DEWEIGHT_FACTOR, 6)
+
+
+# ---------------------------------------------------------------------------
+# M1: STRONG-3 `skills`-named directory SHAPE heuristic. Unlike the unambiguous STRONG-0 vendor
+# names above, `skills` stays AMBIGUOUS -- a repo's own feature/plugin package could plausibly be
+# named `skills/` -- so it is gated on the SHAPE of its immediate children (predominantly
+# self-contained leaf skills) plus a false-positive guard (nothing outside the tree imports into
+# it), not a bare name-alone promotion.
+# ---------------------------------------------------------------------------
+
+
+def test_skill_tree_of_many_leaf_skills_is_deweighted(tmp_path: Path) -> None:
+    # Task scenario (b): `core/skills/` has 3 immediate children, each a self-contained leaf skill
+    # (its own SKILL.md plus a small script) -- the whole tree fires on SHAPE alone.
+    root = tmp_path.resolve()
+    skills_dir = root / "core" / "skills"
+    files = [root / "app.py"]
+    for name in ("alpha", "beta", "gamma"):
+        leaf = skills_dir / name
+        leaf.mkdir(parents=True)
+        (leaf / "SKILL.md").write_text(f"# {name}\n")
+        script = leaf / "run.py"
+        script.write_text("def run():\n    pass\n")
+        files.append(script)
+    rm = _rm(root, files, {})
+
+    trees = _detect_vendored_subtrees(rm)
+
+    assert str(skills_dir) in trees
+    info = trees[str(skills_dir)]
+    assert "skill-tree-shape" in info["reasons"]
+    assert info["ignore_glob"] == "core/skills/**"
+
+
+def test_skill_tree_of_pure_markdown_leaf_skills_is_still_deweighted(tmp_path: Path) -> None:
+    # Regression: a skill tree whose leaves carry ONLY a SKILL.md (no accompanying code file at
+    # all -- a very common real-world shape, e.g. this repo's own `.claude/skills/*/SKILL.md`
+    # onboarding library) must still be reported. `_is_skill_leaf_tree` validates the SHAPE against
+    # the real filesystem child-directory listing, independent of the code-only `tree_files` used
+    # for the centrality de-weight multiplier -- an earlier draft of this fix silently dropped this
+    # exact case via a stale `if not tree_files: continue` guard that pre-dated STRONG-3.
+    root = tmp_path.resolve()
+    skills_dir = root / "core" / "skills"
+    files = [root / "app.py"]
+    for name in ("alpha", "beta", "gamma"):
+        leaf = skills_dir / name
+        leaf.mkdir(parents=True)
+        skill_md = leaf / "SKILL.md"
+        skill_md.write_text(f"# {name}\n")
+        files.append(skill_md)  # no accompanying code file in this leaf at all
+    rm = _rm(root, files, {})
+
+    trees = _detect_vendored_subtrees(rm)
+
+    assert str(skills_dir) in trees
+    assert "skill-tree-shape" in trees[str(skills_dir)]["reasons"]
+    assert trees[str(skills_dir)]["ignore_glob"] == "core/skills/**"
+
+
+def test_skill_tree_deweights_central_score_but_keeps_the_file(tmp_path: Path) -> None:
+    # De-weight-not-exclude (task scenario d) for the NEW STRONG-3 skill-tree-shape mechanism: a
+    # genuinely central file inside a detected skill-leaf tree still surfaces in central_files, just
+    # at a lowered score.
+    root = tmp_path.resolve()
+    skills_dir = root / "core" / "skills"
+    files = [root / "app.py"]
+    hub: Path | None = None
+    for name in ("alpha", "beta", "gamma"):
+        leaf = skills_dir / name
+        leaf.mkdir(parents=True)
+        (leaf / "SKILL.md").write_text(f"# {name}\n")
+        script = leaf / "run.py"
+        script.write_text("def run():\n    pass\n")
+        files.append(script)
+        if hub is None:
+            hub = script
+    assert hub is not None
+    rm = _rm(root, files, {})
+    rm["symbols"] = [{"name": f"Sym{i}", "kind": "function", "file": str(hub)} for i in range(4)]
+
+    raw = _central_files_from_map(rm, max_central_files=10, auto_deweight=False)
+    dew = _central_files_from_map(rm, max_central_files=10, auto_deweight=True)
+
+    hub_str = str(hub)
+    raw_hub = next(f for f in raw if f["file"] == hub_str)
+    dew_hub = next(
+        f for f in dew if f["file"] == hub_str
+    )  # still present -> de-weight, not exclude
+    assert raw_hub["score"] > 0
+    assert dew_hub["score"] == round(raw_hub["score"] * _DEWEIGHT_FACTOR, 6)
+
+
+def test_skips_skill_named_package_imported_across_repo(tmp_path: Path) -> None:
+    # Task scenario (c) -- the false-positive guard: `skills/plugin_a/` superficially LOOKS
+    # leaf-shaped (its own SKILL.md), but the tree as a whole IS imported from OUTSIDE it
+    # (`main.py` imports `plugin_a/handler.py`) -- a genuine product package, not a bundled/vendored
+    # skill library. Must NOT be de-weighted no matter how leaf-shaped its children look.
+    root = tmp_path.resolve()
+    skills_dir = root / "skills"
+    plugin = skills_dir / "plugin_a"
+    plugin.mkdir(parents=True)
+    (plugin / "SKILL.md").write_text("# plugin_a\n")
+    handler = plugin / "handler.py"
+    handler.write_text("def run():\n    pass\n")
+    main = root / "main.py"
+    rm = _rm(root, [main, handler], {main: ["handler"]})
+
+    assert _detect_vendored_subtrees(rm) == {}
+
+
+def test_skips_flat_skills_package_with_no_subdirectories(tmp_path: Path) -> None:
+    # A `skills/` package with flat `.py` files directly inside (no folder-per-skill layout) has NO
+    # children to score as "leaf skills" -- a real flat Python package named `skills/` is never
+    # mistaken for a bundle of independent skills.
+    root = tmp_path.resolve()
+    skills_dir = root / "skills"
+    skills_dir.mkdir()
+    (skills_dir / "foo.py").write_text("def foo():\n    pass\n")
+    (skills_dir / "bar.py").write_text("def bar():\n    pass\n")
+    rm = _rm(
+        root,
+        [root / "app.py", skills_dir / "foo.py", skills_dir / "bar.py"],
+        {},
+    )
+
+    assert _detect_vendored_subtrees(rm) == {}
+
+
+def test_skill_tree_below_leaf_fraction_threshold_is_not_deweighted(tmp_path: Path) -> None:
+    # Only half (2 of 4) of the immediate children look like self-contained leaf skills -- below
+    # `_SKILL_LEAF_FRACTION_THRESHOLD` -- so the SHAPE check must not fire even though the tree as a
+    # whole is not imported from outside it.
+    root = tmp_path.resolve()
+    skills_dir = root / "skills"
+
+    real_skill = skills_dir / "real_skill"
+    real_skill.mkdir(parents=True)
+    (real_skill / "SKILL.md").write_text("# real_skill\n")
+
+    shared = skills_dir / "shared"
+    shared.mkdir(parents=True)
+    shared_util = shared / "util.py"
+    shared_util.write_text("def util():\n    pass\n")
+
+    consumer_a = skills_dir / "consumer_a"
+    consumer_a.mkdir(parents=True)
+    a_impl = consumer_a / "a_impl.py"
+    a_impl.write_text("def a():\n    pass\n")
+
+    consumer_b = skills_dir / "consumer_b"
+    consumer_b.mkdir(parents=True)
+    b_impl = consumer_b / "b_impl.py"
+    b_impl.write_text("def b():\n    pass\n")
+
+    rm = _rm(
+        root,
+        [root / "app.py", shared_util, a_impl, b_impl],
+        {a_impl: ["util"], b_impl: ["util"]},  # both consumers reach OUT to a sibling child
+    )
+
     assert _detect_vendored_subtrees(rm) == {}
 
 

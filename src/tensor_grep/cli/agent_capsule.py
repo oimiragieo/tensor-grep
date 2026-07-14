@@ -2819,6 +2819,27 @@ def build_agent_capsule_from_map(
     suggested_scope = payload.get("suggested_scope")
     if suggested_scope:
         result["suggested_scope"] = suggested_scope
+    # suggested_ignore (M2): parity with `tg orient`, which already surfaces auto-deweighted vendor/
+    # skill/tool-config subtree roots as ready-to-paste `--ignore` globs. `tg agent` already runs
+    # the SAME de-weight during ranking (`_build_context_pack_from_map`'s own `auto_deweight` pass,
+    # repo_map.py) but, pre-M2, never surfaced the glob hint itself -- an agent had to hand-derive
+    # `--ignore` globs or fall back to `tg orient` first. Recompute `_detect_vendored_subtrees`
+    # against the SAME (already `--ignore`-filtered) `rm` the ranking pass used above, and reuse
+    # orient's exact glob-builder (`_suggested_ignore_from_deweighted_trees`) -- never a second,
+    # independently hand-rolled hint that could drift from what `tg orient` would say for the same
+    # repo. `_detect_vendored_subtrees` reads only `rm`'s already-in-hand file/import lists plus a
+    # bounded number of manifest-marker existence checks (no new directory walk), so this is cheap
+    # relative to the rest of the capsule build. Additive + conditional, same shape as
+    # `suggested_scope` above: present only when non-empty, so a capsule with nothing deweighted
+    # stays byte-identical to a pre-M2 build.
+    from tensor_grep.cli.orient_capsule import (
+        _detect_vendored_subtrees,
+        _suggested_ignore_from_deweighted_trees,
+    )
+
+    suggested_ignore = _suggested_ignore_from_deweighted_trees(_detect_vendored_subtrees(rm))
+    if suggested_ignore:
+        result["suggested_ignore"] = suggested_ignore
     # DAR: additive CONDITIONAL keys, same pattern as scan_limit/partial above -- zero deps (or
     # the kill-switch, or a fail-safe early return inside `_collect_outbound_dependencies`) means
     # `outbound_dependencies` is `[]`, and BOTH keys are omitted so the capsule stays
