@@ -93,6 +93,28 @@ def test_agent_capsule_suggested_ignore_absent_for_genuine_skills_package(tmp_pa
     assert "suggested_ignore" not in payload
 
 
+def test_agent_capsule_suggested_ignore_absent_for_skills_package_via_symbol_import(
+    tmp_path: Path,
+) -> None:
+    """Opus-gate MUST-FIX regression via M2: the symbol/subpackage-import false positive
+    (`from skills.auth import Auth`, subpackages with `__init__.py`, no SKILL.md) must not reach the
+    `tg agent` capsule either -- `suggested_ignore` absent. This is the moat-facing surface the gate
+    called out: M2 wires the same detection into the agent/daemon path, so the FP had to be proven
+    gone on BOTH commands, not just `tg orient`."""
+    project = tmp_path / "workspace"
+    for sub in ("auth", "db"):
+        pkg = project / "skills" / sub
+        pkg.mkdir(parents=True)
+        (pkg / "__init__.py").write_text(f"class {sub.capitalize()}:\n    pass\n", encoding="utf-8")
+    (project / "main.py").write_text(
+        "from skills.auth import Auth\n\ndef go():\n    return Auth()\n", encoding="utf-8"
+    )
+
+    payload = build_agent_capsule("auth", project, max_tokens=2000)
+
+    assert "suggested_ignore" not in payload
+
+
 def test_agent_capsule_suggested_ignore_respects_explicit_ignore_flag(tmp_path: Path) -> None:
     """`--ignore` (hard exclude) is applied to `rm` BEFORE the M2 suggested_ignore recompute -- a
     tree the caller already excluded outright must not also show up as a suggestion."""

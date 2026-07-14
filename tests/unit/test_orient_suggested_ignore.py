@@ -149,3 +149,43 @@ def test_suggested_ignore_absent_for_genuine_skills_package_imported_across_repo
 
     assert payload["suggested_ignore"] is None
     assert payload["deweighted_trees"] == []
+
+
+def test_suggested_ignore_absent_for_skills_package_via_subpackage_symbol_import(
+    tmp_path: Path,
+) -> None:
+    # Opus-gate MUST-FIX regression, end-to-end: a genuine product `skills/` package consumed via
+    # the COMMON idiom `from skills.auth import Auth` (symbol/subpackage import, subpackages carry
+    # `__init__.py`, no SKILL.md) must yield `suggested_ignore is None`. This is the exact form the
+    # stem-only import graph can't resolve -- pre-STRONG-3 `main` returned None here, so it is a
+    # regression the manifest-required + `__init__.py`-refusal guards must prevent.
+    for sub in ("auth", "db"):
+        pkg = tmp_path / "skills" / sub
+        pkg.mkdir(parents=True)
+        (pkg / "__init__.py").write_text(f"class {sub.capitalize()}:\n    pass\n", encoding="utf-8")
+    (tmp_path / "main.py").write_text(
+        "from skills.auth import Auth\n\ndef go():\n    return Auth()\n", encoding="utf-8"
+    )
+
+    payload = build_orient_capsule(tmp_path, max_tokens=500)
+
+    assert payload["suggested_ignore"] is None
+    assert payload["deweighted_trees"] == []
+
+
+def test_suggested_ignore_absent_for_skills_dir_with_init_py(tmp_path: Path) -> None:
+    # Opus-gate MUST-FIX regression, end-to-end: a `skills/__init__.py` at the tree root is an
+    # unambiguous real-Python-package marker -- STRONG-3 is refused, `suggested_ignore is None`.
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    (skills_dir / "__init__.py").write_text("from .auth import Auth\n", encoding="utf-8")
+    leaf = skills_dir / "auth"
+    leaf.mkdir()
+    (leaf / "SKILL.md").write_text("# auth\n", encoding="utf-8")
+    (leaf / "impl.py").write_text("class Auth:\n    pass\n", encoding="utf-8")
+    (tmp_path / "main.py").write_text("from skills import Auth\n", encoding="utf-8")
+
+    payload = build_orient_capsule(tmp_path, max_tokens=500)
+
+    assert payload["suggested_ignore"] is None
+    assert payload["deweighted_trees"] == []

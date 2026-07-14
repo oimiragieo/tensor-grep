@@ -3,15 +3,19 @@ centrality (#132 / #55 PR6), known AI-tool/harness config directories (#164), an
 whole-tree detection (unambiguous STRONG-0 vendor names + STRONG-3 skill-tree shape heuristic).
 
 A subtree fires on STRONG-0 (closed-vocabulary directory NAME -- a tool-config dir like `.claude`,
-OR an unambiguous vendor/dependency dir like `node_modules`/`vendor`/`third_party`/`_vendored`/
-`external_repos`) ALONE, on STRONG-3 (a `skills`-named directory whose immediate children have the
-SHAPE of independent leaf skills) ALONE, or on STRONG-1 (nested package manifest) AND (STRONG-2
-(import island) OR WEAK (name prior)). The de-weight multiplies a subtree file's composite
-centrality by ``_DEWEIGHT_FACTOR`` -- it LOWERS the score, it never EXCLUDES the file, so a
-genuinely central vendored file can still surface. A monorepo subproject that has a manifest but IS
-imported across the repo is protected by the import-island test (de-weight would hide real product
-code); a `skills`-named directory imported across the repo is protected the same way by STRONG-3's
-own external-import guard (see `_is_skill_leaf_tree`).
+OR an unambiguous vendor/dependency dir `third_party`/`_vendored`) ALONE, on STRONG-3 (a
+`skills`-named directory that clears a SHAPE gauntlet: >=60% of immediate children carry a
+SKILL.md/skill.md manifest, no `__init__.py` in the tree root or any child, and nothing outside the
+tree imports in) ALONE, or on STRONG-1 (nested package manifest) AND (STRONG-2 (import island) OR
+WEAK (name prior)). The de-weight multiplies a subtree file's composite centrality by
+``_DEWEIGHT_FACTOR`` -- it LOWERS the score, it never EXCLUDES the file, so a genuinely central
+vendored file can still surface. A monorepo subproject that has a manifest but IS imported across
+the repo is protected by the import-island test (de-weight would hide real product code); a genuine
+product `skills/` package is protected by STRONG-3's manifest-required + `__init__.py`-refusal
+guards (a Python package has an `__init__.py` and no per-child SKILL.md), which hold even for the
+common `from skills.<subpkg> import <Symbol>` idiom the stem-only import graph can't resolve.
+(`node_modules`/`vendor`/`external_repos` are NOT STRONG-0 -- they are walker-skipped upstream via
+`repo_map._SKIP_DIR_NAMES`, so a STRONG-0 entry would be dead code.)
 
 `_detect_vendored_subtrees` reads the real filesystem (it checks ``root.is_dir()`` and each
 candidate directory for a manifest via ``.exists()``), so these tests build real ``tmp_path``
@@ -105,36 +109,38 @@ def test_skips_neutral_dirname_with_no_manifest_no_island_no_name_prior(tmp_path
 
 
 # ---------------------------------------------------------------------------
-# M1: STRONG-0 unambiguous vendor/dependency directory names (`_STRONG0_VENDOR_DIR_NAMES`) fire on
-# the NAME ALONE, no manifest and no import-island required -- unlike the old WEAK name-prior role
-# of `_VENDOR_NAME_PRIOR`, which only ever broke a STRONG-1-manifest tie. Dogfood gap: a bundled
-# `node_modules/`/`vendor/`/`third_party/`/`_vendored/`/`external_repos/` subtree with no manifest
-# copied into the scanned tree previously required STRONG-1 to even be CONSIDERED a candidate, so
-# the whole tree ranked as "central" alongside real product code. `skills` is deliberately EXCLUDED
-# from this promotion (see the STRONG-3 shape-heuristic tests further below).
+# M1: STRONG-0 unambiguous vendor/dependency directory names (`_STRONG0_VENDOR_DIR_NAMES` =
+# {`third_party`, `_vendored`}) fire on the NAME ALONE, no manifest and no import-island required --
+# unlike the old WEAK name-prior role of `_VENDOR_NAME_PRIOR`, which only ever broke a
+# STRONG-1-manifest tie. Dogfood gap: a bundled `third_party/`/`_vendored/` subtree with no manifest
+# copied into the scanned tree previously required STRONG-1 to even be CONSIDERED a candidate, so the
+# whole tree ranked as "central" alongside real product code. `node_modules`/`vendor`/`external_repos`
+# are deliberately NOT STRONG-0 -- they are already in `repo_map._SKIP_DIR_NAMES` (the walker skips
+# them entirely), so a STRONG-0 entry would be dead code at real-scan time (see
+# `test_dropped_vendor_names_are_not_strong0` below). `skills` is EXCLUDED for a different reason (a
+# repo's own package could be named `skills/`); see the STRONG-3 tests further below.
 # ---------------------------------------------------------------------------
 
 
 def test_strong0_vendor_name_fires_without_any_manifest(tmp_path: Path) -> None:
-    # M1: `vendor/` (an unambiguous STRONG-0 vendor name) now fires on the name ALONE -- no
-    # manifest required. Supersedes the old "name prior is only a tie-breaker" contract for these 5
-    # unambiguous names specifically.
+    # M1: `_vendored/` (an unambiguous STRONG-0 vendor name) fires on the name ALONE -- no manifest
+    # required. Supersedes the old "name prior is only a tie-breaker" contract for these names.
     root = tmp_path.resolve()
-    (root / "vendor").mkdir()
-    rm = _rm(root, [root / "app.py", root / "vendor" / "lib.py"], {})
+    (root / "_vendored").mkdir()
+    rm = _rm(root, [root / "app.py", root / "_vendored" / "lib.py"], {})
     trees = _detect_vendored_subtrees(rm)
-    assert str(root / "vendor") in trees
-    info = trees[str(root / "vendor")]
-    assert "vendor-name-strong0:vendor" in info["reasons"]
+    assert str(root / "_vendored") in trees
+    info = trees[str(root / "_vendored")]
+    assert "vendor-name-strong0:_vendored" in info["reasons"]
     assert not any(r.startswith("nested-manifest:") for r in info["reasons"])
-    assert info["ignore_glob"] == "vendor/**"
+    assert info["ignore_glob"] == "_vendored/**"
 
 
-def test_strong0_node_modules_fires_on_name_alone_task_scenario_a(tmp_path: Path) -> None:
-    # Task scenario (a): a whole `node_modules/` tree with NO nested manifest anywhere must be
+def test_strong0_third_party_fires_on_name_alone_task_scenario_a(tmp_path: Path) -> None:
+    # Task scenario (a): a whole `third_party/` tree with NO nested manifest anywhere must be
     # de-weighted and its root surfaced as a ready-to-paste `--ignore` glob.
     root = tmp_path.resolve()
-    pkg_dir = root / "node_modules" / "left-pad"
+    pkg_dir = root / "third_party" / "left-pad"
     pkg_dir.mkdir(parents=True)
     lib = pkg_dir / "index.js"
     lib.write_text("module.exports = () => {};\n")
@@ -142,18 +148,18 @@ def test_strong0_node_modules_fires_on_name_alone_task_scenario_a(tmp_path: Path
 
     trees = _detect_vendored_subtrees(rm)
 
-    assert str(root / "node_modules") in trees
-    info = trees[str(root / "node_modules")]
-    assert "vendor-name-strong0:node_modules" in info["reasons"]
-    assert info["ignore_glob"] == "node_modules/**"
+    assert str(root / "third_party") in trees
+    info = trees[str(root / "third_party")]
+    assert "vendor-name-strong0:third_party" in info["reasons"]
+    assert info["ignore_glob"] == "third_party/**"
 
 
-def test_strong0_node_modules_deweights_central_score_but_keeps_the_file(tmp_path: Path) -> None:
+def test_strong0_vendor_deweights_central_score_but_keeps_the_file(tmp_path: Path) -> None:
     # De-weight-not-exclude (task scenario d) for the NEW STRONG-0 vendor mechanism: a genuinely
-    # central file inside a bare (no-manifest) `node_modules/` tree still surfaces in central_files,
+    # central file inside a bare (no-manifest) `third_party/` tree still surfaces in central_files,
     # just at a lowered (`_DEWEIGHT_FACTOR`-multiplied) score.
     root = tmp_path.resolve()
-    pkg_dir = root / "node_modules" / "left-pad"
+    pkg_dir = root / "third_party" / "left-pad"
     pkg_dir.mkdir(parents=True)
     lib = pkg_dir / "index.js"
     lib.write_text("module.exports = () => {};\n")
@@ -172,12 +178,28 @@ def test_strong0_node_modules_deweights_central_score_but_keeps_the_file(tmp_pat
     assert dew_lib["score"] == round(raw_lib["score"] * _DEWEIGHT_FACTOR, 6)
 
 
+def test_dropped_vendor_names_are_not_strong0(tmp_path: Path) -> None:
+    # Honest-set guard (Opus-gate NIT): `node_modules`, `vendor`, `external_repos` are ALL in
+    # `repo_map._SKIP_DIR_NAMES` (walker-skipped upstream), so they are deliberately NOT STRONG-0.
+    # A synthetic `rm` bypassing the walker proves the name-alone promotion does not fire for them:
+    # with no manifest and no import-island, the detector returns {} (they still WOULD fire as the
+    # WEAK `_VENDOR_NAME_PRIOR` tie-breaker if a nested manifest surfaced, but never on name alone).
+    for name in ("node_modules", "vendor", "external_repos"):
+        root = (tmp_path / name).resolve()
+        root.mkdir()
+        (root / name).mkdir()
+        rm = _rm(root, [root / "app.py", root / name / "lib.py"], {})
+        assert _detect_vendored_subtrees(rm) == {}, f"{name} should not fire STRONG-0 on name alone"
+
+
 # ---------------------------------------------------------------------------
-# M1: STRONG-3 `skills`-named directory SHAPE heuristic. Unlike the unambiguous STRONG-0 vendor
-# names above, `skills` stays AMBIGUOUS -- a repo's own feature/plugin package could plausibly be
-# named `skills/` -- so it is gated on the SHAPE of its immediate children (predominantly
-# self-contained leaf skills) plus a false-positive guard (nothing outside the tree imports into
-# it), not a bare name-alone promotion.
+# M1: STRONG-3 `skills`-named directory SHAPE gauntlet. Unlike the unambiguous STRONG-0 vendor names
+# above, `skills` stays AMBIGUOUS -- a repo's own feature/plugin package could plausibly be named
+# `skills/` -- so it is gated on a gauntlet a real Python package can never pass: (a) >=60% of its
+# immediate children each carry their own SKILL.md/skill.md manifest (Opus-gate: the SOLE positive
+# leaf signal -- a "no imports crossing out" fallback was unsafe because the stem-only import graph
+# can't resolve a `from skills.<subpkg> import <Symbol>` edge), (b) NO `__init__.py` in the tree
+# root or any immediate child, and (c) a best-effort "nothing outside imports in" guard.
 # ---------------------------------------------------------------------------
 
 
@@ -299,9 +321,11 @@ def test_skips_flat_skills_package_with_no_subdirectories(tmp_path: Path) -> Non
 
 
 def test_skill_tree_below_leaf_fraction_threshold_is_not_deweighted(tmp_path: Path) -> None:
-    # Only half (2 of 4) of the immediate children look like self-contained leaf skills -- below
-    # `_SKILL_LEAF_FRACTION_THRESHOLD` -- so the SHAPE check must not fire even though the tree as a
-    # whole is not imported from outside it.
+    # Only 1 of 4 immediate children carries a SKILL.md manifest -- below
+    # `_SKILL_LEAF_FRACTION_THRESHOLD` (0.6) -- so the SHAPE check must not fire. The other 3 are
+    # plain code folders with no manifest: under the Opus-gate manifest-required rule they do NOT
+    # count toward the leaf fraction (an earlier draft would have vacuously counted them via a
+    # "no imports crossing out" fallback, the exact source of the symbol-import false positive).
     root = tmp_path.resolve()
     skills_dir = root / "skills"
 
@@ -309,26 +333,56 @@ def test_skill_tree_below_leaf_fraction_threshold_is_not_deweighted(tmp_path: Pa
     real_skill.mkdir(parents=True)
     (real_skill / "SKILL.md").write_text("# real_skill\n")
 
-    shared = skills_dir / "shared"
-    shared.mkdir(parents=True)
-    shared_util = shared / "util.py"
-    shared_util.write_text("def util():\n    pass\n")
+    files = [root / "app.py"]
+    for name in ("mod_a", "mod_b", "mod_c"):
+        child = skills_dir / name
+        child.mkdir(parents=True)
+        impl = child / f"{name}.py"
+        impl.write_text("def go():\n    pass\n")  # code, but NO SKILL.md manifest
+        files.append(impl)
+    rm = _rm(root, files, {})
 
-    consumer_a = skills_dir / "consumer_a"
-    consumer_a.mkdir(parents=True)
-    a_impl = consumer_a / "a_impl.py"
-    a_impl.write_text("def a():\n    pass\n")
+    assert _detect_vendored_subtrees(rm) == {}
 
-    consumer_b = skills_dir / "consumer_b"
-    consumer_b.mkdir(parents=True)
-    b_impl = consumer_b / "b_impl.py"
-    b_impl.write_text("def b():\n    pass\n")
 
+def test_skips_skill_package_consumed_via_subpackage_symbol_import(tmp_path: Path) -> None:
+    # Opus-gate MUST-FIX regression: a genuine product `skills/` package consumed via the COMMON
+    # idiom `from skills.auth import Auth` (a symbol/subpackage import) must NOT be de-weighted. The
+    # stem-only import graph can't resolve that edge (last dotted component `Auth` is a symbol and
+    # `skills.auth` is a SUBPACKAGE dir, neither a file stem), so `externally_isolated` is
+    # (wrongly) True -- the belt-and-suspenders manifest-required + `__init__.py`-refusal guards are
+    # what actually catch it: each subpackage child has an `__init__.py` (real Python package) and
+    # NO SKILL.md. Pre-STRONG-3 `main` returned None here; this proves the PR does not regress it.
+    root = tmp_path.resolve()
+    skills_dir = root / "skills"
+    for sub in ("auth", "db"):
+        pkg = skills_dir / sub
+        pkg.mkdir(parents=True)
+        (pkg / "__init__.py").write_text(f"class {sub.capitalize()}:\n    pass\n")
+    main = root / "main.py"
+    main.write_text("from skills.auth import Auth\n\ndef go():\n    return Auth()\n")
     rm = _rm(
         root,
-        [root / "app.py", shared_util, a_impl, b_impl],
-        {a_impl: ["util"], b_impl: ["util"]},  # both consumers reach OUT to a sibling child
+        [main, skills_dir / "auth" / "__init__.py", skills_dir / "db" / "__init__.py"],
+        {main: ["skills.auth", "skills.auth.Auth"]},  # unresolvable in the stem-only graph
     )
+
+    assert _detect_vendored_subtrees(rm) == {}
+
+
+def test_skips_skill_dir_with_init_py_at_root(tmp_path: Path) -> None:
+    # Opus-gate MUST-FIX regression: a `skills/__init__.py` at the tree root is an unambiguous
+    # "this is a real Python package" marker -- STRONG-3 is refused entirely regardless of how
+    # leaf-shaped its children look.
+    root = tmp_path.resolve()
+    skills_dir = root / "skills"
+    skills_dir.mkdir()
+    (skills_dir / "__init__.py").write_text("from .auth import Auth\n")
+    leaf = skills_dir / "auth"
+    leaf.mkdir()
+    (leaf / "SKILL.md").write_text("# auth\n")  # even WITH a manifest, the root __init__.py wins
+    (leaf / "impl.py").write_text("class Auth:\n    pass\n")
+    rm = _rm(root, [root / "main.py", leaf / "impl.py"], {})
 
     assert _detect_vendored_subtrees(rm) == {}
 

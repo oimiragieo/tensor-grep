@@ -60,24 +60,37 @@ _CENTRAL_SYMBOL_DENSITY_CAP = 25
 #         manifest (no package.json/pyproject.toml -- it's config, not a buildable nested project),
 #         so gating it behind STRONG-1 like the WEAK prior below meant it could NEVER fire, no
 #         matter what name list it was added to.
-#       * `_STRONG0_VENDOR_DIR_NAMES` (e.g. `node_modules`, `vendor`, `third_party`, `_vendored`,
-#         `external_repos`) -- M1 dogfood gap: a bundled dependency tree with NO manifest inside the
-#         SCANNED subtree (or a manifest filename outside `_BROAD_WORKSPACE_PROJECT_MARKERS`)
-#         previously required STRONG-1 to even be CONSIDERED a de-weight candidate at all, so the
-#         whole tree ranked as "central" right alongside real product code. These 5 names are
-#         effectively NEVER a repo's own product code, unlike `skills` (see STRONG-3 below).
+#       * `_STRONG0_VENDOR_DIR_NAMES` (`third_party`, `_vendored`) -- M1 dogfood gap: a bundled
+#         dependency tree with NO manifest inside the SCANNED subtree (or a manifest filename outside
+#         `_BROAD_WORKSPACE_PROJECT_MARKERS`) previously required STRONG-1 to even be CONSIDERED a
+#         de-weight candidate at all, so the whole tree ranked as "central" right alongside real
+#         product code. These names are effectively NEVER a repo's own product code, unlike `skills`
+#         (see STRONG-3 below). NOTE the set is deliberately just these two: `node_modules`, `vendor`,
+#         and `external_repos` are ALSO in `repo_map._SKIP_DIR_NAMES`, so the repo-map WALKER never
+#         descends into them at all (a stronger, upstream protection) -- a STRONG-0 entry for them
+#         would be dead code at real-scan time, so they are left out to keep this set honest.
 #   STRONG-1 -- a directory below the repo root contains its own manifest, reusing the same marker
 #     set `_path_has_project_marker` (main.py) uses for broad-scan workspace-project detection.
 #   STRONG-2 -- an import island: no file OUTSIDE the subtree resolves an import INTO it (computed
 #     from the same resolved-import graph the centrality ranking builds).
 #   STRONG-3 (M1) -- a `skills`-named directory (AMBIGUOUS: unlike the unambiguous STRONG-0 vendor
-#     names, a repo's OWN feature/plugin package could plausibly be named `skills/`) whose immediate
-#     children are PREDOMINANTLY self-contained leaf subtrees (each carries its own `SKILL.md`/
-#     `skill.md`, or has no imports crossing out of its own folder) AND which nothing OUTSIDE the
-#     tree imports INTO -- see `_is_skill_leaf_tree`. The external-import guard is the false-
-#     positive backstop: a genuine product `skills/` package (imported from elsewhere in the repo
-#     like any other internal module) fails it and is NEVER de-weighted no matter how leaf-shaped
-#     its subdirectories look.
+#     names, a repo's OWN feature/plugin package could plausibly be named `skills/`) that clears a
+#     SHAPE gauntlet designed so a genuine Python package can never pass it (see `_is_skill_leaf_tree`).
+#     Fires only when ALL of:
+#       (a) POSITIVE skill-manifest evidence -- at least `_SKILL_LEAF_FRACTION_THRESHOLD` of its
+#           immediate children each carry their own `SKILL.md`/`skill.md` (`_child_has_skill_manifest`).
+#           This is the LOAD-BEARING guard: an earlier draft counted a child as a leaf if it merely
+#           had "no imports crossing out", but the stem-only import graph
+#           (`_code_files_and_import_graph`) cannot resolve a `from skills.auth import Auth` symbol/
+#           subpackage edge, so a real `__init__.py` subpackage had empty resolved-imports and
+#           passed VACUOUSLY -- mislabeling a genuine product `skills/` package as a bundle (Opus-gate
+#           FP). A folder-per-skill bundle always carries a manifest; a Python package never does.
+#       (b) NO `__init__.py` in the tree root OR any immediate child -- an unambiguous "this is a real
+#           Python (sub)package, not a folder-per-skill bundle" marker. Belt-and-suspenders with (a).
+#       (c) the best-effort external-import guard: nothing OUTSIDE the tree resolves an import INTO it
+#           (the same `externally_isolated` evidence STRONG-2 uses). Kept as a strictly-safer extra
+#           signal, but it is NOT relied on alone -- the stem graph misses symbol/subpackage imports,
+#           which is exactly why (a)+(b) exist.
 #   WEAK -- a name prior (vendor/, third_party/, skills/, external_repos/, _vendored/, node_modules/):
 #     a TIE-BREAKER for a STRONG-1 candidate that is neither an island nor already covered by
 #     STRONG-0/STRONG-3 above (kept for any directory that reaches this point via a nested manifest
@@ -106,22 +119,25 @@ _TOOL_CONFIG_DIR_NAMES = frozenset({
 # STRONG-0 unambiguous vendor/dependency directory names (M1): unlike `_VENDOR_NAME_PRIOR`'s WEAK
 # tie-breaker role above (fires only alongside a STRONG-1 nested manifest), these names are
 # effectively NEVER a repo's own product code -- matched on the EXACT directory basename, same
-# mechanism as `_TOOL_CONFIG_DIR_NAMES`, so a `node_modules/`/`vendor/`/`third_party/`/`_vendored/`/
-# `external_repos/` subtree de-weights its WHOLE contents without needing a nested manifest at all.
-# `skills` is deliberately EXCLUDED here -- a repo's OWN feature/plugin package could plausibly be
-# named `skills/`, so it gets a SHAPE check instead of a bare name-alone promotion; see
-# `_is_skill_leaf_tree` and the STRONG-3 tier in the module comment above `_DEWEIGHT_FACTOR`.
+# mechanism as `_TOOL_CONFIG_DIR_NAMES`, so a `third_party/`/`_vendored/` subtree de-weights its
+# WHOLE contents without needing a nested manifest at all. Deliberately just these two: `node_modules`,
+# `vendor`, and `external_repos` are ALSO in `repo_map._SKIP_DIR_NAMES` (the repo-map walker skips
+# them entirely at scan time), so a STRONG-0 entry for those would be dead code -- they stay OUT to
+# keep this set honest (they still fire as the WEAK `_VENDOR_NAME_PRIOR` tie-breaker if a nested
+# manifest ever surfaces one through the walker). `skills` is EXCLUDED for a different reason -- a
+# repo's OWN feature/plugin package could plausibly be named `skills/`, so it gets a SHAPE gauntlet
+# instead of a bare name-alone promotion; see `_is_skill_leaf_tree` and the STRONG-3 tier above.
 _STRONG0_VENDOR_DIR_NAMES = frozenset({
-    "node_modules",
-    "vendor",
     "third_party",
     "_vendored",
-    "external_repos",
 })
-# STRONG-3 skill-leaf-tree shape heuristic (M1) tuning: a `skills`-named directory's immediate
-# child counts as a self-contained "leaf skill" if it carries one of these manifest filenames
-# (case-insensitive, checked directly inside the child -- not recursively), OR (see
-# `_child_is_self_contained_leaf`) has no imports crossing out to the rest of the repo.
+# STRONG-3 skill-leaf manifest filenames (Opus-gate FIX -- now the SOLE positive leaf signal, see
+# `_child_has_skill_manifest`): a `skills`-named directory's immediate child counts toward the
+# leaf-fraction ONLY if it carries one of these manifest filenames (case-insensitive, checked
+# directly inside the child -- not recursively, mirroring STRONG-1's own manifest check). The
+# earlier "no imports crossing out / no code files" fallback was REMOVED: it satisfied the fraction
+# vacuously for an `__init__.py` subpackage whose symbol/subpackage imports the stem-only graph
+# could not resolve, a false positive on the common `from skills.<subpkg> import <Symbol>` idiom.
 _SKILL_LEAF_MANIFEST_NAMES = frozenset({"skill.md"})
 # A `skills/` directory de-weights its whole subtree only when AT LEAST this fraction of its
 # immediate children look like independent leaf skills -- a strict majority, not "any single one",
@@ -192,21 +208,28 @@ def _code_files_and_import_graph(
     return code_files, resolved_imports, reverse_importers
 
 
-def _child_is_self_contained_leaf(
-    child_abs_dir: Path,
-    child_rel_parts: tuple[str, ...],
-    *,
-    code_rel_parts: list[tuple[str, tuple[str, ...]]],
-    resolved_imports: dict[str, list[str]],
-) -> bool:
-    """One immediate child of a STRONG-3 ``skills/`` candidate: does it look like a self-contained
-    leaf skill? Either signal is sufficient (see the STRONG-3 comment above ``_DEWEIGHT_FACTOR``):
+def _dir_contains_init_py(directory: Path) -> bool:
+    """True if ``directory`` directly contains an ``__init__.py`` -- an unambiguous "this is a real
+    Python (sub)package" marker used to REFUSE a STRONG-3 skill-leaf match (see
+    ``_is_skill_leaf_tree``). Fail-safe: any OSError reads as "not a package" (False)."""
+    try:
+        return (directory / "__init__.py").is_file()
+    except OSError:
+        return False
 
-      * it carries its own manifest (``SKILL.md``/``skill.md``, matched case-insensitively directly
-        inside the child -- NOT recursively, mirroring how STRONG-1's own manifest check works); or
-      * (fallback for a leaf with no manifest, e.g. a bare helper-script folder) NONE of its own
-        code files import anything OUTSIDE itself -- vacuously true when the child has no code
-        files at all (the common case: a leaf skill folder of pure Markdown).
+
+def _child_has_skill_manifest(child_abs_dir: Path) -> bool:
+    """One immediate child of a STRONG-3 ``skills/`` candidate: does it carry its own skill manifest
+    (``SKILL.md``/``skill.md``, matched case-insensitively directly inside the child -- NOT
+    recursively, mirroring how STRONG-1's own manifest check works)?
+
+    This is the SOLE positive leaf signal (Opus-gate FIX). An earlier draft ALSO counted a child
+    with "no imports crossing out / no code files" as a leaf, but the stem-only import graph
+    (``_code_files_and_import_graph``) cannot resolve a ``from skills.auth import Auth`` symbol/
+    subpackage edge, so a real ``__init__.py`` subpackage had empty resolved-imports and satisfied
+    that test VACUOUSLY -- a false positive on a genuine product ``skills/`` package consumed via
+    the common ``from skills.<subpkg> import <Symbol>`` idiom. A folder-per-skill bundle always
+    carries a manifest; a Python subpackage never does, so requiring one is unambiguous.
     """
     try:
         for entry in child_abs_dir.iterdir():
@@ -214,35 +237,29 @@ def _child_is_self_contained_leaf(
                 return True
     except OSError:
         pass
-    depth = len(child_rel_parts)
-    child_files = {f for f, parts in code_rel_parts if parts[:depth] == child_rel_parts}
-    if not child_files:
-        return (
-            True  # no code at all (e.g. a pure-Markdown skill folder) -- trivially self-contained
-        )
-    return all(target in child_files for f in child_files for target in resolved_imports.get(f, []))
+    return False
 
 
 def _is_skill_leaf_tree(
     abs_dir: Path,
-    rel_dir: Path,
     tree_files: set[str],
     *,
-    code_rel_parts: list[tuple[str, tuple[str, ...]]],
-    resolved_imports: dict[str, list[str]],
     reverse_importers: dict[str, set[str]],
 ) -> bool:
-    """STRONG-3 SHAPE heuristic for an AMBIGUOUS ``skills``-named directory (see the module comment
+    """STRONG-3 SHAPE gauntlet for an AMBIGUOUS ``skills``-named directory (see the module comment
     above ``_DEWEIGHT_FACTOR``): unlike an unambiguous ``_STRONG0_VENDOR_DIR_NAMES`` entry, a repo's
     own feature could plausibly be named ``skills/``, so bare-name-alone promotion is unsafe. Fires
-    only when BOTH:
+    only when ALL of:
 
-      * the false-positive guard: NOTHING outside the tree imports INTO it (the same
-        ``externally_isolated`` evidence STRONG-2 import-island detection uses below) -- a genuine
-        product ``skills/`` package imported elsewhere in the repo fails this and is NEVER
-        de-weighted, no matter how leaf-shaped its children look; AND
-      * most immediate children look like independent, self-contained leaf skills --
-        ``_child_is_self_contained_leaf``.
+      (c) the best-effort external-import guard: nothing OUTSIDE the tree resolves an import INTO it
+          (the same ``externally_isolated`` evidence STRONG-2 import-island detection uses). Kept as
+          a strictly-safer EXTRA signal, but NOT relied on alone -- the stem-only import graph misses
+          a ``from skills.<subpkg> import <Symbol>`` edge, which is why (a)+(b) below carry the load.
+      (b) NO ``__init__.py`` in the tree root OR any immediate child -- a real Python (sub)package
+          marker a folder-per-skill bundle never has (Opus-gate FIX, belt-and-suspenders with (a)).
+      (a) POSITIVE skill-manifest evidence: at least ``_SKILL_LEAF_FRACTION_THRESHOLD`` of the
+          immediate child directories each carry their own ``SKILL.md``/``skill.md``
+          (``_child_has_skill_manifest``) -- the load-bearing guard (Opus-gate FIX).
 
     A ``skills/`` directory with NO subdirectories at all (flat ``.py``/``.ts`` files directly
     inside -- the shape of a real Python/TS package, not a folder-per-skill bundle) has no children
@@ -251,22 +268,17 @@ def _is_skill_leaf_tree(
     externally_isolated = all(reverse_importers.get(f, set()) <= tree_files for f in tree_files)
     if not externally_isolated:
         return False  # imported from outside the tree -- looks like real, shared product code
+    if _dir_contains_init_py(abs_dir):
+        return False  # `skills/__init__.py` -- this is a real Python package, not a skill bundle
     try:
         child_dirs = [entry for entry in abs_dir.iterdir() if entry.is_dir()]
     except OSError:
         return False
     if not child_dirs:
         return False
-    leaf_count = sum(
-        1
-        for child in child_dirs
-        if _child_is_self_contained_leaf(
-            child,
-            (*rel_dir.parts, child.name),
-            code_rel_parts=code_rel_parts,
-            resolved_imports=resolved_imports,
-        )
-    )
+    if any(_dir_contains_init_py(child) for child in child_dirs):
+        return False  # a child is a real Python subpackage -- not a folder-per-skill bundle
+    leaf_count = sum(1 for child in child_dirs if _child_has_skill_manifest(child))
     return (leaf_count / len(child_dirs)) >= _SKILL_LEAF_FRACTION_THRESHOLD
 
 
@@ -353,10 +365,11 @@ def _detect_vendored_subtrees(rm: dict[str, Any]) -> dict[str, dict[str, Any]]:
     if not (manifest_dirs or tool_config_dirs or strong0_vendor_dirs or skill_candidate_dirs):
         return {}
 
-    # The import graph is needed both for STRONG-3's shape validation below and for the main
-    # STRONG-2/WEAK evaluation loop further down -- compute it exactly ONCE and reuse (this reads
-    # only `rm`'s already-in-hand "files"/"imports" lists, no new filesystem I/O).
-    _code_files, resolved_imports, reverse_importers = _code_files_and_import_graph(rm)
+    # The reverse-import graph is needed both for STRONG-3's external-import guard below and for the
+    # main STRONG-2/WEAK evaluation loop further down -- compute it exactly ONCE and reuse (this reads
+    # only `rm`'s already-in-hand "files"/"imports" lists, no new filesystem I/O). `resolved_imports`
+    # (the forward edges) is not needed here since the STRONG-3 leaf test became manifest-based.
+    _code_files, _resolved_imports, reverse_importers = _code_files_and_import_graph(rm)
     code_file_set = set(_code_files)
 
     # Precompute each code file's path-parts relative to root ONCE, on the SAME lexical basis the
@@ -382,10 +395,7 @@ def _detect_vendored_subtrees(rm: dict[str, Any]) -> dict[str, dict[str, Any]]:
         }
         if _is_skill_leaf_tree(
             root / rel_dir,
-            rel_dir,
             tree_files_for_skill_check,
-            code_rel_parts=code_rel_parts,
-            resolved_imports=resolved_imports,
             reverse_importers=reverse_importers,
         ):
             skill_leaf_dirs.add(rel_dir)
