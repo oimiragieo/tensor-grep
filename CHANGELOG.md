@@ -1,6 +1,92 @@
 # CHANGELOG
 
 
+## v1.75.1 (2026-07-14)
+
+### Bug Fixes
+
+- **gpu**: Wsl probe path-domain bridging + cuda-check CI anti-rot gate
+  ([#594](https://github.com/oimiragieo/tensor-grep/pull/594),
+  [`7f8de84`](https://github.com/oimiragieo/tensor-grep/commit/7f8de840fe1bf102abb22e64b3da0f34aa0a46d6))
+
+* fix(gpu): bridge WSL path-domain mismatch in the doctor/agent GPU probes (#171 GPU-P0-1)
+
+On WSL, resolve_native_tg_binary() can return a Windows-target binary (an explicit
+  TG_NATIVE_TG_BINARY override or an in-tree build reachable over /mnt/<drive>/...). Both the doctor
+  probe (_doctor_gpu_search_runtime_probe, main.py) and the agent probe (_agent_gpu_evidence,
+  agent_capsule.py) write a GPU-route sentinel under a Linux TemporaryDirectory and pass that
+  /tmp/... path as argv to the resolved binary. A Windows PE cannot resolve a Linux path -- a
+  different filesystem namespace -- so the probe fails with a structured path_not_found and reads as
+  "no GPU support" when the real cause is a path-domain mismatch, not a capability gap.
+
+Add three shared helpers in runtime_paths.py (one implementation, reused by both probes): -
+  is_cross_domain_native_binary(): true only when the host is genuinely WSL
+  (WSL_DISTRO_NAME/WSL_INTEROP or /run/WSL) AND the resolved binary is Windows-shaped (.exe suffix
+  or /mnt/<drive>/ mount). Gating on a real WSL signal (not just sys.platform == "linux") prevents
+  false positives on bare Linux CI runners whose test fixtures happen to use a `tg.exe` name. -
+  translate_path_for_windows_binary(): translates the sentinel path via `wslpath -w`, failing closed
+  to None (never raises) when wslpath is absent, times out, or exits non-zero. -
+  gpu_probe_timeout_s(): resolves the probe timeout, honoring TENSOR_GREP_GPU_PROBE_TIMEOUT_S and
+  raising the floor on cross-domain (a WSL -> Windows exec can legitimately exceed the same-domain
+  default).
+
+Both probes now: detect cross-domain, translate the sentinel path before it becomes argv, report a
+  distinct `path_domain_mismatch` status when translation is unavailable (instead of a generic
+  "failed" or silently passing an unresolvable path), and use the shared timeout helper. The probe
+  itself is unchanged when not cross-domain (the common case).
+
+Tests: tests/unit/test_runtime_paths.py (new helper unit tests, fully monkeypatched + one skipif
+  real-wslpath smoke test), tests/unit/ test_cli_modes.py (doctor probe wiring), tests/unit/
+  test_agent_capsule_gpu_probe.py (new file, agent probe wiring).
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* ci: add cargo check --features cuda anti-bit-rot gate (#171)
+
+The `cuda` cargo feature (rust_core/Cargo.toml [features]) today only compiles inside
+  build-release-native-assets's nvidia legs, which are themselves `if:`-skipped unless
+  RELEASE_NATIVE_ASSET_PROFILE == 'native-frontdoor-gpu' (not the default) -- so it can rot
+  invisibly with zero PR-time signal.
+
+Add cuda-feature-check: a fast `cargo check --features cuda` (ubuntu-latest + windows-latest, no
+  CUDA toolkit required) that runs on every PR, modeled on the existing
+  test-rust-core/native-build-smoke jobs' Rust+PyO3 setup. Wired into the release job's `needs` so a
+  broken cuda feature actually blocks release instead of being visible-but-ignored. Publishes
+  nothing.
+
+Locally verified: `cargo check --features cuda` compiles clean in ~37s with no CUDA toolkit
+  installed.
+
+* fix(gpu): drop /mnt false-positive in windows-target detection (Opus MF-1)
+
+The adversarial gate caught a regression the original PR introduced: native_binary_targets_windows()
+  returned True for EITHER a `.exe` suffix OR a `/mnt/<drive>/` path. The `/mnt` disjunct is wrong
+  -- on a WSL host with the repo checked out on a Windows drive and built in-place via the LINUX
+  `maturin develop` / `cargo build`, the default resolver returns a genuine Linux ELF at
+  `/mnt/c/.../rust_core/target/release/tg` (it looks for `tg`, not `tg.exe`, on Linux). The `/mnt`
+  branch flagged that ELF as cross-domain -> its `/tmp` sentinel got translated to a Windows UNC
+  path and handed to a Linux binary that cannot open it -> a probe that worked pre-PR now spuriously
+  fails.
+
+The `/mnt` disjunct also adds ZERO true-positives: a Windows in-tree build emits `tg.exe` (caught by
+  the `.exe` check) and the only genuine Windows binary reachable on WSL comes via an explicit
+  TG_NATIVE_TG_BINARY=....exe (also `.exe`). A Windows PE is not exec'able via the Win32 loader or
+  the WSL binfmt interop handler without the `.exe` suffix, so `.exe` is both necessary and
+  sufficient.
+
+Fix: native_binary_targets_windows() now keys on the `.exe` suffix ALONE; removed the now-unused
+  _WINDOWS_DRVFS_MOUNT_RE regex and updated the module comment/docstrings. Tests: inverted
+  TestNativeBinaryTargetsWindows::test_mnt_drive_mount_without_exe_is_not_windows_target (a plain
+  `/mnt/c/.../tg` is NOT a Windows target) and added
+  TestIsCrossDomainNativeBinary::test_false_on_wsl_host_with_linux_elf_on_windows_drive_mount (the
+  exact caught regression: a `/mnt/c/.../tg` Linux ELF with WSL signals present is NOT cross-domain,
+  so its `/tmp` sentinel is not translated).
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.75.0 (2026-07-14)
 
 ### Chores
