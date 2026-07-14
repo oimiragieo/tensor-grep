@@ -462,6 +462,46 @@ jobs:
         working-directory: rust_core
         run: cargo test --verbose --no-default-features
 
+  # #171 anti-bit-rot gate: today the `cuda` cargo feature (rust_core/Cargo.toml `[features]`)
+  # only compiles inside `build-release-native-assets`'s nvidia legs, which are themselves
+  # `if:`-skipped unless RELEASE_NATIVE_ASSET_PROFILE == 'native-frontdoor-gpu' (not the default)
+  # -- so it can rot silently with zero PR-time signal. This is a fast `cargo check` (not a full
+  # build/test, no CUDA toolkit required) that runs on every PR so a break is caught immediately.
+  cuda-feature-check:
+    name: cuda-feature-check (${{ matrix.os }})
+    needs: smoke
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python for PyO3 Linker
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Create venv for PyO3
+        shell: bash
+        run: |
+          python -m venv .venv
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "$GITHUB_WORKSPACE\.venv\Scripts" >> "$GITHUB_PATH"
+          else
+            echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: cargo check --features cuda
+        working-directory: rust_core
+        run: cargo check --features cuda
+
   search-golden-parity:
     name: search-golden-parity (windows-latest)
     needs: smoke
@@ -883,7 +923,7 @@ jobs:
 
   release:
     name: Semantic Release
-    needs: [smoke, release-readiness, agent-readiness, windows-agent-readiness, package-manager-readiness, static-analysis, test-python, test-rust-core, search-golden-parity, native-build-smoke, test-gpu-linux, benchmark-regression]
+    needs: [smoke, release-readiness, agent-readiness, windows-agent-readiness, package-manager-readiness, static-analysis, test-python, test-rust-core, cuda-feature-check, search-golden-parity, native-build-smoke, test-gpu-linux, benchmark-regression]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push' && !contains(github.event.head_commit.message, 'skip release')
     runs-on: ubuntu-latest
     outputs:
