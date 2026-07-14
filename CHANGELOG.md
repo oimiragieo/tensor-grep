@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## v1.74.3 (2026-07-14)
+
+### Bug Fixes
+
+- **cli**: Clean error + exit 2 for explicit --gpu-device-ids without a GPU backend
+  ([#166](https://github.com/oimiragieo/tensor-grep/pull/166),
+  [`019080a`](https://github.com/oimiragieo/tensor-grep/commit/019080a2c48e946596f0a4201eee003c7ccfd803))
+
+`tg --gpu-device-ids N` on a machine with no GPU backend dumped a raw uncaught ConfigurationError
+  Python traceback (exit 1). Now caught in search_command and routed through the existing
+  `_exit_search_error` helper: clean ASCII "Error: ..." message + exit 2 (--json emits a structured
+  {ok:false,error:configuration_error} envelope + exit 2). Dogfood-verified end-to-end on the real
+  built binary. The real user-facing GPU fix after F3 was found to be CLI-dead-code (#166).
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.74.2 (2026-07-14)
 
 ### Bug Fixes
