@@ -1531,3 +1531,88 @@ def test_build_agent_capsule_confidence_and_ask_unchanged_by_edit_plan_parity_re
             "context consistency requires confirmation",
         ],
     }
+
+
+def _write_tie_project(project: Path) -> None:
+    """An AMBIGUOUS repo: two sibling source files each define a symbol strongly matching the
+    query, so one is ranked primary (flat 0.9 seed confidence) and the other surfaces as a
+    high-confidence (1.0) alternative that TIES it -- with no test file, so no targeted validation
+    evidence exists to resolve the tie. This is the exact ambiguity `tg agent` flags with
+    `ask_user_before_editing.required = true`; `tg edit-plan` must match (Opus-gate MUST-FIX)."""
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    (project / "pyproject.toml").write_text(
+        '[project]\nname = "sample"\nversion = "0.1.0"\n', encoding="utf-8"
+    )
+    (src_dir / "alpha_processor.py").write_text(
+        "def process_payment_record(payload):\n    return payload\n", encoding="utf-8"
+    )
+    (src_dir / "beta_processor.py").write_text(
+        "def process_payment_record_backup(payload):\n    return payload\n", encoding="utf-8"
+    )
+
+
+def test_build_context_edit_plan_flags_tie_ambiguity_matching_agent(tmp_path: Path) -> None:
+    """Opus-gate safety MUST-FIX (on c63f509): `ask_user_before_editing.required` IS the hard
+    auto-edit safety gate, so on an AMBIGUOUS (alternative-target-tie) plan it must match `tg
+    agent` in the unsafe direction. Pre-fix, `tg edit-plan` omitted tie detection and returned
+    `required = false` on the exact plan where `tg agent` returns `true` -- an agent trusting
+    edit-plan would auto-edit a possibly-wrong ambiguous target without confirming.
+
+    Tie detection needs only the payload's `candidate_edit_targets`/`file_matches` alternatives +
+    `query` (NO snippets/call-site evidence), so edit-plan must compute it -- see
+    `agent_capsule._capsule_confidence_and_ask_without_render`."""
+    project = tmp_path / "project"
+    _write_tie_project(project)
+    query = "process payment record"
+
+    edit_plan_payload = repo_map.build_context_edit_plan(query, project)
+    agent_payload = agent_capsule.build_agent_capsule(query, project)
+
+    # Agent's own contract: this fixture is a genuine confirmation tie.
+    assert agent_payload["ambiguity"]["status"] == "tie_requires_confirmation"
+    assert agent_payload["ask_user_before_editing"]["required"] is True
+
+    # Parity in the UNSAFE direction: edit-plan must also gate the auto-edit.
+    assert edit_plan_payload["ask_user_before_editing"]["required"] is True
+    assert (
+        edit_plan_payload["ask_user_before_editing"]["required"]
+        == agent_payload["ask_user_before_editing"]["required"]
+    )
+    # The tie ask-reason is the safety signal an agent branches on.
+    assert (
+        "alternative target confidence ties primary target"
+        in edit_plan_payload["ask_user_before_editing"]["reasons"]
+    )
+    # Confidence caps identically to agent on a tie (0.74, agent_capsule.py's tie branch).
+    assert (
+        edit_plan_payload["confidence"]["overall"] == agent_payload["confidence"]["overall"] == 0.74
+    )
+    assert (
+        "alternative target confidence tie" in edit_plan_payload["confidence"]["downgrade_reasons"]
+    )
+
+
+def test_build_agent_capsule_tie_confidence_and_ask_unchanged_by_edit_plan_parity_refactor(
+    tmp_path: Path,
+) -> None:
+    """Golden byte-unchanged pin for the AMBIGUOUS case (Opus-gate MUST-FIX): reproducing agent's
+    tie/marker ladder inside edit-plan's `_capsule_confidence_and_ask_without_render` must NOT
+    perturb `tg agent`'s own output (agent never calls that helper). Values captured from
+    `build_agent_capsule` on this exact tie fixture."""
+    project = tmp_path / "project"
+    _write_tie_project(project)
+
+    payload = agent_capsule.build_agent_capsule("process payment record", project)
+    assert payload["confidence"] == {
+        "overall": 0.74,
+        "downgrade_reasons": ["alternative target confidence tie"],
+    }
+    assert payload["ask_user_before_editing"] == {
+        "required": True,
+        "reasons": [
+            "alternative target confidence ties primary target",
+            "confidence below 0.75",
+            "context consistency requires confirmation",
+        ],
+    }

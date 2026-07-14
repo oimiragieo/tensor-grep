@@ -12732,41 +12732,17 @@ def _edit_plan_confidence_and_ask(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Parity fix (CEO v1.72.1 dogfood): `tg edit-plan --json` had no top-level `confidence`/
     `ask_user_before_editing` even though `tg agent --json` already surfaces both (the same class
-    of gap `_top_level_validation_plan` above closed for `validation_plan`). Computed via
-    `agent_capsule`'s trust-check + `_confidence` ladder -- a DEFERRED import, since
-    `agent_capsule` imports this module at load time (`from tensor_grep.cli import repo_map`) and
-    a module-level import here would cycle; same precedent as this module's existing local
-    `orient_capsule` imports a few hundred lines up. See
-    `agent_capsule._capsule_confidence_and_ask_without_render`'s docstring for exactly which
-    render/call-site-evidence-only enrichments (snippets, call-site evidence, tie-break, LSP
-    boost) are intentionally absent -- edit-plan renders no source text, so faking them would be
-    dishonest, not "the same way agent does it"."""
+    of gap `_top_level_validation_plan` above closed for `validation_plan`). Delegates to
+    `agent_capsule._capsule_confidence_and_ask_without_render`, which reproduces agent's confidence
+    + ambiguity ladder (INCLUDING the tie/marker-helper ask-gate -- Opus-gate safety MUST-FIX on
+    c63f509) against this exact edit-plan payload, using agent's own helpers. A DEFERRED import,
+    since `agent_capsule` imports this module at load time (`from tensor_grep.cli import repo_map`)
+    and a module-level import here would cycle; same precedent as this module's existing local
+    `orient_capsule` imports a few hundred lines up. See that helper's docstring for exactly which
+    genuinely snippet-/call-site-/LSP-evidence-gated enrichments stay agent-only (and why)."""
     from tensor_grep.cli import agent_capsule
 
-    primary_target = payload.get("primary_target")
-    target = dict(primary_target) if isinstance(primary_target, dict) else {}
-    edit_plan_seed = payload.get("edit_plan_seed")
-    edit_plan_seed_dict = edit_plan_seed if isinstance(edit_plan_seed, dict) else {}
-    raw_validation_alignment = edit_plan_seed_dict.get("validation_alignment")
-    validation_alignment = (
-        dict(raw_validation_alignment) if isinstance(raw_validation_alignment, dict) else {}
-    )
-    validation_commands = [
-        str(command) for command in payload.get("validation_commands", []) if command
-    ]
-    suggested_validation_commands = [
-        dict(entry)
-        for entry in payload.get("suggested_validation_commands", [])
-        if isinstance(entry, dict)
-    ]
-    return agent_capsule._capsule_confidence_and_ask_without_render(
-        payload,
-        query=query,
-        target=target,
-        validation_commands=validation_commands,
-        suggested_validation_commands=suggested_validation_commands,
-        validation_alignment=validation_alignment,
-    )
+    return agent_capsule._capsule_confidence_and_ask_without_render(payload, query=query)
 
 
 def _compact_context_render_payload(

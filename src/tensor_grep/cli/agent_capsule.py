@@ -1788,43 +1788,69 @@ def _capsule_confidence_and_ask_without_render(
     payload: dict[str, Any],
     *,
     query: str,
-    target: dict[str, Any],
-    validation_commands: list[str],
-    suggested_validation_commands: list[dict[str, Any]],
-    validation_alignment: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Parity fix (CEO v1.72.1 dogfood): the non-render counterpart to the top-level
     `confidence`/`ask_user_before_editing` derivation `build_agent_capsule_from_map` computes,
-    for a caller (`tg edit-plan`, via `repo_map.build_context_edit_plan_from_map`) that has no
-    rendered snippets, call-site evidence, alternative-target ties, or LSP tie-break proof --
-    edit-plan's contract never renders source text (docs/harness_api.md's Edit Plan JSON
-    `max_tokens` note), so those render/call-site-evidence-only enrichments (the graph-
-    corroborated + token-budget confidence uplifts, the LSP confidence boost, tie-break
-    resolution, the unrequested-marker-helper ask-reason) cannot honestly apply here and are
-    deliberately omitted rather than faked.
+    for a caller (`tg edit-plan`, via `repo_map.build_context_edit_plan_from_map`) that never
+    renders source text (docs/harness_api.md's Edit Plan JSON `max_tokens` note).
 
-    Reuses `_capsule_trust_checks` and `_confidence` UNMODIFIED (aside from `_confidence`'s
-    additive `None`-sentinel widening) so both surfaces share one source of truth for the
-    thresholds/text that DO generalize:
-      * `_capsule_trust_checks`'s query-language and validation-alignment checks read only
-        `query`/`target`/`validation_commands`/`validation_alignment` -- already edit-plan-safe.
-        Its cross-language-*snippet* check degrades to a safe no-op on `snippets=[]` (no snippet
-        evidence to contradict the primary target, not a fabricated pass).
-      * `_confidence` is called with `snippets=None` (the "no snippet contract" sentinel -- see
-        its docstring) and a MINIMAL, honest `consistency` dict: `primary_file_included` mirrors
-        exactly what `repo_map`'s own `included` boolean measures for agent (whether a primary
-        file was resolved at all); `rendered_context_includes_primary` is deliberately left unset
-        (defaults to `True`) since edit-plan has no rendered context to mismatch against.
-      * The validation-evidence and low-confidence ask-reasons reuse
-        `_capsule_validation_evidence_ask_reason` / `_capsule_low_confidence_ask_reason` --
-        the exact functions `build_agent_capsule_from_map` calls for the same two checks.
-      * Scan truncation reuses `_capsule_scan_incomplete` (already a payload-shape-agnostic twin
-        of `main._scan_incomplete`) and the same downgrade/ask reason text constants agent uses.
+    It reproduces agent's ambiguity ladder AS FAITHFULLY as the non-render payload allows, reusing
+    agent's OWN helpers against the same payload agent reads -- `_primary_target`,
+    `_alternative_targets`, `_prefer_implementation_over_marker_helper`, `_capsule_trust_checks`,
+    `_capsule_validation_alignment`, `_tied_alternative_targets`,
+    `_primary_target_is_unrequested_marker_helper`, `_confidence`, and the shared ask-reason
+    helpers -- so the >=0.75 no-ask threshold, the query-language / validation-alignment
+    downgrades, the scan-truncation gate, AND (Opus-gate MUST-FIX) the alternative-target-TIE
+    downgrade + unrequested-marker-helper ask-reason all fire IDENTICALLY to `tg agent`.
+
+    The tie + marker-helper ambiguity signals need only the payload's `candidate_edit_targets`
+    /`file_matches` alternatives and the `query` (see `_alternative_targets`) -- NO snippets, NO
+    call-site evidence -- so they MUST be computed here: omitting them let edit-plan report
+    `ask_user_before_editing.required = false` on an ambiguous plan where `tg agent` returns
+    `true`, a safety under-report in the unsafe (auto-edit) direction (Opus gate on c63f509).
+
+    Only the genuinely snippet-/call-site-/LSP-evidence-gated enrichments stay agent-only, because
+    edit-plan structurally lacks the evidence they corroborate against (faking them would be
+    dishonest, not "the same way agent does it"):
+      * the graph-corroborated + token-budget confidence UPLIFTS (need rendered snippets +
+        verified call-site evidence);
+      * the LSP confidence BOOST and LSP-based tie RESOLUTION (need provider-backed LSP proof);
+      * the snippet-only ask-reasons (`no snippets included`, `primary file omitted from capsule
+        snippets`) and the rendered-context-consistency ask-reason -- every ambiguity cause
+        edit-plan CAN have already contributes its own direct ask-reason above (trust / tie /
+        marker / scan / no-validation / low-confidence), so excluding these never under-reports.
+    Validation-based tie RESOLUTION is KEPT (edit-plan carries `validation_plan`/commands/
+    alignment), so a tie agent legitimately resolves via targeted validation evidence is resolved
+    here too rather than spuriously over-flagged.
+
+    `_confidence` is called with `snippets=None` (the "no snippet contract" sentinel -- see its
+    docstring) so the snippet-absence 0.55 degrade does not fire for a contract that has no
+    snippets by design. Agent's output is byte-unchanged: it never calls this helper.
     """
-    primary_file = str(target.get("file") or "")
-    consistency = {"primary_file_included": bool(primary_file)}
-    trust = _capsule_trust_checks(query, target, [], validation_commands, validation_alignment)
     scan_truncated = _capsule_scan_incomplete(payload)
+    # Build target + alternatives EXACTLY as `build_agent_capsule_from_map` does (agent_capsule.py:
+    # `target = _primary_target(...)` -> `_alternative_targets(...)[:4]` ->
+    # `_prefer_implementation_over_marker_helper`), so tie/marker detection sees the same inputs.
+    target = _primary_target(payload)
+    alternatives = _alternative_targets(payload, target, limit=None)[:4]
+    target, alternatives = _prefer_implementation_over_marker_helper(query, target, alternatives)
+
+    edit_plan_seed = _as_dict(payload.get("edit_plan_seed"))
+    validation_plan = _as_list_of_dicts(edit_plan_seed.get("validation_plan"))
+    validation_commands = _as_list_of_strings(payload.get("validation_commands"))
+    validation_plan, validation_commands, validation_alignment = _capsule_validation_alignment(
+        target,
+        validation_plan,
+        validation_commands,
+        payload,
+    )
+    suggested_validation_commands = _as_list_of_dicts(
+        payload.get("suggested_validation_commands")
+        or edit_plan_seed.get("suggested_validation_commands"),
+    )
+
+    consistency: dict[str, Any] = {"primary_file_included": bool(str(target.get("file") or ""))}
+    trust = _capsule_trust_checks(query, target, [], validation_commands, validation_alignment)
     downgrade_reasons: list[str] = list(trust["downgrade_reasons"])
     if scan_truncated:
         downgrade_reasons.append(_CAPSULE_SCAN_TRUNCATED_DOWNGRADE_REASON)
@@ -1832,8 +1858,47 @@ def _capsule_confidence_and_ask_without_render(
     confidence_cap = float(trust["confidence_cap"])
     if confidence_cap < 1.0:
         confidence["overall"] = round(min(float(confidence["overall"]), confidence_cap), 3)
+        _cap_primary_target_confidence(target, confidence_cap)
+    _cap_alternative_target_confidences(alternatives, target)
 
+    # Ambiguity: alternative-target TIE detection + validation-based resolution, matching agent's
+    # ladder (agent_capsule.py). LSP-based resolution is intentionally excluded (needs LSP proof).
+    tied_alternatives = _tied_alternative_targets(query, alternatives, target)
+    marker_helper_tie = bool(tied_alternatives) and _primary_target_is_unrequested_marker_helper(
+        query,
+        target,
+    )
+    validation_alignment_status = str(validation_alignment.get("status") or "")
+    validation_kept_count = int(validation_alignment.get("kept_count", 0) or 0)
+    targeted_validation_evidence = _targeted_validation_evidence(validation_plan)
+    tie_resolved_by_validation = (
+        bool(tied_alternatives)
+        and not marker_helper_tie
+        and bool(validation_commands)
+        and bool(targeted_validation_evidence)
+        and (
+            validation_alignment_status == "aligned"
+            or (validation_alignment_status == "mismatch-filtered" and validation_kept_count > 0)
+        )
+    )
+    if tied_alternatives and tie_resolved_by_validation:
+        tied_alternatives = []
+    if tied_alternatives:
+        confidence["overall"] = round(min(float(confidence["overall"]), 0.74), 3)
+        confidence["downgrade_reasons"] = _dedupe([
+            *list(confidence.get("downgrade_reasons") or []),
+            "alternative target confidence tie",
+        ])
+
+    # Ask-reasons in agent's order: trust, marker-helper, tie, scan, validation-evidence,
+    # low-confidence (the snippet-only + rendered-context-consistency reasons are agent-only).
     ask_reasons: list[str] = list(trust["ask_reasons"])
+    if _primary_target_is_unrequested_marker_helper(query, target):
+        ask_reasons.append(
+            "primary target is an unrequested marker-helper; confirm the intended edit target"
+        )
+    if tied_alternatives:
+        ask_reasons.append("alternative target confidence ties primary target")
     if scan_truncated:
         ask_reasons.append(_CAPSULE_SCAN_TRUNCATED_ASK_REASON)
     validation_evidence_ask_reason = _capsule_validation_evidence_ask_reason(
