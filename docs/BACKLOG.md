@@ -3,7 +3,12 @@
 > **Canonical prioritized work list.** Kept in sync with the CLI task store (`TaskUpdate`) and
 > GitHub (`gh pr list` is the source of truth for PRs). **CEO status** = summarize SHIPPING + P0/P1.
 > Update whenever a PR opens/merges or the queue changes. Task-store IDs (`#NNN`) cross-referenced.
-> Last refreshed 2026-07-13 (v1.70.0 = CEO 2 HIGH `sys.path.insert` fix #152, dogfood-verified live; #569 de-flake merged; #570 gitignore #127 draining -> v1.70.1. Prior: v1.69.0-.3 CEO WSL-dogfood drain + #151; campaign #142).
+> Last refreshed 2026-07-13 (task #162 — this refresh). Live PyPI is v1.72.1; the v1.70.0->v1.72.1
+> wave (#152/#127/#90b/#153/#154/#158/#159/#580/#581) drained one-per-publish with ZERO broken
+> releases, and #582 (test-only, no release) closed PR #581's Opus-gate coverage gaps. **PR queue is
+> now EMPTY (0 open).** ~15 items previously listed as IN-FLIGHT/ready below had already shipped
+> across the v1.59-v1.72.1 window and are reconciled out this pass (receipts under CURRENT LIVE
+> BACKLOG). Prior: v1.69.0-.3 CEO WSL-dogfood drain + #151; campaign #142.
 
 **Process:** deep-dive/audit (cite `file:line`) → verify-against-code → Sonnet TDD build in
 `isolation:'worktree'` → real-venv verify (`uv run --active --no-sync`; copy `rust_core.pyd`, set
@@ -25,7 +30,8 @@ wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while 
 
 ## ⭐ CURRENT STATE (2026-07-13) — authoritative; every section BELOW is HISTORICAL until the next full refresh
 
-- **Live PyPI: v1.71.2 (2026-07-13) — the v1.69.3-dogfood MED batch + audit sweep drained one-per-publish, ZERO broken releases, all dogfood-verified on published wheels:** v1.70.0 **#152** sys.path.insert imports (2 HIGH) · v1.70.1 **#127** non-git `.gitignore` · v1.70.2 **#90b** `tg doctor` ast-grep exit-0 honesty · v1.71.0 **#153** `tg codemap` default deadline (agent-loop-safe) · v1.71.1 **#154** unscoped/multi-root search fast-refuse (<1s vs 60s timeout — enterprise gap #1) · v1.71.2 **#158** `tg scan` marked-root workspace refuse (the #154 sibling; verified on the wheel — fast-refuses a marked workspace parent). **DRAINING: v1.71.3 = #159** `tg lsp` fail-closed with a clean "install tensor-grep[ast]" message on the missing `ast` extra (was a raw `ModuleNotFoundError` traceback; run `29281694988`). **#578 (docs, holds post-drain, no release):** 4-skill accuracy refresh correcting TWO false WSL-`/mnt/c` "regression" claims (whole-repo `tg agent` + `tg codemap` — native repro: agent ~26s, codemap 41s whole-repo `partial=false` complete). **CodeQL alert #13 (py/redos test fixture) resolved** (dismissed — false positive on a deliberate ReDoS fixture). **Moat FULLY dogfood-verified on real code** (orient / agent / `search --rank` / `--semantic` graceful-degrade / codemap + #158 scan) — all healthy.
+- **Live PyPI: v1.72.1 (2026-07-13) — the edit-plan/agent-parity + `--deadline` coverage wave, drained one-per-publish, ZERO broken releases, dogfood-verified where noted:** v1.71.3 **#159** `tg lsp` fail-closed with a clean "pip install tensor-grep[ast]" message on the missing `ast` extra (was a raw `ModuleNotFoundError` traceback; run `29281694988`) · v1.72.0 **#580** `tg edit-plan` structured top-level `validation_plan` (parity with `tg agent`; the CEO v1.71.1 dogfood ask #1) · v1.72.1 **#581** accept `--deadline`/`--no-deadline` on agent/edit-plan/context/context-render/map/orient + `--deadline` on defs (the CEO v1.71.3 dogfood HIGH — the exit-2 "No such option" cliff that burned agent loops; dogfood-verified on the wheel: all 7 accept it, enforced, correct exit codes, orient stays exit-0 per its NO-exit-2 contract). **#582 merged (test-only, `test(cli):`, no release)** — closes PR #581's Opus-gate coverage gaps (daemon-skip regression test w/ passing mutation-check + real-truncation exit-2 + agent-2nd-scan + `CONTRACTS.md` `tg context` nit); full CI matrix green (`6cb53a4`). **PR queue now EMPTY (0 open).** Docs-only, no release, both merged: #578 (4-skill WSL-artifact corrections) + #579 (prior backlog refresh).
+- **Prior wave (v1.70.0-v1.71.2, 2026-07-13) — the v1.69.3-dogfood MED batch + audit sweep, drained one-per-publish, ZERO broken releases, all dogfood-verified on published wheels:** v1.70.0 **#152** sys.path.insert imports (2 HIGH) · v1.70.1 **#127** non-git `.gitignore` · v1.70.2 **#90b** `tg doctor` ast-grep exit-0 honesty · v1.71.0 **#153** `tg codemap` default deadline (agent-loop-safe) · v1.71.1 **#154** unscoped/multi-root search fast-refuse (<1s vs 60s timeout — enterprise gap #1) · v1.71.2 **#158** `tg scan` marked-root workspace refuse (the #154 sibling; verified on the wheel — fast-refuses a marked workspace parent). **#578** (docs, no release): 4-skill accuracy refresh correcting TWO false WSL-`/mnt/c` "regression" claims (whole-repo `tg agent` + `tg codemap` — native repro: agent ~26s, codemap 41s whole-repo `partial=false` complete). **CodeQL alert #13 (py/redos test fixture) resolved** (dismissed — false positive on a deliberate ReDoS fixture). **Moat FULLY dogfood-verified on real code** (orient / agent / `search --rank` / `--semantic` graceful-degrade / codemap + #158 scan) — all healthy.
 - **Prior wave (v1.70.0) -- the CEO's 2 HIGH `sys.path.insert` fix (#152/#568, `feat` = minor bump), dogfood-verified on the published wheel.** CEO v1.69.3 dogfood found `tg imports`/`importers` did NOT resolve `sys.path.insert(0, .../lib)` path-hacked modules (`from ultrathink_routing import` -> `resolved=None`/`external=True`). Fix parses statically-resolvable `sys.path.insert/append` dirs as import search roots for BOTH the forward (`_python_imports_with_lines`) and reverse (`_python_imports_and_symbols`) resolvers in `repo_map.py`; dynamic/out-of-root exprs stay external (honest). **Verified live on the v1.70.0 wheel** (clean venv): forward resolves `.../lib/ultrathink_routing.py` (`external=False`); reverse `tg importers` -> `importer_count=1, importers=['main.py']`. The release recovered from a razor-thin timing flake in an UNRELATED perf test (`test_incremental_refresh`, missed the `<0.5x` bar by 0.0013s -- NOT a #152 regression): the rerun passed + `release-tag-smoke`=success on the wheel; **#569** (`6eaf384`, `test:`, no release) permanently de-flakes it (per-file sleep raised so the signal dominates the shared graph overhead). **DRAINING one-per-publish: #570** index `.gitignore` non-git-dir no-op fix (#127, `add_ignore` trio in `index.rs`, Opus-gate SHIP, 5 Rust tests) -> **v1.70.1**.
 - **Prior wave (v1.69.3): #151 shipped (2026-07-13):** running the published wheel on 3 real external repos (flask/fastapi/requests) surfaced one genuine correctness gap -- `tg importers FILE [ROOT]` (ROOT defaults to CWD) returned an empty `importer_count` with NO signal when FILE is OUTSIDE ROOT (indistinguishable from "genuinely unimported"; silent-wrong for an agent shelling `tg importers /other/repo/file.py` from a different CWD). Fix (**#566** `00e4e99`, Sonnet-TDD -> **Opus gate SHIP** 7-axis adversarial, additive-only, MCP output-shape safe): a lexical containment check in `build_file_importers_from_map` stamps `file_outside_root` + an honest `scan_remediation`. **Dogfood-verified on the published v1.69.3 wheel:** outside-root -> `file_outside_root:true` + remediation; in-root -> `false` + correct `importer_count`. fastapi/requests batteries were clean (no new defects).
 - **v1.69.0-.2 (prior wave):** **CEO v1.68.1 WSL-dogfood drain COMPLETE** (2026-07-13) - 3 genuine fixes built (Sonnet-TDD in `isolation:'worktree'`, Opus-gated where MCP-reaching), drained one-per-publish, **zero broken releases**, all **dogfood-verified on the published v1.69.2 wheel** (`release-tag-smoke` = success on the wheel): (a) **#562** `tg codemap --ignore` + `--deadline` (`codemap.py:862`, reuses `_apply_ignore_globs`; no MCP/backend surface) -> **v1.69.0**, both flags accepted + JSON emitted; (b) **#563** F2 nested-import recall (`repo_map.py` two `tree.body` -> `ast.walk(tree)` at :5827/:1813; `tg imports`/`importers` had silently missed function/class-scoped imports incl. the repo's own `main.py -> repo_map.py`; Opus SHIP) -> **v1.69.1**, verified nested `json`+`collections` now resolve alongside top-level `os`; (c) **#564** F3 `suggested_scope`-on-tie (`agent_capsule.py` new `_suggested_scope_from_tied_targets` :197, trigger :2375; the ambiguous-tie path now emits a narrowing scope (deepest common parent of the tied candidates) when they share a subtree, honest-null when the tie spans the whole repo -- both confirmed by dogfood; touches `tg_agent_capsule` MCP; **Opus SHIP** + gate-recommended `os.path.normpath` `..`-confinement hardening + probe test, 11/11 real-venv) -> **v1.69.2**, verified code+normpath-hardening shipped. **WSL-artifacts DEBUNKED (not chased):** codemap "60-180s/no JSON" = WSL 9p (native 33s complete); daemon "not warm" = a naive 2-run test that never hit cache (real ~90-150x cold->warm); env-blocked **#89/#90** need a Linux/WSL box.
@@ -39,19 +45,21 @@ wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while 
   - **#22, #38, #44, #47, #48, #59, #62 — ALL CLOSED** (the 7 oldest ledger entries, PR3b-era through 2026-07-07): fixed, superseded, or re-homed on receipts (retention-cap #329/#427 · audit-manifest digest+verify system · lockfile #355/#376 · AST byte-budget cache #539 · render-flag guard · sidecar envelope #304 · version-soup structurally gated · daemon Tier-1 #492/#498 · recall+honesty wave #463/#504/#418 · exit-2 contract #419 · Go Stage-1 #420/#422/#431). **#38 (`tg diff-docs`) killed outright** — retirement line added to `PAPER.md` §3.10. **#63 converts to one small build item** (F19+F22+F26 lang-graph tail — see CURRENT LIVE BACKLOG). Full receipts: `cluster-4-stale-reconcile.md`.
 - **Net effect:** CURRENT LIVE BACKLOG below is a full rewrite — every surviving item is re-cited against today's tree; #89/#90/#109 (Linux-blocked) carry forward unaudited (outside campaign #142's scope).
 - **CEO-gated (the CEO's call):** benchmark publish #72 (the 7.5x-fewer-tokens-than-grep proof) · `tg ledger` #77 (local agent coordination) · GPU multi-week rebuild (conflicts with no-SaaS) · next-language expansion (Java/C#/C++/Ruby/PHP). See CEO-FACING below.
-- **Strategic (CEO steer 2026-07-11, still in force):** tool WORKS (moat = **7.5x fewer tokens than grep on definition-lookup**, benchmark-proven); finish the moat (latency — warm-daemon flip #543 is the next lever, gate-pending) + shift to gotcontext wiring vs draining the self-refilling tail; no-SaaS (gotcontext.ai is the SaaS shell, not tg).
+- **Strategic (standing CEO steer, still in force):** tool WORKS (moat = **7.5x fewer tokens than grep on definition-lookup**, benchmark-proven); finish the moat + shift to gotcontext wiring vs draining the self-refilling tail; no-SaaS (gotcontext.ai is the SaaS shell, not tg).
 
 ---
 
 ## SHIPPING — open PRs (drain one-per-publish) — task #117
 
-**1 open PR: #578** (docs — 4-skill accuracy refresh + WSL-artifact corrections; holds post-drain, no release since `docs:`) + **v1.71.3 releasing** (#159 `tg lsp` fail-closed on missing `ast` extra, run `29281694988`). The v1.70.0->v1.71.2 wave (#152/#127/#90b/#153/#154/#158) drained one-per-publish, ZERO broken releases; #578 merges once v1.71.3's chore-release + PyPI settle (push-race). Prior: **#570** index `.gitignore` (#127) -> v1.70.1; **#569** de-flake merged (`6eaf384`, `test:`, no release). Before this wave: **#566** (`tg importers` outside-root honest signal -> v1.69.3, dogfood-verified live). Before it, the v1.68.1 CEO WSL-dogfood 3-PR drain (#562/#563/#564 -> v1.69.0/.1/.2) fully drained one-per-publish, zero broken releases; before it, campaign #142's 4-PR queue (#554-557) drained to v1.67.1/v1.68.0/v1.68.1/v1.68.2 — zero broken releases. Post-campaign artifacts also merged: **#559** backlog-reconcile + **#560** AGENTS.md ruff-scope docs-hardening (both docs-only, no release).
+**0 open PRs — queue EMPTY.** **#582** (`test(cli):` — closed PR #581's Opus-gate coverage gaps: daemon-skip regression test w/ passing mutation-check + real-truncation exit-2 + agent-2nd-scan + `CONTRACTS.md` `tg context` nit) merged clean, full CI matrix green (`6cb53a4`); test-only, no release. The v1.70.0->v1.72.1 wave (#152/#127/#90b/#153/#154/#158/#159/#580/#581) drained one-per-publish, ZERO broken releases. Prior: the v1.68.1 CEO WSL-dogfood 3-PR drain (#562/#563/#564 -> v1.69.0/.1/.2) and campaign #142's 4-PR queue (#554-557 -> v1.67.1-v1.68.2) both drained clean. Post-campaign docs-only merges (no release): #559/#560/#561/#565/#567/#572/#578/#579. **Next move is CEO-gated or demand-gated** (see CURRENT LIVE BACKLOG below) — no new build is queued.
 
-## SHIPPED — live on PyPI up to **v1.71.2**
+## SHIPPED — live on PyPI up to **v1.72.1**
 
-**v1.70.0-v1.71.2 window (2026-07-13, merged, on PyPI):** #152/#568 sys.path.insert imports resolution — 2 HIGH (v1.70.0) · #127/#570 non-git `.gitignore` (v1.70.1) · #90b/#571 `tg doctor` ast-grep exit-0 honesty (v1.70.2) · #153/#573 `tg codemap` default deadline (v1.71.0) · #154/#574 unscoped/multi-root fast-refuse (v1.71.1) · #158/#576 `tg scan` marked-root workspace refuse (v1.71.2) · #572 skills + BACKLOG docs refresh (`docs:`) · #575 **CLOSED** (CodeQL py/redos suppression — non-functional inline comment; the API dismissal is the real fix). v1.71.3 (#159 lsp fail-closed) releasing.
+**v1.71.3-v1.72.1 window (2026-07-13, merged, on PyPI):** #159/#577 `tg lsp` fail-closed on the missing `ast` extra (v1.71.3) · #580 `tg edit-plan` structured top-level `validation_plan`, parity with `tg agent` (v1.72.0) · #581 accept `--deadline`/`--no-deadline` on agent/edit-plan/context/context-render/map/orient + `--deadline` on defs (v1.72.1, dogfood-verified on the wheel: all 7 accept it, orient stays exit-0) · **#582** (`test(cli):`, merged, no release) closes #581's Opus-gate coverage gaps, full CI matrix green (`6cb53a4`). Docs-only, no release: #578 (4-skill WSL-artifact corrections) + #579 (prior backlog refresh).
 
-**v1.59–v1.66.1 window (merged, on PyPI):** #541 index capability-validator · #542 AstBackend tree-sitter query-API repair · #543 warm-daemon default-ON flip (#94 latency lever) · #544 `--index` front-door routing · #545 `--rank` chunk cap · #546 atomic + cross-process-locked index write · #547 backlog reconcile · #548 iterative Go AST walk (no RecursionError) · #549 `tg classify --stdin/--text` · #550 ast-grep fail-closed · #551 wedged-python help-probe deflake · #552 launcher import-defer perf · #553 Ed25519 evidence-signing (v1.67.0) · #558 release-blocker hotfix · #554-557 campaign-100 (v1.67.1→v1.68.2) · #559 backlog-reconcile (docs) · #560 AGENTS.md whole-repo ruff-scope hardening (docs) · #561 backlog-refresh v1.68.1->v1.68.2 (docs) · **#562 codemap --ignore/--deadline (v1.69.0)** · **#563 nested-import recall (v1.69.1)** · **#564 suggested_scope-on-tie + normpath ..-confinement (v1.69.2)** · **#566 importers outside-root honest signal (v1.69.3, dogfood-found on flask)**. Older detail below is HISTORICAL.
+**v1.70.0-v1.71.2 window (2026-07-13, merged, on PyPI):** #152/#568 sys.path.insert imports resolution — 2 HIGH (v1.70.0) · #127/#570 non-git `.gitignore` (v1.70.1) · #90b/#571 `tg doctor` ast-grep exit-0 honesty (v1.70.2) · #153/#573 `tg codemap` default deadline (v1.71.0) · #154/#574 unscoped/multi-root fast-refuse (v1.71.1) · #158/#576 `tg scan` marked-root workspace refuse (v1.71.2) · #572 skills + BACKLOG docs refresh (`docs:`) · #575 **CLOSED** (CodeQL py/redos suppression — non-functional inline comment; the API dismissal is the real fix).
+
+**v1.59–v1.66.1 window (merged, on PyPI):** #541 index capability-validator · #542 AstBackend tree-sitter query-API repair · #543 warm-daemon default-ON flip (#94 latency lever) · #544 `--index` front-door routing · #545 `--rank` chunk cap · #2/#546 atomic + cross-process-locked index write · #547 backlog reconcile · #63/#548 iterative Go AST walk (no RecursionError) + Python `in_annotation` leak + registry-dispatch governance test · #92/#549 `tg classify --stdin/--text` · #550 ast-grep fail-closed · #551 wedged-python help-probe deflake · #552 launcher import-defer perf · #124-P2/#553 Ed25519 evidence-signing (v1.67.0) · #558 release-blocker hotfix · #554-557 campaign-100 (v1.67.1→v1.68.2, incl. #108 daemon Tier-2 -> v1.68.0, #126 apply_policy fail-open -> v1.68.1, #121 --count-matches -> v1.68.2) · #559 backlog-reconcile (docs) · #560 AGENTS.md whole-repo ruff-scope hardening (docs) · #561 backlog-refresh v1.68.1->v1.68.2 (docs) · **#562 codemap --ignore/--deadline (v1.69.0)** · **#563 nested-import recall (v1.69.1)** · **#564 suggested_scope-on-tie + normpath ..-confinement (v1.69.2)** · **#566 importers outside-root honest signal (v1.69.3, dogfood-found on flask)** · #565/#567 backlog refreshes (docs) · **#130b/#568 sys.path.insert import resolution (v1.70.0)**. Older detail below is HISTORICAL.
 
 Prior batch: #499→v1.58.5 (tg_repo_map 512→2000) · #500→v1.58.6 (#110 write-path symlink TOCTOU) ·
 #503→v1.58.7 + #505→v1.58.8 (two flaky-test root fixes) · #501→v1.58.9 (multi-pattern `-e`/`-f`) ·
@@ -74,101 +82,90 @@ signed consumable tg outputs.
 
 ---
 
-## CURRENT LIVE BACKLOG (campaign #142 reconciled 2026-07-12 — the real residual queue after 4 audit passes)
+## CURRENT LIVE BACKLOG (reconciled 2026-07-13, task #162 — cross-checked against `git log` + live code, not just the ledger)
 
-### IN-FLIGHT builds (actively draining/underway)
-- **#543** warm session-daemon default-ON flip (#94) + version-skew guard. `feat/warm-daemon-default`,
-  draft. Gate: session_daemon (Opus) — **PENDING**, not yet approved despite design-level clearance.
-  `[shipping]`
-- **#544** route `--index` to the Rust capability validator instead of leaking through Python-passthrough
-  pre-clap-parse (#138/#140). `fix/passthrough-index-frontdoor`, draft. Gate: routing (Opus) — pending,
-  `--`-sentinel caveat flagged for the reviewer. `[shipping]`
-- **#545** cap the plain-`--rank` corpus rechunk at the `reranker.py` chokepoint (#128d/MED-1) —
-  `TG_RANK_CORPUS_CHUNK_CAP`, never drops matches, sets `rank_fallback_reason` on trip.
-  `fix/rank-total-chunk-cap`, draft. Gate: none (pure `core/`, self-declared gate-free). `[shipping]`
-- **#2** index atomic+locked write — `std::fs::write` at `index.rs:856` has zero fsync/rename/locking
-  (audit A4). Building now (`fix/atomic-locked-index*` worktrees), not yet pushed. Gate: index_lock
-  (Opus). `[ready]`
+**Reconciled this pass (already shipped or resolved -> dropped from the active queue below; one-line receipts):**
+- **#543** warm session-daemon default-ON flip + version-skew guard (#94) -> shipped `45000f4`, v1.65.0.
+- **#544** route `--index` to the Rust capability validator (#138/#140) -> shipped `eaaaf0a`, v1.65.0.
+- **#545** cap the plain-`--rank` corpus rechunk (#128d/MED-1) -> shipped `f43b7c0`, v1.65.1.
+- **#2** index atomic+locked `.tg_index` write (audit A4) -> shipped `aa57254`/#546, v1.65.4.
+- **#63** lang-graph crash/leak tail (Python `in_annotation` leak, Go unbounded recursion, registry-
+  dispatch governance test) -> shipped `0fa47d6`/#548, v1.65.5.
+- **#92** `tg classify --stdin`/`--text` literal mode -> shipped `7f11bc0`/#549, v1.65.6.
+- **#130b** `sys.path.insert`/`append` import-awareness (imports/importers) -> shipped `abd58e2`/#568
+  (re-tagged **#152** in later ledger entries, same fix), v1.70.0.
+- **#124-P2** EvidenceReceipt signing (shipped as Ed25519, not HMAC as originally scoped — same intent:
+  `tg evidence verify`/`keygen`/`pubkey`) -> shipped `5e046ed`/#553, v1.66.1.
+- **#124-Gap1/Gap2** checkpoint undo persistence -> both confirmed live in code: `undo_argv`/
+  `undo_command` are computed via `_undo_argv` (`checkpoint_store.py:264,871-872`) and returned on
+  checkpoint create; the manifest `rollback` block is persisted in `evidence_receipt.py:651-666` and
+  `apply_policy.py:988` payloads. Neither is in-memory-only anymore — no single PR to cite, closed
+  incrementally across the checkpoint/evidence work.
+- **#108** daemon Tier-2 (orient/agent capsules via the warm daemon) -> shipped `47174b4`/#555, v1.68.0.
+- **#126** apply_policy fail-open edge (canonicalize exec parent) -> shipped `d8cf53c`/#556, v1.68.1.
+- **#121** native `--count-matches` no-rg degrade -> shipped `87515df`/#557, v1.68.2.
+- **#127** index-build `.gitignore` non-git-dir no-op -> shipped `2c07e0a`/#570, v1.70.1.
+- **F3** GPU fail-closed capability matrix (`--gpu-device-ids` combined with ast/nlp/count/
+  fixed-strings/context/line-regexp/word-regexp/LTL) -> confirmed shipped across a "round-4" audit
+  pass, `pipeline.py:203-293` (each combo fails loud via `_raise_explicit_gpu_configuration_error`
+  instead of silently dropping the flag). The `-o`/`--max-filesize`/`--color`/`--no-ignore-vcs` flags
+  named in the original finding are output/filter concerns that never independently select a backend,
+  so they were never a live instance of this gap.
+- **Dead-code (partial):** `semantic_index.py` already carries the honesty docstring asked for
+  (`semantic_index.py:1`, "kept SEPARATE from the Rust TGI v3 `.tg_index`"). NOT confirmed deleted:
+  `sidecar.py::_classify_lines` (still defined, `sidecar.py:157`, a thin unused wrapper around
+  `_classify_lines_with_metadata`) and `rust_core/src/backend_cpu.rs::replace_in_place`
+  (`backend_cpu.rs:212`, still `pub fn`) — kept as a small LOW item below rather than marked shipped.
 
-### GATE-FREE ready (no mandatory-gate surface; buildable now, no in-flight collision)
-- **#63** lang-graph crash/leak tail — ONE PR for 3 Fable-audit LOWs: Python `Annotated[int,
-  validate(X)]` mislabels runtime-value call-args as `"type"` (`in_annotation` leaks into `ast.Call`
-  args, `repo_map.py:4383-4390`) · registry↔language-mapping governance test missing
-  (`_target_language_for_path` vs `_provider_language_for_path` drift undetected — "the
-  MOST-FORGOTTEN seam") · Go `_walk` unbounded recursion + `splitlines()`-vs-tree-sitter row mismatch
-  (`lang_go.py`, a crash not a degrade). Cite: `cluster-4-stale-reconcile.md` (#63). `[ready]`
-- **#92** `tg classify --stdin`/`--text` literal mode — the sidecar payload protocol already carries
-  literal content end-to-end (`sidecar.py:211,243-251`); only the two front doors (clap + Typer) can't
-  express it yet. Serialize on `main.rs`. Cite: `cluster-3-p2-followups.md` (#92). `[ready]`
-- **#130b** `sys.path.insert` import-awareness (imports/importers, beyond #504's dynamic-call recall) —
-  a benchmarked P4 moat-recall gap, not polish; cluster-2 recommends un-holding it from the CEO churn
-  steer. Cite: `cluster-2-p1-moat.md` (#130). `[ready]`
-- **#124-Gap1/Gap2** persist checkpoint `undo_argv`/`undo_command` (in-memory-only today) + persist the
-  manifest `rollback` field (write-ordering is already correct; additive field only) — both
-  MCP-adjacent (`tg_checkpoint_*`); light Opus review recommended though neither is on the strict
-  mandatory-gate list. Cite: `cluster-2-p1-moat.md` (#124). `[ready]`
-- **#86 T7→T8** late-rerank real-model integration + latency receipt (T7), then **T8 = the golden-set
-  ship/no-ship decision** (4-arm nDCG/recall/p50 vs RRF baseline; a fail means stay experimental or
-  retire to PAPER.md — a quality gate, not a security one). T9 (`--rerank` registration) / T10 (NOTICE
-  attribution) follow ONLY if T8 passes. Fully parallel-safe, new files only.
-  Cite: `cluster-2-p1-moat.md` (#86). `[ready]`
-- **Dead-code:** `sidecar.py _classify_lines` (trivial, zero callers, delete) · `backend_cpu.rs
-  replace_in_place` (confirmed-dead, but `cpu_backend` IS a mandatory-gate surface → light Opus parity
-  review even for a pure deletion) · **KEEP** `semantic_index.py` (unwired BM25 persistence — stamp an
-  honesty docstring only; it's the designed substrate for #108, deleting now is negative-value churn).
-  Cite: `cluster-3-p2-followups.md` DEAD-CODE 1-3. `[ready]`
+**Verify-flagged (not on the live task-store queue; also not confirmed shipped in this pass — flagged
+for the next audit rather than re-opened as active work):**
+- **#86** T7->T8 late-rerank (real-model latency receipt + golden-set ship/no-ship decision). T0-T6
+  (foundation/ONNX encoder/`--semantic` wiring, `#471`-`#474`) shipped v1.51-v1.54; `#531` hardened the
+  wall-clock deadline (audit A3, v1.63.2). No T7/T8-labeled commit found in `git log --oneline --all`;
+  reads as shelved (`TG_LATE_RERANK` stays experimental/opt-in, `reranker.py:45`) rather than an open
+  gap, but this pass could not confirm that either way.
+- **#128c** session-daemon worker-semaphore (`TG_DAEMON_MAX_WORKERS`) — no matching symbol anywhere in
+  `src/` (`session_daemon.py` has no semaphore/max-workers guard). Genuinely looks unbuilt; not on the
+  live queue, so not re-added as active work, but it is the one item this pass could not verify as
+  either shipped or intentionally dropped.
 
-### OPUS-GATED (mandatory or recommended adversarial review before merge)
-- **#124-P2** EvidenceReceipt HMAC signing + `tg evidence verify` — mirror the shipped audit-manifest
-  digest-chain+signing system 1:1, do not invent a new scheme. Discretionary Opus crypto pass.
-  Cite: `cluster-2-p1-moat.md` (#124). `[ready]`
-- **#98** MCP consolidation (47→~10 task-shaped dispatch tools, non-breaking, `TG_MCP_TOOL_SURFACE=lean`)
-  — design fully recovered + re-verified against live code; **#124-P3** (`tg_evidence` MCP tool) rides
-  immediately after on the same consolidated surface. Gate: mcp (mandatory). Cite:
-  `cluster-2-p1-moat.md` (#98). `[ready]`
-- **#108** daemon Tier-2 — serve orient/agent capsules via the warm daemon (PR-A orient, then PR-B
-  agent). Blocked-by **#543** landing (same surface + cache region + gate). Gate: session_daemon
-  (mandatory). Cite: `cluster-2-p1-moat.md` (#108). `[blocked]` (after #543)
-- **#125** checkpoint `except Exception`→`except BaseException` cleanup-on-abort + create-vs-undo
-  symlink consistency. MCP-reachable (`tg_checkpoint_undo`). Gate: mcp-adjacent (mandatory). Cite:
-  `cluster-3-p2-followups.md` (#125). `[ready]`
-- **#126** apply_policy fail-open edge — canonicalize the executable's PARENT (realpath) so the lexical
-  guard-check and the spawn use the same form; closes the 8.3-shortname/junction/`\\?\` divergence on
-  the RCE guard. Highest-value item in cluster-3. Gate: apply_policy (mandatory RE-gate). Cite:
-  `cluster-3-p2-followups.md` (#126). `[ready]`
-- **#121** native `--count-matches` no-rg degrade — the raw hard-error half already shipped (structured
-  exit-2); the remaining gap is native-engine parity, gated on verifying occurrence- vs line-granularity
-  in the match vector BEFORE choosing degrade-vs-refuse-reword. Gate: backends (mandatory,
-  routing/selection change). Cite: `cluster-3-p2-followups.md` (#121). `[ready]`
-- **#115** symlink-sweep: 3 unguarded `std::fs::write` sites (checkpoint metadata, checkpoint index,
-  rollback-restore) — the `write_bytes_refuse_symlink` helper already exists with exactly one caller;
-  mechanical swap to 4. Gate: light Opus diff-review (security-adjacent, not on the strict mandatory
-  list). Cite: `cluster-3-p2-followups.md` (#115). `[ready]`
-- **F3** GPU fail-closed capability matrix — `--gpu-device-ids` combined with `-r`/`-o`/`--max-filesize`/
-  `--color`/`--no-ignore-vcs` silently drops the flag and exits 0 (Backend Fail-Closed Contract class,
-  same class as the `--pcre2` precedent). **Gate-ambiguity flagged by cluster-1, read as resolved
-  here:** this is Phase-0 honesty (non-CEO-gated); only the NVIDIA-packaging-matrix-removal half of
-  the GPU-program line (CEO-FACING below) stays CEO-gated — reconfirm with the CEO if that reading is
-  wrong before merge. Gate: backends (mandatory). Cite: `cluster-1-p0-correctness.md` (#131 F3).
-  `[ready]`
-- **#128c** session-daemon worker-semaphore (`TG_DAEMON_MAX_WORKERS`, gates only the expensive dispatch
-  branch — `ping`/`stop` stay ungated so shutdown can't starve). Blocked-by **#543** merging first (same
-  handler file); priority rises once #543 lands (becomes the default hot path). Gate: session_daemon
-  (mandatory). Cite: `cluster-1-p0-correctness.md` (#128c). `[blocked]` (after #543)
-- **#127** index-build `.gitignore` silently no-ops in non-git dirs — mirror the sibling `add_ignore`
-  trio (`main.rs`/`native_search.rs`); do NOT use `.require_git(false)` (the original task's own
-  suggested fix is backwards — it would create the opposite divergence on nested `.gitignore`s). Gate:
-  none mandatory (correctness, not index_lock) but same-file blocked-by **#2** (atomic+locked index
-  write) — build immediately after it merges. Cite: `cluster-3-p2-followups.md` (#127). `[blocked]`
-  (after #2)
+### Ready to build (no mandatory-gate blocker)
+- **#58** promote `tg route-test` hidden->public (small feature follow-up).
+- **#98** MCP tool consolidation (45->~10 task-shaped dispatch tools, non-breaking,
+  `TG_MCP_TOOL_SURFACE=lean`) + staleness receipts (P2). Design previously recovered/verified
+  (campaign #142). Note: `#554`/v1.67.1 shipped a much narrower precursor under the same tracking
+  number (`tg_session_open` default `max_repo_files` 512->2000) — that is NOT this consolidation.
+- **#141** native `AstBackend` vs the ast-grep wrapper — DSL divergence + `is_available` broadening
+  (design-stage; needs a design pass before a TDD build).
+- **#160** v1.71.3 dogfood Medium/Lower feature tail: `suggested_ignore`/orient-auto-deweight,
+  complete-scan `suggested_scope`, dynamic-import string/getattr breadth, cold-doctor daemon-autostart
+  hint — needs verify-against-code first (some sub-items may already be partially covered by shipped
+  work; re-check before scoping a PR).
 
-### FLIP follow-ups
-- **#143** (LOW) — daemon-default-flip follow-up; scope not detailed in any of campaign #142's 4 cluster
-  audits, surfaces once #543 ships. `[blocked]` (after #543)
+### LOW-severity follow-ups (non-blocking)
+- **#115** symlink sweep — 3 unguarded `std::fs::write` sites (checkpoint metadata, checkpoint index,
+  rollback-restore); the `write_bytes_refuse_symlink` helper already exists with one caller, mechanical
+  swap to 4.
+- **#125** H3+H4 gate follow-ups — checkpoint `except Exception`->`except BaseException`
+  cleanup-on-abort + create-vs-undo symlink consistency. MCP-reachable (`tg_checkpoint_undo`).
+- **#143** Opus-gate LOW follow-ups — `#543`'s race-test/symbol-timeout/`lru_cache` flip + `#140`'s
+  `--` sentinel (non-blocking).
+- **#155** `#152` Opus-gate LOW nits — dead reverse-tag block + an ordering comment.
+- **Dead-code (partial, see reconciliation note above):** delete `sidecar.py::_classify_lines` (unused
+  wrapper) + `rust_core/src/backend_cpu.rs::replace_in_place` if confirmed zero-caller; light Opus
+  parity review for the Rust deletion (`cpu_backend` is a mandatory-gate surface).
 
-### Blocked on a Linux box (unaudited by campaign #142 — carried forward unchanged)
-- **#89** WSL `/mnt/c` path resolution · **#90** ast-grep Linux/WSL + doctor honesty · **#109** cuda
-  implicit-walk ceiling.
+### Blocked on a Linux/WSL box (env-blocked, not CEO-gated)
+- **#89** WSL `/mnt/c` absolute-path resolution in the native backend.
+- **#90** `tg scan` ast-grep Linux/WSL portability + doctor false-"available" exit-127. The
+  doctor-honesty half already shipped (**#90b**/`fb3291b`, v1.70.2 — `tg doctor` no longer reports
+  `available:true` for a non-runnable ast-grep shim); the Linux/WSL ast-grep portability piece itself
+  is still open and unverifiable without a Linux/WSL box.
+- **#109** cuda GPU implicit-walk ceiling.
+
+### CEO-gated (full framing in CEO-FACING below)
+- **#72** benchmark proof-point publish.
+- **#131** GPU deep-dive audit + multi-week rebuild (conflicts with no-SaaS).
 
 ---
 
@@ -184,8 +181,9 @@ signed consumable tg outputs.
   (secret/PII/license/policy rule-packs)**. ⚠ **Directly re-opens the #99 "no-SaaS" wedge the CEO
   closed 2026-07-10** — a genuine strategic fork. Campaign #142 re-homes the old **#47** finding
   ("GPU public-proof", an NVIDIA-flavor native build) onto this same fork — one CEO decision now
-  covers both. Cite: `cluster-4-stale-reconcile.md` (#47). Only the Phase-0 honesty/correctness fixes (**F3**,
-  CURRENT LIVE BACKLOG above) are non-gated.
+  covers both. Cite: `cluster-4-stale-reconcile.md` (#47). The Phase-0 honesty/correctness fixes
+  (**F3**, the GPU fail-closed capability matrix) already shipped across several audit rounds (see
+  SHIPPED above); the remaining ask is the funded rebuild itself.
 - **Enterprise gaps** (dogfood-surfaced, design-scale): **multi-root workspace primitive** (orient/
   search/blast across sibling repos, no manual fan-out) · target-selection accuracy scoreboard
   (top-k/MRR) · cross-OS managed ast-grep · LSP proof-mode (availability ≠ navigation proof).
@@ -194,8 +192,8 @@ signed consumable tg outputs.
   grammar-missing + `resolution_gaps`, `3481742`/#420) is the proven template, so the marginal
   per-language cost is now much lower than when this roadmap was first scoped.
   `_provider_language_for_path` already maps java/c/cpp/csharp/php ids for the LSP-provider layer
-  today, but the graph layer does not — the same drift class **#63**'s new F22 governance test
-  (CURRENT LIVE BACKLOG above) now guards against.
+  today, but the graph layer does not — the same drift class **#63**'s F22 governance test (shipped,
+  `#548`/v1.65.5) now guards against.
 
 ## References
 - Cross-session resume anchor (memory): `tensor-grep-drain-resume-2026-07-09.md` (live drain/audit/dogfood/GPU state).
