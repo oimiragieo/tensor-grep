@@ -1,6 +1,39 @@
 # CHANGELOG
 
 
+## v1.72.1 (2026-07-14)
+
+### Bug Fixes
+
+- **cli**: Accept --deadline on agent/edit-plan/context/context-render/map/orient/defs
+  ([#581](https://github.com/oimiragieo/tensor-grep/pull/581),
+  [`5bd327c`](https://github.com/oimiragieo/tensor-grep/commit/5bd327c663defbf30f57f941acbd238232c20a88))
+
+--deadline was defined on 7 commands (refs/callers/impact/blast-radius/importers/ inventory/codemap)
+  but missing from the repo-scanning commands agent, edit-plan, context, context-render, map,
+  orient, and defs. An agent that learned --deadline works on `tg callers` and passed it to these
+  siblings got a Click "No such option" exit-2, burning the agent loop (CEO v1.71.3 dogfood, HIGH).
+
+Adds --deadline/--no-deadline (codemap's #153 pair, but defaulting to None/ unbounded, unlike
+  codemap's 60s) to agent/edit-plan/context/context-render/map/ orient, and --deadline alone (no
+  --no-deadline, mirroring its true siblings refs/ callers/impact/blast-radius) to defs. Threads
+  deadline_seconds/deadline_monotonic into build_context_pack, build_context_edit_plan(_from_map),
+  build_context_render (_from_map), build_orient_capsule(_from_map), build_agent_capsule(_from_map)
+  (incl. its second call-site-evidence blast-radius scan), and build_symbol_defs -- all of which
+  either already accepted deadline_monotonic (build_repo_map) or needed only a thin, additive
+  thread-through. Every warm-daemon fast path is skipped whenever --deadline is requested, mirroring
+  the existing refs/callers/impact/ blast-radius daemon gate (a cached repo_map cannot honor a fresh
+  per-request deadline). `tg orient` keeps its documented NO-exit-2 contract: a deadline truncation
+  surfaces partial/deadline_limit informationally only, never flipping the exit code
+  (docs/CONTRACTS.md updated to say so explicitly).
+
+Default stays None everywhere, so behavior is unchanged unless --deadline is passed. Verified
+  end-to-end against the real shipped binary (not just CliRunner): all 7 commands accept --deadline
+  (exit != 2), a real deadline-truncated whole-repo scan correctly exits 2 with partial:true on the
+  6 exit-2 commands and exits 0 with partial:true on orient, and --no-deadline/sub-floor rejection
+  behave correctly.
+
+
 ## v1.72.0 (2026-07-13)
 
 ### Documentation

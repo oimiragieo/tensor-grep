@@ -4345,7 +4345,7 @@ wheels = [
 
 [[package]]
 name = "tensor-grep"
-version = "1.72.0"
+version = "1.72.1"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
