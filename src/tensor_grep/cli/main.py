@@ -31,10 +31,13 @@ from tensor_grep.cli.runtime_paths import (
     _native_tg_version_matches,
     env_flag_disabled,
     env_flag_enabled,
+    gpu_probe_timeout_s,
+    is_cross_domain_native_binary,
     iter_in_tree_native_tg_binaries,
     native_frontdoor_metadata_path,
     resolve_native_tg_binary,
     resolve_ripgrep_binary,
+    translate_path_for_windows_binary,
 )
 from tensor_grep.core.observability import nvtx_range
 from tensor_grep.core.retrieval_chunker import MAX_CHUNKS
@@ -2674,10 +2677,29 @@ def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str,
         base["error"] = f"native tg binary does not exist: {native_tg_binary}"
         return base
 
+    # GPU-P0-1 (#171): on WSL, native_tg_binary can be a Windows-target binary that cannot
+    # resolve a Linux TemporaryDirectory path. Detect that cross-domain mismatch and bridge the
+    # sentinel path via wslpath before it becomes argv; the shared helper also raises the probe
+    # timeout floor since a WSL -> Windows exec can legitimately take longer.
+    cross_domain = is_cross_domain_native_binary(native_tg_binary)
+    probe_timeout_s = gpu_probe_timeout_s(cross_domain=cross_domain)
+
     sentinel = "tg doctor gpu runtime probe"
     with TemporaryDirectory(prefix="tg-doctor-gpu-probe-") as temp_dir:
         probe_file = Path(temp_dir) / "probe.log"
         probe_file.write_text(f"{sentinel}\n", encoding="utf-8")
+        probe_target = str(probe_file)
+        if cross_domain:
+            translated = translate_path_for_windows_binary(probe_file)
+            if translated is None:
+                base["status"] = "path_domain_mismatch"
+                base["error"] = (
+                    "resolved native tg binary targets Windows but this WSL host could not "
+                    "translate the probe path via wslpath (path-domain mismatch, not a GPU "
+                    "capability gap)"
+                )
+                return base
+            probe_target = translated
         command = [
             str(native_tg_binary),
             "search",
@@ -2687,7 +2709,7 @@ def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str,
             "--no-ignore",
             "-F",
             sentinel,
-            str(probe_file),
+            probe_target,
         ]
         base["command"] = " ".join([*command[:-1], "<doctor-gpu-probe-file>"])
         try:
@@ -2698,11 +2720,11 @@ def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=2.0,
+                timeout=probe_timeout_s,
             )
         except subprocess.TimeoutExpired:
             base["status"] = "failed"
-            base["error"] = "GPU runtime probe timed out after 2.0 seconds"
+            base["error"] = f"GPU runtime probe timed out after {probe_timeout_s:g} seconds"
             return base
         except OSError as exc:
             base["status"] = "failed"

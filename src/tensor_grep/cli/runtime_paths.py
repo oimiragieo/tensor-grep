@@ -286,6 +286,141 @@ def resolve_native_tg_binary() -> Path | None:
     return None
 
 
+# --- GPU-P0-1 (#171): WSL native-binary path-domain bridging ----------------------------------
+#
+# On WSL, resolve_native_tg_binary() can return a Windows-target binary (an explicit
+# TG_NATIVE_TG_BINARY override pointing at a `.exe` under `/mnt/<drive>/...`, or an in-tree build
+# produced by a Windows-side `cargo build` against a repo checkout shared over the same mount).
+# The GPU doctor/agent probes write a sentinel file under a Linux TemporaryDirectory (a
+# `/tmp/...`-style path) and pass it as argv to that binary. A Windows PE cannot resolve a
+# `/tmp/...` path -- a different filesystem namespace -- so the probe fails with a structured
+# `path_not_found` from the native binary, which reads as "no GPU support" even when the GPU route
+# itself may be fine. These helpers detect that mismatch and bridge it via `wslpath`, so the
+# doctor probe (cli/main.py) and the agent probe (cli/agent_capsule.py) share ONE implementation
+# instead of two divergent copies.
+
+#: Base GPU probe timeout (seconds) when host and resolved binary share a filesystem domain.
+DEFAULT_GPU_PROBE_TIMEOUT_S = 2.0
+
+#: Floor applied when the resolved native binary is cross-domain (WSL host, Windows binary) -- a
+#: WSL -> Windows exec crosses an interop boundary that can legitimately exceed the same-domain
+#: default.
+CROSS_DOMAIN_GPU_PROBE_TIMEOUT_S = 6.0
+
+_WSLPATH_TRANSLATE_TIMEOUT_S = 2.0
+
+_WINDOWS_DRVFS_MOUNT_RE = re.compile(r"^/mnt/[a-zA-Z](?:/|$)")
+
+
+def is_wsl_host() -> bool:
+    """True when this process is running inside a WSL (1 or 2) Linux environment.
+
+    This is a NARROWER check than "any Linux box" -- it only adds the "genuinely WSL" signal on
+    top of the `sys.platform.startswith("linux")` gate already applied by callers, so a
+    `.exe`-suffixed path used by an unrelated fixture on a bare Linux CI runner (no WSL) is never
+    misread as a real WSL path-domain mismatch. `WSL_DISTRO_NAME`/`WSL_INTEROP` are set by WSL
+    itself in every real WSL session and are the standard, filesystem-read-free way to detect it;
+    `/run/WSL` (also used by `core.hardware.device_detect`) is the fallback for a stripped
+    subprocess environment that dropped those variables.
+    """
+    if os.environ.get("WSL_DISTRO_NAME") or os.environ.get("WSL_INTEROP"):
+        return True
+    return os.path.exists("/run/WSL")
+
+
+def native_binary_targets_windows(binary: Path | str) -> bool:
+    """True when `binary`'s path shape looks like a Windows-target executable.
+
+    Either signal alone is sufficient: a `.exe` suffix cannot be a native Linux ELF or macOS
+    Mach-O binary regardless of where it lives on disk, and a path rooted at `/mnt/<drive>/` is
+    the WSL2 drvfs mount of a Windows drive -- nothing genuinely native to the WSL Linux
+    filesystem lives there.
+    """
+    text = str(binary).replace("\\", "/")
+    if text.lower().endswith(".exe"):
+        return True
+    return _WINDOWS_DRVFS_MOUNT_RE.match(text) is not None
+
+
+def is_cross_domain_native_binary(binary: Path | str | None) -> bool:
+    """True when the host is Linux/WSL but the resolved native `tg` binary targets Windows.
+
+    Requires ALL THREE: a Linux host (`sys.platform`), a genuine WSL signal (`is_wsl_host()`),
+    and a Windows-shaped binary path (`native_binary_targets_windows()`). Dropping the WSL-signal
+    check would false-positive on any bare Linux CI runner whose test fixtures happen to use a
+    `.exe`-suffixed name for unrelated reasons; dropping the platform check would be redundant but
+    harmless. The downstream `wslpath` lookup also fails closed (returns None) when unavailable,
+    so even a false positive here degrades to the honest `path_domain_mismatch` status rather than
+    a silently wrong argv.
+    """
+    if binary is None:
+        return False
+    if not sys.platform.startswith("linux"):
+        return False
+    if not is_wsl_host():
+        return False
+    return native_binary_targets_windows(binary)
+
+
+def translate_path_for_windows_binary(
+    path: Path | str, *, timeout_s: float = _WSLPATH_TRANSLATE_TIMEOUT_S
+) -> str | None:
+    """Translate a Linux-side path to a form a Windows binary can open, via `wslpath -w`.
+
+    Works both for a path under a drive mount (translates to the Windows drive-letter form) and a
+    path purely inside the WSL VM filesystem such as `/tmp/...` (translates to a UNC path served
+    over the WSL network redirector, which Windows can read while the distro is running). Returns
+    None -- never raises -- when `wslpath` is not on PATH, times out, or exits non-zero, so the
+    caller can report a distinct `path_domain_mismatch` status instead of silently handing the
+    Windows binary a Linux path it cannot open.
+    """
+    wslpath_bin = shutil.which("wslpath")
+    if wslpath_bin is None:
+        return None
+    try:
+        result = subprocess.run(
+            [wslpath_bin, "-w", str(path)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_s,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    translated = result.stdout.strip()
+    return translated or None
+
+
+def gpu_probe_timeout_s(
+    *, cross_domain: bool = False, default_s: float = DEFAULT_GPU_PROBE_TIMEOUT_S
+) -> float:
+    """Resolve the GPU probe subprocess timeout (seconds).
+
+    `TENSOR_GREP_GPU_PROBE_TIMEOUT_S` always wins when set to a valid positive float -- one
+    operator-level knob shared by the doctor probe and the agent probe (no divergent copy).
+    Absent an override, `default_s` applies unless `cross_domain` is set, in which case the floor
+    is raised to at least `CROSS_DOMAIN_GPU_PROBE_TIMEOUT_S` (a WSL -> Windows exec can
+    legitimately exceed the same-domain default; #171 GPU-P0-1). Passing the caller's own existing
+    default as `default_s` (e.g. the agent capsule's `--gpu-timeout-s`) means an explicit,
+    already-generous caller value is never lowered by the cross-domain floor -- only ever raised
+    when it would otherwise be too tight.
+    """
+    raw = os.environ.get("TENSOR_GREP_GPU_PROBE_TIMEOUT_S", "").strip()
+    if raw:
+        try:
+            override = float(raw)
+        except ValueError:
+            override = 0.0
+        if override > 0:
+            return override
+    if cross_domain:
+        return max(default_s, CROSS_DOMAIN_GPU_PROBE_TIMEOUT_S)
+    return default_s
+
+
 @lru_cache(maxsize=1)
 def resolve_ripgrep_binary() -> Path | None:
     binary_name = "rg.exe" if sys.platform.startswith("win") else "rg"
