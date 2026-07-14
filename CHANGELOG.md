@@ -1,6 +1,52 @@
 # CHANGELOG
 
 
+## v1.75.2 (2026-07-14)
+
+### Bug Fixes
+
+- **gpu**: Doctor probe failure taxonomy + honest device-id validation
+  ([#595](https://github.com/oimiragieo/tensor-grep/pull/595),
+  [`7350d77`](https://github.com/oimiragieo/tensor-grep/commit/7350d77f335fec7a2f3e3cfa51ec6164ed48be8d))
+
+* fix(gpu): doctor probe failure taxonomy + native-frontdoor flavor surfacing
+
+Audit #171 P0-2. The doctor's GPU runtime probe collapsed every rc!=0 outcome from the native binary
+  to one opaque status="failed", discarding the structured {"error": "<kind>", ...} object the
+  native tg binary prints to stdout in --json mode (exit_structured_search_error_if_needed,
+  rust_core/src/main.rs). Map each known kind to a distinct doctor status (failed_path_bridging /
+  failed_input / failed_gpu_unavailable) with a new native_error_kind field, falling closed to
+  failed_other for anything unrecognized or non-JSON. The P0-1 path_domain_mismatch short-circuit is
+  unchanged (it never execs the binary, so there is nothing to classify).
+
+Also surface inspect_native_tg_binary's native-frontdoor flavor metadata (installed vs requested
+  asset flavor, asset name, metadata status, and a derived mismatch note) on `tg doctor` --
+  previously only benchmark scripts read it, so there was no way to see "you asked for nvidia but
+  got cpu" without reaching for a benchmark script.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(gpu): honest out-of-range --gpu-device-ids validation
+
+Audit #171 P0-3. --gpu-device-ids parsing only validated ints/non-negative/ dedupe
+  (_parse_gpu_device_ids_cli) with no inventory check, so a typo'd or stale device id (e.g. 99)
+  silently CPU-falls-back indistinguishably from a real id (0). Add a Python pre-flight stderr WARN
+  -- never a hard failure -- naming the requested id(s) missing from the local DeviceDetector
+  inventory and the available ids, wired into both `tg search` and `tg agent`. Silent when the
+  inventory itself is empty (a CPU-only environment cannot enumerate CUDA devices at all, so warning
+  there would be a false claim, not a true one) and never raises on a DeviceDetector failure.
+
+On an actual CUDA-enabled build, validate_requested_cuda_device_ids (rust_core/src/gpu_native.rs)
+  already rejects an out-of-range id, but classify_gpu_route_failure's catch-all mislabeled the
+  message as "CUDA initialization failed: ..." -- true-sounding but wrong, since nothing failed to
+  initialize. Add an explicit "invalid CUDA device id" arm so it classifies as its own Fatal reason
+  with the verbatim message.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.75.1 (2026-07-14)
 
 ### Bug Fixes
