@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## v1.74.2 (2026-07-14)
+
+### Bug Fixes
+
+- **blast-radius**: Embed mermaid in JSON when --json --mermaid combined
+  ([#164](https://github.com/oimiragieo/tensor-grep/pull/164),
+  [`932652b`](https://github.com/oimiragieo/tensor-grep/commit/932652bfa9db26ca1fdc1bf8ed5788723e0bdbca))
+
+`tg blast-radius SYMBOL PATH --json --mermaid` let --mermaid short-circuit --json, so an agent
+  requesting both got Mermaid text only (json.loads raised). Now when both flags are set, the
+  rendered Mermaid is embedded in the JSON payload under a `mermaid` key and JSON is emitted.
+  --mermaid-alone and --json-alone are byte-identical; the exit-2/exit-1 contract is preserved.
+  blast-radius is the only command with both flags. From the CEO's 1.74.0 dogfood (#164).
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.74.1 (2026-07-14)
 
 ### Bug Fixes
