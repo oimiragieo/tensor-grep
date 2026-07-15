@@ -871,12 +871,39 @@ def create_checkpoint(path: str = ".") -> CheckpointCreateResult:
             scope_kind=scope.scope_kind,
             original_path=scope.original_path,
         )
+
+        # audit #178 (surfaced by the #610 gate): the guarded region must also extend through
+        # the index write below -- q10's load->mutate->write RMW of index.json, cross-process
+        # and cross-thread (see _index_lock.index_lock docstring / AGENTS.md Backend Fail-Closed
+        # Contract). Before this fix that RMW ran entirely OUTSIDE this try/except: a failure
+        # loading, parsing, or writing index.json after the copy loop AND metadata.json had both
+        # already fully succeeded still orphaned the fully-populated per-checkpoint directory
+        # forever -- audit #125a's widening (below) only reached the metadata write, not this
+        # index write. Retention selection stays inside the lock (pure, no I/O); the actual
+        # rmtree of dropped (OTHER, already-retired) snapshot dirs happens AFTER this try/except
+        # -- once our own new checkpoint is durably indexed, a failure pruning old dirs is a
+        # separate, best-effort concern and must not roll back the checkpoint just committed.
+        with index_lock(_index_path(root)):
+            records = _load_index(root)
+            records.insert(
+                0,
+                CheckpointRecord(
+                    version=_CHECKPOINT_VERSION,
+                    checkpoint_id=checkpoint_id,
+                    mode=mode,
+                    root=str(root),
+                    created_at=created_at,
+                    file_count=len(entries),
+                ),
+            )
+            records, dropped_dirs = _select_retained_checkpoints(root, records)
+            _write_index(root, records)
     except BaseException:
         # audit #125a: catch BaseException, not Exception -- KeyboardInterrupt/SystemExit
         # subclass BaseException directly (not Exception), so a Ctrl+C here previously escaped
         # this handler entirely and left an uncleaned checkpoint dir behind. The guarded region
-        # also now extends through the metadata write below (not just the copy loop above): a
-        # failure writing metadata.json after a fully successful copy must not orphan that
+        # extends through the metadata write AND (audit #178) the index write above: a failure
+        # writing metadata.json OR index.json after a fully successful copy must not orphan that
         # directory either -- audit H4's original cleanup only covered the copy loop. Remove the
         # WHOLE per-checkpoint dir (metadata.json may or may not have been written yet, but
         # snapshot_dir's own parent must go too, not just the snapshot/ subdir) -- matches how
@@ -885,26 +912,6 @@ def create_checkpoint(path: str = ".") -> CheckpointCreateResult:
         shutil.rmtree(snapshot_dir.parent, ignore_errors=True)
         raise
 
-    # q10 RMW race: load->mutate->write must be atomic w.r.t. every other writer of this
-    # index.json, cross-process and cross-thread, or a concurrent insert can be lost (see
-    # _index_lock.index_lock docstring / AGENTS.md Backend Fail-Closed Contract). Retention
-    # selection stays inside the lock (pure, no I/O); the actual rmtree of dropped snapshot
-    # dirs happens AFTER release so the lock is never held across slow directory removal.
-    with index_lock(_index_path(root)):
-        records = _load_index(root)
-        records.insert(
-            0,
-            CheckpointRecord(
-                version=_CHECKPOINT_VERSION,
-                checkpoint_id=checkpoint_id,
-                mode=mode,
-                root=str(root),
-                created_at=created_at,
-                file_count=len(entries),
-            ),
-        )
-        records, dropped_dirs = _select_retained_checkpoints(root, records)
-        _write_index(root, records)
     for directory in dropped_dirs:
         shutil.rmtree(directory, ignore_errors=True)
     _prime_bounded_discovery_caches_for_root(root)
