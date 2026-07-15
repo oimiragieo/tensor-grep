@@ -45,11 +45,15 @@ concrete failure observed this session.
   `&` in a `run_in_background` wrapper orphaned it). Each fire is short-lived, so nothing can be killed
   mid-run. Push-race gate per fire: the latest `chore(release)` tag must be on PyPI AND `main` CI
   `completed` before merging.
-- **A3 — Mandatory adversarial security gate before merge.** Every security PR — touching `apply_policy`
-  / `mcp_server` / `*_backend` / an index-or-session lock / auth / money / migration — gets an Opus "try
-  to BREAK it, cite `file:line`, default FIX-FIRST if uncertain" review *before* merge. Not a rubber
-  stamp: this session it returned SHIP on some and caught real issues on others (a symlink RCE bypass; a
-  lock-release TOCTOU). `codex` is the nominal second vendor but its WSL path is unreliable → Opus is the
+- **A3 -- Mandatory adversarial security gate before merge.** Every security PR -- touching `apply_policy`
+  / `mcp_server` / `*_backend` / an index-or-session lock / auth / money / migration / native asset /
+  installer / doctor-probe construction -- gets an Opus "try to BREAK it, cite `file:line`, default
+  FIX-FIRST if uncertain" review *before* merge. Not a rubber stamp: this session it returned SHIP on some
+  and caught real issues on others (a symlink RCE bypass; a lock-release TOCTOU). The native-asset /
+  installer / doctor-probe trigger was added after the v1.75.1-v1.75.3 GPU wave (#594-#596: WSL
+  path-domain probe bridging, doctor probe failure taxonomy, calibrate/installer remediation) ran every PR
+  through this same gate and it returned real `SHIP-WITH-NIT` / `SHIP` verdicts off 8/8 clean probes rather
+  than a rubber stamp. `codex` is the nominal second vendor but its WSL path is unreliable -> Opus is the
   reliable substitute. Verdict shape: `SHIP` | `FIX-FIRST(+file:line + repro + minimal fix)`.
 - **A4 — Resume a dead agent from its transcript.** A background subagent that dies with "terminated
   early due to an API error: 500" is REVIVED by `SendMessage` to its `agentId` (partial work intact) — do
@@ -69,12 +73,53 @@ concrete failure observed this session.
 - **A8 — Fable is reachable only via `Agent(model:fable)`.** A Workflow `agent()` call cannot reach Fable —
   it silently falls back to the session model. Dispatch Fable design/audit seats as `Agent` subagents,
   never inside a `Workflow`.
+- **A9 -- Probe liveness via `SendMessage` before any `TaskStop`.** A background subagent's output-file
+  mtime/size is UNRELIABLE (0KB for 40-57 min while foreground-compiling). The reliable alive-vs-paused
+  tell is a `SendMessage` probe: a reply of "Message queued...at its next tool round" means ALIVE;
+  "had no active task; resumed from transcript" means it WAS PAUSED. Corroborate with Pyright
+  `<new-diagnostics>` on its file-writes plus the active build-process count. Cross-ref A5 ("don't kill on
+  staleness") -- this probe is the mechanism A5's "trust the completion notification" actually relies on.
+- **A10 -- A no-verdict council seat is a FAILED seat, not a blocker.** The codex thinktank seat can hang
+  on an MCP-auth spin (cloudflare/sentry `invalid_token`) -> 0KB output, no anchored verdict. Treat it as
+  FAILED: kill it, sweep the orphaned processes it left behind (20+ stale codex processes found in one
+  session), and synthesize from the surviving Opus lenses instead of waiting on it.
+- **A11 -- Design-review-before-build** (CEO directive #174). Fable designs a plan -> a thinktank council
+  certifies the PLAN itself is sound and ready (not findings, not a diff) -> bake must-fixes into the plan
+  -> Sonnet builds TDD-first (worktree, foreground-gate) -> mandatory adversarial Opus gate (now including
+  native-asset/installer/doctor-probe work, see the A3 extension above) -> drain one PR per publish. This
+  sequence caught a CI-reddening fix, an ordering bug, and a GPU-oversell claim BEFORE any code was built
+  this session.
 
 ## Current Handoff
 
 release_docs_current_tag: v1.75.4
 
 As of 2026-06-26, the current tagged release state is `v1.75.4`, and the latest complete public PyPI/release-asset distribution is also `v1.75.4`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.75.4` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
+
+**2026-07-14 Current-Handoff addendum -- GPU Phase-0 hardening wave (v1.75.1-v1.75.4, audit #171).** Four
+PRs closed audit #171's P0-1 through P0-5 GPU findings, each behind the mandatory Opus adversarial gate
+(SHIP / SHIP-WITH-NIT verdicts, 8/8 probes clean): `#594` (v1.75.1) bridged a WSL path-domain mismatch in
+the doctor/agent GPU probes (a Windows-target binary resolved from WSL cannot open a `/tmp/...` sentinel
+path -- the probe now detects cross-domain, translates the path via `wslpath -w`, and fails closed to a
+distinct `path_domain_mismatch` status instead of a generic "failed") and added a `cargo check --features
+cuda` anti-bit-rot CI gate so the `cuda` Cargo feature -- normally compiled only by release legs gated on
+the `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE` repository variable equalling `native-frontdoor-gpu` -- is
+checked on every PR instead of rotting silently between releases; `#595` (v1.75.2) replaced the doctor's
+opaque GPU-probe `status="failed"` with a structured `native_error_kind` taxonomy (`failed_path_bridging`
+/ `failed_input` / `failed_gpu_unavailable` / `failed_other`) and added an honest out-of-range
+`--gpu-device-ids` warning instead of an indistinguishable silent CPU fallback; `#596` (v1.75.3) added a
+`calibrate` remediation message on both native bail arms plus a loud nvidia-requested/cpu-delivered
+installer downgrade warning; `#597` (v1.75.4) closed 5 gate-nits from the Opus review of the prior three
+(evidence-path translation, doctor version dedup/reorder, a cross-domain-conditional `path_not_found`
+fix, an invalid-device-id classification fix, and co-gating `sanitize_cuda_detail` plus its callers under
+`#[cfg(any(feature = "cuda", test))]` so a default `cargo test` actually compiles and runs its unit tests
+instead of silently skipping them -- see the CI/Release Rules bullet on this pattern below). Separately,
+`#593` (v1.75.0) shipped an unrelated `tg orient` / `tg agent` improvement (M1+M2: broadened
+`suggested_ignore` whole vendor/skill-tree detection with a new STRONG-0 promotion tier) that landed in
+the same version range by coincidence of publish order, not as part of the GPU wave -- verify-before-cite
+matters even for a version range handed down in a task brief. See `docs/gpu_crossover.md` for the GPU
+promotion-status read and the Roadmap Sequencing section for the Phase 0/1/2 framing this wave completes
+Phase 0 of.
 
 - Recent fix commits:
   - `a840cd4 fix(search): tg search --rank errored in plain-text mode (#275)`
@@ -281,15 +326,49 @@ This contract is violated repeatedly. The recurring anti-pattern is a bare `exce
 
 The same discipline applies beyond backends: any router/pipeline that can silently override an explicit user intent (e.g. an explicit `--gpu` request quietly routed to CPU) must instead raise `ConfigurationError` or emit a diagnostic. A systemic `SafeBackendMixin` + a fault-injection conformance CI gate (every registered backend must raise, not return empty, when its engine call fails) is the planned structural fix so this stops recurring one file at a time.
 
-## Roadmap Sequencing (2026-07-02)
+## Roadmap Sequencing (2026-07-02, GPU phase structure added 2026-07-14)
 
-The GPU native-backend program (the P1 CUDA-PFAC kernel and beyond) is **held at the already-shipped P0 harness** — the correctness taxonomy, the loud non-promotional fallback, and the `doctor`/proof fields. Do **not** advance to P2–P4 (kernel, correctness gates, fair-bench, device/CI proof) until three CPU-only, every-install wins ship first:
+The GPU native-backend program runs a 3-phase sequence gated on evidence, not a blanket "hold until N CPU
+wins ship" rule:
 
-1. **Local hybrid semantic search** (BM25 + CPU dense embeddings fused with RRF, no API key) — the #1 validated user ask and the biggest competitive gap. Reference architecture: MinishLab `Semble` (tree-sitter chunking + `potion-code-16M` Model2Vec + BM25 + RRF, CPU-only, MIT).
-2. **`tg registration-check` productized** as a first-class command — a real-use-validated agent-native differentiator no plain grep/ast-grep offers.
-3. **A Bloom-filter n-gram chunk prefilter** for the slow non-literal-regex full-scan path in `rust_core`, which is far more broadly felt than the GPU program's narrow many-pattern-resident niche.
+- **Phase 0 -- shipped, gated OFF by default.** The correctness taxonomy, the loud non-promotional CPU
+  fallback, the `doctor`/proof fields, and (v1.75.1-v1.75.4, audit #171 P0-1..P0-5 -- see the Current
+  Handoff addendum above) the WSL path-domain probe bridging, doctor probe failure taxonomy, honest
+  `--gpu-device-ids` validation, `calibrate` remediation messaging, and the loud nvidia->cpu installer
+  downgrade warning are all SHIPPED and locally correctness-proven (RTX 4070 / RTX 5070, 1GB/5GB). The
+  native `cuda` Cargo feature only compiles into release assets when the repository variable
+  `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE` is explicitly set to `native-frontdoor-gpu`; the shipped
+  default (`native-frontdoor`) never builds or ships a GPU asset, so Phase 0 landing is a code-complete,
+  correctness-gated capability with zero public exposure until an operator opts in.
+- **Phase 1 -- reversible flag-flip, not yet authorized.** Flipping the release variable to build and ship
+  a GPU native asset is a reversible, single-variable change, but shipping the ASSET is not the same as
+  PROMOTING it: no crossover has been proven (GPU remains slower than `rg` / `tg_cpu` for single-pattern
+  search; see `docs/gpu_crossover.md`), and the public promotion gate
+  (`.github/workflows/public-gpu-proof.yml`, dispatch-only) has not been run to a `public_gpu_proof =
+  true` / `public_managed_promotion_ready = true` verdict -- the exact requirements are pinned in
+  [docs/CONTRACTS.md](docs/CONTRACTS.md) (the "Public managed GPU promotion" bullets, currently around
+  lines 80-82). Do not flip the variable to promote GPU as a default route until that gate passes.
+- **Phase 2 -- self-hosted GPU CI runner, CEO-gated.** Proving Phase 1's crossover claim at 1GB/5GB scale
+  in CI (rather than only on local RTX 4070/5070 dogfood boxes) requires a self-hosted GPU-capable runner
+  wired into `public-gpu-proof.yml`. That is a real recurring infra cost and access-control surface, so
+  provisioning it is explicitly CEO-gated, not an engineering-capacity decision.
 
-Rationale: the project's own docs place raw search speed (where GPU competes) in the **parity tier, not the moat**; GPU is currently slower than CPU with no promotion-ready path; and the heuristic auto-GPU route is effectively dead code whenever ripgrep is installed (the common case). The moat is the **agent-native context layer** (`orient` / `callers` / blast-radius / the token-efficient capsule), so engineering capacity funds that first. Explicit `--gpu-device-ids` stays supported and must fail loud when it cannot be honored (see the Backend Fail-Closed Contract).
+The original CPU-only "3 wins before GPU advances" gate (2026-07-02) is superseded by this phase
+structure, but its first win already shipped and validates the sequencing logic: **local hybrid semantic
+search** (BM25 + CPU dense embeddings fused with RRF, no API key, no GPU) -- the #1 validated user ask --
+shipped as `tg search --semantic` (`retrieval_dense.py` + `retrieval_fusion.py`, default-OFF, gated on
+the `semantic` extra; see the `tensor-grep-semantic-search-campaign` skill). Reference architecture:
+MinishLab `Semble` (tree-sitter chunking + `potion-code-16M` Model2Vec + BM25 + RRF, CPU-only, MIT). The
+other two original CPU-only items -- `tg registration-check` productized as a first-class command, and a
+Bloom-filter n-gram chunk prefilter for the slow non-literal-regex full-scan path in `rust_core` -- have
+not shipped and remain live backlog items, independent of GPU phase gating.
+
+Rationale (unchanged): the project's own docs place raw search speed (where GPU competes) in the
+**parity tier, not the moat**; the heuristic auto-GPU route is effectively dead code whenever ripgrep is
+installed (the common case). The moat is the **agent-native context layer** (`orient` / `callers` /
+blast-radius / the token-efficient capsule), so engineering capacity funds that first. Explicit
+`--gpu-device-ids` stays supported and must fail loud when it cannot be honored (see the Backend
+Fail-Closed Contract).
 
 ## Security Hardening Patterns (Round-3 audit lens)
 
@@ -316,11 +395,12 @@ Three kinds of skills apply to this repo; load the relevant one before non-trivi
   - `verify-plan-against-code` — before building an AI/subagent-drafted plan, verify every seam claim (file paths, the command/flag registration sites above, routing) against the real code with `file:line` citations; bake corrections in first.
   - `supply-chain-hardening` — before writing any download / extract / install / self-upgrade / toolchain-bootstrap code, apply the 5 checks (zip-slip guard, byte-capped/time-bound downloads, fail-closed checksum incl. detached helpers, `--locked` pinned CI tools, fail-closed unverified toolchains). Shipped patterns: #283/#284/#285/#287.
   - `worktree-fanout-verification-gate` — before integrating agent branches from a worktree fan-out: remove worktrees before checkout (`git worktree remove --force <path>` — else checkout is blocked and tests silently run main's code); re-run pytest/ruff/mypy in the real venv (worktrees have no `.venv`; agents' "tests pass" claims are hypotheses until then); run `ruff format --preview` on ALL agent-touched files (not only hand-fixed ones); and treat scoped-local-green as a hypothesis, not a merge signal.
-- **Carrying the project forward — the in-repo skill library** (`.claude/skills/tensor-grep-*` + `code-search-and-retrieval-reference`, **16 skills**): the onboarding handbook so a new engineer or a Sonnet-class session can debug, extend, validate, and advance `tg` without the original authors. Each auto-loads by its `description`; load the one matching your task. Index by intent:
+- **Carrying the project forward -- the in-repo skill library** (`.claude/skills/tensor-grep-*` + `code-search-and-retrieval-reference`, **20 skills**): the onboarding handbook so a new engineer or a Sonnet-class session can debug, extend, validate, and advance `tg` without the original authors. Each auto-loads by its `description`; load the one matching your task. Index by intent -- this exact bucket list is kept byte-identical with `CLAUDE.md`'s skill index; `tests/unit/test_skill_index_sync.py` fails if either doc drifts from the real `.claude/skills/` folder set:
   - **Change safely:** `tensor-grep-change-control` (the gates), `tensor-grep-debugging-playbook`, `tensor-grep-failure-archaeology` (don't re-fight settled battles), `tensor-grep-validation-and-qa`.
   - **Understand:** `tensor-grep-architecture-contract`, `code-search-and-retrieval-reference` (domain theory), `tensor-grep-config-and-flags`.
   - **Operate:** `tensor-grep-build-and-env`, `tensor-grep-run-and-operate`, `tensor-grep-diagnostics-and-tooling`, `tensor-grep-docs-and-writing`, `tensor-grep-release-and-positioning`, `tensor-grep-workspace-dogfood` (multi-repo stress dogfood), `tensor-grep-enterprise-agent` (enterprise readiness gaps + agent hard-stops).
-  - **Advance (SOTA):** `tensor-grep-semantic-search-campaign`, `tensor-grep-benchmark-and-proof-toolkit`, `tensor-grep-research-frontier`, `tensor-grep-research-methodology`.
+  - **Advance (SOTA):** `tensor-grep-semantic-search-campaign`, `tensor-grep-benchmark-and-proof-toolkit`, `tensor-grep-research-frontier`, `tensor-grep-research-methodology`, `tensor-grep-large-repo-scale-campaign` (bounding scale/deadline on large repos).
+  - **Orchestrate:** `tensor-grep-backlog-campaign` (the multi-PR drain+build campaign playbook).
 - When working ON tensor-grep, use `tg search`/`tg defs`/`tg callers` for code navigation rather than generic grep/find — this exercises the tool's own surfaces and catches routing regressions early (mind the scoped-path workaround above).
 
 These encode the "Adding a Command or Flag", "Dogfood the Real Binary", and "Verify AI-Drafted Plans" sections above as reusable, project-independent skills.
@@ -511,6 +591,19 @@ Any new download / extract / install / self-upgrade helper must apply the v1.17.
 (e) uv's `.ps1` installer LACKS binary checksum verification (uv issue #13074) while the `.sh` self-verifies (uv >=0.11.0, pinned 0.11.25); Windows fix = download the pinned uv RELEASE BINARY + verify a COMMITTED dual-arch (x86_64 + aarch64) SHA-256 fail-closed before use (implemented in `scripts/install.ps1` + a new `scripts/uv_checksums.json`, landing with PR #302 — not yet on `main`); discipline: ALWAYS download + `Get-FileHash` to CONFIRM a committed SHA — never trust an agent's "fetched from the sidecar" value.
 (f) ACCEPTED BOOTSTRAP TRUST BOUNDARY (documented, not a gap): the toolchain bootstrappers are trusted-over-HTTPS + version-pinned, NOT checksum-gated like the release artifacts WE download — uv's `.sh` self-verifies its binary (uv >=0.11.0, pinned 0.11.25), and rustup is fetched via `curl https://sh.rustup.rs | sh` in the semantic-release `build_command` (pyproject.toml) then pinned with `rustup default 1.96.0` (rustup self-verifies the toolchain). This is a deliberately different posture from (a)-(e), which checksum-gate artifacts WE fetch/extract. De-piping rustup to a pinned-binary + committed-checksum download is a tracked follow-up — it touches the release `build_command`, so it is ATTENDED (do not change it autonomously).
 
+Any Rust helper reachable only from a `#[cfg(feature = "cuda")]`-gated test must be re-gated
+`#[cfg(any(feature = "cuda", test))]` -- co-gating every helper it transitively calls -- instead of
+staying plain `#[cfg(feature = "cuda")]`. A default `cargo test` (no `--features cuda`, what CI's
+release-gating static-analysis job runs) never compiles a plain-`cuda`-gated test at all, so a test
+written against a plain-`cuda`-gated helper silently never runs; separately, un-gating only the test
+without also re-gating
+the helper leaves the helper with zero default-build callers and fails `cargo clippy -- -D warnings` on
+`dead_code`. `any(feature = "cuda", test)` solves both at once: the helper compiles whenever `cuda` is
+enabled (unchanged production behavior) OR whenever `cfg(test)` is set, so the test has something to call
+and is not itself dead code, while staying absent from the default non-test release build. Precedent:
+`GpuRouteFailureKind` / `sanitize_cuda_detail` / `classify_gpu_route_failure` in `rust_core/src/main.rs`
+(gate-nit #172 NIT-4 / MF-1, shipped in `#597` / v1.75.4).
+
 Do not casually edit:
 
 - `.github/workflows/ci.yml`
@@ -585,12 +678,30 @@ Preferred approach:
 5. open a PR with the correct conventional title and wait for PR CI/CodeQL to pass
 6. if the change is release-bearing and intended to ship now, squash-merge the PR to `main`
 7. wait for main CI and semantic-release complete successfully, plus CodeQL, `publish-github-release-assets`, PyPI/package artifact validation, `publish-pypi`, and `publish-success-gate`
-8. verify the GitHub release assets, PyPI latest version, and any affected public installer/update path. PyPI/public installer availability is verified before final release status is reported
-9. after semantic-release completes, `git fetch origin main --tags` and fast-forward local `main` to the release commit before reporting the final version state
+8. also check the `release-tag-smoke` JOB's own conclusion inside the release run (`gh run view <id>
+   --json jobs`), not just latest-main-green -- it is `needs`-gated on `[release, publish-success-gate]`
+   (not `continue-on-error`), checks out the actual published tag and runs `agent_readiness.py` against
+   it, and sat red across `v1.64.4`+ while PyPI kept publishing, masking a real regression for 4 releases
+9. verify the GitHub release assets, PyPI latest version, and any affected public installer/update path. PyPI/public installer availability is verified before final release status is reported
+10. after semantic-release completes, `git fetch origin main --tags` and fast-forward local `main` to the release commit before reporting the final version state
 
 Do not report a release-bearing fix as complete after only a branch push, open PR, or green PR checks. The final report must name the PR, merge commit, main CI run, CodeQL run, released tag/version, PyPI/package publish status, and any local/public installer dogfood result.
 
 For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and merge only when requested or clearly required. After merge, main CI should pass but semantic-release should skip release publishing.
+
+### Build ahead of a release gate (pipelining)
+
+The push-race gate above blocks the *merge* step, not the *build* step. Once `origin/main` has advanced
+past a collision-blocked PR's base, that PR can safely rebase, rebuild, and re-run its full local/CI
+validation **in parallel with an in-flight release** -- only the final squash-merge must still wait for
+the prior release to fully publish (the `chore(release)` commit on `main` plus PyPI). Doing the
+rebase/rebuild/verify work eagerly, instead of sitting idle until the release window closes, saves
+roughly 40 minutes per PR across a multi-PR drain campaign. This is the same shape as three well-known
+patterns, named here so it is recognizable rather than reinvented: a **merge queue** / speculative CI
+(validate against a projected future base before the real merge lands), a **release train** (fixed
+publish cadence; work queues up between departures without blocking on any single publish), and
+**build-once-promote-everywhere** (a single verified artifact is promoted through gates rather than
+rebuilt at each one). Only the merge itself is push-race-gated; the build is not.
 
 ## PR Title And Release Intent
 

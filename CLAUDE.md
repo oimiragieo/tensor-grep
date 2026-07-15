@@ -40,15 +40,12 @@ Claude Code guidance for the **tensor-grep** repository.
 ## Skills that apply here
 
 - **Using `tg`**: `.claude/skills/tensor-grep/SKILL.md` (+ `REFERENCE.md`).
-- **Carrying the project forward (in-repo onboarding library, 18 skills)**: `.claude/skills/tensor-grep-*`
-  + `code-search-and-retrieval-reference` — the retirement handbook so a new engineer or a Sonnet-class
-  session can debug, extend, validate, and advance `tg`. Change: `change-control`, `debugging-playbook`,
-  `failure-archaeology`, `validation-and-qa`. Understand: `architecture-contract`,
-  `code-search-and-retrieval-reference`, `config-and-flags`. Operate: `build-and-env`, `run-and-operate`,
-  `diagnostics-and-tooling`, `docs-and-writing`, `release-and-positioning`. Advance:
-  `semantic-search-campaign`, `benchmark-and-proof-toolkit`, `research-frontier`, `research-methodology`,
-  `large-repo-scale-campaign`. Orchestrate: `backlog-campaign` (the multi-PR drain+build campaign playbook).
-  Each auto-loads by task; this is the index.
+- **Carrying the project forward -- the in-repo skill library** (`.claude/skills/tensor-grep-*` + `code-search-and-retrieval-reference`, **20 skills**): the onboarding handbook so a new engineer or a Sonnet-class session can debug, extend, validate, and advance `tg` without the original authors. Each auto-loads by its `description`; load the one matching your task. Index by intent -- this exact bucket list is kept byte-identical with `AGENTS.md`'s skill index; `tests/unit/test_skill_index_sync.py` fails if either doc drifts from the real `.claude/skills/` folder set:
+  - **Change safely:** `tensor-grep-change-control` (the gates), `tensor-grep-debugging-playbook`, `tensor-grep-failure-archaeology` (don't re-fight settled battles), `tensor-grep-validation-and-qa`.
+  - **Understand:** `tensor-grep-architecture-contract`, `code-search-and-retrieval-reference` (domain theory), `tensor-grep-config-and-flags`.
+  - **Operate:** `tensor-grep-build-and-env`, `tensor-grep-run-and-operate`, `tensor-grep-diagnostics-and-tooling`, `tensor-grep-docs-and-writing`, `tensor-grep-release-and-positioning`, `tensor-grep-workspace-dogfood` (multi-repo stress dogfood), `tensor-grep-enterprise-agent` (enterprise readiness gaps + agent hard-stops).
+  - **Advance (SOTA):** `tensor-grep-semantic-search-campaign`, `tensor-grep-benchmark-and-proof-toolkit`, `tensor-grep-research-frontier`, `tensor-grep-research-methodology`, `tensor-grep-large-repo-scale-campaign` (bounding scale/deadline on large repos).
+  - **Orchestrate:** `tensor-grep-backlog-campaign` (the multi-PR drain+build campaign playbook).
 - **Build/release discipline** (global, `~/.claude/skills/`): `dogfood-the-shipped-artifact`,
   `verify-plan-against-code`, `supply-chain-hardening`, `worktree-fanout-verification-gate`,
   `anti-hang-test-protocol` (hang-class test hygiene: shell-timeout + fix-before-red-test),
