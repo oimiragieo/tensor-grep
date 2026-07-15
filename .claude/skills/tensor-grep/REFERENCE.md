@@ -113,5 +113,3 @@ An embedded public key alone only proves the receipt is internally self-consiste
 ## Known Issues
 
 **Unscoped search on a vendored root refuses instantly, not a 60 s hang.** `tg search PATTERN` with no path against a root whose top level contains `node_modules`/`vendor`/`external_repos`/`third_party` is refused in under 1 s (exit 2) before any walk starts. A large/unscoped root with no such top-level dir still gets a wall-clock-bounded native walk (flagged partial on expiry) or the `TG_RG_TIMEOUT_SECONDS`-bounded rg passthrough (default 60 s, lowered from 600 s in #288) — the 60 s timeout is a backstop, not the primary behavior. WORKAROUND: always supply a path — `tg search PATTERN C:\repo` completes in ~0.4 s.
-
-**No scoped file-dependency primitive (v1.49.x).** No `tg imports`/`tg importers`/`tg deps <file>` command exists yet — only whole-repo `tg map`/`tg orient`. For "what does file X import," prefer `grep`/`Read` of X's own import lines over `tg map`; a real benchmark found `tg map` ~10x more token-expensive than that for a single-file dependency question.

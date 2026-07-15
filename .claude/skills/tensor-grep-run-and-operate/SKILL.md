@@ -76,6 +76,8 @@ command name).
 | `tg doctor` | `PATH` | System/GPU/cache/AST/daemon/shell diagnostics |
 | `tg dogfood` | (flag-driven) | Wraps `agent_readiness.py` into one verdict + JSON |
 | `tg upgrade` | — | Upgrade the installed `tensor-grep` package |
+| `tg calibrate` | -- (no positional; delegates to the native binary) | Measure CPU-vs-GPU crossover thresholds; exit 1 with a remediation pointer if no CUDA-enabled native binary is installed (#596). See `docs/gpu_crossover.md`. |
+| `tg devices [--json] [--format text\|json]` | (flag-driven) | Print routable GPU device IDs + VRAM inventory (`collect_device_inventory`); the CLI counterpart of the `tg_devices` MCP tool (S7). See `docs/gpu_crossover.md`. |
 
 ## 2. Orientation and content search
 
@@ -96,6 +98,18 @@ hubs; the twin flag on `tg agent` (`#397`) is below. This is a *ranking* exclusi
 exclusion — the files are still walked, just kept out of the "central files" / "primary target" list.
 (Note: `tg search --ignore` is a **different**, boolean flag — "respect ignore files" — not this glob;
 `tg docs-coverage --ignore` (§13) is a coverage exclusion. See `tensor-grep-config-and-flags`.)
+
+`orient`'s JSON also carries a **`suggested_ignore`** field (`orient_capsule.py:872`,
+`_suggested_ignore_from_deweighted_trees`) -- ready-to-paste `--ignore` globs for whatever
+auto-de-weighted vendor/skill trees it found (de-weight, never hard-exclude, by default). **v1.75.0
+(#593, "M1+M2") broadened this from narrow nested-manifest islands to whole vendor/skill trees**: a
+new STRONG-0 promotion fires on 5 unambiguous vendor-dir basenames alone (`node_modules`, `vendor`,
+`third_party`, `_vendored`, `external_repos` -- no manifest needed), and a new STRONG-3 shape
+heuristic detects a whole `skills/`-named tree whose children look like independent leaf skills with
+no imports crossing out of the tree (a genuine imported `skills/` package stays un-deweighted). M2 in
+the same PR also added `suggested_ignore` parity to **`tg agent --json`**, which previously never
+surfaced it at all even though `tg agent` runs the identical de-weight during ranking -- additive-only,
+mirroring `suggested_scope`'s convention (present only when non-empty).
 
 ```powershell
 tg search "invoice tax" C:\repo --rank --json

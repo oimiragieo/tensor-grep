@@ -117,14 +117,18 @@ Ranked by how hard each is to fake, cheapest-to-check first:
    un-runnable in its own tree* until re-run in the real environment.
 10. **A security-touching change is not "done" on green tests alone — it needs a mandatory adversarial
     review before merge.** Any PR touching `apply_policy`, `mcp_server`, `cpu_backend`/native-argv
-    construction, `index_lock`, auth, money, or a migration gets a dedicated "try to BREAK this, cite
-    `file:line`, default to FIX-FIRST if uncertain" pass — not a rubric checklist, an actual attempted
-    exploit. This is not theoretical: this exact gate caught a real symlink-follow RCE bypass
-    (`.resolve()` following the symlink before the containment check) and a lock-release TOCTOU that a
-    green test suite missed on both. Route security-review model selection through
-    `feedback-fable5-cyber-classifier-audit-on-opus` (global memory) — run vuln-hunting turns on
-    Opus/Sonnet, not Fable (its cyber classifier silently falls back mid-turn). Verdict is binary:
-    `SHIP` or `FIX-FIRST(file:line + repro + fix)`, never a rubber stamp.
+    construction, `index_lock`, auth, money, a migration, or **native asset / installer / doctor-probe
+    construction** gets a dedicated "try to BREAK this, cite `file:line`, default to FIX-FIRST if
+    uncertain" pass — not a rubric checklist, an actual attempted exploit. This is not theoretical: this
+    exact gate caught a real symlink-follow RCE bypass (`.resolve()` following the symlink before the
+    containment check) and a lock-release TOCTOU that a green test suite missed on both. The
+    native-asset/installer/doctor-probe addition is the v1.75.2/v1.75.3 GPU Phase-0 precedent -- PR #596
+    (P0-5, loud nvidia-to-cpu installer downgrade) was held in draft with an explicit "Opus gate pending
+    before merge" per its council-reviewed plan, because a silent wrong-flavor install or a misleading
+    `doctor` probe status is a security-relevant integrity failure, not a UX nit. Route security-review
+    model selection through `feedback-fable5-cyber-classifier-audit-on-opus` (global memory) — run
+    vuln-hunting turns on Opus/Sonnet, not Fable (its cyber classifier silently falls back mid-turn).
+    Verdict is binary: `SHIP` or `FIX-FIRST(file:line + repro + fix)`, never a rubber stamp.
 11. **A test that exercises a hang-class bug (ReDoS, deadlock, lock-race, unbounded subprocess/loop)
     must itself be unhangable, or it just relocates the hang into your test run.** Wrap it in an outer
     shell timeout with a kill-after grace period AND the test framework's own per-test timeout (a
@@ -455,7 +459,8 @@ was never observed to fail cannot be trusted to catch a regression.
       surface (routing, capsule, MCP, docs-claim strings).
 - [ ] For release/workflow/package-manager changes: `uv run python scripts/validate_release_assets.py`
       exits 0.
-- [ ] If it touches `apply_policy`/`mcp_server`/native-argv/`index_lock`/auth/money/a migration: an
+- [ ] If it touches `apply_policy`/`mcp_server`/native-argv/`index_lock`/auth/money/a migration/native
+      asset-installer-doctor-probe construction: an
       adversarial "try to break it" security pass ran and returned `SHIP` (Part 1 point 10) — not just
       green functional tests.
 - [ ] If the test itself exercises a hang-class bug (ReDoS/deadlock/lock-race): the test run is wrapped

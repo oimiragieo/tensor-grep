@@ -68,15 +68,16 @@ These are not in a config file; they are CEO-confirmed law. Breaking one is a pr
 **Rule:** GPU, LSP, semantic-search, and provider-backed classify (`cybert`) paths stay **default-OFF and labeled experimental** until correctness **and** speed **and** UX are all proven. Never market an unproven wedge.
 
 **Why / incidents:**
-- **GPU** is slower than CPU with no promotion-ready path; the P1 CUDA-PFAC kernel is **PAUSED** (roadmap: fund the CPU moat first — `AGENTS.md:226-234`). Any GPU-requested fallback must surface `gpu_evidence_status = unsupported`, `gpu_proof = false`, `native_gpu_unavailable` (`AGENTS.md:156`). The only *candidate* CUDA wedge is many fixed strings over a large corpus — never single-pattern cold grep.
+- **GPU** Phase-0 SHIPPED (v1.75.0-v1.75.4, PRs #593-#597): NVIDIA native assets are built and locally correctness-proven (RTX 4070 `sm_89` / RTX 5070 `sm_120` -- `docs/gpu_crossover.md`), but gated OFF the public release by the CI Actions var `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE` (default `native-frontdoor`, CPU-only; GPU asset publishing needs the non-default `native-frontdoor-gpu`) -- Phase 1 is now a reversible flag-flip, not a multi-week rebuild. That flip publishes assets only: no speed crossover is proven vs `rg`/`tg_cpu`, GPU auto-recommendation stays `false`, and the reviewer-gated `public-gpu-proof.yml` speed-crossover gate remains unmet (`docs/CONTRACTS.md:80-82`). Any GPU-requested fallback must surface `gpu_evidence_status = unsupported`, `gpu_proof = false`, `native_gpu_unavailable` (`AGENTS.md:156`). The only *candidate* CUDA wedge is many fixed strings over a large corpus — never single-pattern cold grep.
 - **LSP** availability is install evidence only, not proof of working navigation; a row counts as LSP proof only with `lsp_provider_response = true` from a completed request (`AGENTS.md:163`).
 - **classify** is deterministic-local by default; provider mode requires `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` and provider failure must fall back **before** loading a tokenizer/model (`AGENTS.md:154`).
 
 ### 5. Mandatory adversarial security gate before merge
 
 **Rule:** Every PR touching a security-sensitive surface — `apply_policy`, `mcp_server`, native-argv
-construction (`cpu_backend`/`rg_passthrough`), `index_lock`, auth, money, or a schema/data migration —
-gets a dedicated **adversarial** review before merge, in addition to (never instead of) green tests:
+construction (`cpu_backend`/`rg_passthrough`), `index_lock`, auth, money, a schema/data migration, or
+**native asset / installer / doctor-probe construction** — gets a dedicated **adversarial** review
+before merge, in addition to (never instead of) green tests:
 "try to actually BREAK this, cite `file:line` for every claim, default to FIX-FIRST when uncertain."
 This is a distinct pass from ordinary code review — a reviewer optimizing for "does this look right"
 misses what a reviewer optimizing for "how would I exploit this" catches.
@@ -89,7 +90,12 @@ was a missing adversarial pass. Ordinary review (Codex) proved unreliable/WSL-fl
 practice — run the security-adversarial pass on **Opus or Sonnet-5, never Fable** (Fable 5 ships a
 semantic+cumulative cyber-safety classifier that auto-falls-back to Opus mid-turn on vuln-hunting
 content, which just adds friction rather than blocking anything — see the global memory
-`feedback-fable5-cyber-classifier-audit-on-opus`).
+`feedback-fable5-cyber-classifier-audit-on-opus`). **Precedent for the native-asset/installer/
+doctor-probe addition:** the v1.75.2/v1.75.3 GPU Phase-0 installer-downgrade PR (#596, P0-5 -- loud
+nvidia-to-cpu installer downgrade) was held in draft with an explicit "Opus gate pending before merge"
+per its council-reviewed plan before shipping; construction of installer/asset-selection logic and
+`doctor` probe payloads is exactly the class of code where a silent wrong-flavor install or a
+misleading probe status is a security-relevant integrity failure, not just a UX nit.
 
 **Verdict is binary, not a rubric score:** `SHIP` or `FIX-FIRST(file:line + repro + fix)`. A rubber-stamp
 "looks fine" is not a passing verdict — the reviewer must state what they tried to break and why it held.
@@ -202,6 +208,10 @@ That job **compiles native assets before publishing → it runs ~6 minutes**, an
 **Recovery — do NOT panic-rerun:** the failure self-heals. The next push-to-`main` re-runs `Semantic Release`; because the version is **derived from git tags** (not the failed run's state), it recomputes the correct next version and covers the orphaned `fix:`/`feat:` commit. The fix's *code* was already on `main` — only the publish step was behind. Diagnose by decoding the structured job result first: `gh run view <id> --json jobs` → find `Semantic Release` → `--log-failed`. A `! [rejected] main -> main` line is the push-race signature (`AGENTS.md:506-508`).
 
 Other push rules: don't push from a dirty worktree if `origin/main` moved with unrelated local changes; a branch push / open PR starts **PR CI only** — it is not a release (`AGENTS.md:492-496`).
+
+### Build-vs-merge decoupling -- the push-race gates MERGE, not BUILD
+
+**One-merge-per-tick governs when a PR may *merge*, not when work on it may *start*.** A PR sequenced "after vX publishes" purely for a **code-collision** reason (it touches the same file as the in-flight release, or it wants vX's already-merged code as its base) may **branch and build off the just-merged `main` in parallel with the in-flight release** -- draft it, implement it, run PR-branch CI, get it fully review-ready -- while the release job is still compiling native assets. Only the final **merge** into `main` stays push-race-gated: wait for the prior `chore(release)` commit + PyPI to confirm publish before clicking merge, not before starting work. Across a multi-PR campaign this saves ~40 min/PR of pure idle waiting (see the wall-time table below for how long a full publish actually takes). Named patterns for the same underlying principle elsewhere: **merge-queue / speculative CI** (validate speculatively against a predicted merge base, re-validate only if the base actually changed), **release-train** (work lands continuously; only the train's scheduled departure is gated), and **build-once-promote-everywhere** (one build artifact is promoted through successive gates rather than rebuilt at each one).
 
 ### Current wall-time is much bigger than "~6 minutes" — size watchers accordingly (re-verified 2026-07-03, v1.19.x receipts)
 

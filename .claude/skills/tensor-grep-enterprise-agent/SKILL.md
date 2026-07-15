@@ -49,7 +49,7 @@ Verified against **tg 1.71.1** (2026-07-13 workspace dogfood on `/mnt/c/dev/proj
 | Complete callers at repo root | Still prefer `src/` |
 | `codemap` agent-loop-safe | **Fixed** (#153 deadline; native ~41s whole-repo, bounded/partial) |
 | Agent accuracy gate (top-k / MRR / false-primary) | Missing |
-| GPU promotion / LSP proof | Experimental / not claimed |
+| GPU promotion / LSP proof | Experimental / not claimed -- GPU Phase-0 SHIPPED v1.75.0-v1.75.4 (native assets locally correctness-proven, gated off the public release behind `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE`), but no speed crossover is proven vs `rg`/`tg_cpu` and `public-gpu-proof.yml` remains unmet (`docs/gpu_crossover.md`) |
 | Cold text search vs `rg` claims | `rg` remains baseline |
 
 ## Recommended loop

@@ -47,7 +47,7 @@ of the partial-results contract (see `tensor-grep-architecture-contract` for the
 | `0` | at least one match found | pass through |
 | `1` | search ran cleanly, zero matches | **not** an error — a `SearchResult` with 0 matches, never raised as a failure |
 | `2`, matches parsed (soft per-file error, e.g. one unreadable path among many) | rg still emitted matches for the readable files | tg **keeps** those matches, sets `result_incomplete=True` + an `incomplete_reason`, and does **not** raise — `partial = result.returncode == 2 and total_matches > 0` (`ripgrep_backend.py:123`, mirrored in `_search_files_with_matches`/`_search_counts`) |
-| `2`, nothing parsed, or any `> 2` | a genuine fatal failure (bad regex, unreadable path with no other matches, etc.) | `RipgrepBackend.search()` raises a **bare `RuntimeError`** — deliberately **not** `BackendExecutionError` — whenever `result.returncode > 1 and not partial` (`ripgrep_backend.py:124-128`; the two sibling methods raise the same way at `:297` and `:413`). It is kept as plain `RuntimeError` specifically so this failure does not get caught by an `except BackendExecutionError:` engine-swap handler elsewhere (e.g. the `--pcre2` CPU-fallback path) — see G3/task #79 below for the open item to reconcile this with the rest of the Backend Fail-Closed Contract's normal `BackendExecutionError` convention. |
+| `2`, nothing parsed, or any `> 2` | a genuine fatal failure (bad regex, unreadable path with no other matches, etc.) | `RipgrepBackend.search()` raises `BackendExecutionError` whenever `result.returncode > 1 and not partial` (`ripgrep_backend.py:124-128`; the two sibling methods raise the same way at `:297` and `:413`; the rg-missing guard at `:505` too). **RESOLVED #79/#10/#14 (commit `a7c9431`)** -- every `RipgrepBackend` fatal path used to raise a bare `RuntimeError`, deliberately not `BackendExecutionError`, so it would not get caught by `cli/main.py`'s `except BackendExecutionError:` per-file CPU-fallback retry (`:7481`); the fix flipped all of them to `BackendExecutionError` so that retry now catches rg failures the same way it does every other backend, per the Backend Fail-Closed Contract's normal convention. |
 
 **Do not describe exit-2 as unconditionally "raise `BackendExecutionError`"** — that was true before
 #341 (round-4 slice 3) and is no longer true; a partial exit-2 with real matches is now a **kept**
@@ -391,7 +391,7 @@ isolation, since this is still the fastest-moving area in the repo.
 
 | Concept | tg file | One-line gotcha |
 |---|---|---|
-| rg exit code 2 (kept, not raised) | `ripgrep_backend.py:123-128,297,413` | matches parsed -> `result_incomplete=True`, kept; nothing parsed / `>2` -> bare `RuntimeError` |
+| rg exit code 2 (kept, not raised) | `ripgrep_backend.py:123-128,297,413` | matches parsed -> `result_incomplete=True`, kept; nothing parsed / `>2` -> `BackendExecutionError` (RESOLVED #79, `a7c9431`) |
 | PCRE2 detection | `ripgrep_backend.py:53` (`supports_pcre2`) | real smoke test (`-P "a(?=b)" -V`), not a version-string guess |
 | Binary NUL detection | `test_rg_parity_edges.py:41-43,147` | exit code must match rg's, not just stdout |
 | `-u`/`-uu`/`-uuu` | `bootstrap.py:459` (`_search_args_request_unrestricted_generated_scan`) | intercepted by the broad-root safety guard, not blind passthrough |
@@ -512,5 +512,3 @@ Open uncertainties (do not cite as fact without independent verification):
   added to `cpu_backend.py` that could fall back to Python `re` must independently prove pattern
   safety or fail closed (see the durable lesson at the end of §1a); a future change could
   reintroduce a bypass the same way audit #111 found a third one after #6/#16 closed the first two.
-- task #79 (§1: `RipgrepBackend` raising a bare `RuntimeError` instead of `BackendExecutionError`)
-  is tracked as an open reconciliation item, not yet resolved as of this writing.

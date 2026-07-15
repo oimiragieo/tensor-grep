@@ -327,6 +327,13 @@ Full runbook: `docs/RELEASE_CHECKLIST.md:153-170`. Summary:
 [ ] `publish-github-release-assets` green for the new tag
 [ ] `publish-pypi` green (if publish_pypi was true) AND PyPI JSON API shows the version
 [ ] `publish-success-gate` green
+[ ] `release-tag-smoke`'s OWN conclusion checked inside the release run (`gh run view <id> --json
+    jobs` -> find the `release-tag-smoke` job -> read ITS `conclusion`) -- do not infer this from
+    "latest main run green." It is a NEEDS-gated job (`needs: [release, publish-success-gate]`) that
+    checks out the release tag and re-runs `scripts/agent_readiness.py` against it; PyPI can keep
+    publishing fine for releases at a time while this job stays red underneath, masking a real
+    regression (#542 masked for 4 releases since v1.64.4 this way -- see
+    `tensor-grep-failure-archaeology` and `tensor-grep-debugging-playbook` for the incident).
 [ ] Docker dogfood (1.7) run against the published version, exit 0
 [ ] If installer/update path changed: `tg upgrade` + fresh-shell `tg --version` verified
 ```
@@ -409,9 +416,9 @@ numbers."** Concretely:
 
 ### 2.3 Current experimental / open surfaces (label them as such, don't oversell)
 
-| Surface | Status (2026-07-02, v1.17.25) | Source |
+| Surface | Status (2026-07-02, v1.17.25 unless noted) | Source |
 |---|---|---|
-| GPU native backend (P1 CUDA-PFAC kernel) | **Paused at P0** (correctness taxonomy + loud non-promotional fallback + doctor/proof fields already shipped). Not advancing to P2–P4 until 3 CPU-only wins ship first (hybrid semantic search, `tg orient`+token-efficiency proof, Bloom-filter n-gram prefilter). | `AGENTS.md:226-234` (Roadmap Sequencing) |
+| GPU native backend | **Status refreshed to v1.75.4.** Phase-0 SHIPPED (v1.75.0-v1.75.4, PRs #593-#597): NVIDIA native assets built and locally correctness-proven (RTX 4070 `sm_89` / RTX 5070 `sm_120`, 1GB/5GB correctness), gated OFF the public release by the CI Actions var `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE` (default `native-frontdoor`, CPU-only; GPU asset publishing needs the non-default `native-frontdoor-gpu`) -- Phase 1 is now a reversible flag-flip, not a multi-week rebuild. That flip does not promote GPU, change the CPU-default auto-recommendation, or prove a speed crossover: no speed crossover is proven vs `rg`/`tg_cpu`, GPU auto-recommendation stays `false`, and the reviewer-gated `public-gpu-proof.yml` speed-crossover gate remains unmet. | `docs/gpu_crossover.md`, `docs/CONTRACTS.md:80-82` |
 | GPU speed claim generally | Not accepted. GPU still loses or times out on 100MB/1GB/5GB public scale checks as of the last dogfood; kept experimental/opt-in until correctness+speed beat both `rg` and `tg --cpu` on accepted artifacts. | `docs/PAPER.md:139` |
 | CyBERT / provider-backed `classify` | Opt-in only (`TENSOR_GREP_CLASSIFY_PROVIDER=cybert`), default is local deterministic; useful future reference, not a default performance claim. | `docs/PAPER.md:141-146` |
 | Resident AST worker (`tg worker`) | Opt-in (`TG_RESIDENT_AST=1`), hidden from `--help`, workload-dependent — helps startup-dominated repeated micro-workflows, not the default performance path. | `docs/EXPERIMENTAL.md:5-14` |
@@ -458,10 +465,13 @@ grep -n "^jobs:\|^  [a-zA-Z][a-zA-Z0-9_-]*:$\|needs:" .github/workflows/ci.yml
 sed -n '1,90p' docs/tool_comparison.md
 
 # GPU / roadmap status
-grep -n "Roadmap Sequencing" AGENTS.md
-sed -n '134,146p' docs/PAPER.md
+grep -n "RELEASE_NATIVE_ASSET_PROFILE\|native-frontdoor-gpu" .github/workflows/ci.yml
+sed -n '1,20p' docs/gpu_crossover.md
 ```
 
 If `scripts/validate_pr_title_semver.py`'s regex or `_RELEASE_INTENTS` dict changes, update
 section 1.3 here. If `ci.yml`'s `release` job `needs:` list changes, update the DAG in section 1.2.
-If the GPU roadmap graduates past P0, update section 2.3 and drop the "paused" framing.
+GPU Phase-0 (correctness-proven native assets, gated off the public release by
+`TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE`) shipped v1.75.0-v1.75.4 -- if the CI var default flips to
+publish GPU assets, or a speed crossover is actually proven (`public-gpu-proof.yml` passes), update
+section 2.3 again and drop the "no crossover proven" framing.

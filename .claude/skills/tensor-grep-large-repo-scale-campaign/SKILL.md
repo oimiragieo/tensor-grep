@@ -37,12 +37,22 @@ skill without beating a measurable gate and a conscious flag-flip** (Phase 4).
 
 ## Why this is the live frontier (receipts)
 
-- **`--deadline` is threaded but not yet end-to-end effective (task #52, OPEN).**
+- **`--deadline` is now a hard end-to-end wall-clock bound on the graph commands
+  (task #52, CLOSED by PR #478 / `67f9779`, shipped v1.54.3).**
   Receipt (2026-07-05, on a real ~1884-file TypeScript repo, **pre-#396**):
   `tg callers QueryEngine --deadline 10` took **~25 s** (not ~10 s), and a direct
   `deadline_seconds=8` call took **>90 s**. Root cause: `build_symbol_callers_from_map`
   (the caller-scan) **re-reads/re-parses** candidate files in an `any()`-loop per
-  definition, so "each stage is bounded" did **not** make the pipeline bounded.
+  definition, so "each stage is bounded" did **not** make the pipeline bounded. #478
+  closed the residual gap a verify-plan-against-code pass found after #396/#440: four
+  loops still had no wall-clock bound -- (A) `_iter_repo_files`' file-tree walk (count-only
+  bound, no deadline), (B) `_relevant_tests_for_symbol`'s two unguarded `any()` loops (the
+  dominant cause on a high-fan-out symbol like `"main"`, confirmed a 3x-recurring P0), (C)
+  `build_symbol_impact_from_map` had no deadline parameter at all, and (D) the `string_refs`
+  second pass in `build_symbol_refs_from_map`. All four now fold into the existing
+  `_DeadlineBreakFlag`/`partial`/`deadline_limit` machinery, guarded `if deadline_monotonic
+  is not None` so an undeadlined caller sees byte-identical behavior. See S2 for what this
+  does and does not close (the #390 daemon-path gap is explicitly separate).
 - **#396 (v1.39.1) shipped a caller-scan re-parse cache + `Path.resolve()` memoization**
   — the code comment measures **~18 s of ~22 s** wall time was redundant `resolve()`
   churn (`src/tensor_grep/cli/repo_map.py:74-76`), claims **7.9x on central symbols.**
@@ -108,6 +118,7 @@ they drift.
 | **#396** caller-scan cache | `_mtime_aware_cache` (mtime+size in key) + `_resolved_path_str` `lru_cache(8192)` + `_module_aliases_for_path` `lru_cache(16384)`->`frozenset` (PR #345). **7.9x on central symbols.** | `repo_map.py:90/97/6356` |
 | **#398/#399/#401** exit semantics | #398 exit 2 on ANY truncated partial; #399 walked it back to exit 2 only when the partial is **also EMPTY** (found-but-capped exited 0); **#401 reverted #399** — a UNANIMOUS design council restored exit 2 on ANY truncated/partial result **REGARDLESS of whether matches were found** ("truncation trumps found": an agent must never trust a capped caller-set as exhaustive). This is the CURRENT, final contract — do not describe #399's found-exits-0 behavior as current. | `main.py:8374-8384`; `docs/CONTRACTS.md:109` |
 | **#400** unscoped-hang fix (e7f18b7) — **shipped v1.40.4** (`bb14abe`), hardened by **#413** (v1.42.0) and **#428** | (A) `_SKIP_DIR_NAMES` excludes `_tg_refs` / `.tg_semantic_index` / `external_repos` (`repo_map.py:185`); (B) **native per-file search walk** got a wall-clock bound — `compute_native_walk_deadline` / `native_walk_deadline_exceeded` (`backends/cpu_backend.py`), checked per file, breaks to a partial with `result_incomplete`+stderr warning (`main.py:6716-6744`); (C) `_should_refuse_unbounded_vendored_root_scan` (`main.py:3925`, backed by the O(top-level-entries)-only probe `_root_top_level_vendored_dir_names` at `main.py:3906`, exit 2, <1s — never walks) refuses a root with `node_modules`/`vendor`/`external_repos`/`third_party` at top level, **duplicated by design** into `bootstrap.py`'s `_search_paths_include_vendored_root` (~line 591) because that front door fast-paths native/rg past `main.py` (the recurring "two front doors" class) — both guards import the same `UNBOUNDED_VENDORED_ROOT_DIR_NAMES` set from `io/directory_scanner.py` (~line 36) as the single source of truth so they cannot drift apart. #413 added a bounded-`scandir` instant-refusal for a large *single-project* root (no vendored top-level dir but still huge); #428 ported the same walk-deadline/refusal into the MCP surface (`tg_search`/`tg_ast_search` had never inherited it). | `tg --version` (expect >= 1.40.4); `git log --oneline --all \| grep -i '#400\|#413\|#428'` |
+| **#478** (`67f9779`, shipped v1.54.3) -- **CLOSES #52**, the 4 residual unbounded loops | (A) `_iter_repo_files`' file-tree walk gains `deadline_monotonic`/`deadline_hit` params (was count-only bound); `build_inventory` now computes its deadline BEFORE the walk, not after. (B) `_relevant_tests_for_symbol`'s two unguarded `any()` loops (the dominant cause on a high-fan-out symbol like `"main"`) now break on a shared deadline. (C) `build_symbol_impact_from_map` (`repo_map.py:14608`) gained a `deadline_monotonic` parameter it never had, threaded into its `_preferred_definition_files`/`_relevant_tests_for_symbol` calls, plus a new `partial`/`deadline_limit` payload block; `build_symbol_impact`/`build_symbol_blast_radius_from_map` updated to pass it through. (D) the `string_refs` second pass in `build_symbol_refs_from_map` folds into the existing `refs_scan_deadline_hit` local. All four guarded `if deadline_monotonic is not None` (byte-identical no-op otherwise). **Scope note:** the design doc explicitly keeps `session_store.py` (the daemon call sites) out of scope -- see #390 in S2, which #478 narrows but does not close. | `git show --stat 67f9779`; `grep -n "deadline_monotonic" src/tensor_grep/cli/repo_map.py | grep -i impact` |
 
 **Merge/release state to stamp every session:** #400/#413/#428 are all in the **installed
 binary** as of v1.49.3 — this is not a source-only or in-flight fix. If a future session finds
@@ -119,28 +130,33 @@ project's merge-gate guardrail: an open PR is guidance, not a receipt, until it 
 
 ## 2. Still open (the campaign's actual work)
 
-- **#52 — end-to-end deadline ineffective on a large TS repo — LIKELY CLOSED, verify before
-  trusting.** Three independent mechanisms now bound the shape #52 originally reported: (a)
-  **#396**'s caller-scan re-parse cache (7.9x on central symbols); (b) **#440** (`7afb6e4`,
-  tracked as task #61 but the identical symptom — "`--deadline` ineffective on a central
-  symbol because an import-consumer/preferred-definition sibling loop was unbounded") bounds
-  those two remaining sibling loops on `callers`/`refs` and marks an early break `partial` for
-  exit-2 honesty; (c) the **`CALLER_SCAN_FILE_CEILING = 512`** chokepoint (`repo_map.py:168`)
-  is a *deliberate, separate* constant from `DEFAULT_AGENT_REPO_MAP_LIMIT` (raised 512->2000,
-  see `tensor-grep-config-and-flags`) — the in-code comment states explicitly that raising the
-  map limit to 2000 is safe for caller-scan latency **only because** this ceiling independently
-  bounds the caller-scan hot loop's per-file work, otherwise "a naive raise to 2000 would make
-  it worse" (task #52 shape, `repo_map.py:162-163`). Net: do not assume #52 is still open just
-  because it predates these fixes — the current architecture is built specifically to prevent
-  the #52 shape from recurring — but **re-run Phase 0 once** on a real large TS repo before
-  writing "#52 closed" anywhere; this skill downgrades the claim to *likely closed*, not
-  confirmed closed.
-- **#390 — daemon-path deadline gap.** The `_from_map` builders that operate on a
-  cached session `repo_map` are inconsistently bounded. VERIFY per command:
+- **#52 — end-to-end deadline ineffective on a large TS repo — CLOSED by PR #478
+  (`67f9779`, shipped v1.54.3).** See the shipped-table row in S1 for the four loops it
+  bounded (A: file-tree walk, B: `_relevant_tests_for_symbol`, C: `build_symbol_impact_from_map`,
+  D: `string_refs` second pass). This supersedes the *likely-closed* framing this skill
+  previously carried after #396/#440/the `CALLER_SCAN_FILE_CEILING` chokepoint alone — those
+  three narrowed the gap but a verify-plan-against-code pass still found the four loops above
+  live and unbounded; #478 is the commit that actually closes it. **Still do a one-time fresh
+  Phase-0 re-measure** on a real large TS repo before citing a specific wall-clock number in a
+  benchmark claim or PR -- "the mechanism is closed" and "I have re-confirmed the number on my
+  reference repo" are different claims; S3 Phase 0 gives the exact command.
+- **#390 — daemon-path deadline gap -- narrowed by #478, still OPEN.** The `_from_map` builders
+  that operate on a cached session `repo_map` are inconsistently bounded, AND the daemon
+  (`session_store.py`) call sites for the commands it does route never pass a deadline at all --
+  two separate gaps. VERIFY per command:
   `build_symbol_callers_from_map` (`repo_map.py:13777`) **does** take `deadline_monotonic`;
-  `build_symbol_impact_from_map` (`repo_map.py:13181`) **does not**. Daemon-served
-  queries that skip `build_repo_map` (the map is cached) are not bounded by the scan
-  deadline for the part they still compute.
+  `build_symbol_impact_from_map` (`repo_map.py:14608`) **now also accepts a
+  `deadline_monotonic` parameter as of #478** (it genuinely did not before) -- but that closed
+  only the builder-side plumbing gap (candidate (c)'s prerequisite), not the daemon path
+  itself: `session_store.py`'s `_dispatch_session_command`-style handlers call both
+  `build_symbol_impact_from_map` (`session_store.py:1267`) and `build_symbol_callers_from_map`
+  (`session_store.py:1289`) **without ever passing `deadline_monotonic`**, confirmed by reading
+  those call sites directly -- so a daemon-served `impact`/`callers` query on a cached session
+  map is still unbounded for the part it computes, regardless of what the CLI-path `--deadline`
+  flag would have done. The #478 design doc explicitly scoped `session_store.py` OUT ("do NOT
+  touch session/daemon territory... Fixes B/C/D are correct no-ops there") -- closing #390 for
+  real is threading an actual deadline value through those two call sites, which is now a
+  smaller remaining PR than it was before #478 (the builder already accepts the parameter).
 - **Default budget.** The native-walk bound reuses `configured_ripgrep_timeout_seconds()`,
   which now defaults to **60 s** (`subprocess_policy.py:44`, was 600 s). `AGENTS.md:184`
   still narrates the pre-#400 "600 s" symptom — that doc lags; the resolver is the source of
@@ -176,13 +192,14 @@ Measure-Command { uv run --no-sync python -m tensor_grep callers $repo Node --de
   ~11 s for `--deadline 10`). Read the JSON: `partial`/`result_incomplete` must be
   `true` **iff** the scan was actually truncated, and a truncated result must carry a
   non-empty `incomplete_reason`/`caveat`.
-- **If elapsed >> deadline (e.g. 25 s for a 10 s budget)** -> **#52 is still confirmed
-  open at HEAD**, despite #396/#440/the `CALLER_SCAN_FILE_CEILING` chokepoint (§2) — those
-  were built specifically to prevent this shape, so a live overrun here is a genuine
-  regression, not "still unfixed as expected." Proceed to Phase 1 to find where the budget
-  leaks.
+- **If elapsed >> deadline (e.g. 25 s for a 10 s budget)** -> **a NEW regression, not #52
+  reopened** -- #52 is CLOSED at HEAD (#478/`67f9779`, S1/§2), built specifically to prevent
+  exactly this shape across all four loops (A/B/C/D), so a live overrun here means either a
+  new unbounded loop was introduced since #478, or you are hitting the still-open #390
+  daemon-path gap (a *session-served* query, not a fresh CLI one -- check which path you ran).
+  Proceed to Phase 1 to find where the budget leaks.
 - **If elapsed is bounded AND truncation is honestly flagged** -> matches the current
-  expectation (§2: #52 likely-closed). Do NOT just declare victory: re-run on a *second*
+  expectation (§2: #52 closed). Do NOT just declare victory: re-run on a *second*
   large repo and a *central* symbol (highest fan-in), confirm the exit code matches
   `CONTRACTS.md:109` (exit 2 fires on ANY truncation, found or not — §5), then route
   promotion of the "closed" claim through Phase 4 / change-control.
@@ -246,7 +263,9 @@ caller-scan `any()`-loop: check `native_walk_deadline_exceeded` (or an equivalen
   (#401 — do not build toward the old #399 "found-but-capped exits 0" shape). Mirror
   #400's shape (`main.py:6716-6744`): break, never return a clean empty.
 - **Why preferred:** it directly closes #52 with a mechanism already proven in-tree; low
-  blast radius; deterministic.
+  blast radius; deterministic. **This is what #478 (`67f9779`) actually shipped** -- the same
+  per-file-deadline-check shape, applied to all four residual loops (S1/S2). This menu entry
+  stays useful as the template for the next #52-shaped finding, not just a historical proposal.
 
 #### Candidate (b) — extend the #396 caching to the residual re-parse
 If Phase 1 shows re-parses that #396's caches miss, widen coverage.
@@ -260,14 +279,21 @@ If Phase 1 shows re-parses that #396's caches miss, widen coverage.
 - Caching bounds the *common* case but does **not** bound a pathological single file —
   ship it WITH candidate (a), not instead of it.
 
-#### Candidate (c) — close the #390 daemon-path deadline gap
-Thread `deadline_monotonic` through the `_from_map` builders that lack it (start with
-`build_symbol_impact_from_map`, `repo_map.py:13181`) so a daemon-served query on a
-cached map is still bounded.
+#### Candidate (c) — close the #390 daemon-path deadline gap (NARROWED by #478, still open)
+Thread an actual `deadline_monotonic` value through the `session_store.py` daemon call
+sites so a daemon-served query on a cached map is still bounded. **The builder-side
+prerequisite is now done:** `build_symbol_impact_from_map` (`repo_map.py:14608`) gained a
+`deadline_monotonic` parameter via #478's Loop C -- the design doc explicitly scoped
+`session_store.py` itself OUT of that PR. What remains is strictly the call-site wiring:
+`session_store.py:1267` (`build_symbol_impact_from_map`) and `session_store.py:1289`
+(`build_symbol_callers_from_map`) both currently call these builders with no
+`deadline_monotonic` argument at all.
 - **Obligation:** the daemon serves from a **cached** `repo_map`, so `build_repo_map`'s
-  deadline never fires; the bound must live in the per-symbol traversal. Verify the
-  daemon path actually reaches the bounded code (dogfood via the running daemon, not
-  just the in-process function). Separate gate from #52 — a distinct PR.
+  deadline never fires; the bound must live in the per-symbol traversal (now available on
+  the impact builder; already available on the callers builder). Decide where the deadline
+  value itself comes from for a daemon request (a new request field? a fixed server-side
+  cap?) and verify the daemon path actually reaches the bounded code (dogfood via the
+  running daemon, not just the in-process function). Separate gate from #52 — a distinct PR.
 
 #### Candidate (d) — replace the regex/slow TS parse with tree-sitter (HIGHEST RISK — fenced)
 Only if (a)+(b)+(c) leave the parse itself as the irreducible hotspot.
@@ -398,20 +424,27 @@ full `BackendExecutionError` contract).
 
 ## Provenance and maintenance
 
-Every claim above is verifiable from the repo at HEAD on **2026-07-08** (**v1.49.3**). The
-unscoped-hang fix **#400** = `e7f18b7` is fully shipped (v1.40.4, `bb14abe`, plus follow-ons
-**#413**/**#428**) — do not re-check "is #400 released yet" as if it were still in question.
-Re-run these when a claim may have drifted; date-stamp any change.
+Every claim above is verifiable from the repo at HEAD on **2026-07-08** (**v1.49.3**), with the
+**#52/#390/#478 facts specifically re-verified against HEAD on 2026-07-14 (v1.75.4)** -- re-verify
+everything else independently before trusting it, the base pass predates the newer facts by
+several releases. The unscoped-hang fix **#400** = `e7f18b7` is fully shipped (v1.40.4, `bb14abe`,
+plus follow-ons **#413**/**#428**) — do not re-check "is #400 released yet" as if it were still in
+question. Re-run these when a claim may have drifted; date-stamp any change.
 
 - **Deadline threading:** `grep -n deadline_seconds src/tensor_grep/cli/repo_map.py | head`
   and `tg callers --help | grep -i deadline`.
-- **#52 likely-closed check:** re-run Phase 0 on a large repo; compare elapsed vs `--deadline`;
+- **#52 closed check:** `git show --stat 67f9779` (PR #478) confirms the four-loop fix landed;
+  re-run Phase 0 on a large repo to get a fresh wall-clock number before citing one in a claim;
   also `grep -n "CALLER_SCAN_FILE_CEILING\|DEFAULT_AGENT_REPO_MAP_LIMIT" src/tensor_grep/cli/repo_map.py`
   to confirm the two constants are still deliberately decoupled (2000 map limit / 512 caller-scan
   ceiling).
 - **#390 daemon gap:** `grep -n "def build_symbol_.*_from_map" src/tensor_grep/cli/repo_map.py`
-  then check which take `deadline_monotonic` (callers: yes, as of this writing at
-  `repo_map.py:13777`; impact: no, `repo_map.py:13181`).
+  then check which take `deadline_monotonic` (callers: yes, `repo_map.py:13777`; impact: yes as
+  of #478, `repo_map.py:14608`/`:14613` -- this flipped from the prior "impact: no"). Then check
+  whether the gap is actually closed by grepping the DAEMON call sites, not just the builder
+  signature: `grep -n "build_symbol_impact_from_map\|build_symbol_callers_from_map" src/tensor_grep/cli/session_store.py`
+  -- as of this writing neither call passes `deadline_monotonic`, so #390 stays open at the
+  daemon layer even though the builder-side blocker is gone.
 - **Native-walk bound + default budget:** `grep -n "native_walk_deadline\|compute_native_walk_deadline" src/tensor_grep/backends/cpu_backend.py`;
   `grep -n TG_RG_TIMEOUT_SECONDS src/tensor_grep/cli/subprocess_policy.py` (default 60 s, not the
   pre-#400 600 s `AGENTS.md:184` still narrates as the historical symptom).
@@ -421,17 +454,21 @@ Re-run these when a claim may have drifted; date-stamp any change.
 - **Profiling / parity harness:** `ls benchmarks/run_ast_parity_check.py benchmarks/check_regression.py`; `grep -n "class _ProfileCollector" src/tensor_grep/cli/repo_map.py`.
 
 **Open / candidate (not settled — do not present as done):**
-- **#390 (daemon gap) is OPEN** — confirmed above, `build_symbol_impact_from_map` still lacks
-  `deadline_monotonic`.
-- **#52 is LIKELY CLOSED but not confirmed** — #396 (cache), #440/task-#61 (bounds the two
-  remaining sibling loops on `callers`/`refs`), and the `CALLER_SCAN_FILE_CEILING` chokepoint
-  (§2) together target exactly the #52 shape, but no session has re-run Phase 0 end-to-end on a
-  fresh large TS repo since #440 landed (2026-07-08) to confirm the wall-clock numbers hold.
-  Do the re-measurement before writing "#52 closed" as fact anywhere (docs, PR text, this file).
-- The caller-scan re-parse bound (candidate a) and the parser swap (candidate d) are
-  **unbuilt candidates**; the parser swap is gated on AST parity and may never be worth it — but
-  candidate (a) may already be substantially covered by #440, re-verify against Phase 1 output
-  before building it as new work.
+- **#390 (daemon gap) is OPEN, narrower than before** — the builder-side blocker
+  (`build_symbol_impact_from_map` lacking `deadline_monotonic`) is now fixed by #478, but
+  `session_store.py`'s daemon call sites still pass no deadline to either `_from_map` builder
+  they use (confirmed above) -- closing it now means wiring those two call sites, not fixing the
+  builders.
+- **#52 is CLOSED** — PR #478 (`67f9779`, shipped v1.54.3) bounded the four residual unbounded
+  loops (S1/S2) that #396/#440/the `CALLER_SCAN_FILE_CEILING` chokepoint alone left live. Still
+  do a one-time fresh Phase-0 re-measurement on a real large TS repo before citing a specific
+  wall-clock number in a new claim (the mechanism being closed and a specific number being
+  re-confirmed are different statements) -- do not re-open "#52 closed" as a question, only
+  re-confirm the number.
+- The parser swap (candidate d) remains an **unbuilt candidate**, gated on AST parity and may
+  never be worth it. The caller-scan re-parse bound (candidate a) shipped as #478 (see S3 Phase 2
+  candidate (a) note) -- it is no longer an open candidate for the #52 shape specifically, though
+  the pattern remains the template for the next similar finding.
 - Doc-of-record narrative lags reality: `AGENTS.md:184` (still narrates the pre-#400 "600 s"
   hang symptom as if unfixed), `SESSION_HANDOFF.md` — trust the code + `docs/CONTRACTS.md`,
   note the doc lags.
