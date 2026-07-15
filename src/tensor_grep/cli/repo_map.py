@@ -12470,11 +12470,21 @@ def build_context_render(
         # import avoids the module-level cycle (orient_capsule imports this module), exactly like the
         # `_apply_ignore_globs` reuse above. Additive + conditional: absent unless the scan was
         # truncated AND a clear winner exists, so a non-truncated render stays byte-identical.
+        #
+        # #179: also thread in the SAME auto-detected vendor/skill/tool-config tree set `tg orient`
+        # (#168/#606) and `tg agent` (agent_capsule.py's own #179 fix) exclude from their own
+        # suggested_scope rollup -- otherwise this wrapper (behind `tg context-render`, and any other
+        # `include_suggested_scope=True` caller) could point an agent at a tree the sibling commands
+        # already know to avoid, on the exact same repo map.
         scan_limit = repo_map.get("scan_limit")
         if isinstance(scan_limit, dict) and scan_limit.get("possibly_truncated"):
-            from tensor_grep.cli.orient_capsule import _suggested_scope_from_map
+            from tensor_grep.cli.orient_capsule import (
+                _detect_vendored_subtrees,
+                _suggested_scope_from_map,
+            )
 
-            suggested_scope = _suggested_scope_from_map(repo_map)
+            deweighted_trees = _detect_vendored_subtrees(repo_map)
+            suggested_scope = _suggested_scope_from_map(repo_map, deweighted_trees=deweighted_trees)
             if suggested_scope is not None:
                 render["suggested_scope"] = suggested_scope
     return render

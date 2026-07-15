@@ -2341,9 +2341,19 @@ def build_agent_capsule_from_map(
     # Local import avoids a module-level circular import (orient_capsule imports repo_map, which
     # this module also imports) -- same discipline repo_map.build_context_render's own reuse of
     # this helper uses, and the same reasoning as the _suggested_scope_from_map import below.
-    from tensor_grep.cli.orient_capsule import _apply_ignore_globs
+    from tensor_grep.cli.orient_capsule import _apply_ignore_globs, _detect_vendored_subtrees
 
     rm = _apply_ignore_globs(rm, ignore)
+    # #179: compute the SAME auto-detected vendor/skill/tool-config tree set ONCE, here, against the
+    # final (already `--ignore`-filtered) `rm`, and thread it through every `_suggested_scope_from_map`
+    # call below plus the `suggested_ignore` build near the end of this function. Previously each
+    # `_suggested_scope_from_map(rm)` call below ran with no exclusion set at all (defaulting to
+    # "nothing excluded"), while `suggested_ignore` independently re-ran `_detect_vendored_subtrees(rm)`
+    # for the SAME `rm` -- so `suggested_scope` could point an agent straight at a tree `suggested_
+    # ignore` already flagged in the very same capsule (#179, the tg-agent/context-render sibling of
+    # orient's #168/#606 fix). Sourcing both fields from one shared call makes them provably
+    # consistent, not just coincidentally so, and also drops a redundant second detection pass.
+    deweighted_trees = _detect_vendored_subtrees(rm)
     resolved_path = str(rm["path"])
     requested_semantic_provider = semantic_provider
     effective_semantic_provider = (
@@ -2374,7 +2384,7 @@ def build_agent_capsule_from_map(
     ):
         from tensor_grep.cli.orient_capsule import _suggested_scope_from_map
 
-        suggested_scope_from_map = _suggested_scope_from_map(rm)
+        suggested_scope_from_map = _suggested_scope_from_map(rm, deweighted_trees=deweighted_trees)
         if suggested_scope_from_map is not None:
             payload["suggested_scope"] = suggested_scope_from_map
     # PR-1 (1D): whether the underlying repo scan itself (not the capsule's own snippet/token
@@ -2617,7 +2627,7 @@ def build_agent_capsule_from_map(
     if ambiguity.get("requires_confirmation") and not payload.get("suggested_scope"):
         from tensor_grep.cli.orient_capsule import _suggested_scope_from_map
 
-        tie_suggested_scope = _suggested_scope_from_map(rm)
+        tie_suggested_scope = _suggested_scope_from_map(rm, deweighted_trees=deweighted_trees)
         if tie_suggested_scope is None:
             # `tied_alternatives` (not `ambiguity["tied_alternative_targets"]`) is the definitive
             # source: `requires_confirmation` is only ever True from the `if tied_alternatives:`
@@ -2874,21 +2884,19 @@ def build_agent_capsule_from_map(
     # skill/tool-config subtree roots as ready-to-paste `--ignore` globs. `tg agent` already runs
     # the SAME de-weight during ranking (`_build_context_pack_from_map`'s own `auto_deweight` pass,
     # repo_map.py) but, pre-M2, never surfaced the glob hint itself -- an agent had to hand-derive
-    # `--ignore` globs or fall back to `tg orient` first. Recompute `_detect_vendored_subtrees`
-    # against the SAME (already `--ignore`-filtered) `rm` the ranking pass used above, and reuse
-    # orient's exact glob-builder (`_suggested_ignore_from_deweighted_trees`) -- never a second,
-    # independently hand-rolled hint that could drift from what `tg orient` would say for the same
-    # repo. `_detect_vendored_subtrees` reads only `rm`'s already-in-hand file/import lists plus a
-    # bounded number of manifest-marker existence checks (no new directory walk), so this is cheap
-    # relative to the rest of the capsule build. Additive + conditional, same shape as
-    # `suggested_scope` above: present only when non-empty, so a capsule with nothing deweighted
-    # stays byte-identical to a pre-M2 build.
-    from tensor_grep.cli.orient_capsule import (
-        _detect_vendored_subtrees,
-        _suggested_ignore_from_deweighted_trees,
-    )
+    # `--ignore` globs or fall back to `tg orient` first. Reuse the `deweighted_trees` set already
+    # computed once, near the top of this function (#179), against the SAME (already
+    # `--ignore`-filtered) `rm` the ranking pass used above, and feed it into orient's exact
+    # glob-builder (`_suggested_ignore_from_deweighted_trees`) -- never a second, independently
+    # hand-rolled hint that could drift from what `tg orient` would say for the same repo, and never
+    # a second `_detect_vendored_subtrees` walk over the same `rm` (#179 dedupes what was previously
+    # two independent calls into one shared result, which is also what makes `suggested_scope` above
+    # provably consistent with this hint rather than coincidentally so). Additive + conditional, same
+    # shape as `suggested_scope` above: present only when non-empty, so a capsule with nothing
+    # deweighted stays byte-identical to a pre-M2 build.
+    from tensor_grep.cli.orient_capsule import _suggested_ignore_from_deweighted_trees
 
-    suggested_ignore = _suggested_ignore_from_deweighted_trees(_detect_vendored_subtrees(rm))
+    suggested_ignore = _suggested_ignore_from_deweighted_trees(deweighted_trees)
     if suggested_ignore:
         result["suggested_ignore"] = suggested_ignore
     # DAR: additive CONDITIONAL keys, same pattern as scan_limit/partial above -- zero deps (or
