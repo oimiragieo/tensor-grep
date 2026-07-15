@@ -119,6 +119,7 @@ fn test_gpu_native_adaptive_dispatch_matches_cpu_for_ten_kib_lines() {
         hidden: false,
         max_depth: None,
         max_batch_bytes: Some(256 * 1024),
+        path_was_implicit: false,
     };
 
     let stats = gpu_native_search_paths(&config, device_id).unwrap();
@@ -161,6 +162,7 @@ fn test_gpu_native_adaptive_dispatch_matches_cpu_for_hundred_kib_lines() {
         hidden: false,
         max_depth: None,
         max_batch_bytes: Some(512 * 1024),
+        path_was_implicit: false,
     };
 
     let stats = gpu_native_search_paths(&config, device_id).unwrap();
@@ -202,6 +204,7 @@ fn test_gpu_native_adaptive_dispatch_classifies_mixed_short_medium_and_long_line
         hidden: false,
         max_depth: None,
         max_batch_bytes: Some(256 * 1024),
+        path_was_implicit: false,
     };
 
     let stats = gpu_native_search_paths(&config, device_id).unwrap();
@@ -263,6 +266,7 @@ fn test_gpu_native_long_line_corpus_is_not_slower_than_short_line_corpus() {
         hidden: false,
         max_depth: None,
         max_batch_bytes: Some(2 * 1024 * 1024),
+        path_was_implicit: false,
     };
     let long_config = GpuNativeSearchConfig {
         patterns: vec![pattern.to_string()],
@@ -272,6 +276,7 @@ fn test_gpu_native_long_line_corpus_is_not_slower_than_short_line_corpus() {
         hidden: false,
         max_depth: None,
         max_batch_bytes: Some(2 * 1024 * 1024),
+        path_was_implicit: false,
     };
 
     let mut short_samples = Vec::new();

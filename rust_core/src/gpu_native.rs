@@ -361,6 +361,16 @@ pub struct GpuNativeSearchConfig {
     pub hidden: bool,
     pub max_depth: Option<usize>,
     pub max_batch_bytes: Option<usize>,
+    /// Whether the caller omitted an explicit PATH (the search root defaulted to `.` rather than
+    /// a user-supplied path). Gates `check_gpu_native_implicit_walk_ceiling`, this engine's own
+    /// refuse-before-enumerate guard (audit #109 -- the cuda-native-GPU sibling of
+    /// `NativeSearchConfig::path_was_implicit`, audit #105, itself the native-CPU sibling of
+    /// `RipgrepSearchArgs::path_was_implicit`, audit #100). An explicit, deliberately-scoped PATH
+    /// must never be refused regardless of its size. `Default`'s `false` is NOT a safe fallback for
+    /// the walk guard itself (it means "never refuse"); it only exists so ad hoc test fixtures and
+    /// the always-explicit-`--path` diagnostic commands (`gpu-native-stats`, cuda-graph benchmark)
+    /// get deterministic, non-refusing behavior, mirroring `NativeSearchConfig`'s convention.
+    pub path_was_implicit: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -3784,6 +3794,47 @@ fn ensure_capacity(capacity: usize, required: usize, path: &Path) -> Result<()> 
     ))
 }
 
+/// Bounded refuse-before-enumerate gate for the GPU-native engine's own root walk -- the
+/// cuda-native sibling of `native_search::check_native_implicit_walk_ceiling` (audit #105) and
+/// `rg_passthrough::check_implicit_walk_ceiling` (audit #100). Audit #109 found the GPU-native
+/// engine had NO ceiling at all: `GpuSearchParams::path_was_implicit` (main.rs) was threaded into
+/// the CPU-fallback `RipgrepSearchArgs`/`NativeSearchConfig` redirects (`execute_gpu_native_route`'s
+/// unavailable-GPU fallback path) but never into `GpuNativeSearchConfig` itself, so a bare
+/// implicit-path `tg search PAT --gpu-device-ids 0` on a huge root walked unbounded through this
+/// engine even though the CPU engine (#105) and rg-passthrough engine (#100) were both already
+/// bounded for the exact same shape of request.
+///
+/// Only meaningful when `config.path_was_implicit` -- an explicit, deliberately-scoped PATH is
+/// never refused regardless of size. Called as the FIRST statement of `collect_walked_files`, the
+/// only function in this module that ever hands a root to `WalkBuilder`.
+fn check_gpu_native_implicit_walk_ceiling(
+    config: &GpuNativeSearchConfig,
+    roots: &[PathBuf],
+) -> Option<String> {
+    if !config.path_was_implicit {
+        return None;
+    }
+    let probe_roots: Vec<String> = roots
+        .iter()
+        .map(|root| root.to_string_lossy().into_owned())
+        .collect();
+    if crate::rg_passthrough::implicit_search_walk_exceeds_ceiling(
+        &probe_roots,
+        config.max_depth,
+        config.no_ignore,
+        config.hidden,
+        crate::rg_passthrough::IMPLICIT_SEARCH_WALK_FILE_CEILING,
+    ) {
+        Some(
+            crate::rg_passthrough::format_unbounded_implicit_search_walk_error(
+                crate::rg_passthrough::IMPLICIT_SEARCH_WALK_FILE_CEILING,
+            ),
+        )
+    } else {
+        None
+    }
+}
+
 fn collect_search_files(config: &GpuNativeSearchConfig) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     let mut roots = Vec::new();
@@ -3812,6 +3863,9 @@ fn collect_search_files(config: &GpuNativeSearchConfig) -> Result<Vec<PathBuf>> 
 }
 
 fn collect_walked_files(config: &GpuNativeSearchConfig, roots: &[PathBuf]) -> Result<Vec<PathBuf>> {
+    if let Some(refusal) = check_gpu_native_implicit_walk_ceiling(config, roots) {
+        return Err(anyhow!(refusal));
+    }
     let builder = build_walk_builder(config, roots)?;
     let walked_files = Arc::new(std::sync::Mutex::new(Vec::new()));
     let shared_files = Arc::clone(&walked_files);
@@ -4288,13 +4342,142 @@ fn ensure_cuda_library_path() {
 #[cfg(test)]
 mod tests {
     use super::{
-        cached_search_kernel_ptx_path, kernel_compile_options_for_compute_capability,
-        line_matches_for_file, load_file_batch_into_pinned_slice, resolve_adaptive_match_capacity,
+        cached_search_kernel_ptx_path, check_gpu_native_implicit_walk_ceiling,
+        collect_search_files, kernel_compile_options_for_compute_capability, line_matches_for_file,
+        load_file_batch_into_pinned_slice, resolve_adaptive_match_capacity,
         resolve_max_match_capacity, validate_requested_cuda_device_ids, BatchedFile, FileBatchPlan,
-        LineDescriptor, PatternMatchPosition,
+        GpuNativeSearchConfig, LineDescriptor, PatternMatchPosition,
     };
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+
+    // --- Audit #109: GPU-native implicit-walk-ceiling gate --------------------------------
+    // Mirrors native_search.rs's audit #105 test suite for `check_native_implicit_walk_ceiling`.
+    // #105 hoisted a walk-ceiling gate into the native-CPU engine but left the GPU-native engine
+    // (this module) with NO ceiling at all -- `GpuNativeSearchConfig` did not even have a
+    // `path_was_implicit` field, so a bare implicit-path `--gpu-device-ids` search on a huge root
+    // walked unbounded through `collect_walked_files`.
+
+    fn make_stub_file_dir(dir: &Path, file_count: usize) {
+        for index in 0..file_count {
+            fs::write(
+                dir.join(format!("stub_{index}.py")),
+                "nothing interesting\n",
+            )
+            .unwrap();
+        }
+    }
+
+    fn config_with_paths(paths: Vec<PathBuf>, path_was_implicit: bool) -> GpuNativeSearchConfig {
+        GpuNativeSearchConfig {
+            patterns: vec!["TODO".to_string()],
+            paths,
+            path_was_implicit,
+            ..GpuNativeSearchConfig::default()
+        }
+    }
+
+    #[test]
+    fn check_gpu_native_implicit_walk_ceiling_refuses_oversized_implicit_walk() {
+        // RED-before-fix: this is the exact shape of the #109 bypass -- an implicit-path search
+        // (no explicit PATH positional) on a root over the 1500-file ceiling.
+        let dir = tempfile::tempdir().unwrap();
+        make_stub_file_dir(dir.path(), 1600);
+        let roots = vec![dir.path().to_path_buf()];
+        let config = config_with_paths(roots.clone(), true);
+
+        let refusal = check_gpu_native_implicit_walk_ceiling(&config, &roots);
+
+        assert!(
+            refusal.is_some(),
+            "an oversized implicit-path walk must be refused"
+        );
+    }
+
+    #[test]
+    fn check_gpu_native_implicit_walk_ceiling_allows_explicit_path_even_when_oversized() {
+        // Non-regression (Trap #3 parity, mirrors native_search.rs/rg_passthrough.rs): an
+        // EXPLICIT, deliberately-scoped PATH must never be refused regardless of size.
+        let dir = tempfile::tempdir().unwrap();
+        make_stub_file_dir(dir.path(), 1600);
+        let roots = vec![dir.path().to_path_buf()];
+        let config = config_with_paths(roots.clone(), false);
+
+        let refusal = check_gpu_native_implicit_walk_ceiling(&config, &roots);
+
+        assert!(
+            refusal.is_none(),
+            "an explicit path must run uninhibited even when the walk exceeds the ceiling"
+        );
+    }
+
+    #[test]
+    fn check_gpu_native_implicit_walk_ceiling_allows_implicit_path_under_ceiling() {
+        // Normal-case non-regression: an implicit path under the ceiling is unaffected -- a
+        // typical repo must never be refused.
+        let dir = tempfile::tempdir().unwrap();
+        make_stub_file_dir(dir.path(), 50);
+        let roots = vec![dir.path().to_path_buf()];
+        let config = config_with_paths(roots.clone(), true);
+
+        let refusal = check_gpu_native_implicit_walk_ceiling(&config, &roots);
+
+        assert!(
+            refusal.is_none(),
+            "a 50-file implicit root must not be refused"
+        );
+    }
+
+    #[test]
+    fn collect_search_files_refuses_oversized_implicit_walk_before_enumerating() {
+        // Hermetic end-to-end test of the actual `collect_search_files` production entry point
+        // `gpu_native_search_paths_multi_with_options` calls before ever touching a CUDA device
+        // (see that function: `collect_search_files(config)?` runs BEFORE `resolve_cuda_devices`),
+        // so this test exercises the real bug with no GPU/CUDA runtime involved. Bounded per
+        // anti-hang-test-protocol: run on a joined worker thread with an explicit timeout so a
+        // regression (the gate silently stops firing) that falls through to the unbounded
+        // parallel walk cannot hang the test runner -- it fails fast with a clear panic instead.
+        let dir = tempfile::tempdir().unwrap();
+        make_stub_file_dir(dir.path(), 1600);
+        let config = config_with_paths(vec![dir.path().to_path_buf()], true);
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = collect_search_files(&config).map_err(|error| error.to_string());
+            let _ = tx.send(result);
+        });
+        let result = rx.recv_timeout(std::time::Duration::from_secs(10)).expect(
+            "collect_search_files must return well within 10s -- a hang here means the \
+             walk-ceiling gate did not fire before an unbounded parallel walk",
+        );
+
+        let err = result.expect_err("an oversized implicit-path walk must be refused, not Ok");
+        assert!(
+            crate::rg_passthrough::is_unbounded_implicit_search_walk_refusal(&err),
+            "unexpected error (expected the walk-ceiling refusal): {err}"
+        );
+    }
+
+    #[test]
+    fn collect_search_files_does_not_refuse_explicit_oversized_path() {
+        // Non-regression: an explicit PATH (even oversized) must complete normally, not be
+        // refused -- fail-open for explicit scoping is the whole point of the guard (Trap #3
+        // parity). Bounded per anti-hang-test-protocol.
+        let dir = tempfile::tempdir().unwrap();
+        make_stub_file_dir(dir.path(), 1600);
+        let config = config_with_paths(vec![dir.path().to_path_buf()], false);
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = collect_search_files(&config).map_err(|error| error.to_string());
+            let _ = tx.send(result);
+        });
+        let result = rx
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .expect("collect_search_files must return well within 20s for an explicit path");
+
+        result.expect("an explicit oversized path must not be refused");
+    }
 
     #[test]
     fn validate_requested_cuda_device_ids_preserves_selected_subset_without_expanding() {

@@ -777,6 +777,7 @@ fn test_gpu_native_multi_pattern_falls_back_to_batched_passes_for_large_pattern_
         hidden: false,
         max_depth: None,
         max_batch_bytes: Some(8 * 1024),
+        path_was_implicit: false,
     };
 
     let stats = gpu_native_search_paths(&config, device_id).unwrap();
@@ -821,6 +822,7 @@ fn test_gpu_native_three_pattern_dispatch_is_below_two_times_single_pattern() {
         hidden: false,
         max_depth: None,
         max_batch_bytes: None,
+        path_was_implicit: false,
     };
     let multi_config = GpuNativeSearchConfig {
         patterns: vec![
@@ -834,6 +836,7 @@ fn test_gpu_native_three_pattern_dispatch_is_below_two_times_single_pattern() {
         hidden: false,
         max_depth: None,
         max_batch_bytes: None,
+        path_was_implicit: false,
     };
 
     let mut single_samples = Vec::new();
