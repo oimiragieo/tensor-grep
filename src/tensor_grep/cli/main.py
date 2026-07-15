@@ -7719,18 +7719,24 @@ def calibrate() -> None:
         # audit L10: calibrate is unsupported without the native binary (and on CPU-only
         # boxes the native binary itself exits non-zero when CUDA is unavailable). tg's
         # convention is exit 1 for runtime/unsupported errors, not exit 2 (usage errors).
-        # P0-4 (GPU Phase-0 honesty): don't leave the caller with a dead end -- name the
-        # remediation. This wrapper uses inherited stdio for the real `calibrate` subprocess
-        # below and must NOT capture its stderr (that would break streaming), so only THIS
-        # wrapper-owned missing-binary message gets the pointer; the native binary's own
-        # calibrate-failure remediation text is Rust-owned (crossover.rs).
+        # P0-4 (GPU Phase-0 honesty, #596) named a remediation here so this wasn't a dead end.
+        # CEO dogfood follow-up (v1.76.6): #596's "if published ... falls back to CPU when it
+        # is not" framing still invited TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR=nvidia + `tg
+        # upgrade` as an obtainable GPU path, but no NVIDIA-enabled asset has ever shipped (the
+        # release profile that builds one is held off) -- a permanent dead end dressed up as
+        # honest advice. State the evergreen, structural fact instead (GPU needs a
+        # CUDA-enabled build, which isn't present here) without claiming an upgrade will --or
+        # won't-- fetch one; `tg doctor` is the live way to check once a binary exists. This
+        # wrapper uses inherited stdio for the real `calibrate` subprocess below and must NOT
+        # capture its stderr (that would break streaming), so only THIS wrapper-owned
+        # missing-binary message gets touched; the native binary's own calibrate-failure
+        # remediation is Rust-owned (crossover.rs) and follows the same discipline there.
         typer.echo(
             "Error: native tg binary not found for calibrate command.\n"
-            "To enable GPU crossover calibration, set env "
-            "TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR=nvidia then run 'tg upgrade' to fetch an "
-            "NVIDIA-enabled native binary, if one is published for this platform on the "
-            "release page; the installer falls back to CPU when it is not. Run 'tg doctor' "
-            "to check the requested-vs-installed native flavor.",
+            "Run 'tg upgrade' to install a native tg binary so calibrate can run. GPU (CUDA) "
+            "acceleration is experimental and is not available without a CUDA-enabled build; "
+            "run 'tg doctor' after upgrading to confirm this install's native flavor before "
+            "relying on TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR=nvidia.",
             err=True,
         )
         raise typer.Exit(1)

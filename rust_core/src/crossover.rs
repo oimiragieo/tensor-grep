@@ -476,34 +476,45 @@ fn user_crossover_config_path() -> Option<PathBuf> {
     })
 }
 
-// P0-4 (GPU Phase-0 honesty): a bare "requires a CUDA-enabled build" / "device unavailable"
-// error leaves a caller with no idea how to fix it. Point at the exact remediation -- the
-// TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR override + `tg upgrade` -- and name the platform's
-// NVIDIA release asset via compile-time cfg. HONESTY: never claim an asset "isn't published
-// yet" (that phrasing goes false the moment the asset profile is flipped on); phrase the
-// linux/windows case conditionally ("if published ... falls back to CPU when it is not") and
-// state the macOS case as the structural fact it is (Apple platforms are not a CUDA target).
-fn crossover_gpu_remediation_hint() -> String {
-    let platform_clause = if cfg!(target_os = "linux") {
-        "on linux this fetches the tg-linux-amd64-nvidia asset, if an NVIDIA asset is \
-         published for this platform on the release page; the installer falls back to CPU \
-         when it is not"
-            .to_string()
-    } else if cfg!(target_os = "windows") {
-        "on windows this fetches the tg-windows-amd64-nvidia.exe asset, if an NVIDIA asset is \
-         published for this platform on the release page; the installer falls back to CPU \
-         when it is not"
-            .to_string()
-    } else {
-        "no NVIDIA asset is published for this platform (Apple platforms are not a CUDA \
-         target); the installer stays on CPU here"
-            .to_string()
-    };
-    format!(
-        "To enable, set env TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR=nvidia then run `tg upgrade` \
-         ({platform_clause}). Run `tg doctor` to check the requested-vs-installed native \
-         flavor."
-    )
+// P0-4 (GPU Phase-0 honesty, #596) pointed calibrate-failure guidance at
+// TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR + `tg upgrade`, phrased conditionally ("if published ...
+// falls back to CPU when it is not") so it would never assert a false "no NVIDIA asset
+// published" claim. CEO dogfood (v1.76.6) found that phrasing still misleading in practice:
+// no NVIDIA-flavored asset has ever shipped (the release profile that builds one is held
+// off), so the caveated "upgrade" invitation was a permanent dead end dressed up as honest
+// advice. Fix: stop advertising the upgrade from a build that structurally has no CUDA
+// support compiled in -- state plainly that GPU acceleration is experimental and not shipped
+// in *this build*. This is flip-agnostic with NO new signal needed: the moment an
+// NVIDIA-flavored asset actually ships, it is compiled WITH the `cuda` feature, which takes
+// the entirely different arm below (real device enumeration) and never reaches this string
+// at all -- so the claim can never go stale from a future flag-flip. It only ever describes
+// a build with no CUDA compiled in, which is permanently true for that concrete artifact
+// regardless of what the release pipeline later publishes.
+//
+// cfg-gated to match its only call site (the `not(feature = "cuda")` arm of
+// `detect_device_name` below) -- otherwise it is unreachable dead code under a `--features
+// cuda` build and trips `clippy -D warnings` there.
+#[cfg(not(feature = "cuda"))]
+fn crossover_gpu_remediation_hint_no_cuda_build() -> String {
+    "GPU (CUDA) acceleration is experimental and is not shipped in this build (compiled \
+     without CUDA support), so it cannot run GPU calibration here. Run `tg doctor` to confirm \
+     this build's native flavor, and see docs/gpu_crossover.md for the current GPU roadmap."
+        .to_string()
+}
+
+// Distinct from the no-cuda-build hint above: this build DOES have CUDA support compiled in,
+// so telling the caller to go "upgrade to get NVIDIA" would be nonsensical -- the problem is
+// that the requested device id isn't among the enumerated devices (a hardware/driver/config
+// problem), not a missing build.
+//
+// cfg-gated to match its only call site (the `feature = "cuda"` arm of `detect_device_name`
+// below) -- otherwise it is unreachable dead code under a default (non-cuda) build and trips
+// `clippy -D warnings` there.
+#[cfg(feature = "cuda")]
+fn crossover_gpu_remediation_hint_device_not_found() -> String {
+    "Run `tg devices` to list routable GPU device IDs, or `tg doctor` to check GPU runtime \
+     health, then retry calibration with a valid device id."
+        .to_string()
 }
 
 fn detect_device_name(device_id: i32) -> Result<String> {
@@ -519,7 +530,7 @@ fn detect_device_name(device_id: i32) -> Result<String> {
         }
         bail!(
             "CUDA device {device_id} is unavailable for crossover calibration.\n{}",
-            crossover_gpu_remediation_hint()
+            crossover_gpu_remediation_hint_device_not_found()
         );
     }
 
@@ -528,7 +539,7 @@ fn detect_device_name(device_id: i32) -> Result<String> {
         let _ = device_id;
         bail!(
             "crossover calibration requires a CUDA-enabled build.\n{}",
-            crossover_gpu_remediation_hint()
+            crossover_gpu_remediation_hint_no_cuda_build()
         )
     }
 }
@@ -542,39 +553,60 @@ enum SearchMode {
 mod tests {
     use super::*;
 
-    // P0-4 RED test: detect_device_name is always-compiled (no `cuda` feature required), so
-    // this runs in the default `test-rust-core` CI matrix (ubuntu/windows/macos x stable/
-    // nightly, `cargo test --no-default-features`). The `#[cfg(feature = "cuda")]` arm's own
-    // edit (crossover.rs:520-523) is only compile-checked by the separate `cuda-feature-check`
-    // job (`cargo check --features cuda`, ubuntu+windows only) -- never test-executed here,
-    // which is an accepted gap (council nit).
+    // Follow-up to #596 (CEO dogfood, v1.76.6): #596's remediation was honest in isolation
+    // ("if published ... falls back to CPU when it is not") but still dangled
+    // TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR=nvidia + `tg upgrade` as an obtainable path, when in
+    // reality no NVIDIA-flavored asset has ever shipped (the release profile that builds one
+    // is held off) -- a permanent dead end. This RED->GREEN test asserts the no-cuda-build
+    // message states the honest, evergreen fact (GPU experimental / not shipped in this
+    // build) instead of inviting an upgrade dance that always falls back to CPU today.
+    //
+    // detect_device_name is always-compiled (no `cuda` feature required), so this runs in the
+    // default `test-rust-core` CI matrix (ubuntu/windows/macos x stable/nightly, `cargo test
+    // --no-default-features`). The `#[cfg(feature = "cuda")]` arm is only compile-checked by
+    // the separate `cuda-feature-check` job (`cargo check --features cuda`) -- never
+    // test-executed here, which is an accepted pre-existing gap (council nit).
     #[cfg(not(feature = "cuda"))]
     #[test]
-    fn detect_device_name_without_cuda_feature_names_remediation() {
+    fn detect_device_name_without_cuda_feature_states_experimental_not_upgrade_dead_end() {
         let err = detect_device_name(0).expect_err("a non-cuda build must fail closed");
         let message = err.to_string();
         assert!(
-            message.contains("TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR"),
-            "message should point at the native-frontdoor flavor override env var: {message}"
+            !message.contains("TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR"),
+            "message must not invite the FLAVOR=nvidia override as an obtainable path: {message}"
         );
         assert!(
-            message.contains("tg upgrade"),
-            "message should tell the user how to fetch an NVIDIA-enabled binary: {message}"
+            !message.contains("tg upgrade"),
+            "message must not invite `tg upgrade` as a way to get GPU support today: {message}"
         );
-        #[cfg(target_os = "linux")]
         assert!(
-            message.contains("tg-linux-amd64-nvidia"),
-            "message should name the linux NVIDIA asset: {message}"
+            message.contains("experimental"),
+            "message should state GPU acceleration is experimental: {message}"
         );
-        #[cfg(target_os = "windows")]
         assert!(
-            message.contains("tg-windows-amd64-nvidia.exe"),
-            "message should name the windows NVIDIA asset: {message}"
+            message.contains("not shipped in this build"),
+            "message should honestly scope the claim to this build, not the whole release: \
+             {message}"
         );
-        #[cfg(target_os = "macos")]
         assert!(
-            message.contains("no NVIDIA asset"),
-            "message should honestly state macOS has no NVIDIA asset: {message}"
+            message.contains("tg doctor"),
+            "message should still point at `tg doctor` for diagnostics: {message}"
         );
+    }
+
+    // Mirror check for the cuda-enabled arm: it must keep its OWN, scenario-correct
+    // remediation (a device/driver/config problem, not a "no GPU build" problem) and must
+    // never regress to claim GPU is "not shipped in this build" when the build plainly HAS
+    // CUDA compiled in. Compile-checked only (no CUDA toolkit available to link/run this arm
+    // outside the release nvidia legs) -- mirrors the existing accepted gap above.
+    #[cfg(feature = "cuda")]
+    #[test]
+    fn crossover_gpu_remediation_hint_device_not_found_is_not_a_build_availability_claim() {
+        let hint = crossover_gpu_remediation_hint_device_not_found();
+        assert!(
+            !hint.contains("not shipped in this build"),
+            "a CUDA-enabled build must never be told GPU isn't shipped in it: {hint}"
+        );
+        assert!(hint.contains("tg devices") || hint.contains("tg doctor"));
     }
 }
