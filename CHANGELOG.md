@@ -1,6 +1,63 @@
 # CHANGELOG
 
 
+## v1.76.9 (2026-07-15)
+
+### Bug Fixes
+
+- Calibrate/doctor GPU guidance honest when no nvidia asset is shipped (CEO dogfood #169)
+  ([#612](https://github.com/oimiragieo/tensor-grep/pull/612),
+  [`cefec00`](https://github.com/oimiragieo/tensor-grep/commit/cefec00a12ca29fccff61708ffa58e9838dafe6f))
+
+`tg calibrate` on a CPU-only build (crossover.rs, `detect_device_name`'s non-cuda arm) and the
+  Python calibrate() wrapper's missing-binary message (main.py) both inherited #596's caveated "set
+  TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR=nvidia then run `tg upgrade` (if published ... falls back to
+  CPU when it is not)" framing. That phrasing is honest in isolation, but in practice it is a
+  permanent dead end right now: no NVIDIA-flavored asset has ever shipped for any release (the CI
+  native-asset profile that builds one is held off), so the invitation always resolves to a silent
+  CPU fallback.
+
+Fix, flip-agnostic with no new signal needed: condition the guidance on the Rust `cuda` Cargo
+  feature itself, which is already compile-baked ground truth about the concrete binary that is
+  running --
+
+- `crossover_gpu_remediation_hint_no_cuda_build()` (new, cfg-gated `not(feature = "cuda")`): states
+  the evergreen fact that GPU acceleration is experimental and not shipped in *this* build, without
+  inviting FLAVOR=nvidia + `tg upgrade` as obtainable. This can never go stale on a future flag-flip
+  -- the moment an NVIDIA-flavored asset ships, it is compiled WITH the `cuda` feature and takes the
+  other arm entirely, never reaching this string. -
+  `crossover_gpu_remediation_hint_device_not_found()` (renamed/split, cfg-gated `feature = "cuda"`):
+  kept distinct so a build that DOES have CUDA compiled in but can't find the requested device id
+  gets scenario-correct guidance (check `tg devices`/`tg doctor`), instead of the previous shared
+  hint nonsensically telling an nvidia-binary user to go "upgrade to get nvidia". - Python
+  `calibrate()`'s missing-native-binary message: same discipline -- keeps `tg upgrade` (still valid,
+  needed regardless of GPU) and `tg doctor`, drops the specific "if one is published ... release
+  page" dead-end framing in favor of the same evergreen "GPU needs a CUDA-enabled build" statement.
+
+Both hint functions are cfg-gated at their definitions (not just their call sites) so neither is
+  dead code under the other build configuration (`clippy -D warnings` would otherwise fail).
+
+TDD: updated the existing RED/GREEN Rust unit test to assert the message no longer contains
+  `TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR`/`tg upgrade` and does contain `experimental`/`not shipped in
+  this build`/`tg doctor`; added a compile-checked-only mirror test for the cuda-enabled arm (no
+  CUDA toolkit available in this environment to execute it, matching the pre-existing
+  `cuda-feature-check` job's own compile-check-only scope). Updated the Python L10 test the same
+  way.
+
+Gates: `cargo fmt --check` clean; `cargo test --no-default-features --lib` 106/106 passed; `cargo
+  clippy --no-default-features --all-targets -- -D warnings` clean once the pre-existing, unrelated
+  `rg_passthrough.rs:781` worktree-artifact lint is suppressed (confirmed via `git blame` to predate
+  this change, untouched here); `cargo check --features cuda` (the exact command CI's
+  `cuda-feature-check` job runs) clean. Python: targeted + keyword-filtered pytest (105 tests across
+  the touched/adjacent calibrate, doctor, gpu, and frontdoor surfaces) green; `ruff format
+  --preview`, `ruff check`, `ruff format --check --preview`, and `mypy` all clean on the touched
+  files.
+
+Scope: touches only the calibrate-message code (Rust + Python) and its tests; no unrelated churn.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.76.8 (2026-07-15)
 
 ### Bug Fixes
