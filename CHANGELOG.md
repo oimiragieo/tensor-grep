@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v1.76.5 (2026-07-15)
+
+### Bug Fixes
+
+- Orient suggested_scope excludes deweighted/ignored trees
+  ([#606](https://github.com/oimiragieo/tensor-grep/pull/606),
+  [`2c365f2`](https://github.com/oimiragieo/tensor-grep/commit/2c365f2519ae540796a925328480a8f095dc8686))
+
+_suggested_scope_from_map now excludes files under the deweighted/ignored trees (suggested_ignore)
+  when picking the scope directory, so on a truncated harness-repo scan it no longer misdirects an
+  agent to .claude (agrees with suggested_ignore). Preserves the SUB-2 raw-centrality intent
+  (filters ignored trees, does not rescale). Reviewed clean (optional deweighted_trees kwarg, 3
+  other callers untouched); dogfood-verified on agent-studio (.claude -> scripts/). Closes #168.
+  Sibling agent/context-render gap tracked as #179.
+
+
 ## v1.76.4 (2026-07-15)
 
 ### Bug Fixes
