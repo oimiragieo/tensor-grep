@@ -84,6 +84,13 @@ def _read_project_version_fallback() -> str:
     return "0.0.0"
 
 
+# Safe to cache (unlike `_native_tg_version` below, whose docstring at `inspect_native_tg_binary`
+# warns against a path-keyed cache going stale across an `os.replace` swap): this function takes
+# no arguments and only reads pyproject.toml + installed package metadata, neither of which change
+# within a single process lifetime. Called on every daemon probe (`_probe_daemon` in
+# session_daemon.py) since the daemon became default-on for symbol commands, so an uncached
+# pyproject.toml read + importlib.metadata scan on every probe is wasted I/O.
+@lru_cache(maxsize=1)
 def _expected_tg_version() -> str:
     source_version = _read_project_version_fallback()
     try:

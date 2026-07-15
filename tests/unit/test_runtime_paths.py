@@ -17,9 +17,11 @@ from tensor_grep.cli.runtime_paths import resolve_native_tg_binary, resolve_ripg
 def clear_caches():
     resolve_native_tg_binary.cache_clear()
     resolve_ripgrep_binary.cache_clear()
+    runtime_paths._expected_tg_version.cache_clear()
     yield
     resolve_native_tg_binary.cache_clear()
     resolve_ripgrep_binary.cache_clear()
+    runtime_paths._expected_tg_version.cache_clear()
 
 
 # Task #94 PR-1: env_flag_disabled is the mirror of env_flag_enabled for a default-ON, opt-out

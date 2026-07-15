@@ -491,6 +491,10 @@ def test_build_file_importers_python_excludes_duplicate_basename_false_edge(
         if current["file"] == str(run_py.resolve())
     )
     assert edge["module"] == "config"
+    # #155 fix companion: a normal (non-sys.path-hacked) Python edge must NOT gain the
+    # "path_provenance" key at all -- same payload-bloat-avoidance rule already applied to
+    # dynamic/dynamic_unresolved (only stamp a key when it says something non-default).
+    assert "path_provenance" not in edge
 
 
 def test_build_file_importers_python_recalls_from_dot_import(tmp_path: Path) -> None:
@@ -1232,6 +1236,14 @@ def test_build_file_importers_finds_sys_path_insert_hacked_importer(tmp_path: Pa
     )
     assert edge["module"] == "mymod"
     assert edge["line"] == 3
+    # #155 fix: the reverse edge must honestly report the sys.path-hack provenance (mirrors the
+    # forward `tg imports` side, which already tags this "sys-path-insert" -- see
+    # test_build_file_imports_resolves_sys_path_insert_hacked_module above) instead of silently
+    # collapsing it into the generic "parser-backed" label. `provenance` itself stays
+    # "parser-backed" (drives resolution_confidence; this edge IS still exactly as
+    # parser-confirmed as any other Python edge) -- the hack is surfaced as a separate field.
+    assert edge["provenance"] == "parser-backed"
+    assert edge["path_provenance"] == "sys-path-insert"
 
 
 def test_sys_path_hack_present_stdlib_import_stays_external(tmp_path: Path) -> None:
