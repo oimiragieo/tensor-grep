@@ -192,6 +192,75 @@ def test_inspect_native_tg_binary_reports_matching_in_tree_binary(monkeypatch, t
     assert inspected["version"] == "tensor-grep 1.12.4"
 
 
+def test_inspect_native_tg_binary_honors_provided_version_text_without_subprocess_spawn(
+    monkeypatch, tmp_path
+):
+    """NIT-1 (#172): the doctor path (main.py's _build_doctor_payload) already computes a
+    binary's version via its own `tg --version` subprocess call (_doctor_rust_binary_version)
+    before calling inspect_native_tg_binary, which -- until this fix -- unconditionally spawned
+    a SECOND `tg --version` subprocess for the identical binary via its own internal
+    _native_tg_version call (added by #595). When the caller already has the text, passing it as
+    version_text must skip that internal spawn entirely."""
+    repo_root = tmp_path / "repo"
+    binary_name = "tg.exe" if sys.platform.startswith("win") else "tg"
+    native_binary = repo_root / "rust_core" / "target" / "release" / binary_name
+    native_binary.parent.mkdir(parents=True, exist_ok=True)
+    native_binary.write_text("current\n", encoding="utf-8")
+
+    call_count = 0
+
+    def _counting_native_tg_version(_candidate):
+        nonlocal call_count
+        call_count += 1
+        return "tg 1.12.4"
+
+    monkeypatch.setattr(runtime_paths, "_native_tg_version", _counting_native_tg_version)
+
+    inspected = runtime_paths.inspect_native_tg_binary(
+        native_binary,
+        repo_root=repo_root,
+        expected_version="1.12.4",
+        version_text="tg 1.12.4",
+    )
+
+    assert call_count == 0, (
+        "inspect_native_tg_binary must not call _native_tg_version when version_text is provided"
+    )
+    assert inspected["version"] == "tg 1.12.4"
+    assert inspected["version_status"] == "matches"
+    assert inspected["kind"] == "in-tree-release"
+
+
+def test_inspect_native_tg_binary_falls_back_to_native_tg_version_when_version_text_omitted(
+    monkeypatch, tmp_path
+):
+    """Baseline: omitting version_text (the pre-existing call shape) preserves the internal
+    _native_tg_version subprocess path -- this NIT must not remove that fallback."""
+    repo_root = tmp_path / "repo"
+    binary_name = "tg.exe" if sys.platform.startswith("win") else "tg"
+    native_binary = repo_root / "rust_core" / "target" / "release" / binary_name
+    native_binary.parent.mkdir(parents=True, exist_ok=True)
+    native_binary.write_text("current\n", encoding="utf-8")
+
+    call_count = 0
+
+    def _counting_native_tg_version(_candidate):
+        nonlocal call_count
+        call_count += 1
+        return "tg 1.12.4"
+
+    monkeypatch.setattr(runtime_paths, "_native_tg_version", _counting_native_tg_version)
+
+    inspected = runtime_paths.inspect_native_tg_binary(
+        native_binary,
+        repo_root=repo_root,
+        expected_version="1.12.4",
+    )
+
+    assert call_count == 1
+    assert inspected["version"] == "tg 1.12.4"
+
+
 def test_expected_tg_version_prefers_repo_source_when_editable_metadata_is_stale(monkeypatch):
     monkeypatch.setattr(
         importlib.metadata,
