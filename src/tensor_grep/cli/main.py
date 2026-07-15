@@ -9365,12 +9365,9 @@ def _build_route_test_payload(
     }
 
 
-# Hidden/experimental: `route-test` (compare context-render vs edit-plan routing) works but is not yet in
-# the public --help surface -- promoting it needs native-binary registration + PUBLIC_TOP_LEVEL_COMMANDS
-# parity (the 4-registration-sites contract). Ships hidden here; a follow-up PR promotes it to visible.
-@app.command(name="route-test", hidden=True)
+@app.command(name="route-test")
 def route_test(
-    path: str = typer.Argument(".", help="File or directory to inventory"),
+    path: str = typer.Argument(".", help="File or directory to test routing for."),
     query_arg: str | None = typer.Argument(
         None, help="Query text to compare through context-render and edit-plan."
     ),
@@ -9413,7 +9410,13 @@ def route_test(
         True, "--json/--text", help="Emit machine-readable JSON output (default)."
     ),
 ) -> None:
-    """Compare context-render and edit-plan target routing for the same query."""
+    """Diagnose routing agreement between context-render and edit-plan for one query.
+
+    Runs the same PATH/QUERY through both target-selection paths and reports their primary
+    targets side by side, so an agent or operator can confirm the two routes agree (same file,
+    symbol, and line) before trusting an edit-plan's target -- or see exactly where and why they
+    diverge.
+    """
     try:
         resolved_path, resolved_query = _resolve_path_and_query(
             path=path,

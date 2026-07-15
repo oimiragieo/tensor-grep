@@ -92,6 +92,7 @@ It ships as a native CLI on Windows, macOS, and Linux — no server required for
 ### Diagnostics & ops
 - **`tg doctor`** — system, GPU, cache, AST, and daemon diagnostics.
 - **`tg dogfood`** — agent-readiness gate; emits structured JSON with limitation surfaces.
+- **`tg route-test`** — diagnostic: compare `context-render` vs `edit-plan` target routing for the same query, reporting agreement and confidence warnings.
 - **`tg upgrade`** / **`tg update`** — self-upgrade.
 - **`tg repair-launcher`** — fix native vs Python launcher conflicts on Windows.
 

@@ -6321,6 +6321,27 @@ def test_route_test_json_demotes_low_confidence_to_note_when_routes_agree(monkey
     assert any("confidence 0.650 is below" in note for note in payload["notes"])
 
 
+def test_route_test_is_publicly_visible_in_top_level_help():
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["--help"])
+
+    assert result.exit_code == 0
+    help_text = _strip_ansi(result.stdout)
+    assert "route-test" in help_text
+
+
+def test_route_test_help_still_documents_its_own_options():
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["route-test", "--help"])
+
+    assert result.exit_code == 0
+    help_text = _strip_ansi(result.stdout)
+    assert "--max-files" in help_text
+    assert "--provider" in help_text
+
+
 def test_agent_capsule_json_returns_actionable_context_capsule(tmp_path):
     runner = CliRunner()
     project = tmp_path / "project"
