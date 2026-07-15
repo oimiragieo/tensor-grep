@@ -3,12 +3,12 @@
 > **Canonical prioritized work list.** Kept in sync with the CLI task store (`TaskUpdate`) and
 > GitHub (`gh pr list` is the source of truth for PRs). **CEO status** = summarize SHIPPING + P0/P1.
 > Update whenever a PR opens/merges or the queue changes. Task-store IDs (`#NNN`) cross-referenced.
-> Last refreshed 2026-07-14 (backlog-steward tick). **Live PyPI is v1.75.4** (published; GPU Phase-0
-> program #171 + #172 gate-nits complete, all CI jobs green). **#592** (prior docs reconcile) MERGED
-> (`adf5750`); the v1.75.0->v1.75.4 wave (#593/#594/#595/#596/#597) drained one-per-publish, ZERO broken
-> releases -- PR queue is EMPTY going into this reconcile (**#173**). Prior: v1.73.0->v1.74.4
-> (#584/#585/#131-F3/#164/#166/#591); v1.70.0->v1.72.1 (#152/#127/#90b/#153/#154/#158/#159/#580/#581);
-> v1.69.0-.3 CEO WSL-dogfood; #142.
+> Last refreshed 2026-07-15 (backlog-steward tick). **Live PyPI is v1.76.5** (published; the v1.76.x
+> "remaining AI-actionable backlog" wave #176 drained one-per-publish, ZERO broken releases). #176
+> shipped 6 PRs: v1.76.0 #601 route-test public / v1.76.1 #602 checkpoint-symlink / v1.76.2 #604 perf /
+> v1.76.3 #603 daemon-guard / v1.76.4 #605 cuda-ceiling / v1.76.5 #606 orient-scope -- PR queue EMPTY.
+> Prior: v1.75.0->v1.75.4 GPU Phase-0 (#593/#594/#595/#596/#597, #173 reconcile); v1.73.0->v1.74.4
+> (#584/#585/#131-F3/#164/#166/#591); v1.70.0->v1.72.1; v1.69.0-.3; #142.
 
 **Process:** deep-dive/audit (cite `file:line`) → verify-against-code → Sonnet TDD build in
 `isolation:'worktree'` → real-venv verify (`uv run --active --no-sync`; copy `rust_core.pyd`, set
@@ -28,8 +28,9 @@ wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while 
 
 ---
 
-## ⭐ CURRENT STATE (2026-07-14) — authoritative; every section BELOW is HISTORICAL until the next full refresh
+## ⭐ CURRENT STATE (2026-07-15) — authoritative; every section BELOW is HISTORICAL until the next full refresh
 
+- **Live PyPI: v1.76.5 (2026-07-15, published). Directive #176 ("implement the remaining AI-actionable backlog") COMPLETE — a 6-PR wave, Sonnet-TDD in `isolation:'worktree'`, Opus-gated where load-bearing, drained one-per-publish, ZERO broken releases:** v1.76.0 **#601** promote `tg route-test` hidden->public (also closed a native-front-door gap — route-test was absent from the rust front door; dogfood-verified on the wheel) · v1.76.1 **#602** checkpoint/rollback write symlink-hardening (Opus SHIP — genuinely TOCTOU-safe incl. Windows `FILE_FLAG_OPEN_REPARSE_POINT` same-handle check, NOT the #110 O_NOFOLLOW-noop) · v1.76.2 **#604** perf `@lru_cache _expected_tg_version` + `tg importers` dead-provenance precision fix · v1.76.3 **#603** session-daemon removes only its OWN metadata (stale-daemon orphan-pileup guard; Opus SHIP-WITH-NITS) · v1.76.4 **#605** bound the cuda GPU implicit-walk to mirror the #105 native DoS ceiling (Opus SHIP-WITH-NITS, exact parity + fail-closed) · v1.76.5 **#606** `tg orient` `suggested_scope` excludes deweighted/ignored trees (no longer misdirects agents to `.claude`; dogfood-verified agent-studio `.claude`->`scripts/`). **PR queue EMPTY (0 open).** One CI hiccup self-corrected: v1.76.3 hit a transient Windows dep-install flake -> `gh run rerun --failed` cleared it (a job-failure release does NOT self-heal, unlike a push-race rejection — banked). Cleanup done (6 agent worktrees + all branches pruned). **AI-actionable backlog is now EMPTY** — remainder is demand-deferred (#98 MCP-consolidation, #141 native-AstBackend), env-blocked (#89/#90, need Linux/WSL), or LOW nits (#178/#179/#125).
 - **Live PyPI: v1.75.4 (2026-07-14, published).** The GPU Phase-0 program drained one-per-publish, ZERO
   broken releases: **v1.75.0** #593 `tg orient`/`tg agent` broaden `suggested_ignore` to whole vendor/
   skill trees (M1+M2, a CEO-dogfood-found gap in #164's `.claude` deweight) | **v1.75.1** #594 GPU
