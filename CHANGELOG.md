@@ -1,6 +1,20 @@
 # CHANGELOG
 
 
+## v1.75.3 (2026-07-15)
+
+### Bug Fixes
+
+- **gpu**: Calibrate remediation message + loud nvidia->cpu installer downgrade
+  ([#596](https://github.com/oimiragieo/tensor-grep/pull/596),
+  [`a4b3c05`](https://github.com/oimiragieo/tensor-grep/commit/a4b3c05cf3c04be4c143a583cccd09658404c50e))
+
+P0-4 calibrate remediation (Rust crossover_gpu_remediation_hint on both bail arms + Python wrapper
+  missing-binary msg) + P0-5 loud nvidia->cpu installer downgrade warning with SF-1
+  no-nvidia-candidate guard. Council must-fixes MF-1/SF-1 baked; Opus gate a3a72b1=SHIP (8/8 probes
+  pass); CI CLEAN.
+
+
 ## v1.75.2 (2026-07-14)
 
 ### Bug Fixes
