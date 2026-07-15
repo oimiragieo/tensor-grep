@@ -372,12 +372,69 @@ def _release_daemon_start_lock(root: Path) -> None:
         pass
 
 
-def _remove_daemon_metadata(root: Path) -> None:
+def _remove_daemon_metadata(
+    root: Path, *, expected_pid: int | None = None, expected_port: int | None = None
+) -> None:
+    """Remove ``daemon.json`` for ``root``, guarded against deleting a REPLACEMENT daemon's metadata.
+
+    Task #143a-a (stale-daemon-metadata race): when ``_probe_daemon`` rejects a daemon over a
+    ``package_version`` mismatch (see the skew check in ``_probe_daemon`` below), the client spawns
+    a replacement daemon (call it B) while the old daemon (A) keeps running until its own
+    idle/max-uptime self-shutdown fires. If A's shutdown path (or ``stop_session_daemon``'s
+    PID-kill fallback) unlinked ``daemon.json`` unconditionally, it would delete WHATEVER metadata
+    currently exists -- including B's, the healthy replacement -- orphaning B (it keeps serving,
+    but no client can discover it) and silently piling up orphaned daemon processes over time.
+
+    Passing ``expected_pid``/``expected_port`` re-reads the CURRENT on-disk metadata immediately
+    before unlinking and only proceeds if its ``pid``/``port`` fields still match -- i.e. the file
+    still identifies the exact instance the caller intends to remove. A mismatch (a replacement has
+    since published its own metadata), a missing file, or an unparseable/corrupt file are all
+    treated as "not mine" and left untouched -- the fail-safe choice, since we cannot prove the file
+    is safe to delete, and a corrupt file self-heals the next time a daemon is (re)started via
+    ``_spawn_daemon_subprocess``'s unconditional clear below.
+
+    When BOTH ``expected_pid`` and ``expected_port`` are omitted (the default), removal is
+    unconditional -- this mode exists for exactly one legitimate caller, ``_spawn_daemon_subprocess``,
+    which holds the daemon-start lock (excluding any concurrent spawn for this root) and is clearing
+    the slate for a brand-new instance it is about to launch, so there is no prior "self" identity to
+    compare against yet. Every other caller must supply at least one ``expected_*`` value, or skip
+    the call entirely when it cannot establish one (see ``stop_session_daemon``).
+    """
     metadata_path = _daemon_metadata_path(root)
+    if expected_pid is not None or expected_port is not None:
+        current = _read_daemon_metadata(root)
+        if current is None:
+            return
+        if expected_pid is not None and current.get("pid") != expected_pid:
+            return
+        if expected_port is not None and current.get("port") != expected_port:
+            return
     try:
         metadata_path.unlink()
     except OSError:
         pass
+
+
+def _daemon_identity(metadata: dict[str, Any] | None) -> tuple[int | None, int | None]:
+    """Best-effort ``(pid, port)`` extraction from daemon metadata (task #143a-a).
+
+    Used by callers of the guarded ``_remove_daemon_metadata`` above to compute the specific
+    instance they intend to remove. Missing or non-numeric fields resolve to ``None`` rather than
+    raising, so a malformed or partial metadata dict never turns into a removal call the guard
+    cannot safely reason about -- the caller is expected to skip the removal when either half of
+    the pair it needs comes back ``None`` (see ``stop_session_daemon``).
+    """
+    if not metadata:
+        return None, None
+    try:
+        pid: int | None = int(metadata["pid"])
+    except (KeyError, TypeError, ValueError):
+        pid = None
+    try:
+        port: int | None = int(metadata["port"])
+    except (KeyError, TypeError, ValueError):
+        port = None
+    return pid, port
 
 
 def _pid_looks_like_tg_daemon(pid: int) -> bool:
@@ -630,6 +687,12 @@ def _spawn_daemon_subprocess(root: Path) -> None:
     ``daemon.json`` to appear and does not touch the start-lock -- the caller is responsible for
     both (holding the lock across this call, and deciding whether/how long to wait afterward).
     """
+    # Task #143a-a: unconditional (force) removal is intentional and safe here -- every caller
+    # holds the daemon-start lock for `root` (excluding any concurrent spawn), so nothing else can
+    # be publishing fresh metadata for this root while we hold it, and we are about to Popen a
+    # brand-new instance that will publish its OWN metadata momentarily. There is no prior "self"
+    # identity to compare against yet, unlike the guarded callers in stop_session_daemon and
+    # run_session_daemon_server's shutdown path below.
     _remove_daemon_metadata(root)
     creationflags = 0
     env = os.environ.copy()
@@ -772,7 +835,16 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
         # socket is wedged). Fall back to terminating the recorded pid if it validates.
         stale_metadata = _read_daemon_metadata(root)
         killed = _terminate_daemon_by_pid(stale_metadata)
-        _remove_daemon_metadata(root)
+        # Task #143a-a: only remove the metadata that still identifies the STALE daemon we just
+        # targeted -- never whatever happens to be on disk by the time we get here. A concurrent
+        # autostart elsewhere may have already spawned and published a healthy replacement's
+        # daemon.json in the window between the failed probe above and this cleanup; an
+        # unconditional unlink would delete that replacement's metadata too. When the stale
+        # metadata itself cannot be identified (missing/corrupt), there is nothing safe to
+        # remove -- skip rather than guess.
+        stale_pid, stale_port = _daemon_identity(stale_metadata)
+        if stale_pid is not None:
+            _remove_daemon_metadata(root, expected_pid=stale_pid, expected_port=stale_port)
         return {
             "version": _SESSION_VERSION,
             "root": str(root),
@@ -802,7 +874,12 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
         # validated pid terminate so a wedged daemon is not left running.
         if _terminate_daemon_by_pid(metadata):
             stop_method = "pid"
-    _remove_daemon_metadata(root)
+    # Task #143a-a: only remove daemon.json if it still identifies the SAME daemon this call
+    # targeted (captured in `metadata` above) -- a replacement may have spawned and published its
+    # own metadata in the window since. See _remove_daemon_metadata's docstring for the full race.
+    target_pid, target_port = _daemon_identity(metadata)
+    if target_pid is not None:
+        _remove_daemon_metadata(root, expected_pid=target_pid, expected_port=target_port)
     response["running"] = False
     response["root"] = str(root)
     response["stopped"] = True
@@ -1965,7 +2042,13 @@ def run_session_daemon_server(path: str = ".") -> None:
         finally:
             stop_event.set()
             _flush_demand_metrics_if_dirty(server, force=True)
-            _remove_daemon_metadata(root)
+            # Task #143a-a: this daemon must only ever remove ITS OWN daemon.json on shutdown
+            # (idle timeout, max-uptime, or a cooperative "stop" command). If a client already
+            # rejected this daemon over a package_version mismatch and spawned a healthy
+            # replacement, that replacement's metadata is what is on disk by the time THIS daemon
+            # finally shuts itself down -- an unconditional unlink here would delete it out from
+            # under the replacement, orphaning it with no discoverable daemon.json.
+            _remove_daemon_metadata(root, expected_pid=os.getpid(), expected_port=int(port))
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
