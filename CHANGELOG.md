@@ -1,6 +1,62 @@
 # CHANGELOG
 
 
+## v1.76.10 (2026-07-15)
+
+### Bug Fixes
+
+- Detect WSL via /proc/version when env signals are stripped (is_wsl_host fallback)
+  ([#615](https://github.com/oimiragieo/tensor-grep/pull/615),
+  [`e2413f2`](https://github.com/oimiragieo/tensor-grep/commit/e2413f2a4e46f86003c164833b5da4aec707c7c2))
+
+is_wsl_host() only checked WSL_DISTRO_NAME/WSL_INTEROP env vars and /run/WSL. A wrapper/service that
+  strips those env vars on a WSL1-style host with no /run/WSL makes is_wsl_host() wrongly return
+  False, which cascades into is_cross_domain_native_binary() returning False and the GPU probe
+  handing a raw Linux /tmp path to the Windows tg.exe binary (path_not_found).
+
+Add /proc/version (contains "microsoft" on every WSL1/WSL2 kernel, never on non-WSL Linux) as a
+  final, read-safe fallback after the existing env-var and /run/WSL checks. This only adds a WSL
+  signal and never removes one, so it cannot regress a currently-working WSL config.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Reconcile to v1.76.9 (post-#176 hardening + dogfood wave)
+  ([#614](https://github.com/oimiragieo/tensor-grep/pull/614),
+  [`96a377a`](https://github.com/oimiragieo/tensor-grep/commit/96a377a175b53fd8d348325974ab2d7719039022))
+
+Header + CURRENT STATE refreshed to live PyPI v1.76.9. Adds the 4-PR wave after #176: v1.76.7 #610
+  (daemon-coercion + rust checkpoint cleanup), v1.76.8 #611 (checkpoint symlink-disclosure
+  security), v1.76.9 #612 (GPU calibrate honesty), + #613 flaky index-lock heartbeat hardening
+  (test: no-release). Notes the v1.76.9 release-failure recovery (flaky test rerun) and #90 close
+  (doctor false-available already fixed #130b). PR queue empty; AI-actionable backlog empty.
+
+### Testing
+
+- Widen index-lock heartbeat freshness bound for loaded CI runners (flaked v1.76.9 on windows)
+  ([#613](https://github.com/oimiragieo/tensor-grep/pull/613),
+  [`85d61dc`](https://github.com/oimiragieo/tensor-grep/commit/85d61dccec779444304f89212e77e7b838356f02))
+
+test_heartbeat_keeps_mtime_fresh_during_long_hold flaked on windows-latest py3.11 CI
+  (max_observed_age 0.7837s > stale_after_s 0.6s), blocking the v1.76.9 release run. The heartbeat
+  mechanism is not broken -- the loaded 2-core CI runner GIL-starved the heartbeat thread for
+  ~0.78s, longer than the test's own bound. Same flakiness class the test's comment already
+  documents from the prior #120 macOS hardening (0.152s > 0.15s).
+
+Widen stale_after_s 0.6 -> 2.0 and hold_s 1.5 -> 4.0 (absolute headroom: ~2.5x the worst observed
+  starvation of 0.78s), keep heartbeat_interval_s at 0.05 so the ratio grows to 40x, and record the
+  2026-07-15 windows observation in the comment alongside the existing macOS note. The assertion
+  itself (max_observed_age < stale_after_s) is unchanged -- only the constants move.
+
+RED-GREEN verified: GREEN run (real heartbeat_interval_s=0.05) observed max_observed_age ~0.064s,
+  comfortably under 2.0s. RED run (heartbeat sabotaged to interval_s=999, never fires during the
+  hold) observed max_observed_age ~3.977s and the assertion correctly failed (3.97721529006958 < 2.0
+  is False), proving the widened bound still discriminates a working heartbeat from a dead one.
+
+No production code changed.
+
+
 ## v1.76.9 (2026-07-15)
 
 ### Bug Fixes
