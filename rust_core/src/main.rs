@@ -8511,14 +8511,23 @@ fn collect_checkpoint_entries(scope: &CheckpointScope) -> anyhow::Result<BTreeMa
 /// follow_symlinks=False)` (checkpoint_store.py:853-855, audit HIGH -- symlink disclosure).
 /// `std::fs::copy` FOLLOWS symlinks, so a plain copy here would read a source symlink's
 /// (possibly out-of-root) TARGET content and bake it into the snapshot -- an out-of-root
-/// disclosure (audit #178). This matters doubly because this Rust binary implements no
-/// checkpoint RESTORE of its own -- `tg checkpoint` (list/undo) is a full Python passthrough,
-/// see `Commands::Checkpoint` below -- so the only restore path is
-/// `checkpoint_store.py::undo_checkpoint`, which ALSO uses `follow_symlinks=False` and
-/// therefore expects a stored snapshot entry to still BE a symlink; materializing the target's
-/// bytes here would silently turn a restored symlink into a plain file on undo, on top of the
-/// disclosure. Recreate the symlink AS a symlink instead of following it; fall back to a
-/// normal file copy for every non-symlink entry.
+/// disclosure (audit #178). Recreate the symlink AS a symlink instead of following it; fall
+/// back to a normal file copy for every non-symlink entry.
+///
+/// Round-trip contract (verified against `checkpoint_store.py::undo_checkpoint`, the only
+/// restore path -- `tg checkpoint` list/undo is a full Python passthrough, see
+/// `Commands::Checkpoint` below). Storing the link AS a link (not its target's bytes) is what
+/// keeps an out-of-root symlink FAIL-CLOSED rather than a disclosure on undo -- but it does NOT
+/// make every symlink restorable, and this comment must not claim a full round-trip. undo's
+/// read-only pre-flight `_resolve_within_root` (checkpoint_store.py:124-139, called at
+/// :1232-1235) RESOLVES each stored snapshot symlink and, before touching any working-tree
+/// file, REFUSES it (ValueError) when the resolved target escapes the snapshot root; the later
+/// missing-source probe (:1246-1257) raises CheckpointCorruptError for a dangling target. So an
+/// out-of-root OR dangling symlink checkpoint is refused fail-closed on undo -- no disclosure,
+/// no data loss, working tree left intact, but NOT restorable. Only an in-root symlink whose
+/// resolved target exists inside the snapshot is actually restored. That fail-closed refusal is
+/// the correct, safe behavior; the alternative (following the link here) would materialize
+/// out-of-root content into the snapshot and then into the tree on undo.
 fn copy_checkpoint_entry(source: &Path, destination: &Path) -> std::io::Result<()> {
     if std::fs::symlink_metadata(source)?.file_type().is_symlink() {
         let link_target = std::fs::read_link(source)?;
@@ -8551,11 +8560,32 @@ fn create_checkpoint_symlink(target: &Path, link: &Path) -> std::io::Result<()> 
             .and_then(|candidate| std::fs::metadata(candidate).ok())
             .map(|metadata| metadata.is_dir())
             .unwrap_or(false);
-        if resolved_is_dir {
+        let result = if resolved_is_dir {
             std::os::windows::fs::symlink_dir(target, link)
         } else {
             std::os::windows::fs::symlink_file(target, link)
-        }
+        };
+        // audit #178 F2a: creating a symlink on Windows needs SeCreateSymbolicLinkPrivilege
+        // (admin, or Developer Mode). Without it the OS returns ERROR_PRIVILEGE_NOT_HELD (1314),
+        // which the caller's `.with_context("failed to copy ... into checkpoint snapshot ...")`
+        // would otherwise surface as a bare, misleading "copy failed". Re-message that one errno
+        // so the real cause (a privilege gap, not a copy fault) is visible; leave every other
+        // error untouched.
+        result.map_err(|err| {
+            const ERROR_PRIVILEGE_NOT_HELD: i32 = 1314;
+            if err.raw_os_error() == Some(ERROR_PRIVILEGE_NOT_HELD) {
+                std::io::Error::new(
+                    err.kind(),
+                    format!(
+                        "creating checkpoint symlink {} requires administrator privileges or \
+                         Windows Developer Mode (ERROR_PRIVILEGE_NOT_HELD)",
+                        link.display()
+                    ),
+                )
+            } else {
+                err
+            }
+        })
     }
     #[cfg(not(any(unix, windows)))]
     {
