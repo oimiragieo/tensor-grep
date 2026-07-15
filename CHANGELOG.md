@@ -1,6 +1,21 @@
 # CHANGELOG
 
 
+## v1.76.1 (2026-07-15)
+
+### Bug Fixes
+
+- Guard checkpoint/rollback writes vs symlink swap + interrupt-safe cleanup
+  ([#602](https://github.com/oimiragieo/tensor-grep/pull/602),
+  [`f22ffa5`](https://github.com/oimiragieo/tensor-grep/commit/f22ffa570b7f3c1cbb5b9c8bc8f447a7bfa39bcc))
+
+Routes the 3 unguarded Rust checkpoint/rollback writes (metadata.json, index.json,
+  restore_validation_rollback_snapshots) through write_bytes_refuse_symlink (TOCTOU-safe on both
+  platforms incl Windows FILE_FLAG_OPEN_REPARSE_POINT), and widens create_checkpoint's guard to
+  except BaseException with unconditional re-raise + per-checkpoint-dir cleanup. Opus adversarial
+  gate: SHIP (3 pre-existing NITs -> task #178). Closes #115, #125a.
+
+
 ## v1.76.0 (2026-07-15)
 
 ### Documentation
