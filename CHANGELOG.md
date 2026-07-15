@@ -1,6 +1,30 @@
 # CHANGELOG
 
 
+## v1.76.7 (2026-07-15)
+
+### Bug Fixes
+
+- Gate-nit hardening -- daemon-metadata coercion + Rust checkpoint cleanup
+  ([#610](https://github.com/oimiragieo/tensor-grep/pull/610),
+  [`2f903c2`](https://github.com/oimiragieo/tensor-grep/commit/2f903c2657c63c94bc743d3649ead2bae9a39c1a))
+
+NIT-1: _remove_daemon_metadata coerces both sides through _daemon_identity (prevents a future silent
+  never-delete leak). NIT-2: Rust create_checkpoint removes the orphaned random-id dir on any write
+  failure (fail-closed, mirrors Python; only removes its own random-id subtree, never the sibling
+  index.json/shared store). Opus adversarial gate: SHIP-WITH-NITS (both correct + fail-closed; 3
+  non-blocking follow-up NITs -> #178). Closes the daemon-coercion + rust-cleanup parts of #178;
+  #125b verified already-consistent.
+
+### Documentation
+
+- **backlog**: Reconcile to v1.76.6 (#608 dogfood follow-up)
+  ([#609](https://github.com/oimiragieo/tensor-grep/pull/609),
+  [`e384806`](https://github.com/oimiragieo/tensor-grep/commit/e384806e6ef909acb78d1734c61e4a008c4728e0))
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.76.6 (2026-07-15)
 
 ### Bug Fixes
