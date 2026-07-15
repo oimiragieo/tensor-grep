@@ -6412,12 +6412,20 @@ def _python_module_matches_definition(
     repo_root: Path | str | None = None,
     *,
     level: int = 0,
-) -> bool:
-    return bool(
-        _python_module_match_details(
-            importer_path, module_name, definition_path, repo_root, level=level
-        )["matched"]
+) -> tuple[bool, list[str]]:
+    """Return `(matched, provenance)`.
+
+    Unlike the bool-only `_js_ts_module_matches_definition` / `_rust_module_matches_definition`
+    siblings, this also threads through `_python_module_match_details`'s `provenance` (notably
+    the "sys-path-insert" tag) -- #155 fix: that tag was computed but provably unreachable
+    (this was the only caller, and it discarded everything but the bool) before this change.
+    The sole caller, `_confirm_import_edges`, uses it to report the tag honestly on `tg
+    importers` reverse edges instead of silently collapsing it into a generic label.
+    """
+    details = _python_module_match_details(
+        importer_path, module_name, definition_path, repo_root, level=level
     )
+    return bool(details["matched"]), list(details["provenance"])
 
 
 def _group_symbols_by_file(symbols: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -15463,6 +15471,7 @@ def _confirm_import_edges(
             # a confirmed edge for an import whose target we can't actually read (precision
             # matters more than recall past this point).
             continue
+        python_provenance: list[str] = []
         if language_id in ("javascript", "typescript"):
             matched = _js_ts_module_matches_definition(
                 candidate_importer, module, target_file, repo_root
@@ -15479,7 +15488,7 @@ def _confirm_import_edges(
             # `_python_module_candidates` resolve a relative import correctly instead of
             # falling back to a bare path-suffix match that ignores directory context.
             level = int(raw_entry.get("level", 0) or 0)
-            matched = _python_module_matches_definition(
+            matched, python_provenance = _python_module_matches_definition(
                 candidate_importer, module, target_file, repo_root, level=level
             )
         if not matched or line in seen_lines:
@@ -15496,6 +15505,16 @@ def _confirm_import_edges(
             "provenance": provenance,
             "resolution_confidence": _import_graph_resolution_confidence(provenance),
         }
+        if python_provenance == ["sys-path-insert"]:
+            # #155 fix: report the sys.path-hack tag honestly on the reverse edge too, mirroring
+            # the forward `tg imports` path (`_resolve_raw_import_entry`). A SEPARATE field, not
+            # an overwrite of `provenance` above -- that string drives
+            # `_import_graph_resolution_confidence`'s enum ("parser-backed"/"heuristic"/
+            # "regex-heuristic", pinned by test_import_span_targeting.py) and this edge is still
+            # exactly as parser-confirmed (exact AST-parsed, exact resolved-path match) as any
+            # other Python edge, just resolved via a sys.path-hacked root instead of a standard
+            # one.
+            edge["path_provenance"] = "sys-path-insert"
         if dynamic:
             # Payload-bloat fix (#93 SUB-1 follow-up, same rationale as
             # _resolve_raw_import_entry): preserve the dynamic markers on an edge that IS
