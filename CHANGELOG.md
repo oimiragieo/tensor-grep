@@ -1,6 +1,29 @@
 # CHANGELOG
 
 
+## v1.76.6 (2026-07-15)
+
+### Bug Fixes
+
+- Tg agent/context-render suggested_scope excludes deweighted/ignored trees
+  ([#608](https://github.com/oimiragieo/tensor-grep/pull/608),
+  [`9a4ec59`](https://github.com/oimiragieo/tensor-grep/commit/9a4ec592f25b03e0bfd13c73f87d2faa70f12c7b))
+
+Threads _detect_vendored_subtrees(rm) into the agent_capsule + repo_map build_context_render
+  _suggested_scope_from_map calls (agent_capsule.py:2377/2620, repo_map.py:12477), mirroring the
+  #606 orient fix — so tg agent/context-render suggested_scope excludes ignored trees and agrees
+  with suggested_ignore (was contradicting: pointed at .claude while suggested_ignore excluded it).
+  Dogfood-verified on agent-studio: .claude -> scripts. Closes #179.
+
+### Documentation
+
+- **backlog**: Reconcile to v1.76.5 -- #176 AI-actionable-backlog wave complete (6 PRs, ZERO broken)
+  ([#607](https://github.com/oimiragieo/tensor-grep/pull/607),
+  [`1c9668f`](https://github.com/oimiragieo/tensor-grep/commit/1c9668f5f8397e5284c5d3775b9fc56123fa2b51))
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.76.5 (2026-07-15)
 
 ### Bug Fixes
