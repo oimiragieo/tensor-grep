@@ -853,32 +853,37 @@ def create_checkpoint(path: str = ".") -> CheckpointCreateResult:
             # follow_symlinks=False: store a symlink AS a link, never copy its (possibly
             # out-of-root) target content into the snapshot (audit HIGH — symlink disclosure).
             shutil.copy2(source, destination, follow_symlinks=False)
-    except Exception:
-        # audit H4: never leave a half-copied checkpoint dir behind on any abort, budget-
-        # related or not (e.g. disk fills mid-copy despite the pre-flight, or a file
-        # vanishes/grows mid-loop). Remove the WHOLE per-checkpoint dir (metadata.json has not
-        # been written yet at this point, but snapshot_dir's own parent must go too, not just
-        # the snapshot/ subdir) -- matches how _prune_checkpoint_records removes a checkpoint.
+
+        result = CheckpointCreateResult(
+            checkpoint_id=checkpoint_id,
+            mode=mode,
+            root=str(root),
+            created_at=created_at,
+            file_count=len(entries),
+            undo_argv=_undo_argv(scope, checkpoint_id),
+            undo_command=_display_command(_undo_argv(scope, checkpoint_id)),
+            skipped_nested_repos=skipped_nested_repos,
+        )
+        _write_checkpoint_metadata(
+            root,
+            result,
+            entries,
+            scope_kind=scope.scope_kind,
+            original_path=scope.original_path,
+        )
+    except BaseException:
+        # audit #125a: catch BaseException, not Exception -- KeyboardInterrupt/SystemExit
+        # subclass BaseException directly (not Exception), so a Ctrl+C here previously escaped
+        # this handler entirely and left an uncleaned checkpoint dir behind. The guarded region
+        # also now extends through the metadata write below (not just the copy loop above): a
+        # failure writing metadata.json after a fully successful copy must not orphan that
+        # directory either -- audit H4's original cleanup only covered the copy loop. Remove the
+        # WHOLE per-checkpoint dir (metadata.json may or may not have been written yet, but
+        # snapshot_dir's own parent must go too, not just the snapshot/ subdir) -- matches how
+        # _prune_checkpoint_records removes a checkpoint. Always re-raise: the interrupt or
+        # exception must still propagate to the caller, never be swallowed here.
         shutil.rmtree(snapshot_dir.parent, ignore_errors=True)
         raise
-
-    result = CheckpointCreateResult(
-        checkpoint_id=checkpoint_id,
-        mode=mode,
-        root=str(root),
-        created_at=created_at,
-        file_count=len(entries),
-        undo_argv=_undo_argv(scope, checkpoint_id),
-        undo_command=_display_command(_undo_argv(scope, checkpoint_id)),
-        skipped_nested_repos=skipped_nested_repos,
-    )
-    _write_checkpoint_metadata(
-        root,
-        result,
-        entries,
-        scope_kind=scope.scope_kind,
-        original_path=scope.original_path,
-    )
 
     # q10 RMW race: load->mutate->write must be atomic w.r.t. every other writer of this
     # index.json, cross-process and cross-thread, or a concurrent insert can be lost (see
