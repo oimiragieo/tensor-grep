@@ -589,19 +589,52 @@ def _top_level_dir(file_path: str, root: Path) -> str | None:
     return parts[0]
 
 
-def _suggested_scope_from_map(rm: dict[str, Any]) -> dict[str, Any] | None:
+def _file_in_any_tree(file_path: str, tree_roots: list[str]) -> bool:
+    """True if `file_path` lives inside any of `tree_roots` (absolute directory paths -- the
+    ``_detect_vendored_subtrees`` dict keys). Standalone helper (#168) rather than reusing
+    `_central_files_from_map`'s inline tree-membership loop, so that function's existing,
+    already-tested de-weight logic is left untouched."""
+    candidate = Path(file_path)
+    for tree_root in tree_roots:
+        try:
+            candidate.relative_to(tree_root)
+        except ValueError:
+            continue
+        return True
+    return False
+
+
+def _suggested_scope_from_map(
+    rm: dict[str, Any],
+    *,
+    deweighted_trees: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
     """Centrality-weighted directory rollup: sum each code file's composite centrality
     (`_file_centrality_scores`) up to its top-level directory, rank directories, and suggest the
     top one only when it clearly outranks the runner-up. Returns None (never a guess) when there
     are no candidate subdirectories, the signal is entirely flat (all zero), or the top two
     directories are tied/near-tied. Callers gate the call itself on the repo map's
-    ``scan_limit.possibly_truncated`` -- a complete scan has nothing left to narrow."""
+    ``scan_limit.possibly_truncated`` -- a complete scan has nothing left to narrow.
+
+    ``deweighted_trees`` (#168): the same auto-detected vendor/skill/tool-config subtree set
+    ``_detect_vendored_subtrees`` produces for ``suggested_ignore`` (e.g. ``.claude/**`` on a
+    Claude-Code-harness repo whose scan truncates). A file inside any of these trees is EXCLUDED
+    from the directory rollup entirely -- not merely de-weighted -- so `suggested_scope` can never
+    point an agent at the exact tree `suggested_ignore` already says to ignore; the two fields must
+    never contradict each other. This only shrinks the candidate set: whatever directory remains is
+    still ranked on the raw, un-de-weighted score (preserving the SUB-2 design -- see
+    `_central_files_from_map`'s docstring). ``None``/omitted -- the default -- means "nothing to
+    exclude" and reproduces the pre-#168 behavior exactly; the `agent_capsule.py` and `repo_map.py`
+    call sites do not thread a deweight set through yet and are unaffected by this parameter."""
     code_files, centrality = _file_centrality_scores(rm)
     if not code_files:
         return None
     root = Path(str(rm.get("path", ".")))
+    tree_roots = list(deweighted_trees.keys()) if deweighted_trees else []
     dir_scores: dict[str, float] = {}
     for file_path in code_files:
+        if tree_roots and _file_in_any_tree(file_path, tree_roots):
+            continue  # #168: never roll an ignored tree's files into a scope candidate
         top_dir = _top_level_dir(file_path, root)
         if top_dir is None:
             continue
@@ -770,7 +803,13 @@ def build_orient_capsule_from_map(
     scan_possibly_truncated = bool(
         isinstance(scan_limit_info, dict) and scan_limit_info.get("possibly_truncated")
     )
-    suggested_scope = _suggested_scope_from_map(rm) if scan_possibly_truncated else None
+    # `deweighted_trees` (#168) is threaded through so suggested_scope can never point an agent at
+    # the same tree suggested_ignore (below) already says to ignore -- the two fields must agree.
+    suggested_scope = (
+        _suggested_scope_from_map(rm, deweighted_trees=deweighted_trees)
+        if scan_possibly_truncated
+        else None
+    )
     # The capsule's own simplified `scan_limit` int (see the docstring above): the cap that
     # produced `rm`, read back off the map itself rather than threaded through as a second,
     # independently-suppliable parameter.
