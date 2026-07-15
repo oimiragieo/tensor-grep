@@ -345,11 +345,23 @@ def is_wsl_host() -> bool:
     misread as a real WSL path-domain mismatch. `WSL_DISTRO_NAME`/`WSL_INTEROP` are set by WSL
     itself in every real WSL session and are the standard, filesystem-read-free way to detect it;
     `/run/WSL` (also used by `core.hardware.device_detect`) is the fallback for a stripped
-    subprocess environment that dropped those variables.
+    subprocess environment that dropped those variables. `/proc/version` containing "microsoft"
+    (case-insensitive) is the canonical fallback for a fully stripped environment where a wrapper
+    or service dropped both env vars AND has no `/run/WSL` -- every WSL1/WSL2 kernel stamps this
+    string (e.g. "Linux version 6.6.87.2-microsoft-standard-WSL2"), and no non-WSL Linux kernel
+    does, so this signal is safe and cannot false-positive. The read is wrapped fail-closed:
+    any OSError (missing file, permission denied, etc.) is treated as "not WSL" rather than
+    raising.
     """
     if os.environ.get("WSL_DISTRO_NAME") or os.environ.get("WSL_INTEROP"):
         return True
-    return os.path.exists("/run/WSL")
+    if os.path.exists("/run/WSL"):
+        return True
+    try:
+        with open("/proc/version", encoding="utf-8", errors="replace") as fh:
+            return "microsoft" in fh.read().lower()
+    except OSError:
+        return False
 
 
 def native_binary_targets_windows(binary: Path | str) -> bool:
