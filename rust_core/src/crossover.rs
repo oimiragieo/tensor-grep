@@ -476,6 +476,36 @@ fn user_crossover_config_path() -> Option<PathBuf> {
     })
 }
 
+// P0-4 (GPU Phase-0 honesty): a bare "requires a CUDA-enabled build" / "device unavailable"
+// error leaves a caller with no idea how to fix it. Point at the exact remediation -- the
+// TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR override + `tg upgrade` -- and name the platform's
+// NVIDIA release asset via compile-time cfg. HONESTY: never claim an asset "isn't published
+// yet" (that phrasing goes false the moment the asset profile is flipped on); phrase the
+// linux/windows case conditionally ("if published ... falls back to CPU when it is not") and
+// state the macOS case as the structural fact it is (Apple platforms are not a CUDA target).
+fn crossover_gpu_remediation_hint() -> String {
+    let platform_clause = if cfg!(target_os = "linux") {
+        "on linux this fetches the tg-linux-amd64-nvidia asset, if an NVIDIA asset is \
+         published for this platform on the release page; the installer falls back to CPU \
+         when it is not"
+            .to_string()
+    } else if cfg!(target_os = "windows") {
+        "on windows this fetches the tg-windows-amd64-nvidia.exe asset, if an NVIDIA asset is \
+         published for this platform on the release page; the installer falls back to CPU \
+         when it is not"
+            .to_string()
+    } else {
+        "no NVIDIA asset is published for this platform (Apple platforms are not a CUDA \
+         target); the installer stays on CPU here"
+            .to_string()
+    };
+    format!(
+        "To enable, set env TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR=nvidia then run `tg upgrade` \
+         ({platform_clause}). Run `tg doctor` to check the requested-vs-installed native \
+         flavor."
+    )
+}
+
 fn detect_device_name(device_id: i32) -> Result<String> {
     #[cfg(feature = "cuda")]
     {
@@ -487,17 +517,64 @@ fn detect_device_name(device_id: i32) -> Result<String> {
         {
             return Ok(device.name);
         }
-        bail!("CUDA device {device_id} is unavailable for crossover calibration");
+        bail!(
+            "CUDA device {device_id} is unavailable for crossover calibration.\n{}",
+            crossover_gpu_remediation_hint()
+        );
     }
 
     #[cfg(not(feature = "cuda"))]
     {
         let _ = device_id;
-        bail!("crossover calibration requires a CUDA-enabled build")
+        bail!(
+            "crossover calibration requires a CUDA-enabled build.\n{}",
+            crossover_gpu_remediation_hint()
+        )
     }
 }
 
 enum SearchMode {
     Cpu,
     Gpu(i32),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // P0-4 RED test: detect_device_name is always-compiled (no `cuda` feature required), so
+    // this runs in the default `test-rust-core` CI matrix (ubuntu/windows/macos x stable/
+    // nightly, `cargo test --no-default-features`). The `#[cfg(feature = "cuda")]` arm's own
+    // edit (crossover.rs:520-523) is only compile-checked by the separate `cuda-feature-check`
+    // job (`cargo check --features cuda`, ubuntu+windows only) -- never test-executed here,
+    // which is an accepted gap (council nit).
+    #[cfg(not(feature = "cuda"))]
+    #[test]
+    fn detect_device_name_without_cuda_feature_names_remediation() {
+        let err = detect_device_name(0).expect_err("a non-cuda build must fail closed");
+        let message = err.to_string();
+        assert!(
+            message.contains("TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR"),
+            "message should point at the native-frontdoor flavor override env var: {message}"
+        );
+        assert!(
+            message.contains("tg upgrade"),
+            "message should tell the user how to fetch an NVIDIA-enabled binary: {message}"
+        );
+        #[cfg(target_os = "linux")]
+        assert!(
+            message.contains("tg-linux-amd64-nvidia"),
+            "message should name the linux NVIDIA asset: {message}"
+        );
+        #[cfg(target_os = "windows")]
+        assert!(
+            message.contains("tg-windows-amd64-nvidia.exe"),
+            "message should name the windows NVIDIA asset: {message}"
+        );
+        #[cfg(target_os = "macos")]
+        assert!(
+            message.contains("no NVIDIA asset"),
+            "message should honestly state macOS has no NVIDIA asset: {message}"
+        );
+    }
 }

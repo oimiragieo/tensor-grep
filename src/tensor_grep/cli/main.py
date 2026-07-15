@@ -322,6 +322,10 @@ class _NativeFrontdoorInstallResult:
     url: str
     flavor: str
     asset_name: str
+    # P0-5 (GPU Phase-0 honesty): defaulted so the single construction site below and any
+    # future caller stay valid without threading these through everywhere.
+    requested_flavor: str = "cpu"
+    downgrade_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -713,6 +717,40 @@ def _native_frontdoor_checksum_error(
     return None
 
 
+def _native_frontdoor_download_error_for_flavor(
+    download_errors: list[str], flavor: str
+) -> str | None:
+    """First download_errors entry attributable to `flavor` (each entry is formatted as
+    "<flavor> asset ...", see _install_release_native_frontdoor), or None if no candidate of
+    that flavor was ever attempted. SF-1: a platform with no NVIDIA asset at all never
+    appends an nvidia candidate to the download loop, so download_errors has no
+    nvidia-flavored entry -- callers must not index into it blindly in that case.
+    """
+    prefix = f"{flavor} asset"
+    for error in download_errors:
+        if error.startswith(prefix):
+            return error
+    return None
+
+
+def _native_frontdoor_downgrade_reason(
+    *, requested_flavor: str, installed_flavor: str, download_errors: list[str]
+) -> str | None:
+    """Honest reason the installed native-frontdoor flavor differs from what was requested
+    (TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR), or None when they already agree -- including the
+    default cpu-request path, which must stay silent (requested cpu always installs cpu).
+    """
+    if installed_flavor == requested_flavor:
+        return None
+    reason = _native_frontdoor_download_error_for_flavor(download_errors, requested_flavor)
+    if reason is not None:
+        return reason
+    # SF-1: no candidate of the requested flavor was ever attempted for this platform (e.g.
+    # darwin/non-amd64, where _native_frontdoor_asset_candidates never appends an nvidia
+    # entry) -- state that honestly rather than fabricating a reason nothing recorded.
+    return f"no {requested_flavor.upper()} asset is published for this platform"
+
+
 def _write_native_frontdoor_metadata(
     destination: Path,
     *,
@@ -793,10 +831,33 @@ def _install_release_native_frontdoor(
                 version=version,
                 candidate=candidate,
             )
+            # P0-5 (GPU Phase-0 honesty): a requested nvidia flavor that silently
+            # lands cpu (nvidia unavailable, or no nvidia asset exists for this platform at
+            # all) used to be indistinguishable from an ordinary cpu install. Warn loudly on
+            # stderr so a caller sees the downgrade instead of only discovering it later via
+            # `tg doctor`. Silent on the default cpu-request path (requested cpu always
+            # installs cpu, so this never fires there) and never pollutes any --json stream
+            # (stderr only; `tg upgrade` has no --json output).
+            requested_flavor = _requested_native_frontdoor_flavor()
+            downgrade_reason = _native_frontdoor_downgrade_reason(
+                requested_flavor=requested_flavor,
+                installed_flavor=candidate.flavor,
+                download_errors=download_errors,
+            )
+            if downgrade_reason is not None:
+                print(
+                    f"WARNING: requested native tg front-door flavor '{requested_flavor}' "
+                    f"was not installed ({downgrade_reason}); installed '{candidate.flavor}' "
+                    "instead. Run 'tg doctor' to check the requested-vs-installed native "
+                    "flavor.",
+                    file=sys.stderr,
+                )
             return _NativeFrontdoorInstallResult(
                 url=url,
                 flavor=candidate.flavor,
                 asset_name=candidate.asset_name,
+                requested_flavor=requested_flavor,
+                downgrade_reason=downgrade_reason,
             )
         finally:
             temp_path.unlink(missing_ok=True)
@@ -7625,7 +7686,20 @@ def calibrate() -> None:
         # audit L10: calibrate is unsupported without the native binary (and on CPU-only
         # boxes the native binary itself exits non-zero when CUDA is unavailable). tg's
         # convention is exit 1 for runtime/unsupported errors, not exit 2 (usage errors).
-        typer.echo("Error: native tg binary not found for calibrate command.", err=True)
+        # P0-4 (GPU Phase-0 honesty): don't leave the caller with a dead end -- name the
+        # remediation. This wrapper uses inherited stdio for the real `calibrate` subprocess
+        # below and must NOT capture its stderr (that would break streaming), so only THIS
+        # wrapper-owned missing-binary message gets the pointer; the native binary's own
+        # calibrate-failure remediation text is Rust-owned (crossover.rs).
+        typer.echo(
+            "Error: native tg binary not found for calibrate command.\n"
+            "To enable GPU crossover calibration, set env "
+            "TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR=nvidia then run 'tg upgrade' to fetch an "
+            "NVIDIA-enabled native binary, if one is published for this platform on the "
+            "release page; the installer falls back to CPU when it is not. Run 'tg doctor' "
+            "to check the requested-vs-installed native flavor.",
+            err=True,
+        )
         raise typer.Exit(1)
 
     completed = subprocess.run([str(native_tg_binary), "calibrate"], check=False)
