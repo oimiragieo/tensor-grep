@@ -1,6 +1,53 @@
 # CHANGELOG
 
 
+## v1.76.0 (2026-07-15)
+
+### Documentation
+
+- **agents**: Capture session orchestration patterns + reconcile skill index + CI divergence gate +
+  GPU doc reframe ([#599](https://github.com/oimiragieo/tensor-grep/pull/599),
+  [`cd3ec10`](https://github.com/oimiragieo/tensor-grep/commit/cd3ec107e41ffe79129335651d238520f9ee5eaf))
+
+AGENTS.md A9-A11 (SendMessage-liveness / no-verdict-seat / design-review-before-build) +
+  adversarial-gate-surface ext + build-ahead-of-release subsection + release-tag-smoke checklist
+  step + cfg(any(cuda,test)) rule + Roadmap Phase-0/1/2 rewrite + v1.75.x handoff. CLAUDE.md skill
+  index reconciled to committed 20+base, byte-identical with AGENTS.md. NEW
+  tests/unit/test_skill_index_sync.py CI gate (index==real .claude/skills folders).
+  docs/gpu_crossover.md additive GPU-wave section. Audit-verified by workflow wnia2ckzd;
+  docs+governance, no release.
+
+- **backlog**: Reconcile to v1.75.x + GPU Phase-0 program state
+  ([#598](https://github.com/oimiragieo/tensor-grep/pull/598),
+  [`bb76de6`](https://github.com/oimiragieo/tensor-grep/commit/bb76de67c1d43f2b879281aed57d30cf17820e22))
+
+Reconcile docs/BACKLOG.md to Live v1.75.4 + the GPU Phase-0 wave (v1.75.0-.4, #593-#597 SHIPPED
+  ledger, registered #171/#172/#173). CEO-FACING GPU section rewritten to the honest reframe (assets
+  built+correctness-proven but gated off; flip publishes assets-not-promotion, no crossover;
+  CONTRACTS.md:80-82). docs-only, no release. Closes GPU directive #174.
+
+- **skills**: Reconcile skill library to v1.75.4 reality (GPU reframe + verified-shipped features +
+  new methods) ([#600](https://github.com/oimiragieo/tensor-grep/pull/600),
+  [`1419232`](https://github.com/oimiragieo/tensor-grep/commit/141923256020ca8ed73f7b5fb6544bc765ca5b7d))
+
+14 audit-verified accuracy fixes across 18 in-repo skills: GPU Phase-0-shipped reframe (honesty
+  floor kept), backend-#79 RESOLVED, semantic-search-shipped, #52/#74/#456 status,
+  adversarial-gate-surface +native/installer/doctor, release-tag-smoke steward,
+  cargo-check-cuda+cfg(any(cuda,test)), tg calibrate (no positional -- fixed the audit's own error
+  vs empty CalibrateArgs), doctor GPU-probe fields, backlog-campaign 20/21 count. Audit-verified by
+  workflow wnia2ckzd; docs-only, no release. Net -11 em-dashes.
+
+### Features
+
+- Promote tg route-test from hidden to public
+  ([#601](https://github.com/oimiragieo/tensor-grep/pull/601),
+  [`92ea52d`](https://github.com/oimiragieo/tensor-grep/commit/92ea52d49f373d043ff3077d88d7c6db54e71444))
+
+route-test was hidden (main.py:9371) AND entirely absent from the native front door; adds a
+  RouteTest passthrough (trailing_var_arg + allow_hyphen_values, byte-identical to Context/Doctor)
+  through the shared handle_python_passthrough helper, plus RED-first visibility tests. Closes #58.
+
+
 ## v1.75.4 (2026-07-15)
 
 ### Bug Fixes
