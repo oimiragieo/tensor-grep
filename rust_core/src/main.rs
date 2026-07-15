@@ -10663,6 +10663,10 @@ fn gpu_native_config_from_internal_args(args: &GpuNativeStatsArgs) -> GpuNativeS
         hidden: false,
         max_depth: None,
         max_batch_bytes: args.max_batch_bytes,
+        // `GpuNativeStatsArgs::path` is a required `#[arg(long)]` (no default_value) -- this
+        // diagnostic command always has an explicit, deliberately-scoped PATH, never an implicit
+        // one, so the #109 ceiling must never fire here regardless of tree size.
+        path_was_implicit: false,
     }
 }
 
@@ -10676,6 +10680,10 @@ fn gpu_native_config_from_graph_args(args: &GpuCudaGraphArgs) -> GpuNativeSearch
         hidden: false,
         max_depth: None,
         max_batch_bytes: args.max_batch_bytes,
+        // `GpuCudaGraphArgs::path` is a required `#[arg(long)]` (no default_value) -- this
+        // benchmark command always has an explicit, deliberately-scoped PATH, never an implicit
+        // one, so the #109 ceiling must never fire here regardless of tree size.
+        path_was_implicit: false,
     }
 }
 
@@ -10764,6 +10772,12 @@ fn execute_gpu_native_route(
         hidden: params.hidden,
         max_depth: params.max_depth,
         max_batch_bytes: None,
+        // Audit #109 fix: this field did not exist on `GpuNativeSearchConfig` at all, so the
+        // GPU-native engine had no equivalent of the #105 native-CPU implicit-walk ceiling --
+        // `params.path_was_implicit` was already threaded into the CPU-fallback redirects
+        // (`ripgrep_args_for_gpu_params`, `native_search_config_for_gpu_params`) but silently
+        // dropped here, the one construction site that feeds the actual cuda kernel walk.
+        path_was_implicit: params.path_was_implicit,
     };
 
     let stats = gpu_native_search_paths_multi(&config, device_ids)?;

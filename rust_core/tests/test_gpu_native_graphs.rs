@@ -46,6 +46,7 @@ fn test_gpu_native_replays_captured_cuda_graphs_without_changing_results() {
         hidden: false,
         max_depth: None,
         max_batch_bytes: Some(4 * 1024),
+        path_was_implicit: false,
     };
 
     let benchmark = benchmark_cuda_graph_search_paths(&config, device_id).unwrap();
@@ -83,6 +84,7 @@ fn test_gpu_native_cuda_graphs_reduce_batch_overhead_by_ten_percent() {
         hidden: false,
         max_depth: None,
         max_batch_bytes: Some(4 * 1024),
+        path_was_implicit: false,
     };
 
     let benchmark = benchmark_cuda_graph_search_paths(&config, device_id).unwrap();

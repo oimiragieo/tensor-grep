@@ -80,6 +80,7 @@ fn test_gpu_native_search_reports_pinned_double_buffered_stream_pipeline() {
         hidden: false,
         max_depth: None,
         max_batch_bytes: Some(64 * 1024),
+        path_was_implicit: false,
     };
 
     let stats = gpu_native_search_paths(&config, device_id).unwrap();
@@ -107,6 +108,7 @@ fn test_gpu_native_overlap_matches_expected_results_without_races() {
         hidden: false,
         max_depth: None,
         max_batch_bytes: Some(64 * 1024),
+        path_was_implicit: false,
     };
 
     let mut actual = gpu_native_search_paths(&config, device_id)
@@ -138,6 +140,7 @@ fn test_gpu_native_overlap_metrics_show_transfer_compute_overlap() {
         hidden: false,
         max_depth: None,
         max_batch_bytes: Some(64 * 1024),
+        path_was_implicit: false,
     };
 
     let stats = gpu_native_search_paths(&config, device_id).unwrap();
@@ -189,6 +192,7 @@ fn test_gpu_native_multi_gpu_balances_distribution_and_matches_single_gpu_result
         hidden: false,
         max_depth: None,
         max_batch_bytes: Some(128 * 1024),
+        path_was_implicit: false,
     };
 
     let single = gpu_native_search_paths(&config, devices[0].device_id).unwrap();
