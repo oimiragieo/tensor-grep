@@ -1,6 +1,21 @@
 # CHANGELOG
 
 
+## v1.76.3 (2026-07-15)
+
+### Bug Fixes
+
+- Session daemon removes only its own metadata (stale-daemon orphan pileup)
+  ([#603](https://github.com/oimiragieo/tensor-grep/pull/603),
+  [`248fa35`](https://github.com/oimiragieo/tensor-grep/commit/248fa354d8b67bda7a7ea820e6f0956154818951))
+
+_remove_daemon_metadata now only unlinks daemon.json when the on-disk (pid,port) identity matches
+  this instance (mismatch/missing/corrupt = fail-safe 'not mine'); _spawn_daemon_subprocess keeps
+  its force-remove under the start-lock as the universal backstop. Fixes the orphan-pileup when a
+  version-mismatch spawns a replacement daemon. Opus adversarial gate: SHIP-WITH-NITS (4 optional
+  NITs -> task #178, none block).
+
+
 ## v1.76.2 (2026-07-15)
 
 ### Performance Improvements
