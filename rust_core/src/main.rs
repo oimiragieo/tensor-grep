@@ -5124,9 +5124,12 @@ mod tests {
         // NIT (v1.76 #602 gate, "NIT-3"): checkpoint_store.py::create_checkpoint (the Python
         // side) already wraps its copy-loop + metadata-write in `except BaseException: rmtree
         // (snapshot_dir.parent); raise` (audit #125a, shipped in #602) so a failure never
-        // orphans the random-id snapshot dir. The Rust `create_checkpoint` above had NO
-        // equivalent: a failure in the copy loop, the metadata write, OR the index write left
-        // the just-created checkpoint_id directory (snapshot/ + metadata.json) behind forever.
+        // orphans the random-id snapshot dir -- audit #178 later widened that same Python guard
+        // to also cover the index write (see checkpoint_store.py::create_checkpoint), closing
+        // the one gap that earlier widening had not yet reached. The Rust `create_checkpoint`
+        // above had NO equivalent at all: a failure in the copy loop, the metadata write, OR
+        // the index write left the just-created checkpoint_id directory (snapshot/ +
+        // metadata.json) behind forever.
         //
         // Force a deterministic, cross-platform failure at the LAST fallible step (the
         // pre-existing index.json fails to parse) so the copy loop and the metadata.json write
@@ -5163,6 +5166,90 @@ mod tests {
             std::fs::read(&index_path).unwrap(),
             b"not valid json",
             "the pre-existing (corrupt) index.json itself must be left untouched"
+        );
+    }
+
+    #[test]
+    fn test_create_checkpoint_does_not_disclose_symlink_target() {
+        // Item 1 (audit #178, surfaced by the #610 gate): `std::fs::copy` FOLLOWS symlinks, so
+        // a source-tree symlink pointing OUTSIDE the checkpoint root previously had its
+        // TARGET's content copied into the snapshot -- an out-of-root disclosure. Mirrors the
+        // Python-side regression test `test_create_checkpoint_does_not_disclose_symlink_target`
+        // in tests/unit/test_checkpoint_containment.py (checkpoint_store.py:853-855).
+        let repo_parent = tempfile::tempdir().unwrap();
+        let repo_path = repo_parent.path().join("repo");
+        std::fs::create_dir_all(&repo_path).unwrap();
+        std::fs::write(repo_path.join("real.py"), b"in-repo content\n").unwrap();
+
+        let outside_dir = tempfile::tempdir().unwrap();
+        let secret = outside_dir.path().join("secret.txt");
+        std::fs::write(&secret, b"SECRET-OUT-OF-ROOT\n").unwrap();
+
+        let link_path = repo_path.join("link.txt");
+        if let Err(err) = try_symlink_file(&secret, &link_path) {
+            eprintln!(
+                "skipping test_create_checkpoint_does_not_disclose_symlink_target: cannot create a symlink in this environment: {err}"
+            );
+            return;
+        }
+
+        let path_str = repo_path.to_str().unwrap();
+        let result = create_checkpoint(path_str).expect("checkpoint creation must still succeed");
+
+        let scope = detect_checkpoint_scope(path_str);
+        let snapshot_dir = checkpoint_snapshot_dir(&scope.root, &result.checkpoint_id);
+        let snapshotted_link = snapshot_dir.join("link.txt");
+
+        // The snapshot entry must itself be a symlink -- never a regular file holding the
+        // target's bytes -- proving the target's content was never read/copied.
+        let snapshotted_type = std::fs::symlink_metadata(&snapshotted_link)
+            .expect("snapshotted symlink entry must exist")
+            .file_type();
+        assert!(
+            snapshotted_type.is_symlink(),
+            "checkpoint snapshot must store the symlink itself, not its resolved target content"
+        );
+
+        // Belt-and-suspenders: no regular file anywhere under the snapshot may contain the
+        // out-of-root secret's content.
+        for entry in walkdir::WalkDir::new(&snapshot_dir) {
+            let entry = entry.unwrap();
+            if entry.file_type().is_file() {
+                let text = std::fs::read_to_string(entry.path()).unwrap_or_default();
+                assert!(
+                    !text.contains("SECRET-OUT-OF-ROOT"),
+                    "checkpoint snapshot must not disclose the out-of-root secret's content: {}",
+                    entry.path().display()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_create_checkpoint_still_copies_regular_files_byte_identical() {
+        // Regression guard for the copy_checkpoint_entry symlink fix above: an ordinary
+        // (non-symlink) source tree must still be captured with byte-identical content, and a
+        // normal (no-symlink) checkpoint create must be entirely unaffected by the new
+        // is_symlink() branch.
+        let dir = tempfile::tempdir().unwrap();
+        let repo_path = dir.path().join("repo");
+        std::fs::create_dir_all(repo_path.join("pkg")).unwrap();
+        std::fs::write(repo_path.join("a.py"), b"alpha\n").unwrap();
+        std::fs::write(repo_path.join("pkg").join("b.py"), b"beta\n").unwrap();
+
+        let path_str = repo_path.to_str().unwrap();
+        let result = create_checkpoint(path_str).expect("checkpoint creation must succeed");
+        assert_eq!(result.file_count, 2);
+
+        let scope = detect_checkpoint_scope(path_str);
+        let snapshot_dir = checkpoint_snapshot_dir(&scope.root, &result.checkpoint_id);
+        assert_eq!(
+            std::fs::read(snapshot_dir.join("a.py")).unwrap(),
+            b"alpha\n"
+        );
+        assert_eq!(
+            std::fs::read(snapshot_dir.join("pkg").join("b.py")).unwrap(),
+            b"beta\n"
         );
     }
 
@@ -8419,6 +8506,97 @@ fn collect_checkpoint_entries(scope: &CheckpointScope) -> anyhow::Result<BTreeMa
     }
 }
 
+/// Copies one checkpoint source entry into the snapshot, mirroring
+/// `checkpoint_store.py::create_checkpoint`'s `shutil.copy2(source, destination,
+/// follow_symlinks=False)` (checkpoint_store.py:853-855, audit HIGH -- symlink disclosure).
+/// `std::fs::copy` FOLLOWS symlinks, so a plain copy here would read a source symlink's
+/// (possibly out-of-root) TARGET content and bake it into the snapshot -- an out-of-root
+/// disclosure (audit #178). Recreate the symlink AS a symlink instead of following it; fall
+/// back to a normal file copy for every non-symlink entry.
+///
+/// Round-trip contract (verified against `checkpoint_store.py::undo_checkpoint`, the only
+/// restore path -- `tg checkpoint` list/undo is a full Python passthrough, see
+/// `Commands::Checkpoint` below). Storing the link AS a link (not its target's bytes) is what
+/// keeps an out-of-root symlink FAIL-CLOSED rather than a disclosure on undo -- but it does NOT
+/// make every symlink restorable, and this comment must not claim a full round-trip. undo's
+/// read-only pre-flight `_resolve_within_root` (checkpoint_store.py:124-139, called at
+/// :1232-1235) RESOLVES each stored snapshot symlink and, before touching any working-tree
+/// file, REFUSES it (ValueError) when the resolved target escapes the snapshot root; the later
+/// missing-source probe (:1246-1257) raises CheckpointCorruptError for a dangling target. So an
+/// out-of-root OR dangling symlink checkpoint is refused fail-closed on undo -- no disclosure,
+/// no data loss, working tree left intact, but NOT restorable. Only an in-root symlink whose
+/// resolved target exists inside the snapshot is actually restored. That fail-closed refusal is
+/// the correct, safe behavior; the alternative (following the link here) would materialize
+/// out-of-root content into the snapshot and then into the tree on undo.
+fn copy_checkpoint_entry(source: &Path, destination: &Path) -> std::io::Result<()> {
+    if std::fs::symlink_metadata(source)?.file_type().is_symlink() {
+        let link_target = std::fs::read_link(source)?;
+        create_checkpoint_symlink(&link_target, destination)
+    } else {
+        std::fs::copy(source, destination).map(|_| ())
+    }
+}
+
+/// Recreates a symlink (never its target's content) at `link`, pointing at the same raw
+/// `target` text the original symlink stored (relative or absolute, copied verbatim -- exactly
+/// what `os.readlink()` + `os.symlink()` do on the Python side, so a relative target resolves
+/// the same way it always would relative to a symlink's own directory; this is an existing,
+/// accepted property of symlink-preserving copies -- e.g. Python's own `shutil.copytree(...,
+/// symlinks=True)` -- not a new gap introduced here).
+fn create_checkpoint_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link)
+    }
+    #[cfg(windows)]
+    {
+        // Windows symlinks are typed (file vs. directory reparse point). Resolve the target
+        // relative to the link's own parent directory to pick the right type; a target that
+        // cannot be resolved (dangling symlink) defaults to a file symlink, same as Python's
+        // `os.symlink(target, dst)` (which defaults `target_is_directory=False`).
+        let resolved_is_dir = link
+            .parent()
+            .map(|parent| parent.join(target))
+            .and_then(|candidate| std::fs::metadata(candidate).ok())
+            .map(|metadata| metadata.is_dir())
+            .unwrap_or(false);
+        let result = if resolved_is_dir {
+            std::os::windows::fs::symlink_dir(target, link)
+        } else {
+            std::os::windows::fs::symlink_file(target, link)
+        };
+        // audit #178 F2a: creating a symlink on Windows needs SeCreateSymbolicLinkPrivilege
+        // (admin, or Developer Mode). Without it the OS returns ERROR_PRIVILEGE_NOT_HELD (1314),
+        // which the caller's `.with_context("failed to copy ... into checkpoint snapshot ...")`
+        // would otherwise surface as a bare, misleading "copy failed". Re-message that one errno
+        // so the real cause (a privilege gap, not a copy fault) is visible; leave every other
+        // error untouched.
+        result.map_err(|err| {
+            const ERROR_PRIVILEGE_NOT_HELD: i32 = 1314;
+            if err.raw_os_error() == Some(ERROR_PRIVILEGE_NOT_HELD) {
+                std::io::Error::new(
+                    err.kind(),
+                    format!(
+                        "creating checkpoint symlink {} requires administrator privileges or \
+                         Windows Developer Mode (ERROR_PRIVILEGE_NOT_HELD)",
+                        link.display()
+                    ),
+                )
+            } else {
+                err
+            }
+        })
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (target, link);
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "symlinks not supported on this platform",
+        ))
+    }
+}
+
 fn create_checkpoint(path: &str) -> anyhow::Result<CheckpointCreateSummary> {
     let scope = detect_checkpoint_scope(path);
     let root = scope.root.clone();
@@ -8441,13 +8619,15 @@ fn create_checkpoint(path: &str) -> anyhow::Result<CheckpointCreateSummary> {
 
     // NIT (v1.76 #602 gate, "NIT-3"): mirror checkpoint_store.py::create_checkpoint's
     // `except BaseException: shutil.rmtree(snapshot_dir.parent, ignore_errors=True); raise`
-    // (audit #125a, shipped in #602) on the Rust side. Everything from here on is fallible (a
-    // file copy, the metadata.json write, the index.json read/parse/write) and, before this
-    // fix, a failure at ANY of those steps propagated the error via `?` while leaving the
-    // just-created random-id checkpoint directory -- `checkpoint_dir`, holding both snapshot/
-    // and metadata.json -- behind on disk forever. Run the rest of the write sequence in a
-    // closure (stable Rust has no `try` blocks) and remove that whole directory before
-    // propagating any error; the success (`Ok`) path below is byte-identical to before.
+    // (audit #125a, shipped in #602; widened by audit #178 to also cover the index write, so
+    // it is now a true mirror end-to-end -- see checkpoint_store.py::create_checkpoint) on the
+    // Rust side. Everything from here on is fallible (a file copy, the metadata.json write,
+    // the index.json read/parse/write) and, before this fix, a failure at ANY of those steps
+    // propagated the error via `?` while leaving the just-created random-id checkpoint
+    // directory -- `checkpoint_dir`, holding both snapshot/ and metadata.json -- behind on disk
+    // forever. Run the rest of the write sequence in a closure (stable Rust has no `try`
+    // blocks) and remove that whole directory before propagating any error; the success (`Ok`)
+    // path below is byte-identical to before.
     let checkpoint_dir = checkpoint_storage_dir(&root).join(&checkpoint_id);
 
     let write_checkpoint_body = || -> anyhow::Result<CheckpointCreateSummary> {
@@ -8465,7 +8645,7 @@ fn create_checkpoint(path: &str) -> anyhow::Result<CheckpointCreateSummary> {
                     )
                 })?;
             }
-            std::fs::copy(&source, &destination).with_context(|| {
+            copy_checkpoint_entry(&source, &destination).with_context(|| {
                 format!(
                     "failed to copy {} into checkpoint snapshot {}",
                     source.display(),

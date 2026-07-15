@@ -178,6 +178,33 @@ def test_create_checkpoint_cleans_up_snapshot_dir_on_metadata_write_failure(
     )
 
 
+def test_create_checkpoint_cleans_up_snapshot_dir_on_index_write_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item 2 (audit #178, surfaced by the #610 gate): audit #125a's cleanup try/except widened
+    to cover the copy loop AND the metadata write, but the index.json read/parse/write that
+    follows (the q10 RMW block) ran entirely OUTSIDE that try/except. A failure while loading or
+    writing index.json -- after the copy loop AND metadata.json had both already fully succeeded
+    -- previously orphaned the fully-populated per-checkpoint directory forever. The guard must
+    widen once more to also cover the index write."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "a.py").write_text("a\n", encoding="utf-8")
+
+    def _boom_write_index(*args, **kwargs):
+        raise OSError("simulated index write failure")
+
+    monkeypatch.setattr(checkpoint_store, "_write_index", _boom_write_index)
+
+    with pytest.raises(OSError):
+        checkpoint_store.create_checkpoint(str(root))
+
+    assert _storage_dir_entries(root) == [], (
+        "a fully-copied-and-metadata-written checkpoint dir was left behind after an "
+        "index-write failure"
+    )
+
+
 def test_create_checkpoint_respects_raised_env_cap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

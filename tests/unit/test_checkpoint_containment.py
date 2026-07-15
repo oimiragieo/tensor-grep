@@ -160,6 +160,117 @@ def test_create_checkpoint_does_not_disclose_symlink_target(tmp_path: Path) -> N
             assert "SECRET-OUT-OF-ROOT" not in path.read_text(encoding="utf-8", errors="ignore")
 
 
+def _write_rust_format_metadata(repo: Path, checkpoint_id: str, entries: dict[str, bool]) -> None:
+    """Write a checkpoint metadata.json in the RUST create path's exact wire format.
+
+    The native `create_checkpoint` (rust_core/src/main.rs `CheckpointMetadata`) serializes only
+    {version, checkpoint_id, mode, root, scope, original_path, created_at, file_count, entries}
+    -- it does NOT emit the Python-only ``active`` / ``skipped_nested_repos`` fields that
+    ``checkpoint_store._write_checkpoint_metadata`` adds. Writing the leaner Rust shape here makes
+    these tests double as a cross-language contract guard: they fail if ``undo_checkpoint`` ever
+    starts requiring a Python-only metadata field a Rust-created checkpoint never wrote.
+    """
+    meta_path = checkpoint_store._metadata_path(repo, checkpoint_id)
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": checkpoint_store._CHECKPOINT_VERSION,
+        "checkpoint_id": checkpoint_id,
+        "mode": "filesystem-snapshot",
+        "root": str(repo),
+        "scope": "tree",
+        "original_path": str(repo),
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "file_count": len(entries),
+        "entries": entries,
+    }
+    meta_path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_rust_created_out_of_root_symlink_checkpoint_fails_closed_on_undo(tmp_path: Path) -> None:
+    """audit #178 F1: pin the Python-undo half of the Rust-create -> Python-undo contract for an
+    OUT-OF-ROOT symlink.
+
+    The fixed Rust create path (`tg run/rewrite --apply --checkpoint`, main.rs
+    `copy_checkpoint_entry`) now stores a tracked out-of-root symlink AS a symlink in the
+    snapshot instead of following it and baking the target's bytes in -- proved on the create
+    side by rust_core test ``test_create_checkpoint_does_not_disclose_symlink_target``. This test
+    reproduces exactly that snapshot state (an out-of-root symlink stored as a symlink, plus a
+    metadata.json in Rust's wire format) and pins the OTHER half: ``undo_checkpoint`` must FAIL
+    CLOSED -- undo's read-only pre-flight ``_resolve_within_root`` (checkpoint_store.py:124-139,
+    called at :1232-1235) resolves the stored snapshot symlink and refuses it (ValueError)
+    because its target escapes the snapshot root, BEFORE mutating a single working-tree file. So
+    the out-of-root target's content is never materialized into the repo and the working tree is
+    left completely intact (fail-closed-but-not-restorable -- the accurate round-trip contract).
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    keep = repo / "keep.py"
+    keep.write_text("original in-repo content\n", encoding="utf-8")
+
+    secret = tmp_path / "secret.txt"
+    secret.write_text("SECRET-OUT-OF-ROOT\n", encoding="utf-8")
+
+    checkpoint_id = "ckpt-20260101000000-deadbeef"
+    snapshot_dir = checkpoint_store._snapshot_path(repo, checkpoint_id)
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    (snapshot_dir / "keep.py").write_text("original in-repo content\n", encoding="utf-8")
+
+    # Mirror the Rust create path: the tracked symlink is stored AS a symlink pointing at its
+    # original out-of-root target -- never the target's bytes.
+    try:
+        (snapshot_dir / "link.txt").symlink_to(secret)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation requires privilege on this platform")
+
+    _write_rust_format_metadata(repo, checkpoint_id, {"keep.py": True, "link.txt": True})
+
+    with pytest.raises(ValueError):
+        checkpoint_store.undo_checkpoint(checkpoint_id, str(repo))
+
+    # Fail-closed: the out-of-root target is untouched and its content was NOT written anywhere
+    # into the working tree, and the pre-existing in-repo file is unchanged.
+    assert secret.read_text(encoding="utf-8") == "SECRET-OUT-OF-ROOT\n"
+    assert keep.read_text(encoding="utf-8") == "original in-repo content\n"
+    for path in repo.rglob("*"):
+        if (
+            path.is_file()
+            and not path.is_symlink()
+            and checkpoint_store._CHECKPOINT_DIRNAME not in path.parts
+        ):
+            assert "SECRET-OUT-OF-ROOT" not in path.read_text(encoding="utf-8", errors="ignore")
+
+
+def test_rust_created_dangling_symlink_checkpoint_fails_closed_on_undo(tmp_path: Path) -> None:
+    """audit #178 F1 (companion): a tracked DANGLING symlink (target missing) captured via the
+    Rust create path is likewise refused fail-closed on undo -- the stored snapshot symlink
+    resolves in-root but its target does not exist, so undo's missing-source probe
+    (checkpoint_store.py:1246-1257) raises CheckpointCorruptError before any working-tree file is
+    touched. Pins the dangling half of the round-trip comment's fail-closed claim."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    keep = repo / "keep.py"
+    keep.write_text("original in-repo content\n", encoding="utf-8")
+
+    checkpoint_id = "ckpt-20260101000000-feedface"
+    snapshot_dir = checkpoint_store._snapshot_path(repo, checkpoint_id)
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    (snapshot_dir / "keep.py").write_text("original in-repo content\n", encoding="utf-8")
+
+    # An in-root RELATIVE symlink whose target does not exist in the snapshot (dangling).
+    try:
+        (snapshot_dir / "link.txt").symlink_to("missing_sibling")
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation requires privilege on this platform")
+
+    _write_rust_format_metadata(repo, checkpoint_id, {"keep.py": True, "link.txt": True})
+
+    with pytest.raises(checkpoint_store.CheckpointCorruptError):
+        checkpoint_store.undo_checkpoint(checkpoint_id, str(repo))
+
+    # Fail-closed: working tree left intact, no partial restore.
+    assert keep.read_text(encoding="utf-8") == "original in-repo content\n"
+
+
 def test_create_checkpoint_prunes_to_retention_cap(tmp_path: Path, monkeypatch) -> None:
     """Round-4 DoS: the checkpoint store had no retention cap, so every `tg checkpoint create`
     copied the whole scope into a new snapshot dir with unbounded disk growth. Retain only the
