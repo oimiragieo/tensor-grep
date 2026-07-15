@@ -1,6 +1,60 @@
 # CHANGELOG
 
 
+## v1.76.8 (2026-07-15)
+
+### Bug Fixes
+
+- Checkpoint snapshot must not follow symlinks (out-of-root disclosure) + cleanup completeness
+  (#178) ([#611](https://github.com/oimiragieo/tensor-grep/pull/611),
+  [`ff95b3b`](https://github.com/oimiragieo/tensor-grep/commit/ff95b3b039da675e1a790f48bd3c10781f231276))
+
+* fix: checkpoint snapshot must not follow symlinks (out-of-root disclosure) + cleanup completeness
+  (#178)
+
+- rust_core/src/main.rs: create_checkpoint's snapshot copy used std::fs::copy, which follows
+  symlinks -- a repo symlink pointing outside the checkpoint root had its TARGET content copied into
+  the snapshot (audit HIGH, matches checkpoint_store.py's explicit follow_symlinks=False policy).
+  Add copy_checkpoint_entry + create_checkpoint_symlink to recreate a symlink as a symlink instead
+  of following it, matching the only checkpoint restore engine that exists
+  (checkpoint_store.py::undo_checkpoint, itself follow_symlinks=False on both restore legs). -
+  src/tensor_grep/cli/checkpoint_store.py: create_checkpoint's except BaseException cleanup guard
+  covered the copy loop and the metadata write but not the index.json read/parse/write that followed
+  outside the try/except -- a failure there orphaned a fully-populated per-checkpoint directory
+  forever. Widen the guard to also cover the index write. - Update the Rust NIT-3 comments to
+  accurately reflect end-to-end parity with the widened Python guard.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix: address Opus gate F1/F2a on checkpoint symlink fix (#178)
+
+F1 (comment): the copy_checkpoint_entry round-trip comment (rust_core/src/main.rs) overstated undo
+  restorability. undo_checkpoint's pre-flight _resolve_within_root (checkpoint_store.py:124-139,
+  called at :1232-1235) resolves the stored snapshot symlink and refuses an out-of-root target
+  (ValueError) before any working-tree mutation; the missing-source probe (:1246-1257) raises
+  CheckpointCorruptError for a dangling target. So recreate-as-symlink keeps out-of-root/dangling
+  symlink checkpoints fail-closed on undo (no disclosure, working tree intact, NOT restorable); only
+  in-root symlinks restore. Comment corrected to state this accurately.
+
+F1 (test): add two Python undo_checkpoint fail-closed tests in
+  tests/unit/test_checkpoint_containment.py pinning the Python-undo half of the Rust-create ->
+  Python-undo contract -- an out-of-root symlink checkpoint (snapshot symlink + Rust-wire-format
+  metadata) is refused with ValueError, and an in-root dangling symlink with CheckpointCorruptError,
+  both before any working-tree file is touched and with the out-of-root target's content written
+  nowhere into the repo. The metadata is written in Rust's exact wire format (no Python-only
+  active/skipped_nested_repos fields), so the tests also guard the cross-language metadata contract.
+  The out-of-root test was verified RED against a simulated pre-fix snapshot (target bytes baked
+  in).
+
+F2a (nit): create_checkpoint_symlink now re-messages the Windows ERROR_PRIVILEGE_NOT_HELD (1314)
+  symlink-creation failure so the real cause (needs admin / Developer Mode) is visible instead of
+  the caller's misleading "failed to copy ... into checkpoint snapshot".
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.76.7 (2026-07-15)
 
 ### Bug Fixes
