@@ -123,6 +123,29 @@ def test_remove_daemon_metadata_guarded_preserves_replacement_on_port_mismatch(
     assert survivor["port"] == 3333
 
 
+def test_remove_daemon_metadata_guarded_matches_string_pid_and_port_on_disk(
+    tmp_path: Path,
+) -> None:
+    """NIT (v1.76 #603 gate, "NIT-D3"): the guarded compare must coerce the ON-DISK pid/port
+    through ``_daemon_identity`` (the same helper used for the caller's expected identity)
+    instead of comparing ``current.get("pid") != expected_pid`` directly. Today every writer
+    always stores ``pid``/``port`` as JSON ints, so the direct compare happens to work -- but a
+    future writer that stores them as strings (or any other non-int JSON type) would make the
+    direct compare silently NEVER match, so the metadata is never removed and orphans forever.
+    Simulate that future writer here: write pid/port as strings and confirm the guarded removal
+    still recognizes the file as the caller's own instance and deletes it.
+    """
+    root = tmp_path.resolve()
+    payload = _payload(pid=111, port=2222)
+    payload["pid"] = "111"
+    payload["port"] = "2222"
+    session_daemon._write_daemon_metadata(root, payload)
+
+    session_daemon._remove_daemon_metadata(root, expected_pid=111, expected_port=2222)
+
+    assert session_daemon._read_daemon_metadata(root) is None
+
+
 def test_remove_daemon_metadata_guarded_noop_when_file_missing(tmp_path: Path) -> None:
     root = tmp_path.resolve()
     session_daemon._remove_daemon_metadata(root, expected_pid=111, expected_port=2222)

@@ -5120,6 +5120,53 @@ mod tests {
     }
 
     #[test]
+    fn test_create_checkpoint_removes_orphaned_dir_on_index_parse_failure() {
+        // NIT (v1.76 #602 gate, "NIT-3"): checkpoint_store.py::create_checkpoint (the Python
+        // side) already wraps its copy-loop + metadata-write in `except BaseException: rmtree
+        // (snapshot_dir.parent); raise` (audit #125a, shipped in #602) so a failure never
+        // orphans the random-id snapshot dir. The Rust `create_checkpoint` above had NO
+        // equivalent: a failure in the copy loop, the metadata write, OR the index write left
+        // the just-created checkpoint_id directory (snapshot/ + metadata.json) behind forever.
+        //
+        // Force a deterministic, cross-platform failure at the LAST fallible step (the
+        // pre-existing index.json fails to parse) so the copy loop and the metadata.json write
+        // both succeed first -- proving the cleanup covers the whole write sequence, not just
+        // the copy loop.
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("fixture.py");
+        std::fs::write(&file_path, "def add(x, y): return x + y\n").unwrap();
+
+        let path_str = file_path.to_str().unwrap();
+        let scope = detect_checkpoint_scope(path_str);
+        let storage_dir = checkpoint_storage_dir(&scope.root);
+        std::fs::create_dir_all(&storage_dir).unwrap();
+        let index_path = storage_dir.join("index.json");
+        std::fs::write(&index_path, b"not valid json").unwrap();
+
+        let result = create_checkpoint(path_str);
+        assert!(
+            result.is_err(),
+            "a corrupt pre-existing index.json must fail create_checkpoint"
+        );
+
+        let remaining: Vec<std::ffi::OsString> = std::fs::read_dir(&storage_dir)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name())
+            .collect();
+        assert_eq!(
+            remaining,
+            vec![std::ffi::OsString::from("index.json")],
+            "a failed checkpoint must not leave an orphaned per-checkpoint directory behind: {remaining:?}"
+        );
+        assert_eq!(
+            std::fs::read(&index_path).unwrap(),
+            b"not valid json",
+            "the pre-existing (corrupt) index.json itself must be left untouched"
+        );
+    }
+
+    #[test]
     fn test_restore_validation_rollback_snapshots_refuses_symlink_at_file_path() {
         // #115 Gap 3: between "apply the edit" and a failed-validation rollback, an edited
         // file could be swapped for a symlink pointing outside the project (e.g. via a
@@ -8392,86 +8439,107 @@ fn create_checkpoint(path: &str) -> anyhow::Result<CheckpointCreateSummary> {
         )
     })?;
 
-    for (rel_path, exists) in &entries {
-        if !exists {
-            continue;
-        }
-        let source = root.join(rel_path);
-        let destination = snapshot_dir.join(rel_path);
-        if let Some(parent) = destination.parent() {
-            std::fs::create_dir_all(parent).with_context(|| {
+    // NIT (v1.76 #602 gate, "NIT-3"): mirror checkpoint_store.py::create_checkpoint's
+    // `except BaseException: shutil.rmtree(snapshot_dir.parent, ignore_errors=True); raise`
+    // (audit #125a, shipped in #602) on the Rust side. Everything from here on is fallible (a
+    // file copy, the metadata.json write, the index.json read/parse/write) and, before this
+    // fix, a failure at ANY of those steps propagated the error via `?` while leaving the
+    // just-created random-id checkpoint directory -- `checkpoint_dir`, holding both snapshot/
+    // and metadata.json -- behind on disk forever. Run the rest of the write sequence in a
+    // closure (stable Rust has no `try` blocks) and remove that whole directory before
+    // propagating any error; the success (`Ok`) path below is byte-identical to before.
+    let checkpoint_dir = checkpoint_storage_dir(&root).join(&checkpoint_id);
+
+    let write_checkpoint_body = || -> anyhow::Result<CheckpointCreateSummary> {
+        for (rel_path, exists) in &entries {
+            if !exists {
+                continue;
+            }
+            let source = root.join(rel_path);
+            let destination = snapshot_dir.join(rel_path);
+            if let Some(parent) = destination.parent() {
+                std::fs::create_dir_all(parent).with_context(|| {
+                    format!(
+                        "failed to create checkpoint parent dir {}",
+                        parent.display()
+                    )
+                })?;
+            }
+            std::fs::copy(&source, &destination).with_context(|| {
                 format!(
-                    "failed to create checkpoint parent dir {}",
-                    parent.display()
+                    "failed to copy {} into checkpoint snapshot {}",
+                    source.display(),
+                    destination.display()
                 )
             })?;
         }
-        std::fs::copy(&source, &destination).with_context(|| {
-            format!(
-                "failed to copy {} into checkpoint snapshot {}",
-                source.display(),
-                destination.display()
-            )
-        })?;
-    }
 
-    let summary = CheckpointCreateSummary {
-        checkpoint_id: checkpoint_id.clone(),
-        mode: mode.clone(),
-        root: checkpoint_display_path(&root),
-        scope: scope.scope_kind().to_string(),
-        original_path: checkpoint_display_path(&scope.original_path),
-        created_at: created_at.clone(),
-        file_count: entries.len(),
-    };
-    let metadata = CheckpointMetadata {
-        version: JSON_OUTPUT_VERSION,
-        checkpoint_id: checkpoint_id.clone(),
-        mode: mode.clone(),
-        root: summary.root.clone(),
-        scope: summary.scope.clone(),
-        original_path: summary.original_path.clone(),
-        created_at: created_at.clone(),
-        file_count: entries.len(),
-        entries,
-    };
-    let metadata_path = checkpoint_metadata_path(&root, &checkpoint_id);
-    if let Some(parent) = metadata_path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create {}", parent.display()))?;
-    }
-    write_bytes_refuse_symlink(&metadata_path, &serde_json::to_vec_pretty(&metadata)?)
-        .with_context(|| format!("failed to write {}", metadata_path.display()))?;
-
-    let index_path = checkpoint_index_path(&root);
-    let mut records: Vec<CheckpointIndexRecord> = if index_path.exists() {
-        serde_json::from_slice(
-            &std::fs::read(&index_path)
-                .with_context(|| format!("failed to read {}", index_path.display()))?,
-        )
-        .with_context(|| format!("failed to parse {}", index_path.display()))?
-    } else {
-        Vec::new()
-    };
-    records.insert(
-        0,
-        CheckpointIndexRecord {
+        let summary = CheckpointCreateSummary {
+            checkpoint_id: checkpoint_id.clone(),
+            mode: mode.clone(),
+            root: checkpoint_display_path(&root),
+            scope: scope.scope_kind().to_string(),
+            original_path: checkpoint_display_path(&scope.original_path),
+            created_at: created_at.clone(),
+            file_count: entries.len(),
+        };
+        let metadata = CheckpointMetadata {
             version: JSON_OUTPUT_VERSION,
             checkpoint_id: checkpoint_id.clone(),
-            mode,
+            mode: mode.clone(),
             root: summary.root.clone(),
-            created_at,
-            file_count: summary.file_count,
-        },
-    );
-    if let Some(parent) = index_path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create {}", parent.display()))?;
-    }
-    write_bytes_refuse_symlink(&index_path, &serde_json::to_vec_pretty(&records)?)
-        .with_context(|| format!("failed to write {}", index_path.display()))?;
+            scope: summary.scope.clone(),
+            original_path: summary.original_path.clone(),
+            created_at: created_at.clone(),
+            file_count: entries.len(),
+            entries,
+        };
+        let metadata_path = checkpoint_metadata_path(&root, &checkpoint_id);
+        if let Some(parent) = metadata_path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
+        write_bytes_refuse_symlink(&metadata_path, &serde_json::to_vec_pretty(&metadata)?)
+            .with_context(|| format!("failed to write {}", metadata_path.display()))?;
 
-    Ok(summary)
+        let index_path = checkpoint_index_path(&root);
+        let mut records: Vec<CheckpointIndexRecord> = if index_path.exists() {
+            serde_json::from_slice(
+                &std::fs::read(&index_path)
+                    .with_context(|| format!("failed to read {}", index_path.display()))?,
+            )
+            .with_context(|| format!("failed to parse {}", index_path.display()))?
+        } else {
+            Vec::new()
+        };
+        records.insert(
+            0,
+            CheckpointIndexRecord {
+                version: JSON_OUTPUT_VERSION,
+                checkpoint_id: checkpoint_id.clone(),
+                mode,
+                root: summary.root.clone(),
+                created_at,
+                file_count: summary.file_count,
+            },
+        );
+        if let Some(parent) = index_path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
+        write_bytes_refuse_symlink(&index_path, &serde_json::to_vec_pretty(&records)?)
+            .with_context(|| format!("failed to write {}", index_path.display()))?;
+
+        Ok(summary)
+    };
+
+    let result = write_checkpoint_body();
+    if result.is_err() {
+        // Best-effort: already on the error path, so a cleanup failure must never mask (or
+        // panic over) the original error being returned.
+        let _ = std::fs::remove_dir_all(&checkpoint_dir);
+    }
+    result
 }
 
 fn load_batch_rewrite_config(config_path: &Path) -> anyhow::Result<BatchRewriteConfig> {

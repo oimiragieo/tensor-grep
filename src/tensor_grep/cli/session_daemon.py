@@ -405,9 +405,20 @@ def _remove_daemon_metadata(
         current = _read_daemon_metadata(root)
         if current is None:
             return
-        if expected_pid is not None and current.get("pid") != expected_pid:
+        # NIT (v1.76 #603 gate, "NIT-D3"): compare through `_daemon_identity` on BOTH sides
+        # instead of `current.get("pid") != expected_pid` directly. Every writer today always
+        # stores pid/port as JSON ints, so the direct compare happens to work -- but trusting
+        # that on-disk shape is not type-safe: a future writer that stored either field as a
+        # string (or any other non-int JSON value) would make the direct compare silently NEVER
+        # match, so this guard would never delete that metadata -- a permanent orphan leak
+        # instead of a loud failure. `_daemon_identity` already coerces via `int(...)` (and
+        # resolves to `None` on anything unparseable), so routing the on-disk read through it
+        # here makes the compare type-safe the same way the callers computing `expected_pid`/
+        # `expected_port` already do (see `_daemon_identity`'s callers below).
+        current_pid, current_port = _daemon_identity(current)
+        if expected_pid is not None and current_pid != expected_pid:
             return
-        if expected_port is not None and current.get("port") != expected_port:
+        if expected_port is not None and current_port != expected_port:
             return
     try:
         metadata_path.unlink()
