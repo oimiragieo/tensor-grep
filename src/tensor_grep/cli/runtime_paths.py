@@ -195,8 +195,18 @@ def inspect_native_tg_binary(
     *,
     repo_root: Path | None = None,
     expected_version: str | None = None,
+    version_text: str | None = None,
 ) -> dict[str, str | None]:
-    """Return non-destructive native tg version metadata for diagnostics."""
+    """Return non-destructive native tg version metadata for diagnostics.
+
+    `version_text`, when provided, is trusted as-is and skips the internal `_native_tg_version`
+    subprocess spawn -- GPU Phase-0 gate-nit #172 NIT-1: the doctor path already spawns its own
+    `tg --version` via `_doctor_rust_binary_version` before calling this function, so spawning a
+    SECOND `--version` subprocess for the identical binary here was pure duplication. Do not
+    `@lru_cache` `_native_tg_version` itself to "fix" this a different way -- it is also called by
+    installer verification, which re-reads the SAME path across a candidate loop after
+    `os.replace`; a path-keyed cache would return a stale pre-replace version there.
+    """
     root = repo_root or _repo_root()
     expected = expected_version or _expected_tg_version()
     try:
@@ -217,7 +227,8 @@ def inspect_native_tg_binary(
     else:
         kind = "external"
 
-    version_text = _native_tg_version(resolved) if resolved.is_file() else None
+    if version_text is None and resolved.is_file():
+        version_text = _native_tg_version(resolved)
     if not resolved.is_file():
         version_status = "missing"
     elif _native_tg_version_matches(expected, version_text):

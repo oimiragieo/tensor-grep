@@ -1426,6 +1426,30 @@ def _agent_gpu_evidence(
             **route_fields,
         }
 
+    # GPU-P0 gate-nit B (#172): the probe command above already translates its (self-generated)
+    # sentinel path when cross_domain, but this evidence command used to append the RAW user
+    # `path` unconditionally -- a Windows-target binary can no more resolve a raw WSL/Linux
+    # search root here than it could the probe's temp dir. Mirror the probe's translate-or-fail-
+    # closed handling instead of silently handing the native binary an unresolvable path (which
+    # would misreport as a generic evidence-command failure rather than the honest
+    # path_domain_mismatch status).
+    evidence_path = path
+    if cross_domain:
+        translated_evidence_path = translate_path_for_windows_binary(path)
+        if translated_evidence_path is None:
+            return {
+                "status": "path_domain_mismatch",
+                "requested_device_ids": requested_device_ids,
+                "used_for_evidence": False,
+                "promotion_claim": False,
+                "reason": (
+                    "resolved native tg binary targets Windows but this WSL host could not "
+                    "translate the evidence path via wslpath (path-domain mismatch, not a GPU "
+                    "capability gap)"
+                ),
+            }
+        evidence_path = translated_evidence_path
+
     evidence_command: list[object] = [
         tg_command,
         "search",
@@ -1436,7 +1460,7 @@ def _agent_gpu_evidence(
     ]
     for term in query_terms:
         evidence_command.extend(["-e", term])
-    evidence_command.append(path)
+    evidence_command.append(evidence_path)
     evidence = _run_agent_gpu_json_command(
         evidence_command,
         timeout_s=effective_timeout_s,

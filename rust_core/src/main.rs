@@ -2509,7 +2509,13 @@ mod tests {
     // "CUDA initialization failed: ..." -- true-sounding but wrong: nothing failed to initialize,
     // the id was simply invalid. These tests pin the classifier's OWN reason, verbatim, distinct
     // from the genuine-initialization-failure arms below.
-    #[cfg(feature = "cuda")]
+    //
+    // GPU Phase-0 gate-nit #172 NIT-4 / MF-1: these 3 tests used to ALSO carry their own
+    // `#[cfg(feature = "cuda")]`, so a default `cargo test` (no --features cuda) never compiled
+    // or ran them at all -- silently, since `mod tests` itself is only `#[cfg(test)]`-gated, so
+    // nothing signaled the gap. `classify_gpu_route_failure` and its types are now gated
+    // `any(feature = "cuda", test)` (see the definitions above), which is present under plain
+    // `cargo test`, so the redundant per-test cuda gate is dropped here and these run by default.
     #[test]
     fn classify_gpu_route_failure_reports_invalid_device_id_as_its_own_fatal_reason() {
         let failure =
@@ -2522,7 +2528,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "cuda")]
     #[test]
     fn classify_gpu_route_failure_does_not_relabel_invalid_device_id_as_init_failure() {
         let failure =
@@ -2535,7 +2540,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "cuda")]
     #[test]
     fn classify_gpu_route_failure_still_labels_genuine_init_failures_as_such() {
         // Baseline: the pre-existing "CUDA initialization failed:" arm must keep working --
@@ -2546,6 +2550,23 @@ mod tests {
         assert_eq!(
             failure.message,
             "CUDA initialization failed: driver too old"
+        );
+    }
+
+    // NIT-3 (#172): `gpu_fatal_native_error_kind` is the thin, pure, directly-testable string
+    // check the two `exit_structured_search_error_if_needed` emission sites now call instead of
+    // hardcoding "gpu_fatal" -- these pin its two branches directly, independent of the enum
+    // `kind` (both messages below classify as `GpuRouteFailureKind::Fatal`; only the WIRE error
+    // string differs).
+    #[test]
+    fn gpu_fatal_native_error_kind_distinguishes_invalid_device_id() {
+        assert_eq!(
+            gpu_fatal_native_error_kind("invalid CUDA device id 99; available CUDA devices: 0, 1"),
+            "gpu_invalid_device_id"
+        );
+        assert_eq!(
+            gpu_fatal_native_error_kind("CUDA initialization failed: driver too old"),
+            "gpu_fatal"
         );
     }
 
@@ -10221,14 +10242,26 @@ fn explicit_gpu_sidecar_is_available() -> bool {
         .is_some_and(|path| path.exists())
 }
 
-#[cfg(feature = "cuda")]
+// GPU Phase-0 gate-nit #172 NIT-4 / MF-1: `GpuRouteFailureKind`, `GpuRouteFailure`,
+// `sanitize_cuda_detail`, and `classify_gpu_route_failure` below are gated `any(feature = "cuda",
+// test)` rather than plain `feature = "cuda"` so `cargo test` (default features, no cuda) can
+// compile and RUN the 3 `classify_gpu_route_failure_*` tests in `mod tests` above -- previously
+// those tests were ALSO `#[cfg(feature = "cuda")]`-gated, so a default `cargo test` silently
+// never executed them at all. A bare un-gate of just the tests would not compile (the classifier
+// and its types would still be absent by default); a bare un-gate of the classifier alone would
+// leave it with zero callers in the default build (its production callers stay cuda-gated) and
+// fail `cargo clippy -- -D warnings` on `dead_code`. Gating the definitions themselves on
+// `any(feature = "cuda", test)` solves both: present whenever cuda is enabled (unchanged
+// production behavior) OR whenever `cfg(test)` is set (so the tests below have something to call
+// and are not themselves dead code), absent in the default clippy/release build (no dead_code).
+#[cfg(any(feature = "cuda", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GpuRouteFailureKind {
     Unavailable,
     Fatal,
 }
 
-#[cfg(feature = "cuda")]
+#[cfg(any(feature = "cuda", test))]
 struct GpuRouteFailure {
     kind: GpuRouteFailureKind,
     message: String,
@@ -10377,7 +10410,7 @@ fn simulated_gpu_route_failure() -> Option<GpuRouteFailure> {
     None
 }
 
-#[cfg(feature = "cuda")]
+#[cfg(any(feature = "cuda", test))]
 fn sanitize_cuda_detail(raw: &str) -> String {
     let compact = raw.replace(['\r', '\n'], " ");
     let lower = compact.to_ascii_lowercase();
@@ -10396,7 +10429,7 @@ fn sanitize_cuda_detail(raw: &str) -> String {
         .to_string()
 }
 
-#[cfg(feature = "cuda")]
+#[cfg(any(feature = "cuda", test))]
 fn classify_gpu_route_failure(raw_message: &str) -> GpuRouteFailure {
     if raw_message.starts_with("CUDA is unavailable:") {
         return GpuRouteFailure {
@@ -10469,6 +10502,26 @@ fn classify_gpu_route_failure(raw_message: &str) -> GpuRouteFailure {
             "CUDA initialization failed: {}",
             sanitize_cuda_detail(raw_message)
         ),
+    }
+}
+
+// GPU-P0 gate-nit #172 NIT-3: `classify_gpu_route_failure`'s `Fatal` kind is deliberately coarse
+// (kind + human message only) -- both emission sites below used to collapse EVERY Fatal straight
+// to one native error kind ("gpu_fatal"), including the out-of-range --gpu-device-ids arm above
+// (already given its own message-level branch in `classify_gpu_route_failure` so it is never
+// relabeled as an init failure). The doctor/agent-capsule Python layer maps native error kinds to
+// a status; "gpu_fatal" reads as "GPU unavailable", so a typo'd device id misreported as a
+// capability gap instead of a user-input error. This is a thin, pure, directly-testable string
+// check on the ALREADY-CLASSIFIED Fatal message -- deliberately NOT a 3rd `GpuRouteFailureKind`
+// variant, which would force every `match failure.kind` call site's Fatal arm to add a case for a
+// distinction only the WIRE error-kind string needs to make; the two enum variants remain the
+// coarse "should we CPU-fallback or hard-fail" signal.
+#[cfg(any(feature = "cuda", test))]
+fn gpu_fatal_native_error_kind(message: &str) -> &'static str {
+    if message.starts_with("invalid CUDA device id") {
+        "gpu_invalid_device_id"
+    } else {
+        "gpu_fatal"
     }
 }
 
@@ -10668,7 +10721,7 @@ fn handle_auto_gpu_search(
                     exit_structured_search_error_if_needed(
                         params.json,
                         params.ndjson,
-                        "gpu_fatal",
+                        gpu_fatal_native_error_kind(&failure.message),
                         failure.message,
                     );
                 }
@@ -10838,7 +10891,7 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                     exit_structured_search_error_if_needed(
                         params.json,
                         params.ndjson,
-                        "gpu_fatal",
+                        gpu_fatal_native_error_kind(&failure.message),
                         failure.message,
                     );
                 }

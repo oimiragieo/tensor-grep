@@ -845,12 +845,14 @@ def _install_release_native_frontdoor(
                 download_errors=download_errors,
             )
             if downgrade_reason is not None:
-                print(
+                # Gate-nit C (#172): the house idiom is typer.echo(..., err=True), not a raw
+                # print(..., file=sys.stderr) -- functionally equivalent, ASCII-safe.
+                typer.echo(
                     f"WARNING: requested native tg front-door flavor '{requested_flavor}' "
                     f"was not installed ({downgrade_reason}); installed '{candidate.flavor}' "
                     "instead. Run 'tg doctor' to check the requested-vs-installed native "
                     "flavor.",
-                    file=sys.stderr,
+                    err=True,
                 )
             return _NativeFrontdoorInstallResult(
                 url=url,
@@ -2724,18 +2726,30 @@ def _doctor_gpu_status() -> dict[str, Any]:
 # exit_structured_search_error_if_needed in rust_core/src/main.rs) with an "error" field naming
 # the failure kind. Map each KNOWN kind to a distinct doctor status instead of collapsing every
 # rc!=0 outcome to one opaque "failed" -- an agent reading tg doctor --json can then tell "the
-# probe's own temp/translated path went missing" (failed_path_bridging) apart from "the sentinel
-# search input was rejected" (failed_input) apart from "the GPU route itself hit a real CUDA
-# fault" (failed_gpu_unavailable). Any kind this table has never seen -- or stdout that is not
-# the expected structured JSON at all (a raw panic, empty output, etc.) -- fails closed to
-# failed_other rather than guessing.
+# probe's own temp/translated path went missing" (failed_path_bridging / failed_probe_path,
+# see _doctor_gpu_probe_failure_status) apart from "the sentinel search input was rejected"
+# (failed_input) apart from "the GPU route itself hit a real CUDA fault" (failed_gpu_unavailable).
+# Any kind this table has never seen -- or stdout that is not the expected structured JSON at all
+# (a raw panic, empty output, etc.) -- fails closed to failed_other rather than guessing.
+#
+# "path_not_found" is intentionally absent from this static table -- NIT-2 (#172):
+# _doctor_gpu_probe_failure_status conditions it on is_cross_domain_native_binary(...) instead,
+# because "failed_path_bridging" bakes in a WSL cross-domain assumption a same-domain host has no
+# grounds to make (a vanished probe dir there is a neutral failed_probe_path, not a bridging
+# failure). CONTRACTS.md does not enumerate doctor GPU-probe failure statuses, so both are
+# additive diagnostics, not a breaking contract change.
 _DOCTOR_GPU_PROBE_FAILURE_STATUS_BY_NATIVE_ERROR_KIND: dict[str, str] = {
-    "path_not_found": "failed_path_bridging",
     "empty_pattern": "failed_input",
     "invalid_regex": "failed_input",
     "gpu_fatal": "failed_gpu_unavailable",
+    # NIT-3 (#172): the classifier's invalid-device arm (rust_core/src/main.rs
+    # gpu_fatal_native_error_kind) emits this DISTINCT kind instead of the coarse "gpu_fatal" so a
+    # typo'd --gpu-device-ids reads as a user-input error, not "GPU unavailable".
+    "gpu_invalid_device_id": "failed_input",
 }
 _DOCTOR_GPU_PROBE_DEFAULT_FAILURE_STATUS = "failed_other"
+_DOCTOR_GPU_PROBE_PATH_NOT_FOUND_STATUS_CROSS_DOMAIN = "failed_path_bridging"
+_DOCTOR_GPU_PROBE_PATH_NOT_FOUND_STATUS_SAME_DOMAIN = "failed_probe_path"
 
 
 def _doctor_gpu_probe_native_error_kind(stdout: str | None) -> str | None:
@@ -2757,9 +2771,17 @@ def _doctor_gpu_probe_native_error_kind(stdout: str | None) -> str | None:
     return error_kind if isinstance(error_kind, str) and error_kind else None
 
 
-def _doctor_gpu_probe_failure_status(native_error_kind: str | None) -> str:
+def _doctor_gpu_probe_failure_status(
+    native_error_kind: str | None, *, cross_domain: bool = False
+) -> str:
     if native_error_kind is None:
         return _DOCTOR_GPU_PROBE_DEFAULT_FAILURE_STATUS
+    if native_error_kind == "path_not_found":
+        return (
+            _DOCTOR_GPU_PROBE_PATH_NOT_FOUND_STATUS_CROSS_DOMAIN
+            if cross_domain
+            else _DOCTOR_GPU_PROBE_PATH_NOT_FOUND_STATUS_SAME_DOMAIN
+        )
     return _DOCTOR_GPU_PROBE_FAILURE_STATUS_BY_NATIVE_ERROR_KIND.get(
         native_error_kind, _DOCTOR_GPU_PROBE_DEFAULT_FAILURE_STATUS
     )
@@ -2844,7 +2866,9 @@ def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str,
     if result.returncode != 0:
         native_error_kind = _doctor_gpu_probe_native_error_kind(result.stdout)
         base["native_error_kind"] = native_error_kind
-        base["status"] = _doctor_gpu_probe_failure_status(native_error_kind)
+        base["status"] = _doctor_gpu_probe_failure_status(
+            native_error_kind, cross_domain=cross_domain
+        )
         base["error"] = (result.stderr or "").strip() or "GPU runtime probe failed"
         return base
 
@@ -3008,6 +3032,12 @@ def _build_doctor_payload(
         _DOCTOR_LSP_PROBE_TIMEOUT_ENV,
     ]
     installed_version = _doctor_installed_version()
+    # NIT-1 + MF-2 (#172): compute rust_binary_version BEFORE the inspect_native_tg_binary call
+    # (it used to be computed after) so it can be threaded through as version_text below --
+    # inspect_native_tg_binary's own internal _native_tg_version call would otherwise spawn a
+    # SECOND `tg --version` subprocess against the identical native_tg_binary that this line
+    # already spawned one for.
+    rust_binary_version = _doctor_rust_binary_version(native_tg_binary)
     # P0-2 (#171): surface the native-frontdoor flavor metadata that inspect_native_tg_binary
     # already computes (merging installed-vs-requested asset flavor) -- until now this was only
     # consumed by benchmarks/run_benchmarks.py and benchmarks/run_gpu_native_benchmarks.py, so
@@ -3016,7 +3046,11 @@ def _build_doctor_payload(
     # in-tree dev build never writes tg-native-metadata.json), so every lookup below is a safe
     # `.get(...)` returning None.
     native_frontdoor_inspection = (
-        inspect_native_tg_binary(native_tg_binary, expected_version=installed_version)
+        inspect_native_tg_binary(
+            native_tg_binary,
+            expected_version=installed_version,
+            version_text=rust_binary_version,
+        )
         if native_tg_binary is not None
         else {}
     )
@@ -3024,7 +3058,6 @@ def _build_doctor_payload(
     native_frontdoor_requested_flavor = native_frontdoor_inspection.get(
         "native_frontdoor_requested_flavor"
     )
-    rust_binary_version = _doctor_rust_binary_version(native_tg_binary)
     native_tg_binary_kind = _doctor_native_tg_binary_kind(native_tg_binary)
     rust_binary_version_matches = _doctor_rust_binary_version_matches(
         installed_version,

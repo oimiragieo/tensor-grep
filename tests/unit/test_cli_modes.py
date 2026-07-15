@@ -2333,11 +2333,44 @@ def test_doctor_gpu_runtime_probe_native_error_kind_is_none_on_success(
 # opaque "failed" status. The native binary (run with --json) prints a structured
 # {"error": "<kind>", "detail": ...} object to stdout before exiting non-zero; these pin the
 # doctor's mapping from each known kind to a distinct, honest status.
-def test_doctor_gpu_runtime_probe_maps_path_not_found_to_failed_path_bridging(
+# NIT-2 (#172): failed_path_bridging bakes in a WSL cross-domain assumption -- outside a genuine
+# cross-domain host, a vanished probe path is not a "bridging" failure at all, so the mapping is
+# now CONDITIONAL on is_cross_domain_native_binary(...) (the same collaborator the P0-1 WSL
+# translation logic above already uses). These two tests pin both branches.
+def test_doctor_gpu_runtime_probe_maps_path_not_found_to_failed_probe_path_when_not_cross_domain(
     monkeypatch, tmp_path: Path
 ) -> None:
     native_tg = tmp_path / "tg.exe"
     native_tg.write_text("native", encoding="utf-8")
+    monkeypatch.setattr("tensor_grep.cli.main.is_cross_domain_native_binary", lambda _binary: False)
+
+    def _fake_run(command, **_kwargs):
+        stdout = json.dumps({
+            "version": 1,
+            "ok": False,
+            "error": "path_not_found",
+            "detail": "search path does not exist: <doctor-gpu-probe-file>",
+        })
+        return subprocess.CompletedProcess(command, 2, stdout, "")
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    probe = cli_main._doctor_gpu_search_runtime_probe(native_tg)
+
+    assert probe["status"] == "failed_probe_path"
+    assert probe["native_error_kind"] == "path_not_found"
+    assert probe["exit_code"] == 2
+
+
+def test_doctor_gpu_runtime_probe_maps_path_not_found_to_failed_path_bridging_when_cross_domain(
+    monkeypatch, tmp_path: Path
+) -> None:
+    native_tg = tmp_path / "tg.exe"
+    native_tg.write_text("native", encoding="utf-8")
+    monkeypatch.setattr("tensor_grep.cli.main.is_cross_domain_native_binary", lambda _binary: True)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main.translate_path_for_windows_binary", lambda _path: "C:\\translated"
+    )
 
     def _fake_run(command, **_kwargs):
         stdout = json.dumps({
@@ -2414,7 +2447,7 @@ def test_doctor_gpu_runtime_probe_maps_gpu_fatal_to_failed_gpu_unavailable(
             "version": 1,
             "ok": False,
             "error": "gpu_fatal",
-            "detail": "invalid CUDA device id 0; available CUDA devices: (none)",
+            "detail": "CUDA initialization failed: driver too old",
         })
         return subprocess.CompletedProcess(command, 2, stdout, "")
 
@@ -2424,6 +2457,34 @@ def test_doctor_gpu_runtime_probe_maps_gpu_fatal_to_failed_gpu_unavailable(
 
     assert probe["status"] == "failed_gpu_unavailable"
     assert probe["native_error_kind"] == "gpu_fatal"
+
+
+# NIT-3 (#172): the native classifier's invalid-device arm now emits a DISTINCT native error kind
+# (gpu_invalid_device_id, see rust_core/src/main.rs classify_gpu_route_failure +
+# gpu_fatal_native_error_kind) instead of the coarse gpu_fatal every other Fatal reason still
+# uses -- a typo'd --gpu-device-ids now reads as a user-input error (failed_input) rather than
+# misreporting as "GPU unavailable" (failed_gpu_unavailable).
+def test_doctor_gpu_runtime_probe_maps_gpu_invalid_device_id_to_failed_input(
+    monkeypatch, tmp_path: Path
+) -> None:
+    native_tg = tmp_path / "tg.exe"
+    native_tg.write_text("native", encoding="utf-8")
+
+    def _fake_run(command, **_kwargs):
+        stdout = json.dumps({
+            "version": 1,
+            "ok": False,
+            "error": "gpu_invalid_device_id",
+            "detail": "invalid CUDA device id 99; available CUDA devices: (none)",
+        })
+        return subprocess.CompletedProcess(command, 2, stdout, "")
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    probe = cli_main._doctor_gpu_search_runtime_probe(native_tg)
+
+    assert probe["status"] == "failed_input"
+    assert probe["native_error_kind"] == "gpu_invalid_device_id"
 
 
 def test_doctor_gpu_runtime_probe_maps_unrecognized_error_kind_to_failed_other(
@@ -2490,6 +2551,92 @@ def test_doctor_gpu_runtime_probe_native_error_kind_absent_for_path_domain_misma
 
     assert probe["status"] == "path_domain_mismatch"
     assert probe["native_error_kind"] is None
+
+
+# NIT-1 + MF-2 (#172): _doctor_rust_binary_version and inspect_native_tg_binary (added by #595)
+# each spawned their OWN `tg --version` subprocess for the IDENTICAL resolved native_tg_binary --
+# inspect_native_tg_binary's internal _native_tg_version call was pure duplication, only possible
+# to eliminate by threading the doctor's already-computed text through as version_text, which in
+# turn requires computing rust_binary_version BEFORE (not after) the inspect_native_tg_binary
+# call. These pin the doctor-level effect of that ordering + threading fix.
+def test_doctor_payload_threads_rust_binary_version_into_inspect_native_tg_binary(
+    monkeypatch, tmp_path: Path
+) -> None:
+    native_tg = tmp_path / "tg.exe"
+    native_tg.write_text("native", encoding="utf-8")
+
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "1.75.2")
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: native_tg)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_rust_binary_version",
+        lambda _binary: "tg 1.75.2",
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_session_daemon_status",
+        lambda path: {"running": False},
+    )
+
+    captured_kwargs: list[dict] = []
+    real_inspect = cli_main.inspect_native_tg_binary
+
+    def _capturing_inspect(candidate, **kwargs):
+        captured_kwargs.append(kwargs)
+        return real_inspect(candidate, **kwargs)
+
+    monkeypatch.setattr("tensor_grep.cli.main.inspect_native_tg_binary", _capturing_inspect)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["doctor", str(tmp_path), "--json", "--no-lsp"])
+
+    assert result.exit_code == 0
+    assert len(captured_kwargs) == 1
+    assert captured_kwargs[0].get("version_text") == "tg 1.75.2"
+    payload = json.loads(result.stdout)
+    assert payload["rust_binary_version"] == "tg 1.75.2"
+
+
+def test_doctor_payload_does_not_double_spawn_native_tg_version(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """The doctor-level spawn-count pin: with rust_binary_version threaded through as
+    version_text, inspect_native_tg_binary's own internal _native_tg_version subprocess call
+    (runtime_paths.py) must never fire for the doctor's resolved native_tg_binary."""
+    from tensor_grep.cli import runtime_paths as runtime_paths_module
+
+    native_tg = tmp_path / "tg.exe"
+    native_tg.write_text("native", encoding="utf-8")
+
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "1.75.2")
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: native_tg)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_rust_binary_version",
+        lambda _binary: "tg 1.75.2",
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_session_daemon_status",
+        lambda path: {"running": False},
+    )
+
+    native_tg_version_call_count = 0
+    real_native_tg_version = runtime_paths_module._native_tg_version
+
+    def _counting_native_tg_version(candidate):
+        nonlocal native_tg_version_call_count
+        native_tg_version_call_count += 1
+        return real_native_tg_version(candidate)
+
+    monkeypatch.setattr(
+        "tensor_grep.cli.runtime_paths._native_tg_version", _counting_native_tg_version
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["doctor", str(tmp_path), "--json", "--no-lsp"])
+
+    assert result.exit_code == 0
+    assert native_tg_version_call_count == 0, (
+        "inspect_native_tg_binary must not spawn its own _native_tg_version subprocess when the "
+        "doctor already threaded version_text through (would double-spawn `tg --version`)"
+    )
 
 
 def test_doctor_json_reports_native_version_mismatch(monkeypatch, tmp_path: Path) -> None:

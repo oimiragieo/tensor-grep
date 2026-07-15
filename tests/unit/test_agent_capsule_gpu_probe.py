@@ -60,6 +60,90 @@ def test_agent_gpu_evidence_cross_domain_translates_probe_path(monkeypatch, tmp_
     assert result["status"] != "failed"
 
 
+def test_agent_gpu_evidence_cross_domain_translates_evidence_path(monkeypatch, tmp_path):
+    """NIT-B (#172): the FIRST (probe) command translates `path` when cross_domain, but the
+    SECOND (evidence) command used to append the RAW user `path` -- a Windows-target binary
+    cannot resolve a raw WSL/Linux path any more for the evidence scan than it can for the
+    probe scan. Both commands must translate the same way."""
+    translated_probe_path = "C:\\Users\\x\\AppData\\Local\\Temp\\tg-agent-gpu-probe-abc"
+    translated_evidence_path = "C:\\Users\\x\\repo"
+
+    monkeypatch.setattr(
+        agent_capsule, "resolve_native_tg_binary", lambda: Path("/mnt/c/fake/tg.exe")
+    )
+    monkeypatch.setattr(agent_capsule, "is_cross_domain_native_binary", lambda _binary: True)
+
+    def _fake_translate(path):
+        # The probe path is a fresh TemporaryDirectory under the "tg-agent-gpu-probe-" prefix;
+        # the evidence path is the caller's own `path` argument -- assert each is translated
+        # independently rather than the probe's cached translation leaking into the evidence
+        # command's argv.
+        return (
+            translated_probe_path
+            if "tg-agent-gpu-probe-" in str(path)
+            else translated_evidence_path
+        )
+
+    monkeypatch.setattr(agent_capsule, "translate_path_for_windows_binary", _fake_translate)
+
+    captured_calls: list[list[str]] = []
+
+    def _fake_run(command, **_kwargs):
+        captured_calls.append(list(command))
+        return subprocess.CompletedProcess(command, 0, json.dumps(_fake_native_gpu_payload()), "")
+
+    monkeypatch.setattr(agent_capsule.subprocess, "run", _fake_run)
+
+    result = agent_capsule._agent_gpu_evidence(
+        query="needle_query", path=str(tmp_path), gpu_device_ids=[0], max_files=5, timeout_s=5.0
+    )
+
+    assert len(captured_calls) == 2, "expected a probe call and an evidence call"
+    # The evidence call's LAST argv element is the search path -- it must be the TRANSLATED
+    # Windows path, not the raw Linux/WSL `path` argument the capsule was invoked with.
+    assert captured_calls[1][-1] == translated_evidence_path
+    assert str(tmp_path) not in captured_calls[1]
+    assert result["status"] != "path_domain_mismatch"
+    assert result["status"] != "failed"
+
+
+def test_agent_gpu_evidence_path_domain_mismatch_when_evidence_translation_unavailable(
+    monkeypatch, tmp_path
+):
+    """NIT-B (#172): when the probe path translates fine but the EVIDENCE path's translation
+    fails, the function must fail closed with the same honest path_domain_mismatch status
+    instead of shelling out with an unresolvable raw path."""
+    translated_probe_path = "C:\\Users\\x\\AppData\\Local\\Temp\\tg-agent-gpu-probe-abc"
+
+    monkeypatch.setattr(
+        agent_capsule, "resolve_native_tg_binary", lambda: Path("/mnt/c/fake/tg.exe")
+    )
+    monkeypatch.setattr(agent_capsule, "is_cross_domain_native_binary", lambda _binary: True)
+
+    def _fake_translate(path):
+        return translated_probe_path if "tg-agent-gpu-probe-" in str(path) else None
+
+    monkeypatch.setattr(agent_capsule, "translate_path_for_windows_binary", _fake_translate)
+
+    captured_calls: list[list[str]] = []
+
+    def _fake_run(command, **_kwargs):
+        captured_calls.append(list(command))
+        return subprocess.CompletedProcess(command, 0, json.dumps(_fake_native_gpu_payload()), "")
+
+    monkeypatch.setattr(agent_capsule.subprocess, "run", _fake_run)
+
+    result = agent_capsule._agent_gpu_evidence(
+        query="needle_query", path=str(tmp_path), gpu_device_ids=[0], max_files=5, timeout_s=5.0
+    )
+
+    assert len(captured_calls) == 1, "must not shell out for evidence once translation fails"
+    assert result["status"] == "path_domain_mismatch"
+    assert result["used_for_evidence"] is False
+    assert result["promotion_claim"] is False
+    assert "wslpath" in result["reason"]
+
+
 def test_agent_gpu_evidence_path_domain_mismatch_when_translation_unavailable(
     monkeypatch, tmp_path
 ):
