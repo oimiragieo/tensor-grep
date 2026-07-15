@@ -267,8 +267,13 @@ def test_l10_calibrate_exits_one_when_unsupported(monkeypatch) -> None:
     # error: tg's convention is exit 1, not the usage-error exit 2.
     assert result.exit_code == 1, result.stdout
     # P0-4 (GPU Phase-0 honesty): the missing-binary message must carry an actionable
-    # remediation pointer -- not just "not found" with no next step -- naming the flavor
-    # override env var, the `tg upgrade` command, and the `tg doctor` diagnostic.
-    assert "TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR" in result.output
+    # remediation pointer -- not just "not found" with no next step.
     assert "tg upgrade" in result.output
     assert "tg doctor" in result.output
+    # CEO dogfood follow-up (v1.76.6): the message must state the honest, evergreen fact
+    # (GPU experimental / needs a CUDA-enabled build) instead of inviting
+    # TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR=nvidia + `tg upgrade` as an obtainable GPU path --
+    # no NVIDIA-enabled asset has ever shipped, so that framing was a permanent dead end.
+    assert "experimental" in result.output
+    assert "if one is published for this platform on the release page" not in result.output
+    assert "NVIDIA-enabled native binary" not in result.output
