@@ -3,11 +3,12 @@
 > **Canonical prioritized work list.** Kept in sync with the CLI task store (`TaskUpdate`) and
 > GitHub (`gh pr list` is the source of truth for PRs). **CEO status** = summarize SHIPPING + P0/P1.
 > Update whenever a PR opens/merges or the queue changes. Task-store IDs (`#NNN`) cross-referenced.
-> Last refreshed 2026-07-14 (backlog-steward tick). **Live PyPI is v1.74.4** (published; all 25 CI jobs
-> green). **#591** (test de-flake) MERGED (`fc231ed`); **#592** (this docs reconcile) is the lone open PR.
-> The v1.73.0->v1.74.x wave (#584/#585/#131-F3/#164/#166) shipped one-per-publish; F3 (v1.74.1) was
-> later dogfood-proved CLI-dead-code and honestly corrected (see the v1.74.x bullet). Prior:
-> v1.70.0->v1.72.1 (#152/#127/#90b/#153/#154/#158/#159/#580/#581); v1.69.0-.3 CEO WSL-dogfood; #142.
+> Last refreshed 2026-07-14 (backlog-steward tick). **Live PyPI is v1.75.4** (published; GPU Phase-0
+> program #171 + #172 gate-nits complete, all CI jobs green). **#592** (prior docs reconcile) MERGED
+> (`adf5750`); the v1.75.0->v1.75.4 wave (#593/#594/#595/#596/#597) drained one-per-publish, ZERO broken
+> releases -- PR queue is EMPTY going into this reconcile (**#173**). Prior: v1.73.0->v1.74.4
+> (#584/#585/#131-F3/#164/#166/#591); v1.70.0->v1.72.1 (#152/#127/#90b/#153/#154/#158/#159/#580/#581);
+> v1.69.0-.3 CEO WSL-dogfood; #142.
 
 **Process:** deep-dive/audit (cite `file:line`) → verify-against-code → Sonnet TDD build in
 `isolation:'worktree'` → real-venv verify (`uv run --active --no-sync`; copy `rust_core.pyd`, set
@@ -29,7 +30,22 @@ wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while 
 
 ## ⭐ CURRENT STATE (2026-07-14) — authoritative; every section BELOW is HISTORICAL until the next full refresh
 
-- **Live PyPI: v1.74.4 (2026-07-14, published).** The v1.73.0->v1.74.x
+- **Live PyPI: v1.75.4 (2026-07-14, published).** The GPU Phase-0 program drained one-per-publish, ZERO
+  broken releases: **v1.75.0** #593 `tg orient`/`tg agent` broaden `suggested_ignore` to whole vendor/
+  skill trees (M1+M2, a CEO-dogfood-found gap in #164's `.claude` deweight) | **v1.75.1** #594 GPU
+  Phase-0 P0-1 WSL probe path-domain bridging + a `cargo check --features cuda` anti-bit-rot CI gate |
+  **v1.75.2** #595 GPU Phase-0 P0-2/P0-3 doctor probe failure-taxonomy + honest device-id validation |
+  **v1.75.3** #596 GPU Phase-0 P0-4/P0-5 calibrated remediation message + loud nvidia->cpu installer
+  downgrade | **v1.75.4** #597 GPU Phase-0 gate-nits (**#172**): doctor-probe precision + native
+  error-kind taxonomy, 5 nits incl. the `cfg(any(cuda,test))` classifier fix that silently skipped 3
+  tests under a default `cargo test`. Together this closes out **#171** (the GPU Phase-0 program) --
+  full receipt in CURRENT LIVE BACKLOG below. **HONEST SCOPE (council must-fix MF-3):** this wave
+  hardens the CPU-default GPU code path's correctness/observability under the existing default-OFF
+  `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE` gate -- it does NOT promote GPU, change the CPU-default
+  recommendation, or prove a speed crossover; full reframe in CEO-FACING GPU below. **#592** (prior
+  docs reconcile to v1.74.x) merged `adf5750`; the PR queue was empty going into this wave and is empty
+  again after it (see SHIPPING below).
+- **Prior wave: v1.74.4 (2026-07-14, published).** The v1.73.0->v1.74.x
   wave — the CEO's v1.72.1 dogfood tail + the v1.74.0 WSL-saddle dogfood fix-queue (#164) — drained
   one-per-publish, ZERO broken releases: **v1.73.0** #584 `tg edit-plan` top-level `confidence` +
   `ask_user_before_editing` (agent parity) & #585 `--deadline` on source/docs-coverage/blast-radius-plan ·
@@ -70,14 +86,25 @@ wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while 
 
 ## SHIPPING — open PRs (drain one-per-publish) — task #117
 
-**1 open PR — #592** (`docs:`, no release) — this BACKLOG reconcile to the live v1.74.x state. The
-v1.73.0->v1.74.4 wave (#584/#585/#131-F3/#164/#166/#591) drained one-per-publish, ZERO broken releases.
-Prior: v1.70.0->v1.72.1 (#152/#127/#90b/#153/#154/#158/#159/#580/#581); the v1.68.1 CEO WSL-dogfood 3-PR
-drain (#562/#563/#564 -> v1.69.0/.1/.2); campaign #142's 4-PR queue (#554-557 -> v1.67.1-v1.68.2) — all
-clean. **After #592 merges, next move is CEO-gated or demand-gated** (see CURRENT LIVE BACKLOG) — no new
-build is queued.
+**Queue empty -- 0 open PRs.** The v1.75.0->v1.75.4 GPU Phase-0 wave (#593/#594/#595/#596/#597) drained
+one-per-publish, ZERO broken releases, closing out **#171** (GPU Phase-0 program, P0-1..P0-5) + **#172**
+(gate-nits). Prior: v1.73.0->v1.74.4 (#584/#585/#131-F3/#164/#166/#591); v1.70.0->v1.72.1
+(#152/#127/#90b/#153/#154/#158/#159/#580/#581); the v1.68.1 CEO WSL-dogfood 3-PR drain (#562/#563/#564
+-> v1.69.0/.1/.2); campaign #142's 4-PR queue (#554-557 -> v1.67.1-v1.68.2) -- all clean. This BACKLOG
+reconcile (`docs:`, no release, **#173**) is the next PR to open -- drain clear, no other build queued.
+**After it merges, next move is CEO-gated or demand-gated** (see CURRENT LIVE BACKLOG).
 
-## SHIPPED — live on PyPI up to **v1.74.4**
+## SHIPPED — live on PyPI up to **v1.75.4**
+
+**v1.75.0-v1.75.4 window (2026-07-14, merged, on PyPI) -- GPU Phase-0 program #171 + gate-nits #172
+complete:** #593 `tg orient`/`tg agent` broaden `suggested_ignore` to whole vendor/skill trees, M1+M2
+(v1.75.0) | #594 GPU Phase-0 P0-1 WSL probe path-domain bridging + `cargo check --features cuda`
+anti-bit-rot CI gate (v1.75.1) | #595 GPU Phase-0 P0-2/P0-3 doctor probe failure-taxonomy + honest
+device-id validation (v1.75.2) | #596 GPU Phase-0 P0-4/P0-5 calibrated remediation message + loud
+nvidia->cpu installer downgrade (v1.75.3) | #597 GPU Phase-0 gate-nits: doctor-probe precision + native
+error-kind taxonomy, 5 nits incl. the `cfg(any(cuda,test))` classifier fix (v1.75.4). **Scope stays
+CPU-default-honest** -- this hardens the gated-OFF GPU code path's correctness/observability; it does
+not promote GPU or prove a speed crossover (full reframe: CEO-FACING GPU below).
 
 **v1.73.0-v1.74.4 window (2026-07-14, merged, on PyPI):** #584 `tg edit-plan` top-level confidence +
 ask_user_before_editing (v1.73.0) · #585 `--deadline` on source/docs-coverage/blast-radius-plan (v1.73.0) ·
@@ -148,6 +175,19 @@ signed consumable tg outputs.
   `sidecar.py::_classify_lines` (still defined, `sidecar.py:157`, a thin unused wrapper around
   `_classify_lines_with_metadata`) and `rust_core/src/backend_cpu.rs::replace_in_place`
   (`backend_cpu.rs:212`, still `pub fn`) — kept as a small LOW item below rather than marked shipped.
+- **#171** GPU Phase-0 program (de-risking toward a possible Phase-1 `cuda-check` CI gate) -> SHIPPED:
+  P0-1 WSL probe path-domain bridging + `cargo check --features cuda` anti-bit-rot CI gate (`7f8de84`/
+  #594, v1.75.1) | P0-2/P0-3 doctor probe failure-taxonomy + honest device-id validation (`7350d77`/
+  #595, v1.75.2) | P0-4/P0-5 calibrated remediation message + loud nvidia->cpu installer downgrade
+  (`a4b3c05`/#596, v1.75.3). Phase 0 is now DONE; Phase 1 (flipping
+  `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE`) is a reversible release-config decision, not a rebuild --
+  see the reframed CEO-FACING GPU entry below.
+- **#172** GPU Phase-0 gate-nits (doctor-probe precision + native error-kind taxonomy) -> shipped
+  `3fd3af7`/#597, v1.75.4. 5 nits incl. a decisive one: `classify_gpu_route_failure` and its 3 tests
+  were `#[cfg(feature = "cuda")]`-gated, so a default `cargo test` (no `--features cuda`) silently never
+  ran them.
+- **#173** this BACKLOG reconcile (docs-only, no release) -- CURRENT STATE/SHIPPING/SHIPPED refreshed to
+  v1.75.4 + the CEO-FACING GPU section reframed for honesty (council must-fix MF-3, see below).
 
 **Verify-flagged (not on the live task-store queue; also not confirmed shipped in this pass — flagged
 for the next audit rather than re-opened as active work):**
@@ -207,15 +247,30 @@ for the next audit rather than re-opened as active work):**
   enterprise-gap below.
 - **#77** `tg ledger` local agent context-sharing (thinktank-reviewed conditional narrow-yes; gated
   behind semantic-search shipping first).
-- **GPU program** — the GPU deep-dive recommends a ~24wk/2-engineer rebuild (Phase 0 truth → Phase 1
-  resident+matcher experiments = the FUNDING GATE → sharded streaming → fixed-string matcher →
-  packaging → resident service → bounded regex) toward **a local/BYOC high-throughput scanning plane
-  (secret/PII/license/policy rule-packs)**. ⚠ **Directly re-opens the #99 "no-SaaS" wedge the CEO
-  closed 2026-07-10** — a genuine strategic fork. Campaign #142 re-homes the old **#47** finding
-  ("GPU public-proof", an NVIDIA-flavor native build) onto this same fork — one CEO decision now
-  covers both. Cite: `cluster-4-stale-reconcile.md` (#47). The Phase-0 honesty/correctness fixes
-  (**F3**, the GPU fail-closed capability matrix) already shipped across several audit rounds (see
-  SHIPPED above); the remaining ask is the funded rebuild itself.
+- **GPU program -- REFRAMED 2026-07-14 (Phase-0 complete: #171 + #172; council must-fix MF-3 honesty
+  gate baked into this reframe).** NVIDIA native assets are BUILT and locally correctness-proven on the
+  dev box (device 0 `RTX 4070` `sm_89`, device 1 `RTX 5070` `sm_120`; see `docs/SESSION_HANDOFF.md` GPU
+  dogfood notes and `docs/gpu_crossover.md`), gated OFF the public release by CI Actions var
+  `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE` (default `native-frontdoor`, CPU-only; the opt-in flip is
+  `native-frontdoor-gpu`, `.github/workflows/ci.yml:1121`). **So Phase 1 is a reversible release-config
+  flag-flip decision, not the ~24wk/2-engineer rebuild this section previously described.**
+  **CRITICAL HONESTY (do not violate `docs/CONTRACTS.md:80-82`):** flipping the var publishes ASSETS
+  only -- it does NOT promote GPU. GPU auto-recommendation stays `false`; no speed crossover vs
+  `rg`/`tg_cpu` is proven yet (`docs/gpu_crossover.md` still records "no crossover" for the measured
+  workload classes); the reviewer-gated `public-gpu-proof.yml` speed-crossover gate is UNMET (manual
+  `workflow_dispatch` only, requires a `self-hosted`/`gpu`/`tensor-grep-public-gpu-proof`-labeled runner,
+  and its `environment: public-gpu-proof` lets maintainers require explicit approval before it runs --
+  `docs/CI_PIPELINE.md`). Assets become downloadable; the CPU path remains the default and the
+  recommended engine until a self-hosted GPU rig proves a crossover -- which it may not.
+  **Phase 2** = attach the dev GPU box as that self-hosted runner to actually execute
+  `public-gpu-proof.yml`'s speed-crossover proof. CEO-gated: needs the physical hardware attached. **Can
+  still re-open the #99 "no-SaaS" wedge the CEO closed 2026-07-10 IF pursued as a funded buildout** --
+  Phase 0's de-risking narrows the ask, it does not itself resolve that strategic fork. Campaign #142
+  re-homes the old **#47** finding ("GPU public-proof", an NVIDIA-flavor native build) onto this same
+  fork -- one CEO decision now covers both. Cite: `cluster-4-stale-reconcile.md` (#47). Phase-0 receipts:
+  **#171**/**#172** (CURRENT LIVE BACKLOG above; releases in SHIPPED above). The earlier Phase-0
+  honesty/correctness fix (**F3**, the GPU fail-closed capability matrix) also already shipped (see
+  SHIPPED above).
 - **Enterprise gaps** (dogfood-surfaced, design-scale): **multi-root workspace primitive** (orient/
   search/blast across sibling repos, no manual fan-out) · target-selection accuracy scoreboard
   (top-k/MRR) · cross-OS managed ast-grep · LSP proof-mode (availability ≠ navigation proof).
