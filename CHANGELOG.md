@@ -1,6 +1,20 @@
 # CHANGELOG
 
 
+## v1.76.2 (2026-07-15)
+
+### Performance Improvements
+
+- Cache _expected_tg_version + fix dead import-provenance tag in tg importers
+  ([#604](https://github.com/oimiragieo/tensor-grep/pull/604),
+  [`e575075`](https://github.com/oimiragieo/tensor-grep/commit/e5750759d169c5c717cda0a36ed7e33ebfda9a2d))
+
+@lru_cache(maxsize=1) on _expected_tg_version (matches its cached siblings; cache_clear added to the
+  test fixture) + threads the sys-path-insert provenance through _python_module_matches_definition
+  into a separate path_provenance field (not overwriting the pinned provenance enum). Reviewed clean
+  (single caller consumes the tuple). Closes #143 (lru_cache), #155.
+
+
 ## v1.76.1 (2026-07-15)
 
 ### Bug Fixes
