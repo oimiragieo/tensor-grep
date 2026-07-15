@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v1.76.4 (2026-07-15)
+
+### Bug Fixes
+
+- Bound cuda GPU engine implicit-walk to mirror the #105 native ceiling
+  ([#605](https://github.com/oimiragieo/tensor-grep/pull/605),
+  [`71cd49d`](https://github.com/oimiragieo/tensor-grep/commit/71cd49dd233ef9793de6d1bbdc0a11bcebd4903f))
+
+Threads path_was_implicit from GpuSearchParams into GpuNativeSearchConfig and applies
+  check_gpu_native_implicit_walk_ceiling in collect_walked_files (byte-for-byte parity with
+  native_search.rs's #105 ceiling: same IMPLICIT_SEARCH_WALK_FILE_CEILING, same threshold, same
+  fail-closed refusal). Closes the cuda-engine implicit-walk DoS (#105 sibling). Opus adversarial
+  gate: SHIP-WITH-NITS (no bypass, exact parity, fail-closed; 2 optional NITs -> task #178). Closes
+  #109.
+
+
 ## v1.76.3 (2026-07-15)
 
 ### Bug Fixes
