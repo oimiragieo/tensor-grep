@@ -301,6 +301,29 @@ verify pass (a Linux-reasoning agent's Windows-FS-blind concurrency claim among 
 `tensor-grep-worktree-council-verify-caught-3of3-2026-07-03` memory / `tensor-grep-change-control`'s
 change-control gates for where this sits in the merge pipeline.
 
+### 10. A cuda-only test helper needs BOTH itself and every helper it calls co-gated, or `clippy -D warnings` reds the release gate
+
+**Symptom:** `cargo clippy -- -D warnings` (the default-feature build `static-analysis` runs) fails
+with a `dead_code` warning on a function that is only ever called from inside `#[cfg(feature =
+"cuda")]` test code.
+**Cause:** gating a test's *own* `#[cfg(feature = "cuda")]` attribute is not enough by itself -- a
+default `cargo test` (no `--features cuda`, what CI's `test-rust-core` runs) then silently never
+compiles OR runs that test at all (audit #172, gate-nit NIT-4/MF-1: 3 `classify_gpu_route_failure_*`
+tests in `rust_core/src/main.rs` were `#[cfg(feature = "cuda")]`-gated on top of their enclosing
+`#[cfg(test)] mod tests`, so plain `cargo test` skipped them with zero signal). The naive fix --
+un-gate just the tests -- doesn't compile, because the helper functions they call
+(`classify_gpu_route_failure`, `sanitize_cuda_detail`, `GpuRouteFailureKind`, `GpuRouteFailure`)
+are still absent by default; the naive fix in the other direction -- un-gate just the helpers -- leaves
+them with zero callers in the default (non-cuda) build and reds `cargo clippy -- -D warnings` on
+`dead_code`.
+**Fix:** gate the helper definitions themselves `#[cfg(any(feature = "cuda", test))]` (present
+whenever cuda is enabled -- unchanged production behavior -- OR whenever `cfg(test)` is set, so the
+tests have something to call and are not dead code), and drop the redundant per-test
+`#[cfg(feature = "cuda")]` so the tests run under plain `cargo test`/`cargo clippy` too. Verify with
+both `cargo test --no-default-features` (tests now compile+run) and `cargo clippy --
+-D warnings` (default features, no `--tests` -- the release-gating `static-analysis` job's exact
+invocation) locally before pushing. Source: PR #597 (`3fd3af7`, shipped v1.75.4).
+
 ## CI parity cheat sheet
 
 What `.github/workflows/ci.yml` actually runs, and the closest local reproduction. Release/publish
@@ -313,6 +336,7 @@ jobs are intentionally omitted here — see `tensor-grep-release-and-positioning
 | `test-python` (3 OS × py3.11/3.12) | `uv run pytest tests -v --tb=short` | `uv run pytest -q` |
 | `test-rust-core` (3 OS × stable/nightly) | `cargo test --verbose --no-default-features` | `cargo test --manifest-path rust_core/Cargo.toml --no-default-features` |
 | `search-golden-parity` (windows) | `cargo test --test test_search_golden` | `cargo test --manifest-path rust_core/Cargo.toml --test test_search_golden` |
+| `cuda-feature-check` (ubuntu + windows, added #594/v1.75.1) | `cargo check --features cuda` -- a fast anti-bit-rot gate (no CUDA toolkit required, no build/test) so the `cuda` cargo feature can't rot silently between the rare times it actually compiles inside `build-release-native-assets`'s gated nvidia legs | `cargo check --manifest-path rust_core/Cargo.toml --features cuda` |
 | `native-build-smoke` (4 OS) | `cargo build --release --no-default-features` then `tg --version`/`--help`/one search on the built binary | same, run from `rust_core/` |
 | `agent-readiness` | `scripts/agent_readiness.py --no-shell-probes --no-wsl-probe` (the 13-check repo-local contract gate) | `python scripts/agent_readiness.py --no-shell-probes --no-wsl-probe --output artifacts/agent_readiness.json`; see `tensor-grep-diagnostics-and-tooling` |
 | `windows-agent-readiness` | `scripts/agent_readiness.py --only-shell-probes --no-wsl-probe` (public shell-probe gate only — a **disjoint** check set from `agent-readiness`, none of the 13 repo-local checks) | `python scripts/agent_readiness.py --only-shell-probes --no-wsl-probe --output artifacts/agent_readiness.json`; see `tensor-grep-diagnostics-and-tooling` |

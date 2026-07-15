@@ -253,13 +253,18 @@ control-plane experiment vs. the accepted baseline — do not average them.
 
 ## GPU claims need a stricter bar (read before trusting any GPU number)
 
-State of the GPU program as of v1.49.3 (re-verify against AGENTS.md "Roadmap Sequencing" — that section
-is itself dated and can lag; `docs/gpu_crossover.md`):
-GPU is **held at the P0 harness** (correctness taxonomy + loud non-promotional fallback +
-`doctor`/proof fields) — the P1 CUDA-PFAC kernel work is **paused**, not advancing to P2-P4
-(correctness gates, fair-bench, device/CI proof) until three CPU-only wins ship first (local hybrid
-semantic search, `tg registration-check`, a Bloom-filter n-gram prefilter). Do not treat any GPU
-number you produce as promotion evidence; it is implementation history at best.
+State of the GPU program as of v1.75.4 (re-verify against `docs/gpu_crossover.md`, which is the
+current source of truth; AGENTS.md "Roadmap Sequencing" predates the v1.75.x wave and can lag):
+**GPU Phase-0 SHIPPED** (v1.75.0-v1.75.4, PRs #593-#597) and is locally correctness-proven (RTX 4070
+`sm_89` / RTX 5070 `sm_120`, 1GB/5GB match+file-set identity), but gated OFF the public release by the
+CI Actions var `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE` (default `native-frontdoor`, CPU-only; GPU
+asset publishing needs the non-default `native-frontdoor-gpu`) — Phase 1 is now a **reversible
+flag-flip**, not a multi-week rebuild. That flip changes only whether the built assets are published;
+it does **not** promote GPU, change the CPU-default auto-recommendation, or prove a speed crossover.
+Keep the honesty floor: no speed crossover is proven vs `rg`/`tg_cpu`, GPU auto-recommendation stays
+`false`, and the reviewer-gated `public-gpu-proof.yml` speed-crossover gate remains unmet
+(`docs/CONTRACTS.md:80-82`). Do not treat any GPU number you produce as promotion evidence; it is
+implementation history at best.
 
 Two hard-earned rules if you do run a GPU benchmark:
 
@@ -352,9 +357,12 @@ number:
 - Launcher-mode enum / command-kind classifier: `grep -n "launcher_mode not in\|def classify_tg_launcher_command" benchmarks/run_benchmarks.py`.
 - Stale-binary refusal behavior: `grep -n "allow-claim-unsafe-launcher\|benchmark_claim_blockers" benchmarks/run_benchmarks.py benchmarks/run_native_cpu_benchmarks.py`.
 - Fixed-multi-pattern worked-example numbers: `grep -n "fixed multi-pattern\|multi_pattern" docs/gpu_crossover.md docs/benchmarks.md CHANGELOG.md` — these are historical (v1.11.x) and
-  will not change, but the *current* GPU roadmap status (paused/P0) should be re-checked in AGENTS.md
-  "Roadmap Sequencing" since that date-stamped section is the one most likely to move.
-- GPU pause/roadmap status: `grep -n "Roadmap Sequencing" -A 15 AGENTS.md`.
+  will not change, but the *current* GPU status (Phase-0 SHIPPED as of v1.75.0-v1.75.4, PRs #593-#597;
+  Phase 1 = a reversible flag-flip on `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE`, default
+  `native-frontdoor` CPU-only) should be re-checked since it is the fact most likely to have moved
+  further -- no speed crossover is proven vs `rg`/`tg_cpu` regardless of publish-flag state
+  (`docs/CONTRACTS.md:80-82`).
+- GPU Phase-0/Phase-1 status: `grep -n "RELEASE_NATIVE_ASSET_PROFILE\|native-frontdoor-gpu" .github/workflows/ci.yml` and re-read `docs/gpu_crossover.md`'s current top section.
 - Current release tag: `grep -n "release_docs_current_tag" AGENTS.md`.
 - Token-economy harness promotion status (#72 — still uncommitted as of 2026-07-08?):
   `ls benchmarks/ | grep -i token` and `grep -n "token" docs/benchmarks.md` (expect no hits until #72 lands).

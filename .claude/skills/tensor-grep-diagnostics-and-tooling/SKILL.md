@@ -6,7 +6,9 @@ description: Use when you need to MEASURE tensor-grep's health instead of eyebal
 # tensor-grep Diagnostics and Tooling
 
 How to **measure, not eyeball**, whether a tensor-grep (`tg`) install or a repo checkout is
-healthy. All facts below are verified against the repo at **v1.17.25 (2026-07-02)** by reading
+healthy. Most facts below are verified against the repo at **v1.17.25 (2026-07-02)**; the GPU doctor-probe
+fields (`gpu.search_runtime_probe.*`, `native_frontdoor_*`) were re-verified against **v1.75.4
+(2026-07-14)** by reading
 the cited files — re-verify with the commands in "Provenance and maintenance" if you suspect drift.
 
 ## When to use this skill (and when to use a sibling instead)
@@ -85,6 +87,9 @@ gap.
 | `skipped_native_tg_binaries` | `[]`, or a list of correctly-ignored stale in-tree binaries | a non-empty list here is the **healthy** outcome when you have an old local dev build lying around — it means doctor correctly did NOT select it |
 | `mcp_stdio_launcher_warning` | `null` | non-null on Windows usually means a PowerShell shim (`tg.ps1`) is ambiguous for MCP stdio clients; the message tells you to point the MCP client at the native `tg.exe` directly |
 | `gpu.available` / `gpu.search_ready` / `gpu.tier.promotion_proof` | `available` reflects CUDA device presence; `search_ready` reflects whether a real search actually routed through `NativeGpuBackend` | **`gpu.available=true` does NOT mean GPU search works.** Always read `search_ready` and `tier.promotion_proof`, not just `available`. GPU is experimental-until-proven (see `docs/gpu_crossover.md`) — never a PASS/FAIL signal, always informational. |
+| `gpu.search_runtime_probe.status` (v1.75.2, #595 + gate-nits v1.75.4, #597) | `supported`, or one of the failure-taxonomy statuses: `not_run`, `path_domain_mismatch`, `failed_input`, `failed_gpu_unavailable`, `failed_path_bridging` (WSL cross-domain), `failed_probe_path` (same-domain path vanished), `failed_other` (unrecognized/unparseable -- fails closed) | Replaces a single opaque `"failed"` for every `rc!=0` outcome -- read the specific status before assuming "GPU is just broken"; `failed_input` (e.g. `gpu_invalid_device_id`) means a bad request, not an unavailable GPU (`_doctor_gpu_search_runtime_probe`/`_doctor_gpu_probe_failure_status`, `main.py:2774-2874`) |
+| `gpu.search_runtime_probe.native_error_kind` | `null`, or the native binary's own structured `--json` error kind (e.g. `path_not_found`, `empty_pattern`, `invalid_regex`, `gpu_fatal`, `gpu_invalid_device_id`) | the raw kind behind the mapped `status` above -- `null` means stdout wasn't the expected structured JSON at all (a raw panic, empty output), not that there was no error |
+| `native_frontdoor_flavor` / `native_frontdoor_requested_flavor` / `native_frontdoor_asset_name` / `native_frontdoor_metadata_status` / `native_frontdoor_flavor_mismatch_note` | populated strings when a managed native front door is installed | surfaces "you asked for `nvidia` but got `cpu`" (`_doctor_native_frontdoor_flavor_mismatch_note`, `main.py:2990`) -- previously only a benchmark script could see this; now visible in plain `tg doctor` |
 | `lsp.enabled` / `lsp.providers[].health_status` | `health_status` in `{ready, available_unverified, unhealthy, missing}` | **provider availability is not navigation proof.** A provider counts as real LSP evidence only when a completed request set `lsp_provider_response = true` — `provenance = "lsp-*"` alone is not enough (`AGENTS.md` LSP rules). |
 | `ast_grep.available` / `ast_grep.binary` | `true` / a resolved path | `false` degrades `tg run`'s semantic (`--selector`/`--strictness`) options; AST structural search itself still works via the native backend |
 | `session_daemon.running` | informational | `true` means a warm localhost daemon is serving cached repo-map/session state for this root |
@@ -324,6 +329,7 @@ source of truth.
 | Unit/integration tests are all green, but the real published binary is broken | `CliRunner` bypasses `tensor_grep.cli.bootstrap:main_entry` (the real front door) | run Tool 4 (`scripts/dogfood/dogfood_features.py`) against the real binary; see `dogfood-the-shipped-artifact` |
 | `repo-cli-build-warmup` fails or times out | the repo-local `uv`/`tg` editable entrypoint is stale/unsynchronized | `uv sync`, or `uv run --refresh-package tensor-grep tg --version` |
 | `gpu.available = true` but you expected GPU search to actually run | `available` only reflects CUDA device presence | check `gpu.search_ready` and `gpu.tier.promotion_proof` instead — GPU is experimental-until-proven |
+| `tg search --gpu-device-ids N` / `tg agent --gpu-device-ids N` silently proceeds despite an out-of-range `N` (v1.75.2, #595) | `N` isn't in the local `DeviceDetector` inventory | check stderr for the `_warn_unavailable_gpu_device_ids` WARN (never a hard failure) naming the requested id and the actually-available ids; silent when the inventory is empty (a CPU-only box has no CUDA devices to warn about) |
 
 ## The bundled traffic-light script
 
@@ -348,8 +354,11 @@ fail the exit code, matching `tg doctor`'s own non-gating nature).
 
 ## Provenance and maintenance
 
-Verified against v1.17.25 (2026-07-02) by reading the cited source directly. Re-verify if this
-skill feels stale:
+Base doctor/dogfood facts verified against v1.17.25 (2026-07-02); the GPU doctor-probe fields
+(failure taxonomy, `native_error_kind`, `native_frontdoor_*` flavor fields, the honest
+out-of-range device-id warning) re-verified against **v1.75.4 (2026-07-14)** -- both by reading the
+cited source directly. Re-verify if this skill feels stale, and treat the v1.17.25-era claims as
+the ones most likely to have drifted furthest, not the GPU section:
 
 ```powershell
 # current version
@@ -357,6 +366,9 @@ grep -n '^version = ' pyproject.toml
 
 # doctor payload fields (re-check the table above against the real builder)
 grep -n 'search_acceleration_backend\|rust_binary_version_status\|launcher_kind' src/tensor_grep/cli/main.py
+
+# GPU doctor-probe failure taxonomy + native-frontdoor flavor fields
+grep -n 'native_error_kind\|_doctor_gpu_probe_failure_status\|native_frontdoor_flavor_mismatch_note\|_warn_unavailable_gpu_device_ids' src/tensor_grep/cli/main.py
 
 # agent_readiness check names / count (13 repo-local checks expected)
 grep -n 'name="' scripts/agent_readiness.py

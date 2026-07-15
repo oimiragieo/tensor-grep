@@ -285,6 +285,23 @@ time, and a stale duration assumption is how a watcher's timeout gets tuned wron
 
 ---
 
+## Battle 15 -- `release-tag-smoke` stayed red for 4 releases while PyPI kept publishing, masking a real regression
+
+| Field | Detail |
+|---|---|
+| **Symptom** | "Latest `main` CI run is green" was trusted as "releases are healthy," but the post-publish, NEEDS-gated `release-tag-smoke` job (`.github/workflows/ci.yml`, `needs: [release, publish-success-gate]`, checks out the release tag and re-runs `scripts/agent_readiness.py` against it) had been **red since v1.64.4** while `publish-pypi`/`publish-success-gate` kept going green release after release -- 4 releases shipped with this specific gate failing underneath, unnoticed. |
+| **Root cause** | `release-tag-smoke` is a separate JOB inside the same workflow run as `Semantic Release`/`publish-pypi` -- a run's overall "latest run on `main`: success" summary does not surface one late-stage job's own red `conclusion` unless you look at that job specifically. It masked a real regression: PR #542's `AstBackend` DSL-divergence bug (`tg run --pattern <ast-grep-syntax>` on an environment without `ast-grep` installed) -- `release-tag-smoke` was the one gate that would have caught it (it runs against the actually-published wheel, not local pytest), but nobody was checking its own conclusion. |
+| **Evidence** | `gh run list --workflow ci.yml` showing several consecutive releases publish successfully; `gh run view <id> --json jobs` on any of those runs shows the `release-tag-smoke` job's own `conclusion: "failure"` sitting underneath an overall run that still reads as the release having gone out. Fixed by hotfix `#144`. |
+| **Status** | **SETTLED discipline.** Steward routine: after any release, check the `release-tag-smoke` JOB's own conclusion inside that specific run (`gh run view <id> --json jobs` -> find the job named `release-tag-smoke` -> read its `conclusion`), not just "latest main run green." See `tensor-grep-debugging-playbook` for the triage row and `tensor-grep-release-and-positioning` S1.9 for the release-mechanics checklist item. |
+
+**Rule:** A green *workflow run* is not the same claim as a green *specific job* inside it, especially
+for a NEEDS-gated post-publish job that only runs after the parts you were actually watching
+(`publish-pypi`, `publish-success-gate`) already succeeded. When multiple jobs share one workflow run
+and only some of them gate on "did the release actually work end-to-end" (vs. "did the version-bump
+and upload succeed"), check every gating job's own conclusion by name, not the run's aggregate status.
+
+---
+
 ## Cross-cutting lessons (the meta-patterns behind the battles)
 
 These recur across the chronicle; internalize them and you avoid the next re-fight too.

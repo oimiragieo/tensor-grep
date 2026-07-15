@@ -112,8 +112,14 @@ principle). By contrast, the **heuristic** (non-explicit) auto-GPU path degrades
 `warnings.warn(...)` + `fallback_reason`, not an exception — only *explicit* user intent gets fail-loud
 treatment (`pipeline.py:174-176`, `_should_honor_explicit_gpu_ids`).
 
-GPU remains **EXPERIMENTAL** end-to-end: slower than CPU, no promotion-ready path, P1 CUDA kernel work
-is paused (`AGENTS.md:226-234`, "Roadmap Sequencing"). Do not market or default-enable it.
+GPU remains **EXPERIMENTAL** end-to-end. GPU Phase-0 SHIPPED (v1.75.0-v1.75.4, PRs #593-#597):
+NVIDIA native assets are built and locally correctness-proven (RTX 4070 `sm_89` / RTX 5070 `sm_120` --
+`docs/gpu_crossover.md`), but gated OFF the public release by the CI Actions var
+`TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE` (default `native-frontdoor`, CPU-only; GPU asset
+publishing needs the non-default `native-frontdoor-gpu`) -- Phase 1 is now a reversible flag-flip, not
+a multi-week rebuild. That flip publishes assets only: no speed crossover is proven vs `rg`/`tg_cpu`,
+GPU auto-recommendation stays `false`, and the reviewer-gated `public-gpu-proof.yml` speed-crossover
+gate remains unmet (`docs/CONTRACTS.md:80-82`). Do not market or default-enable it.
 
 ### Classify provider
 
@@ -217,7 +223,7 @@ when it carries `lsp_provider_response = true` from a completed provider request
 | `--provider lsp` / `--provider hybrid`, `TG_LSP_PROVIDER` | **EXPERIMENTAL** | explicit `--provider` value or `TG_LSP_PROVIDER` env | Availability ≠ working navigation; see LSP-proof contract above. |
 | `TENSOR_GREP_CLASSIFY_PROVIDER=cybert`/`triton` | **EXPERIMENTAL** | explicit env opt-in | Requires a Triton/CyBERT model deployment; falls back before expensive model load if unavailable. |
 | `TG_MCP_ALLOW_VALIDATION_COMMANDS=1` | **Off by design (security), not "not ready yet"** | explicit env opt-in on the MCP server process | Shell-executes `lint_cmd`/`test_cmd`, a prompt-injection surface. |
-| Local hybrid semantic search (BM25 + CPU dense embeddings) | **Not yet shipped** — roadmap item #1 (`AGENTS.md:226-234`) | n/a | Do not document flags for this as if they exist; check `AGENTS.md` Roadmap Sequencing for current status before claiming it's available. |
+| Local hybrid semantic search (BM25 + CPU dense embeddings + RRF) | **SHIPPED, EXPERIMENTAL default-OFF** — `tg search --semantic` (`main.py:6619`; `core/retrieval_dense.py` + `core/retrieval_fusion.py`) | explicit `--semantic` flag; requires the `semantic` extra (`model2vec`, `pyproject.toml:577`), fails closed with a `rank_fallback_reason` when unavailable | No API key, no GPU, pure local CPU dense leg fused with BM25 via RRF -- see `tensor-grep-semantic-search-campaign` for build history and promotion gates. |
 
 ## `tg inventory`: walk-only repo manifest (v1.19.0, #343)
 

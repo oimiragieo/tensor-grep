@@ -51,6 +51,18 @@ flag-flip** (see Phase 5).
 > closed-out; if you are extending it further (chunking, a `tg index` command, a
 > default-flip), Phases 4-5 below are still the right runbook.
 >
+> **Two further opt-in refinements SHIPPED since (both default-OFF, additive):**
+> `TG_CHUNKER=structural` (PR #443, `9015238`, shipped v1.47.0) -- cAST AST-shaped
+> chunking (`retrieval_chunker.py`, `CHUNKER_MODE_ENV_VAR`) beside the fixed-window
+> chunker, fail-open, chunk-shape-identical contract, index-version-bumped
+> (`semantic_index.py` v2 folds the active chunker mode into its cache key). This
+> retires the old "cAST is a candidate deepener, not a requirement for v1" framing in
+> S3 Candidate 1 below -- it shipped as an explicit opt-in, not a requirement, but it is
+> no longer merely a future candidate. `TG_RRF_CHANNELS=1` (PR #442, `a402f81`, shipped
+> v1.46.0) -- channelized RRF (`reranker.py`, `_RRF_CHANNELS_ENV`): weighted per-channel
+> fusion including a 1.5x path/filename channel, additive `weights` param, default-off
+> and byte-identical when unset.
+>
 > (Superseded note, kept for history: as of 2026-07-05/v1.40.2 this was still unbuilt
 > and `tensor-grep-large-repo-scale-campaign` was the live campaign instead — that is
 > no longer the case for the dense/RRF leg specifically; re-check which campaign is
@@ -172,12 +184,13 @@ Derivation obligations before you depend on it:
 3. **CPU + footprint** — confirm it runs with no GPU, and record the on-disk model
    size and the added dependency weight. The model **must be an OPTIONAL extra**, not
    a hard install dependency (every-install must still work with BM25-only).
-4. **Chunking choice** — Semble uses tree-sitter chunks; tensor-grep already has
-   line-window `chunk_file`. Decide (and justify with a measurement, not taste)
-   whether to reuse `chunk_file` first (cheaper, already shipped) and only move to
-   AST-shaped chunks if the numbers demand it. `docs/PAPER.md` (cAST, arXiv:2506.15655)
-   is the reference for AST-shaped chunking; it is a *candidate deepener*, not a
-   requirement for v1.
+4. **Chunking choice -- RESOLVED, both ship.** Semble uses tree-sitter chunks;
+   tensor-grep already had line-window `chunk_file` as the default, and now also ships
+   `TG_CHUNKER=structural` (PR #443, v1.47.0) -- opt-in cAST AST-shaped chunking
+   (`docs/PAPER.md`/arXiv:2506.15655 is the reference paper), fail-open and
+   chunk-shape-identical to the fixed-window path when unset. This was a *candidate
+   deepener* as of the original design; it is now a shipped, default-off refinement --
+   do not describe it as unbuilt.
 
 ### Candidate 2: ripvec (pure-Rust)
 A pure-Rust vector path. Derivation obligations: confirm license, maturity, and

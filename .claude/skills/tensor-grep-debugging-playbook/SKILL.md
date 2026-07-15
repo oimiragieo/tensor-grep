@@ -68,6 +68,7 @@ If your symptom isn't in the table below, it's probably not covered here — che
 | Agent-capsule primary target flipped after an unrelated change (wrong file promoted to top) | The agent capsule's flat, no-IDF candidate scorer is corpus-fragile — a small corpus change can flip which candidate wins a tie. (`tg search --rank` and semantic search use a different, IDF-weighted BM25 scorer and are not known to share this bug.) | Re-run `tg agent PATH QUERY --json` before/after the change and diff `primary_target` + `ambiguity`/`ask_reasons` fields | [§8](#8-ranking-flip) |
 | A `CliRunner` test reading `capfd` starts returning empty output / `JSONDecodeError` right after a delegation, routing-gate, or `--rank`/`--sort-files`-style flag change — often only on `main`/release CI, green on the PR | The code path moved from a **delegated subprocess** (needs fd-level `capfd`) to **in-process** `typer.echo` (needs `result.stdout`), or vice versa — the test's capture fixture didn't move with it. PR CI often doesn't build the native binary, so the mismatch is invisible there. | Grep the refuse-tuple for the field you touched (`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, `src/tensor_grep/cli/main.py:1783`) — did it just start refusing (or allowing) native delegation? | [§9](#9-capture-surface-trap-capfd-vs-resultstdout) |
 | A latency "fix" doesn't move the needle, or a reported regression can't be reproduced / doesn't match the diff | The hot path was inferred by reading code (a review/design pass) instead of measured — the real bottleneck is often a pure helper called redundantly in a hot loop, invisible from reading the "expensive-looking" function alone | Profile the **actual** slow command at realistic scale (not a toy input) and check top cumulative-time frames; Counter-wrap a suspect function to see call-count-vs-unique-input redundancy before designing a cache | [§10](#10-profile-at-scale-discipline-latency-claims) |
+| PyPI/`chore(release)` published fine, "latest `main` run green" -- but a real regression shipped anyway | The workflow run's *aggregate* status hides one late-stage job's own red conclusion -- specifically the NEEDS-gated `release-tag-smoke` job (re-runs `scripts/agent_readiness.py` against the actually-published wheel), which can stay red for releases at a time while `publish-pypi`/`publish-success-gate` keep going green | `gh run view <run-id> --json jobs` on the release run -> find the job named **`release-tag-smoke`** specifically -> read its own `conclusion`, don't infer from the run's overall status | [S11](#11-release-published-but-release-tag-smoke-stayed-red-masked-regression) |
 
 ---
 
@@ -455,6 +456,35 @@ code-reading guess alone. Reproduce the slowness under a profiler on the real co
 scale first; only then pick the fix target. Verify any cache/memoization "fix" against a parity
 check (identical output on the same input) before trusting the speedup — a cache is only safe if it
 doesn't change results.
+
+---
+
+## 11. Release published but `release-tag-smoke` stayed red (masked regression)
+
+**"Latest `main` CI run is green" is not the same claim as "releases are healthy."** The post-publish
+`release-tag-smoke` job (`.github/workflows/ci.yml`, `needs: [release, publish-success-gate]`) checks
+out the just-published release tag and re-runs `scripts/agent_readiness.py` against it -- the one gate
+that validates the actually-published wheel, not local pytest. It is a separate JOB inside the same
+workflow run as `Semantic Release`/`publish-pypi`, so a run's aggregate "success" summary does not
+surface this one job's own red `conclusion` unless you look at it specifically.
+
+**Known incident:** this job stayed red **since v1.64.4** across 4 releases while `publish-pypi` and
+`publish-success-gate` kept publishing fine -- masking PR #542's real `AstBackend` DSL-divergence
+regression (`tg run --pattern <ast-grep-syntax>` on an environment without `ast-grep` installed).
+Nobody was checking `release-tag-smoke`'s own conclusion, only "did the latest run on `main` succeed
+overall." Fixed by hotfix `#144`. Full incident: `tensor-grep-failure-archaeology` Battle 15.
+
+**Discriminating experiment:**
+
+```bash
+gh run list --workflow ci.yml --branch main --limit 5     # recent release runs, not just the latest
+gh run view <run-id> --json jobs                          # find the job named "release-tag-smoke"
+gh run view <run-id> --log-failed                         # if its conclusion is "failure"
+```
+
+**Rule:** after any release, check `release-tag-smoke`'s own conclusion inside that specific run by
+name -- do not infer release health from "latest main run green." See
+`tensor-grep-release-and-positioning` S1.9 for the release-mechanics checklist item that encodes this.
 
 ---
 

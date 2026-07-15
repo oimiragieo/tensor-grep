@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-backlog-campaign
-description: Use when asked to deep-dive, audit, fix, or drain tensor-grep backlog — OR investigate/rank next work and produce SPEC/TDD plans (docs/plans/requirements|design|tasks-*.md) without implementing. Triggers: "work the backlog", "what next", "investigate and plan", backlog-completion campaign. META-ORCHESTRATOR — 18-skill library. Semantic-search flagship: tensor-grep-semantic-search-campaign. Scale/hang campaign: tensor-grep-large-repo-scale-campaign. Load tensor-grep-change-control before edit.
+description: Use when asked to deep-dive, audit, fix, or drain tensor-grep backlog — OR investigate/rank next work and produce SPEC/TDD plans (docs/plans/requirements|design|tasks-*.md) without implementing. Triggers: "work the backlog", "what next", "investigate and plan", backlog-completion campaign. META-ORCHESTRATOR — 20-skill library. Semantic-search flagship: tensor-grep-semantic-search-campaign. Scale/hang campaign: tensor-grep-large-repo-scale-campaign. Load tensor-grep-change-control before edit.
 ---
 
 # tensor-grep backlog campaign
@@ -87,12 +87,12 @@ Executive summary · evidence · skills used · tools (gaps only) · plan pointe
 7. **Plans are hypotheses** — `verify-plan-against-code` BEFORE multi-file dispatch; `subagent-verification-workflow` + `worktree-fanout-verification-gate` AFTER.
 8. **Never trust a self-report** — re-run verification gates yourself in the real venv; worktree/subagent "tests pass" is a hypothesis.
 9. **Draft-PR-only autonomy** — endpoint is a draft PR a human merges. Never auto-merge.
-10. **WIP CAP (2026-07-08 receipt)** — do NOT dispatch a new BUILD while **>5 PRs are undrained** OR the **main gate is red**. Generating fixes faster than the ~40–66 min/publish drain empties the queue produces "churning, not completing" (backlog stays constant-size while PRs pile up). Design fork: complete-then-start, not start-then-hope. A red main gate is a drop-everything hotfix that jumps the queue ahead of any new build. Check `gh pr list` count and `gh run list --branch main` conclusion before authorizing a new fan-out.
-11. **Mandatory adversarial security gate before merge** — every security-class PR (`apply_policy` / `mcp_server` / `cpu_backend` / `index_lock`/`session_daemon` / auth / money / migration) gets an adversarial "try-to-BREAK-it, cite `file:line`, default FIX-FIRST-if-uncertain" review **before merge**, in addition to (not instead of) the mandatory `codex` gate below. This is not a rubber stamp: on the 2026-07-08 session it returned SHIP on 3 PRs and caught real issues on 2 — a symlink-follow RCE bypass (`.resolve()` followed the symlink; fixed with `os.path.abspath`) and a lock-release TOCTOU (accepted-as-documented after proving a heartbeat thread makes it unreachable). `codex` is the nominal 2nd-vendor tool but its WSL path is unreliable on this box — an Opus **Agent** subagent (`model: opus`) is the reliable substitute when `codex` is dead, not a reason to skip the gate. Verdict shape: `SHIP` | `FIX-FIRST(+file:line+repro+minimal-fix)`.
+10. **WIP CAP (2026-07-08 receipt)** — do NOT dispatch a new BUILD while **>5 PRs are undrained** OR the **main gate is red**. Generating fixes faster than the ~40–66 min/publish drain empties the queue produces "churning, not completing" (backlog stays constant-size while PRs pile up). Design fork: complete-then-start, not start-then-hope. A red main gate is a drop-everything hotfix that jumps the queue ahead of any new build. Check `gh pr list` count and `gh run list --branch main` conclusion before authorizing a new fan-out. **Build-vs-merge decoupling:** the WIP cap and one-merge-per-tick both gate *merge* timing, not when work may *start* -- a PR sequenced "after vX publishes" purely for a CODE-COLLISION reason (it touches the same file, or wants vX's already-merged code as its base) may branch and build off the just-merged `main` in parallel with an in-flight release; only the final merge stays gated. This saves ~40 min/PR across a campaign. See `tensor-grep-change-control` Part 7 for the full pattern (named after merge-queue/speculative-CI, release-train, and build-once-promote-everywhere).
+11. **Mandatory adversarial security gate before merge** — every security-class PR (`apply_policy` / `mcp_server` / `cpu_backend` / `index_lock`/`session_daemon` / auth / money / migration / **native asset, installer, or doctor-probe construction**) gets an adversarial "try-to-BREAK-it, cite `file:line`, default FIX-FIRST-if-uncertain" review **before merge**, in addition to (not instead of) the mandatory `codex` gate below. This is not a rubber stamp: on the 2026-07-08 session it returned SHIP on 3 PRs and caught real issues on 2 — a symlink-follow RCE bypass (`.resolve()` followed the symlink; fixed with `os.path.abspath`) and a lock-release TOCTOU (accepted-as-documented after proving a heartbeat thread makes it unreachable). The native-asset/installer/doctor-probe addition is the v1.75.2/v1.75.3 GPU Phase-0 precedent -- PR #596 (P0-5, loud nvidia-to-cpu installer downgrade) was held in draft with an explicit "Opus gate pending before merge" per its council-reviewed plan, because a silent wrong-flavor install or a misleading `doctor` probe status is a security-relevant integrity failure, not a UX nit. `codex` is the nominal 2nd-vendor tool but its WSL path is unreliable on this box — an Opus **Agent** subagent (`model: opus`) is the reliable substitute when `codex` is dead, not a reason to skip the gate. Verdict shape: `SHIP` | `FIX-FIRST(+file:line+repro+minimal-fix)`.
 
 ---
 
-## Skill library — retiring-fellow taxonomy (18 skills, `.claude/skills/`)
+## Skill library — retiring-fellow taxonomy (20 skills, `.claude/skills/`)
 
 **Ground-truth rule:** verify commands/paths against repo + `tg --help`; re-read each skill's "Provenance and maintenance" when drift suspected. **No skill routes around `tensor-grep-change-control`.**
 
@@ -117,10 +117,12 @@ Executive summary · evidence · skills used · tools (gaps only) · plan pointe
 | 15 | `tensor-grep-research-frontier` | SOTA gaps (GPU, LSP, semantic) |
 | 16 | `tensor-grep-research-methodology` | Hypothesis → falsifiable milestone discipline |
 | 17 | `tensor-grep-large-repo-scale-campaign` | Hang/scale-honesty: unscoped-search refusal, `--deadline` end-to-end, exit-2 partial contract |
-| 18 | `tensor-grep-backlog-campaign` | This skill — the meta-orchestrator itself |
+| 18 | `tensor-grep-enterprise-agent` | Enterprise agentic readiness gaps -- EvidenceReceipts, codemap, multi-repo workspaces |
+| 19 | `tensor-grep-workspace-dogfood` | Stress-test against a multi-project workspace (monorepo parent, many languages) |
+| 20 | `tensor-grep-backlog-campaign` | This skill — the meta-orchestrator itself |
 | — | `tensor-grep` + `REFERENCE.md` | **Using** `tg` to navigate any repo |
 
-**This skill** = meta-orchestrator for generic backlog drain (skill #18 of the library it indexes).
+**This skill** = meta-orchestrator for generic backlog drain (skill #20 of the library it indexes).
 **Semantic-search flagship → #13**, not here. **Scale/hang campaign → #17**, not here.
 
 **Also load:** `tensor-grep` (usage), global `~/.claude/skills/` (`verify-plan-against-code`, `dogfood-the-shipped-artifact`, …). **NO `docs/skill_index.md`** — use `AGENTS.md` skills section + table above.
@@ -410,10 +412,15 @@ Exa competitive/prior-art scan → derive edge cases competitors handle or miss 
 ## Provenance and maintenance
 
 Process/orchestration facts re-verified **2026-07-08** against **v1.49.3** (`pyproject.toml`,
-`grep -n '^version = ' pyproject.toml`). This skill has no pinned `file:line` code citations of its
-own to drift — it indexes the 18-skill library, which DOES carry code citations; re-verify the
-count with `ls .claude/skills | grep -c '^tensor-grep-'` (expect the library table above minus the
-non-`tensor-grep-*` entries) before trusting the "18 skills" stamp on a later session. Process
+`grep -n '^version = ' pyproject.toml`); the **skill-count table was re-verified 2026-07-14 against
+v1.75.4** (see the docs-accuracy PR that added this note). This skill has no pinned `file:line` code
+citations of its own to drift — it indexes the 20-skill library, which DOES carry code citations;
+re-verify the count with `ls .claude/skills | grep -c '^tensor-grep-'` (expect **19** -- 19 of the
+table's 20 numbered rows are `tensor-grep-*`-named; `code-search-and-retrieval-reference` (row 5) is
+the one row that doesn't match that grep pattern, so 19 + 1 = the 20 numbered library rows; the bare
+`tensor-grep` dash-row is a 21st folder on disk, intentionally not counted in the "20 skills" figure
+since it's usage-docs for the tool itself, not a library entry) before trusting the "20 skills" stamp
+on a later session. Process
 receipts dated 2026-07-08 (WIP CAP, adversarial security gate, resume-from-transcript, don't-kill-
 on-staleness, harvest pattern, self-firing drain-cron) come from the same session's `session_learnings`
 ledger — treat them as durable orchestration discipline, not code facts that can be grep-verified.
