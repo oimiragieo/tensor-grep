@@ -5043,6 +5043,122 @@ mod tests {
                 .is_empty()
         );
     }
+
+    /// Creates a symlink at `link` pointing to `target`, dispatching to the platform-specific
+    /// primitive (mirrors write_bytes_refuse_symlink's own unix/windows/other split). Tests
+    /// call this and skip gracefully (matching the existing audit-manifest symlink tests) when
+    /// the sandbox lacks symlink privilege instead of failing the whole suite.
+    fn try_symlink_file(target: &Path, link: &Path) -> std::io::Result<()> {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link)
+        }
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_file(target, link)
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = (target, link);
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "symlinks not supported on this platform",
+            ))
+        }
+    }
+
+    #[test]
+    fn test_create_checkpoint_refuses_symlink_at_index_path() {
+        // #115 Gap 2: checkpoint_index_path (checkpoint_storage_dir(root).join("index.json"))
+        // is a SHARED, PREDICTABLE path across every checkpoint under a given root -- unlike
+        // metadata.json (namespaced under a random checkpoint_id, unpredictable ahead of the
+        // call), an attacker who can write into the checkpoint root can plant a symlink at
+        // index.json in advance of any create_checkpoint call. Confirm create_checkpoint
+        // refuses to follow it instead of silently overwriting whatever the symlink targets.
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("fixture.py");
+        std::fs::write(&file_path, "def add(x, y): return x + y\n").unwrap();
+
+        let outside_dir = tempfile::tempdir().unwrap();
+        let outside_target = outside_dir.path().join("outside-target.json");
+        // Valid (empty-array) JSON so the pre-write "does index.json already exist -> read
+        // + parse it" branch succeeds and execution actually reaches the write call this
+        // test targets, instead of failing earlier on a JSON-parse error.
+        std::fs::write(&outside_target, b"[]").unwrap();
+
+        // Reuse the production scope-detection so the storage dir we plant the symlink under
+        // is byte-identical to the one create_checkpoint computes internally (both must agree
+        // post-canonicalization, or the symlink would land at the wrong path).
+        let path_str = file_path.to_str().unwrap();
+        let scope = detect_checkpoint_scope(path_str);
+        let storage_dir = checkpoint_storage_dir(&scope.root);
+        std::fs::create_dir_all(&storage_dir).unwrap();
+        let index_path = storage_dir.join("index.json");
+        if let Err(err) = try_symlink_file(&outside_target, &index_path) {
+            eprintln!(
+                "skipping test_create_checkpoint_refuses_symlink_at_index_path: cannot create a symlink in this environment: {err}"
+            );
+            return;
+        }
+
+        let result = create_checkpoint(path_str);
+        assert!(
+            result.is_err(),
+            "create_checkpoint must refuse to write the shared index through a symlink"
+        );
+        assert_eq!(
+            std::fs::read(&outside_target).unwrap(),
+            b"[]",
+            "the symlink's target outside the checkpoint root must be left untouched"
+        );
+    }
+
+    #[test]
+    fn test_restore_validation_rollback_snapshots_refuses_symlink_at_file_path() {
+        // #115 Gap 3: between "apply the edit" and a failed-validation rollback, an edited
+        // file could be swapped for a symlink pointing outside the project (e.g. via a
+        // hostile --lint-cmd/--test-cmd running between apply and rollback).
+        // restore_validation_rollback_snapshots must refuse to follow it instead of writing
+        // the pre-edit snapshot bytes through the symlink.
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("fixture.py");
+        let original_bytes = b"def add(x, y): return x + y\n".to_vec();
+        std::fs::write(&file_path, &original_bytes).unwrap();
+
+        let outside_dir = tempfile::tempdir().unwrap();
+        let outside_target = outside_dir.path().join("outside-target.py");
+        std::fs::write(&outside_target, b"UNTOUCHED").unwrap();
+
+        let mut snapshots = BTreeMap::new();
+        snapshots.insert(file_path.to_string_lossy().to_string(), original_bytes);
+
+        // Simulate the swap: the tracked file is replaced by a symlink after the pre-apply
+        // snapshot was captured.
+        std::fs::remove_file(&file_path).unwrap();
+        if let Err(err) = try_symlink_file(&outside_target, &file_path) {
+            eprintln!(
+                "skipping test_restore_validation_rollback_snapshots_refuses_symlink_at_file_path: cannot create a symlink in this environment: {err}"
+            );
+            return;
+        }
+
+        let summary = restore_validation_rollback_snapshots(&snapshots);
+
+        assert!(
+            !summary.success,
+            "restore must report failure when a snapshot target is a symlink"
+        );
+        assert!(
+            summary.files_restored.is_empty(),
+            "a refused symlink write must not be counted as restored"
+        );
+        assert_eq!(summary.errors.len(), 1);
+        assert_eq!(
+            std::fs::read(&outside_target).unwrap(),
+            b"UNTOUCHED",
+            "the symlink's target outside the rollback root must be left untouched"
+        );
+    }
 }
 
 fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
@@ -8317,7 +8433,7 @@ fn create_checkpoint(path: &str) -> anyhow::Result<CheckpointCreateSummary> {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
-    std::fs::write(&metadata_path, serde_json::to_vec_pretty(&metadata)?)
+    write_bytes_refuse_symlink(&metadata_path, &serde_json::to_vec_pretty(&metadata)?)
         .with_context(|| format!("failed to write {}", metadata_path.display()))?;
 
     let index_path = checkpoint_index_path(&root);
@@ -8345,7 +8461,7 @@ fn create_checkpoint(path: &str) -> anyhow::Result<CheckpointCreateSummary> {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
-    std::fs::write(&index_path, serde_json::to_vec_pretty(&records)?)
+    write_bytes_refuse_symlink(&index_path, &serde_json::to_vec_pretty(&records)?)
         .with_context(|| format!("failed to write {}", index_path.display()))?;
 
     Ok(summary)
@@ -8965,7 +9081,7 @@ fn restore_validation_rollback_snapshots(
     let mut errors = Vec::new();
 
     for (file, bytes) in snapshots {
-        match std::fs::write(file, bytes) {
+        match write_bytes_refuse_symlink(Path::new(file), bytes) {
             Ok(()) => files_restored.push(file.clone()),
             Err(error) => errors.push(format!("failed to restore {file}: {error}")),
         }
@@ -9000,6 +9116,11 @@ fn emit_rollback_status(summary: &ValidationRollbackSummary) {
 /// previously followed by a plain `std::fs::write` -- a confined write could escape its
 /// anchor. Mirrors the confine-then-open discipline `_write_json_refuse_symlink` already
 /// uses on the Python side (`src/tensor_grep/cli/main.py`).
+///
+/// audit #115: also guards `create_checkpoint`'s metadata.json + the shared/predictable
+/// index.json write, and `restore_validation_rollback_snapshots`'s per-file restore write --
+/// the same TOCTOU class, just with the checkpoint/rollback root standing in for
+/// `--audit-manifest`'s confined target.
 fn write_bytes_refuse_symlink(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     use std::fs::OpenOptions;
 

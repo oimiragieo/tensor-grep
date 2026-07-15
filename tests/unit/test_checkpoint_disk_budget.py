@@ -123,6 +123,61 @@ def test_create_checkpoint_cleans_up_snapshot_dir_on_mid_copy_failure(
     assert _storage_dir_entries(root) == [], "a half-copied checkpoint dir was left behind"
 
 
+def test_create_checkpoint_cleans_up_snapshot_dir_on_mid_copy_keyboard_interrupt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """audit #125a: KeyboardInterrupt/SystemExit are BaseException, not Exception -- a Ctrl+C
+    mid-copy must trigger the same half-copied-dir cleanup as an ordinary OSError (see
+    test_create_checkpoint_cleans_up_snapshot_dir_on_mid_copy_failure above), and the interrupt
+    must still propagate to the caller afterward, not be swallowed by the cleanup handler."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "a.py").write_text("a\n", encoding="utf-8")
+    (root / "b.py").write_text("b\n", encoding="utf-8")
+
+    original_copy2 = checkpoint_store.shutil.copy2
+    calls = {"n": 0}
+
+    def _interrupt_on_second_copy(src, dst, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise KeyboardInterrupt
+        return original_copy2(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(checkpoint_store.shutil, "copy2", _interrupt_on_second_copy)
+
+    with pytest.raises(KeyboardInterrupt):
+        checkpoint_store.create_checkpoint(str(root))
+
+    assert _storage_dir_entries(root) == [], (
+        "a half-copied checkpoint dir was left behind after a KeyboardInterrupt"
+    )
+
+
+def test_create_checkpoint_cleans_up_snapshot_dir_on_metadata_write_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """audit #125a: the cleanup try/except must extend through the metadata-write step, not
+    stop at the end of the copy loop -- a failure while writing metadata.json (after the copy
+    has fully succeeded) must not orphan the now fully-copied-but-unindexed per-checkpoint
+    directory."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "a.py").write_text("a\n", encoding="utf-8")
+
+    def _boom_metadata_write(*args, **kwargs):
+        raise OSError("simulated metadata write failure")
+
+    monkeypatch.setattr(checkpoint_store, "_write_checkpoint_metadata", _boom_metadata_write)
+
+    with pytest.raises(OSError):
+        checkpoint_store.create_checkpoint(str(root))
+
+    assert _storage_dir_entries(root) == [], (
+        "a fully-copied checkpoint dir was left behind after a metadata-write failure"
+    )
+
+
 def test_create_checkpoint_respects_raised_env_cap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
