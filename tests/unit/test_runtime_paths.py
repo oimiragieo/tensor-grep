@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import mock_open, patch
 
 import pytest
 
@@ -652,6 +652,25 @@ class TestIsWslHost:
         )
         assert runtime_paths.is_wsl_host() is True
 
+    def test_true_via_proc_version_when_env_and_run_wsl_both_stripped(self, monkeypatch):
+        """The stripped-environment fallback: a wrapper/service that drops
+        WSL_DISTRO_NAME/WSL_INTEROP and runs on a WSL1-style host with no `/run/WSL` is still
+        detected via `/proc/version`, which every real WSL1/WSL2 kernel stamps with "microsoft"
+        (e.g. "Linux version 6.6.87.2-microsoft-standard-WSL2")."""
+        monkeypatch.delenv("WSL_DISTRO_NAME", raising=False)
+        monkeypatch.delenv("WSL_INTEROP", raising=False)
+        original_exists = os.path.exists
+        monkeypatch.setattr(
+            runtime_paths.os.path,
+            "exists",
+            lambda p: False if p == "/run/WSL" else original_exists(p),
+        )
+        monkeypatch.setattr(
+            "builtins.open",
+            mock_open(read_data="Linux version 6.6.87.2-microsoft-standard-WSL2\n"),
+        )
+        assert runtime_paths.is_wsl_host() is True
+
     def test_false_on_plain_linux_without_any_wsl_signal(self, monkeypatch):
         monkeypatch.delenv("WSL_DISTRO_NAME", raising=False)
         monkeypatch.delenv("WSL_INTEROP", raising=False)
@@ -661,6 +680,28 @@ class TestIsWslHost:
             "exists",
             lambda p: False if p == "/run/WSL" else original_exists(p),
         )
+        monkeypatch.setattr(
+            "builtins.open",
+            mock_open(read_data="Linux version 6.8.0-generic (buildd@bare-metal)\n"),
+        )
+        assert runtime_paths.is_wsl_host() is False
+
+    def test_false_when_proc_version_unreadable(self, monkeypatch):
+        """A bare/minimal or permission-restricted host where `/proc/version` cannot be opened
+        must fail closed to False, never raise."""
+        monkeypatch.delenv("WSL_DISTRO_NAME", raising=False)
+        monkeypatch.delenv("WSL_INTEROP", raising=False)
+        original_exists = os.path.exists
+        monkeypatch.setattr(
+            runtime_paths.os.path,
+            "exists",
+            lambda p: False if p == "/run/WSL" else original_exists(p),
+        )
+
+        def _raise_file_not_found(*_args, **_kwargs):
+            raise FileNotFoundError("/proc/version")
+
+        monkeypatch.setattr("builtins.open", _raise_file_not_found)
         assert runtime_paths.is_wsl_host() is False
 
 
