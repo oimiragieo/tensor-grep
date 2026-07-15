@@ -1,6 +1,20 @@
 # CHANGELOG
 
 
+## v1.75.4 (2026-07-15)
+
+### Bug Fixes
+
+- **gpu**: Doctor probe precision + native error-kind taxonomy gate-nits
+  ([#597](https://github.com/oimiragieo/tensor-grep/pull/597),
+  [`3fd3af7`](https://github.com/oimiragieo/tensor-grep/commit/3fd3af7cfea7f85e5664c2c9d736ab5ee3c52dc5))
+
+5 GPU Phase-0 gate-nits + gate-nit-C. NIT-B evidence-path translate, NIT-1+MF-2 doctor version
+  dedup+reorder, NIT-2 path_not_found cross-domain-conditional, NIT-3
+  gpu_invalid_device_id->failed_input, MF-1 NIT-4 cfg(any(cuda,test)) classifier + tests now run.
+  Opus gate aef52d41=SHIP-WITH-NIT (8/8 probes clean); CI CLEAN. Nit banked #143.
+
+
 ## v1.75.3 (2026-07-15)
 
 ### Bug Fixes
