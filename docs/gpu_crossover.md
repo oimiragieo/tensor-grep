@@ -36,6 +36,42 @@ Current native evidence:
 
 The latest user dogfood also reported the native harness as `passed = false` because the speed target and error-test expectations did not pass. That is the intended decision: correctness evidence is necessary, but it is not enough to enable or market GPU auto-routing.
 
+## 2026-07-14 GPU Phase-0 Hardening Wave (Audit #171, v1.75.1-v1.75.4)
+
+Four PRs closed audit #171's P0-1 through P0-5 findings against the GPU doctor/agent probe surface and
+the installer/calibrate remediation paths, each gated by the mandatory Opus adversarial review (SHIP /
+SHIP-WITH-NIT verdicts, 8/8 probes clean). This wave hardens *evidence quality and operator messaging*
+around the existing GPU surface; it does not change the promotion decision above -- native CUDA
+correctness remains locally proven, and public managed promotion remains unmet.
+
+- `#594` (v1.75.1): fixed a WSL path-domain mismatch in the doctor and agent GPU probes. On WSL,
+  `resolve_native_tg_binary()` can return a Windows-target binary; both probes were writing a GPU-route
+  sentinel under a Linux `TemporaryDirectory` and passing that `/tmp/...` path as argv to a Windows PE,
+  which cannot resolve it, so a path-domain mismatch previously read as "no GPU support" rather than its
+  real cause. Fixed by detecting genuine WSL cross-domain execution, translating the sentinel path via
+  `wslpath -w`, and failing closed to a distinct `path_domain_mismatch` status when translation is
+  unavailable. Also added a `cargo check --features cuda` anti-bit-rot CI gate (runs on every PR, no CUDA
+  toolkit required) so the `cuda` Cargo feature -- normally compiled only by release legs gated on the
+  `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE` repository variable equalling `native-frontdoor-gpu` --
+  cannot rot silently between releases.
+- `#595` (v1.75.2): replaced the doctor's opaque GPU-probe `status="failed"` (which collapsed every
+  nonzero exit code from the native binary into one undifferentiated status) with a structured
+  `native_error_kind` taxonomy (`failed_path_bridging` / `failed_input` / `failed_gpu_unavailable` /
+  `failed_other`), and added an honest pre-flight warning when a requested `--gpu-device-ids` value is
+  out of range for the local device inventory instead of an indistinguishable silent CPU fallback.
+- `#596` (v1.75.3): added a `calibrate` remediation message on both native bail arms, plus a loud
+  nvidia-requested/cpu-delivered installer downgrade warning (guarded so it never fires on a host with no
+  NVIDIA candidate at all, which would be a false claim rather than a true one).
+- `#597` (v1.75.4): closed 5 gate-nits from the Opus review of the prior three PRs, including re-gating
+  `GpuRouteFailureKind` / `sanitize_cuda_detail` / `classify_gpu_route_failure` in `rust_core/src/main.rs`
+  from `#[cfg(feature = "cuda")]` to `#[cfg(any(feature = "cuda", test))]` so a default `cargo test` (no
+  `--features cuda`) actually compiles and runs their unit tests instead of silently skipping them -- see
+  `AGENTS.md`'s CI/Release Rules section for this pattern generalized as a standing rule.
+
+Separately, `#593` (v1.75.0) shipped an unrelated `tg orient` / `tg agent` improvement (broadened
+`suggested_ignore` vendor/skill-tree detection) that landed in the same version range by coincidence of
+publish order; it is not part of this GPU wave and is not summarized here.
+
 ## 2026-06-29 Wave-2 Promotion-Schema Audit
 
 A structured audit of the promotion-gate schema and `public-gpu-proof.yml` workflow was performed as part of the wave-2 hardening cycle.
