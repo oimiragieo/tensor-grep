@@ -361,3 +361,73 @@ def test_find_output_is_ascii(tmp_path: Path, monkeypatch) -> None:  # type: ign
     assert result.exit_code == 0, result.output
     assert result.stdout.isascii()
     assert result.stderr.isascii()
+
+
+def _spy_on_rank_chunks(monkeypatch) -> list[float]:  # type: ignore[no-untyped-def]
+    """Wrap the REAL `rank_chunks` (reranker.py) so every call's `dense_weight` kwarg is recorded
+    before delegating -- `_execute_find` imports `rank_chunks` via a LOCAL
+    `from tensor_grep.core.reranker import rank_chunks` at call time (main.py), so the module
+    attribute on `tensor_grep.core.reranker` (not `tensor_grep.cli.main`) is the correct monkeypatch
+    target: the local import re-resolves the name from that module's namespace on every call."""
+    from tensor_grep.core import reranker as reranker_module
+
+    real_rank_chunks = reranker_module.rank_chunks
+    captured: list[float] = []
+
+    def _spy(*args, **kwargs):  # type: ignore[no-untyped-def]
+        captured.append(kwargs.get("dense_weight", 1.0))
+        return real_rank_chunks(*args, **kwargs)
+
+    monkeypatch.setattr(reranker_module, "rank_chunks", _spy)
+    return captured
+
+
+def test_find_dense_weight_default_is_noop(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """TG_FIND_DENSE_WEIGHT unset (the default, #189) must be a byte-identical no-op: `_execute_find`
+    always calls `rank_chunks` with `dense_weight=1.0`, regardless of query shape -- including a
+    multi-word NL query, the ONE case the adaptive rule would treat differently if the default were
+    not truly inert. Mirrors `test_find_late_head_only_when_env_set`'s "prove the default never
+    changes behavior" strategy, at the `dense_weight` kwarg instead of the late-rerank probe."""
+    monkeypatch.delenv("TG_FIND_DENSE_WEIGHT", raising=False)
+    _stub_dense_clean(monkeypatch)
+    captured = _spy_on_rank_chunks(monkeypatch)
+    (tmp_path / "invoice.py").write_text(
+        "def make_invoice(invoice_id):\n    invoice = invoice_id\n    return invoice\n",
+        encoding="utf-8",
+    )
+
+    # A multi-word (>2 split_terms tokens) query -- the adaptive rule's NL branch -- so this test
+    # would catch an accidental "adaptive rule ignores the env-unset default" bug, not just an
+    # accidental non-1.0 literal default.
+    result = CliRunner().invoke(app, ["find", "invoice processing helper", str(tmp_path), "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert captured, "rank_chunks was never called"
+    assert all(weight == 1.0 for weight in captured), (
+        f"expected dense_weight=1.0 (no-op) on every call with the env unset, got {captured}"
+    )
+
+
+def test_find_dense_weight_adaptive_nl_vs_literal(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """TG_FIND_DENSE_WEIGHT=5.0 (#189, ledger DENSE-WEIGHT SWEEP): a multi-word/NL query (>2
+    `split_terms` tokens) gets the boosted dense_weight; a short (<=2 token) identifier/literal
+    query is protected at 1.0 -- the adaptive rule's whole point (the golden-set sweep's canary,
+    `vm-behavior-10`, showed dense-only regresses a short lexical-overlap query, hence NOT a blind
+    flip)."""
+    monkeypatch.setenv("TG_FIND_DENSE_WEIGHT", "5.0")
+    _stub_dense_clean(monkeypatch)
+    captured = _spy_on_rank_chunks(monkeypatch)
+    (tmp_path / "invoice.py").write_text(
+        "def make_invoice(invoice_id):\n    invoice = invoice_id\n    return invoice\n",
+        encoding="utf-8",
+    )
+
+    nl_result = CliRunner().invoke(
+        app, ["find", "invoice processing helper text", str(tmp_path), "--json"]
+    )
+    assert nl_result.exit_code == 0, nl_result.output
+    assert captured[-1] == 5.0, f"multi-word query must get the boosted weight, got {captured}"
+
+    literal_result = CliRunner().invoke(app, ["find", "invoice", str(tmp_path), "--json"])
+    assert literal_result.exit_code == 0, literal_result.output
+    assert captured[-1] == 1.0, f"a 1-token literal query must stay at 1.0, got {captured}"
