@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from tensor_grep.backends.base import ComputeBackend
     from tensor_grep.core.config import SearchConfig
     from tensor_grep.core.result import MatchLine, SearchResult
+    from tensor_grep.core.retrieval_chunker import Chunk
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
 # backlog #1 (Fable+thinktank plan, 2026-07-06): kept numerically in sync with
@@ -3982,6 +3983,352 @@ def _apply_semantic_rerank(all_results: "SearchResult", pattern: str) -> "Search
             bm25_index=bm25_index,
             dense_index=None,
         )
+
+
+# tg find (Wave 2b/2c, #189): the whole-repo hybrid semantic search command. Shares the exact
+# leg-construction/degrade scaffold `_apply_semantic_rerank` uses above (dense-leg availability
+# probe, late-rerank env gate, BackendExecutionError propagation) but differs in one load-bearing
+# way: `--semantic`'s corpus is already regex-prefiltered by `search`'s matched-file set, so a
+# corpus-cap trip there is a benign BM25-only degrade (exit 0). `tg find` walks the WHOLE repo with
+# no prefilter, so a corpus-cap/deadline/max-repo-files trip here means the ranking covers only
+# PART of the repo -- that must surface as `result_incomplete` + exit 2 (fix-approach council
+# must-fix C2), never a silent exit-0 degrade.
+_FIND_CORPUS_CHUNK_CAP = MAX_CHUNKS
+
+
+def _find_representative_line(chunk: "Chunk", query_terms: set[str]) -> tuple[int, str]:
+    """Pick ONE line within `chunk` to surface as the synthesized `MatchLine` (D2): the line with
+    the most `split_terms` overlap with the query, ties broken by the FIRST such line (the `>`
+    comparison below never replaces an already-found best on an equal score) -- deterministic
+    regardless of repeated content within the chunk.
+
+    Falls back to the chunk's first line (or an empty string for a pathologically empty chunk)
+    when the query has no terms at all or the chunk somehow has no lines -- `chunk_file` never
+    returns an empty-text chunk in practice, but this stays total rather than raising on it.
+    """
+    from tensor_grep.core.retrieval_lexical import split_terms
+
+    lines = chunk.text.splitlines()
+    if not lines:
+        return chunk.start_line, ""
+
+    best_index = 0
+    best_overlap = -1
+    for index, line_text in enumerate(lines):
+        overlap = len(query_terms & set(split_terms(line_text))) if query_terms else 0
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best_index = index
+
+    return chunk.start_line + best_index, lines[best_index]
+
+
+def _execute_find(
+    query: str,
+    path: str,
+    *,
+    limit: int,
+    max_repo_files: int,
+    max_tokens: int,
+    deadline: float | None,
+) -> "SearchResult":
+    """The `tg find` pipeline: whole-repo walk -> chunk -> BM25 [+ dense] [+ late MaxSim] rank via
+    the shared `rank_chunks` core (`core/reranker.py`) -> `--limit` -> token-budget fit -> a
+    synthesized `SearchResult` (one representative `MatchLine` per selected chunk, D2).
+
+    Fail-closed matrix (D3, fix-approach council must-fixes C1-C3):
+    - dense/late-leg extra absent, model not fetched, or a recoverable degrade -> visible BM25-only
+      (or pre-late-stage) fallback: `rank_fallback_reason` set + a `tg:`-prefixed stderr line, exit
+      0. Mirrors `_apply_semantic_rerank`'s dense/late scaffold exactly (same probes, same helper).
+    - a genuine unrecoverable backend fault (`BackendExecutionError` from a corrupt model directory
+      or an encode-time crash) is NOT caught here -- it propagates to the command boundary (C1),
+      which must catch it and exit 2 with a clean `tg:` message, never a raw traceback.
+    - a repo walk capped by `--max-repo-files`, a `--deadline` cutoff (walk or chunk phase), a
+      per-file chunk() `RuntimeError`, or the corpus-wide chunk cap all mean the ranked corpus was
+      PARTIAL (no regex prefilter narrowed it first, unlike `--semantic`) -- each sets
+      `result_incomplete=True` + appends a human-readable `incomplete_reason` (C2); the caller
+      exits 2 for these, never the exit-0 BM25-only degrade `--semantic`'s own corpus cap uses.
+    - `--limit` and `--max-tokens` are OUTPUT caps on an otherwise-complete ranking (mirrors
+      `_scan_incomplete`'s output-cap-stays-0 carve-out, repo_map.py) -- they truncate the
+      lowest-ranked matches first and never set `result_incomplete`; at least one match survives
+      the token budget even if it alone exceeds `max_tokens` (the "confident false zero" floor
+      `_apply_context_token_budget` documents at repo_map.py:8221).
+    """
+    from tensor_grep.cli.repo_map import (
+        _deadline_monotonic_from_seconds,
+        _DeadlineBreakFlag,
+        _iter_repo_files,
+    )
+    from tensor_grep.cli.repo_map import _estimate_tokens as _repo_map_estimate_tokens
+    from tensor_grep.core.reranker import rank_chunks
+    from tensor_grep.core.result import MatchLine, SearchResult
+    from tensor_grep.core.retrieval_bm25 import Bm25Index
+    from tensor_grep.core.retrieval_chunker import Chunk, chunk_file
+    from tensor_grep.core.retrieval_dense import (
+        DenseIndex,
+        DenseUnavailableError,
+        default_model_dir,
+        dense_available,
+        load_dense_model,
+    )
+    from tensor_grep.core.retrieval_lexical import split_terms
+
+    root = Path(path).expanduser().resolve()
+    if not root.exists():
+        raise FileNotFoundError(f"Path not found: {root}")
+
+    result = SearchResult()
+    incomplete_reasons: list[str] = []
+
+    deadline_monotonic = _deadline_monotonic_from_seconds(deadline)
+    walk_deadline_hit = _DeadlineBreakFlag()
+    all_files = _iter_repo_files(
+        root,
+        max_files=max_repo_files,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=walk_deadline_hit,
+    )
+
+    if walk_deadline_hit.hit:
+        reason = (
+            f"repo walk exceeded the {deadline:g}s deadline after {len(all_files)} files -- "
+            "ranking covers a partial corpus"
+        )
+        incomplete_reasons.append(reason)
+        sys.stderr.write(f"tg: {reason}\n")
+    elif len(all_files) >= max_repo_files:
+        reason = (
+            f"repo walk capped at --max-repo-files={max_repo_files}; the repo may hold more "
+            "files -- raise --max-repo-files to widen coverage"
+        )
+        incomplete_reasons.append(reason)
+        sys.stderr.write(f"tg: {reason}\n")
+
+    # C2: chunk with a per-file RuntimeError guard + a corpus-wide cap, mirroring
+    # `_apply_semantic_rerank`'s chunk-building loop (main.py:3886-3927) in SHAPE only -- the
+    # ACTION on trip deliberately differs (see the docstring above): note partial coverage and
+    # keep going / stop, never force a bm25-only retry the way the regex-prefiltered `--semantic`
+    # path does.
+    chunks: list[Chunk] = []
+    chunked_file_count = 0
+    for file_path in all_files:
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            reason = (
+                f"chunking exceeded the {deadline:g}s deadline after {chunked_file_count} of "
+                f"{len(all_files)} files -- ranking covers a partial corpus"
+            )
+            incomplete_reasons.append(reason)
+            sys.stderr.write(f"tg: {reason}\n")
+            break
+        try:
+            file_chunks = chunk_file(str(file_path))
+        except RuntimeError as exc:
+            reason = f"skipped {file_path}: {exc}"
+            incomplete_reasons.append(reason)
+            sys.stderr.write(f"tg: {reason}\n")
+            continue
+        chunks.extend(file_chunks)
+        chunked_file_count += 1
+        if len(chunks) > _FIND_CORPUS_CHUNK_CAP:
+            reason = (
+                f"find corpus chunk cap ({_FIND_CORPUS_CHUNK_CAP}) reached over "
+                f"{chunked_file_count} of {len(all_files)} files -- ranking covers a partial corpus"
+            )
+            incomplete_reasons.append(reason)
+            sys.stderr.write(f"tg: {reason}\n")
+            break
+
+    if incomplete_reasons:
+        result.result_incomplete = True
+        result.incomplete_reason = "; ".join(incomplete_reasons)
+
+    if not chunks:
+        return result
+
+    bm25_index = Bm25Index(chunks)
+
+    dense_index = None
+    available, unavailable_reason = dense_available()
+    if not available:
+        result.rank_fallback_reason = unavailable_reason
+        sys.stderr.write(f"tg: {unavailable_reason}\n")
+    else:
+        try:
+            model = load_dense_model(default_model_dir())
+            dense_index = DenseIndex(chunks, model)
+        except DenseUnavailableError as exc:
+            result.rank_fallback_reason = str(exc)
+            sys.stderr.write(f"tg: {exc}\n")
+        # BackendExecutionError (e.g. a corrupt model directory) deliberately propagates -- the
+        # command boundary (C1) must catch it and exit 2, never degrade here.
+
+    late_reranker = None
+    if os.environ.get("TG_LATE_RERANK") == "1":
+        from tensor_grep.core.retrieval_late import (
+            LateRerankUnavailableError,
+            late_available,
+            load_late_reranker,
+        )
+
+        late_ok, late_reason = late_available()
+        if not late_ok:
+            _note_late_rerank_degraded(result, late_reason or "late rerank unavailable")
+        else:
+            try:
+                late_reranker = load_late_reranker()
+            except LateRerankUnavailableError as exc:
+                _note_late_rerank_degraded(result, str(exc))
+            # BackendExecutionError deliberately propagates -- mirrors the dense leg immediately
+            # above and `_apply_semantic_rerank`'s identical contract.
+
+    fused_order, late_fallback_reason = rank_chunks(
+        query,
+        chunks,
+        bm25_index=bm25_index,
+        dense_index=dense_index,
+        late_reranker=late_reranker,
+    )
+    if late_fallback_reason:
+        result.rank_fallback_reason = (
+            f"{result.rank_fallback_reason}; {late_fallback_reason}"
+            if result.rank_fallback_reason
+            else late_fallback_reason
+        )
+
+    selected = fused_order[: max(0, limit)]
+    query_terms = set(split_terms(query))
+    matches: list[MatchLine] = []
+    for chunk_index in selected:
+        chunk = chunks[chunk_index]
+        line_number, line_text = _find_representative_line(chunk, query_terms)
+        matches.append(MatchLine(line_number=line_number, text=line_text, file=chunk.file_path))
+
+    # Output-only budget fit (never touches result_incomplete -- see docstring): truncate the
+    # LOWEST-ranked matches first (the tail of the already best-first `matches` list), floored at 1
+    # survivor so a real hit is never trimmed down to a "confident false zero".
+    if max_tokens > 0 and matches:
+        budgeted: list[MatchLine] = []
+        running_tokens = 0
+        for match in matches:
+            match_tokens = _repo_map_estimate_tokens(match.text)
+            if budgeted and running_tokens + match_tokens > max_tokens:
+                break
+            budgeted.append(match)
+            running_tokens += match_tokens
+        matches = budgeted or matches[:1]
+
+    result.matches = matches
+    result.total_matches = len(matches)
+    matched_paths = sorted({match.file for match in matches})
+    result.matched_file_paths = matched_paths
+    result.total_files = len(matched_paths)
+    for match in matches:
+        result.match_counts_by_file[match.file] = result.match_counts_by_file.get(match.file, 0) + 1
+
+    return result
+
+
+@app.command()
+def find(
+    query: str = typer.Argument(..., help="Natural-language or keyword query to search for."),
+    path: str = typer.Argument(".", help="Root directory (or single file) to search."),
+    limit: int = typer.Option(10, "--limit", min=1, help="Maximum ranked chunks to return."),
+    max_repo_files: int = typer.Option(
+        _DEFAULT_AGENT_REPO_SCAN_LIMIT,
+        "--max-repo-files",
+        min=1,
+        help="Maximum repo files to scan before ranking.",
+    ),
+    max_tokens: int = typer.Option(
+        4000,
+        "--max-tokens",
+        min=0,
+        help=(
+            "Bound the result set to ~N tokens, dropping the lowest-ranked matches first "
+            "(0 = unbounded)."
+        ),
+    ),
+    deadline: float | None = typer.Option(
+        None,
+        "--deadline",
+        min=0.1,
+        help=(
+            "Stop the repo walk/chunk phase after N seconds and return ranked results over the "
+            "partial corpus scanned so far (result_incomplete=true, exit 2) instead of running "
+            "unbounded."
+        ),
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+    ndjson: bool = typer.Option(
+        False, "--ndjson", help="Emit newline-delimited JSON, one object per match."
+    ),
+) -> None:
+    """EXPERIMENTAL: whole-repo hybrid semantic search (BM25 + local CPU dense-embedding
+    relevance, RRF-fused [+ optional MaxSim late rerank]), ranked file:line results.
+
+    Unlike `tg search --rank`/`--semantic` (which re-rank an EXISTING regex match set), `tg find`
+    walks and ranks the WHOLE repo -- no pattern pre-filter, so it can surface content a
+    vocabulary-mismatched regex would miss. No API key, no GPU. The dense leg requires the
+    `semantic` extra and a fetched model; falls back to BM25-only (visibly, never silently) when
+    either is missing -- a BM25-only `tg find` is still a fully supported mode. Bounded by default
+    (`--max-repo-files`, `--deadline`, an internal corpus-wide chunk cap): a truncated scan is
+    marked `result_incomplete` and exits 2 rather than silently reporting a partial repo as
+    complete. Does not offer `--format rg` -- this is not a grep-parity surface.
+    """
+    from tensor_grep.backends.base import BackendExecutionError
+
+    try:
+        result = _execute_find(
+            query,
+            path,
+            limit=limit,
+            max_repo_files=max_repo_files,
+            max_tokens=max_tokens,
+            deadline=deadline,
+        )
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    except BackendExecutionError as exc:
+        # C1: mirror `search`'s command-boundary catch (main.py ~7528-7537) -- `_execute_find`
+        # deliberately does not catch this (see its docstring); a corrupt model / encode-time
+        # fault must exit cleanly here, never a raw traceback.
+        if json_output:
+            _emit_search_error_json("find_backend_error", str(exc))
+        else:
+            typer.echo(f"tg: {exc}", err=True)
+        sys.exit(2)
+
+    if result.is_empty:
+        if json_output:
+            from tensor_grep.cli.formatters.json_fmt import JsonFormatter
+
+            _safe_stdout_line(JsonFormatter().format(result))
+        # C3: replicate search's hand-written exit block (main.py ~7643-7679) -- the SearchResult
+        # envelope buys the JSON fields, not the exit codes.
+        sys.exit(2 if result.result_incomplete else 1)
+
+    formatter: OutputFormatter
+    if ndjson:
+        from tensor_grep.cli.formatters.json_fmt import NdjsonFormatter
+
+        formatter = NdjsonFormatter()
+    elif json_output:
+        from tensor_grep.cli.formatters.json_fmt import JsonFormatter
+
+        formatter = JsonFormatter()
+    else:
+        from tensor_grep.cli.formatters.ripgrep_fmt import RipgrepFormatter
+        from tensor_grep.core.config import SearchConfig
+
+        # `with_filename=True` unconditionally: unlike `search` (whose matches are usually already
+        # scoped to a query'd area), `find` ranks across the whole repo, so the file is always
+        # relevant context even when every top match happens to land in one file.
+        formatter = RipgrepFormatter(config=SearchConfig(with_filename=True))
+
+    _safe_stdout_line(formatter.format(result))
+    if result.result_incomplete:
+        sys.exit(2)
 
 
 def _search_error_payload(error: str, detail: str) -> dict[str, object]:
