@@ -1,6 +1,112 @@
 # CHANGELOG
 
 
+## v1.76.12 (2026-07-16)
+
+### Bug Fixes
+
+- **importers**: Resolve directory-index imports (require('./router') -> router/index.js) (#188)
+  ([#619](https://github.com/oimiragieo/tensor-grep/pull/619),
+  [`1b71660`](https://github.com/oimiragieo/tensor-grep/commit/1b716607dc276164580568945990fda2e35fc2f5))
+
+* fix(importers): resolve directory-index bare specifiers in the reverse-importers alias prefilter
+
+`tg importers lib/router/index.js` returned `importer_count: 0` on express@4.21.1 even though
+  `lib/application.js`/`lib/express.js` both do `require('./router')` -- a bare relative specifier
+  that names a DIRECTORY, which Node resolves to `router/index.js` (the forward `tg imports` side
+  already resolves this correctly).
+
+Root cause: `_module_aliases_for_path` (repo_map.py:7430), which backs the coarse alias PREFILTER
+  `_reverse_importers` uses to build reverse-importer candidates, only generates aliases anchored on
+  a file's OWN stem/dotted-parts -- for `router/index.js` that's "index"/"router.index", never the
+  PARENT directory name "router". So a bare-specifier importer never became a prefilter candidate
+  and never reached the precise per-candidate CONFIRM step (`_js_ts_module_matches_definition`,
+  which already mirrors Node's file-then-index resolution order via `_js_ts_candidate_files` and
+  would have resolved it correctly once given the chance).
+
+Fix: when a file's stem is a directory-index/package-init sentinel ("index" for JS/TS, "__init__"
+  for Python -- the same magic-name set `_definition_module_parts` already uses for bare/absolute
+  specifier matching, minus Rust's "mod" which is out of scope here), also alias it by its parent
+  directory name. This only WIDENS the prefilter's candidate set; the existing CONFIRM step still
+  requires an exact resolved-path match, so it cannot introduce a false-positive edge on its own
+  (verified: `require('./routerX')` normalizes to "routerx", never "router").
+
+Verified on the real express@4.21.1 corpus: `importer_count` 0 -> 2 (application.js:17,
+  express.js:20), while `require('./router/route')` (a genuinely different target) stays excluded.
+
+Added 6 tests (RED on origin/main, GREEN with this fix): bare require(), bare ESM import, the Python
+  __init__.py symmetric case, plus 3 guardrails (prefix-false-match x2, no double-count when a file
+  imports the same directory two different ways). Ran the full existing repo_map/importers/
+  callers/blast-radius/context/agent-capsule regression set (271 tests) with zero new failures.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(importers): remediate directory-index alias per adversarial gate (confine to tg importers;
+  soften bare-specifier claim)
+
+Addresses the SHIP-WITH-NITS MUST-FIX findings on the first fix (eb3e8d5).
+
+Finding B (the core fix -- confine the alias so it perturbs no other consumer): The first fix added
+  the directory-index parent-dir alias directly to the SHARED `_module_aliases_for_path`, which also
+  feeds substring/exact RANKING (`_import_graph_bonus`, `_test_import_bonus`, `_test_graph_score`),
+  blast-radius scope expansion (set-intersection in `_scoped_repo_map_for_edit_plan_blast_radius`),
+  and the test-coverage gate. A top-level `pkg/__init__.py` aliasing to bare "pkg" there inflated
+  the `tg edit-plan` blast-radius (proven: editing `pkg/__init__.py` dragged every `import pkg.*`
+  file into scope).
+
+- Reverted `_module_aliases_for_path` to a byte-identical executable body vs origin/main. - Added
+  `_reverse_importer_extra_aliases(path)` (the parent-dir alias for index/__init__ files). -
+  `_reverse_importers` gained an opt-in `include_directory_index_aliases` param (default OFF).
+  Confined even tighter than the gate asked: ONLY `build_file_importers_from_map` (`tg importers`)
+  passes True, because it is the one reverse consumer that runs the per-candidate CONFIRM step
+  (`_confirm_import_edges`). The blast-radius (:16587) and context/agent-capsule (:3836) callers
+  feed `_reverse_importers` into PageRank SCORING with no confirm step -- and even there a widened
+  edge measurably reordered pinned output (`test_python_termui_symbols_prefer_depth_one_dependents`
+  regressed under the broader confinement before I narrowed it to `tg importers`-only).
+
+Finding A (soften the overclaim + document the bare-specifier behavior): The old comment claimed the
+  confirm step "cannot create a false-positive edge." True for RELATIVE specifiers (exact path
+  resolve) but FALSE for BARE ones: a bare `import X from 'react'` falls through to
+  `_module_path_matches_definition`, a path-suffix compare that strips the index magic name, so it
+  matches a local `src/react/index.ts` at the pre-existing 0.2 confidence. Softened the docstring to
+  state this truthfully (correct in pnpm/yarn workspace monorepos; a deliberate false-positive only
+  for an npm-name-vs-local-dir collision) and pinned it with a test.
+
+NIT: noted Rust `mod.rs`'s exclusion from `_DIRECTORY_INDEX_STEMS` is also a PRECISION choice
+  (adding "mod" would extend the bare-specifier false-positive surface to Rust), not just scope.
+
+Tests (all RED on the appropriate pre-remediation state, GREEN now): -
+  test_build_file_importers_bare_specifier_matches_local_directory_index_package (finding A). -
+  test_directory_index_parent_alias_confined_to_reverse_importers (finding B root cause; RED on the
+  first fix where `_module_aliases_for_path("pkg/__init__.py")` contained "pkg"). -
+  test_edit_plan_blast_radius_scope_not_inflated_by_top_level_init (finding B vector; RED on the
+  first fix -- `service.py` was inflated into the edit-plan scope).
+
+Re-verified: express@4.21.1 `tg importers lib/router/index.js` still importer_count 0 -> 2
+
+(application.js:17, express.js:20; `./router/route` still excluded); `_module_aliases_for_path`
+  executable body byte-identical to origin/main; 156-test importers/callers/blast-radius/context/
+  cross-lang regression set green; the previously-regressed edit_plan_seed depth tests green again;
+  `ruff format --check --preview` + `ruff check` clean.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Reconcile to v1.76.11 (device_detect WSL2 honesty #617 + help-contract flake fix
+  #616) ([#618](https://github.com/oimiragieo/tensor-grep/pull/618),
+  [`1158bef`](https://github.com/oimiragieo/tensor-grep/commit/1158bef8591c3c84750078ba6e0f7a5373f0f507))
+
+Live PyPI v1.76.10 -> v1.76.11. Adds the CURRENT STATE entry for #617 (get_platform WSL2 3-signal
+  honesty, Opus SHIP-WITH-NITS + parity-test) and the no-release #616 (invariant help-contract
+  assertion for clap's width/ platform-dependent visible_alias rendering). PR queue EMPTY;
+  AI-actionable backlog EMPTY.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.76.11 (2026-07-16)
 
 ### Bug Fixes
