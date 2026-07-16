@@ -420,6 +420,155 @@ def test_build_file_importers_confirms_real_importer_and_excludes_precision_trap
     assert edge["kind"] == "import-consumer"
 
 
+# ---------------------------------------------------------------------------------------------
+# Reverse directory-index recall (express@4.21.1 dogfood bug): a bare relative specifier that
+# names a DIRECTORY -- `require('./router')` -- resolves, by Node's own directory-index
+# convention, to `router/index.js` (the forward `tg imports` side already proves this via
+# test_build_file_imports_resolves_require_via_index_probe above). The reverse side used to miss
+# it entirely: the coarse alias PREFILTER (`_reverse_importers`, built from
+# `_module_aliases_for_path`) never gave `router/index.js` a "router" alias -- every alias it
+# generated was anchored on the file's OWN stem ("index"), never its PARENT directory name -- so
+# a bare-specifier importer never became a prefilter CANDIDATE and never reached the precise
+# per-candidate CONFIRM step (`_js_ts_module_matches_definition`) that would have resolved it
+# correctly. `tg importers lib/router/index.js` on express@4.21.1 returned `importer_count: 0`
+# despite `lib/application.js`/`lib/express.js` both doing `require('./router')`.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_build_file_importers_finds_directory_index_bare_require_specifier(
+    tmp_path: Path,
+) -> None:
+    """The express@4.21.1 repro: `require('./router')` must be a confirmed importer of
+    `router/index.js`, not just an unresolved/invisible reference."""
+    project = tmp_path / "project"
+    router_dir = project / "lib" / "router"
+    router_dir.mkdir(parents=True)
+    target = router_dir / "index.js"
+    target.write_text("module.exports = {};\n", encoding="utf-8")
+    consumer = project / "lib" / "app.js"
+    consumer.write_text('var Router = require("./router");\n', encoding="utf-8")
+
+    payload = repo_map.build_file_importers(target, project)
+
+    importer_files = set(payload["importer_files"])
+    assert str(consumer.resolve()) in importer_files
+    assert payload["importer_count"] == 1
+    edge = payload["importers"][0]
+    assert edge["file"] == str(consumer.resolve())
+    assert edge["line"] == 1
+    assert edge["module"] == "./router"
+    assert edge["edge_kind"] == "reverse-import"
+
+
+def test_build_file_importers_finds_directory_index_bare_esm_import_specifier(
+    tmp_path: Path,
+) -> None:
+    """Same directory-index gap, ESM form (`import Router from './router'`) -- the bug report's
+    alternate phrasing; proves the fix is not require()-specific."""
+    project = tmp_path / "project"
+    router_dir = project / "lib" / "router"
+    router_dir.mkdir(parents=True)
+    target = router_dir / "index.js"
+    target.write_text("export default {};\n", encoding="utf-8")
+    consumer = project / "lib" / "app.js"
+    consumer.write_text('import Router from "./router";\n', encoding="utf-8")
+
+    payload = repo_map.build_file_importers(target, project)
+
+    assert str(consumer.resolve()) in set(payload["importer_files"])
+
+
+def test_build_file_importers_directory_index_rejects_prefix_false_match(
+    tmp_path: Path,
+) -> None:
+    """Guardrail: `require('./routerX')` must NOT be counted as an importer of
+    `router/index.js` -- the new parent-directory alias ("router") must not substring/prefix-
+    match a sibling directory/file whose name merely starts with the same characters
+    ("routerX" normalizes to "routerx", never "router")."""
+    project = tmp_path / "project"
+    lib_dir = project / "lib"
+    router_dir = lib_dir / "router"
+    router_dir.mkdir(parents=True)
+    target = router_dir / "index.js"
+    target.write_text("module.exports = {};\n", encoding="utf-8")
+
+    # A REAL, distinct decoy file one character away from the directory name.
+    decoy = lib_dir / "routerX.js"
+    decoy.write_text("module.exports = { decoy: true };\n", encoding="utf-8")
+    decoy_consumer = lib_dir / "appx.js"
+    decoy_consumer.write_text('var RouterX = require("./routerX");\n', encoding="utf-8")
+
+    payload = repo_map.build_file_importers(target, project)
+
+    assert str(decoy_consumer.resolve()) not in set(payload["importer_files"])
+    assert payload["importer_count"] == 0
+
+    # Sanity: the decoy importer's OWN forward resolution still correctly targets routerX.js,
+    # not router/index.js -- proving this is a genuine two-different-targets negative, not an
+    # accidental "nothing resolves" false negative.
+    decoy_imports = repo_map.build_file_imports(decoy_consumer)
+    assert decoy_imports["imports"][0]["resolved"] == str(decoy.resolve())
+
+
+def test_build_file_importers_directory_index_no_double_count_two_specifier_forms(
+    tmp_path: Path,
+) -> None:
+    """Guardrail: a single file that imports the SAME directory two different ways (bare
+    `require('./router')` and explicit `require('./router/index')`) must be counted once in
+    `importer_files` and produce exactly one edge PER real statement (2), never deduplicated to
+    fewer or multiplied by cross-matching aliases to more."""
+    project = tmp_path / "project"
+    router_dir = project / "lib" / "router"
+    router_dir.mkdir(parents=True)
+    target = router_dir / "index.js"
+    target.write_text("module.exports = {};\n", encoding="utf-8")
+    consumer = project / "lib" / "app.js"
+    consumer.write_text(
+        'var Router = require("./router");\nvar RouterAgain = require("./router/index");\n',
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_importers(target, project)
+
+    assert payload["importer_files"] == [str(consumer.resolve())]
+    assert payload["importer_count"] == 2
+    lines = sorted(int(edge["line"]) for edge in payload["importers"])
+    assert lines == [1, 2]
+
+
+def test_build_file_importers_bare_specifier_matches_local_directory_index_package(
+    tmp_path: Path,
+) -> None:
+    """DOCUMENTED accepted-heuristic behavior (adversarial-review finding A, 2026-07-16): the
+    directory-index parent-dir alias also lets a BARE (non-relative) specifier that happens to
+    match a LOCAL directory's name be reported as an importer -- `import { x } from 'react'` when
+    the repo has `src/react/index.ts`. The reverse CONFIRM step's bare-specifier arm
+    (`_module_path_matches_definition`) is a path-SUFFIX compare that strips the index magic name,
+    so this matches at the pre-existing low "partial-resolution" confidence.
+
+    This is CORRECT in pnpm/yarn workspace monorepos (where `react` is a real local package dir)
+    and a deliberate false-positive for the rare npm-package-name-vs-local-dir collision -- NOT an
+    exact edge. Pinned so the behavior is INTENTIONAL and reviewed, not a silent surprise. (The
+    parent-dir alias is confined to the reverse-importers prefilter, so this heuristic does NOT
+    leak into ranking or blast-radius -- see the confinement + non-inflation tests below.)"""
+    project = tmp_path / "project"
+    react_dir = project / "src" / "react"
+    react_dir.mkdir(parents=True)
+    target = react_dir / "index.ts"
+    target.write_text("export const x = 1;\n", encoding="utf-8")
+    consumer = project / "src" / "app.ts"
+    consumer.write_text("import { x } from 'react';\n", encoding="utf-8")
+
+    payload = repo_map.build_file_importers(target, project)
+
+    # The bare specifier IS reported (the accepted workspace-monorepo heuristic).
+    assert str(consumer.resolve()) in set(payload["importer_files"])
+    edge = next(
+        current for current in payload["importers"] if current["file"] == str(consumer.resolve())
+    )
+    assert edge["module"] == "react"
+
+
 def test_build_file_importers_finds_tsconfig_alias_importer(tmp_path: Path) -> None:
     """Prefilter recall: a tsconfig path-alias importer must still be found (not just plain
     relative imports)."""
@@ -544,6 +693,123 @@ def test_build_file_importers_python_dotted_import_precision(tmp_path: Path) -> 
 
     assert str(consumer.resolve()) in set(app_payload["importer_files"])
     assert str(consumer.resolve()) not in set(tools_payload["importer_files"])
+
+
+def test_build_file_importers_finds_directory_index_python_package_bare_from_import(
+    tmp_path: Path,
+) -> None:
+    """Python symmetric case of the express directory-index bug: `from . import router` where
+    `router` is a SUBPACKAGE (`router/__init__.py`), not a plain sibling module. The reverse
+    alias prefilter must give the package's `__init__.py` a "router" alias (its parent directory
+    name), the same way it now does for JS/TS `index.js` -- `_module_aliases_for_path` backs
+    both languages' reverse prefilter identically."""
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    router_pkg = pkg / "router"
+    router_pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    target = router_pkg / "__init__.py"
+    target.write_text("class Router:\n    pass\n", encoding="utf-8")
+    consumer = pkg / "main.py"
+    consumer.write_text("from . import router\n", encoding="utf-8")
+
+    payload = repo_map.build_file_importers(target, project)
+
+    assert str(consumer.resolve()) in set(payload["importer_files"])
+    edge = next(
+        current for current in payload["importers"] if current["file"] == str(consumer.resolve())
+    )
+    assert edge["module"] == "router"
+    assert edge["line"] == 1
+
+
+def test_build_file_importers_directory_index_python_rejects_prefix_false_match(
+    tmp_path: Path,
+) -> None:
+    """Guardrail, Python side: `from . import routerX` (a real sibling MODULE, not the
+    `router` subpackage) must never be counted as an importer of `router/__init__.py`."""
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    router_pkg = pkg / "router"
+    router_pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    target = router_pkg / "__init__.py"
+    target.write_text("class Router:\n    pass\n", encoding="utf-8")
+
+    (pkg / "routerX.py").write_text("DECOY = True\n", encoding="utf-8")
+    decoy_consumer = pkg / "mainx.py"
+    decoy_consumer.write_text("from . import routerX\n", encoding="utf-8")
+
+    payload = repo_map.build_file_importers(target, project)
+
+    assert str(decoy_consumer.resolve()) not in set(payload["importer_files"])
+    assert payload["importer_count"] == 0
+
+
+# ---------------------------------------------------------------------------------------------
+# Shared-helper confinement (adversarial-review finding B, 2026-07-16): the directory-index
+# parent-dir alias must live ONLY in the reverse-importers prefilter, NOT in the SHARED
+# `_module_aliases_for_path` (which also feeds substring/exact ranking + blast-radius scope
+# expansion + the test-coverage gate). A top-level `pkg/__init__.py` gaining a bare "pkg" alias
+# in the shared helper would make editing that (often empty) init pull most of the repo into
+# `tg blast-radius` and mark nearly every test covered.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_directory_index_parent_alias_confined_to_reverse_importers() -> None:
+    """The SHARED `_module_aliases_for_path` must NOT emit a directory-index file's parent-dir
+    (bare-package) alias; that alias lives ONLY in the reverse-importers-only helper."""
+    # Shared helper: byte-stable -- no bare parent-dir alias for either language's index file.
+    assert "pkg" not in repo_map._module_aliases_for_path("pkg/__init__.py")
+    assert "router" not in repo_map._module_aliases_for_path("lib/router/index.js")
+    # Confined helper: emits exactly the parent-dir alias, and only for index/__init__ stems.
+    assert repo_map._reverse_importer_extra_aliases("pkg/__init__.py") == frozenset({"pkg"})
+    assert repo_map._reverse_importer_extra_aliases("lib/router/index.js") == frozenset({"router"})
+    assert repo_map._reverse_importer_extra_aliases("lib/router/index.ts") == frozenset({"router"})
+    # A non-index file earns no extra alias (it already resolves by its own stem).
+    assert repo_map._reverse_importer_extra_aliases("lib/router/route.js") == frozenset()
+    assert repo_map._reverse_importer_extra_aliases("pkg/service.py") == frozenset()
+    # A bare top-level index with no parent directory earns nothing (no parent to alias).
+    assert repo_map._reverse_importer_extra_aliases("index.js") == frozenset()
+
+
+def test_edit_plan_blast_radius_scope_not_inflated_by_top_level_init(tmp_path: Path) -> None:
+    """Finding B, at the EXACT flagged vector: `_scoped_repo_map_for_edit_plan_blast_radius` (the
+    `tg edit-plan` blast-radius scoping) expands scope by intersecting each selected file's
+    `_module_aliases_for_path` with importers' alias candidates
+    (`definition_aliases & imported_aliases`). A top-level `pkg/__init__.py` must NOT alias to
+    bare "pkg" in that shared helper, or EDITING it would drag every unrelated `import pkg.*` file
+    into the edit-plan radius (the gate's worst case). With the parent-dir alias confined to the
+    reverse-importers prefilter, the shared helper stays byte-stable and the scope does not
+    inflate. RED on the first fix (which put "pkg" in `_module_aliases_for_path`)."""
+    root = tmp_path / "repo"
+    init_file = str(root / "pkg" / "__init__.py")
+    service = str(root / "pkg" / "service.py")
+    other = str(root / "pkg" / "other.py")
+    helpers = str(root / "pkg" / "helpers.py")
+    map_data = {
+        "path": str(root),
+        "files": [init_file, service, other, helpers],
+        "symbols": [{"name": "top_level_init_symbol", "file": init_file, "kind": "function"}],
+        # service.py / other.py import a DIFFERENT submodule of the package, never the init symbol.
+        "imports": [
+            {"file": service, "imports": ["pkg.helpers"]},
+            {"file": other, "imports": ["pkg.helpers"]},
+        ],
+        "tests": [],
+    }
+    payload = {"files": [init_file], "tests": []}
+
+    scoped = repo_map._scoped_repo_map_for_edit_plan_blast_radius(
+        map_data, payload, "top_level_init_symbol", max_files=5
+    )
+
+    scoped_files = set(scoped["files"])
+    assert init_file in scoped_files  # the edited file itself is always in scope
+    # The unrelated `import pkg.helpers` files must NOT be scope-expanded into the radius.
+    assert service not in scoped_files
+    assert other not in scoped_files
+    assert scoped["edit_plan_blast_radius_scope"]["scoped_file_count"] == 1
 
 
 # ---------------------------------------------------------------------------------------------
