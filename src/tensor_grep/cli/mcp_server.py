@@ -32,6 +32,7 @@ from tensor_grep.cli.main import (
     _apply_semantic_rerank,
     _build_doctor_payload,
     _build_rulesets_payload,
+    _execute_find,
     _format_unbounded_large_root_scan_error,
     _format_unbounded_vendored_root_scan_error,
     _load_inline_rule_specs,
@@ -90,7 +91,13 @@ def _mcp_server_version() -> str:
 # inline_rules + ruleset now optional). Every existing caller's behavior is unchanged when
 # the new params are simply not passed; bumped anyway because `tg_mcp_capabilities()`'s
 # `tools[]` array itself grew, which a version-pinning client may reasonably want to detect.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.2.0"
+# 1.2.0 -> 1.3.0 (Wave 2d, #189): additive tool-set shape change, same shape/rationale as the
+# round-9 bump above -- 1 new tool (tg_find, the agent-callable form of `tg find`). Every
+# existing caller's behavior is unchanged (no existing tool's signature moved); bumped because
+# `tg_mcp_capabilities()`'s `tools[]` array grew again, which a version-pinning client may want
+# to detect (else two different tool sets would both report 1.2.0 and a pinning client would
+# not re-fetch tools[] to discover tg_find).
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.3.0"
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -106,6 +113,8 @@ _REWRITE_ROUTING_REASON = "ast-native"
 _INDEX_ROUTING_BACKEND = "TrigramIndex"
 _INDEX_ROUTING_REASON = "index-accelerated"
 _AGENT_ROUTING_REASON = "agent-context-capsule"
+_FIND_ROUTING_BACKEND = "HybridRank"
+_FIND_ROUTING_REASON = "tg-find"
 _WINDOWS_VARIADIC_METAVAR_RE = re.compile(r"(?<!\$)\$\$([A-Z][A-Z0-9_]*)")
 _NATIVE_TG_REMEDIATION = (
     "Install a standalone native tg binary, put it on PATH, or set TG_NATIVE_TG_BINARY."
@@ -122,6 +131,14 @@ _DEFAULT_MCP_REPO_SCAN_LIMIT = 2000
 # Mirrors repo_map._DEFAULT_CONTEXT_MAX_TOKENS; 0/None = explicit unbounded opt-out (a guard test
 # pins them equal). Literal keeps the heavy repo_map import lazy.
 _DEFAULT_MCP_CONTEXT_MAX_TOKENS = 16000
+# `tg_find`'s own budget default (Wave 2d, #189 fix-approach council max_tokens must-fix):
+# mirrors the CLI's `tg find --max-tokens` default (main.py's `typer.Option(4000, ...)` on the
+# `find` command) -- DELIBERATELY DIFFERENT from `_DEFAULT_MCP_CONTEXT_MAX_TOKENS` above, which
+# bounds a different tool family (context pack/render/agent-capsule). A guard test
+# (test_tg_find_max_tokens_default_matches_cli) pins this literal equal to the CLI's own default
+# via `inspect.signature`, mirroring test_inventory.py's
+# test_cli_default_max_files_matches_module_constant pattern.
+_DEFAULT_MCP_FIND_MAX_TOKENS = 4000
 
 _PYTHON_LOCAL_MCP_TOOLS = (
     "tg_rulesets",
@@ -151,6 +168,7 @@ _PYTHON_LOCAL_MCP_TOOLS = (
     "tg_symbol_blast_radius_render",
     "tg_search",
     "tg_ast_search",
+    "tg_find",
     "tg_classify_logs",
     "tg_devices",
     "tg_audit_manifest_verify",
@@ -4025,6 +4043,142 @@ def tg_symbol_blast_radius_render(
             "retryable": False,
         }
         return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_find(
+    query: str,
+    path: str = ".",
+    limit: int = 10,
+    max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
+    max_tokens: int = _DEFAULT_MCP_FIND_MAX_TOKENS,
+    deadline: float | None = None,
+) -> str:
+    """
+    Whole-repo hybrid semantic search (BM25 + local CPU dense-embedding relevance, RRF-fused
+    [+ optional MaxSim late rerank]) -- the agent-callable form of `tg find` (Wave 2d, #189).
+
+    Unlike `tg_search`/`tg_ast_search` (which re-rank an EXISTING pattern match set), `tg_find`
+    walks and ranks the WHOLE repo -- no pattern pre-filter, so it can surface content a
+    vocabulary-mismatched query would miss. No API key, no GPU. The dense leg requires the
+    `semantic` extra and a fetched model; falls back to BM25-only (visibly, via
+    `rank_fallback_reason`, never silently) when either is missing -- a BM25-only result is
+    still a fully supported response. Bounded by default (`max_repo_files`, `deadline`, an
+    internal corpus-wide chunk cap): a truncated scan is marked `result_incomplete` with an
+    `incomplete_reason` rather than silently reporting a partial repo as complete.
+
+    Args:
+        query: Natural-language or keyword query to rank the corpus against.
+        path: Root directory (or single file) to search. Confined to the project root (cwd);
+            a path that legitimately lives outside the project must be copied in first
+            (fail-closed, not a silent drop).
+        limit: Maximum ranked chunks to return.
+        max_repo_files: Maximum repo files to scan before ranking.
+        max_tokens: Bound the result set to ~N tokens, dropping the lowest-ranked matches
+            first (0 = unbounded). Defaults to the same value the CLI's `tg find --max-tokens`
+            uses (a guard test pins the two equal).
+        deadline: Optional wall-clock budget in seconds for the repo walk/chunk phase. When
+            exceeded, ranking covers only the partial corpus scanned so far and the response
+            is marked `result_incomplete=true` instead of running unbounded.
+    """
+    # S1 (fix-approach council must-fix, Wave 2d): confine the scan-root to the MCP root as the
+    # VERY FIRST operation, before any walk root is derived from it -- mirrors tg_file_importers's
+    # `path` confinement (round-8, audit #95) rather than tg_file_imports's `file` confinement,
+    # because `path` here IS the primary scan root `_execute_find` walks from (there is no
+    # separate `file` param to confine first). The round-8 live vuln was a secondary root derived
+    # from an UNconfined primary path (tg_session_file_importers's session_root) -- this call must
+    # run, and its RESOLVED result must be forwarded, before `_execute_find` (which derives its
+    # whole-repo walk root from `path`) is ever invoked.
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        payload = _envelope_base(
+            routing_backend=_FIND_ROUTING_BACKEND,
+            routing_reason=_FIND_ROUTING_REASON,
+            include_schema_version=False,
+        )
+        payload["query"] = query
+        payload["path"] = path
+        payload["error"] = {"code": "invalid_input", "message": str(exc)}
+        return json.dumps(payload, indent=2)
+
+    try:
+        result = _execute_find(
+            query,
+            path,
+            limit=limit,
+            max_repo_files=max_repo_files,
+            max_tokens=max_tokens,
+            deadline=deadline,
+        )
+    except FileNotFoundError as exc:
+        # S2: this branch (like the confinement ValueError branch above) deliberately echoes
+        # str(exc) -- it already resolves to the WITHIN-ROOT path `_execute_find` refused
+        # (mirrors tg_file_importers's FileNotFoundError branch, mcp_server.py). Never widen this
+        # raw echo to the generic Exception branch below.
+        payload = _envelope_base(
+            routing_backend=_FIND_ROUTING_BACKEND,
+            routing_reason=_FIND_ROUTING_REASON,
+            include_schema_version=False,
+        )
+        payload["query"] = query
+        payload["path"] = path
+        payload["error"] = {"code": "invalid_input", "message": str(exc)}
+        return json.dumps(payload, indent=2)
+    except BackendExecutionError as exc:
+        # C1 mirror (main.py's find command boundary): a genuine backend fault (corrupt dense
+        # model directory, encode-time crash) propagates out of `_execute_find` by design -- it is
+        # never silently degraded. `BackendExecutionError` messages are curated single-line text
+        # under the Backend Fail-Closed Contract (never a raw traceback), so echoing str(exc) here
+        # mirrors the choice already shipped for tg_search's own `_apply_semantic_rerank`
+        # BackendExecutionError branch below (code "semantic_backend_error"); this one gets its
+        # own distinguishable code matching the CLI's own --json error code (main.py's
+        # `find_backend_error`) so an agent caller can tell "the backend broke" apart from an
+        # ordinary internal_error.
+        payload = _envelope_base(
+            routing_backend=_FIND_ROUTING_BACKEND,
+            routing_reason=_FIND_ROUTING_REASON,
+            include_schema_version=False,
+        )
+        payload["query"] = query
+        payload["path"] = path
+        payload["error"] = {
+            "code": "find_backend_error",
+            "message": str(exc),
+            "retryable": False,
+        }
+        return json.dumps(payload, indent=2)
+    except Exception as exc:  # S2: propagate as a structured, SANITIZED error -- never raw
+        payload = _envelope_base(
+            routing_backend=_FIND_ROUTING_BACKEND,
+            routing_reason=_FIND_ROUTING_REASON,
+            include_schema_version=False,
+        )
+        payload["query"] = query
+        payload["path"] = path
+        payload["error"] = _sanitized_tool_error("tg_find", exc)
+        return json.dumps(payload, indent=2)
+
+    # Stamp the MCP routing metadata on the success path so it matches the error envelopes above
+    # (which set _FIND_ROUTING_BACKEND/_FIND_ROUTING_REASON) -- `_execute_find` returns a bare
+    # SearchResult (routing_backend/reason=None), so without this the success response would carry
+    # `"routing_backend": null` while its own error responses carry "HybridRank", an odd
+    # within-tool inconsistency. Set on the handler's local SearchResult only, NOT inside
+    # `_execute_find`: the CLI's `tg find --json` output stays unchanged (the CLI has its own
+    # `_execute_find` call and its own SearchResult).
+    result.routing_backend = _FIND_ROUTING_BACKEND
+    result.routing_reason = _FIND_ROUTING_REASON
+
+    # D2 (reuse, not duplicate): `_execute_find` already returns a `SearchResult`; serialize it
+    # with the SAME `JsonFormatter` the CLI's `tg find --json` uses instead of hand-rolling a
+    # second match-payload builder, so `rank_fallback_reason` / `result_incomplete` /
+    # `incomplete_reason` / `matches[].file,line,line_number,text` land at the top level for free
+    # and cannot drift from the CLI's own envelope shape.
+    from tensor_grep.cli.formatters.json_fmt import JsonFormatter
+
+    envelope = json.loads(JsonFormatter().format(result))
+    envelope = {"query": query, "path": path, **envelope}
+    return _inject_mcp_contract_fields(json.dumps(envelope, indent=2))
 
 
 @mcp.tool()  # type: ignore

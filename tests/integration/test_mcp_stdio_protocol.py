@@ -40,8 +40,8 @@ async def _stdio_protocol_roundtrip() -> None:
         async with ClientSession(read_stream, write_stream) as session:
             initialized = await session.initialize()
             assert initialized.serverInfo.name == "tensor-grep"
-            # round-9 (audit #95 Part 2): _TG_MCP_SERVER_CONTRACT_VERSION bumped 1.1.0 -> 1.2.0.
-            assert initialized.serverInfo.version == "1.2.0"
+            # Wave 2d (#189): _TG_MCP_SERVER_CONTRACT_VERSION bumped 1.2.0 -> 1.3.0 (tg_find added).
+            assert initialized.serverInfo.version == "1.3.0"
 
             listed = await session.list_tools()
             tool_names = {tool.name for tool in listed.tools}
@@ -112,8 +112,8 @@ async def _stdio_content_length_initialize_roundtrip() -> None:
         server_info = result["serverInfo"]
         assert isinstance(server_info, dict)
         assert server_info["name"] == "tensor-grep"
-        # round-9 (audit #95 Part 2): _TG_MCP_SERVER_CONTRACT_VERSION bumped 1.1.0 -> 1.2.0.
-        assert server_info["version"] == "1.2.0"
+        # Wave 2d (#189): _TG_MCP_SERVER_CONTRACT_VERSION bumped 1.2.0 -> 1.3.0 (tg_find added).
+        assert server_info["version"] == "1.3.0"
     finally:
         if process.stdin is not None:
             process.stdin.close()
