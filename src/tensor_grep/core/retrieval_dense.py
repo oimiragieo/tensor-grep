@@ -17,11 +17,26 @@ Fail-closed contract (see AGENTS.md "Backend Fail-Closed Contract"):
   dim-mismatch shape check in :meth:`DenseIndex.query`, which is intentionally recoverable (see
   its docstring) so a broken encoder degrades visibly instead of crashing deep inside a numpy
   matrix multiply.
+
+This module also owns a checksum-pinned fetch of the potion-code-16M model files themselves --
+:func:`fetch_dense_model` (importable) and ``python -m tensor_grep.core.retrieval_dense --fetch``
+(CLI), mirroring :func:`~tensor_grep.core.retrieval_late.fetch_late_model`'s precedent exactly: a
+pinned HF commit SHA (never ``main``), a per-file SHA-256 + exact-byte-size manifest, a
+byte-capped + time-bound + wall-clock-deadline-bounded download, atomic verify-before-install, and
+fail-closed refuse + cleanup on any mismatch -- never a partial install. Never auto-downloads at
+query time; fetch is an explicit user action only.
 """
 
 from __future__ import annotations
 
+import argparse
+import hashlib
 import os
+import shutil
+import sys
+import tempfile
+import time
+import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -92,11 +107,9 @@ def load_dense_model(model_dir: str | Path) -> Any:
     if not path.is_dir():
         raise DenseUnavailableError(
             "semantic ranking unavailable: model not fetched -- expected a model2vec "
-            f"StaticModel directory at {path}. There is no `tg` fetch command for this leg yet; "
-            "fetch it yourself via model2vec's own HuggingFace integration, e.g. "
-            "`StaticModel.from_pretrained('minishlab/potion-code-16M').save_pretrained(<dir>)`, "
-            "then point TG_SEMANTIC_MODEL_DIR at <dir> (or save_pretrained directly to "
-            f"{path})"
+            f"StaticModel directory at {path}; run "
+            "`python -m tensor_grep.core.retrieval_dense --fetch` (or set TG_SEMANTIC_MODEL_DIR) "
+            "to provide one"
         )
     try:
         from model2vec import StaticModel
@@ -194,3 +207,186 @@ class DenseIndex:
         scores = self._matrix @ query_vec
         ranked = sorted(enumerate(scores.tolist()), key=lambda item: (-item[1], item[0]))
         return ranked[:top_k]
+
+
+# ---------------------------------------------------------------------------------------------
+# Checksum-pinned fetch of the potion-code-16M model files (mirrors
+# ``retrieval_late.py``'s LateOn-Code-edge fetch -- see that module for the full design
+# rationale). Never auto-downloads at query time; fetch is an explicit user action only, via
+# ``python -m tensor_grep.core.retrieval_dense --fetch``.
+# ---------------------------------------------------------------------------------------------
+
+# `minishlab/potion-code-16M` (MIT; see NOTICE). Pinned to a fixed commit SHA via a
+# `resolve/<sha>/...` URL (never `/resolve/main/...`) so the fetched content is immutable
+# regardless of future upstream changes. Resolved 2026-07-16 via `git ls-remote
+# https://huggingface.co/minishlab/potion-code-16M` (the repo's `refs/heads/main` at fetch time).
+_HF_REPO = "minishlab/potion-code-16M"
+_HF_REVISION = "1b0ff71095656b23306542bbad34a09109673720"
+_HF_RESOLVE_BASE = f"https://huggingface.co/{_HF_REPO}/resolve/{_HF_REVISION}"
+
+# filename -> (sha256_hex, exact_byte_size). This is exactly the 3-file model2vec "native" layout
+# `StaticModel.from_pretrained` requires (model2vec's `persistence/datamodels.py`
+# `FOLDER_LAYOUTS[0]`: `config.json` + `model.safetensors` + `tokenizer.json`, verified against
+# the model2vec source). The upstream repo ALSO carries `modules.json` and `README.md`, but
+# neither is read by the loader (`persistence/persistence.py::load_pretrained`), so both are
+# deliberately excluded from the pinned manifest -- fewer pinned files means less to verify and
+# less that can silently drift.
+#
+# Computed by downloading each file from the pinned revision above and hashing locally, verified
+# 2026-07-16 via THREE independent tools (Python `hashlib.sha256`, PowerShell `Get-FileHash`, and
+# `certutil -hashfile`, all byte-identical) -- see supply-chain-hardening skill H6
+# "SHA-confirmation discipline": never trust an agent-reported or sidecar SHA, always
+# download+hash to confirm. `model.safetensors`' hash additionally cross-checks the HF API tree
+# endpoint's LFS pointer `oid` (sha256) for the pinned revision, obtained WITHOUT downloading the
+# file first (`GET /api/models/minishlab/potion-code-16M/tree/<revision>`) -- all four independent
+# sources agree.
+_FETCH_MANIFEST: dict[str, tuple[str, int]] = {
+    "model.safetensors": (
+        "ca6159081a6e96cebe4ad878e5e8437bfccc761e8db16223370149cd2faa6c0b",
+        64_299_272,
+    ),
+    "tokenizer.json": (
+        "8e84217af15e70e8127c855435fc3d8a4cd91d7bbe686f72e75f188118ec78ae",
+        1_041_917,
+    ),
+    "config.json": (
+        "edf07552b5d768d556ded176d19f3a34f25360548de3a246d226ce8e28647914",
+        97,
+    ),
+}
+
+_MAX_DOWNLOAD_BYTES = 128 * 1024 * 1024  # per-file cap; the largest pinned file is ~64.3 MB
+_DOWNLOAD_TIMEOUT_S = 60.0
+_DOWNLOAD_CHUNK_SIZE = 1024 * 1024
+
+
+def _download_bounded(url: str, *, max_bytes: int, timeout_s: float) -> bytes:
+    """Stream ``url`` fully into memory, refusing to exceed ``max_bytes``
+    (supply-chain-hardening H2: byte-capped + time-bound). The cap is enforced per-chunk during
+    the read, not after buffering the whole body, so an oversized response cannot exhaust memory
+    before the cap trips.
+
+    ALSO enforces a total wall-clock deadline across the whole streamed read
+    (``TG_SEMANTIC_FETCH_DEADLINE_S``, default 300s -- generous for a ~65MB download on a slow
+    link). ``timeout_s`` only bounds a SINGLE ``resp.read()`` call, so a malicious/compromised
+    server that keeps every individual recv just under ``timeout_s`` (and every chunk under
+    ``max_bytes``) -- a slow-drip -- could otherwise hang the fetch indefinitely. This is an
+    ADDITIVE third bound: it does not change the per-recv socket timeout or the byte cap. Mirrors
+    ``retrieval_late._download_bounded`` exactly (see that module for the original design note,
+    Opus security-gate nit #87).
+
+    Raises a plain ``OSError``/``ValueError`` on any failure (network error, timeout, the byte
+    cap, or the wall-clock deadline). The caller (:func:`fetch_dense_model`) wraps ALL of this
+    uniformly into :class:`~tensor_grep.backends.base.BackendExecutionError`.
+    """
+    deadline_s = float(os.environ.get("TG_SEMANTIC_FETCH_DEADLINE_S", "300"))
+    start = time.monotonic()
+    request = urllib.request.Request(url, headers={"User-Agent": "tensor-grep-semantic-fetch"})
+    with urllib.request.urlopen(request, timeout=timeout_s) as resp:
+        buffer = bytearray()
+        while True:
+            chunk = resp.read(_DOWNLOAD_CHUNK_SIZE)
+            if not chunk:
+                break
+            buffer.extend(chunk)
+            if len(buffer) > max_bytes:
+                raise ValueError(f"{url} exceeded the {max_bytes}-byte cap")
+            if time.monotonic() - start > deadline_s:
+                raise ValueError(f"{url} exceeded the {deadline_s}s total download deadline")
+        return bytes(buffer)
+
+
+def fetch_dense_model(dest_dir: str | Path | None = None) -> Path:
+    """Download the 3 pinned potion-code-16M files into ``dest_dir``, checksum-gated + atomic.
+
+    Fail-closed contract (supply-chain-hardening H2/H3): each file is streamed with a byte cap +
+    timeout, verified against a hard-coded SHA-256 pin from a PINNED HF revision (``_HF_REVISION``,
+    never ``main``) BEFORE anything lands at ``dest_dir``. On any download failure or checksum
+    mismatch, the temp download directory is discarded and :class:`BackendExecutionError` is
+    raised -- no partial or unverified file is ever left where :func:`load_dense_model` would find
+    it.
+
+    The final install step (moving the verified temp directory to ``dest_dir``) is a single
+    ``os.replace`` -- atomic on both POSIX and Windows PROVIDED ``dest_dir`` does not already
+    exist. If ``dest_dir`` already holds a previous install (a re-fetch), it is removed
+    immediately before the replace: ``os.replace`` cannot atomically overwrite a non-empty
+    directory on Windows (verified empirically: ``PermissionError [WinError 5] Access is
+    denied``), so a plain overwrite is not available cross-platform. This narrows, but does not
+    eliminate, the crash window between the rmtree and the replace; the new copy is fully
+    verified before the old one is ever touched, and a re-run of ``--fetch`` is idempotent.
+
+    Mirrors :func:`~tensor_grep.core.retrieval_late.fetch_late_model` exactly (see that module for
+    the original design note); NEVER called automatically at query time -- fetch is an explicit
+    user action only (``python -m tensor_grep.core.retrieval_dense --fetch``).
+    """
+    dest = Path(dest_dir) if dest_dir is not None else default_model_dir()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    tmp_dir = tempfile.mkdtemp(dir=str(dest.parent), prefix=".tg-semantic-fetch-")
+    tmp_path = Path(tmp_dir)
+    try:
+        for filename, (expected_sha256, expected_size) in _FETCH_MANIFEST.items():
+            url = f"{_HF_RESOLVE_BASE}/{filename}"
+            try:
+                data = _download_bounded(
+                    url, max_bytes=_MAX_DOWNLOAD_BYTES, timeout_s=_DOWNLOAD_TIMEOUT_S
+                )
+            except Exception as exc:
+                raise BackendExecutionError(
+                    f"dense model fetch failed downloading {filename} from {url}: {exc}"
+                ) from exc
+
+            actual_sha256 = hashlib.sha256(data).hexdigest()
+            if actual_sha256 != expected_sha256 or len(data) != expected_size:
+                raise BackendExecutionError(
+                    f"dense model fetch checksum mismatch for {filename}: expected "
+                    f"sha256={expected_sha256} size={expected_size}, got "
+                    f"sha256={actual_sha256} size={len(data)} -- refusing to install (the fetch "
+                    "is PINNED to a fixed HF revision and must never silently accept changed "
+                    "content)"
+                )
+            (tmp_path / filename).write_bytes(data)
+
+        if dest.exists():
+            shutil.rmtree(dest)
+        os.replace(tmp_path, dest)
+    finally:
+        # A no-op if the `os.replace` above already moved `tmp_path` away (success path);
+        # cleans up the partial download on any failure path (checksum mismatch, network error).
+        shutil.rmtree(tmp_path, ignore_errors=True)
+    return dest
+
+
+def _fetch_cli(argv: list[str] | None = None) -> int:
+    """Entry point for ``python -m tensor_grep.core.retrieval_dense --fetch``."""
+    parser = argparse.ArgumentParser(
+        prog="python -m tensor_grep.core.retrieval_dense",
+        description=(
+            "Fetch the pinned potion-code-16M dense-embedding model files (checksum-verified)."
+        ),
+    )
+    parser.add_argument(
+        "--fetch",
+        action="store_true",
+        help="Download the 3 pinned model files to the model cache directory.",
+    )
+    parser.add_argument(
+        "--model-dir",
+        default=None,
+        help="Override the fetch destination (else TG_SEMANTIC_MODEL_DIR, or the default cache dir).",
+    )
+    args = parser.parse_args(argv)
+    if not args.fetch:
+        parser.print_help()
+        return 2
+    try:
+        dest = fetch_dense_model(args.model_dir)
+    except Exception as exc:
+        print(f"tg: dense model fetch failed: {exc}", file=sys.stderr)
+        return 1
+    print(f"tg: dense model fetched to {dest}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_fetch_cli())
