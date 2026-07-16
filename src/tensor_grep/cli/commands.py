@@ -30,6 +30,7 @@ KNOWN_COMMANDS = {
     "callers",
     "imports",
     "importers",
+    "find",
     "blast-radius",
     "blast-radius-render",
     "blast-radius-plan",

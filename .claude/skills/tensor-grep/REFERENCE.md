@@ -23,6 +23,7 @@ tg codemap REPO_PATH --out /tmp/code-map --json
 tg session open REPO_PATH
 tg search PATTERN PATH
 tg search PATTERN PATH --rank
+tg find "natural language query" PATH
 tg orient REPO_PATH
 ```
 
@@ -73,6 +74,16 @@ tg source C:\repo <symbol-from-top-hit>
 ```
 
 Use when the symbol name is unknown but the concept or text is known. `--rank` (alias `--bm25`) re-ranks ripgrep hits by BM25 content relevance — pure Python, no API key, no GPU.
+
+## Whole-Repo Semantic Search (no pattern needed)
+
+```powershell
+tg find "verify login tokens" C:\repo
+tg find "verify login tokens" C:\repo --json
+tg find "verify login tokens" C:\repo --limit 20 --max-tokens 8000
+```
+
+`tg find` (experimental) is for when you cannot predict a matching keyword or regex at all — unlike `tg search --rank` (which re-ranks an EXISTING regex match set), it walks and ranks the WHOLE repo via BM25 + local CPU dense-embedding relevance, no pattern pre-filter. No API key, no GPU. `rank_fallback_reason` present in JSON means the dense leg degraded to BM25-only (extra/model absent) — still a legitimate, fully supported result. `result_incomplete: true` + exit 2 means the repo walk or ranking corpus was truncated (`--max-repo-files` cap, `--deadline` cutoff, or an internal chunk cap) — treat the result as partial, not the full answer; widen `--max-repo-files`/`--deadline` and retry. Exit 1 means a complete scan found no ranked matches. Does not offer `--format rg`.
 
 ## Session Memory
 

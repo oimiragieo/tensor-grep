@@ -36,6 +36,7 @@ It ships as a native CLI on Windows, macOS, and Linux — no server required for
 - **ripgrep-compatible subset** — supports the common `rg` flags (pattern, path, `-t`/`--type`, `--count-matches`, `--no-ignore`, `--sort path`, `--format rg`, `--json`, `--ndjson`). This is a validated compatible subset, not a full ripgrep replacement. Use `--format rg` for deterministic ripgrep-shaped stdout; `--format rg --json` for rg JSON Lines output.
 - Root-level shortcuts: `tg PATTERN [PATH]`, `tg -t js PATTERN PATH`, `tg --count-matches PATTERN PATH` all behave as `tg search ...`.
 - **`tg search PATTERN PATH --rank`** (alias `--bm25`) — local BM25 re-ranking of text-search results by per-chunk content relevance. Pure-Python, no API key, no GPU. Scores and re-orders results from the ripgrep-backed engine so the most content-relevant matches surface first. Works in plain text and `--json` output modes. Usage: `tg search PATTERN PATH --rank`.
+- **`tg find "QUERY" [PATH]`** (experimental) — whole-repo hybrid semantic search: no regex/pattern pre-filter, walks and ranks the WHOLE repo via BM25 + local CPU dense-embedding relevance (RRF-fused), so it can surface content a vocabulary-mismatched regex would miss. No API key, no GPU. The dense leg falls back to BM25-only (visibly, never silently) when the `semantic` extra or a fetched model is absent — a BM25-only `tg find` is a fully supported mode. Bounded by default (`--max-repo-files`, `--deadline`); a truncated scan exits 2 with `result_incomplete`. Does not offer `--format rg` — this is not a grep-parity surface. Options: `--limit` (default 10), `--max-tokens` (default 4000, 0 = unbounded), `--max-repo-files`, `--deadline`, `--json`, `--ndjson`.
 - Chunk-parallel native CPU engine for large files.
 
 ### AST search & rewrite
@@ -136,6 +137,9 @@ tg scan --config sgconfig.yml
 
 # Local BM25 re-ranking — surface most-relevant matches first, no API key
 tg search "TODO" src/ --rank
+
+# Whole-repo hybrid semantic search (experimental) — no pattern pre-filter needed
+tg find "verify login tokens" src/
 
 # One-call codebase orientation for agents — central files, entry points, symbol map
 tg orient src/

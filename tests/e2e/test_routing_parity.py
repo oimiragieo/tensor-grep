@@ -38,6 +38,7 @@ PUBLIC_TOP_LEVEL_COMMANDS = {
     "callers",
     "imports",
     "importers",
+    "find",
     "blast-radius",
     "blast-radius-render",
     "blast-radius-plan",

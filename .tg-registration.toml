@@ -22,3 +22,17 @@ sites = [
   { file = "src/tensor_grep/cli/lsp_provider_setup.py", symbol = "_LANGUAGE_ORDER" },
   { file = "src/tensor_grep/cli/lsp_provider_setup.py", symbol = "_LANGUAGE_ALIASES" },
 ]
+
+# A new top-level `tg` command must be a member of both the Python bootstrap/Typer source of
+# truth AND the native<->Python help-parity contract, or it silently misroutes on one launcher
+# (tg find Wave 2b/2c, #189). The extractor needs `symbol ... =` (a real assignment) to bracket-
+# match the value, so this intentionally does NOT point at the Rust `Commands::Find` enum variant
+# (no `=`) -- the Rust side is covered separately by `is_known_python_command`'s `include_str!` of
+# commands.py (main.rs) plus the routing-parity real-binary --help tests.
+[[registration_groups]]
+name = "find-command"
+entities = ["find"]
+sites = [
+  { file = "src/tensor_grep/cli/commands.py", symbol = "KNOWN_COMMANDS" },
+  { file = "tests/e2e/test_routing_parity.py", symbol = "PUBLIC_TOP_LEVEL_COMMANDS" },
+]

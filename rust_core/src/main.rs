@@ -1041,6 +1041,12 @@ pub enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Whole-repo hybrid semantic search (BM25 + dense), ranked file:line results
+    #[command(name = "find", disable_help_flag = true)]
+    Find {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Build a transitive blast-radius graph for a symbol
     #[command(name = "blast-radius", disable_help_flag = true)]
     BlastRadius {
@@ -5399,6 +5405,7 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::Callers { args } => handle_python_passthrough("callers", args),
         Commands::Imports { args } => handle_python_passthrough("imports", args),
         Commands::Importers { args } => handle_python_passthrough("importers", args),
+        Commands::Find { args } => handle_python_passthrough("find", args),
         Commands::BlastRadius { args } => handle_python_passthrough("blast-radius", args),
         Commands::BlastRadiusRender { args } => {
             handle_python_passthrough("blast-radius-render", args)

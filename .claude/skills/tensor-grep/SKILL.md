@@ -15,6 +15,7 @@ Use this skill when you need to locate code precisely, understand likely edit im
 - You are preparing a patch and want a smaller, more accurate context bundle.
 - You need a fast codebase orientation capsule (central files, entry points, symbol map) before diving into symbol lookup.
 - You need to find code by text/content relevance rather than an exact symbol name.
+- You need to find code by MEANING when you cannot predict a matching keyword or regex — use `tg find "QUERY" [PATH]` (experimental): whole-repo hybrid BM25 + dense-embedding ranking, no pattern pre-filter required.
 - You need to resume or persist cross-session repo-map context — use `tg session` to cache the repo-map, then call session-scoped commands (`tg session context-render`, `tg session edit-plan`, `tg session blast-radius-render`) without re-indexing on each invocation.
 
 ## Argument Order
@@ -37,6 +38,7 @@ prefer the canonical path-first form.
    - `tg search PATTERN REPO_PATH --rank`
    - Workspace-root search is refused in ~1s unless scoped (`--glob` / `--type` / `--max-depth`) or `--allow-broad-generated-scan`
    - `tg source REPO_PATH/src SYMBOL`
+   - No good pattern/keyword to anchor on? `tg find "natural language query" REPO_PATH` (experimental) ranks the whole repo by BM25 + dense relevance instead of requiring a regex match at all. `result_incomplete: true` + exit 2 means the scan/ranking covered only PART of the repo (raise `--max-repo-files` / `--deadline`); a missing `rank_fallback_reason` means the dense leg ran, present means it degraded to BM25-only (still a legitimate result, just lexical-only).
 4. Symbol navigation — prefer `src/` for complete callers (root often returns `partial`):
    - `tg callers REPO_PATH/src SYMBOL --deadline 15 --json`
    - `tg defs` / `tg refs` / `tg blast-radius` similarly
