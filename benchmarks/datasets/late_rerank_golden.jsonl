@@ -1,0 +1,40 @@
+{"id": "vm-concept-01", "query": "verify login credentials", "category": "concept", "relevant": [{"file": "auth/session_guard.py", "start_line": 4, "end_line": 6}]}
+{"id": "vm-concept-02", "query": "keep track of who did what for compliance", "category": "concept", "relevant": [{"file": "security/audit_trail.py", "start_line": 6, "end_line": 9}]}
+{"id": "vm-concept-03", "query": "turn raw stored bytes into a structured object", "category": "concept", "relevant": [{"file": "data/record_mapper.py", "start_line": 9, "end_line": 11}]}
+{"id": "vm-concept-04", "query": "make sure incoming data is not malformed", "category": "concept", "relevant": [{"file": "validation/schema_checker.py", "start_line": 8, "end_line": 12}]}
+{"id": "vm-concept-05", "query": "figure out which language to show text in", "category": "concept", "relevant": [{"file": "i18n/locale_resolver.py", "start_line": 4, "end_line": 9}]}
+{"id": "vm-concept-06", "query": "confirm a webhook really came from the sender", "category": "concept", "relevant": [{"file": "webhook/signature_verifier.py", "start_line": 6, "end_line": 8}]}
+{"id": "vm-concept-07", "query": "protect a secret so it cannot be read at rest", "category": "concept", "relevant": [{"file": "security/secret_vault.py", "start_line": 4, "end_line": 5}]}
+{"id": "vm-concept-08", "query": "decide whether a user is allowed to use a feature", "category": "concept", "relevant": [{"file": "config/feature_flags.py", "start_line": 6, "end_line": 9}]}
+{"id": "vm-concept-09", "query": "split a big result set into smaller pages", "category": "concept", "relevant": [{"file": "paging/cursor_paginator.py", "start_line": 4, "end_line": 5}]}
+{"id": "vm-concept-10", "query": "convert a document into a searchable structure", "category": "concept", "relevant": [{"file": "search/index_builder.py", "start_line": 4, "end_line": 9}]}
+{"id": "vm-behavior-01", "query": "retry with backoff", "category": "behavior", "relevant": [{"file": "net/retry_policy.py", "start_line": 4, "end_line": 6}]}
+{"id": "vm-behavior-02", "query": "close connections nobody is using anymore", "category": "behavior", "relevant": [{"file": "net/socket_watchdog.py", "start_line": 8, "end_line": 13}]}
+{"id": "vm-behavior-03", "query": "throw away the least recently touched cache entry", "category": "behavior", "relevant": [{"file": "cache/memo_store.py", "start_line": 7, "end_line": 11}]}
+{"id": "vm-behavior-04", "query": "load likely needed data before it is asked for", "category": "behavior", "relevant": [{"file": "cache/warmup.py", "start_line": 4, "end_line": 5}]}
+{"id": "vm-behavior-05", "query": "put a task on the background work list", "category": "behavior", "relevant": [{"file": "queue/job_dispatcher.py", "start_line": 6, "end_line": 8}]}
+{"id": "vm-behavior-06", "query": "set aside a message that keeps failing", "category": "behavior", "relevant": [{"file": "queue/dead_letter.py", "start_line": 6, "end_line": 8}]}
+{"id": "vm-behavior-07", "query": "slow down a client sending too many requests", "category": "behavior", "relevant": [{"file": "middleware/rate_limiter.py", "start_line": 8, "end_line": 15}]}
+{"id": "vm-behavior-08", "query": "bring a crashed worker back online", "category": "behavior", "relevant": [{"file": "scheduler/backoff_supervisor.py", "start_line": 6, "end_line": 10}]}
+{"id": "vm-behavior-09", "query": "fire off jobs whose scheduled time has arrived", "category": "behavior", "relevant": [{"file": "scheduler/cron_runner.py", "start_line": 4, "end_line": 8}]}
+{"id": "vm-behavior-10", "query": "borrow a connection out of a shared pool", "category": "behavior", "relevant": [{"file": "data/pool_manager.py", "start_line": 12, "end_line": 15}]}
+{"id": "vm-error-01", "query": "connection refused when reaching the database", "category": "error-message", "relevant": [{"file": "errors/fault_catalog.py", "start_line": 4, "end_line": 5}]}
+{"id": "vm-error-02", "query": "operation took longer than the allowed time", "category": "error-message", "relevant": [{"file": "errors/timeout_guard.py", "start_line": 4, "end_line": 5}]}
+{"id": "vm-error-03", "query": "a background job crashed and nobody was told", "category": "error-message", "relevant": [{"file": "errors/error_reporter.py", "start_line": 6, "end_line": 8}]}
+{"id": "vm-error-04", "query": "the disk ran out of room while writing a file", "category": "error-message", "relevant": [{"file": "files/storage_guard.py", "start_line": 8, "end_line": 12}]}
+{"id": "vm-error-05", "query": "too many failed login attempts from one place", "category": "error-message", "relevant": [{"file": "auth/lockout_policy.py", "start_line": 6, "end_line": 9}]}
+{"id": "vm-error-06", "query": "a message could not be parsed at all", "category": "error-message", "relevant": [{"file": "serialize/codec.py", "start_line": 12, "end_line": 15}]}
+{"id": "vm-error-07", "query": "a payload arrived that fails an integrity check", "category": "error-message", "relevant": [{"file": "integrity/checksum_validator.py", "start_line": 10, "end_line": 14}]}
+{"id": "vm-error-08", "query": "the server refused to accept a new connection", "category": "error-message", "relevant": [{"file": "net/listener_guard.py", "start_line": 8, "end_line": 11}]}
+{"id": "vm-error-09", "query": "a scheduled task never produced any output", "category": "error-message", "relevant": [{"file": "scheduler/watchdog_timer.py", "start_line": 4, "end_line": 7}]}
+{"id": "vm-error-10", "query": "an external service came back with a server fault", "category": "error-message", "relevant": [{"file": "net/http_bridge.py", "start_line": 12, "end_line": 15}]}
+{"id": "vm-config-01", "query": "where do we set the maximum upload size", "category": "config", "relevant": [{"file": "files/quota_tracker.py", "start_line": 3, "end_line": 3}]}
+{"id": "vm-config-02", "query": "how many database connections can be open at once", "category": "config", "relevant": [{"file": "config/settings_loader.py", "start_line": 3, "end_line": 3}]}
+{"id": "vm-config-03", "query": "how long before an idle session is dropped", "category": "config", "relevant": [{"file": "session/session_store.py", "start_line": 3, "end_line": 3}]}
+{"id": "vm-config-04", "query": "which folder holds generated report files", "category": "config", "relevant": [{"file": "reports/output_paths.py", "start_line": 3, "end_line": 3}]}
+{"id": "vm-config-05", "query": "how many retries before giving up on a job", "category": "config", "relevant": [{"file": "queue/retry_budget.py", "start_line": 3, "end_line": 3}]}
+{"id": "vm-config-06", "query": "what port does the internal metrics server listen on", "category": "config", "relevant": [{"file": "metrics/exporter.py", "start_line": 3, "end_line": 3}]}
+{"id": "vm-config-07", "query": "which environment variable turns on debug logging", "category": "config", "relevant": [{"file": "logging/debug_toggle.py", "start_line": 3, "end_line": 3}]}
+{"id": "vm-config-08", "query": "how long do we cache a dns lookup", "category": "config", "relevant": [{"file": "net/dns_cache.py", "start_line": 3, "end_line": 3}]}
+{"id": "vm-config-09", "query": "what is the default page size for listing results", "category": "config", "relevant": [{"file": "paging/list_defaults.py", "start_line": 3, "end_line": 3}]}
+{"id": "vm-config-10", "query": "which locale do we fall back to when none is specified", "category": "config", "relevant": [{"file": "i18n/fallback_locale.py", "start_line": 3, "end_line": 3}]}
