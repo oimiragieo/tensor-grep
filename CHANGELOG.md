@@ -1,6 +1,102 @@
 # CHANGELOG
 
 
+## v1.76.11 (2026-07-16)
+
+### Bug Fixes
+
+- **gpu**: Detect WSL2 in device_detect via the same 3 signals as is_wsl_host (#187)
+  ([#617](https://github.com/oimiragieo/tensor-grep/pull/617),
+  [`f2101ab`](https://github.com/oimiragieo/tensor-grep/commit/f2101ab276672ea373ce877d3946dd7926ef610d))
+
+* fix(gpu): detect WSL2 in device_detect via the same 3 signals as is_wsl_host
+
+`DeviceDetector.get_platform()` detected WSL2 only via `os.path.exists("/run/WSL")`, so a
+  stripped-environment WSL2 host (WSL_DISTRO_NAME/WSL_INTEROP dropped, no /run/WSL) was
+  mis-classified as Platform.LINUX. That value is consumed at core/hardware/device_inventory.py:63
+  (`get_platform().name.lower()`) as the `platform` field of the GPU device-inventory report, so `tg
+  devices` reported "linux" instead of "wsl2" on a stripped-env WSL host -- the same WSL-honesty gap
+  the #615 is_wsl_host hardening fixed for the path-bridging probes.
+
+Add a module-private `_running_under_wsl()` mirroring is_wsl_host's 3 signals
+  (WSL_DISTRO_NAME/WSL_INTEROP env -> /run/WSL -> /proc/version "microsoft", fail-closed).
+  Duplicated rather than imported because core.hardware must not depend on the cli layer.
+  get_platform() has no control-flow consumer (Platform is only read for this report string), so
+  broadening WSL2 detection is strictly more-accurate and cannot regress a code path.
+
+RED-GREEN: a /proc/version-only WSL host now returns WSL2 (was LINUX). Adds a regression test plus
+  per-signal coverage for the helper.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* test(gpu): pin _running_under_wsl equal to is_wsl_host across all signals
+
+Addresses the Opus-gate NIT on #617: the two hand-copied WSL probes had no test keeping them in
+  lockstep, so a future hardening of one (e.g. #615's /proc/version signal) could silently drift the
+  other. Add a parity test over every signal (env / /run/WSL / /proc/version / unreadable) asserting
+  both return the same value.
+
+* style: ruff-format the parity-test assert message wrap
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Testing
+
+- Harden width-fragile help-contract extractor + docs reconcile to v1.76.10
+  ([#616](https://github.com/oimiragieo/tensor-grep/pull/616),
+  [`4279d84`](https://github.com/oimiragieo/tensor-grep/commit/4279d84c517ad59a06c4d2b042a9e81e000290e0))
+
+* docs(backlog): reconcile to v1.76.10 + soften is_wsl_host docstring (gate nit)
+
+Header + CURRENT STATE refreshed to live PyPI v1.76.10 (#615 is_wsl_host /proc/version WSL-detection
+  hardening). Records the corrected misdiagnosis (WSL path-bridging already fixed v1.75.1;
+  stale-local-checkout trap) + the WSL-repro unblock. Softens the is_wsl_host docstring overclaim
+  per the #615 Opus-gate nit (cannot-false-positive -> degrades to honest path_domain_mismatch).
+  docs-only, no release.
+
+* test: recover wrapped clap [aliases:] continuation in help-contract parity extractor
+
+_extract_visible_help_commands only searched for the `[aliases: update]` annotation on a command's
+  header line. clap renders that annotation after the parent command's help text and wraps it onto a
+  continuation line once the line exceeds the (terminal-width-dependent) wrap column. `update` is
+  the only command-level visible_alias in the public set, so whenever the annotation wrapped,
+  test_empty_invocation_fallback_help_matches_public_contract dropped `update` and failed --
+  non-deterministically, on a byte-identical native binary (Cargo.lock pins clap 4.6.2): PASS on the
+  v1.76.10 release run, FAIL twice on PR #616 at a narrower effective width.
+
+Hoist the alias scan out of the command-header branch so it runs on every in-section line,
+  recovering aliases regardless of where clap wraps them. Add a regression test feeding the wrapped
+  rendering directly (RED before, GREEN after).
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* test: assert invariant (not exact set) for clap-rendered fallback help parity
+
+The empty-invocation FALLBACK help is rendered by clap's own formatter
+  (`CommandCli::command().print_help()` in `print_native_top_level_help`), which lays out the
+  `update` visible-alias in a terminal-width/platform-dependent way. The prior exact-set assertion
+  therefore flipped on a byte-identical native binary (clap 4.6.2, pinned in Cargo.lock): PASS on
+  the v1.76.10 release run, FAIL on the ubuntu+macos runners here because `update` was not parsed
+  back out of clap's rendered text.
+
+My earlier attempt (hoist the `[aliases:]` scan to every line) was WRONG -- clap does not emit an
+  inline `[aliases: update]` in this path; it drops the standalone `update` entry at the CI width.
+  Reverted. Instead assert the load-bearing invariant: every REAL command is present and no
+  UNEXPECTED command leaks; only known visible-aliases (PUBLIC_TOP_LEVEL_ALIASES) may be absent from
+  the parsed set. This still catches genuine native<->Python command drift and is robust to however
+  clap renders the alias.
+
+Verified: dogfooded against a freshly-built origin/main native binary (update caught -> passes) AND
+  against the CI ground-truth set (update dropped -> passes), while a missing real command or an
+  unexpected command still fails the assertion.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.76.10 (2026-07-15)
 
 ### Bug Fixes
