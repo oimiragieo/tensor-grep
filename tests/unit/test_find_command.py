@@ -396,8 +396,8 @@ def test_find_dense_weight_default_is_noop(tmp_path: Path, monkeypatch) -> None:
         encoding="utf-8",
     )
 
-    # A multi-word (>2 split_terms tokens) query -- the adaptive rule's NL branch -- so this test
-    # would catch an accidental "adaptive rule ignores the env-unset default" bug, not just an
+    # A multi-word (>1 whitespace-separated word) query -- the adaptive rule's NL branch -- so this
+    # test would catch an accidental "adaptive rule ignores the env-unset default" bug, not just an
     # accidental non-1.0 literal default.
     result = CliRunner().invoke(app, ["find", "invoice processing helper", str(tmp_path), "--json"])
 
@@ -409,16 +409,21 @@ def test_find_dense_weight_default_is_noop(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_find_dense_weight_adaptive_nl_vs_literal(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """TG_FIND_DENSE_WEIGHT=5.0 (#189, ledger DENSE-WEIGHT SWEEP): a multi-word/NL query (>2
-    `split_terms` tokens) gets the boosted dense_weight; a short (<=2 token) identifier/literal
+    """TG_FIND_DENSE_WEIGHT=5.0 (#189, ledger DENSE-WEIGHT SWEEP): a multi-word/NL query (>1
+    whitespace-separated word) gets the boosted dense_weight; a single-token identifier/literal
     query is protected at 1.0 -- the adaptive rule's whole point (the golden-set sweep's canary,
     `vm-behavior-10`, showed dense-only regresses a short lexical-overlap query, hence NOT a blind
-    flip)."""
+    flip).
+
+    The literal probe here is a DESCRIPTIVE, multi-morpheme identifier (`create_invoice_record` ->
+    3 `split_terms` morphemes) on purpose: the dogfood finding (#191) was that the prior
+    `split_terms(query) > 2` classifier wrongly boosted exactly this shape. A single-token
+    identifier must stay at 1.0 no matter how many morphemes it splits into."""
     monkeypatch.setenv("TG_FIND_DENSE_WEIGHT", "5.0")
     _stub_dense_clean(monkeypatch)
     captured = _spy_on_rank_chunks(monkeypatch)
     (tmp_path / "invoice.py").write_text(
-        "def make_invoice(invoice_id):\n    invoice = invoice_id\n    return invoice\n",
+        "def create_invoice_record(invoice_id):\n    invoice = invoice_id\n    return invoice\n",
         encoding="utf-8",
     )
 
@@ -428,9 +433,55 @@ def test_find_dense_weight_adaptive_nl_vs_literal(tmp_path: Path, monkeypatch) -
     assert nl_result.exit_code == 0, nl_result.output
     assert captured[-1] == 5.0, f"multi-word query must get the boosted weight, got {captured}"
 
-    literal_result = CliRunner().invoke(app, ["find", "invoice", str(tmp_path), "--json"])
+    # `create_invoice_record` is ONE whitespace-free token but THREE split_terms morphemes -- the
+    # exact shape the old morpheme-count classifier leaked to the dense boost. It must stay at 1.0.
+    literal_result = CliRunner().invoke(
+        app, ["find", "create_invoice_record", str(tmp_path), "--json"]
+    )
     assert literal_result.exit_code == 0, literal_result.output
-    assert captured[-1] == 1.0, f"a 1-token literal query must stay at 1.0, got {captured}"
+    assert captured[-1] == 1.0, (
+        f"a single-token multi-morpheme identifier must stay at 1.0, got {captured}"
+    )
+
+
+def test_find_dense_weight_multimorpheme_identifier_protected(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Dogfood finding (#191): the NL-vs-literal classifier gates on WHITESPACE-separated word
+    count, NOT `split_terms` morpheme count. `split_terms` splits snake_case/camelCase into
+    morphemes, so a descriptive single-token identifier splits into 3+ morphemes -- the prior
+    `split_terms(query) > 2` floor misclassified all of these as NL and boosted the dense leg,
+    exactly backwards for a literal-identifier lookup where BM25 is the strong leg (a real-repo
+    dogfood on tensor-grep's own src leaked 5 of 6 such queries). Direct-import-and-call, mirroring
+    `test_reranker.py`'s `_rank_corpus_chunk_cap` malformed-override pattern, so it pins the
+    classifier itself independent of any corpus.
+
+    Every identifier below is ONE whitespace-free token (so protected at 1.0) but >=2 `split_terms`
+    morphemes (so the OLD classifier would have wrongly returned the env's 5.0)."""
+    from tensor_grep.cli.main import _find_dense_weight
+
+    monkeypatch.setenv("TG_FIND_DENSE_WEIGHT", "5.0")
+
+    # Single-token, multi-morpheme identifiers -- the dogfood's own examples plus this repo's own
+    # symbols. Each MUST route to the protected 1.0, never the boosted 5.0.
+    protected_identifiers = [
+        "mint_access_token",  # snake_case, 3 morphemes
+        "getUserName",  # camelCase, 3 morphemes
+        "_confine_mcp_path",  # leading underscore, 3 morphemes
+        "BackendExecutionError",  # PascalCase, 3 morphemes
+        "reciprocal_rank_fusion",  # 3 morphemes
+        "_iter_repo_files",  # 3 morphemes
+        "rank_chunks",  # 2 morphemes (the ONE the old rule happened to protect)
+    ]
+    for identifier in protected_identifiers:
+        assert _find_dense_weight(identifier) == 1.0, (
+            f"single-token identifier {identifier!r} must stay at 1.0 (was leaked to the dense "
+            "boost by the old split_terms>2 morpheme classifier)"
+        )
+
+    # A genuinely multi-word (whitespace-separated) query is still NL and still gets the env value.
+    assert _find_dense_weight("borrow a connection out of a shared pool") == 5.0
+    assert _find_dense_weight("verify login credentials") == 5.0
+    # Boundary: even a bare 2-word phrase is multi-word -> boosted (whitespace, not word length).
+    assert _find_dense_weight("shared pool") == 5.0
 
 
 def test_find_dense_weight_nonfinite_env_clamps_to_default(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -440,10 +491,11 @@ def test_find_dense_weight_nonfinite_env_clamps_to_default(monkeypatch) -> None:
     for a multi-word query, and `rank_chunks(dense_weight=nan)` would thread a degenerate
     `weights=[1.0, nan]` list into `reciprocal_rank_fusion`'s sort. Mirrors
     `test_reranker.py::test_rank_corpus_chunk_cap_non_positive_or_malformed_env_falls_back_to_default`'s
-    direct-import-and-call pattern for a malformed-override guard. A multi-word (>2 `split_terms`
-    tokens) query is used so the adaptive branch is actually reached -- a short/literal query
-    already returns 1.0 unconditionally (see test_find_dense_weight_adaptive_nl_vs_literal above)
-    and would never exercise this guard at all."""
+    direct-import-and-call pattern for a malformed-override guard. A multi-word (>1
+    whitespace-separated word) query is used so the adaptive branch is actually reached -- a
+    single-token literal query already returns 1.0 unconditionally (see
+    test_find_dense_weight_multimorpheme_identifier_protected above) and would never exercise this
+    guard at all."""
     from tensor_grep.cli.main import _find_dense_weight
 
     for bad_value in ("nan", "-nan", "NaN", "inf", "-inf", "Infinity", "-Infinity"):
