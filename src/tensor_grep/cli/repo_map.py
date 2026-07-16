@@ -7427,10 +7427,11 @@ def _source_tokens(source_files: list[str]) -> set[str]:
 
 
 # Directory-index reverse-importers fix (tg importers correctness gap, express@4.21.1 dogfood):
-# these are the same "magic" directory-index/package-init stems `_definition_module_parts`
-# (:3200) already strips for BARE/absolute specifier matching -- MINUS "mod" (Rust `mod.rs`),
-# which is a real analogous gap but outside this fix's scope (JS/TS `index` + the Python
-# `__init__` case the fix asks to check symmetrically; do not scope-creep to Rust here).
+# the "magic" directory-index/package-init stems `_definition_module_parts` (:3200) already
+# strips for BARE/absolute specifier matching. Rust `mod.rs` is deliberately EXCLUDED for two
+# reasons: SCOPE (the reported gap is JS/TS `index` + the symmetric Python `__init__`) AND
+# PRECISION -- adding "mod" would extend the accepted bare-specifier false-positive surface
+# documented on `_reverse_importer_extra_aliases` (below) to Rust as well.
 _DIRECTORY_INDEX_STEMS = frozenset({"index", "__init__"})
 
 
@@ -7441,6 +7442,15 @@ def _module_aliases_for_path(path: str) -> frozenset[str]:
     # ~unique-file inputs on a depth-2 blast-radius), so memoization collapses it to one build
     # per distinct path. frozenset return keeps the cached value immutable (all callers iterate
     # it or .update() FROM it; none mutate it).
+    #
+    # DELIBERATELY does NOT emit a directory-index file's PARENT-DIR alias -- that lives in the
+    # reverse-importers-ONLY `_reverse_importer_extra_aliases` (below). This helper is SHARED by
+    # substring/exact RANKING (`_import_graph_bonus`, `_test_import_bonus`, `_test_graph_score`)
+    # and by BLAST-RADIUS scope expansion (set-intersection ~:11542) + the test-coverage gate
+    # (substring match ~:16732). Giving a top-level `pkg/__init__.py` a bare "pkg" alias HERE
+    # would make editing that (often empty) init pull most of the repo into `tg blast-radius`
+    # and mark nearly every test covered (adversarial-review finding, 2026-07-16). Keep it
+    # byte-stable for those consumers; widen only the reverse-importers prefilter.
     current = Path(path)
     aliases = {current.stem.lower()}
     parts = [part.lower() for part in current.with_suffix("").parts]
@@ -7448,29 +7458,47 @@ def _module_aliases_for_path(path: str) -> frozenset[str]:
         aliases.add(".".join(parts))
     if len(parts) > 1:
         aliases.add(".".join(parts[-2:]))
-        # Directory-index recall fix: a bare relative specifier that names a DIRECTORY --
-        # `require('./router')`/`import ... from './router'` (JS/TS) or `from . import router`
-        # where `router` is a subpackage (Python) -- resolves, by Node's/Python's own directory-
-        # index convention, to `router/index.{js,ts,mjs,cjs}` or `router/__init__.py`. That bare
-        # specifier's normalized alias is just the DIRECTORY name ("router"), which never
-        # appeared above -- every alias built so far is anchored on the file's OWN stem
-        # ("index"/"__init__"), never its PARENT directory name. Without this, a directory-index
-        # importer never enters the coarse alias PREFILTER (`_reverse_importers`) as a
-        # candidate for the index/init file, so it never reaches the precise per-candidate
-        # CONFIRM step (`_js_ts_module_matches_definition`/`_python_module_matches_definition`)
-        # that would otherwise resolve it correctly -- that step already mirrors Node's
-        # file-then-index resolution order (`_js_ts_candidate_files`) and already handles Python
-        # packages (`_python_module_candidates`); the gap was purely in this prefilter never
-        # nominating the candidate in the first place. Adding the parent-dir alias only WIDENS
-        # the prefilter's candidate set (the same over-count-then-confirm pattern
-        # `_python_imports_and_symbols`'s `from . import X` fix already established, :1841) --
-        # the CONFIRM step still requires an exact resolved-path match, so this cannot by itself
-        # create a false-positive edge (e.g. `require('./routerX')` normalizes to alias
-        # "routerx", never "router" -- see test_build_file_importers_directory_index_rejects_
-        # prefix_false_match).
-        if current.stem.lower() in _DIRECTORY_INDEX_STEMS:
-            aliases.add(parts[-2])
     return frozenset(alias for alias in aliases if alias)
+
+
+@lru_cache(maxsize=16384)
+def _reverse_importer_extra_aliases(path: str) -> frozenset[str]:
+    """Extra alias a DIRECTORY-INDEX file earns ONLY for the reverse-importers candidate
+    prefilter (`_reverse_importers`) -- deliberately NOT folded into the SHARED
+    `_module_aliases_for_path` (see its note for why that helper must stay byte-stable).
+
+    A bare relative specifier that names a DIRECTORY -- `require('./router')` /
+    `import ... from './router'` (JS/TS) or `from . import router` where `router` is a subpackage
+    (Python) -- resolves, by Node's/Python's own directory-index convention, to
+    `router/index.{js,ts,mjs,cjs}` or `router/__init__.py`. That specifier normalizes to the
+    PARENT DIRECTORY name ("router"), which `_module_aliases_for_path` never emits (every alias
+    it builds is anchored on the file's OWN stem -- "index"/"__init__" -- never its parent dir).
+    Without this alias the directory-index importer never enters the coarse prefilter as a
+    candidate, so it never reaches the precise per-candidate CONFIRM step
+    (`_js_ts_module_matches_definition` / `_python_module_matches_definition`).
+
+    PRECISION -- this alias WIDENS the prefilter; it is NOT a proof of an edge (the CONFIRM step
+    still gates every candidate, and every `_reverse_importers` consumer either confirms edges
+    (`tg importers`) or feeds PageRank SCORING, never raw membership). For a RELATIVE specifier
+    the confirm resolves the exact path, so `./router` -> a real `router/index.js` is an exact
+    edge and `./routerX` is rejected. For a BARE (non-relative) specifier the JS/TS confirm falls
+    through to `_module_path_matches_definition` (:3214) -- a path-SUFFIX compare that itself
+    strips the index/__init__ magic name -- so a bare npm-style `import X from 'react'` WILL
+    match a local `src/react/index.ts` at the pre-existing 0.2 "partial-resolution" confidence.
+    That is INTENTIONAL (correct in pnpm/yarn workspace monorepos where `react` is a real local
+    package dir; a deliberate false-positive only for the rare npm-package-name-vs-local-dir
+    collision) and is exactly the existing bare-suffix heuristic this alias feeds -- NOT a new
+    exactness claim. Pinned by
+    test_build_file_importers_bare_specifier_matches_local_directory_index_package.
+    """
+    current = Path(path)
+    if current.stem.lower() not in _DIRECTORY_INDEX_STEMS:
+        return frozenset()
+    parts = [part.lower() for part in current.with_suffix("").parts]
+    if len(parts) < 2:
+        return frozenset()
+    parent = parts[-2]
+    return frozenset({parent}) if parent else frozenset()
 
 
 def _import_alias_candidates(import_name: str) -> set[str]:
@@ -7538,13 +7566,29 @@ def _reverse_importers(
     all_files: list[str],
     imports_by_file: dict[str, list[str]],
     *,
+    include_directory_index_aliases: bool = False,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, set[str]]:
+    # `include_directory_index_aliases` is opt-in and defaults OFF so this function stays
+    # byte-behaviour-identical to origin/main for its RANKING consumers -- the blast-radius
+    # (:16587) and context/agent-capsule (:3836) callers feed its output into
+    # `_personalized_reverse_import_pagerank` (a SCORING signal), and even a widened reverse edge
+    # there measurably reorders pinned `dependent_files` output
+    # (test_python_termui_symbols_prefer_depth_one_dependents). ONLY the `tg importers`
+    # reverse-resolution (`build_file_importers_from_map`) passes True, because ONLY it runs the
+    # per-candidate CONFIRM step (`_confirm_import_edges`) that turns the widened prefilter back
+    # into exact edges. See `_reverse_importer_extra_aliases` for the alias rationale.
     with _profiling_phase(_profiling_collector, "graph_construction"):
         alias_to_files: dict[str, set[str]] = {}
         for current in all_files:
             for alias in _module_aliases_for_path(current):
                 alias_to_files.setdefault(alias, set()).add(current)
+            if include_directory_index_aliases:
+                # Directory-index recall (express@4.21.1 dogfood): also nominate a directory's
+                # `index.*`/`__init__.py` under its PARENT-DIR alias, so a bare relative specifier
+                # (`require('./router')` / `from . import router`) reaches the CONFIRM step.
+                for alias in _reverse_importer_extra_aliases(current):
+                    alias_to_files.setdefault(alias, set()).add(current)
         reverse: dict[str, set[str]] = {current: set() for current in all_files}
         for importer in all_files:
             for import_name in imports_by_file.get(importer, []):
@@ -15622,7 +15666,15 @@ def build_file_importers_from_map(
         )
         for current in repo_map.get("imports", [])
     }
-    reverse_map = _reverse_importers(all_files, imports_by_file)
+    # `include_directory_index_aliases=True`: `tg importers` is the ONE reverse consumer that
+    # runs the per-candidate CONFIRM step below (`_confirm_import_edges`), so it is the only one
+    # that may safely widen the prefilter with directory-index parent-dir aliases (a bare
+    # `require('./router')` importer of `router/index.js`). The blast-radius / context callers of
+    # `_reverse_importers` leave this OFF -- they feed its output into PageRank scoring with no
+    # confirm step, and widening it there reorders pinned output (see the note on that function).
+    reverse_map = _reverse_importers(
+        all_files, imports_by_file, include_directory_index_aliases=True
+    )
     prefiltered = sorted(reverse_map.get(target_file, set()))
 
     ceiling_hit = len(prefiltered) > CALLER_SCAN_FILE_CEILING

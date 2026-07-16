@@ -536,6 +536,39 @@ def test_build_file_importers_directory_index_no_double_count_two_specifier_form
     assert lines == [1, 2]
 
 
+def test_build_file_importers_bare_specifier_matches_local_directory_index_package(
+    tmp_path: Path,
+) -> None:
+    """DOCUMENTED accepted-heuristic behavior (adversarial-review finding A, 2026-07-16): the
+    directory-index parent-dir alias also lets a BARE (non-relative) specifier that happens to
+    match a LOCAL directory's name be reported as an importer -- `import { x } from 'react'` when
+    the repo has `src/react/index.ts`. The reverse CONFIRM step's bare-specifier arm
+    (`_module_path_matches_definition`) is a path-SUFFIX compare that strips the index magic name,
+    so this matches at the pre-existing low "partial-resolution" confidence.
+
+    This is CORRECT in pnpm/yarn workspace monorepos (where `react` is a real local package dir)
+    and a deliberate false-positive for the rare npm-package-name-vs-local-dir collision -- NOT an
+    exact edge. Pinned so the behavior is INTENTIONAL and reviewed, not a silent surprise. (The
+    parent-dir alias is confined to the reverse-importers prefilter, so this heuristic does NOT
+    leak into ranking or blast-radius -- see the confinement + non-inflation tests below.)"""
+    project = tmp_path / "project"
+    react_dir = project / "src" / "react"
+    react_dir.mkdir(parents=True)
+    target = react_dir / "index.ts"
+    target.write_text("export const x = 1;\n", encoding="utf-8")
+    consumer = project / "src" / "app.ts"
+    consumer.write_text("import { x } from 'react';\n", encoding="utf-8")
+
+    payload = repo_map.build_file_importers(target, project)
+
+    # The bare specifier IS reported (the accepted workspace-monorepo heuristic).
+    assert str(consumer.resolve()) in set(payload["importer_files"])
+    edge = next(
+        current for current in payload["importers"] if current["file"] == str(consumer.resolve())
+    )
+    assert edge["module"] == "react"
+
+
 def test_build_file_importers_finds_tsconfig_alias_importer(tmp_path: Path) -> None:
     """Prefilter recall: a tsconfig path-alias importer must still be found (not just plain
     relative imports)."""
@@ -711,6 +744,72 @@ def test_build_file_importers_directory_index_python_rejects_prefix_false_match(
 
     assert str(decoy_consumer.resolve()) not in set(payload["importer_files"])
     assert payload["importer_count"] == 0
+
+
+# ---------------------------------------------------------------------------------------------
+# Shared-helper confinement (adversarial-review finding B, 2026-07-16): the directory-index
+# parent-dir alias must live ONLY in the reverse-importers prefilter, NOT in the SHARED
+# `_module_aliases_for_path` (which also feeds substring/exact ranking + blast-radius scope
+# expansion + the test-coverage gate). A top-level `pkg/__init__.py` gaining a bare "pkg" alias
+# in the shared helper would make editing that (often empty) init pull most of the repo into
+# `tg blast-radius` and mark nearly every test covered.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_directory_index_parent_alias_confined_to_reverse_importers() -> None:
+    """The SHARED `_module_aliases_for_path` must NOT emit a directory-index file's parent-dir
+    (bare-package) alias; that alias lives ONLY in the reverse-importers-only helper."""
+    # Shared helper: byte-stable -- no bare parent-dir alias for either language's index file.
+    assert "pkg" not in repo_map._module_aliases_for_path("pkg/__init__.py")
+    assert "router" not in repo_map._module_aliases_for_path("lib/router/index.js")
+    # Confined helper: emits exactly the parent-dir alias, and only for index/__init__ stems.
+    assert repo_map._reverse_importer_extra_aliases("pkg/__init__.py") == frozenset({"pkg"})
+    assert repo_map._reverse_importer_extra_aliases("lib/router/index.js") == frozenset({"router"})
+    assert repo_map._reverse_importer_extra_aliases("lib/router/index.ts") == frozenset({"router"})
+    # A non-index file earns no extra alias (it already resolves by its own stem).
+    assert repo_map._reverse_importer_extra_aliases("lib/router/route.js") == frozenset()
+    assert repo_map._reverse_importer_extra_aliases("pkg/service.py") == frozenset()
+    # A bare top-level index with no parent directory earns nothing (no parent to alias).
+    assert repo_map._reverse_importer_extra_aliases("index.js") == frozenset()
+
+
+def test_edit_plan_blast_radius_scope_not_inflated_by_top_level_init(tmp_path: Path) -> None:
+    """Finding B, at the EXACT flagged vector: `_scoped_repo_map_for_edit_plan_blast_radius` (the
+    `tg edit-plan` blast-radius scoping) expands scope by intersecting each selected file's
+    `_module_aliases_for_path` with importers' alias candidates
+    (`definition_aliases & imported_aliases`). A top-level `pkg/__init__.py` must NOT alias to
+    bare "pkg" in that shared helper, or EDITING it would drag every unrelated `import pkg.*` file
+    into the edit-plan radius (the gate's worst case). With the parent-dir alias confined to the
+    reverse-importers prefilter, the shared helper stays byte-stable and the scope does not
+    inflate. RED on the first fix (which put "pkg" in `_module_aliases_for_path`)."""
+    root = tmp_path / "repo"
+    init_file = str(root / "pkg" / "__init__.py")
+    service = str(root / "pkg" / "service.py")
+    other = str(root / "pkg" / "other.py")
+    helpers = str(root / "pkg" / "helpers.py")
+    map_data = {
+        "path": str(root),
+        "files": [init_file, service, other, helpers],
+        "symbols": [{"name": "top_level_init_symbol", "file": init_file, "kind": "function"}],
+        # service.py / other.py import a DIFFERENT submodule of the package, never the init symbol.
+        "imports": [
+            {"file": service, "imports": ["pkg.helpers"]},
+            {"file": other, "imports": ["pkg.helpers"]},
+        ],
+        "tests": [],
+    }
+    payload = {"files": [init_file], "tests": []}
+
+    scoped = repo_map._scoped_repo_map_for_edit_plan_blast_radius(
+        map_data, payload, "top_level_init_symbol", max_files=5
+    )
+
+    scoped_files = set(scoped["files"])
+    assert init_file in scoped_files  # the edited file itself is always in scope
+    # The unrelated `import pkg.helpers` files must NOT be scope-expanded into the radius.
+    assert service not in scoped_files
+    assert other not in scoped_files
+    assert scoped["edit_plan_blast_radius_scope"]["scoped_file_count"] == 1
 
 
 # ---------------------------------------------------------------------------------------------
