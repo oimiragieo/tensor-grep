@@ -1,6 +1,48 @@
 # CHANGELOG
 
 
+## v1.76.13 (2026-07-16)
+
+### Bug Fixes
+
+- **gpu**: Drop the residual FLAVOR=nvidia dead-end in calibrate messaging + honest cuda-test
+  coverage comment (#612 gate NITs, #182)
+  ([#621](https://github.com/oimiragieo/tensor-grep/pull/621),
+  [`a02bce5`](https://github.com/oimiragieo/tensor-grep/commit/a02bce584090f1ccebc67ad6213d4a7e289ab280))
+
+NIT-1 (honesty-consistency): the Python calibrate no-binary message still name-dropped
+  TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR=nvidia in a "confirm before relying on" aside -- asymmetric
+  with the Rust side (crossover.rs detect_device_name), which forbids that override as an obtainable
+  path because no nvidia-flavored asset ships. Dropped it; added the symmetric "FLAVOR not in
+  output" assertion (RED->GREEN vs the shipped message).
+
+NIT-3 (wording): "so calibrate can run" -> "that calibrate requires" -- calibrate still fails-closed
+  on a CPU-only box after upgrade, so don't overpromise success.
+
+NIT-2 (crossover.rs, comment-only): the cfg(cuda) mirror-TEST fn is compiled by NO CI job
+  (cuda-feature-check omits --tests; test-rust-core is cuda-off), so "Compile-checked only"
+  overstated coverage. The production fn it guards IS compile-checked via its :533 call site under
+  cargo check --features cuda; corrected the comment to state the real (uncovered-test) gap and why
+  adding --all-targets is deferred (pre-existing cuda test debt risk), not silently done.
+
+Text-only: no logic, no control-flow, no CI-config change.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Reconcile to v1.76.12 (importers directory-index #619 + #72 moat re-proof)
+  ([#620](https://github.com/oimiragieo/tensor-grep/pull/620),
+  [`6679445`](https://github.com/oimiragieo/tensor-grep/commit/667944589e3e46780657dae331d8575f2a557c55))
+
+Live PyPI v1.76.11 -> v1.76.12. CURRENT STATE captures the #72 tokens-per-correct re-run (P4
+  file-deps ~10x-worse -> ~2.24x-better than rg post-#460, F1 preserved, $0 deterministic, publish
+  CEO-gated) and #619 (tg importers directory-index resolution, confined + Opus-gated + remediated).
+  PR queue EMPTY.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.76.12 (2026-07-16)
 
 ### Bug Fixes
