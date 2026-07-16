@@ -332,4 +332,6 @@ class TestDeviceDetect:
                     stack.enter_context(patch("builtins.open", side_effect=OSError))
                 else:
                     stack.enter_context(patch("builtins.open", mock_open(read_data=proc_version)))
-                assert _running_under_wsl() == is_wsl_host(), f"WSL-detection drift in case {name!r}"
+                assert _running_under_wsl() == is_wsl_host(), (
+                    f"WSL-detection drift in case {name!r}"
+                )
