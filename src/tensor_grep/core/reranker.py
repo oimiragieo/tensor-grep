@@ -214,6 +214,115 @@ def rerank_by_bm25(
     return dataclasses.replace(result, matches=reranked)
 
 
+def rank_chunks(
+    query: str,
+    chunks: list[Chunk],
+    *,
+    bm25_index: Bm25Index,
+    dense_index: DenseIndex | None,
+    late_reranker: LateReranker | None,
+    k: int = DEFAULT_K,
+) -> tuple[list[int], str | None]:
+    """Fuse BM25 [+ dense] [+ path] chunk rankings via RRF, then optionally MaxSim-rerank the head
+    via ``late_reranker`` -- the pure, fail-closed rank core shared by :func:`rerank_hybrid` and
+    (per the ``tg find`` plan, Wave 2a) any future caller needing the identical ordering. Extracted
+    byte-identically out of ``rerank_hybrid``: callers building their own ``bm25_index`` /
+    ``dense_index`` (and, for ``rerank_hybrid``, the corpus-cap chunking) are unaffected -- this
+    function only fuses and (optionally) late-reranks an already-built corpus.
+
+    Returns ``(fused_order, late_fallback_reason)``:
+
+    - ``fused_order``: chunk indices (into ``chunks``) in final rank order -- RRF-fused, then
+      MaxSim-reordered over its head when ``late_reranker`` is supplied and does not degrade.
+    - ``late_fallback_reason``: ``None`` unless the late-rerank stage degraded (the
+      ``TG_RERANK_BUDGET_MS`` wall-clock budget exceeded, or a recoverable
+      :class:`~tensor_grep.core.retrieval_late.LateRerankUnavailableError`). An UNRECOVERABLE
+      encode-time fault (anything else, including a ``BackendExecutionError`` or a
+      ``KeyboardInterrupt``/``SystemExit`` user-abort) is NOT caught here and propagates to the
+      caller, per the Backend Fail-Closed Contract.
+    """
+    total = max(1, len(chunks))
+    bm25_ranking = [chunk_idx for chunk_idx, _ in bm25_index.query(query, top_k=total)]
+    rankings: list[list[int]] = [bm25_ranking]
+    if dense_index is not None:
+        dense_ranking = [chunk_idx for chunk_idx, _ in dense_index.query(query, top_k=total)]
+        rankings.append(dense_ranking)
+
+    weights: list[float] | None = None
+    if _rrf_channels_enabled():
+        weights = [1.0] * len(rankings)
+        path_ranking = _path_channel_ranking(chunks, query)
+        if path_ranking:
+            rankings.append(path_ranking)
+            weights.append(PATH_CHANNEL_WEIGHT)
+
+    fused_order = reciprocal_rank_fusion(rankings, k=k, weights=weights)
+
+    # T5/T6: the late-interaction splice. Order-only over `fused_order`'s chunk indices -- same
+    # matches, same membership, same JSON shape (design doc "The seam"). `late_reranker=None`
+    # (the default) skips this block entirely: byte-identical to the pre-T5 fused order.
+    late_fallback_reason: str | None = None
+    if late_reranker is not None:
+        pool_k = max(
+            0, min(_int_env(_RERANK_POOL_K_ENV, _DEFAULT_RERANK_POOL_K), _MAX_RERANK_POOL_K)
+        )
+        budget_ms = _int_env(_RERANK_BUDGET_MS_ENV, _DEFAULT_RERANK_BUDGET_MS)
+        head = fused_order[:pool_k]
+        # Real wall-clock deadline (A3, external audit 2026-07-11): the previous post-hoc
+        # `elapsed > budget` check could only DISCARD a rerank that had already RETURNED -- a HUNG
+        # encoder (a wedged model, an infinite loop in the injected reranker) never returns, so
+        # `late_reranker.rerank` blocked `tg search --rank` indefinitely with no bound. Run it on a
+        # daemon thread and `join` on the budget: if it overruns, abandon the thread (it dies with
+        # this short-lived CLI process) and degrade. The Backend Fail-Closed Contract is PRESERVED
+        # across the thread boundary -- a LateRerankUnavailableError (recoverable) degrades to the
+        # plain RRF order; ANYTHING ELSE (a genuine BackendExecutionError encode fault, or a
+        # KeyboardInterrupt/SystemExit user-abort) is re-raised on this thread so it still
+        # propagates to the CLI boundary (cli/main.py ~:6804-6813), exactly as the synchronous
+        # version did. Capturing BaseException (not just Exception) is deliberate: it keeps a
+        # user-abort from being silently swallowed into an RRF degrade AND guarantees exactly one
+        # of the two result holders is populated when the worker finishes (so the `else` splice
+        # below can never IndexError on an empty result).
+        rerank_result: list[list[int]] = []
+        rerank_error: list[BaseException] = []
+
+        def _run_late_rerank() -> None:
+            try:
+                rerank_result.append(
+                    late_reranker.rerank(query, [chunks[i].text for i in head], head)
+                )
+            except (
+                BaseException
+            ) as exc:  # classified + re-raised (if non-recoverable) by the caller
+                rerank_error.append(exc)
+
+        worker = threading.Thread(target=_run_late_rerank, name="tg-late-rerank", daemon=True)
+        worker.start()
+        worker.join(timeout=budget_ms / 1000.0)
+
+        if worker.is_alive():
+            # Still running at the deadline (hung or merely too slow): do NOT wait -- abandon the
+            # daemon thread and degrade. This is the only branch that bounds a genuinely HUNG
+            # encoder; the old post-hoc check could never run for one.
+            late_fallback_reason = (
+                f"late rerank unavailable: budget exceeded (>{budget_ms}ms at pool_k={pool_k})"
+            )
+            sys.stderr.write(f"tg: {late_fallback_reason}\n")
+        elif rerank_error:
+            exc = rerank_error[0]
+            if isinstance(exc, LateRerankUnavailableError):
+                # RECOVERABLE (e.g. a malformed embedding shape): degrade, never crash.
+                late_fallback_reason = str(exc)
+                sys.stderr.write(f"tg: {late_fallback_reason}\n")
+            else:
+                # A genuine encode-time fault -> propagate (Backend Fail-Closed Contract): never
+                # silently degrade a real error into a plausible-but-wrong ranking.
+                raise exc
+        else:
+            fused_order = rerank_result[0] + fused_order[pool_k:]
+
+    return fused_order, late_fallback_reason
+
+
 def rerank_hybrid(
     result: SearchResult,
     query: str,
@@ -271,84 +380,14 @@ def rerank_hybrid(
         bm25_index = Bm25Index(chunks)
     chunks = bm25_index.chunks
 
-    total = max(1, len(chunks))
-    bm25_ranking = [chunk_idx for chunk_idx, _ in bm25_index.query(query, top_k=total)]
-    rankings: list[list[int]] = [bm25_ranking]
-    if dense_index is not None:
-        dense_ranking = [chunk_idx for chunk_idx, _ in dense_index.query(query, top_k=total)]
-        rankings.append(dense_ranking)
-
-    weights: list[float] | None = None
-    if _rrf_channels_enabled():
-        weights = [1.0] * len(rankings)
-        path_ranking = _path_channel_ranking(chunks, query)
-        if path_ranking:
-            rankings.append(path_ranking)
-            weights.append(PATH_CHANNEL_WEIGHT)
-
-    fused_order = reciprocal_rank_fusion(rankings, k=k, weights=weights)
-
-    # T5/T6: the late-interaction splice. Order-only over `fused_order`'s chunk indices -- same
-    # matches, same membership, same JSON shape (design doc "The seam"). `late_reranker=None`
-    # (the default) skips this block entirely: byte-identical to the pre-T5 fused order.
-    late_rank_fallback_reason: str | None = None
-    if late_reranker is not None:
-        pool_k = max(
-            0, min(_int_env(_RERANK_POOL_K_ENV, _DEFAULT_RERANK_POOL_K), _MAX_RERANK_POOL_K)
-        )
-        budget_ms = _int_env(_RERANK_BUDGET_MS_ENV, _DEFAULT_RERANK_BUDGET_MS)
-        head = fused_order[:pool_k]
-        # Real wall-clock deadline (A3, external audit 2026-07-11): the previous post-hoc
-        # `elapsed > budget` check could only DISCARD a rerank that had already RETURNED -- a HUNG
-        # encoder (a wedged model, an infinite loop in the injected reranker) never returns, so
-        # `late_reranker.rerank` blocked `tg search --rank` indefinitely with no bound. Run it on a
-        # daemon thread and `join` on the budget: if it overruns, abandon the thread (it dies with
-        # this short-lived CLI process) and degrade. The Backend Fail-Closed Contract is PRESERVED
-        # across the thread boundary -- a LateRerankUnavailableError (recoverable) degrades to the
-        # plain RRF order; ANYTHING ELSE (a genuine BackendExecutionError encode fault, or a
-        # KeyboardInterrupt/SystemExit user-abort) is re-raised on this thread so it still
-        # propagates to the CLI boundary (cli/main.py ~:6804-6813), exactly as the synchronous
-        # version did. Capturing BaseException (not just Exception) is deliberate: it keeps a
-        # user-abort from being silently swallowed into an RRF degrade AND guarantees exactly one
-        # of the two result holders is populated when the worker finishes (so the `else` splice
-        # below can never IndexError on an empty result).
-        rerank_result: list[list[int]] = []
-        rerank_error: list[BaseException] = []
-
-        def _run_late_rerank() -> None:
-            try:
-                rerank_result.append(
-                    late_reranker.rerank(query, [chunks[i].text for i in head], head)
-                )
-            except (
-                BaseException
-            ) as exc:  # classified + re-raised (if non-recoverable) by the caller
-                rerank_error.append(exc)
-
-        worker = threading.Thread(target=_run_late_rerank, name="tg-late-rerank", daemon=True)
-        worker.start()
-        worker.join(timeout=budget_ms / 1000.0)
-
-        if worker.is_alive():
-            # Still running at the deadline (hung or merely too slow): do NOT wait -- abandon the
-            # daemon thread and degrade. This is the only branch that bounds a genuinely HUNG
-            # encoder; the old post-hoc check could never run for one.
-            late_rank_fallback_reason = (
-                f"late rerank unavailable: budget exceeded (>{budget_ms}ms at pool_k={pool_k})"
-            )
-            sys.stderr.write(f"tg: {late_rank_fallback_reason}\n")
-        elif rerank_error:
-            exc = rerank_error[0]
-            if isinstance(exc, LateRerankUnavailableError):
-                # RECOVERABLE (e.g. a malformed embedding shape): degrade, never crash.
-                late_rank_fallback_reason = str(exc)
-                sys.stderr.write(f"tg: {late_rank_fallback_reason}\n")
-            else:
-                # A genuine encode-time fault -> propagate (Backend Fail-Closed Contract): never
-                # silently degrade a real error into a plausible-but-wrong ranking.
-                raise exc
-        else:
-            fused_order = rerank_result[0] + fused_order[pool_k:]
+    fused_order, late_rank_fallback_reason = rank_chunks(
+        query,
+        chunks,
+        bm25_index=bm25_index,
+        dense_index=dense_index,
+        late_reranker=late_reranker,
+        k=k,
+    )
 
     # Position in the fused order is a monotonic proxy for the underlying RRF score: RRF ties are
     # already broken by ascending chunk index before this list is built, so using position
