@@ -1,0 +1,10 @@
+{"id": "id3-01", "query": "mint_access_token", "category": "identifier3", "relevant": [{"file": "auth/token_issuer.py", "start_line": 6, "end_line": 7}]}
+{"id": "id3-02", "query": "reap_stale_connection", "category": "identifier3", "relevant": [{"file": "net/socket_watchdog.py", "start_line": 8, "end_line": 13}]}
+{"id": "id3-03", "query": "validate_hmac_signature", "category": "identifier3", "relevant": [{"file": "webhook/signature_verifier.py", "start_line": 6, "end_line": 8}]}
+{"id": "id3-04", "query": "rotate_signing_key", "category": "identifier3", "relevant": [{"file": "security/key_rotation.py", "start_line": 4, "end_line": 5}]}
+{"id": "id3-05", "query": "normalize_requested_limit", "category": "identifier3", "relevant": [{"file": "paging/list_defaults.py", "start_line": 6, "end_line": 7}]}
+{"id": "id3-06", "query": "quarantine_failed_item", "category": "identifier3", "relevant": [{"file": "queue/dead_letter.py", "start_line": 6, "end_line": 8}]}
+{"id": "id3-07", "query": "throttle_excess_traffic", "category": "identifier3", "relevant": [{"file": "middleware/rate_limiter.py", "start_line": 8, "end_line": 15}]}
+{"id": "id3-08", "query": "dispatch_outbound_call", "category": "identifier3", "relevant": [{"file": "net/http_bridge.py", "start_line": 8, "end_line": 9}]}
+{"id": "id3-09", "query": "capture_unhandled_exception", "category": "identifier3", "relevant": [{"file": "errors/error_reporter.py", "start_line": 6, "end_line": 8}]}
+{"id": "id3-10", "query": "is_capability_enabled", "category": "identifier3", "relevant": [{"file": "config/feature_flags.py", "start_line": 6, "end_line": 9}]}

@@ -1,5 +1,6 @@
 import dataclasses
 import json
+import math
 import os
 import re
 import shutil
@@ -4005,30 +4006,52 @@ _FIND_CORPUS_CHUNK_CAP = MAX_CHUNKS
 # that keeps a non-default env value scoped to the query shape the sweep actually validated.
 _FIND_DENSE_WEIGHT_ENV = "TG_FIND_DENSE_WEIGHT"
 _FIND_DENSE_WEIGHT_DEFAULT = 1.0
-# split_terms(query) token count strictly ABOVE this is treated as NL/multi-word; at or below it
-# is treated as a short identifier/literal (grep-style) query. Chosen from the golden-set sweep's
-# own corpus split: the NL set's split_terms token count is min 3 (never <=2), so ">2" is the
-# tightest floor that cannot misclassify any of the 40 measured NL queries while still catching a
-# bare 1-2-word literal search.
-_FIND_DENSE_WEIGHT_ADAPTIVE_TOKEN_FLOOR = 2
+# Whitespace-based NL-vs-literal classifier (dogfood finding, #191): a query with MORE THAN ONE
+# whitespace-separated word is NL/multi-word and gets the adaptive weight; a single whitespace-free
+# token is a literal identifier (a symbol name, a grep-style search) and stays at 1.0. The prior
+# `split_terms(query) > 2` morpheme-count floor was WRONG: `split_terms` splits snake_case/camelCase
+# into MORPHEMES, so a descriptive single-token identifier (`_confine_mcp_path`, `getUserName`,
+# `BackendExecutionError`, `reciprocal_rank_fusion` -- all 3 morphemes) counted as "NL" and leaked
+# to the dense boost. A real-repo dogfood on tensor-grep's own src caught this: 5 of 6 literal
+# identifier queries were misclassified; only `rank_chunks` (2 morphemes) stayed protected. Every
+# literal query in the dogfood was a single whitespace-free token and every NL query had 6+
+# space-separated words -- whitespace is the clean separator the morpheme floor couldn't exploit.
 
 
 def _find_dense_weight(query: str) -> float:
     """Query-adaptive `dense_weight` for `tg find`'s `rank_chunks` calls ONLY (#189) -- DEFAULT-OFF:
-    `TG_FIND_DENSE_WEIGHT` unset, empty, or unparseable as a float always returns 1.0 (the
-    byte-identical no-op fusion weight), regardless of the query's shape. This mirrors
-    `reranker._int_env`'s "a malformed override must degrade gracefully" contract for a float
-    instead of an int.
+    `TG_FIND_DENSE_WEIGHT` unset, empty, unparseable, or non-finite (see flip-prep NIT 1 below)
+    always returns 1.0 (the byte-identical no-op fusion weight), regardless of the query's shape.
+    This mirrors `reranker._int_env`'s "a malformed override must degrade gracefully" contract for
+    a float instead of an int.
 
-    When the env var IS set to a valid float, the dense leg is boosted ONLY for NL/multi-word
-    queries -- `split_terms(query)` yielding MORE than
-    :data:`_FIND_DENSE_WEIGHT_ADAPTIVE_TOKEN_FLOOR` tokens -- where the sweep measured the lift
-    with zero per-category regression. A short query (a bare identifier, function/class name, or a
-    1-2 word literal/grep-style search -- `tg find`'s own "literal" golden slice,
-    `benchmarks/datasets/literal_golden.jsonl`) instead routes to 1.0 (the un-boosted 1:1 fusion):
-    the sweep's canary case proved BM25 is the stronger leg there, so boosting dense would regress
-    it -- this is the guard that keeps the knob scoped to where it was actually measured to help,
-    not a blind flip.
+    When the env var IS set to a valid FINITE float, the dense leg is boosted ONLY for genuinely
+    multi-word NL queries -- `query.split()` yielding MORE than ONE whitespace-separated word --
+    where the golden-set sweep measured the lift with zero per-category regression. A single
+    whitespace-free token (a bare identifier, a function/class/symbol name, a grep-style literal
+    search -- `tg find`'s own "literal" and "identifier3" golden slices,
+    `benchmarks/datasets/literal_golden.jsonl` + `identifier3_golden.jsonl`) instead routes to 1.0
+    (the un-boosted 1:1 fusion): the sweep's canary case proved BM25 is the stronger leg for a
+    lexical query, so boosting dense would risk regressing it -- this is the guard that keeps the
+    knob scoped to where it was actually measured to help, not a blind flip.
+
+    Whitespace, NOT morphemes (dogfood finding, #191): the classifier gates on whitespace-separated
+    word count, never `split_terms(query)` morpheme count. `split_terms` splits snake_case/camelCase
+    into morphemes, so a descriptive single-token identifier like `mint_access_token` /
+    `getUserName` / `_confine_mcp_path` splits into 3+ morphemes and the old `> 2` floor
+    misclassified it as NL -- exactly backwards for a literal-identifier lookup where BM25 is the
+    strong leg. A real-repo dogfood on tensor-grep's own src caught the leak (5 of 6 literal
+    identifier queries wrongly boosted, only the 2-morpheme `rank_chunks` protected); the
+    whitespace gate is the dogfood's own recommended fix.
+
+    Flip-prep NIT 1 (tg_find_review_ledger.md FLIP-PREP): `float("nan")` / `float("inf")` /
+    `float("-inf")` all PARSE successfully -- `ValueError` alone never catches them, and `nan` in
+    particular compares unequal to everything (including itself), so a downstream `!= 1.0` check
+    would treat it as "non-default" too. Left unclamped, a malformed-but-parseable
+    `TG_FIND_DENSE_WEIGHT=nan` would flow into `rank_chunks(dense_weight=nan)`, building a
+    degenerate `weights=[1.0, nan]` list for `reciprocal_rank_fusion`'s sort. `math.isfinite`
+    rejects `nan` and both infinities the same way the `except ValueError` branch above rejects
+    outright garbage, before the query-shape check ever runs.
     """
     raw = os.environ.get(_FIND_DENSE_WEIGHT_ENV)
     if not raw:
@@ -4037,12 +4060,16 @@ def _find_dense_weight(query: str) -> float:
         weight = float(raw)
     except ValueError:
         return _FIND_DENSE_WEIGHT_DEFAULT
+    if not math.isfinite(weight):
+        return _FIND_DENSE_WEIGHT_DEFAULT
 
-    from tensor_grep.core.retrieval_lexical import split_terms
-
-    if len(split_terms(query)) > _FIND_DENSE_WEIGHT_ADAPTIVE_TOKEN_FLOOR:
-        return weight
-    return _FIND_DENSE_WEIGHT_DEFAULT
+    # A single whitespace-free token (or an empty/whitespace-only query, whose `split()` -> []) is a
+    # literal identifier -> stay at the protected 1.0. Only a genuinely multi-word (space-separated)
+    # query is NL and gets the adaptive weight. Whitespace, not `split_terms` morphemes -- see the
+    # module comment above `_FIND_DENSE_WEIGHT_ENV` for the dogfood finding (#191) this fixes.
+    if len(query.split()) <= 1:
+        return _FIND_DENSE_WEIGHT_DEFAULT
+    return weight
 
 
 def _find_representative_line(chunk: "Chunk", query_terms: set[str]) -> tuple[int, str]:
