@@ -1,6 +1,11 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, mock_open, patch
 
-from tensor_grep.core.hardware.device_detect import DeviceDetector, DeviceInfo, Platform
+from tensor_grep.core.hardware.device_detect import (
+    DeviceDetector,
+    DeviceInfo,
+    Platform,
+    _running_under_wsl,
+)
 
 
 class TestDeviceDetect:
@@ -228,17 +233,17 @@ class TestDeviceDetect:
         assert detector.has_gds() is True
 
     @patch("tensor_grep.core.hardware.device_detect.sys")
-    @patch("os.path.exists")
-    def test_should_detect_platform(self, mock_exists, mock_sys):
-        # Test Linux
+    @patch("tensor_grep.core.hardware.device_detect._running_under_wsl")
+    def test_should_detect_platform(self, mock_wsl, mock_sys):
+        # Test Linux (not WSL)
         mock_sys.platform = "linux"
-        mock_exists.return_value = False
+        mock_wsl.return_value = False
         detector = DeviceDetector()
         assert detector.get_platform() == Platform.LINUX
 
         # Test WSL2
         mock_sys.platform = "linux"
-        mock_exists.return_value = True
+        mock_wsl.return_value = True
         detector = DeviceDetector()
         assert detector.get_platform() == Platform.WSL2
 
@@ -246,3 +251,87 @@ class TestDeviceDetect:
         mock_sys.platform = "win32"
         detector = DeviceDetector()
         assert detector.get_platform() == Platform.WINDOWS
+
+    @patch("tensor_grep.core.hardware.device_detect.sys")
+    def test_get_platform_wsl2_via_proc_version_when_env_stripped(self, mock_sys):
+        # Regression: a stripped-environment WSL2 host (WSL_DISTRO_NAME/WSL_INTEROP dropped and
+        # no /run/WSL) was mis-reported as Platform.LINUX because get_platform only checked
+        # /run/WSL. It now consults /proc/version, matching cli.runtime_paths.is_wsl_host (#615).
+        mock_sys.platform = "linux"
+        proc_version = "Linux version 6.6.87.2-microsoft-standard-WSL2 (root@build) #1 SMP\n"
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("os.path.exists", return_value=False),
+            patch("builtins.open", mock_open(read_data=proc_version)),
+        ):
+            assert DeviceDetector().get_platform() == Platform.WSL2
+
+    def test_running_under_wsl_detects_env_signal(self):
+        with (
+            patch.dict("os.environ", {"WSL_DISTRO_NAME": "Ubuntu"}, clear=True),
+            patch("os.path.exists", return_value=False),
+        ):
+            assert _running_under_wsl() is True
+
+    def test_running_under_wsl_detects_run_wsl_marker(self):
+        # env stripped of WSL vars, but /run/WSL present (the fallback signal)
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("os.path.exists", return_value=True),
+        ):
+            assert _running_under_wsl() is True
+
+    def test_running_under_wsl_detects_proc_version_microsoft(self):
+        # env stripped AND no /run/WSL: fall back to the /proc/version kernel stamp
+        proc_version = "Linux version 6.6.87.2-microsoft-standard-WSL2 (root@build) #1 SMP\n"
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("os.path.exists", return_value=False),
+            patch("builtins.open", mock_open(read_data=proc_version)),
+        ):
+            assert _running_under_wsl() is True
+
+    def test_running_under_wsl_false_on_plain_linux(self):
+        proc_version = "Linux version 6.8.0-45-generic (buildd@lcy02) #45-Ubuntu SMP\n"
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("os.path.exists", return_value=False),
+            patch("builtins.open", mock_open(read_data=proc_version)),
+        ):
+            assert _running_under_wsl() is False
+
+    def test_running_under_wsl_fails_closed_when_proc_version_unreadable(self):
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("os.path.exists", return_value=False),
+            patch("builtins.open", side_effect=OSError("no /proc/version")),
+        ):
+            assert _running_under_wsl() is False
+
+    def test_running_under_wsl_matches_is_wsl_host(self):
+        # `_running_under_wsl` is a deliberate copy of `cli.runtime_paths.is_wsl_host`
+        # (core.hardware must not import the cli layer). Pin the two equal across every
+        # signal so a future hardening of one (e.g. #615 added /proc/version) cannot
+        # silently drift from the other.
+        from contextlib import ExitStack
+
+        from tensor_grep.cli.runtime_paths import is_wsl_host
+
+        cases = [
+            ("env_signal", {"WSL_INTEROP": "/run/WSL/x_interop"}, False, None),
+            ("run_wsl_marker", {}, True, None),
+            ("proc_microsoft", {}, False, "Linux version 6.6.87.2-microsoft-standard-WSL2\n"),
+            ("plain_linux", {}, False, "Linux version 6.8.0-45-generic #45-Ubuntu\n"),
+            ("proc_unreadable", {}, False, None),
+        ]
+        for name, env, run_wsl_exists, proc_version in cases:
+            with ExitStack() as stack:
+                stack.enter_context(patch.dict("os.environ", env, clear=True))
+                stack.enter_context(patch("os.path.exists", return_value=run_wsl_exists))
+                if proc_version is None:
+                    stack.enter_context(patch("builtins.open", side_effect=OSError))
+                else:
+                    stack.enter_context(patch("builtins.open", mock_open(read_data=proc_version)))
+                assert _running_under_wsl() == is_wsl_host(), (
+                    f"WSL-detection drift in case {name!r}"
+                )

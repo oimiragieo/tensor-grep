@@ -10,6 +10,28 @@ class Platform(Enum):
     WSL2 = auto()
 
 
+def _running_under_wsl() -> bool:
+    """True when running inside WSL (1 or 2), using the same three signals as the canonical
+    ``cli.runtime_paths.is_wsl_host``.
+
+    The logic is duplicated here deliberately: ``core.hardware`` must not import from the ``cli``
+    layer, so a shared helper cannot live in ``runtime_paths``. ``WSL_DISTRO_NAME``/``WSL_INTEROP``
+    are set by every real WSL session; ``/run/WSL`` is the fallback for a stripped subprocess
+    environment that dropped those variables; and ``/proc/version`` containing "microsoft"
+    (case-insensitive) is the canonical fallback that every WSL1/WSL2 kernel stamps and no non-WSL
+    Linux kernel does. The file read is fail-closed -- any OSError is treated as "not WSL".
+    """
+    if os.environ.get("WSL_DISTRO_NAME") or os.environ.get("WSL_INTEROP"):
+        return True
+    if os.path.exists("/run/WSL"):
+        return True
+    try:
+        with open("/proc/version", encoding="utf-8", errors="replace") as fh:
+            return "microsoft" in fh.read().lower()
+    except OSError:
+        return False
+
+
 @dataclass(frozen=True)
 class DeviceInfo:
     device_id: int
@@ -275,7 +297,7 @@ class DeviceDetector:
         if sys.platform == "win32":
             return Platform.WINDOWS
         elif sys.platform.startswith("linux"):
-            if os.path.exists("/run/WSL"):
+            if _running_under_wsl():
                 return Platform.WSL2
             return Platform.LINUX
         return Platform.LINUX
