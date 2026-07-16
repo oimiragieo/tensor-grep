@@ -277,3 +277,8 @@ def test_l10_calibrate_exits_one_when_unsupported(monkeypatch) -> None:
     assert "experimental" in result.output
     assert "if one is published for this platform on the release page" not in result.output
     assert "NVIDIA-enabled native binary" not in result.output
+    # #182 NIT-1: the residual FLAVOR name-drop is dropped so this Python wrapper matches the
+    # Rust side (crossover.rs detect_device_name test), which forbids the override entirely.
+    # A "confirm before relying on TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR=nvidia" aside dangled
+    # an override that no shipped asset honors -- the same permanent dead end, asymmetric.
+    assert "TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR" not in result.output
