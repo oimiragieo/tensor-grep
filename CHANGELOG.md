@@ -1,6 +1,68 @@
 # CHANGELOG
 
 
+## v1.78.0 (2026-07-16)
+
+### Features
+
+- **mcp**: Tg_find MCP tool for agent-callable hybrid search (tg find Wave 2d, #189)
+  ([#627](https://github.com/oimiragieo/tensor-grep/pull/627),
+  [`6d79945`](https://github.com/oimiragieo/tensor-grep/commit/6d79945cf63c0b52640cfcd20e02300da6f0655c))
+
+* feat(mcp): tg_find MCP tool for agent-callable hybrid search (tg find Wave 2d, #189)
+
+Registers "tg_find" into _PYTHON_LOCAL_MCP_TOOLS and adds the @mcp.tool() handler, mirroring
+  tg_file_importers's path-confinement template rather than tg_file_imports's (path is the
+  primary/only scan-root param here). Reuses _execute_find's compute and the CLI's own JsonFormatter
+  for serialization -- no duplicated ranking or match-payload logic.
+
+Fix-approach council must-fixes (mandatory, this PR): - S1: path is confined via _confine_mcp_path
+  as the very first operation in the handler, before _execute_find derives its whole-repo walk root
+  from it. - S2: the error-sanitization split is preserved -- only the generic Exception branch
+  routes through _sanitized_tool_error; the confinement ValueError and _execute_find's
+  FileNotFoundError branches deliberately keep their within-root echo. A new BackendExecutionError
+  branch mirrors the CLI's command-boundary catch (C1) and tg_search's existing
+  _apply_semantic_rerank precedent, with its own find_backend_error code so a genuine backend fault
+  is distinguishable from an ordinary internal_error. - A4: docs/harness_api.md documents tg_find in
+  the "Current tool set" list (48 tools), satisfying
+  test_harness_api_doc_lists_every_registered_mcp_tool_name. - max_tokens:
+  _DEFAULT_MCP_FIND_MAX_TOKENS=4000 is pinned equal to the CLI's `tg find --max-tokens` default via
+  a guard test using the test_inventory.py inspect.signature(...).default.default introspection
+  pattern.
+
+Also adds the required tests/unit/test_mcp_server.py::_RATCHET_BASE_KWARGS["tg_find"] entry so the
+  schema-driven confinement ratchet (test_mcp_primary_path_confinement_ratchet) covers the new
+  tool's path param automatically.
+
+This is a NEW LLM-facing param surface -- the highest-risk surface in the tg find plan -- so it
+  ships as its own PR pending the mandatory Opus security gate + a second adversarial lens, per the
+  review council. Not self-approved.
+
+* fix(mcp): bump contract version 1.3.0 for tg_find tool (Opus-gate blocker, #189)
+
+Opus correctness-lens blocker: adding tg_find grows tg_mcp_capabilities()'s tools[] array, so per
+  the constant's own documented round-9 precedent (1.1.0->1.2.0 was bumped SPECIFICALLY because new
+  tools grew tools[], "so a version-pinning client may detect it") the convention REQUIRES a bump.
+  Leaving 1.2.0 makes two different tool sets both report 1.2.0, so a pinning client would not
+  re-fetch tools[] and would never see tg_find. This is not caught by CI (the version is hardcoded
+  in asserts; there is no tools[]-count-to-version test) -- CI-green is not contract-correct.
+
+- Bump _TG_MCP_SERVER_CONTRACT_VERSION 1.2.0 -> 1.3.0 (additive = minor, matching the round-9 shape)
+  + a comment line noting tg_find (Wave 2d) as the trigger. - Update the 3 hardcoded
+  server-contract-version asserts: tests/integration/test_mcp_stdio_protocol.py (serverInfo.version,
+  both roundtrips) and tests/unit/test_mcp_server.py (options.server_version). The test_cli_modes.py
+  "1.2.0" stubs are the _latest_pypi_tensor_grep_version (tg upgrade PyPI lookup) -- UNRELATED to
+  the MCP contract version -- and are deliberately left untouched.
+
+Bundled NIT (Opus correctness-lens, clean + scoped): the tg_find SUCCESS path serialized a bare
+  SearchResult from _execute_find, so routing_backend/routing_reason came out null while the tool's
+  own ERROR envelopes set "HybridRank"/"tg-find". Stamp _FIND_ROUTING_BACKEND/_FIND_ROUTING_REASON
+  onto the handler's local SearchResult before serializing so success matches the error envelopes.
+  Set in the MCP handler only, NOT in _execute_find -- the CLI's `tg find --json` output is
+  unchanged. Extended test_tg_find_response_shape_and_ascii to assert the success response carries
+  routing_backend/routing_reason set (not null).
+
+
 ## v1.77.0 (2026-07-16)
 
 ### Chores
