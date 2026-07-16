@@ -431,3 +431,48 @@ def test_find_dense_weight_adaptive_nl_vs_literal(tmp_path: Path, monkeypatch) -
     literal_result = CliRunner().invoke(app, ["find", "invoice", str(tmp_path), "--json"])
     assert literal_result.exit_code == 0, literal_result.output
     assert captured[-1] == 1.0, f"a 1-token literal query must stay at 1.0, got {captured}"
+
+
+def test_find_dense_weight_nonfinite_env_clamps_to_default(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Flip-prep NIT 1 (tg_find_review_ledger.md FLIP-PREP): `float("nan")` / `float("inf")` /
+    `float("-inf")` all PARSE without raising `ValueError`, so the pre-existing `except ValueError`
+    guard alone never rejected them -- left unclamped, `_find_dense_weight` would return `nan`/`inf`
+    for a multi-word query, and `rank_chunks(dense_weight=nan)` would thread a degenerate
+    `weights=[1.0, nan]` list into `reciprocal_rank_fusion`'s sort. Mirrors
+    `test_reranker.py::test_rank_corpus_chunk_cap_non_positive_or_malformed_env_falls_back_to_default`'s
+    direct-import-and-call pattern for a malformed-override guard. A multi-word (>2 `split_terms`
+    tokens) query is used so the adaptive branch is actually reached -- a short/literal query
+    already returns 1.0 unconditionally (see test_find_dense_weight_adaptive_nl_vs_literal above)
+    and would never exercise this guard at all."""
+    from tensor_grep.cli.main import _find_dense_weight
+
+    for bad_value in ("nan", "-nan", "NaN", "inf", "-inf", "Infinity", "-Infinity"):
+        monkeypatch.setenv("TG_FIND_DENSE_WEIGHT", bad_value)
+        weight = _find_dense_weight("invoice processing helper")
+        assert weight == 1.0, f"non-finite env value {bad_value!r} was not clamped, got {weight!r}"
+
+
+def test_find_dense_weight_nonfinite_env_never_reaches_rank_chunks(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """End-to-end companion to the unit test above: proves the clamp holds through the FULL `tg
+    find` call chain, not just the helper in isolation -- `rank_chunks` must never observe a
+    non-finite `dense_weight` kwarg for a real invocation, which is the actual danger (a degenerate
+    `weights=[1.0, nan]` reaching `reciprocal_rank_fusion`'s sort)."""
+    monkeypatch.setenv("TG_FIND_DENSE_WEIGHT", "nan")
+    _stub_dense_clean(monkeypatch)
+    captured = _spy_on_rank_chunks(monkeypatch)
+    (tmp_path / "invoice.py").write_text(
+        "def make_invoice(invoice_id):\n    invoice = invoice_id\n    return invoice\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app, ["find", "invoice processing helper text", str(tmp_path), "--json"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured, "rank_chunks was never called"
+    assert all(weight == 1.0 for weight in captured), (
+        f"expected dense_weight=1.0 for every call with a non-finite env value, got {captured}"
+    )

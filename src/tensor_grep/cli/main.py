@@ -1,5 +1,6 @@
 import dataclasses
 import json
+import math
 import os
 import re
 import shutil
@@ -4015,12 +4016,12 @@ _FIND_DENSE_WEIGHT_ADAPTIVE_TOKEN_FLOOR = 2
 
 def _find_dense_weight(query: str) -> float:
     """Query-adaptive `dense_weight` for `tg find`'s `rank_chunks` calls ONLY (#189) -- DEFAULT-OFF:
-    `TG_FIND_DENSE_WEIGHT` unset, empty, or unparseable as a float always returns 1.0 (the
-    byte-identical no-op fusion weight), regardless of the query's shape. This mirrors
-    `reranker._int_env`'s "a malformed override must degrade gracefully" contract for a float
-    instead of an int.
+    `TG_FIND_DENSE_WEIGHT` unset, empty, unparseable, or non-finite (see flip-prep NIT 1 below)
+    always returns 1.0 (the byte-identical no-op fusion weight), regardless of the query's shape.
+    This mirrors `reranker._int_env`'s "a malformed override must degrade gracefully" contract for
+    a float instead of an int.
 
-    When the env var IS set to a valid float, the dense leg is boosted ONLY for NL/multi-word
+    When the env var IS set to a valid FINITE float, the dense leg is boosted ONLY for NL/multi-word
     queries -- `split_terms(query)` yielding MORE than
     :data:`_FIND_DENSE_WEIGHT_ADAPTIVE_TOKEN_FLOOR` tokens -- where the sweep measured the lift
     with zero per-category regression. A short query (a bare identifier, function/class name, or a
@@ -4029,6 +4030,15 @@ def _find_dense_weight(query: str) -> float:
     the sweep's canary case proved BM25 is the stronger leg there, so boosting dense would regress
     it -- this is the guard that keeps the knob scoped to where it was actually measured to help,
     not a blind flip.
+
+    Flip-prep NIT 1 (tg_find_review_ledger.md FLIP-PREP): `float("nan")` / `float("inf")` /
+    `float("-inf")` all PARSE successfully -- `ValueError` alone never catches them, and `nan` in
+    particular compares unequal to everything (including itself), so a downstream `!= 1.0` check
+    would treat it as "non-default" too. Left unclamped, a malformed-but-parseable
+    `TG_FIND_DENSE_WEIGHT=nan` would flow into `rank_chunks(dense_weight=nan)`, building a
+    degenerate `weights=[1.0, nan]` list for `reciprocal_rank_fusion`'s sort. `math.isfinite`
+    rejects `nan` and both infinities the same way the `except ValueError` branch above rejects
+    outright garbage, before the query-shape check ever runs.
     """
     raw = os.environ.get(_FIND_DENSE_WEIGHT_ENV)
     if not raw:
@@ -4036,6 +4046,8 @@ def _find_dense_weight(query: str) -> float:
     try:
         weight = float(raw)
     except ValueError:
+        return _FIND_DENSE_WEIGHT_DEFAULT
+    if not math.isfinite(weight):
         return _FIND_DENSE_WEIGHT_DEFAULT
 
     from tensor_grep.core.retrieval_lexical import split_terms
