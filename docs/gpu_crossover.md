@@ -137,34 +137,84 @@ shared memory. It is optimized for **fixed-string multi-pattern** search over la
 only workload class where GPU can produce a credible speed win over `rg`. (A PFAC /
 failureless-Aho-Corasick automaton is a *future* optimization, not what ships today.)
 
-| Semantic | GPU support | Fallback |
-| --- | --- | --- |
-| Fixed-string multi-pattern (`-F -e PAT1 -e PAT2 …`) over large corpora | Supported (position-parallel byte-compare CUDA kernel) | — |
-| General regex (non-literal patterns) | Not supported | CPU |
-| Case-insensitive or smart-case matching (`-i`, `-S`) | Not supported | CPU |
-| Multiline mode (`-U`, `--multiline`) | Not supported | CPU |
-| Binary file search (`--text`, `--binary`) | Not supported | CPU |
-| Hidden-file or no-ignore overrides (`--hidden`, `--no-ignore`) | Not supported | CPU |
-| Context-line output (`-A`, `-B`, `-C`) | Not supported | CPU |
-| Line or word anchoring (`-x`, `-w`) | Not supported | CPU |
-| Count / counting mode (`-c`, `--count`) | Not supported | CPU |
+There are two independent GPU-adjacent lanes in this codebase, and they do **not** share one
+support matrix — a semantic unsupported in one can be supported in the other. The two tables
+below are intentionally separate so every row is unambiguous about which lane it describes:
 
-When the GPU backend is unavailable or the request falls outside the supported lane,
-`tg` falls back to CPU and emits a `UserWarning` with a human-readable explanation.
-The `fallback_reason` attribute on the `Pipeline` object captures the same text for
-programmatic inspection; it is surfaced in the JSON route envelope via the
-`fallback_reason` field so callers can observe it without parsing log output.
+1. The **native CUDA-kernel lane**, compiled only into the CUDA-feature release build
+   (`cargo build --features cuda`) and gated by `gpu_native_fallback_reason` in
+   `rust_core/src/main.rs`.
+2. The **Python GPU sidecar lane**, the CuDF/Torch backends in
+   `src/tensor_grep/core/pipeline.py`, reachable from any build — including the standard
+   public binary — whenever a Python sidecar handles the search (directly, or as the native
+   binary's own redirect target when a request falls outside lane 1).
+
+### Native CUDA-kernel lane
+
+`gpu_native_fallback_reason(&GpuSearchParams) -> Option<&'static str>` (`rust_core/src/main.rs`)
+is the single source of truth for this lane: it returns `None` when the request reaches the
+native CUDA kernel unmodified, or `Some(reason)` when the request must be redirected instead.
+Every `Some(reason)` case falls through `handle_gpu_search` to `handle_gpu_sidecar_search` (the
+Python GPU sidecar) first; if that sidecar is itself unavailable, CPU is the final fallback (see
+the [Python GPU sidecar lane](#python-gpu-sidecar-lane) below).
+
+| Semantic | Native CUDA kernel | Redirected to | Exact `gpu_native_fallback_reason` string |
+| --- | --- | --- | --- |
+| Fixed-string multi-pattern (`-F -e PAT1 -e PAT2 …`), or literal patterns without `-F` that contain no regex metacharacters | Supported (position-parallel byte-compare CUDA kernel) | — | — (`None`) |
+| Count / counting mode (`-c`, `--count`) | Supported (native kernel emits counts directly) | — | — (`None`) |
+| Hidden-file or no-ignore overrides (`--hidden`, `--no-ignore`) | Supported (`GpuSearchParams` carries `hidden`/`no_ignore`; the native file walk honors both) | — | — (`None`) |
+| Case-insensitive or smart-case matching (`-i`, `-S`) | Not supported | Python GPU sidecar | `case-insensitive searches are not yet supported by native GPU routing` |
+| Binary-as-text search (`--text`) | Not supported | Python GPU sidecar | `binary-as-text searches are not yet supported by native GPU routing` |
+| Patterns containing a literal newline or carriage return | Not supported | CPU or Python GPU sidecar | `line-terminator patterns require CPU or sidecar routing` |
+| Invert-match (`-v`) | Not supported | Python GPU sidecar | `invert-match searches are not yet supported by native GPU routing` |
+| Context-line output (`-A`, `-B`, `-C`) | Not supported | Python GPU sidecar | `context line searches are not yet supported by native GPU routing` |
+| Max-count (`-m`, `--max-count`) | Not supported | Python GPU sidecar | `max-count searches are not yet supported by native GPU routing` |
+| Word-boundary matching (`-w`) | Not supported | Python GPU sidecar | `word-boundary searches are not yet supported by native GPU routing` |
+| Regex patterns containing metacharacters, run without `-F` (`patterns_require_regex_engine`) | Not supported | Python GPU sidecar | `regex patterns still require the Python GPU sidecar` |
+| `--replace` | Not supported | Python GPU sidecar | `--replace searches are not yet supported by native GPU routing` |
+| `--only-matching` (`-o`) | Not supported | Python GPU sidecar | `--only-matching searches are not yet supported by native GPU routing` |
+| `--max-filesize` | Not supported | Python GPU sidecar | `--max-filesize is not yet supported by native GPU routing` |
+| `--color` | Not supported | Python GPU sidecar | `--color is not yet supported by native GPU routing` |
+| `--no-ignore-vcs` | Not supported | Python GPU sidecar | `--no-ignore-vcs is not yet supported by native GPU routing` |
+
+Multiline mode (`-U`, `--multiline`, `--multiline-dotall`) and exact-line matching (`-x`,
+`--line-regexp`) never reach `GpuSearchParams` at all — they are forced to plain CPU/`rg`
+passthrough further upstream regardless of `--gpu-device-ids`
+(`SEARCH_PYTHON_PASSTHROUGH_FLAGS` / `search_requires_ripgrep_passthrough` in
+`rust_core/src/main.rs`), so they are outside the `gpu_native_fallback_reason` contract above.
+
+When the native GPU kernel is unavailable or the request falls outside this lane, `tg` emits a
+`UserWarning` with a human-readable explanation. The `fallback_reason` attribute on the
+`Pipeline` object captures the same text for programmatic inspection; it is surfaced in the JSON
+route envelope via the `fallback_reason` field so callers can observe it without parsing log
+output.
 
 GPU routing is **explicit and opt-in** (`--gpu-device-ids`). Heuristic auto-routing
 is disabled until the public managed binary passes the promotion proof gate described
 in [Required Promotion Rule](#required-promotion-rule).
 
-**Python pipeline note:** the Python-layer pipeline (`pipeline.py`) additionally
-routes explicit `--gpu-device-ids` requests through a CuDF/Torch sidecar path for
-complex regex when `rg` is unavailable. That path has the same CPU-fallback taxonomy
-and emits the same `fallback_reason`/`UserWarning` when the sidecar is unavailable.
-Fixed-string patterns (`-F`) in the Python pipeline are served by the StringZilla
-SIMD backend, not the GPU path; the fixed-string CUDA semantics above apply to the native CUDA route.
+### Python GPU sidecar lane
+
+The Python-layer pipeline (`Pipeline` in `src/tensor_grep/core/pipeline.py`) has its own,
+independent support matrix for the CuDF/Torch GPU backends, reachable from any build (not only
+the CUDA-feature release). It governs both the native binary's Python-sidecar redirect described
+above and any direct Python-pipeline invocation. Unlike the native lane, an **explicit**
+`--gpu-device-ids` request outside this lane's support does **not** silently fall back to CPU:
+`Pipeline` raises a `ConfigurationError` and refuses the search (the Backend Fail-Closed
+Contract), because a quiet CPU-fallback result here would otherwise look like GPU acceleration
+proof without being any.
+
+| Semantic | Sidecar (CuDF / Torch) | Explicit `--gpu-device-ids` behavior |
+| --- | --- | --- |
+| AST search (`--ast`) | Not supported | Fails closed: `ConfigurationError` ("AST search has no GPU backend") |
+| Count mode (`-c`, `--count`) | Not supported | Fails closed: `ConfigurationError` ("count (-c) search has no GPU backend") |
+| Fixed-string patterns (`-F`) | Not supported | Fails closed: `ConfigurationError` ("fixed-string (-F) search has no GPU backend"); served by the StringZilla SIMD CPU backend instead |
+| Context, line-regexp, word-regexp, or LTL queries (`-A`/`-B`/`-C`, `-x`, `-w`, LTL) | Not supported | Fails closed: `ConfigurationError` ("context/line-regexp/word-regexp/LTL search has no GPU backend") |
+| General regex (anything not listed above) | Supported | Routes to `CuDFBackend`, falling back to `TorchBackend` if CuDF is unavailable |
+
+Fixed-string patterns (`-F`) in the Python pipeline are always served by the StringZilla SIMD
+backend regardless of `--gpu-device-ids`; the fixed-string CUDA-kernel semantics in the
+native-lane table above apply only to the CUDA-feature native route, never to this sidecar lane.
 
 ## Historical v1.7 Artifact (Superseded)
 
