@@ -1,6 +1,192 @@
 # CHANGELOG
 
 
+## v1.77.0 (2026-07-16)
+
+### Chores
+
+- **bench**: T8 golden-set eval harness + P5 lane (tg find Wave 1, #189)
+  ([#625](https://github.com/oimiragieo/tensor-grep/pull/625),
+  [`d6fa824`](https://github.com/oimiragieo/tensor-grep/commit/d6fa82458659c4b743c2a470bc8a030c46a7069d))
+
+Adds the LIVE-pipeline retrieval-quality golden-set harness that gates every future tg find /
+  late-rerank promotion decision (design doc
+  docs/plans/design-tensor-grep-late-rerank-2026-07-09.md:48), plus a purpose-built vocab-mismatch
+  corpus (74 files) and golden query set (40 queries across concept/behavior/error-message/config
+  categories, verified zero content-token overlap between each query and its own target file).
+
+Bakes in the 4 mandatory adversarial-review must-fixes (tg_find_review_ledger.md WAVE 1): E1 refuses
+  an empty gold-label set at load time and bidirectionally validates the oracle itself (gold=1.0
+  exact, reversed/empty below a computed achievable ceiling); E2 machine-checks BM25-alone scores
+  near-floor on the corpus (measured recall@10=0.25, ndcg@10=0.11); E3 keeps --corpus an optional,
+  non-gating manual override; E4 adds a per-query paired win/loss/tie report and refuses any
+  comparison verdict over a skipped arm. find/find+stack arms are explicit skip stubs pending Wave
+  2c/3.
+
+Also lands the P5 (NL-query) lane in the scratchpad #72 harness -- internal only, not committed
+  here.
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Reconcile to v1.76.13 (#621 GPU-calibrate honesty NITs / #182 closed)
+  ([#622](https://github.com/oimiragieo/tensor-grep/pull/622),
+  [`1feb4fb`](https://github.com/oimiragieo/tensor-grep/commit/1feb4fbb38accaec66827e2deca96fdf2f40a368))
+
+v1.76.13 (#621) shipped the last AI-actionable item -- the 3 SHIP-WITH-NITS Opus-gate follow-ups
+  from #612 GPU-calibrate honesty (task #182): drop the residual FLAVOR=nvidia dead-end name-drop in
+  the calibrate no-binary message + correct the over-stated cuda-test coverage comment in
+  crossover.rs. Opus gate SHIP-CLEAN. Header -> v1.76.13 / 15 PRs; new CURRENT STATE bullet.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+- **gpu**: Reconcile gpu_crossover.md semantics table with the code + split native/sidecar lanes +
+  governance test ([#623](https://github.com/oimiragieo/tensor-grep/pull/623),
+  [`f91b9e7`](https://github.com/oimiragieo/tensor-grep/commit/f91b9e7eeb8697eef683ea7218fcb90362b8c8e8))
+
+The "Supported semantics" table drifted from the code and was factually wrong: it claimed --count /
+  --hidden / --no-ignore route to CPU, but gpu_native_fallback_reason (rust_core/src/main.rs) never
+  checks them, so they reach the native CUDA lane; it was also missing 7 real fallback reasons
+  (invert-match, max-count, --replace, --only-matching, --max-filesize, --color, --no-ignore-vcs)
+  and mislabeled the regex row's fallback (it needs the Python GPU sidecar, not bare CPU). Split
+  into two explicit tables: - Native CUDA-kernel lane (16 rows, 1:1 with
+  gpu_native_fallback_reason). - Python GPU sidecar lane (5 rows, from pipeline.py's fail-closed
+  contract).
+
+Adds tests/unit/test_gpu_crossover_doc_semantics.py (8 tests): parses both tables and pins them
+  against a canonical native reason-set + live introspection of
+  Pipeline._should_honor_explicit_gpu_ids / _needs_python_cpu, so the doc can't silently drift from
+  the code again. Pure factual/lane-split accuracy fix; no behavior change. (#169 GPU program,
+  do-regardless honesty fix.)
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Features
+
+- **cli**: Tg find whole-repo hybrid semantic search command (tg find Wave 2b/2c, #189)
+  ([#626](https://github.com/oimiragieo/tensor-grep/pull/626),
+  [`501dc26`](https://github.com/oimiragieo/tensor-grep/commit/501dc268086eaed63e4d6965a159a01030cfa98d))
+
+* feat(cli): tg find whole-repo hybrid semantic search command (tg find Wave 2b/2c, #189)
+
+Adds `tg find "<query>" [PATH]`: a whole-repo BM25 + local CPU dense-embedding (RRF-fused, optional
+  MaxSim late rerank) search command with no regex/pattern pre-filter, ranked via the shared
+  rank_chunks core (core/reranker.py, Wave 2a). Experimental, fail-closed, bounded, CPU-only.
+
+Registration (2b, all sites in this commit): "find" added to cli/commands.py KNOWN_COMMANDS, the
+  Rust Commands::Find enum variant + dispatch arm (mirrors Importers),
+  tests/e2e/test_routing_parity.py PUBLIC_TOP_LEVEL_COMMANDS, a new .tg-registration.toml
+  entity-scoped group, and the @app.command() handler in cli/main.py.
+
+Pipeline (2c): _execute_find walks via repo_map._iter_repo_files (bounded by
+  --max-repo-files/--deadline), chunks with a per-file RuntimeError guard plus a corpus-wide cap,
+  builds the BM25 [+ dense] [+ late] legs with the same availability/degrade scaffold
+  _apply_semantic_rerank uses, ranks via rank_chunks, applies --limit, budget-fits via --max-tokens,
+  and synthesizes a SearchResult (one representative MatchLine per chunk, max split_terms overlap
+  with the query, deterministic tie->first).
+
+Fail-closed matrix (the 4 must-fixes from the review ledger): - C1: the command boundary catches
+  BackendExecutionError and exits 2 with a clean tg: message, mirroring search's own catch --
+  _execute_find itself deliberately does not catch it. - C2: a repo-walk deadline/max-repo-files cap
+  or the corpus-wide chunk cap sets result_incomplete + incomplete_reason and exits 2 (never the
+  exit-0 BM25-only degrade --semantic's own corpus cap uses, which is only correct there because a
+  regex pre-filter already scoped the corpus). - C3: the exit-code block (0 results / 1 none / 2
+  result_incomplete) is hand-written at the command boundary, replicating search's own contract. -
+  A1: the real registration gates are test_cli_bootstrap.py's Typer-vs-KNOWN_COMMANDS check and
+  test_routing_parity.py's real --help parity test, not registration_check.py alone -- both now
+  cover "find" via the new .tg-registration.toml group plus the KNOWN_COMMANDS/
+  PUBLIC_TOP_LEVEL_COMMANDS/@app.command additions.
+
+Tests: tests/unit/test_find_command.py (12 tests covering the full fail-closed matrix, BM25-only
+  degrade, late-rerank gating, budget truncation, ASCII output) and
+  tests/integration/test_find_command_binary.py (5 tests via the real bootstrap python-m entry
+  point, not CliRunner --help contract, tiny-repo end-to-end, native-launcher parity skipped without
+  a built binary). All 17 pass locally against this worktree's source via a sibling checkout's
+  prebuilt venv interpreter.
+
+Docs: README.md Text search bullet + Quick start example, the tensor-grep skill (SKILL.md workflow
+  step + REFERENCE.md command list and a new Whole-Repo Semantic Search section).
+
+Out of scope (later PRs per the plan): the tg_find MCP tool (Wave 2d), the CPU rank stack (Wave 3),
+  and the golden-harness gate run against Wave 1's benchmarks/eval_late_rerank_quality.py (already
+  merged, #625) -- that run is the orchestrator's follow-up.
+
+No cargo/rustc/maturin was run to build this; the 2-line Rust passthrough is CI-compiled, and its
+  native-launcher parity test skips locally without a built binary. A background process on this
+  shared server independently rebuilt rust_core/target/debug/tg.exe from the edited main.rs
+  mid-session (never invoked by this agent) and confirms the full pipeline end-to-end through the
+  real native binary: `tg --help` lists find, and `tg find invoice <tmp> --json` returns the correct
+  match with representative-line tie-break landing on line 1 as designed.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(cli): F1 query-time dense degrade for tg find (Opus-gate blocker, #189)
+
+The Opus gate on PR #626 found a real Backend Fail-Closed Contract violation: _execute_find guarded
+  only the DenseIndex(chunks, model) CONSTRUCTION, but the rank_chunks(...) CALL was unwrapped, and
+  the find command boundary catches only FileNotFoundError/BackendExecutionError. DenseIndex.query
+  can raise DenseUnavailableError at QUERY time (a dim/shape mismatch) from inside rank_chunks;
+  DenseUnavailableError subclasses RuntimeError, so it was caught by NEITHER handler -> raw
+  traceback + exit 1 instead of the contracted visible BM25-only degrade + exit 0.
+
+Fix (mirrors the shipped --semantic sibling's own F1 catch at cli/main.py:3970-3984 exactly): wrap
+  the rank_chunks call in try/except DenseUnavailableError; on catch, append the BM25-only
+  rank_fallback_reason + tg: stderr line and re-run rank_chunks with dense_index=None (and
+  late_reranker=None, since the late stage only ever fed off the now-dropped dense fusion). Result
+  stays exit 0 (degraded, not failed). Tightened the _execute_find docstring so its "mirrors
+  _apply_semantic_rerank" claim now honestly includes the query-time F1 path.
+
+Regression test (real RED->GREEN, verified both directions): add
+  test_find_dense_unavailable_at_query_degrades_to_bm25_exit_0 with a _QueryDimMismatchModel that
+  encodes the corpus to dim 4 (construction succeeds) but the query to dim 5 (DenseIndex.query
+  raises at QUERY time, inside rank_chunks -- NOT the already-guarded construction path). Asserts
+  exit 0, no escaped exception, rank_fallback_reason set (mentions the dim mismatch), and real
+  BM25-only matches. Confirmed RED without the F1 catch (exit 1 + DenseUnavailableError escaping as
+  the result exception) and GREEN with it.
+
+Optional NIT (mid-pipeline --deadline stage check) deliberately skipped: the corpus is already
+  bounded (max_repo_files<=2000 + the chunk cap, so no hang), the shipped --help already honestly
+  scopes --deadline to "the repo walk/chunk phase" (nothing dishonest ships), and a mid-rank stage
+  check can only be tripped in isolation via contrived time.monotonic call-count mocking -- which
+  would ship an effectively-untested branch against this repo's RED->GREEN discipline. Noted for a
+  follow-up if D4's literal "between stages" wording is ever wanted as the shipped contract.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Refactoring
+
+- **reranker**: Extract rank_chunks shared fail-closed core (tg find Wave 2a, #189)
+  ([#624](https://github.com/oimiragieo/tensor-grep/pull/624),
+  [`2393a7e`](https://github.com/oimiragieo/tensor-grep/commit/2393a7e0d570d91fec4296c5c671fde87c1c726b))
+
+Extracts the leg-queries -> weighted RRF -> optional MaxSim-head rank core (reranker.py:274-351
+  pre-refactor) out of rerank_hybrid into a new pure rank_chunks(query, chunks, *, bm25_index,
+  dense_index, late_reranker, k) -> (fused_order, late_fallback_reason) helper. rerank_hybrid now
+  delegates to it and uses the returned tuple for its unchanged tail (fused_score, match_score,
+  reason combination). This is a byte-identical refactor: no behavior change.
+
+Stays in reranker.py per the review's C-plan-1 must-fix -- the region reads module-level
+  _int_env/_rrf_channels_enabled/_path_channel_ranking/ PATH_CHANNEL_WEIGHT/the pool+budget
+  consts/threading/sys/ LateRerankUnavailableError, so a separate module would force moving or
+  importing all of them and expand the blast radius for no benefit.
+
+tests/unit/test_rank_chunks.py pins rank_chunks directly: bm25-only identity fuse no-op, the
+  TG_RRF_CHANNELS weighted-fusion path, late-rerank budget-exceeded degrade,
+  LateRerankUnavailableError degrade, and (C-plan-2 must-fix) a genuine
+  non-LateRerankUnavailableError fault injected INSIDE the daemon worker thread that must propagate
+  -- reranker.py's `raise exc` branch was previously unpinned through rerank_hybrid (existing
+  corrupt-model tests raise from load_late_reranker in the CLI, a different path, before the worker
+  thread starts).
+
+tests/unit/test_reranker_hybrid.py and tests/unit/test_search_semantic_rerank.py pass unchanged,
+  pinning rerank_hybrid's end-to-end behavior across the extraction boundary.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.76.13 (2026-07-16)
 
 ### Bug Fixes
