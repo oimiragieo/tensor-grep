@@ -420,6 +420,122 @@ def test_build_file_importers_confirms_real_importer_and_excludes_precision_trap
     assert edge["kind"] == "import-consumer"
 
 
+# ---------------------------------------------------------------------------------------------
+# Reverse directory-index recall (express@4.21.1 dogfood bug): a bare relative specifier that
+# names a DIRECTORY -- `require('./router')` -- resolves, by Node's own directory-index
+# convention, to `router/index.js` (the forward `tg imports` side already proves this via
+# test_build_file_imports_resolves_require_via_index_probe above). The reverse side used to miss
+# it entirely: the coarse alias PREFILTER (`_reverse_importers`, built from
+# `_module_aliases_for_path`) never gave `router/index.js` a "router" alias -- every alias it
+# generated was anchored on the file's OWN stem ("index"), never its PARENT directory name -- so
+# a bare-specifier importer never became a prefilter CANDIDATE and never reached the precise
+# per-candidate CONFIRM step (`_js_ts_module_matches_definition`) that would have resolved it
+# correctly. `tg importers lib/router/index.js` on express@4.21.1 returned `importer_count: 0`
+# despite `lib/application.js`/`lib/express.js` both doing `require('./router')`.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_build_file_importers_finds_directory_index_bare_require_specifier(
+    tmp_path: Path,
+) -> None:
+    """The express@4.21.1 repro: `require('./router')` must be a confirmed importer of
+    `router/index.js`, not just an unresolved/invisible reference."""
+    project = tmp_path / "project"
+    router_dir = project / "lib" / "router"
+    router_dir.mkdir(parents=True)
+    target = router_dir / "index.js"
+    target.write_text("module.exports = {};\n", encoding="utf-8")
+    consumer = project / "lib" / "app.js"
+    consumer.write_text('var Router = require("./router");\n', encoding="utf-8")
+
+    payload = repo_map.build_file_importers(target, project)
+
+    importer_files = set(payload["importer_files"])
+    assert str(consumer.resolve()) in importer_files
+    assert payload["importer_count"] == 1
+    edge = payload["importers"][0]
+    assert edge["file"] == str(consumer.resolve())
+    assert edge["line"] == 1
+    assert edge["module"] == "./router"
+    assert edge["edge_kind"] == "reverse-import"
+
+
+def test_build_file_importers_finds_directory_index_bare_esm_import_specifier(
+    tmp_path: Path,
+) -> None:
+    """Same directory-index gap, ESM form (`import Router from './router'`) -- the bug report's
+    alternate phrasing; proves the fix is not require()-specific."""
+    project = tmp_path / "project"
+    router_dir = project / "lib" / "router"
+    router_dir.mkdir(parents=True)
+    target = router_dir / "index.js"
+    target.write_text("export default {};\n", encoding="utf-8")
+    consumer = project / "lib" / "app.js"
+    consumer.write_text('import Router from "./router";\n', encoding="utf-8")
+
+    payload = repo_map.build_file_importers(target, project)
+
+    assert str(consumer.resolve()) in set(payload["importer_files"])
+
+
+def test_build_file_importers_directory_index_rejects_prefix_false_match(
+    tmp_path: Path,
+) -> None:
+    """Guardrail: `require('./routerX')` must NOT be counted as an importer of
+    `router/index.js` -- the new parent-directory alias ("router") must not substring/prefix-
+    match a sibling directory/file whose name merely starts with the same characters
+    ("routerX" normalizes to "routerx", never "router")."""
+    project = tmp_path / "project"
+    lib_dir = project / "lib"
+    router_dir = lib_dir / "router"
+    router_dir.mkdir(parents=True)
+    target = router_dir / "index.js"
+    target.write_text("module.exports = {};\n", encoding="utf-8")
+
+    # A REAL, distinct decoy file one character away from the directory name.
+    decoy = lib_dir / "routerX.js"
+    decoy.write_text("module.exports = { decoy: true };\n", encoding="utf-8")
+    decoy_consumer = lib_dir / "appx.js"
+    decoy_consumer.write_text('var RouterX = require("./routerX");\n', encoding="utf-8")
+
+    payload = repo_map.build_file_importers(target, project)
+
+    assert str(decoy_consumer.resolve()) not in set(payload["importer_files"])
+    assert payload["importer_count"] == 0
+
+    # Sanity: the decoy importer's OWN forward resolution still correctly targets routerX.js,
+    # not router/index.js -- proving this is a genuine two-different-targets negative, not an
+    # accidental "nothing resolves" false negative.
+    decoy_imports = repo_map.build_file_imports(decoy_consumer)
+    assert decoy_imports["imports"][0]["resolved"] == str(decoy.resolve())
+
+
+def test_build_file_importers_directory_index_no_double_count_two_specifier_forms(
+    tmp_path: Path,
+) -> None:
+    """Guardrail: a single file that imports the SAME directory two different ways (bare
+    `require('./router')` and explicit `require('./router/index')`) must be counted once in
+    `importer_files` and produce exactly one edge PER real statement (2), never deduplicated to
+    fewer or multiplied by cross-matching aliases to more."""
+    project = tmp_path / "project"
+    router_dir = project / "lib" / "router"
+    router_dir.mkdir(parents=True)
+    target = router_dir / "index.js"
+    target.write_text("module.exports = {};\n", encoding="utf-8")
+    consumer = project / "lib" / "app.js"
+    consumer.write_text(
+        'var Router = require("./router");\nvar RouterAgain = require("./router/index");\n',
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_importers(target, project)
+
+    assert payload["importer_files"] == [str(consumer.resolve())]
+    assert payload["importer_count"] == 2
+    lines = sorted(int(edge["line"]) for edge in payload["importers"])
+    assert lines == [1, 2]
+
+
 def test_build_file_importers_finds_tsconfig_alias_importer(tmp_path: Path) -> None:
     """Prefilter recall: a tsconfig path-alias importer must still be found (not just plain
     relative imports)."""
@@ -544,6 +660,57 @@ def test_build_file_importers_python_dotted_import_precision(tmp_path: Path) -> 
 
     assert str(consumer.resolve()) in set(app_payload["importer_files"])
     assert str(consumer.resolve()) not in set(tools_payload["importer_files"])
+
+
+def test_build_file_importers_finds_directory_index_python_package_bare_from_import(
+    tmp_path: Path,
+) -> None:
+    """Python symmetric case of the express directory-index bug: `from . import router` where
+    `router` is a SUBPACKAGE (`router/__init__.py`), not a plain sibling module. The reverse
+    alias prefilter must give the package's `__init__.py` a "router" alias (its parent directory
+    name), the same way it now does for JS/TS `index.js` -- `_module_aliases_for_path` backs
+    both languages' reverse prefilter identically."""
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    router_pkg = pkg / "router"
+    router_pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    target = router_pkg / "__init__.py"
+    target.write_text("class Router:\n    pass\n", encoding="utf-8")
+    consumer = pkg / "main.py"
+    consumer.write_text("from . import router\n", encoding="utf-8")
+
+    payload = repo_map.build_file_importers(target, project)
+
+    assert str(consumer.resolve()) in set(payload["importer_files"])
+    edge = next(
+        current for current in payload["importers"] if current["file"] == str(consumer.resolve())
+    )
+    assert edge["module"] == "router"
+    assert edge["line"] == 1
+
+
+def test_build_file_importers_directory_index_python_rejects_prefix_false_match(
+    tmp_path: Path,
+) -> None:
+    """Guardrail, Python side: `from . import routerX` (a real sibling MODULE, not the
+    `router` subpackage) must never be counted as an importer of `router/__init__.py`."""
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    router_pkg = pkg / "router"
+    router_pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    target = router_pkg / "__init__.py"
+    target.write_text("class Router:\n    pass\n", encoding="utf-8")
+
+    (pkg / "routerX.py").write_text("DECOY = True\n", encoding="utf-8")
+    decoy_consumer = pkg / "mainx.py"
+    decoy_consumer.write_text("from . import routerX\n", encoding="utf-8")
+
+    payload = repo_map.build_file_importers(target, project)
+
+    assert str(decoy_consumer.resolve()) not in set(payload["importer_files"])
+    assert payload["importer_count"] == 0
 
 
 # ---------------------------------------------------------------------------------------------

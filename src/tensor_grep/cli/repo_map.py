@@ -7426,6 +7426,14 @@ def _source_tokens(source_files: list[str]) -> set[str]:
     return tokens
 
 
+# Directory-index reverse-importers fix (tg importers correctness gap, express@4.21.1 dogfood):
+# these are the same "magic" directory-index/package-init stems `_definition_module_parts`
+# (:3200) already strips for BARE/absolute specifier matching -- MINUS "mod" (Rust `mod.rs`),
+# which is a real analogous gap but outside this fix's scope (JS/TS `index` + the Python
+# `__init__` case the fix asks to check symmetrically; do not scope-creep to Rust here).
+_DIRECTORY_INDEX_STEMS = frozenset({"index", "__init__"})
+
+
 @lru_cache(maxsize=16384)
 def _module_aliases_for_path(path: str) -> frozenset[str]:
     # Pure function of the path STRING (no file I/O) — safe to cache unconditionally, no mtime
@@ -7440,6 +7448,28 @@ def _module_aliases_for_path(path: str) -> frozenset[str]:
         aliases.add(".".join(parts))
     if len(parts) > 1:
         aliases.add(".".join(parts[-2:]))
+        # Directory-index recall fix: a bare relative specifier that names a DIRECTORY --
+        # `require('./router')`/`import ... from './router'` (JS/TS) or `from . import router`
+        # where `router` is a subpackage (Python) -- resolves, by Node's/Python's own directory-
+        # index convention, to `router/index.{js,ts,mjs,cjs}` or `router/__init__.py`. That bare
+        # specifier's normalized alias is just the DIRECTORY name ("router"), which never
+        # appeared above -- every alias built so far is anchored on the file's OWN stem
+        # ("index"/"__init__"), never its PARENT directory name. Without this, a directory-index
+        # importer never enters the coarse alias PREFILTER (`_reverse_importers`) as a
+        # candidate for the index/init file, so it never reaches the precise per-candidate
+        # CONFIRM step (`_js_ts_module_matches_definition`/`_python_module_matches_definition`)
+        # that would otherwise resolve it correctly -- that step already mirrors Node's
+        # file-then-index resolution order (`_js_ts_candidate_files`) and already handles Python
+        # packages (`_python_module_candidates`); the gap was purely in this prefilter never
+        # nominating the candidate in the first place. Adding the parent-dir alias only WIDENS
+        # the prefilter's candidate set (the same over-count-then-confirm pattern
+        # `_python_imports_and_symbols`'s `from . import X` fix already established, :1841) --
+        # the CONFIRM step still requires an exact resolved-path match, so this cannot by itself
+        # create a false-positive edge (e.g. `require('./routerX')` normalizes to alias
+        # "routerx", never "router" -- see test_build_file_importers_directory_index_rejects_
+        # prefix_false_match).
+        if current.stem.lower() in _DIRECTORY_INDEX_STEMS:
+            aliases.add(parts[-2])
     return frozenset(alias for alias in aliases if alias)
 
 
