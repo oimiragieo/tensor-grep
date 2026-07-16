@@ -4039,7 +4039,13 @@ def _execute_find(
     Fail-closed matrix (D3, fix-approach council must-fixes C1-C3):
     - dense/late-leg extra absent, model not fetched, or a recoverable degrade -> visible BM25-only
       (or pre-late-stage) fallback: `rank_fallback_reason` set + a `tg:`-prefixed stderr line, exit
-      0. Mirrors `_apply_semantic_rerank`'s dense/late scaffold exactly (same probes, same helper).
+      0. Mirrors `_apply_semantic_rerank`'s dense/late scaffold (same `dense_available` /
+      `late_available` probes, same construction-time degrades) INCLUDING its query-time F1 catch:
+      a `DenseUnavailableError` raised from INSIDE `rank_chunks`'s `DenseIndex.query` (a dim/shape
+      mismatch, distinct from the construction path) is caught around the `rank_chunks` call and
+      degrades to a BM25-only re-run, so it stays a visible exit-0 degrade rather than escaping as a
+      raw traceback (`DenseUnavailableError` subclasses `RuntimeError`, so neither the construction
+      guard nor the command boundary would otherwise catch it).
     - a genuine unrecoverable backend fault (`BackendExecutionError` from a corrupt model directory
       or an encode-time crash) is NOT caught here -- it propagates to the command boundary (C1),
       which must catch it and exit 2 with a clean `tg:` message, never a raw traceback.
@@ -4181,13 +4187,38 @@ def _execute_find(
             # BackendExecutionError deliberately propagates -- mirrors the dense leg immediately
             # above and `_apply_semantic_rerank`'s identical contract.
 
-    fused_order, late_fallback_reason = rank_chunks(
-        query,
-        chunks,
-        bm25_index=bm25_index,
-        dense_index=dense_index,
-        late_reranker=late_reranker,
-    )
+    try:
+        fused_order, late_fallback_reason = rank_chunks(
+            query,
+            chunks,
+            bm25_index=bm25_index,
+            dense_index=dense_index,
+            late_reranker=late_reranker,
+        )
+    except DenseUnavailableError as exc:
+        # F1 (Opus-gate blocker; mirrors `_apply_semantic_rerank`'s own query-time catch,
+        # main.py:3970-3984): a dense fault raised at QUERY time from INSIDE `rank_chunks`'s call to
+        # `DenseIndex.query` (e.g. a dim/shape mismatch) is NOT the DenseIndex CONSTRUCTION path
+        # guarded above. `DenseUnavailableError` subclasses `RuntimeError`, so without this it would
+        # escape both here AND the command boundary (which catches only FileNotFoundError /
+        # BackendExecutionError) as a raw traceback + exit 1 -- a Backend Fail-Closed Contract
+        # violation. Degrade VISIBLY to BM25-only (reuse the SAME bm25_index -- no second chunk
+        # pass) and re-run; this also bypasses the late stage, which is only ever wired into the
+        # primary call above and fed off the (now-dropped) dense fusion.
+        degrade_reason = str(exc)
+        result.rank_fallback_reason = (
+            f"{result.rank_fallback_reason}; {degrade_reason}"
+            if result.rank_fallback_reason
+            else degrade_reason
+        )
+        sys.stderr.write(f"tg: {exc}\n")
+        fused_order, late_fallback_reason = rank_chunks(
+            query,
+            chunks,
+            bm25_index=bm25_index,
+            dense_index=None,
+            late_reranker=None,
+        )
     if late_fallback_reason:
         result.rank_fallback_reason = (
             f"{result.rank_fallback_reason}; {late_fallback_reason}"

@@ -37,6 +37,26 @@ class _FakeDenseModel:
         return np.ones((len(texts), 4), dtype=np.float32)
 
 
+class _QueryDimMismatchModel:
+    """Encodes the CORPUS to dim 4 (so `DenseIndex(chunks, model)` CONSTRUCTION succeeds) but the
+    QUERY string to dim 5, so `DenseIndex.query` raises `DenseUnavailableError` at QUERY time (the
+    dim-mismatch shape check) -- from INSIDE `rank_chunks`, the F1 path distinct from the
+    construction path the outer `try/except DenseUnavailableError` already guards. This is the exact
+    fault the shipped `--semantic` sibling catches around its own `rerank_hybrid` call
+    (cli/main.py:3970-3984); the regression test below proves `tg find` catches it too."""
+
+    def __init__(self, query: str) -> None:
+        self._query = query
+
+    def encode(self, texts: list[str]) -> np.ndarray:
+        # The single-text query batch -> wrong dim (5); every other batch (the corpus chunks) -> the
+        # index's own dim (4). `_encode_matrix` still sees shape[0] == len(texts) for both, so only
+        # the query-time dim-mismatch check fires -- never the malformed-shape check.
+        if texts == [self._query]:
+            return np.ones((1, 5), dtype=np.float32)
+        return np.ones((len(texts), 4), dtype=np.float32)
+
+
 def _stub_dense_unavailable(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setattr(
         "tensor_grep.core.retrieval_dense.dense_available",
@@ -67,6 +87,41 @@ def test_find_bm25_only_when_extra_absent_sets_rank_fallback_reason(
     assert payload.get("rank_fallback_reason") is not None
     assert "model2vec" in payload["rank_fallback_reason"]
     assert payload["total_matches"] >= 1
+
+
+def test_find_dense_unavailable_at_query_degrades_to_bm25_exit_0(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """Opus-gate blocker F1 regression: a `DenseUnavailableError` raised at QUERY time (a
+    dim/shape mismatch from inside `rank_chunks`'s `DenseIndex.query`, NOT at construction --
+    construction is already guarded) must degrade VISIBLY to BM25-only and exit 0, never escape
+    as a raw traceback + exit 1. `DenseUnavailableError` subclasses `RuntimeError`, so before the
+    F1 catch it was caught by neither the construction guard nor the command boundary (which
+    catches only FileNotFoundError / BackendExecutionError) -- a Backend Fail-Closed Contract
+    violation. Mirrors the shipped `--semantic` sibling's own F1 catch (cli/main.py:3970-3984)."""
+    monkeypatch.setattr("tensor_grep.core.retrieval_dense.dense_available", lambda: (True, None))
+    monkeypatch.setattr(
+        "tensor_grep.core.retrieval_dense.load_dense_model",
+        lambda _dir: _QueryDimMismatchModel(query="invoice"),
+    )
+    (tmp_path / "invoice.py").write_text(
+        "def make_invoice(invoice_id):\n    invoice = invoice_id\n    return invoice\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(app, ["find", "invoice", str(tmp_path), "--json"])
+
+    # Degraded, NOT failed: a clean sys.exit(0), never a raw traceback and never exit 1.
+    assert result.exit_code == 0, result.output
+    assert result.exception is None, (
+        f"query-time DenseUnavailableError escaped as a traceback: {result.exception!r}"
+    )
+    payload = json.loads(result.stdout)
+    # Visible BM25-only degrade: the dim-mismatch reason is surfaced, and real matches still rank.
+    assert payload.get("rank_fallback_reason") is not None
+    assert "dim" in payload["rank_fallback_reason"].lower()
+    assert payload["total_matches"] >= 1
+    assert any(str(match["file"]).endswith("invoice.py") for match in payload["matches"])
 
 
 def test_find_corrupt_model_raises_backend_execution_error_exit_2(
