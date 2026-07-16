@@ -3995,6 +3995,55 @@ def _apply_semantic_rerank(all_results: "SearchResult", pattern: str) -> "Search
 # must-fix C2), never a silent exit-0 degrade.
 _FIND_CORPUS_CHUNK_CAP = MAX_CHUNKS
 
+# #189 (ledger DENSE-WEIGHT SWEEP, agent a8580b6e 2026-07-16): the golden-set sweep measured a
+# real ndcg@10/recall lift (1:5 bm25:dense -> +0.1419 ndcg@10, recall 0.55->0.80, ZERO
+# per-category regression) on the 40 NL vocab-mismatch golden queries -- but that set is 100% NL
+# and cannot see the opposite failure mode: a short/lexical query (the canary `vm-behavior-10`)
+# where BM25 is the stronger leg and boosting dense regresses it. `TG_FIND_DENSE_WEIGHT` is the
+# knob (default "1.0" = today's equal-weight fusion, a byte-identical no-op -- see
+# `core/reranker.py`'s `rank_chunks(dense_weight=...)`); `_find_dense_weight` below is the guard
+# that keeps a non-default env value scoped to the query shape the sweep actually validated.
+_FIND_DENSE_WEIGHT_ENV = "TG_FIND_DENSE_WEIGHT"
+_FIND_DENSE_WEIGHT_DEFAULT = 1.0
+# split_terms(query) token count strictly ABOVE this is treated as NL/multi-word; at or below it
+# is treated as a short identifier/literal (grep-style) query. Chosen from the golden-set sweep's
+# own corpus split: the NL set's split_terms token count is min 3 (never <=2), so ">2" is the
+# tightest floor that cannot misclassify any of the 40 measured NL queries while still catching a
+# bare 1-2-word literal search.
+_FIND_DENSE_WEIGHT_ADAPTIVE_TOKEN_FLOOR = 2
+
+
+def _find_dense_weight(query: str) -> float:
+    """Query-adaptive `dense_weight` for `tg find`'s `rank_chunks` calls ONLY (#189) -- DEFAULT-OFF:
+    `TG_FIND_DENSE_WEIGHT` unset, empty, or unparseable as a float always returns 1.0 (the
+    byte-identical no-op fusion weight), regardless of the query's shape. This mirrors
+    `reranker._int_env`'s "a malformed override must degrade gracefully" contract for a float
+    instead of an int.
+
+    When the env var IS set to a valid float, the dense leg is boosted ONLY for NL/multi-word
+    queries -- `split_terms(query)` yielding MORE than
+    :data:`_FIND_DENSE_WEIGHT_ADAPTIVE_TOKEN_FLOOR` tokens -- where the sweep measured the lift
+    with zero per-category regression. A short query (a bare identifier, function/class name, or a
+    1-2 word literal/grep-style search -- `tg find`'s own "literal" golden slice,
+    `benchmarks/datasets/literal_golden.jsonl`) instead routes to 1.0 (the un-boosted 1:1 fusion):
+    the sweep's canary case proved BM25 is the stronger leg there, so boosting dense would regress
+    it -- this is the guard that keeps the knob scoped to where it was actually measured to help,
+    not a blind flip.
+    """
+    raw = os.environ.get(_FIND_DENSE_WEIGHT_ENV)
+    if not raw:
+        return _FIND_DENSE_WEIGHT_DEFAULT
+    try:
+        weight = float(raw)
+    except ValueError:
+        return _FIND_DENSE_WEIGHT_DEFAULT
+
+    from tensor_grep.core.retrieval_lexical import split_terms
+
+    if len(split_terms(query)) > _FIND_DENSE_WEIGHT_ADAPTIVE_TOKEN_FLOOR:
+        return weight
+    return _FIND_DENSE_WEIGHT_DEFAULT
+
 
 def _find_representative_line(chunk: "Chunk", query_terms: set[str]) -> tuple[int, str]:
     """Pick ONE line within `chunk` to surface as the synthesized `MatchLine` (D2): the line with
@@ -4194,6 +4243,7 @@ def _execute_find(
             bm25_index=bm25_index,
             dense_index=dense_index,
             late_reranker=late_reranker,
+            dense_weight=_find_dense_weight(query),
         )
     except DenseUnavailableError as exc:
         # F1 (Opus-gate blocker; mirrors `_apply_semantic_rerank`'s own query-time catch,
@@ -4218,6 +4268,7 @@ def _execute_find(
             bm25_index=bm25_index,
             dense_index=None,
             late_reranker=None,
+            dense_weight=_find_dense_weight(query),
         )
     if late_fallback_reason:
         result.rank_fallback_reason = (

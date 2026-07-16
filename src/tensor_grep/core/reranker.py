@@ -222,6 +222,7 @@ def rank_chunks(
     dense_index: DenseIndex | None,
     late_reranker: LateReranker | None,
     k: int = DEFAULT_K,
+    dense_weight: float = 1.0,
 ) -> tuple[list[int], str | None]:
     """Fuse BM25 [+ dense] [+ path] chunk rankings via RRF, then optionally MaxSim-rerank the head
     via ``late_reranker`` -- the pure, fail-closed rank core shared by :func:`rerank_hybrid` and
@@ -229,6 +230,19 @@ def rank_chunks(
     byte-identically out of ``rerank_hybrid``: callers building their own ``bm25_index`` /
     ``dense_index`` (and, for ``rerank_hybrid``, the corpus-cap chunking) are unaffected -- this
     function only fuses and (optionally) late-reranks an already-built corpus.
+
+    ``dense_weight`` (#189, ledger DENSE-WEIGHT SWEEP): a per-call multiplier on the dense leg's
+    RRF weight, relative to the BM25 leg's fixed 1.0 -- ``weights=[1.0, dense_weight]`` when
+    ``dense_index`` is present and ``dense_weight`` is non-default. ``dense_weight=1.0`` (the
+    default) is a byte-identical no-op: no ``weights`` list is even built for this reason alone, so
+    fusion falls through to the exact same ``weights=None`` call ``rerank_hybrid`` (which never
+    passes ``dense_weight``) has always made. Composes with the ``TG_RRF_CHANNELS`` path channel
+    below: when both are active, the path leg's ``PATH_CHANNEL_WEIGHT`` is appended AFTER the dense
+    weight, so ``weights`` becomes ``[1.0, dense_weight, PATH_CHANNEL_WEIGHT]`` -- one entry per
+    ``rankings`` leg, in the same order they were built. Ignored (no effect) when
+    ``dense_index is None``: there is no dense leg to weight. Callers own picking a non-default
+    value; `tg find` is the only current caller that ever does (``cli/main.py``'s
+    ``_find_dense_weight``, itself gated behind ``TG_FIND_DENSE_WEIGHT`` and default-OFF).
 
     Returns ``(fused_order, late_fallback_reason)``:
 
@@ -249,8 +263,10 @@ def rank_chunks(
         rankings.append(dense_ranking)
 
     weights: list[float] | None = None
+    if dense_index is not None and dense_weight != 1.0:
+        weights = [1.0, dense_weight]
     if _rrf_channels_enabled():
-        weights = [1.0] * len(rankings)
+        weights = weights if weights is not None else [1.0] * len(rankings)
         path_ranking = _path_channel_ranking(chunks, query)
         if path_ranking:
             rankings.append(path_ranking)

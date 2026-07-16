@@ -1,0 +1,10 @@
+{"id": "lit-01", "query": "bind_address", "category": "literal", "relevant": [{"file": "metrics/exporter.py", "start_line": 6, "end_line": 7}]}
+{"id": "lit-02", "query": "remember", "category": "literal", "relevant": [{"file": "cache/memo_store.py", "start_line": 14, "end_line": 16}]}
+{"id": "lit-03", "query": "take_snapshot", "category": "literal", "relevant": [{"file": "backup/snapshot_writer.py", "start_line": 4, "end_line": 5}]}
+{"id": "lit-04", "query": "resolve_hostname", "category": "literal", "relevant": [{"file": "net/dns_resolver.py", "start_line": 6, "end_line": 7}]}
+{"id": "lit-05", "query": "CorruptionFault", "category": "literal", "relevant": [{"file": "integrity/checksum_validator.py", "start_line": 6, "end_line": 7}]}
+{"id": "lit-06", "query": "attempts_remaining", "category": "literal", "relevant": [{"file": "queue/retry_budget.py", "start_line": 6, "end_line": 7}]}
+{"id": "lit-07", "query": "next_cursor", "category": "literal", "relevant": [{"file": "paging/cursor_paginator.py", "start_line": 8, "end_line": 10}]}
+{"id": "lit-08", "query": "PartnerBreakdown", "category": "literal", "relevant": [{"file": "net/http_bridge.py", "start_line": 4, "end_line": 5}]}
+{"id": "lit-09", "query": "make_preview", "category": "literal", "relevant": [{"file": "media/thumbnail_maker.py", "start_line": 4, "end_line": 5}]}
+{"id": "lit-10", "query": "read_rows", "category": "literal", "relevant": [{"file": "importer/csv_reader.py", "start_line": 4, "end_line": 5}]}
