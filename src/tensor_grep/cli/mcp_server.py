@@ -91,7 +91,13 @@ def _mcp_server_version() -> str:
 # inline_rules + ruleset now optional). Every existing caller's behavior is unchanged when
 # the new params are simply not passed; bumped anyway because `tg_mcp_capabilities()`'s
 # `tools[]` array itself grew, which a version-pinning client may reasonably want to detect.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.2.0"
+# 1.2.0 -> 1.3.0 (Wave 2d, #189): additive tool-set shape change, same shape/rationale as the
+# round-9 bump above -- 1 new tool (tg_find, the agent-callable form of `tg find`). Every
+# existing caller's behavior is unchanged (no existing tool's signature moved); bumped because
+# `tg_mcp_capabilities()`'s `tools[]` array grew again, which a version-pinning client may want
+# to detect (else two different tool sets would both report 1.2.0 and a pinning client would
+# not re-fetch tools[] to discover tg_find).
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.3.0"
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -4152,6 +4158,16 @@ def tg_find(
         payload["path"] = path
         payload["error"] = _sanitized_tool_error("tg_find", exc)
         return json.dumps(payload, indent=2)
+
+    # Stamp the MCP routing metadata on the success path so it matches the error envelopes above
+    # (which set _FIND_ROUTING_BACKEND/_FIND_ROUTING_REASON) -- `_execute_find` returns a bare
+    # SearchResult (routing_backend/reason=None), so without this the success response would carry
+    # `"routing_backend": null` while its own error responses carry "HybridRank", an odd
+    # within-tool inconsistency. Set on the handler's local SearchResult only, NOT inside
+    # `_execute_find`: the CLI's `tg find --json` output stays unchanged (the CLI has its own
+    # `_execute_find` call and its own SearchResult).
+    result.routing_backend = _FIND_ROUTING_BACKEND
+    result.routing_reason = _FIND_ROUTING_REASON
 
     # D2 (reuse, not duplicate): `_execute_find` already returns a `SearchResult`; serialize it
     # with the SAME `JsonFormatter` the CLI's `tg find --json` uses instead of hand-rolling a

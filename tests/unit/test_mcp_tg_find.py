@@ -324,6 +324,11 @@ def test_tg_find_response_shape_and_ascii(tmp_path, monkeypatch):
     assert payload["query"] == "invoice"
     assert payload["path"] == str(tmp_path.resolve())
     assert payload["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
+    # Success-path routing metadata must be SET (not null), matching the error envelopes -- the
+    # handler stamps _FIND_ROUTING_BACKEND/_FIND_ROUTING_REASON onto the bare SearchResult
+    # `_execute_find` returns before serializing.
+    assert payload["routing_backend"] == mcp_server._FIND_ROUTING_BACKEND
+    assert payload["routing_reason"] == mcp_server._FIND_ROUTING_REASON
     assert isinstance(payload["matches"], list)
     match = payload["matches"][0]
     assert match["file"].endswith("invoice.py")
