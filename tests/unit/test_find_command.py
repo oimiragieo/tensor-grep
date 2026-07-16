@@ -382,12 +382,19 @@ def _spy_on_rank_chunks(monkeypatch) -> list[float]:  # type: ignore[no-untyped-
     return captured
 
 
-def test_find_dense_weight_default_is_noop(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """TG_FIND_DENSE_WEIGHT unset (the default, #189) must be a byte-identical no-op: `_execute_find`
-    always calls `rank_chunks` with `dense_weight=1.0`, regardless of query shape -- including a
-    multi-word NL query, the ONE case the adaptive rule would treat differently if the default were
-    not truly inert. Mirrors `test_find_late_head_only_when_env_set`'s "prove the default never
-    changes behavior" strategy, at the `dense_weight` kwarg instead of the late-rerank probe."""
+def test_find_dense_weight_default_is_adaptive_end_to_end(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """#191 (the default flip): with TG_FIND_DENSE_WEIGHT UNSET -- today's production env, and the
+    ONLY thing this PR changes -- a genuinely multi-word NL query must now thread the
+    ledger-validated ADAPTIVE weight (5.0, `tg_find_review_ledger.md` DENSE-WEIGHT SWEEP: 1:5
+    bm25:dense -> +0.1419 ndcg@10, recall 0.55->0.80, zero per-category regression) into
+    `rank_chunks`, not the old inert 1.0 no-op. A single-token query must stay at the protected
+    1.0 -- the whitespace gate applies to the new adaptive default exactly as it does to an
+    explicit env override (see `test_find_dense_weight_adaptive_nl_vs_literal` below).
+
+    Was RED before the flip: `_execute_find` used to call `rank_chunks(dense_weight=1.0)`
+    unconditionally when the env was unset, regardless of query shape. This is the end-to-end
+    proof the flip actually reaches the real call chain, not just the helper in isolation -- see
+    `test_find_dense_weight_default_protects_literal_identifiers` for the direct-call companion."""
     monkeypatch.delenv("TG_FIND_DENSE_WEIGHT", raising=False)
     _stub_dense_clean(monkeypatch)
     captured = _spy_on_rank_chunks(monkeypatch)
@@ -396,16 +403,59 @@ def test_find_dense_weight_default_is_noop(tmp_path: Path, monkeypatch) -> None:
         encoding="utf-8",
     )
 
-    # A multi-word (>1 whitespace-separated word) query -- the adaptive rule's NL branch -- so this
-    # test would catch an accidental "adaptive rule ignores the env-unset default" bug, not just an
-    # accidental non-1.0 literal default.
-    result = CliRunner().invoke(app, ["find", "invoice processing helper", str(tmp_path), "--json"])
-
-    assert result.exit_code == 0, result.output
-    assert captured, "rank_chunks was never called"
-    assert all(weight == 1.0 for weight in captured), (
-        f"expected dense_weight=1.0 (no-op) on every call with the env unset, got {captured}"
+    # A multi-word (>1 whitespace-separated word) query -- the adaptive rule's NL branch.
+    nl_result = CliRunner().invoke(
+        app, ["find", "invoice processing helper", str(tmp_path), "--json"]
     )
+    assert nl_result.exit_code == 0, nl_result.output
+    assert captured, "rank_chunks was never called"
+    assert captured[-1] == 5.0, (
+        f"env-unset multi-word query must now get the adaptive weight, got {captured}"
+    )
+
+    # A single whitespace-free token must stay at the protected no-op weight, env-unset or not.
+    literal_result = CliRunner().invoke(app, ["find", "invoice", str(tmp_path), "--json"])
+    assert literal_result.exit_code == 0, literal_result.output
+    assert captured[-1] == 1.0, (
+        f"env-unset single-token query must stay at the protected 1.0, got {captured}"
+    )
+
+
+def test_find_dense_weight_default_protects_literal_identifiers(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """#191 (the default flip), direct-call companion to the end-to-end test above: pins the
+    ADAPTIVE-by-default behavior at the `_find_dense_weight` helper level, across the real
+    dogfood-caught identifier shapes (`tg_find_review_ledger.md` REAL-REPO DOGFOOD) -- with
+    TG_FIND_DENSE_WEIGHT UNSET, every one of these single-token, multi-morpheme identifiers must
+    still resolve to the protected 1.0 (the whitespace gate does not care whether the weight it is
+    guarding came from an explicit env override or the new adaptive default), while genuinely
+    multi-word NL queries resolve to the adaptive 5.0. Mirrors
+    `test_find_dense_weight_multimorpheme_identifier_protected`'s identifier list, env UNSET
+    instead of env=5.0."""
+    from tensor_grep.cli.main import _find_dense_weight
+
+    monkeypatch.delenv("TG_FIND_DENSE_WEIGHT", raising=False)
+
+    protected_identifiers = [
+        "mint_access_token",  # snake_case, 3 morphemes
+        "getUserName",  # camelCase, 3 morphemes
+        "_confine_mcp_path",  # leading underscore, 3 morphemes
+        "BackendExecutionError",  # PascalCase, 3 morphemes
+        "reciprocal_rank_fusion",  # 3 morphemes
+        "_iter_repo_files",  # 3 morphemes
+        "rank_chunks",  # 2 morphemes (the ONE the old rule happened to protect)
+    ]
+    for identifier in protected_identifiers:
+        assert _find_dense_weight(identifier) == 1.0, (
+            f"single-token identifier {identifier!r} must stay at 1.0 under the adaptive default, "
+            "not just under an explicit env override"
+        )
+
+    # Genuinely multi-word NL queries get the adaptive default instead of the old inert 1.0.
+    assert _find_dense_weight("how does the retry backoff work") == 5.0
+    assert _find_dense_weight("borrow a connection out of a shared pool") == 5.0
+    assert _find_dense_weight("verify login credentials") == 5.0
+    # Boundary: even a bare 2-word phrase is multi-word -> adaptive (whitespace, not word length).
+    assert _find_dense_weight("shared pool") == 5.0
 
 
 def test_find_dense_weight_adaptive_nl_vs_literal(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -484,24 +534,98 @@ def test_find_dense_weight_multimorpheme_identifier_protected(monkeypatch) -> No
     assert _find_dense_weight("shared pool") == 5.0
 
 
-def test_find_dense_weight_nonfinite_env_clamps_to_default(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """Flip-prep NIT 1 (tg_find_review_ledger.md FLIP-PREP): `float("nan")` / `float("inf")` /
-    `float("-inf")` all PARSE without raising `ValueError`, so the pre-existing `except ValueError`
-    guard alone never rejected them -- left unclamped, `_find_dense_weight` would return `nan`/`inf`
-    for a multi-word query, and `rank_chunks(dense_weight=nan)` would thread a degenerate
-    `weights=[1.0, nan]` list into `reciprocal_rank_fusion`'s sort. Mirrors
-    `test_reranker.py::test_rank_corpus_chunk_cap_non_positive_or_malformed_env_falls_back_to_default`'s
-    direct-import-and-call pattern for a malformed-override guard. A multi-word (>1
-    whitespace-separated word) query is used so the adaptive branch is actually reached -- a
-    single-token literal query already returns 1.0 unconditionally (see
-    test_find_dense_weight_multimorpheme_identifier_protected above) and would never exercise this
-    guard at all."""
+def test_find_dense_weight_explicit_env_override_wins_over_adaptive_default(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """#191 flip-safety pin: an explicit TG_FIND_DENSE_WEIGHT env value always wins over the new
+    adaptive default -- the flip only changes what happens when the env is ABSENT, never when an
+    operator has set one. `=1.0` is the explicit opt-out (must NOT be silently upgraded to the
+    adaptive 5.0 just because 1.0 also happens to be the literal-path fallback); `=3.0` is an
+    arbitrary explicit override distinct from both 1.0 and the adaptive 5.0, proving the env value
+    itself is threaded through rather than clobbered by the new default. The whitespace gate still
+    protects single-token identifiers under an explicit override, unchanged from before the flip
+    (see test_find_dense_weight_multimorpheme_identifier_protected above)."""
     from tensor_grep.cli.main import _find_dense_weight
 
-    for bad_value in ("nan", "-nan", "NaN", "inf", "-inf", "Infinity", "-Infinity"):
+    monkeypatch.setenv("TG_FIND_DENSE_WEIGHT", "1.0")
+    assert _find_dense_weight("invoice processing helper") == 1.0, (
+        "an explicit TG_FIND_DENSE_WEIGHT=1.0 opt-out must be honored, not upgraded to adaptive"
+    )
+    assert _find_dense_weight("_confine_mcp_path") == 1.0
+
+    monkeypatch.setenv("TG_FIND_DENSE_WEIGHT", "3.0")
+    assert _find_dense_weight("invoice processing helper") == 3.0, (
+        "an explicit TG_FIND_DENSE_WEIGHT=3.0 override must win over the adaptive default"
+    )
+    assert _find_dense_weight("_confine_mcp_path") == 1.0, (
+        "the whitespace gate must still protect a single-token identifier under an explicit override"
+    )
+
+
+def test_find_dense_weight_nonfinite_env_clamps_to_adaptive_default(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Flip-prep NIT 1 (tg_find_review_ledger.md FLIP-PREP) + thinktank rank-lens must-fix 2
+    (2026-07-16): `float("nan")` / `float("inf")` / `float("-inf")` all PARSE without raising
+    `ValueError`, so the `except ValueError` guard alone never rejected them -- and plain
+    ValueError-triggering garbage (`"banana"`, `"12abc"`) hits the OTHER branch. Pre-#191 both
+    branches clamped to the inert 1.0. POST-#191 must-fix 2, a malformed/non-finite override is
+    instead treated EXACTLY like an unset env var: it now resolves to the SAME adaptive default a
+    multi-word query would get anyway, so a typo'd `TG_FIND_DENSE_WEIGHT` value never silently
+    opts an operator OUT of the improved default. The finiteness guard itself is NOT weakened: a
+    non-finite value still never reaches `rank_chunks(dense_weight=...)` -- `weights=[1.0, nan]`
+    would otherwise build a degenerate list for `reciprocal_rank_fusion`'s sort; it now clamps to
+    5.0 instead of 1.0. Mirrors
+    `test_reranker.py::test_rank_corpus_chunk_cap_non_positive_or_malformed_env_falls_back_to_default`'s
+    direct-import-and-call pattern for a malformed-override guard. A multi-word (>1
+    whitespace-separated word) query is used so the adaptive branch is actually reached; a
+    single-token query is also checked to prove the whitespace gate still protects literals even
+    under a malformed override (see test_find_dense_weight_multimorpheme_identifier_protected for
+    the SET-to-a-valid-value sibling of this protection)."""
+    from tensor_grep.cli.main import _find_dense_weight
+
+    bad_values = (
+        "nan",
+        "-nan",
+        "NaN",
+        "inf",
+        "-inf",
+        "Infinity",
+        "-Infinity",
+        "banana",
+        "12abc",
+    )
+    for bad_value in bad_values:
         monkeypatch.setenv("TG_FIND_DENSE_WEIGHT", bad_value)
         weight = _find_dense_weight("invoice processing helper")
-        assert weight == 1.0, f"non-finite env value {bad_value!r} was not clamped, got {weight!r}"
+        assert weight == 5.0, (
+            f"malformed/non-finite env value {bad_value!r} must now resolve to the adaptive "
+            f"default (treated like unset), got {weight!r}"
+        )
+        literal_weight = _find_dense_weight("_confine_mcp_path")
+        assert literal_weight == 1.0, (
+            f"a single-token identifier must stay protected at 1.0 even under a malformed env "
+            f"value {bad_value!r}, got {literal_weight!r}"
+        )
+
+
+def test_find_dense_weight_default_boosts_two_word_lexical_canary(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Thinktank rank-lens must-fix 1 (2026-07-16): the whitespace gate is purely structural, so a
+    2-word LEXICAL phrase (not natural language) is indistinguishable from a 2-word NL phrase and
+    ALSO receives the adaptive boost when TG_FIND_DENSE_WEIGHT is unset. The 1:5 sweep is 100% NL
+    queries and the literal/identifier3 golden slices are single-token by construction, so this
+    exact shape (a short literal CODE phrase) is UNMEASURED by either. This canary is a
+    VISIBILITY/regression-catch test, not a new classifier: it documents and pins the current,
+    intentional behavior so a future change to the gate is a conscious decision, not a silent
+    drift. `TG_FIND_DENSE_WEIGHT=1.0` remains the escape hatch for an operator who hits a
+    regression on a precise 2-word literal search; `potion-code-16M` is a CODE-domain embedding
+    model, which makes boosting a 2-word code fragment defensible too, not just prose NL."""
+    from tensor_grep.cli.main import _find_dense_weight
+
+    monkeypatch.delenv("TG_FIND_DENSE_WEIGHT", raising=False)
+
+    for lexical_query in ("return None", "TODO fixme"):
+        assert _find_dense_weight(lexical_query) == 5.0, (
+            f"a 2-word lexical query {lexical_query!r} is expected to receive the adaptive boost "
+            "under the whitespace gate (documented scope, not a bug) -- if this now fails, the "
+            "gate's shape changed and the PR body / docstring KNOWN SCOPE note need updating too"
+        )
 
 
 def test_find_dense_weight_nonfinite_env_never_reaches_rank_chunks(
@@ -510,7 +634,9 @@ def test_find_dense_weight_nonfinite_env_never_reaches_rank_chunks(
     """End-to-end companion to the unit test above: proves the clamp holds through the FULL `tg
     find` call chain, not just the helper in isolation -- `rank_chunks` must never observe a
     non-finite `dense_weight` kwarg for a real invocation, which is the actual danger (a degenerate
-    `weights=[1.0, nan]` reaching `reciprocal_rank_fusion`'s sort)."""
+    `weights=[1.0, nan]` reaching `reciprocal_rank_fusion`'s sort). Post-#191 must-fix 2, a
+    non-finite env value resolves to the ADAPTIVE default (5.0) for this multi-word query, treated
+    exactly like an unset env var -- not the old inert 1.0."""
     monkeypatch.setenv("TG_FIND_DENSE_WEIGHT", "nan")
     _stub_dense_clean(monkeypatch)
     captured = _spy_on_rank_chunks(monkeypatch)
@@ -525,6 +651,7 @@ def test_find_dense_weight_nonfinite_env_never_reaches_rank_chunks(
 
     assert result.exit_code == 0, result.output
     assert captured, "rank_chunks was never called"
-    assert all(weight == 1.0 for weight in captured), (
-        f"expected dense_weight=1.0 for every call with a non-finite env value, got {captured}"
+    assert all(weight == 5.0 for weight in captured), (
+        f"expected dense_weight=5.0 (adaptive, treated like unset) for every call with a "
+        f"non-finite env value, got {captured}"
     )

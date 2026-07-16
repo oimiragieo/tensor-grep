@@ -4001,11 +4001,26 @@ _FIND_CORPUS_CHUNK_CAP = MAX_CHUNKS
 # per-category regression) on the 40 NL vocab-mismatch golden queries -- but that set is 100% NL
 # and cannot see the opposite failure mode: a short/lexical query (the canary `vm-behavior-10`)
 # where BM25 is the stronger leg and boosting dense regresses it. `TG_FIND_DENSE_WEIGHT` is the
-# knob (default "1.0" = today's equal-weight fusion, a byte-identical no-op -- see
-# `core/reranker.py`'s `rank_chunks(dense_weight=...)`); `_find_dense_weight` below is the guard
-# that keeps a non-default env value scoped to the query shape the sweep actually validated.
+# knob (see `core/reranker.py`'s `rank_chunks(dense_weight=...)`); `_find_dense_weight` below is
+# the guard that keeps the boost scoped to the query shape the sweep actually validated.
+#
+# #191 (THE FLIP): the env-unset default is no longer the inert 1.0 no-op. With the classifier
+# hardened (whitespace gate, below) and the flip-prep NITs closed (nan/inf clamp, 3-token
+# identifier re-sweep), env-unset now applies the SAME adaptive rule a valid explicit override
+# would: a multi-word NL query gets `_FIND_DENSE_WEIGHT_ADAPTIVE_DEFAULT` (5.0, the ledger-swept
+# 1:5 bm25:dense ratio); a single whitespace-free token stays at the protected 1.0. A malformed or
+# non-finite override (a typo, `nan`, `inf`) is now treated exactly like unset -- it resolves to
+# the SAME adaptive default rather than silently opting a typo'd operator OUT of the improved
+# default (thinktank rank-lens must-fix, 2026-07-16). An operator who wants the OLD equal-weight
+# fusion back must set `TG_FIND_DENSE_WEIGHT=1.0` explicitly.
 _FIND_DENSE_WEIGHT_ENV = "TG_FIND_DENSE_WEIGHT"
 _FIND_DENSE_WEIGHT_DEFAULT = 1.0
+# The ledger-validated adaptive weight (#191, DENSE-WEIGHT SWEEP): encodes the swept 1:5
+# bm25:dense ratio -- `rank_chunks` fixes the bm25 leg at 1.0, so `dense_weight=5.0` IS the 1:5
+# ratio (tg_find_review_ledger.md DENSE-WEIGHT SWEEP). This is now the env-UNSET (and
+# env-malformed/non-finite) resolution for a genuinely multi-word query; a single-token query
+# still resolves to `_FIND_DENSE_WEIGHT_DEFAULT` above via the whitespace gate.
+_FIND_DENSE_WEIGHT_ADAPTIVE_DEFAULT = 5.0
 # Whitespace-based NL-vs-literal classifier (dogfood finding, #191): a query with MORE THAN ONE
 # whitespace-separated word is NL/multi-word and gets the adaptive weight; a single whitespace-free
 # token is a literal identifier (a symbol name, a grep-style search) and stays at 1.0. The prior
@@ -4019,21 +4034,24 @@ _FIND_DENSE_WEIGHT_DEFAULT = 1.0
 
 
 def _find_dense_weight(query: str) -> float:
-    """Query-adaptive `dense_weight` for `tg find`'s `rank_chunks` calls ONLY (#189) -- DEFAULT-OFF:
-    `TG_FIND_DENSE_WEIGHT` unset, empty, unparseable, or non-finite (see flip-prep NIT 1 below)
-    always returns 1.0 (the byte-identical no-op fusion weight), regardless of the query's shape.
-    This mirrors `reranker._int_env`'s "a malformed override must degrade gracefully" contract for
-    a float instead of an int.
+    """Query-adaptive `dense_weight` for `tg find`'s `rank_chunks` calls ONLY (#189, flipped ON by
+    #191): with `TG_FIND_DENSE_WEIGHT` unset -- or set to something malformed/unparseable/
+    non-finite (see flip-prep NIT 1 below) -- a genuinely multi-word NL query now gets the
+    ledger-validated `_FIND_DENSE_WEIGHT_ADAPTIVE_DEFAULT` (5.0) instead of the old inert 1.0
+    no-op. A single whitespace-free token ALWAYS stays at the protected
+    `_FIND_DENSE_WEIGHT_DEFAULT` (1.0), regardless of the env var's state -- the whitespace gate
+    below applies uniformly to the adaptive default, a malformed/non-finite fallback, AND an
+    explicit override alike.
 
-    When the env var IS set to a valid FINITE float, the dense leg is boosted ONLY for genuinely
-    multi-word NL queries -- `query.split()` yielding MORE than ONE whitespace-separated word --
-    where the golden-set sweep measured the lift with zero per-category regression. A single
-    whitespace-free token (a bare identifier, a function/class/symbol name, a grep-style literal
-    search -- `tg find`'s own "literal" and "identifier3" golden slices,
+    When the env var IS set to a valid FINITE float, that EXPLICIT value replaces the adaptive
+    default for a multi-word query -- `TG_FIND_DENSE_WEIGHT=1.0` is the explicit opt-out back to
+    the old equal-weight fusion; any other finite value (e.g. `=3.0`) is honored verbatim. A
+    single whitespace-free token (a bare identifier, a function/class/symbol name, a grep-style
+    literal search -- `tg find`'s own "literal" and "identifier3" golden slices,
     `benchmarks/datasets/literal_golden.jsonl` + `identifier3_golden.jsonl`) instead routes to 1.0
-    (the un-boosted 1:1 fusion): the sweep's canary case proved BM25 is the stronger leg for a
-    lexical query, so boosting dense would risk regressing it -- this is the guard that keeps the
-    knob scoped to where it was actually measured to help, not a blind flip.
+    (the un-boosted 1:1 fusion) NO MATTER what the env var says: the sweep's canary case proved
+    BM25 is the stronger leg for a lexical query, so boosting dense would risk regressing it --
+    this is the guard that keeps the knob scoped to where it was actually measured to help.
 
     Whitespace, NOT morphemes (dogfood finding, #191): the classifier gates on whitespace-separated
     word count, never `split_terms(query)` morpheme count. `split_terms` splits snake_case/camelCase
@@ -4044,29 +4062,46 @@ def _find_dense_weight(query: str) -> float:
     identifier queries wrongly boosted, only the 2-morpheme `rank_chunks` protected); the
     whitespace gate is the dogfood's own recommended fix.
 
+    KNOWN SCOPE (thinktank rank-lens, 2026-07-16): the whitespace gate is purely structural -- a
+    2-word LEXICAL phrase (e.g. `"return None"`, `"TODO fixme"`) is indistinguishable from a
+    2-word NL phrase and ALSO receives the adaptive boost. The 1:5 sweep is 100% NL queries and
+    the literal/identifier3 golden slices are single-token by construction, so this exact shape is
+    UNMEASURED. This is a deliberate non-goal, not an oversight: building a lexical-vs-NL content
+    classifier here would repeat the exact mistake the morpheme classifier made (a content-based
+    heuristic that silently misclassifies real queries) -- see
+    `test_find_dense_weight_default_boosts_two_word_lexical_canary` for the regression-catching
+    canary this scope decision needs. `TG_FIND_DENSE_WEIGHT=1.0` remains the escape hatch for a
+    precise 2-word literal search; `potion-code-16M` is a CODE-domain embedding model, which makes
+    boosting a 2-word code fragment defensible too, not just prose NL.
+
     Flip-prep NIT 1 (tg_find_review_ledger.md FLIP-PREP): `float("nan")` / `float("inf")` /
     `float("-inf")` all PARSE successfully -- `ValueError` alone never catches them, and `nan` in
     particular compares unequal to everything (including itself), so a downstream `!= 1.0` check
-    would treat it as "non-default" too. Left unclamped, a malformed-but-parseable
-    `TG_FIND_DENSE_WEIGHT=nan` would flow into `rank_chunks(dense_weight=nan)`, building a
-    degenerate `weights=[1.0, nan]` list for `reciprocal_rank_fusion`'s sort. `math.isfinite`
-    rejects `nan` and both infinities the same way the `except ValueError` branch above rejects
-    outright garbage, before the query-shape check ever runs.
+    would treat it as "non-default" too. `math.isfinite` rejects `nan` and both infinities the same
+    way the `except ValueError` branch below rejects outright garbage -- both now fall through to
+    the SAME adaptive-default resolution as an unset env var (#191 must-fix 2: a typo must not
+    silently opt an operator OUT of the improved default), rather than being clamped to the old
+    1.0. Either way, a non-finite value never reaches `rank_chunks(dense_weight=...)`:
+    `weights=[1.0, nan]` would otherwise build a degenerate list for `reciprocal_rank_fusion`'s
+    sort.
     """
     raw = os.environ.get(_FIND_DENSE_WEIGHT_ENV)
-    if not raw:
-        return _FIND_DENSE_WEIGHT_DEFAULT
-    try:
-        weight = float(raw)
-    except ValueError:
-        return _FIND_DENSE_WEIGHT_DEFAULT
-    if not math.isfinite(weight):
-        return _FIND_DENSE_WEIGHT_DEFAULT
+    weight = _FIND_DENSE_WEIGHT_ADAPTIVE_DEFAULT
+    if raw:
+        try:
+            explicit = float(raw)
+        except ValueError:
+            explicit = None
+        if explicit is not None and math.isfinite(explicit):
+            weight = explicit
+        # else: malformed or non-finite -- treated exactly like an unset env var (falls through to
+        # the adaptive default above), per #191 must-fix 2.
 
     # A single whitespace-free token (or an empty/whitespace-only query, whose `split()` -> []) is a
-    # literal identifier -> stay at the protected 1.0. Only a genuinely multi-word (space-separated)
-    # query is NL and gets the adaptive weight. Whitespace, not `split_terms` morphemes -- see the
-    # module comment above `_FIND_DENSE_WEIGHT_ENV` for the dogfood finding (#191) this fixes.
+    # literal identifier -> stay at the protected 1.0, regardless of the env var's state. Only a
+    # genuinely multi-word (space-separated) query is NL and gets the resolved `weight` above.
+    # Whitespace, not `split_terms` morphemes -- see the module comment above `_FIND_DENSE_WEIGHT_ENV`
+    # for the dogfood finding (#191) this fixes.
     if len(query.split()) <= 1:
         return _FIND_DENSE_WEIGHT_DEFAULT
     return weight
