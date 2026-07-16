@@ -8,7 +8,8 @@ description: Use when setting up the tensor-grep dev environment from a fresh cl
 Recreate a working tensor-grep dev environment from nothing, and rebuild it correctly after
 touching Rust. Every command below is verified against `pyproject.toml`, `rust_core/Cargo.toml`,
 `rust_core/rust-toolchain.toml`, `CONTRIBUTING.md`, `AGENTS.md`, and `.github/workflows/ci.yml` as
-of **2026-07-08, v1.49.3**. Re-verify anything version-shaped before trusting it long-term — see
+of **2026-07-08, v1.49.3** (toolchain pins + test counts re-verified **2026-07-16, v1.78.1**, still
+accurate). Re-verify anything version-shaped before trusting it long-term — see
 "Provenance and maintenance" at the bottom.
 
 ## When to use this skill
@@ -191,7 +192,7 @@ python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 tg dogfood --output artifacts/dogfood_readiness.json
 ```
 
-**Test corpus size** (2026-07-08): `tests/` has 208 unit test files + 15 e2e test files + 10
+**Test corpus size** (2026-07-16): `tests/` has 239 unit test files + 16 e2e test files + 11
 integration test files (`pyproject.toml` sets `testpaths = ["tests"]`, so a bare `uv run pytest -q`
 covers all three). `uv run pytest -q` "can take substantially longer than 70-90 seconds on
 [a Windows] machine when the full JS/TS and e2e surface is hot" — use a timeout of at least 120s for
@@ -350,7 +351,7 @@ Volatile facts stated above and how to re-check them if this skill feels stale:
 - **Version pins** (Python floor, uv, maturin, Rust toolchain, ruff, mypy, pyo3):
   `grep -nE "requires-python|version|channel" pyproject.toml rust_core/Cargo.toml rust_core/rust-toolchain.toml`
 - **uv version CI pins**: `grep -n "uv==" .github/workflows/ci.yml`
-- **Test file counts** (208 unit / 15 e2e / 10 integration as of 2026-07-08):
+- **Test file counts** (239 unit / 16 e2e / 11 integration as of 2026-07-16):
   `find tests/unit tests/e2e tests/integration -name "test_*.py" | wc -l` run per directory, or one
   combined `find tests -name "test_*.py" | wc -l` for the total file count.
   Note this counts *files*, not individual `def test_*` cases — the suite has thousands of the latter.
@@ -358,6 +359,6 @@ Volatile facts stated above and how to re-check them if this skill feels stale:
 - **LTO / release-profile setting**: `grep -n "profile.release" -A2 rust_core/Cargo.toml`
 - **Registration-completeness gate presence**: `ls .tg-registration.toml` and
   `grep -n "registration_check" .github/workflows/ci.yml`
-- **Current versions re-verified 2026-07-08**: tensor-grep `v1.49.3`, Rust toolchain `1.96.0`, uv
-  `0.11.25`, ruff `==0.15.20`, mypy `==1.19.1`, pyo3 `0.29.0`, maturin build-system pin `>=1.5,<2.0`,
-  Python floor `>=3.11`.
+- **Current versions re-verified 2026-07-08, toolchain pins RE-CONFIRMED unchanged 2026-07-16**:
+  tensor-grep `v1.78.1`, Rust toolchain `1.96.0`, uv `0.11.25`, ruff `==0.15.20`, mypy `==1.19.1`,
+  pyo3 `0.29.0`, maturin build-system pin `>=1.5,<2.0`, Python floor `>=3.11`.

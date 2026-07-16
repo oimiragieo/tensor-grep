@@ -209,6 +209,27 @@ that earns or fails a pre-stated 2-week numeric gate before any ledger/claims la
 of this writing that build (`#456`) is **open, not merged to `main`** — cite it as an in-flight design
 pattern, not a shipped result (`git log --oneline origin/main | head` to re-check).
 
+### Worked example — a fresh default-OFF -> proven -> pending-flip lifecycle (`TG_FIND_DENSE_WEIGHT`, #189/#628/#630, 2026-07-16)
+
+A clean, in-progress instance of stages 2-3 (the "adopted" stage 5a has NOT fired yet — do not describe
+this knob as flipped). `tg find`'s golden-set sweep (`benchmarks/eval_late_rerank_quality.py`) measured
+a real ndcg@10/recall@10 lift from a 1:5 bm25:dense fusion weight, with zero per-category regression, on
+the 40-query NL golden set — that is Test B's "predict the number, then measure" working as designed.
+But the sweep is 100% NL queries and cannot see the opposite failure mode (a short/lexical query where
+BM25 is the stronger leg and boosting dense regresses it) — so the knob shipped **stage 2, experimental
+default-OFF** (`TG_FIND_DENSE_WEIGHT` unset = `1.0` = today's byte-identical equal-weight fusion), scoped
+by a query-shape classifier so a non-default env value only ever applies where the sweep actually
+measured the lift (multi-word queries), never to a literal/identifier lookup. **The classifier itself
+then failed its OWN Test A** on the first real-corpus dogfood: the original morpheme-count gate
+(`split_terms(query) > 2`) mis-boosted 5 of 6 literal-identifier golden queries because a descriptive
+single-token identifier (`reciprocal_rank_fusion`, `_confine_mcp_path`) splits into 3+ morphemes — fixed
+by switching to a whitespace word-count gate (`#191`, commit `173e093`/`#630`), which also added a
+`math.isfinite` clamp so `TG_FIND_DENSE_WEIGHT=nan`/`inf` degrades to the safe default instead of
+poisoning `reciprocal_rank_fusion`'s sort. **Stage 3 (dogfood/benchmark) is now satisfied; stage 5a
+(conscious flag-flip to a non-1.0 default) is a separate, still-open CEO checkpoint** — evidence in hand
+does not itself authorize the flip. See `tensor-grep-semantic-search-campaign` STATUS UPDATE 2 and
+`tensor-grep-config-and-flags` for the mechanics.
+
 ### Retirement is a deliverable — the ledger
 
 `docs/PAPER.md` is the repo's **research notebook**, and §3.10 "Optimization Ledger: Accepted Wins and
@@ -262,6 +283,21 @@ before citing it: the committed-artifact number and the informal receipt in memo
 (`tensor-grep-benchmark-proofpoint-2026-07-08`) had not yet been reconciled as of this writing — see
 `docs/benchmarks.md` and `tensor-grep-benchmark-and-proof-toolkit` before quoting a precise figure.
 
+**C14, continued (2026-07-16) — the full lifecycle, not just the disconfirming measurement.** This is
+worth tracking through to its end because it is a rare in-repo example of every Part 3 stage actually
+firing in sequence: (1) **hypothesis** — the context moat wins on token economy; (2) **disconfirming
+measurement** — P4 file-deps landed ~10x WORSE than `rg` (53,631 tokens-per-correct via whole-repo
+`tg map`), not a win, exposing a genuine scoped gap (no file-dependency primitive existed); (3) **fix**
+— `tg imports FILE` / `tg importers FILE [ROOT]` shipped (`#460`, `05f49b8`, the normal 4-site
+registration plus MCP tools); (4) **re-verify** — the SAME Sverklo P4 task slice re-run independently
+(deterministic, $0) landed at 2,387 tokens-per-correct, ~**2.24x BETTER** than `rg`, F1 improved
+0.542->0.606, bidirectional-oracle-validated 25/25 (`v1.76.12`, `#619`); (5) **adopted** — the primitive
+is shipped and load-bearing; the only remaining gate is **publishing the numbers**, which is a separate,
+CEO-held decision (`#72`), not a research-methodology gate. Test A's "one mechanism must explain every
+observation, including the negatives" held throughout: the SAME context-moat mechanism correctly
+predicted both the P1 win and, once the scoped-gap fix landed, the P4 win — the disconfirming
+measurement was not a refutation, it was the diagnostic that pointed at the missing primitive.
+
 Two guardrails on idea *selection* (the frontier owns the full target list; this is just the methodology):
 
 - **Weight ideas by the strategy, not by novelty.** Raw search speed is the **parity tier**; the moat is the
@@ -301,11 +337,12 @@ If you cannot tick a box, you have a **candidate**, not a result. Say "candidate
 ## Provenance and maintenance
 
 Volatile facts were originally dated **2026-07-02, release `v1.17.25`**; AGENTS.md citations
-re-grepped and re-anchored **2026-07-08 against `v1.49.3`** (AGENTS.md gained a new orchestration
-section that shifted most downstream line numbers by roughly +18/+19 — **do not trust a stale
-number, re-grep it**; the table below carries the numbers verified at v1.49.3). Re-verify before
-relying on any of them — a wrong methodology runbook lets a bad result through, which is worse than
-none.
+re-grepped and re-anchored **2026-07-08 against `v1.49.3`**; the C14 lifecycle extension and the
+`TG_FIND_DENSE_WEIGHT` worked example were added and verified **2026-07-16 against `v1.78.1`** (AGENTS.md
+has continued to gain sections since 2026-07-08 that shift downstream line numbers — **do not trust a
+stale number, re-grep it**; the table below carries the numbers verified at v1.49.3, not yet re-walked
+for v1.78.1). Re-verify before relying on any of them — a wrong methodology runbook lets a bad result
+through, which is worse than none.
 
 | Claim | Re-verify command |
 |---|---|

@@ -9,7 +9,10 @@ How to **measure, not eyeball**, whether a tensor-grep (`tg`) install or a repo 
 healthy. Most facts below are verified against the repo at **v1.17.25 (2026-07-02)**; the GPU doctor-probe
 fields (`gpu.search_runtime_probe.*`, `native_frontdoor_*`) were re-verified against **v1.75.4
 (2026-07-14)** by reading
-the cited files — re-verify with the commands in "Provenance and maintenance" if you suspect drift.
+the cited files; the `agent_readiness.py` check count/names (13 repo-local, 23 total), the core
+doctor field names, and the new `tg find`/`tg route-test` interpretation section were spot-checked
+against **v1.78.1 (2026-07-16)** — re-verify with the commands in "Provenance and maintenance" if
+you suspect drift.
 
 ## When to use this skill (and when to use a sibling instead)
 
@@ -285,6 +288,31 @@ every feature works on the shipped artifact; exit 1 = a named regression with ou
 For the full "why CliRunner alone is not enough" rationale and workflow discipline, see the global
 skill `dogfood-the-shipped-artifact` — this section only covers what the script measures.
 
+## Interpreting `tg find` / `tg route-test` output (v1.77.0+, #189)
+
+Two newer JSON surfaces belong in this skill's "what does the field actually prove" territory —
+neither is a health-check tool like Tools 1-4 above, but both need the same field-by-field
+interpretation discipline before you trust them.
+
+**`tg find` (`main.py:4340-4440`):**
+
+| Field | Healthy value | What a bad/absent value means |
+|---|---|---|
+| `rank_fallback_reason` | absent when the dense leg fully participated; a string (e.g. the `semantic` extra or model is unavailable) when it degraded | this is a **visible, legitimate degrade** — BM25-only is still a fully-supported result. Do NOT read a populated value as an error; DO be suspicious of a run you expected to be hybrid that shows no dense-leg evidence at all with this field also absent (see `tensor-grep-debugging-playbook` §4). |
+| `result_incomplete` | `false`/absent on a complete scan | `true` means `--deadline`/`--max-repo-files`/the internal corpus-wide chunk cap truncated the walk — the ranked results are a FLOOR, not the full answer. Exit code confirms this independent of the JSON: any truncation exits **2**, whether or not matches were found (`tensor-grep-run-and-operate` §11c, `tensor-grep-large-repo-scale-campaign` §1/§5). |
+| exit code | `0` = complete + found; `1` = complete + empty; `2` = `BackendExecutionError` OR any truncation | do not read exit `2` here as a plain usage error the way `tg search`'s exit-2 convention works (§11b) — `tg find` follows the symbol-command-style "truncation trumps found" shape, a DIFFERENT convention than `tg search`. |
+
+**`tg route-test` (`main.py:9833-9925`) — diagnoses routing agreement between `context-render` and `edit-plan`:**
+
+| Field | Healthy value | What a bad value means |
+|---|---|---|
+| `agreement` | `true` | `false` means the two target-selection paths picked DIFFERENT primary files/symbols/lines for the same query — treat an `edit-plan` target as unverified until you understand why they diverged, not just proceed |
+| `warnings[]` | `[]` | each entry names a specific divergence reason; read every entry before trusting either route's primary target |
+
+Both are new-command additions to this skill's interpretation layer, not new measurement TOOLS — the
+four tools table above (`tg doctor`, `agent_readiness.py`, `tg dogfood`, the Docker dogfood) is
+unchanged by their existence.
+
 ## Benchmarks — which script answers which question
 
 Deep methodology (claim-quality artifacts, the noise-floor/absolute-jitter rule, the fair-baseline
@@ -357,8 +385,10 @@ fail the exit code, matching `tg doctor`'s own non-gating nature).
 Base doctor/dogfood facts verified against v1.17.25 (2026-07-02); the GPU doctor-probe fields
 (failure taxonomy, `native_error_kind`, `native_frontdoor_*` flavor fields, the honest
 out-of-range device-id warning) re-verified against **v1.75.4 (2026-07-14)** -- both by reading the
-cited source directly. Re-verify if this skill feels stale, and treat the v1.17.25-era claims as
-the ones most likely to have drifted furthest, not the GPU section:
+cited source directly; the `tg find`/`tg route-test` interpretation section is new as of
+**v1.78.1 (2026-07-16)**, verified directly against `main.py:4340-4440`/`:9833-9925`. Re-verify if
+this skill feels stale, and treat the v1.17.25-era claims as the ones most likely to have drifted
+furthest, not the GPU section:
 
 ```powershell
 # current version

@@ -12,7 +12,7 @@ description: >
   solution menu -> fail-closed build -> change-control promotion runbook with exact
   commands, expected numbers, and branch-on-mismatch forks. Verified against v1.49.3
   on 2026-07-08 (#400 fully shipped since v1.40.4; the exit-code contract is exit-2-
-  regardless-of-found, per #401).
+  regardless-of-found, per #401); `tg find` addition spot-checked 2026-07-16 at v1.78.1.
 ---
 
 # tensor-grep — Large-Repo Scale-Honesty Campaign
@@ -119,6 +119,8 @@ they drift.
 | **#398/#399/#401** exit semantics | #398 exit 2 on ANY truncated partial; #399 walked it back to exit 2 only when the partial is **also EMPTY** (found-but-capped exited 0); **#401 reverted #399** — a UNANIMOUS design council restored exit 2 on ANY truncated/partial result **REGARDLESS of whether matches were found** ("truncation trumps found": an agent must never trust a capped caller-set as exhaustive). This is the CURRENT, final contract — do not describe #399's found-exits-0 behavior as current. | `main.py:8374-8384`; `docs/CONTRACTS.md:109` |
 | **#400** unscoped-hang fix (e7f18b7) — **shipped v1.40.4** (`bb14abe`), hardened by **#413** (v1.42.0) and **#428** | (A) `_SKIP_DIR_NAMES` excludes `_tg_refs` / `.tg_semantic_index` / `external_repos` (`repo_map.py:185`); (B) **native per-file search walk** got a wall-clock bound — `compute_native_walk_deadline` / `native_walk_deadline_exceeded` (`backends/cpu_backend.py`), checked per file, breaks to a partial with `result_incomplete`+stderr warning (`main.py:6716-6744`); (C) `_should_refuse_unbounded_vendored_root_scan` (`main.py:3925`, backed by the O(top-level-entries)-only probe `_root_top_level_vendored_dir_names` at `main.py:3906`, exit 2, <1s — never walks) refuses a root with `node_modules`/`vendor`/`external_repos`/`third_party` at top level, **duplicated by design** into `bootstrap.py`'s `_search_paths_include_vendored_root` (~line 591) because that front door fast-paths native/rg past `main.py` (the recurring "two front doors" class) — both guards import the same `UNBOUNDED_VENDORED_ROOT_DIR_NAMES` set from `io/directory_scanner.py` (~line 36) as the single source of truth so they cannot drift apart. #413 added a bounded-`scandir` instant-refusal for a large *single-project* root (no vendored top-level dir but still huge); #428 ported the same walk-deadline/refusal into the MCP surface (`tg_search`/`tg_ast_search` had never inherited it). | `tg --version` (expect >= 1.40.4); `git log --oneline --all \| grep -i '#400\|#413\|#428'` |
 | **#478** (`67f9779`, shipped v1.54.3) -- **CLOSES #52**, the 4 residual unbounded loops | (A) `_iter_repo_files`' file-tree walk gains `deadline_monotonic`/`deadline_hit` params (was count-only bound); `build_inventory` now computes its deadline BEFORE the walk, not after. (B) `_relevant_tests_for_symbol`'s two unguarded `any()` loops (the dominant cause on a high-fan-out symbol like `"main"`) now break on a shared deadline. (C) `build_symbol_impact_from_map` (`repo_map.py:14608`) gained a `deadline_monotonic` parameter it never had, threaded into its `_preferred_definition_files`/`_relevant_tests_for_symbol` calls, plus a new `partial`/`deadline_limit` payload block; `build_symbol_impact`/`build_symbol_blast_radius_from_map` updated to pass it through. (D) the `string_refs` second pass in `build_symbol_refs_from_map` folds into the existing `refs_scan_deadline_hit` local. All four guarded `if deadline_monotonic is not None` (byte-identical no-op otherwise). **Scope note:** the design doc explicitly keeps `session_store.py` (the daemon call sites) out of scope -- see #390 in S2, which #478 narrows but does not close. | `git show --stat 67f9779`; `grep -n "deadline_monotonic" src/tensor_grep/cli/repo_map.py | grep -i impact` |
+
+| **`tg find`** (v1.77.0, #189, `main.py:4340-4440`) — whole-repo hybrid NL search, a NEW command that reuses this campaign's bounding shape from day one rather than retrofitting it later | Takes `--deadline`/`--max-repo-files` plus an internal corpus-wide chunk cap (`_FIND_CORPUS_CHUNK_CAP`); a truncated scan sets `result_incomplete=true` and exits 2 (found-but-truncated prints results THEN exits 2 -- same "truncation trumps found" rule as #401 below, not the found-exits-0 shape #399 walked back). **Unlike `tg search`, `tg find` does NOT get the instant vendored/workspace-root refusal (#400)** -- it always attempts the bounded scan rather than refusing outright, because ranking the whole repo (not raw-text matching it) is the command's entire point. | `tensor-grep-run-and-operate` §11c has the full exit-contract prose; `main.py:4340-4440` |
 
 **Merge/release state to stamp every session:** #400/#413/#428 are all in the **installed
 binary** as of v1.49.3 — this is not a source-only or in-flight fix. If a future session finds
@@ -387,6 +389,13 @@ and **breaks** (`main.py:6716-6744`) — a flagged partial, never a silent empty
 bound you add MUST follow this shape (see `tensor-grep-architecture-contract` for the
 full `BackendExecutionError` contract).
 
+**`tg find` (v1.77.0, #189) followed this shape from its first shipped version** — a genuine
+example of a new command adopting this campaign's contract instead of retrofitting it: any
+`--deadline`/`--max-repo-files`/internal chunk-cap truncation sets `result_incomplete=true` and
+exits 2, whether or not ranked matches were found. It is bounded but NOT refusal-gated the way
+`tg search` is (#400's instant vendored/workspace-root refusal does not apply) — see the §1
+shipped table.
+
 ---
 
 ## 6. When NOT to use this skill
@@ -425,9 +434,10 @@ full `BackendExecutionError` contract).
 ## Provenance and maintenance
 
 Every claim above is verifiable from the repo at HEAD on **2026-07-08** (**v1.49.3**), with the
-**#52/#390/#478 facts specifically re-verified against HEAD on 2026-07-14 (v1.75.4)** -- re-verify
-everything else independently before trusting it, the base pass predates the newer facts by
-several releases. The unscoped-hang fix **#400** = `e7f18b7` is fully shipped (v1.40.4, `bb14abe`,
+**#52/#390/#478 facts specifically re-verified against HEAD on 2026-07-14 (v1.75.4)**, and the
+**`tg find` §1 row + §5 addendum verified 2026-07-16 (v1.78.1)** -- re-verify everything else
+independently before trusting it, the base pass predates the newer facts by several releases. The
+unscoped-hang fix **#400** = `e7f18b7` is fully shipped (v1.40.4, `bb14abe`,
 plus follow-ons **#413**/**#428**) — do not re-check "is #400 released yet" as if it were still in
 question. Re-run these when a claim may have drifted; date-stamp any change.
 

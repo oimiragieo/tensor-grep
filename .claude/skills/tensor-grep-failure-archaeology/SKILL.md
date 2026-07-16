@@ -10,7 +10,9 @@ verdict. Each entry is `symptom -> root cause -> evidence -> status` so a future
 model does not burn a day re-discovering the same wall.
 
 Facts below were verified against the repo on **2026-07-02 at v1.17.25**, with a second pass on
-**2026-07-03 at v1.19.3** (Battles 9-14). Re-verify anything load-bearing with the commands in
+**2026-07-03 at v1.19.3** (Battles 9-14), a third pass adding Battle 15 (`release-tag-smoke`), and a
+fourth pass **2026-07-16 at v1.78.1** fixing the stale `case_sensitive` KNOWN_GAP claim in Battle 9 and
+adding Battle 16 (the `tg find` Opus-gate catches). Re-verify anything load-bearing with the commands in
 **Provenance and maintenance** before you act on it.
 
 ## When to use this skill
@@ -188,7 +190,7 @@ answer must PASS *and* a wrong/empty answer must FAIL before any batch is truste
 | **Symptom** | `tg search --rank --cpu` (also `--rank --json`/`--ndjson`, `--sort-files --cpu`) silently returned **unranked / unsorted** results — no error, output just looked plausible and wrong. |
 | **Root cause** | Native-tg delegation `sys.exit()`s **before** the Python-side BM25 rerank and the in-backend sort ever run. `rank_bm25` and `sort_files` were `SearchConfig` fields that were neither forwarded into the native argv nor listed in the refuse-tuple (`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`), so the gate happily delegated and the flags evaporated. A tempting alternative fix — a generic **"differs-from-default" runtime gate** that refuses delegation whenever any field is non-default — was explicitly rejected: `query_pattern` is auto-set on **every** search, so a blanket differs-from-default check would trip on it on literally every invocation and kill the native fast path entirely (a re-confirmation of a 2026-06-30 failure mode; see `tensor-grep-config-and-flags`). |
 | **Evidence** | Commit `5e6f780` (#342, "fix: refuse native delegation for --rank/--sort-files (silent wrong-output) + coverage ratchet") adds `sort_files`/`rank_bm25` to `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` in `src/tensor_grep/cli/main.py`. New governance ratchet `tests/unit/test_native_delegation_field_coverage.py` **AST-derives** the forwarded-field set from `_build_native_tg_search_command` and asserts every `SearchConfig` field is forwarded \| refused \| gate-handled \| in the documented `_NATIVE_TG_DELEGATION_KNOWN_GAP_FIELDS` frozenset (which explicitly names `query_pattern` with the differs-from-default caveat in its comment). |
-| **Status** | **SETTLED** for `rank_bm25`/`sort_files`. **OPEN debt**: the `KNOWN_GAP` frozenset (`ast_prefer_native`, `ast_selector`, `ast_stdin`, `nlp_threshold`, `use_jit`, `case_sensitive`, `ignore_dot`, …) documents fields that were *already* silently dropped before #342 — acknowledged, not fixed. |
+| **Status** | **SETTLED** for `rank_bm25`/`sort_files`. **OPEN debt**: the `KNOWN_GAP` frozenset (`ast_prefer_native`, `ast_selector`, `ast_stdin`, `nlp_threshold`, `use_jit`, `ignore_dot`, …) documents fields that were *already* silently dropped before #342 — acknowledged, not fixed. **`case_sensitive` is NOT in this set** — audit #19 forwarded it into the native argv via `-s`, so it graduated out of `KNOWN_GAP` into the Forwarded bucket; do not list it as a gap in new docs (`tensor-grep-config-and-flags` records this explicitly). |
 
 **Rule:** Same bug class as #336's `-u`/`-uu` no-op — a `SearchConfig` field that affects output is
 a silent-drop landmine unless it is forwarded to the native argv, added to the refuse-tuple, or
@@ -302,6 +304,24 @@ and upload succeed"), check every gating job's own conclusion by name, not the r
 
 ---
 
+## Battle 16 -- the `tg find` Opus gates caught what 203-tests-passing-style green CI would have missed (2026-07-16, #189)
+
+| Field | Detail |
+|---|---|
+| **Symptom** | Two `tg find` build-wave PRs (#626 CLI, #627 MCP) reached the mandatory adversarial Opus gate with all tests green and no CI failures, yet the gate still returned FIX-FIRST on both. |
+| **Root cause** | Two independent misses, each a known bug CLASS from earlier battles recurring in new code: (1) `_execute_find`'s dense-encode path could raise a query-time `DenseUnavailableError` that was NOT caught at the command boundary — it would have propagated as an uncaught exception (a crash) instead of degrading to BM25-only, violating the Backend Fail-Closed Contract the exact way Battle 8's dead bridge and this repo's `--pcre2` anti-pattern already taught (a real failure must never surface as a silent/uncontrolled path); (2) the `tg_find` MCP tool PR shipped without bumping `_TG_MCP_SERVER_CONTRACT_VERSION` — a fresh instance of the "enumerate all N registration sites" bug class (AGENTS.md "Adding a Command or Flag"), except a NEW site this repo had not previously named: a new MCP tool's request/response shape IS a registration site, just like the 4 command sites and 2 search-flag sites. Neither defect showed up in unit tests because neither test suite exercised the specific failure path (a corrupt/missing model at query time; a contract-version consumer diffing the reported version). |
+| **Evidence** | Fix commit `045fadc` ("fix(cli): F1 query-time dense degrade for tg find (Opus-gate blocker, #189)") catches `DenseUnavailableError` at the `find()` command boundary and degrades to BM25-only with a visible `rank_fallback_reason`, mirroring `search`'s existing catch. Fix commit `3fcca06` ("fix(mcp): bump contract version 1.3.0 for tg_find tool (Opus-gate blocker, #189)") bumps `_TG_MCP_SERVER_CONTRACT_VERSION` in `mcp_server.py`. Both fixes landed inside the same PR the gate blocked, before merge. |
+| **Status** | **SETTLED discipline, reinforced.** The mandatory adversarial Opus gate (`AGENTS.md` A3 / "Verify AI-Drafted Plans" post-build audit) is not a rubber stamp even on a well-tested, TDD-built feature — see the A3 bullet's own prior receipts (a symlink RCE bypass, a lock-release TOCTOU) for the pattern repeating. AGENTS.md now names a **5th** registration site for this reason: any new MCP tool bumps `_TG_MCP_SERVER_CONTRACT_VERSION` (see "Adding a Command or Flag"). |
+
+**Rule:** A green test suite proves the tests you wrote pass, not that every failure boundary is
+covered — a new compute path (a dense-model encode call, a new MCP tool) needs its OWN fail-closed
+catch and its OWN registration-site check, not an inherited assumption that a sibling command/tool's
+contract automatically covers it. Route every new MCP tool through the 5-site checklist (4 command
+sites + `_TG_MCP_SERVER_CONTRACT_VERSION`), and route every new backend-compute call through the
+Backend Fail-Closed Contract explicitly, even when it "obviously" mirrors an existing command.
+
+---
+
 ## Cross-cutting lessons (the meta-patterns behind the battles)
 
 These recur across the chronicle; internalize them and you avoid the next re-fight too.
@@ -338,12 +358,20 @@ These recur across the chronicle; internalize them and you avoid the next re-fig
 ## Provenance and maintenance
 
 Re-verify these before treating any claim above as current (drift-prone facts are date-stamped
-**as of 2026-07-02, v1.17.25**, with Battles 9-14 verified **2026-07-03, v1.19.3**):
+**as of 2026-07-02, v1.17.25**, with Battles 9-14 verified **2026-07-03, v1.19.3**, and Battle 9's
+`case_sensitive` correction + Battle 16 verified **2026-07-16, v1.78.1**):
 
 ```bash
 # Current version + latest settled entries
-grep -E '^version *=' pyproject.toml            # expect 1.19.3 (or newer)
+grep -E '^version' pyproject.toml               # expect 1.78.1 (or newer)
 head -20 CHANGELOG.md
+
+# Battle 9 correction (case_sensitive graduated OUT of KNOWN_GAP, audit #19)
+grep -n "case_sensitive" tests/unit/test_native_delegation_field_coverage.py
+
+# Battle 16 (tg find Opus-gate catches)
+git show 045fadc --stat
+git show 3fcca06 --stat
 
 # Battle 1 (PyO3 dir-walk revert) + Battle 2 (free-threading revert)
 git show b2f3fdd --stat

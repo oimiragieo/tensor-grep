@@ -6,8 +6,8 @@ description: Use when running the `tg` CLI day-to-day — exact syntax for orien
 # tensor-grep run & operate
 
 An imperative, copy-pasteable runbook for **running** `tg` (the tensor-grep CLI). Ground-truthed
-against `src/tensor_grep/cli/main.py` at **released v1.71.1**, re-verified
-**2026-07-13** (workspace dogfood on `/mnt/c/dev/projects`). Every command below is a real `@app.command` in that file — re-verify with the
+against `src/tensor_grep/cli/main.py` at **released v1.78.1**, re-verified
+**2026-07-16**. Every command below is a real `@app.command` in that file — re-verify with the
 commands in [Provenance and maintenance](#provenance-and-maintenance) before trusting a flag on a
 newer version. `main.py` churns ~100+ lines per release, so treat every `main.py:NNNN` cite as an
 approximate anchor: `grep` the symbol, don't trust the raw line.
@@ -59,6 +59,7 @@ command name).
 | --- | --- | --- |
 | `tg orient PATH` | `PATH` | One-call codebase orientation: central files by import in-degree, entry points, symbol map, AST snippets |
 | `tg search PATTERN PATH --rank` | `PATTERN PATH` | Text search with a real hit re-ranked by BM25 relevance instead of grep order |
+| `tg find PATH "query"` | `PATH QUERY` | Whole-repo natural-language hybrid search (BM25 [+ CPU dense [+ MaxSim]] -> RRF -> budget-fitted `file:line`); v1.77.0, #189 |
 | `tg defs PATH SYMBOL` | `PATH SYMBOL` | Exact definition locations |
 | `tg source PATH SYMBOL` | `PATH SYMBOL` | Full source block for a symbol |
 | `tg refs PATH SYMBOL` | `PATH SYMBOL` | References to a symbol |
@@ -74,6 +75,7 @@ command name).
 | `tg run PATTERN PATH` | `PATTERN [PATH]` | Bounded AST structural search / guarded rewrite |
 | `tg mcp` | — | Start the MCP stdio server |
 | `tg doctor` | `PATH` | System/GPU/cache/AST/daemon/shell diagnostics |
+| `tg route-test PATH "query"` | `PATH QUERY` | Diagnose routing agreement between `context-render` and `edit-plan` for one query -- reports `agreement`/`warnings` |
 | `tg dogfood` | (flag-driven) | Wraps `agent_readiness.py` into one verdict + JSON |
 | `tg upgrade` | — | Upgrade the installed `tensor-grep` package |
 | `tg calibrate` | -- (no positional; delegates to the native binary) | Measure CPU-vs-GPU crossover thresholds; exit 1 with a remediation pointer if no CUDA-enabled native binary is installed (#596). See `docs/gpu_crossover.md`. |
@@ -265,13 +267,15 @@ Starts a **stdio** MCP server (`FastMCP("tensor-grep")`, `mcp_server.py:64`, `an
 Call `tg_mcp_capabilities` **first** in any new client/sandbox — it reports which tools work
 without a standalone native `tg` binary versus which require one (`mcp_server.py:1433`).
 
-Representative tool names (**42** as of v1.49.3 — `grep -n "^def tg_\|^async def tg_" mcp_server.py
+Representative tool names (**48** as of v1.78.1 — `grep -n "^def tg_\|^async def tg_" mcp_server.py
 | wc -l`; re-run this before trusting the count on a later version, see Provenance below):
-`tg_search`, `tg_ast_search`, `tg_symbol_defs`, `tg_symbol_source`,
+`tg_search`, `tg_find` (whole-repo hybrid NL search, agent-callable form of `tg find`, v1.78.0/#189/#627 —
+see `docs/harness_api.md`), `tg_ast_search`, `tg_symbol_defs`, `tg_symbol_source`,
 `tg_symbol_refs`, `tg_symbol_callers`, `tg_symbol_impact`, `tg_symbol_blast_radius`,
 `tg_symbol_blast_radius_render`, `tg_symbol_blast_radius_plan`, `tg_context_pack`,
 `tg_context_render`, `tg_edit_plan`, `tg_agent_capsule`, `tg_ruleset_scan`, `tg_rewrite_plan`,
-`tg_rewrite_apply`, `tg_classify_logs`, `tg_devices`, `tg_index_search`, `tg_repo_map`,
+`tg_rewrite_apply`, `tg_rewrite_diff`, `tg_classify_logs`, `tg_devices`, `tg_index_search`, `tg_repo_map`,
+`tg_file_imports`, `tg_file_importers`, `tg_session_file_importers`,
 `tg_checkpoint_create` / `_list` / `_undo`, `tg_session_open` / `_list` / `_show` / `_refresh` /
 `_edit_plan` / `_context_render` / `_blast_radius*`, `tg_audit_manifest_verify`,
 `tg_audit_history`, `tg_audit_diff`, `tg_review_bundle_create` / `_verify`.
@@ -450,6 +454,15 @@ contract mirrors), not via a special exit code on a found search.
 gate (§13). Plain command/usage/argument errors across the CLI exit **2** (`typer.Exit(code=2)`);
 handled runtime errors exit **1**.
 
+`tg find` (v1.77.0, #189) has its own hybrid contract, closer to the symbol-command shape than to
+plain `tg search` (`main.py:4340-4440`): a `BackendExecutionError` (e.g. a corrupt dense model) is
+caught at the command boundary and exits **2** (JSON error envelope with `code="find_backend_error"`
+under `--json`, else a `tg: ...` stderr line) — never a raw traceback. An empty result exits **2** if
+`result_incomplete` else **1**. A **found** result that is ALSO `result_incomplete` (a
+`--deadline`/`--max-repo-files`/internal chunk-cap truncation) prints the ranked partial results
+**then** exits **2** — truncation trumps found, same rule as §11a's symbol commands, not §11b's plain
+search-family convention.
+
 ### 11d. What an agent/script should branch on
 
 ```powershell
@@ -617,9 +630,11 @@ tools use the 16000 pack budget. What the budget *proves* (vs. what it just boun
 
 ## Provenance and maintenance
 
-Facts here were re-verified **2026-07-08** against **released v1.49.3** by reading
+Facts here were re-verified **2026-07-16** against **released v1.78.1** by reading
 `src/tensor_grep/cli/main.py`, `mcp_server.py`, `repo_map.py`, `docs_coverage.py`,
-`subprocess_policy.py`, `cpu_backend.py`, and `docs/CONTRACTS.md` (`pyproject.toml:430` = `1.49.3`).
+`subprocess_policy.py`, `cpu_backend.py`, and `docs/CONTRACTS.md` (`pyproject.toml` = `1.78.1`). The
+`tg find` (§1, §7, §11c) and `tg route-test` (§1) additions were re-verified directly against
+`main.py:4340-4440` and `main.py:9833-9925` in this same pass.
 The unscoped-`tg search` hang fix (§10) is **shipped and released** (`#400` in v1.40.3, `#413` in
 v1.42.0) — it is no longer an in-flight branch. `main.py` moves ~100+ lines per release, so re-grep
 the symbol before trusting a cite:
@@ -635,8 +650,8 @@ grep -n "@app.command\|@session_app.command\|@session_daemon_app.command\|@check
 # Full, current MCP tool surface (compare against SS 7)
 # NOTE: `grep -A1 "@mcp.tool" | grep "^def "` is BROKEN -- ripgrep/grep's `-A1` context lines are
 # prefixed "NNNN-", not "NNNN:", so `^def ` never matches and this silently returns 0. Count the
-# decorated function definitions directly instead (verified == the @mcp.tool decorator count, 42
-# as of v1.49.3):
+# decorated function definitions directly instead (verified == the @mcp.tool decorator count, 48
+# as of v1.78.1):
 grep -n "^def tg_\|^async def tg_" src/tensor_grep/cli/mcp_server.py | wc -l
 
 # Symbol-command exit contract (SS 11) -- narrative + implementation
@@ -668,8 +683,8 @@ grep -n "KNOWN_COMMANDS\|PUBLIC_TOP_LEVEL_COMMANDS" src/tensor_grep/cli/commands
 ```
 
 Open uncertainties this skill does not resolve: the exact current MCP tool count drifts every
-release (42 as of v1.49.3 — re-run the grep above, don't trust the stamped number); whether
+release (48 as of v1.78.1 — re-run the grep above, don't trust the stamped number); whether
 `--symbol`/`--query` hidden flags have since been removed (still present and working, with a
-deprecation warning, at v1.49.3 — re-grep `main.py` for the deprecation-warning call site, the line
+deprecation warning, at v1.78.1 — re-grep `main.py` for the deprecation-warning call site, the line
 number drifts); and the exact set of `SEARCH_PYTHON_PASSTHROUGH_FLAGS` / `_TG_ONLY_SEARCH_FLAGS`
 (that pairing is `tensor-grep-config-and-flags`' territory, not re-enumerated here).

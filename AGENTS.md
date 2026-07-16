@@ -79,6 +79,8 @@ concrete failure observed this session.
   "had no active task; resumed from transcript" means it WAS PAUSED. Corroborate with Pyright
   `<new-diagnostics>` on its file-writes plus the active build-process count. Cross-ref A5 ("don't kill on
   staleness") -- this probe is the mechanism A5's "trust the completion notification" actually relies on.
+  Codified as the global skill `agent-liveness-probe` — load it before killing, restarting, or
+  `TaskStop`-ing anything that looks stalled.
 - **A10 -- A no-verdict council seat is a FAILED seat, not a blocker.** The codex thinktank seat can hang
   on an MCP-auth spin (cloudflare/sentry `invalid_token`) -> 0KB output, no anchored verdict. Treat it as
   FAILED: kill it, sweep the orphaned processes it left behind (20+ stale codex processes found in one
@@ -89,6 +91,15 @@ concrete failure observed this session.
   native-asset/installer/doctor-probe work, see the A3 extension above) -> drain one PR per publish. This
   sequence caught a CI-reddening fix, an ordering bug, and a GPU-oversell claim BEFORE any code was built
   this session.
+- **A12 -- CPU-safe shared-server discipline.** This desktop is a SHARED machine (Operating Rule #3); other
+  AI/omega-* services run concurrently. CPU-heavy work (loading/inferring a dense-embedding model, a full-
+  corpus rerank sweep, a wide benchmark matrix, a cold `cargo check`) must NOT run locally and starve them —
+  route it to cloud `Agent` subagents or GitHub Actions CI. The entire `tg find` build+eval campaign (#189)
+  ran this way: zero local CPU. A bounded probe (a handful of queries, not the full golden set) is fine to
+  sanity-check wiring; push the real evaluation to CI/a subagent. The cron tick itself is cloud-side and is
+  not the problem — local process SPAWNS (codex/droid/gemini/cargo/rustc) are. Receipt: a 2026-07-16 GPU
+  deep-dive fanned out local codex+droid + a cold cuda `cargo check` and saturated the CPU (3 orphaned codex
+  procs killed).
 
 ## Current Handoff
 
@@ -120,6 +131,24 @@ the same version range by coincidence of publish order, not as part of the GPU w
 matters even for a version range handed down in a task brief. See `docs/gpu_crossover.md` for the GPU
 promotion-status read and the Roadmap Sequencing section for the Phase 0/1/2 framing this wave completes
 Phase 0 of.
+
+**2026-07-16 addendum -- `tg find` CPU semantic moat (v1.77.0-v1.78.1, campaign #189).** Three build
+waves plus an MCP tool shipped whole-repo natural-language code search -- the CPU-only ColGrep-class
+response: BM25 + local CPU dense embeddings -> weighted RRF -> optional MaxSim -> budget-fitted
+`file:line` output. `#626` (v1.77.0) shipped the CLI `tg find` through the standard 4-site registration
+path with a fail-closed matrix (`BackendExecutionError` -> exit-2; internal chunk-cap /
+`--max-repo-files` / `--deadline` truncation -> `result_incomplete=true` + exit-2, never a silent
+partial-as-complete). `#627` (v1.78.0) shipped the MCP `tg_find` tool as its OWN PR to de-risk the
+LLM-facing surface (see `docs/harness_api.md` for the contract). `#628` shipped the default-OFF
+`TG_FIND_DENSE_WEIGHT` adaptive knob (byte-identical no-op at `1.0`), landing inside the `v1.78.1` patch
+release together with the unrelated `#632` `mcp` CVE-2026-52870 dependency floor bump; `#630` (on top of
+`v1.78.1`, unreleased `chore:` commit) hardened the knob's query classifier from a `split_terms`
+morpheme-count floor to a whitespace-word-count gate plus a `math.isfinite` nan/inf clamp -- still
+default-OFF, NOT the flip. BM25-only degrade is visible/legitimate (`rank_fallback_reason`).
+**Process note:** both Opus gates caught real defects the plan missed -- a query-time
+`DenseUnavailableError` that would have crashed instead of BM25-degrading (a Backend Fail-Closed
+Contract violation, fixed `045fadc`), and a missed MCP contract-version bump (fixed `3fcca06`; see the
+5th-registration-site note below).
 
 - Recent fix commits:
   - `a840cd4 fix(search): tg search --rank errored in plain-text mode (#275)`
@@ -277,6 +306,11 @@ Known current weak spots:
 5. Reject regressions even if the code is otherwise clean.
 6. Do not change workflow, release, or docs contracts without updating the validator-backed tests.
 7. Do not run `wsl --shutdown`, restart WSL, stop Docker/WSL services, kill WSL processes, or reboot/restart the host as memory cleanup without explicit user approval. Other agents use WSL. If memory pressure is observed, first collect read-only process/memory evidence, stop only tensor-grep-owned processes you started, and ask before touching unrelated processes.
+8. On ANY red CI check — not only a release-publish failure — decode the structured job result FIRST:
+   `gh run view <id> --json jobs`, find the failing job, read its actual `--log-failed` / the failing
+   test's −/+ diff, before theorizing from a traceback. A contract change (ruff / exit-code / JSON schema)
+   is usually PINNED by a governance test; update the pin in the SAME PR rather than loosening the test.
+   See `tensor-grep-debugging-playbook`, and the push-race-specific instance under Push Discipline.
 
 ## Adding a Command or Flag
 
@@ -297,6 +331,12 @@ Missing either slot lets the flag reach ripgrep for users who install the publis
 **Registration-completeness is a universal bug class, not a tg quirk.** "Add a thing that must be registered in N places, miss one, it fails *quietly*" hit tg here (the `--rank` flag missed one of two front doors) and a downstream user's billing code (a new `/v1` route missed the cron registration + a `test_route_scope_coverage` exemption — green tests, broken route). Before claiming any registration change is done, **enumerate all N sites**. `tg callers <registration-function>` lists every *callable* registration in ~1s — but the call graph **cannot see set/list/decorator registrations** (an allow-list like `bootstrap._TG_ONLY_SEARCH_FLAGS`, `@router.post`, dispatch tables), and those are often the missed site (`--rank` lives in a *set*, not a call — `callers` would never have found it), so **grep / `tg scan` those**. Confirm your new entry appears in *all* sites. This is the default audit path (`tg callers` for blast radius → `tg scan` for pattern bugs → `tg doctor --with-lsp` for diagnostics); the principle is Hard Rule 6 in `verify-plan-against-code`, and the call-graph blind spots are in `tensor-grep-code-audit` (P7).
 
 As of v1.17.1 (#282), the CI registration-completeness gate is BLOCKING — a registration mismatch fails the CI run, not just warns. The checker's member extractor is now string/comment-aware, so `#`-commented entries are no longer surfaced as false registered members.
+
+**A new MCP tool function is a FIFTH registration site, not one of the four above.** Every tool's JSON
+envelope embeds `mcp_contract_version` from the single `_TG_MCP_SERVER_CONTRACT_VERSION` constant
+(`mcp_server.py`) — bump it whenever a tool's request/response shape changes. Same "enumerate all N
+sites" bug class: the `tg_find` MCP PR (#627) shipped with an un-bumped contract version, caught only by
+the mandatory adversarial Opus gate, not by tests or CI.
 
 ## Dogfood the Real Binary, Not CliRunner
 
@@ -395,6 +435,10 @@ Three kinds of skills apply to this repo; load the relevant one before non-trivi
   - `verify-plan-against-code` — before building an AI/subagent-drafted plan, verify every seam claim (file paths, the command/flag registration sites above, routing) against the real code with `file:line` citations; bake corrections in first.
   - `supply-chain-hardening` — before writing any download / extract / install / self-upgrade / toolchain-bootstrap code, apply the 5 checks (zip-slip guard, byte-capped/time-bound downloads, fail-closed checksum incl. detached helpers, `--locked` pinned CI tools, fail-closed unverified toolchains). Shipped patterns: #283/#284/#285/#287.
   - `worktree-fanout-verification-gate` — before integrating agent branches from a worktree fan-out: remove worktrees before checkout (`git worktree remove --force <path>` — else checkout is blocked and tests silently run main's code); re-run pytest/ruff/mypy in the real venv (worktrees have no `.venv`; agents' "tests pass" claims are hypotheses until then); run `ruff format --preview` on ALL agent-touched files (not only hand-fixed ones); and treat scoped-local-green as a hypothesis, not a merge signal.
+  - `anti-hang-test-protocol` — hang-class test hygiene: wrap every test run in a shell timeout, and write the fix BEFORE the red-phase adversarial test (a ReDoS/deadlock red-test executed against un-fixed code IS the hang it is testing).
+  - `instrumented-build-gate` — measure real demand before building a speculative feature.
+  - `agent-liveness-probe` — before killing, restarting, or `TaskStop`-ing a background subagent that looks stalled, probe liveness via `SendMessage` rather than trusting output-file mtime/size (see A9 above).
+  (the global-skill half of this list is manually maintained — no CI gate — diff it by hand against `CLAUDE.md`'s copy.)
 - **Carrying the project forward -- the in-repo skill library** (`.claude/skills/tensor-grep-*` + `code-search-and-retrieval-reference`, **20 skills**): the onboarding handbook so a new engineer or a Sonnet-class session can debug, extend, validate, and advance `tg` without the original authors. Each auto-loads by its `description`; load the one matching your task. Index by intent -- this exact bucket list is kept byte-identical with `CLAUDE.md`'s skill index; `tests/unit/test_skill_index_sync.py` fails if either doc drifts from the real `.claude/skills/` folder set:
   - **Change safely:** `tensor-grep-change-control` (the gates), `tensor-grep-debugging-playbook`, `tensor-grep-failure-archaeology` (don't re-fight settled battles), `tensor-grep-validation-and-qa`.
   - **Understand:** `tensor-grep-architecture-contract`, `code-search-and-retrieval-reference` (domain theory), `tensor-grep-config-and-flags`.
@@ -565,6 +609,20 @@ Notes:
 - `cyBERT` may skip if Triton is unavailable.
 - Treat `SKIP` as expected infrastructure state, not a fake failure.
 
+### Retrieval-quality (NL search) benchmark
+
+```powershell
+python benchmarks/eval_late_rerank_quality.py --output artifacts/bench_find_quality.json
+```
+
+Use for `tg find` / `tg_find` ranking changes (`TG_FIND_DENSE_WEIGHT`, RRF channels, chunker, late-rerank).
+This is a QUALITY benchmark (ndcg@10 / recall@10 on the NL golden set + literal/identifier golden slices),
+NOT a speed benchmark — run it IN ADDITION to the CLI search benchmark when the change touches the CPU
+search path. Bidirectionally-oracle-validate any new golden query before trusting a delta (an empty/wrong
+answer must FAIL the grader). Add a per-query paired win/loss/tie report before gating a ship on a bare
+40-query mean (see the global `paired-test-power-discipline` skill). `TG_LATE_RERANK` stays OFF — it
+regresses vs plain BM25, entangled with a non-role-aware doc encoder; a harness gap, not a verdict on MaxSim.
+
 ## Performance Discipline
 
 Use these rules consistently:
@@ -590,6 +648,15 @@ CI is not just a test runner. It enforces:
 Any new download / extract / install / self-upgrade helper must apply the v1.17.2–v1.17.5 supply-chain patterns (see the `supply-chain-hardening` skill): (a) zip-slip guard — validate every member path against the resolved dest before `extractall` (reuse the production `_safe_extract_zip`); (b) time-bound + byte-capped downloads — `urlopen(timeout=...)` / socket timeout + a byte cap (256 MiB for native assets); (c) checksum-gated fail-closed installs — embed the expected SHA from `CHECKSUMS.txt` and verify before `os.replace`, INCLUDING in the detached Windows self-upgrade helpers; (d) `--locked` + exact version pins for CI tools (e.g. `cargo-audit==0.22.2 --locked`, `cargo-deny --locked`) — an unpinned `cargo install` can pull a breaking upstream release mid-CI.
 (e) uv's `.ps1` installer LACKS binary checksum verification (uv issue #13074) while the `.sh` self-verifies (uv >=0.11.0, pinned 0.11.25); Windows fix = download the pinned uv RELEASE BINARY + verify a COMMITTED dual-arch (x86_64 + aarch64) SHA-256 fail-closed before use (implemented in `scripts/install.ps1` + a new `scripts/uv_checksums.json`, landing with PR #302 — not yet on `main`); discipline: ALWAYS download + `Get-FileHash` to CONFIRM a committed SHA — never trust an agent's "fetched from the sidecar" value.
 (f) ACCEPTED BOOTSTRAP TRUST BOUNDARY (documented, not a gap): the toolchain bootstrappers are trusted-over-HTTPS + version-pinned, NOT checksum-gated like the release artifacts WE download — uv's `.sh` self-verifies its binary (uv >=0.11.0, pinned 0.11.25), and rustup is fetched via `curl https://sh.rustup.rs | sh` in the semantic-release `build_command` (pyproject.toml) then pinned with `rustup default 1.96.0` (rustup self-verifies the toolchain). This is a deliberately different posture from (a)-(e), which checksum-gate artifacts WE fetch/extract. De-piping rustup to a pinned-binary + committed-checksum download is a tracked follow-up — it touches the release `build_command`, so it is ATTENDED (do not change it autonomously).
+(g) **Runtime-dependency CVE response (#632 / v1.78.1).** Unlike (a)–(f) (code WE write), a disclosed CVE
+in a THIRD-PARTY runtime dependency is caught by the `Dependency & License Audit` workflow's strict-on-
+fixable `pip-audit` / `cargo-audit` gate — and it reds **every open PR**, unrelated to any diff. Decode the
+audit's OWN structured output for the exact package + fixed-version; bump the `pyproject.toml`/`Cargo.toml`
+FLOOR (e.g. `mcp>=1.2.0` → `mcp>=1.27.2`), NOT just a lock relock — a floor-only relock can silently regress
+below the patch on a future bare resolve. Regenerate the lockfile, then re-run the FULL dependent test
+surface unmodified (`tests/unit/test_mcp_server.py`, `tests/unit/test_mcp_tg_find.py`,
+`tests/integration/test_mcp_stdio_protocol.py`, `tests/unit/test_harness_api_docs.py`) — a passing
+dependency bump with zero code changes is the expected GOOD outcome, not a reason to skip verification.
 
 Any Rust helper reachable only from a `#[cfg(feature = "cuda")]`-gated test must be re-gated
 `#[cfg(any(feature = "cuda", test))]` -- co-gating every helper it transitively calls -- instead of

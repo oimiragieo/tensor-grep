@@ -83,6 +83,21 @@ Ranked by how hard each is to fake, cheapest-to-check first:
    which is worse than not shipping it. Before shipping any precision/heuristic feature (doc-drift,
    ranking, classification, dedup), run it on this repo's own real corpus and eyeball the finding count
    and the top hits — a green fixture suite alone cannot catch a flooding failure mode.
+
+   **2nd receipt (2026-07-16, `tg find` campaign #189, commit `173e093`/#630) — same trap, a different
+   FAILURE SHAPE.** The 1st receipt above is a **volume** failure (thousands of extra findings); this
+   one is a **shape** failure (systematic misclassification with a normal-looking finding count). The
+   `TG_FIND_DENSE_WEIGHT` query classifier that scopes the adaptive dense-weight boost to genuinely
+   multi-word queries was built and fixture-tested against `benchmarks/datasets/literal_golden.jsonl` —
+   green. A real-corpus dogfood against tensor-grep's own `src/` then found the classifier mis-boosting
+   **5 of 6** literal-identifier queries (`_confine_mcp_path`, `getUserName`, `BackendExecutionError`,
+   `reciprocal_rank_fusion` — all multi-morpheme under `split_terms()`, the classifier's original gate)
+   — the fixture set happened to be built from queries the morpheme-count heuristic classified
+   correctly by chance, so green fixtures hid a systematic bug in the classifier's core logic, not an
+   edge case it forgot to cover. Fixed by switching to a whitespace word-count gate
+   (`len(query.split()) <= 1` -> literal). **Both receipts share the same root lesson (fixture-green is
+   not real-corpus-safe) but manifest oppositely** — check both a flooding COUNT and a systematic
+   MISCLASSIFICATION PATTERN when dogfooding a precision/heuristic feature, not just one.
 5. **A routing/delegation change is only proven by `tests/integration/`, run with the native `tg`
    binary built — not `tests/unit/` alone.**
    `tests/integration/test_bm25_search_flag.py::test_search_rank_reorders_by_bm25` read `capfd` (the
@@ -139,6 +154,19 @@ Ranked by how hard each is to fake, cheapest-to-check first:
     can look indistinguishable from a genuinely stuck build/agent. Never write an unbounded
     loop/spawn/backtrack-prone pattern into a test without an explicit bound. Full protocol: the global
     skill `anti-hang-test-protocol`.
+12. **An oracle must assert non-empty GOLD-LABELS, not just non-empty predictions — a vacuous-truth
+    oracle scores an empty label set as a perfect result.** `retrieval_scoring.py`'s `recall_at_k`/
+    `ndcg_at_k` return a vacuous `1.0` for ANY ranking when the `relevant` (gold-label) set is empty —
+    a query with a broken/missing golden answer would silently "pass" with a perfect score instead of
+    failing loud. `benchmarks/eval_late_rerank_quality.py` (the `tg find` golden-set gate, #189) is the
+    positive counter-example worth copying: `load_golden_queries` asserts every query has a NON-EMPTY
+    `relevant` set at LOAD time (a loud `GoldenSetError`, not a silent perfect score), and a separate
+    `validate_oracle` function proves the METRIC itself behaves correctly — a "gold" ranking (every
+    relevant file first) must score `ndcg@k == 1.0` exactly, and a "reversed"/"empty" ranking must
+    score AT OR BELOW a computed achievable ceiling, not an arbitrary hardcoded number. Before trusting
+    any new golden/oracle-graded query, confirm it has (a) a genuinely non-empty gold-label set and (b)
+    a metric that demonstrably fails on a deliberately-wrong answer, not just passes on a correct one —
+    see `tests/unit/test_eval_late_rerank_quality.py::test_empty_gold_label_is_loud`.
 
 ---
 
@@ -374,9 +402,9 @@ future agent (human or model) retries the losing idea — see `tensor-grep-resea
 
 | Directory | What lives there | Run cost |
 |---|---|---|
-| `tests/unit/` (208 files as of 2026-07-08) | Fast, isolated; heavy `CliRunner` usage (400+ call sites) — good for flag-parsing/formatter/validator logic, **not sufficient alone for routing changes** (Part 1 point 3) | seconds each |
-| `tests/e2e/` (15 files) | Cross-launcher parity (`python-m`/`native`/`bootstrap`), golden/snapshot output, backend/IO contracts, rg characterization, hypothesis property tests, throughput floors | seconds-minutes; some spawn real subprocesses |
-| `tests/integration/` (10 files) | Needs real external state — GPU/cuDF, MCP stdio protocol, cross-backend runs, the harness-adoption smoke, `tg orient`/pipeline end-to-end | slow, sometimes GPU-gated |
+| `tests/unit/` (239 files as of 2026-07-16) | Fast, isolated; heavy `CliRunner` usage (400+ call sites) — good for flag-parsing/formatter/validator logic, **not sufficient alone for routing changes** (Part 1 point 3) | seconds each |
+| `tests/e2e/` (16 files) | Cross-launcher parity (`python-m`/`native`/`bootstrap`), golden/snapshot output, backend/IO contracts, rg characterization, hypothesis property tests, throughput floors | seconds-minutes; some spawn real subprocesses |
+| `tests/integration/` (11 files) | Needs real external state — GPU/cuDF, MCP stdio protocol, cross-backend runs, the harness-adoption smoke, `tg orient`/pipeline end-to-end | slow, sometimes GPU-gated |
 | `tests/golden/` | Committed golden-output fixtures consumed by `rust_core/tests/test_search_golden.rs`, not itself a pytest dir | n/a |
 | `tests/fixtures/`, `tests/schemas/`, `tests/helpers/` | Shared fixture data (`ast_smoke`, `retrieval`), `tg_output.schema.json`, `rg_parity.py` helper (ripgrep binary resolution + `RGContractRow`) | n/a |
 
@@ -470,12 +498,15 @@ was never observed to fail cannot be trusted to catch a regression.
 
 ## Provenance and maintenance
 
-Volatile facts re-verified **2026-07-08, release `v1.49.3`**. Re-verify before relying on them:
+Volatile facts re-verified **2026-07-08, release `v1.49.3`**; the 2nd fixture-blind-spot receipt
+(Part 1 pt 4), the vacuous-truth-oracle checklist item (Part 1 pt 12), and the test-file counts were
+re-verified **2026-07-16, release `v1.78.1`**. Re-verify before relying on them:
 
 | Claim | Re-verify command |
 |---|---|
 | Total collected tests | `uv run pytest tests --collect-only -q` (tail line; re-run to check — grows every release, do not trust a stale snapshot number here) |
-| Test file counts (208 unit / 15 e2e / 10 integration as of 2026-07-08) | `Get-ChildItem tests/unit,tests/e2e,tests/integration -Filter test_*.py -Recurse \| Measure-Object` (PowerShell) or `find tests/unit tests/e2e tests/integration -name 'test_*.py' \| wc -l` |
+| Test file counts (239 unit / 16 e2e / 11 integration as of 2026-07-16) | `Get-ChildItem tests/unit,tests/e2e,tests/integration -Filter test_*.py -Recurse \| Measure-Object` (PowerShell) or `find tests/unit tests/e2e tests/integration -name 'test_*.py' \| wc -l` |
+| `tg find` classifier receipt + vacuous-truth oracle guard | `grep -n "test_empty_gold_label_is_loud" tests/unit/test_eval_late_rerank_quality.py`; `grep -n "GoldenSetError\|vacuous" benchmarks/eval_late_rerank_quality.py` |
 | `dogfood()` CLI entry point (symbol anchor, not a line number) | `grep -n "^def dogfood" src/tensor_grep/cli/main.py` |
 | `CliRunner` usage count in unit tests | `grep -rc CliRunner tests/unit/*.py \| awk -F: '{s+=$2} END{print s}'` |
 | pytest markers registered | `grep -n "markers = \[" -A 10 pyproject.toml` |

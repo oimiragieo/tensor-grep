@@ -52,6 +52,7 @@ Five corollaries, all stated in AGENTS.md:
 | context-render / edit-plan latency | `benchmarks/run_context_render_benchmarks.py` | editor-plane latency, not search speed |
 | blast-radius latency | `benchmarks/run_blast_radius_benchmarks.py` | impact-analysis latency |
 | repo-map / retrieval quality (not speed) | `benchmarks/run_repo_retrieval_benchmarks.py` | recall/precision/MRR/nDCG/F1/token-budget, a quality metric, not a timing one |
+| `tg find` / `tg_find` ranking, `TG_FIND_DENSE_WEIGHT`, RRF channels, chunker, late-rerank | `benchmarks/eval_late_rerank_quality.py` | quality gate (ndcg@10/recall@10) on the NL golden set + literal/identifier golden slices — NOT a speed benchmark; see `tensor-grep-semantic-search-campaign` STATUS UPDATE 2 |
 | tokens-per-correct-answer / token-economy (the moat metric — CANDIDATE, not yet a committed script, gated on #72) | none committed yet — see "6. Token-economy" below | a task-level cost metric (tokens spent to reach a correct answer, oracle-validated), not a latency metric — do not conflate with any row above |
 
 Full matrix with default artifact paths: `docs/benchmarks.md` § "Benchmark Matrix" (19 scripts as of
@@ -146,12 +147,20 @@ what a fleet of agents actually pays for, not a lab F1 score.
 Sverklo `bench:primitives` (Zenodo 10.5281/zenodo.19802051) on `expressjs/express@4.21.1`, 25 tasks (10
 definition-lookup P1, 10 references P2, 5 file-deps P4). Gated tokens-per-correct-answer (F1>=0.8):
 **tg P1 = 1,243 tok vs rg = 9,328 tok -> tg 7.5x BETTER** (moat validated on definitions). **tg P4 file-deps
-= 53,631 tok vs rg = 5,367 tok -> tg ~10x WORSE** — tg has no scoped "what does file X import / who
-imports X" primitive, only whole-repo `tg map`, so every P4 query pays the whole-repo capsule cost
-regardless of the single file asked (task #74 tracks the fix: a scoped `tg imports <file>`/`tg deps
-<file>` command). Raw artifacts and scripts currently live at `scratchpad/bench/` (`results.json`,
-`run_bench.py`, `score.py`, `validate_oracle.py`) — **not yet promoted to `benchmarks/` or
-`docs/benchmarks.md`**; full memory: `tensor-grep-benchmark-proofpoint-2026-07-08`.
+= 53,631 tok vs rg = 5,367 tok -> tg ~10x WORSE (at the time)** — tg had no scoped "what does file X
+import / who imports X" primitive, only whole-repo `tg map`, so every P4 query paid the whole-repo
+capsule cost regardless of the single file asked (task #74).
+
+**P4 CLOSED AND RE-PROVEN (2026-07-16, `v1.76.12` #619).** `#460` (`05f49b8`) shipped the fix — scoped
+`tg imports FILE` / `tg importers FILE [ROOT]` — and the SAME Sverklo P4 slice was re-run independently
+(deterministic, $0, `scratchpad/bench/aggregate.py`): **53,631 tok -> 2,387 tok, ~10x WORSE -> ~2.24x
+BETTER than rg**, F1 preserved and improved (0.542 -> 0.606), bidirectional-oracle PASSED 25/25. **The
+moat is now proven on both P1 and P4.** Raw artifacts and scripts still live at `scratchpad/bench/`
+(`results.json`, `run_bench.py`, `score.py`, `validate_oracle.py`, `aggregate.py`) — **still not
+promoted to `benchmarks/` or `docs/benchmarks.md`**, so the harness-committal gap in the paragraph below
+is unchanged even though the P4 number itself is now closed; full memory:
+`tensor-grep-benchmark-proofpoint-2026-07-08` (original) + `tensor-grep-drain-resume-2026-07-12.md` /
+`tensor-grep-find-campaign-2026-07-16.md` (re-proof receipts).
 
 **Why this is gated, not accepted, and what #72 covers**: (a) the run above is one repo / one language
 (JS) / 25 tasks — a real signal, not a general claim, and the full 180-task/6-repo suite (flask/fastapi
@@ -159,13 +168,36 @@ in Python plausibly show a bigger win) has not run; (b) the harness (`run_bench.
 `validate_oracle.py`) has not been committed to `benchmarks/`, given a `docs/benchmarks.md` Matrix row,
 or wired into `check_regression.py`-style acceptance; (c) publishing this number externally is
 CEO-gated (public positioning), separate from whether the harness itself is accepted internally. Do
-**not** cite the 1,243/9,328 or 53,631/5,367 numbers above as an accepted claim-quality artifact until
-#72 lands a committed script + `artifacts/bench_*.json` — treat them as a research finding pointing at
-real moat validation (P1) and a real gap (P4), not yet a benchmark-governed line. Follow this skill's
+**not** cite the 1,243/9,328, 53,631/5,367, or the re-proof 2,387 numbers above as an accepted
+claim-quality artifact until #72 lands a committed script + `artifacts/bench_*.json` — treat them as a
+research finding pointing at real moat validation on BOTH axes now (P1 definitions + P4 file-deps), not
+yet a benchmark-governed line. Follow this skill's
 same discipline once #72 ships: fair-baseline (`rg` is already the right comparator here), noise-floor
 (deterministic CLIs, no run-to-run variance in this metric class so the usual jitter rule is moot, but
 oracle correctness bugs are the equivalent failure mode — bidirectionally validate the oracle before
 trusting a score), and no doc/PAPER.md claim until the artifact is accepted.
+
+### 7. `tg find` retrieval-quality golden-set gates (SHIPPED, v1.77.0+, #189)
+
+Unlike §6 (an uncommitted CANDIDATE), `benchmarks/eval_late_rerank_quality.py` is a **committed,
+running** ndcg@10/recall@10 quality gate for `tg find` / `tg_find` ranking changes (dense weight, RRF
+channels, chunker, late-rerank) — see the decision-table row above and
+`tensor-grep-semantic-search-campaign` STATUS UPDATE 2. Two rigor requirements before trusting a gate
+run here, both learned the hard way on this harness:
+
+1. **Corpus-hardness gate.** Before trusting a "rrf beats bm25" delta, assert BM25-alone scores
+   near-floor on the HARD subset of the golden set (the vocabulary-mismatch queries the dense leg is
+   supposed to rescue) — the same GATE 0b trap as §Phase-0 baselines elsewhere in this repo's
+   campaigns: an easy/keyword-discriminating corpus lets BM25 saturate at recall 1.0 and makes any
+   fusion delta look meaningless by comparison, or conversely hides a real fusion win inside noise.
+2. **Paired win/loss/tie report, not a bare mean.** A 40-query aggregate mean can hide a distribution
+   where one lucky query drives the whole delta. Report per-query win/loss/tie counts (e.g. "positive
+   in all 4 categories, essentially wins-or-ties per query, a single ndcg loss out of 40" — the actual
+   `tg find` gate-run shape) before gating a ship decision on the mean alone. See the global skill
+   `paired-test-power-discipline`.
+
+Bidirectionally validate any new golden query the same way as elsewhere in this skill: a correct answer
+must PASS the grader and a wrong/empty answer must FAIL it, before trusting a delta computed against it.
 
 ## Noise-floor / jitter discipline
 
@@ -345,8 +377,9 @@ the row diagnostic (not release-gating) until it actually beats that number.
 
 ## Provenance and maintenance
 
-Facts here re-verified at tensor-grep **v1.49.3** (2026-07-08). Re-verify before trusting a stale
-number:
+Facts here re-verified at tensor-grep **v1.49.3** (2026-07-08); the §6 P4 close-out, the new §7
+`tg find` retrieval-quality section, and the decision-table row were added and verified **v1.78.1**
+(2026-07-16) — the rest was not re-walked in this pass. Re-verify before trusting a stale number:
 
 - Script inventory / artifact paths drift: `grep -n "| .* | \`benchmarks/run_" docs/benchmarks.md`
   or re-read the "Benchmark Matrix" table.

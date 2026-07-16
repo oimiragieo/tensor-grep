@@ -69,6 +69,7 @@ If your symptom isn't in the table below, it's probably not covered here — che
 | A `CliRunner` test reading `capfd` starts returning empty output / `JSONDecodeError` right after a delegation, routing-gate, or `--rank`/`--sort-files`-style flag change — often only on `main`/release CI, green on the PR | The code path moved from a **delegated subprocess** (needs fd-level `capfd`) to **in-process** `typer.echo` (needs `result.stdout`), or vice versa — the test's capture fixture didn't move with it. PR CI often doesn't build the native binary, so the mismatch is invisible there. | Grep the refuse-tuple for the field you touched (`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, `src/tensor_grep/cli/main.py:1783`) — did it just start refusing (or allowing) native delegation? | [§9](#9-capture-surface-trap-capfd-vs-resultstdout) |
 | A latency "fix" doesn't move the needle, or a reported regression can't be reproduced / doesn't match the diff | The hot path was inferred by reading code (a review/design pass) instead of measured — the real bottleneck is often a pure helper called redundantly in a hot loop, invisible from reading the "expensive-looking" function alone | Profile the **actual** slow command at realistic scale (not a toy input) and check top cumulative-time frames; Counter-wrap a suspect function to see call-count-vs-unique-input redundancy before designing a cache | [§10](#10-profile-at-scale-discipline-latency-claims) |
 | PyPI/`chore(release)` published fine, "latest `main` run green" -- but a real regression shipped anyway | The workflow run's *aggregate* status hides one late-stage job's own red conclusion -- specifically the NEEDS-gated `release-tag-smoke` job (re-runs `scripts/agent_readiness.py` against the actually-published wheel), which can stay red for releases at a time while `publish-pypi`/`publish-success-gate` keep going green | `gh run view <run-id> --json jobs` on the release run -> find the job named **`release-tag-smoke`** specifically -> read its own `conclusion`, don't infer from the run's overall status | [S11](#11-release-published-but-release-tag-smoke-stayed-red-masked-regression) |
+| `Dependency & License Audit` job is red, but your diff doesn't touch any dependency file, and it reds EVERY open PR at once | A newly-disclosed CVE/RUSTSEC advisory against an already-pinned, unmodified dependency -- the strict-on-fixable `pip-audit`/`cargo-audit` gate fails for everyone until the floor moves, not just your branch | `gh run view <run-id> --log-failed` on the `Dependency & License Audit` job -- decode pip-audit's/cargo-audit's OWN structured output for the exact package + advisory ID + fixed-version | [S12](#12-dependency--license-audit-red-on-an-untouched-dependency-newly-disclosed-cve) |
 
 ---
 
@@ -170,7 +171,13 @@ answer is "the backend crashed" is the one failure this repo treats as unaccepta
 finds matches but `tg` reports zero, suspect a swallowed backend error, not a real no-match. Then
 inspect `--json` output for `routing_reason` / `fallback_reason` — a populated `fallback_reason`
 means a *visible*, legitimate degraded path (e.g. CyBERT provider unavailable); an *absent* one on
-a result you believe is wrong means look for a silent swap.
+a result you believe is wrong means look for a silent swap. **Current, still-live example of the
+correct visible-degrade shape (v1.77.0, #189):** `tg find`'s JSON carries `rank_fallback_reason` when
+the dense leg degrades to BM25-only (the `semantic` extra or model is unavailable) — a legitimate,
+fully-supported result, distinguishable from a real backend failure (which instead raises
+`BackendExecutionError` -> exit 2, per `tensor-grep-run-and-operate` §11c). If you see a `tg find`
+result with NEITHER `rank_fallback_reason` set NOR a nonzero exit on a run you expected the dense leg
+to participate in, that is the silent-swap bug this section targets, not a normal degrade.
 
 **Ground-truth example of the correct pattern** (`src/tensor_grep/backends/rust_backend.py:260-278`):
 a PCRE2 search that fails inside the native ripgrep bridge raises `BackendExecutionError` and
@@ -488,14 +495,54 @@ name -- do not infer release health from "latest main run green." See
 
 ---
 
+## 12. `Dependency & License Audit` red on an untouched dependency (newly-disclosed CVE)
+
+**Symptom:** the `Dependency & License Audit` CI job goes red on a PR that touches nothing in
+`pyproject.toml`/`uv.lock`/`Cargo.toml`/`Cargo.lock` -- and the same job is red on every OTHER open
+PR simultaneously, not just yours.
+
+**Root cause:** unlike a code defect you introduced, this is a newly-disclosed security advisory
+against a dependency your `pyproject.toml`/`Cargo.toml` floor already resolves to -- the strict-on-
+fixable `pip-audit` (Python) / `cargo-audit` (Rust) gate fails the instant the advisory database picks
+up the CVE/RUSTSEC entry, independent of any diff. **Known incident (2026-07-16, #632, `b796be3`):**
+`mcp` 1.26.0 (satisfied by the then-current floor `mcp>=1.2.0`) had a newly-disclosed advisory
+(CVE-2026-52870, fixed in `mcp` 1.27.2) that failed `pip-audit` on every open branch at once.
+
+**Discriminating experiment:**
+
+```bash
+gh run view <run-id> --json jobs                          # find "Dependency & License Audit"
+gh run view <run-id> --log-failed                          # read pip-audit's/cargo-audit's OWN
+                                                             # structured output: package + advisory
+                                                             # ID + fixed-version, not a generic error
+```
+
+**Fix:** bump the dependency **FLOOR** in `pyproject.toml`/`Cargo.toml` to the fixed version (e.g.
+`mcp>=1.2.0` -> `mcp>=1.27.2`), not just a bare `uv lock`/`cargo update` relock -- a floor-only relock
+lets a future bare resolve (no `--upgrade-package`) silently settle back below the patched version.
+Regenerate the lockfile, then re-run the FULL dependent test surface UNMODIFIED (for the `mcp` case:
+`tests/unit/test_mcp_server.py`, `tests/unit/test_mcp_tg_find.py`,
+`tests/integration/test_mcp_stdio_protocol.py`, `tests/unit/test_harness_api_docs.py`) — a passing
+dependency bump with zero code changes is the expected GOOD outcome, not a reason to skip
+verification; if the bump needs a code change too, that is itself a signal to read the changelog
+between the two versions before assuming the fix is a one-line bump. See `AGENTS.md` CI/Release Rules
+item (g) and the global skill `supply-chain-hardening` for the broader pattern.
+
+**Rule:** do not treat a `Dependency & License Audit` failure as "must be something in my diff" —
+check whether EVERY open PR is also red before spending time bisecting your own change; a
+simultaneous cross-PR failure on this specific job is the tell.
+
+---
+
 ## Provenance and maintenance
 
 Facts here were originally verified **2026-07-02, tensor-grep v1.17.25** for §1–§8, and
 **2026-07-03, v1.19.3** for §9–§10; drift-checked and re-anchored **2026-07-08 against v1.49.3**
 (`pyproject.toml:430`) for the §5 rg-passthrough-sentinel status, §8 `score_term_overlap`/degrade-
 to-ask citations, §3 exit-124 citations, and the §9 `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`
-line number. Re-verify anything below before trusting it on a later version — this table drifts
-whenever the cited line numbers, defaults, or contracts change.
+line number; **2026-07-16 against v1.78.1** added §12 (dependency-CVE-audit triage) and the §4
+`tg find rank_fallback_reason` example. Re-verify anything below before trusting it on a later
+version — this table drifts whenever the cited line numbers, defaults, or contracts change.
 
 Re-verification commands:
 

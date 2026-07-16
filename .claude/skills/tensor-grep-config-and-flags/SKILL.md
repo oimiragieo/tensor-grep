@@ -6,8 +6,8 @@ description: Use when adding, changing, or auditing a tg environment variable, C
 # tensor-grep config and flags
 
 A ground-truthed catalog of every tg config axis — env vars, CLI flags, provider modes — plus the
-registration checklist for adding a new one. Verified against source as of 2026-07-08, **v1.49.3**
-(`pyproject.toml:430`). Re-verify commands are in [Provenance and maintenance](#provenance-and-maintenance)
+registration checklist for adding a new one. Verified against source as of 2026-07-16, **v1.78.1**
+(`pyproject.toml`). Re-verify commands are in [Provenance and maintenance](#provenance-and-maintenance)
 because these drift with every release.
 
 ## When to use this skill
@@ -223,7 +223,8 @@ when it carries `lsp_provider_response = true` from a completed provider request
 | `--provider lsp` / `--provider hybrid`, `TG_LSP_PROVIDER` | **EXPERIMENTAL** | explicit `--provider` value or `TG_LSP_PROVIDER` env | Availability ≠ working navigation; see LSP-proof contract above. |
 | `TENSOR_GREP_CLASSIFY_PROVIDER=cybert`/`triton` | **EXPERIMENTAL** | explicit env opt-in | Requires a Triton/CyBERT model deployment; falls back before expensive model load if unavailable. |
 | `TG_MCP_ALLOW_VALIDATION_COMMANDS=1` | **Off by design (security), not "not ready yet"** | explicit env opt-in on the MCP server process | Shell-executes `lint_cmd`/`test_cmd`, a prompt-injection surface. |
-| Local hybrid semantic search (BM25 + CPU dense embeddings + RRF) | **SHIPPED, EXPERIMENTAL default-OFF** — `tg search --semantic` (`main.py:6619`; `core/retrieval_dense.py` + `core/retrieval_fusion.py`) | explicit `--semantic` flag; requires the `semantic` extra (`model2vec`, `pyproject.toml:577`), fails closed with a `rank_fallback_reason` when unavailable | No API key, no GPU, pure local CPU dense leg fused with BM25 via RRF -- see `tensor-grep-semantic-search-campaign` for build history and promotion gates. |
+| Local hybrid semantic search (BM25 + CPU dense embeddings + RRF) | **SHIPPED, EXPERIMENTAL default-OFF** — `tg search --semantic` (`main.py:6619`; `core/retrieval_dense.py` + `core/retrieval_fusion.py`) | explicit `--semantic` flag; requires the `semantic` extra (`model2vec`, `pyproject.toml:577`), fails closed with a `rank_fallback_reason` when unavailable | No API key, no GPU, pure local CPU dense leg fused with BM25 via RRF -- see `tensor-grep-semantic-search-campaign` for build history and promotion gates. A 2nd consumer of the same dense/fusion core is `tg find` (below). |
+| `TG_FIND_DENSE_WEIGHT` (`tg find` only) | `"1.0"` (unset/empty/unparseable/non-finite all resolve to this — byte-identical no-op fusion weight) | Query-adaptive `dense_weight` override for `tg find`'s `rank_chunks` calls ONLY -- gates ONLY `tg find`, never `--semantic`. A valid finite override applies ONLY to genuinely multi-word queries (`len(query.split()) > 1`, a whitespace word-count gate, #191/#630); a single whitespace-free token (a literal identifier/symbol lookup) always stays pinned at `1.0` regardless of the env value. `math.isfinite` clamps `nan`/`inf`/`-inf` back to the default (flip-prep NIT 1, #630) before it can reach `reciprocal_rank_fusion`'s sort. | `main.py:4007-4008` (`_FIND_DENSE_WEIGHT_ENV`/`_FIND_DENSE_WEIGHT_DEFAULT`), `main.py:4021-4072` (`_find_dense_weight`) -- still **default-OFF**; the flip to a non-1.0 default is a separate CEO checkpoint (`tensor-grep-semantic-search-campaign`). |
 
 ## `tg inventory`: walk-only repo manifest (v1.19.0, #343)
 
@@ -433,13 +434,16 @@ grep -n '_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS = ' src/tensor_grep/cli/m
 uv run pytest tests/unit/test_native_delegation_field_coverage.py -v
 ```
 
-Verified against source as of 2026-07-08 (this update, v1.49.3): `tg inventory` section including
+Verified against source as of 2026-07-08 (v1.49.3): `tg inventory` section including
 the `DEFAULT_AGENT_REPO_MAP_LIMIT` 512->2000 raise + the `CALLER_SCAN_FILE_CEILING` trap; the
 native-delegation field-coverage ratchet including `case_sensitive`'s removal from `KNOWN_GAP`
-(audit #19); the new `TG_SESSION_DAEMON_RESPONSE_TIMEOUT_SECONDS` env var (#390). The rest of this
-file (env-var catalog, front-door tables, GPU/LSP/provider sections above) was **not** re-walked
-line-by-line in this pass — treat those sections' exact line numbers as needing a fresh check per
-the rule below, independent of the sections just re-verified.
+(audit #19); the new `TG_SESSION_DAEMON_RESPONSE_TIMEOUT_SECONDS` env var (#390).
 
-If `AGENTS.md`'s `release_docs_current_tag` no longer says `v1.49.3`, treat every default/line-number
+Re-verified as of 2026-07-16 (v1.78.1): the new `TG_FIND_DENSE_WEIGHT` row above, read directly
+against `main.py:4007-4072`. The rest of this file (env-var catalog, front-door tables, GPU/LSP/
+provider sections above) was **not** re-walked line-by-line in this pass — treat those sections'
+exact line numbers as needing a fresh check per the rule below, independent of the sections just
+re-verified.
+
+If `AGENTS.md`'s `release_docs_current_tag` no longer says `v1.78.1`, treat every default/line-number
 claim in this file as needing re-verification, not just the version string.
