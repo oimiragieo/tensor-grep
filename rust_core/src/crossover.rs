@@ -597,8 +597,14 @@ mod tests {
     // Mirror check for the cuda-enabled arm: it must keep its OWN, scenario-correct
     // remediation (a device/driver/config problem, not a "no GPU build" problem) and must
     // never regress to claim GPU is "not shipped in this build" when the build plainly HAS
-    // CUDA compiled in. Compile-checked only (no CUDA toolkit available to link/run this arm
-    // outside the release nvidia legs) -- mirrors the existing accepted gap above.
+    // CUDA compiled in. #182 NIT-2 (honest coverage): unlike the production fn -- which IS
+    // compile-checked via its real call site at :533 under `cargo check --features cuda` --
+    // this `#[cfg(feature = "cuda")]` TEST fn is compiled by NO CI job (`cuda-feature-check`
+    // runs `cargo check --features cuda` WITHOUT `--tests`, and `test-rust-core` is cuda-off),
+    // so it is neither run NOR compile-checked in CI today; it is checked only by a local
+    // `cargo test --features cuda`. Accepted gap: adding `--all-targets` to cuda-feature-check
+    // would compile-check it but risks surfacing pre-existing cuda test debt in
+    // main.rs/test_routing.rs -- deferred deliberately, not silently skipped.
     #[cfg(feature = "cuda")]
     #[test]
     fn crossover_gpu_remediation_hint_device_not_found_is_not_a_build_availability_claim() {

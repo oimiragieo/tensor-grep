@@ -7726,17 +7726,20 @@ def calibrate() -> None:
         # release profile that builds one is held off) -- a permanent dead end dressed up as
         # honest advice. State the evergreen, structural fact instead (GPU needs a
         # CUDA-enabled build, which isn't present here) without claiming an upgrade will --or
-        # won't-- fetch one; `tg doctor` is the live way to check once a binary exists. This
+        # won't-- fetch one; `tg doctor` is the live way to check once a binary exists.
+        # #182 NIT-1: the v1.76.6 revision still name-dropped
+        # TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR=nvidia in a "confirm before relying on" aside --
+        # dropped here so this Python wrapper matches the Rust side (crossover.rs), whose
+        # detect_device_name test forbids that override as an obtainable path. This
         # wrapper uses inherited stdio for the real `calibrate` subprocess below and must NOT
         # capture its stderr (that would break streaming), so only THIS wrapper-owned
         # missing-binary message gets touched; the native binary's own calibrate-failure
         # remediation is Rust-owned (crossover.rs) and follows the same discipline there.
         typer.echo(
             "Error: native tg binary not found for calibrate command.\n"
-            "Run 'tg upgrade' to install a native tg binary so calibrate can run. GPU (CUDA) "
-            "acceleration is experimental and is not available without a CUDA-enabled build; "
-            "run 'tg doctor' after upgrading to confirm this install's native flavor before "
-            "relying on TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR=nvidia.",
+            "Run 'tg upgrade' to install the native tg binary that calibrate requires. GPU "
+            "(CUDA) acceleration is experimental and is not shipped in any current build; run "
+            "'tg doctor' after upgrading to check this install's native flavor.",
             err=True,
         )
         raise typer.Exit(1)
