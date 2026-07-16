@@ -1,6 +1,229 @@
 # CHANGELOG
 
 
+## v1.79.0 (2026-07-16)
+
+### Chores
+
+- **find**: Whitespace-gate the dense-weight classifier + nan/inf clamp + 3-token golden slice
+  (flip-prep, default-off, #191) ([#630](https://github.com/oimiragieo/tensor-grep/pull/630),
+  [`999aa05`](https://github.com/oimiragieo/tensor-grep/commit/999aa0566b722d494c525dbec454b2b090af4a0d))
+
+* fix(find): clamp non-finite TG_FIND_DENSE_WEIGHT + 3-token-identifier golden slice (flip-prep,
+  #191)
+
+Flip-prep for #191's TG_FIND_DENSE_WEIGHT knob (#628, commit 4071d7f): closes the 2 Opus-gate NITs
+  that must be resolved before any default-flip. Default stays OFF (1.0, byte-identical) -- this is
+  NOT the flip, it is the evidence + safety clamp the flip decision needs.
+
+NIT 1 -- nan/inf clamp (src/tensor_grep/cli/main.py): `float("nan")` / `float("inf")` /
+  `float("-inf")` all PARSE without raising ValueError, so the existing `except ValueError` guard
+  alone never rejected them. Left unclamped, a multi-word query with TG_FIND_DENSE_WEIGHT=nan would
+  flow into rank_chunks(dense_weight=nan), threading a degenerate weights=[1.0, nan] list into
+  reciprocal_rank_fusion's sort. _find_dense_weight now checks math.isfinite(weight) immediately
+  after the float() parse and falls back to the 1.0 default on nan/+-inf, same as the ValueError
+  branch above it. Operator-only path (no crash today, no observed production impact) but must be
+  closed before the knob is ever turned on for real.
+
+NIT 2 -- 3-token-identifier golden slice (benchmarks/datasets/identifier3_golden.jsonl): 10 new
+  queries, each a verbatim, single-file-unique multi-segment identifier already present in
+  find_golden_corpus/ (mint_access_token, reap_stale_connection, validate_hmac_signature,
+  rotate_signing_key, normalize_requested_limit, quarantine_failed_item, throttle_excess_traffic,
+  dispatch_outbound_call, capture_unhandled_exception, is_capability_enabled) -- every one splits to
+  exactly 3 split_terms tokens, so the adaptive rule classifies them as NL/multi-word and WOULD
+  dense-boost them when the knob is on, even though the query is really a literal-identifier lookup
+  where BM25 should be strong. This is the exact blind spot the 100%-NL late_rerank_golden.jsonl set
+  (all >=3 tokens by construction) and the <=2-token literal_golden.jsonl set structurally cannot
+  see. No new corpus fixture files were needed -- all 10 identifiers already existed verbatim,
+  grep-unique, in the committed corpus.
+
+Tests: test_find_dense_weight_nonfinite_env_clamps_to_default (direct-call, mirrors
+  test_reranker.py's _rank_corpus_chunk_cap malformed-env pattern; covers nan/-nan/NaN/inf/-inf/
+  Infinity/-Infinity) and test_find_dense_weight_nonfinite_env_never_reaches_rank_chunks (CliRunner
+  + rank_chunks call-spy, proves the clamp holds through the full tg find call chain). Confirmed RED
+  without the clamp (nan flowed through unchanged), GREEN with it restored.
+
+Re-swept the real dense leg (potion-code-16M) over THREE slices at TG_FIND_DENSE_WEIGHT=1.0
+  (baseline) vs =5.0 (adaptive-on), --validate-oracle-equivalent PASS on all three:
+
+slice run ndcg@10 recall@10 (a) NL (40, late_rerank_golden) baseline (1.0) 0.3047 0.5500 (a) NL (40)
+  adaptive (5.0) 0.4466 0.8000 (21W/3L/16T) (b) literal (10, <=2 tok) baseline (1.0) 1.0000 1.0000
+  (b) literal (10) adaptive (5.0) 1.0000 1.0000 (0W/0L/10T, byte-identical) (c) identifier3 (10,
+  NEW) baseline (1.0) 1.0000 1.0000 (c) identifier3 (10) adaptive (5.0) 1.0000 1.0000 (0W/0L/10T,
+  byte-identical)
+
+Slice (a) reproduces the ledger's prior numbers exactly (cross-validates the harness). Slice (c)
+  per-query: all 10 TIE at ndcg@10=1.0 in both runs -- confirmed via instrumentation that the
+  env=5.0 run DOES dispatch dense_weight=5.0 for every id3-* query (the adaptive rule correctly
+  classifies them as NL), so this is a real measurement, not an accidental no-op. A follow-up
+  diagnostic (BM25-alone top1 vs dense-alone top1 per query, plus a stress test at dense_weight in
+  {5,10,20,50,100,1000}) shows BM25 and dense independently rank the correct target file #1 for all
+  10 queries -- the two legs AGREE, so no RRF weight can change the fused top rank. This is a
+  stronger result than "not regressed at 5.0": the identifier3 slice is clean at every weight
+  tested, not merely safe at the currently-recommended value.
+
+VERDICT: the adaptive rule is CLEAN on 3-token identifiers on this evidence -- flip-safe, no
+  threshold refinement indicated. Caveat carried forward from the original PR's literal-slice
+  honesty note: this holds on the small (74-file/74-chunk, one-concept-per-file) synthetic corpus
+  where BM25 and dense have no real disagreement to expose; it is evidence the rule is safe on the
+  measured golden set, not a universal proof against every real-world corpus shape. The actual
+  default-flip remains a separate, later, conscious decision (product taste, CEO checkpoint) -- not
+  part of this change.
+
+Default-off byte-identical still holds: existing test_find_command.py, test_rank_chunks.py,
+  test_reranker_hybrid.py, test_search_semantic_rerank.py, test_mcp_tg_find.py,
+  test_eval_late_rerank_quality.py, and test_reranker.py (55 + 36 = targeted, all passing) continue
+  to pass UNMODIFIED except for the 2 new tests added above. The clamp only changes behavior on the
+  previously-broken nan/inf env path; every other input is unaffected.
+
+MANDATORY Opus rank-logic gate required before merge (not self-approved), per house rules.
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+* fix(find): whitespace-gate the dense-weight classifier so descriptive identifiers stay at 1.0
+  (dogfood finding, #191)
+
+A real-repo dogfood on tensor-grep's own src found a bug the synthetic golden set could not see:
+  `_find_dense_weight`'s NL-vs-literal classifier gated on `split_terms(query) > 2`, but
+  `split_terms` splits snake_case/camelCase into MORPHEMES, so descriptively-named single-token
+  identifiers count as 3+ tokens and were WRONGLY given the NL dense-boost: `_confine_mcp_path`,
+  `reciprocal_rank_fusion`, `_find_dense_weight`, `BackendExecutionError`, `_iter_repo_files` all
+  split to 3 morphemes and classified as "NL". 5 of 6 real literal-identifier queries leaked to
+  weight 5.0; only `rank_chunks` (2 morphemes) stayed protected. The flip-prep
+  `identifier3_golden.jsonl` slice queries (`mint_access_token` etc.) are ALL single tokens that
+  split to 3 morphemes -- they were being dense-boosted, not protected. The re-sweep showed them TIE
+  only because that corpus's BM25 and dense already agree on the top-1 file; a sparser repo could
+  regress.
+
+THE FIX (the dogfood's own recommendation): replace the morpheme-count classifier with a
+  WHITESPACE-based one. `_find_dense_weight` now gates on `len(query.split()) <= 1` -> return 1.0 (a
+  single whitespace-free token is a literal identifier and stays protected); only a genuinely
+  multi-word (space-separated) query is NL and gets the adaptive env weight. Every literal query in
+  the dogfood was a single whitespace-free token; every NL query had 6+ space-separated words -- a
+  clean separator the morpheme floor couldn't exploit. The nan/inf clamp (flip-prep NIT 1) is kept.
+  Removed the now-unused `_FIND_DENSE_WEIGHT_ADAPTIVE_TOKEN_FLOOR` constant and the `split_terms`
+  import inside the helper; the docstring + module comment now describe the whitespace rule
+  honestly.
+
+Tests: new test_find_dense_weight_multimorpheme_identifier_protected (direct-call, mirrors
+  test_reranker.py's malformed-override pattern) asserts single-token multi-morpheme identifiers
+  (mint_access_token / getUserName / _confine_mcp_path / BackendExecutionError /
+  reciprocal_rank_fusion / _iter_repo_files / rank_chunks) all return 1.0, and multi-word queries
+  return the env value. test_find_dense_weight_adaptive_nl_vs_literal's literal probe was
+  strengthened from the 1-morpheme "invoice" to the 3-morpheme single-token identifier
+  "create_invoice_record" so the end-to-end path also exercises the dogfood shape. Both confirmed
+  RED against the old morpheme rule (create_invoice_record -> 5.0, mint_access_token -> 5.0) and
+  GREEN with the whitespace gate.
+
+Corrected 3-slice re-sweep (real dense leg potion-code-16M, --validate-oracle PASS on all three):
+
+slice run ndcg@10 recall@10 dense_weight seen (adaptive) (a) NL (40) baseline (1.0) 0.3047 0.5500 --
+  (a) NL (40) adaptive (5.0) 0.4466 0.8000 [5.0] (all 40 still boosted) (b) literal (10, <=2 tok)
+  baseline (1.0) 1.0000 1.0000 -- (b) literal (10) adaptive (5.0) 1.0000 1.0000 [1.0] (protected)
+  (c) identifier3 (10, NEW) baseline (1.0) 1.0000 1.0000 -- (c) identifier3 (10) adaptive (5.0)
+  1.0000 1.0000 [1.0] (NOW protected)
+
+The decisive change vs the pre-fix re-sweep: slice (c)'s adaptive run now dispatches
+  dense_weight=1.0 for every id3-* query (was 5.0). Instrumentation makes the fix visible per slice
+  -- identifier3 has split_terms MORPHEME counts [3] (the old leak signal) but whitespace WORD
+  counts [1] (the new protection signal), so it is now genuinely routed to 1.0 by the whitespace
+  gate, not accidentally tied by corpus agreement. NL is unaffected: all 40 NL queries have
+  whitespace word count >=3, so the +0.1419 ndcg@10 lift (21W/3L/16T) is fully preserved,
+  byte-identical to before.
+
+Default stays OFF (TG_FIND_DENSE_WEIGHT unset -> 1.0 for every query shape). Existing
+  find/reranker/mcp/eval tests pass unmodified: test_find_command.py (18 tests incl. the new one),
+  test_rank_chunks.py, test_reranker_hybrid.py, test_search_semantic_rerank.py, test_mcp_tg_find.py
+  (56 with the dense leg present), plus test_reranker.py + test_eval_late_rerank_quality.py in an
+  extras-absent env. This is still flip-PREP, not the flip; MANDATORY Opus rank-logic gate before
+  merge (not self-approved).
+
+---------
+
+### Features
+
+- **find**: Flip TG_FIND_DENSE_WEIGHT default to adaptive dense-favored weight for multi-word NL
+  queries (#191) ([#634](https://github.com/oimiragieo/tensor-grep/pull/634),
+  [`c1d4ba4`](https://github.com/oimiragieo/tensor-grep/commit/c1d4ba4e28d753f7c23b907a98d01ce48e9758a4))
+
+The dense-weight knob (#628) shipped default-OFF: with TG_FIND_DENSE_WEIGHT unset,
+  _find_dense_weight(query) returned 1.0 (a byte-identical no-op), regardless of query shape. The
+  whitespace gate (#630, multi-word=NL, single-token=protected) plus the nan/inf finiteness guard
+  were flip-prep, landed default-OFF. This PR flips the default: env-unset now applies the SAME
+  adaptive rule an explicit override would.
+
+Evidence (tg_find_review_ledger.md, DENSE-WEIGHT SWEEP, agent a8580b6e 2026-07-16): the golden-set
+  sweep measured 1:5 bm25:dense -> +0.1419 ndcg@10 (0.305->0.447), recall 0.55->0.80, ZERO
+  per-category regression, on the 40 NL vocab-mismatch golden queries. rank_chunks fixes the bm25
+  leg's RRF weight at 1.0, so dense_weight=5.0 IS the swept 1:5 ratio.
+
+What changed (src/tensor_grep/cli/main.py, _find_dense_weight): - Added
+  _FIND_DENSE_WEIGHT_ADAPTIVE_DEFAULT = 5.0. - Env-unset (or empty) for a multi-word query now
+  resolves to 5.0 instead of the old 1.0. - A single whitespace-free token (identifier/literal
+  query) is UNCHANGED: still 1.0, regardless of the env var's state -- the whitespace gate protects
+  literals uniformly. - An explicit TG_FIND_DENSE_WEIGHT value still wins over the adaptive default
+  (=1.0 is the explicit opt-out back to old behavior; any other finite value, e.g. =3.0, is honored
+  verbatim).
+
+Two must-fixes from the thinktank rank-lens review, folded into this same PR (both instructed by the
+  orchestrator mid-build, both keep RED->GREEN):
+
+1. Malformed-env rule changed. Pre-flip, garbage/nan/inf in the env degraded to 1.0. Post-flip, that
+  would silently opt a typo'd user OUT of the improved default -- so a malformed, unparseable, or
+  non-finite (nan/inf) env value now resolves to the ADAPTIVE default instead, treated exactly like
+  an unset env var. The math.isfinite finiteness clamp is NOT weakened: a non-finite value still
+  never reaches rank_chunks(dense_weight=...) (which would otherwise build a degenerate
+  weights=[1.0, nan] list for reciprocal_rank_fusion's sort) -- it now clamps to 5.0 instead of 1.0.
+  No governance/contract test pinned the old 1.0-degrade (searched tests/ and docs/), so no
+  conflicting contract had to be preserved.
+
+2. Multi-word-lexical canary added. The 1:5 sweep is 100% NL queries, and the literal/identifier3
+  golden slices are single-token by construction, so a 2-word LEXICAL phrase (e.g. "return None") is
+  structurally unmeasured -- the whitespace gate is purely structural and boosts it exactly like a
+  2-word NL phrase. This is documented as a deliberate, known scope limit (not a bug, and NOT fixed
+  with a new lexical-vs-NL content classifier, which would repeat the exact mistake the old morpheme
+  classifier made) with a regression-catching canary test. TG_FIND_DENSE_WEIGHT=1.0 remains the
+  escape hatch for a precise 2-word literal search; potion-code-16M is a CODE-domain embedding
+  model, which makes boosting a 2-word code fragment defensible too.
+
+Tests (tests/unit/test_find_command.py), RED before the flip, GREEN after: -
+  test_find_dense_weight_default_is_adaptive_end_to_end (rewrites the old
+  test_find_dense_weight_default_is_noop, whose asserted invariant this PR intentionally breaks) -
+  test_find_dense_weight_default_protects_literal_identifiers (new) -
+  test_find_dense_weight_nonfinite_env_clamps_to_adaptive_default (rewrites
+  test_find_dense_weight_nonfinite_env_clamps_to_default for must-fix 1; extended with plain
+  ValueError-garbage cases "banana"/"12abc") -
+  test_find_dense_weight_default_boosts_two_word_lexical_canary (new, must-fix 2) -
+  test_find_dense_weight_nonfinite_env_never_reaches_rank_chunks (assertion target updated 1.0 ->
+  5.0 for must-fix 1; same test name, same end-to-end purpose)
+
+Unaffected (env-SET-to-a-valid-value path is unchanged), confirmed still green: -
+  test_find_dense_weight_adaptive_nl_vs_literal -
+  test_find_dense_weight_multimorpheme_identifier_protected -
+  test_find_dense_weight_explicit_env_override_wins_over_adaptive_default (new, pins the
+  opt-out/override contract explicitly)
+
+No golden fixture files needed touching: grepped every `tg find` invocation across tests/ for a
+  multi-word query string and confirmed the ONLY three call sites were already inside
+  test_find_command.py's dense-weight section (all either explicitly set the env var, so unaffected,
+  or are the one test rewritten above). Every other test in this file and in test_mcp_tg_find.py /
+  test_find_command_binary.py / test_routing_parity.py uses a single-token query, which the
+  whitespace gate protects unconditionally.
+
+Reversible: TG_FIND_DENSE_WEIGHT=1.0 is a one-line operator opt-out back to the old equal-weight
+  fusion; reverting this commit is also a clean one-line revert (only cli/main.py's
+  _find_dense_weight and its docstrings/comments changed; no call-site or signature changes).
+
+Verified: ruff check (whole repo) all-clean; ruff format --preview --check (whole repo) shows only 4
+  PRE-EXISTING unrelated docs/*.md drift files (confirmed identical with and without this diff via
+  git stash, i.e. not introduced by this change) -- both files this PR touches are already
+  formatted. 95 targeted tests green across test_find_command.py, test_rank_chunks.py,
+  test_mcp_tg_find.py, test_reranker.py, test_reranker_hybrid.py, test_eval_late_rerank_quality.py,
+  test_search_semantic_rerank.py.
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+
 ## v1.78.1 (2026-07-16)
 
 ### Bug Fixes
