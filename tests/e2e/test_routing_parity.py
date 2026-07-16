@@ -64,6 +64,14 @@ PUBLIC_TOP_LEVEL_COMMANDS = {
     "dogfood",
 }
 
+# Commands that are clap `visible_alias`es of another command (e.g. `update` -> `upgrade`).
+# clap renders aliases in a terminal-width/platform-dependent way, so a parity check against
+# clap's own rendered help must treat these as OPTIONAL in the parsed set (see
+# test_empty_invocation_fallback_help_matches_public_contract).
+PUBLIC_TOP_LEVEL_ALIASES = {
+    "update",
+}
+
 
 def _get_native_binary() -> str | None:
     try:
@@ -589,7 +597,23 @@ def test_empty_invocation_fallback_help_matches_public_contract(parity_env):
     native_help = _run_native_front_door([], cwd=parity_env, env=env)
 
     assert native_help.returncode == 0
-    assert _extract_visible_help_commands(native_help.stdout) == PUBLIC_TOP_LEVEL_COMMANDS
+    # Unlike the passthrough parity tests above (which parse Python/Typer's stable help), this
+    # fallback path is rendered by clap's own formatter (`CommandCli::command().print_help()` in
+    # `print_native_top_level_help`). clap lays out the `update` visible-alias in a terminal-
+    # width/platform-dependent way, so it is not always parsed back out of the rendered text --
+    # the SAME byte-identical native binary passed this on one v1.76.10 release run and failed it
+    # on the next (PR #616). Assert the load-bearing invariant instead of exact set equality:
+    # every REAL command is present and no UNEXPECTED command leaks; only known aliases may be
+    # absent. This still catches genuine native<->Python command drift.
+    native_commands = _extract_visible_help_commands(native_help.stdout)
+    assert native_commands <= PUBLIC_TOP_LEVEL_COMMANDS, (
+        "native fallback help exposed commands outside the public contract: "
+        f"{sorted(native_commands - PUBLIC_TOP_LEVEL_COMMANDS)}"
+    )
+    missing_real = (PUBLIC_TOP_LEVEL_COMMANDS - native_commands) - PUBLIC_TOP_LEVEL_ALIASES
+    assert not missing_real, (
+        f"native fallback help is missing real (non-alias) commands: {sorted(missing_real)}"
+    )
     assert native_help.stderr.strip() == ""
 
 

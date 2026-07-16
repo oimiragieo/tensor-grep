@@ -348,8 +348,9 @@ def is_wsl_host() -> bool:
     subprocess environment that dropped those variables. `/proc/version` containing "microsoft"
     (case-insensitive) is the canonical fallback for a fully stripped environment where a wrapper
     or service dropped both env vars AND has no `/run/WSL` -- every WSL1/WSL2 kernel stamps this
-    string (e.g. "Linux version 6.6.87.2-microsoft-standard-WSL2"), and no non-WSL Linux kernel
-    does, so this signal is safe and cannot false-positive. The read is wrapped fail-closed:
+    string (e.g. "Linux version 6.6.87.2-microsoft-standard-WSL2"), and standard non-WSL Linux
+    kernels do not -- and even a rare false-positive degrades to an honest `path_domain_mismatch`
+    via the downstream `wslpath` fail-closed guard, never a wrong argv. The read is wrapped fail-closed:
     any OSError (missing file, permission denied, etc.) is treated as "not WSL" rather than
     raising.
     """
