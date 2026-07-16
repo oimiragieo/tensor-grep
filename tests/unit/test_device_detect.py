@@ -307,3 +307,29 @@ class TestDeviceDetect:
             patch("builtins.open", side_effect=OSError("no /proc/version")),
         ):
             assert _running_under_wsl() is False
+
+    def test_running_under_wsl_matches_is_wsl_host(self):
+        # `_running_under_wsl` is a deliberate copy of `cli.runtime_paths.is_wsl_host`
+        # (core.hardware must not import the cli layer). Pin the two equal across every
+        # signal so a future hardening of one (e.g. #615 added /proc/version) cannot
+        # silently drift from the other.
+        from contextlib import ExitStack
+
+        from tensor_grep.cli.runtime_paths import is_wsl_host
+
+        cases = [
+            ("env_signal", {"WSL_INTEROP": "/run/WSL/x_interop"}, False, None),
+            ("run_wsl_marker", {}, True, None),
+            ("proc_microsoft", {}, False, "Linux version 6.6.87.2-microsoft-standard-WSL2\n"),
+            ("plain_linux", {}, False, "Linux version 6.8.0-45-generic #45-Ubuntu\n"),
+            ("proc_unreadable", {}, False, None),
+        ]
+        for name, env, run_wsl_exists, proc_version in cases:
+            with ExitStack() as stack:
+                stack.enter_context(patch.dict("os.environ", env, clear=True))
+                stack.enter_context(patch("os.path.exists", return_value=run_wsl_exists))
+                if proc_version is None:
+                    stack.enter_context(patch("builtins.open", side_effect=OSError))
+                else:
+                    stack.enter_context(patch("builtins.open", mock_open(read_data=proc_version)))
+                assert _running_under_wsl() == is_wsl_host(), f"WSL-detection drift in case {name!r}"
