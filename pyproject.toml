@@ -561,7 +561,10 @@ dependencies = [
     # 0.25, still block 0.26 until the tests migrate off isolated_filesystem().
     "typer>=0.12,<0.26",
     "rich>=13.0",
-    "mcp>=1.2.0",
+    # >=1.27.2: CVE-2026-52870 fix (mcp 1.26.0 advisory); floor bumped, not just relocked, so a
+    # fresh resolve without --upgrade-package can never silently settle back below the patched
+    # version.
+    "mcp>=1.27.2",
     "pathspec>=1.0.4",
     "pyyaml>=6.0",
     "pyarrow>=23.0.1",
@@ -570,7 +573,7 @@ dependencies = [
     "opentelemetry-exporter-otlp>=1.27.0",
     "importlib-metadata<8.5.0; python_version < '3.12'",
     # Ed25519 EvidenceReceipt signing (`tg evidence emit --sign` / verify / keygen / pubkey,
-    # task #124). Already resolved transitively via mcp>=1.2.0 -> pyjwt[crypto] -> cryptography
+    # task #124). Already resolved transitively via mcp>=1.27.2 -> pyjwt[crypto] -> cryptography
     # (uv.lock) and pinned >=48.0.1 in [tool.uv].constraint-dependencies above -- promoting it to a
     # direct core dependency is a zero-additional-install-cost change.
     "cryptography>=48.0.1",
