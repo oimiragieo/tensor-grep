@@ -7755,6 +7755,7 @@ _RATCHET_BASE_KWARGS: dict[str, dict[str, object]] = {
     "tg_symbol_blast_radius_render": {"symbol": "Foo", "path": "."},
     "tg_search": {"pattern": "x", "path": "."},
     "tg_ast_search": {"pattern": "x", "lang": "python", "path": "."},
+    "tg_find": {"query": "x", "path": "."},
     "tg_classify_logs": {"file_path": "dummy.log"},
     "tg_index_search": {"pattern": "x", "path": "."},
     "tg_rewrite_plan": {"pattern": "x", "replacement": "y", "lang": "python", "path": "."},

@@ -1472,7 +1472,7 @@ PyPI wheel installs can serve simple `tg_rewrite_plan(...)` and `tg_rewrite_appl
 
 Call `tg_mcp_capabilities()` first when a client might be running in a PyPI wheel, sandbox, or other runtime where the standalone native binary is uncertain.
 
-Current tool set (47 tools; re-derive with `grep -n "^def tg_\|^async def tg_" src/tensor_grep/cli/mcp_server.py | wc -l` and cross-check names against `test_harness_api_doc_lists_every_registered_tool_name`, which enumerates the live registry so this list can't silently drift again):
+Current tool set (48 tools; re-derive with `grep -n "^def tg_\|^async def tg_" src/tensor_grep/cli/mcp_server.py | wc -l` and cross-check names against `test_harness_api_doc_lists_every_registered_tool_name`, which enumerates the live registry so this list can't silently drift again):
 
 - `tg_mcp_capabilities()`
 - `tg_rulesets()`
@@ -1510,6 +1510,7 @@ Current tool set (47 tools; re-derive with `grep -n "^def tg_\|^async def tg_" s
 - `tg_session_file_importers(session_id, file, path=".", refresh_on_stale=False, auto_refresh=None)`
 - `tg_search(pattern=None, path=".", case_sensitive=False, ignore_case=False, fixed_strings=False, word_regexp=False, context=None, max_count=None, max_results=None, max_files=None, count_matches=False, glob=None, type_filter=None, query=None, structured_json=True, max_repo_files=2000, rank=False, semantic=False)`
 - `tg_ast_search(pattern, lang, path=".", structured_json=True, max_repo_files=2000)`
+- `tg_find(query, path=".", limit=10, max_repo_files=2000, max_tokens=4000, deadline=None)` -- whole-repo hybrid semantic search (BM25 [+ dense [+ MaxSim]]), the agent-callable form of `tg find`; walks and ranks the WHOLE repo (no pattern pre-filter). `path` is confined to the project root as the first operation. Returns the same `matches[]`/`rank_fallback_reason`/`result_incomplete`/`incomplete_reason` envelope shape as [`examples/search.json`](examples/search.json) (serialized via the same `JsonFormatter` the CLI's `tg find --json` uses), plus top-level `query`/`path`. A hard backend fault (e.g. a corrupt dense model) comes back as `error.code = "find_backend_error"`, never a raw traceback.
 - `tg_index_search(pattern, path=".")`
 - `tg_classify_logs(file_path, structured_json=True)`
 - `tg_devices(json_output=True)`
