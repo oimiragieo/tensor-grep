@@ -1,6 +1,84 @@
 # CHANGELOG
 
 
+## v1.78.1 (2026-07-16)
+
+### Bug Fixes
+
+- **deps**: Bump mcp to >=1.27.2 for CVE-2026-52870 (unblocks the audit gate)
+  ([#632](https://github.com/oimiragieo/tensor-grep/pull/632),
+  [`b796be3`](https://github.com/oimiragieo/tensor-grep/commit/b796be35aa51d085240e23e35a46bb9f11d0ad15))
+
+mcp 1.26.0 has a newly-disclosed advisory (CVE-2026-52870, fixed in 1.27.2) that fails the
+  Dependency & License Audit's strict-on-fixable pip-audit gate on every branch, not just this one.
+  Bump the pyproject.toml floor from mcp>=1.2.0 to mcp>=1.27.2 (not just a lockfile relock) so a
+  future resolve without --upgrade-package can never silently settle back below the patched version,
+  and regenerate uv.lock (mcp 1.26.0 -> 1.28.1, latest).
+
+Verified: mcp_server.py needed no API adaptation -- all 351 tests across
+  tests/unit/test_mcp_server.py, tests/unit/test_mcp_tg_find.py,
+  tests/integration/test_mcp_stdio_protocol.py, and tests/unit/test_harness_api_docs.py pass
+  unmodified against mcp 1.28.1. pip-audit with the CI's exact ignore-vuln list now reports no
+  findings for mcp (2 pre-existing unrelated ignores only).
+
+### Chores
+
+- **find**: Tg_find_dense_weight adaptive dense-weight knob, default-off (no behavior change) +
+  literal golden slice (Wave 3, #189) ([#628](https://github.com/oimiragieo/tensor-grep/pull/628),
+  [`4071d7f`](https://github.com/oimiragieo/tensor-grep/commit/4071d7f7f20275911e09ac652301151a9fe95ff2))
+
+Ships DEFAULT-OFF evidence-gathering infrastructure for the ledger's DENSE-WEIGHT SWEEP
+  recommendation (agent a8580b6e, 2026-07-16): 1:5 bm25:dense measured +0.14 ndcg@10 / +0.25
+  recall@10 on the 40-query NL golden set with zero per-category regression, but that set is 100% NL
+  and cannot see literal-query regression risk (BM25's strong leg).
+
+- core/reranker.py: rank_chunks gains dense_weight: float = 1.0. When dense_index is present and
+  dense_weight != 1.0, weights=[1.0, dense_weight] is threaded into reciprocal_rank_fusion,
+  composing correctly with the existing TG_RRF_CHANNELS path-channel append. dense_weight=1.0 (the
+  default, and an omitted kwarg) is a byte-identical no-op: no weights list is built for this reason
+  alone, so fusion falls through to the exact weights=None call rerank_hybrid has always made.
+  rerank_hybrid's own call site is unaffected (it never passes dense_weight). - cli/main.py: a new
+  _find_dense_weight(query) helper reads TG_FIND_DENSE_WEIGHT (default 1.0, malformed values degrade
+  gracefully to 1.0). Query-adaptive: split_terms(query) yielding more than 2 tokens (NL/multi-word)
+  returns the env value; a short (<=2 token) identifier/literal query always returns 1.0, protecting
+  the case the golden set can't see. Wired into BOTH _execute_find rank_chunks calls (the primary
+  call and the F1 BM25-only degrade re-run) -- tg find ONLY. _apply_semantic_rerank / tg search
+  --semantic is untouched, and the MCP tg_find tool inherits the wiring for free since it shares
+  _execute_find. - benchmarks/datasets/literal_golden.jsonl: a new 10-query literal/ identifier
+  golden slice (verbatim, single-file-unique symbol names from the existing find_golden_corpus/)
+  exercising the branch the 100%-NL golden set cannot reach. - Tests: test_rank_chunks_dense_weight
+  (byte-identical at 1.0, weights=[1.0, 5.0] passed to fusion, an observable top-rank flip at 5.0),
+  test_rank_chunks_dense_weight_ignored_without_dense_index, test_find_dense_weight_default_is_noop,
+  and test_find_dense_weight_adaptive_nl_vs_literal (all via CliRunner + a rank_chunks call-spy).
+  Existing test_reranker_hybrid.py / test_search_semantic_rerank.py / test_find_command.py /
+  test_mcp_tg_find.py pass UNCHANGED.
+
+Re-swept the real dense leg (potion-code-16M) over both golden sets at TG_FIND_DENSE_WEIGHT=1.0 vs
+  5.0: NL set baseline ndcg@10=0.3047 / recall@10=0.5500 (reproduces the ledger's prior 0.305/0.55
+  exactly), adaptive 0.4466/0.8000 (21W/3L/16T ndcg@10, matching the ledger's sweep exactly); the
+  literal slice is byte-identical at both settings (dense_weight stays 1.0 for all 10 queries,
+  0W/0L/10T).
+
+MANDATORY Opus rank-logic gate required before merge (not self-approved). The default-flip itself is
+  a SEPARATE conscious decision after this evidence.
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Reconcile CURRENT STATE to the tg find campaign (v1.77.0 CLI + v1.78.0 MCP,
+  #189/#190) ([#629](https://github.com/oimiragieo/tensor-grep/pull/629),
+  [`0946e7e`](https://github.com/oimiragieo/tensor-grep/commit/0946e7ee69d70f15a77cc9e0e146cbcf1d3e96e6))
+
+Prepends a new CURRENT STATE bullet covering the tg find campaign (#189): Wave 2a rank_chunks
+  extraction (#624), Wave 1 T8 golden harness (#625), Wave 2b/2c the tg find CLI command (#626 ->
+  v1.77.0), and Wave 2d the MCP tg_find tool (#627 -> v1.78.0). Records the golden gate-run
+  validation (+0.195 ndcg@10 / +0.30 recall@10 vs BM25, CEO-gated #72 for public release), the 2
+  real bugs the Opus gates caught (F1 fail-closed degrade, MCP contract-version bump), and the
+  in-flight Wave 3 dense-weight knob (#628, open draft). Updates the top banner's
+  live-version/PR-queue line to match. No other section touched.
+
+
 ## v1.78.0 (2026-07-16)
 
 ### Features
