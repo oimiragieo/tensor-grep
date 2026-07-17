@@ -1,6 +1,120 @@
 # CHANGELOG
 
 
+## v1.81.1 (2026-07-17)
+
+### Bug Fixes
+
+- **context**: Return-time deadline backstop + bound the 2nd validation-plan chain for tg
+  context-render/edit-plan/context (dogfood-#1 residual-of-residual, #642 gate nit-1)
+  ([#645](https://github.com/oimiragieo/tensor-grep/pull/645),
+  [`78a6a37`](https://github.com/oimiragieo/tensor-grep/commit/78a6a37d46657466af2d102e49980d923f8e0067))
+
+#642 added a return-time wall-clock catch-all to build_agent_capsule_from_map (tg agent) only. The
+  #642 Opus gate flagged that tg context-render/edit-plan/context reach their own render/pack
+  builders (build_context_render_from_map, build_context_edit_plan_from_map, build_context_pack)
+  directly, bypassing that fix, so a tail-stage overrun after the checkpointed
+  build_context_pack_from_map stage could still silently exit 0.
+
+- Mirror #642's deadline_exceeded_at_return backstop verbatim at each builder's single return point,
+  OR'd with the payload's own partial signal, stamping partial=True/partial_reason=
+  "deadline"/deadline_limit regardless of which stage actually overran. - Thread
+  deadline_monotonic/deadline_hit through the second validation-plan chain
+  (_validation_plan_and_alignment_for_tests -> _raw_validation_plan_for_tests ->
+  _detect_validation_runners_from_root / _ensure_primary_language_validation_fallback ->
+  _precomputed_validation_files_for_root) so it is actually bounded, not merely backstopped after
+  the fact. All new params are optional/keyword-only, backward compatible. - Fix a distinct gap
+  found while extending the fix: build_context_edit_plan_from_map's own call into
+  _attach_edit_plan_metadata dropped deadline_monotonic entirely, so tg edit-plan never threaded a
+  deadline into edit-plan-seed at all, independent of the backstop. - Close the same gap on the
+  (currently dead, include_edit_plan_seed=False) lightweight-navigation branch for completeness, per
+  the Opus adversarial gate's N1 nit. - docs/CONTRACTS.md: document the now-emitted partial_reason
+  field and the deliberate false-partial semantics (a complete-but-late render can be partial=true
+  without being result_incomplete).
+
+TDD: new tests force the shared deadline to have already elapsed by the time each command's tail
+  executes (deterministic sleep injection, no wall-clock racing), parametrized across
+  context-render/ edit-plan/context, plus golden no-overrun companions and unit-level
+  deadline-threading proofs. Confirmed RED on unmodified origin/main, GREEN after the fix.
+  Adversarially reviewed (Opus gate: SHIP-WITH-NITS, both nits addressed or verified as false
+  positives).
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Testing
+
+- **daemon**: Harden flaky test_lifecycle_commands_never_counted timeout (blocked v1.81.0 on macos
+  CI contention, #202) ([#646](https://github.com/oimiragieo/tensor-grep/pull/646),
+  [`e8697de`](https://github.com/oimiragieo/tensor-grep/commit/e8697de99a0fb478be00a71ec5bd6168d6e10ebd))
+
+Root cause confirmed from the actual CI failure log (run 29559122313, test-python macos-latest
+  py3.11), not guessed: the test failed with `TimeoutError: timed out` at session_daemon.py:518,
+  inside `_daemon_request`'s `socket.create_connection(...,
+  timeout=_DAEMON_CONNECT_TIMEOUT_SECONDS)` (0.5s) -- the TCP connect phase, before a single byte of
+  the ping/stats/health request was ever sent. This is distinct from
+  `_DAEMON_RESPONSE_TIMEOUT_SECONDS` (60s, already generous and untouched); the connect-phase
+  timeout is hardcoded at 0.5s regardless of the caller's response_timeout. 4618 other tests passed
+  in the same 264s run, consistent with a transient runner-contention blip, not a real hang or a
+  daemon-metrics regression (a real bug would assert-fail, not raise a socket timeout before the
+  request was even sent).
+
+This is the identical connect-jitter class already worked around in
+  test_orient_agent_daemon.py::_request_with_connect_retry ("under N simultaneous connects the
+  loopback accept backlog can transiently make one attempt time out even though the daemon itself is
+  healthy"). Mirrors that established, proven pattern locally (per this file's own convention of
+  duplicating small harness helpers rather than cross-importing): a bounded 5-attempt retry that
+  catches only (TimeoutError, OSError) around the 3 daemon_request calls in
+  test_lifecycle_commands_never_counted.
+
+Why this fits without gutting the test: - The assertion under test (lifecycle commands are never
+  counted in demand_metrics) is completely unchanged -- both `assert
+  server.demand_metrics.snapshot() == {}` checks are untouched. - A connect-phase timeout means zero
+  bytes reached the server, so a retry is a clean fresh attempt on a brand-new socket
+  (_daemon_request opens one connection per call) -- it cannot double-count or mask a real
+  daemon-metrics regression. Any actual response, including a WRONG one, returns immediately on the
+  first attempt. - No production code changed: _DAEMON_CONNECT_TIMEOUT_SECONDS stays 0.5s, so the
+  deliberate fast-fail daemon-liveness probes (_probe_daemon, _merge_live_daemon_stats) that
+  intentionally reuse this same constant as their response_timeout are unaffected. -
+  Platform-neutral: a pure Python retry loop, no sys.platform branching, so it cannot false-fail or
+  gut the test on any OS.
+
+Verified: the pinned governance test
+
+test_session_serve.py::test_daemon_request_separates_connect_and_response_timeouts (asserts the
+  connect timeout stays symbolically pinned to _DAEMON_CONNECT_TIMEOUT_SECONDS even when
+  response_timeout is 60s) still passes, since only the test file was touched. Ran the specific test
+  plus the full daemon/session test family (195 passed, 1 skipped) against the real worktree source
+  (PYTHONPATH override verified against the stale shared venv install per the known stale-venv
+  trap). ruff check + ruff format --preview clean on the touched file, and whole-repo ruff check
+  clean (4 pre-existing unrelated .md doc-fence formatting drifts left untouched, out of scope).
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+- **index-lock**: Assert write-interval overlap, not wall-clock ratio, for per-root lock isolation
+  ([#650](https://github.com/oimiragieo/tensor-grep/pull/650),
+  [`9bf4772`](https://github.com/oimiragieo/tensor-grep/commit/9bf47727ac28b34127b1a8d58527acf9a10cfb3f))
+
+test_index_lock_is_per_root_not_global asserted `concurrent_elapsed < baseline_elapsed * 1.8 + 0.5`
+  to prove two different roots don't serialize on a shared lockfile. That wall-clock RATIO is
+  inherently flaky on contended CI runners: the v1.81.1 release run measured concurrent=0.906s vs a
+  0.894s ceiling (baseline 0.219s) -- pure runner jitter, and the jitter even exceeded 2x baseline,
+  so no ratio bound stays both sharp AND non-flaky. Same recurring flaky-blocks-release class as
+  #120/#156/#183/#202.
+
+Replace the timing ratio with a causal, jitter-immune invariant: record each root's write-lock hold
+  interval (enter/leave around the monkeypatched slow _write_index) and assert the two intervals
+  OVERLAP. Two per-root locks held at the same instant overlap regardless of absolute runner speed;
+  a shared/global lockfile forces one write to wait for the other to release -> zero overlap -> the
+  assertion still fails, so it stays sharp against the regression it guards. A threading.Barrier(2)
+  placed BEFORE open_session (not inside the locked write, to avoid deadlock under a hypothetical
+  global lock) removes thread-start skew as a flake vector; the barrier wait carries a 10s anti-hang
+  timeout.
+
+Test-only; no shipped-code change.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.81.0 (2026-07-17)
 
 ### Continuous Integration
