@@ -454,3 +454,162 @@ def test_collect_capsule_call_site_evidence_propagates_inner_partial_signal(
     assert related_call_sites == []
     assert evidence.get("partial") is True, evidence
     assert evidence.get("deadline_limit", {}).get("deadline_exceeded") is True, evidence
+
+
+# ==================================================================================================
+# Item 5 (#642 gate nit-1 fast-follow): #642 added the SAME final wall-clock catch-all as Item 4
+# above, but ONLY to build_agent_capsule_from_map (agent_capsule.py) -- the #642 Opus gate flagged
+# that `tg context-render` / `tg edit-plan` / `tg context` reach their own render/pack builders
+# (build_context_render_from_map, build_context_edit_plan_from_map, build_context_pack -- all
+# repo_map.py) WITHOUT ever routing through the agent capsule, so none of them ever saw a return-time
+# recheck: a tail stage overrunning the shared --deadline budget after the checkpointed
+# build_context_pack_from_map stage finished in budget could still silently report exit 0 /
+# partial-not-True. Separately (found while extending the fix, not in the original #642 gate note):
+# build_context_edit_plan_from_map's OWN call into _attach_edit_plan_metadata dropped
+# deadline_monotonic entirely, so `tg edit-plan` never threaded a deadline into the edit-plan-seed's
+# validation-plan discovery AT ALL, independent of the backstop. Fixed by: (a) the same final
+# wall-clock catch-all (partial=True/partial_reason="deadline"/deadline_limit), mirrored verbatim,
+# added to all three render/pack builders' single return points; (b) deadline_monotonic/deadline_hit
+# threaded through the SECOND validation-plan chain named by the gate
+# (_validation_plan_and_alignment_for_tests -> _raw_validation_plan_for_tests ->
+# _detect_validation_runners_from_root -> _precomputed_validation_files_for_root, repo_map.py
+# ~11987, reached via _build_edit_plan_seed) so that chain is actually BOUNDED, not merely
+# backstopped after the fact; (c) build_context_edit_plan_from_map now passes its own
+# deadline_monotonic into _attach_edit_plan_metadata.
+# ==================================================================================================
+
+_RENDER_FAMILY_DEADLINE_COMMAND_ARGS = {
+    # command -> args-builder(tmp_path, deadline_seconds) -> full CliRunner argv
+    "context-render": lambda p, d: [
+        "context-render",
+        str(p),
+        "helper",
+        "--deadline",
+        str(d),
+        "--json",
+    ],
+    "edit-plan": lambda p, d: ["edit-plan", str(p), "helper", "--deadline", str(d), "--json"],
+    "context": lambda p, d: ["context", str(p), "helper", "--deadline", str(d), "--json"],
+}
+
+
+@pytest.mark.parametrize("command", sorted(_RENDER_FAMILY_DEADLINE_COMMAND_ARGS))
+def test_render_family_tail_overrun_after_checkpointed_pack_stage_still_reports_partial(
+    tmp_path: Path, monkeypatch, command: str
+) -> None:
+    """Deterministic (no wall-clock racing, same proven technique as Item 4's agent test): force the
+    shared deadline to have ALREADY elapsed by the time execution reaches each command's tail (the
+    edit-plan-seed / validation-plan work that runs AFTER build_context_pack_from_map returns), while
+    that checkpointed stage itself finishes well within budget. `context` has no edit-plan-seed tail,
+    but shares the same missing return-time recheck in build_context_pack, so it must also flip.
+
+    RED pre-fix: exit_code == 0 / payload.get("partial") in (None, False) for all three commands --
+    the exact silent lie #642 closed for `tg agent` only. GREEN post-fix: each builder's own final
+    catch-all re-checks the shared absolute deadline before returning, regardless of which stage
+    actually overran.
+    """
+    _write_helper_and_caller(tmp_path)
+    original_pack = repo_map.build_context_pack_from_map
+
+    def _slow_pack(rm, query, **kwargs):
+        result = original_pack(rm, query, **kwargs)
+        time.sleep(0.5)
+        return result
+
+    monkeypatch.setattr(repo_map, "build_context_pack_from_map", _slow_pack)
+
+    args = _RENDER_FAMILY_DEADLINE_COMMAND_ARGS[command](tmp_path, 0.3)
+    result = CliRunner().invoke(app, args)
+
+    assert result.exit_code == 2, f"{command}: {result.output}"
+    payload = json.loads(result.output)
+    assert payload.get("partial") is True, f"{command}: {result.output}"
+    assert payload.get("partial_reason") == "deadline", f"{command}: {result.output}"
+    assert payload.get("deadline_limit", {}).get("deadline_exceeded") is True, (
+        f"{command}: {result.output}"
+    )
+
+
+@pytest.mark.parametrize("command", sorted(_RENDER_FAMILY_DEADLINE_COMMAND_ARGS))
+def test_render_family_no_overrun_stays_exit_0_partial_absent(tmp_path: Path, command: str) -> None:
+    """Companion golden-parity case (mirrors Item 4's agent golden test): a real run that finishes on
+    its own, well within a generous deadline, must NOT gain a spurious partial=True/partial_reason
+    from the new catch-all -- it only fires on an ACTUAL wall-clock overrun, never unconditionally."""
+    _write_helper_and_caller(tmp_path)
+    args = _RENDER_FAMILY_DEADLINE_COMMAND_ARGS[command](tmp_path, 30)
+    result = CliRunner().invoke(app, args)
+    assert result.exit_code == 0, f"{command}: {result.output}"
+    payload = json.loads(result.output)
+    assert payload.get("partial") is not True, f"{command}: {result.output}"
+    assert "partial_reason" not in payload, f"{command}: {result.output}"
+
+
+def test_validation_plan_and_alignment_threads_deadline_into_precomputed_file_resolution(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Proves fix-part (b) directly (thread, not just backstop): _validation_plan_and_alignment_for_
+    tests is the SECOND validation-plan chain the #642 gate named (repo_map.py ~11987, reached via
+    _build_edit_plan_seed). Spies on the innermost function in the chain
+    (_precomputed_validation_files_for_root, already deadline-aware since #642/#639) and asserts it
+    actually RECEIVES the caller's deadline_monotonic/deadline_hit -- proving the chain is bounded,
+    not merely caught after the fact by the return-time backstop tested above. Deterministic: no
+    sleeping, no timing assertions, just kwarg propagation."""
+    (tmp_path / "mod.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+    test_file = tmp_path / "test_mod.py"
+    test_file.write_text(
+        "from mod import helper\n\n\ndef test_helper():\n    assert helper() == 1\n",
+        encoding="utf-8",
+    )
+    recorded: dict = {}
+    original = repo_map._precomputed_validation_files_for_root
+
+    def _spy(root, file_paths, **kwargs):
+        recorded["deadline_monotonic"] = kwargs.get("deadline_monotonic")
+        recorded["deadline_hit"] = kwargs.get("deadline_hit")
+        return original(root, file_paths, **kwargs)
+
+    monkeypatch.setattr(repo_map, "_precomputed_validation_files_for_root", _spy)
+
+    sentinel_deadline = time.monotonic() + 30.0
+    sentinel_flag = repo_map._DeadlineBreakFlag()
+    repo_map._validation_plan_and_alignment_for_tests(
+        [str(test_file)],
+        repo_root=str(tmp_path),
+        primary_symbol={"name": "helper", "file": str(tmp_path / "mod.py")},
+        primary_file=str(tmp_path / "mod.py"),
+        query="helper",
+        deadline_monotonic=sentinel_deadline,
+        deadline_hit=sentinel_flag,
+    )
+
+    assert recorded.get("deadline_monotonic") == sentinel_deadline, recorded
+    assert recorded.get("deadline_hit") is sentinel_flag, recorded
+
+
+def test_build_context_edit_plan_from_map_threads_deadline_into_edit_plan_metadata(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Regression lock for fix-part (c): build_context_edit_plan_from_map's own call into
+    _attach_edit_plan_metadata dropped deadline_monotonic entirely (found while extending #642's fix
+    to `tg edit-plan`, distinct from the SECOND-validation-plan-chain gap the #642 gate itself
+    flagged) -- the edit-plan-seed's internal deadline-checked loops never saw a deadline at all for
+    the edit-plan command family. Spy-only; no real overrun needed."""
+    _write_helper_and_caller(tmp_path)
+    recorded: dict = {}
+    original = repo_map._attach_edit_plan_metadata
+
+    def _spy(repo_map_arg, payload_arg, **kwargs):
+        recorded["deadline_monotonic"] = kwargs.get("deadline_monotonic")
+        return original(repo_map_arg, payload_arg, **kwargs)
+
+    monkeypatch.setattr(repo_map, "_attach_edit_plan_metadata", _spy)
+    sentinel_deadline = time.monotonic() + 30.0
+    built_repo_map = repo_map.build_repo_map(str(tmp_path))
+
+    repo_map.build_context_edit_plan_from_map(
+        built_repo_map,
+        "helper",
+        deadline_monotonic=sentinel_deadline,
+    )
+
+    assert recorded.get("deadline_monotonic") == sentinel_deadline, recorded
