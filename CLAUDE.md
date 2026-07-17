@@ -19,6 +19,11 @@ Claude Code guidance for the **tensor-grep** repository.
   building.
 - **Backend Fail-Closed Contract** — raise `BackendExecutionError` on failure; never return an empty
   result or silently swap engines for a contract flag (e.g. `--pcre2`).
+- **AST Native/Wrapper Two-Engine Divergence (task #141)** — the ast-grep wrapper and native
+  tree-sitter `AstBackend` speak different DSLs; the metavar (`$NAME`/`$$$ARGS`) fail-closed guard
+  already exists at 3 sites (`ConfigurationError`, never a silent native mis-route); the native-shaped
+  fallback to tree-sitter when ast-grep is absent is deliberate (CPU box still gets AST); full DSL
+  parity stays demand-gated.
 - **`tg find` (whole-repo hybrid NL search, v1.77.0 CLI / v1.78.0 MCP)** — the CPU semantic moat: BM25 +
   CPU dense embeddings → RRF → budget-fitted output, plus the default-OFF `TG_FIND_DENSE_WEIGHT` knob
   gated by a whitespace NL-vs-literal query classifier. A new MCP tool is a 5th registration site (bump

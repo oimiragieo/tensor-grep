@@ -1248,6 +1248,55 @@ def test_tg_ast_search_returns_structured_unavailable_when_pipeline_construction
     assert "not available" in payload["error"]["message"]
 
 
+def test_tg_ast_search_fails_closed_for_metavariable_pattern_when_wrapper_unavailable(
+    tmp_path, monkeypatch
+):
+    """Regression (#141 council-correction): unlike the sibling test above (which mocks
+    ``Pipeline`` itself), this drives the REAL ``Pipeline`` with a genuine ast-grep metavariable
+    pattern (``$NAME``) so the fail-closed refusal is proven end-to-end at the MCP entry path --
+    ``Pipeline.__init__``, ``_supports_native_ast_pattern``, and
+    ``_raise_explicit_ast_configuration_error`` (core/pipeline.py ~52-60, ~230-233) all run for
+    real. Only the backend AVAILABILITY probes are stubbed (same technique as
+    tests/unit/test_pipeline.py), with the native AstBackend left AVAILABLE to prove its presence
+    never lets a metavariable pattern silently mis-route to it. Note: ``tg_ast_search``'s own
+    ``Pipeline(config=config)`` construction (cli/mcp_server.py ~4629) never threads
+    ``query_pattern`` into the ``SearchConfig`` it builds, so ``_supports_native_ast_pattern`` is
+    unconditionally ``False`` there -- every AST pattern via this MCP tool requires the wrapper at
+    this construction step, native ``AstBackend`` is structurally unreachable through it regardless
+    of the caller's pattern. ``tg_ast_search`` (cli/mcp_server.py ~4630-4653) must catch the
+    resulting ``ConfigurationError`` and return the structured "unavailable" JSON error, never a
+    raw exception (Backend Fail-Closed Contract)."""
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)  # an in-root path so the confinement check passes first
+
+    class _StubProbeBackend:
+        def is_available(self):
+            return True
+
+    class _AvailableAstBackend:
+        def is_available(self):
+            return True
+
+    class _UnavailableAstGrepWrapperBackend:
+        def is_available(self):
+            return False
+
+    monkeypatch.setattr("tensor_grep.core.pipeline.RipgrepBackend", _StubProbeBackend)
+    monkeypatch.setattr("tensor_grep.core.pipeline.RustCoreBackend", _StubProbeBackend)
+    monkeypatch.setattr("tensor_grep.backends.ast_backend.AstBackend", _AvailableAstBackend)
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend",
+        _UnavailableAstGrepWrapperBackend,
+    )
+
+    out = mcp_server.tg_ast_search("$NAME", "python", ".")
+
+    payload = json.loads(out)
+    assert payload["error"]["code"] == "unavailable"
+    assert "not available" in payload["error"]["message"]
+
+
 def test_tg_ast_search_refuses_vendored_root_scan_with_actionable_message(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
