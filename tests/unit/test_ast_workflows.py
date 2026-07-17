@@ -506,6 +506,42 @@ def test_select_ast_backend_should_reject_wrapper_pattern_when_wrapper_is_unavai
         )
 
 
+def test_select_ast_backend_should_reject_ast_grep_metavariable_pattern_when_wrapper_is_unavailable(
+    monkeypatch,
+):
+    """Regression (#141 council-correction): `$NAME`/`$$$ARGS` metavariable syntax is
+    ast-grep-wrapper-only -- native tree-sitter's query DSL has no metavariable concept, so
+    `_select_ast_backend_for_pattern`'s `pattern_kind` classifier must mark these patterns
+    "wrapper", not "native", even with `ast_prefer_native=True` and the native AstBackend
+    AVAILABLE. With the wrapper unavailable, `tg run`/`tg scan`'s backend selector
+    (cli/ast_workflows.py ~990) must raise the structured ConfigurationError (Backend Fail-Closed
+    Contract) instead of silently falling through to native tree-sitter, which cannot serve
+    metavariable patterns at all and would return wrong (usually zero) results."""
+    from tensor_grep.cli.ast_workflows import _select_ast_backend_for_pattern
+
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_backend.AstBackend",
+        _AvailableAstBackend,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend",
+        _UnavailableAstGrepWrapperBackend,
+    )
+
+    for metavar_pattern in ("$NAME", "$$$ARGS"):
+        with pytest.raises(ConfigurationError, match="ast-grep"):
+            _select_ast_backend_for_pattern(
+                SearchConfig(
+                    ast=True,
+                    ast_prefer_native=True,
+                    lang="python",
+                    query_pattern=metavar_pattern,
+                ),
+                metavar_pattern,
+                {},
+            )
+
+
 def test_select_ast_backend_prefers_wrapper_when_ast_grep_available(monkeypatch):
     """Invariant C (delete-dead-lsp-tensor-gnn): with ast-grep AVAILABLE, tg run/tg scan MUST
     select the wrapper even for a native-shaped pattern with ast_prefer_native=True. This is the

@@ -148,6 +148,47 @@ class TestPipeline:
                 ),
             )
 
+    def test_supports_native_ast_pattern_should_reject_ast_grep_metavariable_syntax(self):
+        """`_supports_native_ast_pattern` decides whether a pattern is native-tree-sitter-shaped
+        (a bare identifier, or an s-expression starting with `(`). Native tree-sitter's query DSL
+        has NO concept of ast-grep metavariables (`$NAME`, `$$$ARGS`) -- they must always classify
+        as non-native so the caller routes to the ast-grep wrapper (the only backend that
+        understands that syntax), never to native tree-sitter (which cannot parse `$NAME` as a
+        metavariable capture at all)."""
+        for metavar_pattern in ("$NAME", "$$$ARGS", "def $FUNC():", "class $NAME: $$$BODY"):
+            config = SearchConfig(ast=True, lang="python", query_pattern=metavar_pattern)
+            assert Pipeline._supports_native_ast_pattern(config) is False
+
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    @patch("tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend")
+    @patch("tensor_grep.backends.ast_backend.AstBackend")
+    def test_should_reject_ast_grep_metavariable_pattern_when_wrapper_is_unavailable(
+        self, mock_ast_backend, mock_ast_wrapper, mock_rust, mock_rg
+    ):
+        """Regression (#141 council-correction): a genuine ast-grep metavariable pattern
+        (`$NAME`/`$$$ARGS`) is wrapper-only syntax -- native tree-sitter cannot serve it under any
+        circumstance. Even with the native AstBackend AVAILABLE, the fail-closed guard
+        (`_raise_explicit_ast_configuration_error`, core/pipeline.py ~230-233) must still refuse
+        when the ast-grep wrapper is absent, instead of silently mis-routing to native tree-sitter
+        (which would treat `$NAME` as unparseable/literal text and return wrong results)."""
+        mock_rg.return_value.is_available.return_value = True
+        mock_rust.return_value.is_available.return_value = True
+        mock_ast_backend.return_value.is_available.return_value = True  # native present...
+        mock_ast_wrapper.return_value.is_available.return_value = False  # ...wrapper absent
+
+        for metavar_pattern in ("$NAME", "$$$ARGS"):
+            with pytest.raises(ConfigurationError, match="ast-grep"):
+                Pipeline(
+                    force_cpu=False,
+                    config=SearchConfig(
+                        ast=True,
+                        ast_prefer_native=True,
+                        lang="python",
+                        query_pattern=metavar_pattern,
+                    ),
+                )
+
     @patch("tensor_grep.backends.cybert_backend.CybertBackend")
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
     @patch("tensor_grep.core.pipeline.RustCoreBackend")
