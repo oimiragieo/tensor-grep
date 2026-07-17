@@ -9349,14 +9349,15 @@ def agent(
         help=(
             "Stop the underlying repo scan after N seconds and return a partial capsule "
             "(partial=true, deadline_limit) with whatever was found so far, instead of running "
-            "unbounded. Pass --no-deadline to keep the (already default) unbounded behavior explicit."
+            "unbounded. The cold path (no running session daemon) defaults to 60s so a huge repo "
+            "can't hang an agent loop; pass --no-deadline to disable the bound."
         ),
     ),
     no_deadline: bool = typer.Option(
         False,
         "--no-deadline",
-        help="Accepted for command-surface parity with codemap; a no-op since agent already "
-        "defaults to an unbounded --deadline.",
+        help="Disable the cold path's default 60s --deadline bound; let the scan run unbounded "
+        "(a warm session daemon is unaffected either way).",
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
