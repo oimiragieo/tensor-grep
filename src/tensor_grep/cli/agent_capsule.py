@@ -614,6 +614,12 @@ def _collect_capsule_call_site_evidence(
         # carries so an agent sees WHY graph_trust_summary was downgraded, not just that it was.
         "resolution_gaps": _as_list_of_dicts(radius_payload.get("resolution_gaps")),
     }
+    # #639 Opus-gate nit 1 (dogfood #1 RESIDUAL): this rescue scan's own deadline_seconds budget
+    # (floored to >=0.1s above) can itself truncate `radius_payload` -- reuse repo_map's own
+    # `_copy_partial_signal` helper (the exact propagation every other symbol builder in this
+    # codebase uses) so that signal survives into the evidence dict an agent actually reads,
+    # instead of being silently dropped the moment it's repackaged here.
+    repo_map._copy_partial_signal(evidence, radius_payload)
     return related_call_sites, evidence
 
 
@@ -741,6 +747,11 @@ def _collect_capsule_call_site_evidence_from_map(
         "graph_trust_summary": _as_dict(radius_payload.get("graph_trust_summary")),
         "resolution_gaps": _as_list_of_dicts(radius_payload.get("resolution_gaps")),
     }
+    # #639 Opus-gate nit 1: structural parity with the cold sibling above -- the map-based
+    # blast-radius lookup does not run a fresh time-bounded scan itself, but `rm` may already be
+    # partial from an earlier deadline cutoff; propagate that forward the same way rather than
+    # silently dropping it just because this collector was reached via the warm/daemon path.
+    repo_map._copy_partial_signal(evidence, radius_payload)
     return related_call_sites, evidence, False
 
 
@@ -2896,13 +2907,33 @@ def build_agent_capsule_from_map(
     # dogfood finding 1 / council must-fix #2: fold DAR's own deadline break in alongside the
     # inner context-render's -- either one broke on --deadline makes this capsule partial, same
     # "any one of N sibling stages" fold-in the callers/impact/blast-radius seams already use.
-    if payload.get("partial") or outbound_dependencies_deadline_hit.hit:
+    # #639 Opus-gate nit 1 (dogfood #1 RESIDUAL): that fold-in only named the sibling stages it
+    # explicitly threaded a deadline-break flag through -- the call-site-evidence rescue scan's
+    # OWN partial signal (now propagated onto `call_site_evidence` above) was silently dropped,
+    # and nothing re-checked the shared wall-clock budget one FINAL time before this capsule
+    # returns. Add both: `call_site_evidence.get("partial")` as a third named sibling source, and
+    # an absolute-deadline recheck as the honesty BACKSTOP -- if the budget has been blown by the
+    # time we reach this return, regardless of which stage (checkpointed or not) actually
+    # consumed the time, this capsule must never silently report exit 0 / partial-not-True (the
+    # exact silent lie dogfood #1 originally flagged). Mirrors codemap.py's own `tail_deadline_hit`
+    # catch-all for the same class of gap.
+    deadline_exceeded_at_return = (
+        deadline_monotonic is not None and time.monotonic() >= deadline_monotonic
+    )
+    if (
+        payload.get("partial")
+        or outbound_dependencies_deadline_hit.hit
+        or call_site_evidence.get("partial")
+        or deadline_exceeded_at_return
+    ):
         result["partial"] = True
-        deadline_limit = payload.get("deadline_limit")
-        if isinstance(deadline_limit, dict):
-            result["deadline_limit"] = dict(deadline_limit)
-        elif outbound_dependencies_deadline_hit.hit:
-            result["deadline_limit"] = {"deadline_exceeded": True}
+        result["partial_reason"] = "deadline"
+        deadline_limit = payload.get("deadline_limit") or call_site_evidence.get("deadline_limit")
+        result["deadline_limit"] = (
+            dict(deadline_limit)
+            if isinstance(deadline_limit, dict)
+            else {"deadline_exceeded": True}
+        )
     if scan_truncated:
         result["result_incomplete"] = True
     # suggested_scope (#133 dogfood): the same centrality-weighted directory narrowing `tg orient`

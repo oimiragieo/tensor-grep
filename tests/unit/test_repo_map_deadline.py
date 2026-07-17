@@ -141,6 +141,45 @@ def test_m1_blast_radius_plan_deadline_none_is_unaffected(tmp_path: Path) -> Non
     assert "deadline_limit" not in result
 
 
+# --- #639 Opus-gate nit 1 (dogfood #1 RESIDUAL): _precomputed_validation_files_for_root did a
+# per-entry Path.resolve() filesystem syscall with NO deadline awareness at all -- on a large repo
+# map's file list (up to DEFAULT_AGENT_REPO_MAP_LIMIT entries) this was the dominant unbounded cost
+# behind a `tg agent --deadline` request overrunning in the validation-file-discovery tail even
+# though the scan itself finished in budget (see tests/integration/test_agent_codemap_deadline_
+# scale.py's documented finding, and test_cli_deadline_coverage_gaps.py's Item 4 for the end-to-end
+# capsule-level proof). ---
+
+
+def test_precomputed_validation_files_for_root_bounds_on_expired_deadline(tmp_path: Path) -> None:
+    # Many entries so an unbounded loop would be observably slower than a bounded one, but no
+    # wall-clock racing is needed -- mirrors test_deadline_already_expired_returns_partial_
+    # immediately's technique: the deadline is already expired before the call even starts, so a
+    # bounded loop must break before doing (meaningfully) more resolve work, not walk the list
+    # regardless.
+    file_paths = [f"file_{index}.py" for index in range(5000)]
+    deadline_hit = repo_map._DeadlineBreakFlag()
+
+    selected = repo_map._precomputed_validation_files_for_root(
+        tmp_path,
+        file_paths,
+        deadline_monotonic=time.monotonic() - 1.0,
+        deadline_hit=deadline_hit,
+    )
+
+    assert selected == []
+    assert deadline_hit.hit is True
+
+
+def test_precomputed_validation_files_for_root_deadline_none_is_unbounded(tmp_path: Path) -> None:
+    # Golden-parity companion: the new deadline_monotonic/deadline_hit params are additive -- every
+    # pre-existing call site (none of which passes them) must see byte-identical behavior.
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("y = 2\n", encoding="utf-8")
+    selected = repo_map._precomputed_validation_files_for_root(tmp_path, ["a.py", "b.py"])
+    assert selected is not None
+    assert len(selected) == 2
+
+
 def _make_caller_repo(root: Path, callers: int) -> None:
     src = root / "src"
     src.mkdir(parents=True)
