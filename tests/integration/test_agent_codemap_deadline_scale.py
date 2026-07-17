@@ -112,13 +112,17 @@ def star_import_repo(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 def test_agent_tight_deadline_exits_2_with_partial_true(star_import_repo: Path) -> None:
-    # Deliberately sub-second: OS file-cache warmth varies run-to-run (a repeat run against the
-    # same fixture directory -- e.g. after an earlier test in this module already read every
-    # file once -- can be several times faster than a cold-cache run), so a "moderately tight"
-    # multi-second deadline was observed to be flaky (sometimes not crossed at all). A budget
-    # this far below any plausible real (scan + post-map) completion time for ~2000 files is
-    # crossed deterministically regardless of cache state.
-    deadline = 0.5
+    # Deliberately at the CLI's own enforced floor (`--deadline` has `min=0.1` on every command
+    # that defines it -- see main.py): OS file-cache warmth AND shared-CI-runner speed both vary
+    # run-to-run (a repeat run against the same fixture directory can be several times faster
+    # than a cold-cache run, and a lightly-loaded runner can be several times faster than a
+    # loaded one), so a "moderately tight" budget was observed to be flaky in CI -- run
+    # 29547883118 completed this fixture's WHOLE post-map path (scan + capsule render + call-site
+    # evidence) in under 500ms on an ubuntu-latest/macos-latest py3.11 runner (exit 0, no
+    # truncation) while the same workload took ~3.6s on a separate ubuntu-latest py3.12 runner the
+    # same run. 0.5s was not tight enough; 0.1s is the tightest budget the CLI accepts and is
+    # crossed deterministically regardless of cache state or runner speed.
+    deadline = 0.1
     started_at = time.monotonic()
     result = _run_tg(
         [
@@ -187,8 +191,9 @@ def test_agent_default_deadline_still_completes_and_is_bounded(star_import_repo:
 def test_codemap_tight_deadline_exits_2_with_partial_reason_deadline(
     star_import_repo: Path,
 ) -> None:
-    # Sub-second for the same cache-warmth-determinism reason as the agent test above.
-    deadline = 0.5
+    # At the CLI's own enforced floor (min=0.1) for the same cache-warmth-and-runner-speed
+    # determinism reason as the agent test above.
+    deadline = 0.1
     out_dir = star_import_repo / "docs" / "code-map"
     started_at = time.monotonic()
     result = _run_tg(
@@ -257,11 +262,12 @@ def test_codemap_default_no_deadline_flag_completes(star_import_repo: Path) -> N
 def test_edit_plan_tight_deadline_exits_2_with_partial_true_for_free(
     star_import_repo: Path,
 ) -> None:
-    # Sub-second for the same cache-warmth-determinism reason as the agent test above -- this
-    # test in particular runs LAST in the module, by which point every file in the fixture has
-    # already been read (and OS-cached) repeatedly by the earlier agent/codemap tests, so a
-    # multi-second deadline that reliably crossed on a cold cache was observed NOT to cross here.
-    deadline = 0.5
+    # At the CLI's own enforced floor (min=0.1) for the same cache-warmth-and-runner-speed
+    # determinism reason as the agent test above -- this test in particular runs LAST in the
+    # module, by which point every file in the fixture has already been read (and OS-cached)
+    # repeatedly by the earlier agent/codemap tests, so a multi-second deadline that reliably
+    # crossed on a cold cache was observed NOT to cross here.
+    deadline = 0.1
     started_at = time.monotonic()
     result = _run_tg(
         [
