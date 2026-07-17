@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 _TITLE_PATTERN = re.compile(
-    r"^(?P<type>feat|fix|perf|refactor|docs|test|build|ci|chore)"
+    r"^(?P<type>feat|fix|perf|refactor|docs|test|build|ci|chore|bench)"
     r"(?:\([^)]+\))?(?P<breaking>!)?: (?P<summary>\S.*)$"
 )
 
@@ -22,6 +22,7 @@ _RELEASE_INTENTS = {
     "build": "none",
     "ci": "none",
     "chore": "none",
+    "bench": "none",
 }
 
 
