@@ -1,6 +1,39 @@
 # CHANGELOG
 
 
+## v1.81.8 (2026-07-17)
+
+### Bug Fixes
+
+- **deps**: Move pyarrow to the gpu extra + drop the unconfigured opentelemetry sdk/exporter (31-55
+  MiB lighter installs) ([#657](https://github.com/oimiragieo/tensor-grep/pull/657),
+  [`fc7d3b9`](https://github.com/oimiragieo/tensor-grep/commit/fc7d3b9ed3809589c9d30d900bac7b3ec7e0186c))
+
+Both heavyweight deps drifted into the bare [project.dependencies] list unnoticed:
+
+- opentelemetry-sdk + opentelemetry-exporter-otlp are dropped outright. All 6 `trace.get_tracer`
+  call sites (cudf_backend.py x2, cybert_backend.py x2, pipeline.py, cli/main.py) are
+  ImportError-guarded no-ops and no TracerProvider is ever configured, so tracing is inert even with
+  the SDK present. opentelemetry-api stays as the minimal no-op scaffold. Drops the grpcio+protobuf
+  chain (~5-12 MiB).
+
+- pyarrow moves into the `gpu` extra only (not `gpu-win`, which is torch-only with no cudf and never
+  reaches the zero-copy path). Its only prod consumers are two lazy `import pyarrow` calls in
+  cudf_backend.py, both gated behind `import cudf` succeeding first; `is_available()` never touches
+  pyarrow. Managed installers already install [gpu]/[gpu-win], so this is migration-clean for
+  supported GPU users. ~26-47 MiB off every non-GPU install.
+
+Also closes the governance blind spot: test_pyproject_dependencies.py only ever validated
+  [project.optional-dependencies], never the bare [project.dependencies] list -- which is how these
+  two drifted in unnoticed. Adds a test pinning that
+  pyarrow/opentelemetry-sdk/opentelemetry-exporter-otlp must not be bare dependencies, and that
+  pyarrow lives in gpu but not gpu-win.
+
+uv.lock regenerated (`uv lock`, no cargo/build needed -- static PEP 621 metadata resolution only).
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.81.7 (2026-07-17)
 
 ### Bug Fixes

@@ -1579,7 +1579,7 @@ dependencies = [
 
 [[package]]
 name = "tensor_grep_rs"
-version = "1.81.7"
+version = "1.81.8"
 dependencies = [
  "aho-corasick",
  "anyhow",
