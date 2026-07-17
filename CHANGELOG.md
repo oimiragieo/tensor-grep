@@ -1,6 +1,47 @@
 # CHANGELOG
 
 
+## v1.81.3 (2026-07-17)
+
+### Bug Fixes
+
+- **agent**: Anchor --deadline at CLI command entry so front-door time is budgeted (closes the
+  #197/#200 near-miss silent-exit-0 residual)
+  ([#648](https://github.com/oimiragieo/tensor-grep/pull/648),
+  [`ed547b7`](https://github.com/oimiragieo/tensor-grep/commit/ed547b73c31bcbae518c99e9cc997a56a0d3bc49))
+
+`tg agent --deadline N` (and its cold-path siblings context-render/edit-plan/orient/codemap)
+  anchored deadline_monotonic INSIDE the builder (build_agent_capsule et al.), computed fresh from
+  deadline_seconds at whatever moment the builder happened to start running. Front-door time spent
+  in the CLI command body before that point -- the lazy builder import, path/query resolution,
+  GPU-id parsing, and the daemon-skip check -- ran completely unbudgeted. Re-dogfooded on v1.80.4:
+  29% of `--deadline 3` near-miss overruns silently exited 0.
+
+Fix: anchor deadline_monotonic at the TOP of each command body (main.py's new
+  _cli_deadline_monotonic helper), before any front-door work, and thread that pre-anchored value
+  into the builder, which now accepts an optional deadline_monotonic override that takes precedence
+  over recomputing from deadline_seconds. Existing deadline_seconds-only callers (MCP tool, the
+  session daemon's _from_map variants, tests) are unaffected -- the fallback computation is
+  byte-identical to prior behavior.
+
+`tg agent` carries a separate, already-shipped cold-path-only default
+  (DEFAULT_AGENT_CLI_DEADLINE_SECONDS, applied only when neither --deadline nor --no-deadline is
+  passed); that generous 60s fallback keeps its own existing anchor point since it needs the lazy
+  import's constant and only applies once the daemon path is known to have missed -- this fix's
+  scope is the explicit --deadline case.
+
+The irreducible interpreter-boot + Typer/Click dispatch prefix before Python reaches the command
+  body (~100-200ms) remains outside any --deadline budget; documented in the --deadline help text
+  and docs/CONTRACTS.md.
+
+TDD: tests/unit/test_cli_deadline_frontdoor_anchor.py deterministically injects a front-door delay
+  (mirrors PR #642's technique, no wall-clock racing) by wrapping the lazy-imported builder
+  function's own module attribute with a sleep-then-delegate wrapper -- proven RED on unfixed code,
+  GREEN after the fix.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.81.2 (2026-07-17)
 
 ### Bug Fixes
