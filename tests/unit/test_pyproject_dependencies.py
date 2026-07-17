@@ -14,6 +14,11 @@ def _optional_dependencies() -> dict[str, list[str]]:
     return payload["project"]["optional-dependencies"]
 
 
+def _dependencies() -> list[str]:
+    payload = _pyproject_payload()
+    return payload["project"]["dependencies"]
+
+
 def test_nlp_extra_should_use_http_triton_client_not_all() -> None:
     deps = _optional_dependencies()["nlp"]
     assert "transformers>=5.3.0" in deps  # CVE-2026-4372 fixed in 5.3.0
@@ -56,6 +61,36 @@ def test_rerank_extra_pins_onnxruntime_and_tokenizers_no_torch() -> None:
     assert not any(dep.lower().startswith("torch") for dep in deps)
     assert not any("onnxruntime-gpu" in dep.lower() for dep in deps)
     assert not any("pylate" in dep.lower() for dep in deps)
+
+
+def test_bare_dependencies_should_not_carry_gpu_only_or_unconfigured_observability_deps() -> None:
+    # The tests above only ever validate [project.optional-dependencies] -- this is how pyarrow
+    # (GPU-only: CuDFBackend's zero-copy ingestion, gated behind `import cudf` succeeding first)
+    # and opentelemetry-sdk/-exporter-otlp (unconfigured: no TracerProvider is ever set up, so
+    # every `trace.get_tracer` call site is an ImportError-guarded no-op) drifted into the bare
+    # [project.dependencies] list unnoticed, dragging grpcio+protobuf and pyarrow's native wheel
+    # onto every non-GPU install. Pin the intent so they can't drift back in.
+    deps = _dependencies()
+
+    assert not any(dep.lower().startswith("pyarrow") for dep in deps), (
+        "pyarrow is GPU-only -- it belongs in the [gpu] extra, not the bare dependency list"
+    )
+    assert not any(dep.lower().startswith("opentelemetry-sdk") for dep in deps), (
+        "opentelemetry-sdk is unconfigured (no TracerProvider) -- must not be a bare dependency"
+    )
+    assert not any(dep.lower().startswith("opentelemetry-exporter-otlp") for dep in deps), (
+        "opentelemetry-exporter-otlp is unconfigured (no TracerProvider) -- must not be a bare dependency"
+    )
+    # opentelemetry-api stays: it's the minimal no-op scaffold backing the 6 ImportError-guarded
+    # `trace.get_tracer` call sites (cudf_backend.py x2, cybert_backend.py x2, pipeline.py,
+    # cli/main.py), kept for future real instrumentation without re-adding the heavy SDK chain.
+    assert any(dep.lower().startswith("opentelemetry-api") for dep in deps)
+
+    # The gpu extra must carry pyarrow so the GPU zero-copy path still resolves it; gpu-win is
+    # torch-only (no cudf), so the pyarrow zero-copy path never runs there and must stay absent.
+    optional_deps = _optional_dependencies()
+    assert any(dep.lower().startswith("pyarrow") for dep in optional_deps["gpu"])
+    assert not any(dep.lower().startswith("pyarrow") for dep in optional_deps["gpu-win"])
 
 
 def test_ruff_should_extend_default_excludes_for_repo_specific_bench_dirs() -> None:
