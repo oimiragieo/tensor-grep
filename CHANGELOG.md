@@ -1,6 +1,82 @@
 # CHANGELOG
 
 
+## v1.80.3 (2026-07-17)
+
+### Bug Fixes
+
+- **rerank**: Role-aware query encoding for the MaxSim late-rerank (#189 Item 1)
+  ([#640](https://github.com/oimiragieo/tensor-grep/pull/640),
+  [`332ca46`](https://github.com/oimiragieo/tensor-grep/commit/332ca46c9b53675e8e3b5573afdac0a213836884))
+
+THE BUG: `load_late_reranker` wired ONE document-role encoder (`build_late_encoder(model,
+  is_query=False)`) for BOTH the query and every candidate chunk. `LateReranker.rerank` then encoded
+  the query with the `[D] ` prefix + the document max-length instead of `[Q] ` + the query
+  max-length -- the wrong ColBERT sub-space -- which scrambled MaxSim's ranking (rrf+maxsim ndcg@10
+  0.083 vs rrf 0.305, per the #189 ledger). `build_late_encoder(model, is_query=True/False)` already
+  existed and was unit-tested; the gap was that `LateReranker`/`load_late_reranker` never used the
+  query-role encoder at all.
+
+THE FIX (3 seams, backward-compatible, ~20 LOC):
+
+1. `LateReranker.__init__` (retrieval_late.py): added an optional second encoder, `encode_query:
+  Callable[[str], np.ndarray] | None = None`. `encode` remains the doc/default encoder;
+  `encode_query=None` (the default, and every pre-fix call site) falls back to `encode` --
+  byte-identical to the old single-encoder contract. 2. `LateReranker.rerank`: `query_matrix =
+  (self._encode_query or self._encode)(query)`; every chunk still goes through `self._encode`
+  unconditionally. 3. `load_late_reranker`: now wires `LateReranker(build_late_encoder(model,
+  is_query=False), encode_query=build_late_encoder(model, is_query=True))`. No other call site
+  changes -- both CLI gates (cli/main.py `_apply_semantic_rerank` and `tg find`) and the eval
+  harness call `load_late_reranker()` with no args and inherit the fix automatically. TG_LATE_RERANK
+  stays default-OFF; the daemon-budget + BackendExecutionError/LateRerankUnavailableError
+  fail-closed split (reranker.py) is untouched.
+
+TDD: RED tests confirmed the bug against unfixed origin/main
+  (`test_load_late_reranker_routes_query_through_query_prefix` -- query got `[D] ` instead of `[Q]
+  `; `test_late_reranker_uses_query_encoder_for_query_only` -- `TypeError`, no `encode_query` kwarg
+  yet), GREEN after the fix. All 4 pre-existing single-encoder order-only tests pass unchanged
+  (`encode_query=None` backward-compat, also pinned by a new explicit test). Full
+  retrieval_late/reranker/rank_chunks/find/search-semantic-rerank suites (137 tests) pass, including
+  the real-model integration test (`TestRealFetchedModel`, exercised against the actual fetched
+  lightonai/LateOn-Code-edge model, not a mock).
+
+DECISIVE EVAL (`benchmarks/eval_late_rerank_quality.py --runs 3`, 3/3 byte-identical, NL golden set,
+  40 queries):
+
+arm ndcg@10 recall@10 bm25 0.1093 0.2500 dense 0.6026 0.9000 rrf 0.3047 0.5500 rrf+maxsim 0.0679
+  0.2000
+
+The role-aware fix does NOT recover the regression: rrf+maxsim ndcg@10 stayed at 0.068,
+  statistically indistinguishable from the pre-fix 0.083 the ledger recorded, and far below rrf's
+  0.305. The two lexical guard slices are worse: bm25/dense/rrf all score a perfect 1.0 ndcg@10 on
+  both `literal_golden.jsonl` and `identifier3_golden.jsonl` (10 queries each), but rrf+maxsim
+  collapses to 0.082 and 0.029 respectively (delta -0.92 / -0.97 vs bm25) -- MaxSim actively
+  destroys an already-perfect ranking on literal/identifier lookups.
+
+Root-cause diagnostic (not part of this diff): with the role-aware fix applied, raw MaxSim rank of
+  the truly-relevant chunk over the whole 74-chunk golden corpus averages rank ~41/74 across the 40
+  NL queries -- close to the ~37.5 expected under a uniform random ordering -- while RRF
+  (bm25+dense) averages rank ~16.4, a real signal. The 17M-param, 48-dim, int8-quantized
+  LateOn-Code-edge model appears too weak on this corpus/domain to add signal on top of RRF,
+  independent of the role-encoding bug: the fix is a genuine correctness improvement (queries now
+  hit the right ColBERT sub-space) but is not sufficient to make the +maxsim arm competitive.
+  TG_LATE_RERANK remains default-OFF; whether to keep it experimental or formally retire it
+  (docs/PAPER.md) is left to the reviewing engineer per the #189 roadmap's own framing ("either is a
+  clean result").
+
+SECONDARY (deferred, not bundled): un-stubbing a production-faithful `find` arm (calling
+  `core.reranker.rank_chunks(dense_weight=..., late_reranker=...)` instead of the harness's own
+  equal-weight inline fusion) needs a new cross-module import boundary (benchmarks/ -> cli.main for
+  the query-adaptive `_find_dense_weight`), threading a PER-QUERY weight through
+  `run_rrf_arm`/`run_rrf_maxsim_arm` without reintroducing the threaded/non-deterministic
+  late-rerank path `run_rrf_maxsim_arm` deliberately avoids, and new dedicated tests to match this
+  file's existing E1-E4 coverage bar -- more than modest effort, so left as a follow-up
+  (eval_late_rerank_quality.py:632-635 stub sites, cli/main.py:4036 `_find_dense_weight`,
+  core/reranker.py:217 `rank_chunks`).
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+
 ## v1.80.2 (2026-07-17)
 
 ### Bug Fixes
