@@ -31,9 +31,7 @@ def _project(root: Path) -> Path:
     return project.resolve()
 
 
-def test_refs_threads_deadline_into_internal_context_pack(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_refs_threads_deadline_into_internal_context_pack(tmp_path: Path, monkeypatch: Any) -> None:
     project = _project(tmp_path)
     rmap = repo_map.build_repo_map(str(project))
 
