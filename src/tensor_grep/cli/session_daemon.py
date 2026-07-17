@@ -1330,6 +1330,16 @@ def _serve_daemon_response_with_cache(
     # WARM_DAEMON_DEFAULT_DEADLINE_SECONDS budget (session_store.py). Excluding it from the cache
     # entirely is the simplest correct option: a follow-up identical request just recomputes with
     # its own fresh budget instead of replaying a stale truncation.
+    #
+    # Opus-gate nit (PR #647): this guard is SHARED by every command this function serves,
+    # including the 5 symbol commands (defs/impact/refs/callers/blast_radius), not just the 4
+    # #200 targets. It is currently a proven no-op for the symbol commands: `open_session` builds
+    # the cached map with no deadline (session_store.open_session), and the warm symbol path
+    # never threads a per-request deadline into their builders either (the still-open #390 gap),
+    # so a warm symbol response can never be `partial=True` today. If #390 is ever closed by
+    # threading a deadline into the symbol commands too, this guard starts applying to them as
+    # well -- which is the CORRECT behavior (a truncated symbol answer must not be cached either),
+    # but flagging it here so that future change doesn't have to rediscover this coupling.
     if not response.get("partial"):
         with server._response_cache_lock:
             server.response_cache.put(response_cache_key, response)

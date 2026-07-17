@@ -293,6 +293,50 @@ def test_orient_from_map_already_expired_deadline_marks_partial(tmp_path: Path) 
     assert result.get("partial_reason") == "deadline"
 
 
+def test_orient_snippet_loop_breaks_mid_loop_not_just_pre_check(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Strengthens the already-expired-deadline coverage above with the sharper claim (Opus-gate
+    nit, PR #647): the deadline crosses WHILE the snippet loop is running, not merely pre-expired
+    before the first iteration -- so only SOME central files get a snippet and the loop
+    demonstrably stopped early rather than exhausting all of them. Mirrors
+    test_repo_map_deadline.py's proven ...breaks_mid_loop_not_just_pre_check technique: a STATIC
+    fake clock, manually advanced only inside the wrapped per-item work function
+    (_ast_chunked_snippet), so the result is immune to any OTHER incidental time.monotonic() call
+    elsewhere in the function (a `lambda: clock["t"]` read-only patch has no side effect on its
+    own -- only the wrapper's explicit `clock["t"] += 1.0` moves the clock)."""
+    project = tmp_path / "project"
+    src = project / "src"
+    src.mkdir(parents=True)
+    for index in range(6):
+        (src / f"m{index:03d}.py").write_text(
+            f"def helper_{index}():\n    return {index}\n", encoding="utf-8"
+        )
+    rm = repo_map.build_repo_map(str(project.resolve()), max_repo_files=2000)
+
+    base = 1000.0
+    clock = {"t": base}
+    monkeypatch.setattr(orient_capsule.time, "monotonic", lambda: clock["t"])
+    original_snippet = orient_capsule._ast_chunked_snippet
+    call_count = {"n": 0}
+
+    def _advancing_snippet(path_str: str, symbols: list[Any]) -> str | None:
+        call_count["n"] += 1
+        clock["t"] += 1.0
+        return original_snippet(path_str, symbols)
+
+    monkeypatch.setattr(orient_capsule, "_ast_chunked_snippet", _advancing_snippet)
+
+    result = orient_capsule.build_orient_capsule_from_map(
+        rm, max_central_files=6, max_snippet_files=6, deadline_monotonic=base + 3.0
+    )
+
+    assert result.get("partial") is True
+    assert result.get("partial_reason") == "deadline"
+    assert 0 < call_count["n"] < 6, "cut short mid-loop, not exhausted"
+    assert len(result["snippets"]) < 6, "partial snippet set, not the full 6"
+
+
 def test_orient_cold_wrapper_stays_unbounded_by_default(tmp_path: Path) -> None:
     """The cold CLI path (`tg orient`, no --deadline) is a deliberate product decision to stay
     unbounded (see orient_capsule.build_orient_capsule's docstring + the CLI --no-deadline help
