@@ -101,10 +101,22 @@ class LateReranker:
     the ``rerank`` extra). Mirrors :class:`~tensor_grep.core.retrieval_dense.DenseIndex`'s
     dependency-injection shape (retrieval_dense.py:155, the model is passed in already loaded)
     rather than owning model lifecycle itself.
+
+    ``encode_query`` (#189 Item 1 fix, optional): a SECOND, role-aware encoder used for the query
+    text only; ``encode`` continues to encode every candidate chunk. When omitted (``None``, the
+    default), ``encode`` serves both roles -- byte-identical to the pre-fix single-encoder
+    contract, so existing callers (and their order-only tests) are unaffected. See
+    :func:`load_late_reranker` for the real ONNX wiring that supplies role-correct encoders
+    (``[Q] `` vs ``[D] `` prefix + per-role max length) via :func:`build_late_encoder`.
     """
 
-    def __init__(self, encode: Callable[[str], np.ndarray]) -> None:
+    def __init__(
+        self,
+        encode: Callable[[str], np.ndarray],
+        encode_query: Callable[[str], np.ndarray] | None = None,
+    ) -> None:
         self._encode = encode
+        self._encode_query = encode_query
 
     def rerank(self, query: str, chunks: list[str], indices: list[int]) -> list[int]:
         """Return ``indices`` permuted by MaxSim(query, chunk) descending; ties break by
@@ -112,15 +124,17 @@ class LateReranker:
 
         Output is EXACTLY ``indices`` reordered -- never adds, never drops (the seam this feeds,
         ``rerank_hybrid``, splices this back over a ``fused_order`` head slice and must preserve
-        membership; design doc "The seam"). An empty pool returns ``[]`` without invoking
-        ``encode`` at all.
+        membership; design doc "The seam"). An empty pool returns ``[]`` without invoking either
+        encoder at all.
 
         ``chunks[i]`` must correspond to ``indices[i]`` (same length, position-aligned) -- the
-        caller's already-pooled candidate set.
+        caller's already-pooled candidate set. The query is encoded via ``encode_query`` when one
+        was supplied to the constructor, else via ``encode`` (the pre-fix, single-encoder
+        behavior) -- every chunk always goes through ``encode``.
         """
         if not indices:
             return []
-        query_matrix = self._encode(query)
+        query_matrix = (self._encode_query or self._encode)(query)
         doc_matrices = [self._encode(chunk) for chunk in chunks]
         scores = maxsim_scores(query_matrix, doc_matrices)
         return rank_by_maxsim(scores, indices)
@@ -323,18 +337,23 @@ def build_late_encoder(model: LateModel, *, is_query: bool) -> Callable[[str], n
 
 
 def load_late_reranker(model_dir: str | Path | None = None) -> LateReranker:
-    """Convenience constructor: load the model and wire a real encoder into :class:`LateReranker`.
+    """Convenience constructor: load the model and wire ROLE-AWARE encoders into
+    :class:`LateReranker` (#189 Item 1 fix).
 
-    NOTE: :meth:`LateReranker.rerank` (T2) calls the SAME injected ``encode`` for both the query
-    text and every candidate chunk -- it does not yet distinguish roles. This constructor wires
-    the DOCUMENT-role encoder (chunks dominate call volume: one query encode vs N chunk encodes
-    per search) as a conservative default. The asymmetric ``query_prefix``/``document_prefix`` +
-    ``query_length``/``document_length`` in ``onnx_config.json`` are both read and available via
-    ``build_late_encoder(model, is_query=True/False)`` for T5's seam wiring to route correctly.
+    The query text is encoded via the QUERY-role encoder (``query_prefix`` + ``query_length``);
+    every candidate chunk via the DOCUMENT-role encoder (``document_prefix`` + ``document_length``)
+    -- both built from the same loaded ``model`` via ``build_late_encoder(model, is_query=True/
+    False)``. Prior to this fix, a single DOCUMENT-role encoder was wired for both roles, so the
+    query was encoded with the wrong prefix/length (``[D] `` instead of ``[Q] ``) -- the wrong
+    ColBERT sub-space, which scrambled MaxSim's ranking (see #189 ledger, "role-aware query
+    encoding").
     """
     resolved_dir = model_dir if model_dir is not None else default_model_dir()
     model = load_late_model(resolved_dir)
-    return LateReranker(build_late_encoder(model, is_query=False))
+    return LateReranker(
+        build_late_encoder(model, is_query=False),
+        encode_query=build_late_encoder(model, is_query=True),
+    )
 
 
 # ---------------------------------------------------------------------------------------------

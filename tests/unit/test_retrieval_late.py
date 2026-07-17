@@ -335,6 +335,74 @@ class TestBuildLateEncoder:
             encode("hello")
 
 
+class TestLateRerankerRoleAwareQueryEncoding:
+    """#189 Item 1 fix: the query text must route through the QUERY-role encoder (`[Q] ` prefix)
+    and every candidate chunk through the DOCUMENT-role encoder (`[D] ` prefix) -- prior to this
+    fix, `load_late_reranker` wired ONE document-role encoder for both roles (see the removed NOTE
+    that used to sit on its docstring), so a query was encoded into the wrong ColBERT sub-space
+    (`[D] ` prefix + document_length instead of `[Q] ` + query_length). Both tests fail against the
+    pre-fix code: the first because `load_late_reranker` had no second encoder to route through at
+    all, the second because `LateReranker.__init__` did not yet accept `encode_query`.
+    """
+
+    def test_load_late_reranker_routes_query_through_query_prefix(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        # `load_late_model` is monkeypatched to a fake -- no real ONNX model needed for this
+        # assertion, mirroring the fakes `TestBuildLateEncoder` already uses.
+        model = _fake_late_model()
+        monkeypatch.setattr(
+            "tensor_grep.core.retrieval_late.load_late_model", lambda _model_dir: model
+        )
+
+        reranker = load_late_reranker(tmp_path)
+        reranker.rerank("how do I open a file", ["def read(): pass", "def write(): pass"], [1, 2])
+
+        # Both encoders share the SAME underlying `model.tokenizer` (one `load_late_model` call),
+        # so `encoded_texts` is a single flat list in call order: the query first, then each chunk
+        # -- see `LateReranker.rerank`'s call order below.
+        assert model.tokenizer.encoded_texts[0] == "[Q] how do I open a file"
+        assert model.tokenizer.encoded_texts[1:] == [
+            "[D] def read(): pass",
+            "[D] def write(): pass",
+        ]
+
+    def test_late_reranker_uses_query_encoder_for_query_only(self) -> None:
+        query_calls: list[str] = []
+        doc_calls: list[str] = []
+
+        def encode_query(text: str) -> np.ndarray:
+            query_calls.append(text)
+            return np.array([[1.0, 0.0]], dtype=np.float32)
+
+        def encode_doc(text: str) -> np.ndarray:
+            doc_calls.append(text)
+            return np.array([[1.0, 0.0]], dtype=np.float32)
+
+        reranker = LateReranker(encode_doc, encode_query=encode_query)
+
+        reranker.rerank("query", ["chunk-a", "chunk-b"], [10, 20])
+
+        assert query_calls == ["query"]
+        assert doc_calls == ["chunk-a", "chunk-b"]
+
+    def test_encode_query_none_falls_back_to_encode_backward_compat(self) -> None:
+        # `encode_query=None` (the default, and every pre-fix call site via `LateReranker(encode)`
+        # or `LateReranker(encode=...)`) must remain byte-identical to the single-encoder contract:
+        # the SAME callable serves both roles.
+        calls: list[str] = []
+
+        def encode(text: str) -> np.ndarray:
+            calls.append(text)
+            return np.array([[1.0, 0.0]], dtype=np.float32)
+
+        reranker = LateReranker(encode)
+
+        reranker.rerank("query", ["chunk-a"], [1])
+
+        assert calls == ["query", "chunk-a"]
+
+
 def _real_late_model_dir():
     candidate = default_model_dir()
     return candidate if candidate.is_dir() else None
