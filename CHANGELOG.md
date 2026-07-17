@@ -1,6 +1,60 @@
 # CHANGELOG
 
 
+## v1.80.4 (2026-07-17)
+
+### Bug Fixes
+
+- **agent**: Final wall-clock catch-all checkpoint closes the call-site-evidence silent-exit-0
+  residual (dogfood #1 residual, #639 nit)
+  ([#642](https://github.com/oimiragieo/tensor-grep/pull/642),
+  [`ed80e56`](https://github.com/oimiragieo/tensor-grep/commit/ed80e5654df7f872cb318e78c2c1cb739ab18698))
+
+#639 (W1b) bounded the CHECKPOINTED post-map stages (build_context_pack_from_map's own
+  pagerank/scoring loop, DAR's outbound-dependency collection) and folded each one's own
+  deadline-break flag into the agent capsule's result["partial"]. The Opus gate on that PR flagged
+  one residual (nit 1): the fold-in only named the sibling stages it explicitly threaded a flag
+  through, so a `tg agent --deadline` request whose scan+render finish in budget but whose
+  UNcheckpointed tail (call-site-evidence rescue scan, validation-file discovery) pushes elapsed
+  time past the deadline could still silently report exit 0 / partial-not-True.
+
+Three changes close it:
+
+1. build_agent_capsule_from_map (agent_capsule.py): the existing "any one of N sibling stages"
+  fold-in now also names call_site_evidence.get("partial") as a third source, AND adds a FINAL
+  absolute-deadline recheck (time.monotonic() >= deadline_monotonic) as an honesty backstop -- if
+  the budget has been blown by the time the capsule returns, it is marked partial=True /
+  partial_reason="deadline" regardless of which stage actually consumed the time. Mirrors
+  codemap.py's own tail_deadline_hit catch-all for the same class of gap.
+
+2. _collect_capsule_call_site_evidence[_from_map] (agent_capsule.py): the rescue blast-radius scan's
+  own radius_payload["partial"] was silently dropped when repackaged into the evidence dict an agent
+  actually reads. Now propagated via repo_map's existing _copy_partial_signal helper (reused
+  verbatim, both cold and warm/daemon collectors).
+
+3. _precomputed_validation_files_for_root (repo_map.py): this per-file Path.resolve() loop had no
+  deadline awareness at all -- the pre-existing unbounded cost documented in
+  test_agent_codemap_deadline_scale.py's module docstring. Now accepts optional
+  deadline_monotonic/deadline_hit params (default None, fully backward compatible) and breaks early
+  on expiry. Threaded through the one call chain relevant to `tg agent`'s edit-plan-seed tail:
+  build_context_render_from_map -> _attach_edit_plan_metadata -> _build_edit_plan_seed ->
+  _discover_validation_tests_for_primary_file (whose own scoring loop is now also bounded).
+
+TDD: new tests force the overrun deterministically (injected sleep / already-expired deadline, no
+  wall-clock racing) into the tail specifically, not the scan -- the existing 0.1s integration tests
+  cross the deadline in the scan itself and don't cover this residual. One pre-existing test
+  (test_agent_second_scan_deadline_clamps_to_floor) asserted exit_code==0 for a scenario that, on
+  inspection, was itself an instance of the same silent lie (a --deadline 0.3 request that actually
+  ran ~0.5s+ reported success); updated to the corrected exit 2 / partial=True contract.
+
+Verified: targeted agent_capsule/repo_map/deadline/exit-code unit suites (~700 tests) and the
+  real-binary integration suite (tests/integration/test_agent_codemap_deadline_scale.py, real
+  subprocess against a 2001-file fixture) all green; ruff check + ruff format --preview clean on
+  every touched file.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.80.3 (2026-07-17)
 
 ### Bug Fixes
