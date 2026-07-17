@@ -94,7 +94,12 @@ def main() -> int:
     code, ver, _ = _run(["--version"])
     print(f"version: {ver.strip()} (exit {code})\n")
 
-    with tempfile.TemporaryDirectory() as td:
+    # ignore_cleanup_errors: on Windows, AV/the search indexer can hold a
+    # transient lock on tg-touched files, so rmtree at __exit__ raises
+    # PermissionError AFTER every check passed -> the harness exited 1 on a
+    # 10/10 green run (false negative). Swallow only the cleanup rmtree error;
+    # check outcomes are already recorded in _RESULTS inside the block. (#201)
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         fixture = Path(td) / "repo"
         _build_fixture(fixture)
         fx = str(fixture)
