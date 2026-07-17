@@ -1,6 +1,95 @@
 # CHANGELOG
 
 
+## v1.81.0 (2026-07-17)
+
+### Continuous Integration
+
+- **release-intent**: Accept the documented `bench:` no-release commit type in
+  validate_pr_title_semver (#198) ([#644](https://github.com/oimiragieo/tensor-grep/pull/644),
+  [`29a4cc5`](https://github.com/oimiragieo/tensor-grep/commit/29a4cc55846a3228093f9e431eacac85605ecf1e))
+
+- `_TITLE_PATTERN` and `_RELEASE_INTENTS` in scripts/validate_pr_title_semver.py did not recognize
+  the `bench` commit type, so a `bench:`-titled PR failed the release-intent CI check even though
+  bench-only commits (12+ already merged, e.g. `bench(find): ...`, `bench: refresh windows text
+  baseline`) are benchmark-artifact-only changes that should never bump the release version -- the
+  same no-release intent already given to docs/test/chore/ci/build. - This mirrors the existing
+  `refactor:` precedent documented in .claude/skills/tensor-grep-change-control/SKILL.md:
+  `_RELEASE_INTENTS` is the release-intent ground truth, and the AGENTS.md prose table is a
+  known-incomplete summary (it also omits `refactor:`), not a strict enumeration -- so this is
+  enforcement catching up to already- established practice, not a docs contradiction. - No change to
+  actual release behavior: semantic-release (python-semantic-release, no custom commit_parser in
+  pyproject.toml) already treats an unrecognized commit type as no-bump by default, so `bench:`
+  commits were never triggering unintended releases. This PR only fixes the release-intent CHECK to
+  stop false-failing on that already-safe, already-used type. - TDD: added
+  test_validate_pr_title_semver_should_accept_bench_title_as_no_release (RED confirmed against the
+  pre-fix pattern, GREEN after adding `bench` -> "none").
+
+### Features
+
+- **mcp**: Additive task-shaped meta-tools + TG_MCP_LEGACY_TOOLS flag (Phase-1, #98)
+  ([#643](https://github.com/oimiragieo/tensor-grep/pull/643),
+  [`6d8a23e`](https://github.com/oimiragieo/tensor-grep/commit/6d8a23ed9f64af847321145c86c76d05dbbf1e33))
+
+* feat(mcp): additive task-shaped meta-tools + TG_MCP_LEGACY_TOOLS flag (Phase-1, #98)
+
+Add 10 task-shaped meta-tools (tg_navigate/tg_impact/tg_query/tg_context/tg_explore/
+  tg_session/tg_scan/tg_audit/tg_checkpoint/tg_rewrite) that compose the 46 legacy MCP tools by an
+  `action` selector, dispatching directly to each legacy tool FUNCTION so every fail-closed-class
+  behavior (native-unavailable, validation-command gating, plan-drift) is inherited unchanged. All
+  48 legacy tool names stay individually registered by default via the new `TG_MCP_LEGACY_TOOLS`
+  flag (default ON); the 10 meta-tools and the 2 always-on singletons (tg_mcp_capabilities,
+  tg_classify_logs) are never gated. Contract version bumped 1.3.0 -> 1.4.0 (additive tools[]
+  growth).
+
+Also threads W1b's `deadline_seconds` through the MCP `tg_agent_capsule` tool (it only reached the
+  internal `build_agent_capsule` builder in #639), so `tg_context(action="capsule")` can forward a
+  deadline.
+
+Security: every meta-tool confines its primary `path` and every secondary path-shaped param
+  unconditionally, before the action branch runs, regardless of which action was requested --
+  resolves a reachability gap where a param exclusive to one action (e.g. tg_audit's
+  manifest_path/bundle_path across 5 different actions) would otherwise be confined only when that
+  specific action happened to be chosen. tg_query's new `workspace_roots` (list[str]) param confines
+  each element independently and fails the WHOLE call closed if any element escapes.
+
+Tests: extends the schema-driven string-path confinement ratchet to the 10 new tools; adds a new
+  schema-driven plural (array<string>) path ratchet exempting tg_explore's glob-pattern `ignore`;
+  proves the TG_MCP_LEGACY_TOOLS flag-OFF de-registration via subprocess isolation (registration +
+  the capability registry are both import-time bound, so a same-process reload would leak state into
+  sibling tests); per-meta dispatch tests spy each composed legacy function and assert forwarded
+  kwargs; fail-closed-class preservation tests diff the meta and legacy call paths byte-for-byte.
+  Fixes a real regression the new tests caught along the way: the larger tools/list payload from the
+  10 additive tools exceeded asyncio's default 64 KiB subprocess stdout buffer in the raw-framing
+  MCP stdio integration tests, so both raise `limit=8 MiB`.
+
+Docs: docs/harness_api.md's governed "Current tool set" list gets a `name(...)` bullet for each of
+  the 10 meta-tools (release-gate must-fix -- CI fails otherwise) plus a capability-registry field
+  reference for the new `meta` mode/composes/actions shape.
+
+* docs(mcp): correct meta-confinement comment — tg_scan/tg_rewrite secondary paths are confined by
+  the delegated legacy fn (gate nit, #643)
+
+The meta-tool section header (mcp_server.py) and the ratchet-kwargs comment (test_mcp_server.py)
+  both claimed every meta tool confines ALL of its declared path-shaped params unconditionally at
+  the meta layer before the action branch. That is false for two metas: tg_scan's
+  baseline_path/write_baseline/ suppressions_path/write_suppressions and tg_rewrite's
+  audit_manifest/policy are NOT confined at the meta layer -- they are forwarded verbatim to the
+  delegated legacy function (tg_ruleset_scan / execute_rewrite_apply_json via tg_rewrite_apply),
+  which confines them before any filesystem op instead.
+
+Behavior is unchanged and already secure/ratchet-proven; only the comment text was misleading.
+  Correct both comments so a future maintainer does not delete the legacy-layer confinement as
+  "redundant defense-in-depth" and open a path-traversal hole. Comment-only change, no logic
+  touched.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.80.4 (2026-07-17)
 
 ### Bug Fixes
