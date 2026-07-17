@@ -36,10 +36,46 @@ def test_vendored_root_dir_names_match_source_of_truth() -> None:
     """Review finding L1 (PR #400): cli/bootstrap.py's front-door vendored-root mirror and
     cli/main.py's `_should_refuse_unbounded_vendored_root_scan` guard must trigger on
     exactly the same set of heavy top-level dir names, or the two front doors (native/rg
-    fast path vs full CLI) can disagree about whether a root is unbounded."""
-    assert (
-        bootstrap._UNBOUNDED_VENDORED_ROOT_DIR_NAMES == cli_main._UNBOUNDED_VENDORED_ROOT_DIR_NAMES
-    ), "bootstrap's vendored-root trigger set must match cli/main.py's exactly"
+    fast path vs full CLI) can disagree about whether a root is unbounded.
+
+    perf/#48: bootstrap.py no longer binds `_UNBOUNDED_VENDORED_ROOT_DIR_NAMES` as a
+    persistent module attribute -- `_search_paths_include_vendored_root` now does its own
+    function-local `from tensor_grep.io.directory_scanner import UNBOUNDED_VENDORED_ROOT_DIR_NAMES`
+    so that heavy import (which transitively pulls in `tensor_grep.core.config` and stdlib
+    `dataclasses`/`inspect`) is not paid by the `tg --version` fast path
+    (`tests/unit/test_bootstrap_fast_path_imports.py` pins that). Structurally this makes
+    bootstrap.py's copy DRIFT-PROOF -- it always re-reads the canonical set fresh, it can no
+    longer hold a stale independent copy -- so this test now (a) checks cli/main.py's own
+    still-module-level copy against the canonical source directly, and (b) behaviorally proves
+    bootstrap's guard function actually consults that same canonical set."""
+    from tensor_grep.io.directory_scanner import UNBOUNDED_VENDORED_ROOT_DIR_NAMES
+
+    assert cli_main._UNBOUNDED_VENDORED_ROOT_DIR_NAMES == UNBOUNDED_VENDORED_ROOT_DIR_NAMES, (
+        "cli/main.py's vendored-root trigger set must match the canonical source of truth exactly"
+    )
+    assert UNBOUNDED_VENDORED_ROOT_DIR_NAMES, (
+        "canonical set must be non-empty for this test to mean anything"
+    )
+
+
+def test_vendored_root_guard_triggers_on_every_canonical_name(tmp_path: Path) -> None:
+    """Companion behavioral check to the drift test above: bootstrap's front-door guard must
+    fire for a root whose top-level child is ANY name in the canonical
+    `UNBOUNDED_VENDORED_ROOT_DIR_NAMES` set, and must NOT fire for an unrelated child name --
+    proving the perf/#48 function-local import actually wires the guard to the real set rather
+    than silently going stale/empty."""
+    from tensor_grep.io.directory_scanner import UNBOUNDED_VENDORED_ROOT_DIR_NAMES
+
+    for name in UNBOUNDED_VENDORED_ROOT_DIR_NAMES:
+        root = tmp_path / f"root-{name}"
+        (root / name).mkdir(parents=True)
+        assert bootstrap._search_paths_include_vendored_root([str(root)]) is True, (
+            f"guard must trigger on canonical vendored dir name {name!r}"
+        )
+
+    unrelated_root = tmp_path / "root-unrelated"
+    (unrelated_root / "not_a_vendored_dir").mkdir(parents=True)
+    assert bootstrap._search_paths_include_vendored_root([str(unrelated_root)]) is False
 
 
 def test_typer_app_commands_match_source_of_truth() -> None:
