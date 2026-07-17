@@ -1,6 +1,120 @@
 # CHANGELOG
 
 
+## v1.80.2 (2026-07-17)
+
+### Bug Fixes
+
+- **agent**: Bound tg agent + tg codemap --deadline through the post-map stages (dogfood #1)
+  ([#639](https://github.com/oimiragieo/tensor-grep/pull/639),
+  [`22d1f8f`](https://github.com/oimiragieo/tensor-grep/commit/22d1f8fdd040d593aa86c126eab758067907b843))
+
+* fix(agent): bound tg agent + tg codemap --deadline through the post-map stages and stamp
+  fail-closed partial (dogfood #1)
+
+Dogfood finding 1 (HIGH): --deadline threaded into build_repo_map (the scan), which finished in
+  budget, but the POST-MAP stages ran fully unbounded and unstamped -- `tg agent ROOT Q --deadline
+  8` ran ~20s at exit 0 with partial=None (a silent deadline breach); `tg codemap ROOT --deadline 3`
+  ran ~28s. The exit-2 gate keys solely on payload["partial"], so an unstamped truncation exited 0
+  as if complete.
+
+Fixes (all council must-fixes baked in, non-negotiable per the plan):
+
+- _personalized_reverse_import_pagerank (repo_map.py): abandons to {} at the 12-iteration boundary
+  once deadline_monotonic expires (deterministic -- callers already do `.get(x, 0.0)`, never a
+  partial-ranks lie), and hoists the per-node `sorted(reverse_importers.get(current))` out of the
+  loop (free, additive speedup, numerically proven identical to the pre-hoist shape). -
+  build_context_pack_from_map (repo_map.py) now self-stamps partial/deadline_limit from its own
+  deadline_hit readback -- every current caller (agent/context/edit-plan) passes no flag at all
+  today, so a sibling-loop break was previously silently unstamped; _copy_partial_signal can only
+  propagate an existing partial key, never originate one from a bare _DeadlineBreakFlag. -
+  _collect_outbound_dependencies (agent_capsule.py, DAR) now threads deadline_monotonic and bails
+  through its existing ([], {}) fail-safe shape; build_agent_capsule_from_map folds its own
+  deadline_hit into result["partial"] alongside the context-render signal. - tg agent's 60s default
+  deadline is applied in the command BODY, strictly AFTER the warm-daemon gate (`if
+  effective_deadline is None: ...`) -- putting it on the typer.Option default (codemap's own
+  placement) would make effective_deadline never None on a default call, silently skipping the
+  daemon probe every time (the #108 moat). --no-deadline stays a real opt-out; the library default
+  (build_agent_capsule) stays unbounded. - codemap's post-map tail (the folders_with_no_mapped_files
+  re-walk + the per-folder render loop) now shares the same deadline_monotonic, folds an early break
+  into the existing partial/partial_reason="deadline" ladder, and renders the index off only the
+  folders that were actually written so a deadline-cut tail never dangling-links to an unwritten
+  page. - tg edit-plan inherits the pagerank + self-stamp fix for free (same
+  build_context_pack_from_map seam) -- verified with its own exit-2 test.
+
+TDD: RED tests written first against the unfixed code (confirmed failing for the right reason)
+  across unit tests (deterministic fake-clock control, mirroring the existing task #52/#61/#103
+  deadline-test idiom) and a new real-binary (`python -m tensor_grep`, subprocess timeout,
+  anti-hang-test-protocol) integration suite against a ~2000-file star-import fixture sized to
+  stress pagerank's reverse-import fan-in.
+
+Deviation (documented, out of scope for this PR): profiling the large fixture surfaced a SEPARATE,
+  pre-existing unbounded cost dominated by repeated Path.resolve() calls on Windows (agent's
+  validation-file/test-runner detection reached via the call-site-evidence collector; codemap's
+  _exclude_output_paths) that is not named in this plan and threads no deadline at all. The honesty
+  contract this PR exists to fix (exit 2, partial=True, never a silent exit-0 completeness lie) is
+  proven to hold end-to-end regardless; the wall-clock assertions in the new integration tests are
+  deliberately generous to reflect that known, separate gap rather than overclaim tight deadline
+  adherence this PR does not deliver on its own.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(tests): tighten agent/codemap/edit-plan tight-deadline tests to the CLI's 0.1s floor
+
+PR #639's test-python (macos-latest, py3.11) and (ubuntu-latest, py3.11) both failed CI run
+  29547883118 on `tests/integration/test_agent_codemap_deadline_scale.py::
+  test_agent_tight_deadline_exits_2_with_partial_true` -- `assert 0 == 2`. This is NOT the known
+  #638 test_throughput flake (test_cpu_backend_throughput PASSED in both failing jobs, right before
+  this test ran) and NOT a W1b logic regression -- it is a timing-margin flake in this PR's own new
+  integration test.
+
+Root cause: the test's 0.5s --deadline on the ~2000-file star_import_repo fixture assumed that was
+  "far below any plausible real completion time," but shared GitHub Actions runners have wide speed
+  variance. In this one run, the SAME workload (agent capsule build: scan + pagerank + call-site
+  evidence + JSON render) completed fully within 500ms on the ubuntu-latest/macos-latest py3.11
+  runners (exit 0, no truncation -- the assertion failure), while the ubuntu-latest py3.12 runner
+  (which passed) took ~3.6s for the identical unpressured default-deadline call the same run -- a
+  >7x spread. 0.5s just wasn't tight enough.
+
+Fix: drop `deadline = 0.5` to `deadline = 0.1` in the three tight-deadline tests (agent, codemap,
+  edit-plan) -- the CLI's own enforced floor (`--deadline` has `min=0.1` on every command that
+  defines it), maximizing headroom without changing the fixture. Deliberately did NOT grow
+  star_import_repo's file count instead: it is a module-scoped fixture shared with
+  `test_agent_default_deadline_still_completes_and_is_bounded` and
+  `test_codemap_default_no_deadline_flag_completes`, which assert the DEFAULT (60s) deadline
+  comfortably completes within 60s -- and the module's own docstring documents a separate,
+  out-of-scope unbounded Path.resolve() cost (Windows nt._getfinalpathname) that scales with file
+  count, so enlarging the fixture risked flipping the currently-green windows-latest test-python
+  jobs instead. Verified locally (real subprocess, PYTHONPATH-pointed at this worktree's src,
+  `tensor_grep.__file__` confirmed) that `--deadline 0.1` still reliably triggers exit 2 /
+  partial=True / deadline_exceeded=True / result_incomplete=True -- no assertion weakened, only the
+  timing budget tightened.
+
+All 5 tests in this module plus the PR's other 141 new/touched unit tests (test_repo_map_deadline,
+  test_agent_capsule_outbound_deps, test_codemap, test_repo_map_graph,
+  test_cli_deadline_coverage_gaps) pass locally against this branch.
+
+* fix(cli): correct stale tg agent --deadline/--no-deadline help text
+
+Opus code-review nit on #639: `tg agent`'s F4 change (this PR) gave the cold path a real 60s default
+  --deadline so a whole-repo call always terminates in bounded time. Both option help strings still
+  described the OLD unbounded-by-default behavior: - `--deadline`'s own help said "pass
+  --no-deadline to keep the (already default) unbounded behavior explicit" -- false; the default is
+  now bounded (60s), not unbounded. - `--no-deadline`'s help said "a no-op since agent already
+  defaults to an unbounded --deadline" -- false; --no-deadline is now the REAL opt-out into
+  unbounded behavior.
+
+Reworded both to match the accurate, already-correct phrasing style `codemap` uses for its own
+  (pre-existing, #153) bounded-by-default --deadline/--no-deadline pair. Text only -- no change to
+  the deadline default/gating logic itself (DEFAULT_AGENT_CLI_DEADLINE_SECONDS, the daemon-gate
+  placement, and effective_deadline computation are all untouched). Confirmed no test pins the old
+  strings (`grep` for both phrases matched only main.py) and `tg agent --help` renders cleanly.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.80.1 (2026-07-17)
 
 ### Bug Fixes
