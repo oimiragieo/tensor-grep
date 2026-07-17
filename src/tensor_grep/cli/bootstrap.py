@@ -15,12 +15,21 @@ from tensor_grep.cli.runtime_paths import (
     resolve_ripgrep_binary,
 )
 from tensor_grep.cli.subprocess_policy import run_subprocess as run_subprocess
-from tensor_grep.io.directory_scanner import (
-    BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD,
-    BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD,
-    BROAD_WORKSPACE_PROJECT_MARKERS,
-    UNBOUNDED_VENDORED_ROOT_DIR_NAMES,
-)
+
+# perf/#48: `tensor_grep.io.directory_scanner` is deliberately NOT imported at module level.
+# bootstrap.py only needs its 4 constants (BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD,
+# BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD, BROAD_WORKSPACE_PROJECT_MARKERS,
+# UNBOUNDED_VENDORED_ROOT_DIR_NAMES) inside the search broad-scan guard helpers below
+# (`_path_has_project_marker`, `_search_paths_include_workspace_root`,
+# `_search_paths_include_vendored_root`), which run only for an actual search invocation -- never
+# for `tg --version`/`-V` (the diagnosed cold-start case, ~135ms vs rg's ~7ms). `directory_scanner`
+# itself does `from tensor_grep.core.config import SearchConfig` at ITS OWN module level, which
+# transitively pulls in the stdlib `dataclasses` module -- and `dataclasses` imports `inspect`
+# (plus `ast`/`dis`/`tokenize`/`copy`/`weakref`), a chain measured at ~25ms cumulative
+# (`python -X importtime -c "import tensor_grep.cli.bootstrap"`, warm cache) that a trivial
+# `--version` call has no reason to pay. Each of the 3 helper functions does its own
+# function-local `from tensor_grep.io.directory_scanner import ...` instead; see
+# `tests/unit/test_bootstrap_fast_path_imports.py` for the regression test that pins this.
 
 # Saved at import time so _streaming_passthrough_returncode can detect when
 # run_subprocess has been monkey-patched by a test (old mock pattern).
@@ -146,10 +155,10 @@ _BROAD_GENERATED_SCAN_DIR_NAMES = {
     "venv",
 }
 # Single source of truth: `io/directory_scanner.py` (item #154) -- keeps this file and
-# `cli/main.py`'s equivalent guard from drifting out of sync.
-_BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD = BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD
-_BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD = BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD
-_BROAD_WORKSPACE_PROJECT_MARKERS = BROAD_WORKSPACE_PROJECT_MARKERS
+# `cli/main.py`'s equivalent guard from drifting out of sync. perf/#48: no longer aliased at
+# module level -- `_path_has_project_marker` / `_search_paths_include_workspace_root` below
+# import these constants function-locally (fast-path-unused; see the deferred-import note above
+# the `tensor_grep.cli.subprocess_policy` import).
 _SEARCH_PATTERN_FLAGS = {"-e", "--regexp"}
 _SEARCH_LITERAL_FLAGS = {"-F", "--fixed-strings"}
 _SEARCH_PCRE2_FLAGS = {"-P", "--pcre2"}
@@ -626,7 +635,9 @@ def _search_args_paths_defaulted(search_args: list[str]) -> bool:
 
 
 def _path_has_project_marker(path: Path) -> bool:
-    for marker in _BROAD_WORKSPACE_PROJECT_MARKERS:
+    from tensor_grep.io.directory_scanner import BROAD_WORKSPACE_PROJECT_MARKERS
+
+    for marker in BROAD_WORKSPACE_PROJECT_MARKERS:
         try:
             if (path / marker).exists():
                 return True
@@ -660,6 +671,11 @@ def _search_paths_include_generated_root(paths: list[str]) -> bool:
 
 
 def _search_paths_include_workspace_root(paths: list[str]) -> bool:
+    from tensor_grep.io.directory_scanner import (
+        BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD,
+        BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD,
+    )
+
     for raw_path in paths:
         if not raw_path or raw_path == "-" or raw_path.startswith("-"):
             continue
@@ -672,9 +688,9 @@ def _search_paths_include_workspace_root(paths: list[str]) -> bool:
             # marked children (the higher "marked-root" threshold) before it counts as a
             # workspace parent too.
             threshold = (
-                _BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD
+                BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD
                 if _path_has_project_marker(path)
-                else _BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD
+                else BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD
             )
             project_children = 0
             for child in path.iterdir():
@@ -716,11 +732,10 @@ def _search_paths_include_workspace_root(paths: list[str]) -> bool:
 # per-file deadline), so refusing it was a pure false positive against every ordinary
 # Node/React repo. Imported (not hardcoded) from `io/directory_scanner.py` so this set and
 # cli/main.py's equivalent guard can never drift out of sync.
-_UNBOUNDED_VENDORED_ROOT_DIR_NAMES = UNBOUNDED_VENDORED_ROOT_DIR_NAMES
-
-
 def _search_paths_include_vendored_root(paths: list[str]) -> bool:
     """O(top-level-entries) probe: never walks -- only `Path.iterdir()` one level deep."""
+    from tensor_grep.io.directory_scanner import UNBOUNDED_VENDORED_ROOT_DIR_NAMES
+
     for raw_path in paths:
         if not raw_path or raw_path == "-" or raw_path.startswith("-"):
             continue
@@ -729,7 +744,7 @@ def _search_paths_include_vendored_root(paths: list[str]) -> bool:
             if not path.is_dir():
                 continue
             for child in path.iterdir():
-                if child.is_dir() and child.name.lower() in _UNBOUNDED_VENDORED_ROOT_DIR_NAMES:
+                if child.is_dir() and child.name.lower() in UNBOUNDED_VENDORED_ROOT_DIR_NAMES:
                     return True
         except OSError:
             continue
