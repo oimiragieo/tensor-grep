@@ -1,6 +1,35 @@
 # CHANGELOG
 
 
+## v1.81.5 (2026-07-17)
+
+### Bug Fixes
+
+- **daemon**: Thread the warm-daemon deadline into the refs internal context-pack call (#205)
+  ([#653](https://github.com/oimiragieo/tensor-grep/pull/653),
+  [`0c7a46c`](https://github.com/oimiragieo/tensor-grep/commit/0c7a46cdeff188e6e9504a0f98b0d5ca75b0c70c))
+
+* fix(daemon): thread the warm-daemon deadline into the refs internal context-pack call (#205)
+
+build_symbol_refs_from_map's dominant reference-scan loop was already deadline-bounded, but it
+  invoked build_context_pack_from_map(repo_map, symbol) BARE -- leaving that stage's own in-memory
+  symbol-scoring + pagerank loop unbounded on a very large session repo, unlike the sibling
+  callers/impact handlers which thread the deadline (repo_map.py:16431 / 15011). Surfaced by the
+  #203/#652 Opus gate as a pre-existing parity gap.
+
+Thread deadline_monotonic + a _DeadlineBreakFlag into the call and fold its early break into refs'
+  existing partial signal (mirrors callers exactly). Adds an isolating spy test -- a value-level
+  overrun would pass vacuously via the already-bounded dominant loop.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* style(test): collapse #205 test signature to one line (ruff --preview format gate)
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.81.4 (2026-07-17)
 
 ### Bug Fixes
