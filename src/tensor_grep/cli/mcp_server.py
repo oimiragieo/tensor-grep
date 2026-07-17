@@ -6340,15 +6340,23 @@ def tg_rewrite_diff(pattern: str, replacement: str, lang: str, path: str = ".") 
 # (tg_mcp_capabilities, tg_classify_logs). ALWAYS registered via plain `@mcp.tool()` -- never
 # gated by TG_MCP_LEGACY_TOOLS -- since they are the additive surface that flag exists to let an
 # operator eventually rely on alone (see `_legacy_tools_enabled` docstring). Every meta tool:
-#   1. confines EVERY path-shaped param it declares (unconditionally, before the action branch,
-#      regardless of which action was requested) via `_confine_mcp_path` (or, for `config` on
-#      tg_explore, `_confine_read_path` anchored to the ALREADY-CONFINED primary `path` --
-#      mirrors tg_doctor's own anchor semantics exactly). This is deliberately UNCONDITIONAL
-#      (not "only if this action needs it"): several meta tools (tg_audit, in particular) have
-#      path-shaped params that belong to DIFFERENT, mutually exclusive actions, so confining
-#      only within the matching action branch would leave a param unreachable -- and therefore
-#      unconfined -- whenever a caller picked a different action. Confining everything up front
-#      sidesteps that class of bug entirely and is strictly more defensive.
+#   1. confines its PRIMARY path/root param -- and most other path-shaped params it declares --
+#      unconditionally, before the action branch, regardless of which action was requested, via
+#      `_confine_mcp_path` (or, for `config` on tg_explore, `_confine_read_path` anchored to the
+#      ALREADY-CONFINED primary `path` -- mirrors tg_doctor's own anchor semantics exactly). This
+#      is deliberately UNCONDITIONAL (not "only if this action needs it"): several meta tools
+#      (tg_audit, in particular) have path-shaped params that belong to DIFFERENT, mutually
+#      exclusive actions, so confining only within the matching action branch would leave a param
+#      unreachable -- and therefore unconfined -- whenever a caller picked a different action.
+#      Confining everything up front sidesteps that class of bug entirely and is strictly more
+#      defensive. TWO EXCEPTIONS: tg_scan's baseline_path/write_baseline/suppressions_path/
+#      write_suppressions and tg_rewrite's audit_manifest/policy are NOT confined here -- they
+#      are forwarded verbatim to the legacy function point 2 below dispatches to, which confines
+#      them itself before any filesystem op (tg_ruleset_scan anchors all 4 of the former to
+#      scan_root <= _mcp_root(); execute_rewrite_apply_json, reached via tg_rewrite_apply, anchors
+#      audit_manifest at _mcp_root() and policy at a policy_anchor derived from the already-
+#      confined path). That delegated-layer confinement is LOAD-BEARING, not redundant defense-
+#      in-depth -- do not remove it on the assumption this meta layer already covers it.
 #   2. dispatches to the matching legacy tool FUNCTION directly (not through the MCP transport),
 #      which independently re-confines the same params (idempotent -- an already-confined
 #      absolute in-anchor path always stays in-anchor) and does its own error handling, so the

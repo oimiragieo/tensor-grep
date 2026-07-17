@@ -7830,11 +7830,17 @@ _RATCHET_BASE_KWARGS: dict[str, dict[str, object]] = {
     "tg_session_refresh": {"session_id": "nonexistent-session", "path": "."},
     "tg_session_context": {"session_id": "nonexistent-session", "query": "x", "path": "."},
     "tg_rewrite_diff": {"pattern": "x", "replacement": "y", "lang": "python", "path": "."},
-    # #98 (MCP consolidation Phase-1): the 10 meta-tools. Every meta tool confines ALL of its
-    # declared path-shaped params UNCONDITIONALLY at the top (before the action branch), so --
-    # unlike the legacy tools above, where the chosen action sometimes matters for
-    # reachability -- a single fixed `action` here reaches confinement for every non-exempt
-    # string param on that tool's schema regardless of which action it belongs to.
+    # #98 (MCP consolidation Phase-1): the 10 meta-tools. Every meta tool confines its PRIMARY
+    # path/root param -- and most other declared path-shaped params -- UNCONDITIONALLY at the
+    # top (before the action branch), so -- unlike the legacy tools above, where the chosen
+    # action sometimes matters for reachability -- a single fixed `action` here reaches
+    # confinement for almost every non-exempt string param on that tool's schema regardless of
+    # which action it belongs to. TWO EXCEPTIONS: tg_scan's baseline_path/write_baseline/
+    # suppressions_path/write_suppressions and tg_rewrite's audit_manifest/policy are confined
+    # by the DELEGATED legacy function (tg_ruleset_scan / execute_rewrite_apply_json, the latter
+    # reached via tg_rewrite_apply) before any filesystem op, not by this meta layer -- load-
+    # bearing, not redundant, which is why the fixed action below is deliberately "scan"/"apply"
+    # (the one action each actually dispatches through) so this ratchet still reaches them.
     "tg_navigate": {"action": "imports", "file": "dummy.py", "path": "."},
     "tg_impact": {"action": "impact", "symbol": "Foo", "path": "."},
     "tg_query": {"action": "text", "pattern": "x", "path": "."},
