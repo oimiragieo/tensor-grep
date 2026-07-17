@@ -218,23 +218,40 @@ _SEARCH_ATTACHED_VALUE_SHORT_FLAGS = (
     "-t",
     "-T",
 )
-_SEARCH_GENERATED_SCAN_BOUND_FLAGS = {
+# #88-parity fix (bootstrap/main.py divergence, dogfood #2): cli/main.py's
+# `_has_walk_scope_bound` (~4734, the original #88 fix) distinguishes an UNCONDITIONAL
+# walk bound (`-d`/`--max-depth`/`--maxdepth`, which genuinely limits how far the walk
+# descends) from a PATH-CONDITIONAL one (`-g`/`-t`/`-T`/`--glob`/`--iglob`/`--type`/
+# `--type-not`, which only filter WHICH already-walked files count as candidates -- they
+# do NOT reduce how much of the tree must be walked). This file's front-door mirror used
+# to treat every one of these flags as an unconditional bound, so a bare
+# `tg search PAT -t py --json` (no explicit PATH) slipped past
+# `_search_args_include_unbounded_broad_scan`'s refusal straight into native delegation
+# -- a resurrection of #88 (see `_search_args_include_generated_scan_bound`'s
+# `paths_defaulted` parameter below). The path-conditional set is a valid bound ONLY
+# when the caller also supplied an explicit PATH positional (a deliberately scoped
+# root, further narrowed by a file filter).
+_SEARCH_UNCONDITIONAL_SCAN_BOUND_FLAGS = {
     "-d",
+    "--max-depth",
+    "--maxdepth",
+}
+_SEARCH_UNCONDITIONAL_SCAN_BOUND_PREFIXES = (
+    "--max-depth=",
+    "--maxdepth=",
+)
+_SEARCH_PATH_CONDITIONAL_SCAN_BOUND_FLAGS = {
     "-g",
     "-t",
     "-T",
     "--glob",
     "--iglob",
-    "--max-depth",
-    "--maxdepth",
     "--type",
     "--type-not",
 }
-_SEARCH_GENERATED_SCAN_BOUND_PREFIXES = (
+_SEARCH_PATH_CONDITIONAL_SCAN_BOUND_PREFIXES = (
     "--glob=",
     "--iglob=",
-    "--max-depth=",
-    "--maxdepth=",
     "--type=",
     "--type-not=",
 )
@@ -508,15 +525,32 @@ def _is_short_flag_with_attached_value(arg: str) -> bool:
     )
 
 
-def _search_args_include_generated_scan_bound(search_args: list[str]) -> bool:
+def _search_args_include_generated_scan_bound(
+    search_args: list[str], *, paths_defaulted: bool
+) -> bool:
+    """Council fix (#88-parity): mirrors cli/main.py's `_has_walk_scope_bound` (~4734)
+    exactly -- `-d`/`--max-depth`/`--maxdepth` are an unconditional bound;
+    `-g`/`-t`/`-T`/`--glob`/`--iglob`/`--type`/`--type-not` only count as a bound when
+    ``paths_defaulted`` is False (the caller also supplied an explicit PATH). The
+    caller computes ``paths_defaulted`` from the RAW args via
+    ``_search_args_paths_defaulted`` -- NOT from ``_search_path_args``, whose
+    ``paths or ["."]`` fallback collapses "no path" and an explicit "." into the same
+    value and so cannot make this distinction.
+    """
     for arg in search_args:
-        if arg in _SEARCH_GENERATED_SCAN_BOUND_FLAGS:
+        if arg in _SEARCH_UNCONDITIONAL_SCAN_BOUND_FLAGS:
             return True
-        if arg.startswith(_SEARCH_GENERATED_SCAN_BOUND_PREFIXES):
+        if arg.startswith(_SEARCH_UNCONDITIONAL_SCAN_BOUND_PREFIXES):
             return True
-        if not arg.startswith("--"):
-            if any(
-                arg.startswith(flag) and len(arg) > len(flag) for flag in ("-d", "-g", "-t", "-T")
+        if not arg.startswith("--") and arg.startswith("-d") and len(arg) > len("-d"):
+            return True
+        if not paths_defaulted:
+            if arg in _SEARCH_PATH_CONDITIONAL_SCAN_BOUND_FLAGS:
+                return True
+            if arg.startswith(_SEARCH_PATH_CONDITIONAL_SCAN_BOUND_PREFIXES):
+                return True
+            if not arg.startswith("--") and any(
+                arg.startswith(flag) and len(arg) > len(flag) for flag in ("-g", "-t", "-T")
             ):
                 return True
     return False
@@ -534,7 +568,13 @@ def _search_args_request_unrestricted_generated_scan(search_args: list[str]) -> 
     )
 
 
-def _search_path_args(search_args: list[str]) -> list[str]:
+def _search_path_args_raw(search_args: list[str]) -> list[str]:
+    """Same walk as ``_search_path_args`` but WITHOUT its ``paths or ["."]`` fallback --
+    an empty return means the caller supplied no explicit PATH positional at all
+    (``paths_defaulted``), which the fallback-collapsed public helper cannot
+    distinguish from an explicit ``.`` (both become ``["."]`` there).
+    ``_search_args_paths_defaulted`` below is the only reason this is split out; keep
+    both derived from one walk so they can never drift out of sync with each other."""
     paths: list[str] = []
     bare_pattern_seen = False
     regexp_pattern_seen = False
@@ -568,7 +608,21 @@ def _search_path_args(search_args: list[str]) -> list[str]:
             bare_pattern_seen = True
             continue
         paths.append(arg)
-    return paths or ["."]
+    return paths
+
+
+def _search_path_args(search_args: list[str]) -> list[str]:
+    return _search_path_args_raw(search_args) or ["."]
+
+
+def _search_args_paths_defaulted(search_args: list[str]) -> bool:
+    """RAW-arg positional predicate (#88-parity fix) mirroring cli/main.py's
+    ``paths_defaulted = not args[1:]`` (~7262). Deliberately does NOT derive from
+    ``_search_path_args``: that helper's ``paths or ["."]`` fallback collapses "no path
+    given" and an explicit "." into the identical ``["."]``, so it cannot tell
+    ``tg search PAT -t py`` (no path -- REFUSE) apart from ``tg search PAT . -t py``
+    (explicit "." -- ALLOW). This reads the pre-fallback raw list instead."""
+    return not _search_path_args_raw(search_args)
 
 
 def _path_has_project_marker(path: Path) -> bool:
@@ -685,7 +739,8 @@ def _search_paths_include_vendored_root(paths: list[str]) -> bool:
 def _search_args_include_unbounded_broad_scan(search_args: list[str]) -> bool:
     if "--allow-broad-generated-scan" in search_args:
         return False
-    if _search_args_include_generated_scan_bound(search_args):
+    paths_defaulted = _search_args_paths_defaulted(search_args)
+    if _search_args_include_generated_scan_bound(search_args, paths_defaulted=paths_defaulted):
         return False
     paths = _search_path_args(search_args)
     if _search_paths_include_workspace_root(paths):
