@@ -8371,7 +8371,25 @@ def build_context_pack(
         _profiling_collector=_profiling_collector,
     )
     limited = apply_repo_map_output_limits(context_payload, max_files=max_files)
-    return _apply_context_token_budget(limited, max_tokens)
+    result = _apply_context_token_budget(limited, max_tokens)
+    # #642 gate nit-1 fast-follow: mirrors build_context_render_from_map's own return-time
+    # catch-all (added by this same PR) verbatim. `tg context` has no edit-plan-seed tail, but
+    # still calls apply_repo_map_output_limits/_apply_context_token_budget AFTER build_context_
+    # pack_from_map's own own_deadline_hit fold already ran, so it shares the same missing
+    # "regardless of stage" recheck at its true final return point.
+    deadline_exceeded_at_return = (
+        deadline_monotonic is not None and time.monotonic() >= deadline_monotonic
+    )
+    if result.get("partial") or deadline_exceeded_at_return:
+        result["partial"] = True
+        result["partial_reason"] = "deadline"
+        existing_deadline_limit = result.get("deadline_limit")
+        result["deadline_limit"] = (
+            dict(existing_deadline_limit)
+            if isinstance(existing_deadline_limit, dict)
+            else {"deadline_exceeded": True}
+        )
+    return result
 
 
 def build_context_pack_json(
@@ -9422,13 +9440,28 @@ def _detect_validation_runners_from_root(
     root: Path,
     *,
     precomputed_file_paths: list[str | Path] | None = None,
+    deadline_monotonic: float | None = None,
+    deadline_hit: _DeadlineBreakFlag | None = None,
 ) -> _ValidationRunnerInfo:
+    """#642 gate nit-1 fast-follow: ``deadline_monotonic``/``deadline_hit`` are optional (default
+    ``None``, fully backward compatible with every other call site) and thread straight into
+    ``_precomputed_validation_files_for_root``'s own per-entry ``Path.resolve()`` loop -- the
+    SECOND validation-plan chain the #642 Opus gate named as still-unbounded for
+    ``tg context-render``/``tg edit-plan``/``tg context`` (repo_map.py ~11987, reached via
+    ``_build_edit_plan_seed``). Mirrors the SAME optional-kwarg contract that function already
+    documents for its other callers.
+    """
     if not root.exists():
         return _ValidationRunnerInfo(
             False, False, False, "generic", False, (), (), None, None, None
         )
 
-    all_files = _precomputed_validation_files_for_root(root, precomputed_file_paths)
+    all_files = _precomputed_validation_files_for_root(
+        root,
+        precomputed_file_paths,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=deadline_hit,
+    )
     if all_files is None:
         all_files = _iter_repo_files(root, max_files=_VALIDATION_RUNNER_SCAN_LIMIT)
     has_python = any(current.suffix == ".py" for current in all_files)
@@ -9917,6 +9950,8 @@ def _primary_language_fallback_validation_steps(
     repo_root: str | Path,
     primary_file: str | Path | None,
     precomputed_file_paths: list[str | Path] | None = None,
+    deadline_monotonic: float | None = None,
+    deadline_hit: _DeadlineBreakFlag | None = None,
 ) -> list[dict[str, Any]]:
     if primary_file is None:
         return []
@@ -9936,10 +9971,14 @@ def _primary_language_fallback_validation_steps(
     elif primary_language == "python" and _has_python_validation_fallback_evidence(
         root,
         precomputed_file_paths=precomputed_file_paths,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=deadline_hit,
     ):
         detected = _detect_validation_runners_from_root(
             root,
             precomputed_file_paths=precomputed_file_paths,
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=deadline_hit,
         )
         if detected.python_detection == "detected":
             steps.append({
@@ -9972,6 +10011,8 @@ def _has_python_validation_fallback_evidence(
     root: Path,
     *,
     precomputed_file_paths: list[str | Path] | None = None,
+    deadline_monotonic: float | None = None,
+    deadline_hit: _DeadlineBreakFlag | None = None,
 ) -> bool:
     if any(
         (root / marker).is_file()
@@ -9984,7 +10025,12 @@ def _has_python_validation_fallback_evidence(
         )
     ):
         return True
-    candidate_files = _precomputed_validation_files_for_root(root, precomputed_file_paths)
+    candidate_files = _precomputed_validation_files_for_root(
+        root,
+        precomputed_file_paths,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=deadline_hit,
+    )
     if candidate_files is None:
         candidate_files = _iter_repo_files(root, max_files=_VALIDATION_RUNNER_SCAN_LIMIT)
     return any(current.suffix == ".py" and _is_test_file(current) for current in candidate_files)
@@ -10099,6 +10145,8 @@ def _ensure_primary_language_validation_fallback(
     repo_root: str | Path,
     primary_file: str | Path | None,
     precomputed_file_paths: list[str | Path] | None = None,
+    deadline_monotonic: float | None = None,
+    deadline_hit: _DeadlineBreakFlag | None = None,
 ) -> list[dict[str, Any]]:
     primary_language = _target_language_for_path(primary_file)
     if primary_language is None:
@@ -10107,6 +10155,8 @@ def _ensure_primary_language_validation_fallback(
         repo_root=repo_root,
         primary_file=primary_file,
         precomputed_file_paths=precomputed_file_paths,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=deadline_hit,
     )
     if any(
         _validation_step_matches_primary_language(step, primary_language)
@@ -10187,6 +10237,8 @@ def _raw_validation_plan_for_tests(
     primary_symbol: dict[str, Any] | None = None,
     query: str | None = None,
     precomputed_file_paths: list[str | Path] | None = None,
+    deadline_monotonic: float | None = None,
+    deadline_hit: _DeadlineBreakFlag | None = None,
 ) -> list[dict[str, Any]]:
     explicit_root = Path(repo_root).expanduser().resolve()
     if explicit_root.is_file():
@@ -10200,11 +10252,15 @@ def _raw_validation_plan_for_tests(
         detected = _detect_validation_runners_from_root(
             root,
             precomputed_file_paths=precomputed_file_paths,
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=deadline_hit,
         )
     else:
         local_files = _precomputed_validation_files_for_root(
             explicit_root,
             precomputed_file_paths,
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=deadline_hit,
         )
         if local_files is None:
             local_files = _iter_repo_files(
@@ -10220,11 +10276,15 @@ def _raw_validation_plan_for_tests(
             detected = _detect_validation_runners_from_root(
                 explicit_root,
                 precomputed_file_paths=precomputed_file_paths,
+                deadline_monotonic=deadline_monotonic,
+                deadline_hit=deadline_hit,
             )
         elif precomputed_file_paths is not None:
             detected = _detect_validation_runners_from_root(
                 root,
                 precomputed_file_paths=precomputed_file_paths,
+                deadline_monotonic=deadline_monotonic,
+                deadline_hit=deadline_hit,
             )
         else:
             detected = _detect_validation_runners(str(root))
@@ -10561,7 +10621,17 @@ def _validation_plan_and_alignment_for_tests(
     primary_file: str | Path | None = None,
     query: str | None = None,
     precomputed_file_paths: list[str | Path] | None = None,
+    deadline_monotonic: float | None = None,
+    deadline_hit: _DeadlineBreakFlag | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """#642 gate nit-1 fast-follow: this is the SECOND validation-plan chain the gate named as
+    still-unbounded for ``tg context-render``/``tg edit-plan``/``tg context`` (repo_map.py ~11987,
+    reached via ``_build_edit_plan_seed``) -- ``deadline_monotonic``/``deadline_hit`` are optional
+    (default ``None``, backward compatible with every existing caller) and thread straight through
+    ``_raw_validation_plan_for_tests`` to bound the same per-entry ``Path.resolve()`` cost
+    ``_precomputed_validation_files_for_root`` already bounds for the FIRST (validation-test
+    discovery) chain.
+    """
     raw_plan = _raw_validation_plan_for_tests(
         tests,
         repo_root=repo_root,
@@ -10569,6 +10639,8 @@ def _validation_plan_and_alignment_for_tests(
         primary_symbol=primary_symbol,
         query=query,
         precomputed_file_paths=precomputed_file_paths,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=deadline_hit,
     )
     resolved_primary_file = (
         str(primary_symbol.get("file"))
@@ -10580,6 +10652,8 @@ def _validation_plan_and_alignment_for_tests(
         repo_root=repo_root,
         primary_file=resolved_primary_file,
         precomputed_file_paths=precomputed_file_paths,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=deadline_hit,
     )
     return _align_validation_plan_for_primary_language(raw_plan, resolved_primary_file)
 
@@ -11984,6 +12058,11 @@ def _build_edit_plan_seed(
         if radius_payload is not None
         else ([suggested_edit_primary_symbol] if suggested_edit_primary_symbol is not None else [])
     )
+    # #642 gate nit-1 fast-follow: this IS the SECOND validation-plan chain the gate named (the
+    # FIRST -- _discover_validation_tests_for_primary_file above -- already threads deadline_
+    # monotonic/deadline_hit). Reuse this function's own already-threaded `deadline_hit` flag (not
+    # a fresh one) so an overrun HERE folds into the SAME `edit_plan_seed_deadline_hit` union
+    # `_attach_edit_plan_metadata` already checks -- no new fold-in site needed.
     validation_plan, validation_alignment = _validation_plan_and_alignment_for_tests(
         validation_tests,
         repo_root=payload.get("path", "."),
@@ -11992,6 +12071,8 @@ def _build_edit_plan_seed(
         primary_file=str(primary_file) if primary_file is not None else None,
         query=query,
         precomputed_file_paths=validation_file_paths,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=deadline_hit,
     )
     validation_commands = [str(step["command"]) for step in validation_plan]
     # Additive, unverified suggestion (test-neighbor filename probe) — NEVER merged into the
@@ -12262,6 +12343,8 @@ def _attach_lightweight_navigation_metadata(
     query: str,
     max_files: int,
     max_symbols: int,
+    deadline_monotonic: float | None = None,
+    deadline_hit: _DeadlineBreakFlag | None = None,
 ) -> dict[str, Any]:
     def _ordered_candidate_files(
         files: list[str],
@@ -12325,6 +12408,14 @@ def _attach_lightweight_navigation_metadata(
                 else None
             ),
         ),
+        # #642 gate nit-1 fast-follow (Opus-gate N1): this is the render's `include_edit_plan_seed=
+        # False` lightweight-navigation sibling of _build_edit_plan_seed's own validation-plan call
+        # above -- no LIVE caller currently sets include_edit_plan_seed=False, so this path is
+        # unreachable today (the return-time backstop below would already catch it either way),
+        # but thread deadline through it too so it stays actually bounded rather than merely
+        # backstopped if a future caller ever does take this branch.
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=deadline_hit,
     )
     lightweight_suggested_validation_command = (
         _suggested_validation_command_for_primary_file(primary_file, payload.get("path", "."))
@@ -12515,6 +12606,12 @@ def build_context_edit_plan_from_map(
         max_files=normalized_max_files,
         max_symbols=min(normalized_max_symbols, normalized_max_sources),
         semantic_provider=semantic_provider,
+        # #642 gate nit-1 fast-follow: this call dropped deadline_monotonic entirely (distinct from
+        # the SECOND-validation-plan-chain gap the #642 gate itself flagged) -- `tg edit-plan` never
+        # threaded a deadline into the edit-plan-seed's validation-test discovery or validation-plan
+        # chain at all, independent of the return-time backstop below. build_context_render_from_
+        # map's own call to this same helper already passes deadline_monotonic; mirror it here.
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=collector,
     )
     payload["validation_commands"] = _top_level_validation_commands(payload)
@@ -12532,6 +12629,22 @@ def build_context_edit_plan_from_map(
         payload,
         query=query,
     )
+    # #642 gate nit-1 fast-follow: mirrors build_context_render_from_map's own return-time
+    # catch-all (added by this same PR) verbatim -- this function is `tg edit-plan`'s OWN builder
+    # (build_context_edit_plan -> build_context_edit_plan_from_map), a sibling of build_context_
+    # render_from_map, not a caller of it, so it needs its own independent recheck.
+    deadline_exceeded_at_return = (
+        deadline_monotonic is not None and time.monotonic() >= deadline_monotonic
+    )
+    if payload.get("partial") or deadline_exceeded_at_return:
+        payload["partial"] = True
+        payload["partial_reason"] = "deadline"
+        existing_deadline_limit = payload.get("deadline_limit")
+        payload["deadline_limit"] = (
+            dict(existing_deadline_limit)
+            if isinstance(existing_deadline_limit, dict)
+            else {"deadline_exceeded": True}
+        )
     return _attach_profiling(payload, collector)
 
 
@@ -13479,6 +13592,7 @@ def build_context_render_from_map(
             query=query,
             max_files=max_files,
             max_symbols=max_sources,
+            deadline_monotonic=deadline_monotonic,
         )
     payload["validation_commands"] = _top_level_validation_commands(payload)
     payload["suggested_validation_commands"] = _top_level_suggested_validation_commands(payload)
@@ -13523,6 +13637,28 @@ def build_context_render_from_map(
         max_files=max_files,
         max_sources=max_sources,
     )
+    # #642 gate nit-1 fast-follow: #642 added this SAME final wall-clock catch-all to
+    # build_agent_capsule_from_map (agent_capsule.py) ONLY -- a caller reaching THIS function
+    # directly (the shared render core behind `tg context-render`, both the cold build_context_
+    # render path and the warm session-daemon route in session_store.py) never got the return-time
+    # recheck. `payload.get("partial")` already folds in every stage this function's own callees
+    # thread a deadline flag through (build_context_pack_from_map's own_deadline_hit above, and --
+    # as of this same fix -- the edit-plan-seed's validation-plan chain via
+    # _attach_edit_plan_metadata); OR that with one absolute wall-clock recheck here so ANY sibling
+    # stage this function calls -- instrumented or not -- can never silently return exit 0 once the
+    # caller's budget is gone. Mirrors agent_capsule.py's `deadline_exceeded_at_return` verbatim.
+    deadline_exceeded_at_return = (
+        deadline_monotonic is not None and time.monotonic() >= deadline_monotonic
+    )
+    if payload.get("partial") or deadline_exceeded_at_return:
+        payload["partial"] = True
+        payload["partial_reason"] = "deadline"
+        existing_deadline_limit = payload.get("deadline_limit")
+        payload["deadline_limit"] = (
+            dict(existing_deadline_limit)
+            if isinstance(existing_deadline_limit, dict)
+            else {"deadline_exceeded": True}
+        )
     return _attach_profiling(payload, collector)
 
 
