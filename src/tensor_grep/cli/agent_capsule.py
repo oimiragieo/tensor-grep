@@ -2274,6 +2274,7 @@ def build_agent_capsule(
     gpu_timeout_s: float = 5.0,
     ignore: tuple[str, ...] = (),
     deadline_seconds: float | None = None,
+    deadline_monotonic: float | None = None,
 ) -> dict[str, Any]:
     """Thin cold-path wrapper (task #108): build the repo map (the outer of the two scans this
     capsule used to run independently -- see ``build_agent_capsule_from_map``'s docstring) and
@@ -2292,7 +2293,16 @@ def build_agent_capsule(
     ``deadline_seconds`` (CLI consistency fix, CEO v1.71.3 dogfood): `--deadline` used to be
     undefined on `tg agent` (Click "No such option" exit-2). Converted ONCE (moat P0-6 step-3
     pattern) and shared across the repo-map build AND the capsule's own render/ranking pass in
-    ``build_agent_capsule_from_map`` below."""
+    ``build_agent_capsule_from_map`` below.
+
+    ``deadline_monotonic`` (closes #197/#200 front-door residual): an optional PRE-ANCHORED
+    absolute ``time.monotonic()`` deadline. When supplied, it is used AS-IS instead of being
+    recomputed from ``deadline_seconds`` -- the CLI cold path (``main.agent``) anchors it at
+    command entry, before the lazy import / path resolution / GPU-id parsing / the daemon gate, so
+    that front-door time is budgeted the same way scan time already is. Existing callers that only
+    pass ``deadline_seconds`` (the MCP tool, tests, the deprecated ``build_agent_capsule_json``)
+    are unaffected: the fallback computation below is byte-identical to the prior behavior.
+    """
     from tensor_grep.cli.repo_map import (
         DEFAULT_AGENT_REPO_MAP_LIMIT,
         _deadline_monotonic_from_seconds,
@@ -2301,7 +2311,8 @@ def build_agent_capsule(
     effective_max_repo_files = (
         max_repo_files if max_repo_files is not None else DEFAULT_AGENT_REPO_MAP_LIMIT
     )
-    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
+    if deadline_monotonic is None:
+        deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
     rm = repo_map.build_repo_map(
         path, max_repo_files=effective_max_repo_files, deadline_monotonic=deadline_monotonic
     )

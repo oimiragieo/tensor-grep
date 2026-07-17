@@ -8508,6 +8508,24 @@ def docs_coverage(
         raise typer.Exit(1)
 
 
+def _cli_deadline_monotonic(deadline_seconds: float | None) -> float | None:
+    """Anchor an absolute ``time.monotonic()`` deadline at CLI command entry (closes the #197/#200
+    front-door residual). Mirrors ``repo_map._deadline_monotonic_from_seconds``'s formula, but is
+    meant to be called from the TOP of a deadline-bearing command body -- before the lazy builder
+    import, path/query resolution, GPU-id parsing, and the warm-daemon gate -- so that front-door
+    time is budgeted the same way the underlying repo scan already is. Kept as a tiny, import-free
+    helper (uses only the module-level ``time`` already imported at the top of this file) so calling
+    it early never forces an eager heavy import.
+
+    The remaining process-startup prefix (interpreter boot + Typer/Click argument dispatch) BEFORE
+    Python even reaches this line is a separate, irreducible ~100-200ms budget gap that no CLI
+    command body can account for -- documented in the ``--deadline`` help text and
+    docs/CONTRACTS.md rather than fixed here."""
+    if deadline_seconds is None:
+        return None
+    return time.monotonic() + deadline_seconds
+
+
 @app.command()
 def orient(
     path: str = typer.Argument(".", help="File or directory to orient on"),
@@ -8539,8 +8557,10 @@ def orient(
         "--deadline",
         min=0.1,
         help=(
-            "Stop the underlying repo scan after N seconds and return a partial capsule with "
-            "whatever was found so far, instead of running unbounded. `tg orient` has NO exit-2 "
+            "Stop after N seconds, measured from CLI command entry (not just the underlying repo "
+            "scan -- excludes only the ~100-200ms interpreter-startup/dispatch prefix before this "
+            "command body runs), and return a partial capsule with whatever was found so far, "
+            "instead of running unbounded. `tg orient` has NO exit-2 "
             "contract: a truncated scan still exits 0, surfacing partial/deadline_limit as "
             "informational fields only (never a retry signal). Pass --no-deadline to keep the "
             "(already default) unbounded behavior explicit."
@@ -8555,11 +8575,15 @@ def orient(
     json_output: bool = typer.Option(False, "--json", help="Emit the capsule as JSON"),
 ) -> None:
     """Emit a one-call codebase orientation capsule (central files, entry points, AST snippets)."""
-    from tensor_grep.cli.orient_capsule import build_orient_capsule
-
+    # Anchor deadline_monotonic at CLI command entry (closes the #197/#200 front-door residual):
+    # computed here, BEFORE the lazy orient_capsule import and the daemon gate below, so front-door
+    # time counts against an explicit --deadline the same way the underlying scan already does.
     # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on `tg orient`
     # (Click "No such option" exit-2).
     effective_deadline = None if no_deadline else deadline
+    deadline_monotonic = _cli_deadline_monotonic(effective_deadline)
+
+    from tensor_grep.cli.orient_capsule import build_orient_capsule
 
     # Task #108 (Tier-2 daemon moat): probe BEFORE the try block -- a daemon hit is already a
     # ready-built dict (no filesystem call left that could raise FileNotFoundError/ValueError), so
@@ -8592,6 +8616,7 @@ def orient(
                 ignore=tuple(ignore),
                 auto_deweight=not no_auto_deweight,
                 deadline_seconds=effective_deadline,
+                deadline_monotonic=deadline_monotonic,
             )
         except (FileNotFoundError, ValueError) as exc:
             typer.echo(str(exc), err=True)
@@ -8663,7 +8688,9 @@ def codemap(
         "--deadline",
         min=0.1,
         help=(
-            "Stop the underlying repo scan after N seconds and return a partial map "
+            "Stop after N seconds, measured from CLI command entry (not just the underlying repo "
+            "scan -- excludes only the ~100-200ms interpreter-startup/dispatch prefix before this "
+            "command body runs), and return a partial map "
             "(partial=true, partial_reason='deadline') with whatever was found so far, instead "
             "of running unbounded. Defaults to 60s so a huge multi-root workspace can't hang an "
             "agent loop; pass --no-deadline to disable the bound."
@@ -8677,6 +8704,13 @@ def codemap(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Render a persisted, browsable folder->file->symbol code map (lean index + per-folder pages)."""
+    # Anchor deadline_monotonic at CLI command entry (closes the #197/#200 front-door residual):
+    # computed here, BEFORE the lazy codemap import, so import cost counts against the budget for
+    # the (non-`--check`) scanning path below. --check is a read-only freshness check with no scan/
+    # deadline of its own; computing this unconditionally here is a cheap no-op for that branch.
+    effective_deadline = None if no_deadline else deadline
+    deadline_monotonic = _cli_deadline_monotonic(effective_deadline)
+
     from tensor_grep.cli.codemap import build_codemap, check_codemap_freshness
 
     if check:
@@ -8698,7 +8732,6 @@ def codemap(
             raise typer.Exit(1)
         return
 
-    effective_deadline = None if no_deadline else deadline
     try:
         payload = build_codemap(
             path,
@@ -8708,6 +8741,7 @@ def codemap(
             max_symbols_per_file=max_symbols_per_file,
             ignore=tuple(ignore),
             deadline_seconds=effective_deadline,
+            deadline_monotonic=deadline_monotonic,
         )
     except (FileNotFoundError, NotADirectoryError) as exc:
         typer.echo(str(exc), err=True)
@@ -9185,7 +9219,9 @@ def context_render(
         "--deadline",
         min=0.1,
         help=(
-            "Stop the underlying repo scan after N seconds and return a partial bundle "
+            "Stop after N seconds, measured from CLI command entry (not just the underlying repo "
+            "scan -- excludes only the ~100-200ms interpreter-startup/dispatch prefix before this "
+            "command body runs), and return a partial bundle "
             "(partial=true, deadline_limit) with whatever was found so far, instead of running "
             "unbounded. Pass --no-deadline to keep the (already default) unbounded behavior explicit."
         ),
@@ -9199,6 +9235,14 @@ def context_render(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a prompt-ready repository context bundle for edit planning."""
+    # Anchor deadline_monotonic at CLI command entry (closes the #197/#200 front-door residual):
+    # computed here, BEFORE the lazy repo_map import, path resolution, and the daemon gate below,
+    # so front-door time counts against an explicit --deadline the same way the scan already does.
+    # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on
+    # `tg context-render` (Click "No such option" exit-2).
+    effective_deadline = None if no_deadline else deadline
+    deadline_monotonic = _cli_deadline_monotonic(effective_deadline)
+
     from tensor_grep.cli.repo_map import build_context_render
 
     try:
@@ -9210,9 +9254,6 @@ def context_render(
         )
         resolved_render_profile = render_profile or ("llm" if json_output else "full")
         resolved_optimize_context = optimize_context or (json_output and render_profile is None)
-        # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on
-        # `tg context-render` (Click "No such option" exit-2).
-        effective_deadline = None if no_deadline else deadline
         # Skip the warm-daemon fast path entirely when a --deadline was requested (a warm
         # session's cached repo_map cannot honor a fresh per-request scan deadline) -- mirrors
         # refs/callers/impact/blast-radius's own daemon gate.
@@ -9265,6 +9306,7 @@ def context_render(
             semantic_provider=provider,
             profile=profile,
             deadline_seconds=effective_deadline,
+            deadline_monotonic=deadline_monotonic,
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
@@ -9347,7 +9389,9 @@ def agent(
         "--deadline",
         min=0.1,
         help=(
-            "Stop the underlying repo scan after N seconds and return a partial capsule "
+            "Stop after N seconds, measured from CLI command entry (not just the underlying repo "
+            "scan -- excludes only the ~100-200ms interpreter-startup/dispatch prefix before this "
+            "command body runs), and return a partial capsule "
             "(partial=true, deadline_limit) with whatever was found so far, instead of running "
             "unbounded. The cold path (no running session daemon) defaults to 60s so a huge repo "
             "can't hang an agent loop; pass --no-deadline to disable the bound."
@@ -9362,6 +9406,20 @@ def agent(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return an actionable context capsule for agents before editing."""
+    # Anchor deadline_monotonic at CLI command entry (closes the #197/#200 front-door residual):
+    # computed here, BEFORE the lazy agent_capsule import, path resolution, GPU-id parsing, and the
+    # daemon gate below, so front-door time counts against an EXPLICIT --deadline the same way the
+    # underlying scan already does. Deliberately based on `effective_deadline` (needs only the raw
+    # deadline/no_deadline params, no import) rather than the F4 `cold_deadline_seconds` default
+    # further down: that generous 60s cold-path-only fallback needs DEFAULT_AGENT_CLI_DEADLINE_SECONDS
+    # from the lazy import and only ever applies once we already know the daemon path was not taken,
+    # so it keeps its own existing (later) anchor point there -- this fix's scope is the EXPLICIT
+    # --deadline case, where anchoring here already closes the entire front-door gap. The
+    # irreducible interpreter-boot + Typer/Click dispatch prefix before Python even reaches this
+    # line remains undocumented here (~100-200ms, see the --deadline help text below).
+    effective_deadline = None if no_deadline else deadline
+    deadline_monotonic = _cli_deadline_monotonic(effective_deadline)
+
     from tensor_grep.cli.agent_capsule import (
         DEFAULT_AGENT_CLI_DEADLINE_SECONDS,
         build_agent_capsule,
@@ -9376,9 +9434,6 @@ def agent(
         )
         parsed_gpu_device_ids = _parse_gpu_device_ids_cli(gpu_device_ids)
         _warn_unavailable_gpu_device_ids(parsed_gpu_device_ids)
-        # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on
-        # `tg agent` (Click "No such option" exit-2).
-        effective_deadline = None if no_deadline else deadline
         # Task #108 (Tier-2 daemon moat): mirrors edit-plan's daemon-payload gate (:8452-8478
         # below) -- print the full daemon payload through the SAME json/text branches and the SAME
         # exit-2-on-scan-truncation contract as the cold path, then return early. A miss/error/
@@ -9449,6 +9504,14 @@ def agent(
         cold_deadline_seconds = effective_deadline
         if cold_deadline_seconds is None and not no_deadline:
             cold_deadline_seconds = DEFAULT_AGENT_CLI_DEADLINE_SECONDS
+            # The early anchor above only fires for an EXPLICIT --deadline (effective_deadline was
+            # non-None); this F4 default is a separate cold-path-only fallback that only exists once
+            # we already know the daemon path was not taken, so it gets its own anchor here (mirrors
+            # this same variable's pre-fix anchor point, just hoisted from inside build_agent_capsule
+            # to right after the daemon-miss decision -- not a regression for this implicit case,
+            # and not #197/#200's target: that residual is about a small EXPLICIT --deadline, not
+            # this generous default).
+            deadline_monotonic = _cli_deadline_monotonic(cold_deadline_seconds)
 
         payload = build_agent_capsule(
             resolved_query,
@@ -9463,6 +9526,7 @@ def agent(
             gpu_timeout_s=gpu_timeout_s,
             ignore=tuple(ignore),
             deadline_seconds=cold_deadline_seconds,
+            deadline_monotonic=deadline_monotonic,
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
@@ -9554,7 +9618,9 @@ def edit_plan(
         "--deadline",
         min=0.1,
         help=(
-            "Stop the underlying repo scan after N seconds and return a partial plan "
+            "Stop after N seconds, measured from CLI command entry (not just the underlying repo "
+            "scan -- excludes only the ~100-200ms interpreter-startup/dispatch prefix before this "
+            "command body runs), and return a partial plan "
             "(partial=true, deadline_limit) with whatever was found so far, instead of running "
             "unbounded. Pass --no-deadline to keep the (already default) unbounded behavior explicit."
         ),
@@ -9568,6 +9634,14 @@ def edit_plan(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a machine-readable edit-planning bundle without rendered source text."""
+    # Anchor deadline_monotonic at CLI command entry (closes the #197/#200 front-door residual):
+    # computed here, BEFORE the lazy repo_map import, path resolution, and the daemon gate below,
+    # so front-door time counts against an explicit --deadline the same way the scan already does.
+    # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on
+    # `tg edit-plan` (Click "No such option" exit-2).
+    effective_deadline = None if no_deadline else deadline
+    deadline_monotonic = _cli_deadline_monotonic(effective_deadline)
+
     from tensor_grep.cli.repo_map import build_context_edit_plan
 
     try:
@@ -9577,9 +9651,6 @@ def edit_plan(
             query_option=query,
             command_name="edit-plan",
         )
-        # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on
-        # `tg edit-plan` (Click "No such option" exit-2).
-        effective_deadline = None if no_deadline else deadline
         # Skip the warm-daemon fast path entirely when a --deadline was requested (a warm
         # session's cached repo_map cannot honor a fresh per-request scan deadline) -- mirrors
         # refs/callers/impact/blast-radius's own daemon gate.
@@ -9625,6 +9696,7 @@ def edit_plan(
             semantic_provider=provider,
             profile=profile,
             deadline_seconds=effective_deadline,
+            deadline_monotonic=deadline_monotonic,
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)

@@ -859,6 +859,7 @@ def build_codemap(
     max_symbols_per_file: int = DEFAULT_MAX_SYMBOLS_PER_FILE,
     ignore: tuple[str, ...] = (),
     deadline_seconds: float | None = None,
+    deadline_monotonic: float | None = None,
     _revision_identity: Callable[[Path], dict[str, Any]] | None = None,
     _now: Callable[[], datetime] | None = None,
 ) -> dict[str, Any]:
@@ -874,6 +875,13 @@ def build_codemap(
     cutoff sets the existing ``partial``/``partial_reason`` fields (``partial_reason="deadline"``)
     instead of inventing a new field, and still returns a valid (partial) result -- never hangs,
     never crashes. Both are additive no-ops at their defaults (``()``/``None``).
+
+    ``deadline_monotonic`` (closes #197/#200 front-door residual): an optional PRE-ANCHORED
+    absolute ``time.monotonic()`` deadline, used AS-IS instead of being recomputed from
+    ``deadline_seconds`` when supplied. The CLI cold path (``main.codemap``) anchors it at command
+    entry, before the lazy import, so front-door time is budgeted the same way scan time already
+    is. Existing ``deadline_seconds``-only callers are unaffected: the fallback computation below is
+    byte-identical to the prior behavior.
     """
     root = Path(path).expanduser().resolve()
     if not root.exists():
@@ -896,8 +904,10 @@ def build_codemap(
 
     # moat P0-6 pattern (mirrors build_symbol_impact in repo_map.py): convert the relative
     # --deadline to an ABSOLUTE monotonic timestamp ONCE, then thread it into build_repo_map so a
-    # huge tree degrades to a partial result instead of running unbounded.
-    deadline_monotonic = _repo_map._deadline_monotonic_from_seconds(deadline_seconds)
+    # huge tree degrades to a partial result instead of running unbounded. A caller-supplied
+    # deadline_monotonic (closes #197/#200) takes precedence over recomputing from deadline_seconds.
+    if deadline_monotonic is None:
+        deadline_monotonic = _repo_map._deadline_monotonic_from_seconds(deadline_seconds)
 
     rm = _repo_map.build_repo_map(
         root, max_repo_files=max_repo_files, deadline_monotonic=deadline_monotonic

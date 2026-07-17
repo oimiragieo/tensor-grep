@@ -725,6 +725,7 @@ def build_orient_capsule(
     ignore: tuple[str, ...] = (),
     auto_deweight: bool = True,
     deadline_seconds: float | None = None,
+    deadline_monotonic: float | None = None,
 ) -> dict[str, Any]:
     """Build a bounded codebase orientation capsule (no API key, no GPU).
 
@@ -743,6 +744,13 @@ def build_orient_capsule(
     ``build_repo_map`` walk/parse the same way the symbol commands do; `tg orient` has NO exit-2
     contract (docs/CONTRACTS.md), so a truncated scan still surfaces `partial`/`deadline_limit` as
     INFORMATIONAL fields only (see `build_orient_capsule_from_map`), never a retry signal.
+
+    ``deadline_monotonic`` (closes #197/#200 front-door residual): an optional PRE-ANCHORED
+    absolute ``time.monotonic()`` deadline, used AS-IS instead of being recomputed from
+    ``deadline_seconds`` when supplied. The CLI cold path (``main.orient``) anchors it at command
+    entry, before the lazy import and the daemon gate, so front-door time is budgeted the same way
+    scan time already is. Existing ``deadline_seconds``-only callers are unaffected: the fallback
+    computation below is byte-identical to the prior behavior.
     """
     from tensor_grep.cli.repo_map import (
         DEFAULT_AGENT_REPO_MAP_LIMIT,
@@ -752,7 +760,8 @@ def build_orient_capsule(
     effective_max_repo_files = (
         max_repo_files if max_repo_files is not None else DEFAULT_AGENT_REPO_MAP_LIMIT
     )
-    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
+    if deadline_monotonic is None:
+        deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
     rm = _repo_map.build_repo_map(
         path, max_repo_files=effective_max_repo_files, deadline_monotonic=deadline_monotonic
     )

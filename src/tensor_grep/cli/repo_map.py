@@ -12509,13 +12509,21 @@ def build_context_edit_plan(
     semantic_provider: str = "native",
     profile: bool = False,
     deadline_seconds: float | None = None,
+    deadline_monotonic: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
+    """``deadline_monotonic`` (closes #197/#200 front-door residual): an optional PRE-ANCHORED
+    absolute ``time.monotonic()`` deadline, used AS-IS instead of being recomputed from
+    ``deadline_seconds`` when supplied. The CLI cold path (``main.edit_plan``) anchors it at
+    command entry, before path resolution and the daemon gate, so front-door time is budgeted the
+    same way scan time already is. Existing ``deadline_seconds``-only callers are unaffected: the
+    fallback computation below is byte-identical to the prior behavior."""
     collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
     # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on `tg edit-plan`
     # (Click "No such option" exit-2). Converted ONCE (moat P0-6 step-3 pattern) and shared across
     # the repo-map build AND edit-plan's own symbol-scoring pass in `_from_map` below.
-    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
+    if deadline_monotonic is None:
+        deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
     repo_map = build_repo_map(
         path,
         max_repo_files=max_repo_files,
@@ -12698,12 +12706,20 @@ def build_context_render(
     ignore: tuple[str, ...] = (),
     include_suggested_scope: bool = False,
     deadline_seconds: float | None = None,
+    deadline_monotonic: float | None = None,
 ) -> dict[str, Any]:
+    """``deadline_monotonic`` (closes #197/#200 front-door residual): an optional PRE-ANCHORED
+    absolute ``time.monotonic()`` deadline, used AS-IS instead of being recomputed from
+    ``deadline_seconds`` when supplied. The CLI cold path (``main.context_render``) anchors it at
+    command entry, before path resolution and the daemon gate, so front-door time is budgeted the
+    same way scan time already is. Existing ``deadline_seconds``-only callers are unaffected: the
+    fallback computation below is byte-identical to the prior behavior."""
     collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
     # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on
     # `tg context-render`/`tg agent` (Click "No such option" exit-2). Converted ONCE (moat P0-6
     # step-3 pattern) and shared across the repo-map build AND the render's own symbol-scoring pass.
-    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
+    if deadline_monotonic is None:
+        deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
     repo_map = build_repo_map(
         path,
         max_repo_files=max_repo_files,
