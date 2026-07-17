@@ -16,6 +16,18 @@ pytestmark = [pytest.mark.integration]
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_DIR = REPO_ROOT / "src"
 
+# #98 (MCP consolidation Phase-1): the 10 additive meta-tools grew the `tools/list` JSON-RPC
+# response past asyncio's DEFAULT `StreamReader` line-buffer limit (2**16 = 64 KiB) -- a
+# single-line `tools/list` result now runs ~85 KiB, and asyncio.subprocess's default `limit`
+# governs the buffer BOTH `Process.stdout.readline()` (used by the raw manual-framing tests
+# below) and `Process.stdout.readuntil()` read against. The official `mcp` SDK client used by
+# `_stdio_protocol_roundtrip` above chunks its own reads and is unaffected; only the two
+# `asyncio.create_subprocess_exec(...)`-based raw-framing helpers below need a larger buffer.
+# Sized generously (8 MiB) so continued additive tool-surface growth does not silently
+# re-trip this -- a real MCP message is separately capped at `_MAX_MCP_STDIO_MESSAGE_BYTES`
+# (64 MiB) server-side, so this test-only buffer is well inside that ceiling.
+_SUBPROCESS_STDOUT_LIMIT_BYTES = 8 * 1024 * 1024
+
 
 def _mcp_env() -> dict[str, str]:
     env = os.environ.copy()
@@ -40,13 +52,18 @@ async def _stdio_protocol_roundtrip() -> None:
         async with ClientSession(read_stream, write_stream) as session:
             initialized = await session.initialize()
             assert initialized.serverInfo.name == "tensor-grep"
-            # Wave 2d (#189): _TG_MCP_SERVER_CONTRACT_VERSION bumped 1.2.0 -> 1.3.0 (tg_find added).
-            assert initialized.serverInfo.version == "1.3.0"
+            # #98 (MCP consolidation Phase-1): _TG_MCP_SERVER_CONTRACT_VERSION bumped
+            # 1.3.0 -> 1.4.0 (10 additive task-shaped meta-tools).
+            assert initialized.serverInfo.version == "1.4.0"
 
             listed = await session.list_tools()
             tool_names = {tool.name for tool in listed.tools}
             assert "tg_mcp_capabilities" in tool_names
             assert "tg_rulesets" in tool_names
+            # #98: the 10 additive meta-tools are registered by default (TG_MCP_LEGACY_TOOLS
+            # defaults ON, so the 46 legacy names -- including tg_rulesets above -- stay too).
+            assert "tg_navigate" in tool_names
+            assert "tg_rewrite" in tool_names
 
             capabilities = await session.call_tool("tg_mcp_capabilities", {})
             assert capabilities.isError is False
@@ -85,6 +102,7 @@ async def _stdio_content_length_initialize_roundtrip() -> None:
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        limit=_SUBPROCESS_STDOUT_LIMIT_BYTES,
     )
     assert process.stdin is not None
     try:
@@ -112,8 +130,9 @@ async def _stdio_content_length_initialize_roundtrip() -> None:
         server_info = result["serverInfo"]
         assert isinstance(server_info, dict)
         assert server_info["name"] == "tensor-grep"
-        # Wave 2d (#189): _TG_MCP_SERVER_CONTRACT_VERSION bumped 1.2.0 -> 1.3.0 (tg_find added).
-        assert server_info["version"] == "1.3.0"
+        # #98 (MCP consolidation Phase-1): _TG_MCP_SERVER_CONTRACT_VERSION bumped
+        # 1.3.0 -> 1.4.0 (10 additive task-shaped meta-tools).
+        assert server_info["version"] == "1.4.0"
     finally:
         if process.stdin is not None:
             process.stdin.close()
@@ -149,6 +168,7 @@ async def _stdio_content_length_multibyte_utf8_does_not_desync_next_message() ->
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        limit=_SUBPROCESS_STDOUT_LIMIT_BYTES,
     )
     assert process.stdin is not None
     try:

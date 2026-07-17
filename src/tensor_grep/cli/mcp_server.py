@@ -5,7 +5,7 @@ import os
 import re
 import subprocess
 import sys
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
 from functools import lru_cache
 from importlib.metadata import PackageNotFoundError
@@ -97,7 +97,17 @@ def _mcp_server_version() -> str:
 # `tg_mcp_capabilities()`'s `tools[]` array grew again, which a version-pinning client may want
 # to detect (else two different tool sets would both report 1.2.0 and a pinning client would
 # not re-fetch tools[] to discover tg_find).
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.3.0"
+# 1.3.0 -> 1.4.0 (MCP consolidation Phase-1, #98): additive tool-set shape change -- 10 new
+# task-shaped meta-tools (tg_navigate/tg_impact/tg_query/tg_context/tg_explore/tg_session/
+# tg_scan/tg_audit/tg_checkpoint/tg_rewrite) are ALWAYS registered, composing the 46 legacy
+# tools by an `action` selector param (plus the 2 always-on singletons tg_mcp_capabilities/
+# tg_classify_logs -- 46 + 2 = the pre-existing 48). Every existing caller's behavior is
+# unchanged: all 48 legacy tool names stay individually registered and callable with identical
+# signatures by default (`TG_MCP_LEGACY_TOOLS` defaults ON). Bumped because `tools[]` grew by
+# 10, which a version-pinning client may want to detect. Flipping `TG_MCP_LEGACY_TOOLS` OFF
+# (de-advertising the 46 legacy names, keeping the 10 meta + 2 singletons) is a SEPARATE,
+# deliberate, documented operator/CEO decision -- never bundled into this default-ON PR.
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.4.0"
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -107,6 +117,49 @@ def _apply_mcp_server_metadata(server: FastMCP) -> None:
 # Initialize the FastMCP server
 mcp = FastMCP("tensor-grep")
 _apply_mcp_server_metadata(mcp)
+
+
+def _legacy_tools_enabled() -> bool:
+    """Whether the 46 legacy (pre-consolidation) MCP tool names stay individually registered
+    and advertised via `list_tools()`, on top of the 10 additive task-shaped meta-tools and the
+    2 always-on singletons (MCP consolidation Phase-1, #98).
+
+    Default ON (unset, or any value other than the recognized "off" tokens below): this is an
+    ADDITIVE change, so every existing external client keeps working with zero action required.
+    Flipping OFF removes the 46 legacy names from the advertised tool surface -- the 10 meta
+    tools and the 2 singletons remain, since the meta tools' dispatch bodies call the legacy
+    Python functions directly regardless of flag state (`mcp.tool()(fn)` returns `fn`
+    unchanged, so a de-advertised legacy function stays fully callable in-process). Consciously
+    flipping this to OFF in production is a separate, deliberate, documented operator/CEO
+    decision (Enablement Discipline) -- never bundled into the default-ON Phase-1 PR.
+    """
+    value = os.environ.get("TG_MCP_LEGACY_TOOLS", "")
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _register_legacy_tool(fn: Callable[..., str]) -> Callable[..., str]:
+    """Decorator for the 46 legacy (pre-consolidation) MCP tool functions (#98).
+
+    Registers `fn` as an MCP tool via `mcp.tool()` only when `_legacy_tools_enabled()` is
+    True at IMPORT time; otherwise returns `fn` completely unchanged (not wrapped), so it
+    stays directly importable/callable in-process -- the 10 meta-tools' dispatch bodies call
+    these functions directly no matter what the flag says, so a legacy name can be
+    de-advertised from `list_tools()` while its underlying logic keeps serving the meta-tool
+    that composes it. `mcp.tool()(fn)` itself returns `fn` unchanged (verified against the
+    installed FastMCP -- the decorator's only side effect is registering `fn` in the server's
+    internal tool table), so `fn` is safe to keep calling directly in either flag state.
+
+    Deliberately evaluated once per decoration (import time), not per call: registration and
+    `_MCP_TOOL_CAPABILITIES` (built further below) must both be bound to the SAME flag read so
+    they can never disagree within one running server process -- see the flag-OFF invariant
+    test's subprocess-isolation rationale (`test_mcp_legacy_tools_flag_off_deregisters_
+    legacy_tools_subprocess` in test_mcp_server.py) for why a same-process `importlib.reload`
+    is not an equivalent way to exercise the other flag state.
+    """
+    if _legacy_tools_enabled():
+        return mcp.tool()(fn)  # type: ignore[no-any-return]
+    return fn
+
 
 _REWRITE_ROUTING_BACKEND = "AstBackend"
 _REWRITE_ROUTING_REASON = "ast-native"
@@ -140,6 +193,10 @@ _DEFAULT_MCP_CONTEXT_MAX_TOKENS = 16000
 # test_cli_default_max_files_matches_module_constant pattern.
 _DEFAULT_MCP_FIND_MAX_TOKENS = 4000
 
+# The 46 legacy (pre-consolidation) tool names, gated on `_legacy_tools_enabled()` (#98) --
+# `tg_mcp_capabilities`/`tg_classify_logs` are carved OUT into `_SINGLETON_MCP_TOOLS` below
+# (build-precision must-fix: they are ALWAYS registered/advertised, never gated, so they must
+# never sit in a tuple this module treats as conditional).
 _PYTHON_LOCAL_MCP_TOOLS = (
     "tg_rulesets",
     "tg_ruleset_scan",
@@ -169,7 +226,6 @@ _PYTHON_LOCAL_MCP_TOOLS = (
     "tg_search",
     "tg_ast_search",
     "tg_find",
-    "tg_classify_logs",
     "tg_devices",
     "tg_audit_manifest_verify",
     "tg_audit_history",
@@ -184,60 +240,368 @@ _PYTHON_LOCAL_MCP_TOOLS = (
     "tg_session_show",
     "tg_session_refresh",
     "tg_session_context",
-    "tg_mcp_capabilities",
 )
 _EMBEDDED_SAFE_MCP_TOOLS = ("tg_rewrite_plan", "tg_rewrite_apply")
 _NATIVE_REQUIRED_MCP_TOOLS = ("tg_index_search", "tg_rewrite_diff")
-_MCP_TOOL_CAPABILITIES: dict[str, dict[str, object]] = {
-    **{
+# The 2 always-on singletons (#98 build-precision must-fix #4): NEVER gated by
+# `TG_MCP_LEGACY_TOOLS` -- `tg_mcp_capabilities` is the discovery entrypoint an agent needs
+# even when every legacy name is de-advertised, and `tg_classify_logs` is a standalone-family
+# tool with no meta-tool home (niche, no sibling family to compose into).
+_SINGLETON_MCP_TOOLS = ("tg_mcp_capabilities", "tg_classify_logs")
+# The 10 additive task-shaped meta-tools (#98, Phase-1): ALWAYS registered/advertised
+# regardless of `TG_MCP_LEGACY_TOOLS`, since they are the additive surface this flag exists to
+# let an operator eventually rely on ALONE. Each composes several of the 46 legacy tools by an
+# `action` string param; see `_META_MCP_TOOL_CAPABILITIES` below for the composition map.
+_META_MCP_TOOLS = (
+    "tg_navigate",
+    "tg_impact",
+    "tg_query",
+    "tg_context",
+    "tg_explore",
+    "tg_session",
+    "tg_scan",
+    "tg_audit",
+    "tg_checkpoint",
+    "tg_rewrite",
+)
+# Per-action 3-class signal (native_required / mutation / embedded_fallback) for each meta
+# tool's composed actions -- preserves the SAME signal `_MCP_TOOL_CAPABILITIES` already tracks
+# per legacy tool, just keyed one level deeper since a single meta tool's actions can span
+# more than one class (e.g. tg_query's "index" action is native-required while its "text"/
+# "ast"/"find" siblings are not). `mutation=True` marks an action that can write to disk
+# (either always, like tg_checkpoint's create/undo, or opt-in via an optional param the legacy
+# tool already gates, like tg_scan's write_baseline/write_suppressions or tg_rewrite's apply).
+_META_MCP_TOOL_CAPABILITIES: dict[str, dict[str, object]] = {
+    "tg_navigate": {
+        "mode": "meta",
+        "composes": [
+            "tg_symbol_defs",
+            "tg_symbol_source",
+            "tg_symbol_refs",
+            "tg_symbol_callers",
+            "tg_file_imports",
+            "tg_file_importers",
+        ],
+        "actions": {
+            "defs": {"native_required": False, "mutation": False, "embedded_fallback": False},
+            "source": {"native_required": False, "mutation": False, "embedded_fallback": False},
+            "refs": {"native_required": False, "mutation": False, "embedded_fallback": False},
+            "callers": {"native_required": False, "mutation": False, "embedded_fallback": False},
+            "imports": {"native_required": False, "mutation": False, "embedded_fallback": False},
+            "importers": {
+                "native_required": False,
+                "mutation": False,
+                "embedded_fallback": False,
+            },
+        },
+        "notes": "Task-shaped meta-tool: symbol/file navigation (defs/source/refs/callers/imports/importers).",
+    },
+    "tg_impact": {
+        "mode": "meta",
+        "composes": [
+            "tg_symbol_impact",
+            "tg_symbol_blast_radius",
+            "tg_symbol_blast_radius_plan",
+            "tg_symbol_blast_radius_render",
+        ],
+        "actions": {
+            "impact": {"native_required": False, "mutation": False, "embedded_fallback": False},
+            "blast_radius": {
+                "native_required": False,
+                "mutation": False,
+                "embedded_fallback": False,
+            },
+            "blast_radius_plan": {
+                "native_required": False,
+                "mutation": False,
+                "embedded_fallback": False,
+            },
+            "blast_radius_render": {
+                "native_required": False,
+                "mutation": False,
+                "embedded_fallback": False,
+            },
+        },
+        "notes": "Task-shaped meta-tool: symbol change-impact analysis (impact/blast_radius/blast_radius_plan/blast_radius_render).",
+    },
+    "tg_query": {
+        "mode": "meta",
+        "composes": ["tg_search", "tg_ast_search", "tg_find", "tg_index_search"],
+        "actions": {
+            "text": {"native_required": False, "mutation": False, "embedded_fallback": False},
+            "ast": {"native_required": False, "mutation": False, "embedded_fallback": False},
+            "find": {"native_required": False, "mutation": False, "embedded_fallback": False},
+            "index": {"native_required": True, "mutation": False, "embedded_fallback": False},
+        },
+        "notes": (
+            "Task-shaped meta-tool: pattern/AST/whole-repo-semantic/trigram-index search "
+            "(text/ast/find/index). action='index' requires a standalone native tg binary "
+            "and fails closed (routing_reason='native-tg-unavailable') without one. Accepts "
+            "an optional workspace_roots (array of paths, each independently confined) to "
+            "run the same action across multiple repo roots in one call, aggregated under "
+            "results_by_root."
+        ),
+    },
+    "tg_context": {
+        "mode": "meta",
+        "composes": ["tg_context_pack", "tg_edit_plan", "tg_context_render", "tg_agent_capsule"],
+        "actions": {
+            "pack": {"native_required": False, "mutation": False, "embedded_fallback": False},
+            "edit_plan": {
+                "native_required": False,
+                "mutation": False,
+                "embedded_fallback": False,
+            },
+            "render": {"native_required": False, "mutation": False, "embedded_fallback": False},
+            "capsule": {"native_required": False, "mutation": False, "embedded_fallback": False},
+        },
+        "notes": (
+            "Task-shaped meta-tool: repository context for edit planning "
+            "(pack/edit_plan/render/capsule). action='capsule' accepts the same optional "
+            "deadline (seconds) as `tg codemap --deadline`."
+        ),
+    },
+    "tg_explore": {
+        "mode": "meta",
+        "composes": ["tg_orient", "tg_repo_map", "tg_doctor", "tg_devices"],
+        "actions": {
+            "orient": {"native_required": False, "mutation": False, "embedded_fallback": False},
+            "repo_map": {
+                "native_required": False,
+                "mutation": False,
+                "embedded_fallback": False,
+            },
+            "doctor": {"native_required": False, "mutation": False, "embedded_fallback": False},
+            "devices": {"native_required": False, "mutation": False, "embedded_fallback": False},
+        },
+        "notes": (
+            "Task-shaped meta-tool: codebase orientation and diagnostics "
+            "(orient/repo_map/doctor/devices). Call action='orient' FIRST on an unfamiliar repo."
+        ),
+    },
+    "tg_session": {
+        "mode": "meta",
+        "composes": [
+            "tg_session_open",
+            "tg_session_list",
+            "tg_session_show",
+            "tg_session_refresh",
+            "tg_session_context",
+            "tg_session_edit_plan",
+            "tg_session_context_render",
+            "tg_session_blast_radius",
+            "tg_session_blast_radius_plan",
+            "tg_session_blast_radius_render",
+            "tg_session_file_importers",
+        ],
+        "actions": {
+            "open": {"native_required": False, "mutation": True, "embedded_fallback": False},
+            "list": {"native_required": False, "mutation": False, "embedded_fallback": False},
+            "show": {"native_required": False, "mutation": False, "embedded_fallback": False},
+            "refresh": {"native_required": False, "mutation": True, "embedded_fallback": False},
+            "context": {"native_required": False, "mutation": False, "embedded_fallback": False},
+            "edit_plan": {
+                "native_required": False,
+                "mutation": False,
+                "embedded_fallback": False,
+            },
+            "context_render": {
+                "native_required": False,
+                "mutation": False,
+                "embedded_fallback": False,
+            },
+            "blast_radius": {
+                "native_required": False,
+                "mutation": False,
+                "embedded_fallback": False,
+            },
+            "blast_radius_plan": {
+                "native_required": False,
+                "mutation": False,
+                "embedded_fallback": False,
+            },
+            "blast_radius_render": {
+                "native_required": False,
+                "mutation": False,
+                "embedded_fallback": False,
+            },
+            "file_importers": {
+                "native_required": False,
+                "mutation": False,
+                "embedded_fallback": False,
+            },
+        },
+        "notes": (
+            "Task-shaped meta-tool: cached repository-map session lifecycle and "
+            "session-scoped queries (open/list/show/refresh/context/edit_plan/"
+            "context_render/blast_radius/blast_radius_plan/blast_radius_render/"
+            "file_importers). action='open'/'refresh' write the session cache."
+        ),
+    },
+    "tg_scan": {
+        "mode": "meta",
+        "composes": ["tg_ruleset_scan", "tg_rulesets"],
+        "actions": {
+            "scan": {"native_required": False, "mutation": True, "embedded_fallback": False},
+            "rulesets": {
+                "native_required": False,
+                "mutation": False,
+                "embedded_fallback": False,
+            },
+        },
+        "notes": (
+            "Task-shaped meta-tool: built-in/inline ast-grep ruleset scanning "
+            "(scan/rulesets). action='scan' is read-only by default; supplying "
+            "write_baseline/write_suppressions writes a file to disk."
+        ),
+    },
+    "tg_audit": {
+        "mode": "meta",
+        "composes": [
+            "tg_audit_manifest_verify",
+            "tg_audit_history",
+            "tg_audit_diff",
+            "tg_review_bundle_create",
+            "tg_review_bundle_verify",
+        ],
+        "actions": {
+            "manifest_verify": {
+                "native_required": False,
+                "mutation": False,
+                "embedded_fallback": False,
+            },
+            "history": {"native_required": False, "mutation": False, "embedded_fallback": False},
+            "diff": {"native_required": False, "mutation": False, "embedded_fallback": False},
+            "bundle_create": {
+                "native_required": False,
+                "mutation": True,
+                "embedded_fallback": False,
+            },
+            "bundle_verify": {
+                "native_required": False,
+                "mutation": False,
+                "embedded_fallback": False,
+            },
+        },
+        "notes": (
+            "Task-shaped meta-tool: rewrite audit manifest and review bundle operations "
+            "(manifest_verify/history/diff/bundle_create/bundle_verify). "
+            "action='bundle_create' writes a bundle file when output_path is supplied."
+        ),
+    },
+    "tg_checkpoint": {
+        "mode": "meta",
+        "composes": ["tg_checkpoint_create", "tg_checkpoint_list", "tg_checkpoint_undo"],
+        "actions": {
+            "create": {"native_required": False, "mutation": True, "embedded_fallback": False},
+            "list": {"native_required": False, "mutation": False, "embedded_fallback": False},
+            "undo": {"native_required": False, "mutation": True, "embedded_fallback": False},
+        },
+        "notes": "Task-shaped meta-tool: edit checkpoint lifecycle (create/list/undo). action='create'/'undo' write.",
+    },
+    "tg_rewrite": {
+        "mode": "meta",
+        "composes": ["tg_rewrite_plan", "tg_rewrite_apply", "tg_rewrite_diff"],
+        "actions": {
+            "plan": {"native_required": False, "mutation": False, "embedded_fallback": True},
+            "apply": {"native_required": False, "mutation": True, "embedded_fallback": True},
+            "diff": {"native_required": True, "mutation": False, "embedded_fallback": False},
+        },
+        "notes": (
+            "Task-shaped meta-tool: native AST rewrite plan/apply/diff (plan/apply/diff). "
+            "action='apply' is the mutation surface (writes files); action='diff' requires "
+            "a standalone native tg binary. lint_cmd/test_cmd stay gated by "
+            "TG_MCP_ALLOW_VALIDATION_COMMANDS exactly as on the legacy tg_rewrite_apply tool."
+        ),
+    },
+}
+
+
+def _build_mcp_tool_capabilities() -> dict[str, dict[str, object]]:
+    """Build the live `_MCP_TOOL_CAPABILITIES` registry (#98 build-precision must-fix #4).
+
+    The 46 legacy entries are included ONLY when `_legacy_tools_enabled()` -- evaluated once
+    here, at IMPORT time, the SAME read `_register_legacy_tool` uses for actual registration,
+    so the two can never disagree within one running process (see that decorator's docstring).
+    The 2 singletons and the 10 meta tools are ALWAYS included, unconditionally.
+    """
+    capabilities: dict[str, dict[str, object]] = {}
+    if _legacy_tools_enabled():
+        capabilities.update({
+            name: {
+                "mode": "python-local",
+                "native_required": False,
+                "embedded_fallback": False,
+                "native_required_options": [],
+                "notes": "Runs without a standalone native tg binary.",
+            }
+            for name in _PYTHON_LOCAL_MCP_TOOLS
+        })
+        capabilities.update({
+            name: {
+                "mode": "embedded-safe",
+                "native_required": False,
+                "embedded_fallback": True,
+                "native_required_options": (
+                    [
+                        "verify",
+                        "audit_manifest",
+                        "audit_signing_key",
+                        "lint_cmd",
+                        "test_cmd",
+                    ]
+                    if name == "tg_rewrite_apply"
+                    else []
+                ),
+                "notes": (
+                    "Uses embedded rewrite fallback for simple requests when standalone "
+                    "native tg is unavailable."
+                ),
+            }
+            for name in _EMBEDDED_SAFE_MCP_TOOLS
+        })
+        capabilities.update({
+            name: {
+                "mode": "native-required",
+                "native_required": True,
+                "embedded_fallback": False,
+                "native_required_options": [],
+                "notes": "Requires a standalone native tg binary.",
+            }
+            for name in _NATIVE_REQUIRED_MCP_TOOLS
+        })
+        capabilities["tg_agent_capsule"]["notes"] = (
+            "Runs without a standalone native tg binary for normal capsules; optional "
+            "gpu_device_ids run a selected GPU evidence probe and report sidecar-routed "
+            "GPU as unsupported."
+        )
+    capabilities.update({
         name: {
             "mode": "python-local",
             "native_required": False,
             "embedded_fallback": False,
             "native_required_options": [],
-            "notes": "Runs without a standalone native tg binary.",
+            "notes": "Always-on singleton: runs without a standalone native tg binary.",
         }
-        for name in _PYTHON_LOCAL_MCP_TOOLS
-    },
-    **{
-        name: {
-            "mode": "embedded-safe",
-            "native_required": False,
-            "embedded_fallback": True,
-            "native_required_options": (
-                [
-                    "verify",
-                    "audit_manifest",
-                    "audit_signing_key",
-                    "lint_cmd",
-                    "test_cmd",
-                ]
-                if name == "tg_rewrite_apply"
-                else []
-            ),
-            "notes": (
-                "Uses embedded rewrite fallback for simple requests when standalone "
-                "native tg is unavailable."
-            ),
-        }
-        for name in _EMBEDDED_SAFE_MCP_TOOLS
-    },
-    **{
-        name: {
-            "mode": "native-required",
-            "native_required": True,
-            "embedded_fallback": False,
-            "native_required_options": [],
-            "notes": "Requires a standalone native tg binary.",
-        }
-        for name in _NATIVE_REQUIRED_MCP_TOOLS
-    },
-}
-_MCP_TOOL_CAPABILITIES["tg_agent_capsule"]["notes"] = (
-    "Runs without a standalone native tg binary for normal capsules; optional "
-    "gpu_device_ids run a selected GPU evidence probe and report sidecar-routed "
-    "GPU as unsupported."
-)
+        for name in _SINGLETON_MCP_TOOLS
+    })
+    for name in _META_MCP_TOOLS:
+        entry = dict(_META_MCP_TOOL_CAPABILITIES[name])
+        actions = cast(dict[str, dict[str, object]], entry["actions"])
+        # Aggregate top-level native_required/embedded_fallback (True if ANY action needs it)
+        # so a client reading only the flat fields -- the shape every legacy tool entry
+        # already has -- still gets a correct, if coarser, signal; `actions` carries the
+        # precise per-action detail for a client that reads deeper.
+        entry["native_required"] = any(bool(flags["native_required"]) for flags in actions.values())
+        entry["embedded_fallback"] = any(
+            bool(flags["embedded_fallback"]) for flags in actions.values()
+        )
+        entry["native_required_options"] = []
+        capabilities[name] = entry
+    return capabilities
+
+
+_MCP_TOOL_CAPABILITIES: dict[str, dict[str, object]] = _build_mcp_tool_capabilities()
 
 
 def _repo_root() -> Path:
@@ -322,6 +686,52 @@ def _sanitized_tool_error_text(tool_name: str, exc: BaseException) -> str:
         f"{tool_name} failed: internal error ({exc.__class__.__name__}). "
         "See server logs for detail."
     )
+
+
+# #98 (MCP consolidation Phase-1): shared envelope/error helpers for the 10 task-shaped
+# meta-tools. Every meta tool dispatches to an existing legacy tool function for the actual
+# work (which already returns a fully-formed, tool-specific JSON envelope) -- these helpers
+# only cover the meta layer's OWN error surface: an unknown `action`, a required param missing
+# for the chosen `action`, or a confinement failure caught before any action runs.
+def _meta_envelope(
+    *, tool: str, action: str, extra: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    payload = _envelope_base(
+        routing_backend="MCPMeta",
+        routing_reason=f"{tool}:{action}",
+        include_schema_version=False,
+    )
+    payload["tool"] = tool
+    payload["action"] = action
+    if extra:
+        payload.update(extra)
+    return payload
+
+
+def _meta_unknown_action_error(tool: str, action: str, valid_actions: tuple[str, ...]) -> str:
+    payload = _meta_envelope(tool=tool, action=action)
+    payload["error"] = {
+        "code": "invalid_input",
+        "message": (
+            f"Unknown action {action!r} for {tool}. Valid actions: {', '.join(valid_actions)}."
+        ),
+    }
+    return json.dumps(payload, indent=2)
+
+
+def _meta_missing_param_error(tool: str, action: str, param: str) -> str:
+    payload = _meta_envelope(tool=tool, action=action)
+    payload["error"] = {
+        "code": "invalid_input",
+        "message": f"{tool} action={action!r} requires '{param}'.",
+    }
+    return json.dumps(payload, indent=2)
+
+
+def _meta_confinement_error(tool: str, action: str, exc: ValueError) -> str:
+    payload = _meta_envelope(tool=tool, action=action)
+    payload["error"] = {"code": "invalid_input", "message": str(exc)}
+    return json.dumps(payload, indent=2)
 
 
 def _rewrite_envelope() -> dict[str, Any]:
@@ -1747,7 +2157,7 @@ def _broad_root_scan_refusal_result(
     return f"tg: {message}"
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_rulesets() -> str:
     """Return metadata for built-in security and compliance rulesets."""
     return _inject_mcp_contract_fields(json.dumps(_build_rulesets_payload(), indent=2))
@@ -1889,7 +2299,7 @@ _MAX_INLINE_RULES_CHARS = 64 * 1024
 _MAX_INLINE_RULES = 100
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_ruleset_scan(
     ruleset: str | None = None,
     inline_rules: str | None = None,
@@ -2165,7 +2575,7 @@ def tg_ruleset_scan(
     return json.dumps(payload, indent=2)
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_repo_map(path: str = ".", max_repo_files: int | None = _DEFAULT_MCP_REPO_SCAN_LIMIT) -> str:
     """
     Return a deterministic repository inventory for agent context selection.
@@ -2227,7 +2637,7 @@ def tg_repo_map(path: str = ".", max_repo_files: int | None = _DEFAULT_MCP_REPO_
         return json.dumps(payload, indent=2)
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_orient(
     path: str = ".",
     max_tokens: int = 3000,
@@ -2297,7 +2707,7 @@ def tg_orient(
         return json.dumps(payload, indent=2)
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_doctor(
     path: str = ".",
     config: str | None = "sgconfig.yml",
@@ -2372,7 +2782,7 @@ def tg_doctor(
         return json.dumps(payload, indent=2)
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_context_pack(
     query: str, path: str = ".", max_tokens: int | None = _DEFAULT_MCP_CONTEXT_MAX_TOKENS
 ) -> str:
@@ -2432,7 +2842,7 @@ def tg_context_pack(
         return json.dumps(payload, indent=2)
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_edit_plan(
     query: str,
     path: str = ".",
@@ -2518,7 +2928,7 @@ def tg_edit_plan(
         return json.dumps(payload, indent=2)
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_context_render(
     query: str,
     path: str = ".",
@@ -2608,7 +3018,7 @@ def tg_context_render(
         return json.dumps(payload, indent=2)
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_agent_capsule(
     query: str,
     path: str = ".",
@@ -2620,6 +3030,7 @@ def tg_agent_capsule(
     provider: str = "native",
     gpu_device_ids: list[int] | None = None,
     gpu_timeout_s: float = 5.0,
+    deadline: float | None = None,
 ) -> str:
     """
     Return an Actionable Context Capsule for agent edit planning.
@@ -2635,6 +3046,10 @@ def tg_agent_capsule(
         provider: Semantic provider for primary target proof: native, lsp, or hybrid.
         gpu_device_ids: Optional selected GPU IDs for native route evidence.
         gpu_timeout_s: Maximum seconds for each opt-in GPU evidence command.
+        deadline: Optional wall-clock budget in seconds for the underlying repo-map build
+            and capsule render/ranking pass (#98/W1b parity: mirrors `tg agent --deadline` /
+            `tg codemap --deadline`, previously undefined on this MCP tool). When exceeded,
+            the scan stops and returns a flagged partial result instead of running unbounded.
     """
     # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
@@ -2667,6 +3082,7 @@ def tg_agent_capsule(
                     semantic_provider=provider,
                     gpu_device_ids=gpu_device_ids,
                     gpu_timeout_s=gpu_timeout_s,
+                    deadline_seconds=deadline,
                 ),
                 indent=2,
             )
@@ -2694,7 +3110,7 @@ def tg_agent_capsule(
         )
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_session_edit_plan(
     session_id: str,
     query: str,
@@ -2781,7 +3197,7 @@ def tg_session_edit_plan(
         )
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_session_context_render(
     session_id: str,
     query: str,
@@ -2880,7 +3296,7 @@ def tg_session_context_render(
         )
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_session_blast_radius(
     session_id: str,
     symbol: str,
@@ -2959,7 +3375,7 @@ def tg_session_blast_radius(
         )
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_session_file_importers(
     session_id: str,
     file: str,
@@ -3060,7 +3476,7 @@ def tg_session_file_importers(
         )
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_symbol_blast_radius_plan(
     symbol: str,
     path: str = ".",
@@ -3143,7 +3559,7 @@ def tg_symbol_blast_radius_plan(
         return json.dumps(payload, indent=2)
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_session_blast_radius_render(
     session_id: str,
     symbol: str,
@@ -3259,7 +3675,7 @@ def tg_session_blast_radius_render(
         )
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_session_blast_radius_plan(
     session_id: str,
     symbol: str,
@@ -3364,7 +3780,7 @@ def tg_session_blast_radius_plan(
         )
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_symbol_defs(
     symbol: str,
     path: str = ".",
@@ -3432,7 +3848,7 @@ def tg_symbol_defs(
         return json.dumps(payload, indent=2)
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_symbol_source(
     symbol: str,
     path: str = ".",
@@ -3500,7 +3916,7 @@ def tg_symbol_source(
         return json.dumps(payload, indent=2)
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_symbol_impact(
     symbol: str, path: str = ".", provider: str = "native", deadline: float | None = None
 ) -> str:
@@ -3571,7 +3987,7 @@ def tg_symbol_impact(
         return json.dumps(payload, indent=2)
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_symbol_refs(
     symbol: str,
     path: str = ".",
@@ -3647,7 +4063,7 @@ def tg_symbol_refs(
         return json.dumps(payload, indent=2)
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_symbol_callers(
     symbol: str,
     path: str = ".",
@@ -3723,7 +4139,7 @@ def tg_symbol_callers(
         return json.dumps(payload, indent=2)
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_file_imports(file: str) -> str:
     """
     Return what a single FILE imports, resolved to target files where possible.
@@ -3778,7 +4194,7 @@ def tg_file_imports(file: str) -> str:
         return json.dumps(payload, indent=2)
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_file_importers(
     file: str,
     path: str = ".",
@@ -3866,7 +4282,7 @@ def tg_file_importers(
         return json.dumps(payload, indent=2)
 
 
-@mcp.tool()
+@_register_legacy_tool  # type: ignore
 def tg_symbol_blast_radius(
     symbol: str,
     path: str = ".",
@@ -3948,7 +4364,7 @@ def tg_symbol_blast_radius(
         return json.dumps(payload, indent=2)
 
 
-@mcp.tool()
+@_register_legacy_tool  # type: ignore
 def tg_symbol_blast_radius_render(
     symbol: str,
     path: str = ".",
@@ -4045,7 +4461,7 @@ def tg_symbol_blast_radius_render(
         return json.dumps(payload, indent=2)
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_find(
     query: str,
     path: str = ".",
@@ -4181,7 +4597,7 @@ def tg_find(
     return _inject_mcp_contract_fields(json.dumps(envelope, indent=2))
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_search(
     pattern: str | None = None,
     path: str = ".",
@@ -4582,7 +4998,7 @@ def tg_search(
         return _sanitized_tool_error_text("tg_search", e)
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_ast_search(
     pattern: str,
     lang: str,
@@ -5015,7 +5431,7 @@ def tg_classify_logs(file_path: str, structured_json: bool = True) -> str:
         return _sanitized_tool_error_text("tg_classify_logs", e)
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_devices(json_output: bool = True) -> str:
     """
     Return routable GPU inventory for scheduling and diagnostics.
@@ -5040,7 +5456,7 @@ def tg_devices(json_output: bool = True) -> str:
     return "\n".join(lines)
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_index_search(pattern: str, path: str = ".") -> str:
     """
     Search files via the native trigram index path and return machine-readable JSON.
@@ -5076,7 +5492,7 @@ def tg_index_search(pattern: str, path: str = ".") -> str:
     return _execute_index_search_command(command, pattern=pattern, path=path)
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_rewrite_plan(pattern: str, replacement: str, lang: str, path: str = ".") -> str:
     """
     Return the native AST rewrite plan JSON for the requested pattern and replacement.
@@ -5107,7 +5523,7 @@ def tg_rewrite_plan(pattern: str, replacement: str, lang: str, path: str = ".") 
     return payload
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_rewrite_apply(
     pattern: str,
     replacement: str,
@@ -5201,7 +5617,7 @@ def tg_rewrite_apply(
     return payload
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_audit_manifest_verify(
     manifest_path: str,
     signing_key: str | None = None,
@@ -5266,7 +5682,7 @@ def tg_audit_manifest_verify(
         return _audit_manifest_error(str(exc), code="internal_error")
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_audit_history(path: str = ".") -> str:
     """
     List audit manifest history for a project root.
@@ -5296,7 +5712,7 @@ def tg_audit_history(path: str = ".") -> str:
         return _audit_history_error(str(exc), code="internal_error")
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_audit_diff(previous_manifest: str, current_manifest: str) -> str:
     """
     Compute a semantic diff between two audit manifest JSON files.
@@ -5346,7 +5762,7 @@ def tg_audit_diff(previous_manifest: str, current_manifest: str) -> str:
         return _audit_diff_error(str(exc), code="internal_error")
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_review_bundle_create(
     manifest_path: str,
     scan_path: str | None = None,
@@ -5442,7 +5858,7 @@ def tg_review_bundle_create(
         )
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_review_bundle_verify(bundle_path: str) -> str:
     """
     Verify review bundle integrity and component checksums.
@@ -5495,7 +5911,7 @@ def tg_review_bundle_verify(bundle_path: str) -> str:
         )
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_checkpoint_create(path: str = ".") -> str:
     """
     Create an edit checkpoint rooted at the given path.
@@ -5546,7 +5962,7 @@ def tg_checkpoint_create(path: str = ".") -> str:
     )
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_checkpoint_list(path: str = ".") -> str:
     """
     List checkpoints rooted at the given path.
@@ -5594,7 +6010,7 @@ def tg_checkpoint_list(path: str = ".") -> str:
     )
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_checkpoint_undo(checkpoint_id: str, path: str = ".") -> str:
     """
     Undo an edit checkpoint rooted at the given path.
@@ -5648,7 +6064,7 @@ def tg_checkpoint_undo(checkpoint_id: str, path: str = ".") -> str:
     )
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_session_open(
     path: str = ".", max_repo_files: int | None = _DEFAULT_MCP_REPO_SCAN_LIMIT
 ) -> str:
@@ -5699,7 +6115,7 @@ def tg_session_open(
     )
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_session_list(path: str = ".") -> str:
     """
     List cached sessions for the current root.
@@ -5731,7 +6147,7 @@ def tg_session_list(path: str = ".") -> str:
     )
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_session_show(session_id: str, path: str = ".") -> str:
     """
     Return the cached repository-map payload for a session.
@@ -5767,7 +6183,7 @@ def tg_session_show(session_id: str, path: str = ".") -> str:
     return _inject_mcp_contract_fields(json.dumps(payload, indent=2))
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_session_refresh(session_id: str, path: str = ".") -> str:
     """
     Refresh a cached repository-map session after file changes.
@@ -5803,7 +6219,7 @@ def tg_session_refresh(session_id: str, path: str = ".") -> str:
     return json.dumps(payload.__dict__, indent=2)
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_session_context(
     session_id: str,
     query: str,
@@ -5879,7 +6295,7 @@ def tg_session_context(
     return _inject_mcp_contract_fields(json.dumps(payload, indent=2))
 
 
-@mcp.tool()  # type: ignore
+@_register_legacy_tool  # type: ignore
 def tg_rewrite_diff(pattern: str, replacement: str, lang: str, path: str = ".") -> str:
     """
     Return a unified diff preview for native AST rewrites without modifying files.
@@ -5916,6 +6332,1160 @@ def tg_rewrite_diff(pattern: str, replacement: str, lang: str, path: str = ".") 
         mode="diff",
     )
     return _execute_rewrite_diff_command(command)
+
+
+# ================================================================================================
+# #98 (MCP consolidation Phase-1): 10 ADDITIVE task-shaped meta-tools composing the 46 legacy
+# tools above by an `action` string selector, plus the 2 always-on singletons already defined
+# (tg_mcp_capabilities, tg_classify_logs). ALWAYS registered via plain `@mcp.tool()` -- never
+# gated by TG_MCP_LEGACY_TOOLS -- since they are the additive surface that flag exists to let an
+# operator eventually rely on alone (see `_legacy_tools_enabled` docstring). Every meta tool:
+#   1. confines EVERY path-shaped param it declares (unconditionally, before the action branch,
+#      regardless of which action was requested) via `_confine_mcp_path` (or, for `config` on
+#      tg_explore, `_confine_read_path` anchored to the ALREADY-CONFINED primary `path` --
+#      mirrors tg_doctor's own anchor semantics exactly). This is deliberately UNCONDITIONAL
+#      (not "only if this action needs it"): several meta tools (tg_audit, in particular) have
+#      path-shaped params that belong to DIFFERENT, mutually exclusive actions, so confining
+#      only within the matching action branch would leave a param unreachable -- and therefore
+#      unconfined -- whenever a caller picked a different action. Confining everything up front
+#      sidesteps that class of bug entirely and is strictly more defensive.
+#   2. dispatches to the matching legacy tool FUNCTION directly (not through the MCP transport),
+#      which independently re-confines the same params (idempotent -- an already-confined
+#      absolute in-anchor path always stays in-anchor) and does its own error handling, so the
+#      meta layer never re-implements a legacy tool's fail-closed-class behavior (native-
+#      unavailable, validation-command gating, plan-drift, etc. all come along for free).
+#   3. wraps its own dispatch/confinement errors in a small `_meta_*_error` envelope, and any
+#      unexpected exception in `_sanitized_tool_error` -- never a raw traceback.
+# ================================================================================================
+
+_TG_NAVIGATE_ACTIONS = ("defs", "source", "refs", "callers", "imports", "importers")
+
+
+@mcp.tool()  # type: ignore
+def tg_navigate(
+    action: str,
+    symbol: str | None = None,
+    file: str | None = None,
+    path: str = ".",
+    provider: str = "native",
+    max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
+    deadline: float | None = None,
+) -> str:
+    """
+    Task-shaped meta-tool: symbol/file navigation (#98). Composes 6 legacy tools by `action`:
+
+    - action="defs": exact definition locations for `symbol` (= tg_symbol_defs)
+    - action="source": exact source blocks for `symbol`'s definition (= tg_symbol_source)
+    - action="refs": Python-first symbol references for `symbol` (= tg_symbol_refs)
+    - action="callers": Python-first call sites + likely impacted tests for `symbol`
+      (= tg_symbol_callers)
+    - action="imports": what `file` imports, O(1) single-file parse (= tg_file_imports)
+    - action="importers": the files that import `file` (= tg_file_importers)
+
+    Args:
+        action: One of "defs", "source", "refs", "callers", "imports", "importers".
+        symbol: Exact symbol name to resolve. Required for defs/source/refs/callers.
+        file: File to inspect. Required for imports/importers. Confined to the MCP server
+            root; a file that legitimately lives outside it must be copied in first
+            (fail-closed, not a silent drop).
+        path: File or directory to inventory. Confined to the MCP server root. Unused by
+            imports/importers (which scope via `file`), but still confined unconditionally.
+        provider: Semantic provider for primary target proof: native, lsp, or hybrid. Used
+            by defs/source/refs/callers.
+        max_repo_files: Maximum repository files to scan. Used by refs/callers/importers.
+        deadline: Optional wall-clock budget in seconds for the underlying repo scan (refs/
+            callers/importers only). Partial results are flagged, never silently truncated.
+    """
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+        if file is not None:
+            file = str(_confine_mcp_path(file, label="file"))
+    except ValueError as exc:
+        return _meta_confinement_error("tg_navigate", action, exc)
+
+    try:
+        if action == "defs":
+            if symbol is None:
+                return _meta_missing_param_error("tg_navigate", action, "symbol")
+            return tg_symbol_defs(
+                symbol=symbol, path=path, provider=provider, max_repo_files=max_repo_files
+            )
+        if action == "source":
+            if symbol is None:
+                return _meta_missing_param_error("tg_navigate", action, "symbol")
+            return tg_symbol_source(
+                symbol=symbol, path=path, provider=provider, max_repo_files=max_repo_files
+            )
+        if action == "refs":
+            if symbol is None:
+                return _meta_missing_param_error("tg_navigate", action, "symbol")
+            return tg_symbol_refs(
+                symbol=symbol,
+                path=path,
+                provider=provider,
+                max_repo_files=max_repo_files,
+                deadline=deadline,
+            )
+        if action == "callers":
+            if symbol is None:
+                return _meta_missing_param_error("tg_navigate", action, "symbol")
+            return tg_symbol_callers(
+                symbol=symbol,
+                path=path,
+                provider=provider,
+                max_repo_files=max_repo_files,
+                deadline=deadline,
+            )
+        if action == "imports":
+            if file is None:
+                return _meta_missing_param_error("tg_navigate", action, "file")
+            return tg_file_imports(file=file)
+        if action == "importers":
+            if file is None:
+                return _meta_missing_param_error("tg_navigate", action, "file")
+            return tg_file_importers(
+                file=file, path=path, max_repo_files=max_repo_files, deadline=deadline
+            )
+        return _meta_unknown_action_error("tg_navigate", action, _TG_NAVIGATE_ACTIONS)
+    except Exception as exc:  # never a raw exception across the MCP boundary
+        payload = _meta_envelope(tool="tg_navigate", action=action)
+        payload["error"] = _sanitized_tool_error("tg_navigate", exc)
+        return json.dumps(payload, indent=2)
+
+
+_TG_IMPACT_ACTIONS = ("impact", "blast_radius", "blast_radius_plan", "blast_radius_render")
+
+
+@mcp.tool()  # type: ignore
+def tg_impact(
+    action: str,
+    symbol: str | None = None,
+    path: str = ".",
+    max_depth: int = 3,
+    max_files: int = 3,
+    max_symbols: int = 5,
+    max_sources: int = 5,
+    max_symbols_per_file: int = 6,
+    max_render_chars: int | None = None,
+    optimize_context: bool = False,
+    render_profile: str = "full",
+    profile: bool = False,
+    provider: str = "native",
+    max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
+    deadline: float | None = None,
+) -> str:
+    """
+    Task-shaped meta-tool: symbol change-impact analysis (#98). Composes 4 legacy tools:
+
+    - action="impact": likely impacted files/tests for `symbol` (= tg_symbol_impact)
+    - action="blast_radius": exact callers + transitive file/test blast radius
+      (= tg_symbol_blast_radius)
+    - action="blast_radius_plan": machine-readable blast-radius planning bundle
+      (= tg_symbol_blast_radius_plan)
+    - action="blast_radius_render": prompt-ready blast-radius bundle
+      (= tg_symbol_blast_radius_render)
+
+    Args:
+        action: One of "impact", "blast_radius", "blast_radius_plan", "blast_radius_render".
+        symbol: Exact symbol name to resolve. Required for all 4 actions.
+        path: File or directory to inventory. Confined to the MCP server root.
+        max_depth: Maximum reverse-import depth to include (blast_radius* actions).
+        max_files: Maximum files to include (blast_radius_plan/blast_radius_render).
+        max_symbols: Maximum ranked symbols to retain (blast_radius_plan).
+        max_sources: Maximum exact source blocks to include (blast_radius_render).
+        max_symbols_per_file: Maximum summary symbols per file (blast_radius_render).
+        max_render_chars: Maximum characters in rendered_context (blast_radius_render).
+        optimize_context: Strip blank/comment-only lines from rendered source
+            (blast_radius_render).
+        render_profile: Render profile: full, compact, or llm (blast_radius_render).
+        profile: Include a render profiling breakdown (blast_radius_render).
+        provider: Semantic provider for primary target proof: native, lsp, or hybrid.
+        max_repo_files: Maximum repository files to scan before resolving the symbol.
+        deadline: Optional wall-clock budget in seconds (impact/blast_radius only). Partial
+            results are flagged, never silently truncated.
+    """
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        return _meta_confinement_error("tg_impact", action, exc)
+
+    if symbol is None:
+        return _meta_missing_param_error("tg_impact", action, "symbol")
+
+    try:
+        if action == "impact":
+            return tg_symbol_impact(symbol=symbol, path=path, provider=provider, deadline=deadline)
+        if action == "blast_radius":
+            return tg_symbol_blast_radius(
+                symbol=symbol,
+                path=path,
+                max_depth=max_depth,
+                provider=provider,
+                max_repo_files=max_repo_files,
+                deadline=deadline,
+            )
+        if action == "blast_radius_plan":
+            return tg_symbol_blast_radius_plan(
+                symbol=symbol,
+                path=path,
+                max_depth=max_depth,
+                max_files=max_files,
+                max_symbols=max_symbols,
+                provider=provider,
+                max_repo_files=max_repo_files,
+            )
+        if action == "blast_radius_render":
+            return tg_symbol_blast_radius_render(
+                symbol=symbol,
+                path=path,
+                max_depth=max_depth,
+                max_files=max_files,
+                max_sources=max_sources,
+                max_symbols_per_file=max_symbols_per_file,
+                max_render_chars=max_render_chars,
+                optimize_context=optimize_context,
+                render_profile=render_profile,
+                profile=profile,
+                provider=provider,
+                max_repo_files=max_repo_files,
+            )
+        return _meta_unknown_action_error("tg_impact", action, _TG_IMPACT_ACTIONS)
+    except Exception as exc:
+        payload = _meta_envelope(tool="tg_impact", action=action)
+        payload["error"] = _sanitized_tool_error("tg_impact", exc)
+        return json.dumps(payload, indent=2)
+
+
+_TG_QUERY_ACTIONS = ("text", "ast", "find", "index")
+
+
+def _tg_query_dispatch(
+    action: str,
+    *,
+    pattern: str | None,
+    query: str | None,
+    lang: str | None,
+    path: str,
+    case_sensitive: bool,
+    ignore_case: bool,
+    fixed_strings: bool,
+    word_regexp: bool,
+    context: int | None,
+    max_count: int | None,
+    max_results: int | None,
+    max_files: int | None,
+    count_matches: bool,
+    glob: str | None,
+    type_filter: str | None,
+    structured_json: bool,
+    max_repo_files: int,
+    rank: bool,
+    semantic: bool,
+    limit: int,
+    max_tokens: int | None,
+    deadline: float | None,
+) -> str:
+    """Single-root dispatch core for `tg_query`, shared by the direct call and the per-root
+    `workspace_roots` loop below. Assumes `path` is ALREADY confined."""
+    if action == "text":
+        search_pattern = pattern if pattern is not None else query
+        return tg_search(
+            pattern=search_pattern,
+            path=path,
+            case_sensitive=case_sensitive,
+            ignore_case=ignore_case,
+            fixed_strings=fixed_strings,
+            word_regexp=word_regexp,
+            context=context,
+            max_count=max_count,
+            max_results=max_results,
+            max_files=max_files,
+            count_matches=count_matches,
+            glob=glob,
+            type_filter=type_filter,
+            query=query,
+            structured_json=structured_json,
+            max_repo_files=max_repo_files,
+            rank=rank,
+            semantic=semantic,
+        )
+    if action == "ast":
+        if pattern is None or lang is None:
+            return _meta_missing_param_error("tg_query", action, "pattern and lang")
+        return tg_ast_search(
+            pattern=pattern,
+            lang=lang,
+            path=path,
+            structured_json=structured_json,
+            max_repo_files=max_repo_files,
+        )
+    if action == "find":
+        query_text = query if query is not None else pattern
+        if query_text is None:
+            return _meta_missing_param_error("tg_query", action, "query")
+        effective_max_tokens = (
+            max_tokens if max_tokens is not None else _DEFAULT_MCP_FIND_MAX_TOKENS
+        )
+        return tg_find(
+            query=query_text,
+            path=path,
+            limit=limit,
+            max_repo_files=max_repo_files,
+            max_tokens=effective_max_tokens,
+            deadline=deadline,
+        )
+    if action == "index":
+        if pattern is None:
+            return _meta_missing_param_error("tg_query", action, "pattern")
+        return tg_index_search(pattern=pattern, path=path)
+    return _meta_unknown_action_error("tg_query", action, _TG_QUERY_ACTIONS)
+
+
+@mcp.tool()  # type: ignore
+def tg_query(
+    action: str,
+    pattern: str | None = None,
+    query: str | None = None,
+    lang: str | None = None,
+    path: str = ".",
+    case_sensitive: bool = False,
+    ignore_case: bool = False,
+    fixed_strings: bool = False,
+    word_regexp: bool = False,
+    context: int | None = None,
+    max_count: int | None = None,
+    max_results: int | None = None,
+    max_files: int | None = None,
+    count_matches: bool = False,
+    glob: str | None = None,
+    type_filter: str | None = None,
+    structured_json: bool = True,
+    max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
+    rank: bool = False,
+    semantic: bool = False,
+    limit: int = 10,
+    max_tokens: int | None = None,
+    deadline: float | None = None,
+    workspace_roots: list[str] | None = None,
+) -> str:
+    """
+    Task-shaped meta-tool: pattern/AST/whole-repo-semantic/trigram-index search (#98).
+    Composes 4 legacy tools by `action`:
+
+    - action="text": regex/literal pattern search, optional BM25/hybrid re-rank (= tg_search)
+    - action="ast": structural ast-grep/tree-sitter pattern search (= tg_ast_search)
+    - action="find": whole-repo hybrid semantic search, no pattern pre-filter (= tg_find)
+    - action="index": native trigram-index search; REQUIRES a standalone native tg binary
+      and fails closed (routing_reason="native-tg-unavailable") without one (= tg_index_search)
+
+    Args:
+        action: One of "text", "ast", "find", "index".
+        pattern: Regex/literal search pattern (text/index) or AST pattern (ast). Accepted as
+            a `query` alias for action="text"/"find".
+        query: Free-text query (find) or a `pattern` alias (text). Required for find.
+        lang: Tree-sitter language name. Required for action="ast".
+        path: File or directory to search. Confined to the MCP server root as the first
+            operation, regardless of action.
+        case_sensitive, ignore_case, fixed_strings, word_regexp, context, max_count,
+            max_results, max_files, count_matches, glob, type_filter, rank, semantic:
+            action="text" options; see tg_search.
+        structured_json: Return bounded structured JSON (default true). text/ast only.
+        max_repo_files: Maximum repository files to scan/walk before the scan is capped.
+        limit: Maximum ranked chunks to return (action="find").
+        max_tokens: Bound the result set to ~N tokens (action="find"). None uses tg_find's
+            own default (mirrors the CLI's `tg find --max-tokens` default); pass 0 for
+            explicitly unbounded.
+        deadline: Optional wall-clock budget in seconds (action="find"). Partial results are
+            flagged via result_incomplete, never silently truncated.
+        workspace_roots: Optional list of additional workspace roots. When supplied
+            (non-empty), EACH element is independently confined to the MCP server root; if
+            ANY element escapes, the WHOLE call is refused fail-closed (no partial/
+            best-effort root list). The SAME action then runs once per confined root, and
+            results are aggregated under a top-level `results_by_root` map keyed by the
+            confined root path, instead of the single-root envelope this tool normally
+            returns.
+    """
+    try:
+        confined_path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        return _meta_confinement_error("tg_query", action, exc)
+
+    confined_roots: list[str] | None = None
+    if workspace_roots:
+        try:
+            confined_roots = [
+                str(_confine_mcp_path(root, label="workspace_roots")) for root in workspace_roots
+            ]
+        except ValueError as exc:
+            return _meta_confinement_error("tg_query", action, exc)
+
+    try:
+        if confined_roots is None:
+            return _tg_query_dispatch(
+                action,
+                pattern=pattern,
+                query=query,
+                lang=lang,
+                path=confined_path,
+                case_sensitive=case_sensitive,
+                ignore_case=ignore_case,
+                fixed_strings=fixed_strings,
+                word_regexp=word_regexp,
+                context=context,
+                max_count=max_count,
+                max_results=max_results,
+                max_files=max_files,
+                count_matches=count_matches,
+                glob=glob,
+                type_filter=type_filter,
+                structured_json=structured_json,
+                max_repo_files=max_repo_files,
+                rank=rank,
+                semantic=semantic,
+                limit=limit,
+                max_tokens=max_tokens,
+                deadline=deadline,
+            )
+
+        results_by_root: dict[str, Any] = {}
+        for root in confined_roots:
+            single_text = _tg_query_dispatch(
+                action,
+                pattern=pattern,
+                query=query,
+                lang=lang,
+                path=root,
+                case_sensitive=case_sensitive,
+                ignore_case=ignore_case,
+                fixed_strings=fixed_strings,
+                word_regexp=word_regexp,
+                context=context,
+                max_count=max_count,
+                max_results=max_results,
+                max_files=max_files,
+                count_matches=count_matches,
+                glob=glob,
+                type_filter=type_filter,
+                structured_json=structured_json,
+                max_repo_files=max_repo_files,
+                rank=rank,
+                semantic=semantic,
+                limit=limit,
+                max_tokens=max_tokens,
+                deadline=deadline,
+            )
+            try:
+                results_by_root[root] = json.loads(single_text)
+            except json.JSONDecodeError:
+                results_by_root[root] = single_text
+
+        payload = _meta_envelope(
+            tool="tg_query",
+            action=action,
+            extra={
+                "path": confined_path,
+                "workspace_roots": confined_roots,
+                "results_by_root": results_by_root,
+            },
+        )
+        return json.dumps(payload, indent=2)
+    except Exception as exc:
+        payload = _meta_envelope(tool="tg_query", action=action)
+        payload["error"] = _sanitized_tool_error("tg_query", exc)
+        return json.dumps(payload, indent=2)
+
+
+_TG_CONTEXT_ACTIONS = ("pack", "edit_plan", "render", "capsule")
+
+
+@mcp.tool()  # type: ignore
+def tg_context(
+    action: str,
+    query: str | None = None,
+    path: str = ".",
+    max_files: int = 3,
+    max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
+    max_sources: int = 5,
+    max_symbols: int = 5,
+    max_symbols_per_file: int = 6,
+    max_render_chars: int | None = None,
+    max_tokens: int | None = None,
+    model: str | None = None,
+    optimize_context: bool = False,
+    render_profile: str = "full",
+    provider: str = "native",
+    profile: bool = False,
+    gpu_device_ids: list[int] | None = None,
+    gpu_timeout_s: float = 5.0,
+    deadline: float | None = None,
+) -> str:
+    """
+    Task-shaped meta-tool: repository context for edit planning (#98). Composes 4 legacy tools:
+
+    - action="pack": ranked repository context pack (= tg_context_pack)
+    - action="edit_plan": machine-readable edit-planning bundle, no rendered source
+      (= tg_edit_plan)
+    - action="render": prompt-ready repository context bundle (= tg_context_render)
+    - action="capsule": Actionable Context Capsule for agent edit planning (= tg_agent_capsule)
+
+    Args:
+        action: One of "pack", "edit_plan", "render", "capsule".
+        query: Query text used to rank relevant files/symbols/tests. Required for all 4.
+        path: File or directory to inventory. Confined to the MCP server root.
+        max_files: Maximum ranked files to consider.
+        max_repo_files: Maximum repository files to scan (edit_plan/render/capsule).
+        max_sources: Maximum source snippets/blocks to include.
+        max_symbols: Maximum ranked symbols to retain (edit_plan).
+        max_symbols_per_file: Maximum summary symbols per file (render).
+        max_render_chars: Maximum characters in rendered_context (render).
+        max_tokens: Bound the output for prompt injection. None uses the composed action's
+            own default (pack/render default ~16000, edit_plan defaults unbounded, capsule
+            defaults 1200); pass 0 for explicitly unbounded on pack/render/capsule.
+        model: Optional model name used for token estimation (render/capsule).
+        optimize_context: Strip blank/comment-only lines from rendered source (render).
+        render_profile: Render profile: full, compact, or llm (render).
+        provider: Semantic provider for primary target proof: native, lsp, or hybrid
+            (edit_plan/render/capsule).
+        profile: Include a render profiling breakdown (render).
+        gpu_device_ids: Optional selected GPU IDs for native route evidence (capsule).
+        gpu_timeout_s: Maximum seconds for each opt-in GPU evidence command (capsule).
+        deadline: Optional wall-clock budget in seconds (capsule only; mirrors
+            `tg agent --deadline` / `tg codemap --deadline`).
+    """
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        return _meta_confinement_error("tg_context", action, exc)
+
+    if query is None:
+        return _meta_missing_param_error("tg_context", action, "query")
+
+    try:
+        max_tokens_kwargs: dict[str, Any] = {} if max_tokens is None else {"max_tokens": max_tokens}
+        if action == "pack":
+            return tg_context_pack(query=query, path=path, **max_tokens_kwargs)
+        if action == "edit_plan":
+            return tg_edit_plan(
+                query=query,
+                path=path,
+                max_files=max_files,
+                max_repo_files=max_repo_files,
+                max_sources=max_sources,
+                max_tokens=max_tokens,
+                max_symbols=max_symbols,
+                provider=provider,
+            )
+        if action == "render":
+            return tg_context_render(
+                query=query,
+                path=path,
+                max_files=max_files,
+                max_repo_files=max_repo_files,
+                max_sources=max_sources,
+                max_symbols_per_file=max_symbols_per_file,
+                max_render_chars=max_render_chars,
+                model=model,
+                optimize_context=optimize_context,
+                render_profile=render_profile,
+                provider=provider,
+                profile=profile,
+                **max_tokens_kwargs,
+            )
+        if action == "capsule":
+            return tg_agent_capsule(
+                query=query,
+                path=path,
+                max_files=max_files,
+                max_sources=max_sources,
+                max_repo_files=max_repo_files,
+                model=model,
+                provider=provider,
+                gpu_device_ids=gpu_device_ids,
+                gpu_timeout_s=gpu_timeout_s,
+                deadline=deadline,
+                **max_tokens_kwargs,
+            )
+        return _meta_unknown_action_error("tg_context", action, _TG_CONTEXT_ACTIONS)
+    except Exception as exc:
+        payload = _meta_envelope(tool="tg_context", action=action)
+        payload["error"] = _sanitized_tool_error("tg_context", exc)
+        return json.dumps(payload, indent=2)
+
+
+_TG_EXPLORE_ACTIONS = ("orient", "repo_map", "doctor", "devices")
+
+
+@mcp.tool()  # type: ignore
+def tg_explore(
+    action: str,
+    path: str = ".",
+    max_tokens: int = 3000,
+    max_central_files: int = 10,
+    ignore: list[str] | None = None,
+    max_repo_files: int | None = _DEFAULT_MCP_REPO_SCAN_LIMIT,
+    config: str | None = "sgconfig.yml",
+    with_lsp: bool = True,
+    json_output: bool = True,
+) -> str:
+    """
+    Task-shaped meta-tool: codebase orientation and diagnostics (#98). Composes 4 legacy tools:
+
+    - action="orient": one-call codebase orientation capsule; call FIRST on an unfamiliar
+      repo (= tg_orient)
+    - action="repo_map": deterministic repository inventory (= tg_repo_map)
+    - action="doctor": system/GPU/cache/AST/daemon/LSP diagnostics (= tg_doctor)
+    - action="devices": routable GPU inventory (= tg_devices)
+
+    Args:
+        action: One of "orient", "repo_map", "doctor", "devices".
+        path: File or directory to inspect. Confined to the MCP server root. Unused by
+            devices, but still confined unconditionally.
+        max_tokens: Snippet token budget for the orientation capsule (orient).
+        max_central_files: Number of top central files to surface (orient).
+        ignore: Glob(s) to exclude from centrality ranking (orient); a glob-pattern list,
+            not a path -- not confined.
+        max_repo_files: Maximum repo files to scan (repo_map).
+        config: Path to an ast-grep root config, resolved relative to `path` (doctor).
+        with_lsp: Include external LSP provider diagnostics (doctor).
+        json_output: Emit machine-readable JSON output (devices).
+    """
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+        if config:
+            config = str(_confine_read_path(config, Path(path), label="config"))
+    except ValueError as exc:
+        return _meta_confinement_error("tg_explore", action, exc)
+
+    try:
+        if action == "orient":
+            return tg_orient(
+                path=path,
+                max_tokens=max_tokens,
+                max_central_files=max_central_files,
+                ignore=ignore,
+            )
+        if action == "repo_map":
+            return tg_repo_map(path=path, max_repo_files=max_repo_files)
+        if action == "doctor":
+            return tg_doctor(path=path, config=config, with_lsp=with_lsp)
+        if action == "devices":
+            return tg_devices(json_output=json_output)
+        return _meta_unknown_action_error("tg_explore", action, _TG_EXPLORE_ACTIONS)
+    except Exception as exc:
+        payload = _meta_envelope(tool="tg_explore", action=action)
+        payload["error"] = _sanitized_tool_error("tg_explore", exc)
+        return json.dumps(payload, indent=2)
+
+
+_TG_SESSION_ACTIONS = (
+    "open",
+    "list",
+    "show",
+    "refresh",
+    "context",
+    "edit_plan",
+    "context_render",
+    "blast_radius",
+    "blast_radius_plan",
+    "blast_radius_render",
+    "file_importers",
+)
+_TG_SESSION_ACTIONS_NEEDING_ID = frozenset(_TG_SESSION_ACTIONS) - {"open", "list"}
+
+
+@mcp.tool()  # type: ignore
+def tg_session(
+    action: str,
+    session_id: str | None = None,
+    query: str | None = None,
+    symbol: str | None = None,
+    file: str | None = None,
+    path: str = ".",
+    max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
+    max_files: int = 3,
+    max_sources: int = 5,
+    max_symbols: int = 5,
+    max_symbols_per_file: int = 6,
+    max_render_chars: int | None = None,
+    max_tokens: int | None = None,
+    model: str | None = None,
+    optimize_context: bool = False,
+    render_profile: str = "full",
+    profile: bool = False,
+    max_depth: int = 3,
+    refresh_on_stale: bool = False,
+    auto_refresh: bool | None = None,
+) -> str:
+    """
+    Task-shaped meta-tool: cached repository-map session lifecycle and session-scoped
+    queries (#98). Composes 11 legacy tools by `action`:
+
+    - action="open": create a cached session (= tg_session_open) [writes the session cache]
+    - action="list": list cached sessions (= tg_session_list)
+    - action="show": return the cached repo-map payload (= tg_session_show)
+    - action="refresh": refresh a session after file changes (= tg_session_refresh)
+      [writes the session cache]
+    - action="context": cached-session context pack (= tg_session_context)
+    - action="edit_plan": cached-session edit-planning bundle (= tg_session_edit_plan)
+    - action="context_render": cached-session prompt-ready context (= tg_session_context_render)
+    - action="blast_radius": cached-session blast radius for a symbol (= tg_session_blast_radius)
+    - action="blast_radius_plan": cached-session blast-radius plan
+      (= tg_session_blast_radius_plan)
+    - action="blast_radius_render": cached-session blast-radius render
+      (= tg_session_blast_radius_render)
+    - action="file_importers": cached-session (zero-reparse) importers of a file
+      (= tg_session_file_importers)
+
+    Args:
+        action: One of "open", "list", "show", "refresh", "context", "edit_plan",
+            "context_render", "blast_radius", "blast_radius_plan", "blast_radius_render",
+            "file_importers".
+        session_id: Session ID to query. Required for all actions except open/list.
+        query: Query text. Required for context/edit_plan/context_render.
+        symbol: Exact symbol name. Required for blast_radius/blast_radius_plan/
+            blast_radius_render.
+        file: File to find importers of. Required for file_importers. Confined to the MCP
+            server root; the delegated legacy tool re-confines it to the session root.
+        path: File or directory rooted at the session scope. Confined to the MCP server root.
+        max_repo_files: Maximum repo files to scan into a new/refreshed session (open).
+        max_files, max_sources, max_symbols, max_symbols_per_file, max_render_chars, model,
+            optimize_context, render_profile, profile: render/plan bundle options; see the
+            composed tool's own docstring for which action(s) use each.
+        max_tokens: Bound the output for prompt injection (context/context_render). None
+            uses the composed action's own default; pass 0 for explicitly unbounded.
+        max_depth: Maximum reverse-import depth (blast_radius* actions).
+        refresh_on_stale: Refresh the session inline if its cache is stale, instead of
+            returning an error.
+        auto_refresh: Alias for refresh_on_stale accepted for command-surface parity.
+    """
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+        if file is not None:
+            file = str(_confine_mcp_path(file, label="file"))
+    except ValueError as exc:
+        return _meta_confinement_error("tg_session", action, exc)
+
+    if action in _TG_SESSION_ACTIONS_NEEDING_ID and session_id is None:
+        return _meta_missing_param_error("tg_session", action, "session_id")
+
+    try:
+        if action == "open":
+            return tg_session_open(path=path, max_repo_files=max_repo_files)
+        if action == "list":
+            return tg_session_list(path=path)
+        if action == "show":
+            return tg_session_show(session_id=cast(str, session_id), path=path)
+        if action == "refresh":
+            return tg_session_refresh(session_id=cast(str, session_id), path=path)
+        if action == "context":
+            if query is None:
+                return _meta_missing_param_error("tg_session", action, "query")
+            max_tokens_kwargs: dict[str, Any] = (
+                {} if max_tokens is None else {"max_tokens": max_tokens}
+            )
+            return tg_session_context(
+                session_id=cast(str, session_id),
+                query=query,
+                path=path,
+                refresh_on_stale=refresh_on_stale,
+                auto_refresh=auto_refresh,
+                **max_tokens_kwargs,
+            )
+        if action == "edit_plan":
+            if query is None:
+                return _meta_missing_param_error("tg_session", action, "query")
+            return tg_session_edit_plan(
+                session_id=cast(str, session_id),
+                query=query,
+                path=path,
+                max_files=max_files,
+                max_repo_files=max_repo_files,
+                max_sources=max_sources,
+                max_tokens=max_tokens,
+                max_symbols=max_symbols,
+                refresh_on_stale=refresh_on_stale,
+                auto_refresh=auto_refresh,
+            )
+        if action == "context_render":
+            if query is None:
+                return _meta_missing_param_error("tg_session", action, "query")
+            max_tokens_kwargs = {} if max_tokens is None else {"max_tokens": max_tokens}
+            return tg_session_context_render(
+                session_id=cast(str, session_id),
+                query=query,
+                path=path,
+                max_files=max_files,
+                max_repo_files=max_repo_files,
+                max_sources=max_sources,
+                max_symbols_per_file=max_symbols_per_file,
+                max_render_chars=max_render_chars,
+                model=model,
+                optimize_context=optimize_context,
+                render_profile=render_profile,
+                profile=profile,
+                refresh_on_stale=refresh_on_stale,
+                auto_refresh=auto_refresh,
+                **max_tokens_kwargs,
+            )
+        if action == "blast_radius":
+            if symbol is None:
+                return _meta_missing_param_error("tg_session", action, "symbol")
+            return tg_session_blast_radius(
+                session_id=cast(str, session_id),
+                symbol=symbol,
+                path=path,
+                max_depth=max_depth,
+                refresh_on_stale=refresh_on_stale,
+                auto_refresh=auto_refresh,
+            )
+        if action == "blast_radius_plan":
+            if symbol is None:
+                return _meta_missing_param_error("tg_session", action, "symbol")
+            return tg_session_blast_radius_plan(
+                session_id=cast(str, session_id),
+                symbol=symbol,
+                path=path,
+                max_depth=max_depth,
+                max_files=max_files,
+                max_symbols=max_symbols,
+                refresh_on_stale=refresh_on_stale,
+                auto_refresh=auto_refresh,
+            )
+        if action == "blast_radius_render":
+            if symbol is None:
+                return _meta_missing_param_error("tg_session", action, "symbol")
+            return tg_session_blast_radius_render(
+                session_id=cast(str, session_id),
+                symbol=symbol,
+                path=path,
+                max_depth=max_depth,
+                max_files=max_files,
+                max_sources=max_sources,
+                max_symbols_per_file=max_symbols_per_file,
+                max_render_chars=max_render_chars,
+                optimize_context=optimize_context,
+                render_profile=render_profile,
+                refresh_on_stale=refresh_on_stale,
+                auto_refresh=auto_refresh,
+            )
+        if action == "file_importers":
+            if file is None:
+                return _meta_missing_param_error("tg_session", action, "file")
+            return tg_session_file_importers(
+                session_id=cast(str, session_id),
+                file=file,
+                path=path,
+                refresh_on_stale=refresh_on_stale,
+                auto_refresh=auto_refresh,
+            )
+        return _meta_unknown_action_error("tg_session", action, _TG_SESSION_ACTIONS)
+    except Exception as exc:
+        payload = _meta_envelope(tool="tg_session", action=action)
+        payload["error"] = _sanitized_tool_error("tg_session", exc)
+        return json.dumps(payload, indent=2)
+
+
+_TG_SCAN_ACTIONS = ("scan", "rulesets")
+
+
+@mcp.tool()  # type: ignore
+def tg_scan(
+    action: str,
+    ruleset: str | None = None,
+    inline_rules: str | None = None,
+    path: str = ".",
+    language: str | None = None,
+    glob: str | None = None,
+    file_type: str | None = None,
+    max_depth: int | None = None,
+    allow_broad_generated_scan: bool = False,
+    baseline_path: str | None = None,
+    write_baseline: str | None = None,
+    suppressions_path: str | None = None,
+    write_suppressions: str | None = None,
+    justification: str | None = None,
+    include_evidence_snippets: bool = False,
+    max_evidence_snippets_per_file: int = 1,
+    max_evidence_snippet_chars: int = 120,
+) -> str:
+    """
+    Task-shaped meta-tool: built-in/inline ast-grep ruleset scanning (#98). Composes 2
+    legacy tools:
+
+    - action="scan": execute a ruleset scan (= tg_ruleset_scan). Read-only by default;
+      supplying write_baseline/write_suppressions writes a file to disk.
+    - action="rulesets": built-in ruleset metadata (= tg_rulesets)
+
+    Args:
+        action: One of "scan", "rulesets".
+        ruleset, inline_rules, path, language, glob, file_type, max_depth,
+            allow_broad_generated_scan, baseline_path, write_baseline, suppressions_path,
+            write_suppressions, justification, include_evidence_snippets,
+            max_evidence_snippets_per_file, max_evidence_snippet_chars: forwarded verbatim
+            to tg_ruleset_scan for action="scan"; see that tool's docstring. Exactly one of
+            ruleset/inline_rules is required for action="scan". Unused by action="rulesets".
+    """
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        return _meta_confinement_error("tg_scan", action, exc)
+
+    try:
+        if action == "scan":
+            return tg_ruleset_scan(
+                ruleset=ruleset,
+                inline_rules=inline_rules,
+                path=path,
+                language=language,
+                glob=glob,
+                file_type=file_type,
+                max_depth=max_depth,
+                allow_broad_generated_scan=allow_broad_generated_scan,
+                baseline_path=baseline_path,
+                write_baseline=write_baseline,
+                suppressions_path=suppressions_path,
+                write_suppressions=write_suppressions,
+                justification=justification,
+                include_evidence_snippets=include_evidence_snippets,
+                max_evidence_snippets_per_file=max_evidence_snippets_per_file,
+                max_evidence_snippet_chars=max_evidence_snippet_chars,
+            )
+        if action == "rulesets":
+            return tg_rulesets()
+        return _meta_unknown_action_error("tg_scan", action, _TG_SCAN_ACTIONS)
+    except Exception as exc:
+        payload = _meta_envelope(tool="tg_scan", action=action)
+        payload["error"] = _sanitized_tool_error("tg_scan", exc)
+        return json.dumps(payload, indent=2)
+
+
+_TG_AUDIT_ACTIONS = ("manifest_verify", "history", "diff", "bundle_create", "bundle_verify")
+
+
+@mcp.tool()  # type: ignore
+def tg_audit(
+    action: str,
+    manifest_path: str | None = None,
+    signing_key: str | None = None,
+    previous_manifest: str | None = None,
+    current_manifest: str | None = None,
+    path: str = ".",
+    scan_path: str | None = None,
+    checkpoint_id: str | None = None,
+    output_path: str | None = None,
+    bundle_path: str | None = None,
+) -> str:
+    """
+    Task-shaped meta-tool: rewrite audit manifest and review bundle operations (#98).
+    Composes 5 legacy tools:
+
+    - action="manifest_verify": verify a rewrite audit manifest (= tg_audit_manifest_verify)
+    - action="history": list audit manifest history for a project root (= tg_audit_history)
+    - action="diff": semantic diff between two audit manifests (= tg_audit_diff)
+    - action="bundle_create": create a review bundle (= tg_review_bundle_create)
+      [writes output_path when supplied]
+    - action="bundle_verify": verify review bundle integrity (= tg_review_bundle_verify)
+
+    Args:
+        action: One of "manifest_verify", "history", "diff", "bundle_create", "bundle_verify".
+        manifest_path: Rewrite audit manifest path. Required for manifest_verify/bundle_create.
+        signing_key: Optional HMAC signing key path (manifest_verify); gated by
+            TG_MCP_ALLOW_AUDIT_SIGNING_KEY_READ, not path confinement.
+        previous_manifest: Optional previous manifest (manifest_verify/bundle_create);
+            required for diff.
+        current_manifest: Required for diff.
+        path: Project root to inspect (history). Confined to the MCP server root.
+        scan_path: Optional ruleset scan JSON path (bundle_create).
+        checkpoint_id: Optional checkpoint ID to include (bundle_create); opaque identifier,
+            not a path.
+        output_path: Optional file path to write the bundle JSON (bundle_create).
+        bundle_path: Review bundle path. Required for bundle_verify.
+    """
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+        if manifest_path is not None:
+            manifest_path = str(_confine_mcp_path(manifest_path, label="manifest_path"))
+        if previous_manifest is not None:
+            previous_manifest = str(_confine_mcp_path(previous_manifest, label="previous_manifest"))
+        if current_manifest is not None:
+            current_manifest = str(_confine_mcp_path(current_manifest, label="current_manifest"))
+        if scan_path is not None:
+            scan_path = str(_confine_mcp_path(scan_path, label="scan_path"))
+        if output_path is not None:
+            output_path = str(_confine_mcp_path(output_path, label="output_path"))
+        if bundle_path is not None:
+            bundle_path = str(_confine_mcp_path(bundle_path, label="bundle_path"))
+    except ValueError as exc:
+        return _meta_confinement_error("tg_audit", action, exc)
+
+    try:
+        if action == "manifest_verify":
+            if manifest_path is None:
+                return _meta_missing_param_error("tg_audit", action, "manifest_path")
+            return tg_audit_manifest_verify(
+                manifest_path=manifest_path,
+                signing_key=signing_key,
+                previous_manifest=previous_manifest,
+            )
+        if action == "history":
+            return tg_audit_history(path=path)
+        if action == "diff":
+            if previous_manifest is None or current_manifest is None:
+                return _meta_missing_param_error(
+                    "tg_audit", action, "previous_manifest and current_manifest"
+                )
+            return tg_audit_diff(
+                previous_manifest=previous_manifest, current_manifest=current_manifest
+            )
+        if action == "bundle_create":
+            if manifest_path is None:
+                return _meta_missing_param_error("tg_audit", action, "manifest_path")
+            return tg_review_bundle_create(
+                manifest_path=manifest_path,
+                scan_path=scan_path,
+                checkpoint_id=checkpoint_id,
+                previous_manifest=previous_manifest,
+                output_path=output_path,
+            )
+        if action == "bundle_verify":
+            if bundle_path is None:
+                return _meta_missing_param_error("tg_audit", action, "bundle_path")
+            return tg_review_bundle_verify(bundle_path=bundle_path)
+        return _meta_unknown_action_error("tg_audit", action, _TG_AUDIT_ACTIONS)
+    except Exception as exc:
+        payload = _meta_envelope(tool="tg_audit", action=action)
+        payload["error"] = _sanitized_tool_error("tg_audit", exc)
+        return json.dumps(payload, indent=2)
+
+
+_TG_CHECKPOINT_ACTIONS = ("create", "list", "undo")
+
+
+@mcp.tool()  # type: ignore
+def tg_checkpoint(
+    action: str,
+    checkpoint_id: str | None = None,
+    path: str = ".",
+) -> str:
+    """
+    Task-shaped meta-tool: edit checkpoint lifecycle (#98). Composes 3 legacy tools:
+
+    - action="create": create an edit checkpoint rooted at `path` (= tg_checkpoint_create)
+      [writes]
+    - action="list": list checkpoints rooted at `path` (= tg_checkpoint_list)
+    - action="undo": restore a checkpoint (= tg_checkpoint_undo) [writes]
+
+    Args:
+        action: One of "create", "list", "undo".
+        checkpoint_id: Checkpoint ID to restore. Required for action="undo"; an opaque
+            identifier, not a path.
+        path: File or directory rooted at the checkpoint scope. Confined to the MCP server
+            root.
+    """
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        return _meta_confinement_error("tg_checkpoint", action, exc)
+
+    try:
+        if action == "create":
+            return tg_checkpoint_create(path=path)
+        if action == "list":
+            return tg_checkpoint_list(path=path)
+        if action == "undo":
+            if checkpoint_id is None:
+                return _meta_missing_param_error("tg_checkpoint", action, "checkpoint_id")
+            return tg_checkpoint_undo(checkpoint_id=checkpoint_id, path=path)
+        return _meta_unknown_action_error("tg_checkpoint", action, _TG_CHECKPOINT_ACTIONS)
+    except Exception as exc:
+        payload = _meta_envelope(tool="tg_checkpoint", action=action)
+        payload["error"] = _sanitized_tool_error("tg_checkpoint", exc)
+        return json.dumps(payload, indent=2)
+
+
+_TG_REWRITE_ACTIONS = ("plan", "apply", "diff")
+
+
+@mcp.tool()  # type: ignore
+def tg_rewrite(
+    action: str,
+    pattern: str | None = None,
+    replacement: str | None = None,
+    lang: str | None = None,
+    path: str = ".",
+    verify: bool = False,
+    checkpoint: bool = False,
+    audit_manifest: str | None = None,
+    audit_signing_key: str | None = None,
+    lint_cmd: str | None = None,
+    test_cmd: str | None = None,
+    policy: str | None = None,
+    expected_plan_digest: str | None = None,
+    expected_match_count: int | None = None,
+) -> str:
+    """
+    Task-shaped meta-tool: native AST rewrite plan/apply/diff (#98). Composes 3 legacy tools:
+
+    - action="plan": native AST rewrite plan JSON, preview only (= tg_rewrite_plan)
+    - action="apply": apply native AST rewrites; THE MUTATION SURFACE (writes files)
+      (= tg_rewrite_apply)
+    - action="diff": unified diff preview without modifying files; REQUIRES a standalone
+      native tg binary and fails closed without one (= tg_rewrite_diff)
+
+    Args:
+        action: One of "plan", "apply", "diff".
+        pattern: AST pattern to rewrite. Required for all 3.
+        replacement: Rewrite template. Required for all 3.
+        lang: Tree-sitter language name. Required for all 3.
+        path: File or directory to scan. Confined to the MCP server root.
+        verify: When true, request post-apply verification (apply).
+        checkpoint: When true, create a rollback checkpoint before applying (apply).
+        audit_manifest: Optional path for a deterministic rewrite audit manifest (apply).
+        audit_signing_key: Optional HMAC signing key path for the audit manifest (apply);
+            gated by TG_MCP_ALLOW_AUDIT_SIGNING_KEY_READ, not path confinement.
+        lint_cmd: Optional shell command for post-apply lint validation (apply); refused
+            unless TG_MCP_ALLOW_VALIDATION_COMMANDS=1, same gate as the legacy tool.
+        test_cmd: Optional shell command for post-apply test validation (apply); same gate
+            as lint_cmd.
+        policy: Optional apply policy JSON path (apply).
+        expected_plan_digest: Optional plan_digest from a prior action="plan" call; refuses
+            the apply with code="plan_drift" if the tree has drifted (apply).
+        expected_match_count: Optional expected edit-site count from a prior plan (apply).
+    """
+    try:
+        path = str(_confine_mcp_path(path, label="path"))
+    except ValueError as exc:
+        return _meta_confinement_error("tg_rewrite", action, exc)
+
+    if pattern is None or replacement is None or lang is None:
+        return _meta_missing_param_error("tg_rewrite", action, "pattern, replacement, and lang")
+
+    try:
+        if action == "plan":
+            return tg_rewrite_plan(pattern=pattern, replacement=replacement, lang=lang, path=path)
+        if action == "apply":
+            return tg_rewrite_apply(
+                pattern=pattern,
+                replacement=replacement,
+                lang=lang,
+                path=path,
+                verify=verify,
+                checkpoint=checkpoint,
+                audit_manifest=audit_manifest,
+                audit_signing_key=audit_signing_key,
+                lint_cmd=lint_cmd,
+                test_cmd=test_cmd,
+                policy=policy,
+                expected_plan_digest=expected_plan_digest,
+                expected_match_count=expected_match_count,
+            )
+        if action == "diff":
+            return tg_rewrite_diff(pattern=pattern, replacement=replacement, lang=lang, path=path)
+        return _meta_unknown_action_error("tg_rewrite", action, _TG_REWRITE_ACTIONS)
+    except Exception as exc:
+        payload = _meta_envelope(tool="tg_rewrite", action=action)
+        payload["error"] = _sanitized_tool_error("tg_rewrite", exc)
+        return json.dumps(payload, indent=2)
 
 
 # Bound the Content-Length compatibility read. Official MCP stdio is newline-delimited; this framed

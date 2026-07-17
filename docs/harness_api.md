@@ -1472,7 +1472,7 @@ PyPI wheel installs can serve simple `tg_rewrite_plan(...)` and `tg_rewrite_appl
 
 Call `tg_mcp_capabilities()` first when a client might be running in a PyPI wheel, sandbox, or other runtime where the standalone native binary is uncertain.
 
-Current tool set (48 tools; re-derive with `grep -n "^def tg_\|^async def tg_" src/tensor_grep/cli/mcp_server.py | wc -l` and cross-check names against `test_harness_api_doc_lists_every_registered_tool_name`, which enumerates the live registry so this list can't silently drift again):
+Current tool set (58 tools by default -- 48 legacy + 10 additive task-shaped meta-tools, Phase-1 MCP consolidation #98; re-derive with `grep -n "^def tg_\|^async def tg_" src/tensor_grep/cli/mcp_server.py | wc -l` and cross-check names against `test_harness_api_doc_lists_every_registered_tool_name`, which enumerates the live registry so this list can't silently drift again). Setting `TG_MCP_LEGACY_TOOLS` to `0`/`false`/`no`/`off` de-advertises the 46 legacy tools below that are NOT `tg_mcp_capabilities`/`tg_classify_logs` (those 2 are always-on singletons), leaving the 10 meta-tools + the 2 singletons (12 tools) -- see "Meta-Tools (Phase-1 consolidation)" below):
 
 - `tg_mcp_capabilities()`
 - `tg_rulesets()`
@@ -1483,7 +1483,7 @@ Current tool set (48 tools; re-derive with `grep -n "^def tg_\|^async def tg_" s
 - `tg_context_pack(query, path=".")`
 - `tg_edit_plan(query, path=".", max_files=3, max_sources=5, max_tokens=None, max_symbols=5)`
 - `tg_context_render(query, path=".", max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full")`
-- `tg_agent_capsule(query, path=".", max_files=3, max_sources=5, max_tokens=1200, max_repo_files=2000, model=None, gpu_device_ids=None, gpu_timeout_s=5.0)`
+- `tg_agent_capsule(query, path=".", max_files=3, max_sources=5, max_tokens=1200, max_repo_files=2000, model=None, gpu_device_ids=None, gpu_timeout_s=5.0, deadline=None)` -- `deadline` (#98/W1b parity) mirrors `tg agent --deadline` / `tg codemap --deadline`.
 - `tg_symbol_defs(symbol, path=".")`
 - `tg_symbol_source(symbol, path=".")`
 - `tg_symbol_impact(symbol, path=".", deadline=None)`
@@ -1523,6 +1523,21 @@ Current tool set (48 tools; re-derive with `grep -n "^def tg_\|^async def tg_" s
 - `tg_review_bundle_verify(bundle_path)`
 - `tg_rewrite_diff(pattern, replacement, lang, path=".")`
 
+Meta-Tools (Phase-1 consolidation, #98) -- ALWAYS registered regardless of `TG_MCP_LEGACY_TOOLS`; each composes several of the 46 legacy tools above by an `action` string selector and dispatches to the matching legacy tool FUNCTION directly, so every legacy fail-closed-class behavior (native-unavailable, validation-command gating, plan-drift, ...) is preserved unchanged:
+
+- `tg_navigate(action, symbol=None, file=None, path=".", provider="native", max_repo_files=2000, deadline=None)` -- actions: `defs`/`source`/`refs`/`callers` (= tg_symbol_defs/tg_symbol_source/tg_symbol_refs/tg_symbol_callers), `imports`/`importers` (= tg_file_imports/tg_file_importers).
+- `tg_impact(action, symbol=None, path=".", max_depth=3, max_files=3, max_symbols=5, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full", profile=False, provider="native", max_repo_files=2000, deadline=None)` -- actions: `impact`/`blast_radius`/`blast_radius_plan`/`blast_radius_render` (= tg_symbol_impact/tg_symbol_blast_radius/tg_symbol_blast_radius_plan/tg_symbol_blast_radius_render).
+- `tg_query(action, pattern=None, query=None, lang=None, path=".", ..., max_tokens=None, deadline=None, workspace_roots=None)` -- actions: `text`/`ast`/`find` (= tg_search/tg_ast_search/tg_find), `index` (= tg_index_search, native-required, fails closed without a standalone native tg binary). `workspace_roots` (optional `list[str]`) is a NEW capability: each element is independently confined and the WHOLE call is refused fail-closed if any element escapes the MCP root; when supplied, the same action runs once per confined root and results are aggregated under `results_by_root`.
+- `tg_context(action, query=None, path=".", ..., max_tokens=None, deadline=None)` -- actions: `pack`/`edit_plan`/`render`/`capsule` (= tg_context_pack/tg_edit_plan/tg_context_render/tg_agent_capsule). `action="capsule"` accepts the same `deadline` as `tg_agent_capsule` above.
+- `tg_explore(action, path=".", max_tokens=3000, max_central_files=10, ignore=None, max_repo_files=2000, config="sgconfig.yml", with_lsp=True, json_output=True)` -- actions: `orient`/`repo_map`/`doctor`/`devices` (= tg_orient/tg_repo_map/tg_doctor/tg_devices).
+- `tg_session(action, session_id=None, query=None, symbol=None, file=None, path=".", ...)` -- actions: `open`/`list`/`show`/`refresh`/`context`/`edit_plan`/`context_render`/`blast_radius`/`blast_radius_plan`/`blast_radius_render`/`file_importers` (= the 11 tg_session_* tools above). `open`/`refresh` write the session cache.
+- `tg_scan(action, ruleset=None, inline_rules=None, path=".", ...)` -- actions: `scan`/`rulesets` (= tg_ruleset_scan/tg_rulesets). `action="scan"` is read-only by default; `write_baseline`/`write_suppressions` write a file.
+- `tg_audit(action, manifest_path=None, signing_key=None, previous_manifest=None, current_manifest=None, path=".", scan_path=None, checkpoint_id=None, output_path=None, bundle_path=None)` -- actions: `manifest_verify`/`history`/`diff`/`bundle_create`/`bundle_verify` (= tg_audit_manifest_verify/tg_audit_history/tg_audit_diff/tg_review_bundle_create/tg_review_bundle_verify). `action="bundle_create"` writes `output_path` when supplied.
+- `tg_checkpoint(action, checkpoint_id=None, path=".")` -- actions: `create`/`list`/`undo` (= tg_checkpoint_create/tg_checkpoint_list/tg_checkpoint_undo). `create`/`undo` write.
+- `tg_rewrite(action, pattern=None, replacement=None, lang=None, path=".", verify=False, checkpoint=False, audit_manifest=None, audit_signing_key=None, lint_cmd=None, test_cmd=None, policy=None, expected_plan_digest=None, expected_match_count=None)` -- actions: `plan`/`apply`/`diff` (= tg_rewrite_plan/tg_rewrite_apply/tg_rewrite_diff). `action="apply"` is the mutation surface; `action="diff"` is native-required.
+
+An unrecognized `action` or a missing action-required param returns a structured `error.code = "invalid_input"` envelope (never a raw exception); every meta tool's primary `path` (and any secondary path-shaped param, e.g. `tg_audit`'s `manifest_path`/`bundle_path`) is confined to the MCP server root BEFORE the action branch runs, regardless of which action was requested.
+
 Capability modes:
 
 | Mode | Meaning | Representative tools |
@@ -1530,6 +1545,7 @@ Capability modes:
 | `python-local` | Runs without a standalone native `tg` binary. | `tg_mcp_capabilities`, `tg_repo_map`, `tg_context_pack`, `tg_agent_capsule`, `tg_search`, `tg_ast_search`, `tg_devices`, `tg_checkpoint_create`, `tg_session_context` |
 | `embedded-safe` | Simple requests can use packaged PyO3 rewrite fallback when standalone native `tg` is unavailable. | `tg_rewrite_plan`, `tg_rewrite_apply` |
 | `native-required` | Requires a standalone native `tg` binary via PATH, `TG_NATIVE_TG_BINARY`, in-tree build, or release asset. | `tg_index_search`, `tg_rewrite_diff` |
+| `meta` | Task-shaped meta-tool (#98) composing several legacy tools by an `action` selector; the per-action `native_required`/`mutation`/`embedded_fallback` flags live under `tools[].actions` in the `tg_mcp_capabilities()` response, not the top-level `tools[].mode`/`native_required` fields those describe for the other 3 modes. | `tg_navigate`, `tg_impact`, `tg_query`, `tg_context`, `tg_explore`, `tg_session`, `tg_scan`, `tg_audit`, `tg_checkpoint`, `tg_rewrite` |
 
 `tg_mcp_capabilities()` response fields:
 
@@ -1546,10 +1562,12 @@ Capability modes:
 | `native_tg.path` | `string \| null` | Resolved native binary path when available. |
 | `embedded_rewrite.available` | `boolean` | True when packaged rewrite plan/apply fallback is importable. |
 | `tools[].name` | `string` | Public MCP tool name. |
-| `tools[].mode` | `string` | One of `python-local`, `embedded-safe`, or `native-required`. |
-| `tools[].native_required` | `boolean` | True for tools that cannot run without standalone native `tg`. |
-| `tools[].embedded_fallback` | `boolean` | True for tools with simple embedded rewrite fallback. |
-| `tools[].native_required_options` | `array<string>` | Options that make an otherwise embedded-safe tool require standalone native `tg`; for `tg_rewrite_apply`, this includes `verify`, `audit_manifest`, `audit_signing_key`, `lint_cmd`, and `test_cmd`. Checkpointed apply can use the embedded fallback. |
+| `tools[].mode` | `string` | One of `python-local`, `embedded-safe`, `native-required`, or `meta`. |
+| `tools[].native_required` | `boolean` | True for tools that cannot run without standalone native `tg`. For `mode="meta"`, this is an AGGREGATE (true if ANY composed action requires native `tg`) -- see `tools[].actions` for the precise per-action flag. |
+| `tools[].embedded_fallback` | `boolean` | True for tools with simple embedded rewrite fallback. For `mode="meta"`, this is the same kind of aggregate as `native_required` above. |
+| `tools[].native_required_options` | `array<string>` | Options that make an otherwise embedded-safe tool require standalone native `tg`; for `tg_rewrite_apply`, this includes `verify`, `audit_manifest`, `audit_signing_key`, `lint_cmd`, and `test_cmd`. Checkpointed apply can use the embedded fallback. Always `[]` for `mode="meta"` (the equivalent per-action detail lives in `tools[].actions`). |
+| `tools[].composes` | `array<string>` | `mode="meta"` only: the legacy tool names this meta-tool dispatches to by `action`. |
+| `tools[].actions` | `object` | `mode="meta"` only: per-action `{native_required, mutation, embedded_fallback}` flags, keyed by the action name accepted in that meta-tool's `action` param. `mutation=true` marks an action that can write to disk (always, e.g. `tg_checkpoint`'s `create`/`undo`, or opt-in via a param the composed legacy tool already gates, e.g. `tg_scan`'s `write_baseline`). |
 | `tools[].notes` | `string` | Human-readable routing note. |
 
 Native-unavailable error responses use `error.code = "unavailable"`, `routing_reason = "native-tg-unavailable"`, include the `tool` name, and include `error.remediation` with `TG_NATIVE_TG_BINARY` guidance.
