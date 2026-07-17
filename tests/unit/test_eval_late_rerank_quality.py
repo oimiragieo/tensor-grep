@@ -349,3 +349,190 @@ def test_build_report_is_deterministic_across_repeated_calls() -> None:
     second = mod.render_report(mod.build_report(queries, mod.DEFAULT_CORPUS_DIR, (5, 10)), (5, 10))
 
     assert first == second
+
+
+# ---------------------------------------------------------------------------------------
+# #189 Item-2 DE-RISK: the rrf+cent arm (bench-only measurement; core/reranker.py untouched).
+# ---------------------------------------------------------------------------------------
+
+
+def _centrality_corpus_dir(mod: ModuleType) -> Path:
+    return mod.DEFAULT_CORPUS_DIR.parent / "find_centrality_corpus"
+
+
+def _centrality_golden_path(mod: ModuleType) -> Path:
+    return mod.DEFAULT_GOLDEN_PATH.parent / "find_centrality_golden.jsonl"
+
+
+def test_oracle_bidirectional_against_the_new_centrality_golden_set() -> None:
+    """The PR receipt for the #189 Item-2 structural golden slice: `--validate-oracle` against
+    the new committed corpus + golden queries must pass cleanly, same discipline as
+    ``test_oracle_bidirectional_against_the_real_committed_golden_set`` above."""
+    mod = _load_eval_module()
+
+    exit_code = mod.main([
+        "--validate-oracle",
+        "--corpus",
+        str(_centrality_corpus_dir(mod)),
+        "--golden",
+        str(_centrality_golden_path(mod)),
+    ])
+
+    assert exit_code == 0
+
+
+def test_centrality_golden_has_expected_category_counts() -> None:
+    """Regression guard for the golden set's designed shape (#189 Item-2 §1): 16 hub-discriminator
+    (`central`) queries + 16 leaf-guard (`leaf`) queries, matching the design doc's "~15-20 each"
+    target."""
+    mod = _load_eval_module()
+
+    queries = mod.load_golden_queries(_centrality_golden_path(mod))
+
+    by_category: dict[str, int] = {}
+    for query in queries:
+        by_category[query.category] = by_category.get(query.category, 0) + 1
+    assert by_category == {"central": 16, "leaf": 16}
+
+
+def test_centrality_corpus_hubs_score_highest() -> None:
+    """Regression guard for the corpus's DESIGNED import topology (#189 Item-2 §1): the corpus is
+    built with 4 deliberate hubs (fan_in=6, fan_out=3, symbol density=10 each, by construction),
+    3 shared utilities (fan_in=4), and 24 leaves (fan_in=0) -- every hub must score identically
+    (19.0) and strictly above every non-hub file, or the corpus no longer has "room" for a
+    centrality signal to fix anything (the whole premise of the §1 hub-discriminator queries)."""
+    mod = _load_eval_module()
+    corpus_dir = _centrality_corpus_dir(mod)
+
+    centrality = mod.build_centrality_scores(corpus_dir)
+
+    assert centrality is not None
+    hubs = {
+        "orders/fulfillment_core.py",
+        "accounts/identity_core.py",
+        "pricing/rate_core.py",
+        "shipments/routing_core.py",
+    }
+    hub_scores = {centrality[hub] for hub in hubs}
+    assert hub_scores == {19.0}, hub_scores
+    non_hub_scores = [score for path, score in centrality.items() if path not in hubs]
+    assert max(non_hub_scores) < min(hub_scores)
+
+
+def test_build_centrality_scores_returns_none_never_raises_on_a_missing_dir(
+    tmp_path: Path,
+) -> None:
+    """Mirrors :func:`build_dense_index`'s "recoverable unavailability degrades, never crashes"
+    contract: a corpus_dir that ``build_repo_map`` cannot walk must degrade to ``None`` (which
+    :func:`build_report` turns into an explicit rrf+cent skip-stub), never raise and never take
+    down the whole harness run."""
+    mod = _load_eval_module()
+    missing = tmp_path / "does-not-exist"
+
+    result = mod.build_centrality_scores(missing)
+
+    assert result is None
+
+
+def test_centrality_channel_ranking_excludes_zero_score_and_ties_by_index(
+    tmp_path: Path,
+) -> None:
+    """Mirrors ``core/reranker.py``'s ``_path_channel_ranking`` contract: a chunk whose file
+    scores 0 (or is absent from the centrality map) is EXCLUDED entirely -- never an arbitrary
+    tie-broken low rank -- and files tied on score break by ascending chunk index."""
+    mod = _load_eval_module()
+    chunks = [
+        mod.Chunk(file_path=str(tmp_path / "hub.py"), start_line=1, end_line=5, text="hub"),
+        mod.Chunk(file_path=str(tmp_path / "leaf_a.py"), start_line=1, end_line=2, text="a"),
+        mod.Chunk(file_path=str(tmp_path / "leaf_b.py"), start_line=1, end_line=2, text="b"),
+        mod.Chunk(file_path=str(tmp_path / "zero.py"), start_line=1, end_line=2, text="z"),
+    ]
+    centrality = {"hub.py": 19.0, "leaf_a.py": 3.0, "leaf_b.py": 3.0, "zero.py": 0.0}
+
+    ranking = mod._centrality_channel_ranking(chunks, tmp_path, centrality)
+
+    # zero.py (index 3) never appears; hub.py (19.0) ranks first; leaf_a/leaf_b tie at 3.0 and
+    # break by ascending chunk index (1 before 2).
+    assert ranking == [0, 1, 2]
+
+
+def test_run_rrf_centrality_arm_is_byte_identical_to_rrf_when_centrality_is_empty() -> None:
+    """The design doc's "flat map -> EMPTY leg, not noise" contract (#189 Item-2 §2, restated in
+    §4's arm contract): when the centrality signal is empty (e.g. a corpus with no resolvable
+    import graph, like the base ``find_golden_corpus``), ``rrf+cent`` must score EXACTLY the same
+    as plain ``rrf`` for every query -- the added leg contributes nothing; it must never silently
+    perturb tie-breaking or inject noise into an otherwise-unchanged fusion."""
+    mod = _load_eval_module()
+    queries = mod.load_golden_queries(mod.DEFAULT_GOLDEN_PATH)[:8]
+    corpus_files = mod.load_corpus_files(mod.DEFAULT_CORPUS_DIR)
+    chunks = []
+    for path in corpus_files:
+        chunks.extend(mod.chunk_file(path))
+    dense_index = mod.DenseIndex(chunks, _FakeDenseModel())
+
+    report = mod.build_report(
+        queries,
+        mod.DEFAULT_CORPUS_DIR,
+        (5, 10),
+        dense_index_override=dense_index,
+        centrality_override={},
+    )
+
+    assert report.arms["rrf"].status == "scored"
+    assert report.arms["rrf+cent"].status == "scored"
+    assert report.arms["rrf"].per_query == report.arms["rrf+cent"].per_query
+
+
+def test_build_report_gates_rrf_cent_on_dense_availability() -> None:
+    """``rrf+cent`` fuses bm25+dense+centrality -- it needs the dense leg exactly like ``rrf``
+    does, so it must skip (never crash, never silently score with a missing leg) on the same
+    precondition, with a reason that says why."""
+    mod = _load_eval_module()
+    queries = mod.load_golden_queries(mod.DEFAULT_GOLDEN_PATH)[:2]
+
+    report = mod.build_report(
+        queries,
+        mod.DEFAULT_CORPUS_DIR,
+        (5, 10),
+        dense_reason_override="test: dense leg forced off to isolate the gating check",
+    )
+
+    assert report.arms["rrf+cent"].status == "skipped"
+    assert report.arms["rrf+cent"].reason
+    assert "dense leg unavailable" in report.arms["rrf+cent"].reason
+
+
+def test_run_rrf_centrality_arm_promotes_a_high_centrality_file() -> None:
+    """Direct exercise of the RRF math, compared against the plain ``rrf`` arm: a file the
+    bm25/dense legs rank dead LAST (a 3-way tie breaks by ascending chunk index, so ``high.py``
+    at index 2 sinks to the bottom on both legs) is pulled UP the fused order once a strong
+    centrality score is attached to it -- proving the weighted third leg is actually wired into
+    the fusion, not a dead parameter. A comparison against the same query's plain-``rrf`` score
+    (rather than a hand-derived absolute number) is the robust assertion here: RRF fuses on RANK,
+    not raw score magnitude, so a 100x centrality-score advantage does not automatically win
+    outright against two legs that AGREE on the opposite order -- exactly the "weight must stay
+    sub-dominant" caveat :data:`CENTRALITY_WEIGHT` documents."""
+    mod = _load_eval_module()
+    chunks = [
+        mod.Chunk(file_path="/corpus/low.py", start_line=1, end_line=1, text="zzz"),
+        mod.Chunk(file_path="/corpus/mid.py", start_line=1, end_line=1, text="zzz"),
+        mod.Chunk(file_path="/corpus/high.py", start_line=1, end_line=1, text="zzz"),
+    ]
+    corpus_dir = Path("/corpus")
+    query = mod.GoldenQuery(
+        id="q1", query="zzz", category="central", relevant_files=frozenset({"high.py"})
+    )
+    bm25_index = mod.Bm25Index(chunks)  # every chunk has identical text -> a 3-way tie
+    dense_index = mod.DenseIndex(chunks, _FakeDenseModel())  # also a tie (identical fake vectors)
+    # high.py is ranked LAST on both the bm25 and dense legs (a 3-way tie keeps ascending index
+    # order, and high.py is index 2), but it is BY FAR the highest-centrality file.
+    centrality = {"low.py": 1.0, "mid.py": 1.0, "high.py": 100.0}
+
+    baseline = mod.run_rrf_arm(chunks, corpus_dir, [query], (5, 10), bm25_index, dense_index)
+    boosted = mod.run_rrf_centrality_arm(
+        chunks, corpus_dir, [query], (5, 10), bm25_index, dense_index, centrality
+    )
+
+    assert baseline.status == "scored"
+    assert boosted.status == "scored"
+    assert boosted.per_query["q1"]["ndcg@10"] > baseline.per_query["q1"]["ndcg@10"]

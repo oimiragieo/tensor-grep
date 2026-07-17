@@ -66,6 +66,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from tensor_grep.cli.orient_capsule import _file_centrality_scores
+from tensor_grep.cli.repo_map import build_repo_map
 from tensor_grep.core.retrieval_bm25 import Bm25Index
 from tensor_grep.core.retrieval_chunker import Chunk, chunk_file
 from tensor_grep.core.retrieval_dense import (
@@ -106,6 +108,15 @@ DEFAULT_POOL_K = 50
 # are not built yet -- see docs/BACKLOG.md #189 and tg_find_plan.md Sec.3 WAVE 2/3. Reported as an
 # explicit, permanent skip stub this wave; never silently omitted from the arm list.
 SKIP_AWAITING_WAVE2 = "skipped: awaiting-wave-2 (tg find pipeline not built yet)"
+
+# #189 Item-2 DE-RISK (bench-only exploration -- core/reranker.py is NOT touched by this arm):
+# a third, query-independent RRF leg that ranks chunks by their file's composite centrality
+# (fan-in + fan-out + symbol density, cli/orient_capsule._file_centrality_scores -- the SAME
+# scorer `tg orient`'s central_files already dogfoods, not a new metric). Mirrors reranker.py's
+# PATH_CHANNEL_WEIGHT=1.5 convention for an opt-in extra RRF channel -- both the naming and the
+# starting value match the precedent for "one more trusted-but-not-dominant leg" (design doc
+# #189 Item-2 §2's "start <=1.5, golden tunes" guidance for the eventual production default).
+CENTRALITY_WEIGHT: float = 1.5
 
 _METRIC_NAMES: tuple[str, ...] = (
     "recall@5",
@@ -375,6 +386,91 @@ def run_rrf_arm(
     return ArmResult(name="rrf", status="scored", per_query=per_query)
 
 
+# ---------------------------------------------------------------------------------------
+# #189 Item-2 DE-RISK: the centrality channel (bench-only; core/reranker.py untouched)
+# ---------------------------------------------------------------------------------------
+
+
+def build_centrality_scores(corpus_dir: Path) -> dict[str, float] | None:
+    """Composite per-file centrality over ``corpus_dir``, keyed by corpus-relative posix path,
+    filtered to files scoring >0 -- mirrors :func:`build_dense_index`'s "real production probe,
+    never a reimplementation" contract: this calls the SAME
+    ``cli.orient_capsule._file_centrality_scores`` that ``tg orient``'s ``central_files`` already
+    dogfoods, over a fresh ``cli.repo_map.build_repo_map(corpus_dir)`` repo map.
+
+    Returns ``None`` (never raises) if the repo-map build itself fails for any reason -- the
+    caller (:func:`build_report`) turns that into an explicit skip-stub for the ``rrf+cent`` arm
+    (design doc #189 Item-2 §4: "never silently omit"), the same discipline
+    :func:`build_dense_index` uses for a recoverable dense-leg failure.
+    """
+    try:
+        rm = build_repo_map(str(corpus_dir))
+        _code_files, raw_centrality = _file_centrality_scores(rm)
+    except Exception:  # a repo-map build fault degrades to a skip-stub, never a crash
+        return None
+    return {
+        _relative_posix(file_path, corpus_dir): score
+        for file_path, score in raw_centrality.items()
+        if score > 0
+    }
+
+
+def _centrality_channel_ranking(
+    chunks: list[Chunk], corpus_dir: Path, centrality: dict[str, float]
+) -> list[int]:
+    """Rank chunk indices by their file's centrality score (desc), ties by ascending chunk
+    index -- mirrors ``core/reranker.py``'s ``_path_channel_ranking`` contract exactly: only
+    chunks whose file scores >0 are included (a chunk from a flat/zero-centrality file
+    contributes nothing to this leg, never an arbitrary tie-broken rank -- design doc #189
+    Item-2 §2's "critical: flat map -> EMPTY leg, not noise"). Query-independent: the same
+    ranking for every query, computed once per :func:`run_rrf_centrality_arm` call.
+    """
+    scored: list[tuple[int, float]] = []
+    for i, chunk in enumerate(chunks):
+        rel = _relative_posix(chunk.file_path, corpus_dir)
+        score = centrality.get(rel, 0.0)
+        if score > 0:
+            scored.append((i, score))
+    ranked = sorted(scored, key=lambda item: (-item[1], item[0]))
+    return [chunk_index for chunk_index, _score in ranked]
+
+
+def run_rrf_centrality_arm(
+    chunks: list[Chunk],
+    corpus_dir: Path,
+    queries: list[GoldenQuery],
+    top_ks: tuple[int, ...],
+    bm25_index: Bm25Index,
+    dense_index: DenseIndex,
+    centrality: dict[str, float],
+) -> ArmResult:
+    """The DECISIVE measurement arm (#189 Item-2 de-risk): identical to :func:`run_rrf_arm`
+    (bm25 + dense, both at their rrf-arm parity weight of 1.0) PLUS a third, query-independent
+    centrality channel at :data:`CENTRALITY_WEIGHT` -- so the ONLY difference between this arm's
+    score and the plain ``rrf`` arm's score is the added centrality leg, isolating its effect.
+
+    The centrality ranking is computed ONCE (it does not depend on ``query``) and reused across
+    every query -- recomputing it per-query would be both wasteful and a subtle bug (the design
+    doc's "HIGHEST RISK (§2d)" note: this leg is deliberately query-independent, so there is
+    exactly one ranking to build).
+    """
+    per_query: dict[str, dict[str, float]] = {}
+    total = max(1, len(chunks))
+    centrality_ranking = _centrality_channel_ranking(chunks, corpus_dir, centrality)
+    for query in queries:
+        bm25_ranking = [i for i, _score in bm25_index.query(query.query, top_k=total)]
+        dense_ranking = [i for i, _score in dense_index.query(query.query, top_k=total)]
+        rankings: list[list[int]] = [bm25_ranking, dense_ranking]
+        weights = [1.0, 1.0]
+        if centrality_ranking:
+            rankings.append(centrality_ranking)
+            weights.append(CENTRALITY_WEIGHT)
+        fused = reciprocal_rank_fusion(rankings, k=DEFAULT_K, weights=weights)
+        ranked_files = _dedupe_ranked_files(fused, chunks, corpus_dir)
+        per_query[query.id] = _score_ranking(ranked_files, query.relevant_files, top_ks)
+    return ArmResult(name="rrf+cent", status="scored", per_query=per_query)
+
+
 def build_late_reranker() -> tuple[LateReranker | None, str | None]:
     """Mirrors :func:`build_dense_index`: real production probes
     (``late_available()``/``load_late_reranker()``), recoverable unavailability returns
@@ -571,16 +667,20 @@ def build_report(
     dense_reason_override: str | None = None,
     late_reranker_override: LateReranker | None = None,
     late_reason_override: str | None = None,
+    centrality_override: dict[str, float] | None = None,
 ) -> Report:
     """Run every arm once and return a fully-populated :class:`Report`.
 
     ``*_override`` parameters exist ONLY for tests (dependency injection mirroring
     ``test_search_semantic_rerank.py``'s ``_stub_dense_clean``/``_FakeDenseModel`` and
     ``test_reranker_hybrid.py``'s ``_FixedVectorModel`` conventions) -- they let a test exercise
-    the "dense/rrf/rrf+maxsim actually SCORED" path deterministically without the `semantic`/
-    `rerank` extras or a fetched model being present in CI. When both are ``None`` (the default,
-    used by the real CLI), availability is probed for real via :func:`build_dense_index` /
-    :func:`build_late_reranker`.
+    the "dense/rrf/rrf+maxsim/rrf+cent actually SCORED" path deterministically without the
+    `semantic`/`rerank` extras or a fetched model being present in CI. When all are ``None`` (the
+    default, used by the real CLI), availability is probed for real via :func:`build_dense_index`
+    / :func:`build_late_reranker` / :func:`build_centrality_scores`. ``centrality_override`` is
+    checked via ``is not None`` (not truthiness) so a test can inject an intentionally EMPTY
+    ``{}`` centrality map (the "flat import graph" scenario) without it being mistaken for "not
+    provided, compute for real".
     """
     corpus_files = load_corpus_files(corpus_dir)
     chunks: list[Chunk] = []
@@ -601,10 +701,27 @@ def build_report(
     if dense_index is None:
         arms["dense"] = skipped_arm("dense", dense_reason or "dense leg unavailable")
         arms["rrf"] = skipped_arm("rrf", f"dense leg unavailable: {dense_reason}")
+        arms["rrf+cent"] = skipped_arm("rrf+cent", f"dense leg unavailable: {dense_reason}")
         arms["rrf+maxsim"] = skipped_arm("rrf+maxsim", f"dense leg unavailable: {dense_reason}")
     else:
         arms["dense"] = run_dense_arm(chunks, corpus_dir, queries, top_ks, dense_index)
         arms["rrf"] = run_rrf_arm(chunks, corpus_dir, queries, top_ks, bm25_index, dense_index)
+
+        centrality = (
+            centrality_override
+            if centrality_override is not None
+            else build_centrality_scores(corpus_dir)
+        )
+        if centrality is None:
+            arms["rrf+cent"] = skipped_arm(
+                "rrf+cent",
+                "centrality leg unavailable: repo-map build failed for corpus_dir "
+                "(see build_centrality_scores)",
+            )
+        else:
+            arms["rrf+cent"] = run_rrf_centrality_arm(
+                chunks, corpus_dir, queries, top_ks, bm25_index, dense_index, centrality
+            )
 
         if late_reranker_override is not None:
             late_reranker, late_reason = late_reranker_override, None
