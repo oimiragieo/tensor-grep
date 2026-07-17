@@ -277,6 +277,120 @@ def test_main_entry_should_not_passthrough_single_project_root_with_top_level_ve
     assert called["full_cli"] is True
 
 
+def test_main_entry_should_not_native_delegate_bare_type_filter_with_json_trigger_from_vendored_root(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """#88-parity fix: `_search_args_include_generated_scan_bound` used to treat
+    `-t`/`-g`/`--type`/`--glob` as an UNCONDITIONAL scan bound, unlike cli/main.py's
+    already-fixed `_has_walk_scope_bound` (~4734, the original #88 fix), which only
+    counts them as a bound when an explicit PATH was also given. Without that
+    distinction, a bare `tg search PAT -t py --json` (no PATH, from a vendored/workspace
+    root) slipped past `_search_args_include_unbounded_broad_scan`'s refusal straight
+    into native delegation with a "supported trigger" flag (`--json`/`--cpu`/`--ndjson`/
+    `--gpu-device-ids`) riding along -- `_can_delegate_to_native_tg_search` does not
+    itself re-check walk scope, so this was a real unbounded-native-walk resurrection of
+    #88, not merely a theoretical gap.
+
+    NOTE: a bare `tg search PAT -t py` with NO trigger flag never reaches this branch --
+    it is (accidentally) still caught by `_requires_full_cli`'s `_TG_ONLY_SEARCH_FLAGS`
+    membership check, which forces it to the full CLI by a wholly separate mechanism.
+    That incidental protection does not apply once a trigger flag routes execution into
+    `_can_delegate_to_native_tg_search`'s OR-branch, which is why this test rides `--json`
+    alongside `-t py` -- exactly the shape a JSON-emitting agent caller would send.
+    """
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "go.mod").write_text("module example.com/repo\n", encoding="utf-8")
+    (root / "vendor").mkdir()
+
+    called = {"full_cli": False}
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "pat", "-t", "py", "--json"])
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: "tg.exe")
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: "rg")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_native_tg_search",
+        lambda *_args, **_kwargs: pytest.fail("native delegation should not run (#88-parity)"),
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_rg_passthrough",
+        lambda *_args, **_kwargs: pytest.fail("rg passthrough should not run (#88-parity)"),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: called.__setitem__("full_cli", True))
+
+    bootstrap.main_entry()
+
+    assert called["full_cli"] is True
+
+
+def test_main_entry_should_native_delegate_explicit_dot_path_with_type_filter_and_json_trigger(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Companion to the #88-parity fix above, proving it does not over-refuse: an
+    EXPLICIT `.` path is a deliberate, scoped root, so `-t py` alongside it IS a
+    legitimate walk-scope bound -- mirrors cli/main.py's `_has_walk_scope_bound`, which
+    only exempts glob/type from counting as a bound when `paths_defaulted` is True (no
+    explicit path). Same vendored-root fixture as the refusal test above; the only
+    difference is the explicit `.` positional."""
+    seen: dict[str, object] = {}
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "go.mod").write_text("module example.com/repo\n", encoding="utf-8")
+    (root / "vendor").mkdir()
+
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "pat", ".", "-t", "py", "--json"])
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: "tg.exe")
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: "rg")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_native_tg_search",
+        lambda binary_name, argv: seen.update({"argv": list(argv)}) or 0,
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: pytest.fail("full cli should not run"))
+
+    with pytest.raises(SystemExit) as excinfo:
+        bootstrap.main_entry()
+
+    assert excinfo.value.code == 0
+    assert seen["argv"] == ["pat", ".", "-t", "py", "--json"]
+
+
+def test_main_entry_should_native_delegate_bare_max_depth_with_json_trigger(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Second companion to the #88-parity fix: `-d`/`--max-depth` genuinely bounds HOW
+    FAR the walk descends, so it stays an UNCONDITIONAL scan bound (mirrors
+    cli/main.py's `_has_walk_scope_bound`, which returns True for
+    `config.max_depth is not None` regardless of `paths_defaulted`) -- a bare `-d 3`
+    with no explicit path must remain on the fast native path, unlike `-t`/`-g` without
+    one. Same vendored-root fixture; only the flag changes."""
+    seen: dict[str, object] = {}
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "go.mod").write_text("module example.com/repo\n", encoding="utf-8")
+    (root / "vendor").mkdir()
+
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "pat", "-d", "3", "--json"])
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: "tg.exe")
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: "rg")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_native_tg_search",
+        lambda binary_name, argv: seen.update({"argv": list(argv)}) or 0,
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: pytest.fail("full cli should not run"))
+
+    with pytest.raises(SystemExit) as excinfo:
+        bootstrap.main_entry()
+
+    assert excinfo.value.code == 0
+    assert seen["argv"] == ["pat", "-d", "3", "--json"]
+
+
 def test_main_entry_should_fast_path_repo_root_with_node_modules(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -574,6 +688,80 @@ def test_requires_full_cli_routes_every_walk_scope_filter_form() -> None:
     ]
     for args in must_not_route:
         assert not bootstrap._requires_full_cli(args), f"non-scope search over-routed: {args}"
+
+
+def test_search_args_paths_defaulted_distinguishes_explicit_dot_from_no_path() -> None:
+    """RAW-arg positional predicate (#88-parity fix) mirroring cli/main.py's
+    `paths_defaulted = not args[1:]` (~7262). Must NOT be derived from
+    `_search_path_args`, whose `paths or ["."]` fallback collapses "no path given" and
+    an explicit "." into the identical `["."]` -- exactly the distinction this predicate
+    exists to preserve."""
+    assert bootstrap._search_args_paths_defaulted(["pat", "-t", "py"]) is True
+    assert bootstrap._search_args_paths_defaulted(["pat", ".", "-t", "py"]) is False
+    assert bootstrap._search_args_paths_defaulted(["pat", "-d", "3"]) is True
+    assert bootstrap._search_args_paths_defaulted(["pat", "src", "-t", "py"]) is False
+    # -e/--regexp-supplied pattern: the first positional after it is a real PATH, not
+    # the pattern (the pattern was already consumed by -e's value).
+    assert bootstrap._search_args_paths_defaulted(["-e", "pat", "src"]) is False
+    assert bootstrap._search_args_paths_defaulted(["-e", "pat"]) is True
+    assert bootstrap._search_args_paths_defaulted([]) is True
+
+
+def test_search_args_include_generated_scan_bound_splits_unconditional_from_path_conditional() -> (
+    None
+):
+    """Council fix (#88-parity): `-d`/`--max-depth`/`--maxdepth` stay an UNCONDITIONAL
+    bound regardless of `paths_defaulted` (mirrors cli/main.py's `_has_walk_scope_bound`
+    returning True for `config.max_depth is not None` unconditionally); `-g`/`-t`/`-T`/
+    `--glob`/`--iglob`/`--type`/`--type-not` become PATH-CONDITIONAL -- a bound only when
+    `paths_defaulted=False` (an explicit PATH was also supplied)."""
+    # max-depth forms: a bound with or without an explicit path.
+    for args in (["-d", "3"], ["--max-depth", "3"], ["--maxdepth", "3"], ["-d3"]):
+        assert bootstrap._search_args_include_generated_scan_bound(args, paths_defaulted=True), (
+            f"{args} must be an unconditional bound (no path)"
+        )
+        assert bootstrap._search_args_include_generated_scan_bound(args, paths_defaulted=False), (
+            f"{args} must be an unconditional bound (explicit path)"
+        )
+
+    # type/glob forms: a bound ONLY when an explicit path was given.
+    for args in (
+        ["-t", "py"],
+        ["--type", "py"],
+        ["-T", "py"],
+        ["--type-not", "py"],
+        ["-g", "*.py"],
+        ["--glob", "*.py"],
+        ["--iglob", "*.py"],
+        ["--type=py"],
+        ["--glob=*.py"],
+        ["-tpy"],
+        ["-g*.py"],
+    ):
+        assert not bootstrap._search_args_include_generated_scan_bound(
+            args, paths_defaulted=True
+        ), f"{args} must NOT be a bound with no explicit path (#88-parity)"
+        assert bootstrap._search_args_include_generated_scan_bound(args, paths_defaulted=False), (
+            f"{args} must be a bound once an explicit path is given"
+        )
+
+
+def test_search_args_include_unbounded_broad_scan_refuses_bare_type_filter_from_vendored_root(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """End-to-end (within bootstrap.py, no main_entry monkeypatching) proof that the
+    paths_defaulted split above actually changes
+    `_search_args_include_unbounded_broad_scan`'s verdict against a real pathological
+    root: a bare `-t py` (no path) must now be flagged as an unbounded broad scan from a
+    vendored root, an explicit "." must not, and a bare max-depth must not."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "vendor").mkdir()
+    monkeypatch.chdir(root)
+
+    assert bootstrap._search_args_include_unbounded_broad_scan(["pat", "-t", "py"]) is True
+    assert bootstrap._search_args_include_unbounded_broad_scan(["pat", ".", "-t", "py"]) is False
+    assert bootstrap._search_args_include_unbounded_broad_scan(["pat", "-d", "3"]) is False
 
 
 def test_main_entry_should_strip_noop_rg_format_and_keep_sort_for_rg_passthrough(monkeypatch):
