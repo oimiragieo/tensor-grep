@@ -15325,7 +15325,17 @@ def build_symbol_refs_from_map(
         payload["coverage_summary"] = _coverage_summary(payload)
         payload["resolution_gaps"] = []
         return payload
-    context_payload = build_context_pack_from_map(repo_map, symbol)
+    # #205: bound context-pack's own symbol-scoring + pagerank loop with the SAME warm-daemon
+    # deadline. Previously called BARE here while the sibling handlers callers/impact threaded it
+    # (repo_map.py:16431 / 15011); on a very large session repo this in-memory stage could still
+    # overrun the 60s budget. Fold its early-break into the refs partial signal below.
+    context_pack_deadline_hit = _DeadlineBreakFlag()
+    context_payload = build_context_pack_from_map(
+        repo_map,
+        symbol,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=context_pack_deadline_hit,
+    )
     repo_root = Path(str(repo_map["path"])).resolve()
     refs_universe_files, refs_universe_tests = _repo_map_file_and_test_universe(repo_map)
     bounded_files, refs_ceiling_hit = _cap_caller_scan_files(
@@ -15564,7 +15574,7 @@ def build_symbol_refs_from_map(
         lsp_count=lsp_proof_count,
         fallback_used=fallback_used,
     )
-    if refs_scan_deadline_hit:
+    if refs_scan_deadline_hit or context_pack_deadline_hit.hit:
         payload["partial"] = True
         payload["deadline_limit"] = {
             "deadline_exceeded": True,
