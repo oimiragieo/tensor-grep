@@ -30,6 +30,40 @@ def _serve(server: session_daemon._ThreadedSessionDaemon) -> threading.Thread:
     return thread
 
 
+def _daemon_request_with_connect_retry(
+    host: str, port: int, request: dict[str, Any], *, token: str = ""
+) -> dict[str, Any]:
+    """Bounded retry around ``session_daemon._daemon_request`` for CONNECT-level jitter only.
+
+    ``_daemon_request``'s TCP connect phase uses a tight, single-client-tuned timeout
+    (``session_daemon._DAEMON_CONNECT_TIMEOUT_SECONDS``, 0.5s) that is not itself under test
+    here. Under sustained CI-runner contention -- a shared macOS runner deep into a 4600+ test
+    run -- a single connect attempt can transiently exceed that window even though the daemon
+    thread is healthy and already listening: run 29559122313 (test-python macos-latest py3.11,
+    #202) failed this exact test with ``TimeoutError: timed out`` at
+    ``session_daemon.py:518 socket.create_connection(...) -> sock.connect(sa)``, i.e. before a
+    single byte of the request was ever sent. That is the identical connect-jitter class already
+    worked around in ``test_orient_agent_daemon.py::_request_with_connect_retry`` (see its
+    docstring: "under N simultaneous connects the loopback accept backlog can transiently make
+    one attempt time out even though the daemon itself is healthy").
+
+    Retries ONLY on ``(TimeoutError, OSError)`` -- a connect (or response-read) timeout means
+    either no bytes reached the server yet, or the client simply gave up waiting, so a retry is a
+    clean fresh attempt on a brand-new socket (``_daemon_request`` opens one connection per call).
+    Any actual response -- including a WRONG one -- returns immediately on the first attempt, so
+    this can never mask a functional regression in what the test actually asserts (lifecycle
+    commands are never counted in demand_metrics).
+    """
+    last_error: TimeoutError | OSError | None = None
+    for _attempt in range(5):
+        try:
+            return session_daemon._daemon_request(host, port, request, token=token)
+        except (TimeoutError, OSError) as exc:
+            last_error = exc
+    assert last_error is not None
+    raise last_error
+
+
 def _stub_dispatch(monkeypatch: Any, root: Path) -> None:
     """Route every non-lifecycle command through a cheap fake (mirrors the routing-only stub
     in test_session_daemon_security.py::test_daemon_request_path_field_cannot_escape_root) so
@@ -207,9 +241,9 @@ def test_lifecycle_commands_never_counted(tmp_path: Path, monkeypatch: Any) -> N
         host = str(server.server_address[0])
         port = int(server.server_address[1])
         monkeypatch.setattr(session_daemon.os, "getpid", lambda: 555)
-        session_daemon._daemon_request(host, port, {"command": "ping"}, token="tok")
-        session_daemon._daemon_request(host, port, {"command": "stats"}, token="tok")
-        session_daemon._daemon_request(
+        _daemon_request_with_connect_retry(host, port, {"command": "ping"}, token="tok")
+        _daemon_request_with_connect_retry(host, port, {"command": "stats"}, token="tok")
+        _daemon_request_with_connect_retry(
             host, port, {"command": "health", "session_id": "nope"}, token="tok"
         )
     finally:
