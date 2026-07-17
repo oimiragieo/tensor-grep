@@ -1,6 +1,140 @@
 # CHANGELOG
 
 
+## v1.80.0 (2026-07-17)
+
+### Documentation
+
+- Capture the 2026-07-16 tg-find campaign + session disciplines (CLAUDE.md/AGENTS.md/skills v1.78.1)
+  ([#636](https://github.com/oimiragieo/tensor-grep/pull/636),
+  [`7738fac`](https://github.com/oimiragieo/tensor-grep/commit/7738fac8397cc469c78671c1dfa7786a560661ea))
+
+Captures this session's durable learnings into the governance docs and the 21-skill in-repo library,
+  re-verified against origin/main @ 999aa05 (one commit above v1.78.1):
+
+- AGENTS.md: tg find campaign addendum (#189, v1.77.0 CLI/v1.78.0 MCP), a 5th MCP registration site
+  (bump _TG_MCP_SERVER_CONTRACT_VERSION), a retrieval-quality benchmark subsection, Operating Rule 8
+  (decode-CI-failure-first, generalized), A12 CPU-safe shared-server discipline, CI/Release Rules
+  item (g) for a disclosed runtime-dependency CVE (the #632 mcp bump), and 3 missing global skills
+  added to the Skills index (agent-liveness-probe, anti-hang-test-protocol,
+  instrumented-build-gate). - CLAUDE.md: mirrored the tg find bullet, the
+  dogfood-real-corpus-before-precision- heuristics clause, the extended Campaign Orchestration
+  Disciplines bullet, and agent-liveness-probe in the global-skills list. - 15 in-repo skills
+  accuracy-fixed to v1.78.1 with genuine content deltas (not blind stamp bumps): config-and-flags
+  (TG_FIND_DENSE_WEIGHT row), run-and-operate (tg find + tg route-test, MCP tool count 42->48, exit
+  contract), tensor-grep/REFERENCE.md (tg route-test), semantic-search-campaign (STATUS UPDATE 2),
+  research-frontier (P4 file-deps re-proven 10x-worse -> 2.24x-better), research-methodology (C14
+  full lifecycle + a fresh default-OFF->proven->pending-flip worked example),
+  benchmark-and-proof-toolkit (P4 close-out + new S7 retrieval-quality-gate discipline),
+  failure-archaeology (fixed a stale case_sensitive KNOWN_GAP claim + Battle 16),
+  release-and-positioning (GPU funding-note hedge + internal-vs- publishable distinction),
+  architecture-contract (a new command must prove its own fail-closed boundary, not inherit a
+  sibling's), validation-and-qa (a 2nd fixture-blind-spot receipt + a vacuous-truth-oracle checklist
+  item), large-repo- scale-campaign (tg find's bounded-but-not-refusal-gated shape), build-and-env
+  and change-control (mechanical count/version fixes), debugging-playbook (a new
+  dependency-CVE-audit triage entry), diagnostics-and-tooling (tg find/route-test field
+  interpretation), code-search-and-retrieval-reference (a new, Exa-grounded
+  query-shape-classification section), backlog-campaign (de-hardcoded the session-scoped
+  steward-cron id). - docs/BACKLOG.md: corrected the stale v1.78.0/PR-queue header to the real
+  v1.78.1 + live PR state (verified via gh pr list). - Whole-repo `ruff format --preview .` also
+  fixed 4 pre-existing, unrelated formatting-drift files (docs/architecture.md,
+  docs/planning/PROJECT_PLAN.md, and two docs/plans/*.md files) so the CI gate stays green.
+
+No new skills: per the plan's own audit, every session learning maps onto an existing skill; minting
+  a duplicate would only add discovery-surface cost. Every edit is anchored to a live re-check
+  (grep/git log/git show/gh pr view), not carried over from a stale plan draft -- roughly half of
+  the plan's original "needs-fix" list was already fixed on origin/main and was left untouched.
+
+No src/ code touched.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Features
+
+- **find**: Add checksum-pinned fetch for the dense-embedding model (potion-code-16M) with a module
+  --fetch CLI ([#635](https://github.com/oimiragieo/tensor-grep/pull/635),
+  [`1135d30`](https://github.com/oimiragieo/tensor-grep/commit/1135d301d85523e324b7165af9153906c6014acf))
+
+`tg find`'s dense leg degraded to BM25-only whenever the model wasn't fetched, and there was no `tg`
+  fetch front door for it: `retrieval_dense.py`'s `DenseUnavailableError` literally said "There is
+  no `tg` fetch command for this leg yet" and told users to run an UNPINNED, UNCHECKSUMMED
+  `StaticModel.from_pretrained('minishlab/potion-code-16M').save_pretrained(<dir>)`. The late-rerank
+  leg (`retrieval_late.py`, LateOn-Code-edge) already has the full hardened precedent for exactly
+  this gap. This PR clones it for the dense leg.
+
+What changed (src/tensor_grep/core/retrieval_dense.py only): - `fetch_dense_model(dest_dir=None) ->
+  Path`: downloads the 3 pinned potion-code-16M files, checksum-gated + atomic (mirrors
+  `retrieval_late.fetch_late_model` by symbol: same byte-capped + time-bound +
+  wall-clock-deadline-bounded `_download_bounded`, same tmp-sibling-dir + `os.replace` atomic
+  install, same fail-closed refuse + cleanup on any mismatch -- never a partial install). -
+  `_download_bounded`: per-file byte cap (128 MiB; largest pinned file is ~64.3 MB) + a 60s
+  single-recv socket timeout + an ADDITIVE total wall-clock deadline
+  (`TG_SEMANTIC_FETCH_DEADLINE_S`, default 300s) guarding against a slow-drip server. -
+  `_FETCH_MANIFEST` + `_HF_REVISION`: a real pinned HF commit SHA (never `main`) and real per-file
+  SHA-256 + exact-byte-size for the 3 files model2vec's native `StaticModel.from_pretrained` layout
+  actually reads (`config.json` / `model.safetensors` / `tokenizer.json` -- verified against the
+  model2vec source; `modules.json`/`README.md` are present upstream but not read by the loader, so
+  both are deliberately excluded from the pinned manifest). - `python -m
+  tensor_grep.core.retrieval_dense --fetch [--model-dir ...]`: the ONLY new surface (module CLI only
+  -- per council must-fix F2, deliberately NOT a `tg models fetch` command or a `tg find
+  --fetch-model` flag, so this adds zero new `tg`-CLI registration surface / misroute risk). No
+  user-controllable URL, revision, or checksum. - `DenseUnavailableError`'s "not fetched" message
+  now names the new fetch command instead of the old unpinned/unchecksummed `save_pretrained`
+  workaround. - Fetch is NEVER invoked automatically at query time -- explicit user action only,
+  exactly mirroring `retrieval_late.py`'s contract.
+
+Pinned commit SHA: 1b0ff71095656b23306542bbad34a09109673720, resolved via `git ls-remote
+  https://huggingface.co/minishlab/potion-code-16M` (was `refs/heads/main` at resolution time,
+  2026-07-16).
+
+Manifest (file -> sha256 -> size), verified by THREE independent tools (Python hashlib.sha256,
+  PowerShell Get-FileHash, and certutil -hashfile -- all byte-identical) after downloading each file
+  once from the pinned revision: - model.safetensors ->
+  ca6159081a6e96cebe4ad878e5e8437bfccc761e8db16223370149cd2faa6c0b -> 64,299,272 bytes (also
+  cross-checked against the HF API tree endpoint's LFS pointer `oid`, obtained WITHOUT downloading
+  the file: GET /api/models/minishlab/potion-code-16M/tree/<revision> -- 4 independent sources
+  agree) - tokenizer.json -> 8e84217af15e70e8127c855435fc3d8a4cd91d7bbe686f72e75f188118ec78ae ->
+  1,041,917 bytes - config.json -> edf07552b5d768d556ded176d19f3a34f25360548de3a246d226ce8e28647914
+  -> 97 bytes
+
+TDD (RED confirmed first against the real worktree source -- verified `tensor_grep.__file__`
+  resolves into this worktree's src/, not the shared venv's stale site-packages copy, before
+  trusting any result): tests/unit/test_retrieval_dense_fetch.py, all network-mocked (no real
+  network in the unit suite): - test_fetch_rejects_checksum_mismatch -
+  test_fetch_is_atomic_on_partial_failure -
+  test_fetch_download_error_becomes_backend_execution_error -
+  test_fetch_download_exceeding_byte_cap_is_rejected - test_download_exceeds_total_deadline_raises -
+  test_fetch_respects_TG_SEMANTIC_MODEL_DIR -
+  test_fetch_succeeds_end_to_end_and_is_idempotent_on_refetch -
+  test_fetch_cli_returns_zero_on_success -
+  test_fetch_cli_without_fetch_flag_prints_help_and_exits_nonzero -
+  test_fetch_cli_returns_nonzero_on_failure - test_not_fetched_error_names_the_new_fetch_command -
+  test_fetch_then_load_activates_hybrid_dense_leg_over_bm25_only (the dense-leg activation
+  integration proof: a mocked-network fetch populates the model dir, an injected fake
+  model2vec.StaticModel proves load_dense_model hands back something usable once the directory
+  exists, then feeding that into rerank_hybrid produces a genuinely different match order than
+  rerank_by_bm25 alone -- reproducing test_reranker_hybrid.py's proven BM25-vs-hybrid disagreement
+  fixture, sourced through the real fetch+load path)
+
+The ONE real-network fetch (proving the shipped `--fetch` CLI against the actual HuggingFace host,
+  not just curl) was run ad hoc during development -- mirroring the late-rerank precedent, which
+  also has no committed scripts/dogfood/ entry for its own fetch -- and confirmed: exit 0, all 3
+  files byte-for-byte and hash-for-hash identical to the manifest above, and idempotent on a second
+  run to the same destination.
+
+Verified GREEN: the new suite (12/12), all existing retrieval_dense/retrieval_late/reranker_hybrid/
+  retrieval_fusion/reranker suites (100 passed, 7 skipped -- the skips are the expected
+  real-model-gated tests once TG_SEMANTIC_MODEL_DIR/TG_RERANK_MODEL_DIR point at clean nonexistent
+  dirs, matching CI), and the full unit suite (1107 passed, 9 skipped, 1 pre-existing failure
+  confirmed unrelated via git-stash bisection:
+  test_cli_search_warns_when_gpu_device_id_out_of_local_inventory fails identically on pristine
+  origin/main in this environment, unrelated to dense/find). ruff check and ruff format --preview
+  --check both clean on the two touched files (4 pre-existing unrelated docs/*.md formatting gaps
+  found repo-wide, untouched by this change).
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+
 ## v1.79.0 (2026-07-16)
 
 ### Chores
