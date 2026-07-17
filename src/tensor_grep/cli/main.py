@@ -9361,6 +9361,14 @@ def _agent_trustworthy_deadline_partial_note(payload: dict[str, Any]) -> str | N
     A genuine needs-attention exit-2 -- ``ask_user_before_editing.required`` true, low confidence,
     or a non-deadline partial -- gets no note and keeps reading as needs-attention, unchanged.
 
+    Fail-safe on a malformed capsule (independent-gate nit): a present-but-non-dict
+    ``confidence``/``ask_user_before_editing``, or a bool/non-numeric ``confidence.overall``
+    (bool subclasses int and would otherwise coerce to 1.0), suppresses the note (returns
+    ``None``) rather than raising -- matching the ``scan_limit``/``caller_scan_limit``
+    ``isinstance`` guards below. Unreachable from ``build_agent_capsule_from_map``'s
+    single-return output (it always emits dict-shaped ``confidence``/``ask_user_before_editing``),
+    but an advisory helper must never be what crashes an exit-2 path.
+
     Additive/advisory only: never changes the exit code, the stdout JSON, or the capsule schema --
     called only at the two existing ``raise typer.Exit(2)`` sites inside ``agent()``, stderr-only.
     """
@@ -9374,10 +9382,16 @@ def _agent_trustworthy_deadline_partial_note(payload: dict[str, Any]) -> str | N
             return None
     if payload.get("caller_scan_truncated"):
         return None
-    if bool(payload.get("ask_user_before_editing", {}).get("required")):
+    ask_user_before_editing = payload.get("ask_user_before_editing", {})
+    if not isinstance(ask_user_before_editing, dict):
         return None
-    overall = payload.get("confidence", {}).get("overall")
-    if not isinstance(overall, (int, float)):
+    if bool(ask_user_before_editing.get("required")):
+        return None
+    confidence = payload.get("confidence", {})
+    if not isinstance(confidence, dict):
+        return None
+    overall = confidence.get("overall")
+    if isinstance(overall, bool) or not isinstance(overall, (int, float)):
         return None
 
     from tensor_grep.cli.agent_capsule import _capsule_low_confidence_ask_reason

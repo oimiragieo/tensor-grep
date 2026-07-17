@@ -185,6 +185,33 @@ def test_note_absent_when_confidence_overall_not_numeric() -> None:
     assert _agent_trustworthy_deadline_partial_note(payload) is None
 
 
+def test_note_fail_safe_on_present_but_non_dict_confidence() -> None:
+    """Independent-gate nit: a malformed capsule with `confidence` present but NOT a dict must
+    fail SAFE -- suppress the note (return None), never raise -- matching the helper's own
+    scan_limit/caller_scan_limit isinstance guards. Unreachable from the real builder
+    (`build_agent_capsule_from_map`'s single return always emits a dict `confidence`), pinned so
+    this advisory helper can never be what crashes an exit-2 path on a weird capsule."""
+    for malformed in (None, 0.9, "high", [0.9], True):
+        payload = _trustworthy_deadline_partial_capsule("p", "q")
+        payload["confidence"] = malformed
+        assert _agent_trustworthy_deadline_partial_note(payload) is None, repr(malformed)
+    # bool subclasses int: a bare isinstance(overall, (int, float)) would coerce True -> 1.0 and
+    # emit "confidence 1.00" for a malformed capsule -- reject bools cleanly instead.
+    payload = _trustworthy_deadline_partial_capsule("p", "q")
+    payload["confidence"] = {"overall": True}
+    assert _agent_trustworthy_deadline_partial_note(payload) is None
+
+
+def test_note_fail_safe_on_present_but_non_dict_ask_user_before_editing() -> None:
+    """Same fail-safe pin for `ask_user_before_editing`: present-but-non-dict suppresses the note
+    instead of raising AttributeError. (An ABSENT key still reads as "no ask required" -- that
+    pre-nit semantic is deliberately unchanged.)"""
+    for malformed in (None, True, [], "x", 1):
+        payload = _trustworthy_deadline_partial_capsule("p", "q")
+        payload["ask_user_before_editing"] = malformed
+        assert _agent_trustworthy_deadline_partial_note(payload) is None, repr(malformed)
+
+
 # ==================================================================================================
 # Layer 2: CliRunner end-to-end, cold path (`build_agent_capsule` monkeypatched).
 # ==================================================================================================
@@ -293,6 +320,26 @@ def test_cli_agent_cold_path_complete_result_no_note_no_exit2(tmp_path: Path, mo
     assert result.exit_code == 0, result.output
     assert result.stderr == ""
     assert json.loads(result.stdout) == payload
+
+
+def test_cli_agent_cold_path_malformed_capsule_fail_safe_no_note_no_crash(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Independent-gate nit, CLI boundary: a malformed capsule (present-but-non-dict
+    `confidence` or `ask_user_before_editing`) reaching the exit-2 gate must not crash the CLI
+    and must get no note -- exit code stays 2, stdout JSON byte-unchanged, stderr empty. (A
+    helper AttributeError here would surface as exit 1 with a traceback, breaking both pins.)"""
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    for field, malformed in (("confidence", 0.9), ("ask_user_before_editing", True)):
+        payload = _trustworthy_deadline_partial_capsule(tmp_path, "f")
+        payload[field] = malformed
+        _stub_cold_path(monkeypatch, payload)
+
+        result = runner.invoke(app, ["agent", str(tmp_path), "f", "--json"])
+
+        assert result.exit_code == 2, (field, result.output)
+        assert result.stderr == "", field
+        assert json.loads(result.stdout) == payload
 
 
 # ==================================================================================================
