@@ -1,6 +1,69 @@
 # CHANGELOG
 
 
+## v1.81.6 (2026-07-17)
+
+### Bug Fixes
+
+- **perf**: Defer fast-path-unused bootstrap imports to cut public-shim cold-start (#48)
+  ([#655](https://github.com/oimiragieo/tensor-grep/pull/655),
+  [`fd52c6a`](https://github.com/oimiragieo/tensor-grep/commit/fd52c6a2822042ed96558b915c7267378c18bd92))
+
+`tensor_grep.io.directory_scanner` was imported at bootstrap.py module level for 4 constants
+  (BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD, BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD,
+  BROAD_WORKSPACE_PROJECT_MARKERS, UNBOUNDED_VENDORED_ROOT_DIR_NAMES) used only inside the
+  plain-text-search unbounded-broad-scan guard (_path_has_project_marker,
+  _search_paths_include_workspace_root, _search_paths_include_vendored_root) -- none of which run
+  for `tg --version`/`-V`, the only main_entry() branch that returns before any other work.
+
+directory_scanner.py itself does `from tensor_grep.core.config import SearchConfig` at its own
+  module level, which transitively pulls in stdlib `dataclasses` -> `inspect` (+ ast/dis/tokenize/
+  copy/weakref). Measured via `python -X importtime -c "import tensor_grep.cli.bootstrap"` (warm
+  cache, this machine): ~25ms of that ~78ms total is this directory_scanner subtree, and it is now
+  completely absent from a bare bootstrap import (confirmed 0 occurrences of
+  directory_scanner/core.config/dataclasses/inspect in the after-trace).
+
+Moved the import to a function-local `from tensor_grep.io.directory_scanner import ...` at each of
+  the 3 real use sites instead. `tests/unit/test_bootstrap_fast_path_imports.py` pins this via a
+  subprocess probe (red against the unmodified module, green after) and separately proves a real
+  search invocation still loads directory_scanner correctly when the guard actually needs it.
+
+`tensor_grep.cli.runtime_paths` (resolve_native_tg_binary/resolve_ripgrep_binary/ env_flag_enabled)
+  is deliberately NOT deferred: ~90 existing tests in test_cli_bootstrap.py do
+  `monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", ...)`, which requires that name to
+  stay a directly-bound module attribute -- a function-local import would create a local binding
+  that silently shadows any monkeypatched module attribute instead of being intercepted by it.
+  Rewriting that ~90-site mocking contract is out of scope for this fast-path-import PR.
+
+tests/unit/test_cli_bootstrap.py::test_vendored_root_dir_names_match_source_of_truth previously read
+  bootstrap._UNBOUNDED_VENDORED_ROOT_DIR_NAMES as a persistent module attribute, which no longer
+  exists after the deferral; updated it to compare cli/main.py's copy against the canonical
+  directory_scanner source directly (a strictly stronger check -- bootstrap's side can no longer
+  drift since it now always re-imports the canonical set fresh), plus added a companion behavioral
+  test proving bootstrap's guard function still triggers on every canonical vendored-dir name.
+
+No semantic change: main_entry()'s routing decisions, the --deadline anchor logic (#200-B/#648), and
+  all fail-closed behavior are untouched -- only WHEN 4 constants are imported changed, not what
+  they resolve to or how they're used.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Reconcile the canonical ledger to v1.81.5 (campaign complete) (#190)
+  ([#654](https://github.com/oimiragieo/tensor-grep/pull/654),
+  [`48319e7`](https://github.com/oimiragieo/tensor-grep/commit/48319e7a4510baf8539dd7af401a8c7bbb7680fe))
+
+The header was stale at "Live PyPI is v1.78.1 / PR queue: 1 open #634". Lead it with the true
+  current state: Live PyPI v1.81.5, PR queue EMPTY, and the v1.79-v1.81.5 dogfood + deadline-honesty
+  campaign (COMPLETE): #200 (dogfood-verified) + #203/#652 (9-handler bound, Opus-gated) + #205/#653
+  (refs parity); the two recurring release-flakes killed (#646/#202, #650/#204); #201/#649, #643,
+  #198/#644, #645/#199; #189 CPU-moat negatives -> docs/PAPER.md §3.10 (#651). Mark the mid-body
+  "#634 / 1 open" as the historical v1.78.1-era snapshot.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.81.5 (2026-07-17)
 
 ### Bug Fixes
