@@ -3,7 +3,7 @@
 > **Canonical prioritized work list.** Kept in sync with the CLI task store (`TaskUpdate`) and
 > GitHub (`gh pr list` is the source of truth for PRs). **CEO status** = summarize SHIPPING + P0/P1.
 > Update whenever a PR opens/merges or the queue changes. Task-store IDs (`#NNN`) cross-referenced.
-> Last refreshed 2026-07-16 (backlog-steward tick). **Live PyPI is v1.78.0** (published; the `tg find`
+> Last refreshed 2026-07-16 (docs-capture pass). **Live PyPI is v1.78.1** (published; the `tg find`
 > campaign #189 -- CPU semantic moat / ColGrep response -- shipped CLI (v1.77.0) + MCP tool (v1.78.0)
 > this session on top of the v1.76.x "remaining AI-actionable backlog" wave #176, ZERO broken *published* releases).
 > Shipped 15 PRs (v1.76.x wave): v1.76.0 #601 route-test / v1.76.1 #602 checkpoint-symlink / v1.76.2 #604 perf / v1.76.3 #603 daemon-guard /
@@ -11,8 +11,13 @@
 > v1.76.8 #611 checkpoint-symlink-disclosure (**security**) / v1.76.9 #612 GPU-calibrate-honesty / v1.76.10 #615 WSL-detection hardening (`/proc/version`) /
 > v1.76.11 #617 device_detect-get_platform-WSL2-honesty / v1.76.12 #619 importers-directory-index-resolution (benchmark-found) /
 > v1.76.13 #621 GPU-calibrate-honesty-nits (#612 gate NITs, #182); + #613 flaky-test-hardening + #616 help-contract-flake-fix (both no-release).
-> Plus the `tg find` campaign #189: v1.77.0 #626 CLI hybrid search (Wave 2b/2c) / v1.78.0 #627 MCP `tg_find` tool (Wave 2d);
-> + #624 rank_chunks extraction (Wave 2a) + #625 T8 golden harness (Wave 1), both no-release -- **PR queue: 1 open** (draft #628, Wave 3 dense-weight knob, in CI, not yet merged).
+> Plus the `tg find` campaign #189, now fully MERGED and RELEASED (v1.78.1): v1.77.0 #626 CLI hybrid search (Wave 2b/2c) / v1.78.0 #627 MCP `tg_find` tool (Wave 2d) /
+> #628 `TG_FIND_DENSE_WEIGHT` knob (Wave 3, chore, no-release) / #629 backlog reconcile (docs, no-release) / #632 `mcp` CVE-2026-52870 floor bump (fix, patch-released as v1.78.1);
+> + #624 rank_chunks extraction (Wave 2a) + #625 T8 golden harness (Wave 1), both no-release. **On top of v1.78.1, still unreleased (chore, no-release):** #630 whitespace-gate the
+> dense-weight classifier + nan/inf clamp (flip-prep, #191). **PR queue: 1 open** (`#634`, `fix/find-dense-weight-flip` -- the `TG_FIND_DENSE_WEIGHT`
+> default-flip itself, proposing to move the default from inert `1.0` to the swept 1:5 bm25:dense ratio for multi-word NL queries; per #191's evidence
+> trail this is the still-open CEO checkpoint every skill referencing the knob describes as "not yet flipped" -- verify current PR state with `gh pr view 634`
+> before citing either "flipped" or "still default-OFF" as current).
 > Prior: v1.75.0->v1.75.4 GPU Phase-0 (#593/#594/#595/#596/#597, #173 reconcile); v1.73.0->v1.74.4
 > (#584/#585/#131-F3/#164/#166/#591); v1.70.0->v1.72.1; v1.69.0-.3; #142.
 

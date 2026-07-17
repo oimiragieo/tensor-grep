@@ -7,7 +7,7 @@ description: Use when you need the load-bearing design of tensor-grep and WHY it
 
 **What this is.** A ground-truthed map of tensor-grep's load-bearing design: the invariants a change must not break, and the weak points you must not oversell. Read it to understand *why* the code is shaped this way before you touch it. It is not a how-to — for that, hand off to a sibling (routing table below).
 
-**What tensor-grep is** (as of 2026-07-08, v1.49.3, `pyproject.toml:430`): a code-intelligence CLI named `tg`. A Rust core (`rust_core/` — both a PyO3 extension *and* a standalone `tg` binary) plus a Python CLI (`src/tensor_grep/`). Apache-2.0. Ships to PyPI (package `tensor-grep`), npm, Homebrew, winget. CONTRIBUTING.md calls it a "benchmark-governed, contract-heavy codebase" — that is the whole point: the contracts below are enforced by tests and a CI gate, not by convention.
+**What tensor-grep is** (as of 2026-07-16, v1.78.1, `pyproject.toml`): a code-intelligence CLI named `tg`. A Rust core (`rust_core/` — both a PyO3 extension *and* a standalone `tg` binary) plus a Python CLI (`src/tensor_grep/`). Apache-2.0. Ships to PyPI (package `tensor-grep`), npm, Homebrew, winget. CONTRIBUTING.md calls it a "benchmark-governed, contract-heavy codebase" — that is the whole point: the contracts below are enforced by tests and a CI gate, not by convention.
 
 ## When to use this skill vs a sibling
 
@@ -102,6 +102,8 @@ Rules when a path *can* fall back (AGENTS.md "Backend Fail-Closed Contract", `ba
 
 **The recurring anti-pattern:** a bare `except Exception:` that returns empty or falls through to a different engine. This has been fixed *repeatedly* across audits — the Rust/PCRE2 bridge, the ast-grep OOM mask, the tree-sitter query swallow, CyBERT classify. When you review/write any backend or router that can change engines, this is the first thing to check. The structural fix (a `SafeBackendMixin` + a fault-injection conformance CI gate) is planned but **not yet shipped**, so the discipline is still per-file. The same rule extends to routers: an explicit `--gpu` request silently routed to CPU must raise/emit a diagnostic, not swap silently.
 
+**A new command does not inherit a sibling's fail-closed boundary-catch automatically — prove it, don't assume it (`tg find`, v1.77.0, #189).** `tg find` and `tg search --semantic` share the same dense-embedding core (`retrieval_dense.py`/`retrieval_fusion.py`), but their fail-closed SHAPE differs because their corpora differ: `--semantic` re-ranks an already regex-prefiltered match set, so a degrade to BM25-only is always cheap and benign; `tg find` walks and ranks the WHOLE repo with no prefilter, so a query-time model fault reachable mid-walk is a materially different risk surface. The first `tg find` build wave shipped WITHOUT a command-boundary catch for `DenseUnavailableError` — it would have propagated as an uncaught crash instead of a visible BM25-degrade — caught only by the mandatory adversarial Opus gate, not by the (green) unit tests, and fixed in the same PR (`045fadc`). **Rule:** when a new command reuses an existing backend/compute path, verify its OWN command-boundary exception handling explicitly; do not assume "the underlying module already has a fail-closed contract" is sufficient — the CALLER must also catch and degrade/exit correctly at ITS boundary. See `tensor-grep-run-and-operate` §11c for `tg find`'s full exit-code contract (`BackendExecutionError`→exit-2; empty+`result_incomplete`→exit-2 else exit-1; found+`result_incomplete`→print then exit-2).
+
 ## Partial-results contract: suppression != absence (`SearchResult.result_incomplete`)
 
 Companion invariant to the Backend Fail-Closed Contract above, shipped in round-4 slice 3 (#341, commit `f11ce28`, v1.18.x). `SearchResult` (`src/tensor_grep/core/result.py:21+`, fields at `:54-55`) carries `result_incomplete: bool = False` and `incomplete_reason: str | None = None`, deliberately **not** overloaded onto `fallback_reason` — `fallback_reason` means "the execution engine was swapped"; `result_incomplete` means "this engine ran, but a soft per-item error suppressed part of the output." Conflating them would emit a false "we fell back" signal to `doctor`/JSON consumers.
@@ -157,7 +159,7 @@ Adjacent, same commit: the per-match submatch stash is now built only behind `co
 
 ## The moat: agent-native context, not faster grep
 
-Positioning is a design constraint, not marketing. **tg is not a faster grep.** ripgrep is the raw-text parity baseline; ast-grep is the structural-search baseline. The moat is the **agent-native code-intelligence layer**: `orient`, `callers`, `blast-radius`, `defs`, `refs`, `source`, `agent` (the capsule), `session`. Peers to know: Aider repo-map (tree-sitter + NetworkX PageRank, `--map-tokens`), Sourcegraph Cody (SCIP + BM25 + embeddings → rerank), Cursor (index-first embeddings + Merkle change detection).
+Positioning is a design constraint, not marketing. **tg is not a faster grep.** ripgrep is the raw-text parity baseline; ast-grep is the structural-search baseline. The moat is the **agent-native code-intelligence layer**: `orient`, `callers`, `blast-radius`, `defs`, `refs`, `source`, `agent` (the capsule), `session`, `find` (whole-repo hybrid NL search, v1.77.0, #189). Peers to know: Aider repo-map (tree-sitter + NetworkX PageRank, `--map-tokens`), Sourcegraph Cody (SCIP + BM25 + embeddings → rerank), Cursor (index-first embeddings + Merkle change detection).
 
 Engineering-capacity consequence (AGENTS.md "Roadmap Sequencing 2026-07-02"): CPU-only, every-install moat work is funded *first* — local hybrid semantic search (BM25 + CPU dense embeddings + RRF, no API key), `tg registration-check` as a first-class command, a Bloom-filter n-gram chunk prefilter — before advancing the GPU program. Never make a change that implies "tg beats rg for cold exact-text search."
 
@@ -193,7 +195,7 @@ Encode these honestly; the dogfood report itself emits `world_class_readiness.st
 
 ```powershell
 # Front door + version identity
-uv run tg --version                                  # expect: tensor-grep 1.49.3 (or current)
+uv run tg --version                                  # expect: tensor-grep 1.78.1 (or current)
 # The published entry point (must be bootstrap.main_entry, not a Typer callback)
 uv run python -c "import tensor_grep.cli.bootstrap as b; print(b.main_entry)"
 # Routing / launcher observability
@@ -206,9 +208,11 @@ Never claim a speedup, a fixed weak point, or "tests pass" from a model self-rep
 
 ## Provenance and maintenance
 
-All facts verified against the live repo on 2026-07-08 at v1.49.3. Re-verify anything volatile before relying on it:
+All facts verified against the live repo on 2026-07-08 at v1.49.3; the `tg find` fail-closed-boundary
+paragraph and moat-command-list addition were verified 2026-07-16 at v1.78.1 (the rest was not
+re-walked in this pass). Re-verify anything volatile before relying on it:
 
-- **Version:** `grep '^version = ' pyproject.toml` (was `1.49.3`, `:430`).
+- **Version:** `grep '^version' pyproject.toml` (was `1.78.1`).
 - **Front-door entry point:** read `src/tensor_grep/cli/bootstrap.py:926` (`def main_entry`) and confirm `pyproject.toml`/`packaging` still points `tg` at `tensor_grep.cli.bootstrap:main_entry`.
 - **Command registration sites (4):** `commands.py:9` (`KNOWN_COMMANDS`), `rust_core/src/main.rs:860` (`enum Commands`), `tests/e2e/test_routing_parity.py:17` (`PUBLIC_TOP_LEVEL_COMMANDS`), `@app.command` in `src/tensor_grep/cli/main.py`.
 - **Flag front doors (2):** `rust_core/src/main.rs:170` (`SEARCH_PYTHON_PASSTHROUGH_FLAGS`), `bootstrap.py:24` (`_TG_ONLY_SEARCH_FLAGS`).

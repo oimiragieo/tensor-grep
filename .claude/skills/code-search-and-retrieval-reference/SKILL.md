@@ -8,7 +8,8 @@ description: Use when you need the domain theory behind tensor-grep's search/ret
 The domain-theory pack a mid-level engineer (or a model working cold) usually lacks, narrowed to
 **only the slice that governs tensor-grep's actual behavior**. Every claim below cites the tg file
 that uses it — read that file before relying on the claim in a review or a fix, because code drifts
-and this document does not update itself. Verified against the repo **as of 2026-07-08, v1.49.3**.
+and this document does not update itself. Verified against the repo **as of 2026-07-08, v1.49.3**;
+§9's `tg find` addition and the new §10 (query-shape classification) verified **2026-07-16, v1.78.1**.
 
 ## When NOT to use this skill (use a sibling instead)
 
@@ -385,6 +386,64 @@ or extending this campaign (not just reading the theory), switch to
 fenced-off wrong paths; re-verify its own status note against this section before trusting either in
 isolation, since this is still the fastest-moving area in the repo.
 
+**A 2nd consumer joined in v1.77.0 (#189): `tg find`.** Where `--semantic` above re-ranks an EXISTING
+regex match set, `tg find` walks and ranks the WHOLE repo (no pattern pre-filter) through the SAME
+`retrieval_dense.py`/`retrieval_fusion.py` core, plus two further pieces: an optional MaxSim
+late-rerank stage (`TG_LATE_RERANK`, currently HELD/evidence-gated -- regresses vs plain BM25 in the
+gate-run, entangled with a non-role-aware doc encoder, not a verdict on MaxSim itself) and the
+query-adaptive `TG_FIND_DENSE_WEIGHT` fusion-weight knob (default-OFF, `1.0` = today's byte-identical
+equal weighting) gated by the query-shape classifier in §10 below. See `tensor-grep-run-and-operate`
+§1/§7/§11c for the command surface and `tensor-grep-semantic-search-campaign` STATUS UPDATE 2 for the
+build history.
+
+---
+
+## 10. Query-shape classification — a tokenizer is not a word-splitter (added 2026-07-16)
+
+Any hybrid lexical+semantic router eventually needs to answer a COARSE routing question — "is this
+query a literal/identifier lookup or a natural-language phrase?" — separately from the FINE-GRAINED
+tokenization question BM25 and the dense leg both need ("what are this string's index terms?"). tg
+learned the hard way that reusing the fine-grained tokenizer to answer the coarse question is a bug
+class, not a shortcut: `tg find`'s `TG_FIND_DENSE_WEIGHT` classifier originally gated on
+`split_terms(query) > 2` (the same camelCase/snake_case-aware subword splitter `retrieval_lexical.py`
+uses for BM25 indexing, §3 above) — but `split_terms` splits a descriptive SINGLE-token identifier
+into 3+ MORPHEMES (`reciprocal_rank_fusion`, `_confine_mcp_path`, `BackendExecutionError` all split
+into 3+ pieces), so a literal identifier lookup misclassified as multi-word NL and leaked into the
+dense-boost branch. A real-repo dogfood caught it mis-boosting 5 of 6 literal-identifier golden
+queries. The fix: **whitespace word-count, not morpheme count** (`len(query.split()) <= 1` -> literal;
+#191, commit `173e093`/#630) — see `tensor-grep-config-and-flags` for the shipped mechanics and
+`tensor-grep-validation-and-qa` Part 1 pt 4 for the fixture-green-vs-real-corpus receipt.
+
+**The generalizable gotcha:** do NOT reuse a fine-grained identifier/subword tokenizer (a
+camelCase/snake_case splitter shared with a BM25/indexing leg) to answer a coarse literal-vs-NL
+ROUTING question. Use a cheap, coarse, structural signal instead — raw whitespace word-count is one;
+production systems converge on the same family of signal (backtick-quoting, CamelCase/snake_case
+SHAPE without splitting it into morphemes, path separators, leading question words) rather than a
+learned classifier or a shared subword tokenizer. This generalizes to any hybrid lexical+semantic
+router, not just `tg find`.
+
+**External grounding (verified 2026-07-16, not taken on faith):**
+- Broder, *A Taxonomy of Web Search* (ACM SIGIR Forum, 2002; DOI `10.1145/792550.792552`, ~1,900
+  citations) — the foundational "classify query intent before choosing how to serve it" framing that
+  this whole class of router descends from (navigational/informational/transactional for web search;
+  the same "classify first, retrieve second" shape reapplied to code search).
+- `Dicklesworthstone/frankensearch`, `crates/frankensearch-core/src/query_class.rs` — a real, shipped,
+  zero-ML `Empty`/`Identifier`/`ShortKeyword`/`NaturalLanguage` classifier for hybrid lexical+semantic
+  code retrieval: identifier detection is SHAPE-based (path separators, `::`, dots-without-spaces,
+  camelCase/PascalCase/snake_case, issue-ID patterns) with a raw `split_whitespace().count()` word-count
+  threshold for the ShortKeyword/NaturalLanguage split — the same whitespace-not-morphemes shape tg
+  converged on independently, a near-sibling design confirming the fix direction, not just a coincidence.
+- jgravelle, *You Don't Need an LLM to Route Agent Context: Regex Beats Classifiers by 45 Points*
+  (dev.to, 2026-07-08) — a ~40-line regex heuristic classifier scored **94.3%** accuracy on an
+  agent-context-routing task vs **48.6%** for a TF-IDF+logistic-regression learned classifier and
+  **47.9%** for a TF-IDF-centroid classifier; the article's thesis is exactly this section's lesson
+  generalized: "intent usually lives in the SHAPE of the request" (camelCase/snake_case tokens, leading
+  question words, quoted literals), and bag-of-words/subword tokenization throws that shape away.
+- A third production example surfaced independently during this same research pass (Mnemex, a code-search
+  RAG router): a `symbol_lookup` vs `structural`/`semantic_search`/`exploratory` regex classifier keys
+  on backtick-quoting and CamelCase/snake_case SHAPE (not a shared subword tokenizer) and bypasses vector
+  search entirely for `symbol_lookup` — the same "route on shape, not on the indexing tokenizer" pattern.
+
 ---
 
 ## Quick-reference table
@@ -471,8 +530,10 @@ or fail closed.
 
 ## Provenance and maintenance
 
-Facts here were verified by reading the cited files on **2026-07-08, tensor-grep v1.49.3**. Code
-drifts; re-verify before treating a citation as current, especially line numbers.
+Facts here were verified by reading the cited files on **2026-07-08, tensor-grep v1.49.3**; §9's `tg
+find` paragraph and §10 (query-shape classification, with its external citations re-verified live via
+Exa on 2026-07-16) were added and verified against **v1.78.1**. Code drifts; re-verify before treating
+a citation as current, especially line numbers.
 
 Re-verification commands:
 

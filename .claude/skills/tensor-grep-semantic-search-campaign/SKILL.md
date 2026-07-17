@@ -68,6 +68,34 @@ flag-flip** (see Phase 5).
 > no longer the case for the dense/RRF leg specifically; re-check which campaign is
 > "live" at the time you read this.)
 
+> **STATUS UPDATE 2 (2026-07-16, v1.77.0-v1.78.1, campaign #189): the architecture
+> GRADUATED into a standalone whole-repo command, `tg find`.** Where `--semantic`
+> re-ranks an EXISTING regex match set, `tg find` walks and ranks the WHOLE repo (no
+> pattern pre-filter), reusing the same `retrieval_dense.py`/`retrieval_fusion.py`
+> core. It shipped its own golden harness, `benchmarks/eval_late_rerank_quality.py`
+> (a 40-query NL vocab-mismatch golden set + literal/identifier golden slices,
+> superseding this skill's toy `eval_bm25_quality.py` as the Phase-4-style
+> discriminating gate for `tg find` specifically) — gate-run result: `rrf` beats
+> `bm25` by **+0.195 ndcg@10 / +0.30 recall@10**, bidirectional-oracle-validated
+> (internal; public numbers stay CEO-gated #72). Two further pieces are STILL
+> evidence-gated, not shipped-as-default: (1) **optional MaxSim late rerank**
+> (`TG_LATE_RERANK`) stays OFF — the gate-run shows it regressing vs plain BM25, but
+> that is entangled with a known harness gap (`retrieval_late.py:328-333`'s doc-role
+> encoder is not query/doc role-aware yet), NOT a verdict on MaxSim itself; (2) the
+> `TG_FIND_DENSE_WEIGHT` query-adaptive knob (see `tensor-grep-config-and-flags`) is
+> default-OFF (`1.0` = byte-identical no-op) with real evidence in hand (a 1:5
+> bm25:dense weight lifts NL ndcg@10 by +0.14 with zero per-category regression) — the
+> default-flip itself is a separate, still-open CEO checkpoint (product taste, not an
+> engineering gate). **Receipt (real-corpus-dogfood-beats-fixture-green):** the query
+> classifier that scopes `TG_FIND_DENSE_WEIGHT` to multi-word queries was originally a
+> `split_terms()` morpheme-count floor (`> 2` morphemes = NL); it passed its synthetic
+> literal-golden fixture but a real-repo dogfood on tensor-grep's own `src/` caught it
+> mis-boosting 5 of 6 literal identifier queries (`_confine_mcp_path`, `getUserName`,
+> `reciprocal_rank_fusion` all split into 3+ morphemes) — fixed by switching to a
+> whitespace word-count gate (`len(query.split()) <= 1` stays literal), #191/#630.
+> See `tensor-grep-run-and-operate` §1/§7/§11c for the CLI/MCP command surface and
+> exit contract.
+
 ---
 
 ## 0. When to use this skill — and when to use a sibling instead
@@ -432,10 +460,11 @@ Everything below is verifiable from the repo. Re-run these when a claim may have
 drifted; date-stamp any change.
 
 - **Version / date:** facts originally verified `v1.17.25` (2026-07-02); re-verified
-  UNCHANGED against released `v1.40.2` (origin/main `8829441`) on 2026-07-05; **spot-checked
-  again 2026-07-08 against `v1.49.3` and found the dense/RRF leg now SHIPPED** (see the
-  STATUS note near the top — this was a mechanical stamp bump plus that one correction,
-  not a full re-verification of every Phase 4/5 claim below). Re-check:
+  UNCHANGED against released `v1.40.2` (origin/main `8829441`) on 2026-07-05; spot-checked
+  again 2026-07-08 against `v1.49.3` and found the dense/RRF leg now SHIPPED (see STATUS
+  UPDATE near the top); **spot-checked again 2026-07-16 against `v1.78.1` and found the
+  architecture graduated into `tg find` (see STATUS UPDATE 2 near the top — this was
+  targeted at the `tg find` delta, not a full re-walk of Phases 0-8 below).** Re-check:
   `grep -m1 release_docs_current_tag AGENTS.md` and `grep -m1 '"version"' npm/package.json`.
 - **Dense leg + RRF now shipped:** `ls src/tensor_grep/core/retrieval_dense.py src/tensor_grep/core/retrieval_fusion.py`;
   `grep -n "\-\-semantic" src/tensor_grep/cli/main.py src/tensor_grep/cli/bootstrap.py`;

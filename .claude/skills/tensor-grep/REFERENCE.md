@@ -25,6 +25,7 @@ tg search PATTERN PATH
 tg search PATTERN PATH --rank
 tg find "natural language query" PATH
 tg orient REPO_PATH
+tg route-test REPO_PATH "task query"
 ```
 
 ## Useful Variants
@@ -42,6 +43,7 @@ tg search PATTERN PATH --rank --json
 tg orient REPO_PATH
 tg orient REPO_PATH --json
 tg orient REPO_PATH --max-tokens 6000 --max-central-files 15
+tg route-test REPO_PATH "task query" --json   # {agreement, warnings[]} -- confirm context-render/edit-plan pick the same primary target before trusting an edit-plan target
 ```
 
 When `result_incomplete` is `true`, the scan hit a cap and the call-site list is partial — do not treat a truncated zero-caller result as dead code. A clean zero-caller result is also not proof of dead code: the call graph cannot see set/decorator/dispatch-table registrations.

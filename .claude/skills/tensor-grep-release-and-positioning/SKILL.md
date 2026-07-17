@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-release-and-positioning
-description: Use when merging a release-bearing PR, writing a PR title for tensor-grep, diagnosing "why didn't my release publish" or "why hasn't npm/the docs site updated", running the post-publish dogfood, or making any external-facing speed/GPU/LSP/benchmark claim about tg. Covers semantic-release mechanics in ci.yml, the push-race + one-merge-per-tick discipline (worked example: the #384-#399 sequence), the npm/docs manual-dispatch publish gap, PyPI/npm/Homebrew/winget publish gates, and the not-faster-grep positioning + reproducibility standard for comparator claims. As of 2026-07-05, v1.40.2.
+description: Use when merging a release-bearing PR, writing a PR title for tensor-grep, diagnosing "why didn't my release publish" or "why hasn't npm/the docs site updated", running the post-publish dogfood, or making any external-facing speed/GPU/LSP/benchmark claim about tg. Covers semantic-release mechanics in ci.yml, the push-race + one-merge-per-tick discipline (worked example: the #384-#399 sequence), the npm/docs manual-dispatch publish gap, PyPI/npm/Homebrew/winget publish gates, and the not-faster-grep positioning + reproducibility standard for comparator claims. As of 2026-07-16, v1.78.1.
 ---
 
 # tensor-grep: Release Mechanics and Public Positioning
@@ -413,12 +413,20 @@ numbers."** Concretely:
 7. **Preserve failed attempts, not just wins.** `docs/PAPER.md`'s optimization ledger
    (section 3.10) exists so future agents don't re-attempt the same losing idea; update it whenever
    a benchmark candidate is accepted *or* rejected (`AGENTS.md:556-561`).
+8. **Internally-verified is not the same gate as publishable.** A worked example (2026-07-16, `tg
+   find` campaign #189): the golden-set gate-run showing `rrf` beating `bm25` by **+0.195 ndcg@10 /
+   +0.30 recall@10** on the NL golden set is bidirectional-oracle-validated and internally accepted
+   — but citing it EXTERNALLY (a blog post, a README claim, a public comparator table) is a
+   **separate, CEO-gated decision (#72)** that also covers the earlier P1/P4 tokens-per-correct
+   numbers (`tensor-grep-benchmark-and-proof-toolkit` §6). Do not conflate "this artifact clears the
+   internal acceptance bar" with "this number is cleared for public release" — the latter needs an
+   explicit go from the CEO desk, independent of measurement quality.
 
 ### 2.3 Current experimental / open surfaces (label them as such, don't oversell)
 
 | Surface | Status (2026-07-02, v1.17.25 unless noted) | Source |
 |---|---|---|
-| GPU native backend | **Status refreshed to v1.75.4.** Phase-0 SHIPPED (v1.75.0-v1.75.4, PRs #593-#597): NVIDIA native assets built and locally correctness-proven (RTX 4070 `sm_89` / RTX 5070 `sm_120`, 1GB/5GB correctness), gated OFF the public release by the CI Actions var `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE` (default `native-frontdoor`, CPU-only; GPU asset publishing needs the non-default `native-frontdoor-gpu`) -- Phase 1 is now a reversible flag-flip, not a multi-week rebuild. That flip does not promote GPU, change the CPU-default auto-recommendation, or prove a speed crossover: no speed crossover is proven vs `rg`/`tg_cpu`, GPU auto-recommendation stays `false`, and the reviewer-gated `public-gpu-proof.yml` speed-crossover gate remains unmet. | `docs/gpu_crossover.md`, `docs/CONTRACTS.md:80-82` |
+| GPU native backend | **Status refreshed to v1.75.4, funding note added 2026-07-16.** Phase-0 SHIPPED (v1.75.0-v1.75.4, PRs #593-#597): NVIDIA native assets built and locally correctness-proven (RTX 4070 `sm_89` / RTX 5070 `sm_120`, 1GB/5GB correctness), gated OFF the public release by the CI Actions var `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE` (default `native-frontdoor`, CPU-only; GPU asset publishing needs the non-default `native-frontdoor-gpu`) -- Phase 1 (the flag-flip) remains a reversible, **CEO-held**, not-yet-authorized decision, not a multi-week rebuild. That flip does not promote GPU, change the CPU-default auto-recommendation, or prove a speed crossover: no speed crossover is proven vs `rg`/`tg_cpu`, GPU auto-recommendation stays `false`, and the reviewer-gated `public-gpu-proof.yml` speed-crossover gate remains unmet. `docs/BACKLOG.md`'s CEO desk now repeatedly frames the forward direction as CPU semantic search (`tg find`, #189) with the phrase "GPU retired-for-search (#169)" -- read this as a *resourcing* signal (where engineering capacity goes next), not a technical claim that GPU search is proven impossible; the crossover question itself is still open (see `tensor-grep-research-frontier` Problem 1). | `docs/gpu_crossover.md`, `docs/CONTRACTS.md:80-82`, `docs/BACKLOG.md` CEO desk |
 | GPU speed claim generally | Not accepted. GPU still loses or times out on 100MB/1GB/5GB public scale checks as of the last dogfood; kept experimental/opt-in until correctness+speed beat both `rg` and `tg --cpu` on accepted artifacts. | `docs/PAPER.md:139` |
 | CyBERT / provider-backed `classify` | Opt-in only (`TENSOR_GREP_CLASSIFY_PROVIDER=cybert`), default is local deterministic; useful future reference, not a default performance claim. | `docs/PAPER.md:141-146` |
 | Resident AST worker (`tg worker`) | Opt-in (`TG_RESIDENT_AST=1`), hidden from `--help`, workload-dependent — helps startup-dominated repeated micro-workflows, not the default performance path. | `docs/EXPERIMENTAL.md:5-14` |

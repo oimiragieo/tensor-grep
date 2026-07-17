@@ -132,7 +132,7 @@ Rule 6 is easy to underrate: if you touch `.github/workflows/ci.yml`, `.github/w
 | 1 | `KNOWN_COMMANDS` (Python known-command registry) | `src/tensor_grep/cli/commands.py` | `commands.py:9` |
 | 2 | `Commands::X` enum variant + dispatch arm (native front door) | `rust_core/src/main.rs` | `enum Commands` at `main.rs:838` |
 | 3 | `PUBLIC_TOP_LEVEL_COMMANDS` (parity contract test) | `tests/e2e/test_routing_parity.py` | `:17` (asserted at `:502-503`) |
-| 4 | `@app.command` function (Typer entry point) | `src/tensor_grep/cli/main.py` | 37 `@app.command` defs |
+| 4 | `@app.command` function (Typer entry point) | `src/tensor_grep/cli/main.py` | `grep -c "@app.command" src/tensor_grep/cli/main.py` (44 as of 2026-07-16 -- re-run, do not trust a stamped count) |
 
 ### Adding a search flag (`tg search --myflag`) — 2 front doors (miss one → `rg: unrecognized flag` crash for installed users)
 
@@ -317,11 +317,11 @@ tg dogfood --output artifacts/dogfood_readiness.json
 
 ## Provenance and maintenance
 
-Volatile facts are dated **2026-07-02, release `v1.17.25`**, with a round-4 refresh dated **2026-07-03, release `v1.19.3`** (Part 7 wall-time section + this table's tag/wall-time rows), and a **2026-07-08, release `v1.49.3`** touch-up (Part 1 Rule 5 / Part 10 adversarial-security-gate addition — the Part 7 wall-time numbers themselves are NOT re-measured at v1.49.3, treat them as an illustrative historical sample, not a current SLA). Re-verify anything below before relying on it:
+Volatile facts are dated **2026-07-02, release `v1.17.25`**, with a round-4 refresh dated **2026-07-03, release `v1.19.3`** (Part 7 wall-time section + this table's tag/wall-time rows), a **2026-07-08, release `v1.49.3`** touch-up (Part 1 Rule 5 / Part 10 adversarial-security-gate addition — the Part 7 wall-time numbers themselves are NOT re-measured at v1.49.3, treat them as an illustrative historical sample, not a current SLA), and a **2026-07-16, release `v1.78.1`** fix (the stale `37 @app.command` count, actual 44, replaced with a re-verify command instead of a stamped number). Re-verify anything below before relying on it:
 
 | Claim | Re-verify command |
 |---|---|
-| Current release tag | `grep release_docs_current_tag AGENTS.md` (was `v1.49.3` as of 2026-07-08 — re-check, it moves every release) |
+| Current release tag | `grep release_docs_current_tag AGENTS.md` (was `v1.78.1` as of 2026-07-16 — re-check, it moves every release) |
 | Mandatory adversarial security gate (Part 1 Rule 5) | `feedback-fable5-cyber-classifier-audit-on-opus` + `tensor-grep-campaign-orchestration-playbook-2026-07-08` (global memory) — no single code anchor, this is a process rule; verify it is still being applied by checking recent security-touching PR descriptions for a stated adversarial-review verdict |
 | 4 command registration sites | `grep -n KNOWN_COMMANDS src/tensor_grep/cli/commands.py`; `grep -n "enum Commands" rust_core/src/main.rs`; `grep -n PUBLIC_TOP_LEVEL_COMMANDS tests/e2e/test_routing_parity.py`; `grep -cn "@app.command" src/tensor_grep/cli/main.py` |
 | 2 search-flag front doors | `grep -n SEARCH_PYTHON_PASSTHROUGH_FLAGS rust_core/src/main.rs`; `grep -n _TG_ONLY_SEARCH_FLAGS src/tensor_grep/cli/bootstrap.py` |

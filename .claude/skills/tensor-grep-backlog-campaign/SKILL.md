@@ -138,7 +138,10 @@ Executive summary · evidence · skills used · tools (gaps only) · plan pointe
 - **Restart order:** memory anchor → `docs/BACKLOG.md` → `docs/SESSION_HANDOFF.md` → `AGENTS.md` → GitHub. Never use the ephemeral session task store as source of truth.
 - **CEO status** = BACKLOG top items + blockers + spend + next 3 actions.
 
-**Steward cron (this repo):** `c56ce9a9` at :23 — "Backlog-completion campaign tick". Re-arm if missing.
+**Steward cron (this repo):** the backlog-steward tick is **session-scoped** — it re-arms with a NEW id and
+schedule every session, so any recorded id goes stale immediately. Do NOT trust a previously-recorded id
+(this file, MEMORY.md, a handoff note). Verify the live cron via `CronList` at session start; re-arm if
+absent. (Verified 2026-07-16: three different sources cited three different ids/schedules — all stale.)
 
 ---
 
@@ -412,8 +415,11 @@ Exa competitive/prior-art scan → derive edge cases competitors handle or miss 
 ## Provenance and maintenance
 
 Process/orchestration facts re-verified **2026-07-08** against **v1.49.3** (`pyproject.toml`,
-`grep -n '^version = ' pyproject.toml`); the **skill-count table was re-verified 2026-07-14 against
-v1.75.4** (see the docs-accuracy PR that added this note). This skill has no pinned `file:line` code
+`grep -n '^version' pyproject.toml`); the **skill-count table was re-verified 2026-07-14 against
+v1.75.4** (see the docs-accuracy PR that added this note); the **Steward-cron line was de-hardcoded
+2026-07-16 against v1.78.1** after three sources (this file, MEMORY.md, a handoff note) were each
+found citing a different stale cron id/schedule — the session-scoped nature of the tick means any
+recorded id is a landmine, not a fact to stamp. This skill has no pinned `file:line` code
 citations of its own to drift — it indexes the 20-skill library, which DOES carry code citations;
 re-verify the count with `ls .claude/skills | grep -c '^tensor-grep-'` (expect **19** -- 19 of the
 table's 20 numbered rows are `tensor-grep-*`-named; `code-search-and-retrieval-reference` (row 5) is
