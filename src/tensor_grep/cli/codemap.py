@@ -28,6 +28,7 @@ import json
 import os
 import re
 import subprocess
+import time
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -564,12 +565,28 @@ def _walk_only_universe(root: Path, *, max_repo_files: int) -> list[str]:
     return [str(f) for f in all_files if _repo_map._is_repo_context_file(f, context_root)]
 
 
-def _all_folder_paths(root: Path, *, max_repo_files: int) -> set[str]:
+def _all_folder_paths(
+    root: Path,
+    *,
+    max_repo_files: int,
+    deadline_monotonic: float | None = None,
+    deadline_hit: _repo_map._DeadlineBreakFlag | None = None,
+) -> set[str]:
     """Every folder (repo-relative POSIX, "" for repo root) containing >=1 file the walk reaches,
     regardless of mapped-suffix status -- used only to report how many folders were excluded from
-    the (mapped-files-only) index table because they hold nothing but unmapped extensions."""
+    the (mapped-files-only) index table because they hold nothing but unmapped extensions.
+
+    dogfood finding 1: this re-walk (a SEPARATE pass from build_repo_map's own scan above) used
+    to accept no deadline at all, so it could keep walking a huge/multi-root tree past --deadline
+    on its own. ``_iter_repo_files`` already supports both params (task #52) -- just forward them.
+    """
     try:
-        all_files = _repo_map._iter_repo_files(root, max_files=max_repo_files)
+        all_files = _repo_map._iter_repo_files(
+            root,
+            max_files=max_repo_files,
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=deadline_hit,
+        )
     except OSError:
         return set()
     folders: set[str] = set()
@@ -952,18 +969,34 @@ def build_codemap(
         "max_repo_files": max_repo_files,
     }
 
+    # dogfood finding 1: this re-walk + the per-folder render loop below are the POST-MAP "tail"
+    # -- they used to run fully UNBOUNDED even after the MAP-level scan above finished inside
+    # --deadline (a real `tg codemap ROOT --deadline 3` ran ~28s). Both now share the SAME
+    # deadline_monotonic and fold an early break into `tail_deadline_hit`, council must-fix #4.
+    tail_deadline_hit = False
     try:
-        all_folders = _all_folder_paths(root, max_repo_files=max_repo_files)
+        all_folders_deadline_hit = _repo_map._DeadlineBreakFlag()
+        all_folders = _all_folder_paths(
+            root,
+            max_repo_files=max_repo_files,
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=all_folders_deadline_hit,
+        )
         all_folders = {
             f for f in all_folders if not _is_under_dir(root / f if f else root, out_dir)
         }
         coverage["folders_with_no_mapped_files"] = max(0, len(all_folders) - len(folders))
+        tail_deadline_hit = tail_deadline_hit or all_folders_deadline_hit.hit
     except OSError:
         coverage["folders_with_no_mapped_files"] = 0
 
     written_files: list[Path] = []
     per_page_tokens: dict[str, int] = {}
+    rendered_folders: dict[str, list[str]] = {}
     for folder, files in folders.items():
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            tail_deadline_hit = True
+            break
         page_path = page_paths[folder]
         page_text = _render_folder_page(
             folder,
@@ -979,10 +1012,25 @@ def build_codemap(
         _atomic_write_text(page_path, page_text)
         written_files.append(page_path)
         per_page_tokens[str(page_path)] = _repo_map._estimate_tokens(page_text)
+        rendered_folders[folder] = files
+
+    # council must-fix #4: OR the tail break into the SAME partial boolean + partial_reason
+    # ladder the scan-level cutoff above uses -- never clobber a MORE SPECIFIC existing reason
+    # (scan_limit/self_verify), and never downgrade an already-True partial back to False.
+    if tail_deadline_hit and not coverage["partial"]:
+        coverage["partial"] = True
+        coverage["partial_reason"] = "deadline"
+        coverage["remediation"] = (
+            "The scan hit --deadline before covering the whole tree. Re-run with a higher "
+            "--deadline, or scope PATH to a subdirectory."
+        )
 
     index_text = _render_index(
         root=root,
-        folders=folders,
+        # A deadline-cut tail must never dangling-link the index to a folder page that was never
+        # actually written -- render off `rendered_folders` (a strict subset of `folders` on a
+        # complete run, byte-identical to `folders` itself) rather than the full MAP-level set.
+        folders=rendered_folders,
         symbols_by_file=symbols_by_file,
         blurbs=blurbs,
         central_files=central_files,

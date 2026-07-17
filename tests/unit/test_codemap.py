@@ -6,8 +6,10 @@ generated output never touches the checked-in fixture and mtimes are stable with
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -566,6 +568,139 @@ def test_default_invocation_matches_explicit_noop_ignore_and_deadline(tmp_path: 
     assert explicit_payload["partial_reason"] is None
     assert default_payload["files_total"] == explicit_payload["files_total"]
     assert default_payload["tree_manifest_sha256"] == explicit_payload["tree_manifest_sha256"]
+
+
+# ---------------------------------------------------------------------------
+# (18) dogfood finding 1: the POST-MAP tail (the folders_with_no_mapped_files re-walk + the
+# per-folder render loop) ran fully UNBOUNDED even after the MAP-level scan finished inside
+# --deadline -- a real `tg codemap ROOT --deadline 3` ran ~28s. Both must now bound themselves off
+# the SAME deadline_monotonic and fold an early break into the EXISTING partial/partial_reason=
+# "deadline" contract (18a), and the render loop's break must never leave the INDEX PAGE
+# dangling-linking to a folder page that was never written (18b).
+# ---------------------------------------------------------------------------
+
+
+def _make_many_folder_repo(root: Path, folder_count: int) -> Path:
+    """``folder_count`` distinct folders, each holding one trivial file -- enough real per-folder
+    render-loop iterations to prove a MID-loop deadline break, not just a pre-loop check."""
+    project = root / "project"
+    for index in range(folder_count):
+        folder = project / f"pkg{index:04d}"
+        folder.mkdir(parents=True)
+        (folder / "mod.py").write_text(f"def f{index}():\n    return {index}\n", encoding="utf-8")
+    return project
+
+
+def test_all_folder_paths_bounds_walk_on_expired_deadline(tmp_path: Path) -> None:
+    project = _make_many_folder_repo(tmp_path, 5)
+    flag = _codemap._repo_map._DeadlineBreakFlag()
+
+    folders = _codemap._all_folder_paths(
+        project,
+        max_repo_files=100,
+        deadline_monotonic=time.monotonic() - 1.0,
+        deadline_hit=flag,
+    )
+
+    assert folders == set()
+    assert flag.hit is True
+
+
+def test_all_folder_paths_deadline_none_is_unaffected(tmp_path: Path) -> None:
+    project = _make_many_folder_repo(tmp_path, 5)
+
+    folders = _codemap._all_folder_paths(project, max_repo_files=100)
+
+    assert len(folders) == 5
+
+
+def test_tail_render_loop_honors_deadline_mid_loop_and_marks_partial(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """council must-fix #4: the per-folder render loop must break on --deadline and fold that
+    into the SAME partial/partial_reason=deadline contract the scan-level cutoff already uses --
+    proven via a mid-loop break (some but not all folders rendered), not just a pre-loop check."""
+    project = _make_many_folder_repo(tmp_path, 10)
+
+    base = 1000.0
+    clock = {"t": base}
+    monkeypatch.setattr(_codemap.time, "monotonic", lambda: clock["t"])
+    original_render = _codemap._render_folder_page
+
+    def _advancing_render(*args, **kwargs):
+        clock["t"] += 1.0
+        return original_render(*args, **kwargs)
+
+    monkeypatch.setattr(_codemap, "_render_folder_page", _advancing_render)
+
+    payload = _build(project, deadline_seconds=5.5)
+
+    assert payload["partial"] is True
+    assert payload["partial_reason"] == "deadline"
+    assert payload["remediation"]
+    written_pages = [Path(p) for p in payload["written_files"] if Path(p).stem.startswith("pkg")]
+    # A genuine MID-loop break: some but not all 10 folders got a rendered page.
+    assert 0 < len(written_pages) < 10, (
+        f"expected a partial render (some but not all of 10 folders), got {len(written_pages)}"
+    )
+    for page_path in written_pages:
+        assert page_path.is_file()
+    # The still-valid coverage JSON must agree with the rendered index page.
+    coverage_path = Path(payload["out"]) / _codemap._COVERAGE_FILENAME
+    coverage = json.loads(coverage_path.read_text(encoding="utf-8"))
+    assert coverage["partial"] is True
+    assert coverage["partial_reason"] == "deadline"
+
+
+def test_tail_render_loop_index_never_dangling_links_a_folder_deadline_cut(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """18b: the index page must list (and link to) ONLY folders that actually got a page written
+    -- a dangling link to an unwritten folder page would be a broken-navigation regression."""
+    project = _make_many_folder_repo(tmp_path, 8)
+
+    base = 1000.0
+    clock = {"t": base}
+    monkeypatch.setattr(_codemap.time, "monotonic", lambda: clock["t"])
+    original_render = _codemap._render_folder_page
+
+    def _advancing_render(*args, **kwargs):
+        clock["t"] += 1.0
+        return original_render(*args, **kwargs)
+
+    monkeypatch.setattr(_codemap, "_render_folder_page", _advancing_render)
+
+    payload = _build(project, deadline_seconds=3.5)
+
+    assert payload["partial"] is True
+    index_path = Path(payload["index"])
+    lines = index_path.read_text(encoding="utf-8").splitlines()
+    # Scope to the "## Folders" table specifically -- the EARLIER "## Top central files" table
+    # also has `| \`pkg0000/mod.py\` | ... |`-shaped rows (a FILE path, no link at all), which a
+    # bare `startswith("| \`pkg")` scan over the whole page would misidentify as folder rows.
+    folders_header = lines.index("## Folders")
+    row_count = 0
+    for line in lines[folders_header:]:
+        if not line.startswith("| `pkg"):
+            continue
+        row_count += 1
+        match = re.search(r"\[[^\]]+\]\(([^)]+)\)", line)
+        assert match, f"folder row missing a map link: {line}"
+        linked_page = (index_path.parent / match.group(1)).resolve()
+        assert linked_page.is_file(), f"index links to an unwritten page: {linked_page}"
+    assert row_count > 0, "fixture produced no folder rows to check"
+    assert row_count < 8, "expected a partial render (fewer rows than the 8 real folders)"
+
+
+def test_tail_no_deadline_renders_every_folder_unaffected(tmp_path: Path) -> None:
+    project = _make_many_folder_repo(tmp_path, 6)
+
+    payload = _build(project)
+
+    assert payload["partial"] is False
+    assert payload["folders_total"] == 6
+    written_pages = [p for p in payload["written_files"] if Path(p).stem.startswith("pkg")]
+    assert len(written_pages) == 6
 
 
 # ---------------------------------------------------------------------------

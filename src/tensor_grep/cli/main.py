@@ -9349,19 +9349,23 @@ def agent(
         help=(
             "Stop the underlying repo scan after N seconds and return a partial capsule "
             "(partial=true, deadline_limit) with whatever was found so far, instead of running "
-            "unbounded. Pass --no-deadline to keep the (already default) unbounded behavior explicit."
+            "unbounded. The cold path (no running session daemon) defaults to 60s so a huge repo "
+            "can't hang an agent loop; pass --no-deadline to disable the bound."
         ),
     ),
     no_deadline: bool = typer.Option(
         False,
         "--no-deadline",
-        help="Accepted for command-surface parity with codemap; a no-op since agent already "
-        "defaults to an unbounded --deadline.",
+        help="Disable the cold path's default 60s --deadline bound; let the scan run unbounded "
+        "(a warm session daemon is unaffected either way).",
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return an actionable context capsule for agents before editing."""
-    from tensor_grep.cli.agent_capsule import build_agent_capsule
+    from tensor_grep.cli.agent_capsule import (
+        DEFAULT_AGENT_CLI_DEADLINE_SECONDS,
+        build_agent_capsule,
+    )
 
     try:
         resolved_path, resolved_query = _resolve_path_and_query(
@@ -9432,6 +9436,20 @@ def agent(
                 raise typer.Exit(2)
             return
 
+        # dogfood finding 1 (F4): default the COLD path's --deadline to 60s (mirrors codemap's
+        # #153) so a whole-repo `tg agent` call with no explicit --deadline still terminates in
+        # bounded time. Deliberately computed HERE, AFTER the warm-daemon gate above -- and from
+        # the RAW `deadline`/`no_deadline` params, never by reusing `effective_deadline` -- because
+        # `effective_deadline` intentionally conflates "no --deadline was given" with "--no-deadline
+        # was given" so the gate above treats them identically (a warm session's cached repo_map
+        # cannot honor a fresh per-request deadline either way). Collapsing this 60s default into
+        # THAT variable, or defaulting it on the typer.Option itself, would make effective_deadline
+        # never None on a default call, silently skipping the daemon probe on every single one of
+        # them -- the #108 moat.
+        cold_deadline_seconds = effective_deadline
+        if cold_deadline_seconds is None and not no_deadline:
+            cold_deadline_seconds = DEFAULT_AGENT_CLI_DEADLINE_SECONDS
+
         payload = build_agent_capsule(
             resolved_query,
             resolved_path,
@@ -9444,7 +9462,7 @@ def agent(
             gpu_device_ids=parsed_gpu_device_ids,
             gpu_timeout_s=gpu_timeout_s,
             ignore=tuple(ignore),
-            deadline_seconds=effective_deadline,
+            deadline_seconds=cold_deadline_seconds,
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)

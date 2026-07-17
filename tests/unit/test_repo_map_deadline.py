@@ -1105,3 +1105,94 @@ def test_step103_callers_no_deadline_context_pack_stays_complete(tmp_path: Path)
 
     assert "partial" not in result
     assert result["graph_completeness"] == "moderate"
+
+
+# ---------------------------------------------------------------------------------------------
+# dogfood finding 1: `tg agent`/`tg codemap` --deadline was threaded into build_repo_map (the
+# SCAN) but the POST-MAP stages (context-pack symbol/graph scoring, feeding agent/context/
+# edit-plan alike) ran unbounded AND unstamped -- a real whole-repo `tg agent --deadline 8`
+# silently overran to ~20s at exit 0, partial=None. build_context_pack_from_map (the public
+# build_context_pack_from_map -> _build_context_pack_from_map seam every one of those commands
+# shares) now self-stamps `partial`/`deadline_limit` from its OWN internal deadline_hit readback
+# even when the caller supplies none -- the pre-fix shape for agent/context/edit-plan, none of
+# which passed a deadline_hit flag before this change.
+# ---------------------------------------------------------------------------------------------
+
+
+def _make_pagerank_stress_repo(root: Path, symbol_count: int) -> None:
+    """``symbol_count`` trivial one-function modules that all import a shared ``hub.py`` --
+    non-empty reverse_importers (a real hub with real fan-in), so pagerank's per-node sort has
+    genuine (if small) work to do, not the trivially-empty-set fast path."""
+    src = root / "src"
+    src.mkdir(parents=True)
+    (src / "hub.py").write_text("def hub_fn():\n    return 0\n", encoding="utf-8")
+    for index in range(symbol_count):
+        (src / f"m{index}.py").write_text(
+            f"from src.hub import hub_fn\n\n\ndef f{index}():\n    return hub_fn() + {index}\n",
+            encoding="utf-8",
+        )
+
+
+def test_build_context_pack_from_map_self_stamps_partial_when_pagerank_abandons(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Council must-fix #2 (stamp the partial boolean DIRECTLY): the symbol-scoring loop finishes
+    INSIDE budget, but the very next sibling stage -- _personalized_reverse_import_pagerank --
+    crosses the SAME shared deadline. Before this fix, build_context_pack_from_map never read
+    back its own deadline_hit flag at all (agent/context/edit-plan all call it with no deadline_
+    hit argument), so this whole class of post-symbol-scoring break was silently unstamped."""
+    _make_pagerank_stress_repo(tmp_path, 6)
+    rm = repo_map.build_repo_map(str(tmp_path))
+
+    base = 1000.0
+    clock = {"t": base}
+    monkeypatch.setattr(repo_map.time, "monotonic", lambda: clock["t"])
+    original_score = repo_map._score_symbol
+
+    def _advancing_score(*args, **kwargs):
+        clock["t"] += 1.0
+        return original_score(*args, **kwargs)
+
+    monkeypatch.setattr(repo_map, "_score_symbol", _advancing_score)
+
+    # symbol-scoring calls _score_symbol exactly once per symbol in rm["symbols"], checking the
+    # deadline BEFORE each call (clock values base .. base+total-1) -- a deadline of
+    # base+total-0.5 lets every one of those checks through (all strictly less), leaving the
+    # clock parked at base+total once the loop naturally ends. That is exactly the value
+    # pagerank's OWN new iteration-boundary check reads first, so it aborts on iteration 0.
+    total_symbols = len(rm["symbols"])
+    assert total_symbols > 0, "fixture must actually produce symbols to score"
+    deadline_monotonic = base + total_symbols - 0.5
+
+    payload = repo_map.build_context_pack_from_map(rm, "f0", deadline_monotonic=deadline_monotonic)
+
+    assert payload.get("partial") is True
+    assert payload.get("deadline_limit") == {"deadline_exceeded": True}
+
+
+def test_build_context_pack_from_map_no_deadline_stays_complete(tmp_path: Path) -> None:
+    _make_pagerank_stress_repo(tmp_path, 6)
+    rm = repo_map.build_repo_map(str(tmp_path))
+
+    payload = repo_map.build_context_pack_from_map(rm, "f0")  # no deadline
+
+    assert "partial" not in payload
+    assert "deadline_limit" not in payload
+
+
+def test_build_context_pack_from_map_honors_caller_supplied_deadline_hit_too(
+    tmp_path: Path,
+) -> None:
+    """A caller that DOES pass its own `_DeadlineBreakFlag` (mirroring the callers/impact/blast-
+    radius fold-in pattern) must still see it flip to `.hit = True` -- the self-stamp fix must
+    not swallow/replace a caller-supplied flag with an internal one it never reads back."""
+    _make_pagerank_stress_repo(tmp_path, 4)
+    rm = repo_map.build_repo_map(str(tmp_path))
+    flag = repo_map._DeadlineBreakFlag()
+
+    payload = repo_map.build_context_pack_from_map(
+        rm, "f0", deadline_monotonic=time.monotonic() - 1.0, deadline_hit=flag
+    )
+
+    assert payload.get("partial") is True
+    assert flag.hit is True

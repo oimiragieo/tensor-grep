@@ -24,6 +24,14 @@ _CAPSULE_LSP_CONFIDENCE_BOOST_ENV = "TG_CAPSULE_LSP_CONFIDENCE_BOOST"
 _CAPSULE_LSP_CONFIDENCE_CAP = 0.85
 _CAPSULE_LSP_CONFIDENCE_LANGUAGES = {"javascript", "php", "python", "rust", "typescript"}
 
+# dogfood finding 1: `tg agent`'s CLI front door defaults --deadline to this value (mirrors
+# codemap.DEFAULT_CLI_DEADLINE_SECONDS) so a whole-repo call with no explicit --deadline still
+# terminates in bounded time. `build_agent_capsule`'s own `deadline_seconds: float | None = None`
+# signature default stays unbounded (a direct library call is unaffected) -- only the CLI's cold
+# fallback (main.py's `agent()` body, applied AFTER the warm-daemon gate so a default call still
+# reaches the daemon -- see that function's own comment) reads this constant.
+DEFAULT_AGENT_CLI_DEADLINE_SECONDS = 60.0
+
 # F4: the exact `_build_snippets` omission reason for a source cut by the capsule's OWN token
 # budget (agent_capsule.py `_build_snippets`) -- distinct from the generic "not present in
 # capsule snippets" fallback `_capsule_context_consistency` uses when the primary file never
@@ -875,6 +883,8 @@ def _collect_outbound_dependencies(
     *,
     max_files: int,
     preview_token_budget: int | None,
+    deadline_monotonic: float | None = None,
+    deadline_hit: repo_map._DeadlineBreakFlag | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """DAR (arxiv steal #4): the primary target's outbound dependencies, corroboration-gated.
 
@@ -893,8 +903,19 @@ def _collect_outbound_dependencies(
     FAIL-SAFE (byte-identical contract): every early return here is `([], {})` -- the caller MUST
     treat that as "emit NEITHER `outbound_dependencies` nor `outbound_dependency_evidence`", never
     an empty-but-present key. See `build_agent_capsule`.
+
+    dogfood finding 1 / council must-fix #5: ``deadline_monotonic``/``deadline_hit`` follow the
+    same ``_DeadlineBreakFlag`` readback contract every other deadline-scoped seam in this PR
+    uses. A hit before this function has even started its own FS parse work bails through the
+    SAME fail-safe ``([], {})`` shape as every other early return above -- DAR is opt-in
+    (default OFF) so this is defensive: once opted in, it must never be the reason a --deadline
+    budget is silently blown, even though its own per-primary-file work is normally small.
     """
     if not _capsule_outbound_dependencies_enabled():
+        return [], {}
+    if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+        if deadline_hit is not None:
+            deadline_hit.hit = True
         return [], {}
     primary_file = str(target.get("file") or "")
     primary_symbol = str(target.get("symbol") or "")
@@ -2749,6 +2770,11 @@ def build_agent_capsule_from_map(
     # `related_call_sites`, and deliberately does NOT touch `target`/`confidence`/`consistency`/
     # `ask_reasons` -- see `_collect_outbound_dependencies`'s fail-safe + budget-isolation
     # contract. Never mutates confidence/consistency/trust state (1A owns those).
+    # dogfood finding 1 / council must-fix #5+#2: share the SAME deadline_monotonic this
+    # function's other post-map stages already use, and fold an early bail into the capsule's
+    # own `result["partial"]` below -- mirrors the callers/impact/blast-radius N-way fold-in
+    # pattern (repo_map.py), scoped here to this capsule's own sibling stages.
+    outbound_dependencies_deadline_hit = repo_map._DeadlineBreakFlag()
     outbound_dependencies, outbound_dependency_evidence = _collect_outbound_dependencies(
         query,
         resolved_path,
@@ -2758,6 +2784,8 @@ def build_agent_capsule_from_map(
         related_call_sites,
         max_files=max_files,
         preview_token_budget=outbound_dependency_preview_budget,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=outbound_dependencies_deadline_hit,
     )
     rollback_ref = _command_ref(["tg", "checkpoint", "create", resolved_path])
     route_rationale: list[dict[str, Any]] = [
@@ -2865,11 +2893,16 @@ def build_agent_capsule_from_map(
         result["scan_limit"] = dict(scan_limit)
         if "scan_remediation" in payload:
             result["scan_remediation"] = payload["scan_remediation"]
-    if payload.get("partial"):
+    # dogfood finding 1 / council must-fix #2: fold DAR's own deadline break in alongside the
+    # inner context-render's -- either one broke on --deadline makes this capsule partial, same
+    # "any one of N sibling stages" fold-in the callers/impact/blast-radius seams already use.
+    if payload.get("partial") or outbound_dependencies_deadline_hit.hit:
         result["partial"] = True
         deadline_limit = payload.get("deadline_limit")
         if isinstance(deadline_limit, dict):
             result["deadline_limit"] = dict(deadline_limit)
+        elif outbound_dependencies_deadline_hit.hit:
+            result["deadline_limit"] = {"deadline_exceeded": True}
     if scan_truncated:
         result["result_incomplete"] = True
     # suggested_scope (#133 dogfood): the same centrality-weighted directory narrowing `tg orient`

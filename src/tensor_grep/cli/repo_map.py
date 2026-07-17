@@ -7607,8 +7607,29 @@ def _personalized_reverse_import_pagerank(
     *,
     alpha: float = 0.85,
     iterations: int = 12,
+    deadline_monotonic: float | None = None,
+    deadline_hit: _DeadlineBreakFlag | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, float]:
+    """dogfood finding 1: this 12-iteration loop ran fully UNBOUNDED even when a caller already
+    had a deadline_monotonic in scope (a real ``tg agent``/``tg codemap`` whole-repo call could
+    run well past --deadline here alone). ``deadline_monotonic``/``deadline_hit`` follow the same
+    ``_DeadlineBreakFlag`` readback contract every other deadline-scoped sibling loop in this
+    module uses -- checked at the ITERATION boundary (not mid-iteration) so a hit is always a
+    clean iteration count, never a half-applied update.
+
+    On expiry this ABANDONS to ``{}`` rather than returning the last-completed iteration's
+    partial ranks: every existing caller already treats a missing/zero graph score as "no
+    centrality signal" via ``.get(x, 0.0)`` (see ``_build_context_pack_from_map`` and
+    ``_relevant_tests_for_symbol``), so ``{}`` is a deterministic, already-handled degrade --
+    never a silently-incomplete ranking presented as complete.
+
+    The per-node ``sorted(reverse_importers.get(current))`` is hoisted OUT of the iteration loop
+    below: ``reverse_importers`` never changes across iterations, so the pre-fix code recomputed
+    the same sort up to 12x per node for nothing. Free, additive speedup, independent of the
+    deadline fix above -- proven numerically identical to the pre-hoist shape by
+    ``test_pagerank_hoisted_sort_matches_reference_computation``.
+    """
     with _profiling_phase(_profiling_collector, "graph_pagerank"):
         if not seed_files:
             return {}
@@ -7632,10 +7653,17 @@ def _personalized_reverse_import_pagerank(
             current: (seed_weight if current in seed_set else 0.0) for current in all_files
         }
         ranks = dict(personalization)
+        sorted_outgoing = {
+            current: sorted(reverse_importers.get(current, set())) for current in all_files
+        }
         for _ in range(iterations):
+            if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+                if deadline_hit is not None:
+                    deadline_hit.hit = True
+                return {}
             updated = {current: (1.0 - alpha) * personalization[current] for current in all_files}
             for current in all_files:
-                outgoing = sorted(reverse_importers.get(current, set()))
+                outgoing = sorted_outgoing[current]
                 if outgoing:
                     share = alpha * ranks[current] / len(outgoing)
                     for importer in outgoing:
@@ -7966,10 +7994,15 @@ def _build_context_pack_from_map(
         if not graph_seed_files:
             graph_seed_files = list(dependency_seed_files)
 
+        # dogfood finding 1: deadline_monotonic/deadline_hit were already in scope in this
+        # function (threaded into the symbol-scoring loop above) but never forwarded to pagerank
+        # -- this 12-iteration whole-repo-file loop ran fully unbounded even past --deadline.
         graph_scores = _personalized_reverse_import_pagerank(
             graph_seed_files,
             all_files,
             reverse_importers,
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=deadline_hit,
             _profiling_collector=_profiling_collector,
         )
         for current_path in set(dependency_seed_files) | set(file_distances):
@@ -13495,15 +13528,31 @@ def build_context_pack_from_map(
     payload["tests"] = list(repo_map.get("tests", []))
     payload["related_paths"] = list(repo_map.get("related_paths", []))
     payload.pop("_profiling", None)
+    # dogfood finding 1 (council must-fix #2, stamp the partial boolean DIRECTLY): every current
+    # caller of this function (agent/context/edit-plan's own render/pack builders) passes NO
+    # deadline_hit at all, so a sibling loop breaking early INSIDE _build_context_pack_from_map
+    # (symbol-scoring, pagerank) was silently unstamped -- `_copy_partial_signal` can only
+    # PROPAGATE an existing dict's `partial` key forward, it cannot originate one from a bare
+    # _DeadlineBreakFlag. Always own a flag here (reuse the caller's if one WAS supplied, so a
+    # caller folding this into its own wider N-way union -- mirroring the callers/impact/
+    # blast-radius fold-in pattern -- still observes `.hit`).
+    own_deadline_hit = deadline_hit if deadline_hit is not None else _DeadlineBreakFlag()
     payload = _build_context_pack_from_map(
         payload,
         query,
         auto_deweight=auto_deweight,
         _test_source_limit=_test_source_limit,
         deadline_monotonic=deadline_monotonic,
-        deadline_hit=deadline_hit,
+        deadline_hit=own_deadline_hit,
         _profiling_collector=_profiling_collector,
     )
+    if own_deadline_hit.hit:
+        payload["partial"] = True
+        # setdefault, not overwrite: a repo_map already partial from the SCAN stage (build_repo_
+        # map's own --deadline cutoff, copied onto `payload` via `dict(repo_map)` above) carries a
+        # richer deadline_limit (files_scanned/files_total) -- never clobber that with the generic
+        # shape below just because a post-map sibling loop also happened to cross the same budget.
+        payload.setdefault("deadline_limit", {"deadline_exceeded": True})
     return _attach_profiling(payload, _profiling_collector)
 
 
