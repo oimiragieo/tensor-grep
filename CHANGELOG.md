@@ -1,6 +1,62 @@
 # CHANGELOG
 
 
+## v1.81.7 (2026-07-17)
+
+### Bug Fixes
+
+- **agent**: Stderr note distinguishing a trustworthy deadline-partial from a genuine incomplete
+  ([#656](https://github.com/oimiragieo/tensor-grep/pull/656),
+  [`0e1fb31`](https://github.com/oimiragieo/tensor-grep/commit/0e1fb3122dcbe2bcd32824550c41221148479366))
+
+* fix(agent): stderr note distinguishing a trustworthy deadline-partial from a genuine incomplete
+  (v1.81.6 dogfood)
+
+Both v1.81.6 dogfood reports flagged the same #1 agent confusion: `tg agent <path> --deadline N` can
+  exit 2 with `partial: true` / a deadline-type `partial_reason` while `confidence.overall` is high
+  (e.g. 0.9) and `ask_user_before_editing.required` is false. An agent keying on the exit code alone
+  misreads this as a hard failure -- it is actually a usable answer that only stopped collecting
+  SECONDARY evidence (the call-site rescue scan / outbound-dependency preview / the final wall-clock
+  backstop in agent_capsule.build_agent_capsule_from_map, all AFTER the primary-target
+  ranking/render already completed) once the deadline hit.
+
+The JSON already distinguishes the two cases, so this adds ONE additive stderr line at both `raise
+  typer.Exit(2)` sites inside `main.agent` (the warm-daemon path and the cold path) -- never the
+  exit code, stdout JSON, or capsule schema. The note fires only when the exit-2 is caused SOLELY by
+  a trustworthy deadline-partial: `partial` true with a deadline-type `partial_reason`, no
+  `scan_limit`/`caller_scan_limit` possibly-truncated cap (a genuinely different, non-deadline
+  truncation vector even when it coincides with a deadline hit), `ask_user_before_editing.required`
+  false, and `confidence.overall` at/above the capsule's own confident threshold -- reusing
+  agent_capsule._capsule_low_confidence_ask_reason's real 0.75 cutoff instead of a second hardcoded
+  literal that could drift.
+
+Scoped to `tg agent` only, per the finding's exact ask (edit-plan/map/context-render/ blast-radius
+  share the same `_scan_incomplete` gate but are out of scope here).
+
+22 new tests (14 direct predicate unit tests + 8 CliRunner end-to-end tests across both call sites)
+  plus the existing 418-test agent/deadline/exit-code battery all green.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(agent): fail-safe isinstance guards in the deadline-partial note helper (gate nit)
+
+Independent-gate nit on #656: _agent_trustworthy_deadline_partial_note guarded
+  scan_limit/caller_scan_limit with isinstance but read confidence / ask_user_before_editing bare --
+  a present-but-non-dict value raised AttributeError instead of failing safe. Unreachable from
+  build_agent_capsule_from_map's single-return output (always dict-shaped), but an advisory helper
+  must never be what crashes an exit-2 path: a present-but-non-dict
+  confidence/ask_user_before_editing now suppresses the note (None), and a bool confidence.overall
+  (bool subclasses int) is rejected instead of coercing to 1.0. An ABSENT ask key still reads as "no
+  ask required" -- that semantic is unchanged.
+
++3 tests (TDD, red-then-green) pin the fail-safe at both the predicate and the CLI boundary (exit
+  stays 2, stdout JSON byte-unchanged, stderr empty).
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.81.6 (2026-07-17)
 
 ### Bug Fixes
