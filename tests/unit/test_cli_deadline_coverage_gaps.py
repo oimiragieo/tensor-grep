@@ -303,12 +303,23 @@ def test_agent_second_scan_deadline_clamps_to_floor(tmp_path: Path, monkeypatch)
     result = CliRunner().invoke(
         app, ["agent", str(tmp_path), "helper", "--deadline", "0.3", "--json"]
     )
-    assert result.exit_code == 0, result.output
+    # #639 Opus-gate nit 1 (dogfood #1 RESIDUAL): this scenario's shared deadline has ALREADY
+    # elapsed by the time the rescue scan even starts (0.5s injected delay > 0.3s budget) -- pre-
+    # fix that silently reported exit 0 (the rescue scan itself still succeeded inside its floored
+    # 0.1s sub-budget, so nothing individually named in the old fold-in ever flagged it), which was
+    # itself an instance of the exact silent lie this PR closes: a `--deadline 0.3` request that
+    # actually ran ~0.5s+ must never report success as if it finished in budget. The FINAL
+    # wall-clock catch-all now correctly reports exit 2 / partial=True here, even though the rescue
+    # scan's OWN substantive result (found the caller) is still present and still useful.
+    assert result.exit_code == 2, result.output
     payload = json.loads(result.output)  # must not crash/hang -- valid JSON either way
     assert payload["primary_target"]["symbol"] == "helper"
     assert payload["call_site_evidence"]["status"] == "collected"
-    # The item-3 assertion: the shared deadline had already elapsed (0.5s sleep > 0.3s budget), so
-    # the rescue scan must receive the FLOORED 0.1s budget, never a negative or zero value.
+    assert payload.get("partial") is True, result.output
+    assert payload.get("partial_reason") == "deadline", result.output
+    # The item-3 assertion (unchanged): the shared deadline had already elapsed (0.5s sleep > 0.3s
+    # budget), so the rescue scan must receive the FLOORED 0.1s budget, never a negative or zero
+    # value -- proven by the substantive "collected" result above despite the overall lateness.
     assert recorded.get("deadline_seconds") == 0.1
 
 
@@ -336,3 +347,110 @@ def test_agent_second_scan_skips_gracefully_on_full_deadline_exhaustion(
     assert payload.get("partial") is True
     assert payload["deadline_limit"]["deadline_exceeded"] is True
     assert payload["call_site_evidence"]["status"] == "skipped"
+
+
+# ==================================================================================================
+# Item 4 (dogfood #1 RESIDUAL, #639 Opus-gate nit 1): #639 (W1b) bounded the CHECKPOINTED post-map
+# stages (build_context_pack_from_map's own pagerank/scoring loop, DAR's outbound-dependency
+# collection) and folded each one's own deadline-break flag into the capsule's `result["partial"]`.
+# But that fold-in only named the sibling stages it explicitly threaded a flag through -- the
+# call-site-evidence rescue scan's OWN partial signal was silently dropped, and NOTHING re-checked
+# the shared wall-clock budget one final time before the capsule returns. So a `tg agent --deadline`
+# request whose SCAN and RENDER both finish in budget, but whose (uninstrumented) tail work pushes
+# elapsed time past the deadline, still silently reported exit 0 / partial-not-True -- the exact
+# silent lie dogfood #1 originally flagged, just relocated one stage later. Fixed by: (a) a FINAL
+# wall-clock catch-all in build_agent_capsule_from_map that stamps partial=True/partial_reason=
+# "deadline" regardless of which stage actually consumed the time; (b) propagating call-site-
+# evidence's own radius_payload["partial"] into the evidence dict (agent_capsule.py's existing
+# _copy_partial_signal helper, reused verbatim); (c) bounding _precomputed_validation_files_for_
+# root's per-entry Path.resolve() loop (repo_map.py, see test_repo_map_deadline.py), the
+# pre-existing unbounded cost documented in test_agent_codemap_deadline_scale.py's module docstring.
+# ==================================================================================================
+
+
+def test_agent_tail_overrun_after_checkpointed_pack_stage_still_reports_partial(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Deterministic (no wall-clock racing, mirrors test_agent_second_scan_deadline_clamps_to_
+    floor's proven technique above): force the shared deadline to have ALREADY elapsed by the
+    time execution reaches the tail (validation-file discovery + call-site-evidence), while the
+    CHECKPOINTED scan + build_context_pack_from_map stage itself finishes well within budget --
+    the exact "scan+render fit, tail overruns" shape the existing 0.1s integration tests (which
+    cross the deadline in the scan itself) do not cover. On this small a fixture neither the
+    validation-file-resolve tail nor the rescue blast-radius scan individually takes measurable
+    time, so this specifically isolates the FINAL catch-all (fix item 1), not items 2/3's more
+    targeted bounds.
+    """
+    _write_helper_and_caller(tmp_path)
+    original_pack = repo_map.build_context_pack_from_map
+
+    def _slow_pack(rm, query, **kwargs):
+        result = original_pack(rm, query, **kwargs)
+        time.sleep(0.5)
+        return result
+
+    monkeypatch.setattr(repo_map, "build_context_pack_from_map", _slow_pack)
+
+    result = CliRunner().invoke(
+        app, ["agent", str(tmp_path), "helper", "--deadline", "0.3", "--json"]
+    )
+
+    # RED pre-fix: this was exit_code == 0 / payload.get("partial") in (None, False) -- the silent
+    # lie. GREEN post-fix: the final catch-all in build_agent_capsule_from_map re-checks the shared
+    # absolute deadline before returning, regardless of which stage actually overran.
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.output)
+    assert payload.get("partial") is True, result.output
+    assert payload.get("partial_reason") == "deadline", result.output
+    assert payload.get("deadline_limit", {}).get("deadline_exceeded") is True, result.output
+
+
+def test_agent_no_overrun_stays_exit_0_partial_absent(tmp_path: Path) -> None:
+    """Companion golden-parity case: a real run that finishes on its own, well within a generous
+    deadline, must NOT gain a spurious partial=True from the new catch-all (it only fires on an
+    ACTUAL wall-clock overrun, never unconditionally)."""
+    _write_helper_and_caller(tmp_path)
+    result = CliRunner().invoke(
+        app, ["agent", str(tmp_path), "helper", "--deadline", "30", "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload.get("partial") is not True, result.output
+    assert "partial_reason" not in payload, result.output
+
+
+def test_collect_capsule_call_site_evidence_propagates_inner_partial_signal(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Fix item 2: _collect_capsule_call_site_evidence's own (possibly deadline-truncated)
+    build_symbol_blast_radius rescue scan can come back partial, but the evidence dict built from
+    its radius_payload silently dropped that signal -- an agent reading call_site_evidence in
+    isolation had no way to know the caller set was truncated, and the capsule-level fold-in the
+    sibling test above depends on could never observe it either."""
+    partial_radius = {
+        "callers": [],
+        "output_limit": {},
+        "graph_trust_summary": {},
+        "resolution_gaps": [],
+        "partial": True,
+        "deadline_limit": {"deadline_exceeded": True},
+    }
+    monkeypatch.setattr(
+        agent_capsule.repo_map,
+        "build_symbol_blast_radius",
+        lambda *a, **k: dict(partial_radius),
+    )
+
+    related_call_sites, evidence = agent_capsule._collect_capsule_call_site_evidence(
+        "helper",
+        str(tmp_path),
+        {"symbol": "helper", "confidence": 0.9},
+        include_blast_radius=True,
+        max_files=3,
+        max_repo_files=None,
+        seed_confidence=0.9,
+    )
+
+    assert related_call_sites == []
+    assert evidence.get("partial") is True, evidence
+    assert evidence.get("deadline_limit", {}).get("deadline_exceeded") is True, evidence

@@ -1142,13 +1142,32 @@ def _path_is_relative_to(path: Path, parent: Path) -> bool:
 def _precomputed_validation_files_for_root(
     root: Path,
     file_paths: list[str | Path] | None,
+    *,
+    deadline_monotonic: float | None = None,
+    deadline_hit: _DeadlineBreakFlag | None = None,
 ) -> list[Path] | None:
+    """#639 Opus-gate nit 1 (dogfood #1 RESIDUAL): this loop does one filesystem ``Path.resolve()``
+    syscall per entry in ``file_paths`` -- on a large repo map's ``related_paths``/``files``+
+    ``tests`` list (up to ``DEFAULT_AGENT_REPO_MAP_LIMIT`` entries) this was the dominant,
+    entirely UNBOUNDED cost behind ``tg agent ROOT Q --deadline 8`` running ~20s despite the scan
+    itself finishing in budget (Windows ``nt._getfinalpathname`` is comparatively expensive per
+    call; see ``tests/integration/test_agent_codemap_deadline_scale.py``'s documented finding).
+    ``deadline_monotonic``/``deadline_hit`` are optional (default ``None``, fully backward
+    compatible with the other call sites of this function that pass no deadline at all) and follow
+    the same ``_DeadlineBreakFlag`` readback contract as every other deadline-scoped sibling loop
+    in this module: on expiry, stop resolving further entries and return whatever was already
+    collected instead of walking the rest of the list regardless.
+    """
     if file_paths is None:
         return None
     normalized_root = root.expanduser().resolve()
     selected: list[Path] = []
     seen: set[str] = set()
     for raw_path in file_paths:
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            if deadline_hit is not None:
+                deadline_hit.hit = True
+            break
         current = Path(str(raw_path)).expanduser()
         if not current.is_absolute():
             current = normalized_root / current
@@ -3945,6 +3964,8 @@ def _discover_validation_tests_for_primary_file(
     query: str,
     limit: int,
     precomputed_file_paths: list[str | Path] | None = None,
+    deadline_monotonic: float | None = None,
+    deadline_hit: _DeadlineBreakFlag | None = None,
 ) -> list[str]:
     if not primary_file:
         return []
@@ -3969,6 +3990,8 @@ def _discover_validation_tests_for_primary_file(
     candidate_files = _precomputed_validation_files_for_root(
         validation_root,
         precomputed_file_paths,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=deadline_hit,
     )
     if candidate_files is None:
         candidate_files = _iter_repo_files(
@@ -3976,6 +3999,14 @@ def _discover_validation_tests_for_primary_file(
             max_files=_VALIDATION_RUNNER_SCAN_LIMIT,
         )
     for current in candidate_files:
+        # #639 Opus-gate nit 1: the resolve loop above can be bounded and still hand back a
+        # partial `candidate_files` list -- also bound THIS scoring loop directly (test-file
+        # detection + node:test probe + path scoring below are each their own, non-trivial cost)
+        # so a large candidate set can't itself run the shared budget past zero.
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            if deadline_hit is not None:
+                deadline_hit.hit = True
+            break
         if not _is_test_file(current):
             continue
         resolved = current.resolve()
@@ -11757,6 +11788,8 @@ def _build_edit_plan_seed(
     max_depth: int = _DEFAULT_EDIT_PLAN_MAX_DEPTH,
     blast_radius_payload: dict[str, Any] | None = None,
     semantic_provider: str = "native",
+    deadline_monotonic: float | None = None,
+    deadline_hit: _DeadlineBreakFlag | None = None,
 ) -> dict[str, Any]:
     primary_file = next(iter(payload.get("files", [])), None)
     primary_symbol = next(
@@ -11868,6 +11901,8 @@ def _build_edit_plan_seed(
             query=query,
             limit=max(1, min(max_files, 3)) - len(validation_tests),
             precomputed_file_paths=validation_file_paths,
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=deadline_hit,
         ):
             if current not in validation_tests:
                 validation_tests.append(current)
@@ -12069,6 +12104,7 @@ def _attach_edit_plan_metadata(
     max_depth: int = _DEFAULT_EDIT_PLAN_MAX_DEPTH,
     blast_radius_payload: dict[str, Any] | None = None,
     semantic_provider: str = "native",
+    deadline_monotonic: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     with _profiling_phase(_profiling_collector, "edit_plan_assembly"):
@@ -12133,6 +12169,15 @@ def _attach_edit_plan_metadata(
                     if isinstance(scope, dict):
                         resolved_blast_radius_payload["edit_plan_blast_radius_scope"] = dict(scope)
         with _profiling_phase(_profiling_collector, "edit_plan_seed"):
+            # #639 Opus-gate nit 1 (dogfood #1 RESIDUAL): the validation-file discovery this seed
+            # runs (_discover_validation_tests_for_primary_file -> _precomputed_validation_files_
+            # for_root) does a per-file Path.resolve() pass over the repo map's file list -- a
+            # pre-existing UNBOUNDED cost (see that function's own docstring) that let a `tg agent
+            # --deadline` request overrun in this tail even after the checkpointed scan + pack
+            # stage finished in budget. Own a flag here (mirrors build_context_pack_from_map's own
+            # `own_deadline_hit` pattern) and fold an early break into `payload["partial"]` below,
+            # same "any one sibling stage" fold-in shape every other deadline-scoped seam uses.
+            edit_plan_seed_deadline_hit = _DeadlineBreakFlag()
             payload["edit_plan_seed"] = _build_edit_plan_seed(
                 repo_map,
                 payload,
@@ -12142,7 +12187,14 @@ def _attach_edit_plan_metadata(
                 max_depth=max_depth,
                 blast_radius_payload=resolved_blast_radius_payload,
                 semantic_provider=semantic_provider,
+                deadline_monotonic=deadline_monotonic,
+                deadline_hit=edit_plan_seed_deadline_hit,
             )
+            if edit_plan_seed_deadline_hit.hit:
+                payload["partial"] = True
+                # setdefault, not overwrite: never clobber a richer deadline_limit already present
+                # from the SCAN stage or build_context_pack_from_map's own self-stamp.
+                payload.setdefault("deadline_limit", {"deadline_exceeded": True})
         payload["graph_trust_summary"] = (
             dict(resolved_blast_radius_payload.get("graph_trust_summary", {}))
             if resolved_blast_radius_payload is not None
@@ -13417,6 +13469,7 @@ def build_context_render_from_map(
             max_symbols=max_sources,
             max_depth=_DEFAULT_EDIT_PLAN_MAX_DEPTH,
             semantic_provider=semantic_provider,
+            deadline_monotonic=deadline_monotonic,
             _profiling_collector=collector,
         )
     else:
