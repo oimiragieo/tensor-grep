@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -775,6 +776,7 @@ def build_orient_capsule_from_map(
     render_profile: str = "compact",
     ignore: tuple[str, ...] = (),
     auto_deweight: bool = True,
+    deadline_monotonic: float | None = None,
 ) -> dict[str, Any]:
     """Task #108 (Tier-2 daemon moat): the map-based core of ``build_orient_capsule``, taking an
     already-built ``rm`` (e.g. the warm session daemon's cached ``repo_map``) instead of scanning
@@ -786,7 +788,19 @@ def build_orient_capsule_from_map(
     result field -- reconstructed below from ``rm["scan_limit"]["max_repo_files"]`` (populated by
     ``build_repo_map`` whenever a cap was applied), so there is exactly one source of truth for
     what cap actually produced ``rm`` instead of a second, independently-supplied value that could
-    drift from it."""
+    drift from it.
+
+    ``deadline_monotonic`` (#200): an ABSOLUTE ``time.monotonic()`` budget for THIS function's own
+    post-map work (the snippet-building loop below reads real files via ``_ast_chunked_snippet``,
+    and the centrality/entry-point passes above it are O(cached-map-size)). Unlike its siblings
+    (``build_agent_capsule_from_map``, ``build_context_render_from_map``,
+    ``build_context_edit_plan_from_map``), this function did NOT already accept one -- added here
+    so the warm session daemon (``session_store._serve_session_request_from_payload``) can bound
+    it the same way. Deliberately NOT threaded from ``build_orient_capsule`` (the cold CLI
+    wrapper): ``tg orient`` intentionally stays unbounded by default on the cold path (see this
+    module's ``build_orient_capsule`` docstring and its ``--no-deadline`` CLI help) -- only the
+    warm daemon dispatch path supplies a value, so ``deadline_monotonic=None`` (every existing
+    call site) remains a byte-identical no-op."""
     rm = _apply_ignore_globs(rm, ignore)
 
     deweighted_trees = _detect_vendored_subtrees(rm) if auto_deweight else {}
@@ -835,7 +849,14 @@ def build_orient_capsule_from_map(
     snippets: list[dict[str, Any]] = []
     token_budget_used = 0
     budget_truncated = False
+    # #200: the only real-file I/O left in this function (_ast_chunked_snippet reads+parses each
+    # central file from disk) -- cheap monotonic check per iteration, mirrors the checkpoint
+    # style build_context_pack_from_map's own per-symbol loop already uses.
+    snippet_loop_deadline_hit = False
     for cf in central_files[:max_snippet_files]:
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            snippet_loop_deadline_hit = True
+            break
         file_path = cf["file"]
         snippet_text = _ast_chunked_snippet(file_path, symbol_map.get(file_path, []))
         if not snippet_text:
@@ -919,6 +940,27 @@ def build_orient_capsule_from_map(
     # this does not change orient's documented always-exit-0 behavior; it only makes a truncated
     # scan visible in the payload, the same way `scan_limit`/`truncated` already are.
     _repo_map._copy_partial_signal(result, rm)
+    # #200: final wall-clock catch-all, mirrors build_agent_capsule_from_map's own
+    # deadline_exceeded_at_return check (agent_capsule.py). `_copy_partial_signal` above only
+    # forwards a SCAN-level partial signal already present on `rm` (build_repo_map's own
+    # --deadline, which the warm daemon path never re-applies since `rm` is an already-cached
+    # map) -- this is the independent POST-map bound: even when the snippet loop above didn't
+    # need to break early, the in-memory centrality/entry-point work before it is still
+    # O(cached-map-size) and could itself have consumed the whole warm-daemon budget on an
+    # unusually large cached map. Re-check the shared absolute deadline one final time before
+    # returning, regardless of which part of this function actually consumed the time. No-op
+    # when deadline_monotonic is None (every cold-path call), so cold output stays byte-identical.
+    if deadline_monotonic is not None and (
+        snippet_loop_deadline_hit or time.monotonic() >= deadline_monotonic
+    ):
+        result["partial"] = True
+        result["partial_reason"] = "deadline"
+        existing_deadline_limit = result.get("deadline_limit")
+        result["deadline_limit"] = (
+            dict(existing_deadline_limit)
+            if isinstance(existing_deadline_limit, dict)
+            else {"deadline_exceeded": True}
+        )
     return result
 
 

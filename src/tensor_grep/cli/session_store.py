@@ -62,6 +62,19 @@ _DEFAULT_SESSION_SYMBOL_REPO_MAP_LIMIT = DEFAULT_AGENT_REPO_MAP_LIMIT
 # distinct behavior.
 _DEFAULT_SESSION_ORIENT_REPO_MAP_LIMIT = DEFAULT_AGENT_REPO_MAP_LIMIT
 _DEFAULT_SESSION_AGENT_REPO_MAP_LIMIT = DEFAULT_AGENT_REPO_MAP_LIMIT
+# #200 (Backend Fail-Closed / scale-honesty gap): `_serve_session_request_from_payload` serves
+# agent/orient/context_render/context_edit_plan from an ALREADY-CACHED repo_map, so
+# build_repo_map's own --deadline (agent_capsule.DEFAULT_AGENT_CLI_DEADLINE_SECONDS on the cold
+# CLI path) never applies here -- the scan already happened, possibly long ago. Before this fix
+# these 4 warm-daemon branches never threaded ANY wall-clock budget into their builders (`grep -n
+# deadline session_store.py` was ZERO matches), so the DEFAULT (no --deadline flag) warm-daemon
+# request ran fully unbounded. Matches the cold path's own default exactly (a SAFE first cut: a
+# warm response finishing inside 60s, the overwhelming common case, is unaffected; a tighter
+# warm-specific value is a benchmark-gated follow-on, not this fix) so a warm request that
+# genuinely runs long now comes back partial=True/exit-2 instead of blocking the daemon worker
+# forever. See session_daemon.py's _DAEMON_RESPONSE_TIMEOUT_SECONDS comment, which already
+# flagged this exact gap as "tracked" before this fix closed it.
+WARM_DAEMON_DEFAULT_DEADLINE_SECONDS = 60.0
 # audit I2: bound on-disk session retention; keep at most N newest explicit sessions per root
 # so per-open cost and disk usage stay bounded. Configurable via TG_SESSION_MAX.
 _SESSION_MAX_ENV = "TG_SESSION_MAX"
@@ -1182,6 +1195,13 @@ def _serve_session_request_from_payload(
             "max_repo_files",
             _DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT,
         )
+        # #200: give this warm-daemon post-map computation the SAME default wall-clock honesty
+        # bound the cold CLI path defaults to (WARM_DAEMON_DEFAULT_DEADLINE_SECONDS, module
+        # docstring above) -- build_repo_map's own --deadline never reaches here because the
+        # daemon serves an ALREADY-CACHED map. A response that finishes inside the 60s budget
+        # (the overwhelming common case) is byte-identical to before; only a genuine overrun now
+        # stamps partial=True instead of running forever.
+        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
         response = build_context_render_from_map(
             _limited_session_repo_map(
                 repo_map,
@@ -1205,6 +1225,7 @@ def _serve_session_request_from_payload(
             optimize_context=bool(request.get("optimize_context", False)),
             render_profile=str(request.get("render_profile", "full")),
             profile=bool(request.get("profile", False)),
+            deadline_monotonic=deadline_monotonic,
         )
         response["session_id"] = session_id
         response["routing_reason"] = "session-context-render"
@@ -1221,6 +1242,8 @@ def _serve_session_request_from_payload(
                 None if max_repo_files in (None, "") else int(cast(int | str, max_repo_files))
             ),
         )
+        # #200: same warm-daemon default deadline bound as context_render above.
+        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
         response = build_context_edit_plan_from_map(
             scoped_repo_map,
             query,
@@ -1232,6 +1255,7 @@ def _serve_session_request_from_payload(
                 None if request.get("max_tokens") in (None, "") else int(request["max_tokens"])
             ),
             max_symbols=int(request.get("max_symbols", 5)),
+            deadline_monotonic=deadline_monotonic,
         )
         response["session_id"] = session_id
         response["routing_reason"] = "session-context-edit-plan"
@@ -1374,12 +1398,15 @@ def _serve_session_request_from_payload(
         # having scanned only N files (importers of the dropped files would still count edges
         # into files no longer present), so it must see the whole cached map, exactly like the 5
         # symbol commands above (none of which slice either).
+        # #200: same warm-daemon default deadline bound as context_render above.
+        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
         response = build_orient_capsule_from_map(
             repo_map,
             max_tokens=int(request.get("max_tokens", 3000)),
             max_central_files=int(request.get("max_central_files", 10)),
             ignore=tuple(request.get("ignore") or ()),
             auto_deweight=bool(request.get("auto_deweight", True)),
+            deadline_monotonic=deadline_monotonic,
         )
         response["session_id"] = session_id
         response["routing_reason"] = "session-orient"
@@ -1394,6 +1421,8 @@ def _serve_session_request_from_payload(
         # evidence) both need the whole cached map, not a per-call subset.
         raw_max_tokens = request.get("max_tokens", 1200)
         raw_max_repo_files = request.get("max_repo_files", _DEFAULT_SESSION_AGENT_REPO_MAP_LIMIT)
+        # #200: same warm-daemon default deadline bound as context_render/orient above.
+        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
         response = build_agent_capsule_from_map(
             repo_map,
             query,
@@ -1410,6 +1439,7 @@ def _serve_session_request_from_payload(
             model=(None if request.get("model") in (None, "") else str(request["model"])),
             semantic_provider=provider,
             ignore=tuple(request.get("ignore") or ()),
+            deadline_monotonic=deadline_monotonic,
             # include_blast_radius/gpu_device_ids/gpu_timeout_s deliberately NOT threaded from
             # `request` -- the CLI has no flag reaching the first, and the client wrapper
             # (main._maybe_agent_via_running_daemon) refuses to route a --gpu-device-ids request

@@ -58,8 +58,12 @@ _DAEMON_RESPONSE_TIMEOUT_SECONDS = 60.0
 # moat P0-6 step 5: the client-side socket read timeout for a daemon response is env-configurable so
 # a large repo whose warm-daemon graph query legitimately needs >60s is NOT killed by a hard cap that
 # returns a bare "timed out" / exit 1 / zero JSON (the recurring dogfood "60s cap errors" complaint).
-# Full partial-at-deadline for the DAEMON path needs a separate traversal-deadline (the served graph
-# commands run on the cached map, so the scan-deadline of steps 1-4 does not bound them) -- tracked.
+# #200 added the separate traversal-deadline this comment used to flag as "tracked" -- but only for
+# the 4 commands session_store.WARM_DAEMON_DEFAULT_DEADLINE_SECONDS covers (agent/orient/
+# context_render/context_edit_plan, the DEFAULT no-flag case). The 5 symbol commands (defs/impact/
+# refs/callers/blast_radius) plus blast_radius_render/blast_radius_plan/file_importers/context still
+# run unbounded on THIS daemon path -- that residual is #390, still open (see
+# tensor-grep-large-repo-scale-campaign skill, "#390 -- daemon-path deadline gap").
 _DAEMON_RESPONSE_TIMEOUT_ENV = "TG_SESSION_DAEMON_RESPONSE_TIMEOUT_SECONDS"
 _DAEMON_START_TIMEOUT_SECONDS = 5.0
 _DAEMON_SESSION_LOOKUP_RETRY_SECONDS = 0.25
@@ -1318,8 +1322,27 @@ def _serve_daemon_response_with_cache(
         # test_session_daemon_refresh_on_added_file_response_is_cached).
         session_request["refresh_on_stale"] = False
     response = serve_session_request(session_id, session_request, path, payload=payload)
-    with server._response_cache_lock:
-        server.response_cache.put(response_cache_key, response)
+    # #200: a deadline-truncated (`partial=True`) response must NEVER be cached and replayed to a
+    # later request that would have had a full budget to finish -- the response cache has no TTL
+    # tied to "how much of the original deadline is left", so a cached partial answer would be
+    # served indefinitely to every subsequent identical request, silently downgrading them all to
+    # the same truncated result even though each gets its own fresh
+    # WARM_DAEMON_DEFAULT_DEADLINE_SECONDS budget (session_store.py). Excluding it from the cache
+    # entirely is the simplest correct option: a follow-up identical request just recomputes with
+    # its own fresh budget instead of replaying a stale truncation.
+    #
+    # Opus-gate nit (PR #647): this guard is SHARED by every command this function serves,
+    # including the 5 symbol commands (defs/impact/refs/callers/blast_radius), not just the 4
+    # #200 targets. It is currently a proven no-op for the symbol commands: `open_session` builds
+    # the cached map with no deadline (session_store.open_session), and the warm symbol path
+    # never threads a per-request deadline into their builders either (the still-open #390 gap),
+    # so a warm symbol response can never be `partial=True` today. If #390 is ever closed by
+    # threading a deadline into the symbol commands too, this guard starts applying to them as
+    # well -- which is the CORRECT behavior (a truncated symbol answer must not be cached either),
+    # but flagging it here so that future change doesn't have to rediscover this coupling.
+    if not response.get("partial"):
+        with server._response_cache_lock:
+            server.response_cache.put(response_cache_key, response)
     return response, "miss"
 
 
