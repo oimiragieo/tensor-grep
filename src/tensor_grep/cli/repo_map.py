@@ -14643,6 +14643,7 @@ def build_symbol_defs_from_map(
     *,
     semantic_provider: str = "native",
     max_tests: int | None = None,
+    deadline_monotonic: float | None = None,
 ) -> dict[str, Any]:
     payload = dict(repo_map)
     payload["files"] = list(repo_map.get("files", []))
@@ -14703,8 +14704,23 @@ def build_symbol_defs_from_map(
     # "69KB for a 1-symbol answer" bug. Route through the SAME relevance filter callers/impact
     # already use so defs stops dumping the manifest, then cap it BEFORE `related_paths` derives
     # below (a leak-back through the second field is the same bug one layer down).
-    payload["tests"] = _relevant_tests_for_symbol(repo_map, symbol, definition_files)
+    # task #203: thread the (now-optional) deadline into this sibling test-relevance scan --
+    # _relevant_tests_for_symbol already supports deadline_monotonic/deadline_hit (used by
+    # impact/callers' own fold-in), but defs never passed either, so a warm-daemon `defs` request
+    # on a repo with many tests ran this loop fully unbounded even when a caller supplied a
+    # deadline. Mirrors build_context_pack_from_map's own_deadline_hit pattern (repo_map.py:13744).
+    defs_related_tests_deadline_hit = _DeadlineBreakFlag()
+    payload["tests"] = _relevant_tests_for_symbol(
+        repo_map,
+        symbol,
+        definition_files,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=defs_related_tests_deadline_hit,
+    )
     _apply_symbol_field_output_limit(payload, field_name="tests", max_count=max_tests)
+    if defs_related_tests_deadline_hit.hit:
+        payload["partial"] = True
+        payload.setdefault("deadline_limit", {"deadline_exceeded": True})
     related_paths = []
     for current in [*definition_files, *payload["tests"]]:
         if current not in related_paths:
@@ -17304,6 +17320,13 @@ def build_symbol_blast_radius_plan_from_map(
         max_symbols=normalized_max_symbols,
         max_depth=max_depth,
         blast_radius_payload=payload,
+        # task #203: this call dropped deadline_monotonic entirely even though it is already in
+        # scope as this function's own parameter -- the identical #642 gate nit-1 gap already fixed
+        # on build_context_edit_plan_from_map's matching call (repo_map.py:12617-12622), unfixed
+        # here. Without this, the edit-plan-seed's validation-test discovery inside
+        # _attach_edit_plan_metadata ran unbounded even when a caller supplied a deadline that DID
+        # bound the build_symbol_blast_radius_from_map call above.
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
     )
     return _attach_profiling(payload, _profiling_collector)
@@ -17380,6 +17403,7 @@ def build_symbol_blast_radius_render_from_map(
     render_profile: str = "full",
     profile: bool = False,
     semantic_provider: str = "native",
+    deadline_monotonic: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
@@ -17388,6 +17412,7 @@ def build_symbol_blast_radius_render_from_map(
         symbol,
         max_depth=max_depth,
         semantic_provider=semantic_provider,
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=collector,
     )
     normalized_profile = _normalize_render_profile(render_profile, optimize_context)
@@ -17407,7 +17432,16 @@ def build_symbol_blast_radius_render_from_map(
     # sources are examined first and we degrade gracefully to fewer rendered blocks.
     max_source_candidates = max(max_sources * 8, 24)
     examined_candidates = 0
+    # task #203: bound this per-candidate source-lookup loop with the SAME deadline_monotonic
+    # pattern callers/refs/file_importers already use (checked first, unconditionally, before any
+    # per-candidate filtering) -- the TG-4 comment above already documents this loop running
+    # "~3.5 min on a large repo" with only the COUNT-based max_source_candidates cap and no
+    # wall-clock bound at all.
+    source_loop_deadline_hit = False
     for current_symbol in ranked_symbols:
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            source_loop_deadline_hit = True
+            break
         current_file = str(current_symbol["file"])
         if current_file not in top_files:
             continue
@@ -17481,8 +17515,28 @@ def build_symbol_blast_radius_render_from_map(
         max_symbols=max_sources,
         max_depth=max_depth,
         blast_radius_payload=radius_payload,
+        # task #203: thread the deadline into the edit-plan-seed assembly too, mirroring the
+        # identical fix on build_context_edit_plan_from_map (repo_map.py:12617-12622) and
+        # build_symbol_blast_radius_plan_from_map (this file, just above) -- this call previously
+        # dropped deadline_monotonic entirely.
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=collector,
     )
+    # task #203: fold this function's OWN source-lookup loop deadline signal into partial --
+    # `dict(radius_payload)` above already copied forward any partial/deadline_limit that
+    # build_symbol_blast_radius_from_map (or _attach_edit_plan_metadata's own edit_plan_seed fold-in
+    # just above) already stamped, so `setdefault` here never clobbers a richer upstream signal;
+    # this only adds the flag when THIS loop was the one that broke early.
+    if source_loop_deadline_hit:
+        payload["partial"] = True
+        payload.setdefault(
+            "deadline_limit",
+            {
+                "deadline_exceeded": True,
+                "source_candidates_examined": examined_candidates,
+                "source_candidates_total": len(ranked_symbols),
+            },
+        )
     return _attach_profiling(payload, collector)
 
 

@@ -1182,7 +1182,13 @@ def _serve_session_request_from_payload(
         query = str(request.get("query", "")).strip()
         if not query:
             raise ValueError("context requests require a non-empty query")
-        response = build_context_pack_from_map(repo_map, query)
+        # #203: same warm-daemon default deadline bound as context_render/context_edit_plan below --
+        # build_context_pack_from_map already accepts deadline_monotonic (moat P0-6), but this
+        # branch never threaded one through, so a plain `context` request ran fully unbounded.
+        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
+        response = build_context_pack_from_map(
+            repo_map, query, deadline_monotonic=deadline_monotonic
+        )
         response["session_id"] = session_id
         response["routing_reason"] = "session-context"
         return response
@@ -1277,8 +1283,16 @@ def _serve_session_request_from_payload(
         symbol = str(request.get("symbol", "")).strip()
         if not symbol:
             raise ValueError("defs requests require a non-empty symbol")
+        # #203: same warm-daemon default deadline bound as context above -- build_symbol_defs_from_
+        # map gained deadline_monotonic as part of this fix (it previously had none at all) to
+        # bound its own related-tests sibling scan.
+        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
         response = build_symbol_defs_from_map(
-            repo_map, symbol, semantic_provider=provider, max_tests=max_tests
+            repo_map,
+            symbol,
+            semantic_provider=provider,
+            max_tests=max_tests,
+            deadline_monotonic=deadline_monotonic,
         )
         response["session_id"] = session_id
         response["routing_reason"] = "session-defs"
@@ -1288,8 +1302,17 @@ def _serve_session_request_from_payload(
         symbol = str(request.get("symbol", "")).strip()
         if not symbol:
             raise ValueError("impact requests require a non-empty symbol")
+        # #203: same warm-daemon default deadline bound as context/defs above --
+        # build_symbol_impact_from_map already accepts deadline_monotonic (#52/#103 fixes) and
+        # folds three sibling-loop deadline signals into partial, but this branch never threaded
+        # one through, so a plain `impact` request ran fully unbounded.
+        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
         response = build_symbol_impact_from_map(
-            repo_map, symbol, semantic_provider=provider, max_tests=max_tests
+            repo_map,
+            symbol,
+            semantic_provider=provider,
+            max_tests=max_tests,
+            deadline_monotonic=deadline_monotonic,
         )
         response["session_id"] = session_id
         response["routing_reason"] = "session-impact"
@@ -1299,8 +1322,17 @@ def _serve_session_request_from_payload(
         symbol = str(request.get("symbol", "")).strip()
         if not symbol:
             raise ValueError("refs requests require a non-empty symbol")
+        # #203: same warm-daemon default deadline bound as context/defs/impact above --
+        # build_symbol_refs_from_map already accepts deadline_monotonic (moat P0-6 step 6) and
+        # bounds both its reference-scan and string-refs traversal loops, but this branch never
+        # threaded one through, so a plain `refs` request ran fully unbounded.
+        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
         response = build_symbol_refs_from_map(
-            repo_map, symbol, semantic_provider=provider, max_tests=max_tests
+            repo_map,
+            symbol,
+            semantic_provider=provider,
+            max_tests=max_tests,
+            deadline_monotonic=deadline_monotonic,
         )
         response["session_id"] = session_id
         response["routing_reason"] = "session-refs"
@@ -1310,8 +1342,18 @@ def _serve_session_request_from_payload(
         symbol = str(request.get("symbol", "")).strip()
         if not symbol:
             raise ValueError("callers requests require a non-empty symbol")
+        # #203: same warm-daemon default deadline bound as context/defs/impact/refs above --
+        # build_symbol_callers_from_map already accepts deadline_monotonic (moat P0-6 step 6,
+        # task #61) and folds five sibling-loop deadline signals into partial, but this branch
+        # never threaded one through, so a plain `callers` request ran fully unbounded -- the
+        # exact #390 daemon-path shape this task (#203) closes.
+        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
         response = build_symbol_callers_from_map(
-            repo_map, symbol, semantic_provider=provider, max_tests=max_tests
+            repo_map,
+            symbol,
+            semantic_provider=provider,
+            max_tests=max_tests,
+            deadline_monotonic=deadline_monotonic,
         )
         response["session_id"] = session_id
         response["routing_reason"] = "session-callers"
@@ -1321,7 +1363,13 @@ def _serve_session_request_from_payload(
         target_file = str(request.get("file", "")).strip()
         if not target_file:
             raise ValueError("file_importers requests require a non-empty file")
-        response = build_file_importers_from_map(repo_map, target_file)
+        # #203: same warm-daemon default deadline bound as the symbol commands above --
+        # build_file_importers_from_map already accepts deadline_monotonic and bounds its
+        # per-candidate confirm-import-edges loop, but this branch never threaded one through.
+        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
+        response = build_file_importers_from_map(
+            repo_map, target_file, deadline_monotonic=deadline_monotonic
+        )
         response["session_id"] = session_id
         response["routing_reason"] = "session-file-importers"
         return response
@@ -1330,11 +1378,16 @@ def _serve_session_request_from_payload(
         symbol = str(request.get("symbol", "")).strip()
         if not symbol:
             raise ValueError("blast_radius requests require a non-empty symbol")
+        # #203: same warm-daemon default deadline bound as callers above -- build_symbol_blast_
+        # radius_from_map already accepts deadline_monotonic and threads it into its own callers/
+        # impact/preferred-definition-files sub-calls, but this branch never threaded one through.
+        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
         response = build_symbol_blast_radius_from_map(
             repo_map,
             symbol,
             max_depth=int(request.get("max_depth", 3)),
             semantic_provider=provider,
+            deadline_monotonic=deadline_monotonic,
         )
         response["session_id"] = session_id
         response["routing_reason"] = "session-blast-radius"
@@ -1344,6 +1397,12 @@ def _serve_session_request_from_payload(
         symbol = str(request.get("symbol", "")).strip()
         if not symbol:
             raise ValueError("blast_radius_render requests require a non-empty symbol")
+        # #203: build_symbol_blast_radius_render_from_map did NOT already accept deadline_monotonic
+        # (verified against the real code, unlike its blast_radius/blast_radius_plan siblings) --
+        # extended as part of this fix (its own per-candidate source-lookup loop, documented at the
+        # TG-4 comment in repo_map.py as "~3.5 min on a large repo" with only a count-based cap, is
+        # now wall-clock bounded too). Same warm-daemon default deadline as blast_radius above.
+        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
         response = build_symbol_blast_radius_render_from_map(
             repo_map,
             symbol,
@@ -1360,6 +1419,7 @@ def _serve_session_request_from_payload(
             render_profile=str(request.get("render_profile", "full")),
             profile=bool(request.get("profile", False)),
             semantic_provider=provider,
+            deadline_monotonic=deadline_monotonic,
         )
         response["session_id"] = session_id
         response["routing_reason"] = "session-blast-radius-render"
@@ -1373,6 +1433,10 @@ def _serve_session_request_from_payload(
             "max_repo_files",
             _DEFAULT_SESSION_BLAST_RADIUS_PLAN_REPO_MAP_LIMIT,
         )
+        # #203: same warm-daemon default deadline bound as blast_radius above -- build_symbol_
+        # blast_radius_plan_from_map already accepts deadline_monotonic and threads it into its
+        # build_symbol_blast_radius_from_map call, but this branch never threaded one through.
+        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
         response = build_symbol_blast_radius_plan_from_map(
             _limited_session_repo_map(
                 repo_map,
@@ -1385,6 +1449,7 @@ def _serve_session_request_from_payload(
             max_files=int(request.get("max_files", 3)),
             max_symbols=int(request.get("max_symbols", 5)),
             semantic_provider=provider,
+            deadline_monotonic=deadline_monotonic,
         )
         response["session_id"] = session_id
         response["routing_reason"] = "session-blast-radius-plan"
