@@ -393,23 +393,41 @@ def test_index_lock_is_per_root_not_global(tmp_path: Path, monkeypatch: pytest.M
 
     orig_write_index = session_store._write_index
 
+    # Record the write-lock hold interval per root so we can assert the two
+    # concurrent writes OVERLAP in time -- a causal, jitter-immune proof that
+    # per-root locks did not serialize. The previous wall-clock RATIO assertion
+    # (concurrent < baseline*1.8 + 0.5) flaked on contended CI runners: the
+    # v1.81.1 release run saw concurrent=0.906s vs a 0.894s ceiling, pure runner
+    # jitter, not serialization -- and the jitter even exceeded 2x baseline, so no
+    # ratio bound stays both sharp AND non-flaky. Overlap is unaffected by absolute
+    # timing: two per-root locks held at the same instant overlap no matter how
+    # slow the runner is, while a shared/global lockfile forces one write to wait
+    # for the other to release -> zero overlap -> the assertion still fails.
+    HOLD_SECONDS = 0.5
+    intervals: dict[str, tuple[float, float]] = {}
+    intervals_lock = threading.Lock()
+
     def slow_write_index(r: Path, recs: list) -> None:
-        time.sleep(0.2)
+        enter = time.monotonic()
+        time.sleep(HOLD_SECONDS)
+        leave = time.monotonic()
+        with intervals_lock:
+            intervals[r.name] = (enter, leave)
         return orig_write_index(r, recs)
 
     monkeypatch.setattr(session_store, "_write_index", slow_write_index)
 
-    # Baseline: a single locked (slowed) open_session call.
-    baseline_start = time.monotonic()
-    session_store.open_session(str(root_a))
-    baseline_elapsed = time.monotonic() - baseline_start
-
     results: dict[str, session_store.SessionOpenResult] = {}
+    # Release both threads together so thread-start skew is not a flake vector. The
+    # barrier is BEFORE open_session, not inside the locked write, so a hypothetical
+    # global lock still serializes (one thread blocks on lock acquisition) instead
+    # of deadlocking the barrier. timeout guards against an anti-hang stall.
+    ready = threading.Barrier(2)
 
     def worker(key: str, root: Path) -> None:
+        ready.wait(timeout=10)
         results[key] = session_store.open_session(str(root))
 
-    start = time.monotonic()
     threads = [
         threading.Thread(target=worker, args=("a", root_a)),
         threading.Thread(target=worker, args=("b", root_b)),
@@ -418,11 +436,19 @@ def test_index_lock_is_per_root_not_global(tmp_path: Path, monkeypatch: pytest.M
         t.start()
     for t in threads:
         t.join()
-    concurrent_elapsed = time.monotonic() - start
 
-    # Two DIFFERENT roots must not serialize against each other's lock: concurrent wall
-    # clock stays close to a single locked call, not ~2x (which would mean the two locks
-    # were contending on a shared/global lockfile instead of one lockfile per index.json).
-    assert concurrent_elapsed < baseline_elapsed * 1.8 + 0.5
+    # Two DIFFERENT roots must not serialize against each other's lock: their
+    # write-lock hold intervals must OVERLAP. A shared/global lockfile would make
+    # one write wait for the other to release (a_leave <= b_enter, or vice versa)
+    # -> no overlap -> this assertion fails, catching the regression.
+    assert "project_a" in intervals and "project_b" in intervals, (
+        f"expected one slowed write per root; got {sorted(intervals)}"
+    )
+    a_enter, a_leave = intervals["project_a"]
+    b_enter, b_leave = intervals["project_b"]
+    assert a_enter < b_leave and b_enter < a_leave, (
+        "per-root locks serialized (write-hold intervals did not overlap): "
+        f"project_a=[{a_enter:.3f}, {a_leave:.3f}] project_b=[{b_enter:.3f}, {b_leave:.3f}]"
+    )
     assert results["a"].session_id in {r.session_id for r in session_store._load_index(root_a)}
     assert results["b"].session_id in {r.session_id for r in session_store._load_index(root_b)}
