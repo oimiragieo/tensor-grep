@@ -54,3 +54,12 @@ def test_validate_pr_title_semver_should_read_github_event_payload(tmp_path: Pat
 
     assert result.returncode == 0
     assert "release_intent=patch" in result.stdout
+
+
+def test_validate_pr_title_semver_should_accept_bench_title_as_no_release() -> None:
+    # `bench:` is a documented no-release commit type (docs/chore/test/build/ci/bench all map to
+    # "none" per the change-control ground truth), used for benchmark-artifact-only PRs (#198).
+    result = _run_validator("--title", "bench(find): x")
+
+    assert result.returncode == 0
+    assert "release_intent=none" in result.stdout
