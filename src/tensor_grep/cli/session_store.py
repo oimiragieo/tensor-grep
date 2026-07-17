@@ -423,6 +423,23 @@ def _load_index(root: Path) -> list[SessionRecord]:
 
 def _write_json_atomic(path: Path, payload: Any, *, mode: int | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    # audit C4 / CWE-59: refuse to write THROUGH a pre-existing symlink at the destination --
+    # mirrors evidence_signing._write_private_key_atomic's guard. Without this, `os.replace`
+    # below would not corrupt the symlink's TARGET (POSIX rename() atomically replaces the link
+    # entry itself, not what it points to) but it would still silently destroy the caller's
+    # symlink with no signal that something unexpected was already at the destination -- refusing
+    # outright is the same fail-closed posture the private-key writer already takes. Every caller
+    # of this shared helper (session payloads/index, the daemon token + metrics files, and, via
+    # the C4 fix, the evidence-receipt and review-bundle CLI/MCP writers) gets the same
+    # protection. Callers that first `.expanduser().resolve()` a caller-supplied path MUST check
+    # `is_symlink()` on the pre-resolve path themselves (mirrors evidence_signing.generate_keypair)
+    # -- `.resolve()` follows symlinks, so by the time a resolved path reaches this function the
+    # symlink-ness of the ORIGINAL destination is already lost; this check remains as
+    # defense-in-depth against a symlink planted directly at an already-resolved leaf path (e.g.
+    # the session/daemon internal callers below, which never round-trip through a caller-supplied
+    # string) and against the narrow TOCTOU window between an outer check and this call.
+    if path.is_symlink():
+        raise OSError(f"Refusing to write through a symlink: {path}")
     tmp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
     data = json.dumps(payload, indent=2)
     if mode is not None:

@@ -199,9 +199,21 @@ def create_review_bundle(
     payload["bundle_sha256"] = _sha256_hex(_canonical_review_bundle_bytes(payload))
 
     if output_path is not None:
-        resolved_output = Path(output_path).expanduser().resolve()
-        resolved_output.parent.mkdir(parents=True, exist_ok=True)
-        resolved_output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        from tensor_grep.cli.session_store import _write_json_atomic
+
+        # audit C4 / CWE-59: check for a symlink BEFORE `.resolve()` -- resolving first would
+        # follow the symlink to its real target and make `is_symlink()` on the result always
+        # False, silently defeating `_write_json_atomic`'s own symlink guard (mirrors
+        # evidence_signing.generate_keypair's identical ordering fix). `_write_json_atomic` also
+        # makes this write atomic (temp file + fsync + os.replace) instead of the previous bare
+        # `write_text`, which could leave a truncated bundle on a crash mid-write.
+        expanded_output = Path(output_path).expanduser()
+        if expanded_output.is_symlink():
+            raise OSError(
+                f"Refusing to write the review bundle through a symlink: {expanded_output}"
+            )
+        resolved_output = expanded_output.resolve()
+        _write_json_atomic(resolved_output, payload)
 
     return payload
 
