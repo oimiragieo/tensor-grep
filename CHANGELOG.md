@@ -1,6 +1,121 @@
 # CHANGELOG
 
 
+## v1.80.1 (2026-07-17)
+
+### Bug Fixes
+
+- **search**: Mirror main.py paths-defaulted rule in bootstrap unbounded-scan guard (#88-parity)
+  ([#638](https://github.com/oimiragieo/tensor-grep/pull/638),
+  [`26b3448`](https://github.com/oimiragieo/tensor-grep/commit/26b3448b59b1ba6d341a22dc72ee0cd11b123423))
+
+* fix(search): mirror main.py paths-defaulted rule in the bootstrap unbounded-scan guard so 'tg
+  search PAT -t py' (no path) fast-refuses (#88-parity, dogfood #2)
+
+bootstrap.py's _search_args_include_generated_scan_bound treated ANY of
+  -d/-g/-t/-T/--glob/--iglob/--max-depth/--maxdepth/--type/--type-not as an UNCONDITIONAL scan-scope
+  bound, unlike cli/main.py's already-fixed _has_walk_scope_bound (~4734, the original #88 fix),
+  which only counts -g/-t/-T/--glob/--iglob/--type/--type-not as a bound when the caller ALSO
+  supplied an explicit PATH (paths_defaulted=False).
+
+Verified live (a routing trace against a vendored-root fixture): a bare "tg search PAT -t py" with
+  no trigger flag was already accidentally routed to the full CLI by _requires_full_cli's unrelated
+  _TG_ONLY_SEARCH_FLAGS membership check. But once a "supported trigger" flag rides along
+  (--json/--cpu/--ndjson/--force-cpu/--gpu-device-ids -- exactly what a JSON-emitting agent caller
+  sends), _can_delegate_to_native_tg_search bypasses _requires_full_cli entirely via its own
+  OR-branch, and guarded_broad_root was the only gate left standing. Because the buggy
+  generated-scan-bound check short-circuited on the bare -t py, the guard never flagged the scan as
+  unbounded, and "tg search PAT -t py --json" (no path, from a workspace/vendored root) delegated
+  straight to the native binary with zero scope-bound checking applied -- a real resurrection of #88
+  at the front door, not merely a theoretical gap.
+
+Fix (council-resolved):
+
+1. Added _search_args_paths_defaulted -- a RAW-arg positional predicate mirroring main.py's
+  paths_defaulted = not args[1:] (~7262). It reads a new _search_path_args_raw helper (the existing
+  _search_path_args walk, refactored to expose its pre-fallback state) rather than _search_path_args
+  itself, because that helper's paths or ["."] fallback collapses "no path given" and an explicit
+  "." into the identical ["."] and so cannot tell "tg search PAT -t py" (no path) apart from "tg
+  search PAT . -t py" (explicit ".").
+
+2. Split the bound-flag set in two: _SEARCH_UNCONDITIONAL_SCAN_BOUND_FLAGS
+  (-d/--max-depth/--maxdepth) remains an unconditional bound regardless of paths_defaulted, matching
+  _has_walk_scope_bound's "config.max_depth is not None" check.
+  _SEARCH_PATH_CONDITIONAL_SCAN_BOUND_FLAGS (-g/-t/-T/--glob/--iglob/--type/--type-not) now only
+  counts as a bound when paths_defaulted=False.
+
+3. _search_args_include_generated_scan_bound takes the new paths_defaulted keyword-only param; its
+  sole caller (_search_args_include_unbounded_broad_scan) computes it via
+  _search_args_paths_defaulted and threads it through.
+
+TDD: RED tests confirmed against unfixed origin/main (native delegation fires for the bare -t py
+  --json case; both new helper-signature tests fail); GREEN after the fix. Two companion tests lock
+  the non-regression cases: an explicit "." path still allows -t/-g through (the paths_defaulted
+  distinction, not over-refusal), and a bare -d/--max-depth with no path still allows native
+  delegation (the unconditional-bound carve-out). Full test_cli_bootstrap.py suite (77 passed, 1
+  pre-existing skip unrelated to this change) shows no regressions.
+
+* test(ci): harden the CPU throughput floor test against shared-runner noise
+
+The reported CI failure on run 29546432345 / job 87780302669 (test-python, ubuntu-latest, py3.12)
+  was NOT a bootstrap.py Linux bug and never even reached tests/unit/test_cli_bootstrap.py. pytest's
+  repo-wide `-x` (fail-fast, pyproject.toml addopts) aborted the whole suite at the first failure,
+  which was tests/e2e/test_throughput.py::TestThroughput:: test_cpu_backend_throughput (7.6 MB/s vs
+  an 8.0 MB/s floor) -- a pre-existing, already-twice-hardened, environment-sensitive perf smoke
+  test this PR's diff never touches (`git diff origin/main...HEAD` touches only bootstrap.py +
+  test_cli_bootstrap.py). Because tests/e2e collects before tests/unit, the bootstrap tests never
+  ran on Linux in that job, so the run gave zero signal on the #88-parity fix either way.
+
+Audited the #88-parity bootstrap.py diff and the new test_cli_bootstrap.py tests for the
+  Windows-path-assumption bug this failure was assumed to be: found none. The change is pure
+  argv/flag-string logic (paths_defaulted, unconditional-vs-path-conditional scan-bound flag
+  splitting) with zero os.sep/backslash/drive-letter handling. All 79 bootstrap tests plus the 2
+  floor-selector unit tests pass locally under a correctly pytest-synced venv (Python 3.12.12 /
+  pytest 9.0.3, matching CI's pins).
+
+Fix: extend the throughput test's existing best-of-6 anti-flake sampling with one bounded second
+  wave when the first wave misses the floor, so a transient noisy-neighbor spike on a shared hosted
+  runner (the same class of noise this floor already skips entirely on Windows CI) doesn't fail the
+  build. A genuine throughput regression still misses the floor on both waves, so this does not
+  weaken the gate's power to catch a real regression.
+
+### Testing
+
+- **ast**: Lock in the native/wrapper metavar fail-closed refusals + document the divergence (#141,
+  council-corrected — guard already exists)
+  ([#637](https://github.com/oimiragieo/tensor-grep/pull/637),
+  [`af347b6`](https://github.com/oimiragieo/tensor-grep/commit/af347b650959c143a043eb9c9cbe32fb90c8c23c))
+
+Council-corrected scope for #141: the metavar (`$NAME`/`$$$ARGS`) fail-closed guard between the
+  ast-grep wrapper and native tree-sitter AstBackend already exists at 3 sites -- this adds
+  regression coverage locking it in plus a doc note, and builds NO new guard.
+
+Verified against origin/main (1135d30) by symbol: - Pipeline._supports_native_ast_pattern
+  (core/pipeline.py:52-60) -- the shared classifier; only a bare identifier or an s-expression
+  starting with `(` counts as native-shaped. - Pipeline.__init__'s AST branch
+  (core/pipeline.py:230-233) -- raises ConfigurationError when the pattern isn't native-shaped and
+  the wrapper is unavailable. - _select_ast_backend_for_pattern (cli/ast_workflows.py:928-1004, the
+  `tg run`/`tg scan` selector) -- raises the identical ConfigurationError at line 990. -
+  tg_ast_search (cli/mcp_server.py:4630-4653) -- wraps Pipeline construction in try/except
+  ConfigurationError and converts it to the structured {"error": {"code": "unavailable", ...}} JSON
+  shape.
+
+New tests (tests/unit/test_pipeline.py, test_ast_workflows.py, test_mcp_server.py) drive genuine
+  `$NAME`/`$$$ARGS` metavariable patterns through the real code paths (only backend availability is
+  stubbed) to prove the refusal fires at each entry point, including with the native AstBackend left
+  AVAILABLE to prove its presence never lets a metavariable pattern silently mis-route to it.
+
+New AGENTS.md section ("AST Native/Wrapper Two-Engine Divergence") plus a matching CLAUDE.md pointer
+  bullet document: the two-engine DSL divergence; the 3 already-fail-closed sites (cited above);
+  that the native-shaped fallback (bare identifier -> tree-sitter when ast-grep is absent) is
+  deliberate, not a bug, so a CPU box without ast-grep still gets some AST capability; and that full
+  DSL parity (task #141) stays demand-gated on a concrete consumer.
+
+No routing or guard logic changed -- test and docs only.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.80.0 (2026-07-17)
 
 ### Documentation
