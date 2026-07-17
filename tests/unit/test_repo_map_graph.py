@@ -89,6 +89,119 @@ def test_reverse_import_pagerank_caps_broad_query_seed_sets() -> None:
     assert elapsed < 10.0
 
 
+# ---------------------------------------------------------------------------------------------
+# dogfood finding 1 (agent/codemap --deadline post-map bounding): _personalized_reverse_import_
+# pagerank ran its 12-iteration loop fully UNBOUNDED even when a caller (context-pack scoring)
+# already had a deadline_monotonic in scope -- the loop was never threaded a deadline at all. Two
+# council must-fixes: (1) ABANDON to {} at the iteration boundary on expiry (deterministic --
+# callers already do `.get(x, 0.0)`, never a partial-ranks lie); (2) hoist the per-node
+# `sorted(reverse_importers.get(current))` OUT of the loop, since reverse_importers never changes
+# across iterations -- a free, additive speedup independent of the deadline fix.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_pagerank_abandons_to_empty_dict_on_already_expired_deadline() -> None:
+    files = [f"C:/repo/src/mod_{index}.py" for index in range(20)]
+    # A real hub (non-empty reverse-importers) so a pre-fix run would still do real sort work on
+    # iteration 0 before this test's expired deadline should stop it from ever getting there.
+    reverse = {files[0]: set(files[1:])}
+    flag = repo_map._DeadlineBreakFlag()
+
+    ranks = repo_map._personalized_reverse_import_pagerank(
+        files[:2],
+        files,
+        reverse,
+        deadline_monotonic=time.monotonic() - 1.0,
+        deadline_hit=flag,
+    )
+
+    assert ranks == {}
+    assert flag.hit is True
+
+
+def test_pagerank_deadline_hit_flag_is_optional() -> None:
+    """A caller that passes deadline_monotonic but no deadline_hit flag must not crash -- the
+    None-guard on `deadline_hit.hit = True` mirrors every sibling _DeadlineBreakFlag call site."""
+    files = [f"C:/repo/src/mod_{index}.py" for index in range(5)]
+    reverse = {files[0]: {files[1]}}
+
+    ranks = repo_map._personalized_reverse_import_pagerank(
+        files[:1],
+        files,
+        reverse,
+        deadline_monotonic=time.monotonic() - 1.0,
+    )
+
+    assert ranks == {}
+
+
+def test_pagerank_deadline_none_is_unaffected() -> None:
+    """No deadline supplied (the pre-existing call sites' shape) -> unchanged, non-empty ranks."""
+    files = [f"C:/repo/src/mod_{index}.py" for index in range(10)]
+    reverse = {files[0]: {files[1], files[2]}}
+
+    ranks = repo_map._personalized_reverse_import_pagerank(files[:1], files, reverse)
+
+    assert ranks
+    assert files[0] in ranks
+
+
+def test_pagerank_hoisted_sort_matches_reference_computation() -> None:
+    """The hoist (sorted(reverse_importers.get(current)) computed ONCE before the 12-iteration
+    loop, not recomputed every iteration) must be numerically a pure refactor. Prove it against an
+    independent reference implementation that keeps the pre-fix recompute-every-iteration shape."""
+    files = [f"C:/repo/src/mod_{index}.py" for index in range(8)]
+    reverse = {
+        files[0]: {files[1], files[2], files[3]},
+        files[1]: {files[4]},
+        files[4]: {files[5], files[6]},
+    }
+
+    def _reference(
+        seed_files: list[str],
+        all_files: list[str],
+        reverse_importers: dict[str, set[str]],
+        *,
+        alpha: float = 0.85,
+        iterations: int = 12,
+    ) -> dict[str, float]:
+        all_file_set = set(all_files)
+        seen: set[str] = set()
+        unique_seeds: list[str] = []
+        for current in seed_files:
+            if current not in all_file_set or current in seen:
+                continue
+            seen.add(current)
+            unique_seeds.append(current)
+        seed_set = set(unique_seeds)
+        seed_weight = 1.0 / len(unique_seeds)
+        personalization = {
+            current: (seed_weight if current in seed_set else 0.0) for current in all_files
+        }
+        ranks = dict(personalization)
+        for _ in range(iterations):
+            updated = {current: (1.0 - alpha) * personalization[current] for current in all_files}
+            for current in all_files:
+                # pre-fix shape: recompute the sort every iteration.
+                outgoing = sorted(reverse_importers.get(current, set()))
+                if outgoing:
+                    share = alpha * ranks[current] / len(outgoing)
+                    for importer in outgoing:
+                        updated[importer] = updated.get(importer, 0.0) + share
+                    continue
+                spill = alpha * ranks[current] / len(unique_seeds)
+                for seed in unique_seeds:
+                    updated[seed] = updated.get(seed, 0.0) + spill
+            ranks = updated
+        return {current: rank for current, rank in ranks.items() if rank > 0.0}
+
+    expected = _reference(files[:2], files, reverse)
+    actual = repo_map._personalized_reverse_import_pagerank(files[:2], files, reverse)
+
+    assert actual == expected
+    assert actual  # sanity: the fixture actually produces non-trivial ranks
+
+
 def test_context_tests_skip_framework_scan_without_cheap_test_evidence(monkeypatch) -> None:
     def _fail_unrelated_framework_scan(test_path: str) -> tuple[str, ...]:
         raise AssertionError(f"unexpected framework scan for {test_path}")

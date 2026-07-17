@@ -15,6 +15,7 @@ those keys directly would be silently empty forever. Most tests here build REAL 
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -611,3 +612,149 @@ def test_dar_dedupes_candidates_already_present_in_related_call_sites() -> None:
 
     assert records == []
     assert evidence == {}
+
+
+# ---------------------------------------------------------------------------------------------
+# dogfood finding 1 / council must-fix #5: thread the shared absolute deadline_monotonic through
+# _collect_outbound_dependencies -- before this fix it accepted no deadline at all, so DAR (once
+# opted in) could keep parsing/scanning past --deadline like every other post-map stage this PR
+# bounds. Fail-safe contract preserved: bails to the SAME ([], {}) shape every other early return
+# in this function already uses (see the function's own docstring).
+# ---------------------------------------------------------------------------------------------
+
+
+def test_dar_returns_empty_on_expired_deadline(tmp_path: Path) -> None:
+    paths = _write_dar_project(tmp_path)
+    payload = _dar_context_payload(
+        primary_file=paths["primary"].resolve(),
+        file_summaries=[
+            {
+                "path": str(paths["dependency"].resolve()),
+                "symbols": [{"name": _DEPENDENCY_SYMBOL, "kind": "function", "line": 1}],
+            },
+        ],
+    )
+    target = {"file": str(paths["primary"].resolve()), "symbol": _PRIMARY_SYMBOL}
+    snippets = [
+        {"file": str(paths["primary"].resolve()), "start_line": 1, "source": _PRIMARY_SOURCE},
+    ]
+
+    records, evidence = agent_capsule._collect_outbound_dependencies(
+        _PRIMARY_SYMBOL,
+        str(paths["project"]),
+        target,
+        payload,
+        snippets,
+        [],
+        max_files=3,
+        preview_token_budget=None,
+        deadline_monotonic=time.monotonic() - 1.0,
+    )
+
+    assert records == []
+    assert evidence == {}
+
+
+def test_dar_deadline_hit_flag_is_set_on_expired_deadline(tmp_path: Path) -> None:
+    paths = _write_dar_project(tmp_path)
+    payload = _dar_context_payload(
+        primary_file=paths["primary"].resolve(),
+        file_summaries=[
+            {
+                "path": str(paths["dependency"].resolve()),
+                "symbols": [{"name": _DEPENDENCY_SYMBOL, "kind": "function", "line": 1}],
+            },
+        ],
+    )
+    target = {"file": str(paths["primary"].resolve()), "symbol": _PRIMARY_SYMBOL}
+    snippets = [
+        {"file": str(paths["primary"].resolve()), "start_line": 1, "source": _PRIMARY_SOURCE},
+    ]
+    flag = repo_map._DeadlineBreakFlag()
+
+    agent_capsule._collect_outbound_dependencies(
+        _PRIMARY_SYMBOL,
+        str(paths["project"]),
+        target,
+        payload,
+        snippets,
+        [],
+        max_files=3,
+        preview_token_budget=None,
+        deadline_monotonic=time.monotonic() - 1.0,
+        deadline_hit=flag,
+    )
+
+    assert flag.hit is True
+
+
+def test_dar_deadline_none_still_finds_the_real_dependency(tmp_path: Path) -> None:
+    """Sanity companion: no deadline supplied -> unaffected, still resolves the real dependency
+    (proves the deadline param above is additive, not a behavior change for existing callers)."""
+    paths = _write_dar_project(tmp_path)
+    payload = _dar_context_payload(
+        primary_file=paths["primary"].resolve(),
+        file_summaries=[
+            {
+                "path": str(paths["dependency"].resolve()),
+                "symbols": [{"name": _DEPENDENCY_SYMBOL, "kind": "function", "line": 1}],
+            },
+        ],
+    )
+    target = {"file": str(paths["primary"].resolve()), "symbol": _PRIMARY_SYMBOL}
+    snippets = [
+        {"file": str(paths["primary"].resolve()), "start_line": 1, "source": _PRIMARY_SOURCE},
+    ]
+
+    records, evidence = agent_capsule._collect_outbound_dependencies(
+        _PRIMARY_SYMBOL,
+        str(paths["project"]),
+        target,
+        payload,
+        snippets,
+        [],
+        max_files=3,
+        preview_token_budget=None,
+    )
+
+    assert len(records) == 1
+    assert records[0]["symbol"] == _DEPENDENCY_SYMBOL
+    assert evidence["status"] == "collected"
+
+
+def test_build_agent_capsule_from_map_folds_dar_deadline_hit_into_partial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Council must-fix #2 (stamp the partial boolean DIRECTLY): DAR's own deadline_hit must fold
+    into the capsule's result["partial"] even when nothing else (context-render, pagerank) broke.
+    Simulated via a direct monkeypatch of _collect_outbound_dependencies -- deterministic,
+    independent of DAR's real internal timing/fixture size (already unit-tested in isolation
+    above) -- proving the CALL-SITE wiring in build_agent_capsule_from_map, not DAR itself."""
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+
+    def _fake_collect(*args: object, deadline_hit=None, **kwargs: object):
+        if deadline_hit is not None:
+            deadline_hit.hit = True
+        return [], {}
+
+    monkeypatch.setattr(agent_capsule, "_collect_outbound_dependencies", _fake_collect)
+
+    result = agent_capsule.build_agent_capsule("f", str(tmp_path))
+
+    assert result.get("partial") is True
+    assert result.get("deadline_limit") == {"deadline_exceeded": True}
+
+
+def test_build_agent_capsule_from_map_dar_no_hit_stays_complete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+
+    def _fake_collect(*args: object, deadline_hit=None, **kwargs: object):
+        return [], {}
+
+    monkeypatch.setattr(agent_capsule, "_collect_outbound_dependencies", _fake_collect)
+
+    result = agent_capsule.build_agent_capsule("f", str(tmp_path))
+
+    assert "partial" not in result

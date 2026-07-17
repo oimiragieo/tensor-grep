@@ -115,6 +115,101 @@ def test_defs_daemon_probe_consulted_without_deadline(tmp_path: Path, monkeypatc
 
 
 # ==================================================================================================
+# dogfood finding 1 / F4: `tg agent` defaults --deadline to 60s (mirrors codemap's #153) so a
+# whole-repo call without an explicit --deadline still terminates in bounded time -- but ONLY on
+# the COLD fallback, applied in the command BODY strictly AFTER the warm-daemon gate decides
+# whether to try the daemon (`if effective_deadline is None: ...`). Putting the 60.0 default on
+# the typer.Option itself (codemap's own placement -- codemap has no daemon gate at all) would
+# make `effective_deadline` never None on a default call, silently skipping the daemon probe on
+# EVERY invocation and killing the #108 moat. The tests below prove both halves of that contract
+# at once: the daemon gate is still consulted by default, AND the cold fallback (once the daemon
+# misses/is unavailable) gets exactly 60.0.
+# ==================================================================================================
+
+
+def _agent_cold_spy(recorded: dict):
+    def _spy(query, path, **kwargs):
+        recorded["deadline_seconds"] = kwargs.get("deadline_seconds")
+        return {"path": str(path), "query": query}
+
+    return _spy
+
+
+def test_agent_default_still_reaches_daemon_gate_before_60s_cold_fallback(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """THE moat-preservation proof: a default `tg agent` call (no --deadline/--no-deadline) must
+    still ATTEMPT the warm-daemon path, proving the 60s cold-path default cannot have been
+    applied before the gate's `effective_deadline is None` check."""
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    daemon_calls: list = []
+
+    def _daemon_spy(**kwargs):
+        daemon_calls.append(kwargs)
+        return None  # a daemon "miss" -- falls through to cold; only the CALL matters here
+
+    monkeypatch.setattr(main, "_maybe_agent_via_running_daemon", _daemon_spy)
+    cold_recorded: dict = {}
+    monkeypatch.setattr(agent_capsule, "build_agent_capsule", _agent_cold_spy(cold_recorded))
+
+    result = CliRunner().invoke(app, ["agent", str(tmp_path), "f", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert len(daemon_calls) == 1, "the warm-daemon gate must still be consulted by default"
+    assert cold_recorded.get("deadline_seconds") == 60.0, (
+        "the cold fallback after a daemon miss must default to 60s"
+    )
+
+
+def test_agent_no_deadline_flag_also_reaches_daemon_gate_and_cold_stays_unbounded(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """--no-deadline is a real opt-out: the daemon gate is STILL consulted (unchanged from
+    today -- effective_deadline is None either way), but the cold fallback must stay unbounded
+    (None), never silently downgraded to the new 60s default."""
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    daemon_calls: list = []
+
+    def _daemon_spy(**kwargs):
+        daemon_calls.append(kwargs)
+        return None
+
+    monkeypatch.setattr(main, "_maybe_agent_via_running_daemon", _daemon_spy)
+    cold_recorded: dict = {}
+    monkeypatch.setattr(agent_capsule, "build_agent_capsule", _agent_cold_spy(cold_recorded))
+
+    result = CliRunner().invoke(app, ["agent", str(tmp_path), "f", "--no-deadline", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert len(daemon_calls) == 1
+    assert cold_recorded.get("deadline_seconds") is None
+
+
+def test_agent_explicit_deadline_overrides_the_60s_default(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    monkeypatch.setattr(main, "_maybe_agent_via_running_daemon", lambda **kwargs: None)
+    cold_recorded: dict = {}
+    monkeypatch.setattr(agent_capsule, "build_agent_capsule", _agent_cold_spy(cold_recorded))
+
+    result = CliRunner().invoke(app, ["agent", str(tmp_path), "f", "--deadline", "30", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert cold_recorded.get("deadline_seconds") == 30.0
+
+
+def test_agent_default_cli_deadline_constant_is_60_seconds() -> None:
+    """Documents/locks the constant agent's body-level default reads. Unlike codemap's own guard
+    test (which pins a literal-duplicated typer.Option default against codemap.DEFAULT_CLI_
+    DEADLINE_SECONDS -- required there because codemap's default sits ON the typer.Option,
+    evaluated at CLI-decoration/module-import time, before codemap.py's heavy import runs),
+    agent's 60s default is applied in the command BODY -- after `agent_capsule` is already
+    lazily imported -- so main.py imports agent_capsule.DEFAULT_AGENT_CLI_DEADLINE_SECONDS
+    DIRECTLY rather than literal-duplicating it. There is no drift to pin; this just locks the
+    value itself."""
+    assert agent_capsule.DEFAULT_AGENT_CLI_DEADLINE_SECONDS == 60.0
+
+
+# ==================================================================================================
 # Item 2: cold-path exit-2 coverage under a REAL --deadline-truncated scan (not a mocked payload).
 # Target `src/tensor_grep` itself (~80 real files) rather than a tiny tmp_path fixture -- a 0.1s
 # deadline needs genuine scan work to truncate against; a 2-file fixture can complete a full repo
