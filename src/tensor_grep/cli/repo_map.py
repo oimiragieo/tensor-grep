@@ -14630,10 +14630,39 @@ def build_symbol_defs(
     payload = build_repo_map(
         path, max_repo_files=max_repo_files, deadline_monotonic=deadline_monotonic
     )
+    # audit C1/C2: this call used to be BARE, dropping the deadline entirely --
+    # build_symbol_defs_from_map's OWN internal _relevant_tests_for_symbol scan (repo_map.py:3812)
+    # already accepts deadline_monotonic (#203), it just never received one from here, so a `tg
+    # defs --deadline N` request ran that stage-1 scan fully unbounded (dogfood: `--deadline 40`
+    # -> 113.5s, exit 0, partial:null). main.py's daemon gate skips the warm fast path whenever
+    # --deadline is set, so THIS cold wrapper is the only path an explicit-deadline caller exercises.
     result = build_symbol_defs_from_map(
-        payload, symbol, semantic_provider=semantic_provider, max_tests=max_tests
+        payload,
+        symbol,
+        semantic_provider=semantic_provider,
+        max_tests=max_tests,
+        deadline_monotonic=deadline_monotonic,
     )
     _copy_partial_signal(result, payload)
+    # C1 defense-in-depth: mirrors build_context_pack's #642-style return-time backstop
+    # (repo_map.py:8380-8392) -- a final absolute wall-clock recheck so ANY stage inside
+    # build_symbol_defs_from_map (instrumented or not) can never silently return exit 0 once the
+    # caller's --deadline budget is gone, regardless of which internal loop actually consumed the
+    # time. Does NOT set `partial_reason` -- that field is reserved for the
+    # agent/context/context-render/edit-plan family (docs/CONTRACTS.md); the symbol commands'
+    # existing convention (impact/refs/callers/blast-radius fold-ins above) is partial +
+    # deadline_limit only.
+    deadline_exceeded_at_return = (
+        deadline_monotonic is not None and time.monotonic() >= deadline_monotonic
+    )
+    if result.get("partial") or deadline_exceeded_at_return:
+        result["partial"] = True
+        existing_deadline_limit = result.get("deadline_limit")
+        result["deadline_limit"] = (
+            dict(existing_deadline_limit)
+            if isinstance(existing_deadline_limit, dict)
+            else {"deadline_exceeded": True}
+        )
     return result
 
 
@@ -14845,10 +14874,15 @@ def build_symbol_source(
         deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
     )
+    # audit C1/C2: thread the same deadline into the _from_map core -- previously
+    # dropped here even though build_symbol_source already computed it (dogfood: `tg source
+    # --deadline` overran by 47.0s). build_symbol_source_from_map gains deadline_monotonic below
+    # (site 6); this cold wrapper is site 7.
     result = build_symbol_source_from_map(
         repo_map,
         symbol,
         semantic_provider=semantic_provider,
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
     )
     _copy_partial_signal(result, repo_map)
@@ -14860,9 +14894,19 @@ def build_symbol_source_from_map(
     symbol: str,
     *,
     semantic_provider: str = "native",
+    deadline_monotonic: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    defs_payload = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
+    # audit C1/C2: `deadline_monotonic` is a NEW parameter here (site 6) -- this
+    # function previously had no deadline awareness at all, so its bare build_symbol_defs_from_map
+    # call below silently ran the stage-1 related-tests scan unbounded regardless of any caller's
+    # --deadline. Defaults to None -> byte-identical for every pre-existing call site that does not
+    # pass it (mirrors the documented _iter_repo_files convention, repo_map.py:993-998).
+    # `_copy_partial_signal(payload, defs_payload)` below already folds defs_payload's partial
+    # signal into this function's own fresh envelope, so threading the deadline is the whole fix.
+    defs_payload = build_symbol_defs_from_map(
+        repo_map, symbol, semantic_provider=semantic_provider, deadline_monotonic=deadline_monotonic
+    )
     default_agreement, default_status = _default_provider_metadata(
         Path(str(repo_map["path"])).resolve(),
         repo_map,
@@ -14976,7 +15020,15 @@ def build_symbol_impact_from_map(
     max_tests: int | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    defs_payload = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
+    # audit C1/C2: this call used to be BARE, dropping the deadline this function
+    # itself received -- build_symbol_defs_from_map's OWN internal _relevant_tests_for_symbol
+    # scan (repo_map.py:3812) ran unbounded regardless of --deadline (dogfood: `tg impact
+    # --deadline 1` -> 85.4s). `_copy_partial_signal(payload, defs_payload)` below already folds
+    # defs_payload's partial signal into this function's own return, so threading the deadline
+    # here is the whole fix at this site.
+    defs_payload = build_symbol_defs_from_map(
+        repo_map, symbol, semantic_provider=semantic_provider, deadline_monotonic=deadline_monotonic
+    )
     default_agreement, default_status = _default_provider_metadata(
         Path(str(repo_map["path"])).resolve(),
         repo_map,
@@ -15316,7 +15368,16 @@ def build_symbol_refs_from_map(
     deadline_monotonic: float | None = None,
     max_tests: int | None = None,
 ) -> dict[str, Any]:
-    payload = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
+    # audit C1/C2: this call used to be BARE, dropping the deadline this function
+    # itself received -- build_symbol_defs_from_map's OWN internal _relevant_tests_for_symbol
+    # scan (repo_map.py:3812) ran unbounded regardless of --deadline (dogfood: `tg refs
+    # --deadline` overran by 47.4s). `payload` here IS the defs return value, mutated in place
+    # for the rest of this function, so threading the deadline is the whole fix at this site --
+    # defs_payload's own partial/deadline_limit (if set) survive untouched through every mutation
+    # below since nothing resets those keys before the final return.
+    payload = build_symbol_defs_from_map(
+        repo_map, symbol, semantic_provider=semantic_provider, deadline_monotonic=deadline_monotonic
+    )
     if payload.get("no_match"):
         payload["routing_reason"] = "symbol-refs"
         payload["references"] = []
@@ -16110,7 +16171,15 @@ def build_symbol_callers_from_map(
     max_tests: int | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    defs_payload = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
+    # audit C1/C2: this call used to be BARE, dropping the deadline this function
+    # itself received -- build_symbol_defs_from_map's OWN internal _relevant_tests_for_symbol
+    # scan (repo_map.py:3812) ran unbounded regardless of --deadline (dogfood: `tg callers
+    # --deadline` overran by 20.2s). `_copy_partial_signal(payload, defs_payload)` below already
+    # folds defs_payload's partial signal into this function's own return, so threading the
+    # deadline here is the whole fix at this site.
+    defs_payload = build_symbol_defs_from_map(
+        repo_map, symbol, semantic_provider=semantic_provider, deadline_monotonic=deadline_monotonic
+    )
     if defs_payload.get("no_match"):
         payload = dict(defs_payload)
         payload["routing_reason"] = "symbol-callers"
@@ -16808,7 +16877,16 @@ def build_symbol_blast_radius_from_map(
     deadline_monotonic: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    defs_payload = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
+    # audit C1/C2: this call used to be BARE, dropping the deadline this function
+    # itself received -- build_symbol_defs_from_map's OWN internal _relevant_tests_for_symbol
+    # scan (repo_map.py:3812) ran unbounded regardless of --deadline. This is blast-radius' OWN
+    # DIRECT defs call (distinct from the deadline-aware callers_payload/impact_payload sub-calls
+    # below, which already threaded deadline_monotonic through their own now-fixed sibling defs
+    # calls) -- fixing only the sub-calls would leave THIS call blocking before either of them
+    # ever runs. Folded into this function's own partial stamp below (defs_payload.get("partial")).
+    defs_payload = build_symbol_defs_from_map(
+        repo_map, symbol, semantic_provider=semantic_provider, deadline_monotonic=deadline_monotonic
+    )
     default_agreement, default_status = _default_provider_metadata(
         Path(str(repo_map["path"])).resolve(),
         repo_map,
@@ -17189,10 +17267,16 @@ def build_symbol_blast_radius_from_map(
     # impact_payload["file_matches"]/["tests"]/["imports"]/["symbols"] directly (below), so a
     # deadline-truncated impact scan makes THIS result incomplete too, even when callers_payload
     # and this function's own direct preferred-definition-files call both finished inside budget.
+    # audit C1/C2: ALSO OR in defs_payload's own partial signal -- defs_payload is
+    # this function's OWN direct build_symbol_defs_from_map call above (distinct from the nested
+    # defs calls inside callers_payload/impact_payload, which already fold into THEIR OWN partial
+    # fields read above); a deadline blown during THIS call's stage-1 scan must not go unreported
+    # just because it isn't otherwise read by name past this point.
     if (
         callers_payload.get("partial")
         or preferred_definition_deadline_hit_blast.hit
         or impact_payload.get("partial")
+        or defs_payload.get("partial")
     ):
         payload["partial"] = True
         payload["graph_completeness"] = "partial"
@@ -17203,6 +17287,8 @@ def build_symbol_blast_radius_from_map(
             payload["deadline_limit"] = {"deadline_exceeded": True}
         elif isinstance(impact_payload.get("deadline_limit"), dict):
             payload["deadline_limit"] = dict(impact_payload["deadline_limit"])
+        elif isinstance(defs_payload.get("deadline_limit"), dict):
+            payload["deadline_limit"] = dict(defs_payload["deadline_limit"])
     if callers_payload.get("result_incomplete"):
         # backlog #1 chokepoint: the direct-caller scan's internal ceiling (CALLER_SCAN_FILE_CEILING)
         # dropped files the map covers -> the blast radius built on top of it is not exhaustive

@@ -1553,7 +1553,10 @@ def test_repo_map_impact_propagates_semantic_provider(tmp_path: Path, monkeypatc
     monkeypatch.setattr(
         repo_map,
         "build_symbol_defs_from_map",
-        lambda repo_map_payload, symbol, semantic_provider="native": {
+        # **_kwargs swallows additive params real callers may pass (e.g. audit C1/C2's
+        # deadline_monotonic thread-through) -- mirrors the sibling blast-radius test below
+        # (lambda root, symbol, **kwargs: ...), which already tolerates this.
+        lambda repo_map_payload, symbol, semantic_provider="native", **_kwargs: {
             "path": str(tmp_path.resolve()),
             "definitions": [
                 {
