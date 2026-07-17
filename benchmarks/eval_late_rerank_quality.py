@@ -471,6 +471,42 @@ def run_rrf_centrality_arm(
     return ArmResult(name="rrf+cent", status="scored", per_query=per_query)
 
 
+def run_rrf_centrality_oracle_arm(
+    chunks: list[Chunk],
+    corpus_dir: Path,
+    queries: list[GoldenQuery],
+    top_ks: tuple[int, ...],
+    bm25_index: Bm25Index,
+    dense_index: DenseIndex,
+    centrality: dict[str, float],
+) -> ArmResult:
+    """PROBE-ONLY (refines #189 Item-2; NOT wired into build_report/main, never merged): the
+    CEILING of query-gated centrality. Simulates a PERFECT per-query classifier that always knows
+    the golden ``category`` label ahead of time -- for a ``central`` query, fuses
+    ``[bm25, dense, centrality]`` exactly like :func:`run_rrf_centrality_arm`; for a ``leaf`` (or
+    any non-``central``) query, fuses ``[bm25, dense]`` only, with ``weights=[1.0, 1.0]`` -- a
+    byte-identical no-op to :func:`run_rrf_arm`'s unweighted call (``retrieval_fusion.py``'s own
+    docstring: ``weights=None`` reproduces the unweighted fusion exactly via IEEE-754 multiply-by-
+    1.0). This is the upper bound: no real classifier can beat it, only approach it from below as
+    its per-query error rate falls to 0.
+    """
+    per_query: dict[str, dict[str, float]] = {}
+    total = max(1, len(chunks))
+    centrality_ranking = _centrality_channel_ranking(chunks, corpus_dir, centrality)
+    for query in queries:
+        bm25_ranking = [i for i, _score in bm25_index.query(query.query, top_k=total)]
+        dense_ranking = [i for i, _score in dense_index.query(query.query, top_k=total)]
+        rankings: list[list[int]] = [bm25_ranking, dense_ranking]
+        weights = [1.0, 1.0]
+        if query.category == "central" and centrality_ranking:
+            rankings.append(centrality_ranking)
+            weights.append(CENTRALITY_WEIGHT)
+        fused = reciprocal_rank_fusion(rankings, k=DEFAULT_K, weights=weights)
+        ranked_files = _dedupe_ranked_files(fused, chunks, corpus_dir)
+        per_query[query.id] = _score_ranking(ranked_files, query.relevant_files, top_ks)
+    return ArmResult(name="rrf+cent-oracle", status="scored", per_query=per_query)
+
+
 def build_late_reranker() -> tuple[LateReranker | None, str | None]:
     """Mirrors :func:`build_dense_index`: real production probes
     (``late_available()``/``load_late_reranker()``), recoverable unavailability returns
