@@ -1,6 +1,76 @@
 # CHANGELOG
 
 
+## v1.81.2 (2026-07-17)
+
+### Bug Fixes
+
+- **daemon**: Default wall-clock deadline on the warm dispatch path (#200)
+  ([#647](https://github.com/oimiragieo/tensor-grep/pull/647),
+  [`b281147`](https://github.com/oimiragieo/tensor-grep/commit/b2811475663f87e1061084745ad2feb3179a6723))
+
+* fix(daemon): default wall-clock deadline on the warm dispatch path so
+  agent/orient/context-render/edit-plan are honesty-bounded when served warm (#200)
+
+The warm session daemon's _serve_session_request_from_payload served a cached repo_map fast but
+  never threaded a wall-clock budget into the post-map builders (grep -n deadline session_store.py
+  was zero matches), so a default (no --deadline flag) warm agent/orient/context-render/ edit-plan
+  request ran fully unbounded -- the cold path's implicit 60s net
+  (DEFAULT_AGENT_CLI_DEADLINE_SECONDS) lives inside the cold branch only and is skipped entirely
+  when the daemon answers.
+
+- Add WARM_DAEMON_DEFAULT_DEADLINE_SECONDS = 60.0 (session_store.py), matching the cold path's own
+  default exactly -- a safe first cut. - Thread deadline_monotonic into all 4 named dispatcher
+  branches (context_render, context_edit_plan, orient, agent). - Extend
+  build_orient_capsule_from_map (orient_capsule.py) to accept and honor deadline_monotonic: unlike
+  its 3 siblings, it did not already support one (verified against the real code, not assumed).
+  Bounds the snippet-building file-read loop plus a final wall-clock catch-all, mirroring
+  build_agent_capsule_from_map's existing deadline_exceeded_at_return pattern. The cold CLI wrapper
+  (build_orient_capsule) is deliberately left unchanged -- tg orient's cold path intentionally stays
+  unbounded by default by product design, so only the warm daemon path now supplies a value. -
+  Exclude partial=True responses from the daemon's response cache
+  (session_daemon._serve_daemon_response_with_cache) so a deadline-truncated answer is never
+  replayed to a later request that would have had a fresh budget to finish; a follow-up identical
+  request recomputes instead.
+
+TDD: tests/unit/test_session_daemon_default_deadline.py covers a deterministic
+  already-expired-deadline overrun stamping partial=True (exit 2 end-to-end via a real in-process
+  daemon for agent), the partial-response cache exclusion, and the normal-response/cold-path no-op
+  golden-parity guards. Full regression sweep across every session/daemon/orient/deadline-touching
+  test file (~1400 tests) is green; ruff check, ruff format --preview (whole repo), and mypy strict
+  all pass on the changed files.
+
+Draft PR only, not merged. #390 (the 5 symbol commands plus
+  blast_radius_render/blast_radius_plan/file_importers/context still running unbounded on the daemon
+  path) remains open and out of scope.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(daemon): address Opus-gate nits on #200 (cache-guard coupling doc + mid-loop deadline test)
+
+Follow-up to 672a84c after the mandatory adversarial review (SHIP-WITH-NITS, no blockers found):
+
+- Document the latent coupling between the new partial-response cache exclusion
+  (_serve_daemon_response_with_cache) and the 5 symbol commands that share the same cache function
+  -- it is a proven no-op for them today (they never emit partial=True on the warm path, since #390
+  is still open), but would start applying to them too if #390 is ever closed. Flagged so a future
+  change doesn't have to rediscover this reasoning. - Add
+  test_orient_snippet_loop_breaks_mid_loop_not_just_pre_check, mirroring test_repo_map_deadline.py's
+  proven fake-clock technique (a static clock manually advanced only inside the wrapped per-item
+  work function), proving the orient snippet loop's deadline check actually cuts the loop short
+  mid-iteration -- not just when the deadline was already expired before the first iteration.
+
+Not addressed here (deliberately, per the gate's own characterization as a "defensible judgment
+  call" / non-blocking scoping nit, not a bug): the plain `context` command (distinct from
+  `context_render`) is left unbounded even though its builder already accepts deadline_monotonic --
+  flagged in the PR/report as a near-free follow-up candidate rather than folded into this PR
+  silently.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.81.1 (2026-07-17)
 
 ### Bug Fixes
