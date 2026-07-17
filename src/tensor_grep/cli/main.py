@@ -9328,6 +9328,69 @@ def context_render(
         raise typer.Exit(2)
 
 
+# v1.81.6 dogfood finding #1 (CEO-relayed, both dogfood reports flagged it as the #1 agent
+# confusion): `tg agent --deadline N` can exit 2 with `partial: true` / a deadline-type
+# `partial_reason` while `confidence.overall` is high and `ask_user_before_editing.required` is
+# false -- a genuinely USABLE answer that merely stopped collecting SECONDARY evidence (the
+# call-site rescue scan / outbound-dependency preview / the final wall-clock backstop in
+# `agent_capsule.build_agent_capsule_from_map`, all AFTER the primary-target ranking/render already
+# completed) before the deadline. An agent keying on the exit code alone misreads this as a hard
+# failure. `tg agent` is scoped ONLY here (not `edit-plan`/`map`/`context-render`/`blast-radius`,
+# which share `_scan_incomplete` but not this stderr note) per the finding's exact ask.
+_AGENT_DEADLINE_PARTIAL_REASONS = frozenset({"deadline", "deadline_exceeded"})
+
+
+def _agent_trustworthy_deadline_partial_note(payload: dict[str, Any]) -> str | None:
+    """Return a one-line ASCII stderr note when (and ONLY when) `tg agent`'s exit-2 is caused
+    SOLELY by a trustworthy `--deadline` cutoff, else ``None``.
+
+    "Solely" means every one of these holds against the SAME capsule that is about to exit 2:
+      * ``partial`` is true with a deadline-type ``partial_reason`` (``deadline``/
+        ``deadline_exceeded``) -- a `--deadline` cutoff, not some other truncation.
+      * Neither ``scan_limit`` nor ``caller_scan_limit`` is ``possibly_truncated``, and
+        ``caller_scan_truncated`` is not set -- a genuine scan-coverage gap (the repo-file-count
+        ceiling or the caller-scan file ceiling) is a DIFFERENT, non-deadline truncation vector
+        even when it happens to coincide with a deadline hit, so it must never read as
+        "trustworthy" -- this stays silent (returns ``None``) and the plain exit-2 stands.
+      * ``ask_user_before_editing.required`` is false -- the capsule itself never asked for
+        confirmation.
+      * ``confidence.overall`` is at/above the capsule's own confident threshold, reusing
+        ``agent_capsule._capsule_low_confidence_ask_reason`` (currently 0.75) rather than a
+        second hardcoded cutoff that could silently drift from the real ask-gate.
+
+    A genuine needs-attention exit-2 -- ``ask_user_before_editing.required`` true, low confidence,
+    or a non-deadline partial -- gets no note and keeps reading as needs-attention, unchanged.
+
+    Additive/advisory only: never changes the exit code, the stdout JSON, or the capsule schema --
+    called only at the two existing ``raise typer.Exit(2)`` sites inside ``agent()``, stderr-only.
+    """
+    if not payload.get("partial"):
+        return None
+    if payload.get("partial_reason") not in _AGENT_DEADLINE_PARTIAL_REASONS:
+        return None
+    for key in ("scan_limit", "caller_scan_limit"):
+        limit = payload.get(key)
+        if isinstance(limit, dict) and limit.get("possibly_truncated"):
+            return None
+    if payload.get("caller_scan_truncated"):
+        return None
+    if bool(payload.get("ask_user_before_editing", {}).get("required")):
+        return None
+    overall = payload.get("confidence", {}).get("overall")
+    if not isinstance(overall, (int, float)):
+        return None
+
+    from tensor_grep.cli.agent_capsule import _capsule_low_confidence_ask_reason
+
+    if _capsule_low_confidence_ask_reason(float(overall)) is not None:
+        return None
+    return (
+        f"note: partial result -- stopped at the --deadline (confidence {float(overall):.2f}, "
+        "no ask required); the answer is usable. Re-run with a larger --deadline for full "
+        "coverage."
+    )
+
+
 @app.command(name="agent")
 def agent(
     path: str = typer.Argument(".", help="File or directory to inventory"),
@@ -9488,6 +9551,9 @@ def agent(
                 if gpu_device_ids:
                     typer.echo(f"gpu_acceleration={gpu_acceleration.get('status', 'unknown')}")
             if _scan_incomplete(daemon_payload):
+                deadline_partial_note = _agent_trustworthy_deadline_partial_note(daemon_payload)
+                if deadline_partial_note is not None:
+                    typer.echo(deadline_partial_note, err=True)
                 raise typer.Exit(2)
             return
 
@@ -9568,6 +9634,9 @@ def agent(
             typer.echo(f"gpu_acceleration={gpu_acceleration.get('status', 'unknown')}")
 
     if _scan_incomplete(payload):
+        deadline_partial_note = _agent_trustworthy_deadline_partial_note(payload)
+        if deadline_partial_note is not None:
+            typer.echo(deadline_partial_note, err=True)
         raise typer.Exit(2)
 
 
