@@ -1,6 +1,80 @@
 # CHANGELOG
 
 
+## v1.81.4 (2026-07-17)
+
+### Bug Fixes
+
+- **daemon**: Bound the 9 remaining warm-daemon command handlers with the default deadline (#203)
+  ([#652](https://github.com/oimiragieo/tensor-grep/pull/652),
+  [`81b2148`](https://github.com/oimiragieo/tensor-grep/commit/81b2148e8fec400a8adb4e443f854e4804f77ea0))
+
+The warm daemon's _serve_session_request_from_payload bounded only 4 commands via #200-A
+  (context_render/context_edit_plan/orient/agent). The other 9 — context, defs, impact, refs,
+  callers, file_importers, blast_radius, blast_radius_render, blast_radius_plan — dispatched WITHOUT
+  computing a default deadline, so an agent calling e.g. `tg callers` on a large repo via the warm
+  daemon ran unbounded (the #390 agent-loop-hang class).
+
+verify-plan-against-code correction: most underlying build_*_from_map builders already accepted +
+  honored deadline_monotonic (from #52/#61/#103/#642); the dispatch just never computed/passed the
+  default. Genuinely extended two builders that lacked the param: build_symbol_defs_from_map and
+  build_symbol_blast_radius_render_from_map. Also fixes a latent #642-nit-1-class bug:
+  blast_radius_plan dropped deadline_monotonic on the _attach_edit_plan_metadata call (identical to
+  the already-fixed bug in build_context_edit_plan_from_map).
+
+Each dispatch branch now computes deadline_monotonic = monotonic() +
+  WARM_DAEMON_DEFAULT_DEADLINE_SECONDS (per-branch, matching #200-A; no shared choke point exists).
+  Honest-partial contract preserved (payload["partial"]=True + deadline_limit setdefault, never
+  silent-empty).
+
+RED->GREEN: 14 failed -> 27 passed; 382-test regression sweep clean; ruff clean.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Chores
+
+- **dogfood**: Swallow TemporaryDirectory cleanup errors on Windows (#201)
+  ([#649](https://github.com/oimiragieo/tensor-grep/pull/649),
+  [`f6a46b7`](https://github.com/oimiragieo/tensor-grep/commit/f6a46b7e723de5f94afcc90c6a8678c454f19702))
+
+The full-feature dogfood harness ran all 10 checks green but still exited 1 on Windows. The `with
+  tempfile.TemporaryDirectory()` block cleans up (rmtree) at __exit__; AV / the Windows search
+  indexer can hold a transient lock on files tg just created, raising PermissionError during that
+  cleanup -- AFTER every check passed but BEFORE main() computes `failures` and returns 0. The
+  exception propagated to sys.exit(main()) as a traceback -> exit 1: a false negative in the
+  post-release verification harness that could mask a real dogfood failure.
+
+Fix: ignore_cleanup_errors=True (stdlib, Python 3.10+; repo floor is 3.11). Swallows ONLY the rmtree
+  cleanup error at block exit; check outcomes are recorded in _RESULTS inside the block, so a
+  genuine check failure still returns 1. Dev/CI verification script only -> no shipped change, no
+  release.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- **paper**: Record the three rejected CPU-moat find-ranking levers (#189)
+  ([#651](https://github.com/oimiragieo/tensor-grep/pull/651),
+  [`438ef98`](https://github.com/oimiragieo/tensor-grep/commit/438ef980cacf0492e483da604c23bc4a746f9072))
+
+Section 3.10's rejected-candidates ledger gains item 7: the MaxSim late-interaction rerank
+  (model-capacity ceiling, not the role bug), the structural centrality RRF leg (a query-independent
+  prior that HURTS on real data; the +0.256 synthetic ceiling was a hubs-tied-at-max artifact), and
+  the dense re-distill (potion-code-16M-v2 does not clear the tg-find distribution;
+  static-architecture ceiling, not teacher quality). All three implemented, measured against
+  oracle-validated goldens, rejected on real-query data.
+
+Captures the load-bearing methodological lesson: a synthetic adversarial corpus's structure can
+  manufacture a false ceiling; a real-query eval is mandatory before trusting a ranking-lever's
+  ceiling. Documents that RRF(BM25 + weighted CPU dense) is near the CPU ceiling for
+  query-independent find-ranking, and the retrieval moat is the structure-aware navigation +
+  token-economy surfaces tg already ships.
+
+Docs only; no code change, no release.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.81.3 (2026-07-17)
 
 ### Bug Fixes
