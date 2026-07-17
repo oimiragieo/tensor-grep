@@ -11362,6 +11362,29 @@ def _deduplicate_suggested_edits(suggestions: list[dict[str, Any]]) -> list[dict
     return [deduped[key] for key in ordered_keys]
 
 
+def _capped_suggested_edits(
+    entries: list[dict[str, Any]],
+    max_edits: int | None,
+) -> list[dict[str, Any]]:
+    """Bound ``entries`` to ``max_edits`` items; ``None`` means unbounded. This is the SOLE
+    enforcement point for ``_suggested_edits_from_related_spans``'s ``max_edits`` contract (audit
+    B9/A18): the parameter used to be accepted but silently ignored, so ``tg edit-plan --json
+    --max-files N`` grew ``suggested_edits`` unbounded despite the flag's documented meaning.
+
+    ``max_edits`` is threaded in from ``_build_edit_plan_seed``'s ``suggested_edits_max`` parameter,
+    which defaults to ``None`` and is OPT-IN per caller (see that parameter's docstring): only
+    ``tg edit-plan``'s own builder (``build_context_edit_plan_from_map``) currently passes a real
+    value. ``tg context-render`` (own separate, pre-existing downstream cap via
+    ``_compact_edit_plan_seed``, but only for the compact/llm render profiles -- the default "full"
+    profile has no cap at all) and ``tg blast-radius-plan``/``tg blast-radius-render`` (no cap at
+    all) carry the identical flag-lie this function fixes, but stay on the ``None`` default and are
+    deliberately left unbounded -- out of scope for this PR; see
+    ``tests/unit/test_edit_plan_max_files_bounds_suggested_edits.py`` for the pins proving so."""
+    if max_edits is None:
+        return entries
+    return entries[:max_edits]
+
+
 def _suggested_edits_from_related_spans(
     related_spans: list[dict[str, Any]],
     *,
@@ -11369,7 +11392,7 @@ def _suggested_edits_from_related_spans(
     definitions: list[dict[str, Any]] | None = None,
     callers: list[dict[str, Any]] | None = None,
     repo_root: Path | str | None = None,
-    max_edits: int,
+    max_edits: int | None = None,
 ) -> list[dict[str, Any]]:
     suggestions: list[dict[str, Any]] = []
     processed_spans: list[dict[str, Any]] = []
@@ -11421,12 +11444,12 @@ def _suggested_edits_from_related_spans(
         processed_spans.append(current)
 
     if primary_symbol is None:
-        return _deduplicate_suggested_edits(suggestions)
+        return _capped_suggested_edits(_deduplicate_suggested_edits(suggestions), max_edits)
 
     primary_name = str(primary_symbol.get("name", ""))
     definition_path = str(primary_symbol.get("file", ""))
     if not primary_name or not definition_path:
-        return _deduplicate_suggested_edits(suggestions)
+        return _capped_suggested_edits(_deduplicate_suggested_edits(suggestions), max_edits)
 
     import_updates_by_key: dict[tuple[str, int, int], dict[str, Any]] = {}
     for current in processed_spans:
@@ -11461,7 +11484,7 @@ def _suggested_edits_from_related_spans(
             import_updates_by_key[key] = import_entry
 
     suggestions.extend(import_updates_by_key.values())
-    return _deduplicate_suggested_edits(suggestions)
+    return _capped_suggested_edits(_deduplicate_suggested_edits(suggestions), max_edits)
 
 
 def _preferred_edit_anchor_symbol(
@@ -11864,6 +11887,7 @@ def _build_edit_plan_seed(
     semantic_provider: str = "native",
     deadline_monotonic: float | None = None,
     deadline_hit: _DeadlineBreakFlag | None = None,
+    suggested_edits_max: int | None = None,
 ) -> dict[str, Any]:
     primary_file = next(iter(payload.get("files", [])), None)
     primary_symbol = next(
@@ -12118,7 +12142,15 @@ def _build_edit_plan_seed(
             definitions=suggested_edit_definitions,
             callers=list(radius_payload.get("callers", [])) if radius_payload is not None else [],
             repo_root=Path(str(repo_map["path"])).resolve(),
-            max_edits=max_files,
+            # Opt-in only (audit B9/A18 fix scope): `suggested_edits_max` defaults to `None`
+            # (unbounded, byte-identical to every caller's pre-fix behavior) unless the caller of
+            # `_build_edit_plan_seed` explicitly requests a bound. Only `tg edit-plan`'s own builder
+            # (`build_context_edit_plan_from_map`) opts in today -- `tg context-render` (which has
+            # its own separate, pre-existing downstream cap for the compact/llm profiles only -- see
+            # `_compact_edit_plan_seed`) and `tg blast-radius-plan`/`tg blast-radius-render` (which
+            # have no cap at all) are deliberately left unchanged; they share the identical flag-lie
+            # this fix closes but are out of scope for this PR.
+            max_edits=suggested_edits_max,
         ),
         "dependency_trust": dependency_trust,
         "plan_trust_summary": _plan_trust_summary(
@@ -12187,6 +12219,7 @@ def _attach_edit_plan_metadata(
     semantic_provider: str = "native",
     deadline_monotonic: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
+    suggested_edits_max: int | None = None,
 ) -> dict[str, Any]:
     with _profiling_phase(_profiling_collector, "edit_plan_assembly"):
 
@@ -12270,6 +12303,7 @@ def _attach_edit_plan_metadata(
                 semantic_provider=semantic_provider,
                 deadline_monotonic=deadline_monotonic,
                 deadline_hit=edit_plan_seed_deadline_hit,
+                suggested_edits_max=suggested_edits_max,
             )
             if edit_plan_seed_deadline_hit.hit:
                 payload["partial"] = True
@@ -12621,6 +12655,12 @@ def build_context_edit_plan_from_map(
         # map's own call to this same helper already passes deadline_monotonic; mirror it here.
         deadline_monotonic=deadline_monotonic,
         _profiling_collector=collector,
+        # audit B9/A18: `tg edit-plan --json --max-files N` wired `max_edits=max_files` into
+        # `_suggested_edits_from_related_spans` but the callee never read it, so `suggested_edits`
+        # grew unbounded regardless of `--max-files`. This is the ONE opt-in call site for the new
+        # `suggested_edits_max` bound -- edit-plan's own top-level builder, never shared with
+        # context-render or blast-radius-plan/render (see `_build_edit_plan_seed`'s call comment).
+        suggested_edits_max=normalized_max_files,
     )
     payload["validation_commands"] = _top_level_validation_commands(payload)
     payload["suggested_validation_commands"] = _top_level_suggested_validation_commands(payload)
