@@ -1,6 +1,46 @@
 # CHANGELOG
 
 
+## v1.81.9 (2026-07-18)
+
+### Bug Fixes
+
+- **symbols**: Thread the stage-1 defs-scan deadline through all 6 symbol builders + cold wrappers
+  (audit C1/C2) ([#658](https://github.com/oimiragieo/tensor-grep/pull/658),
+  [`d23bd91`](https://github.com/oimiragieo/tensor-grep/commit/d23bd91c2c2d2dd7112de81b112a34650ec251c3))
+
+build_symbol_defs_from_map was called BARE (no deadline_monotonic) as the stage-1 processing step
+  inside build_symbol_defs (the cold `tg defs` wrapper) and its 5 sibling _from_map builders
+  (impact/refs/callers/blast-radius/source), so its internal _relevant_tests_for_symbol scan
+  (repo_map.py:3812) ran unbounded regardless of --deadline, even though that scan has accepted
+  deadline_monotonic since #203.
+
+Live repros on origin/main (e2553aa): `tg defs search --deadline 40` -> 113.5s exit 0 partial:null
+  (silent 3x overrun); `tg impact search --deadline 1` -> 85.4s; refs 47.4s; callers 20.2s; source
+  47.0s. The warm session-daemon path already threads deadline_monotonic into the top-level
+  build_symbol_*_from_map calls (#203/#652), so this bug silently blew the warm daemon's 60s default
+  budget too -- fixing the 7 sites fixes both paths at once since they share the same core builders.
+
+Mirrors the shipped #205 pattern (thread deadline_monotonic + fold the resulting partial signal into
+  the existing partial/deadline_limit contract) rather than inventing a new shape. No schema change:
+  no new field, no partial_reason added to the symbol-command family (that stays scoped to
+  agent/context/context-render/edit-plan per the existing convention).
+
+The 7 sites: build_symbol_defs (cold wrapper) + its C1 defense-in-depth return-time backstop
+  (mirrors build_context_pack's #642-style recheck); build_symbol_impact_from_map;
+  build_symbol_refs_from_map; build_symbol_callers_from_map; build_symbol_blast_radius_from_map
+  (plus an additive defs_payload.get("partial") fold-in alongside its existing
+  callers_payload/impact_payload signals); build_symbol_source_from_map (gains a new, optional,
+  backward-compatible deadline_monotonic parameter); build_symbol_source (cold wrapper).
+
+Also widens one pre-existing test's overly strict mock lambda
+  (test_semantic_provider_navigation.py::test_repo_map_impact_propagates_semantic_provider) to
+  **_kwargs so it tolerates the now-legitimate deadline_monotonic kwarg, matching the sibling test
+  two lines below.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.81.8 (2026-07-17)
 
 ### Bug Fixes
