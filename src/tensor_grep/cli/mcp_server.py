@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
 from functools import lru_cache
@@ -45,6 +46,7 @@ from tensor_grep.cli.main import (
 from tensor_grep.cli.orient_capsule import build_orient_capsule_json
 from tensor_grep.cli.repo_map import (
     _apply_context_token_budget,
+    _deadline_monotonic_from_seconds,
     build_context_pack,
     build_context_render,
     build_file_importers,
@@ -731,6 +733,19 @@ def _meta_missing_param_error(tool: str, action: str, param: str) -> str:
 def _meta_confinement_error(tool: str, action: str, exc: ValueError) -> str:
     payload = _meta_envelope(tool=tool, action=action)
     payload["error"] = {"code": "invalid_input", "message": str(exc)}
+    return json.dumps(payload, indent=2)
+
+
+def _meta_workspace_roots_cap_error(tool: str, action: str, *, count: int, cap: int) -> str:
+    payload = _meta_envelope(tool=tool, action=action)
+    payload["error"] = {
+        "code": "invalid_input",
+        "message": (
+            f"{tool} action={action!r} received {count} workspace_roots, exceeding the "
+            f"{cap}-root limit (each root re-runs the full action as an independent scan "
+            "pass). Split the call across multiple workspace_roots batches."
+        ),
+    }
     return json.dumps(payload, indent=2)
 
 
@@ -6564,6 +6579,19 @@ def tg_impact(
         return json.dumps(payload, indent=2)
 
 
+# [SEC] Cap the NUMBER of workspace_roots tg_query fans out across in one call, and (below)
+# share ONE wall-clock `deadline` across that fan-out instead of handing every root its own
+# full copy of it. Each root re-runs the FULL requested action (`text`/`ast`/`find`/`index`)
+# as an independent scan pass with its own compute cost; before this cap, an uncapped
+# workspace_roots list combined with a `deadline` that was passed UNCHANGED to every root's
+# `_tg_query_dispatch` call turned a documented "wall-clock budget in seconds" for the WHOLE
+# call into a per-root budget instead -- e.g. tg_query(action="find", deadline=60,
+# workspace_roots=[r1..r20]) could run up to 20x60=1200s from a single MCP call. Mirrors
+# _MAX_INLINE_RULES's fan-out-count cap (tg_ruleset_scan) for the same DoS-via-fan-out shape.
+# (audit C3.)
+_MAX_WORKSPACE_ROOTS = 8
+
+
 _TG_QUERY_ACTIONS = ("text", "ast", "find", "index")
 
 
@@ -6705,13 +6733,18 @@ def tg_query(
             explicitly unbounded.
         deadline: Optional wall-clock budget in seconds (action="find"). Partial results are
             flagged via result_incomplete, never silently truncated.
-        workspace_roots: Optional list of additional workspace roots. When supplied
-            (non-empty), EACH element is independently confined to the MCP server root; if
-            ANY element escapes, the WHOLE call is refused fail-closed (no partial/
-            best-effort root list). The SAME action then runs once per confined root, and
-            results are aggregated under a top-level `results_by_root` map keyed by the
-            confined root path, instead of the single-root envelope this tool normally
-            returns.
+        workspace_roots: Optional list of additional workspace roots (max
+            _MAX_WORKSPACE_ROOTS). When supplied (non-empty), EACH element is independently
+            confined to the MCP server root; if ANY element escapes, or the list exceeds the
+            cap, the WHOLE call is refused fail-closed (no partial/best-effort root list). The
+            SAME action then runs once per confined root, and results are aggregated under a
+            top-level `results_by_root` map keyed by the confined root path, instead of the
+            single-root envelope this tool normally returns. A `deadline`, when set, bounds
+            the WHOLE multi-root call as ONE shared wall-clock budget rather than being handed
+            to every root in full: any root whose turn would start only after that shared
+            budget is already exhausted is skipped (never dispatched) instead of silently
+            multiplying the total cost by the root count. Skipped roots are reported via a
+            top-level `omitted_roots` list plus `partial: true`, never silently dropped.
     """
     try:
         confined_path = str(_confine_mcp_path(path, label="path"))
@@ -6720,6 +6753,13 @@ def tg_query(
 
     confined_roots: list[str] | None = None
     if workspace_roots:
+        if len(workspace_roots) > _MAX_WORKSPACE_ROOTS:
+            return _meta_workspace_roots_cap_error(
+                "tg_query",
+                action,
+                count=len(workspace_roots),
+                cap=_MAX_WORKSPACE_ROOTS,
+            )
         try:
             confined_roots = [
                 str(_confine_mcp_path(root, label="workspace_roots")) for root in workspace_roots
@@ -6756,7 +6796,27 @@ def tg_query(
             )
 
         results_by_root: dict[str, Any] = {}
+        omitted_roots: list[str] = []
+        # Share ONE absolute wall-clock deadline across every root in this loop, mirroring the
+        # deadline_monotonic -> remaining-deadline_seconds pattern agent_capsule.py's call-site
+        # evidence rescue scan already uses (agent_capsule.py:565-567) -- computed ONCE, outside
+        # the loop, so root 2 does not get a fresh copy of `deadline` just because root 1 already
+        # consumed the budget (audit C3: previously EVERY root got the full `deadline`
+        # unchanged, so N roots could cost up to N x deadline wall-clock time instead of one
+        # shared `deadline` for the whole call).
+        loop_deadline_monotonic = _deadline_monotonic_from_seconds(deadline)
         for root in confined_roots:
+            if loop_deadline_monotonic is not None and time.monotonic() >= loop_deadline_monotonic:
+                # The shared budget is already spent -- skip (never dispatch) rather than
+                # silently granting this root its own fresh deadline or silently dropping it
+                # from the response with no signal (reported via omitted_roots/partial below).
+                omitted_roots.append(root)
+                continue
+            root_deadline = (
+                None
+                if loop_deadline_monotonic is None
+                else max(0.1, loop_deadline_monotonic - time.monotonic())
+            )
             single_text = _tg_query_dispatch(
                 action,
                 pattern=pattern,
@@ -6780,21 +6840,28 @@ def tg_query(
                 semantic=semantic,
                 limit=limit,
                 max_tokens=max_tokens,
-                deadline=deadline,
+                deadline=root_deadline,
             )
             try:
                 results_by_root[root] = json.loads(single_text)
             except json.JSONDecodeError:
                 results_by_root[root] = single_text
 
+        extra: dict[str, Any] = {
+            "path": confined_path,
+            "workspace_roots": confined_roots,
+            "results_by_root": results_by_root,
+        }
+        if omitted_roots:
+            # Schema-additive: only present when the shared deadline actually truncated the
+            # root fan-out, so a call that never hits the budget keeps the exact pre-existing
+            # response shape.
+            extra["omitted_roots"] = omitted_roots
+            extra["partial"] = True
         payload = _meta_envelope(
             tool="tg_query",
             action=action,
-            extra={
-                "path": confined_path,
-                "workspace_roots": confined_roots,
-                "results_by_root": results_by_root,
-            },
+            extra=extra,
         )
         return json.dumps(payload, indent=2)
     except Exception as exc:
