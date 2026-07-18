@@ -2,6 +2,7 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from tensor_grep.cli import dogfood as dogfood_module
@@ -360,3 +361,49 @@ def test_dogfood_rejects_non_positive_progress_interval(tmp_path: Path) -> None:
 
     assert result.exit_code == 2
     assert "progress interval must be greater than 0" in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# task #211 (C4/#659 residual): dogfood._write_json_atomic had NO symlink precheck, no fsync,
+# and used a PREDICTABLE (non-random) temp filename, unlike every other ``_write_json_atomic``
+# sibling in the `cli` package. Now routed through the same shared `_index_lock.atomic_write_bytes`
+# helper -- serialization (sort_keys=True + trailing newline) stays byte-for-byte unchanged.
+# ---------------------------------------------------------------------------
+
+
+def test_write_json_atomic_refuses_to_write_through_a_symlink(tmp_path: Path) -> None:
+    real_target = tmp_path / "real.json"
+    real_target.write_text('{"untouched": true}', encoding="utf-8")
+    link_path = tmp_path / "link.json"
+    try:
+        link_path.symlink_to(real_target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not supported / not privileged on this platform")
+
+    with pytest.raises(OSError, match="symlink"):
+        dogfood_module._write_json_atomic(link_path, {"attacker": "payload"})
+
+    assert link_path.is_symlink()
+    assert json.loads(real_target.read_text(encoding="utf-8")) == {"untouched": True}
+
+
+def test_write_json_atomic_normal_write_preserves_exact_serialization(tmp_path: Path) -> None:
+    """Sort-keys + trailing-newline serialization must stay byte-for-byte unchanged by the
+    atomic-write-mechanics refactor."""
+    dest = tmp_path / "dogfood.json"
+
+    dogfood_module._write_json_atomic(dest, {"b": 2, "a": 1})
+
+    assert (
+        dest.read_text(encoding="utf-8")
+        == json.dumps({"b": 2, "a": 1}, indent=2, sort_keys=True) + "\n"
+    )
+
+
+def test_write_json_atomic_overwrite_of_a_regular_file_still_succeeds(tmp_path: Path) -> None:
+    dest = tmp_path / "dogfood.json"
+    dest.write_text('{"old": true}', encoding="utf-8")
+
+    dogfood_module._write_json_atomic(dest, {"new": True})
+
+    assert json.loads(dest.read_text(encoding="utf-8")) == {"new": True}

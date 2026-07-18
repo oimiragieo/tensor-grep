@@ -14,6 +14,8 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -492,3 +494,101 @@ def test_undo_still_restores_normal_nested_snapshot_after_source_containment_fix
     result = checkpoint_store.undo_checkpoint(created.checkpoint_id, str(root))
     assert result.restored_files == 1
     assert nested.read_text(encoding="utf-8") == "deep-original\n"
+
+
+# ---------------------------------------------------------------------------
+# audit C4/#659 residual (task #211): checkpoint_store._write_json_atomic never gained the
+# is_symlink() refusal precheck session_store/evidence_signing already carry -- it predates the
+# C4 fix and was left as its own, un-hardened copy of the same atomic-write pattern (same-dir
+# temp + fsync + os.replace, but no symlink check at all). Before this fix, a pre-existing
+# symlink at metadata.json / index.json / the discovery cache would have been SILENTLY replaced
+# by a real file (os.replace on POSIX swaps the link entry itself, never corrupting the symlink's
+# TARGET, but destroying the symlink with no signal) -- now routed through the shared
+# `_index_lock.atomic_write_json` helper so it fails closed like every sibling writer.
+# ---------------------------------------------------------------------------
+
+
+def _symlink_or_skip(link_path: Path, target: Path) -> None:
+    try:
+        link_path.symlink_to(target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation requires privilege on this platform")
+
+
+def test_write_json_atomic_refuses_to_write_through_a_symlink(tmp_path: Path) -> None:
+    real_target = tmp_path / "real.json"
+    real_target.write_text('{"untouched": true}', encoding="utf-8")
+    link_path = tmp_path / "link.json"
+    _symlink_or_skip(link_path, real_target)
+
+    with pytest.raises(OSError, match="symlink"):
+        checkpoint_store._write_json_atomic(link_path, {"attacker": "payload"})
+
+    # The refused attempt must leave the symlink -- and its target's content -- untouched.
+    assert link_path.is_symlink()
+    assert json.loads(real_target.read_text(encoding="utf-8")) == {"untouched": True}
+
+
+def test_write_json_atomic_normal_write_still_succeeds(tmp_path: Path) -> None:
+    dest = tmp_path / "index.json"
+
+    checkpoint_store._write_json_atomic(dest, [{"checkpoint_id": "ckpt-1"}])
+
+    assert json.loads(dest.read_text(encoding="utf-8")) == [{"checkpoint_id": "ckpt-1"}]
+
+
+def test_write_json_atomic_overwrite_of_a_regular_file_still_succeeds(tmp_path: Path) -> None:
+    """A regular (non-symlink) pre-existing file at the destination must still be overwritable --
+    the new guard targets symlinks specifically, not "anything already there"."""
+    dest = tmp_path / "metadata.json"
+    dest.write_text('{"old": true}', encoding="utf-8")
+
+    checkpoint_store._write_json_atomic(dest, {"new": True})
+
+    assert json.loads(dest.read_text(encoding="utf-8")) == {"new": True}
+
+
+def test_create_checkpoint_refuses_when_metadata_path_is_a_pre_existing_symlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end proof through the real ``create_checkpoint`` entry point (not just the isolated
+    writer): if a symlink is already planted at the checkpoint's metadata.json destination, the
+    create must fail the WHOLE checkpoint closed and never disclose/corrupt the symlink's real
+    (out-of-tree) target -- the exact gap this module's un-hardened copy of the atomic-write
+    pattern had before it was routed through the shared C4 baseline.
+
+    The checkpoint id embeds ``datetime.now(UTC)`` + a random ``uuid4`` hex, so both are pinned
+    here to make the resulting metadata path predictable/plantable in advance, with no race
+    against the real call's own clock/uuid reads.
+    """
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "file.txt").write_text("hello\n", encoding="utf-8")
+
+    fixed_now = datetime(2026, 1, 1, tzinfo=UTC)
+    fixed_uuid = uuid.UUID("deadbeef-0000-4000-8000-000000000000")
+
+    class _FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_now
+
+    monkeypatch.setattr(checkpoint_store, "datetime", _FixedDatetime)
+    monkeypatch.setattr(checkpoint_store, "uuid4", lambda: fixed_uuid)
+
+    checkpoint_id = f"ckpt-{fixed_now.strftime('%Y%m%d%H%M%S')}-{fixed_uuid.hex[:8]}"
+    metadata_path = checkpoint_store._metadata_path(root, checkpoint_id)
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    real_target = tmp_path / "outside_secret.json"
+    real_target.write_text('{"do-not-touch": true}', encoding="utf-8")
+    _symlink_or_skip(metadata_path, real_target)
+
+    with pytest.raises(OSError, match="symlink"):
+        checkpoint_store.create_checkpoint(str(root))
+
+    # The real target OUTSIDE the checkpoint tree is never disclosed/corrupted.
+    assert json.loads(real_target.read_text(encoding="utf-8")) == {"do-not-touch": True}
+    # The existing BaseException cleanup (audit #125a) still fires correctly for this NEW failure
+    # mode: no orphaned partial checkpoint directory is left behind (shutil.rmtree unlinks the
+    # symlink ENTRY it encounters as part of that cleanup; it never follows it into the target).
+    assert not metadata_path.parent.exists()

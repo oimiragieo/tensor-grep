@@ -295,6 +295,35 @@ def test_write_daemon_metadata_windows_cleans_up_temp_on_lock_failure(
     assert leftover == [], f"a partial/unlocked temp file was left behind: {leftover}"
 
 
+def test_write_daemon_metadata_windows_refuses_a_pre_existing_symlink(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """task #211 (C4/#659 residual): this Windows-specific copy of the atomic-write pattern
+    (needed so the ACL lockdown can run between temp-file creation and the token write) never
+    gained the is_symlink() precheck session_store._write_json_atomic /
+    evidence_signing._write_private_key_atomic already carry. A pre-existing symlink at
+    daemon.json -- which carries the IPC token -- must now be refused instead of silently
+    replaced (POSIX O_NOFOLLOW is a no-op on Windows, so this precheck is the only defense
+    available on this code path)."""
+    monkeypatch.setattr(session_daemon.sys, "platform", "win32")
+    root = tmp_path.resolve()
+
+    real_target = tmp_path / "real.json"
+    real_target.write_text('{"untouched": true}', encoding="utf-8")
+    metadata_path = session_daemon._daemon_metadata_path(root)
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        metadata_path.symlink_to(real_target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation requires privilege on this platform")
+
+    with pytest.raises(OSError, match="symlink"):
+        session_daemon._write_daemon_metadata(root, {"token": "sekret", "version": 1})
+
+    assert metadata_path.is_symlink()
+    assert json.loads(real_target.read_text(encoding="utf-8")) == {"untouched": True}
+
+
 def test_restrict_windows_file_is_noop_off_windows(tmp_path: Path, monkeypatch) -> None:
     called: list[object] = []
     monkeypatch.setattr(session_daemon.subprocess, "run", lambda *a, **k: called.append(a))

@@ -3233,16 +3233,22 @@ def test_session_blast_radius_render_reuses_cached_repo_map(tmp_path: Path) -> N
 def test_session_open_fsyncs_payload_before_atomic_replace(tmp_path: Path, monkeypatch) -> None:
     """M6: session_store's atomic writer must fsync the payload data before the atomic
     rename, mirroring checkpoint_store's fix (audit I5) -- otherwise a power-loss between
-    the write and the page-cache flush can publish a truncated index.json/session payload."""
-    from tensor_grep.cli import session_store
+    the write and the page-cache flush can publish a truncated index.json/session payload.
+
+    task #211: the write/fsync/rename mechanics now live in the shared
+    ``_index_lock.atomic_write_bytes`` helper (``session_store._write_json_atomic`` is a thin
+    delegator as of the uniform-onofollow-211 hardening pass) -- patch the fsync/replace call
+    sites there, where the real work now happens, instead of on ``session_store`` directly.
+    """
+    from tensor_grep.cli import _index_lock, session_store
 
     project = tmp_path / "project"
     project.mkdir()
     (project / "sample.py").write_text("value = 1\n", encoding="utf-8")
 
     call_order: list[str] = []
-    real_fsync = session_store.os.fsync
-    real_replace = session_store.replace_with_retry
+    real_fsync = _index_lock.os.fsync
+    real_replace = _index_lock.replace_with_retry
 
     def spy_fsync(fd):
         call_order.append("fsync")
@@ -3252,8 +3258,8 @@ def test_session_open_fsyncs_payload_before_atomic_replace(tmp_path: Path, monke
         call_order.append("replace")
         return real_replace(src, dst, **kwargs)
 
-    monkeypatch.setattr(session_store.os, "fsync", spy_fsync)
-    monkeypatch.setattr(session_store, "replace_with_retry", spy_replace)
+    monkeypatch.setattr(_index_lock.os, "fsync", spy_fsync)
+    monkeypatch.setattr(_index_lock, "replace_with_retry", spy_replace)
 
     session_store.open_session(str(project))
 

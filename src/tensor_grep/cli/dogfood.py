@@ -10,6 +10,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
+from tensor_grep.cli._index_lock import atomic_write_bytes
 from tensor_grep.cli.progress import ProgressReporter
 
 ARTIFACT_TAIL_LINE_LIMIT = 20
@@ -57,10 +58,13 @@ def _bounded_tail_lines(
 
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f"{path.name}.tmp")
-    tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    tmp_path.replace(path)
+    # audit C4/#659 residual (task #211): this had no symlink precheck, no fsync, and used a
+    # PREDICTABLE (non-random) temp filename -- route through the shared C4 baseline
+    # (`_index_lock.atomic_write_bytes`) instead of re-patching a fourth copy of the same gap in
+    # place. The exact serialization (sort_keys=True + trailing newline) is preserved
+    # byte-for-byte; only the write mechanics (atomicity/symlink-safety) change.
+    data = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    atomic_write_bytes(path, data)
 
 
 def _read_json_object(path: Path) -> dict[str, Any] | None:

@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from tensor_grep.cli._index_lock import atomic_write_json
+
 _AUDIT_INDEX_VERSION = 1
 _TG_DIRNAME = ".tensor-grep"
 _AUDIT_SUBDIR = "audit"
@@ -519,15 +521,19 @@ def _history_sort_key(entry: dict[str, Any]) -> tuple[datetime, str, str]:
 
 
 def _write_history_index(root: Path, entries: list[dict[str, Any]]) -> None:
+    # audit C4/#659 residual (task #211): this was a bare `write_text` -- no symlink precheck, no
+    # atomic temp+rename, no fsync -- even though it persists the tamper-evident audit-history
+    # index (.tensor-grep/audit/index.json) that record_audit_manifest/list_audit_history build
+    # the manifest chain from. Route through the same shared C4 baseline every other session/
+    # evidence/checkpoint writer uses; `mkdir` is now handled inside the shared helper.
     index_path = _history_index_path(root)
-    index_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "version": _AUDIT_INDEX_VERSION,
         "schema_version": _AUDIT_INDEX_VERSION,
         "manifests": sorted(entries, key=_history_sort_key, reverse=True),
         "updated_at": _utc_now_iso(),
     }
-    index_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    atomic_write_json(index_path, payload)
 
 
 def _load_history_index(root: Path) -> list[dict[str, Any]] | None:
