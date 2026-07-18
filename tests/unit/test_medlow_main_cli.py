@@ -26,8 +26,11 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from tensor_grep.cli.main import (
+    _doctor_apply_lsp_missing_component_remediation,
+    _doctor_apply_lsp_rust_analyzer_remediation,
     _doctor_apply_lsp_workspace_warnings,
     _doctor_downgrade_lsp_workspace_proof,
+    _doctor_rust_analyzer_missing_component_remediation,
     _should_refuse_unbounded_workspace_root_scan,
     app,
 )
@@ -191,6 +194,121 @@ def test_m10_lsp_proof_preserved_without_workspace_error() -> None:
     # A provider that was never lsp_proof stays untouched.
     assert result[1]["lsp_proof"] is False
     assert "workspace_warning" not in result[1]
+
+
+# ---------------------------------------------------------------------------
+# Actionable rust-analyzer error - name the exact rustup component-add
+# remediation when a rust provider's stderr matches rustup's "missing
+# component" proxy fingerprint (real repro: rustup's rust-analyzer proxy
+# binary spawns, then immediately exits with "unknown binary 'rust-analyzer'
+# in toolchain '<toolchain>'" when the component was never installed for the
+# active toolchain). Narrow by design: only language == rust and only this
+# ONE fingerprint are touched -- every other language and every other error
+# shape must pass through unchanged.
+# ---------------------------------------------------------------------------
+
+
+def test_rust_analyzer_missing_component_remediation_names_the_toolchain() -> None:
+    stderr_lines = [
+        "stdout: some other provider noise",
+        "error: unknown binary 'rust-analyzer' in toolchain '1.96.0-x86_64-pc-windows-msvc'",
+    ]
+    remediation = _doctor_rust_analyzer_missing_component_remediation(stderr_lines)
+    assert remediation is not None
+    assert (
+        "rustup component add rust-analyzer --toolchain 1.96.0-x86_64-pc-windows-msvc"
+        in remediation
+    )
+    assert "tg lsp-setup --include-toolchain-providers" in remediation
+
+
+def test_rust_analyzer_missing_component_remediation_falls_back_without_toolchain() -> None:
+    # The fingerprint markers are present but no quoted toolchain string follows -- must fall
+    # back to the plain command instead of emitting a broken `--toolchain` with no value.
+    stderr_lines = ["error: unknown binary 'rust-analyzer' -- no toolchain reported"]
+    remediation = _doctor_rust_analyzer_missing_component_remediation(stderr_lines)
+    assert remediation is not None
+    assert "rustup component add rust-analyzer" in remediation
+    assert "--toolchain" not in remediation
+
+
+def test_rust_analyzer_missing_component_remediation_absent_when_fingerprint_missing() -> None:
+    stderr_lines = ["some unrelated crash", "thread 'main' panicked at src/main.rs:10"]
+    assert _doctor_rust_analyzer_missing_component_remediation(stderr_lines) is None
+    assert _doctor_rust_analyzer_missing_component_remediation([]) is None
+
+
+def test_doctor_appends_rust_analyzer_remediation_to_not_lsp_proof_reason() -> None:
+    unhealthy = {
+        "language": "rust",
+        "available": True,
+        "health_status": "unhealthy",
+        "lsp_proof": False,
+        "not_lsp_proof_reason": "Provider semantic health probe failed or timed out.",
+        "stderr_tail": [
+            "error: unknown binary 'rust-analyzer' in toolchain '1.96.0-x86_64-pc-windows-msvc'",
+        ],
+    }
+    out = _doctor_apply_lsp_rust_analyzer_remediation(unhealthy)
+    assert (
+        "rustup component add rust-analyzer --toolchain 1.96.0-x86_64-pc-windows-msvc"
+        in out["not_lsp_proof_reason"]
+    )
+    # The original generic reason text is preserved, not replaced.
+    assert "Provider semantic health probe failed or timed out." in out["not_lsp_proof_reason"]
+    # Original dict is not mutated.
+    assert (
+        unhealthy["not_lsp_proof_reason"] == "Provider semantic health probe failed or timed out."
+    )
+
+
+def test_doctor_rust_analyzer_remediation_narrow_to_rust_language() -> None:
+    non_rust = {
+        "language": "python",
+        "health_status": "unhealthy",
+        "not_lsp_proof_reason": "Provider semantic health probe failed or timed out.",
+        "stderr_tail": [
+            "error: unknown binary 'rust-analyzer' in toolchain '1.96.0-x86_64-pc-windows-msvc'",
+        ],
+    }
+    out = _doctor_apply_lsp_rust_analyzer_remediation(non_rust)
+    assert out is non_rust
+    assert out["not_lsp_proof_reason"] == "Provider semantic health probe failed or timed out."
+
+
+def test_doctor_rust_analyzer_remediation_narrow_to_the_exact_fingerprint() -> None:
+    generic_rust_error = {
+        "language": "rust",
+        "health_status": "unhealthy",
+        "not_lsp_proof_reason": "Provider semantic health probe failed or timed out.",
+        "stderr_tail": ["thread 'main' panicked at src/main.rs:10: index out of bounds"],
+    }
+    out = _doctor_apply_lsp_rust_analyzer_remediation(generic_rust_error)
+    assert out["not_lsp_proof_reason"] == "Provider semantic health probe failed or timed out."
+
+
+def test_doctor_apply_lsp_missing_component_remediation_over_provider_list() -> None:
+    providers = [
+        {
+            "language": "rust",
+            "health_status": "unhealthy",
+            "not_lsp_proof_reason": "Provider semantic health probe failed or timed out.",
+            "stderr_tail": [
+                "error: unknown binary 'rust-analyzer' in toolchain '1.96.0-x86_64-pc-windows-msvc'",
+            ],
+        },
+        {
+            "language": "python",
+            "health_status": "unhealthy",
+            "not_lsp_proof_reason": "Provider semantic health probe failed or timed out.",
+            "stderr_tail": [],
+        },
+    ]
+    result = _doctor_apply_lsp_missing_component_remediation(providers)
+    assert "rustup component add rust-analyzer" in result[0]["not_lsp_proof_reason"]
+    assert (
+        result[1]["not_lsp_proof_reason"] == "Provider semantic health probe failed or timed out."
+    )
 
 
 # ---------------------------------------------------------------------------

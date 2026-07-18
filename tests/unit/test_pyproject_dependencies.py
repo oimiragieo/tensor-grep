@@ -41,6 +41,18 @@ def test_ast_dev_bench_extras_include_tree_sitter_go_for_path_a_stage1() -> None
         assert "tree-sitter-go" in deps[extra_name], f"tree-sitter-go missing from [{extra_name}]"
 
 
+def test_ast_extra_pins_pygls_floor_matching_lsp_server_import() -> None:
+    # cli/lsp_server.py imports `from pygls.lsp.server import LanguageServer`, a module path
+    # that exists only in pygls 2.x (pygls 1.x has no `pygls.lsp.server` module at all -- its
+    # LanguageServer lives at `pygls.server`). The `ast` extra's pygls floor must match what the
+    # code actually requires, or `pip install "tensor-grep[ast]"` can resolve a pygls 1.x that
+    # ImportErrors the moment `tg lsp` runs (found by the #663 Opus gate).
+    deps = _optional_dependencies()["ast"]
+
+    assert "pygls>=2.0" in deps
+    assert "pygls>=1.3.0" not in deps
+
+
 def test_semantic_extra_should_pin_model2vec_and_numpy_no_torch() -> None:
     deps = _optional_dependencies()["semantic"]
 

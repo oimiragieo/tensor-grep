@@ -2125,6 +2125,92 @@ def _doctor_apply_lsp_workspace_warnings(
     return [_doctor_downgrade_lsp_workspace_proof(provider) for provider in providers]
 
 
+_DOCTOR_RUST_ANALYZER_MISSING_COMPONENT_TOOLCHAIN_RE = re.compile(r"toolchain '([^']+)'")
+
+
+def _doctor_lsp_missing_rust_analyzer_component_lines(stderr_lines: list[str]) -> list[str]:
+    """Return stderr lines matching rustup's missing-component proxy fingerprint.
+
+    When the ``rust-analyzer`` rustup component is not installed for the active toolchain,
+    the rustup proxy binary at ``~/.cargo/bin/rust-analyzer`` still spawns successfully (the
+    process starts), but immediately exits, printing e.g. ``error: unknown binary
+    'rust-analyzer' in toolchain '1.96.0-x86_64-pc-windows-msvc'`` to stderr. Requiring BOTH
+    markers keeps this narrow: it must not fire on other rust-analyzer stderr noise that
+    happens to mention "toolchain" or "binary" alone.
+    """
+    matches: list[str] = []
+    for raw in stderr_lines:
+        line = str(raw)
+        lowered = line.lower()
+        if "unknown binary" in lowered and "rust-analyzer" in lowered:
+            matches.append(line)
+    return matches
+
+
+def _doctor_rust_analyzer_missing_component_remediation(stderr_lines: list[str]) -> str | None:
+    """Return the exact ``rustup component add`` remediation, or None when rustup's missing-
+    component fingerprint (see ``_doctor_lsp_missing_rust_analyzer_component_lines``) is absent
+    from ``stderr_lines``. The toolchain, when parseable from the matched line, is threaded into
+    ``--toolchain`` so the remediation is copy-pasteable as-is; otherwise this falls back to the
+    plain (no-toolchain) form rather than emitting a broken ``--toolchain`` with no value.
+    """
+    matches = _doctor_lsp_missing_rust_analyzer_component_lines(stderr_lines)
+    if not matches:
+        return None
+    toolchain: str | None = None
+    for line in matches:
+        found = _DOCTOR_RUST_ANALYZER_MISSING_COMPONENT_TOOLCHAIN_RE.search(line)
+        if found:
+            toolchain = found.group(1)
+            break
+    command = (
+        f"rustup component add rust-analyzer --toolchain {toolchain}"
+        if toolchain
+        else "rustup component add rust-analyzer"
+    )
+    return (
+        f"Missing rustup component: run `{command}` "
+        "(or `tg lsp-setup --include-toolchain-providers` to let tensor-grep manage it)."
+    )
+
+
+def _doctor_apply_lsp_rust_analyzer_remediation(provider: dict[str, Any]) -> dict[str, Any]:
+    """Append the rustup component-add remediation to a rust provider's surfaced guidance when
+    its stderr matches the missing-component fingerprint. Narrow by design: only
+    ``language == "rust"`` and only this one fingerprint are touched -- every other language and
+    every other error shape passes through unchanged (this must never become a generic error
+    rewriter)."""
+    if str(provider.get("language", "")).strip().lower() != "rust":
+        return provider
+    stderr_lines = [
+        str(item)
+        for item in (
+            list(provider.get("stderr_tail") or [])
+            + list(provider.get("provider_recent_stderr") or [])
+            + [provider.get("last_error")]
+        )
+        if item
+    ]
+    remediation = _doctor_rust_analyzer_missing_component_remediation(stderr_lines)
+    if remediation is None:
+        return provider
+    updated = dict(provider)
+    existing_reason = str(updated.get("not_lsp_proof_reason") or "").strip()
+    if remediation in existing_reason:
+        return updated  # already applied -- idempotent, avoids duplicate text on repeat calls
+    updated["not_lsp_proof_reason"] = (
+        f"{existing_reason} {remediation}" if existing_reason else remediation
+    )
+    updated["lsp_missing_component_remediation"] = remediation
+    return updated
+
+
+def _doctor_apply_lsp_missing_component_remediation(
+    providers: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [_doctor_apply_lsp_rust_analyzer_remediation(provider) for provider in providers]
+
+
 def _doctor_lsp_providers_by_language(
     providers: list[dict[str, Any]],
 ) -> dict[str, dict[str, Any]]:
@@ -3290,8 +3376,8 @@ def _build_doctor_payload(
         "session_daemon": _doctor_session_daemon_status(str(root)),
     }
     if with_lsp:
-        lsp_providers = _doctor_apply_lsp_workspace_warnings(
-            _doctor_lsp_provider_statuses(str(root))
+        lsp_providers = _doctor_apply_lsp_missing_component_remediation(
+            _doctor_apply_lsp_workspace_warnings(_doctor_lsp_provider_statuses(str(root)))
         )
         lsp_providers_by_language = _doctor_lsp_providers_by_language(lsp_providers)
         payload["lsp"] = {

@@ -34,7 +34,14 @@ from pathlib import Path
 
 import pytest
 
-from tensor_grep.cli import repo_map
+from tensor_grep.cli import repo_map, session_daemon
+from tests.unit.test_symbol_daemon_autostart import (
+    _autostart_env,
+    _cli_json,
+    _probe_fake_for,
+    _real_daemon,
+    _serve,
+)
 
 
 def _write(path: Path, content: str) -> None:
@@ -214,3 +221,54 @@ def test_zero_related_spans_still_returns_empty_list(tmp_path: Path, build) -> N
     payload = build(project)
 
     assert payload["edit_plan_seed"]["suggested_edits"] == []
+
+
+# ---------------------------------------------------------------------------------------------
+# Warm-daemon parity (gate nit from the #666 review): #666 threaded `suggested_edits_max=
+# max_files` into `build_context_render_from_map` ITSELF (not the cold `build_context_render`
+# wrapper), specifically so the cap would apply on both routes -- but every test above only ever
+# drives it through the cold wrapper. `tg context-render` is also served by the warm session
+# daemon (session_store.py's `context_render` command handler calls `build_context_render_from_map`
+# directly against an already-cached repo_map, bypassing `build_context_render`'s own
+# `build_repo_map` call entirely), so this proves the cap holds on that real code path too, not
+# just when reached cold. Mirrors the real-spawned-daemon harness
+# `test_orient_agent_daemon.py` established for orient/agent (itself reusing
+# `test_symbol_daemon_autostart.py`'s `_real_daemon`/`_serve`/`_probe_fake_for`/`_autostart_env`/
+# `_cli_json` fixtures for the same warm-vs-cold parity contract).
+# ---------------------------------------------------------------------------------------------
+
+
+def test_context_render_warm_daemon_bounds_suggested_edits_same_as_cold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _build_many_callers_project(tmp_path, caller_count=5)
+    render_args = [
+        "context-render",
+        str(project),
+        "create invoice",
+        "--max-files",
+        "2",
+        "--render-profile",
+        "full",
+        "--json",
+    ]
+
+    cold_payload = _cli_json(render_args)
+    cold_edits = cold_payload["edit_plan_seed"]["suggested_edits"]
+    assert len(cold_edits) <= 2, "cold route must already bound suggested_edits (see #666)"
+
+    server = _real_daemon(project)
+    _serve(server)
+    try:
+        monkeypatch.setattr(session_daemon, "_probe_daemon", _probe_fake_for(server, "test-token"))
+        _autostart_env(monkeypatch, enabled=True)
+        warm_payload = _cli_json(render_args)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    # Confirms the request actually went through the warm/daemon route, not a silent cold fallback.
+    assert warm_payload["routing_reason"] == "session-context-render"
+    warm_edits = warm_payload["edit_plan_seed"]["suggested_edits"]
+    assert len(warm_edits) <= 2
+    assert warm_edits == cold_edits
