@@ -1,6 +1,47 @@
 # CHANGELOG
 
 
+## v1.81.12 (2026-07-18)
+
+### Bug Fixes
+
+- **edit-plan**: --max-files now actually bounds suggested_edits (audit B9; was silently ignored)
+  ([#661](https://github.com/oimiragieo/tensor-grep/pull/661),
+  [`bc90363`](https://github.com/oimiragieo/tensor-grep/commit/bc90363f24efea513d1d6015def06d2ca35c8c20))
+
+`tg edit-plan --json --max-files N` visibly wired `max_edits=max_files` into
+  `_suggested_edits_from_related_spans` (repo_map.py) but the callee's body never read `max_edits`
+  to bound the returned list. `edit_plan_seed.suggested_edits` could grow unbounded despite the
+  caller (and the user) believing it was capped at `--max-files` -- a flag-lie, the same class of
+  bug as the #200/#203/#205 deadline gaps (convergently found by two independent audit lenses,
+  B9/A18).
+
+Fix: `_capped_suggested_edits` is now the sole enforcement point for that `max_edits` contract,
+  wired opt-in through a new `suggested_edits_max` parameter (`_attach_edit_plan_metadata` ->
+  `_build_edit_plan_seed` -> `_suggested_edits_from_related_spans`). Only
+  `build_context_edit_plan_from_map` (edit-plan's own top-level builder, covering both the cold `tg
+  edit-plan` path and the warm `tg session edit-plan` daemon path) opts in.
+
+Verify-first correction: the audit described `_compact_edit_plan_seed` as an "existing cap" for `tg
+  context-render`, but that helper only fires for `render_profile in {"compact", "llm"}` -- NOT the
+  default "full" profile (used by the MCP context-render tool family by default, and reachable on
+  the CLI via `--json --render-profile full`). context-render's "full" profile therefore carries the
+  identical bug, as do `tg blast-radius-plan` and `tg blast-radius-render` (neither calls
+  `_compact_edit_plan_seed` at all). Binding the fix unconditionally at the shared source would have
+  silently changed all of these -- wider than the "ONE correctness fix" this PR ships and a direct
+  violation of "do not change the context-render output". The new parameter therefore defaults to
+  `None` (unbounded, byte-identical to every caller's pre-fix behavior) everywhere except
+  edit-plan's own call site.
+
+Tests (tests/unit/test_edit_plan_max_files_bounds_suggested_edits.py): - RED-confirmed on unmodified
+  origin/main (10 suggested_edits with --max-files 2), then GREEN with the fix; capped output is a
+  stable prefix of the uncapped one. - context-render pinned unchanged across all three render
+  profiles (full, compact, llm) via a passthrough-vs-real-implementation comparison. -
+  blast-radius-plan/render pinned unchanged (still unbounded, confirming the opt-in gate holds).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.81.11 (2026-07-18)
 
 ### Bug Fixes
