@@ -1,6 +1,58 @@
 # CHANGELOG
 
 
+## v1.81.14 (2026-07-18)
+
+### Bug Fixes
+
+- Tg defs/symbol commands scope to a FILE path instead of raising NotADirectoryError
+  ([#664](https://github.com/oimiragieo/tensor-grep/pull/664),
+  [`5782535`](https://github.com/oimiragieo/tensor-grep/commit/578253544748acf6f84a588bb0636075b11e6183))
+
+`tg defs <file> <symbol> --provider lsp` (and `hybrid`) crashed with NotADirectoryError (CEO
+  dogfood, tg 1.81.11/1.81.12). Root cause: when a repo map is scoped to a single FILE (not a
+  directory), `repo_map["path"]` IS that file. Ten call sites in repo_map.py derived an LSP
+  `workspace_root`/ `repo_root` directly from it via `Path(str(repo_map["path"])).resolve()` with no
+  directory guard. That value reaches `ExternalLSPClient._start_locked`'s
+  `subprocess.Popen(cwd=str(self.workspace_root), ...)` (lsp_external_provider.py:500), which raises
+  NotADirectoryError (WinError 267 on Windows, ENOTDIR on POSIX) when `cwd` is a file. `--provider
+  native` (the CLI default) never reaches this code, which is why it shipped silently -- only
+  `lsp`/`hybrid` reproduce it. The crash fires even when the symbol is absent from the file, since
+  `_external_workspace_symbols` runs unconditionally before any native-match check.
+
+Fix: added `_repo_map_root_dir(repo_map)`, mirroring the pre-existing `root if root.is_dir() else
+  root.parent` pattern already used by `build_repo_map` (`context_root`), and threaded it through
+  every repo_root/ workspace_root call site in the symbol-command family (defs, source, impact,
+  refs, callers, blast-radius): the `_external_definitions`/
+  `_provider_status_snapshot`/`_default_provider_metadata` call sites shared by all six commands
+  (defs' internal `build_symbol_defs_from_map` call), plus refs' and callers' own independent
+  `_external_references` repo_root computations. Also applied to
+  `_build_import_graph_consumers_from_map`, `_preferred_definition_files`, and
+  `_relevant_tests_for_symbol` for consistency (same bug class: Go/Rust cross-file import resolution
+  silently degraded, not crashed, when repo_root was a file). Directory-input behavior is
+  byte-identical (root.is_dir() branch unchanged); only file-input behavior changes, and only for
+  the better. The user-visible `path`/`definitions[].file` fields are unaffected -- `_envelope()`
+  and the `defs_payload["path"]` reads still report the exact file, per the existing contract.
+
+Left untouched (different command family / explicit contract): the `tg edit-plan` seed's `repo_root`
+  (repo_map.py, `_build_edit_plan_seed`) and `build_file_importers_from_map`'s `repo_root` join-base
+  (`tg importers`, explicitly comment-guarded against a cwd-relative resolution change).
+
+Siblings checked with a FILE path + `--provider lsp`: source, impact, refs, callers, and
+  blast-radius all shared the same crash (source/impact/ blast-radius via defs' internal call;
+  refs/callers additionally via their own independent repo_root site) -- all fixed by the same
+  helper.
+
+Added 8 regression tests to test_semantic_provider_navigation.py covering: defs on a FILE with the
+  symbol present (workspace_root asserted to be the file's parent directory, not the file), defs on
+  a FILE with the symbol absent (no_match, no crash), a DIRECTORY path (regression guard --
+  workspace_root unchanged), and one FILE-path no-crash test per sibling command
+  (source/impact/refs/callers/blast-radius). All 8 fail on pre-fix code and pass post-fix; full
+  test_semantic_provider_navigation.py suite (63 tests) passes with no regressions.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.81.13 (2026-07-18)
 
 ### Bug Fixes
