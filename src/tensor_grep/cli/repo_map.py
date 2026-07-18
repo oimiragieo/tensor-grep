@@ -2811,30 +2811,6 @@ def _rust_module_tree_for_entry(
     return module_tree
 
 
-def _rust_module_path_for_definition(
-    definition_path: Path,
-    entry_path: Path,
-) -> tuple[str, ...] | None:
-    normalized_definition = definition_path.expanduser().resolve()
-    normalized_entry = entry_path.expanduser().resolve()
-    if normalized_definition == normalized_entry:
-        return ()
-    try:
-        relative_path = normalized_definition.relative_to(normalized_entry.parent)
-    except ValueError:
-        return None
-    if relative_path.suffix != ".rs":
-        return None
-    parts = list(relative_path.parts)
-    if parts[-1] in {"lib.rs", "main.rs"}:
-        return ()
-    if parts[-1] == "mod.rs":
-        parts = parts[:-1]
-    else:
-        parts[-1] = Path(parts[-1]).stem
-    return tuple(part for part in parts if part)
-
-
 def _rust_workspace_entry_for_crate(
     crate_name: str,
     repo_root: Path | str | None = None,
@@ -7707,26 +7683,6 @@ def _personalized_reverse_import_pagerank(
         return {current: rank for current, rank in ranks.items() if rank > 0.0}
 
 
-def _dependency_ranked_files(
-    ranked_files: list[str],
-    all_files: list[str],
-    imports_by_file: dict[str, list[str]],
-) -> list[str]:
-    if not ranked_files:
-        return []
-
-    boosted: list[tuple[int, str]] = []
-    distances = _reverse_import_distances(ranked_files, all_files, imports_by_file)
-    for current, depth in distances.items():
-        bonus = max(1, 5 - depth)
-        boosted.append((bonus, current))
-
-    boosted.sort(key=lambda item: (-item[0], item[1]))
-    for _, current in boosted:
-        ranked_files.append(current)
-    return ranked_files
-
-
 def _test_import_bonus(
     test_path: str,
     source_tokens: set[str],
@@ -9554,13 +9510,6 @@ def _relative_validation_path(path: Path, repo_root: Path) -> str:
         return path.resolve().relative_to(repo_root).as_posix()
     except ValueError:
         return path.name
-
-
-def _append_unique_command(commands: list[str], command: str, seen: set[str]) -> None:
-    if command in seen:
-        return
-    seen.add(command)
-    commands.append(command)
 
 
 def _shell_safe_arg(value: str) -> str:
