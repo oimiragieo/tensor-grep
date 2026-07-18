@@ -1,6 +1,49 @@
 # CHANGELOG
 
 
+## v1.81.11 (2026-07-18)
+
+### Bug Fixes
+
+- **mcp**: Cap tg_query workspace_roots fan-out + share the wall-clock deadline across roots (audit
+  C3) ([#660](https://github.com/oimiragieo/tensor-grep/pull/660),
+  [`41f6fe9`](https://github.com/oimiragieo/tensor-grep/commit/41f6fe9c6a03487114d6a66b04271475aa01eba9))
+
+tg_query's workspace_roots (list[str]) param had two unbounded-fan-out gaps: (1) no cap on the
+  number of roots, and (2) the per-root dispatch loop handed the SAME full `deadline` to every
+  root's _tg_query_dispatch call, so N roots could cost up to N x deadline wall-clock time instead
+  of the documented "wall-clock budget in seconds" bounding the WHOLE call -- e.g.
+  tg_query(action="find", deadline=60, workspace_roots=[r1..r20]) could run up to 20x60=1200s from a
+  single MCP call.
+
+Fix: - _MAX_WORKSPACE_ROOTS = 8 (module-level constant, local to tg_query, mirrors
+  _MAX_INLINE_RULES's fan-out-count-cap precedent for tg_ruleset_scan). Over the cap fails closed
+  via a new _meta_workspace_roots_cap_error structured payload (code="invalid_input"), mirroring the
+  existing _meta_missing_param_error / _meta_confinement_error shape -- never a raw exception, never
+  a silent truncation to the first N roots. - The loop now tracks ONE shared absolute
+  time.monotonic() deadline (via the already-established _deadline_monotonic_from_seconds helper,
+  reused from repo_map.py) and computes each root's REMAINING budget with the same max(0.1, ...)
+  floor idiom agent_capsule.py's call-site evidence rescue scan already uses. A root whose turn
+  starts only after the shared budget is exhausted is skipped (never dispatched) instead of being
+  granted a fresh copy of `deadline`. Skipped roots are reported via a new top-level `omitted_roots`
+  list + `partial: true` -- explicit, never a silent drop. - Schema-additive: omitted_roots/partial
+  are only present when the shared deadline actually truncated the fan-out, so a call that never
+  hits the budget (including the existing no-deadline default) keeps the exact pre-existing response
+  shape.
+
+Tests (tests/unit/test_mcp_tg_query_fanout_cap.py, RED verified against the unfixed code before
+  restoring the fix): over-cap fail-closed, at-cap boundary accepted, shared-deadline omission (a
+  monkeypatched clock proves 3 roots collapse to 1 dispatch once the budget is spent), the direct
+  amplifier regression (root 2's forwarded deadline must be strictly less than root 1's -- RED
+  showed both equal to the original `deadline` on the unfixed loop), an ample-deadline call still
+  dispatching every root with the unchanged response shape, and the no-deadline default staying
+  byte-for-byte unchanged. Full tests/unit/test_mcp_server.py (485 tests, the tg_query
+  dispatch/confinement/plural-ratchet/envelope-shape coverage) verified still green; mypy --strict
+  and ruff format/check clean on both changed files.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v1.81.10 (2026-07-18)
 
 ### Bug Fixes
