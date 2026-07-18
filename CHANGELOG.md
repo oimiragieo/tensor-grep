@@ -1,6 +1,53 @@
 # CHANGELOG
 
 
+## v1.81.16 (2026-07-18)
+
+### Bug Fixes
+
+- **security**: Uniform symlink-refusal + atomic-rename hardening across the JSON/key/audit-manifest
+  writers (C4/#659 residual) ([#665](https://github.com/oimiragieo/tensor-grep/pull/665),
+  [`bc11f5f`](https://github.com/oimiragieo/tensor-grep/commit/bc11f5fc8928c54ec6c60bcd504ce4ef0e085af3))
+
+Uniform-izes the C4/#659 CWE-59 symlink-attack hardening (is_symlink() precheck on the pre-resolve
+  destination + same-directory temp + fsync + os.replace, plus POSIX O_CREAT|O_EXCL|O_NOFOLLOW
+  defense-in-depth on the temp) across every JSON/key/audit-manifest atomic writer in the cli
+  package, via one new shared helper (_index_lock.atomic_write_bytes / atomic_write_json).
+
+Already-hardened (session_store._write_json_atomic, evidence_signing._write_private_key_atomic):
+  gained O_NOFOLLOW plus the mode=None branch's missing O_EXCL, now delegating to the shared helper
+  instead of each keeping a hand-rolled copy.
+
+Newly hardened (had a real gap before this fix): - checkpoint_store._write_json_atomic: had NO
+  is_symlink() precheck at all -- a pre-existing symlink at metadata.json/index.json/the discovery
+  cache was silently replaced with no signal. - evidence_signing.generate_keypair's .pub sibling
+  write: a bare write_text with no precheck, atomicity, or fsync. -
+  audit_manifest._write_history_index: a bare write_text persisting the tamper-evident
+  .tensor-grep/audit/index.json, with no precheck, atomicity, or fsync. -
+  session_daemon._write_daemon_metadata_windows: the Windows-specific ACL-lock-before-write variant
+  (carries the IPC token) never gained the precheck; added directly (kept out of the shared helper
+  since the ACL lockdown must run between temp creation and the token write). -
+  dogfood._write_json_atomic: no precheck, no fsync, and a predictable (non-uuid) temp filename.
+
+Not naive O_NOFOLLOW-only hardening: O_NOFOLLOW is a documented no-op on Windows (this repo's
+  primary dev platform), so the cross-platform guard is the precheck + same-dir-temp + rename shape;
+  O_NOFOLLOW is POSIX-only belt-and-suspenders on top of it.
+
+Out of scope (Python-side only, per the task): the Rust-side write_audit_manifest TOCTOU is a
+  separate, already-tracked item (#110). codemap.py's _atomic_write_text (generated docs/code-map
+  pages) is a different risk class -- not part of the session/evidence/checkpoint/audit trust chain
+  -- and was left untouched, flagged here for the gate in case a follow-up wants it too.
+
+TDD: symlink-refusal + normal-write + overwrite-of-regular-file + crash-before-fsync tests added for
+  the shared primitive (test_index_lock.py) and for each newly-hardened call site, including two
+  real end-to-end tests through the public entry points (create_checkpoint, record_audit_manifest)
+  with a deterministic clock/uuid to avoid flakiness. Serialization is preserved byte-for-byte at
+  every site (pinned by dedicated tests). No output/behavior change -- only the write mechanics
+  (atomicity/symlink-safety).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.81.15 (2026-07-18)
 
 ### Bug Fixes
