@@ -1,6 +1,46 @@
 # CHANGELOG
 
 
+## v1.81.15 (2026-07-18)
+
+### Bug Fixes
+
+- Context-render/blast-radius-plan/blast-radius-render --max-files now bounds suggested_edits
+  (broader B9/#661 flag-lie) ([#666](https://github.com/oimiragieo/tensor-grep/pull/666),
+  [`e97dec6`](https://github.com/oimiragieo/tensor-grep/commit/e97dec605a448fafc8924cd24cf67beb1ea0a726))
+
+#212 hypothesized that B9/#661's suggested_edits flag-lie fix (tg edit-plan --max-files silently
+  ignored when bounding edit_plan_seed.suggested_edits) was broader than just edit-plan. Verified
+  real by reading the code (B9's own docstrings at repo_map.py already named these three as
+  deliberately out-of-scope) and by dogfooding the Python builders directly against tensor-grep's
+  own src/tensor_grep tree (80 files, symbol SearchConfig):
+
+blast-radius-render --max-files 1 -> files=[1] but suggested_edits: 73 entries / 40 files
+  blast-radius-render --max-files 50 -> files=[42] 73 entries / 40 files (--max-files had ZERO
+  effect on suggested_edits)
+
+blast-radius-plan --max-files 1 -> files=[1] but suggested_edits: 25 entries / 8 files
+  context-render full --max-files 1 -> files=[1] but suggested_edits: 5 entries / 3 files
+
+Fixed the same disciplined way B9 did: each builder now opts into the already-existing
+  suggested_edits_max parameter on _attach_edit_plan_metadata/_build_edit_plan_seed (which still
+  defaults to None -- unbounded -- for any caller that doesn't explicitly pass it), by threading its
+  own --max-files value through. No new CLI flags, no low-level default change.
+
+- build_context_render_from_map now passes suggested_edits_max=max_files (closes the gap for the
+  default "full" render profile; "compact"/"llm" were already bounded one step downstream via
+  _compact_edit_plan_seed, so this is a provable no-op there). -
+  build_symbol_blast_radius_plan_from_map now passes suggested_edits_max=normalized_max_files. -
+  build_symbol_blast_radius_render_from_map now passes suggested_edits_max=max_files.
+
+Updated the two B9 regression tests that pinned the old unbounded shape as "must not change" to pin
+  the new bounded shape instead, and added a dedicated test file with RED/GREEN proof (mirroring
+  B9's own methodology) for all three commands, plus a prefix-stability check for context-render's
+  compact/llm double-truncation path.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.81.14 (2026-07-18)
 
 ### Bug Fixes
