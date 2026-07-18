@@ -15144,9 +15144,38 @@ def evidence_emit(
         raise typer.Exit(code=1) from exc
 
     if output_path is not None:
-        resolved_output = Path(output_path).expanduser().resolve()
-        resolved_output.parent.mkdir(parents=True, exist_ok=True)
-        resolved_output.write_text(json.dumps(receipt, indent=2), encoding="utf-8")
+        from tensor_grep.cli.session_store import _write_json_atomic
+
+        try:
+            # audit C4 / CWE-59: check for a symlink BEFORE `.resolve()` -- resolving first
+            # would follow the symlink to its real target and make `is_symlink()` on the
+            # result always False, silently defeating `_write_json_atomic`'s own symlink guard
+            # (mirrors evidence_signing.generate_keypair's identical ordering fix).
+            # `_write_json_atomic` also makes this write atomic (temp file + fsync +
+            # os.replace) instead of the previous bare `write_text`, which could leave a
+            # truncated receipt on a crash mid-write.
+            expanded_output = Path(output_path).expanduser()
+            if expanded_output.is_symlink():
+                raise OSError(
+                    f"Refusing to write the evidence receipt through a symlink: {expanded_output}"
+                )
+            resolved_output = expanded_output.resolve()
+            _write_json_atomic(resolved_output, receipt)
+        except OSError as exc:
+            # Backend Fail-Closed Contract: never leak a raw traceback for a refused/failed
+            # write -- report the same structured error shape the two except blocks above use.
+            if json_output:
+                typer.echo(
+                    json.dumps(
+                        _evidence_error_payload(
+                            str(exc), code="write_error", routing_reason="evidence-receipt-emit"
+                        ),
+                        indent=2,
+                    )
+                )
+            else:
+                typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
 
     if json_output:
         typer.echo(json.dumps(receipt, indent=2))
