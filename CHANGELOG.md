@@ -1,6 +1,39 @@
 # CHANGELOG
 
 
+## v1.81.10 (2026-07-18)
+
+### Bug Fixes
+
+- **security**: Symlink-refusing atomic write for evidence emit + audit bundle-create outputs
+  (CWE-59, audit C4) ([#659](https://github.com/oimiragieo/tensor-grep/pull/659),
+  [`d6467df`](https://github.com/oimiragieo/tensor-grep/commit/d6467dfcad430e3740cb8d9019b18909e41c9010))
+
+`tg evidence emit --out` (main.py's evidence_emit) and `tg review-bundle create --output` (a.k.a.
+  "audit bundle-create"; audit_manifest.py's create_review_bundle) wrote a caller-specified output
+  path via a bare `resolved.write_text(json.dumps(...), encoding="utf-8")`: no symlink refusal, no
+  atomic temp+rename. A pre-existing symlink at the destination let write_text follow it and
+  overwrite the symlink's TARGET (CWE-59); a crash/kill mid-write had no atomic fallback and could
+  publish a truncated receipt/bundle.
+
+Both sites now route through session_store._write_json_atomic (already used for session/daemon
+  state), extended here with a symlink-refusal guard mirroring
+  evidence_signing._write_private_key_atomic. Each call site also checks is_symlink() BEFORE
+  .resolve() -- resolving first follows the symlink to its real target and makes is_symlink() on the
+  result always False, which would silently defeat the guard (the same ordering fix
+  evidence_signing.generate_keypair already applies). evidence_emit wraps the write in a try/except
+  OSError that reports through the command's existing structured error contract (--json error
+  envelope or a clean stderr message + exit 1) instead of leaking a raw traceback;
+  create_review_bundle's raised OSError already falls through review_bundle_create's (and the MCP
+  tg_review_bundle_create's) existing catch-all exception handler.
+
+Verified via git-stash A/B: the 4 pre-existing test_mcp_server.py failures on this machine
+  (native-binary/embedded-Rust-fallback tests, unrelated to this change) are byte-identical with and
+  without this fix.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.81.9 (2026-07-18)
 
 ### Bug Fixes
