@@ -205,11 +205,6 @@ class DirectoryScanner:
                 decision = result.include
         return bool(decision)
 
-    def _requires_python_guardrails(self, base_path: Path) -> bool:
-        if self.config.no_ignore or self.config.no_ignore_files:
-            return False
-        return base_path.name.lower() in {".claude", *(_GENERATED_DIR_NAMES)}
-
     def _should_descend_dir(self, base_path: Path, root: Path, directory: str) -> bool:
         if self.config.no_ignore or self.config.no_ignore_files:
             return True

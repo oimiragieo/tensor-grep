@@ -565,11 +565,6 @@ def _native_frontdoor_asset_candidates() -> list[_NativeFrontdoorAssetCandidate]
     return candidates
 
 
-def _native_frontdoor_asset_name() -> str | None:
-    candidates = _native_frontdoor_asset_candidates()
-    return candidates[0].asset_name if candidates else None
-
-
 def _native_frontdoor_download_candidates(
     version: str,
 ) -> list[tuple[_NativeFrontdoorAssetCandidate, str]]:
@@ -581,13 +576,6 @@ def _native_frontdoor_download_candidates(
         )
         for candidate in _native_frontdoor_asset_candidates()
     ]
-
-
-def _native_frontdoor_download_url(version: str) -> str | None:
-    candidates = _native_frontdoor_download_candidates(version)
-    if not candidates:
-        return None
-    return candidates[0][1]
 
 
 def _managed_native_frontdoor_path_from_env() -> Path | None:
@@ -1036,17 +1024,6 @@ def _windows_python_scripts_tensor_grep_package_version(
     if not owns_launcher:
         return None
     return version or "installed"
-
-
-def _windows_stale_tensor_grep_python_launchers(
-    expected_version: str,
-    native_path: Path,
-) -> list[_WindowsStalePythonLauncher]:
-    stale_launchers, _unowned_launchers = _windows_tensor_grep_python_launcher_scan(
-        expected_version,
-        native_path,
-    )
-    return stale_launchers
 
 
 def _windows_tensor_grep_python_launcher_scan(
@@ -5444,20 +5421,6 @@ def _load_sg_project_config(config_path: str | None) -> dict[str, object]:
     }
 
 
-def _iter_yaml_files(base_dir: Path, rel_dirs: list[str]) -> list[Path]:
-    candidates: list[Path] = []
-    for rel_dir in rel_dirs:
-        target = (base_dir / rel_dir).resolve()
-        if target.is_file() and target.suffix.lower() in {".yml", ".yaml"}:
-            candidates.append(target)
-            continue
-        if not target.is_dir():
-            continue
-        candidates.extend(sorted(target.rglob("*.yml")))
-        candidates.extend(sorted(target.rglob("*.yaml")))
-    return sorted(set(candidates))
-
-
 def _extract_rule_pattern(rule_data: dict[str, object]) -> str | None:
     direct = rule_data.get("pattern")
     if isinstance(direct, str) and direct.strip():
@@ -5470,46 +5433,6 @@ def _extract_rule_pattern(rule_data: dict[str, object]) -> str | None:
             return nested.strip()
 
     return None
-
-
-def _load_rule_specs(project_cfg: dict[str, object]) -> list[dict[str, str]]:
-    from tensor_grep.backends.ast_backend import normalize_ast_language
-
-    root_dir = cast(Path, project_cfg["root_dir"])
-    rule_dirs = cast(list[str], project_cfg["rule_dirs"])
-    default_language = cast(str, project_cfg["language"])
-
-    specs: list[dict[str, str]] = []
-    for rule_file in _iter_yaml_files(root_dir, rule_dirs):
-        payload = _load_yaml_dict(rule_file)
-
-        raw_rules = payload.get("rules")
-        if isinstance(raw_rules, list):
-            for idx, item in enumerate(raw_rules):
-                if not isinstance(item, dict):
-                    continue
-                pattern = _extract_rule_pattern(item)
-                if not pattern:
-                    continue
-                specs.append({
-                    "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
-                    "pattern": pattern,
-                    "language": normalize_ast_language(
-                        item.get("language") or payload.get("language") or default_language
-                    ),
-                })
-            continue
-
-        pattern = _extract_rule_pattern(payload)
-        if not pattern:
-            continue
-        specs.append({
-            "id": str(payload.get("id") or rule_file.stem),
-            "pattern": pattern,
-            "language": normalize_ast_language(str(payload.get("language") or default_language)),
-        })
-
-    return specs
 
 
 def _load_inline_rule_specs(
@@ -5617,15 +5540,6 @@ def _filter_ast_rule_specs(
     except re.error as exc:
         raise ValueError(f"Invalid --filter regex: {exc}") from exc
     return [rule for rule in rules if compiled.search(str(rule.get("id", "")))]
-
-
-def _suffix_for_language(language: str) -> str:
-    normalized = language.lower()
-    if normalized in {"js", "javascript"}:
-        return ".js"
-    if normalized in {"ts", "typescript"}:
-        return ".ts"
-    return ".py"
 
 
 def _build_rulesets_payload() -> dict[str, object]:
@@ -6494,113 +6408,6 @@ def _run_ast_scan_payload(
         suppression_justification=suppression_justification,
     )
     return payload
-
-
-def _search_ast_test_snippets_with_wrapper(
-    backend: object,
-    *,
-    root_dir: Path,
-    case_cfg: "SearchConfig",
-    pattern: str,
-    language: str,
-    snippets: list[str],
-) -> list[bool]:
-    if not snippets:
-        return []
-
-    suffix = _suffix_for_language(language)
-    with TemporaryDirectory(prefix=".tg_rule_test_batch_", dir=root_dir) as temp_dir:
-        temp_root = Path(temp_dir)
-        snippet_paths: list[Path] = []
-        for index, snippet in enumerate(snippets):
-            snippet_path = temp_root / f"case_{index}{suffix}"
-            snippet_path.write_text(snippet, encoding="utf-8")
-            snippet_paths.append(snippet_path)
-
-        result = cast(Any, backend).search_many(
-            [str(temp_root)],
-            pattern,
-            config=case_cfg,
-        )
-
-        def _resolve_match_path(raw_path: str) -> Path:
-            candidate = Path(raw_path)
-            if candidate.is_absolute():
-                return candidate.resolve()
-            return (temp_root / candidate).resolve()
-
-        matched_paths = {_resolve_match_path(path) for path in result.matched_file_paths}
-        matched_paths.update(
-            _resolve_match_path(match.file) for match in result.matches if match.file
-        )
-        return [snippet_path.resolve() in matched_paths for snippet_path in snippet_paths]
-
-
-def _evaluate_ast_test_case_with_wrapper(
-    backend: object,
-    *,
-    root_dir: Path,
-    case_cfg: "SearchConfig",
-    pattern: str,
-    language: str,
-    valid_snippets: list[str],
-    invalid_snippets: list[str],
-) -> list[tuple[str, bool, bool]]:
-    snippets = [*valid_snippets, *invalid_snippets]
-    if not snippets:
-        return []
-
-    match_results = _search_ast_test_snippets_with_wrapper(
-        backend,
-        root_dir=root_dir,
-        case_cfg=case_cfg,
-        pattern=pattern,
-        language=language,
-        snippets=snippets,
-    )
-    expected_matches = [False] * len(valid_snippets) + [True] * len(invalid_snippets)
-    return list(zip(snippets, expected_matches, match_results, strict=True))
-
-
-def _evaluate_grouped_ast_test_cases_with_wrapper(
-    *,
-    failures: list[str],
-    grouped_cases: dict[
-        tuple[int, str, str],
-        dict[str, object],
-    ],
-) -> None:
-    for batch in grouped_cases.values():
-        backend = batch["backend"]
-        root_dir = cast(Path, batch["root_dir"])
-        case_cfg = cast("SearchConfig", batch["case_cfg"])
-        pattern = cast(str, batch["pattern"])
-        language = cast(str, batch["language"])
-        items = cast(list[tuple[str, str, bool]], batch["items"])
-        snippets = [snippet for _, snippet, _ in items]
-        try:
-            match_results = _search_ast_test_snippets_with_wrapper(
-                backend,
-                root_dir=root_dir,
-                case_cfg=case_cfg,
-                pattern=pattern,
-                language=language,
-                snippets=snippets,
-            )
-        except Exception as exc:
-            for case_key, _, _ in items:
-                failures.append(f"{case_key}: backend error: {exc}")
-            continue
-
-        for (case_key, snippet, expected_match), has_match in zip(
-            items, match_results, strict=True
-        ):
-            if has_match != expected_match:
-                expectation = "match" if expected_match else "no match"
-                failures.append(
-                    f"{case_key}: expected {expectation}, got "
-                    f"{'match' if has_match else 'no match'} for snippet {snippet!r}"
-                )
 
 
 def _describe_ast_backend_mode(backend_name: str) -> str:

@@ -408,12 +408,6 @@ def _capsule_trust_checks(
     }
 
 
-def _validation_plan_has_targeted_primary_evidence(
-    validation_plan: list[dict[str, Any]],
-) -> bool:
-    return bool(_targeted_validation_evidence(validation_plan))
-
-
 def _targeted_validation_evidence(validation_plan: list[dict[str, Any]]) -> list[str]:
     evidence: list[str] = []
     for step in validation_plan:
