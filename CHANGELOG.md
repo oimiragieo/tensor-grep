@@ -1,6 +1,93 @@
 # CHANGELOG
 
 
+## v1.81.17 (2026-07-18)
+
+### Bug Fixes
+
+- **lsp**: Name the exact rustup component-add remediation + tighten pygls floor to >=2.0
+  ([#668](https://github.com/oimiragieo/tensor-grep/pull/668),
+  [`87e4a33`](https://github.com/oimiragieo/tensor-grep/commit/87e4a336fd04f4210f6142cb37c9cae6076d1648))
+
+Three small LOW-polish items, batched:
+
+1. Actionable rust-analyzer error. When a rust LSP provider's stderr matches rustup's
+  missing-component proxy fingerprint (both "unknown binary" and "rust-analyzer" present -- the
+  rustup proxy binary spawns successfully but immediately exits when the rust-analyzer component
+  isn't installed for the active toolchain, e.g. "unknown binary 'rust-analyzer' in toolchain
+  '1.96.0-x86_64-pc-windows-msvc'"), tg doctor now appends the exact `rustup component add
+  rust-analyzer --toolchain <toolchain>` remediation (parsed straight from the error) to the
+  surfaced not_lsp_proof_reason, plus the existing `tg lsp-setup --include-toolchain-providers`
+  pointer. Falls back to the plain `rustup component add rust-analyzer` when no toolchain string is
+  parseable. Narrow by design (mirrors the existing M10 workspace-warning pattern in cli/main.py):
+  only language == rust and only this one fingerprint are touched -- every other language and every
+  other error shape passes through unchanged.
+
+2. pygls floor. cli/lsp_server.py imports `from pygls.lsp.server import LanguageServer`, a module
+  path that exists only in pygls 2.x (pygls 1.x has no `pygls.lsp.server` module at all). The `ast`
+  extra's floor was still pygls>=1.3.0 (found by the #663 Opus gate), so `pip install
+  "tensor-grep[ast]"` could resolve a pygls 1.x that ImportErrors the moment `tg lsp` runs.
+  Tightened to pygls>=2.0 in pyproject.toml (uv.lock's requires-dist metadata updated to match; the
+  locked pygls==2.0.1 already satisfies the new floor, so no re-resolution was needed) and added a
+  governance test pinning the new floor.
+
+3. Warm-daemon parity test (test-only, from the #666 gate nits). #666 threaded
+  suggested_edits_max=max_files into build_context_render_from_map itself so the suggested_edits cap
+  would apply on both the cold CLI route and the warm/session-daemon route (session_store.py calls
+  build_context_render_from_map directly against a cached repo_map). The existing #666 tests only
+  ever exercised the cold wrapper; added one regression test that drives the same assertion through
+  a REAL spawned session daemon (reusing test_symbol_daemon_autostart.py's harness, the same pattern
+  test_orient_agent_daemon.py established for orient/agent) to prove the cap holds on the actual
+  warm-daemon code path too.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Reconcile to v1.81.16 (senior-review + Rust-dogfood campaign #655-#666)
+  ([#667](https://github.com/oimiragieo/tensor-grep/pull/667),
+  [`dae790e`](https://github.com/oimiragieo/tensor-grep/commit/dae790ee26954fad560b0192a162a0536d712593))
+
+* docs(backlog): reconcile to v1.81.16 (senior-review + Rust-dogfood campaign #655-#666)
+
+Reconciles docs/BACKLOG.md (last touched by #654 at v1.81.5) to the just-completed senior-review +
+  Rust-dogfood campaign, verified against git log, gh pr list, gh issue list, PR bodies, and
+  CHANGELOG.md rather than taken on faith from the dispatch brief:
+
+- Prepends a dense per-PR receipt paragraph to the header blockquote covering #655-#666 (v1.81.6
+  through v1.81.15, plus #665 merged and publishing as v1.81.16 at reconcile time) with mechanism,
+  before/after evidence, and verification method per PR. - Updates the SHIPPING and SHIPPED section
+  headers/summaries to the current drain state (0 open PRs, verified via gh pr list --state open). -
+  Corrects two claims from the dispatch brief against live evidence: the
+  fix/lsp-polish-rustup-msg-pygls-floor-216 worktree carries zero commits and zero uncommitted
+  changes (not "in flight" as briefed), and GitHub issue #48 is the only currently-open tracked
+  issue (auto-closed by #655's merge, manually reopened ~1hr later since the PR was an explicit
+  partial fix, not a close). - Preserves the document's existing prepend-and-mark-historical
+  structure (matches the #654 precedent of updating the header while leaving the CURRENT STATE
+  bulleted list, CURRENT LIVE BACKLOG, and CEO-FACING sections as historical snapshots).
+
+No src/ changes. Verified: ruff format --preview --check clean; no tests/ reference BACKLOG.md (not
+  a governed/pinned doc per the docs-and-writing skill's Part 1 table).
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* docs(backlog): avoid GitHub closing-keyword phrasing near open issue #48
+
+The prior commit's header prose named the incident using a GitHub issue-closing keyword (a
+  close/closed-rooted word) placed immediately next to the live, currently-open #48 issue reference
+  -- the same naive-match failure mode that paragraph is itself documenting from an earlier PR
+  title. GitHub's linker keyword match does not appear to respect question marks, negation, or
+  markdown headings, and plausibly also matches a close-rooted suffix inside a hyphenated compound
+  word. Rephrases the passage to describe the same incident using only neutral, non-keyword language
+  (issue-linker, reverted, terminate) so a close/fix/resolve-rooted word never sits directly
+  adjacent to a "#" + number anywhere in this docs-only change, and this PR cannot itself re-trigger
+  the linker against #48 on merge.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.81.16 (2026-07-18)
 
 ### Bug Fixes
