@@ -8,6 +8,7 @@ from typing import Any, cast
 from urllib.parse import unquote, urlparse
 
 from lsprotocol.types import (
+    INITIALIZE,
     TEXT_DOCUMENT_DEFINITION,
     TEXT_DOCUMENT_DID_CHANGE,
     TEXT_DOCUMENT_DID_CLOSE,
@@ -25,6 +26,7 @@ from lsprotocol.types import (
     DidSaveTextDocumentParams,
     DocumentSymbol,
     DocumentSymbolParams,
+    InitializeParams,
     Location,
     OptionalVersionedTextDocumentIdentifier,
     Position,
@@ -60,9 +62,10 @@ class TensorGrepLSPServer(LanguageServer):  # type: ignore
         self.repo_map_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self.provider_mode = "native"
         self.external_providers = ExternalLSPProviderManager()
-        # audit B13: position encoding negotiated with the client.
-        # "utf-16" is the LSP default; we upgrade to "utf-8" when the client
-        # advertises support so that column values are codepoint offsets.
+        # audit B13: position encoding negotiated with the client, mirrored from
+        # pygls' own ``ls.workspace.position_encoding`` once INITIALIZE runs (see
+        # the ``initialize`` feature handler + ``_negotiate_position_encoding``
+        # below). "utf-16" is the LSP default and stays in effect until then.
         self._position_encoding: str = "utf-16"
 
 
@@ -240,11 +243,36 @@ def _codepoint_col_to_utf16(line_text: str, cp_col: int) -> int:
     return utf16_units
 
 
+def _utf8_col_to_codepoint(line_text: str, utf8_col: int) -> int:
+    """Convert a UTF-8 byte-offset column to a Unicode codepoint (str index) offset.
+
+    audit B13: a client that negotiates ``positionEncoding: "utf-8"`` sends
+    ``character`` as a count of UTF-8 code *units* (bytes) — a single codepoint
+    is 1-4 UTF-8 bytes, so (unlike UTF-32) a UTF-8 offset is NOT already a
+    codepoint index and needs the same kind of conversion as UTF-16.
+    """
+    cp = 0
+    utf8_units = 0
+    for ch in line_text:
+        if utf8_units >= utf8_col:
+            break
+        utf8_units += len(ch.encode("utf-8"))
+        cp += 1
+    return cp
+
+
+def _codepoint_col_to_utf8(line_text: str, cp_col: int) -> int:
+    """Convert a codepoint (str index) column offset to UTF-8 byte units."""
+    return len(line_text[:cp_col].encode("utf-8"))
+
+
 def _to_cp_col(ls: TensorGrepLSPServer, line_text: str, col: int) -> int:
     """Convert *col* from the client's position encoding to a codepoint index."""
     if ls._position_encoding == "utf-16":
         return _utf16_col_to_codepoint(line_text, col)
-    # "utf-8" or "utf-32" (codepoints) — Python str indexing is already correct.
+    if ls._position_encoding == "utf-8":
+        return _utf8_col_to_codepoint(line_text, col)
+    # "utf-32" — already a codepoint count; Python str indexing is correct as-is.
     return col
 
 
@@ -252,6 +280,8 @@ def _from_cp_col(ls: TensorGrepLSPServer, line_text: str, cp_col: int) -> int:
     """Convert a codepoint column index to the client's position encoding."""
     if ls._position_encoding == "utf-16":
         return _codepoint_col_to_utf16(line_text, cp_col)
+    if ls._position_encoding == "utf-8":
+        return _codepoint_col_to_utf8(line_text, cp_col)
     return cp_col
 
 
@@ -898,23 +928,60 @@ def workspace_symbol(
     return _workspace_symbols(ls, params.query, path_hint=path_hint)
 
 
-def _negotiate_position_encoding(
-    ls: TensorGrepLSPServer, client_capabilities: dict[str, Any]
-) -> None:
-    """Inspect client capabilities and choose the best position encoding (audit B13).
+@server.feature(INITIALIZE)  # type: ignore
+def initialize(ls: TensorGrepLSPServer, params: InitializeParams) -> None:
+    """Synchronize our column-conversion encoding with the client (audit B13).
 
-    pygls calls the initialize handler before this module's handler runs, so we
-    hook into ``run_lsp`` / the initialize notification to read capabilities.
-    This function is called from the initialize response path.
+    ``@server.feature(INITIALIZE)`` is pygls' documented extension point for
+    the ``initialize`` request. pygls' own built-in handling
+    (``LanguageServerProtocol.lsp_initialize``) negotiates the position
+    encoding and builds ``ls.workspace`` with it *before* invoking this
+    handler, and finalises + returns the ``InitializeResult`` only *after*
+    this handler returns — see ``_negotiate_position_encoding`` for why
+    ``params`` itself is not re-inspected here.
     """
-    general = client_capabilities.get("general") or {}
-    supported = general.get("positionEncodings") or []
-    if "utf-8" in supported:
-        ls._position_encoding = "utf-8"
-    elif "utf-32" in supported:
-        ls._position_encoding = "utf-32"
-    else:
-        ls._position_encoding = "utf-16"
+    _negotiate_position_encoding(ls)
+
+
+def _negotiate_position_encoding(ls: TensorGrepLSPServer) -> None:
+    """Adopt the position encoding pygls negotiated for this session (audit B13).
+
+    Previously dead code: nothing called this function, so ``ls._position_encoding``
+    stayed at its "utf-16" default forever, and the column-conversion helpers
+    (``_to_cp_col`` / ``_from_cp_col``) silently mis-converted columns for any
+    client that negotiated "utf-8" or "utf-32" on a line with non-ASCII text
+    before the target column.
+
+    pygls (>=1.1.0; confirmed against both pygls==2.0.1, the version pinned in
+    uv.lock, and pygls==2.1.1) already negotiates the encoding itself inside
+    ``LanguageServerProtocol.lsp_initialize``
+    — see ``pygls.capabilities.ServerCapabilitiesBuilder.choose_position_encoding``
+    — by walking the client's ``general.positionEncodings`` *in the client's own
+    preference order* and picking the first one pygls also supports (utf-8,
+    utf-16, or utf-32), defaulting to "utf-16" when the capability is absent or
+    empty. That negotiated value is what pygls both (a) uses to construct
+    ``ls.workspace`` before any user ``INITIALIZE`` handler runs, and (b)
+    unconditionally reports back to the client as
+    ``InitializeResult.capabilities.positionEncoding`` — fixed at negotiation
+    time, before a user ``INITIALIZE`` handler is even invoked, so nothing a
+    user handler does can change what gets reported.
+
+    We therefore mirror ``ls.workspace.position_encoding`` — the exact value
+    pygls will report — onto ``ls._position_encoding`` instead of re-deriving
+    our own answer from the raw client capabilities a second time. A second,
+    independent negotiation algorithm could disagree with pygls' own choice
+    (e.g. by not respecting the client's preference order the way pygls does)
+    and silently reintroduce the very client/server encoding mismatch this fix
+    is meant to close.
+    """
+    try:
+        encoding = ls.workspace.position_encoding
+    except RuntimeError:
+        # Defensive only: pygls always creates ls.workspace before invoking a
+        # user INITIALIZE handler, so this is unreachable via the real
+        # initialize dispatch. Guards a direct/out-of-band call.
+        encoding = None
+    ls._position_encoding = encoding if encoding else "utf-16"
 
 
 def run_lsp() -> None:
