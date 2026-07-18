@@ -10,10 +10,14 @@ fresh-but-dead lock would NEVER be reclaimed within the wait window -- every wai
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 from tensor_grep.cli import _index_lock
 
@@ -280,3 +284,157 @@ def test_repeated_acquire_release_hammer_windows(tmp_path: Path) -> None:
             assert lock_path.exists()
             assert _index_lock._token_for_lock(lock_path) is not None
         assert not lock_path.exists(), f"orphaned lockfile after cycle {i}"
+
+
+# ---------------------------------------------------------------------------
+# atomic_write_bytes / atomic_write_json: the shared C4/#659 hardening baseline (task #211)
+# uniformized across session_store / checkpoint_store / evidence_signing / audit_manifest /
+# session_daemon / dogfood's atomic writers. Direct unit coverage of the shared primitive lives
+# here; each sibling module's own test suite covers the thin delegation from its call site.
+# ---------------------------------------------------------------------------
+
+
+def _symlink_or_skip(link_path: Path, target: Path) -> None:
+    try:
+        link_path.symlink_to(target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not supported / not privileged on this platform")
+
+
+def test_atomic_write_bytes_refuses_to_write_through_a_symlink(tmp_path: Path) -> None:
+    real_target = tmp_path / "real.txt"
+    real_target.write_bytes(b"do-not-touch-me")
+    link_path = tmp_path / "link.json"
+    _symlink_or_skip(link_path, real_target)
+
+    with pytest.raises(OSError, match="symlink"):
+        _index_lock.atomic_write_bytes(link_path, b'{"attacker": "payload"}')
+
+    # The refused attempt must leave the symlink -- and its target's content -- untouched.
+    assert link_path.is_symlink()
+    assert real_target.read_bytes() == b"do-not-touch-me"
+
+
+def test_atomic_write_bytes_normal_write_succeeds_and_leaves_no_temp_behind(
+    tmp_path: Path,
+) -> None:
+    dest = tmp_path / "payload.bin"
+
+    _index_lock.atomic_write_bytes(dest, b"hello world")
+
+    assert dest.read_bytes() == b"hello world"
+    assert list(tmp_path.glob(".*.tmp")) == []
+
+
+def test_atomic_write_bytes_overwrite_of_a_regular_file_still_succeeds(tmp_path: Path) -> None:
+    """A regular (non-symlink) pre-existing file at the destination must still be overwritable --
+    the guard targets symlinks specifically, not "anything already there"."""
+    dest = tmp_path / "existing.bin"
+    dest.write_bytes(b"old")
+
+    _index_lock.atomic_write_bytes(dest, b"new")
+
+    assert dest.read_bytes() == b"new"
+
+
+def test_atomic_write_bytes_creates_missing_parent_directories(tmp_path: Path) -> None:
+    dest = tmp_path / "nested" / "dir" / "payload.bin"
+
+    _index_lock.atomic_write_bytes(dest, b"hi")
+
+    assert dest.read_bytes() == b"hi"
+
+
+def test_atomic_write_bytes_temp_open_uses_o_creat_o_excl_and_o_nofollow_where_available(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Belt-and-suspenders defense-in-depth: the temp file open must always request O_EXCL, and
+    O_NOFOLLOW whenever the platform defines it -- a documented no-op on Windows (see the
+    docstring on ``atomic_write_bytes``); the cross-platform guard is the symlink precheck
+    tested above, not this flag."""
+    captured_flags: list[int] = []
+    real_open = os.open
+
+    def _spy_open(path: Any, flags: int, mode: int = 0o777, *args: Any, **kwargs: Any) -> int:
+        captured_flags.append(flags)
+        return real_open(path, flags, mode, *args, **kwargs)
+
+    monkeypatch.setattr(_index_lock.os, "open", _spy_open)
+
+    _index_lock.atomic_write_bytes(tmp_path / "flagged.bin", b"data")
+
+    assert captured_flags, "the temp file must be created via os.open"
+    flags = captured_flags[0]
+    assert flags & os.O_CREAT
+    assert flags & os.O_EXCL
+    expected_nofollow = getattr(os, "O_NOFOLLOW", 0)
+    assert (flags & expected_nofollow) == expected_nofollow
+
+
+def test_atomic_write_bytes_applies_and_reasserts_the_requested_mode(tmp_path: Path) -> None:
+    if os.name != "posix":
+        pytest.skip("POSIX permission bits are only meaningful on POSIX")
+    dest = tmp_path / "secret.bin"
+
+    _index_lock.atomic_write_bytes(dest, b"s3cr3t", mode=0o600)
+
+    assert (dest.stat().st_mode & 0o777) == 0o600
+
+
+def test_atomic_write_bytes_default_mode_matches_plain_open(tmp_path: Path) -> None:
+    """``mode=None`` must behave like plain ``open()`` -- 0o666 masked by umask -- not silently
+    narrow (or widen) an existing caller's permissions relative to the pre-refactor behavior."""
+    if os.name != "posix":
+        pytest.skip("POSIX permission bits are only meaningful on POSIX")
+    dest_default = tmp_path / "default.bin"
+    dest_plain_open = tmp_path / "plain_open.bin"
+
+    _index_lock.atomic_write_bytes(dest_default, b"data")
+    with open(dest_plain_open, "wb") as handle:
+        handle.write(b"data")
+
+    assert (dest_default.stat().st_mode & 0o777) == (dest_plain_open.stat().st_mode & 0o777)
+
+
+def test_atomic_write_bytes_crash_before_fsync_leaves_destination_untouched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Proves the write genuinely goes through the fsync'd temp-then-rename path: a crash before
+    fsync completes must never publish a truncated/partial file over a valid pre-existing one
+    (patching ``os.fsync`` has no effect on a bare, non-atomic write, which never calls it)."""
+    dest = tmp_path / "existing.json"
+    dest.write_bytes(b'{"stale": "pre-existing-valid-json"}')
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise OSError("simulated crash before fsync completes")
+
+    monkeypatch.setattr(_index_lock.os, "fsync", _boom)
+
+    with pytest.raises(OSError):
+        _index_lock.atomic_write_bytes(dest, b'{"new": "should-never-land"}')
+
+    assert dest.read_bytes() == b'{"stale": "pre-existing-valid-json"}'
+    assert list(tmp_path.glob(".*.tmp")) == []  # no partial temp left behind either
+
+
+def test_atomic_write_json_serializes_with_indent_2(tmp_path: Path) -> None:
+    """Pin the exact serialization contract every JSON-shaped sibling (session_store /
+    checkpoint_store / audit_manifest) relies on staying byte-for-byte unchanged."""
+    dest = tmp_path / "payload.json"
+
+    _index_lock.atomic_write_json(dest, {"b": 2, "a": 1})
+
+    assert dest.read_text(encoding="utf-8") == json.dumps({"b": 2, "a": 1}, indent=2)
+
+
+def test_atomic_write_json_refuses_to_write_through_a_symlink(tmp_path: Path) -> None:
+    real_target = tmp_path / "real.json"
+    real_target.write_text('{"untouched": true}', encoding="utf-8")
+    link_path = tmp_path / "link.json"
+    _symlink_or_skip(link_path, real_target)
+
+    with pytest.raises(OSError, match="symlink"):
+        _index_lock.atomic_write_json(link_path, {"attacker": "payload"})
+
+    assert link_path.is_symlink()
+    assert json.loads(real_target.read_text(encoding="utf-8")) == {"untouched": True}

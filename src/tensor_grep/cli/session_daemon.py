@@ -238,6 +238,16 @@ def _write_daemon_metadata_windows(path: Path, payload: dict[str, Any]) -> None:
     the file rather than being recomputed from the parent.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
+    # audit C4/#659 residual (task #211): this Windows-specific copy of the atomic-write pattern
+    # (needed so the ACL lockdown below can run between temp-file creation and the token write --
+    # see the docstring above) never gained the is_symlink() precheck session_store.
+    # _write_json_atomic and evidence_signing._write_private_key_atomic already carry. Add it here
+    # too so a pre-existing symlink at daemon.json is refused instead of silently replaced. POSIX
+    # O_NOFOLLOW is a no-op on Windows (this function only ever runs on win32, per the caller's
+    # `sys.platform == "win32"` guard), so this precheck is the ONLY defense available on this
+    # code path; O_EXCL on the temp-file open below still applies as usual.
+    if path.is_symlink():
+        raise OSError(f"Refusing to write through a symlink: {path}")
     tmp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
     data = json.dumps(payload, indent=2)
     fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, _DAEMON_METADATA_MODE)

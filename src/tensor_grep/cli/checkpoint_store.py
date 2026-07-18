@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from tensor_grep.cli._index_lock import index_lock, replace_with_retry
+from tensor_grep.cli._index_lock import atomic_write_json, index_lock
 from tensor_grep.cli.subprocess_policy import configured_git_timeout_seconds, run_subprocess
 
 _CHECKPOINT_VERSION = 1
@@ -97,28 +97,15 @@ def _is_generated_discovery_dir(path: Path) -> bool:
 
 
 def _write_json_atomic(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
-    with open(tmp_path, "w", encoding="utf-8") as handle:
-        handle.write(json.dumps(payload, indent=2))
-        handle.flush()
-        # fsync the data before the rename so a crash can never publish a truncated
-        # index/metadata that would leave the agent's rollback safety net unable to
-        # find the checkpoint while edits stay applied (audit I5).
-        os.fsync(handle.fileno())
-    replace_with_retry(tmp_path, path)
-    # Best-effort durability of the rename itself; directory fsync is a no-op or
-    # unsupported on Windows, so failures here are non-fatal.
-    try:
-        dir_fd = os.open(str(path.parent), os.O_RDONLY)
-    except OSError:
-        return
-    try:
-        os.fsync(dir_fd)
-    except OSError:
-        pass
-    finally:
-        os.close(dir_fd)
+    """Write ``payload`` as pretty JSON to ``path`` atomically, refusing a pre-existing symlink.
+
+    Thin wrapper over the shared C4/#659 hardening baseline (`_index_lock.atomic_write_json`).
+    This module's own copy of the atomic-write pattern predated the C4 fix and never gained the
+    `is_symlink()` precheck `session_store`/`evidence_signing` already carry (task #211 residual)
+    -- routing through the shared helper closes that gap uniformly instead of re-patching a third
+    copy of the same pattern in place.
+    """
+    atomic_write_json(path, payload)
 
 
 def _resolve_within_root(root: Path, root_resolved: Path, rel_path: str) -> Path:

@@ -14,7 +14,7 @@ from time import monotonic
 from typing import Any, TextIO, cast
 from uuid import uuid4
 
-from tensor_grep.cli._index_lock import index_lock, replace_with_retry
+from tensor_grep.cli._index_lock import atomic_write_json, index_lock
 from tensor_grep.cli.agent_capsule import build_agent_capsule_from_map
 from tensor_grep.cli.orient_capsule import build_orient_capsule_from_map
 from tensor_grep.cli.repo_map import (
@@ -422,68 +422,17 @@ def _load_index(root: Path) -> list[SessionRecord]:
 
 
 def _write_json_atomic(path: Path, payload: Any, *, mode: int | None = None) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # audit C4 / CWE-59: refuse to write THROUGH a pre-existing symlink at the destination --
-    # mirrors evidence_signing._write_private_key_atomic's guard. Without this, `os.replace`
-    # below would not corrupt the symlink's TARGET (POSIX rename() atomically replaces the link
-    # entry itself, not what it points to) but it would still silently destroy the caller's
-    # symlink with no signal that something unexpected was already at the destination -- refusing
-    # outright is the same fail-closed posture the private-key writer already takes. Every caller
-    # of this shared helper (session payloads/index, the daemon token + metrics files, and, via
-    # the C4 fix, the evidence-receipt and review-bundle CLI/MCP writers) gets the same
-    # protection. Callers that first `.expanduser().resolve()` a caller-supplied path MUST check
-    # `is_symlink()` on the pre-resolve path themselves (mirrors evidence_signing.generate_keypair)
-    # -- `.resolve()` follows symlinks, so by the time a resolved path reaches this function the
-    # symlink-ness of the ORIGINAL destination is already lost; this check remains as
-    # defense-in-depth against a symlink planted directly at an already-resolved leaf path (e.g.
-    # the session/daemon internal callers below, which never round-trip through a caller-supplied
-    # string) and against the narrow TOCTOU window between an outer check and this call.
-    if path.is_symlink():
-        raise OSError(f"Refusing to write through a symlink: {path}")
-    tmp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
-    data = json.dumps(payload, indent=2)
-    if mode is not None:
-        # audit S3 + round-3: create the temp AT the restrictive mode via os.open(O_CREAT|O_EXCL)
-        # so a sensitive file (e.g. the 0600 daemon token) is never briefly world-readable in the
-        # window between write and chmod. O_EXCL also refuses to follow a pre-existing temp/symlink.
-        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(data)
-                handle.flush()
-                # M6: fsync the data before the rename so a crash can never publish a
-                # truncated session index/payload (mirrors checkpoint_store._write_json_atomic,
-                # audit I5).
-                os.fsync(handle.fileno())
-        except BaseException:
-            tmp_path.unlink(missing_ok=True)  # don't leave a partial temp behind
-            raise
-        # O_CREAT honors the umask, so the created mode is never broader than `mode`; force the
-        # exact requested bits for determinism (in case the umask stripped an owner bit).
-        try:
-            os.chmod(tmp_path, mode)
-        except OSError:
-            pass
-    else:
-        with open(tmp_path, "w", encoding="utf-8") as handle:
-            handle.write(data)
-            handle.flush()
-            # M6: fsync the data before the rename so a crash can never publish a truncated
-            # session index/payload (mirrors checkpoint_store._write_json_atomic, audit I5).
-            os.fsync(handle.fileno())
-    replace_with_retry(tmp_path, path)
-    # Best-effort durability of the rename itself; directory fsync is a no-op or unsupported
-    # on Windows, so failures here are non-fatal.
-    try:
-        dir_fd = os.open(str(path.parent), os.O_RDONLY)
-    except OSError:
-        return
-    try:
-        os.fsync(dir_fd)
-    except OSError:
-        pass
-    finally:
-        os.close(dir_fd)
+    """Write ``payload`` as pretty JSON to ``path`` atomically, refusing a pre-existing symlink.
+
+    Thin wrapper over the shared C4/#659 hardening baseline
+    (`_index_lock.atomic_write_json`/`atomic_write_bytes` -- see those docstrings for the full
+    precheck + same-dir-temp + fsync + os.replace (+ POSIX O_EXCL|O_NOFOLLOW) rationale). Every
+    caller of this function (session payloads/index, the daemon token + metrics files via
+    session_daemon, and, via the C4 fix, the evidence-receipt and review-bundle CLI/MCP writers)
+    gets the same protection, uniformized (task #211) across every sibling writer in the `cli`
+    package instead of being re-implemented per module.
+    """
+    atomic_write_json(path, payload, mode=mode)
 
 
 def _write_index(root: Path, records: list[SessionRecord]) -> None:

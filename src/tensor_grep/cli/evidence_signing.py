@@ -47,7 +47,7 @@ from cryptography.hazmat.primitives.serialization import (
     PublicFormat,
 )
 
-from tensor_grep.cli._index_lock import replace_with_retry
+from tensor_grep.cli._index_lock import atomic_write_bytes
 from tensor_grep.cli.audit_manifest import _utc_now_iso
 
 ALGORITHM = "ed25519"
@@ -202,7 +202,10 @@ def _write_private_key_atomic(path: Path, raw_private_bytes: bytes, *, force: bo
     # Refuse to write THROUGH a pre-existing symlink at the target path regardless of --force: a
     # symlink there could redirect the private key material somewhere the caller does not expect
     # (write-side symlink-attack class; see AGENTS.md "Symlink-follow disclosure", the read-side
-    # sibling of this same concern).
+    # sibling of this same concern). `atomic_write_bytes` repeats this same check internally
+    # (defense-in-depth against the outer-check/write TOCTOU window), but this explicit check
+    # stays here so the caller-visible exception on the common path is EvidenceSigningError, not
+    # the shared helper's generic OSError.
     if path.is_symlink():
         raise EvidenceSigningError(f"Refusing to write a signing key through a symlink: {path}")
     if path.exists() and not force:
@@ -210,24 +213,11 @@ def _write_private_key_atomic(path: Path, raw_private_bytes: bytes, *, force: bo
             f"Signing key already exists: {path} (pass --force to overwrite)"
         )
 
-    tmp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    # audit S3 / atomic-write-permission-window pattern (session_store._write_json_atomic): create
-    # the temp AT 0600 from byte one via os.open(O_CREAT|O_EXCL) so the private key is never
-    # briefly world-readable, and O_EXCL refuses to follow a pre-existing temp/symlink.
-    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(raw_private_bytes)
-            handle.flush()
-            os.fsync(handle.fileno())
-    except BaseException:
-        tmp_path.unlink(missing_ok=True)
-        raise
-    try:
-        os.chmod(tmp_path, 0o600)
-    except OSError:
-        pass
-    replace_with_retry(tmp_path, path)
+    # audit S3 / round-3 / task #211 (uniform-onofollow-211): create+publish via the shared
+    # C4/#659 hardening baseline (`_index_lock.atomic_write_bytes` -- 0600 from byte one via
+    # os.open(O_CREAT|O_EXCL[|O_NOFOLLOW]), fsync before the rename, os.replace) instead of a
+    # hand-rolled copy of the same pattern.
+    atomic_write_bytes(path, raw_private_bytes, mode=0o600)
 
 
 def generate_keypair(out_path: str | Path, *, force: bool = False) -> dict[str, str]:
@@ -254,11 +244,16 @@ def generate_keypair(out_path: str | Path, *, force: bool = False) -> dict[str, 
     pub_b64 = public_key_b64(private_key)
     key_id = key_id_from_public_b64(pub_b64)
     pub_path = resolved.with_name(resolved.name + ".pub")
-    pub_path.write_text(pub_b64 + "\n", encoding="utf-8")
-    try:
-        os.chmod(pub_path, 0o644)
-    except OSError:
-        pass
+    # audit C4/#659 residual (task #211): this sibling write had NO symlink precheck, no
+    # atomicity, and no fsync at all (a bare write_text) even though it is a signing artifact
+    # emitted alongside the already-hardened private key. Mirror `_write_private_key_atomic`'s own
+    # precheck-then-shared-helper shape (so a refused attempt here raises the same
+    # EvidenceSigningError type as every other failure mode in this module) and route the actual
+    # write through the same shared baseline. Public-key material is not secret, but the
+    # write-through-symlink / partial-write-on-crash risk classes apply just the same.
+    if pub_path.is_symlink():
+        raise EvidenceSigningError(f"Refusing to write a signing key through a symlink: {pub_path}")
+    atomic_write_bytes(pub_path, (pub_b64 + "\n").encode("utf-8"), mode=0o644)
 
     return {
         "private_key_path": str(resolved),

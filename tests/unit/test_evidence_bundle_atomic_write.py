@@ -272,3 +272,69 @@ def test_write_json_atomic_overwrite_of_a_regular_file_still_succeeds(tmp_path: 
     session_store._write_json_atomic(dest, {"new": True})
 
     assert json.loads(dest.read_text(encoding="utf-8")) == {"new": True}
+
+
+# ---------------------------------------------------------------------------
+# 5. task #211 (the C4/#659 residual this file's name predates): audit_manifest.
+#    _write_history_index was a bare `write_text` -- no symlink refusal, no atomic temp+rename,
+#    no fsync at all -- even though it persists the tamper-evident audit-history index
+#    (.tensor-grep/audit/index.json) that record_audit_manifest/list_audit_history build the
+#    manifest chain from. Now routed through the same shared `_index_lock.atomic_write_json`
+#    helper as every other writer covered by this file.
+# ---------------------------------------------------------------------------
+
+
+def test_write_history_index_refuses_to_write_through_a_symlink(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    real_target = tmp_path / "real.json"
+    real_target.write_text('{"untouched": true}', encoding="utf-8")
+    history_dir = root / ".tensor-grep" / "audit"
+    history_dir.mkdir(parents=True)
+    link_path = history_dir / "index.json"
+    _symlink_or_skip(link_path, real_target)
+
+    with pytest.raises(OSError, match="symlink"):
+        audit_manifest._write_history_index(root, [])
+
+    assert link_path.is_symlink()
+    assert json.loads(real_target.read_text(encoding="utf-8")) == {"untouched": True}
+
+
+def test_write_history_index_normal_write_still_succeeds(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    entry = {
+        "manifest_sha256": "a" * 64,
+        "kind": "rewrite-audit-manifest",
+        "created_at": "2026-01-01T00:00:00Z",
+        "file_path": str(root / "manifest.json"),
+        "previous_manifest_sha256": None,
+    }
+
+    audit_manifest._write_history_index(root, [entry])
+
+    index_path = root / ".tensor-grep" / "audit" / "index.json"
+    on_disk = json.loads(index_path.read_text(encoding="utf-8"))
+    assert on_disk["manifests"] == [entry]
+
+
+def test_record_audit_manifest_refuses_when_history_index_is_a_pre_existing_symlink(
+    tmp_path: Path,
+) -> None:
+    """End-to-end proof through the real ``record_audit_manifest`` entry point (reached from
+    ``verify_audit_manifest`` on every successful verification, main.py's `tg run
+    --audit-manifest`, and `tg audit record`): a pre-existing symlink at
+    .tensor-grep/audit/index.json must fail the write closed instead of silently replacing it."""
+    project = _make_project(tmp_path)
+    manifest_path = project / ".tensor-grep" / "audit" / "manifest.json"
+    manifest = _write_audit_manifest(manifest_path, project_root=project)
+
+    real_target = tmp_path / "real.json"
+    real_target.write_text('{"untouched": true}', encoding="utf-8")
+    index_path = project / ".tensor-grep" / "audit" / "index.json"
+    _symlink_or_skip(index_path, real_target)
+
+    with pytest.raises(OSError, match="symlink"):
+        audit_manifest.record_audit_manifest(manifest_path, manifest=manifest)
+
+    assert index_path.is_symlink()
+    assert json.loads(real_target.read_text(encoding="utf-8")) == {"untouched": True}

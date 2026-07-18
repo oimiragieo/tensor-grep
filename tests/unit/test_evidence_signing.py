@@ -273,24 +273,36 @@ def test_verify_with_malformed_trusted_key_entry_never_matches_and_never_crashes
 def test_generate_keypair_creates_the_temp_at_a_restrictive_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Cross-platform (works on Windows too): confirm the temp is created via os.open with a mode
-    that grants no group/other bits, mirroring session_store's own atomic-write-permission-window
-    regression test -- never create-world-readable-then-chmod."""
+    """Cross-platform (works on Windows too): confirm the PRIVATE KEY temp is created via
+    os.open with a mode that grants no group/other bits, mirroring session_store's own
+    atomic-write-permission-window regression test -- never create-world-readable-then-chmod.
+
+    The sibling ``.pub`` file (also routed through the shared atomic-write helper as of the
+    uniform-onofollow-211 hardening pass, task #211) is deliberately created at a WIDER 0o644
+    mode -- it is public key material, not a secret -- so this spy records ``(path, mode)`` pairs
+    and asserts the private-key temp specifically (identified by its ``.pub.`` -free temp name),
+    rather than blanket-asserting over every ``os.open`` call `generate_keypair` makes.
+    """
     key_path = tmp_path / "key"
-    created_modes: list[int] = []
+    created: list[tuple[str, int]] = []
     real_open = os.open
 
     def _spy_open(path: Any, flags: int, mode: int = 0o777, *args: Any, **kwargs: Any) -> int:
         if flags & os.O_CREAT:
-            created_modes.append(mode)
+            created.append((str(path), mode))
         return real_open(path, flags, mode, *args, **kwargs)
 
     monkeypatch.setattr(evidence_signing.os, "open", _spy_open)
 
     evidence_signing.generate_keypair(key_path)
 
-    assert created_modes, "the private key temp must be created via os.open(O_CREAT, mode)"
-    assert all((mode & 0o077) == 0 for mode in created_modes)
+    key_modes = [mode for path, mode in created if ".pub." not in path]
+    pub_modes = [mode for path, mode in created if ".pub." in path]
+    assert key_modes, "the private key temp must be created via os.open(O_CREAT, mode)"
+    assert all((mode & 0o077) == 0 for mode in key_modes)
+    # The .pub sibling is intentionally NOT restrictive -- it is public material.
+    assert pub_modes, "the .pub temp must also be created via os.open(O_CREAT, mode)"
+    assert all(mode == 0o644 for mode in pub_modes)
 
 
 def test_generate_keypair_final_mode_is_0600_on_posix(tmp_path: Path) -> None:
@@ -342,6 +354,30 @@ def test_generate_keypair_refuses_to_write_through_a_symlink_even_with_force(
 
     # the symlink's target must be untouched by the refused attempt
     assert link_path.is_symlink()
+
+
+def test_generate_keypair_refuses_to_write_the_pub_file_through_a_symlink(
+    tmp_path: Path,
+) -> None:
+    """task #211 (C4/#659 residual): the ``.pub`` sibling write had NO symlink precheck at all
+    before this fix (a bare ``write_text``) -- unlike the private key it sits beside. Exercise it
+    specifically: the PRIVATE key destination is fresh (no force needed), but the ``.pub``
+    sibling path is pre-symlinked."""
+    key_path = tmp_path / "key"
+    real_target = tmp_path / "real_target.pub"
+    real_target.write_text("do-not-touch-me", encoding="utf-8")
+    pub_link = tmp_path / "key.pub"
+    try:
+        pub_link.symlink_to(real_target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not supported / not privileged on this platform")
+
+    with pytest.raises(evidence_signing.EvidenceSigningError, match="symlink"):
+        evidence_signing.generate_keypair(key_path)
+
+    # the symlink's target must be untouched by the refused attempt
+    assert pub_link.is_symlink()
+    assert real_target.read_text(encoding="utf-8") == "do-not-touch-me"
 
 
 # ---------------------------------------------------------------------------

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 _POLL_S = 0.02
@@ -42,6 +44,102 @@ def replace_with_retry(
             if attempt == attempts - 1:
                 raise
             time.sleep(delay_s)
+
+
+def atomic_write_bytes(path: Path, data: bytes, *, mode: int | None = None) -> None:
+    """Write ``data`` to ``path`` atomically, refusing to write through a pre-existing symlink.
+
+    The ONE shared hardening baseline (audit C4 / CWE-59, PR #659; uniformized across every
+    sibling writer by task #211) for every JSON/key/manifest writer in the ``cli`` package: an
+    ``is_symlink()`` refusal precheck on the PRE-resolve destination, a same-directory temp file,
+    POSIX ``O_CREAT|O_EXCL`` plus ``O_NOFOLLOW`` where the platform has it, an ``fsync`` of the
+    written bytes before the rename, and :func:`replace_with_retry` (``os.replace``) to publish.
+
+    Why the precheck AND the rename-based swap: ``os.replace`` never dereferences a destination
+    symlink -- POSIX ``rename()`` atomically replaces the link ENTRY itself, never the file it
+    points to -- so this function can never be tricked into corrupting an arbitrary symlink
+    TARGET through the publish step alone. But without the precheck it would still silently
+    destroy a pre-existing symlink at the destination with no signal that something unexpected was
+    already there; refusing outright is the same fail-closed posture
+    ``evidence_signing._write_private_key_atomic`` has always taken (the original C4 fix), now
+    uniform across every sibling writer instead of copy-pasted (or, in three sites, MISSING)
+    per-module.
+
+    ``O_NOFOLLOW`` is a documented no-op on Windows (``getattr(os, "O_NOFOLLOW", 0)`` mirrors both
+    cpython's own ``tempfile`` module and this codebase's established
+    ``main._write_json_refuse_symlink`` idiom) -- it is belt-and-suspenders defense-in-depth
+    against a symlink swapped in at the randomly-named temp path itself (astronomically unlikely,
+    since the name includes a fresh ``uuid4``), not the cross-platform guard. The cross-platform
+    guard is the precheck + same-directory-temp + rename shape, which holds identically on POSIX
+    and Windows -- do NOT treat ``O_NOFOLLOW`` alone as sufficient hardening on this codebase's
+    primary (Windows) development platform.
+
+    Callers that first ``.expanduser().resolve()`` a caller-supplied path MUST check
+    ``is_symlink()`` on the PRE-resolve path themselves before calling this function (mirrors
+    ``evidence_signing.generate_keypair``) -- ``.resolve()`` follows symlinks, so by the time a
+    resolved path reaches here the symlink-ness of the ORIGINAL destination is already lost. This
+    function's own check remains as defense-in-depth against a symlink planted directly at an
+    already-resolved leaf path (the common case for internal callers that never round-trip through
+    a caller-supplied string) and against the narrow TOCTOU window between an outer check and this
+    call.
+
+    ``mode``, when given, is applied to the temp file at creation (honoring the umask) and
+    re-asserted with ``os.chmod`` afterward for determinism (in case the umask stripped a bit);
+    when ``None`` the temp file is created at the same effective permissions plain ``open()``
+    would use (``0o666`` masked by umask).
+
+    Raises ``OSError`` if ``path`` is already a symlink; propagates any other write/rename failure
+    (Backend Fail-Closed Contract -- never a silent partial write).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink():
+        raise OSError(f"Refusing to write through a symlink: {path}")
+    tmp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    create_mode = 0o666 if mode is None else mode
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(tmp_path, flags, create_mode)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            # M6: fsync the data before the rename so a crash can never publish a truncated
+            # file (mirrors session_store._write_json_atomic, audit I5).
+            os.fsync(handle.fileno())
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)  # don't leave a partial temp behind
+        raise
+    if mode is not None:
+        # O_CREAT honors the umask, so the created mode is never broader than `mode`; force the
+        # exact requested bits for determinism (in case the umask stripped an owner bit).
+        try:
+            os.chmod(tmp_path, mode)
+        except OSError:
+            pass
+    replace_with_retry(tmp_path, path)
+    # Best-effort durability of the rename itself; directory fsync is a no-op or unsupported on
+    # Windows, so failures here are non-fatal.
+    try:
+        dir_fd = os.open(str(path.parent), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(dir_fd)
+    except OSError:
+        pass
+    finally:
+        os.close(dir_fd)
+
+
+def atomic_write_json(path: Path, payload: Any, *, mode: int | None = None) -> None:
+    """``json.dumps(payload, indent=2)`` convenience wrapper over :func:`atomic_write_bytes`.
+
+    Shared by every caller whose serialization is exactly ``json.dumps(payload, indent=2)`` (no
+    ``sort_keys``, no trailing newline) -- currently ``session_store``/``checkpoint_store``/
+    ``audit_manifest``'s index/metadata writers. A caller with different serialization (e.g.
+    ``dogfood``'s ``sort_keys=True`` + trailing newline) calls :func:`atomic_write_bytes` directly
+    with its own precomputed bytes instead, so its on-disk output stays byte-for-byte unchanged.
+    """
+    atomic_write_bytes(path, json.dumps(payload, indent=2).encode("utf-8"), mode=mode)
 
 
 def _lock_path_for(index_path: Path) -> Path:
