@@ -1957,3 +1957,295 @@ def test_mcp_blast_radius_render_accepts_provider_parameter(tmp_path: Path, monk
     )
 
     assert payload["semantic_provider"] == "lsp"
+
+
+# ---------------------------------------------------------------------------
+# Regression (CEO dogfood 2026-07-18): `tg defs/source/refs/callers/impact/
+# blast-radius <FILE> <SYMBOL> --provider lsp/hybrid` used to crash with
+# NotADirectoryError. Root cause: when a repo map is scoped to a single FILE
+# (not a directory), `repo_map["path"]` IS that file. Several `_external_*`
+# call sites derived `repo_root`/`workspace_root` directly from it via
+# `Path(str(repo_map["path"])).resolve()` with no directory guard. That value
+# eventually reaches `ExternalLSPClient._start_locked`'s
+# `subprocess.Popen(cwd=str(self.workspace_root), ...)`
+# (lsp_external_provider.py:500), which raises `NotADirectoryError`
+# (WinError 267 on Windows, ENOTDIR on POSIX) when `cwd` is a file rather
+# than a directory. `--provider native` (the CLI default) never reaches this
+# code, which is why the bug shipped silently -- it only reproduces under
+# `--provider lsp`/`hybrid`.
+#
+# The fix threads every such site through `_repo_map_root_dir()`, mirroring
+# the pre-existing `root if root.is_dir() else root.parent` pattern already
+# used by `build_repo_map` (`context_root`) and
+# `_repo_map_file_and_test_universe` (`base`) -- so external tooling always
+# receives a real directory, while the user-visible `path`/`definitions[].file`
+# fields are unaffected (they still report the exact file, per `_envelope`).
+# ---------------------------------------------------------------------------
+
+
+def test_repo_map_defs_file_path_with_lsp_provider_scopes_workspace_to_parent_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`tg defs <file.py> <symbol> --provider lsp` must never crash with
+    NotADirectoryError. The LSP `workspace_root` passed to `get_client` must be
+    the file's PARENT directory (a real directory `subprocess.Popen(cwd=...)`
+    can chdir into), never the file itself."""
+    module_path = tmp_path / "module.py"
+    module_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
+
+    class _FakeClient:
+        request_timeout_seconds = 3.0
+        initialize_timeout_seconds = 3.0
+
+        def ensure_document(self, **kwargs: object) -> None:
+            pass
+
+        def request(self, method: str, params: dict[str, object]) -> list[dict[str, object]]:
+            return []
+
+    class _FakeManager:
+        def get_client(self, *, language: str, workspace_root: Path) -> _FakeClient:
+            # The load-bearing assertion: workspace_root must be a real directory (the
+            # file's parent), never the file itself -- a file here is exactly what crashed
+            # subprocess.Popen(cwd=...) with NotADirectoryError.
+            assert workspace_root == tmp_path.resolve()
+            assert workspace_root.is_dir()
+            return _FakeClient()
+
+        def provider_status(self, *, language: str, workspace_root: Path) -> dict[str, object]:
+            assert workspace_root == tmp_path.resolve()
+            return {
+                "language": language,
+                "workspace_root": str(workspace_root),
+                "available": True,
+                "health_status": "ready",
+            }
+
+    monkeypatch.setattr(repo_map, "_EXTERNAL_LSP_PROVIDER_MANAGER", _FakeManager())
+
+    payload = repo_map.build_symbol_defs("create_invoice", module_path, semantic_provider="lsp")
+
+    assert payload["definitions"][0]["name"] == "create_invoice"
+    # The user-visible `path` field must still report the exact FILE, unaffected by the
+    # internal workspace-root directory fix.
+    assert payload["path"] == str(module_path.resolve())
+
+
+def test_repo_map_defs_file_path_symbol_not_found_with_lsp_provider_no_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same crash is reachable even when the symbol is absent from the file:
+    `_external_workspace_symbols` runs unconditionally before any native-match
+    check, so a bad `workspace_root` crashes regardless of whether the symbol
+    resolves."""
+    module_path = tmp_path / "module.py"
+    module_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
+
+    class _FakeClient:
+        request_timeout_seconds = 3.0
+        initialize_timeout_seconds = 3.0
+
+        def ensure_document(self, **kwargs: object) -> None:
+            pass
+
+        def request(self, method: str, params: dict[str, object]) -> list[dict[str, object]]:
+            return []
+
+    class _FakeManager:
+        def get_client(self, *, language: str, workspace_root: Path) -> _FakeClient:
+            assert workspace_root.is_dir()
+            return _FakeClient()
+
+        def provider_status(self, *, language: str, workspace_root: Path) -> dict[str, object]:
+            assert workspace_root.is_dir()
+            return {
+                "language": language,
+                "workspace_root": str(workspace_root),
+                "available": True,
+                "health_status": "ready",
+            }
+
+    monkeypatch.setattr(repo_map, "_EXTERNAL_LSP_PROVIDER_MANAGER", _FakeManager())
+
+    payload = repo_map.build_symbol_defs(
+        "ThisSymbolDoesNotExist", module_path, semantic_provider="lsp"
+    )
+
+    assert payload["definitions"] == []
+
+
+def test_repo_map_defs_directory_path_with_lsp_provider_workspace_root_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression guard: a DIRECTORY path must keep using itself (not its parent) as the
+    LSP workspace_root -- unchanged from before this fix."""
+    module_path = tmp_path / "module.py"
+    module_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
+
+    class _FakeClient:
+        request_timeout_seconds = 3.0
+        initialize_timeout_seconds = 3.0
+
+        def ensure_document(self, **kwargs: object) -> None:
+            pass
+
+        def request(self, method: str, params: dict[str, object]) -> list[dict[str, object]]:
+            return []
+
+    class _FakeManager:
+        def get_client(self, *, language: str, workspace_root: Path) -> _FakeClient:
+            assert workspace_root == tmp_path.resolve()
+            return _FakeClient()
+
+        def provider_status(self, *, language: str, workspace_root: Path) -> dict[str, object]:
+            assert workspace_root == tmp_path.resolve()
+            return {
+                "language": language,
+                "workspace_root": str(workspace_root),
+                "available": True,
+                "health_status": "ready",
+            }
+
+    monkeypatch.setattr(repo_map, "_EXTERNAL_LSP_PROVIDER_MANAGER", _FakeManager())
+
+    payload = repo_map.build_symbol_defs("create_invoice", tmp_path, semantic_provider="lsp")
+
+    assert payload["definitions"][0]["name"] == "create_invoice"
+
+
+def test_repo_map_source_file_path_with_lsp_provider_no_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`tg source <file> <symbol> --provider lsp` inherits defs' internal
+    `_external_definitions` call and used to crash identically."""
+    module_path = tmp_path / "module.py"
+    module_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
+
+    captured_roots: list[Path] = []
+
+    def _fake_external_workspace_symbols(root, symbol, **kwargs):
+        captured_roots.append(root)
+        return []
+
+    monkeypatch.setattr(repo_map, "_external_workspace_symbols", _fake_external_workspace_symbols)
+
+    payload = repo_map.build_symbol_source("create_invoice", module_path, semantic_provider="lsp")
+
+    assert captured_roots, "expected _external_workspace_symbols to be invoked"
+    assert all(root.is_dir() for root in captured_roots)
+    assert payload["sources"][0]["name"] == "create_invoice"
+
+
+def test_repo_map_impact_file_path_with_lsp_provider_no_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`tg impact <file> <symbol> --provider lsp` inherits defs' internal
+    `_external_definitions` call and used to crash identically."""
+    module_path = tmp_path / "module.py"
+    module_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
+
+    captured_roots: list[Path] = []
+
+    def _fake_external_workspace_symbols(root, symbol, **kwargs):
+        captured_roots.append(root)
+        return []
+
+    monkeypatch.setattr(repo_map, "_external_workspace_symbols", _fake_external_workspace_symbols)
+
+    payload = repo_map.build_symbol_impact("create_invoice", module_path, semantic_provider="lsp")
+
+    assert captured_roots, "expected _external_workspace_symbols to be invoked"
+    assert all(root.is_dir() for root in captured_roots)
+    assert payload["definitions"][0]["name"] == "create_invoice"
+
+
+def test_repo_map_blast_radius_file_path_with_lsp_provider_no_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`tg blast-radius <file> <symbol> --provider lsp` inherits defs' internal
+    `_external_definitions` call and used to crash identically."""
+    module_path = tmp_path / "module.py"
+    module_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
+
+    captured_roots: list[Path] = []
+
+    def _fake_external_workspace_symbols(root, symbol, **kwargs):
+        captured_roots.append(root)
+        return []
+
+    def _fake_external_references(root, symbol, definitions):
+        captured_roots.append(root)
+        return []
+
+    monkeypatch.setattr(repo_map, "_external_workspace_symbols", _fake_external_workspace_symbols)
+    monkeypatch.setattr(repo_map, "_external_references", _fake_external_references)
+
+    payload = repo_map.build_symbol_blast_radius(
+        "create_invoice", module_path, semantic_provider="lsp"
+    )
+
+    assert captured_roots, "expected external LSP helpers to be invoked"
+    assert all(root.is_dir() for root in captured_roots)
+    assert payload["definitions"][0]["name"] == "create_invoice"
+
+
+def test_repo_map_refs_file_path_with_lsp_provider_no_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`tg refs <file> <symbol> --provider lsp` has its OWN independent repo_root
+    computation (distinct from defs' internal one) feeding `_external_references` --
+    must be fixed at its own site too, or this crashes even after defs itself is fixed."""
+    module_path = tmp_path / "module.py"
+    module_path.write_text(
+        "def create_invoice() -> None:\n    return None\n\n\ncreate_invoice()\n", encoding="utf-8"
+    )
+
+    captured_roots: list[Path] = []
+
+    def _fake_external_workspace_symbols(root, symbol, **kwargs):
+        captured_roots.append(root)
+        return []
+
+    def _fake_external_references(root, symbol, definitions):
+        captured_roots.append(root)
+        return []
+
+    monkeypatch.setattr(repo_map, "_external_workspace_symbols", _fake_external_workspace_symbols)
+    monkeypatch.setattr(repo_map, "_external_references", _fake_external_references)
+
+    payload = repo_map.build_symbol_refs("create_invoice", module_path, semantic_provider="lsp")
+
+    assert captured_roots, "expected external LSP helpers to be invoked"
+    assert all(root.is_dir() for root in captured_roots)
+    assert payload["definitions"][0]["name"] == "create_invoice"
+
+
+def test_repo_map_callers_file_path_with_lsp_provider_no_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`tg callers <file> <symbol> --provider lsp` has its OWN independent repo_root
+    computation (distinct from defs' internal one) feeding `_external_references` --
+    must be fixed at its own site too, or this crashes even after defs itself is fixed."""
+    module_path = tmp_path / "module.py"
+    module_path.write_text(
+        "def create_invoice() -> None:\n    return None\n\n\ncreate_invoice()\n", encoding="utf-8"
+    )
+
+    captured_roots: list[Path] = []
+
+    def _fake_external_workspace_symbols(root, symbol, **kwargs):
+        captured_roots.append(root)
+        return []
+
+    def _fake_external_references(root, symbol, definitions):
+        captured_roots.append(root)
+        return []
+
+    monkeypatch.setattr(repo_map, "_external_workspace_symbols", _fake_external_workspace_symbols)
+    monkeypatch.setattr(repo_map, "_external_references", _fake_external_references)
+
+    payload = repo_map.build_symbol_callers("create_invoice", module_path, semantic_provider="lsp")
+
+    assert captured_roots, "expected external LSP helpers to be invoked"
+    assert all(root.is_dir() for root in captured_roots)
+    assert payload["definitions"][0]["name"] == "create_invoice"
