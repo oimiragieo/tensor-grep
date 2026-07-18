@@ -1470,6 +1470,26 @@ def _literal_symbol_seed_files(
     return seed_files
 
 
+def _repo_map_root_dir(repo_map: dict[str, Any]) -> Path:
+    """Directory-safe root derived from ``repo_map['path']``.
+
+    A repo map's own ``path`` field can be a FILE, not a directory -- ``tg defs/source/refs/
+    callers/impact/blast-radius <file> <symbol>`` scopes the whole map to that one file (see
+    ``build_repo_map``'s ``_envelope(root)`` call, which deliberately stamps the raw, possibly-
+    file ``root`` so the OUTPUT accurately echoes back what path was targeted). But any INTERNAL
+    consumer that needs a directory to root external tooling in -- an LSP `workspace_root` (which
+    ultimately reaches ``subprocess.Popen(cwd=...)`` in ``lsp_external_provider.py``), or a Cargo/
+    go.mod discovery walk -- must never receive that file itself: unlike ``Path.is_file()``/
+    ``.exists()`` (which pathlib silently degrades to ``False`` for a through-a-file path),
+    ``subprocess.Popen(cwd=<file>)`` is a raw OS call with no such guard and crashes with
+    ``NotADirectoryError`` (WinError 267 on Windows, ENOTDIR on POSIX) -- the CEO-dogfood-reported
+    crash on `tg defs <file> <symbol> --provider lsp/hybrid` (native is unaffected; it never reaches
+    this code). Mirrors the pre-existing ``root if root.is_dir() else root.parent`` pattern already
+    used by ``build_repo_map`` (``context_root``)."""
+    root = Path(str(repo_map["path"])).expanduser().resolve()
+    return root if root.is_dir() else root.parent
+
+
 def _repo_map_file_and_test_universe(repo_map: dict[str, Any]) -> tuple[list[Path], list[Path]]:
     """Same normalization + cross-key dedupe as ``_repo_map_file_universe`` below, but returned
     as SEPARATE (files, tests) lists so a caller can distinguish membership (F1 fix: the
@@ -1477,8 +1497,7 @@ def _repo_map_file_and_test_universe(repo_map: dict[str, Any]) -> tuple[list[Pat
     re-deriving it. ``_repo_map_file_universe`` is a thin wrapper over this and its
     source-first-then-tests concatenation order is UNCHANGED -- existing global-order
     consumers (build_context_pack_from_map, edit-plan seeding) are untouched."""
-    root = Path(str(repo_map["path"])).expanduser().resolve()
-    base = root if root.is_dir() else root.parent
+    base = _repo_map_root_dir(repo_map)
     seen: set[str] = set()
     files: list[Path] = []
     tests: list[Path] = []
@@ -3684,7 +3703,7 @@ def _build_import_graph_consumers_from_map(
 ) -> list[dict[str, Any]]:
     if not definition_files:
         return []
-    repo_root = Path(str(repo_map["path"])).resolve()
+    repo_root = _repo_map_root_dir(repo_map)
     definition_file_set = {str(current) for current in definition_files}
     files = bounded_files if bounded_files is not None else _repo_map_file_universe(repo_map)
     consumers: list[dict[str, Any]] = []
@@ -3750,7 +3769,7 @@ def _preferred_definition_files(
     deadline_monotonic: float | None = None,
     deadline_hit: _DeadlineBreakFlag | None = None,
 ) -> list[str]:
-    repo_root = Path(str(repo_map["path"])).resolve()
+    repo_root = _repo_map_root_dir(repo_map)
     definitions = [
         dict(current)
         for current in repo_map.get("symbols", [])
@@ -3796,7 +3815,7 @@ def _relevant_tests_for_symbol(
     deadline_hit: _DeadlineBreakFlag | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> list[str]:
-    repo_root = Path(str(repo_map["path"])).resolve()
+    repo_root = _repo_map_root_dir(repo_map)
     tests = [str(current) for current in repo_map.get("tests", [])]
     caller_set = set(caller_files or [])
     symbol_candidates = [symbol]
@@ -14690,7 +14709,7 @@ def build_symbol_defs_from_map(
     fallback_used = False
     if normalized_provider != "native":
         external_definitions = _external_definitions(
-            Path(str(repo_map["path"])).resolve(),
+            _repo_map_root_dir(repo_map),
             symbol,
             native_definitions,
             repo_map=repo_map,
@@ -14780,7 +14799,7 @@ def build_symbol_defs_from_map(
         fallback_used=fallback_used,
     )
     payload["provider_status"] = _provider_status_snapshot(
-        Path(str(repo_map["path"])).resolve(),
+        _repo_map_root_dir(repo_map),
         semantic_provider=normalized_provider,
         languages=_provider_languages_for_symbol(repo_map, symbol, definitions),
         fallback_used=fallback_used,
@@ -14897,7 +14916,7 @@ def build_symbol_source_from_map(
         repo_map, symbol, semantic_provider=semantic_provider, deadline_monotonic=deadline_monotonic
     )
     default_agreement, default_status = _default_provider_metadata(
-        Path(str(repo_map["path"])).resolve(),
+        _repo_map_root_dir(repo_map),
         repo_map,
         symbol,
         semantic_provider=semantic_provider,
@@ -15019,7 +15038,7 @@ def build_symbol_impact_from_map(
         repo_map, symbol, semantic_provider=semantic_provider, deadline_monotonic=deadline_monotonic
     )
     default_agreement, default_status = _default_provider_metadata(
-        Path(str(repo_map["path"])).resolve(),
+        _repo_map_root_dir(repo_map),
         repo_map,
         symbol,
         semantic_provider=semantic_provider,
@@ -15386,7 +15405,7 @@ def build_symbol_refs_from_map(
         deadline_monotonic=deadline_monotonic,
         deadline_hit=context_pack_deadline_hit,
     )
-    repo_root = Path(str(repo_map["path"])).resolve()
+    repo_root = _repo_map_root_dir(repo_map)
     refs_universe_files, refs_universe_tests = _repo_map_file_and_test_universe(repo_map)
     bounded_files, refs_ceiling_hit = _cap_caller_scan_files(
         [*refs_universe_files, *refs_universe_tests],
@@ -16180,7 +16199,7 @@ def build_symbol_callers_from_map(
         payload["coverage_summary"] = _coverage_summary(payload)
         payload["resolution_gaps"] = []
         return _attach_profiling(payload, _profiling_collector)
-    repo_root = Path(str(repo_map["path"])).resolve()
+    repo_root = _repo_map_root_dir(repo_map)
     callers_universe_files, callers_universe_tests = _repo_map_file_and_test_universe(repo_map)
     bounded_files, callers_ceiling_hit = _cap_caller_scan_files(
         [*callers_universe_files, *callers_universe_tests],
@@ -16877,7 +16896,7 @@ def build_symbol_blast_radius_from_map(
         repo_map, symbol, semantic_provider=semantic_provider, deadline_monotonic=deadline_monotonic
     )
     default_agreement, default_status = _default_provider_metadata(
-        Path(str(repo_map["path"])).resolve(),
+        _repo_map_root_dir(repo_map),
         repo_map,
         symbol,
         semantic_provider=semantic_provider,
