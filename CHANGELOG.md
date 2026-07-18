@@ -1,6 +1,116 @@
 # CHANGELOG
 
 
+## v1.81.13 (2026-07-18)
+
+### Bug Fixes
+
+- **lsp**: Negotiate + advertise client position encoding (wire up dead audit-B13 path)
+  ([#663](https://github.com/oimiragieo/tensor-grep/pull/663),
+  [`b8efeae`](https://github.com/oimiragieo/tensor-grep/commit/b8efeaea05627bec0563104d5ba68b34183af239))
+
+_negotiate_position_encoding() had zero call sites -- ls._position_encoding was permanently stuck at
+  its "utf-16" default, so a client that negotiated utf-8 or utf-32 got wrong columns
+  (definitions/references/rename landing at the wrong offset) on any line with non-ASCII text before
+  the target column. There was also no @server.feature(INITIALIZE) handler at all.
+
+Root-caused against the installed pygls (confirmed on both pygls==2.0.1, the version actually pinned
+  in uv.lock, and pygls==2.1.1): pygls's own built-in INITIALIZE handling
+  (LanguageServerProtocol.lsp_initialize) already negotiates the encoding from the client's
+  general.positionEncodings capability -- respecting the client's own preference order -- builds
+  ls.workspace with it, and unconditionally reports the same value back via
+  InitializeResult.capabilities.positionEncoding. That value is fixed before any user
+  @server.feature(INITIALIZE) handler runs, so a second, independent negotiation algorithm (which is
+  what the dead code was) could disagree with what pygls actually reports and silently reintroduce
+  the exact mismatch this closes.
+
+Fix: register `initialize` via @server.feature(INITIALIZE) and have _negotiate_position_encoding()
+  mirror ls.workspace.position_encoding (the value pygls already negotiated and will report) onto
+  ls._position_encoding, instead of re-deriving a second answer from raw capabilities. Preserves
+  today's "utf-16" default when the capability is absent/empty.
+
+Also fixes a second bug found while writing the behavioral test: _to_cp_col / _from_cp_col treated
+  "utf-8" the same as "utf-32" (pass columns through unchanged, on the theory both are "already
+  codepoints"). That only holds for utf-32 (fixed-width, 1 unit per codepoint) -- UTF-8 is a
+  variable-width byte encoding (1-4 bytes per codepoint), so the passthrough was itself silently
+  wrong for any non-ASCII line under a utf-8-negotiating client. Added _utf8_col_to_codepoint /
+  _codepoint_col_to_utf8 mirroring the existing UTF-16 pair.
+
+Tests (tests/unit/test_lsp_server.py, all new, TDD -- written first, watched fail against
+  origin/main both by ImportError, since `initialize` did not exist, and by direct assertion when
+  tested against the pre-fix behavior): - initialize negotiates + reports the client's preferred
+  mutually-supported encoding (utf-8/utf-16/utf-32), respects client preference order (not the old
+  code's order-blind "utf-8 wins if present anywhere" rule), and preserves the utf-16 default for
+  missing/empty capabilities. - non-ASCII-prefixed line resolves to the correct symbol and
+  round-trips to the correct wire column under each of utf-16/utf-8/utf-32. - the same logical
+  position yields three different (and correct) wire columns depending on the negotiated encoding. -
+  end-to-end: a real initialize(utf-8) call followed by prepare_rename correctly uses the negotiated
+  encoding.
+
+Full tests/unit/test_lsp_server.py: 21/21 passed (10 pre-existing + 11 new), verified against both
+  pygls==2.0.1 (uv.lock-pinned) and pygls==2.1.1. ruff format/check and mypy clean on the changed
+  file. Full tests/unit/ suite (1198 tests) has exactly one failure,
+  test_cli_search_warns_when_gpu_device _id_out_of_local_inventory in test_cli_modes.py, confirmed
+  pre-existing and unrelated by reproducing it identically against unmodified origin/main.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+### Chores
+
+- **cleanup**: Remove 11 provably-dead private symbols across cli/repo_map.py, cli/main.py,
+  cli/agent_capsule.py, io/directory_scanner.py (#210)
+  ([#662](https://github.com/oimiragieo/tensor-grep/pull/662),
+  [`eae8ea9`](https://github.com/oimiragieo/tensor-grep/commit/eae8ea95285ede9ca9ac18d50d74f3806f4f2165))
+
+Conservative, evidence-backed dead-code sweep. Every removed symbol was confirmed to have zero
+  references anywhere in src/ + tests/ + docs (two independent zero-reference scans: a full regex
+  re-scan and a single-pass identifier-frequency tokenizer, cross-validated to identical results),
+  verified individually against dispatch tables, protocol/stdlib callback contracts, and test pins
+  before removal.
+
+Most of this PR's real finds are "superseded implementation left behind after a refactor moved the
+  real logic elsewhere, but the old helper was never deleted": - _load_rule_specs + _iter_yaml_files
+  (main.py): fully superseded by ast_workflows.py's independent _load_rule_specs_and_meta +
+  _iter_yaml_files, which the live `tg scan` sgconfig path actually calls. - _suffix_for_language +
+  _search_ast_test_snippets_with_wrapper + _evaluate_ast_test_case_with_wrapper +
+  _evaluate_grouped_ast_test_cases_ with_wrapper (main.py): the pre-ast_workflows.py AST test-case
+  evaluator chain; ast_workflows.py's `tg test` path has its own independent reimplementation and
+  never calls these. - _native_frontdoor_asset_name + _native_frontdoor_download_url (main.py):
+  single-candidate helpers superseded by the nvidia/cpu multi-candidate fallback
+  (_native_frontdoor_asset_candidates / _native_frontdoor_download_candidates). -
+  _windows_stale_tensor_grep_python_launchers (main.py): a thin wrapper around
+  _windows_tensor_grep_python_launcher_scan; the real removal path
+  (_remove_windows_stale_tensor_grep_python_launchers) calls the scan function directly instead. -
+  _requires_python_guardrails (io/directory_scanner.py): its only call site was the dead
+  RustDirectoryScanner fast-path branch removed by e527eae (#308, "drop dead scanner path") -- that
+  commit deleted the caller but missed the now-orphaned method. -
+  _validation_plan_has_targeted_primary_evidence (cli/agent_capsule.py): boolean wrapper over
+  _targeted_validation_evidence; current callers (:1956, :2573) call _targeted_validation_evidence
+  directly instead. - _rust_module_path_for_definition, _dependency_ranked_files,
+  _append_unique_command (cli/repo_map.py): standalone helpers with no callers found anywhere.
+
+10 of the task's 11 static-scan seed candidates turned out to be FALSE POSITIVES on inspection
+  (LanguageSpec dispatch-table signature requirements, a stdlib urlretrieve reporthook callback
+  contract, a Python protocol method, and one seed already fixed by #661) -- kept, not touched. Two
+  additional zero-reference symbols were deliberately left in place rather than removed:
+  _GO_DEF_NODE_KINDS (lang_go.py) carries an explicit author comment claiming intentional
+  documentation-parity purpose, and _negotiate_position_encoding (lsp_server.py) is an incomplete
+  LSP feature (audit B13, commit 29ac86b) whose docstring states it needs an initialize-lifecycle
+  hook that was never wired up -- real logic pending a follow-up, not cruft.
+
+No CLI-facing surface changed (no typer/click option touched). No call-site or test change (every
+  removed symbol had zero test dependents). ruff format --preview and ruff check clean on all 4
+  files. Targeted unit tests for all 4 changed modules pass in full, plus a full `tests/unit/` sweep
+  (4931 passed; the only 12 failures trace to 3 pre-existing missing optional/native deps in this
+  shared venv -- the uncompiled tensor_grep.rust_core extension, model2vec, onnxruntime -- confirmed
+  via git-stash-and-rerun against the clean origin/main baseline and unrelated to any of the 4
+  changed files).
+
+Non-releasing cleanup; no behavior change.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.81.12 (2026-07-18)
 
 ### Bug Fixes
