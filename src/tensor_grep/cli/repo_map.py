@@ -11340,14 +11340,21 @@ def _capped_suggested_edits(
     --max-files N`` grew ``suggested_edits`` unbounded despite the flag's documented meaning.
 
     ``max_edits`` is threaded in from ``_build_edit_plan_seed``'s ``suggested_edits_max`` parameter,
-    which defaults to ``None`` and is OPT-IN per caller (see that parameter's docstring): only
-    ``tg edit-plan``'s own builder (``build_context_edit_plan_from_map``) currently passes a real
-    value. ``tg context-render`` (own separate, pre-existing downstream cap via
-    ``_compact_edit_plan_seed``, but only for the compact/llm render profiles -- the default "full"
-    profile has no cap at all) and ``tg blast-radius-plan``/``tg blast-radius-render`` (no cap at
-    all) carry the identical flag-lie this function fixes, but stay on the ``None`` default and are
-    deliberately left unbounded -- out of scope for this PR; see
-    ``tests/unit/test_edit_plan_max_files_bounds_suggested_edits.py`` for the pins proving so."""
+    which defaults to ``None`` and is OPT-IN per caller (see that parameter's docstring).
+    ``tg edit-plan``'s own builder (``build_context_edit_plan_from_map``, audit B9/A18) was the
+    first to pass a real value. Audit #212 (a follow-up to B9/#661) found the identical flag-lie in
+    three sibling callers and closed it the same way: ``tg context-render`` (own separate,
+    pre-existing downstream cap via ``_compact_edit_plan_seed``, but only for the compact/llm render
+    profiles -- the default "full" profile had no cap at all) and ``tg blast-radius-plan``/``tg
+    blast-radius-render`` (no cap at all, in any profile) now ALSO opt in, passing their own
+    ``--max-files`` value through ``build_context_render_from_map``/``build_symbol_blast_radius_
+    plan_from_map``/``build_symbol_blast_radius_render_from_map`` respectively. See
+    ``tests/unit/test_edit_plan_max_files_bounds_suggested_edits.py`` and
+    ``tests/unit/test_context_render_and_blast_radius_max_files_bounds_suggested_edits.py`` for the
+    pins proving so. Any FUTURE caller of ``_build_edit_plan_seed``/``_attach_edit_plan_metadata``
+    that does not explicitly pass ``suggested_edits_max`` still gets the unbounded, pre-fix
+    behavior -- the low-level default stays ``None`` on purpose so a not-yet-written caller is never
+    silently capped."""
     if max_edits is None:
         return entries
     return entries[:max_edits]
@@ -12110,14 +12117,16 @@ def _build_edit_plan_seed(
             definitions=suggested_edit_definitions,
             callers=list(radius_payload.get("callers", [])) if radius_payload is not None else [],
             repo_root=Path(str(repo_map["path"])).resolve(),
-            # Opt-in only (audit B9/A18 fix scope): `suggested_edits_max` defaults to `None`
-            # (unbounded, byte-identical to every caller's pre-fix behavior) unless the caller of
-            # `_build_edit_plan_seed` explicitly requests a bound. Only `tg edit-plan`'s own builder
-            # (`build_context_edit_plan_from_map`) opts in today -- `tg context-render` (which has
-            # its own separate, pre-existing downstream cap for the compact/llm profiles only -- see
-            # `_compact_edit_plan_seed`) and `tg blast-radius-plan`/`tg blast-radius-render` (which
-            # have no cap at all) are deliberately left unchanged; they share the identical flag-lie
-            # this fix closes but are out of scope for this PR.
+            # Opt-in only (audit B9/A18 fix scope, broadened by #212): `suggested_edits_max` defaults
+            # to `None` (unbounded, byte-identical to every UNNAMED caller's pre-fix behavior) unless
+            # the caller of `_build_edit_plan_seed` explicitly requests a bound. `tg edit-plan`'s own
+            # builder (`build_context_edit_plan_from_map`) opted in first (B9/A18); `tg context-render`
+            # (which also has its own separate, pre-existing downstream cap for the compact/llm
+            # profiles only -- see `_compact_edit_plan_seed` -- but none for the default "full"
+            # profile) and `tg blast-radius-plan`/`tg blast-radius-render` (which had no cap at all,
+            # in any profile) now ALSO opt in (#212, a follow-up to B9/#661), each passing its own
+            # `--max-files` value through `_attach_edit_plan_metadata`. Any future caller that omits
+            # `suggested_edits_max` still gets the unbounded pre-fix shape.
             max_edits=suggested_edits_max,
         ),
         "dependency_trust": dependency_trust,
@@ -13608,6 +13617,15 @@ def build_context_render_from_map(
             semantic_provider=semantic_provider,
             deadline_monotonic=deadline_monotonic,
             _profiling_collector=collector,
+            # #212 (broader B9/#661 flag-lie): the "full" render profile (the default for text
+            # output, and explicitly selectable for --json) has no downstream cap on suggested_edits
+            # at all -- _compact_context_render_payload's _compact_edit_plan_seed truncation only
+            # runs for render_profile in {"compact", "llm"} (see that function's own guard). Opting
+            # into the SAME suggested_edits_max mechanism build_context_edit_plan_from_map already
+            # uses closes the gap for "full" while being a provable no-op for "compact"/"llm" --
+            # _compact_edit_plan_seed's OWN [:max_files] truncation downstream already reduces those
+            # profiles to <=max_files, so bounding at the source produces the identical final list.
+            suggested_edits_max=max_files,
         )
     else:
         payload = _attach_lightweight_navigation_metadata(
@@ -17432,6 +17450,12 @@ def build_symbol_blast_radius_plan_from_map(
         # bound the build_symbol_blast_radius_from_map call above.
         deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
+        # #212 (broader B9/#661 flag-lie): `tg blast-radius-plan` has NO downstream compaction step
+        # at all (unlike context-render), so before this, edit_plan_seed.suggested_edits was
+        # unconditionally unbounded regardless of --max-files -- dogfooded on tensor-grep's own repo
+        # (SearchConfig, 80 files): --max-files 1 returned files=[1] but suggested_edits spanning 8
+        # distinct files. Opt into the same mechanism build_context_edit_plan_from_map already uses.
+        suggested_edits_max=normalized_max_files,
     )
     return _attach_profiling(payload, _profiling_collector)
 
@@ -17625,6 +17649,13 @@ def build_symbol_blast_radius_render_from_map(
         # dropped deadline_monotonic entirely.
         deadline_monotonic=deadline_monotonic,
         _profiling_collector=collector,
+        # #212 (broader B9/#661 flag-lie): `tg blast-radius-render` has NO downstream compaction
+        # step either, in ANY render_profile, so before this, edit_plan_seed.suggested_edits was
+        # unconditionally unbounded regardless of --max-files -- dogfooded on tensor-grep's own repo
+        # (SearchConfig, 80 files): --max-files 1 returned files=[1] but suggested_edits spanning 40
+        # distinct files (identical 73-entry count as --max-files 50 -- zero bounding effect at all).
+        # Opt into the same mechanism build_context_edit_plan_from_map already uses.
+        suggested_edits_max=max_files,
     )
     # task #203: fold this function's OWN source-lookup loop deadline signal into partial --
     # `dict(radius_payload)` above already copied forward any partial/deadline_limit that

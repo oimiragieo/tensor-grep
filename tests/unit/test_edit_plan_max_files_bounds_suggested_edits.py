@@ -22,6 +22,17 @@ pre-fix behavior) everywhere, and only `build_context_edit_plan_from_map` (edit-
 builder -- never shared with context-render or blast-radius-plan/render) passes a real value. The
 context-render/blast-radius-plan/blast-radius-render gaps are real and share the same root cause,
 but are deliberately left unfixed here as an out-of-scope, separately-reviewable follow-up.
+
+RESOLVED by #212 (a follow-up audit to this one): dogfooding on tensor-grep's own repo confirmed the
+gap was real and user-visible (`--max-files 1` on `blast-radius-render` returned `files=[1]` but
+`suggested_edits` spanning 40 distinct files -- byte-identical to `--max-files 50`, i.e. zero
+bounding effect). `build_context_render_from_map`, `build_symbol_blast_radius_plan_from_map`, and
+`build_symbol_blast_radius_render_from_map` now ALL opt in too, each passing its own `--max-files`
+value as `suggested_edits_max`. The two tests below that used to pin the unbounded shape as
+"must not change" were updated in place to pin the now-bounded shape instead; see
+`tests/unit/test_context_render_and_blast_radius_max_files_bounds_suggested_edits.py` for the
+RED/GREEN proof (mirroring this file's own `test_edit_plan_max_files_bounds_suggested_edits`
+methodology) that the fix does real work on all three sibling commands.
 """
 
 from pathlib import Path
@@ -111,56 +122,40 @@ def test_edit_plan_max_files_zero_related_spans_still_returns_empty_list(tmp_pat
 
 
 @pytest.mark.parametrize("render_profile", ["full", "compact", "llm"])
-def test_edit_plan_max_files_does_not_change_context_render_suggested_edits(
+def test_edit_plan_max_files_now_bounds_context_render_suggested_edits_in_every_profile(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     render_profile: str,
 ) -> None:
-    """`tg context-render` must be byte-identical before and after this fix, in every render
-    profile. `build_context_render_from_map`'s own call to `_attach_edit_plan_metadata` never passes
-    `suggested_edits_max` (it is edit-plan's own opt-in only), so `_capped_suggested_edits` always
-    receives `max_edits=None` on this path -- i.e. this PR's new capping mechanism never actually
-    engages for context-render, regardless of profile. Proved directly: swapping in a raw passthrough
-    for `_capped_suggested_edits` (which is what `max_edits=None` already reduces to) must not change
-    context-render's output at all, for ANY profile -- including "full", the default, which (found
-    while writing this test) has NO suggested_edits cap at all, pre- or post-fix; see module
-    docstring."""
+    """UPDATED by #212 (was `..._does_not_change_context_render_suggested_edits`, which pinned the
+    OLD unbounded "full"-profile shape as "must not change"): `build_context_render_from_map` now
+    opts into `suggested_edits_max` too (passing its own `--max-files` value), closing the gap for
+    "full" -- the default profile, and the one this test previously proved had NO cap at all, pre-
+    or post-B9. "compact"/"llm" are unaffected in practice (they already truncated to the same bound
+    one step downstream via `_compact_edit_plan_seed`) but are asserted here too so all three
+    profiles are pinned to the same invariant going forward. See
+    `test_context_render_and_blast_radius_max_files_bounds_suggested_edits.py` for the RED/GREEN
+    proof that this bound does real truncation work (not vacuously satisfied)."""
     project = _build_many_callers_project(tmp_path, caller_count=5)
 
-    fixed_payload = repo_map.build_context_render(
+    payload = repo_map.build_context_render(
         "create invoice", project, max_files=2, render_profile=render_profile
     )
-    fixed_edits = fixed_payload["edit_plan_seed"]["suggested_edits"]
 
-    monkeypatch.setattr(repo_map, "_capped_suggested_edits", lambda entries, max_edits: entries)
-    control_payload = repo_map.build_context_render(
-        "create invoice", project, max_files=2, render_profile=render_profile
+    assert len(payload["edit_plan_seed"]["suggested_edits"]) <= 2, (
+        f"context-render (profile={render_profile!r}) suggested_edits must now be bounded by "
+        "--max-files in every profile (#212 closed the 'full'-profile gap this test used to pin "
+        "as deliberately out of scope)"
     )
-    control_edits = control_payload["edit_plan_seed"]["suggested_edits"]
-
-    assert control_edits == fixed_edits, (
-        f"context-render (profile={render_profile!r}) suggested_edits changed when this PR's "
-        "capping mechanism was swapped for a raw passthrough -- it must never engage on this path"
-    )
-    # Document the ACTUAL pre-existing shape per profile (measured against origin/main before this
-    # PR, unchanged by it): "compact"/"llm" already truncate via the separate, pre-existing
-    # `_compact_edit_plan_seed` cap; the default "full" profile does not truncate at all. Both facts
-    # are pinned here so a future change to either shape is a conscious, reviewed decision.
-    if render_profile == "full":
-        assert len(fixed_edits) > 2, (
-            "the default profile's suggested_edits is NOT capped by --max-files (a known, "
-            "out-of-scope gap this PR does not touch -- see module docstring); if this now holds "
-            "<=2 it should be a deliberate fix with its own test, not an accidental side effect"
-        )
-    else:
-        assert len(fixed_edits) <= 2
 
 
-def test_edit_plan_max_files_does_not_change_blast_radius_plan_or_render(tmp_path: Path) -> None:
-    """Same discipline as the context-render pin above, for the other two `_attach_edit_plan_
-    metadata` callers this PR deliberately leaves untouched: `tg blast-radius-plan` and `tg
-    blast-radius-render` share the identical B9/A18 flag-lie (neither calls `_compact_edit_plan_seed`
-    either) but are out of scope for this fix -- they must keep their pre-fix (unbounded) shape."""
+def test_edit_plan_max_files_now_bounds_blast_radius_plan_and_render(tmp_path: Path) -> None:
+    """UPDATED by #212 (was `..._does_not_change_blast_radius_plan_or_render`, which pinned the OLD
+    unbounded shape as "must not change"): `build_symbol_blast_radius_plan_from_map` and
+    `build_symbol_blast_radius_render_from_map` now ALSO opt into `suggested_edits_max`, each
+    passing its own `--max-files` value -- the same fix `build_context_edit_plan_from_map` (B9/A18)
+    and `build_context_render_from_map` (#212, above) already ship. See
+    `test_context_render_and_blast_radius_max_files_bounds_suggested_edits.py` for the RED/GREEN
+    proof that this bound does real truncation work (not vacuously satisfied)."""
     project = _build_many_callers_project(tmp_path, caller_count=5)
 
     plan_payload = repo_map.build_symbol_blast_radius_plan("create_invoice", project, max_files=2)
@@ -168,7 +163,5 @@ def test_edit_plan_max_files_does_not_change_blast_radius_plan_or_render(tmp_pat
         "create_invoice", project, max_files=2
     )
 
-    # Unchanged means still unbounded here -- both comfortably exceed the --max-files=2 cap that
-    # edit-plan now enforces, proving this PR's fix did not leak into either sibling command.
-    assert len(plan_payload["edit_plan_seed"]["suggested_edits"]) > 2
-    assert len(render_payload["edit_plan_seed"]["suggested_edits"]) > 2
+    assert len(plan_payload["edit_plan_seed"]["suggested_edits"]) <= 2
+    assert len(render_payload["edit_plan_seed"]["suggested_edits"]) <= 2
