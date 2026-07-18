@@ -12,10 +12,11 @@
 > the fast-path-unused `directory_scanner` import in `bootstrap.py`: measured -24% (18.8ms off ~78.1ms)
 > `import tensor_grep.cli.bootstrap` cost, but scoped ONLY to `--version`/`-V` and native `run`/`scan`/
 > `test`/`ast-info` fast-dispatch (NOT `search`/`--help`, which still hit the broad-scan guard first) --
-> explicitly a **partial** win on **#48** (public-shim cold-start): GitHub auto-closed #48 from the bare
-> "(#48)" in the PR title despite the PR body's own "Closes #48? NO -- partial win," manually reopened ~1hr
-> later (closed 18:16:37Z, reopened 19:22:13Z) -- lesson: never put a bare issue number in a PR title/body
-> unless the merge should actually close it. **#656/v1.81.7** adds one stderr line at `tg agent`'s two
+> explicitly a **partial** win on **#48** (public-shim cold-start): the bare issue-number parenthetical in
+> the PR title triggered GitHub's own issue-linker despite the PR body's explicit answer that the fix was
+> only a partial win, not a full resolution; the linker's action was manually reverted ~1hr later
+> (18:16:37Z / 19:22:13Z) -- lesson: never put a bare issue-number parenthetical in a PR title/body unless
+> the merge should actually terminate that tracked item. **#656/v1.81.7** adds one stderr line at `tg agent`'s two
 > `typer.Exit(2)` sites distinguishing a trustworthy deadline-partial (high confidence, `ask.required:false`)
 > from a genuine incomplete -- no JSON/exit-code change. **#657/v1.81.8** drops the inert
 > `opentelemetry-sdk`/`-exporter-otlp` (zero configured `TracerProvider`, all 6 call sites already
