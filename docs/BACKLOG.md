@@ -3,8 +3,96 @@
 > **Canonical prioritized work list.** Kept in sync with the CLI task store (`TaskUpdate`) and
 > GitHub (`gh pr list` is the source of truth for PRs). **CEO status** = summarize SHIPPING + P0/P1.
 > Update whenever a PR opens/merges or the queue changes. Task-store IDs (`#NNN`) cross-referenced.
-> Last refreshed 2026-07-17 (post-v1.81.5 campaign reconcile). **Live PyPI is v1.81.5. PR queue: EMPTY.** The
-> v1.79-v1.81.5 dogfood + deadline-honesty campaign (2026-07-17) is COMPLETE + drained clean, one-per-publish:
+> Last refreshed 2026-07-18 (post-v1.81.16 senior-review + Rust-dogfood campaign reconcile). **Live PyPI is
+> v1.81.15; v1.81.16 (PR #665) was still publishing at reconcile time (CI run in progress, PyPI /pypi/json
+> still reporting 1.81.15) -- verify `/simple` or `gh run list` before citing v1.81.16 as live. PR queue:
+> EMPTY (0 open).** The senior-review + Rust-dogfood campaign (2026-07-17/18, CEO directive "review + fix
+> + find dead/unused code + clean up", then a same-session Rust-repo dogfood) shipped 11 PRs -- **#655-#666**
+> -- one-per-publish, ZERO broken releases, each independently Opus-gated pre-merge. **#655/v1.81.6** defers
+> the fast-path-unused `directory_scanner` import in `bootstrap.py`: measured -24% (18.8ms off ~78.1ms)
+> `import tensor_grep.cli.bootstrap` cost, but scoped ONLY to `--version`/`-V` and native `run`/`scan`/
+> `test`/`ast-info` fast-dispatch (NOT `search`/`--help`, which still hit the broad-scan guard first) --
+> explicitly a **partial** win on **#48** (public-shim cold-start): the bare issue-number parenthetical in
+> the PR title triggered GitHub's own issue-linker despite the PR body's explicit answer that the fix was
+> only a partial win, not a full resolution; the linker's action was manually reverted ~1hr later
+> (18:16:37Z / 19:22:13Z) -- lesson: never put a bare issue-number parenthetical in a PR title/body unless
+> the merge should actually terminate that tracked item. **#656/v1.81.7** adds one stderr line at `tg agent`'s two
+> `typer.Exit(2)` sites distinguishing a trustworthy deadline-partial (high confidence, `ask.required:false`)
+> from a genuine incomplete -- no JSON/exit-code change. **#657/v1.81.8** drops the inert
+> `opentelemetry-sdk`/`-exporter-otlp` (zero configured `TracerProvider`, all 6 call sites already
+> ImportError-guarded no-ops) and moves `pyarrow` into the `gpu` extra only (its 2 production consumers are
+> both already gated behind `import cudf`) -- ~31-55 MiB lighter non-GPU installs; adds a governance test
+> that now also checks the bare `[project.dependencies]` list (previously only extras were checked, which
+> is how both drifted in unnoticed). **#658/v1.81.9 (audit C1/C2)** -- the prior campaign's deadline-honesty
+> "COMPLETE" claim was FALSIFIED and re-fixed: `build_symbol_defs_from_map` was called bare (no
+> `deadline_monotonic`) by 5 sibling `_from_map` builders + 2 cold wrappers, so its internal test-relevance
+> scan ran unbounded on both the cold CLI and warm-daemon paths regardless of `--deadline`; live pre-fix
+> repro `tg defs search --deadline 40` -> 113.5s exit 0 `partial:null` (a silent ~3x overrun of the 40s
+> budget), impact/refs/callers/source similarly overran -- fixed by threading the deadline through all 7
+> sites (mirrors the shipped #205 pattern) plus a return-time backstop on the cold `build_symbol_defs`
+> wrapper. **LESSON: a "program COMPLETE" claim needs adversarial fresh-eyes on ALL stages + an OLD-vs-NEW
+> real-binary repro, not a one-path dogfood.** **#659/v1.81.10 (audit C4, CWE-59)** -- `tg evidence emit
+> --out` and `tg review-bundle create --output` (also the MCP `tg_review_bundle_create` tool) used bare
+> `write_text` with no symlink refusal or atomicity; fixed via `session_store._write_json_atomic` extended
+> with an `is_symlink()`-before-`.resolve()` guard. **#660/v1.81.11 (audit C3)** -- the MCP `tg_query`
+> tool's `workspace_roots` fan-out had no cap and passed the FULL `deadline` to every root (20 roots x 60s
+> = up to 1200s from one call); fixed with a fail-closed `_MAX_WORKSPACE_ROOTS = 8` cap (mirrors the
+> existing `_MAX_INLINE_RULES=100` precedent) plus one shared monotonic deadline across the loop (not
+> divided -- an early-finishing root gives back its unused time). **#661/v1.81.12 (audit B9/A18)** -- `tg
+> edit-plan --max-files` visibly wired `max_edits` into `_suggested_edits_from_related_spans` but the
+> callee never read it, so `suggested_edits` grew unbounded despite the flag; fixed via a new
+> `_capped_suggested_edits` enforcement point (opt-in `suggested_edits_max`, default `None`/unbounded
+> elsewhere). **#662 (swept into v1.81.13, non-releasing `chore:`)** -- dead-code cleanup: 255 LOC / 14
+> symbols removed across `repo_map.py`/`main.py`/`agent_capsule.py`/`directory_scanner.py` (11 direct
+> zero-reference removals + 3 cascaded orphans found while removing their sole caller); 10 of the task's 11
+> seed candidates were FALSE POSITIVES on inspection (dispatch-table signatures, a stdlib callback
+> contract, a Python protocol method, one already fixed by #661) and were deliberately kept --
+> independent-Opus-gate proved every removal dead against the real tree. Flagged (not removed)
+> `_negotiate_position_encoding` as an incomplete LSP feature needing a follow-up, which became #663.
+> **#663/v1.81.13 (audit B13)** -- `_negotiate_position_encoding()` had zero call sites and no
+> `@server.feature(INITIALIZE)` handler, so `ls._position_encoding` stayed permanently stuck at
+> `"utf-16"`, giving wrong columns to utf-8/utf-32-negotiating LSP clients on non-ASCII lines; fixed to
+> mirror pygls's own `ls.workspace.position_encoding` (verified against both `pygls==2.0.1`, the
+> `uv.lock`-pinned version, and `2.1.1`) rather than re-deriving a second, potentially-disagreeing
+> negotiation. Writing the behavioral test surfaced a SECOND, independent bug in the same file:
+> `_to_cp_col`/`_from_cp_col` treated utf-8 as passthrough same as utf-32, which is wrong since utf-8 is
+> variable-width -- added `_utf8_col_to_codepoint`/`_codepoint_col_to_utf8`. **#664/v1.81.14 (CEO dogfood
+> find, tg 1.81.11/1.81.12)** -- `tg defs <FILE> <symbol> --provider lsp`/`hybrid` crashed with
+> `NotADirectoryError`/WinError 267 because 10 call sites derived an LSP `workspace_root` straight from
+> `repo_map["path"]` with no directory guard, reaching `subprocess.Popen(cwd=<file>)`; `--provider native`
+> (the CLI default) never hit this path, so it shipped silently. Fixed via a new `_repo_map_root_dir()`
+> helper (mirrors the existing `root if root.is_dir() else root.parent` pattern) threaded through all 10
+> sites across defs/source/impact/refs/callers/blast-radius; directory-input behavior stays byte-identical.
+> **#666/v1.81.15 (broader B9/#661 flag-lie, #212)** -- same flag-lie class in 3 more commands:
+> `context-render` (full profile), `blast-radius-plan`, `blast-radius-render` all advertised `--max-files`
+> but never bounded `suggested_edits` -- live-dogfood-verified on tensor-grep's own repo
+> (`blast-radius-render --max-files 1` vs `50` -> byte-identical 73 `suggested_edits`/40 files, zero effect
+> pre-fix); fixed the same way B9 did. **#665 (merged 2026-07-18, publishing as v1.81.16 -- C4/#659
+> residual)** -- uniformizes the C4/#659 hardened-write pattern (precheck + same-dir-temp + fsync +
+> `os.replace`; bare `O_NOFOLLOW` is a confirmed no-op on Windows) across every sibling atomic writer via a
+> new shared `_index_lock.atomic_write_bytes`/`atomic_write_json` primitive: the biggest gap found was
+> `checkpoint_store._write_json_atomic` having NO symlink precheck at all, and
+> `audit_manifest._write_history_index` (the tamper-evident audit chain) being a fully bare `write_text`
+> with zero hardening; also closed a 4th near-identical `dogfood._write_json_atomic` with a predictable
+> (non-`uuid4`) temp filename. `codemap.py::_atomic_write_text` (doc-generation, a different risk class)
+> explicitly left out of scope, flagged for a future pass. **The Rust-repo dogfood side-investigation
+> (#210/#211/#214/#216) closed clean:** #214 (rust-analyzer-init reported as broken) is working-as-intended
+> -- it is a missing-rustup-component ENV gap, not a `tg` bug; `tg`'s own doctor/detection code already
+> references `rustup` at 4 sites (`scan_guardrails.py`/`main.py`/`lsp_provider_setup.py`/`bootstrap.py`),
+> so no code change was needed. **VERIFIED CORRECTION to the prior "in flight" framing:** a
+> `fix/lsp-polish-rustup-msg-pygls-floor-216` worktree was scaffolded for LOW-priority follow-ups (a
+> friendlier rustup-component message, bumping the declared `pygls` floor from `>=1.3.0` toward the
+> `uv.lock`-pinned `2.0.1`, a warm-daemon LSP parity test) but carries ZERO commits and zero uncommitted
+> changes as of this reconcile (`git diff origin/main --stat` empty) -- queued, not started; do not
+> describe it as "in flight." **CEO-gated, unchanged (verified via `gh issue list`/`gh issue view`, only
+> #48 is a currently-open GitHub issue; #72/#169/#189-fork are this ledger's own task-store framing, not
+> open GitHub issues):** #72 benchmark-publish (public/irreversible); #48's native-front-door
+> architectural half (the ~30-40ms Python-interpreter startup floor visible at the top of every
+> `-X importtime` trace, before `tensor_grep` is even reached, bounds how close a Python console-entry
+> shim can get to `rg`'s ~7ms native start -- separate from this campaign's import-deferral win); #169 GPU
+> enterprise (spend); #189-fork query-gated signal channels vs accept-the-find-ranking-ceiling (taste).
+> **Prior campaign (2026-07-17):** the v1.79-v1.81.5 dogfood + deadline-honesty campaign is COMPLETE +
+> drained clean, one-per-publish:
 > the warm-daemon `--deadline` surface is now bounded end-to-end. **#200 (HIGH, dogfood-caught):** `tg agent
 > --deadline` silently ignored on the default warm-daemon path -> #642 (cold residual) + #200-A/#647 (warm
 > default deadline, v1.81.2) + #200-B/#648 (front-door anchor, v1.81.3), dogfood-VERIFIED on the published wheel
@@ -117,15 +205,35 @@ wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while 
 
 ## SHIPPING — open PRs (drain one-per-publish) — task #117
 
-**Queue empty -- 0 open PRs.** The v1.75.0->v1.75.4 GPU Phase-0 wave (#593/#594/#595/#596/#597) drained
-one-per-publish, ZERO broken releases, closing out **#171** (GPU Phase-0 program, P0-1..P0-5) + **#172**
-(gate-nits). Prior: v1.73.0->v1.74.4 (#584/#585/#131-F3/#164/#166/#591); v1.70.0->v1.72.1
-(#152/#127/#90b/#153/#154/#158/#159/#580/#581); the v1.68.1 CEO WSL-dogfood 3-PR drain (#562/#563/#564
--> v1.69.0/.1/.2); campaign #142's 4-PR queue (#554-557 -> v1.67.1-v1.68.2) -- all clean. This BACKLOG
-reconcile (`docs:`, no release, **#173**) is the next PR to open -- drain clear, no other build queued.
-**After it merges, next move is CEO-gated or demand-gated** (see CURRENT LIVE BACKLOG).
+**Queue empty -- 0 open PRs (verified 2026-07-18 via `gh pr list --state open`).** The senior-review +
+Rust-dogfood campaign (**#655-#666**) drained one-per-publish through v1.81.15; PR #665 merged and was
+publishing as v1.81.16 at reconcile time -- ZERO broken releases, full receipts in the header above. This
+BACKLOG reconcile (`docs:`, no release) is the next PR to open -- drain clear, no other build queued.
+**After it merges, next move is CEO-gated or demand-gated** (see CURRENT LIVE BACKLOG below -- note that
+section still reads as of its 2026-07-13 reconcile date and has not been re-walked against the
+senior-review/Rust-dogfood findings; treat the header above as authoritative for this campaign's items).
 
-## SHIPPED — live on PyPI up to **v1.76.9** (v1.76.0-.9 detail in CURRENT STATE above)
+**Prior drain waves:** the v1.75.0->v1.75.4 GPU Phase-0 wave (#593/#594/#595/#596/#597) drained
+one-per-publish, ZERO broken releases, closing out **#171** (GPU Phase-0 program, P0-1..P0-5) + **#172**
+(gate-nits). Before that: v1.73.0->v1.74.4 (#584/#585/#131-F3/#164/#166/#591); v1.70.0->v1.72.1
+(#152/#127/#90b/#153/#154/#158/#159/#580/#581); the v1.68.1 CEO WSL-dogfood 3-PR drain (#562/#563/#564
+-> v1.69.0/.1/.2); campaign #142's 4-PR queue (#554-557 -> v1.67.1-v1.68.2) -- all clean.
+
+## SHIPPED — live on PyPI up to **v1.81.15** (v1.81.16/PR #665 publishing at reconcile time; v1.76.0-.9
+detail in CURRENT STATE above; v1.76.10-v1.81.15 not yet individually backfilled into this section --
+see CHANGELOG.md for the authoritative per-version detail in that gap)
+
+**v1.81.6-v1.81.15 window (2026-07-17/18, merged, on PyPI) -- the senior-review + Rust-dogfood campaign,
+full receipts in the header above:** #655 public-shim cold-start partial win (v1.81.6) | #656 stderr
+deadline-partial note (v1.81.7) | #657 deps-slim, ~31-55 MiB lighter (v1.81.8) | #658 C1/C2
+deadline-honesty re-fix across 7 sites (v1.81.9) | #659 C4 symlink-safe atomic write for evidence/
+review-bundle (v1.81.10) | #660 C3 MCP `tg_query` fan-out cap + shared deadline (v1.81.11) | #661 B9
+`--max-files` now bounds `edit-plan` `suggested_edits` (v1.81.12) | #662 dead-code cleanup, 255 LOC/14
+symbols, non-releasing chore, swept into v1.81.13 | #663 B13 LSP position-encoding negotiation + a
+utf-8 column-conversion fix (v1.81.13) | #664 `defs`/symbol commands FILE-path `NotADirectoryError` fix
+(v1.81.14) | #666 broader B9 flag-lie across context-render/blast-radius-plan/blast-radius-render
+(v1.81.15) | #665 uniform atomic-writer symlink hardening via a shared `_index_lock` primitive (merged,
+publishing as v1.81.16).
 
 **v1.75.0-v1.75.4 window (2026-07-14, merged, on PyPI) -- GPU Phase-0 program #171 + gate-nits #172
 complete:** #593 `tg orient`/`tg agent` broaden `suggested_ignore` to whole vendor/skill trees, M1+M2
