@@ -9826,9 +9826,15 @@ def _build_route_test_payload(
     max_symbols: int,
     provider: str,
     profile: bool,
+    deadline_monotonic: float | None = None,
 ) -> dict[str, Any]:
     from tensor_grep.cli.repo_map import build_context_edit_plan, build_context_render
 
+    # #223 SLA fix: ONE shared, pre-anchored absolute deadline threaded into BOTH builder calls
+    # (each already honors deadline_monotonic AS-IS post-#671, never recomputing it) instead of
+    # each side silently getting its own unbounded None. Side 1 (context-render) runs first and
+    # spends against the shared budget; side 2 (edit-plan) naturally gets whatever wall-clock
+    # remains under the SAME anchor -- no separate per-side split needed.
     context_payload = build_context_render(
         query,
         path,
@@ -9840,6 +9846,7 @@ def _build_route_test_payload(
         optimize_context=True,
         semantic_provider=provider,
         profile=profile,
+        deadline_monotonic=deadline_monotonic,
     )
     edit_payload = build_context_edit_plan(
         query,
@@ -9850,6 +9857,7 @@ def _build_route_test_payload(
         max_symbols=max_symbols,
         semantic_provider=provider,
         profile=profile,
+        deadline_monotonic=deadline_monotonic,
     )
 
     context_target = _route_test_primary_target(context_payload)
@@ -9901,7 +9909,7 @@ def _build_route_test_payload(
 
     context_validation_count = _route_test_validation_command_count(context_payload)
     edit_validation_count = _route_test_validation_command_count(edit_payload)
-    return {
+    result: dict[str, Any] = {
         "version": 1,
         "routing_reason": "route-test",
         "path": str(Path(path).expanduser().resolve(strict=False)),
@@ -9929,6 +9937,27 @@ def _build_route_test_payload(
             "edit_plan": edit_validation_count,
         },
     }
+    # #223 SLA honesty: each builder independently stamps its OWN top-level `partial` (+
+    # `partial_reason`/`deadline_limit`) when the SHARED deadline truncated it (build_context_
+    # render_from_map / build_context_edit_plan_from_map's return-time backstops). Kept
+    # additive-only -- mirrors the result_incomplete/partial convention used throughout this
+    # codebase (architecture-contract's partial-results contract) -- so a complete run's JSON
+    # stays byte-identical to before this fix. `agreement_basis` is the new tell an agent must
+    # check before trusting `agreement` at face value: an agreement computed from one or two
+    # TRUNCATED sides must not read as a full-confidence verdict just because the payload shape
+    # otherwise looks the same as always.
+    context_partial = bool(context_payload.get("partial"))
+    edit_partial = bool(edit_payload.get("partial"))
+    if context_partial or edit_partial:
+        result["partial"] = True
+        result["partial_reason"] = "deadline"
+        result["agreement_basis"] = "partial"
+        result["deadline_limit"] = {
+            "deadline_exceeded": True,
+            "context_render": context_partial,
+            "edit_plan": edit_partial,
+        }
+    return result
 
 
 @app.command(name="route-test")
@@ -9972,6 +10001,24 @@ def route_test(
     profile: bool = typer.Option(
         False, "--profile", help="Include per-route profiling in the compared builders."
     ),
+    deadline: float | None = typer.Option(
+        None,
+        "--deadline",
+        min=0.1,
+        help=(
+            "Stop after N seconds, measured from CLI command entry, and mark the result partial "
+            '(partial=true, agreement_basis="partial") with whatever was found so far instead '
+            "of running unbounded. route-test runs the FULL context-render AND edit-plan builds "
+            "back to back, so -- unlike context-render/edit-plan, which stay unbounded by default "
+            "-- it defaults to 60s (mirrors tg agent's cold-path default) rather than running "
+            "unbounded. Pass --no-deadline to disable the bound."
+        ),
+    ),
+    no_deadline: bool = typer.Option(
+        False,
+        "--no-deadline",
+        help="Disable route-test's default 60s --deadline bound; let both routes run unbounded.",
+    ),
     json_output: bool = typer.Option(
         True, "--json/--text", help="Emit machine-readable JSON output (default)."
     ),
@@ -9983,6 +10030,23 @@ def route_test(
     symbol, and line) before trusting an edit-plan's target -- or see exactly where and why they
     diverge.
     """
+    # #223: anchor deadline_monotonic at CLI command entry, BEFORE path/query resolution, so
+    # front-door time counts against the bound the same way the underlying repo scans already do
+    # (mirrors context-render/edit-plan/agent's own #197/#200 anchor). route-test defaults to a
+    # bounded wall clock -- reusing DEFAULT_AGENT_CLI_DEADLINE_SECONDS (tg agent's existing 60s
+    # cold-path constant, F4) rather than inventing a second default -- because it pays the FULL
+    # context-render + edit-plan cost twice (dogfood v19: ~27s alone, hit a 60s external harness
+    # timeout under concurrent load). An explicit --deadline overrides the default; --no-deadline
+    # disables the bound entirely.
+    from tensor_grep.cli.agent_capsule import DEFAULT_AGENT_CLI_DEADLINE_SECONDS
+
+    effective_deadline = (
+        None
+        if no_deadline
+        else (deadline if deadline is not None else DEFAULT_AGENT_CLI_DEADLINE_SECONDS)
+    )
+    deadline_monotonic = _cli_deadline_monotonic(effective_deadline)
+
     try:
         resolved_path, resolved_query = _resolve_path_and_query(
             path=path,
@@ -10000,32 +10064,40 @@ def route_test(
             max_symbols=max_symbols,
             provider=provider,
             profile=profile,
+            deadline_monotonic=deadline_monotonic,
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
+    # Output-before-exit (mirrors context-render/edit-plan/agent, Cluster B 2026-07-06): print the
+    # full payload FIRST, then exit 2 if either side's build was truncated -- never a silent exit
+    # 0 that reads as a complete, full-confidence agreement.
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
-        return
+    else:
+        context_target = payload["context_render"]["primary_target"]
+        edit_target = payload["edit_plan"]["primary_target"]
+        typer.echo(f"Route test for {payload['path']}")
+        typer.echo(f"query={payload['query']}")
+        typer.echo(
+            "context-render="
+            f"{context_target.get('file')}#L{context_target.get('line')} "
+            f"{context_target.get('symbol')}"
+        )
+        typer.echo(
+            "edit-plan="
+            f"{edit_target.get('file')}#L{edit_target.get('line')} "
+            f"{edit_target.get('symbol')}"
+        )
+        typer.echo(f"agreement={payload['agreement']}")
+        for warning in payload["warnings"]:
+            typer.echo(f"warning={warning}")
+        if payload.get("partial"):
+            typer.echo(f"partial=true agreement_basis={payload.get('agreement_basis')}")
 
-    context_target = payload["context_render"]["primary_target"]
-    edit_target = payload["edit_plan"]["primary_target"]
-    typer.echo(f"Route test for {payload['path']}")
-    typer.echo(f"query={payload['query']}")
-    typer.echo(
-        "context-render="
-        f"{context_target.get('file')}#L{context_target.get('line')} "
-        f"{context_target.get('symbol')}"
-    )
-    typer.echo(
-        "edit-plan="
-        f"{edit_target.get('file')}#L{edit_target.get('line')} "
-        f"{edit_target.get('symbol')}"
-    )
-    typer.echo(f"agreement={payload['agreement']}")
-    for warning in payload["warnings"]:
-        typer.echo(f"warning={warning}")
+    if _scan_incomplete(payload):
+        raise typer.Exit(2)
 
 
 def _positive_int(value: Any) -> int | None:

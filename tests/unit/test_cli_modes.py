@@ -6340,6 +6340,266 @@ def test_route_test_help_still_documents_its_own_options():
     help_text = _strip_ansi(result.stdout)
     assert "--max-files" in help_text
     assert "--provider" in help_text
+    assert "--deadline" in help_text
+    assert "--no-deadline" in help_text
+
+
+def _route_test_agreeing_target(target_file: Path) -> dict:
+    return {
+        "file": str(target_file.resolve()),
+        "symbol": "create_invoice",
+        "line": 1,
+        "confidence": {"file": 0.9, "symbol": 0.9},
+    }
+
+
+def test_route_test_threads_shared_deadline_monotonic_into_both_builders(monkeypatch, tmp_path):
+    """#223: route-test must anchor ONE deadline_monotonic and pass the SAME value to both the
+    context-render and edit-plan builders (not recompute an independent N-second budget per
+    side) -- otherwise side 2 would silently get its own full budget instead of whatever wall
+    clock side 1 left, defeating the shared-anchor SLA design."""
+    runner = CliRunner()
+    project = tmp_path / "project"
+    project.mkdir()
+    target_file = project / "target.py"
+    target_file.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+
+    captured: dict[str, float | None] = {}
+
+    def fake_context_render(*_args, **kwargs):
+        captured["context_render"] = kwargs.get("deadline_monotonic")
+        return {
+            "routing_reason": "context-render",
+            "navigation_pack": {
+                "primary_target": _route_test_agreeing_target(target_file),
+                "validation_commands": [],
+            },
+        }
+
+    def fake_edit_plan(*_args, **kwargs):
+        captured["edit_plan"] = kwargs.get("deadline_monotonic")
+        return {
+            "routing_reason": "context-edit-plan",
+            "primary_target": _route_test_agreeing_target(target_file),
+            "validation_commands": [],
+        }
+
+    monkeypatch.setattr(repo_map, "build_context_render", fake_context_render)
+    monkeypatch.setattr(repo_map, "build_context_edit_plan", fake_edit_plan)
+
+    before = time.monotonic()
+    result = runner.invoke(app, ["route-test", str(project), "add invoice", "--deadline", "30"])
+    after = time.monotonic()
+
+    assert result.exit_code == 0, result.output
+    assert captured["context_render"] is not None
+    assert captured["edit_plan"] is not None
+    # Shared anchor: BOTH sides receive the IDENTICAL absolute deadline, not independently
+    # recomputed 30-seconds-from-now values (which would differ by however long side 1 took).
+    assert captured["context_render"] == captured["edit_plan"]
+    assert before + 30 <= captured["context_render"] <= after + 30
+
+
+def test_route_test_default_deadline_matches_agent_cold_default(monkeypatch, tmp_path):
+    """#223: with no explicit --deadline/--no-deadline, route-test must default to the SAME 60s
+    constant `tg agent`'s cold path uses (agent_capsule.DEFAULT_AGENT_CLI_DEADLINE_SECONDS) --
+    not a second, independently-invented default that could silently drift from it. route-test
+    pays the full context-render + edit-plan cost twice (dogfood v19: ~27s alone, tripped a 60s
+    external harness timeout under concurrent load), unlike context-render/edit-plan which stay
+    unbounded by default."""
+    runner = CliRunner()
+    project = tmp_path / "project"
+    project.mkdir()
+    target_file = project / "target.py"
+    target_file.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+
+    captured: dict[str, float | None] = {}
+
+    def fake_context_render(*_args, **kwargs):
+        captured["context_render"] = kwargs.get("deadline_monotonic")
+        return {
+            "routing_reason": "context-render",
+            "navigation_pack": {
+                "primary_target": _route_test_agreeing_target(target_file),
+                "validation_commands": [],
+            },
+        }
+
+    def fake_edit_plan(*_args, **kwargs):
+        captured["edit_plan"] = kwargs.get("deadline_monotonic")
+        return {
+            "routing_reason": "context-edit-plan",
+            "primary_target": _route_test_agreeing_target(target_file),
+            "validation_commands": [],
+        }
+
+    monkeypatch.setattr(repo_map, "build_context_render", fake_context_render)
+    monkeypatch.setattr(repo_map, "build_context_edit_plan", fake_edit_plan)
+
+    before = time.monotonic()
+    result = runner.invoke(app, ["route-test", str(project), "add invoice"])
+    after = time.monotonic()
+
+    assert result.exit_code == 0, result.output
+    assert captured["context_render"] == captured["edit_plan"]
+    default_seconds = agent_capsule.DEFAULT_AGENT_CLI_DEADLINE_SECONDS
+    assert before + default_seconds <= captured["context_render"] <= after + default_seconds
+
+
+def test_route_test_no_deadline_disables_bound(monkeypatch, tmp_path):
+    """#223: --no-deadline must disable the default bound entirely -- both sides get None
+    (unbounded), not the 60s default."""
+    runner = CliRunner()
+    project = tmp_path / "project"
+    project.mkdir()
+    target_file = project / "target.py"
+    target_file.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+
+    captured: dict[str, object] = {"context_render": "unset", "edit_plan": "unset"}
+
+    def fake_context_render(*_args, **kwargs):
+        captured["context_render"] = kwargs.get("deadline_monotonic")
+        return {
+            "routing_reason": "context-render",
+            "navigation_pack": {
+                "primary_target": _route_test_agreeing_target(target_file),
+                "validation_commands": [],
+            },
+        }
+
+    def fake_edit_plan(*_args, **kwargs):
+        captured["edit_plan"] = kwargs.get("deadline_monotonic")
+        return {
+            "routing_reason": "context-edit-plan",
+            "primary_target": _route_test_agreeing_target(target_file),
+            "validation_commands": [],
+        }
+
+    monkeypatch.setattr(repo_map, "build_context_render", fake_context_render)
+    monkeypatch.setattr(repo_map, "build_context_edit_plan", fake_edit_plan)
+
+    result = runner.invoke(app, ["route-test", str(project), "add invoice", "--no-deadline"])
+
+    assert result.exit_code == 0, result.output
+    assert captured["context_render"] is None
+    assert captured["edit_plan"] is None
+
+
+def test_route_test_json_stamps_partial_and_exits_2_when_a_side_truncates(monkeypatch, tmp_path):
+    """#223 HONESTY: when either builder's payload stamps partial=True (a real --deadline cutoff
+    upstream, build_context_render_from_map / build_context_edit_plan_from_map's own return-time
+    backstop), route-test's OWN composite payload must stamp partial=True, agreement_basis=
+    "partial", and exit 2 -- an agreement computed from a truncated side must never masquerade as
+    a full-confidence verdict just because the two sides happen to still agree. Deterministic at
+    the unit level (mirrors the #669/#671 monkeypatched-clock pattern's determinism goal without
+    needing a real clock: route-test does not own the deadline-TRIPPING mechanism, only the
+    aggregation/honesty-propagation of an already-partial builder payload, so faking the builder
+    return value isolates exactly the logic this fix adds)."""
+    runner = CliRunner()
+    project = tmp_path / "project"
+    project.mkdir()
+    target_file = project / "target.py"
+    target_file.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+
+    def fake_context_render(*_args, **_kwargs):
+        return {
+            "routing_reason": "context-render",
+            "partial": True,
+            "partial_reason": "deadline",
+            "deadline_limit": {"deadline_exceeded": True},
+            "navigation_pack": {
+                "primary_target": _route_test_agreeing_target(target_file),
+                "validation_commands": [],
+            },
+        }
+
+    def fake_edit_plan(*_args, **_kwargs):
+        return {
+            "routing_reason": "context-edit-plan",
+            "primary_target": _route_test_agreeing_target(target_file),
+            "validation_commands": ["pytest"],
+        }
+
+    monkeypatch.setattr(repo_map, "build_context_render", fake_context_render)
+    monkeypatch.setattr(repo_map, "build_context_edit_plan", fake_edit_plan)
+
+    result = runner.invoke(app, ["route-test", str(project), "add invoice", "--deadline", "5"])
+
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    # The agreement verdict itself is still computed and reported (both sides genuinely agree
+    # here) -- what changes is the trust label attached to it.
+    assert payload["agreement"] is True
+    assert payload["partial"] is True
+    assert payload["partial_reason"] == "deadline"
+    assert payload["agreement_basis"] == "partial"
+    assert payload["deadline_limit"] == {
+        "deadline_exceeded": True,
+        "context_render": True,
+        "edit_plan": False,
+    }
+
+
+def test_route_test_text_mode_reports_partial_and_exits_2(monkeypatch, tmp_path):
+    """#223: the --text branch gained the SAME exit-2-on-truncation contract as --json (it had NO
+    exit-2 logic at all before this fix) and prints a one-line partial tell instead of silently
+    exiting 0 on a truncated comparison."""
+    runner = CliRunner()
+    project = tmp_path / "project"
+    project.mkdir()
+    target_file = project / "target.py"
+    target_file.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+
+    def fake_context_render(*_args, **_kwargs):
+        return {
+            "routing_reason": "context-render",
+            "partial": True,
+            "partial_reason": "deadline",
+            "navigation_pack": {
+                "primary_target": _route_test_agreeing_target(target_file),
+                "validation_commands": [],
+            },
+        }
+
+    def fake_edit_plan(*_args, **_kwargs):
+        return {
+            "routing_reason": "context-edit-plan",
+            "primary_target": _route_test_agreeing_target(target_file),
+            "validation_commands": ["pytest"],
+        }
+
+    monkeypatch.setattr(repo_map, "build_context_render", fake_context_render)
+    monkeypatch.setattr(repo_map, "build_context_edit_plan", fake_edit_plan)
+
+    result = runner.invoke(
+        app, ["route-test", str(project), "add invoice", "--deadline", "5", "--text"]
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "agreement=True" in result.output
+    assert "partial=true agreement_basis=partial" in result.output
+
+
+def test_route_test_json_no_pressure_omits_partial_fields(tmp_path):
+    """#223 byte-identity guard: when neither side hits the (now-defaulted) deadline, route-test's
+    JSON payload must carry none of the new additive fields -- partial, partial_reason,
+    agreement_basis, deadline_limit are ALL absent, matching the pre-#223 shape exactly (the
+    default 60s bound is present internally but never trips on this tiny fixture)."""
+    runner = CliRunner()
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "payments.py").write_text(
+        "def create_invoice(total, tax):\n    subtotal = total + tax\n    return subtotal\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["route-test", str(project), "create invoice tax"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    for key in ("partial", "partial_reason", "agreement_basis", "deadline_limit"):
+        assert key not in payload, f"unexpected additive key {key!r} on a no-pressure run"
 
 
 def test_agent_capsule_json_returns_actionable_context_capsule(tmp_path):
