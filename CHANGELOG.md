@@ -1,6 +1,77 @@
 # CHANGELOG
 
 
+## v1.81.19 (2026-07-19)
+
+### Bug Fixes
+
+- **importers**: Deterministic likely-first bounded scan so partial coverage finds real importers
+  ([#670](https://github.com/oimiragieo/tensor-grep/pull/670),
+  [`94f92b3`](https://github.com/oimiragieo/tensor-grep/commit/94f92b31c95237379b47bb3edda19d93f125d64c))
+
+* fix(importers): deterministic likely-first bounded scan so partial coverage finds real importers
+
+Dogfood flap (v1.81.15 PASS -> v1.81.17 INCOMPLETE "0 importers @ 330/1035 files scanned" on a
+  50k-file WSL multi-repo workspace). Verified against the real code: build_file_importers_from_map
+  (repo_map.py) prefilters candidates via _reverse_importers' deliberately broad basename-alias
+  graph (over 1000 candidates for one target file on a large ROOT is expected, not a bug), then
+  ordered them via a plain sorted(reverse_map.get(target_file, set())) before slicing to
+  CALLER_SCAN_FILE_CEILING / --deadline. That sort buckets candidates by absolute path string, i.e.
+  by repo-name alphabetically on a multi-repo ROOT, with zero preference for the target file's own
+  repo. On a ~40-repo workspace, a target repo that happens to sort late (e.g. "tensor-grep" behind
+  a dozen "omega-*" repos) can have every one of its real importers stranded past a partial scan's
+  cut line, while the scan is still honestly stamped incomplete -- exactly the reported flap. No
+  prioritization toward the target's own repo/directory existed anywhere on this path (confirmed
+  absent).
+
+Fix: _tier_reverse_importer_candidates (repo_map.py) replaces the plain sort with a 4-tier proximity
+  order -- same directory/ancestor directories up to the file's inferred project root (reusing the
+  existing _infer_project_root marker walk) < rest of the same project < other projects, same
+  language < everything else -- with a stable path-string sort within each tier for full
+  determinism. It is a pure reordering of the same candidate membership: an unbounded/complete scan
+  still confirms every candidate and returns the identical result set (the existing edges.sort by
+  (file, line) at the end already makes output order scan-order-independent); only which candidates
+  survive a partial ceiling/deadline cut changes.
+
+Tests (tests/unit/test_file_deps.py): a direct 4-tier ordering/boundary test, a determinism test,
+  and a ~40-repo/364-candidate synthetic-workspace integration test proving (a) a ceiling bounded to
+  ~30% of candidates still finds all 3 same-repo importers and stamps the result incomplete, (b) the
+  identical budget under the OLD plain-alphabetical order would have stranded all 3 (causal
+  regression guard), and (c) an unbounded scan finds all 4 importers (3 same-repo + 1 reached only
+  via a cross-repo sys.path hack), unaffected by the reordering.
+
+Full suite: tests/unit/test_file_deps.py + test_cap_fix_chokepoint.py + test_repo_map_graph.py all
+  green with the fix in place; ruff check/format clean.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* fix(importers): hoist project_root.resolve() out of the per-candidate tier closure
+
+Opus-gate nit on PR #670 (same class as the #639 precedent at repo_map.py:1149, where per-entry
+  Path.resolve() over a large list was the dominant unbounded cost on Windows): _tier ran once per
+  candidate via sorted(), and for every non-same-ancestry candidate (the majority on a large
+  multi-repo ROOT) paid ~3 filesystem syscalls -- its own candidate_path.resolve(), a second resolve
+  of that identical path inside _path_is_relative_to, and a resolve of project_root inside
+  _path_is_relative_to repeated on every call despite being invariant across the whole sort. This
+  runs over the full prefiltered set (not ceiling-bounded) before the deadline-gated confirm loop,
+  so on a slow filesystem a short --deadline could be consumed by tiering itself (honestly stamped,
+  but worse than pre-fix in that corner).
+
+Fix: resolve project_root exactly once before the sort; _tier now reuses the already-computed
+  resolved_candidate directly against the hoisted project_root_resolved via a plain
+  relative_to/ValueError check, instead of calling _path_is_relative_to (which re-resolves both
+  sides on every call). Net: one resolve per candidate, zero per-candidate project-root resolves.
+
+Re-ran the 5 new tests plus the two existing importers ceiling tests
+  (test_build_file_importers_from_map_ceiling_branch_marks_result_incomplete,
+  test_build_file_importers_from_map_below_ceiling_stays_complete) foreground: 7 passed in 4.58s.
+  ruff check and ruff format --preview clean on the touched file.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.81.18 (2026-07-19)
 
 ### Bug Fixes
