@@ -16054,6 +16054,21 @@ def _tier_reverse_importer_candidates(
             break
         current = parent
     target_suffix = target_path.suffix.lower()
+    # Opus-gate nit (PR #670, same class as the #639 precedent at :1149): _tier runs once per
+    # candidate via sorted() below, and for every non-same-ancestry candidate (the majority on a
+    # large multi-repo ROOT) used to pay ~3 filesystem syscalls -- its own
+    # candidate_path.resolve(), a SECOND resolve of that identical path inside
+    # _path_is_relative_to, and a resolve of project_root inside _path_is_relative_to repeated on
+    # EVERY call despite being invariant across the whole sort. This runs over the FULL
+    # prefiltered set (not ceiling-bounded) BEFORE the deadline-gated confirm loop, so on a slow
+    # filesystem a short --deadline could be consumed by tiering itself. Resolve project_root
+    # exactly ONCE here; _tier below reuses the already-resolved resolved_candidate directly via
+    # relative_to instead of calling _path_is_relative_to (which would re-resolve both sides
+    # again) -- net one resolve per candidate, zero per-candidate project-root resolves.
+    try:
+        project_root_resolved = project_root.resolve()
+    except OSError:
+        project_root_resolved = project_root
 
     def _tier(candidate: str) -> int:
         candidate_path = Path(candidate)
@@ -16063,8 +16078,11 @@ def _tier_reverse_importer_candidates(
             resolved_candidate = candidate_path
         if resolved_candidate.parent in ancestor_dirs:
             return _REVERSE_IMPORTER_TIER_SAME_ANCESTRY
-        if _path_is_relative_to(candidate_path, project_root):
+        try:
+            resolved_candidate.relative_to(project_root_resolved)
             return _REVERSE_IMPORTER_TIER_SAME_PROJECT
+        except ValueError:
+            pass
         if candidate_path.suffix.lower() == target_suffix:
             return _REVERSE_IMPORTER_TIER_SAME_LANGUAGE
         return _REVERSE_IMPORTER_TIER_OTHER
