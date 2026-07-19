@@ -283,7 +283,12 @@ def _is_skill_leaf_tree(
     return (leaf_count / len(child_dirs)) >= _SKILL_LEAF_FRACTION_THRESHOLD
 
 
-def _detect_vendored_subtrees(rm: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def _detect_vendored_subtrees(
+    rm: dict[str, Any],
+    *,
+    deadline_monotonic: float | None = None,
+    deadline_hit: _repo_map._DeadlineBreakFlag | None = None,
+) -> dict[str, dict[str, Any]]:
     """Auto-detect bundled vendor/skill/generated CODE subtrees, and known AI-tool/harness config
     directories, to DE-WEIGHT (never hard-exclude).
 
@@ -293,7 +298,57 @@ def _detect_vendored_subtrees(rm: dict[str, Any]) -> dict[str, dict[str, Any]]:
     skills) ALONE, or on STRONG-1 (nested package manifest) AND (STRONG-2 (import island) OR WEAK
     (name prior)) -- see the module-level comment above ``_DEWEIGHT_FACTOR`` for the full rule.
     Requires ``rm["path"]`` to point at a real, existing directory (a synthetic/relative-path test
-    fixture with no "path" key returns ``{}`` rather than guessing against the process CWD)."""
+    fixture with no "path" key returns ``{}`` rather than guessing against the process CWD).
+
+    ``deadline_monotonic`` (agent cold-path assembly-tail SLA fix): this is the single most
+    expensive post-map assembly stage on a large repo -- a candidate-directory manifest-marker
+    probe (STRONG-1, O(candidate_dirs x markers) `Path.exists()` calls), a reverse-import-graph
+    re-derivation + STRONG-3 skill-leaf validation (`_is_skill_leaf_tree`, `iterdir()`-heavy per
+    `skills`-named candidate -- measured on a real ~50k-file multi-project workspace: 241
+    skills-named directories / 2,933 child directories, ~0.69s warm / low-seconds cold), and an
+    outermost-nested-chain dedup (O(candidate_roots^2) `Path.resolve()`-backed comparisons) --
+    profiled at ~1.2-3.6s PER CALL depending on how many manifest-bearing directories the repo has,
+    and it is called from multiple sites (this module's own callers plus `repo_map._build_context_
+    pack_from_map`'s independent `auto_deweight` pass) so the cost compounds. An optional
+    PRE-ANCHORED absolute ``time.monotonic()`` budget, exactly like every other post-map deadline
+    seam in this codebase (`_collect_outbound_dependencies`, `_build_context_pack_from_map`'s
+    symbol-scoring loop), checked at FOUR points:
+
+      1. Function entry: when the shared budget is ALREADY exhausted by the time this stage would
+         start, skip the expensive detection entirely and return ``{}`` immediately.
+      2. UNLIKE most sibling deadline seams (whose per-item cost is small enough that an
+         entry-only check is sufficient), this function's OWN internal sections are each
+         independently expensive enough to blow the ENTIRE remaining budget in a single
+         uninterrupted call even when the deadline had NOT yet been exceeded at entry (measured:
+         one call took ~3.6s against a repo whose collection stage left ~2.3s of budget) -- so the
+         STRONG-1 manifest probe LOOP also checks the deadline per-iteration (mirroring
+         `_build_context_pack_from_map`'s own per-symbol check) and breaks early, keeping whatever
+         partial `manifest_dirs` was already found rather than discarding it.
+      3. Immediately after that loop, one more check gates the reverse-import-graph re-derivation
+         AND the STRONG-3 skill-leaf validation loop TOGETHER (they are not independently
+         expensive enough on their own to warrant per-iteration checks the way the manifest probe
+         and the dedup loop are, but their COMBINED cost on a skills-directory-heavy repo is real
+         and was measured un-gated by points 2 and 4 alone) -- an early ``{}`` return here, same
+         shape as every other bail-out in this function, never a partially-built dict missing
+         fields the rest of the function assumes.
+      4. The outermost-chain dedup loop ALSO checks the deadline per-iteration and breaks early,
+         keeping whatever partial `subtree_rel_roots` was already deduped.
+
+    All four cases return/keep the SAME shapes this function already produces for "no vendor/skill
+    signal found" or "partial evidence" -- no new return type, no exception. This is purely
+    ADDITIVE de-weighting evidence (never hard-exclude, per the docstring above), so cutting it
+    short once a --deadline has already been blown never changes correctness, only whether ranking
+    gets the (full or partial) vendor/skill de-weight boost -- and the capsule is already stamped
+    partial/deadline_exceeded by the caller at that point. ``deadline_hit`` (optional, mirrors the
+    ``_DeadlineBreakFlag`` sibling seams in this module and in ``repo_map.py``) is set to ``True``
+    on ANY of the four checks firing, so a caller folding this into its own wider N-way
+    partial/deadline_limit union can observe "did this stage actually cut anything short" even on
+    a call that still returns a non-empty (but now partial) result. Default ``None`` for both new
+    parameters (every pre-existing call site) is a byte-identical no-op."""
+    if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+        if deadline_hit is not None:
+            deadline_hit.hit = True
+        return {}
     path_value = rm.get("path")
     if not path_value:
         return {}
@@ -325,8 +380,17 @@ def _detect_vendored_subtrees(rm: dict[str, Any]) -> dict[str, dict[str, Any]]:
         return {}
 
     # STRONG-1: directory contains its own manifest.
+    # #220: O(candidate_dirs x markers) `Path.exists()` calls -- on a repo with many candidate
+    # directories this loop ALONE can consume the entire remaining --deadline budget in one
+    # uninterrupted call (measured). Per-iteration check (mirrors `_build_context_pack_from_map`'s
+    # own per-symbol loop): break and keep whatever partial `manifest_dirs` was already found --
+    # additive de-weight evidence, so a partial pass under-detects (never mis-detects).
     manifest_dirs: dict[Path, str] = {}
     for rel_dir in candidate_dirs:
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            if deadline_hit is not None:
+                deadline_hit.hit = True
+            break
         abs_dir = root / rel_dir
         for marker in sorted(_BROAD_WORKSPACE_PROJECT_MARKERS):
             try:
@@ -364,6 +428,22 @@ def _detect_vendored_subtrees(rm: dict[str, Any]) -> dict[str, dict[str, Any]]:
     ]
 
     if not (manifest_dirs or tool_config_dirs or strong0_vendor_dirs or skill_candidate_dirs):
+        return {}
+
+    # #220 Opus-gate follow-up: the two most expensive REMAINING sections -- the reverse-import
+    # graph re-derivation just below AND the STRONG-3 skill-leaf validation loop that consumes it
+    # (`_is_skill_leaf_tree`, `iterdir()`-heavy per `skill_candidate_dirs` entry) -- ran
+    # unconditionally even after the manifest-probe loop above already broke on a tripped deadline:
+    # that loop's own per-iteration check only bounds ITSELF, and the outermost-dedup loop's check
+    # further below only bounds what comes AFTER it, leaving exactly this middle section open.
+    # Measured on the real workspace shape that motivated this fix: 241 skills-named directories /
+    # 2,933 child directories -> ~0.69s warm, low-seconds cold, entirely unbounded by either
+    # existing check. One check here, in the SAME shape as every other bail-out in this function
+    # (return the truncated-but-valid `{}` shape, never a partially-built dict missing the
+    # STRONG-2/WEAK fields the rest of this function assumes), bounds both in one shot.
+    if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+        if deadline_hit is not None:
+            deadline_hit.hit = True
         return {}
 
     # The reverse-import graph is needed both for STRONG-3's external-import guard below and for the
@@ -411,8 +491,21 @@ def _detect_vendored_subtrees(rm: dict[str, Any]) -> dict[str, dict[str, Any]]:
     all_candidate_roots = (
         manifest_dirs.keys() | tool_config_dirs | strong0_vendor_dirs | skill_leaf_dirs
     )
+    # #220: O(candidate_roots^2)-shaped worst case (each candidate compared against every
+    # already-accepted outer root) -- the single largest measured contributor to this function's
+    # cost (~1.2s of a ~1.2s total call on a 40-manifest-dir tree; scales further with more
+    # manifest-bearing directories, e.g. a nested monorepo `packages/*/package.json` shape).
+    # Per-iteration check, same shape as the manifest-probe loop above: break and keep whatever
+    # partial `subtree_rel_roots` was already deduped -- a partial dedup can at worst leave a
+    # redundant NESTED entry alongside its already-accepted outer parent (never a correctness bug:
+    # the ranking consumer below stops at the FIRST matching tree_root per file, so an overlapping
+    # entry is never double-applied).
     subtree_rel_roots: list[Path] = []
     for rel_dir in sorted(all_candidate_roots, key=lambda p: len(p.parts)):
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            if deadline_hit is not None:
+                deadline_hit.hit = True
+            break
         if any(
             _repo_map._path_is_relative_to(root / rel_dir, root / existing)
             for existing in subtree_rel_roots
@@ -609,6 +702,7 @@ def _suggested_scope_from_map(
     rm: dict[str, Any],
     *,
     deweighted_trees: dict[str, dict[str, Any]] | None = None,
+    deadline_monotonic: float | None = None,
 ) -> dict[str, Any] | None:
     """Centrality-weighted directory rollup: sum each code file's composite centrality
     (`_file_centrality_scores`) up to its top-level directory, rank directories, and suggest the
@@ -626,7 +720,18 @@ def _suggested_scope_from_map(
     still ranked on the raw, un-de-weighted score (preserving the SUB-2 design -- see
     `_central_files_from_map`'s docstring). ``None``/omitted -- the default -- means "nothing to
     exclude" and reproduces the pre-#168 behavior exactly; the `agent_capsule.py` and `repo_map.py`
-    call sites do not thread a deweight set through yet and are unaffected by this parameter."""
+    call sites do not thread a deweight set through yet and are unaffected by this parameter.
+
+    ``deadline_monotonic`` (agent cold-path assembly-tail SLA fix): this rollup's own
+    `_file_centrality_scores` call re-derives the whole-repo import graph (`_code_files_and_
+    import_graph`), a second such derivation on top of `_detect_vendored_subtrees`'s own -- real
+    but smaller cost than that function on the profiled synthetic tree. An optional PRE-ANCHORED
+    absolute ``time.monotonic()`` budget: when the shared assembly budget is already exhausted,
+    skip the rollup and return ``None`` -- the SAME "no suggestion" shape this function already
+    returns for a flat/tied/signal-free repo, so callers need no new branch. Default ``None``
+    (every pre-existing call site) is a byte-identical no-op."""
+    if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+        return None
     code_files, centrality = _file_centrality_scores(rm)
     if not code_files:
         return None

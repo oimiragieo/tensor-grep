@@ -8061,7 +8061,9 @@ def _build_context_pack_from_map(
         if auto_deweight:
             from tensor_grep.cli.orient_capsule import _DEWEIGHT_FACTOR, _detect_vendored_subtrees
 
-            deweighted_trees = _detect_vendored_subtrees(payload)
+            deweighted_trees = _detect_vendored_subtrees(
+                payload, deadline_monotonic=deadline_monotonic, deadline_hit=deadline_hit
+            )
             if deweighted_trees:
                 tree_roots = list(deweighted_trees.keys())
                 for current_path, score in list(file_scores.items()):
@@ -12788,8 +12790,14 @@ def build_context_render(
                 _suggested_scope_from_map,
             )
 
-            deweighted_trees = _detect_vendored_subtrees(repo_map)
-            suggested_scope = _suggested_scope_from_map(repo_map, deweighted_trees=deweighted_trees)
+            deweighted_trees = _detect_vendored_subtrees(
+                repo_map, deadline_monotonic=deadline_monotonic
+            )
+            suggested_scope = _suggested_scope_from_map(
+                repo_map,
+                deweighted_trees=deweighted_trees,
+                deadline_monotonic=deadline_monotonic,
+            )
             if suggested_scope is not None:
                 render["suggested_scope"] = suggested_scope
     return render

@@ -2381,6 +2381,19 @@ def build_agent_capsule_from_map(
     from tensor_grep.cli.orient_capsule import _apply_ignore_globs, _detect_vendored_subtrees
 
     rm = _apply_ignore_globs(rm, ignore)
+    # Cold-path assembly-tail SLA fix (#220): the top tail consumer profiled on a 25k-file/
+    # 40-sibling-project synthetic tree -- 1.2-3.6s PER CALL depending on manifest-directory
+    # density, called from two places (here AND `repo_map._build_context_pack_from_map`'s own
+    # `auto_deweight` pass inside the `build_context_render_from_map` call just below), so it can
+    # burn multiple seconds of wall-clock AFTER the shared --deadline budget has already been
+    # exhausted by the repo-map scan above -- OR, since its own internal loops are each
+    # independently expensive, blow the budget in a single uninterrupted call even when it hadn't
+    # been exhausted YET at entry. `deadline_hit` (not just a pre-call time check) catches BOTH
+    # shapes uniformly, since `_detect_vendored_subtrees` sets it on its own entry-skip AND on
+    # either of its two internal per-iteration breaks -- surfaced in `deadline_limit.assembly_
+    # stages_skipped` below (see that block's comment).
+    skipped_assembly_stages: list[str] = []
+    detect_vendored_deadline_hit = repo_map._DeadlineBreakFlag()
     # #179: compute the SAME auto-detected vendor/skill/tool-config tree set ONCE, here, against the
     # final (already `--ignore`-filtered) `rm`, and thread it through every `_suggested_scope_from_map`
     # call below plus the `suggested_ignore` build near the end of this function. Previously each
@@ -2390,7 +2403,11 @@ def build_agent_capsule_from_map(
     # ignore` already flagged in the very same capsule (#179, the tg-agent/context-render sibling of
     # orient's #168/#606 fix). Sourcing both fields from one shared call makes them provably
     # consistent, not just coincidentally so, and also drops a redundant second detection pass.
-    deweighted_trees = _detect_vendored_subtrees(rm)
+    deweighted_trees = _detect_vendored_subtrees(
+        rm, deadline_monotonic=deadline_monotonic, deadline_hit=detect_vendored_deadline_hit
+    )
+    if detect_vendored_deadline_hit.hit:
+        skipped_assembly_stages.append("vendored_subtree_detection")
     resolved_path = str(rm["path"])
     requested_semantic_provider = semantic_provider
     effective_semantic_provider = (
@@ -2421,7 +2438,15 @@ def build_agent_capsule_from_map(
     ):
         from tensor_grep.cli.orient_capsule import _suggested_scope_from_map
 
-        suggested_scope_from_map = _suggested_scope_from_map(rm, deweighted_trees=deweighted_trees)
+        # Cold-path assembly-tail SLA fix (#220): second-largest profiled tail consumer (a
+        # whole-repo centrality rollup). Same skip-tracking shape as vendored_subtree_detection
+        # above -- see the `deadline_limit.assembly_stages_skipped` block near this function's
+        # return for why a pre-call check (not just the callee's own internal one) is needed here.
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            skipped_assembly_stages.append("suggested_scope")
+        suggested_scope_from_map = _suggested_scope_from_map(
+            rm, deweighted_trees=deweighted_trees, deadline_monotonic=deadline_monotonic
+        )
         if suggested_scope_from_map is not None:
             payload["suggested_scope"] = suggested_scope_from_map
     # PR-1 (1D): whether the underlying repo scan itself (not the capsule's own snippet/token
@@ -2664,7 +2689,16 @@ def build_agent_capsule_from_map(
     if ambiguity.get("requires_confirmation") and not payload.get("suggested_scope"):
         from tensor_grep.cli.orient_capsule import _suggested_scope_from_map
 
-        tie_suggested_scope = _suggested_scope_from_map(rm, deweighted_trees=deweighted_trees)
+        # Cold-path assembly-tail SLA fix (#220): same skip-tracking as the scan-truncation
+        # `suggested_scope` block above -- reuses the "suggested_scope" tag (deduped below) since
+        # it is the same underlying rollup. A deadline-skip here (returns None) falls through to
+        # the cheap `_suggested_scope_from_tied_targets` fallback just below unchanged -- that
+        # fallback was ALREADY the "no clear winner" path, so this adds no new branch.
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            skipped_assembly_stages.append("suggested_scope")
+        tie_suggested_scope = _suggested_scope_from_map(
+            rm, deweighted_trees=deweighted_trees, deadline_monotonic=deadline_monotonic
+        )
         if tie_suggested_scope is None:
             # `tied_alternatives` (not `ambiguity["tied_alternative_targets"]`) is the definitive
             # source: `requires_confirmation` is only ever True from the `if tied_alternatives:`
@@ -2928,6 +2962,11 @@ def build_agent_capsule_from_map(
     if (
         payload.get("partial")
         or outbound_dependencies_deadline_hit.hit
+        # #220: a fourth named sibling source -- `_detect_vendored_subtrees` broke early (entry
+        # skip or a mid-loop break) even though `time.monotonic()` is a strictly-increasing clock
+        # so `deadline_exceeded_at_return` below would already catch this too; named explicitly
+        # anyway for the same defense-in-depth reason `call_site_evidence.get("partial")` was.
+        or detect_vendored_deadline_hit.hit
         or call_site_evidence.get("partial")
         or deadline_exceeded_at_return
     ):
@@ -2939,6 +2978,15 @@ def build_agent_capsule_from_map(
             if isinstance(deadline_limit, dict)
             else {"deadline_exceeded": True}
         )
+        # Cold-path assembly-tail SLA fix (#220): additive observability for the post-deadline
+        # ASSEMBLY stages this fix bounds (vendored_subtree_detection, suggested_scope) -- distinct
+        # from `scan_limit`/`deadline_limit.files_scanned` above, which describe the COLLECTION
+        # (repo-map walk/parse) stage only. Only stamped when at least one assembly stage actually
+        # skipped work, so a capsule with no assembly-tail impact stays byte-identical to before
+        # this fix -- and always nested under the SAME `deadline_limit` dict that already carries
+        # `deadline_exceeded`, never a standalone top-level key implying honesty independent of it.
+        if skipped_assembly_stages:
+            result["deadline_limit"]["assembly_stages_skipped"] = _dedupe(skipped_assembly_stages)
     if scan_truncated:
         result["result_incomplete"] = True
     # suggested_scope (#133 dogfood): the same centrality-weighted directory narrowing `tg orient`
