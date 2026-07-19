@@ -1,6 +1,39 @@
 # CHANGELOG
 
 
+## v1.82.0 (2026-07-19)
+
+### Features
+
+- **ledger**: Advisory code-scoped agent coordination plane (claims MVP, slice 1)
+  ([#673](https://github.com/oimiragieo/tensor-grep/pull/673),
+  [`68f3977`](https://github.com/oimiragieo/tensor-grep/commit/68f3977dbb7fbe652ecd039dd88ab5c2220a57cc))
+
+* feat(ledger): advisory code-scoped agent coordination plane (claims MVP, slice 1)
+
+Add `tg ledger claim/release/list` -- a local, ADVISORY, code-scoped agent-to-agent coordination
+  plane. Claims are never locks: they report live overlaps from other agents on shared symbols/files
+  and let the caller decide, so tg never blocks or serializes an edit. State is a single index.json
+  under `<root>/.tensor-grep/ledger/claims/`, read-modify-written under the existing `_index_lock`
+  primitive (same cross-process safety session/checkpoint stores use), TTL-expiring (default 900s)
+  so a crashed agent's claim self-heals with no special handling, and capped at 256 live
+  records/root as a DoS bound distinct from TTL pruning.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* fix(ledger): mark tg ledger EXPERIMENTAL (Slice 1) per gate nit
+
+Independent Opus gate on #673 (SHIP-WITH-NITS): tg ledger's help/docstrings described semantics but
+  not stability, and CONTRACTS.md sec 9 sat parallel to the stable sec 8 with no experimental
+  umbrella. Prefix ledger_app help + the 3 command docstrings with "EXPERIMENTAL (Slice 1): ",
+  mirroring tg find's EXPERIMENTAL: docstring prefix, and add an explicit Status line to sec 9
+  stating the surface/JSON schema may change in a minor release.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.81.21 (2026-07-19)
 
 ### Bug Fixes
