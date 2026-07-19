@@ -1,6 +1,134 @@
 # CHANGELOG
 
 
+## v1.83.0 (2026-07-19)
+
+### Features
+
+- **ledger**: Findings -- content-addressed artifact reuse with revision-freshness (slice 2)
+  ([#675](https://github.com/oimiragieo/tensor-grep/pull/675),
+  [`aaf9077`](https://github.com/oimiragieo/tensor-grep/commit/aaf90773d018ff6b6b424be598a540d566905b48))
+
+* feat(ledger): findings -- content-addressed artifact reuse with revision-freshness (slice 2)
+
+Extends the Slice 1 `tg ledger` coordination plane (#673, shipped) with `record`/`find`: one agent
+  records an evidence-receipt/blast-radius/context-pack/repo-map artifact it already computed; a
+  sibling agent finds it by symbol and reuses the artifact instead of recomputing -- the "saves on
+  searches / uses contracts" pillar.
+
+- New subtree `<root>/.tensor-grep/ledger/findings/` (index.json + content-addressed
+  blobs/<receipt_sha256>.json, dedup'd by content hash), sibling to claims/, created only on first
+  `record` (default-inert). - Composes existing primitives exactly as designed:
+  `index_lock`/`atomic_write_json` (_index_lock.py) for the RMW + write path,
+  `_repo_revision_identity` (evidence_receipt.py) for the freshness token,
+  `receipt_digest`/`verify_receipt` (evidence_signing.py) for the content address and optional
+  signature trust. - Freshness is revision-primary (commit_sha + dirty_tree_sha256 match, never
+  fabricated on an unresolvable revision) with a 24h TTL backstop. Found and fixed a self-dirty bug
+  during design: record's own writes under .tensor-grep/ledger/ would otherwise poison every
+  subsequent find's dirty-tree comparison -- both record and find now call
+  `_repo_revision_identity(..., exclude_prefixes=(".tensor-grep/ledger",))`, mirroring the existing
+  `tg codemap --check` self-dirty fix. - Integrity is fail-closed: every finding actually served is
+  read back and its content digest recomputed against the recorded receipt_sha256; a mismatch or
+  missing blob raises LedgerIntegrityError (exit 2) rather than silently dropping or serving
+  unverified data. - Exit-code contract: `record` is 0/2 (mirrors claim/release/list). `find` is a
+  NEW 0/1/2 three-state contract mirroring the symbol-command contract (0 = >=1 fresh finding, safe
+  to reuse; 1 = none fresh, recompute; 2 = fail-closed/corrupt/tampered) so a harness can branch `if
+  tg ledger find PATH --symbol S --fresh-only; then reuse; else compute; fi`. - Caps: 512
+  findings/root, 256 MiB total distinct blob bytes (TG_LEDGER_MAX_BLOB_BYTES), both
+  oldest-evicted-first; every record prunes TTL-expired findings and GCs any blob no longer
+  referenced by a live finding (a shared/dedup'd blob survives until its last referencing finding is
+  gone). - Default-OFF in the sense that matters: no auto-consult from `tg agent`/`edit-plan` in
+  this slice -- record/find are explicit-invoke only. - docs/CONTRACTS.md section 10 documents the
+  full contract (exit codes, record shape, freshness/integrity semantics, caps).
+
+Tests: 108 (73 store-level in test_ledger_store.py covering default-inert, validation, dedup, signed
+  metadata, freshness, integrity, cap eviction + blob GC, corrupt-index fail-closed; 22 CLI-level in
+  test_ledger_cli.py covering the JSON envelope and 0/1/2 exit contract; 4 Slice 1 concurrency
+  regression, unchanged and green). Real-binary dogfood via bootstrap.main_entry (not CliRunner)
+  confirms the full record -> find(fresh) -> dirty-edit -> find(stale) -> tamper -> find(exit 2)
+  sequence end to end.
+
+No NEW top-level command -- ledger was already registered in Slice 1's 3 non-Python-decorator sites
+  (commands.py KNOWN_COMMANDS, rust_core Commands::Ledger passthrough, PUBLIC_TOP_LEVEL_ COMMANDS);
+  this PR only adds two @ledger_app.command subcommands.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* fix(ledger): fold in gate NITs -- content-address the blob read path, floor byte cap
+
+Independent Opus gate on #675 returned SHIP-WITH-NITS (both cruxes -- integrity and freshness
+  self-dirty -- verified clean). Two hardening NITs folded in before un-draft:
+
+NIT 1 (defense-in-depth): `_verify_finding_blob` derived the blob read path from the INDEX's own
+  `blob_relpath` string, an untrusted field in a plain, per-repo, multi-agent-writable `index.json`.
+  Derive it instead from the RECORDED `receipt_sha256` via `_blob_path` -- the same helper
+  `record_finding` uses to WRITE it -- so the read path is a pure function of a validated content
+  digest, not index-supplied data. Added `_valid_sha256_hex` (a 64-char lowercase-hex structural
+  check, not a blocklist) and gated BOTH `_blob_path` call sites that consume an index-derived sha
+  on it: `_verify_finding_blob` (the one the gate named) and `_distinct_blob_bytes` (same class --
+  its eviction-accounting `.stat()` call had the identical untrusted-path-construction shape).
+
+NIT 2 (robustness): `_evict_findings_over_cap`'s byte-cap loop could evict + GC the record
+  `record_finding` just wrote in the SAME call when `TG_LEDGER_MAX_BLOB_BYTES` was configured below
+  one artifact's size -- "success" returned for a finding that was never durably kept (default 256
+  MiB unaffected; only reachable via pathological misconfiguration). Fixed by flooring the effective
+  byte cap at `_MAX_ARTIFACT_FILE_BYTES` (the existing bound on any single artifact `record` will
+  ever accept), mirroring `_configured_ttl_seconds`'s own `max(1, ...)` floor idiom.
+
+Tests: 3 new regressions (111 total, up from 108) -- tampered `blob_relpath` with a correct
+  content-addressed blob still resolves correctly (proves the read is content-addressed, not
+  index-relpath-addressed); a malformed/path-traversal-shaped `receipt_sha256` is refused before any
+  path is built; a pathologically small `TG_LEDGER_MAX_BLOB_BYTES` no longer evicts the record just
+  written. Updated the existing byte-cap-eviction test to also shrink `_MAX_ARTIFACT_FILE_BYTES` for
+  the fixture (the new floor otherwise swallows tiny test artifacts under the real 8 MiB default).
+
+Pre-merge dogfood (gate's explicit ask): re-ran the real-binary `tg ledger find` 0/1/2 exit-code
+  sequence via `bootstrap.main_entry()` (not CliRunner) AFTER the NIT 1 change, since it altered the
+  actual blob-read code path -- record (exit 0) -> find fresh hit (exit 0) -> dirty a tracked file
+  -> find --fresh-only (exit 1) -> tamper the blob -> find (exit 2, "tampered or corrupted" surfaced
+  in the JSON error envelope). All three exit codes confirmed against the real front door.
+
+Not fixed (gate said optional/safe-direction, tracked separately): a lock-free `find` racing a
+  concurrent `record`'s GC can mislabel a genuinely-missing blob as tamper (exit 2) -- the safe
+  direction (fail closed rather than silently serve), deferred rather than adding a two-writer
+  stress test in this pass.
+
+ruff format --check --preview and ruff check both clean.
+
+* fix(ledger): satisfy mypy -- TypeGuard for the sha256 validator, narrow signing_block
+
+CI's "Formatting & Linting" gate runs `uv run mypy src/tensor_grep` in addition to ruff; I had only
+  verified ruff locally, missing the exact CI-parity gap this repo warns about.
+
+Root cause 1 (nit-1 fallout): `_valid_sha256_hex` was typed `-> bool`, so `if not
+  _valid_sha256_hex(x): <exit>` did not narrow `x` from `Any | None` (an
+  `entry.get("receipt_sha256")` read off an untyped index record) to `str` for mypy at the call
+  sites that feed it into `str`-typed parameters (`_blob_path`, `hmac.compare_digest`,
+  `set[str].add`). Fixed by typing it `-> TypeGuard[str]`. Also split `_distinct_blob_bytes`'s
+  compound `if not _valid_sha256_hex(sha) or sha in seen: continue` into two separate single-guard
+  `if ...: continue` statements -- the canonical shape mypy narrows through unambiguously, rather
+  than relying on it reasoning through a TypeGuard folded into an `or` with a type-unrelated second
+  condition.
+
+Root cause 2 (pre-existing, unrelated to nit-1 -- caught by running the FULL `mypy src/tensor_grep`
+  this pass, not just the touched files): `record_finding` computed `signed =
+  isinstance(signing_block, dict) and isinstance(signature_block, dict)` into a bool, then branched
+  on `if signed:` before calling `signing_block.get(...)`. mypy does not propagate isinstance
+  narrowing through an intermediate bool variable, so `signing_block` was still `Any | None` inside
+  the branch. Fixed by re-checking the `isinstance`s directly in the `if` condition (redundant with
+  `signed` at runtime, but the shape mypy actually tracks).
+
+Purely type-narrowing -- zero runtime behavior change. Re-ran the full ledger test suite (111 tests:
+  store + CLI + Slice-1 concurrency regression) to confirm: unchanged, all green. ruff format
+  --check --preview and ruff check both still clean.
+
+`uv run mypy src/tensor_grep`: Success, no issues found.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.82.1 (2026-07-19)
 
 ### Bug Fixes
