@@ -15987,6 +15987,109 @@ def _confirm_import_edges(
     return edges
 
 
+_REVERSE_IMPORTER_TIER_SAME_ANCESTRY = 0
+_REVERSE_IMPORTER_TIER_SAME_PROJECT = 1
+_REVERSE_IMPORTER_TIER_SAME_LANGUAGE = 2
+_REVERSE_IMPORTER_TIER_OTHER = 3
+
+
+def _tier_reverse_importer_candidates(
+    candidates: set[str],
+    target_file: str,
+) -> list[str]:
+    """Proximity-tiered reverse-import candidate ordering (dogfood flap: v1.81.15 PASS ->
+    v1.81.17 INCOMPLETE "0 importers @ 330/1035 files scanned" on a 50k-file WSL multi-repo
+    workspace). Orders the reverse-import PREFILTER candidates by proximity to TARGET before
+    ``build_file_importers_from_map`` applies
+    its ``CALLER_SCAN_FILE_CEILING``/``--deadline`` slice, instead of the plain lexicographic
+    path sort this replaces.
+
+    ``_reverse_importers``'s alias prefilter is DELIBERATELY broad -- ``_module_aliases_for_path``
+    keys purely on a file's basename/near-basename (e.g. every ``utils.py`` in a 40-repo
+    workspace collides on the "utils" alias), relying on the per-candidate
+    ``_confirm_import_edges`` CONFIRM step to separate real edges from same-named-but-unrelated
+    noise. On a huge multi-repo ROOT this prefilter can legitimately balloon to 1000+ candidates
+    for one target file, the overwhelming majority from OTHER repos. A plain
+    ``sorted(reverse_map.get(target_file, set()))`` then buckets that list by absolute-path
+    string, i.e. effectively by REPO NAME alphabetically -- nothing about it favors TARGET's own
+    repo. When the ceiling/deadline slice below cuts the list short (a large ROOT + a
+    --deadline, or the default CLI --deadline-less path racing wall-clock variance on a slow
+    WSL /mnt/c mount), a target file whose own repo happens to sort late is entirely capable of
+    having ALL of its real (same-repo) importers stranded past the cut line, reporting "0
+    importers" while the scan is still honestly stamped incomplete -- exactly the reported flap.
+
+    A real importer of FILE is overwhelmingly within FILE's own repo/package, so reordering the
+    SAME candidate set (never dropping or adding members) into four proximity tiers, closest
+    first, makes a partial scan cover the highest-yield subset first:
+
+      0. same directory as FILE, or one of FILE's ancestor directories up to (and including) its
+         inferred project root (``_infer_project_root`` -- the nearest ``.git``/``pyproject.toml``/
+         ``package.json``/``Cargo.toml``/``tsconfig.json`` marker) -- the files most likely to hold
+         a real same-package edge (a parent ``__init__.py``, a sibling module).
+      1. elsewhere inside the same project root.
+      2. outside the project root, but the same language (file suffix) as FILE.
+      3. everything else.
+
+    Within a tier, candidates sort by path string for full determinism, independent of the
+    upstream set/dict iteration order. This is a pure REORDERING of the same candidate
+    membership -- an unbounded/complete scan (no ceiling or deadline hit) still confirms every
+    candidate exactly as before and returns the identical found-set;
+    ``build_file_importers_from_map`` re-sorts ``edges`` by ``(file, line)`` before returning, so
+    the tiering here never changes output order, only which candidates survive a partial cut.
+    """
+    target_path = Path(target_file)
+    target_dir = target_path.parent
+    project_root = _infer_project_root(target_path)
+    ancestor_dirs: set[Path] = set()
+    current = target_dir
+    while True:
+        try:
+            ancestor_dirs.add(current.resolve())
+        except OSError:
+            ancestor_dirs.add(current)
+        if current == project_root:
+            break
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    target_suffix = target_path.suffix.lower()
+    # Opus-gate nit (PR #670, same class as the #639 precedent at :1149): _tier runs once per
+    # candidate via sorted() below, and for every non-same-ancestry candidate (the majority on a
+    # large multi-repo ROOT) used to pay ~3 filesystem syscalls -- its own
+    # candidate_path.resolve(), a SECOND resolve of that identical path inside
+    # _path_is_relative_to, and a resolve of project_root inside _path_is_relative_to repeated on
+    # EVERY call despite being invariant across the whole sort. This runs over the FULL
+    # prefiltered set (not ceiling-bounded) BEFORE the deadline-gated confirm loop, so on a slow
+    # filesystem a short --deadline could be consumed by tiering itself. Resolve project_root
+    # exactly ONCE here; _tier below reuses the already-resolved resolved_candidate directly via
+    # relative_to instead of calling _path_is_relative_to (which would re-resolve both sides
+    # again) -- net one resolve per candidate, zero per-candidate project-root resolves.
+    try:
+        project_root_resolved = project_root.resolve()
+    except OSError:
+        project_root_resolved = project_root
+
+    def _tier(candidate: str) -> int:
+        candidate_path = Path(candidate)
+        try:
+            resolved_candidate = candidate_path.resolve()
+        except OSError:
+            resolved_candidate = candidate_path
+        if resolved_candidate.parent in ancestor_dirs:
+            return _REVERSE_IMPORTER_TIER_SAME_ANCESTRY
+        try:
+            resolved_candidate.relative_to(project_root_resolved)
+            return _REVERSE_IMPORTER_TIER_SAME_PROJECT
+        except ValueError:
+            pass
+        if candidate_path.suffix.lower() == target_suffix:
+            return _REVERSE_IMPORTER_TIER_SAME_LANGUAGE
+        return _REVERSE_IMPORTER_TIER_OTHER
+
+    return sorted(candidates, key=lambda candidate: (_tier(candidate), candidate))
+
+
 def build_file_importers_from_map(
     repo_map: dict[str, Any],
     file_path: str | Path,
@@ -16050,7 +16153,13 @@ def build_file_importers_from_map(
     reverse_map = _reverse_importers(
         all_files, imports_by_file, include_directory_index_aliases=True
     )
-    prefiltered = sorted(reverse_map.get(target_file, set()))
+    # Proximity-tiered, not a plain lexicographic path sort (dogfood flap fix) -- see
+    # _tier_reverse_importer_candidates for why a bare alphabetical order strands a target
+    # repo's real importers on a large multi-repo ROOT once the ceiling/deadline slice below
+    # cuts the candidate list short.
+    prefiltered = _tier_reverse_importer_candidates(
+        reverse_map.get(target_file, set()), target_file
+    )
 
     ceiling_hit = len(prefiltered) > CALLER_SCAN_FILE_CEILING
     bounded_candidates = prefiltered[:CALLER_SCAN_FILE_CEILING]
