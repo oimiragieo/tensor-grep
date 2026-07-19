@@ -1,6 +1,54 @@
 # CHANGELOG
 
 
+## v1.81.21 (2026-07-19)
+
+### Bug Fixes
+
+- **route-test**: Default wall-clock deadline + partial-honest agreement (SLA under load)
+  ([#672](https://github.com/oimiragieo/tensor-grep/pull/672),
+  [`008ee9d`](https://github.com/oimiragieo/tensor-grep/commit/008ee9d6aca341f437ae5100389d6246e08b37df))
+
+`tg route-test` ran the FULL context-render AND edit-plan builds back to back with no bound at all
+  -- dogfood v19 measured ~27s alone on the WSL workspace but hit a 60s harness timeout under
+  concurrent load, because neither build_context_render nor build_context_edit_plan was ever called
+  with a deadline_monotonic/deadline_seconds.
+
+Fix: add --deadline (typer option, min=0.1) + --no-deadline, defaulting to
+  DEFAULT_AGENT_CLI_DEADLINE_SECONDS (60s, tg agent's existing cold-path constant -- reused, not
+  reinvented) when neither is passed. ONE shared, pre-anchored deadline_monotonic (anchored at CLI
+  command entry, before path/query resolution, mirroring context-render/edit-plan/agent's own
+  #197/#200 anchor) is threaded into BOTH builder calls -- side 2 (edit-plan) naturally receives
+  whatever wall-clock side 1 (context-render) left, no separate per-side split needed.
+
+Honesty: when either builder's payload stamps its own partial=true (a real deadline cutoff),
+
+route-test's composite JSON now additively stamps partial: true, partial_reason: "deadline",
+  deadline_limit ({deadline_exceeded, context_render, edit_plan} -- which side(s) truncated), and
+  agreement_basis: "partial", then exits 2 via the same _scan_incomplete gate context-render/
+  edit-plan/agent already use. An agreement computed from one or two truncated sides must not
+  masquerade as a full-confidence verdict just because the two sides happen to still agree. A
+  complete comparison (neither side truncated) omits all four fields -- byte-identical to the
+  pre-fix payload, confirmed by a real-binary dogfood run and a dedicated no-pressure unit test.
+
+Verified live on the real binary (not just CliRunner): a 0.1s --deadline on a synthetic fixture
+  correctly exits 2 with partial/agreement_basis/deadline_limit stamped; the default/no-flag path
+  and an explicit --deadline 30 both stay byte-identical (no new keys) on a fast run.
+
+Tests: 6 new unit tests in tests/unit/test_cli_modes.py (shared-anchor threading,
+  default-matches-agent-constant, --no-deadline disables the bound, partial-stamps-and-exits-2,
+  text-mode parity, no-pressure byte-identity) -- all via the existing monkeypatch-the-builder
+  pattern already used by this file's route-test tests, deterministic without needing a real clock
+  trip. 857 tests green across the route-test suite, the touched builders' own
+  deadline/context-render/edit-plan suites, and docs governance; 1 pre-existing GPU-inventory test
+  failure confirmed unrelated (reproduces identically on a clean, unmodified origin/main checkout).
+
+docs/CONTRACTS.md: added a bullet documenting route-test's new --deadline/partial/agreement_basis
+  contract alongside the sibling context-render/edit-plan/agent entries.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.81.20 (2026-07-19)
 
 ### Bug Fixes
