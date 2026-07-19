@@ -60,7 +60,7 @@ from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 from uuid import uuid4
 
 from tensor_grep.cli._index_lock import atomic_write_json, index_lock
@@ -612,7 +612,7 @@ def _blob_path(root: Path, sha256: str) -> Path:
     return _findings_blobs_dir(root) / f"{sha256}.json"
 
 
-def _valid_sha256_hex(value: Any) -> bool:
+def _valid_sha256_hex(value: Any) -> TypeGuard[str]:
     """True only for a well-formed 64-char lowercase-hex sha256 digest. Every caller that
     builds a filesystem path from an index-derived `receipt_sha256` (`_verify_finding_blob`,
     `_distinct_blob_bytes`) MUST gate on this first: `receipt_sha256` is read back from
@@ -620,7 +620,13 @@ def _valid_sha256_hex(value: Any) -> bool:
     entry could otherwise smuggle a path-traversal string (e.g. `"../../../elsewhere"`) into
     `_blob_path` and redirect a read/stat outside `findings/blobs/`. A real sha256 hexdigest
     can never contain `/`, `.`, or any other path-meaningful character, so this check is a
-    STRUCTURAL guarantee, not a blocklist."""
+    STRUCTURAL guarantee, not a blocklist.
+
+    Typed as a `TypeGuard[str]` (not plain `bool`) so `if not _valid_sha256_hex(x): <exit>`
+    narrows `x` to `str` for mypy at every call site -- `x` starts as `Any | None` (an
+    `entry.get("receipt_sha256")` read off an untyped index record), and mypy does not treat
+    `Any | None` as automatically compatible with the `str`-typed parameters (`_blob_path`,
+    `hmac.compare_digest`, `set[str].add`) those call sites feed it into afterward."""
     return (
         isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
     )
@@ -789,7 +795,13 @@ def _distinct_blob_bytes(root: Path, records: list[dict[str, Any]]) -> int:
     total = 0
     for entry in records:
         sha = entry.get("receipt_sha256")
-        if not _valid_sha256_hex(sha) or sha in seen:
+        # Split into two separate guards (rather than `if not _valid_sha256_hex(sha) or sha in
+        # seen: continue`) so the TypeGuard narrowing unambiguously applies: a single negated
+        # -guard-with-early-`continue` is the canonical shape mypy narrows through; folding a
+        # second, type-unrelated condition into the same `or` is not guaranteed to.
+        if not _valid_sha256_hex(sha):
+            continue
+        if sha in seen:
             continue
         seen.add(sha)
         try:
@@ -913,7 +925,11 @@ def record_finding(
     # documents -- record time has no reason to require the `cryptography` package at all.
     signed = isinstance(signing_block, dict) and isinstance(signature_block, dict)
     key_id: str | None = None
-    if signed:
+    # Re-check inline (redundant with `signed` above at runtime, but `if signed:` alone does not
+    # let mypy narrow `signing_block` -- narrowing through an intermediate bool variable is not
+    # tracked, only a direct `isinstance(...)` in the `if` condition itself is) so
+    # `signing_block.get(...)` below sees `signing_block: dict[str, Any]`, not `Any | None`.
+    if isinstance(signing_block, dict) and isinstance(signature_block, dict):
         candidate_key_id = signing_block.get("key_id")
         if isinstance(candidate_key_id, str) and candidate_key_id:
             key_id = candidate_key_id
