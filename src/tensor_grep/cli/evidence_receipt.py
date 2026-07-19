@@ -42,7 +42,11 @@ from tensor_grep.cli.audit_manifest import (
     _resolve_root,
     _utc_now_iso,
 )
-from tensor_grep.cli.subprocess_policy import configured_git_timeout_seconds, run_subprocess
+from tensor_grep.cli.subprocess_policy import (
+    configured_git_timeout_seconds,
+    deadline_capped_timeout_seconds,
+    run_subprocess,
+)
 
 RECEIPT_SCHEMA_VERSION = 1
 
@@ -143,7 +147,10 @@ def _parse_branch_header(header_text: str) -> str | None:
 
 
 def _repo_revision_identity(
-    root: Path, exclude_prefixes: Sequence[str] | None = None
+    root: Path,
+    exclude_prefixes: Sequence[str] | None = None,
+    *,
+    deadline_monotonic: float | None = None,
 ) -> dict[str, Any]:
     """`git rev-parse HEAD` + `git status --porcelain=v1 -b` -> commit/branch/dirty identity.
 
@@ -161,13 +168,34 @@ def _repo_revision_identity(
     implementation -- every existing caller that never passes `exclude_prefixes` is provably
     unaffected; see `_repo_revision_identity_excluding` for the separate opt-in branch, which is
     still exactly 1 status call (2 total with the `rev-parse` above).
+
+    `deadline_monotonic` (opt-in, default None; tg-codemap 90s-timeout root cause): an optional
+    PRE-ANCHORED absolute ``time.monotonic()`` deadline. Both git calls are otherwise bounded
+    ONLY by `configured_git_timeout_seconds()` (120s default) -- a budget entirely decoupled from
+    a caller's `--deadline`. On a large/slow working tree `git status` in particular can itself
+    take tens of seconds, silently spending a caller's whole deadline budget before
+    `build_repo_map`'s own per-iteration checks ever get a chance to run. When supplied, each
+    call's timeout is capped to whatever budget remains
+    (`subprocess_policy.deadline_capped_timeout_seconds`); an already-expired budget (at entry, or
+    between the two calls) skips the remaining git call(s) and returns `status: "unavailable"`
+    immediately rather than invoking git with a non-positive timeout. `None` (the default, every
+    pre-existing caller) is a byte-identical no-op.
     """
     timeout_seconds = configured_git_timeout_seconds()
+
+    commit_call_timeout = deadline_capped_timeout_seconds(
+        timeout_seconds, deadline_monotonic=deadline_monotonic
+    )
+    if commit_call_timeout is None:
+        return {
+            "status": "unavailable",
+            "reason": "deadline exceeded before revision identity could run",
+        }
 
     try:
         commit_result = run_subprocess(
             ["git", "-C", str(root), "rev-parse", "HEAD"],
-            timeout_seconds=timeout_seconds,
+            timeout_seconds=commit_call_timeout,
             capture_output=True,
             text=True,
             check=False,
@@ -180,18 +208,27 @@ def _repo_revision_identity(
     if not commit_sha:
         return {"status": "unavailable", "reason": "git rev-parse HEAD returned no output"}
 
+    status_call_timeout = deadline_capped_timeout_seconds(
+        timeout_seconds, deadline_monotonic=deadline_monotonic
+    )
+    if status_call_timeout is None:
+        return {
+            "status": "unavailable",
+            "reason": "deadline exceeded before git status could run",
+        }
+
     if exclude_prefixes:
         return _repo_revision_identity_excluding(
             root,
             commit_sha=commit_sha,
-            timeout_seconds=timeout_seconds,
+            timeout_seconds=status_call_timeout,
             exclude_prefixes=exclude_prefixes,
         )
 
     try:
         status_result = run_subprocess(
             ["git", "-C", str(root), "status", "--porcelain=v1", "-b"],
-            timeout_seconds=timeout_seconds,
+            timeout_seconds=status_call_timeout,
             capture_output=True,
             text=True,
             check=False,

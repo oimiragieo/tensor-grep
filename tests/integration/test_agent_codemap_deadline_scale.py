@@ -15,18 +15,35 @@ binary" rule and the anti-hang-test-protocol skill: a subprocess `timeout=` is a
 OS-level kill if a fix regresses back to unbounded, whereas an in-process CliRunner hang would
 hang the whole pytest run (and every other queued test) with it.
 
-KNOWN, OUT-OF-SCOPE FINDING (documented here, not fixed by this PR -- see the module docstring
-of ``src/tensor_grep/cli/agent_capsule.py``'s ``_collect_capsule_call_site_evidence_from_map``
-call chain and ``codemap.py``'s ``_exclude_output_paths``): profiling this fixture at ~2000
-files surfaced a SEPARATE, pre-existing unbounded cost dominated by repeated ``Path.resolve()``
-(Windows ``nt._getfinalpathname``) calls -- `agent`'s validation-file/test-runner detection
-(``_precomputed_validation_files_for_root``, reached via the call-site-evidence collector) and
-`codemap`'s output-path exclusion (``_exclude_output_paths``). Neither is named in this PR's
-scope (``_personalized_reverse_import_pagerank``, ``_collect_outbound_dependencies``, the
-codemap tail, the F4 60s default) and neither threads a deadline at all. Because of it, the
-WALL-CLOCK assertions below are deliberately generous (they catch a genuine hang/regression to
-fully-unbounded, not a tight deadline-adherence claim this PR cannot back) -- what IS tightly
-proven, and is this PR's actual contract, is that a truncated run is HONESTLY reported
+KNOWN, PARTIALLY-ADDRESSED FINDING: profiling this fixture's SHAPE at ~2000 files (and, at real
+dogfood scale, a real 999-file/2147-symbol repo) surfaced a SEPARATE, pre-existing unbounded cost
+dominated by repeated ``Path.resolve()`` (Windows ``nt._getfinalpathname``) calls -- `agent`'s
+validation-file/test-runner detection (``_precomputed_validation_files_for_root``, reached via
+the call-site-evidence collector, STILL out of scope here -- see
+``src/tensor_grep/cli/agent_capsule.py``'s ``_collect_capsule_call_site_evidence_from_map`` call
+chain) and `codemap`'s output-path exclusion (``_exclude_output_paths``).
+
+tg-codemap 90s-timeout root cause (dogfood 2026-07-19): the `codemap` side of this finding is now
+SUBSTANTIALLY fixed -- `_exclude_output_paths` was redundantly re-``.resolve()``ing the invariant
+`out_dir`/`index_path` (and the same repeated candidate file, once per SYMBOL rather than once
+per FILE) on every check; hoisting both directory resolves out of the loop and memoizing
+per-candidate resolution (see ``codemap.py``'s ``_is_under_resolved_dir`` /
+``_resolved_path_is_within`` / ``_cached_resolve`` docstrings) cut a real 999-file repo's
+``_exclude_output_paths`` cost from 15.7s to 1.4s (cProfile, cumulative) and its
+``nt._getfinalpathname`` call count from 55,118 to 6,364 -- it was the SINGLE DOMINANT cost of
+that run (more than the actual repo scan) before this fix. This is a constant-factor/redundant-
+syscall fix, NOT a deadline gate on that loop's own iteration -- its cost still scales with the
+(already deadline-bounded, in the common case) scan's unique file count, so an adversarial
+fast-scan-huge-file-count shape could still cost something non-trivial; deliberately left
+unbounded rather than time-boxing it, because skipping the exclusion check for some files can
+make codemap's OWN previously-written pages incorrectly reappear as "source files" (the exact
+self-invalidation bug this function exists to prevent) -- a correctness risk judged worse than
+the now-much-smaller residual cost. The `agent`-side finding is UNCHANGED and still out of scope
+(``_personalized_reverse_import_pagerank``, ``_collect_outbound_dependencies``, the codemap tail,
+the F4 60s default were this area's actual scope). Because of the remaining `agent`-side and
+adversarial-shape residual, the WALL-CLOCK assertions below stay deliberately generous (they
+catch a genuine hang/regression to fully-unbounded, not a tight deadline-adherence claim) -- what
+IS tightly proven, and is this PR's actual contract, is that a truncated run is HONESTLY reported
 (exit 2, partial/partial_reason, never a silent exit-0 completeness lie).
 """
 

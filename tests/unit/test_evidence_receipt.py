@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -451,6 +452,121 @@ def test_repo_revision_identity_exclude_prefixes_still_makes_at_most_two_git_cal
     evidence_receipt._repo_revision_identity(git_repo, exclude_prefixes=["docs/code-map"])
 
     assert call_count <= 2
+
+
+# ---------------------------------------------------------------------------
+# deadline_monotonic: tg-codemap 90s-timeout root cause. Both git calls here were previously
+# bounded ONLY by configured_git_timeout_seconds() (120s default), a budget entirely decoupled
+# from a caller's --deadline -- on a large/slow working tree `git status` alone could consume a
+# caller's whole deadline budget before build_repo_map's own per-iteration checks ever ran.
+# Deterministic via monkeypatched time.monotonic (anti-hang-test-protocol: never a real sleep).
+# ---------------------------------------------------------------------------
+
+
+def test_repo_revision_identity_deadline_none_preserves_default_timeout(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Byte-identity guard: deadline_monotonic=None (every pre-existing caller) must pass the
+    EXACT same timeout_seconds to run_subprocess as before this fix -- not merely an equal-by-
+    coincidence value."""
+    captured_timeouts: list[float] = []
+    real_run_subprocess = evidence_receipt.run_subprocess
+
+    def _spy_run_subprocess(*args: Any, **kwargs: Any) -> Any:
+        captured_timeouts.append(kwargs.get("timeout_seconds"))
+        return real_run_subprocess(*args, **kwargs)
+
+    monkeypatch.setattr(evidence_receipt, "run_subprocess", _spy_run_subprocess)
+
+    identity = evidence_receipt._repo_revision_identity(git_repo)
+
+    assert identity["status"] == "present"
+    assert captured_timeouts, "expected at least one git subprocess call"
+    expected = evidence_receipt.configured_git_timeout_seconds()
+    assert all(t == expected for t in captured_timeouts), captured_timeouts
+
+
+def test_repo_revision_identity_caps_git_timeout_to_remaining_deadline_budget(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The core fix: a caller-supplied deadline_monotonic must cap EACH git call's own timeout
+    to the remaining wall-clock budget, never the raw 120s default -- proving a single slow git
+    call can no longer itself blow past the caller's --deadline."""
+    captured_timeouts: list[float] = []
+    real_run_subprocess = evidence_receipt.run_subprocess
+
+    def _spy_run_subprocess(*args: Any, **kwargs: Any) -> Any:
+        captured_timeouts.append(kwargs.get("timeout_seconds"))
+        return real_run_subprocess(*args, **kwargs)
+
+    monkeypatch.setattr(evidence_receipt, "run_subprocess", _spy_run_subprocess)
+    monkeypatch.setattr(time, "monotonic", lambda: 1000.0)
+    deadline_monotonic = 1000.0 + 5.0  # 5s of budget, far below the 120s git-timeout default
+
+    identity = evidence_receipt._repo_revision_identity(
+        git_repo, deadline_monotonic=deadline_monotonic
+    )
+
+    assert identity["status"] == "present"
+    assert captured_timeouts, "expected at least one git subprocess call"
+    assert all(t <= 5.0 for t in captured_timeouts), (
+        f"git call timeout(s) {captured_timeouts} were not capped to the ~5s remaining budget "
+        "-- a slow git call could still blow past --deadline"
+    )
+
+
+def test_repo_revision_identity_skips_git_entirely_when_deadline_already_expired(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An already-expired budget at entry must skip BOTH git calls outright (never invoke
+    run_subprocess with a non-positive timeout) and degrade honestly to unavailable -- the same
+    fail-closed shape every other git-error path in this function already returns."""
+    call_count = 0
+    real_run_subprocess = evidence_receipt.run_subprocess
+
+    def _counting_run_subprocess(*args: Any, **kwargs: Any) -> Any:
+        nonlocal call_count
+        call_count += 1
+        return real_run_subprocess(*args, **kwargs)
+
+    monkeypatch.setattr(evidence_receipt, "run_subprocess", _counting_run_subprocess)
+    monkeypatch.setattr(time, "monotonic", lambda: 1000.0)
+    deadline_monotonic = 1000.0 - 1.0  # already 1s past deadline
+
+    identity = evidence_receipt._repo_revision_identity(
+        git_repo, deadline_monotonic=deadline_monotonic
+    )
+
+    assert call_count == 0, "an already-expired deadline must skip git entirely, not invoke it"
+    assert identity["status"] == "unavailable"
+    assert "deadline" in identity.get("reason", "").lower()
+    assert "commit_sha" not in identity
+
+
+def test_repo_revision_identity_excluding_branch_also_caps_git_timeout(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """codemap.py's real call site always passes exclude_prefixes (its own --out dir), which
+    routes into _repo_revision_identity_excluding's SEPARATE status call -- must be capped too,
+    not just the plain (no exclude_prefixes) branch above."""
+    captured_timeouts: list[float] = []
+    real_run_subprocess = evidence_receipt.run_subprocess
+
+    def _spy_run_subprocess(*args: Any, **kwargs: Any) -> Any:
+        captured_timeouts.append(kwargs.get("timeout_seconds"))
+        return real_run_subprocess(*args, **kwargs)
+
+    monkeypatch.setattr(evidence_receipt, "run_subprocess", _spy_run_subprocess)
+    monkeypatch.setattr(time, "monotonic", lambda: 1000.0)
+    deadline_monotonic = 1000.0 + 5.0
+
+    identity = evidence_receipt._repo_revision_identity(
+        git_repo, exclude_prefixes=["docs/code-map"], deadline_monotonic=deadline_monotonic
+    )
+
+    assert identity["status"] == "present"
+    assert captured_timeouts, "expected at least one git subprocess call"
+    assert all(t <= 5.0 for t in captured_timeouts), captured_timeouts
 
 
 # ---------------------------------------------------------------------------
