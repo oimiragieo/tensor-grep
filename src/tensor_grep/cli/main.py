@@ -275,6 +275,12 @@ evidence_app = typer.Typer(
     no_args_is_help=True,
 )
 
+ledger_app = typer.Typer(
+    help="EXPERIMENTAL (Slice 1): advisory, code-scoped agent-to-agent coordination claims "
+    "(never blocks an edit). Surface and JSON schema may change in a minor release.",
+    no_args_is_help=True,
+)
+
 session_app.add_typer(session_daemon_app, name="daemon")
 
 
@@ -13704,6 +13710,7 @@ app.add_typer(checkpoint_app, name="checkpoint")
 app.add_typer(session_app, name="session")
 app.add_typer(review_bundle_app, name="review-bundle")
 app.add_typer(evidence_app, name="evidence")
+app.add_typer(ledger_app, name="ledger")
 
 
 @app.command(name="mcp")
@@ -15342,6 +15349,271 @@ def evidence_pubkey(
         return
     typer.echo(f"key_id={payload['key_id']}")
     typer.echo(f"public_key={payload['public_key']}")
+
+
+def _ledger_error_payload(message: str, *, code: str, routing_reason: str) -> dict[str, object]:
+    return {
+        "version": _json_output_version(),
+        "schema_version": _json_output_version(),
+        "routing_backend": "Ledger",
+        "routing_reason": routing_reason,
+        "sidecar_used": False,
+        "advisory": True,
+        "error": {"code": code, "message": message},
+    }
+
+
+def _emit_ledger_error(
+    exc: BaseException, *, json_output: bool, code: str, routing_reason: str
+) -> None:
+    if json_output:
+        typer.echo(
+            json.dumps(
+                _ledger_error_payload(str(exc), code=code, routing_reason=routing_reason),
+                indent=2,
+            )
+        )
+    else:
+        typer.echo(str(exc), err=True)
+
+
+@ledger_app.command("claim")
+def ledger_claim(
+    path: str = typer.Argument(".", help="Repository path the claim is scoped to."),
+    symbol: list[str] = typer.Option(
+        [], "--symbol", help="Symbol name to claim. Repeatable (--symbol A --symbol B)."
+    ),
+    files: str | None = typer.Option(
+        None,
+        "--files",
+        help="Comma-separated root-relative file paths to claim (e.g. --files a.py,b.py).",
+    ),
+    intent: str = typer.Option(
+        "edit", "--intent", help='Caller-declared intent, e.g. "edit", "review".'
+    ),
+    ttl: int | None = typer.Option(
+        None,
+        "--ttl",
+        help="Claim TTL in seconds. Defaults to TG_LEDGER_CLAIM_TTL_SECONDS or 900.",
+    ),
+    agent_id: str | None = typer.Option(
+        None,
+        "--agent-id",
+        help="Caller-supplied agent identifier, recorded verbatim (never inferred). Falls "
+        "back to TG_LEDGER_AGENT_ID, then TG_EVIDENCE_AGENT_ID. Do not put secrets here.",
+    ),
+    note: str | None = typer.Option(
+        None,
+        "--note",
+        help="Free-text note recorded verbatim. Do not put secrets here.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """EXPERIMENTAL (Slice 1): record an advisory claim on symbols/files and report live
+    overlaps from other agents. Surface and JSON schema may change in a minor release.
+
+    ADVISORY ONLY: this never blocks an edit. It always exits 0 on success -- even when
+    other agents hold live overlapping claims, which are reported in `overlaps` for the
+    caller to act on. It exits 2 only on a fail-closed condition (lock timeout, a `--files`
+    entry outside the repo root, or a write failure); nothing is written when that happens.
+    """
+    from tensor_grep.cli import _index_lock, ledger_store
+
+    file_list = [item.strip() for item in files.split(",") if item.strip()] if files else []
+
+    try:
+        result = ledger_store.submit_claim(
+            path,
+            symbols=list(symbol),
+            files=file_list,
+            intent=intent,
+            note=note,
+            ttl_seconds=ttl,
+            agent_id=agent_id,
+        )
+    except ledger_store.LedgerError as exc:
+        _emit_ledger_error(
+            exc, json_output=json_output, code="fail_closed", routing_reason="ledger-claim"
+        )
+        raise typer.Exit(code=2) from exc
+    except _index_lock.IndexLockTimeoutError as exc:
+        _emit_ledger_error(
+            exc, json_output=json_output, code="lock_timeout", routing_reason="ledger-claim"
+        )
+        raise typer.Exit(code=2) from exc
+    except OSError as exc:
+        _emit_ledger_error(
+            exc, json_output=json_output, code="write_error", routing_reason="ledger-claim"
+        )
+        raise typer.Exit(code=2) from exc
+    except Exception as exc:
+        _emit_ledger_error(
+            exc, json_output=json_output, code="internal_error", routing_reason="ledger-claim"
+        )
+        raise typer.Exit(code=2) from exc
+
+    payload = {
+        "version": _json_output_version(),
+        "schema_version": _json_output_version(),
+        "routing_backend": "Ledger",
+        "routing_reason": "ledger-claim",
+        "sidecar_used": False,
+        "ledger_schema_version": ledger_store.LEDGER_SCHEMA_VERSION,
+        "advisory": True,
+        "claim": result["claim"],
+        "overlaps": result["overlaps"],
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    claim = cast(dict[str, object], result["claim"])
+    overlaps = cast(list[dict[str, object]], result["overlaps"])
+    typer.echo(f"Claim {claim['claim_id']} recorded for agent={claim['agent_id']}")
+    typer.echo(f"  symbols={claim['symbols']} files={claim['files']}")
+    typer.echo(f"  expires_at={claim['expires_at']}")
+    if overlaps:
+        typer.echo(f"  overlaps: {len(overlaps)} live claim(s) from other agents")
+        for overlap in overlaps:
+            typer.echo(
+                f"    {overlap['claim_id']} agent={overlap['agent_id']} "
+                f"intent={overlap['intent']} expires_at={overlap['expires_at']}"
+            )
+    else:
+        typer.echo("  overlaps: none")
+
+
+@ledger_app.command("release")
+def ledger_release(
+    path: str = typer.Argument(".", help="Repository path the claim is scoped to."),
+    claim_id: str | None = typer.Option(
+        None, "--claim-id", help="Release the claim with this exact ID."
+    ),
+    symbol: str | None = typer.Option(
+        None,
+        "--symbol",
+        help="Release the caller's own live claim(s) covering this symbol.",
+    ),
+    agent_id: str | None = typer.Option(
+        None,
+        "--agent-id",
+        help="Caller-supplied agent identifier used to scope --symbol release. Falls back "
+        "to TG_LEDGER_AGENT_ID, then TG_EVIDENCE_AGENT_ID.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """EXPERIMENTAL (Slice 1): release a claim by exact `--claim-id` (any caller who knows
+    the id) or by `--symbol` (scoped to the resolved `--agent-id`'s own claims only). Surface
+    and JSON schema may change in a minor release. Always exits 0 on success, including when
+    nothing matched -- releasing an already-expired or unknown claim is not an error. Exits 2
+    only on a fail-closed condition (lock timeout or a write failure)."""
+    from tensor_grep.cli import _index_lock, ledger_store
+
+    try:
+        result = ledger_store.release_claim(
+            path, claim_id=claim_id, symbol=symbol, agent_id=agent_id
+        )
+    except ledger_store.LedgerError as exc:
+        _emit_ledger_error(
+            exc, json_output=json_output, code="fail_closed", routing_reason="ledger-release"
+        )
+        raise typer.Exit(code=2) from exc
+    except _index_lock.IndexLockTimeoutError as exc:
+        _emit_ledger_error(
+            exc, json_output=json_output, code="lock_timeout", routing_reason="ledger-release"
+        )
+        raise typer.Exit(code=2) from exc
+    except OSError as exc:
+        _emit_ledger_error(
+            exc, json_output=json_output, code="write_error", routing_reason="ledger-release"
+        )
+        raise typer.Exit(code=2) from exc
+    except Exception as exc:
+        _emit_ledger_error(
+            exc, json_output=json_output, code="internal_error", routing_reason="ledger-release"
+        )
+        raise typer.Exit(code=2) from exc
+
+    released = cast(list[dict[str, object]], result["released"])
+    payload = {
+        "version": _json_output_version(),
+        "schema_version": _json_output_version(),
+        "routing_backend": "Ledger",
+        "routing_reason": "ledger-release",
+        "sidecar_used": False,
+        "ledger_schema_version": ledger_store.LEDGER_SCHEMA_VERSION,
+        "advisory": True,
+        "released": released,
+        "released_count": result["released_count"],
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    if not released:
+        typer.echo("No matching live claim found (already released or expired).")
+        return
+    for entry in released:
+        typer.echo(f"Released {entry['claim_id']} (agent={entry['agent_id']})")
+
+
+@ledger_app.command("list")
+def ledger_list(
+    path: str = typer.Argument(".", help="Repository path the claims are scoped to."),
+    symbol: str | None = typer.Option(
+        None, "--symbol", help="Filter to live claims covering this symbol."
+    ),
+    agent_id: str | None = typer.Option(
+        None, "--agent-id", help="Filter to live claims from this agent."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """EXPERIMENTAL (Slice 1): list live (non-expired) claims for the current root. Surface
+    and JSON schema may change in a minor release. Always exits 0, including an empty result
+    -- an empty claims list is a normal outcome, not a not-found error."""
+    from tensor_grep.cli import ledger_store
+
+    try:
+        result = ledger_store.list_claims(path, symbol=symbol, agent_id=agent_id)
+    except ledger_store.LedgerError as exc:
+        _emit_ledger_error(
+            exc, json_output=json_output, code="fail_closed", routing_reason="ledger-list"
+        )
+        raise typer.Exit(code=2) from exc
+    except OSError as exc:
+        _emit_ledger_error(
+            exc, json_output=json_output, code="read_error", routing_reason="ledger-list"
+        )
+        raise typer.Exit(code=2) from exc
+    except Exception as exc:
+        _emit_ledger_error(
+            exc, json_output=json_output, code="internal_error", routing_reason="ledger-list"
+        )
+        raise typer.Exit(code=2) from exc
+
+    claims = cast(list[dict[str, object]], result["claims"])
+    payload = {
+        "version": _json_output_version(),
+        "schema_version": _json_output_version(),
+        "routing_backend": "Ledger",
+        "routing_reason": "ledger-list",
+        "sidecar_used": False,
+        "ledger_schema_version": ledger_store.LEDGER_SCHEMA_VERSION,
+        "advisory": True,
+        "claims": claims,
+        "count": result["count"],
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    if not claims:
+        typer.echo("No live claims.")
+        return
+    for entry in claims:
+        typer.echo(
+            f"{entry['claim_id']}  agent={entry['agent_id']}  "
+            f"symbols={entry.get('symbols')}  files={entry.get('files')}  "
+            f"expires_at={entry.get('expires_at')}"
+        )
 
 
 @app.command("update")

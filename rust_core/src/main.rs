@@ -1119,6 +1119,12 @@ pub enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Advisory, code-scoped agent-to-agent coordination claims
+    #[command(name = "ledger", disable_help_flag = true)]
+    Ledger {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// List GPU devices and routing readiness
     #[command(name = "devices", disable_help_flag = true)]
     Devices {
@@ -5420,6 +5426,7 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::AuditDiff { args } => handle_python_passthrough("audit-diff", args),
         Commands::ReviewBundle { args } => handle_python_passthrough("review-bundle", args),
         Commands::Evidence { args } => handle_python_passthrough("evidence", args),
+        Commands::Ledger { args } => handle_python_passthrough("ledger", args),
         Commands::Devices { args } => handle_python_passthrough("devices", args),
         Commands::Context { args } => handle_python_passthrough("context", args),
         Commands::RouteTest { args } => handle_python_passthrough("route-test", args),
