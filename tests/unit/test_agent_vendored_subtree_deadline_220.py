@@ -12,7 +12,7 @@ and `_suggested_scope_from_map` (the centrality rollup). Real-binary wall-to-exi
 `tests/integration/test_agent_cold_deadline_tail_sla_220.py`; this file proves the MECHANISM at
 the function level: fast, deterministic, no subprocess.
 
-Three properties, mirroring the `_detect_vendored_subtrees`/`_suggested_scope_from_map`
+Four properties, mirroring the `_detect_vendored_subtrees`/`_suggested_scope_from_map`
 docstrings' own contract:
   1. An ALREADY-EXCEEDED `deadline_monotonic` skips the expensive work and returns the SAME
      "nothing to report" shape the function already used for its other bail-out cases (`{}` /
@@ -20,16 +20,24 @@ docstrings' own contract:
   2. `deadline_monotonic=None` (omitted) and a `deadline_monotonic` comfortably in the FUTURE
      produce IDENTICAL output to each other -- the no-deadline-pressure path is byte-for-byte
      unaffected by this fix (the explicit regression guard the build task asked for).
-  3. `_detect_vendored_subtrees`'s own two internal loops (the STRONG-1 manifest probe and the
-     outermost-nested-chain dedup) each check the deadline PER ITERATION, not just once at
-     function entry -- an entry-only check was proven insufficient during this fix's own
-     calibration: a single uninterrupted call measured at ~3.6s even when ~2.3s of budget
-     remained at entry (a manifest-dense repo's post-deadline wall-to-exit only dropped from
-     ~9.3s to ~5.5s with an entry-only check, and to ~3.4s once the internal loops were also
-     bounded -- see `tests/integration/test_agent_cold_deadline_tail_sla_220.py`'s module
-     docstring for the real-binary numbers). The tests below force this with a monkeypatched
-     `time.monotonic()` so they are deterministic (no reliance on a real clock crossing a real
-     deadline mid-loop, which would make the test flaky by construction).
+  3. `_detect_vendored_subtrees`'s own STRONG-1 manifest-probe loop and outermost-nested-chain
+     dedup loop each check the deadline PER ITERATION, not just once at function entry -- an
+     entry-only check was proven insufficient during this fix's own calibration: a single
+     uninterrupted call measured at ~3.6s even when ~2.3s of budget remained at entry (a
+     manifest-dense repo's post-deadline wall-to-exit only dropped from ~9.3s to ~5.5s with an
+     entry-only check, and to ~3.4s once the internal loops were also bounded -- see
+     `tests/integration/test_agent_cold_deadline_tail_sla_220.py`'s module docstring for the
+     real-binary numbers).
+  4. An independent Opus gate on the resulting PR (#669) found ONE MORE un-gated span this fix
+     initially missed: between the manifest-probe loop's check and the dedup loop's check sits
+     the reverse-import-graph re-derivation (`_code_files_and_import_graph`) AND the STRONG-3
+     skill-leaf validation loop (`_is_skill_leaf_tree`) that consumes it -- measured on the real
+     workspace that motivated this fix at 241 skills-named directories / 2,933 child directories,
+     ~0.69s warm / low-seconds cold, un-gated by either neighboring check. A 4th checkpoint
+     (right after the manifest loop, before the import-graph call) closes this.
+  All internal-loop/mid-function checks above are forced with a monkeypatched `time.monotonic()`
+  so they are deterministic (no reliance on a real clock crossing a real deadline mid-loop, which
+  would make the test flaky by construction).
 """
 
 from __future__ import annotations
@@ -287,3 +295,99 @@ def test_detect_vendored_subtrees_outermost_dedup_loop_has_own_deadline_check(
     # A partial dedup pass can at most equal the full result (never MORE trees than a complete
     # pass would find -- see the function's own docstring on why an incomplete dedup is safe).
     assert len(result) <= 20
+
+
+def test_detect_vendored_subtrees_post_manifest_loop_gate_skips_import_graph_and_skill_leaf_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#220 Opus-gate follow-up (independent gate on PR #669, real-workspace-measured): between
+    the manifest-probe loop's own per-iteration check and the outermost-dedup loop's own
+    per-iteration check sat an UN-GATED middle section -- the reverse-import-graph re-derivation
+    (`_code_files_and_import_graph`) AND the STRONG-3 skill-leaf validation loop
+    (`_is_skill_leaf_tree`, `iterdir()`-heavy per `skills`-named candidate) that consumes it. The
+    gate measured this on the real workspace that motivated this fix: 241 skills-named
+    directories / 2,933 child directories -> ~0.69s warm, low-seconds cold, entirely un-gated by
+    either neighboring check. Proven here with an exploding sentinel on
+    `_code_files_and_import_graph` -- unambiguous proof of reachability (not just "the deadline
+    check ran," but "the expensive call itself was never invoked") -- combined with the same
+    monkeypatched-clock determinism as the sibling loop tests above (never a real clock racing a
+    real deadline)."""
+    root = tmp_path.resolve()
+    # STRONG-0 `_vendored` dirs make `strong0_vendor_dirs` non-empty (so the earlier "nothing
+    # found at all" bail-out does not fire for an unrelated reason) AND a `skills/` dir with
+    # leaf-shaped children (mirrors test_orient_deweight_vendored.py's "many leaf skills" shape)
+    # makes `skill_candidate_dirs` non-empty too -- the skipped section would genuinely do real
+    # work absent this fix, not a vacuous no-op.
+    files = []
+    for i in range(10):
+        vendored = root / f"proj{i}" / "_vendored"
+        vendored.mkdir(parents=True)
+        (vendored / "lib.py").write_text("x = 1\n", encoding="utf-8")
+        files.append(str(vendored / "lib.py"))
+    for leaf in ("leaf-a", "leaf-b"):
+        leaf_dir = root / "skills" / leaf
+        leaf_dir.mkdir(parents=True)
+        (leaf_dir / "SKILL.md").write_text("# skill\n", encoding="utf-8")
+        files.append(str(leaf_dir / "SKILL.md"))
+    rm = {"path": str(root), "files": files, "imports": [], "symbols": []}
+
+    real_monotonic = time.monotonic
+    deadline = real_monotonic() + 3600.0
+
+    class _ImportGraphReached(Exception):
+        pass
+
+    sentinel_calls = 0
+
+    def exploding_import_graph(*_args: Any, **_kwargs: Any) -> Any:
+        nonlocal sentinel_calls
+        sentinel_calls += 1
+        raise _ImportGraphReached
+
+    monkeypatch.setattr(
+        "tensor_grep.cli.orient_capsule._code_files_and_import_graph", exploding_import_graph
+    )
+
+    # Phase 1: self-calibrate AND sanity-check in one pass. A counting (real-value) clock with an
+    # ample deadline -- `_code_files_and_import_graph` MUST be reached (proves this fixture's
+    # skipped section is genuinely non-vacuous), and the call count at the moment it fires is
+    # exactly "1 entry check + N manifest-loop-iteration checks + 1 post-manifest-loop check" --
+    # the flip boundary phase 2 needs, without hardcoding or re-deriving `len(candidate_dirs)`.
+    total_calls_before_import_graph = 0
+
+    def counting_clock() -> float:
+        nonlocal total_calls_before_import_graph
+        total_calls_before_import_graph += 1
+        return real_monotonic()
+
+    monkeypatch.setattr("tensor_grep.cli.orient_capsule.time.monotonic", counting_clock)
+    with pytest.raises(_ImportGraphReached):
+        _detect_vendored_subtrees(rm, deadline_monotonic=deadline)
+    assert sentinel_calls == 1, "fixture assumption drifted -- the skipped section is not reached"
+
+    # Phase 2: the actual regression guard. Flip `time.monotonic()` to "already past deadline"
+    # starting at the EXACT call phase 1 measured -- the manifest-probe loop's own per-iteration
+    # check (point 2 in the function's docstring) never sees "past" here, so it completes ALL its
+    # iterations normally (proving this test isolates the POST-loop check, point 3, not a
+    # mid-loop break -- that's already covered by
+    # test_detect_vendored_subtrees_manifest_probe_loop_has_own_deadline_check above).
+    sentinel_calls = 0
+    call_count = 0
+    flip_at_call = total_calls_before_import_graph
+
+    def clock() -> float:
+        nonlocal call_count
+        call_count += 1
+        return deadline + 1.0 if call_count >= flip_at_call else real_monotonic()
+
+    monkeypatch.setattr("tensor_grep.cli.orient_capsule.time.monotonic", clock)
+    deadline_hit = _repo_map._DeadlineBreakFlag()
+
+    result = _detect_vendored_subtrees(rm, deadline_monotonic=deadline, deadline_hit=deadline_hit)
+
+    assert sentinel_calls == 0, (
+        "_code_files_and_import_graph ran even though the deadline had already tripped by the "
+        "post-manifest-loop check -- the #220 Opus-gate middle-section gate regressed"
+    )
+    assert deadline_hit.hit is True
+    assert result == {}

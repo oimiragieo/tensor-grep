@@ -302,38 +302,49 @@ def _detect_vendored_subtrees(
 
     ``deadline_monotonic`` (agent cold-path assembly-tail SLA fix): this is the single most
     expensive post-map assembly stage on a large repo -- a candidate-directory manifest-marker
-    probe (STRONG-1, O(candidate_dirs x markers) `Path.exists()` calls) followed by an
+    probe (STRONG-1, O(candidate_dirs x markers) `Path.exists()` calls), a reverse-import-graph
+    re-derivation + STRONG-3 skill-leaf validation (`_is_skill_leaf_tree`, `iterdir()`-heavy per
+    `skills`-named candidate -- measured on a real ~50k-file multi-project workspace: 241
+    skills-named directories / 2,933 child directories, ~0.69s warm / low-seconds cold), and an
     outermost-nested-chain dedup (O(candidate_roots^2) `Path.resolve()`-backed comparisons) --
     profiled at ~1.2-3.6s PER CALL depending on how many manifest-bearing directories the repo has,
     and it is called from multiple sites (this module's own callers plus `repo_map._build_context_
     pack_from_map`'s independent `auto_deweight` pass) so the cost compounds. An optional
     PRE-ANCHORED absolute ``time.monotonic()`` budget, exactly like every other post-map deadline
     seam in this codebase (`_collect_outbound_dependencies`, `_build_context_pack_from_map`'s
-    symbol-scoring loop):
+    symbol-scoring loop), checked at FOUR points:
 
-      1. When the shared budget is ALREADY exhausted by the time this stage would start, skip the
-         expensive detection entirely and return ``{}`` immediately.
+      1. Function entry: when the shared budget is ALREADY exhausted by the time this stage would
+         start, skip the expensive detection entirely and return ``{}`` immediately.
       2. UNLIKE most sibling deadline seams (whose per-item cost is small enough that an
-         entry-only check is sufficient), this function's OWN two internal loops are each
+         entry-only check is sufficient), this function's OWN internal sections are each
          independently expensive enough to blow the ENTIRE remaining budget in a single
          uninterrupted call even when the deadline had NOT yet been exceeded at entry (measured:
          one call took ~3.6s against a repo whose collection stage left ~2.3s of budget) -- so the
-         STRONG-1 manifest probe and the outermost-chain dedup EACH also check the deadline
-         per-iteration (mirroring `_build_context_pack_from_map`'s own per-symbol check) and break
-         early, keeping whatever partial `manifest_dirs`/`subtree_rel_roots` was already built
-         rather than discarding it.
+         STRONG-1 manifest probe LOOP also checks the deadline per-iteration (mirroring
+         `_build_context_pack_from_map`'s own per-symbol check) and breaks early, keeping whatever
+         partial `manifest_dirs` was already found rather than discarding it.
+      3. Immediately after that loop, one more check gates the reverse-import-graph re-derivation
+         AND the STRONG-3 skill-leaf validation loop TOGETHER (they are not independently
+         expensive enough on their own to warrant per-iteration checks the way the manifest probe
+         and the dedup loop are, but their COMBINED cost on a skills-directory-heavy repo is real
+         and was measured un-gated by points 2 and 4 alone) -- an early ``{}`` return here, same
+         shape as every other bail-out in this function, never a partially-built dict missing
+         fields the rest of the function assumes.
+      4. The outermost-chain dedup loop ALSO checks the deadline per-iteration and breaks early,
+         keeping whatever partial `subtree_rel_roots` was already deduped.
 
-    Both cases return/keep the SAME shapes this function already produces for "no vendor/skill
+    All four cases return/keep the SAME shapes this function already produces for "no vendor/skill
     signal found" or "partial evidence" -- no new return type, no exception. This is purely
     ADDITIVE de-weighting evidence (never hard-exclude, per the docstring above), so cutting it
     short once a --deadline has already been blown never changes correctness, only whether ranking
     gets the (full or partial) vendor/skill de-weight boost -- and the capsule is already stamped
     partial/deadline_exceeded by the caller at that point. ``deadline_hit`` (optional, mirrors the
     ``_DeadlineBreakFlag`` sibling seams in this module and in ``repo_map.py``) is set to ``True``
-    on EITHER the entry skip or a mid-loop break, so a caller folding this into its own wider
-    N-way partial/deadline_limit union can observe "did this stage actually cut anything short"
-    even on a call that still returns a non-empty (but now partial) result. Default ``None`` for
-    both new parameters (every pre-existing call site) is a byte-identical no-op."""
+    on ANY of the four checks firing, so a caller folding this into its own wider N-way
+    partial/deadline_limit union can observe "did this stage actually cut anything short" even on
+    a call that still returns a non-empty (but now partial) result. Default ``None`` for both new
+    parameters (every pre-existing call site) is a byte-identical no-op."""
     if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
         if deadline_hit is not None:
             deadline_hit.hit = True
@@ -417,6 +428,22 @@ def _detect_vendored_subtrees(
     ]
 
     if not (manifest_dirs or tool_config_dirs or strong0_vendor_dirs or skill_candidate_dirs):
+        return {}
+
+    # #220 Opus-gate follow-up: the two most expensive REMAINING sections -- the reverse-import
+    # graph re-derivation just below AND the STRONG-3 skill-leaf validation loop that consumes it
+    # (`_is_skill_leaf_tree`, `iterdir()`-heavy per `skill_candidate_dirs` entry) -- ran
+    # unconditionally even after the manifest-probe loop above already broke on a tripped deadline:
+    # that loop's own per-iteration check only bounds ITSELF, and the outermost-dedup loop's check
+    # further below only bounds what comes AFTER it, leaving exactly this middle section open.
+    # Measured on the real workspace shape that motivated this fix: 241 skills-named directories /
+    # 2,933 child directories -> ~0.69s warm, low-seconds cold, entirely unbounded by either
+    # existing check. One check here, in the SAME shape as every other bail-out in this function
+    # (return the truncated-but-valid `{}` shape, never a partially-built dict missing the
+    # STRONG-2/WEAK fields the rest of this function assumes), bounds both in one shot.
+    if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+        if deadline_hit is not None:
+            deadline_hit.hit = True
         return {}
 
     # The reverse-import graph is needed both for STRONG-3's external-import guard below and for the
