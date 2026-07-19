@@ -769,6 +769,48 @@ def test_find_missing_blob_raises_integrity_error(tmp_path: Path) -> None:
         ledger_store.find_findings(str(root), symbol="value")
 
 
+def test_find_ignores_tampered_blob_relpath_and_uses_content_address(tmp_path: Path) -> None:
+    """NIT 1 regression: the blob READ path is derived from the recorded receipt_sha256 via
+    _blob_path, never trusted from the index's own blob_relpath string.
+
+    Setup: leave the REAL content-addressed blob (named by the correct sha256) untouched and
+    correct, but corrupt ONLY blob_relpath in the index to point at a DECOY file with
+    DIFFERENT content. If find_findings ever read from blob_relpath instead of the content
+    address, the decoy's digest would not match receipt_sha256 and this would raise
+    LedgerIntegrityError. It must NOT raise -- proving the read is content-addressed, not
+    index-relpath-addressed.
+    """
+    root = _make_project(tmp_path)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    ledger_store.record_finding(str(root), receipt_path=str(artifact), symbol="value")
+
+    decoy_path = _findings_blobs_dir(root) / "decoy.json"
+    decoy_path.write_text(json.dumps({"decoy": True}), encoding="utf-8")
+
+    records = json.loads(_findings_index_path(root).read_text(encoding="utf-8"))
+    records[0]["blob_relpath"] = "findings/blobs/decoy.json"
+    _findings_index_path(root).write_text(json.dumps(records), encoding="utf-8")
+
+    result = ledger_store.find_findings(str(root), symbol="value")  # must NOT raise
+    assert result["count"] == 1
+
+
+def test_find_refuses_malformed_receipt_sha256(tmp_path: Path) -> None:
+    """NIT 1 regression: a hand-tampered receipt_sha256 that is not a well-formed 64-char hex
+    digest (e.g. a path-traversal-shaped string) is refused outright before _blob_path is ever
+    constructed from it."""
+    root = _make_project(tmp_path)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    ledger_store.record_finding(str(root), receipt_path=str(artifact), symbol="value")
+
+    records = json.loads(_findings_index_path(root).read_text(encoding="utf-8"))
+    records[0]["receipt_sha256"] = "../../../../elsewhere"
+    _findings_index_path(root).write_text(json.dumps(records), encoding="utf-8")
+
+    with pytest.raises(ledger_store.LedgerIntegrityError, match="malformed receipt_sha256"):
+        ledger_store.find_findings(str(root), symbol="value")
+
+
 def test_find_does_not_integrity_check_filtered_out_stale_findings(tmp_path: Path) -> None:
     """A tampered blob for a finding EXCLUDED by --fresh-only must not fail the whole call --
     only findings actually being served are integrity-checked."""
@@ -846,8 +888,13 @@ def test_eviction_over_byte_cap_evicts_oldest_and_gcs_blob(
     artifact_payload = {"a": "x" * 200}
     # Derive the cap from the REAL on-disk blob size (not a guessed constant): room for exactly
     # one artifact's blob plus headroom, but not two -- deterministic regardless of exact JSON
-    # serialization details.
+    # serialization details. The byte cap is floored at _MAX_ARTIFACT_FILE_BYTES (NIT 2 fix: a
+    # cap below one artifact's size must never silently evict the record just written), so
+    # exercising byte-cap eviction with small fixture artifacts also requires shrinking that
+    # floor -- otherwise the real 8 MiB default would swallow both tiny artifacts and nothing
+    # would ever be evicted.
     one_blob_bytes = len(json.dumps(artifact_payload, indent=2).encode("utf-8"))
+    monkeypatch.setattr(ledger_store, "_MAX_ARTIFACT_FILE_BYTES", one_blob_bytes + 50)
     monkeypatch.setenv("TG_LEDGER_MAX_BLOB_BYTES", str(one_blob_bytes + 50))
 
     artifact_a = _write_artifact_json(tmp_path, "a.json", artifact_payload)
@@ -861,6 +908,27 @@ def test_eviction_over_byte_cap_evicts_oldest_and_gcs_blob(
     records = json.loads(_findings_index_path(root).read_text(encoding="utf-8"))
     assert {r["symbol"] for r in records} == {"beta"}  # alpha evicted (oldest)
     assert not (_findings_blobs_dir(root) / f"{sha_a}.json").exists()  # ...and its blob GC'd
+
+
+def test_record_survives_pathologically_small_byte_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """NIT 2 regression: TG_LEDGER_MAX_BLOB_BYTES configured well below a single artifact's
+    size must never silently evict the record `record_finding` just wrote in the SAME call --
+    the byte cap is floored at _MAX_ARTIFACT_FILE_BYTES so one artifact always fits, no matter
+    how small the configured/env cap is. Before the fix, this exact scenario made `record`
+    return a "success" finding payload for a record that was immediately evicted + GC'd."""
+    root = _make_project(tmp_path)
+    monkeypatch.setenv("TG_LEDGER_MAX_BLOB_BYTES", "1")  # pathologically small
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+
+    result = ledger_store.record_finding(str(root), receipt_path=str(artifact), symbol="value")
+    sha = result["finding"]["receipt_sha256"]
+
+    records = json.loads(_findings_index_path(root).read_text(encoding="utf-8"))
+    assert len(records) == 1
+    assert records[0]["symbol"] == "value"
+    assert (_findings_blobs_dir(root) / f"{sha}.json").exists()
 
 
 def test_expired_findings_pruned_and_orphaned_blob_gc_on_next_record(tmp_path: Path) -> None:

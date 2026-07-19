@@ -612,6 +612,20 @@ def _blob_path(root: Path, sha256: str) -> Path:
     return _findings_blobs_dir(root) / f"{sha256}.json"
 
 
+def _valid_sha256_hex(value: Any) -> bool:
+    """True only for a well-formed 64-char lowercase-hex sha256 digest. Every caller that
+    builds a filesystem path from an index-derived `receipt_sha256` (`_verify_finding_blob`,
+    `_distinct_blob_bytes`) MUST gate on this first: `receipt_sha256` is read back from
+    `index.json`, a plain, per-repo, multi-agent-writable JSON file, so a hand-tampered index
+    entry could otherwise smuggle a path-traversal string (e.g. `"../../../elsewhere"`) into
+    `_blob_path` and redirect a read/stat outside `findings/blobs/`. A real sha256 hexdigest
+    can never contain `/`, `.`, or any other path-meaningful character, so this check is a
+    STRUCTURAL guarantee, not a blocklist."""
+    return (
+        isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+    )
+
+
 def _new_finding_id() -> str:
     # Mirrors _new_claim_id's shape: finding-<UTC-compact-timestamp>-<hex8>.
     timestamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S%f")
@@ -766,12 +780,16 @@ def _distinct_blob_bytes(root: Path, records: list[dict[str, Any]]) -> int:
     """Sum of on-disk sizes for the DISTINCT `receipt_sha256` values referenced by `records` --
     a blob shared (dedup'd) by two findings counts once, not twice. A blob that is referenced
     but missing/unreadable contributes 0 rather than raising -- eviction accounting must never
-    itself become a fail-closed surface; `find_findings` is what raises on a missing blob."""
+    itself become a fail-closed surface; `find_findings` is what raises on a missing blob.
+    Skips (never `.stat()`s) an entry whose `receipt_sha256` is not `_valid_sha256_hex` -- same
+    path-traversal concern `_verify_finding_blob` guards against, applied here so a
+    hand-tampered index can't redirect this accounting `.stat()` outside `findings/blobs/`
+    either."""
     seen: set[str] = set()
     total = 0
     for entry in records:
         sha = entry.get("receipt_sha256")
-        if not isinstance(sha, str) or sha in seen:
+        if not _valid_sha256_hex(sha) or sha in seen:
             continue
         seen.add(sha)
         try:
@@ -799,6 +817,15 @@ def _evict_findings_over_cap(
     effective_max_bytes = (
         _configured_max_total_blob_bytes() if max_total_blob_bytes is None else max_total_blob_bytes
     )
+    # Floored at _MAX_ARTIFACT_FILE_BYTES regardless of source (env config or an explicit
+    # override): a byte cap smaller than the largest single artifact tg will ever accept
+    # (_read_artifact_file's own bound) would let the while-loop below evict the record
+    # `record_finding` JUST wrote in the SAME call, before it ever durably persists -- a
+    # "success" response for a finding that was never actually kept. This is a total-DISK
+    # -USAGE bound, not a per-artifact size limit (that is _MAX_ARTIFACT_FILE_BYTES's own job),
+    # so silently flooring a misconfigured value here mirrors _configured_ttl_seconds's own
+    # `max(1, ...)` floor idiom rather than letting it produce silent, user-visible data loss.
+    effective_max_bytes = max(effective_max_bytes, _MAX_ARTIFACT_FILE_BYTES)
 
     ordered = sorted(records, key=lambda entry: str(entry.get("created_at", "")))
     if len(ordered) > effective_max_records:
@@ -943,18 +970,26 @@ def _verify_finding_blob(
     actually about to be served (called after the symbol/artifact_kind/freshness filters in
     `find_findings`), never the whole index. For a `signed` finding, additionally attaches
     `key_trusted` by re-verifying against the CALLER's current trusted-key set (which may
-    differ from whatever was configured at record time)."""
+    differ from whatever was configured at record time).
+
+    The blob path is derived from the RECORDED `receipt_sha256` via `_blob_path` -- the SAME
+    helper `record_finding` uses to WRITE it -- never from the index's own `blob_relpath`
+    string. `blob_relpath` stays on the record purely for display/debugging; trusting it as a
+    READ path would let a hand-tampered `index.json` (a plain, per-repo, multi-agent-writable
+    JSON file) redirect this read to an arbitrary same-user JSON file. Content-addressing the
+    read closes that: the path is a pure function of a `_valid_sha256_hex`-checked digest, so
+    there is nothing for a tampered index to redirect."""
     finding_id = str(entry.get("finding_id"))
-    blob_relpath = entry.get("blob_relpath")
     expected_sha256 = entry.get("receipt_sha256")
-    if not isinstance(blob_relpath, str) or not blob_relpath:
-        raise LedgerIntegrityError(f"Finding {finding_id} has no blob_relpath on record")
-    blob_path = _ledger_root_dir(root) / blob_relpath
+    if not _valid_sha256_hex(expected_sha256):
+        raise LedgerIntegrityError(
+            f"Finding {finding_id} has a malformed receipt_sha256 on record (not a 64-char "
+            "hex sha256 digest) -- refusing to derive a blob path from it."
+        )
+    blob_path = _blob_path(root, expected_sha256)
     artifact = _read_blob_artifact(blob_path, finding_id)
     actual_sha256 = receipt_digest(artifact)
-    if not isinstance(expected_sha256, str) or not hmac.compare_digest(
-        actual_sha256, expected_sha256
-    ):
+    if not hmac.compare_digest(actual_sha256, expected_sha256):
         raise LedgerIntegrityError(
             f"Finding {finding_id} blob content does not match its recorded receipt_sha256 "
             "(tampered or corrupted)."
