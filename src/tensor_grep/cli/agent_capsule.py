@@ -2999,7 +2999,8 @@ def build_agent_capsule_from_map(
             else {"deadline_exceeded": True}
         )
         # Cold-path assembly-tail SLA fix (#220): additive observability for the post-deadline
-        # ASSEMBLY stages this fix bounds (vendored_subtree_detection, suggested_scope) -- distinct
+        # ASSEMBLY stages this fix bounds (vendored_subtree_detection, suggested_scope,
+        # context_pack_assembly -- the last added by #222) -- distinct
         # from `scan_limit`/`deadline_limit.files_scanned` above, which describe the COLLECTION
         # (repo-map walk/parse) stage only. Only stamped when at least one assembly stage actually
         # skipped work, so a capsule with no assembly-tail impact stays byte-identical to before
