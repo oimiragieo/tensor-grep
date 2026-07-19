@@ -1,6 +1,124 @@
 # CHANGELOG
 
 
+## v1.82.1 (2026-07-19)
+
+### Bug Fixes
+
+- **codemap**: Bound git-identity calls + eliminate a resolve() storm so large workspaces degrade
+  honestly ([#674](https://github.com/oimiragieo/tensor-grep/pull/674),
+  [`e95abfa`](https://github.com/oimiragieo/tensor-grep/commit/e95abfa8abc2171239d65b1797bf811e18234367))
+
+* fix(codemap): bound the git-identity calls + eliminate a redundant resolve() storm so large
+  workspaces degrade honestly instead of timing out
+
+Verify-first (against the real v1.81.21 code, not the campaign brief's hypothesis):
+
+(a) Default deadline: DEFAULT_CLI_DEADLINE_SECONDS = 60.0 (codemap.py), pinned to main.py's
+  --deadline literal by an existing guard test (#153). Not too large by itself.
+
+(b) Is deadline_monotonic threaded through ALL phases? Walk + symbol/import extraction
+  (repo_map.build_repo_map) and the post-map tail (folders_with_no_mapped_files re-walk + the
+  per-folder render/write loop) were ALREADY correctly bounded, per-iteration, by prior work
+  (#639/#642/council must-fix #4) -- confirmed by reading the code and the existing test suite
+  (tests/unit/test_codemap.py's (16)/(18) sections). The campaign brief's hypothesis ("emission/
+  rendering runs after the flag unboundedly") was FALSE on inspection -- the obvious suspect was
+  already fixed. Two REAL gaps were not threaded, both git-subprocess-adjacent: 1.
+  evidence_receipt._repo_revision_identity (git rev-parse + git status) ran BEFORE
+  deadline_monotonic was even computed in build_codemap, bounded only by TG_GIT_TIMEOUT_SECONDS
+  (120s default PER CALL, subprocess_policy.py) -- entirely decoupled from --deadline. 2.
+  codemap._tracked_file_set (git ls-files), called post-scan via _exclude_untracked_paths, same
+  120s-default/no-deadline-awareness gap. A single slow `git status` on a large/dirty working tree
+  could alone consume most of a 60s --deadline before build_repo_map's own bounded walk ever got a
+  chance to run.
+
+(c) What does a deadline-tripped codemap emit today? Already honest: partial=true,
+  partial_reason="deadline", a remediation string in _coverage.json, a visible "Partial: yes" /
+  "Remediation: ..." note in the rendered index.md, and CLI exit 2. This part of the "fix" was
+  already shipped; not re-touched here.
+
+Additional finding (profiled, not hypothesized): dogfooding a real 999-file git repo (this very
+  worktree, not a synthetic fixture) surfaced a SECOND, independently dominant cost -- a resolve()
+  storm in _exclude_output_paths. cProfile showed it at 15.7s of a 26.4s total run, driving 55,118
+  Windows nt._getfinalpathname syscalls, because out_dir/index_path were re-`.resolve()`d on EVERY
+  file/symbol/import check (out_dir is invariant across the whole call) and the same file string
+  (shared across many symbols) was re-resolved on every repeat. This was MORE expensive than the
+  actual repo scan. Mirrors the exact "profile-at-scale reveals a second compounding issue" pattern
+  already seen in this codebase's #669-then-#671 history.
+
+Fix, per phase: - evidence_receipt._repo_revision_identity / _repo_revision_identity_excluding:
+  accept an optional deadline_monotonic; each git call's timeout is capped to the remaining budget
+  via a new subprocess_policy.deadline_capped_timeout_seconds() helper; an already-expired budget
+  skips the remaining call(s) and degrades to status="unavailable" (the same shape every other
+  git-error path already returns) instead of invoking git with a non-positive timeout. -
+  codemap._tracked_file_set: same capping via the same helper; _exclude_untracked_paths forwards
+  deadline_monotonic through (its existing None-tracked-set no-op degrade already covers a
+  deadline-triggered skip -- no new field needed). - build_codemap: the deadline_monotonic anchor is
+  now computed BEFORE the revision-identity call (previously after) and threaded into it and into
+  the post-scan _exclude_untracked_paths call. The per-folder blurb-loading loop
+  (README.md/__init__.py reads, no prior deadline check) now also bounds itself per-iteration,
+  keeping whatever blurbs were computed (purely additive decoration -- both render call sites
+  already default missing entries to ""). - codemap._is_under_dir -> split into
+  _resolved_path_is_within (pure comparison, both args pre-resolved, zero syscalls) and
+  _is_under_resolved_dir (resolves only the candidate); both _exclude_output_paths call sites now
+  resolve out_dir/index_path ONCE and memoize per-candidate resolution via a new _cached_resolve
+  helper. Output is byte-identical; only redundant filesystem syscalls are removed. Deliberately NOT
+  deadline-gated (unlike the loops above) -- skipping the exclusion check for some files could make
+  codemap's own previously -written pages incorrectly reappear as "source files" (the exact
+  self-invalidation bug this function exists to prevent), a correctness risk judged worse than the
+  now ~10x-smaller residual cost; documented as a residual for the gate.
+
+Before/after (same real 999-file/2147-symbol repo, in-process cProfile, deadline_seconds=8.0):
+  _exclude_output_paths: 15.662s -> 1.404s (>11x)
+
+nt._getfinalpathname calls: 55,118 -> 6,364 (>8x) Total wall: 26.44s -> 12.12s (>2x) Real CLI
+  dogfood (python -m tensor_grep codemap . --deadline 5): exit=2, partial=true,
+  partial_reason="deadline", revision.status="present" (git calls succeeded, capped not broken),
+  valid index.md + _coverage.json written. Absolute wall-clock numbers on this run were noisy
+  (shared box measured at 100% CPU load / 14 concurrent python processes during this session) -- the
+  syscall-COUNT and cProfile cumulative-time deltas above are the load-independent evidence.
+
+Tests: 15 new deterministic unit tests (monkeypatched time.monotonic, the exploding-sentinel pattern
+  already proven in this file's own (18) section -- never a real sleep) across
+  test_subprocess_policy.py (5: none-is-noop, caps-to-remaining, never-widens, expired->None,
+  exactly-at-deadline->None), test_evidence_receipt.py (4: none-preserves-default,
+  caps-to-remaining, skips-when-expired, the exclude_prefixes branch also capped), and
+  test_codemap.py (6: _tracked_file_set x3 mirroring the evidence_receipt trio,
+  _exclude_untracked_paths forwards deadline_monotonic, an end-to-end honest-degrade proof with a
+  real git repo + simulated-slow git calls asserting real wall-clock stays bounded via
+  time.perf_counter(), a no-deadline-pressure regression guard). Updated the stale "KNOWN,
+  OUT-OF-SCOPE" docstring in tests/integration/test_agent_codemap_deadline_scale.py to reflect the
+  codemap-side fix (the agent-side _precomputed_validation_files_for_root finding is UNCHANGED and
+  still out of scope).
+
+Full suite: 104 passed (tests/unit/test_codemap.py + test_evidence_receipt.py +
+  test_subprocess_policy.py). tests/integration/test_agent_codemap_deadline_scale.py: 5 passed (hit
+  two transient failures mid-session at ~62-67s against a 60.0s generous ceiling under the same
+  measured 100% CPU load spike; both passed cleanly on retry, and one of the two failing tests --
+  test_agent_default_deadline_still_completes_and_is_bounded -- exercises a `tg agent` code path
+  untouched by this change, which is itself evidence the flakes were environmental, not a
+  regression). ruff format --preview and ruff check clean on all touched files.
+
+Unsure-items for the gate: - Should _exclude_output_paths ALSO get a deadline gate on an even-larger
+  repo (its cost now scales with the scan's unique file count, ~10x smaller but not zero), accepting
+  the narrow self-invalidation correctness risk described above? Left unbounded on purpose; flagging
+  for a judgment call. - check_codemap_freshness (`tg codemap --check`) was not touched -- it has no
+  --deadline concept today and was out of the campaign's stated scope (the write/generation path).
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* fix(codemap): commit the check_codemap_freshness call-site fix (gate BLOCK on #674)
+
+The _excluded_by_output_str resolved-kwarg migration updated only one of its two call sites;
+  check_codemap_freshness still passed out_dir=/index_path= -> TypeError crash on `tg codemap
+  --check` (all 8 CI checks red on the single root cause). The fix was applied to the worktree but
+  never committed/pushed; this commits it.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.82.0 (2026-07-19)
 
 ### Features
