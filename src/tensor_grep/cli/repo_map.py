@@ -13497,13 +13497,24 @@ def build_context_render_from_map(
     semantic_provider: str = "native",
     profile: bool = False,
     deadline_monotonic: float | None = None,
+    deadline_hit: _DeadlineBreakFlag | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
+    # #222 (call-2 enumeration-gap fix): `deadline_hit` is a NEW, additive, default-None
+    # passthrough to `build_context_pack_from_map` -- every pre-existing caller (repo_map's own
+    # `build_context_render`, session_store's warm-path renders) passes none and is byte-
+    # identical to before. It lets a caller that already owns a `_DeadlineBreakFlag` (agent_
+    # capsule's `build_agent_capsule_from_map`) observe "did ANY sibling stage INSIDE the pack
+    # build (symbol-scoring, pagerank, or this render's own auto_deweight `_detect_vendored_
+    # subtrees` call) cut short" -- previously unobservable here, so a truncation inside this
+    # call only ever surfaced as the generic `payload["partial"]`, with nothing naming WHICH
+    # assembly stage actually consumed the budget.
     collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
     context_payload = build_context_pack_from_map(
         repo_map,
         query,
         deadline_monotonic=deadline_monotonic,
+        deadline_hit=deadline_hit,
         _profiling_collector=collector,
     )
     normalized_profile = _normalize_render_profile(render_profile, optimize_context)
