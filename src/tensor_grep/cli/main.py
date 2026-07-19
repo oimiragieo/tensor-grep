@@ -276,7 +276,8 @@ evidence_app = typer.Typer(
 )
 
 ledger_app = typer.Typer(
-    help="Advisory, code-scoped agent-to-agent coordination claims (never blocks an edit).",
+    help="EXPERIMENTAL (Slice 1): advisory, code-scoped agent-to-agent coordination claims "
+    "(never blocks an edit). Surface and JSON schema may change in a minor release.",
     no_args_is_help=True,
 )
 
@@ -15408,7 +15409,8 @@ def ledger_claim(
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
-    """Record an advisory claim on symbols/files and report live overlaps from other agents.
+    """EXPERIMENTAL (Slice 1): record an advisory claim on symbols/files and report live
+    overlaps from other agents. Surface and JSON schema may change in a minor release.
 
     ADVISORY ONLY: this never blocks an edit. It always exits 0 on success -- even when
     other agents hold live overlapping claims, which are reported in `overlaps` for the
@@ -15500,10 +15502,11 @@ def ledger_release(
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
-    """Release a claim by exact `--claim-id` (any caller who knows the id) or by `--symbol`
-    (scoped to the resolved `--agent-id`'s own claims only). Always exits 0 on success,
-    including when nothing matched -- releasing an already-expired or unknown claim is not
-    an error. Exits 2 only on a fail-closed condition (lock timeout or a write failure)."""
+    """EXPERIMENTAL (Slice 1): release a claim by exact `--claim-id` (any caller who knows
+    the id) or by `--symbol` (scoped to the resolved `--agent-id`'s own claims only). Surface
+    and JSON schema may change in a minor release. Always exits 0 on success, including when
+    nothing matched -- releasing an already-expired or unknown claim is not an error. Exits 2
+    only on a fail-closed condition (lock timeout or a write failure)."""
     from tensor_grep.cli import _index_lock, ledger_store
 
     try:
@@ -15564,8 +15567,9 @@ def ledger_list(
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
-    """List live (non-expired) claims for the current root. Always exits 0, including an
-    empty result -- an empty claims list is a normal outcome, not a not-found error."""
+    """EXPERIMENTAL (Slice 1): list live (non-expired) claims for the current root. Surface
+    and JSON schema may change in a minor release. Always exits 0, including an empty result
+    -- an empty claims list is a normal outcome, not a not-found error."""
     from tensor_grep.cli import ledger_store
 
     try:
