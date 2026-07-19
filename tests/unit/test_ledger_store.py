@@ -452,3 +452,572 @@ def test_non_array_index_fails_closed(tmp_path: Path) -> None:
     _index_path(root).write_text(json.dumps({"not": "an array"}), encoding="utf-8")
     with pytest.raises(ledger_store.LedgerCorruptIndexError):
         ledger_store.list_claims(str(root))
+
+
+# ========================================================================================
+# Slice 2: findings -- content-addressed artifact reuse (tg ledger record / find)
+# ========================================================================================
+
+
+def _findings_index_path(root: Path) -> Path:
+    return root / ".tensor-grep" / "ledger" / "findings" / "index.json"
+
+
+def _findings_blobs_dir(root: Path) -> Path:
+    return root / ".tensor-grep" / "ledger" / "findings" / "blobs"
+
+
+def _write_artifact_json(tmp_path: Path, name: str, payload: dict) -> Path:
+    artifact_path = tmp_path / name
+    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+    return artifact_path
+
+
+def _rewrite_finding_expires_at(index_path: Path, *, when: datetime, index: int = 0) -> None:
+    records = json.loads(index_path.read_text(encoding="utf-8"))
+    records[index]["expires_at"] = when.isoformat()
+    index_path.write_text(json.dumps(records), encoding="utf-8")
+
+
+# --------------------------------------------------------------------------------------
+# default-inert: nothing is written to disk until the first record
+# --------------------------------------------------------------------------------------
+
+
+def test_no_findings_dir_created_until_first_record(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    assert not (root / ".tensor-grep").exists()
+
+    result = ledger_store.find_findings(str(root), symbol="value")
+    assert result == {"findings": [], "count": 0, "any_fresh": False}
+    assert not (root / ".tensor-grep").exists()
+
+
+def test_first_record_creates_findings_dir_index_and_blob(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"hello": "world"})
+    result = ledger_store.record_finding(
+        str(root), receipt_path=str(artifact), symbol="value", agent_id="agent-a"
+    )
+    assert _findings_index_path(root).exists()
+    sha = result["finding"]["receipt_sha256"]
+    assert (_findings_blobs_dir(root) / f"{sha}.json").exists()
+
+
+# --------------------------------------------------------------------------------------
+# record: usage/validation errors -- fail closed, nothing written
+# --------------------------------------------------------------------------------------
+
+
+def test_record_requires_receipt_path(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    with pytest.raises(ledger_store.LedgerUsageError):
+        ledger_store.record_finding(str(root), agent_id="agent-a")
+    assert not (root / ".tensor-grep").exists()
+
+
+def test_record_rejects_invalid_artifact_kind(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"x": 1})
+    with pytest.raises(ledger_store.LedgerUsageError):
+        ledger_store.record_finding(
+            str(root), receipt_path=str(artifact), artifact_kind="not-a-real-kind"
+        )
+    assert not (root / ".tensor-grep").exists()
+
+
+def test_record_missing_receipt_file_raises_artifact_error(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    with pytest.raises(ledger_store.LedgerArtifactError):
+        ledger_store.record_finding(str(root), receipt_path=str(tmp_path / "nope.json"))
+    assert not (root / ".tensor-grep").exists()
+
+
+def test_record_non_json_receipt_raises_artifact_error(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not valid json", encoding="utf-8")
+    with pytest.raises(ledger_store.LedgerArtifactError):
+        ledger_store.record_finding(str(root), receipt_path=str(bad))
+
+
+def test_record_oversized_receipt_raises_artifact_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _make_project(tmp_path)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"x": "y" * 1000})
+    monkeypatch.setattr(ledger_store, "_MAX_ARTIFACT_FILE_BYTES", 4)
+    with pytest.raises(ledger_store.LedgerArtifactError):
+        ledger_store.record_finding(str(root), receipt_path=str(artifact))
+
+
+def test_record_non_object_receipt_raises_artifact_error(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    artifact = tmp_path / "array.json"
+    artifact.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+    with pytest.raises(ledger_store.LedgerArtifactError):
+        ledger_store.record_finding(str(root), receipt_path=str(artifact))
+
+
+# --------------------------------------------------------------------------------------
+# record: shape, dedup, signed metadata
+# --------------------------------------------------------------------------------------
+
+
+def test_record_shape_and_schema_fields(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    result = ledger_store.record_finding(
+        str(root),
+        receipt_path=str(artifact),
+        artifact_kind="blast-radius",
+        symbol="value",
+        agent_id="agent-a",
+    )
+    finding = result["finding"]
+    assert finding["finding_id"].startswith("finding-")
+    assert finding["ledger_schema_version"] == ledger_store.LEDGER_SCHEMA_VERSION == 1
+    assert finding["kind"] == "finding"
+    assert finding["agent_id"] == "agent-a"
+    assert finding["artifact_kind"] == "blast-radius"
+    assert finding["symbol"] == "value"
+    assert finding["signed"] is False
+    assert finding["key_id"] is None
+    assert finding["blob_relpath"] == f"findings/blobs/{finding['receipt_sha256']}.json"
+    assert "revision" in finding
+    assert finding["ttl_seconds"] == 86400
+
+
+def test_record_default_artifact_kind_is_evidence_receipt(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    result = ledger_store.record_finding(str(root), receipt_path=str(artifact))
+    assert result["finding"]["artifact_kind"] == "evidence-receipt"
+
+
+def test_record_blank_symbol_becomes_none(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    result = ledger_store.record_finding(str(root), receipt_path=str(artifact), symbol="   ")
+    assert result["finding"]["symbol"] is None
+
+
+def test_record_ttl_override_and_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = _make_project(tmp_path)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    result = ledger_store.record_finding(str(root), receipt_path=str(artifact), ttl_seconds=42)
+    assert result["finding"]["ttl_seconds"] == 42
+
+    monkeypatch.setenv("TG_LEDGER_FINDING_TTL_SECONDS", "123")
+    result2 = ledger_store.record_finding(str(root), receipt_path=str(artifact))
+    assert result2["finding"]["ttl_seconds"] == 123
+
+
+def test_record_dedupes_identical_artifact_to_one_blob(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"same": "content"})
+
+    first = ledger_store.record_finding(
+        str(root), receipt_path=str(artifact), symbol="alpha", agent_id="agent-a"
+    )
+    second = ledger_store.record_finding(
+        str(root), receipt_path=str(artifact), symbol="beta", agent_id="agent-b"
+    )
+    assert first["finding"]["receipt_sha256"] == second["finding"]["receipt_sha256"]
+    assert first["finding"]["finding_id"] != second["finding"]["finding_id"]  # two pointers...
+    blob_files = list(_findings_blobs_dir(root).iterdir())
+    assert len(blob_files) == 1  # ...one blob
+
+
+def test_record_signed_artifact_captures_signed_true_and_key_id(tmp_path: Path) -> None:
+    from tensor_grep.cli import evidence_signing
+
+    root = _make_project(tmp_path)
+    key_path = tmp_path / "signing.key"
+    keypair = evidence_signing.generate_keypair(key_path)
+    signed_artifact = evidence_signing.sign_receipt(
+        {"kind": "evidence-receipt"}, private_key_path=key_path
+    )
+    artifact_path = _write_artifact_json(tmp_path, "signed.json", signed_artifact)
+
+    result = ledger_store.record_finding(str(root), receipt_path=str(artifact_path), symbol="value")
+    assert result["finding"]["signed"] is True
+    assert result["finding"]["key_id"] == keypair["key_id"]
+
+
+# --------------------------------------------------------------------------------------
+# find: usage errors, empty results
+# --------------------------------------------------------------------------------------
+
+
+def test_find_requires_symbol(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    with pytest.raises(ledger_store.LedgerUsageError):
+        ledger_store.find_findings(str(root), symbol="")
+    with pytest.raises(ledger_store.LedgerUsageError):
+        ledger_store.find_findings(str(root), symbol="   ")
+
+
+def test_find_no_match_returns_empty(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    ledger_store.record_finding(str(root), receipt_path=str(artifact), symbol="alpha")
+
+    result = ledger_store.find_findings(str(root), symbol="beta")
+    assert result == {"findings": [], "count": 0, "any_fresh": False}
+
+
+def test_find_filters_by_artifact_kind(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    artifact_a = _write_artifact_json(tmp_path, "a.json", {"kind": "a"})
+    artifact_b = _write_artifact_json(tmp_path, "b.json", {"kind": "b"})
+    ledger_store.record_finding(
+        str(root), receipt_path=str(artifact_a), artifact_kind="blast-radius", symbol="value"
+    )
+    ledger_store.record_finding(
+        str(root), receipt_path=str(artifact_b), artifact_kind="repo-map", symbol="value"
+    )
+
+    only_blast = ledger_store.find_findings(str(root), symbol="value", artifact_kind="blast-radius")
+    assert only_blast["count"] == 1
+    assert only_blast["findings"][0]["artifact_kind"] == "blast-radius"
+
+    both = ledger_store.find_findings(str(root), symbol="value")
+    assert both["count"] == 2
+
+
+# --------------------------------------------------------------------------------------
+# find: freshness -- revision-primary, never fabricated, never poisoned by the ledger's own
+# on-disk footprint (record itself writes under .tensor-grep/ledger/findings/, which must NOT
+# make the very next find() see the repo as dirty against itself)
+# --------------------------------------------------------------------------------------
+
+
+def test_find_fresh_true_for_matching_revision(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    _git_init(root)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    ledger_store.record_finding(str(root), receipt_path=str(artifact), symbol="value")
+
+    result = ledger_store.find_findings(str(root), symbol="value")
+    assert result["count"] == 1
+    assert result["findings"][0]["fresh"] is True
+    assert result["any_fresh"] is True
+
+
+def test_find_fresh_false_when_revision_unavailable(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)  # never git-inited -- revision status stays "unavailable"
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    ledger_store.record_finding(str(root), receipt_path=str(artifact), symbol="value")
+
+    result = ledger_store.find_findings(str(root), symbol="value")
+    assert result["findings"][0]["fresh"] is False  # never fabricated as fresh
+    assert result["any_fresh"] is False
+
+
+def test_find_freshness_flips_false_after_dirty_tree_change(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    _git_init(root)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    ledger_store.record_finding(str(root), receipt_path=str(artifact), symbol="value")
+
+    before = ledger_store.find_findings(str(root), symbol="value")
+    assert before["findings"][0]["fresh"] is True
+
+    (root / "mod.py").write_text("def value():\n    return 2\n", encoding="utf-8")  # real edit
+
+    after = ledger_store.find_findings(str(root), symbol="value")
+    assert after["findings"][0]["fresh"] is False
+    assert after["any_fresh"] is False
+
+
+def test_find_fresh_only_excludes_stale(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)  # revision unavailable -> never fresh
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    ledger_store.record_finding(str(root), receipt_path=str(artifact), symbol="value")
+
+    result = ledger_store.find_findings(str(root), symbol="value", fresh_only=True)
+    assert result == {"findings": [], "count": 0, "any_fresh": False}
+
+
+# --------------------------------------------------------------------------------------
+# find: integrity -- fail-closed, never serve tampered/corrupted data
+# --------------------------------------------------------------------------------------
+
+
+def test_find_tampered_blob_raises_integrity_error(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    result = ledger_store.record_finding(str(root), receipt_path=str(artifact), symbol="value")
+    sha = result["finding"]["receipt_sha256"]
+    blob_path = _findings_blobs_dir(root) / f"{sha}.json"
+
+    blob_path.write_text(json.dumps({"a": 2}), encoding="utf-8")  # tamper: different content
+
+    with pytest.raises(ledger_store.LedgerIntegrityError):
+        ledger_store.find_findings(str(root), symbol="value")
+
+
+def test_find_missing_blob_raises_integrity_error(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    result = ledger_store.record_finding(str(root), receipt_path=str(artifact), symbol="value")
+    sha = result["finding"]["receipt_sha256"]
+    (_findings_blobs_dir(root) / f"{sha}.json").unlink()
+
+    with pytest.raises(ledger_store.LedgerIntegrityError):
+        ledger_store.find_findings(str(root), symbol="value")
+
+
+def test_find_ignores_tampered_blob_relpath_and_uses_content_address(tmp_path: Path) -> None:
+    """NIT 1 regression: the blob READ path is derived from the recorded receipt_sha256 via
+    _blob_path, never trusted from the index's own blob_relpath string.
+
+    Setup: leave the REAL content-addressed blob (named by the correct sha256) untouched and
+    correct, but corrupt ONLY blob_relpath in the index to point at a DECOY file with
+    DIFFERENT content. If find_findings ever read from blob_relpath instead of the content
+    address, the decoy's digest would not match receipt_sha256 and this would raise
+    LedgerIntegrityError. It must NOT raise -- proving the read is content-addressed, not
+    index-relpath-addressed.
+    """
+    root = _make_project(tmp_path)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    ledger_store.record_finding(str(root), receipt_path=str(artifact), symbol="value")
+
+    decoy_path = _findings_blobs_dir(root) / "decoy.json"
+    decoy_path.write_text(json.dumps({"decoy": True}), encoding="utf-8")
+
+    records = json.loads(_findings_index_path(root).read_text(encoding="utf-8"))
+    records[0]["blob_relpath"] = "findings/blobs/decoy.json"
+    _findings_index_path(root).write_text(json.dumps(records), encoding="utf-8")
+
+    result = ledger_store.find_findings(str(root), symbol="value")  # must NOT raise
+    assert result["count"] == 1
+
+
+def test_find_refuses_malformed_receipt_sha256(tmp_path: Path) -> None:
+    """NIT 1 regression: a hand-tampered receipt_sha256 that is not a well-formed 64-char hex
+    digest (e.g. a path-traversal-shaped string) is refused outright before _blob_path is ever
+    constructed from it."""
+    root = _make_project(tmp_path)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    ledger_store.record_finding(str(root), receipt_path=str(artifact), symbol="value")
+
+    records = json.loads(_findings_index_path(root).read_text(encoding="utf-8"))
+    records[0]["receipt_sha256"] = "../../../../elsewhere"
+    _findings_index_path(root).write_text(json.dumps(records), encoding="utf-8")
+
+    with pytest.raises(ledger_store.LedgerIntegrityError, match="malformed receipt_sha256"):
+        ledger_store.find_findings(str(root), symbol="value")
+
+
+def test_find_does_not_integrity_check_filtered_out_stale_findings(tmp_path: Path) -> None:
+    """A tampered blob for a finding EXCLUDED by --fresh-only must not fail the whole call --
+    only findings actually being served are integrity-checked."""
+    root = _make_project(tmp_path)  # revision unavailable -> never fresh, always excluded
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    result = ledger_store.record_finding(str(root), receipt_path=str(artifact), symbol="value")
+    sha = result["finding"]["receipt_sha256"]
+    (_findings_blobs_dir(root) / f"{sha}.json").write_text(json.dumps({"a": 2}), encoding="utf-8")
+
+    out = ledger_store.find_findings(str(root), symbol="value", fresh_only=True)
+    assert out == {"findings": [], "count": 0, "any_fresh": False}
+
+
+# --------------------------------------------------------------------------------------
+# find: signed / key_trusted
+# --------------------------------------------------------------------------------------
+
+
+def test_find_signed_finding_key_trusted_true_with_pinned_key(tmp_path: Path) -> None:
+    from tensor_grep.cli import evidence_signing
+
+    root = _make_project(tmp_path)
+    key_path = tmp_path / "signing.key"
+    keypair = evidence_signing.generate_keypair(key_path)
+    signed_artifact = evidence_signing.sign_receipt(
+        {"kind": "evidence-receipt"}, private_key_path=key_path
+    )
+    artifact_path = _write_artifact_json(tmp_path, "signed.json", signed_artifact)
+    ledger_store.record_finding(str(root), receipt_path=str(artifact_path), symbol="value")
+
+    trusted = ledger_store.find_findings(
+        str(root), symbol="value", trusted_public_keys=[keypair["public_key"]]
+    )
+    assert trusted["findings"][0]["key_trusted"] is True
+
+    untrusted = ledger_store.find_findings(str(root), symbol="value")
+    assert untrusted["findings"][0]["key_trusted"] is None  # no trusted keys configured
+
+
+def test_find_unsigned_finding_key_trusted_is_none(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    ledger_store.record_finding(str(root), receipt_path=str(artifact), symbol="value")
+
+    result = ledger_store.find_findings(str(root), symbol="value")
+    assert result["findings"][0]["signed"] is False
+    assert result["findings"][0]["key_trusted"] is None
+
+
+# --------------------------------------------------------------------------------------
+# cap eviction (count + total blob bytes) and blob GC (expired + orphaned)
+# --------------------------------------------------------------------------------------
+
+
+def test_eviction_caps_live_findings_at_max_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _make_project(tmp_path)
+    monkeypatch.setattr(ledger_store, "_MAX_LIVE_FINDINGS", 3)
+    for i in range(5):
+        artifact = _write_artifact_json(tmp_path, f"artifact{i}.json", {"i": i})
+        ledger_store.record_finding(
+            str(root), receipt_path=str(artifact), symbol=f"sym{i}", agent_id=f"agent-{i}"
+        )
+    records = json.loads(_findings_index_path(root).read_text(encoding="utf-8"))
+    assert len(records) == 3
+    kept_symbols = {r["symbol"] for r in records}
+    assert kept_symbols == {"sym2", "sym3", "sym4"}  # oldest 2 evicted
+
+
+def test_eviction_over_byte_cap_evicts_oldest_and_gcs_blob(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _make_project(tmp_path)
+    artifact_payload = {"a": "x" * 200}
+    # Derive the cap from the REAL on-disk blob size (not a guessed constant): room for exactly
+    # one artifact's blob plus headroom, but not two -- deterministic regardless of exact JSON
+    # serialization details. The byte cap is floored at _MAX_ARTIFACT_FILE_BYTES (NIT 2 fix: a
+    # cap below one artifact's size must never silently evict the record just written), so
+    # exercising byte-cap eviction with small fixture artifacts also requires shrinking that
+    # floor -- otherwise the real 8 MiB default would swallow both tiny artifacts and nothing
+    # would ever be evicted.
+    one_blob_bytes = len(json.dumps(artifact_payload, indent=2).encode("utf-8"))
+    monkeypatch.setattr(ledger_store, "_MAX_ARTIFACT_FILE_BYTES", one_blob_bytes + 50)
+    monkeypatch.setenv("TG_LEDGER_MAX_BLOB_BYTES", str(one_blob_bytes + 50))
+
+    artifact_a = _write_artifact_json(tmp_path, "a.json", artifact_payload)
+    result_a = ledger_store.record_finding(str(root), receipt_path=str(artifact_a), symbol="alpha")
+    sha_a = result_a["finding"]["receipt_sha256"]
+    assert (_findings_blobs_dir(root) / f"{sha_a}.json").exists()
+
+    artifact_b = _write_artifact_json(tmp_path, "b.json", {"b": "y" * 200})
+    ledger_store.record_finding(str(root), receipt_path=str(artifact_b), symbol="beta")
+
+    records = json.loads(_findings_index_path(root).read_text(encoding="utf-8"))
+    assert {r["symbol"] for r in records} == {"beta"}  # alpha evicted (oldest)
+    assert not (_findings_blobs_dir(root) / f"{sha_a}.json").exists()  # ...and its blob GC'd
+
+
+def test_record_survives_pathologically_small_byte_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """NIT 2 regression: TG_LEDGER_MAX_BLOB_BYTES configured well below a single artifact's
+    size must never silently evict the record `record_finding` just wrote in the SAME call --
+    the byte cap is floored at _MAX_ARTIFACT_FILE_BYTES so one artifact always fits, no matter
+    how small the configured/env cap is. Before the fix, this exact scenario made `record`
+    return a "success" finding payload for a record that was immediately evicted + GC'd."""
+    root = _make_project(tmp_path)
+    monkeypatch.setenv("TG_LEDGER_MAX_BLOB_BYTES", "1")  # pathologically small
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+
+    result = ledger_store.record_finding(str(root), receipt_path=str(artifact), symbol="value")
+    sha = result["finding"]["receipt_sha256"]
+
+    records = json.loads(_findings_index_path(root).read_text(encoding="utf-8"))
+    assert len(records) == 1
+    assert records[0]["symbol"] == "value"
+    assert (_findings_blobs_dir(root) / f"{sha}.json").exists()
+
+
+def test_expired_findings_pruned_and_orphaned_blob_gc_on_next_record(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    artifact_a = _write_artifact_json(tmp_path, "a.json", {"a": 1})
+    result_a = ledger_store.record_finding(
+        str(root), receipt_path=str(artifact_a), symbol="alpha", ttl_seconds=1
+    )
+    sha_a = result_a["finding"]["receipt_sha256"]
+    _rewrite_finding_expires_at(
+        _findings_index_path(root), when=datetime.now(UTC) - timedelta(seconds=5)
+    )
+
+    artifact_b = _write_artifact_json(tmp_path, "b.json", {"b": 1})
+    ledger_store.record_finding(str(root), receipt_path=str(artifact_b), symbol="beta")
+
+    records = json.loads(_findings_index_path(root).read_text(encoding="utf-8"))
+    assert len(records) == 1
+    assert records[0]["symbol"] == "beta"
+    assert not (_findings_blobs_dir(root) / f"{sha_a}.json").exists()
+
+
+def test_shared_blob_not_gcd_while_any_referencing_finding_survives(tmp_path: Path) -> None:
+    """Two findings pointing at the SAME dedup'd blob: expiring/evicting ONE must not delete
+    the blob out from under the other."""
+    root = _make_project(tmp_path)
+    artifact = _write_artifact_json(tmp_path, "same.json", {"same": True})
+    first = ledger_store.record_finding(
+        str(root), receipt_path=str(artifact), symbol="alpha", ttl_seconds=1
+    )
+    ledger_store.record_finding(str(root), receipt_path=str(artifact), symbol="beta")
+    sha = first["finding"]["receipt_sha256"]
+
+    _rewrite_finding_expires_at(
+        _findings_index_path(root), when=datetime.now(UTC) - timedelta(seconds=5), index=0
+    )
+    artifact_c = _write_artifact_json(tmp_path, "c.json", {"c": 1})
+    ledger_store.record_finding(str(root), receipt_path=str(artifact_c), symbol="gamma")
+
+    records = json.loads(_findings_index_path(root).read_text(encoding="utf-8"))
+    assert {r["symbol"] for r in records} == {"beta", "gamma"}  # alpha's pointer gone (expired)
+    assert (_findings_blobs_dir(root) / f"{sha}.json").exists()  # ...but the SHARED blob lives
+
+
+# --------------------------------------------------------------------------------------
+# bounded/corrupt findings index reads fail closed (never silently read as "no findings")
+# --------------------------------------------------------------------------------------
+
+
+def test_oversized_findings_index_refuses_to_parse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _make_project(tmp_path)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    ledger_store.record_finding(str(root), receipt_path=str(artifact), symbol="value")
+    monkeypatch.setattr(ledger_store, "_MAX_INDEX_FILE_BYTES", 4)
+    with pytest.raises(ledger_store.LedgerIndexTooLargeError):
+        ledger_store.find_findings(str(root), symbol="value")
+
+
+def test_corrupt_findings_index_fails_closed(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    ledger_store.record_finding(str(root), receipt_path=str(artifact), symbol="value")
+    _findings_index_path(root).write_text("{not valid json", encoding="utf-8")
+    with pytest.raises(ledger_store.LedgerCorruptIndexError):
+        ledger_store.find_findings(str(root), symbol="value")
+
+
+def test_non_array_findings_index_fails_closed(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    ledger_store.record_finding(str(root), receipt_path=str(artifact), symbol="value")
+    _findings_index_path(root).write_text(json.dumps({"not": "an array"}), encoding="utf-8")
+    with pytest.raises(ledger_store.LedgerCorruptIndexError):
+        ledger_store.find_findings(str(root), symbol="value")
+
+
+# --------------------------------------------------------------------------------------
+# findings and claims coexist without cross-contamination (separate index.json each)
+# --------------------------------------------------------------------------------------
+
+
+def test_findings_and_claims_indices_are_independent(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    ledger_store.submit_claim(str(root), symbols=["value"], agent_id="agent-a")
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    ledger_store.record_finding(str(root), receipt_path=str(artifact), symbol="value")
+
+    assert ledger_store.list_claims(str(root))["count"] == 1
+    assert ledger_store.find_findings(str(root), symbol="value")["count"] == 1
+    assert _findings_index_path(root) != ledger_store._index_path(root)
