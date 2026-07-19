@@ -1,6 +1,87 @@
 # CHANGELOG
 
 
+## v1.81.20 (2026-07-19)
+
+### Bug Fixes
+
+- **agent**: Bound the vendored-subtree dedup loop's super-linear cost under deadline
+  (real-workspace-scale residual of #669)
+  ([#671](https://github.com/oimiragieo/tensor-grep/pull/671),
+  [`55c9310`](https://github.com/oimiragieo/tensor-grep/commit/55c931050d19e1556fdde340ad231bee346d91fc))
+
+* fix(agent): bound the vendored-subtree dedup loop's super-linear cost under deadline
+  (real-workspace-scale residual of #669)
+
+An OLD-vs-NEW real-binary re-verify of #669 on a real ~50k-file/40-sibling-project workspace
+  falsified its magnitude claim: the fix works at small scale (1.24x overshoot at --deadline 10) but
+  a super-linear stage still engages at larger scale (>200s under cProfile at --deadline 30; 146s
+  unprofiled at the 60s default = 2.43x).
+
+Root cause, localized via cProfile on a reproducing synthetic (not the real workspace -- CPU-safe):
+  `_detect_vendored_subtrees`'s outermost-nested-chain dedup loop (orient_capsule.py) calls
+  `_repo_map._path_is_relative_to(root / rel_dir, root / existing)` inside an
+  O(candidate_roots^2)-shaped `any()` comparison. That helper does TWO real `Path.resolve()`
+  filesystem syscalls (Windows `nt._getfinalpathname`, independently documented expensive by
+  `_precomputed_validation_files_for_root`'s own docstring) PER PAIR. The existing per-iteration
+  deadline check (#220/#669) correctly bounds the ITERATION COUNT, but not each iteration's own
+  cost, which grows with `len(subtree_rel_roots)` -- so on a workspace with thousands of
+  manifest-bearing directories, a handful of late, expensive iterations can blow tens of seconds
+  past --deadline between one checkpoint and the next.
+
+Reproduced on a synthetic sized so candidate roots stay INDEPENDENT (no common absorbing ancestor --
+  unlike #220's own `manifest_heavy_repo` fixture, whose nested packages absorb into their own
+  project root and never expose this): unbounded per-call cost scaled super-linearly (~quadratic)
+  with candidate count -- 7.7s at 120, 20.7s at 200, 40.9s at 304, 102.6s at ~500. cProfile at 320
+  candidates attributed 88-92% of wall-clock to this one dedup genexpr, ~61% to
+  `nt._getfinalpathname` alone.
+
+Fix: `rel_dir`/`existing` are both already lexically relative to the same resolved `root` (no
+  resolve() of their own), so nesting is exactly a `.parts` prefix test -- no filesystem I/O needed.
+  Same fix shape this codebase already uses twice: this function's own STRONG-3 code-file-membership
+  test, and PR #670's `_tier` helper (repo_map.py). Measured 144x faster on the exact ~500-candidate
+  fixture that motivated this fix (102.6s -> 0.71s), byte-identical output confirmed on a real
+  STRONG-0-root-absorbs-nested-manifest scenario.
+
+Second, independent gap closed: `agent_capsule`'s `skipped_assembly_stages` only ever named call-1's
+  own `_detect_vendored_subtrees` invocation -- a SECOND call inside
+  `repo_map._build_context_pack_from_map`'s `auto_deweight` pass could trip its own internal
+  deadline_hit and correctly set `partial: true`, but nothing named WHICH assembly stage actually
+  consumed the budget (reproduced empirically: partial:true with an absent assembly_stages_skipped).
+  `build_context_render_from_map` gained a new, additive, default-None `deadline_hit` passthrough so
+  the caller can observe this and name it honestly as "context_pack_assembly" -- deliberately
+  distinct from "vendored_subtree_detection" since the shared flag also covers symbol-scoring and
+  pagerank, and mislabeling would overclaim precision this signal alone cannot support.
+
+TDD: new unit tests prove (1) the dedup loop never calls the resolve()-based helper again
+  (monkeypatch-raises regression guard), (2) byte-identical dedup results on a real nesting scenario
+  and with/without a far-future deadline, (3) the deadline_hit passthrough is wired correctly
+  end-to-end through agent_capsule. New integration SLA test (real subprocess, real wall-clock,
+  double-timeout anti-hang protocol) proves wall-to-exit stays within deadline*2 at two deadlines on
+  a ~500-independent-candidate fixture verified to fail against the pre-fix code (102.6s/call) and
+  pass cleanly post-fix (0.71s/call) -- outcome-agnostic on returncode per the #669 CI lesson.
+
+Full related test surface: 494 passed, 1 skipped (416 pre-existing agent/deadline/orient/
+  context-pack unit tests + 67 session-daemon tests + 2 pre-existing #220 integration tests + 9 new
+  tests). ruff format --preview and ruff check clean on all touched files.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* fix(agent): fold context_pack_assembly into the assembly_stages_skipped doc/comment enumeration
+
+Orchestrator-dispatched independent Opus gate on PR #671 found a 2-line doc-drift gap this PR's own
+  commissioned gate missed: docs/CONTRACTS.md:102's assembly_stages_skipped contract line and
+  agent_capsule.py's mirroring comment both still listed only the pre-existing
+  "vendored_subtree_detection"/"suggested_scope" pair, not the new "context_pack_assembly" name this
+  PR's enumeration-gap fix introduced. Both now list all three. No code behavior change; ruff format
+  --preview and ruff check clean on both files; tests/unit/test_public_docs_governance.py still
+  passes (43 passed).
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.81.19 (2026-07-19)
 
 ### Bug Fixes
