@@ -1257,11 +1257,23 @@ def check_codemap_freshness(
     walk_cap = (
         int(stamped_cap) if isinstance(stamped_cap, int) and stamped_cap > 0 else max_repo_files
     )
+    # Mirrors _exclude_output_paths's own setup (codemap.py, ~line 517): resolve out_dir/
+    # index_path ONCE and memoize per-candidate resolution -- this is the SECOND call site of
+    # _excluded_by_output_str's resolved-kwarg contract (missed in the original fix; caught by
+    # independent gate review on PR #674 -- see git history for the TypeError it produced here).
+    resolved_out_dir = _resolved_or_self(out_dir)
+    resolved_index_path = _resolved_or_self(index_path)
+    resolve_cache: dict[str, Path | None] = {}
     try:
         live_universe = [
             f
             for f in _walk_only_universe(root, max_repo_files=walk_cap)
-            if not _excluded_by_output_str(f, out_dir=out_dir, index_path=index_path)
+            if not _excluded_by_output_str(
+                f,
+                resolved_out_dir=resolved_out_dir,
+                resolved_index_path=resolved_index_path,
+                resolve_cache=resolve_cache,
+            )
         ]
         live_manifest = _tree_manifest_sha256(sorted(set(live_universe)), root)
     except OSError:
