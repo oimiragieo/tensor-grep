@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 from typer.testing import CliRunner
@@ -1727,3 +1728,227 @@ def test_build_file_imports_sys_path_insert_here_alias_resolves(tmp_path: Path) 
     entry = next(current for current in payload["imports"] if current["module"] == "aliasmod")
     assert entry["resolved"] == str(lib_mod.resolve())
     assert entry["external"] is False
+
+
+# ---------------------------------------------------------------------------------------------
+# Proximity-tiered reverse-import candidate ordering. Dogfood flap (v1.81.15 PASS
+# -> v1.81.17 INCOMPLETE "0 importers @ 330/1035 files scanned" on a 50k-file WSL multi-repo
+# workspace) traced to `build_file_importers_from_map` slicing its CALLER_SCAN_FILE_CEILING /
+# --deadline budget off a PLAIN lexicographic path sort (`sorted(reverse_map.get(target_file,
+# set()))`), which buckets candidates by absolute-path string -- i.e. by REPO NAME alphabetically
+# on a multi-repo ROOT -- with zero preference for TARGET's own repo. `_tier_reverse_importer_candidates`
+# replaces that with a 4-tier proximity order (same dir/ancestor dirs < rest of project < other
+# project same language < everything else) so a partial scan covers the highest-yield candidates
+# first, while an unbounded scan still finds the identical result set.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_tier_reverse_importer_candidates_orders_by_proximity(tmp_path: Path) -> None:
+    """Direct unit coverage of the 4 tiers: same-dir/ancestor-dir (0) < rest of same project (1)
+    < other project, same language (2) < everything else (3); stable path sort within a tier."""
+    proj = tmp_path / "proj"
+    (proj / ".git").mkdir(parents=True)
+    pkg = proj / "src" / "pkg"
+    pkg.mkdir(parents=True)
+    target = pkg / "target.py"
+    target.write_text("", encoding="utf-8")
+
+    sibling = pkg / "sibling.py"  # tier 0: same directory as target
+    sibling.write_text("", encoding="utf-8")
+    top_level_sibling = proj / "src" / "top_level_sibling.py"  # tier 0: target's ancestor dir
+    top_level_sibling.write_text("", encoding="utf-8")
+    same_project_elsewhere = proj / "tests" / "test_target.py"  # tier 1: same project, NOT an
+    same_project_elsewhere.parent.mkdir(parents=True)  # ancestor of target's own directory
+    same_project_elsewhere.write_text("", encoding="utf-8")
+    other_repo_same_language = tmp_path / "other_proj" / "other.py"  # tier 2: other repo, .py
+    other_repo_same_language.parent.mkdir(parents=True)
+    other_repo_same_language.write_text("", encoding="utf-8")
+    other_repo_other_language = tmp_path / "other_proj" / "notes.md"  # tier 3: other repo, .md
+    other_repo_other_language.write_text("", encoding="utf-8")
+
+    candidates = {
+        str(sibling.resolve()),
+        str(top_level_sibling.resolve()),
+        str(same_project_elsewhere.resolve()),
+        str(other_repo_same_language.resolve()),
+        str(other_repo_other_language.resolve()),
+    }
+
+    ordered = repo_map._tier_reverse_importer_candidates(candidates, str(target))
+
+    assert set(ordered[:2]) == {str(sibling.resolve()), str(top_level_sibling.resolve())}
+    assert ordered[2] == str(same_project_elsewhere.resolve())
+    assert ordered[3] == str(other_repo_same_language.resolve())
+    assert ordered[4] == str(other_repo_other_language.resolve())
+
+
+def test_tier_reverse_importer_candidates_is_deterministic(tmp_path: Path) -> None:
+    """Two calls over the same candidate MEMBERSHIP produce byte-identical output -- guaranteed
+    by construction (the function always ends in a full `sorted(..., key=(tier, path))`, a total
+    order with no ties beyond the path string itself), but pinned here as an explicit regression
+    guard against a future change that stops fully sorting the result."""
+    proj = tmp_path / "proj"
+    (proj / ".git").mkdir(parents=True)
+    target = proj / "target.py"
+    target.write_text("", encoding="utf-8")
+    paths: list[str] = []
+    for idx in range(30):
+        current = proj / f"file_{idx:02d}.py"
+        current.write_text("", encoding="utf-8")
+        paths.append(str(current.resolve()))
+
+    first = repo_map._tier_reverse_importer_candidates(set(paths), str(target))
+    second = repo_map._tier_reverse_importer_candidates(set(paths), str(target))
+
+    assert first == second
+    assert first == sorted(paths)  # all same-project here -- collapses to a plain path sort
+
+
+def _build_synthetic_multi_repo_workspace(
+    tmp_path: Path,
+    *,
+    decoy_repo_count: int = 36,
+    decoy_files_per_repo: int = 10,
+) -> dict[str, Any]:
+    """A ~40-repo/few-hundred-file synthetic ROOT for the importers ceiling-bounded-scan
+    coverage: `decoy_repo_count` unrelated repos, each with several files that ALIAS-prefilter
+    match the target via a plain `import helpers` (the real `_reverse_importers` prefilter keys
+    on basename only -- see `_module_aliases_for_path` -- so this is exactly the kind of
+    same-named-but-unrelated noise a huge multi-repo ROOT produces), one importer reached only
+    from a DISTANT repo via a sys.path hack, and the target's own small repo with 3 real
+    importers (one same-directory, two elsewhere in the same project). Decoy repo names
+    ("repo_00".."repo_NN") are chosen to sort BEFORE the target repo name ("zzz_target_repo") in
+    plain lexicographic order, so a pre-fix plain-alphabetical candidate sort exhausts a partial
+    budget entirely on decoys before ever reaching a real importer -- reproducing the reported
+    flap deterministically."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    target_repo = workspace / "zzz_target_repo"
+    (target_repo / ".git").mkdir(parents=True)
+    pkg = target_repo / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    target_file = pkg / "helpers.py"
+    target_file.write_text("def foo():\n    return 1\n", encoding="utf-8")
+
+    same_dir_importer = pkg / "main.py"  # tier 0
+    same_dir_importer.write_text("import pkg.helpers\n", encoding="utf-8")
+
+    sub = pkg / "sub"
+    sub.mkdir()
+    (sub / "__init__.py").write_text("", encoding="utf-8")
+    nested_importer = sub / "consumer.py"  # tier 1 (not an ancestor dir of target's own dir)
+    nested_importer.write_text("from pkg.helpers import foo\n", encoding="utf-8")
+
+    other = target_repo / "other"
+    other.mkdir()
+    sibling_importer = other / "another_consumer.py"  # tier 1 (sibling subtree, same project)
+    sibling_importer.write_text("import pkg.helpers\n", encoding="utf-8")
+
+    same_repo_importers = {
+        str(same_dir_importer.resolve()),
+        str(nested_importer.resolve()),
+        str(sibling_importer.resolve()),
+    }
+
+    decoy_repo_dirs = []
+    for repo_idx in range(decoy_repo_count):
+        repo_dir = workspace / f"repo_{repo_idx:02d}"
+        repo_dir.mkdir()
+        decoy_repo_dirs.append(repo_dir)
+        for file_idx in range(decoy_files_per_repo):
+            decoy = repo_dir / f"decoy_{file_idx:02d}.py"
+            # Aliases to "helpers" (target's basename) via _module_aliases_for_path, so this
+            # file enters the reverse-import PREFILTER -- but nothing at any of ITS OWN
+            # candidate roots is a real `helpers.py`, so it never CONFIRMS as a real edge.
+            decoy.write_text("import helpers\n", encoding="utf-8")
+
+    distant_importer = decoy_repo_dirs[0] / "distant_consumer.py"
+    # Only a statically-resolvable sys.path hack lets an import from a SIBLING repo resolve --
+    # the natural "ancestor directory up to repo root" search (_python_candidate_roots) never
+    # crosses a repo boundary on its own.
+    distant_importer.write_text(
+        "import sys, os\n"
+        'sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "zzz_target_repo", "pkg"))\n'
+        "from helpers import foo\n",
+        encoding="utf-8",
+    )
+
+    total_candidates = decoy_repo_count * decoy_files_per_repo + 1 + len(same_repo_importers)
+    return {
+        "workspace": workspace,
+        "target_file": target_file,
+        "same_repo_importers": same_repo_importers,
+        "distant_importer": str(distant_importer.resolve()),
+        "total_candidates": total_candidates,
+    }
+
+
+def test_build_file_importers_ceiling_bounded_scan_finds_same_repo_importers_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end proof: on a ~40-repo/few-hundred-file ROOT, a CALLER_SCAN_FILE_CEILING
+    bounded to ~30% of the prefiltered candidates still finds all 3 real same-repo importers
+    (proximity-tiered first) and honestly stamps the result incomplete -- the exact shape of the
+    "0 importers @ 330/1035 files scanned" dogfood flap, now with the real importers surviving
+    the cut instead of being stranded behind alphabetically-earlier decoy repos."""
+    fixture = _build_synthetic_multi_repo_workspace(tmp_path)
+    budget = max(1, int(fixture["total_candidates"] * 0.3))
+    monkeypatch.setattr(repo_map, "CALLER_SCAN_FILE_CEILING", budget)
+
+    payload = repo_map.build_file_importers(fixture["target_file"], fixture["workspace"])
+
+    assert payload["result_incomplete"] is True
+    caller_scan_limit = payload["caller_scan_limit"]
+    assert caller_scan_limit["possibly_truncated"] is True
+    assert caller_scan_limit["files_total"] == fixture["total_candidates"]
+    importer_files = set(payload["importer_files"])
+    assert fixture["same_repo_importers"] <= importer_files
+
+
+def test_build_file_importers_ceiling_bounded_scan_misses_importers_without_tiering(
+    tmp_path: Path,
+) -> None:
+    """Regression guard / causal proof for the fix above: simulate the PRE-FIX plain
+    lexicographic order (what `prefiltered = sorted(reverse_map.get(target_file, set()))` used
+    to do) over the IDENTICAL candidate set and budget -- the 3 same-repo importers, whose repo
+    name ("zzz_target_repo") sorts AFTER all decoy repo names ("repo_00".."repo_35"), are
+    entirely stranded past the cut line. This is the exact reported dogfood flap this fix closes."""
+    fixture = _build_synthetic_multi_repo_workspace(tmp_path)
+    budget = max(1, int(fixture["total_candidates"] * 0.3))
+
+    rmap = repo_map.build_repo_map(fixture["workspace"])
+    all_files = [str(current) for current in rmap.get("files", [])]
+    imports_by_file = {
+        str(current["file"]): list(
+            dict.fromkeys(str(name) for name in current.get("imports", []) if name)
+        )
+        for current in rmap.get("imports", [])
+    }
+    reverse_map = repo_map._reverse_importers(
+        all_files, imports_by_file, include_directory_index_aliases=True
+    )
+    target_str = str(fixture["target_file"].resolve())
+    pre_fix_order = sorted(reverse_map.get(target_str, set()))
+    assert len(pre_fix_order) == fixture["total_candidates"]
+    pre_fix_bounded = set(pre_fix_order[:budget])
+
+    assert fixture["same_repo_importers"].isdisjoint(pre_fix_bounded)
+
+
+def test_build_file_importers_unbounded_result_set_unaffected_by_tiering(tmp_path: Path) -> None:
+    """Regression guard: when nothing is truncated (no ceiling/deadline hit), the tiered
+    candidate order is a pure REORDERING of the exact same membership -- the found result set
+    must equal what the OLD plain lexicographic order would ALSO find, since every candidate
+    gets confirmed either way and `build_file_importers_from_map` re-sorts `edges` by
+    (file, line) before returning."""
+    fixture = _build_synthetic_multi_repo_workspace(tmp_path)
+    assert fixture["total_candidates"] < repo_map.CALLER_SCAN_FILE_CEILING  # no ceiling hit here
+
+    payload = repo_map.build_file_importers(fixture["target_file"], fixture["workspace"])
+
+    assert payload.get("result_incomplete") is not True
+    importer_files = set(payload["importer_files"])
+    expected = fixture["same_repo_importers"] | {fixture["distant_importer"]}
+    assert importer_files == expected
