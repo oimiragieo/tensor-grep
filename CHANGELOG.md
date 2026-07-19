@@ -1,6 +1,106 @@
 # CHANGELOG
 
 
+## v1.81.18 (2026-07-19)
+
+### Bug Fixes
+
+- **agent**: Bound the post-deadline assembly tail so wall-to-partial ~= deadline + constant (cold
+  path SLA) ([#669](https://github.com/oimiragieo/tensor-grep/pull/669),
+  [`438dfca`](https://github.com/oimiragieo/tensor-grep/commit/438dfca0148725204684ee456238f278973c17cd))
+
+* fix(agent): bound the post-deadline assembly tail so wall-to-partial ~= deadline + constant (cold
+  path SLA)
+
+`tg agent <root> <query> --deadline N` threads deadline_monotonic through the COLLECTION stage
+  (build_repo_map's file walk + parse loop) correctly, but two ASSEMBLY stages ran unconditionally
+  after it: _detect_vendored_subtrees (called from BOTH agent_capsule.build_agent_capsule_from_map
+  AND repo_map._build_context_pack_from_map's own auto_deweight pass, so the cost was paid twice)
+  and _suggested_scope_from_map (the centrality rollup). On a real ~50k-file multi-project workspace
+  this let wall-to-emission overshoot the advertised 60s deadline by 2.5x+ while the emitted JSON
+  was still honest (partial:true, deadline_limit.deadline_exceeded:true) -- honest, but far too slow
+  to be useful to a caller budgeting on the deadline.
+
+Two-part fix, both required (measured on a 60-project/180-manifest-dir synthetic tree, --deadline
+  3.0): an entry-only "skip if already past deadline" check alone only dropped wall-to-exit from
+  ~9.3s to ~5.5s, because _detect_vendored_subtrees's own internal O(candidate_dirs) manifest probe
+  and O(candidate_roots^2) outermost-chain dedup are each independently expensive enough (measured
+  ~3.6s in one uninterrupted call) to blow the whole remaining budget even when the deadline had NOT
+  yet been exceeded at entry. Threading the same per-iteration deadline check into both of those
+  internal loops (mirroring _build_context_pack_from_map's own per-symbol loop) closed the rest of
+  the gap, to ~3.4s.
+
+Honesty is preserved and extended: partial/deadline_limit.deadline_exceeded continue to fire
+  correctly, and a new additive deadline_limit.assembly_stages_skipped field names which assembly
+  stage(s) were cut short. The no-deadline-pressure path is unaffected by construction (every new
+  parameter defaults to None, a byte-identical no-op) and is regression-guarded by tests.
+  Warm-daemon parity holds: session_store.py already threads the same deadline_monotonic into
+  build_agent_capsule_from_map for both the cold and warm paths, so this fix uniformly extends
+  existing #200/#203 coverage rather than diverging from it.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* fix(agent): gate the un-gated middle section of _detect_vendored_subtrees (Opus-gate follow-up)
+
+Independent Opus gate on PR #669 measured a residual on the real workspace that motivated this fix:
+  between the manifest-probe loop's own per-iteration deadline check and the outermost-dedup loop's
+  own per-iteration check sat an UN-GATED middle section -- the reverse-import-graph re-derivation
+  (_code_files_and_import_graph, un-cached) AND the STRONG-3 skill-leaf validation loop
+  (_is_skill_leaf_tree, iterdir()-heavy per skills-named candidate) that consumes it. Measured on
+  the real workspace: 241 skills-named directories / 2,933 child directories -> ~0.69s warm,
+  low-seconds cold, entirely unbounded by either neighboring check.
+
+Fix: one more deadline check, placed immediately after the manifest-probe loop and before the
+  import-graph call, in the same shape as every other bail-out in this function (return the
+  truncated-but-valid {} shape, set deadline_hit). This is the cleanest of the three checkpoints to
+  add since it does not need to preserve any partial state (unlike the two loop-level checks, which
+  keep partial manifest_dirs/ subtree_rel_roots) -- everything downstream of this point is derived
+  FROM the import graph, so skipping before it is either "run the whole middle section" or "skip it
+  entirely," never a partial variant.
+
+New deterministic unit test proves this two ways: an exploding sentinel on
+  _code_files_and_import_graph shows it is genuinely reached without deadline pressure (sanity, not
+  a vacuous fixture) and genuinely NOT reached once the deadline has already tripped by the time the
+  manifest loop finishes -- verified to catch the regression by temporarily disabling the new check
+  and confirming the test fails with the sentinel exception propagating uncaught.
+
+Also documents the new deadline_limit.assembly_stages_skipped capsule field in docs/CONTRACTS.md
+  (campaign doc-of-record discipline) and updates the module docstrings to describe all four
+  deadline checkpoints now in _detect_vendored_subtrees (entry, manifest-loop, post-manifest-loop,
+  dedup-loop).
+
+Full regression: 420 passed (up from 361), including the new test, all existing
+  deadline/agent-capsule/orient-capsule tests, and the docs governance suite. ruff format --preview
+  and ruff check both clean on all touched files.
+
+* fix(test): make the #220 wall-to-exit SLA test outcome-agnostic (CI fix)
+
+PR #669's CI matrix came back red on all 4 non-Windows test-python jobs plus test-gpu-nvidia (run
+  29671609290), all with the identical failure: test_agent_tight_deadline_wall_to_exit_bounded
+  asserted returncode == 2 and got 0. Decoded from the job logs: on faster
+  ubuntu-latest/macos-latest runners, the manifest_heavy_repo fixture (~540-720 files) legitimately
+  completes UNDER the 3.0s deadline (scan_limit.possibly_truncated: false), so the agent finishes
+  complete (exit 0) rather than truncated (exit 2) -- the returncode==2 assertion was over-specified
+  and OS-speed-fragile. The Windows test-python jobs passed because the deadline reliably trips
+  there. Confirmed the test-gpu-nvidia failure is the identical assertion, not a different bug.
+
+Fix: the test now asserts the wall bound (elapsed < deadline + 3.0) unconditionally -- the actual
+  #220 property under test -- then branches on the real outcome: returncode 2 asserts the existing
+  honesty fields (partial:true, deadline_exceeded:true); returncode 0 asserts the run is genuinely
+  complete (partial is not True). Both outcomes are valid: the fixture is not inflated to force a
+  trip on every runner, which would only trade one kind of CI fragility (assertion mismatch) for
+  another (slower CI on every platform). A deterministic trip-path is already covered by the
+  monkeypatched-clock unit tests in test_agent_vendored_subtree_deadline_220.py, independent of any
+  runner's real-clock speed.
+
+Verified locally (Windows, where the deadline still reliably trips): both integration tests pass,
+  all 8 unit tests pass, ruff format --preview and ruff check clean.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.81.17 (2026-07-18)
 
 ### Bug Fixes
