@@ -500,15 +500,42 @@ def _detect_vendored_subtrees(
     # redundant NESTED entry alongside its already-accepted outer parent (never a correctness bug:
     # the ranking consumer below stops at the FIRST matching tree_root per file, so an overlapping
     # entry is never double-applied).
+    #
+    # #222 (real-workspace-scale residual of #220/#669): the per-iteration check above bounds the
+    # ITERATION COUNT, but each iteration's own cost used to be `_path_is_relative_to(root /
+    # rel_dir, root / existing)` -- TWO real `Path.resolve()` filesystem syscalls (Windows
+    # `nt._getfinalpathname`, independently measured expensive -- see
+    # `_precomputed_validation_files_for_root`'s docstring) PER (candidate, already-accepted)
+    # pair, so a SINGLE outer iteration's cost grows with `len(subtree_rel_roots)` -- on a
+    # candidate-cardinality synthetic (~40 sibling repos with manifest-heavy dependency trees) a
+    # single call's unbounded cost scaled super-linearly (~quadratic: 7.7s at 120 candidates,
+    # 20.7s at 200, 40.9s at 304; 88-92% of wall-clock inside this one genexpr, ~61% inside
+    # `nt._getfinalpathname` alone), so on a real workspace with thousands of manifest-bearing
+    # directories a handful of late, expensive iterations can blow tens of seconds past
+    # --deadline between one checkpoint and the next.
+    #
+    # Fix: `rel_dir`/`existing` are BOTH already lexically relative to the SAME resolved `root`
+    # (built from `candidate_dirs` above via a plain `.relative_to(root)` -- no resolve() of its
+    # own), so "is root/rel_dir nested under root/existing" is exactly a `.parts` PREFIX test --
+    # no filesystem I/O needed. Same fix shape this codebase already uses twice: this function's
+    # own STRONG-3 code-file-membership test above (`code_rel_parts`, replaced an identical
+    # two-resolve `_path_is_relative_to` call for the same reason) and
+    # `_reverse_importer_proximity_tier`'s `_tier` helper (repo_map.py, PR #670): "resolve once /
+    # reuse / avoid re-resolving via `_path_is_relative_to`" in a hot per-candidate loop. This
+    # function is documented as purely ADDITIVE de-weighting evidence (never hard-exclude, see
+    # the module comment above `_DEWEIGHT_FACTOR`), so trading real-symlink-aware nesting for
+    # lexical nesting is the same accepted tradeoff the STRONG-3 fix already made -- worst case a
+    # symlinked subtree dedupes against its lexical parent instead of its resolved one, never a
+    # crash or a violation of "never exclude."
     subtree_rel_roots: list[Path] = []
     for rel_dir in sorted(all_candidate_roots, key=lambda p: len(p.parts)):
         if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
             if deadline_hit is not None:
                 deadline_hit.hit = True
             break
+        rel_dir_parts = rel_dir.parts
         if any(
-            _repo_map._path_is_relative_to(root / rel_dir, root / existing)
-            for existing in subtree_rel_roots
+            existing.parts == rel_dir_parts[: len(existing.parts)] for existing in subtree_rel_roots
         ):
             continue
         subtree_rel_roots.append(rel_dir)

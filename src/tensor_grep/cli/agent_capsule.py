@@ -2415,6 +2415,18 @@ def build_agent_capsule_from_map(
         if semantic_provider == "native" and _capsule_lsp_confidence_boost_enabled()
         else semantic_provider
     )
+    # #222 (call-2 enumeration-gap fix, Opus-gate N4 nit on #669/#220): `build_context_render_
+    # from_map` -> `build_context_pack_from_map` -> `_build_context_pack_from_map` runs its OWN
+    # SECOND `_detect_vendored_subtrees` call (repo_map.py's `auto_deweight` pass) plus the
+    # symbol-scoring and pagerank sibling loops, all sharing ONE internal `_DeadlineBreakFlag`
+    # that -- before this fix -- was never passed in from here, so `build_context_pack_from_map`
+    # always minted its own throwaway flag (see that function's "dogfood finding 1" comment) and
+    # this capsule could only ever observe the RESULT (`payload["partial"]`), never WHICH stage
+    # actually cut short. A dedicated flag here (deliberately NOT reusing
+    # `detect_vendored_deadline_hit` above, which is call-1-specific and would mislabel a
+    # symbol-scoring/pagerank trip as "vendored_subtree_detection") makes that whole render call
+    # observable as one honestly-named unit.
+    context_pack_deadline_hit = repo_map._DeadlineBreakFlag()
     payload = repo_map.build_context_render_from_map(
         rm,
         query,
@@ -2426,7 +2438,15 @@ def build_agent_capsule_from_map(
         render_profile="full",
         semantic_provider=effective_semantic_provider,
         deadline_monotonic=deadline_monotonic,
+        deadline_hit=context_pack_deadline_hit,
     )
+    if context_pack_deadline_hit.hit:
+        # Deliberately a DIFFERENT name than "vendored_subtree_detection" above: this flag covers
+        # the WHOLE render call's internal sibling stages (symbol-scoring, pagerank, AND the
+        # second _detect_vendored_subtrees call), not vendored-detection specifically -- naming it
+        # generically here is honest about what is actually distinguishable from this signal
+        # alone, rather than overclaiming precise attribution to one sub-stage.
+        skipped_assembly_stages.append("context_pack_assembly")
     # TRAP B (task #108 design review): `suggested_scope` is computed in the WRAPPER
     # (`build_context_render`, repo_map.py) via `include_suggested_scope=True`, NOT inside
     # `build_context_render_from_map` -- replicate that exact block here (same gate, same
