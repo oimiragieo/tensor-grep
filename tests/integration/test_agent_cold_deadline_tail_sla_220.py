@@ -30,6 +30,20 @@ Real subprocess (`python -m tensor_grep`), not CliRunner, per AGENTS.md's "dogfo
 binary" rule and the anti-hang-test-protocol skill: a subprocess `timeout=` is a genuine
 OS-level kill if this regresses back to unbounded, whereas an in-process CliRunner hang would
 hang the whole pytest run (and every other queued test) with it.
+
+CI FINDING (PR #669, run 29671609290): the initial version of `test_agent_tight_deadline_wall_
+to_exit_bounded` additionally asserted `returncode == 2` (deadline tripped) -- true on the
+Windows dev box this was authored on, but FALSE on faster ubuntu-latest/macos-latest runners,
+where this fixture's ~540-720 files can legitimately finish complete (`returncode == 0`,
+`scan_limit.possibly_truncated: false`) well inside a 3.0s deadline. That assertion was
+over-specified and OS-speed-fragile -- the actual #220 property (wall-to-exit is BOUNDED, not
+"the deadline must trip") holds in both outcomes, so the test now asserts the wall bound
+unconditionally and branches on the outcome only for the outcome-specific honesty checks. A
+deterministic trip-path (proving the deadline checks themselves fire, independent of any
+runner's absolute speed) is covered separately by the monkeypatched-clock unit tests in
+`tests/unit/test_agent_vendored_subtree_deadline_220.py` -- deliberately NOT re-covered here by
+inflating the fixture to force a trip on every runner, which would only trade this fragility for
+slower CI on every platform instead of fixing it.
 """
 
 from __future__ import annotations
@@ -131,7 +145,21 @@ def test_agent_tight_deadline_wall_to_exit_bounded(manifest_heavy_repo: Path) ->
     repo shaped to stress the (pre-fix, unbounded) assembly tail. Generous bound -- catches a
     regression back to "the assembly tail runs unbounded regardless of --deadline" (which would
     show as several times the deadline, or the subprocess timeout firing outright), not a tight
-    deadline-adherence claim."""
+    deadline-adherence claim.
+
+    OUTCOME-AGNOSTIC by design (CI decode, run 29671609290): on a Windows dev box this fixture's
+    ~540 files consistently overran a 3.0s deadline (returncode 2, partial), but on faster
+    ubuntu-latest/macos-latest CI runners the SAME fixture can legitimately finish complete
+    (returncode 0) well inside the deadline (observed: 721 files scanned, `scan_limit.possibly_
+    truncated: false`, in well under 3.0s). Both outcomes are honest and both must satisfy the
+    wall-bound -- asserting a specific returncode was over-specified and OS-speed-fragile. The
+    property under test is "wall-to-exit is bounded, not the pre-fix multi-second unbounded
+    tail," not "the deadline must trip on every runner." A deterministic trip-path (proving the
+    mid-loop/post-loop deadline checks themselves fire correctly, independent of runner speed) is
+    already covered by the monkeypatched-clock unit tests in
+    tests/unit/test_agent_vendored_subtree_deadline_220.py -- this integration test does not need
+    to force a trip by inflating the tree (that would just re-introduce timing fragility and add
+    CI cost in the other direction)."""
     deadline = 3.0
     started_at = time.monotonic()
     result = _run_tg(
@@ -147,20 +175,33 @@ def test_agent_tight_deadline_wall_to_exit_bounded(manifest_heavy_repo: Path) ->
     )
     elapsed = time.monotonic() - started_at
 
-    # Generous ceiling (deadline + a fixed constant, not a multiplier of the noise-prone kind).
-    # Measured on this exact fixture: pre-fix ~9.3s (entry-only-check partial-fix ~5.5s; the full
-    # fix, entry check + BOTH internal loops bounded, ~3.4s) against this 3.0s deadline -- so
+    # Generous ceiling (deadline + a fixed constant, not a multiplier of the noise-prone kind),
+    # holds regardless of which branch below fires. Measured on this exact fixture (Windows dev
+    # box, the slower case): pre-fix ~9.3s (entry-only-check partial-fix ~5.5s; the full fix,
+    # entry check + all four checkpoints bounded, ~3.4s) against this 3.0s deadline -- so
     # deadline+3.0=6.0s comfortably clears the fixed number's jitter while still catching a
-    # regression back to either the pre-fix OR the entry-only-partial-fix shape.
+    # regression back to either the pre-fix OR the entry-only-partial-fix shape. On a fast runner
+    # that finishes complete well under the deadline, this bound is trivially satisfied too.
     assert elapsed < deadline + 3.0, (
         f"tg agent ran {elapsed:.1f}s against a {deadline}s --deadline on a manifest-heavy repo "
         "-- the post-deadline ASSEMBLY tail looks unbounded again"
     )
-    assert result.returncode == 2, result.stdout + result.stderr
     payload = json.loads(result.stdout)
-    # Honesty must survive the bound: still explicitly flagged, never a silent partial-less exit.
-    assert payload.get("partial") is True, result.stdout
-    assert payload.get("deadline_limit", {}).get("deadline_exceeded") is True, result.stdout
+    if result.returncode == 2:
+        # The deadline actually tripped (typical on a slower runner) -- honesty must survive the
+        # bound: still explicitly flagged, never a silent partial-less exit.
+        assert payload.get("partial") is True, result.stdout
+        assert payload.get("deadline_limit", {}).get("deadline_exceeded") is True, result.stdout
+    else:
+        # The whole run completed naturally UNDER the deadline (typical on a fast CI runner) --
+        # also a valid pass: a genuinely complete run must not ALSO claim a deadline cutoff
+        # (mirrors test_agent_codemap_deadline_scale.py's own
+        # test_agent_default_deadline_still_completes_and_is_bounded assertion).
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert payload.get("partial") is not True, (
+            "a run that beat the deadline should not ALSO claim a deadline cutoff -- "
+            f"{result.stdout}"
+        )
 
 
 def test_agent_no_deadline_pressure_still_detects_vendored_subtrees(
