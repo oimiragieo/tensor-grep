@@ -250,3 +250,225 @@ def test_ledger_registered_in_known_commands() -> None:
     from tensor_grep.cli.commands import KNOWN_COMMANDS
 
     assert "ledger" in KNOWN_COMMANDS
+
+
+# ========================================================================================
+# Slice 2: findings -- tg ledger record / find (exit codes, JSON envelope)
+# ========================================================================================
+
+
+def _git_init(root: Path) -> None:
+    import subprocess
+
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=root, check=True)
+
+
+def _write_artifact_json(tmp_path: Path, name: str, payload: dict) -> Path:
+    artifact_path = tmp_path / name
+    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+    return artifact_path
+
+
+def test_ledger_record_json_envelope_and_exit_zero(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    result = runner.invoke(
+        app,
+        [
+            "ledger",
+            "record",
+            str(root),
+            "--receipt",
+            str(artifact),
+            "--symbol",
+            "value",
+            "--agent-id",
+            "agent-a",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["schema_version"] == payload["version"]
+    assert payload["routing_backend"] == "Ledger"
+    assert payload["routing_reason"] == "ledger-record"
+    assert payload["sidecar_used"] is False
+    assert payload["advisory"] is True
+    assert payload["ledger_schema_version"] == 1
+    assert payload["finding"]["agent_id"] == "agent-a"
+    assert payload["finding"]["symbol"] == "value"
+    assert payload["finding"]["artifact_kind"] == "evidence-receipt"
+    assert payload["finding"]["signed"] is False
+
+
+def test_ledger_record_missing_receipt_exits_two(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    result = runner.invoke(app, ["ledger", "record", str(root), "--json"])
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    assert payload["routing_backend"] == "Ledger"
+    assert payload["error"]["code"] == "fail_closed"
+    assert not (root / ".tensor-grep").exists()
+
+
+def test_ledger_record_bad_artifact_kind_exits_two(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    result = runner.invoke(
+        app,
+        [
+            "ledger",
+            "record",
+            str(root),
+            "--receipt",
+            str(artifact),
+            "--artifact-kind",
+            "not-a-kind",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    assert payload["error"]["code"] == "fail_closed"
+
+
+def test_ledger_record_nonexistent_receipt_file_exits_two(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    result = runner.invoke(
+        app,
+        ["ledger", "record", str(root), "--receipt", str(tmp_path / "nope.json"), "--json"],
+    )
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    assert payload["error"]["code"] == "fail_closed"
+
+
+def test_ledger_record_text_mode_smoke(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    result = runner.invoke(
+        app, ["ledger", "record", str(root), "--receipt", str(artifact), "--symbol", "value"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "recorded" in result.stdout
+
+
+def test_ledger_record_dedup_same_artifact_twice(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"same": "content"})
+    first = runner.invoke(
+        app,
+        ["ledger", "record", str(root), "--receipt", str(artifact), "--symbol", "alpha", "--json"],
+    )
+    second = runner.invoke(
+        app,
+        ["ledger", "record", str(root), "--receipt", str(artifact), "--symbol", "beta", "--json"],
+    )
+    assert first.exit_code == 0
+    assert second.exit_code == 0
+    sha_first = json.loads(first.stdout)["finding"]["receipt_sha256"]
+    sha_second = json.loads(second.stdout)["finding"]["receipt_sha256"]
+    assert sha_first == sha_second
+    blobs_dir = root / ".tensor-grep" / "ledger" / "findings" / "blobs"
+    assert len(list(blobs_dir.iterdir())) == 1
+
+
+def test_ledger_find_exit_zero_on_fresh_hit(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    _git_init(root)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    runner.invoke(
+        app,
+        ["ledger", "record", str(root), "--receipt", str(artifact), "--symbol", "value", "--json"],
+    )
+
+    result = runner.invoke(app, ["ledger", "find", str(root), "--symbol", "value", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["routing_reason"] == "ledger-find"
+    assert payload["any_fresh"] is True
+    assert payload["count"] == 1
+    assert payload["findings"][0]["fresh"] is True
+
+
+def test_ledger_find_exit_one_on_no_fresh_hit_with_fresh_only(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)  # never git-inited -- revision unavailable -> never fresh
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    runner.invoke(
+        app,
+        ["ledger", "record", str(root), "--receipt", str(artifact), "--symbol", "value", "--json"],
+    )
+
+    result = runner.invoke(
+        app, ["ledger", "find", str(root), "--symbol", "value", "--fresh-only", "--json"]
+    )
+    assert result.exit_code == 1, result.output
+    payload = json.loads(result.stdout)
+    assert payload["any_fresh"] is False
+    assert payload["count"] == 0
+
+
+def test_ledger_find_exit_one_on_no_match_at_all(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    result = runner.invoke(app, ["ledger", "find", str(root), "--symbol", "nonexistent", "--json"])
+    assert result.exit_code == 1, result.output
+    payload = json.loads(result.stdout)
+    assert payload["count"] == 0
+    assert payload["any_fresh"] is False
+
+
+def test_ledger_find_exit_two_on_tampered_blob(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    recorded = runner.invoke(
+        app,
+        ["ledger", "record", str(root), "--receipt", str(artifact), "--symbol", "value", "--json"],
+    )
+    sha = json.loads(recorded.stdout)["finding"]["receipt_sha256"]
+    blob_path = root / ".tensor-grep" / "ledger" / "findings" / "blobs" / f"{sha}.json"
+    blob_path.write_text(json.dumps({"a": "tampered"}), encoding="utf-8")
+
+    result = runner.invoke(app, ["ledger", "find", str(root), "--symbol", "value", "--json"])
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    assert payload["error"]["code"] == "fail_closed"
+
+
+def test_ledger_find_missing_symbol_exits_two(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    result = runner.invoke(app, ["ledger", "find", str(root), "--json"])
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    assert payload["error"]["code"] == "fail_closed"
+
+
+def test_ledger_find_text_mode_no_findings(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    result = runner.invoke(app, ["ledger", "find", str(root), "--symbol", "nonexistent"])
+    assert result.exit_code == 1, result.output
+    assert "No matching findings." in result.stdout
+
+
+def test_ledger_find_text_mode_lists_findings(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    _git_init(root)
+    artifact = _write_artifact_json(tmp_path, "artifact.json", {"a": 1})
+    runner.invoke(
+        app,
+        ["ledger", "record", str(root), "--receipt", str(artifact), "--symbol", "value", "--json"],
+    )
+
+    result = runner.invoke(app, ["ledger", "find", str(root), "--symbol", "value"])
+    assert result.exit_code == 0, result.output
+    assert "fresh=True" in result.stdout
+
+
+def test_ledger_top_level_help_lists_record_and_find() -> None:
+    result = runner.invoke(app, ["ledger", "--help"])
+    assert result.exit_code == 0, result.output
+    assert "record" in result.stdout
+    assert "find" in result.stdout

@@ -276,8 +276,9 @@ evidence_app = typer.Typer(
 )
 
 ledger_app = typer.Typer(
-    help="EXPERIMENTAL (Slice 1): advisory, code-scoped agent-to-agent coordination claims "
-    "(never blocks an edit). Surface and JSON schema may change in a minor release.",
+    help="EXPERIMENTAL: advisory, code-scoped agent-to-agent coordination. Slice 1 (claim/"
+    "release/list) never blocks an edit; Slice 2 (record/find) is content-addressed artifact "
+    "reuse with revision-freshness. Surface and JSON schema may change in a minor release.",
     no_args_is_help=True,
 )
 
@@ -15614,6 +15615,200 @@ def ledger_list(
             f"symbols={entry.get('symbols')}  files={entry.get('files')}  "
             f"expires_at={entry.get('expires_at')}"
         )
+
+
+@ledger_app.command("record")
+def ledger_record(
+    path: str = typer.Argument(".", help="Repository path the finding is scoped to."),
+    receipt: str | None = typer.Option(
+        None,
+        "--receipt",
+        help="Path to the evidence-receipt/blast-radius/context-pack/repo-map artifact JSON "
+        "to ingest.",
+    ),
+    artifact_kind: str = typer.Option(
+        "evidence-receipt",
+        "--artifact-kind",
+        help="One of: blast-radius, evidence-receipt, context-pack, repo-map.",
+    ),
+    symbol: str | None = typer.Option(
+        None, "--symbol", help="Symbol name or query string this artifact answers."
+    ),
+    agent_id: str | None = typer.Option(
+        None,
+        "--agent-id",
+        help="Caller-supplied agent identifier, recorded verbatim (never inferred). Falls "
+        "back to TG_LEDGER_AGENT_ID, then TG_EVIDENCE_AGENT_ID. Do not put secrets here.",
+    ),
+    ttl: int | None = typer.Option(
+        None,
+        "--ttl",
+        help="Finding TTL in seconds. Defaults to TG_LEDGER_FINDING_TTL_SECONDS or 86400 (24h).",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """EXPERIMENTAL (Slice 2): ingest an evidence-receipt/blast-radius/context-pack/repo-map
+    artifact JSON as a content-addressed finding pointer a sibling agent can `tg ledger find`
+    and reuse instead of recomputing. Surface and JSON schema may change in a minor release.
+
+    The artifact is stored once at `findings/blobs/<receipt_sha256>.json`, content-addressed
+    by `receipt_sha256` (the same digest `tg evidence` uses) -- recording an identical artifact
+    twice dedupes to the same blob. Exits 0 on success. Exits 2 only on a fail-closed condition
+    (missing `--receipt`, an invalid `--artifact-kind`, a missing/oversized/non-JSON artifact
+    file, a lock timeout, or a write failure); nothing is written when that happens.
+    """
+    from tensor_grep.cli import _index_lock, ledger_store
+
+    try:
+        result = ledger_store.record_finding(
+            path,
+            receipt_path=receipt,
+            artifact_kind=artifact_kind,
+            symbol=symbol,
+            agent_id=agent_id,
+            ttl_seconds=ttl,
+        )
+    except ledger_store.LedgerError as exc:
+        _emit_ledger_error(
+            exc, json_output=json_output, code="fail_closed", routing_reason="ledger-record"
+        )
+        raise typer.Exit(code=2) from exc
+    except _index_lock.IndexLockTimeoutError as exc:
+        _emit_ledger_error(
+            exc, json_output=json_output, code="lock_timeout", routing_reason="ledger-record"
+        )
+        raise typer.Exit(code=2) from exc
+    except OSError as exc:
+        _emit_ledger_error(
+            exc, json_output=json_output, code="write_error", routing_reason="ledger-record"
+        )
+        raise typer.Exit(code=2) from exc
+    except Exception as exc:
+        _emit_ledger_error(
+            exc, json_output=json_output, code="internal_error", routing_reason="ledger-record"
+        )
+        raise typer.Exit(code=2) from exc
+
+    payload = {
+        "version": _json_output_version(),
+        "schema_version": _json_output_version(),
+        "routing_backend": "Ledger",
+        "routing_reason": "ledger-record",
+        "sidecar_used": False,
+        "ledger_schema_version": ledger_store.LEDGER_SCHEMA_VERSION,
+        "advisory": True,
+        "finding": result["finding"],
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    finding = cast(dict[str, object], result["finding"])
+    typer.echo(
+        f"Finding {finding['finding_id']} recorded (artifact_kind={finding['artifact_kind']})"
+    )
+    typer.echo(f"  symbol={finding.get('symbol')} receipt_sha256={finding['receipt_sha256']}")
+    typer.echo(f"  signed={finding['signed']} expires_at={finding['expires_at']}")
+
+
+@ledger_app.command("find")
+def ledger_find(
+    path: str = typer.Argument(".", help="Repository path the findings are scoped to."),
+    symbol: str | None = typer.Option(
+        None, "--symbol", help="Symbol name or query string to look up."
+    ),
+    artifact_kind: str | None = typer.Option(
+        None,
+        "--artifact-kind",
+        help="Restrict to one of: blast-radius, evidence-receipt, context-pack, repo-map.",
+    ),
+    fresh_only: bool = typer.Option(
+        False,
+        "--fresh-only",
+        help="Return only findings whose captured revision matches the current repo state.",
+    ),
+    trusted_key: list[str] | None = typer.Option(
+        None,
+        "--trusted-key",
+        help="A pinned base64 Ed25519 public key (from `tg evidence pubkey`) to trust when "
+        "checking a signed finding's key_trusted. Repeatable. Falls back to "
+        "TG_EVIDENCE_TRUSTED_KEYS (comma-separated).",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """EXPERIMENTAL (Slice 2): look up previously recorded findings for `--symbol` so a
+    sibling agent can reuse a prior artifact instead of recomputing it -- `if tg ledger find
+    PATH --symbol S --fresh-only; then reuse; else compute; fi`. Surface and JSON schema may
+    change in a minor release.
+
+    Exit-code contract (3-state, mirrors the `tg defs`/`callers`/`blast-radius` symbol-command
+    contract -- distinct from claim/release/list, which are 0/2 only): `0` = at least one
+    returned finding is `fresh` (its captured revision matches the current repo state -- safe
+    to reuse); `1` = no returned finding is fresh (recompute) -- covers both "nothing matched"
+    and "matches exist but none are fresh"; `2` = a fail-closed condition fired (missing
+    `--symbol`, a corrupt/oversized index, or a tampered/unreadable blob -- a corrupted finding
+    is refused, never silently served or silently skipped). Every finding actually returned is
+    integrity-checked against its recorded `receipt_sha256` before being served, regardless of
+    exit code.
+    """
+    from tensor_grep.cli import ledger_store
+    from tensor_grep.cli.evidence_signing import resolve_trusted_public_keys
+
+    resolved_trusted_keys = resolve_trusted_public_keys(trusted_key)
+
+    try:
+        result = ledger_store.find_findings(
+            path,
+            symbol=symbol or "",
+            artifact_kind=artifact_kind,
+            fresh_only=fresh_only,
+            trusted_public_keys=resolved_trusted_keys or None,
+        )
+    except ledger_store.LedgerError as exc:
+        _emit_ledger_error(
+            exc, json_output=json_output, code="fail_closed", routing_reason="ledger-find"
+        )
+        raise typer.Exit(code=2) from exc
+    except OSError as exc:
+        _emit_ledger_error(
+            exc, json_output=json_output, code="read_error", routing_reason="ledger-find"
+        )
+        raise typer.Exit(code=2) from exc
+    except Exception as exc:
+        _emit_ledger_error(
+            exc, json_output=json_output, code="internal_error", routing_reason="ledger-find"
+        )
+        raise typer.Exit(code=2) from exc
+
+    findings = cast(list[dict[str, object]], result["findings"])
+    any_fresh = bool(result["any_fresh"])
+    exit_code = 0 if any_fresh else 1
+    payload = {
+        "version": _json_output_version(),
+        "schema_version": _json_output_version(),
+        "routing_backend": "Ledger",
+        "routing_reason": "ledger-find",
+        "sidecar_used": False,
+        "ledger_schema_version": ledger_store.LEDGER_SCHEMA_VERSION,
+        "advisory": True,
+        "findings": findings,
+        "count": result["count"],
+        "any_fresh": any_fresh,
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        raise typer.Exit(code=exit_code)
+
+    if not findings:
+        typer.echo("No matching findings.")
+    else:
+        for entry in findings:
+            typer.echo(
+                f"{entry['finding_id']}  fresh={entry['fresh']}  "
+                f"artifact_kind={entry['artifact_kind']}  agent={entry['agent_id']}  "
+                f"receipt_sha256={entry['receipt_sha256']}"
+            )
+    raise typer.Exit(code=exit_code)
 
 
 @app.command("update")
