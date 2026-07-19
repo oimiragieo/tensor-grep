@@ -704,6 +704,183 @@ def test_tail_no_deadline_renders_every_folder_unaffected(tmp_path: Path) -> Non
 
 
 # ---------------------------------------------------------------------------
+# (19) tg-codemap 90s-timeout root cause: the revision-identity (`git rev-parse` + `git status`)
+# and tracked-file-exclusion (`git ls-files`) subprocess calls were bounded ONLY by
+# TG_GIT_TIMEOUT_SECONDS (120s default PER CALL) -- a budget entirely decoupled from --deadline,
+# and revision-identity ran BEFORE deadline_monotonic even existed. On a large/slow working tree
+# a single `git status` can itself take tens of seconds, so a 60s --deadline could still observe
+# 100s+ of wall time from git calls alone before build_repo_map's own (already deadline-bounded)
+# walk got a chance to run. Deterministic via monkeypatched time.monotonic (anti-hang-test-
+# protocol: never a real sleep) -- mirrors this file's own (18) advancing-clock idiom.
+# ---------------------------------------------------------------------------
+
+
+def test_tracked_file_set_deadline_none_preserves_default_timeout(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Byte-identity guard: deadline_monotonic=None (every pre-existing caller) must pass the
+    exact same timeout_seconds to run_subprocess as before this fix."""
+    repo = _copy_fixture(tmp_path)
+    _init_git_repo(repo)
+    captured_timeouts: list[float] = []
+    real_run_subprocess = _codemap.run_subprocess
+
+    def _spy(*args, **kwargs):
+        captured_timeouts.append(kwargs.get("timeout_seconds"))
+        return real_run_subprocess(*args, **kwargs)
+
+    monkeypatch.setattr(_codemap, "run_subprocess", _spy)
+
+    tracked = _codemap._tracked_file_set(repo)
+
+    assert tracked is not None
+    assert captured_timeouts
+    assert all(t == _codemap.configured_git_timeout_seconds() for t in captured_timeouts)
+
+
+def test_tracked_file_set_caps_timeout_to_remaining_deadline_budget(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = _copy_fixture(tmp_path)
+    _init_git_repo(repo)
+    captured_timeouts: list[float] = []
+    real_run_subprocess = _codemap.run_subprocess
+
+    def _spy(*args, **kwargs):
+        captured_timeouts.append(kwargs.get("timeout_seconds"))
+        return real_run_subprocess(*args, **kwargs)
+
+    monkeypatch.setattr(_codemap, "run_subprocess", _spy)
+    monkeypatch.setattr(_codemap.time, "monotonic", lambda: 1000.0)
+
+    tracked = _codemap._tracked_file_set(repo, deadline_monotonic=1005.0)
+
+    assert tracked is not None
+    assert captured_timeouts
+    assert all(t <= 5.0 for t in captured_timeouts), (
+        f"git ls-files timeout {captured_timeouts} was not capped to the ~5s remaining budget"
+    )
+
+
+def test_tracked_file_set_skips_git_when_deadline_already_expired(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = _copy_fixture(tmp_path)
+    _init_git_repo(repo)
+    call_count = 0
+    real_run_subprocess = _codemap.run_subprocess
+
+    def _counting(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return real_run_subprocess(*args, **kwargs)
+
+    monkeypatch.setattr(_codemap, "run_subprocess", _counting)
+    monkeypatch.setattr(_codemap.time, "monotonic", lambda: 1000.0)
+
+    tracked = _codemap._tracked_file_set(repo, deadline_monotonic=999.0)
+
+    assert call_count == 0, "an already-expired deadline must skip git entirely, not invoke it"
+    assert tracked is None
+
+
+def test_exclude_untracked_paths_forwards_deadline_monotonic_to_tracked_file_set(
+    tmp_path: Path, monkeypatch
+) -> None:
+    captured: dict = {}
+
+    def _spy_tracked_file_set(root, *, deadline_monotonic=None):
+        captured["deadline_monotonic"] = deadline_monotonic
+        return None  # degrade to no-op -- the pre-existing contract for ANY git-unavailable case
+
+    monkeypatch.setattr(_codemap, "_tracked_file_set", _spy_tracked_file_set)
+    rm = {"files": ["a.py"], "tests": [], "symbols": [], "imports": []}
+
+    result = _codemap._exclude_untracked_paths(rm, root=tmp_path, deadline_monotonic=42.0)
+
+    assert captured["deadline_monotonic"] == 42.0
+    assert result == rm
+
+
+def test_build_codemap_degrades_honestly_when_revision_identity_git_call_would_be_slow(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """THE end-to-end SLA/honesty proof. Simulates a very slow `git status` (the tg-codemap
+    90s-timeout root cause) WITHOUT a real sleep: each `run_subprocess` call advances a shared
+    FAKE `time.monotonic()` clock by 40s (mirrors this file's own (18) advancing-clock idiom,
+    the strongest deterministic pattern for this class of bug per anti-hang-test-protocol).
+
+    Real wall-clock is measured separately via `time.perf_counter()` (never patched), so the
+    bound below is a genuine, unforgeable proof: however long the fake clock claims the git
+    call "took", build_codemap must still return promptly with an HONEST partial result --
+    never hang, never crash, never silently claim completeness.
+    """
+    repo = _copy_fixture(tmp_path)
+    _init_git_repo(repo)
+
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(_codemap.time, "monotonic", lambda: clock["t"])
+
+    real_codemap_run_subprocess = _codemap.run_subprocess
+    real_evidence_run_subprocess = _codemap._evidence_receipt.run_subprocess
+
+    def _slow_run_subprocess(*args, **kwargs):
+        clock["t"] += 40.0  # simulate a very slow git call -- no real sleep
+        return real_codemap_run_subprocess(*args, **kwargs)
+
+    def _slow_evidence_run_subprocess(*args, **kwargs):
+        clock["t"] += 40.0
+        return real_evidence_run_subprocess(*args, **kwargs)
+
+    monkeypatch.setattr(_codemap, "run_subprocess", _slow_run_subprocess)
+    monkeypatch.setattr(_codemap._evidence_receipt, "run_subprocess", _slow_evidence_run_subprocess)
+
+    deadline_seconds = 10.0
+    started = time.perf_counter()
+    payload = build_codemap(repo, deadline_seconds=deadline_seconds)
+    real_elapsed = time.perf_counter() - started
+
+    assert real_elapsed < deadline_seconds * 2, (
+        f"build_codemap took {real_elapsed:.2f}s of REAL wall time against a "
+        f"{deadline_seconds}s --deadline while git calls were simulated slow -- looks unbounded"
+    )
+    # Honest partial: the scan/tail machinery downstream shares the SAME deadline_monotonic, so
+    # once the (simulated-slow) revision-identity call alone exhausts the budget, every later
+    # phase correctly observes "already past deadline" via the pre-existing per-iteration checks.
+    assert payload["partial"] is True
+    assert payload["partial_reason"] == "deadline"
+    assert payload["remediation"]
+    # The stamp must degrade honestly too (revision identity was skipped, not fabricated).
+    assert payload["revision"]["status"] == "unavailable"
+    assert Path(payload["index"]).is_file()
+    index_text = Path(payload["index"]).read_text(encoding="utf-8")
+    assert "no-git (manifest-only)" in index_text
+    assert "- Partial: yes" in index_text
+    assert "- Remediation:" in index_text
+    coverage_path = Path(payload["out"]) / _codemap._COVERAGE_FILENAME
+    coverage = json.loads(coverage_path.read_text(encoding="utf-8"))
+    assert coverage["partial"] is True
+    assert coverage["partial_reason"] == "deadline"
+
+
+def test_build_codemap_revision_identity_deadline_wiring_is_noop_with_no_deadline_pressure(
+    tmp_path: Path,
+) -> None:
+    """Regression guard for the "no-deadline-pressure path unchanged" contract: a real git repo
+    with an ample deadline must still produce a fully-present revision identity, byte-identical
+    in shape to before this fix -- the new deadline_monotonic threading through build_codemap's
+    revision-identity call must be a true no-op when the budget is generous."""
+    repo = _copy_fixture(tmp_path)
+    _init_git_repo(repo)
+
+    payload = build_codemap(repo, deadline_seconds=120.0)
+
+    assert payload["partial"] is False
+    assert payload["revision"]["status"] == "present"
+    assert payload["revision"]["commit_sha"]
+
+
+# ---------------------------------------------------------------------------
 # PATH contract: a file path must error, never silently scan the parent.
 # ---------------------------------------------------------------------------
 

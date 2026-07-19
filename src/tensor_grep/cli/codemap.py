@@ -40,7 +40,11 @@ from tensor_grep.cli import lang_registry
 from tensor_grep.cli import orient_capsule as _orient_capsule
 from tensor_grep.cli import repo_map as _repo_map
 from tensor_grep.cli._index_lock import replace_with_retry
-from tensor_grep.cli.subprocess_policy import configured_git_timeout_seconds, run_subprocess
+from tensor_grep.cli.subprocess_policy import (
+    configured_git_timeout_seconds,
+    deadline_capped_timeout_seconds,
+    run_subprocess,
+)
 
 # Mirrors inventory's/docs-coverage's 50000 default (NOT map's 512 or agent's 2000 -- codemap is
 # an exhaustive inventory, not an agent-context budget). Kept as a real module constant (unlike
@@ -157,11 +161,40 @@ def _revision_exclude_prefixes(out_dir: Path, root: Path) -> list[str]:
     return [_repo_relative_posix(str(out_dir), root)]
 
 
-def _is_under_dir(path: Path, directory: Path) -> bool:
+def _resolved_path_is_within(resolved_path: Path, resolved_directory: Path) -> bool:
+    """Pure comparison: BOTH arguments must already be `.resolve()`d by the caller -- no
+    filesystem syscall here at all. Use this (not `_is_under_resolved_dir` below) whenever the
+    candidate is already resolved (e.g. via `_cached_resolve`) -- calling `.resolve()` on an
+    already-resolved Path is idempotent in VALUE but NOT free: it still re-issues the real
+    syscall (Windows `nt._getfinalpathname` in particular), which is exactly the tg-codemap
+    90s-timeout root cause (dogfood 2026-07-19) -- see `_is_under_resolved_dir`'s docstring for
+    the measured cost."""
     try:
-        path.resolve().relative_to(directory.resolve())
+        resolved_path.relative_to(resolved_directory)
         return True
-    except (OSError, ValueError):
+    except ValueError:
+        return False
+
+
+def _is_under_resolved_dir(path: Path, resolved_directory: Path) -> bool:
+    """`resolved_directory` must ALREADY be `.resolve()`d by the caller; `path` (the candidate)
+    is resolved HERE, once. Use this when the caller does NOT already hold a resolved candidate
+    (e.g. `build_codemap`'s tail folder-census filter, where each folder path is visited once and
+    caching wouldn't help); use `_resolved_path_is_within` instead when the candidate is already
+    resolved (e.g. via `_cached_resolve`) -- passing an already-resolved Path in here would
+    re-issue the resolve syscall for no benefit.
+
+    tg-codemap 90s-timeout root cause (dogfood 2026-07-19): a prior version resolved `directory`
+    itself on every call -- on a real 999-file repo this function's two call sites (the per-file/
+    symbol/import output-dir exclusion below, and the tail folder-census filter) drove 55,118
+    `nt._getfinalpathname` (Windows' `Path.resolve()` syscall) calls / 12.9s wall time -- the
+    SINGLE DOMINANT cost of the whole run, more than the actual repo scan -- almost entirely
+    re-resolving the SAME invariant `out_dir` on every candidate. Callers must resolve the
+    directory ONCE outside any loop and pass the result in here; behavior is unchanged (resolving
+    an already-resolved Path is idempotent IN VALUE), only the redundant syscalls are eliminated."""
+    try:
+        return _resolved_path_is_within(path.resolve(), resolved_directory)
+    except OSError:
         return False
 
 
@@ -434,24 +467,67 @@ def _folder_blurb(folder_rel_posix: str, *, root: Path, overlays: dict[str, str]
 # ---------------------------------------------------------------------------
 
 
-def _excluded_by_output_str(file_str: str, *, out_dir: Path, index_path: Path) -> bool:
-    candidate = Path(file_str)
-    if _is_under_dir(candidate, out_dir):
-        return True
+def _resolved_or_self(path: Path) -> Path:
+    """`path.resolve()`, falling back to `path` unchanged on OSError -- matches the fail-open
+    (never raise, degrade to "not excluded") shape the pre-hoisting per-call code already had."""
     try:
-        return candidate.resolve() == index_path.resolve()
+        return path.resolve()
     except OSError:
+        return path
+
+
+def _cached_resolve(file_str: str, cache: dict[str, Path | None]) -> Path | None:
+    """Memoized `Path(file_str).resolve()` (or `None` on OSError) -- many symbols/imports in
+    `rm` repeat the SAME file string (one entry per symbol, not per file), so caching by the raw
+    string avoids re-resolving an already-seen path (part of the tg-codemap 90s-timeout fix,
+    dogfood 2026-07-19: see `_is_under_resolved_dir`'s docstring for the measured cost)."""
+    if file_str in cache:
+        return cache[file_str]
+    try:
+        resolved = Path(file_str).resolve()
+    except OSError:
+        resolved = None
+    cache[file_str] = resolved
+    return resolved
+
+
+def _excluded_by_output_str(
+    file_str: str,
+    *,
+    resolved_out_dir: Path,
+    resolved_index_path: Path,
+    resolve_cache: dict[str, Path | None],
+) -> bool:
+    resolved = _cached_resolve(file_str, resolve_cache)
+    if resolved is None:
         return False
+    # `resolved` is ALREADY resolved (via the cache) -- the pure comparison, never re-resolve it.
+    if _resolved_path_is_within(resolved, resolved_out_dir):
+        return True
+    return resolved == resolved_index_path
 
 
 def _exclude_output_paths(rm: dict[str, Any], *, out_dir: Path, index_path: Path) -> dict[str, Any]:
     """Post-filter the repo_map payload to drop every file under --out (incl. --index) -- mirrors
     orient_capsule.py's `_apply_ignore_globs` (a proven precedent for this exact post-hoc payload
     filtering). Without this, codemap's OWN previously-written `.md`/`.json` pages would be walked
-    back in as new "source files" on the next run (self-invalidation)."""
+    back in as new "source files" on the next run (self-invalidation).
+
+    tg-codemap 90s-timeout root cause (dogfood 2026-07-19): `out_dir`/`index_path` are each
+    resolved exactly ONCE here (not per-candidate), and per-candidate resolution is memoized --
+    see `_is_under_resolved_dir` and `_cached_resolve` for the measured cost this eliminates.
+    Output is byte-identical; only redundant filesystem syscalls are removed."""
+    resolved_out_dir = _resolved_or_self(out_dir)
+    resolved_index_path = _resolved_or_self(index_path)
+    resolve_cache: dict[str, Path | None] = {}
 
     def _excluded(file_str: str) -> bool:
-        return _excluded_by_output_str(file_str, out_dir=out_dir, index_path=index_path)
+        return _excluded_by_output_str(
+            file_str,
+            resolved_out_dir=resolved_out_dir,
+            resolved_index_path=resolved_index_path,
+            resolve_cache=resolve_cache,
+        )
 
     filtered = dict(rm)
     filtered["files"] = [f for f in rm.get("files", []) if not _excluded(str(f))]
@@ -465,15 +541,29 @@ def _exclude_output_paths(rm: dict[str, Any], *, out_dir: Path, index_path: Path
     return filtered
 
 
-def _tracked_file_set(root: Path) -> set[str] | None:
+def _tracked_file_set(root: Path, *, deadline_monotonic: float | None = None) -> set[str] | None:
     """Resolved absolute paths of every git-tracked file under `root` (`git ls-files -z`), or
-    `None` when git is unavailable/errors (not a repo, git missing, timeout). `None` is a distinct
-    sentinel from "empty set": callers must degrade to "no intersection possible" (keep
-    everything) on `None`, never mistake it for "this repo genuinely tracks zero files"."""
+    `None` when git is unavailable/errors (not a repo, git missing, timeout, or -- tg-codemap
+    90s-timeout root cause -- an already-exhausted `deadline_monotonic` budget). `None` is a
+    distinct sentinel from "empty set": callers must degrade to "no intersection possible" (keep
+    everything) on `None`, never mistake it for "this repo genuinely tracks zero files".
+
+    `deadline_monotonic` (opt-in, default None): mirrors `evidence_receipt._repo_revision_
+    identity`'s own deadline-capping -- this call is otherwise bounded ONLY by
+    `configured_git_timeout_seconds()` (120s default), a budget entirely decoupled from a
+    caller's `--deadline`. When supplied, the git call's timeout is capped to whatever budget
+    remains; an already-expired budget skips the git call entirely (same `None` degrade the
+    caller already handles for every other git-unavailable reason). `None` (the default, every
+    pre-existing caller) is a byte-identical no-op."""
+    timeout_seconds = deadline_capped_timeout_seconds(
+        configured_git_timeout_seconds(), deadline_monotonic=deadline_monotonic
+    )
+    if timeout_seconds is None:
+        return None
     try:
         result = run_subprocess(
             ["git", "-C", str(root), "ls-files", "-z"],
-            timeout_seconds=configured_git_timeout_seconds(),
+            timeout_seconds=timeout_seconds,
             capture_output=True,
             text=True,
             check=False,
@@ -493,14 +583,17 @@ def _tracked_file_set(root: Path) -> set[str] | None:
     return tracked
 
 
-def _exclude_untracked_paths(rm: dict[str, Any], *, root: Path) -> dict[str, Any]:
+def _exclude_untracked_paths(
+    rm: dict[str, Any], *, root: Path, deadline_monotonic: float | None = None
+) -> dict[str, Any]:
     """Post-filter the repo_map payload to drop every file `git ls-files` does not track --
     mirrors `_exclude_output_paths`'s exact shape. An untracked/gitignored file (scratch script,
     build artifact, local-only note) is filesystem-real but not part of the project's committed
     surface, and its volatile mtime/existence must never leak into the persisted, browsable
     inventory. Degrades to a no-op (returns `rm` unchanged) when the tracked-file set is
-    unavailable (non-git dir, git missing, timeout) -- never crashes, never guesses."""
-    tracked = _tracked_file_set(root)
+    unavailable (non-git dir, git missing, timeout, or an already-exhausted `deadline_monotonic`
+    budget -- forwarded to `_tracked_file_set`) -- never crashes, never guesses."""
+    tracked = _tracked_file_set(root, deadline_monotonic=deadline_monotonic)
     if tracked is None:
         return rm
 
@@ -882,6 +975,15 @@ def build_codemap(
     entry, before the lazy import, so front-door time is budgeted the same way scan time already
     is. Existing ``deadline_seconds``-only callers are unaffected: the fallback computation below is
     byte-identical to the prior behavior.
+
+    tg-codemap 90s-timeout root cause: this anchor is now computed BEFORE the revision-identity
+    git calls (previously computed after) and threaded into them plus the post-scan tracked-file
+    exclusion below -- both are git subprocess calls otherwise bounded only by
+    ``TG_GIT_TIMEOUT_SECONDS`` (120s default each), a budget entirely decoupled from
+    ``--deadline``. On a large/slow working tree ``git status`` alone can take tens of seconds,
+    which previously ran BEFORE build_repo_map's own (already deadline-bounded) walk even started
+    -- so a 60s ``--deadline`` could still observe 100s+ of wall time from git calls alone. See
+    ``evidence_receipt._repo_revision_identity`` / ``_tracked_file_set`` for the capping mechanism.
     """
     root = Path(path).expanduser().resolve()
     if not root.exists():
@@ -891,30 +993,37 @@ def build_codemap(
 
     out_dir = Path(out).expanduser().resolve() if out is not None else (root / "docs" / "code-map")
     index_path = _resolve_index_path(out_dir, index).resolve()
+    # tg-codemap 90s-timeout root cause (dogfood 2026-07-19): resolved ONCE and reused by both
+    # _exclude_output_paths (via its own internal resolve, same value since out_dir is invariant)
+    # and the tail folder-census filter below -- see _is_under_resolved_dir's docstring.
+    resolved_out_dir = _resolved_or_self(out_dir)
+
+    # moat P0-6 pattern (mirrors build_symbol_impact in repo_map.py): convert the relative
+    # --deadline to an ABSOLUTE monotonic timestamp ONCE, then thread it into every phase below --
+    # including (tg-codemap 90s-timeout root cause) the revision-identity git calls just below,
+    # which used to run BEFORE this anchor even existed. A caller-supplied deadline_monotonic
+    # (closes #197/#200) takes precedence over recomputing from deadline_seconds.
+    if deadline_monotonic is None:
+        deadline_monotonic = _repo_map._deadline_monotonic_from_seconds(deadline_seconds)
 
     if _revision_identity is not None:
         revision = _revision_identity(root)
     else:
         revision = _evidence_receipt._repo_revision_identity(
-            root, exclude_prefixes=_revision_exclude_prefixes(out_dir, root)
+            root,
+            exclude_prefixes=_revision_exclude_prefixes(out_dir, root),
+            deadline_monotonic=deadline_monotonic,
         )
     now = _now() if _now is not None else datetime.now(UTC)
     now_iso = _format_utc_iso(now)
     stamp_line = _format_stamp_line(revision, now_iso)
-
-    # moat P0-6 pattern (mirrors build_symbol_impact in repo_map.py): convert the relative
-    # --deadline to an ABSOLUTE monotonic timestamp ONCE, then thread it into build_repo_map so a
-    # huge tree degrades to a partial result instead of running unbounded. A caller-supplied
-    # deadline_monotonic (closes #197/#200) takes precedence over recomputing from deadline_seconds.
-    if deadline_monotonic is None:
-        deadline_monotonic = _repo_map._deadline_monotonic_from_seconds(deadline_seconds)
 
     rm = _repo_map.build_repo_map(
         root, max_repo_files=max_repo_files, deadline_monotonic=deadline_monotonic
     )
     rm = _orient_capsule._apply_ignore_globs(rm, ignore)
     rm = _exclude_output_paths(rm, out_dir=out_dir, index_path=index_path)
-    rm = _exclude_untracked_paths(rm, root=root)
+    rm = _exclude_untracked_paths(rm, root=root, deadline_monotonic=deadline_monotonic)
 
     universe = sorted(set(rm.get("files", [])) | set(rm.get("tests", [])))
 
@@ -924,7 +1033,19 @@ def build_codemap(
 
     folders = _group_by_folder(universe, root)
     overlays = _load_enrichment_overlays(out_dir)
-    blurbs = {folder: _folder_blurb(folder, root=root, overlays=overlays) for folder in folders}
+    # tg-codemap 90s-timeout root cause residual: this loop does 1-2 file-read attempts (README.md
+    # + __init__.py) PER FOLDER with no per-iteration deadline check -- on a workspace with
+    # thousands of folders the syscall overhead is real, if smaller than the git-call gap above.
+    # Bounded the same way every sibling deadline seam is: keep whatever blurbs were computed so
+    # far and stop. A folder with no blurb entry already degrades gracefully (`blurbs.get(folder,
+    # "")` at both render call sites below) -- purely additive decoration, never core inventory
+    # data, so cutting it short never drops a file/symbol from the map (mirrors
+    # `_detect_vendored_subtrees`'s identical "additive evidence, safe to truncate" reasoning).
+    blurbs: dict[str, str] = {}
+    for folder in folders:
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            break
+        blurbs[folder] = _folder_blurb(folder, root=root, overlays=overlays)
     page_paths: dict[str, Path] = {
         folder: out_dir / f"{_folder_slug(folder)}.md" for folder in folders
     }
@@ -993,7 +1114,9 @@ def build_codemap(
             deadline_hit=all_folders_deadline_hit,
         )
         all_folders = {
-            f for f in all_folders if not _is_under_dir(root / f if f else root, out_dir)
+            f
+            for f in all_folders
+            if not _is_under_resolved_dir(root / f if f else root, resolved_out_dir)
         }
         coverage["folders_with_no_mapped_files"] = max(0, len(all_folders) - len(folders))
         tail_deadline_hit = tail_deadline_hit or all_folders_deadline_hit.hit
@@ -1134,11 +1257,23 @@ def check_codemap_freshness(
     walk_cap = (
         int(stamped_cap) if isinstance(stamped_cap, int) and stamped_cap > 0 else max_repo_files
     )
+    # Mirrors _exclude_output_paths's own setup (codemap.py, ~line 517): resolve out_dir/
+    # index_path ONCE and memoize per-candidate resolution -- this is the SECOND call site of
+    # _excluded_by_output_str's resolved-kwarg contract (missed in the original fix; caught by
+    # independent gate review on PR #674 -- see git history for the TypeError it produced here).
+    resolved_out_dir = _resolved_or_self(out_dir)
+    resolved_index_path = _resolved_or_self(index_path)
+    resolve_cache: dict[str, Path | None] = {}
     try:
         live_universe = [
             f
             for f in _walk_only_universe(root, max_repo_files=walk_cap)
-            if not _excluded_by_output_str(f, out_dir=out_dir, index_path=index_path)
+            if not _excluded_by_output_str(
+                f,
+                resolved_out_dir=resolved_out_dir,
+                resolved_index_path=resolved_index_path,
+                resolve_cache=resolve_cache,
+            )
         ]
         live_manifest = _tree_manifest_sha256(sorted(set(live_universe)), root)
     except OSError:
