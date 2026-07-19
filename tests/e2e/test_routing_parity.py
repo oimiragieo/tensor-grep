@@ -50,6 +50,7 @@ PUBLIC_TOP_LEVEL_COMMANDS = {
     "audit-diff",
     "review-bundle",
     "evidence",
+    "ledger",
     "devices",
     "context",
     "lsp",
