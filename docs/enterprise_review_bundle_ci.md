@@ -1,11 +1,12 @@
 # Enterprise Review Bundle CI Gate
 
 This runbook wires tensor-grep's existing agent-evidence primitives -- `tg agent`, `tg evidence
-emit --sign`, `tg review-bundle create --receipt`, and `tg review-bundle verify --against` -- into
-a single local-first chain that a CI job can gate a pull request on. It closes the loop described
-in `docs/CONTRACTS.md` sections 8 (EvidenceReceipt signing) and 11 (Review bundles): an agent's
-signed claim about what it did is carried in a review bundle, and CI fails the check (exit `1`)
-if that claim is unsigned, untrusted, tampered, or stale relative to the PR's real head commit.
+emit --sign`, `tg review-bundle create --receipt`, and `tg review-bundle verify --against
+--min-receipts --expect-key` -- into a single local-first chain that a CI job can gate a pull
+request on. It closes the loop described in `docs/CONTRACTS.md` sections 8 (EvidenceReceipt
+signing) and 11 (Review bundles): an agent's signed claim about what it did is carried in a
+review bundle, and CI fails the check (exit `1`) if that claim is unsigned, untrusted, tampered,
+stale relative to the PR's real head commit, or -- with `--min-receipts` -- simply absent.
 
 Everything below runs entirely on the CI runner (no network calls, no external service) -- the
 only thing you provide is a pinned Ed25519 public key as a repo/org secret.
@@ -34,15 +35,26 @@ only thing you provide is a pinned Ed25519 public key as a repo/org secret.
      --against "$PR_HEAD_SHA" \
      --require-trusted \
      --trusted-key "$TG_EVIDENCE_TRUSTED_KEY" \
+     --min-receipts 1 \
+     --expect-key "$TG_EVIDENCE_EXPECTED_KEY_ID" \
      --json
    ```
 
    Exit `1` (the command's pre-existing fail-closed contract, unchanged by this feature) means:
    an embedded receipt is unsigned, its key isn't in `--trusted-key`, its content was tampered
    with, its captured commit doesn't match `$PR_HEAD_SHA`, it was captured against a dirty working
-   tree, or `$PR_HEAD_SHA` itself didn't resolve to a real commit. Read `.against` and `.receipts[]`
-   in the JSON output to see exactly which check failed and why -- see `docs/CONTRACTS.md` section
-   11 for the full field shapes.
+   tree, `$PR_HEAD_SHA` itself didn't resolve to a real commit, fewer than `--min-receipts` valid
+   receipts are present, or a named `--expect-key` signer is missing. Read `.against`,
+   `.receipts[]`, and `.policy` in the JSON output to see exactly which check failed and why -- see
+   `docs/CONTRACTS.md` section 11 for the full field shapes.
+
+   **`--min-receipts 1` (and ideally `--expect-key`) are not optional flourishes -- omit them and
+   this gate can be bypassed with zero evidence.** Without a minimum, a bundle with its
+   `evidence_receipts` stripped (or never populated) still verifies `valid = true`, because the
+   remaining checksums are plain SHA-256 and trivially recomputable by anyone with write access to
+   `review-bundle.json`; nothing about `--against`/`--require-trusted` alone forces a receipt to
+   actually be present. `--min-receipts` is the flag that turns "internally consistent JSON" into
+   "at least N genuinely valid receipts are present."
 
 ## GitHub Actions recipe (the trap-safe version)
 
@@ -72,15 +84,18 @@ jobs:
       - name: Verify review bundle against the real PR head
         env:
           TG_EVIDENCE_TRUSTED_KEY: ${{ secrets.TG_EVIDENCE_TRUSTED_KEY }}
+          TG_EVIDENCE_EXPECTED_KEY_ID: ${{ secrets.TG_EVIDENCE_EXPECTED_KEY_ID }}
         run: |
           tg review-bundle verify review-bundle.json \
             --against "${{ github.event.pull_request.head.sha }}" \
             --require-trusted \
             --trusted-key "$TG_EVIDENCE_TRUSTED_KEY" \
+            --min-receipts 1 \
+            --expect-key "$TG_EVIDENCE_EXPECTED_KEY_ID" \
             --json
 ```
 
-Two details worth calling out explicitly, both already covered above but easy to miss under time
+Three details worth calling out explicitly, all already covered above but easy to miss under time
 pressure when adapting this snippet:
 
 - `--against` takes `github.event.pull_request.head.sha` (the PR event payload's own head field),
@@ -90,6 +105,10 @@ pressure when adapting this snippet:
   the merge commit but verify against the head SHA (or vice versa), `review-bundle.json` itself
   (read from the checked-out tree) may not even be the version the receipt describes, on top of the
   ref-mismatch problem above.
+- `--min-receipts 1` is what actually requires evidence to be present at all -- drop it and this
+  whole recipe still "passes" on a bundle with zero receipts. `--expect-key` is optional but
+  recommended when a specific identity (e.g. "the CI service account" or "the on-call reviewer")
+  must be the one who signed, not just any trusted key.
 
 ## Registering a trusted key
 
@@ -100,18 +119,34 @@ recipe above) or in `TG_EVIDENCE_TRUSTED_KEYS` (comma-separated, for more than o
 signer). The private key never leaves the machine/agent that signs; CI only ever needs the public
 key, matching the asymmetric-trust design in `docs/CONTRACTS.md` section 8.
 
+Note the two flags in the recipe above take DIFFERENT values from the same `tg evidence pubkey`
+output: `--trusted-key` takes the base64 **public key**; `--expect-key` takes the printed
+**`key_id`** (`sha256:<hex>`) instead. `--trusted-key` answers "which signers do we cryptographically
+trust at all"; `--expect-key` answers "which of those trusted signers MUST actually be represented
+in this bundle" -- an org can trust several keys while requiring this particular gate to see
+evidence from one specific one (e.g. the CI service account, not just any developer's key).
+
 ## What this gate does and does not prove
 
-- It proves: a specific, pinned identity's key signed a specific EvidenceReceipt, the receipt's
-  content has not been altered since signing, and the receipt was captured at exactly the PR's
-  head commit with no uncommitted changes in the working tree at capture time.
-- It does NOT prove: that the receipt's *content* (the blast-radius evidence, validation outcomes,
-  confidence score, etc.) is itself correct -- `tg` never independently re-derives or fact-checks
-  what an agent claims to have done inside the receipt; it only proves the claim is authentic and
-  fresh. Treat a passing gate as "this evidence trail is genuine and current," not "this change is
-  correct."
+- **It proves presence only when `--min-receipts >= 1` was actually passed.** Integrity checks
+  (checksums, `bundle_sha256`) are plain SHA-256 and require no key to recompute, so an author with
+  write access to `review-bundle.json` can strip every embedded receipt and still produce a
+  bundle that verifies `valid = true` -- "internally consistent" is not the same claim as
+  "evidence is present." `--min-receipts` (and `--expect-key` for a specific required signer) is
+  what turns this from an integrity check into an actual presence-and-authenticity gate. Treat a
+  passing gate WITHOUT `--min-receipts` as proving nothing about whether evidence exists at all.
+- **With `--min-receipts >= 1` (and ideally `--expect-key`), it proves**: at least N specific,
+  pinned identities' keys each signed a specific EvidenceReceipt, that receipt's content has not
+  been altered since signing, and it was captured at exactly the PR's head commit with no
+  uncommitted changes in the working tree at capture time.
+- **It does NOT prove**: that the receipt's *content* (the blast-radius evidence, validation
+  outcomes, confidence score, etc.) is itself correct -- `tg` never independently re-derives or
+  fact-checks what an agent claims to have done inside the receipt; it only proves the claim is
+  authentic, current, and (with `--min-receipts`) actually present. Even at its strongest
+  configuration, treat a passing gate as "a genuine, current evidence trail exists," not "this
+  change is correct."
 - It is entirely local-first: no external service, no network call, no dependency on a specific CI
-  vendor. The same three commands (`tg review-bundle create --receipt`, `tg review-bundle verify
-  --against`) work identically outside GitHub Actions -- GitLab CI, a pre-merge hook, or a plain
-  shell script -- as long as the caller supplies the correct target-ref SHA for that platform's
-  equivalent of the "PR head, not the merge commit" distinction above.
+  vendor. The same commands (`tg review-bundle create --receipt`, `tg review-bundle verify
+  --against --min-receipts --expect-key`) work identically outside GitHub Actions -- GitLab CI, a
+  pre-merge hook, or a plain shell script -- as long as the caller supplies the correct target-ref
+  SHA for that platform's equivalent of the "PR head, not the merge commit" distinction above.

@@ -284,7 +284,22 @@ def _resolve_git_ref_commit_sha(
     `valid=False`. This mirrors `ledger_store._finding_is_fresh`'s fail-closed contract, NOT
     claims' `_revision_matches` (audit_manifest.py's sibling module), which returns `None` for
     "unknown" -- that tri-state is correct for an advisory overlap report, but wrong for a gate.
+
+    CWE-88 / native-argv flag-injection guard (AGENTS.md "Security Hardening Patterns"): a
+    `--against` value starting with `-` would otherwise be parsed by `git rev-parse` as an OPTION
+    rather than a revision. A `--` sentinel does NOT safely close this for this exact invocation
+    shape -- verified empirically: `git rev-parse --verify -- "HEAD^{commit}"` fails ("fatal:
+    Needed a single revision") even for a perfectly valid ref, so inserting one here would trade a
+    security nit for a functional regression. Reject the leading-`-` case up front instead: no
+    legitimate git ref/branch/tag short name can start with `-` (`git branch`/`git tag` themselves
+    refuse to create one), so this can only ever reject a malformed or malicious `--against`
+    value, never a real ref -- and it fails closed the same way every other error path here does.
     """
+    if ref.startswith("-"):
+        return (
+            None,
+            f"Ref {ref!r} looks like a command-line flag (starts with '-'); refusing to resolve it.",
+        )
     resolved_root = (Path(root) if root is not None else Path.cwd()).expanduser().resolve()
     timeout_seconds = configured_git_timeout_seconds()
     try:
@@ -383,6 +398,8 @@ def verify_review_bundle(
     against: str | None = None,
     trusted_public_keys: Sequence[str] | None = None,
     require_trusted: bool = False,
+    min_receipts: int = 0,
+    expect_key_ids: Sequence[str] | None = None,
     root: str | Path | None = None,
 ) -> dict[str, Any]:
     # Local import: evidence_signing imports FROM this module (_utc_now_iso); a module-level
@@ -496,6 +513,46 @@ def verify_review_bundle(
     against_resolution_valid = against_check is None or bool(against_check["valid"])
     receipts_valid = all(bool(entry["valid"]) for entry in receipt_checks)
 
+    # NIT-1 (post-gate hardening, CEO#8): close the empty-bundle bypass. Without an opt-in
+    # minimum, `evidence_receipts` null/absent/[] trivially passes (`all([]) == True`) and
+    # `bundle_sha256` is cosmetic against an author who controls review-bundle.json -- they can
+    # strip every receipt, recompute the KEYLESS checksums, and greenlight the gate with NO
+    # evidence at all. `--min-receipts`/`--expect-key` are the org's opt-in POLICY lever: default
+    # 0 / empty is a no-op (both conditions below are trivially satisfied), so this is
+    # byte-identical to the pre-hardening contract until a caller actively opts in. Both counts
+    # are computed over `receipt_checks[].valid`, which already folds in well-formedness
+    # (a non-dict entry is `valid=False`), signature/digest validity, trust (when
+    # `require_trusted`), and freshness (when `against`) -- so "valid receipt" here means exactly
+    # what an operator combining `--require-trusted --trusted-key ... --against ...` would expect,
+    # not merely "present in the list."
+    expect_key_ids_list = list(expect_key_ids) if expect_key_ids else []
+    policy_enabled = min_receipts > 0 or bool(expect_key_ids_list)
+    valid_receipt_count = sum(1 for entry in receipt_checks if bool(entry.get("valid")))
+    min_receipts_satisfied = valid_receipt_count >= min_receipts
+    valid_key_ids = {
+        signature["key_id"]
+        for entry in receipt_checks
+        if bool(entry.get("valid")) and isinstance(entry.get("signature"), dict)
+        for signature in [entry["signature"]]
+        if signature.get("key_id")
+    }
+    missing_expect_key_ids = [
+        key_id for key_id in expect_key_ids_list if key_id not in valid_key_ids
+    ]
+    expect_keys_satisfied = not missing_expect_key_ids
+    policy_valid = min_receipts_satisfied and expect_keys_satisfied
+
+    policy_reasons: list[str] = []
+    if not min_receipts_satisfied:
+        policy_reasons.append(
+            f"policy requires >={min_receipts} valid evidence receipts; found {valid_receipt_count}"
+        )
+    for missing_key_id in missing_expect_key_ids:
+        policy_reasons.append(
+            f"policy requires evidence signed by key_id {missing_key_id!r}; not found among "
+            "valid receipts"
+        )
+
     payload = _envelope(routing_reason="review-bundle-verify")
     payload["bundle_path"] = str(resolved_bundle)
     payload["valid"] = (
@@ -504,6 +561,7 @@ def verify_review_bundle(
         and manifest_signature_valid
         and against_resolution_valid
         and receipts_valid
+        and policy_valid
     )
     payload["checks"] = checks
     payload["bundle_integrity"] = bundle_integrity
@@ -513,6 +571,17 @@ def verify_review_bundle(
     payload["receipts"] = receipt_checks
     if against_check is not None:
         payload["against"] = against_check
+    if policy_enabled:
+        payload["policy"] = {
+            "min_receipts": min_receipts,
+            "valid_receipt_count": valid_receipt_count,
+            "min_receipts_satisfied": min_receipts_satisfied,
+            "expect_key_ids": expect_key_ids_list,
+            "missing_expect_key_ids": missing_expect_key_ids,
+            "expect_keys_satisfied": expect_keys_satisfied,
+            "valid": policy_valid,
+            "reasons": policy_reasons,
+        }
     return payload
 
 
@@ -523,6 +592,8 @@ def verify_review_bundle_json(
     against: str | None = None,
     trusted_public_keys: Sequence[str] | None = None,
     require_trusted: bool = False,
+    min_receipts: int = 0,
+    expect_key_ids: Sequence[str] | None = None,
     root: str | Path | None = None,
 ) -> str:
     return json.dumps(
@@ -532,6 +603,8 @@ def verify_review_bundle_json(
             against=against,
             trusted_public_keys=trusted_public_keys,
             require_trusted=require_trusted,
+            min_receipts=min_receipts,
+            expect_key_ids=expect_key_ids,
             root=root,
         ),
         indent=2,

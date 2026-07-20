@@ -14970,6 +14970,24 @@ def review_bundle_verify(
         "--trusted-key. Without this flag, an untrusted key is still reported (key_trusted=false) "
         "but does not by itself fail `valid`.",
     ),
+    min_receipts: int = typer.Option(
+        0,
+        "--min-receipts",
+        help="Fail closed (valid=false) unless at least N embedded evidence receipts are "
+        "present, well-formed, and pass signature/trust/freshness verification. Default 0 = no "
+        "enforcement (back-compat: a receipt-less bundle still verifies valid=true). Without "
+        "this, a bundle with its receipts stripped and checksums recomputed passes with NO "
+        "evidence -- this is the org's real policy lever to require genuine, current evidence.",
+    ),
+    expect_key: list[str] | None = typer.Option(
+        None,
+        "--expect-key",
+        help="A key_id (from `tg evidence pubkey`, e.g. sha256:<hex>) that must sign at least "
+        "one valid embedded receipt. Repeatable; ALL named key_ids must each be represented by a "
+        "valid receipt, or verification fails closed (valid=false). Pins WHICH signer(s) are "
+        "required, distinct from --trusted-key which pins which signers are cryptographically "
+        "trusted at all.",
+    ),
     json_output: bool = typer.Option(
         False,
         "--json",
@@ -15000,6 +15018,8 @@ def review_bundle_verify(
                 against=against,
                 trusted_public_keys=trusted_keys,
                 require_trusted=require_trusted,
+                min_receipts=min_receipts,
+                expect_key_ids=expect_key,
             )
             typer.echo(json_text)
             # Mirror the text path: a tampered/invalid bundle must exit 1 even in
@@ -15013,6 +15033,8 @@ def review_bundle_verify(
             against=against,
             trusted_public_keys=trusted_keys,
             require_trusted=require_trusted,
+            min_receipts=min_receipts,
+            expect_key_ids=expect_key,
         )
     except typer.Exit:
         raise
@@ -15095,6 +15117,15 @@ def review_bundle_verify(
         if isinstance(signature, dict) and signature.get("errors"):
             for signature_error in cast(list[object], signature["errors"]):
                 typer.echo(f"  signature_error: {signature_error}")
+    policy = payload.get("policy")
+    if isinstance(policy, dict):
+        typer.echo(
+            f"policy: min_receipts={policy['min_receipts']} "
+            f"valid_receipt_count={policy['valid_receipt_count']} "
+            f"expect_key_ids={policy['expect_key_ids']} valid={policy['valid']}"
+        )
+        for policy_reason in cast(list[object], policy.get("reasons") or []):
+            typer.echo(f"  policy_reason: {policy_reason}")
     if not payload["valid"]:
         raise typer.Exit(code=1)
 
