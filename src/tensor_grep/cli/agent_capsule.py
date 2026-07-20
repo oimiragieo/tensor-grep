@@ -69,6 +69,25 @@ _CAPSULE_SCAN_TRUNCATED_ASK_REASON = (
     "repository scan was truncated; the ranked primary may not be the true target"
 )
 
+# v20 dogfood gap #2: `_primary_target` below returns an empty `{"file": "", ...}` primary when
+# neither `navigation_pack.primary_target` nor `edit_plan_seed.primary_file` resolves -- safe, but
+# useless to an agent when the underlying repo SCAN already truncated, since `rm` already holds
+# every file/symbol the scan reached before the deadline cut it off. `primary_basis` on the
+# primary target marks a heuristic best-effort substitute derived straight from that already-
+# scanned data (see `_best_effort_primary_target_from_map`), distinct from a normal ranked
+# resolution; the additive `partial_primary` flag is the machine-checkable twin of the same fact.
+_BEST_EFFORT_PRIMARY_BASIS = "deadline_truncated_best_effort"
+_BEST_EFFORT_PRIMARY_EVIDENCE = "deadline-truncated-best-effort"
+# Hard item-count cap (deliberately NOT a live `deadline_monotonic` re-check) for each scoring
+# pass inside `_best_effort_primary_target_from_map`: that helper only ever runs AFTER the scan
+# has already been marked truncated (see its lone call site in `build_agent_capsule_from_map`), so
+# gating it on the deadline again would make the whole block permanently dead code. Bounding by
+# item count instead keeps the added cost deterministic and cheap (in-memory string scoring only,
+# no I/O, no second scan) regardless of how large the already-capped `rm` still is -- the same
+# discipline `_build_context_pack_from_map` applies with a live check at repo_map.py:7862, just
+# expressed as a slice since a live check would never let this particular pass run at all.
+_BEST_EFFORT_PRIMARY_SCAN_CAP = 500
+
 
 def _as_dict(value: object) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
@@ -470,6 +489,83 @@ def _primary_target(payload: dict[str, Any]) -> dict[str, Any]:
             ],
         ])
     return target_payload
+
+
+def _best_effort_primary_target_from_map(rm: dict[str, Any], query: str) -> dict[str, Any] | None:
+    """v20 dogfood gap #2: derive a BEST-EFFORT primary target straight from the already-scanned
+    ``rm`` when the real ranking pass (``_primary_target``) came back empty on a truncated scan.
+    No second scan, no I/O -- every candidate below is scored purely off data ``rm`` already
+    holds. Cheapest/most-specific signal first:
+
+      (a) a scanned SYMBOL whose name matches the query, scored with the exact
+          ``repo_map._score_symbol`` a real ranking pass would use;
+      (b) else a scanned FILE PATH that matches the query (``repo_map._score_file_path``);
+      (c) else the single most-central scanned file -- a query-independent last resort, reusing
+          the same composite ``orient_capsule._file_centrality_scores`` that ``tg orient``'s own
+          ``suggested_scope`` already applies unconditionally in this exact truncated-scan tail
+          (``build_agent_capsule_from_map``'s own ``suggested_scope_from_map`` call above does the
+          same thing for the same reason).
+
+    Each of (a)/(b) is capped to the first ``_BEST_EFFORT_PRIMARY_SCAN_CAP`` items ``rm`` holds --
+    see that constant's comment for why this is an item-count cap, not a deadline re-check.
+    Returns ``None`` (never fabricates) when ``rm`` has nothing to score at all. The caller owns
+    stamping ``partial_primary``/``primary_basis`` and letting every existing confidence-cap/
+    ask-reason gate re-run over the result -- this helper returns a bare best-guess location only,
+    never a fully-shaped primary-target dict.
+    """
+    symbols = _as_list_of_dicts(rm.get("symbols"))[:_BEST_EFFORT_PRIMARY_SCAN_CAP]
+    symbol_terms = repo_map._symbol_query_terms(query)
+    if symbols and symbol_terms:
+        best_symbol: dict[str, Any] | None = None
+        best_symbol_score = 0
+        for symbol in symbols:
+            name = symbol.get("name")
+            file_path = symbol.get("file")
+            if not name or not file_path:
+                continue
+            # Normalize defensively -- `_score_symbol` indexes "name"/"kind"/"file" directly, and
+            # this helper must never crash the capsule even if a language-specific extractor ever
+            # omits "kind" on some symbol record.
+            scoreable = {"name": name, "kind": symbol.get("kind") or "unknown", "file": file_path}
+            score = repo_map._score_symbol(scoreable, symbol_terms)
+            if score > best_symbol_score:
+                best_symbol_score = score
+                best_symbol = symbol
+        if best_symbol is not None:
+            line = best_symbol.get("line") or best_symbol.get("start_line") or 1
+            return {
+                "file": str(best_symbol.get("file") or ""),
+                "symbol": best_symbol.get("name"),
+                "kind": str(best_symbol.get("kind") or "unknown"),
+                "line": int(line) if isinstance(line, int) or str(line).isdigit() else 1,
+            }
+
+    files = [str(current) for current in (rm.get("files") or [])][:_BEST_EFFORT_PRIMARY_SCAN_CAP]
+    file_terms = repo_map._query_terms(query)
+    if files and file_terms:
+        best_file: str | None = None
+        best_file_score = 0
+        for candidate_file in files:
+            score = repo_map._score_file_path(candidate_file, file_terms)
+            if score > best_file_score:
+                best_file_score = score
+                best_file = candidate_file
+        if best_file is not None:
+            return {"file": best_file, "symbol": None, "kind": "unknown", "line": 1}
+
+    # Local import avoids a module-level circular import -- same discipline every other
+    # `orient_capsule` reuse in this module already follows (see e.g. `build_agent_capsule_
+    # from_map`'s own docstring for why).
+    from tensor_grep.cli.orient_capsule import _file_centrality_scores
+
+    code_files, centrality = _file_centrality_scores(rm)
+    if code_files:
+        top_file = sorted(code_files, key=lambda current: (-centrality.get(current, 0.0), current))[
+            0
+        ]
+        return {"file": top_file, "symbol": None, "kind": "unknown", "line": 1}
+
+    return None
 
 
 def _target_symbol_was_explicitly_requested(query: str, target: dict[str, Any]) -> bool:
@@ -2475,6 +2571,36 @@ def build_agent_capsule_from_map(
     # simply be the best candidate among the files that were visible, not the true best one).
     scan_truncated = _capsule_scan_incomplete(payload)
     target = _primary_target(payload)
+    # v20 dogfood gap #2: a truncated scan with no resolvable primary previously left `target` at
+    # `_primary_target`'s empty-shape default (`file: ""`) -- safe, but useless to an agent even
+    # though `rm` already holds every file/symbol the scan reached before the deadline cut it off.
+    # Substitute a best-effort candidate derived straight from that already-scanned data (no
+    # second scan) and flag it clearly non-authoritative via the additive `partial_primary`/
+    # `primary_basis` fields. Every confidence cap / ask-reason gate below -- the scan-truncation
+    # downgrade just above, `_cap_primary_target_confidence` a few lines down, the forced
+    # `_CAPSULE_SCAN_TRUNCATED_ASK_REASON` ask-reason, and the T2 uplift's own unconditional
+    # `scan_truncated` disqualifier -- still runs unmodified over this substitute exactly as it
+    # would over a normally-ranked primary, so it can never surface at >=0.75 confidence or with
+    # `ask_user_before_editing.required = False`. A COMPLETE (non-truncated) scan, or a truncated
+    # one that still resolved a normal primary, never enters this block -- byte-identical to
+    # before this fix.
+    if scan_truncated and not target.get("file"):
+        best_effort_target = _best_effort_primary_target_from_map(rm, query)
+        if best_effort_target is not None:
+            target["file"] = best_effort_target["file"]
+            target["symbol"] = best_effort_target["symbol"]
+            target["kind"] = best_effort_target["kind"]
+            target["line"] = best_effort_target["line"]
+            target["partial_primary"] = True
+            target["primary_basis"] = _BEST_EFFORT_PRIMARY_BASIS
+            target["evidence"] = _dedupe([
+                *[
+                    str(item)
+                    for item in target.get("evidence", [])
+                    if item is not None and str(item)
+                ],
+                _BEST_EFFORT_PRIMARY_EVIDENCE,
+            ])
     all_alternatives = _alternative_targets(payload, target, limit=None)
     alternatives = all_alternatives[:4]
     target, alternatives = _prefer_implementation_over_marker_helper(query, target, alternatives)
