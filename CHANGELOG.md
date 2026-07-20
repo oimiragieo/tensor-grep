@@ -1,6 +1,33 @@
 # CHANGELOG
 
 
+## v1.86.0 (2026-07-20)
+
+### Features
+
+- **graph**: Bidirectional-oracle exit-code gate + callers likely-first-under-deadline parity (CEO#4
+  completeness) ([#680](https://github.com/oimiragieo/tensor-grep/pull/680),
+  [`9473d94`](https://github.com/oimiragieo/tensor-grep/commit/9473d9412ef1517328708ff582e44db961ba446b))
+
+Adds tests/unit/test_graph_completeness_oracle.py, a permanent regression gate proving the
+  documented three-state exit-code contract (docs/CONTRACTS.md:112-113) actually holds for `tg
+  importers`, `tg callers`, and `tg blast-radius`: exit 0 with every real edge present on a complete
+  scan, exit 2 (never 0) when a --max-repo-files cap or a --deadline cut drops real data. Fixture C
+  injects an already-expired deadline deterministically (patches `_deadline_monotonic_from_seconds`)
+  instead of racing a real wall clock, which would flake in CI.
+
+Also fixes a real parity gap found while building the gate: `_cap_caller_scan_files` only ordered
+  caller-scan candidates (literal-hit-first, source/test-interleaved) once the file universe
+  exceeded CALLER_SCAN_FILE_CEILING (2000) -- unlike `tg importers`, which always orders via
+  `_tier_reverse_importer_candidates` (#221) regardless of ceiling. A deadline-cut scan of a repo
+  well under that ceiling therefore scanned source-first with no likely-first protection and could
+  strand a late-sorting/test-file caller past the cut. Now ordering also runs below the ceiling
+  whenever a deadline is in play and there are tests to interleave; nothing is dropped by this
+  branch, so it's a pure candidate-order change, invisible to a scan that completes.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.85.0 (2026-07-20)
 
 ### Features
