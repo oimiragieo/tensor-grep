@@ -1,6 +1,116 @@
 # CHANGELOG
 
 
+## v1.87.0 (2026-07-20)
+
+### Features
+
+- **review-bundle**: Evidence-receipt -> verify --against PR-head -> CI-gate path (CEO#8 enterprise
+  close-the-loop) ([#681](https://github.com/oimiragieo/tensor-grep/pull/681),
+  [`891610b`](https://github.com/oimiragieo/tensor-grep/commit/891610b3849a69776af4c0ab7408d8a14d6cf808))
+
+* feat(review-bundle): evidence-receipt -> verify --against PR-head -> CI-gate path (CEO#8)
+
+Wires the existing EvidenceReceipt signing (tg evidence emit --sign) and review-bundle (tg
+  review-bundle create/verify) primitives into a first-class enterprise CI-gate path: an agent's
+  signed EvidenceReceipt is now carried inside a review bundle and re-verified in CI against the PR
+  head commit, failing the check (exit 1) if any receipt is unsigned, untrusted, tampered, stale, or
+  bound to a dirty working tree.
+
+Change A -- bundle carries receipts (audit_manifest.py): - New optional "evidence_receipts"
+  review-bundle component (never required; a receipt-less bundle, old or new, still verifies green).
+  - create_review_bundle(..., receipt_paths=[...]) reads each receipt through
+  evidence_signing.read_receipt_file (the same bounded/validated reader tg evidence uses) and embeds
+  them verbatim; checksums/bundle_sha256 fold them in via the existing generic per-component loop,
+  so tamper-evidence is inherited for free.
+
+Change B -- verify --against + trust (audit_manifest.py): - New _resolve_git_ref_commit_sha: a
+  fail-closed `git rev-parse --verify <ref>^{commit}` resolver, run against the verifying process's
+  own CWD (never a bundle-embedded path). An unresolvable ref fails the WHOLE bundle closed, even
+  with zero embedded receipts. - New _receipt_freshness_against: a receipt is fresh only when its
+  revision.status is "present", revision.commit_sha matches the resolved --against commit, AND
+  revision.dirty is False -- deliberately NOT a dirty_tree_sha256 comparison against the live CI
+  tree, since a CI checkout can legitimately sit on a merge commit. - verify_review_bundle gains
+  against / trusted_public_keys / require_trusted (+ an internal-only `root` kwarg for testability),
+  reuses evidence_signing.verify_receipt for signature/trust (no crypto reimplemented), and folds
+  every receipt + the ref resolution into the existing top-level `valid` -- review-bundle verify
+  --json already exits 1 on invalid, so no new exit-code logic was needed.
+
+CLI (main.py): repeatable --receipt on `review-bundle create`; --against/--trusted-key/
+  --require-trusted on `review-bundle verify`, mirroring `tg evidence verify`'s trust flags and
+  stderr warning exactly.
+
+Docs: CONTRACTS.md section 11 documents the new component/flags, the fail-closed ref resolution, and
+  the freshness definition; section 8's consumer note is updated to point at this new in-tool
+  freshness check. docs/enterprise_review_bundle_ci.md is a full runbook with a GitHub Actions
+  recipe that calls out the critical trap loudly: --against must use
+  github.event.pull_request.head.sha, never $GITHUB_SHA (which resolves to the merge commit on a
+  pull_request trigger and would read every receipt as stale on every PR).
+
+Back-compat: byte-for-byte unchanged behavior when --receipt/--against are omitted; no Rust changes
+  (review-bundle is an existing Python-passthrough command, so new flags forward automatically); no
+  new top-level command or MCP tool (existing tg_review_bundle_create/ verify MCP tools are
+  unaffected -- new params are optional keyword args with defaults).
+
+Tests: tests/unit/test_review_bundle_evidence_receipts.py (21 new tests) covers the back-compat
+  cases, the GREEN signed+fresh+trusted case, and RED cases for staleness, tampering (with
+  recomputed bundle-level checksums, proving defense in depth), unsigned/ untrusted under
+  --require-trusted, a dirty-tree receipt, and an unresolvable --against ref -- plus CLI wiring
+  tests and one real-subprocess (non-CliRunner) exit-code test.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* feat(review-bundle): close empty-bundle policy bypass; harden ref resolver (post-gate NITs)
+
+Three hardenings applied after PR #681 passed the independent Opus gate as SHIP-WITH-NITS.
+
+NIT-1 (the important one -- close the empty-bundle bypass): a bundle with evidence_receipts
+  null/absent/[]/non-list previously passed valid=True even under --require-trusted --against HEAD,
+  because all([]) == True and bundle_sha256 is cosmetic against an author who controls
+  review-bundle.json (plain SHA-256, no key needed to recompute) -- they could strip every receipt,
+  recompute the hash, and greenlight the gate with NO evidence. Receipts cannot be made required in
+  verify_review_bundle without breaking the back-compat contract (a legacy receipt-less bundle must
+  still verify valid=True by default), so this adds two OPTIONAL, default-OFF policy levers instead:
+  - --min-receipts N (default 0): fails closed unless at least N embedded receipts are present,
+  well-formed, and pass signature/trust/freshness verification (receipts[].valid == true). -
+  --expect-key KEY_ID (repeatable): fails closed unless at least one valid receipt is signed by each
+  named key_id, reusing the same key_id verify_receipt already surfaces (distinct from
+  --trusted-key, which pins which signers are trusted at all vs. which MUST be represented). Both
+  fold into the existing valid=False -> exit-1 path; a new additive `policy` JSON field is emitted
+  only when either flag is actually used, so output is byte-identical to before when both are
+  omitted (verified by a dedicated test asserting "policy" not in payload). Threaded through
+  verify_review_bundle/verify_review_bundle_json (audit_manifest.py) and the CLI (main.py, mirroring
+  tg evidence verify's flag/warning style). Both docs updated: the CI recipe now uses --min-receipts
+  (and --expect-key), and the "what this gate proves" section is split into "proves nothing about
+  presence without --min-receipts" vs. "proves presence+authenticity with it."
+
+NIT-2 (house CWE-88 consistency, LOW): _resolve_git_ref_commit_sha's `git rev-parse --verify
+  <ref>^{commit}` had no protection against a flag-like --against value. Verified empirically before
+  choosing a fix: a `--` sentinel actually BREAKS this exact invocation shape (`git rev-parse
+  --verify -- "HEAD^{commit}"` fails with "fatal: Needed a single revision" even for a perfectly
+  valid ref), so it would trade a security nit for a functional regression. Rejects any ref starting
+  with `-` up front instead (no legitimate git ref/branch/tag name can start with `-`), closing the
+  same class without touching git's own argument parsing.
+
+NIT-3 (tests): 10 new tests -- a receipt with revision.status != "present" under --against fails
+  closed; a non-dict evidence_receipts list entry fails closed without crashing; the exact NIT-1
+  attack (a bundle whose receipt is stripped to [] with checksums recomputed passes unenforced,
+  fails under --min-receipts 1); the back-compat control (receipt-less bundle stays valid=True
+  without --min-receipts, no policy key emitted); an --expect-key mismatch; a positive control
+  proving the policy flags don't false-positive on genuinely satisfying evidence; the leading-dash
+  ref rejection; and 2 CLI wiring tests for --min-receipts/ --expect-key.
+
+Verified: 348 passed, 1 skipped across this file + test_review_bundles.py, test_evidence_signing.py,
+  test_evidence_receipt.py, test_ledger_store.py, test_trust_parity.py,
+  test_evidence_bundle_atomic_write.py, test_audit_manifest_signing_key.py,
+  test_main_cli_contracts.py, and both docs-governance suites. ruff check / ruff format --preview /
+  mypy src/tensor_grep (81 files) all clean.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.86.0 (2026-07-20)
 
 ### Features

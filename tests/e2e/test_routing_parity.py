@@ -45,6 +45,7 @@ PUBLIC_TOP_LEVEL_COMMANDS = {
     "edit-plan",
     "context-render",
     "route-test",
+    "prepare",
     "rulesets",
     "audit-history",
     "audit-diff",
