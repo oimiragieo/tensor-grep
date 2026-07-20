@@ -14817,6 +14817,13 @@ def review_bundle_create(
         "--previous-manifest",
         help="Optional previous audit manifest JSON for diff generation.",
     ),
+    receipt: list[str] | None = typer.Option(
+        None,
+        "--receipt",
+        help="Path to a signed EvidenceReceipt JSON file (from `tg evidence emit --sign`) to "
+        "embed in the bundle. Repeatable. Pair with `tg review-bundle verify --against` in CI to "
+        "gate the PR on receipt signature/trust/freshness.",
+    ),
     output_path: str | None = typer.Option(
         None,
         "--output",
@@ -14830,6 +14837,7 @@ def review_bundle_create(
 ) -> None:
     """Create a review bundle for enterprise change review."""
     from tensor_grep.cli.audit_manifest import create_review_bundle, create_review_bundle_json
+    from tensor_grep.cli.evidence_signing import EvidenceSigningError
 
     try:
         if json_output:
@@ -14839,6 +14847,7 @@ def review_bundle_create(
                     scan_path=scan_path,
                     checkpoint_id=checkpoint_id,
                     previous_manifest=previous_manifest,
+                    receipt_paths=receipt,
                     output_path=output_path,
                 )
             )
@@ -14848,6 +14857,7 @@ def review_bundle_create(
             scan_path=scan_path,
             checkpoint_id=checkpoint_id,
             previous_manifest=previous_manifest,
+            receipt_paths=receipt,
             output_path=output_path,
         )
     except FileNotFoundError as exc:
@@ -14880,6 +14890,21 @@ def review_bundle_create(
         else:
             typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
+    except EvidenceSigningError as exc:
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    _review_bundle_error_payload(
+                        str(exc),
+                        code="invalid_receipt",
+                        routing_reason="review-bundle-create",
+                    ),
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
     except Exception as exc:
         if json_output:
             typer.echo(
@@ -14903,6 +14928,7 @@ def review_bundle_create(
             "scan_results",
             "checkpoint_metadata",
             "diff",
+            "evidence_receipts",
         )
         if payload[component] is not None
     ]
@@ -14921,6 +14947,29 @@ def review_bundle_verify(
         "--signing-key",
         help="Optional HMAC signing key path to verify the embedded manifest's signature.",
     ),
+    against: str | None = typer.Option(
+        None,
+        "--against",
+        help="Git ref each embedded evidence receipt's revision must match (commit_sha equal, "
+        "dirty=false) to be considered fresh; an unresolvable ref fails closed. In GitHub Actions "
+        "use the pull_request event's head SHA (github.event.pull_request.head.sha) -- NEVER the "
+        "workflow's own GITHUB_SHA, which resolves to the merge commit, not the PR head, and "
+        "would read every receipt as stale on every PR.",
+    ),
+    trusted_key: list[str] | None = typer.Option(
+        None,
+        "--trusted-key",
+        help="A pinned base64 Ed25519 public key (from `tg evidence pubkey`) to trust when "
+        "verifying embedded evidence_receipts. Repeatable. Falls back to "
+        "TG_EVIDENCE_TRUSTED_KEYS (comma-separated).",
+    ),
+    require_trusted: bool = typer.Option(
+        False,
+        "--require-trusted",
+        help="Fail closed (valid=false) unless every embedded receipt's key matches a "
+        "--trusted-key. Without this flag, an untrusted key is still reported (key_trusted=false) "
+        "but does not by itself fail `valid`.",
+    ),
     json_output: bool = typer.Option(
         False,
         "--json",
@@ -14929,17 +14978,42 @@ def review_bundle_verify(
 ) -> None:
     """Verify review bundle integrity and component checksums."""
     from tensor_grep.cli.audit_manifest import verify_review_bundle, verify_review_bundle_json
+    from tensor_grep.cli.evidence_signing import resolve_trusted_public_keys
 
     try:
+        trusted_keys = resolve_trusted_public_keys(trusted_key)
+        # Least-surprise guard, mirrors `tg evidence verify`: supplying a specific trusted key
+        # strongly implies intent to ENFORCE it, but without --require-trusted an untrusted
+        # embedded receipt key still yields valid=true for that receipt (only key_trusted=false).
+        # Warn VISIBLY on stderr (never touching --json stdout, never silently changing `valid`).
+        if trusted_keys and not require_trusted:
+            typer.echo(
+                "warning: --trusted-key/TG_EVIDENCE_TRUSTED_KEYS supplied without "
+                "--require-trusted; an untrusted embedded receipt key will still report "
+                "valid=true for that receipt. Pass --require-trusted to enforce.",
+                err=True,
+            )
         if json_output:
-            json_text = verify_review_bundle_json(bundle_path, signing_key=signing_key)
+            json_text = verify_review_bundle_json(
+                bundle_path,
+                signing_key=signing_key,
+                against=against,
+                trusted_public_keys=trusted_keys,
+                require_trusted=require_trusted,
+            )
             typer.echo(json_text)
             # Mirror the text path: a tampered/invalid bundle must exit 1 even in
             # --json mode (audit H1) so callers can gate on the process status.
             if not json.loads(json_text).get("valid", False):
                 raise typer.Exit(code=1)
             return
-        payload = verify_review_bundle(bundle_path, signing_key=signing_key)
+        payload = verify_review_bundle(
+            bundle_path,
+            signing_key=signing_key,
+            against=against,
+            trusted_public_keys=trusted_keys,
+            require_trusted=require_trusted,
+        )
     except typer.Exit:
         raise
     except FileNotFoundError as exc:
@@ -15001,6 +15075,26 @@ def review_bundle_verify(
         f"{bundle_integrity['valid']} "
         f"expected={bundle_integrity['expected']} actual={bundle_integrity['actual']}"
     )
+    against_check = payload.get("against")
+    if isinstance(against_check, dict):
+        typer.echo(
+            f"against={against_check['ref']} valid={against_check['valid']} "
+            f"resolved_commit_sha={against_check['resolved_commit_sha']}"
+        )
+        if against_check.get("error"):
+            typer.echo(f"  against_error: {against_check['error']}")
+    for receipt_check in cast(list[dict[str, object]], payload.get("receipts") or []):
+        typer.echo(
+            f"receipt[{receipt_check['index']}]: valid={receipt_check['valid']} "
+            f"receipt_sha256={receipt_check.get('receipt_sha256')}"
+        )
+        freshness = receipt_check.get("freshness")
+        if isinstance(freshness, dict) and freshness.get("error"):
+            typer.echo(f"  freshness_error: {freshness['error']}")
+        signature = receipt_check.get("signature")
+        if isinstance(signature, dict) and signature.get("errors"):
+            for signature_error in cast(list[object], signature["errors"]):
+                typer.echo(f"  signature_error: {signature_error}")
     if not payload["valid"]:
         raise typer.Exit(code=1)
 
