@@ -10233,6 +10233,12 @@ def _build_prepare_blast_radius_floor(
     if deadline_monotonic is not None:
         deadline_seconds_remaining = max(0.1, deadline_monotonic - time.monotonic())
     try:
+        # `max_repo_files` is deliberately OMITTED (max recall within the shared deadline, not a
+        # 2nd cap): this scan's only truncation source must stay the deadline, whose signal we
+        # already read back below (`radius_payload.get("partial")` -> `deadline_partial` ->
+        # top-level `partial`/exit-2). A file-count cap would truncate via `scan_limit` instead,
+        # which this floor never inspects -- that truncation would be silently invisible in
+        # `tg prepare`'s output. Do not "fix" this by adding a cap here.
         radius_payload = build_symbol_blast_radius(
             symbol,
             path,

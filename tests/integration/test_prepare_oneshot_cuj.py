@@ -57,6 +57,16 @@ _PYPROJECT = (
     "[tool.pytest.ini_options]\n"
     'testpaths = ["tests"]\n'
 )
+_ORPHAN_MODULE = (
+    '"""Fixture module for the blast-radius floor zero-caller control."""\n\n\n'
+    "def calculate_early_payment_discount(balance, days_early):\n"
+    '    """Compute an early-payment discount.\n\n'
+    "    Intentionally never called anywhere in this fixture -- the zero-caller control for\n"
+    "    blast_radius_floor's honesty contract (see test_prepare_floor_reports_zero_callers_\n"
+    '    honestly).\n    """\n'
+    "    return balance * 0.02 * days_early\n"
+)
+_ORPHAN_PYPROJECT = '[project]\nname = "orphan-fixture"\nversion = "0.1.0"\n'
 
 
 def _run_tg(
@@ -117,6 +127,21 @@ def large_billing_repo(tmp_path_factory: pytest.TempPathFactory) -> Path:
                 f"def helper_{project_index}_{file_index}():\n    return {file_index}\n",
                 encoding="utf-8",
             )
+    return root
+
+
+@pytest.fixture(scope="module")
+def orphan_repo(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A repo containing exactly one symbol that is DEFINED but has NO callers anywhere -- the
+    zero-caller control (bidirectional-oracle half) for
+    test_prepare_floor_keyed_on_selected_symbol_not_query's positive (callers_count>=1)
+    assertion: proves blast_radius_floor reports 0 honestly instead of vacuously always finding
+    >=1 caller. Deliberately a SEPARATE, isolated fixture (not sharing billing_repo) so this
+    orphan symbol can never become a ranking candidate for any OTHER test's query."""
+    root = tmp_path_factory.mktemp("prepare_cuj_orphan") / "orphan"
+    root.mkdir(parents=True)
+    (root / "pyproject.toml").write_text(_ORPHAN_PYPROJECT, encoding="utf-8")
+    (root / "orphan.py").write_text(_ORPHAN_MODULE, encoding="utf-8")
     return root
 
 
@@ -202,6 +227,38 @@ def test_prepare_floor_keyed_on_selected_symbol_not_query(billing_repo: Path) ->
     assert floor.get("symbol") == selected_symbol, (floor, selected_symbol)
     assert floor.get("source") == "supplementary_blast_radius", floor
     assert floor.get("callers_count", 0) >= 1, floor
+
+
+def test_prepare_floor_reports_zero_callers_honestly(orphan_repo: Path) -> None:
+    """Zero-caller control (bidirectional-oracle half) pairing with
+    test_prepare_floor_keyed_on_selected_symbol_not_query's positive: a symbol that is DEFINED
+    but has NO callers anywhere must report callers_count == 0 through a REAL floor source (not
+    an error), and the run must still exit 0 -- a complete scan that genuinely finds zero
+    callers is not a truncation. Without this control, a floor implementation that always
+    reported callers_count >= 1 regardless of the real caller graph would pass the positive
+    test's `callers_count >= 1` assertion vacuously."""
+    result = _run_tg(
+        ["prepare", str(orphan_repo), "calculate_early_payment_discount", "--json"],
+        cwd=orphan_repo,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+
+    primary_target = payload["primary_target"]
+    assert isinstance(primary_target, dict)
+    assert primary_target.get("symbol") == "calculate_early_payment_discount", payload
+
+    floor = payload["blast_radius_floor"]
+    assert isinstance(floor, dict)
+    assert floor.get("callers_count") == 0, floor
+    assert floor.get("top_callers") == [], floor
+    assert floor.get("source") in ("capsule_call_site_evidence", "supplementary_blast_radius"), (
+        floor
+    )
+    assert "error" not in floor, floor
+
+    for key in ("partial", "partial_reason", "deadline_limit", "result_incomplete"):
+        assert key not in payload, f"{key} unexpectedly present on a complete run: {payload}"
 
 
 def test_prepare_claim_emit_only_by_default(billing_repo: Path) -> None:
