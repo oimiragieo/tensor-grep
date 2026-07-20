@@ -100,6 +100,7 @@ jobs:
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
           script: |
+            try {
             const title = "[Security Audit] Scheduled dependency audit failure";
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             const body = [
@@ -149,12 +150,19 @@ jobs:
                 labels: ["dependencies", "supply-chain"],
               });
             }
+            } catch (error) {
+              // Issue bookkeeping is best-effort: a transient GitHub API error (e.g. a 503)
+              // must not red the scheduled audit and mask a real cargo/pip-audit failure.
+              // The `audit` gate job is authoritative; surface this as a visible warning.
+              core.warning(`Scheduled-audit issue bookkeeping failed (non-fatal; audit gate result is authoritative): ${error.message}`);
+            }
 
       - name: Close scheduled audit issue on success
         if: needs.audit.result == 'success'
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
           script: |
+            try {
             const title = "[Security Audit] Scheduled dependency audit failure";
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
 
@@ -182,3 +190,8 @@ jobs:
               issue_number: existing.number,
               state: "closed",
             });
+            } catch (error) {
+              // Best-effort issue bookkeeping: a transient GitHub API error must not red a
+              // scheduled audit whose gate job (cargo/pip-audit) already succeeded.
+              core.warning(`Scheduled-audit issue bookkeeping failed (non-fatal; audit passed): ${error.message}`);
+            }
