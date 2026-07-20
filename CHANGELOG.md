@@ -1,6 +1,56 @@
 # CHANGELOG
 
 
+## v1.88.0 (2026-07-20)
+
+### Features
+
+- **prepare**: One-call edit-readiness CUJ — primary + blast-radius floor + validation +
+  coordination hooks (CEO#5) ([#682](https://github.com/oimiragieo/tensor-grep/pull/682),
+  [`d883cca`](https://github.com/oimiragieo/tensor-grep/commit/d883cca63b26d72a5ea6fbbc65fe97ce90c90f5d))
+
+* feat(prepare): one-call edit-readiness CUJ (CEO #5)
+
+Add `tg prepare REPO "task" [--json] [--deadline N] [--no-deadline] [--claim]`, a thin composition
+  over the existing agent capsule builder that replaces the orient -> search -> agent -> route-test
+  -> callers -> evidence -> ledger loop with one call: primary target + confidence + ask_user, a
+  callers/blast-radius floor, validation commands, and claim/evidence coordination hooks, bounded by
+  --deadline with the same exit-2 partial-result honesty contract as the rest of the agent-capsule
+  command family.
+
+The only new logic is the blast-radius floor: the capsule's own call-site collector skips unless the
+  query names the primary symbol at >=0.75 confidence, so a natural-language task query would
+  otherwise leave it empty. Reuse the capsule's own scan when it already ran; otherwise run exactly
+  one supplementary FS-backed scan via the literal-seed-rescue-equipped build_symbol_blast_radius,
+  keyed on the symbol the capsule actually selected (never build_symbol_blast_radius_from_map, whose
+  rescue-less no_match on a possibly-truncated map would read as a false-complete absence).
+
+Registered at all 4 sites (commands.py, main.rs enum + dispatch, the routing parity contract, and
+  the Typer command). Rust could not be compiled locally (CPU-safe shared box); the enum variant and
+  dispatch arm mirror route-test's syntax exactly and are validated by CI's test-rust-core /
+  search-golden-parity.
+
+* fix(prepare): close 2 Opus-gate nits on PR #682 (zero-caller control + uncapped-scan comment)
+
+NIT-1: the gate found no test proved a caller-LESS symbol yields callers_count==0 -- every symbol in
+  the existing fixture has >=1 caller, so the positive test's callers_count>=1 wasn't proven
+  non-vacuous. Add a dedicated, isolated orphan_repo fixture (a symbol defined but never called
+  anywhere) and test_prepare_floor_reports_zero_callers_honestly: asserts callers_count==0 through a
+  REAL floor source (not an error) and a clean exit 0. Pairs with the existing
+  test_prepare_floor_keyed_on_selected_symbol_not_query as the bidirectional-oracle half.
+
+NIT-2: comment the build_symbol_blast_radius call in _build_prepare_blast_radius_floor -- the
+  omitted max_repo_files is intentional (max recall within the shared deadline, not a 2nd cap); the
+  floor only ever reads back the scan's `partial` signal, never `scan_limit`, so a file-count cap
+  added later would truncate silently instead of surfacing through partial/exit-2.
+
+Both nits from the independent Opus gate on PR #682 (SHIP-WITH-NITS); N3/N4 explicitly skipped per
+  the gate's own call. Re-verified: 9/9 tests in test_prepare_oneshot_cuj.py (incl. the new
+  zero-caller control, manually cross-checked against the real binary), 52/53 in
+  test_routing_parity.py (1 unchanged, pre-existing, stale-local-native-binary failure unrelated to
+  this change), ruff check clean, ruff format --preview clean, mypy strict clean (81 files).
+
+
 ## v1.87.0 (2026-07-20)
 
 ### Features
