@@ -88,6 +88,13 @@ tg --help
 
 *Note: the Python package path is the one that supports `tg update` / `tg upgrade`. It requires a configured Python environment and may need additional GPU dependencies such as `cudf` and `torch`.*
 
+**Cold-search speed.** This Python entry point pays a Python-interpreter startup tax on every cold,
+one-shot search: roughly 150-250ms before the search itself runs (tracked in
+[issue #48](https://github.com/oimiragieo/tensor-grep/issues/48)). `rg` remains the fastest baseline
+for cold literal search regardless of install channel. For a cold start close to native `rg` speed, use
+the install scripts (Option 1) or `npx`/`npm` (Option 2) above; they set up the managed **native** `tg`
+binary as the front door, and once it is installed, `tg upgrade` keeps it in sync with new releases.
+
 On Windows, the Python package installs a launcher shim under a Python `Scripts` directory. That shim is for invoking the Python CLI path, not for native delegation. Simple AST rewrite plan/apply is still available through the packaged PyO3 Rust extension. If you need native-only features such as rewrite diff, checkpoint, audit, validation, verify, or explicit MCP handoff to the standalone executable, point `TG_NATIVE_TG_BINARY` at an explicit native `tg.exe` path or use a release binary / in-tree Rust build.
 
 ## Option 5: Package Managers
