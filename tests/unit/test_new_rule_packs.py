@@ -198,6 +198,106 @@ def test_new_rule_packs_detect_findings_across_languages(
     assert finding["status"] == "new"
 
 
+_CANONICAL_SECURITY_PACK_NAMES = {
+    "auth-safe",
+    "crypto-safe",
+    "deserialization-safe",
+    "secrets-basic",
+    "subprocess-safe",
+    "tls-safe",
+}
+
+
+# ---------------------------------------------------------------------------
+# CEO#6(c): resolve-only 1:1 ruleset mental-model aliases.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("alias", "canonical"),
+    [
+        ("secrets", "secrets-basic"),
+        ("auth", "auth-safe"),
+        ("crypto", "crypto-safe"),
+        ("deserialize", "deserialization-safe"),
+        ("deserialization", "deserialization-safe"),
+        ("subprocess", "subprocess-safe"),
+        ("tls", "tls-safe"),
+        ("ssl", "tls-safe"),
+    ],
+)
+def test_resolve_rule_pack_accepts_mental_model_aliases(alias: str, canonical: str) -> None:
+    metadata, rules = resolve_rule_pack(alias)
+
+    assert metadata["name"] == canonical
+    assert metadata["category"] == "security"
+    assert metadata["rule_count"] == len(rules)
+    assert len(rules) > 0
+
+
+@pytest.mark.parametrize(
+    ("alias", "canonical"),
+    [
+        ("SECRETS", "secrets-basic"),
+        ("  Auth  ", "auth-safe"),
+        ("TLS", "tls-safe"),
+        ("Ssl", "tls-safe"),
+    ],
+)
+def test_resolve_rule_pack_aliases_are_case_and_whitespace_insensitive(
+    alias: str, canonical: str
+) -> None:
+    metadata, _rules = resolve_rule_pack(alias)
+
+    assert metadata["name"] == canonical
+
+
+def test_resolve_rule_pack_real_names_always_win_over_aliases() -> None:
+    """Real pack names must resolve to themselves, unaffected by the alias table."""
+    for name in sorted(_CANONICAL_SECURITY_PACK_NAMES):
+        metadata, _rules = resolve_rule_pack(name)
+        assert metadata["name"] == name
+
+
+def test_list_rule_packs_does_not_leak_resolve_only_aliases() -> None:
+    """GUARDRAIL: `list_rule_packs()` must expose exactly the 6 canonical names -- aliases are
+    resolve-only and must never appear as if they were real, independently-listed packs."""
+    names = {pack["name"] for pack in list_rule_packs()}
+
+    assert names == _CANONICAL_SECURITY_PACK_NAMES
+
+    for alias in (
+        "auth",
+        "secrets",
+        "crypto",
+        "tls",
+        "ssl",
+        "subprocess",
+        "deserialize",
+        "deserialization",
+        "security",
+    ):
+        assert alias not in names
+
+
+def test_resolve_rule_pack_unknown_name_still_raises_value_error() -> None:
+    """NEGATIVE: a genuinely-unknown name is unaffected by the alias/category additions."""
+    with pytest.raises(ValueError, match="Unknown built-in ruleset"):
+        resolve_rule_pack("totally-not-a-real-ruleset")
+
+
+def test_resolve_rule_pack_security_category_word_lists_the_six_packs() -> None:
+    """`security` names a CATEGORY (all 6 built-in packs today), not one ruleset -- it must
+    raise a smart, actionable error listing the real packs rather than silently picking one
+    (or unioning all 6, which would be its own undesigned meta-pack)."""
+    with pytest.raises(ValueError) as excinfo:
+        resolve_rule_pack("security")
+
+    message = str(excinfo.value)
+    for name in sorted(_CANONICAL_SECURITY_PACK_NAMES):
+        assert name in message
+
+
 def test_deserialization_safe_does_not_flag_yaml_safe_loader(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

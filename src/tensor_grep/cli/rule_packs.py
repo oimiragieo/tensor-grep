@@ -1021,6 +1021,28 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
 }
 
 
+# CEO#6(c): 1:1 mental-model aliases for `resolve_rule_pack`. RESOLVE-ONLY -- these never
+# appear in `list_rule_packs()` (see the leaked-alias guardrail in
+# tests/unit/test_new_rule_packs.py), and every key here is deliberately distinct from every
+# real pack name in `_RULE_PACKS` so the single `.get(normalized_name, normalized_name)` lookup
+# in `resolve_rule_pack` can never shadow a real pack -- a real name always resolves to itself.
+_RULE_PACK_ALIASES: dict[str, str] = {
+    "secrets": "secrets-basic",
+    "auth": "auth-safe",
+    "crypto": "crypto-safe",
+    "deserialize": "deserialization-safe",
+    "deserialization": "deserialization-safe",
+    "subprocess": "subprocess-safe",
+    "tls": "tls-safe",
+    "ssl": "tls-safe",
+}
+
+
+def _rule_pack_names_for_category(category: str) -> list[str]:
+    """Built-in pack names sharing `category` (e.g. all 6 packs share category "security")."""
+    return sorted(name for name, spec in _RULE_PACKS.items() if spec["category"] == category)
+
+
 def list_rule_packs() -> list[dict[str, Any]]:
     packs: list[dict[str, Any]] = []
     for name, spec in sorted(_RULE_PACKS.items()):
@@ -1042,7 +1064,21 @@ def resolve_rule_pack(
     name: str, language: str | None = None
 ) -> tuple[dict[str, Any], list[dict[str, str]]]:
     normalized_name = name.strip().lower()
+    # Real pack names always win: no alias key collides with a real `_RULE_PACKS` name, so this
+    # is a no-op whenever `normalized_name` is already a real pack.
+    normalized_name = _RULE_PACK_ALIASES.get(normalized_name, normalized_name)
     if normalized_name not in _RULE_PACKS:
+        # CEO#6(c): "security" (and any other word that happens to name a shared `category`,
+        # e.g. all 6 built-in packs today) is a CATEGORY, not a single ruleset -- resolving it
+        # to one pack (or silently unioning all matching packs) would be a guess either way.
+        # Surface a smart, actionable error listing the real packs to pick from instead of the
+        # generic "unknown ruleset" message.
+        category_members = _rule_pack_names_for_category(normalized_name)
+        if category_members:
+            raise ValueError(
+                f"'{name}' is a security category, not a single built-in ruleset. "
+                f"Pick one of: {', '.join(category_members)}."
+            )
         available = ", ".join(pack["name"] for pack in list_rule_packs())
         raise ValueError(f"Unknown built-in ruleset '{name}'. Available rulesets: {available}.")
 

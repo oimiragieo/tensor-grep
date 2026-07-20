@@ -551,6 +551,56 @@ def _warn_windows_single_quote_pattern(pattern: str) -> None:
         )
 
 
+# CEO#6(b): static idiom catalog for zero-match `tg run` remediation. Deliberately NOT a
+# "did-you-mean X" correction against the user's actual pattern -- a guessed correction could
+# be actively wrong and mislead the caller (AGENTS.md's Backend Fail-Closed / honest-empty
+# discipline); a static shape catalog can never be wrong, only unhelpful.
+_AST_RUN_REMEDIATION_IDIOMS: tuple[str, ...] = (
+    "def $NAME($$$ARGS): $$$BODY",
+    "function $NAME($$$) { $$$ }",
+)
+
+
+def _ast_run_remediation_lines(pattern: str, lang: str | None) -> list[str]:
+    """Static/heuristic remediation lines for a zero-match ``tg run`` (scope: ``tg run`` only)."""
+    lines = [
+        "No AST matches found. Common idiom shapes: " + " | ".join(_AST_RUN_REMEDIATION_IDIOMS),
+        "Run `tg ast-info` to list supported LANGUAGES.",
+    ]
+    if "$" not in pattern:
+        lines.append(
+            "The pattern has no metavariable ($) -- add one like $NAME to match "
+            "structurally varying code."
+        )
+    if not lang:
+        lines.append(
+            "No --lang was passed -- pass --lang <language> to parse against the right grammar."
+        )
+    return lines
+
+
+def _emit_ast_run_remediation(
+    pattern: str,
+    lang: str | None,
+    *,
+    json_payload: dict[str, Any] | None = None,
+) -> None:
+    """Emit static/heuristic remediation for a zero-match ``tg run``.
+
+    SCOPE: ``tg run`` ONLY -- callers must never call this from ``scan_command``, where a
+    0-finding scan is a clean pass (exit 0), not a failure state the way a 0-match ``tg run``
+    search is. Text output modes pass ``json_payload=None`` and get the hint on STDERR (stdout
+    stays clean/parseable); ``--json`` mode passes the payload dict about to be serialized and
+    gets an ADDITIVE ``"remediation"`` key -- every existing envelope key
+    (version/schema_version/mode/total_matches/...) is left untouched.
+    """
+    lines = _ast_run_remediation_lines(pattern, lang)
+    if json_payload is not None:
+        json_payload["remediation"] = {"hints": lines}
+        return
+    print("\n".join(lines), file=sys.stderr)
+
+
 def run_command(
     pattern: str,
     path: str | None = None,
@@ -594,6 +644,7 @@ def run_command(
     # parser (rust_core/src/main.rs:parse_batch_rewrite_config_value, line ~6088).
     # That error originates in Rust; see cross-file FLAG below for the fix location.
     from tensor_grep.core.config import SearchConfig
+    from tensor_grep.core.pipeline import ConfigurationError
     from tensor_grep.core.result import SearchResult
 
     if policy is not None and not apply and not interactive:
@@ -702,7 +753,46 @@ def run_command(
         ast_stdin_input=stdin_input,
         glob=list(globs or []),
     )
-    backend = _select_ast_backend_for_pattern(cfg, pattern)
+    try:
+        backend = _select_ast_backend_for_pattern(cfg, pattern)
+    except ConfigurationError as exc:
+        # CEO#6(a): honest-error mirror of Task #166's main.py `_exit_search_error` pattern
+        # (main.py's Pipeline-construction ConfigurationError handler). A `$`-metavariable
+        # (wrapper-shaped) pattern requires the ast-grep `sg` binary; when neither the wrapper
+        # nor a native-shaped fallback can serve it, _select_ast_backend_for_pattern
+        # deliberately raises ConfigurationError (Backend Fail-Closed Contract) rather than
+        # silently rerouting to native tree-sitter, which speaks a different query DSL and
+        # would return wrong/empty results instead of an honest error (task #141 -- no
+        # translation shim). This call previously sat outside any try/except, so the
+        # ConfigurationError propagated as a raw, uncaught Python traceback; catch it here and
+        # surface a clean, actionable message + exit 2 instead, like every other expected
+        # run_command error path. Only this specific, deliberate exception type is caught -- a
+        # genuinely unexpected exception still surfaces loudly.
+        message = (
+            f"{exc} This pattern needs a metavariable-capable ast-grep matcher: install the "
+            "ast-grep `sg` binary (https://ast-grep.github.io/guide/quick-start.html) so "
+            "$NAME/$$$ARGS patterns can run, or rewrite the pattern without $ metavariables "
+            "to use tg's native fallback."
+        )
+        if json_mode:
+            import json
+
+            _safe_stdout_line(
+                json.dumps({
+                    "version": 1,
+                    "schema_version": 1,
+                    "mode": "search",
+                    "total_matches": 0,
+                    "ok": False,
+                    "error": "configuration_error",
+                    "detail": str(exc),
+                    "query": pattern,
+                    "path": search_path,
+                })
+            )
+        else:
+            print(f"Error: {message}", file=sys.stderr)
+        return 2
     backend_name = type(backend).__name__
 
     if not json_mode and not files_with_matches:
@@ -862,6 +952,10 @@ def run_command(
                 for m in all_results.matches
             ],
         }
+        if all_results.total_matches == 0:
+            # CEO#6(b): payload must be enriched BEFORE serialization so the additive
+            # "remediation" key ships in the same JSON line -- never a second write.
+            _emit_ast_run_remediation(pattern, lang, json_payload=payload)
         _safe_stdout_line(json.dumps(payload))
         if all_results.total_matches == 0:
             _warn_windows_single_quote_pattern(pattern)
@@ -883,7 +977,10 @@ def run_command(
         for matched_path in ordered_paths:
             _safe_stdout_line(matched_path)
         if not ordered_paths:
+            # CEO#6(b): remediation goes to STDERR here (like the Windows-quote hint just
+            # above it) so `--files-with-matches`' stdout stays a clean, parseable path list.
             _warn_windows_single_quote_pattern(pattern)
+            _emit_ast_run_remediation(pattern, lang)
             return 1
         return 0
 
@@ -892,6 +989,7 @@ def run_command(
     _safe_stdout_line(RipgrepFormatter().format(all_results))
     if all_results.total_matches == 0:
         _warn_windows_single_quote_pattern(pattern)
+        _emit_ast_run_remediation(pattern, lang)
         return 1
     return 0
 

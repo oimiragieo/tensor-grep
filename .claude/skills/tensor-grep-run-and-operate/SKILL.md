@@ -239,6 +239,14 @@ fingerprints; `--suppressions FILE` / `--write-suppressions FILE` mark or record
 (writing suppressions requires `--justification TEXT`). `--allow-broad-generated-scan` opts into an
 otherwise-refused scan of a generated/cache/dependency/multi-project root — prefer scoping first.
 
+`--ruleset` also accepts a handful of RESOLVE-ONLY 1:1 mental-model aliases on top of the 6
+canonical pack names (`rule_packs.py`'s `_RULE_PACK_ALIASES`): `auth`->`auth-safe`,
+`secrets`->`secrets-basic`, `crypto`->`crypto-safe`, `tls`/`ssl`->`tls-safe`,
+`subprocess`->`subprocess-safe`, `deserialize`/`deserialization`->`deserialization-safe`. A real
+pack name always wins over an alias; aliases never appear in `tg rulesets`/`list_rule_packs()`.
+`security` names the shared category all 6 packs belong to, not one pack, so it raises an
+actionable error listing the 6 packs instead of guessing.
+
 ```powershell
 tg run "function_definition" C:\repo\src --lang python --json
 tg run --pattern 'def $NAME($$$ARGS): $$$BODY' --rewrite 'def $NAME($$$ARGS) -> None: $$$BODY' C:\repo --apply --verify
@@ -253,6 +261,22 @@ checkpoint, `-U`/`--update-all` is an ast-grep-compatible alias for apply-all (r
 `--globs` (repeatable, prefix `!` to exclude), `--filter` (text regex over matched nodes),
 `--files-with-matches`. PowerShell users must single-quote patterns containing `$` captures (e.g.
 `'def $NAME($$$ARGS): $$$BODY'`) or PowerShell expands `$NAME` before `tg` sees it.
+
+KEY FACT: `tg run` already IS ast-grep when the `sg` binary is on PATH -- `AstGrepWrapperBackend`
+delegates the pattern to `sg run -p <pattern>` verbatim (`ast_wrapper_backend.py:146`), so
+`$NAME`/`$$$ARGS`/`--selector`/`--strictness` are already 100% ast-grep-compatible with no
+translation layer. When `sg` is absent, a native-shaped pattern (no `$`) still runs through tg's
+own tree-sitter `AstBackend`, but that backend speaks a DIFFERENT query DSL than ast-grep
+(task #141) -- a `$`-metavariable pattern is never silently rerouted there (that would silently
+mistranslate and return wrong matches, worse than an honest empty result). Instead
+`_select_ast_backend_for_pattern` raises a fail-closed `ConfigurationError`, which `run_command`
+now catches and reports as a clean `Error: ...` message + exit `2` (mirroring the Task #166
+`ConfigurationError` handling in `main.py`'s search path), never a raw Python traceback. A
+zero-match `tg run` (exit `1`, not an error) additionally emits static/heuristic remediation via
+`_emit_ast_run_remediation` -- idiom shapes (`def $NAME($$$ARGS): $$$BODY`,
+`function $NAME($$$) { $$$ }`), a `tg ast-info` pointer, and cheap "no `$`" / "no `--lang`" hints
+-- on stderr for text modes and as an additive `"remediation"` `--json` key; this is `tg run`-only
+and never fires on `tg scan` (a 0-finding scan is a clean pass, exit `0`).
 
 ## 7. MCP server
 
