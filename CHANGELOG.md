@@ -1,6 +1,88 @@
 # CHANGELOG
 
 
+## v1.85.0 (2026-07-20)
+
+### Features
+
+- **agent**: Best-effort primary under deadline truncation (v20 gap #2)
+  ([#679](https://github.com/oimiragieo/tensor-grep/pull/679),
+  [`bd0ad0c`](https://github.com/oimiragieo/tensor-grep/commit/bd0ad0cfe7e4267a46ce26da73052401746b4a1d))
+
+* feat(agent): best-effort primary under deadline truncation (v20 gap #2)
+
+When a tg agent scan truncates before ranking ever resolves a primary target, _primary_target
+  returned an empty {"file": "", "symbol": None, ...} -- safe but useless, even though rm (the repo
+  map) already holds every file/symbol the scan reached before the deadline cut it off.
+
+build_agent_capsule_from_map now substitutes a best-effort primary derived straight from that
+  already-scanned rm (no second scan) whenever the scan was truncated AND the real ranking pass came
+  back empty. The new _best_effort_primary_target_from_map helper tries, cheapest-first: a scanned
+  symbol name matching the query, then a scanned file path matching the query, then the single
+  most-central scanned file as a query-independent last resort. Each pass is bounded to the first
+  500 rm items (an item-count cap, not a deadline re-check, since this block only runs after the
+  deadline has already been blown).
+
+The substitute is flagged non-authoritative via two new additive fields on primary_target
+  (partial_primary: true, primary_basis: "deadline_truncated_best_effort") plus an appended evidence
+  entry, and it re-enters every existing confidence-cap / ask-reason gate unmodified: the
+  scan-truncation confidence cap keeps it below 0.75, the forced scan-truncated ask-reason keeps
+  ask_user_before_editing.required true, and the T2 corroborated-resolution uplift's own
+  scan_truncated disqualifier prevents it from ever climbing back to a confident state. The exit-2
+  contract (main._scan_incomplete, keyed only on scan_limit/caller_scan_limit/
+  partial/caller_scan_truncated) is untouched by construction. A complete (non-truncated) scan, or a
+  truncated one that still resolved a normal primary, never enters the new code path --
+  byte-identical to before.
+
+Tests: tests/unit/test_agent_capsule_best_effort_primary.py (9 new cases -- full-pipeline
+  positive/negative/guard scenarios, a structural scan-cap boundary proof, a 50k-symbol wall-clock
+  SLA check, and focused coverage of the three fallback tiers), plus the existing
+  test_agent_capsule*.py suite (68) and tests/integration/test_agent_cold_deadline_tail_sla_220.py
+  (2) all still green.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* fix(agent): make best-effort primary confidence cap structural (nits)
+
+Opus-gate SHIP-WITH-NITS follow-up on #679.
+
+NIT-1 (structural cap): the <0.75 safety guarantee for a best-effort primary previously held only
+  EMERGENTLY -- confidence.overall landed at 0.55 because the empty upstream primary happened to
+  trip existing downgrade branches in _confidence (empty snippets / primary omitted from capsule
+  snippets). That chain depends on the T2 corroborated-resolution uplift's own scan_truncated
+  disqualifier continuing to hold, which is correct today but not a promise the function makes
+  elsewhere. Add a new _BEST_EFFORT_PRIMARY_MAX_CONFIDENCE = 0.55 constant and apply it as the LAST
+  confidence mutation in build_agent_capsule_from_map -- after the T2 uplift call, the only place
+  confidence.overall can be raised rather than merely clamped. Whenever primary_target carries
+  partial_primary, both confidence["overall"] and primary_target["confidence"] are forced down to
+  0.55 via min(), so "partial_primary implies confidence.overall <= 0.55 AND
+  primary_target.confidence <= 0.55" now holds by construction, independent of upstream. No-op
+  (byte-identical) whenever partial_primary is unset.
+
+New test test_structural_cap_defeats_artificially_high_upstream_confidence constructs an adversarial
+  payload (a high edit_plan_seed.confidence.overall seed whose rendered snippet happens to cover the
+  exact file the best-effort pass independently picks, defeating every emergent downgrade) that
+  _confidence alone would score >= 0.75 on -- proven as an explicit precondition -- and asserts the
+  full pipeline still lands at <= 0.55 with ask_user_before_editing.required still True. Verified as
+  load-bearing by temporarily disabling the new cap and confirming the test fails at 0.97 before
+  re-enabling it.
+
+NIT-2 (comment only, no behavior change): documents that partial_primary/ primary_basis live on
+  primary_target only -- edit_order/rollback carry the same best-effort file without the flag, which
+  is safe because both are advisory and ask_user_before_editing.required is forced True regardless.
+
+Skipped NIT-3 (redundant _file_centrality_scores recompute) per reviewer guidance -- micro-perf, not
+  worth the risk on this PR.
+
+Verified: the new test file (10/10), the existing test_agent_capsule*.py suite (68) and
+  tests/integration/test_agent_cold_deadline_tail_sla_220.py (2) all still green; ruff check clean;
+  ruff format --preview clean; mypy src/tensor_grep clean (81 source files).
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.84.0 (2026-07-20)
 
 ### Continuous Integration
