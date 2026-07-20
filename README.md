@@ -37,6 +37,7 @@ It ships as a native CLI on Windows, macOS, and Linux — no server required for
 - Root-level shortcuts: `tg PATTERN [PATH]`, `tg -t js PATTERN PATH`, `tg --count-matches PATTERN PATH` all behave as `tg search ...`.
 - **`tg search PATTERN PATH --rank`** (alias `--bm25`) — local BM25 re-ranking of text-search results by per-chunk content relevance. Pure-Python, no API key, no GPU. Scores and re-orders results from the ripgrep-backed engine so the most content-relevant matches surface first. Works in plain text and `--json` output modes. Usage: `tg search PATTERN PATH --rank`.
 - **`tg find "QUERY" [PATH]`** (experimental) — whole-repo hybrid semantic search: no regex/pattern pre-filter, walks and ranks the WHOLE repo via BM25 + local CPU dense-embedding relevance (RRF-fused), so it can surface content a vocabulary-mismatched regex would miss. No API key, no GPU. The dense leg falls back to BM25-only (visibly, never silently) when the `semantic` extra or a fetched model is absent — a BM25-only `tg find` is a fully supported mode. Bounded by default (`--max-repo-files`, `--deadline`); a truncated scan exits 2 with `result_incomplete`. Does not offer `--format rg` — this is not a grep-parity surface. Options: `--limit` (default 10), `--max-tokens` (default 4000, 0 = unbounded), `--max-repo-files`, `--deadline`, `--json`, `--ndjson`.
+- **`tg install-dense`** — one-shot setup for `tg find`'s dense leg: installs the `semantic` extra (`model2vec` + `numpy` — pure CPU/numpy, no torch or GPU dependency) and fetches the checksum-pinned `potion-code-16M` model (~65MB, one-time download, cached at `~/.tensor-grep/models/potion-code-16M`). Not run automatically and not bundled into the wheel — `tg find` keeps working BM25-only until this has been run once, and offline or on any install/fetch failure it exits non-zero with a clear message rather than leaving a partial model.
 - Chunk-parallel native CPU engine for large files.
 
 ### AST search & rewrite
@@ -140,6 +141,9 @@ tg search "TODO" src/ --rank
 
 # Whole-repo hybrid semantic search (experimental) — no pattern pre-filter needed
 tg find "verify login tokens" src/
+
+# One-shot install of tg find's dense-embedding leg (~65MB, one-time)
+tg install-dense
 
 # One-call codebase orientation for agents — central files, entry points, symbol map
 tg orient src/

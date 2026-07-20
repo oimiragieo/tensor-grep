@@ -2266,6 +2266,26 @@ def _doctor_ast_grep_status() -> dict[str, Any]:
     return status
 
 
+def _doctor_dense_model_status() -> dict[str, Any]:
+    """CEO#7: has the `tg find` / `tg search --semantic` dense-embedding leg been fetched?
+
+    A pure filesystem check (mirrors `load_dense_model`'s own "is it fetched" test -- does the
+    directory exist -- rather than actually loading the model, so this stays cheap for `tg doctor`)
+    reported next to `ast_grep`/`resident_worker`'s optional-capability shape."""
+    from tensor_grep.core.retrieval_dense import default_model_dir
+
+    model_dir = default_model_dir()
+    fetched = model_dir.is_dir()
+    status: dict[str, Any] = {
+        "schema_version": 1,
+        "fetched": fetched,
+        "dir": str(model_dir),
+    }
+    if not fetched:
+        status["install_hint"] = "run `tg install-dense` to fetch the dense-embedding model"
+    return status
+
+
 def _doctor_rust_core_extension_available() -> bool:
     try:
         from tensor_grep.backends.rust_backend import HAVE_RUST
@@ -3381,6 +3401,7 @@ def _build_doctor_payload(
         "resident_worker": _doctor_resident_worker_status(str(root)),
         "env": {key: os.environ[key] for key in env_keys if os.environ.get(key)},
         "session_daemon": _doctor_session_daemon_status(str(root)),
+        "dense_model": _doctor_dense_model_status(),
     }
     if with_lsp:
         lsp_providers = _doctor_apply_lsp_missing_component_remediation(
@@ -4066,6 +4087,27 @@ def _apply_semantic_rerank(all_results: "SearchResult", pattern: str) -> "Search
 # must-fix C2), never a silent exit-0 degrade.
 _FIND_CORPUS_CHUNK_CAP = MAX_CHUNKS
 
+# CEO#7: the raw fetch-command hint baked into retrieval_dense.py's `DenseUnavailableError` ("not
+# fetched" case) predates the one-shot `tg install-dense` command -- see
+# `_friendly_dense_unavailable_message` below.
+_DENSE_FETCH_RAW_HINT = "python -m tensor_grep.core.retrieval_dense --fetch"
+_DENSE_FETCH_FRIENDLY_HINT = "tg install-dense"
+
+
+def _friendly_dense_unavailable_message(exc: BaseException) -> str:
+    """CLI-boundary rewrite of the dense leg's raw fetch-command hint into the one-shot
+    `tg install-dense` command (CEO#7) a real `tg find` user should run instead.
+
+    Deliberately a string substitution at the CALL SITE, not an edit to the library exception
+    message itself (`retrieval_dense.py`'s `DenseUnavailableError` "not fetched" message is pinned
+    verbatim -- including the raw `python -m tensor_grep.core.retrieval_dense --fetch` command --
+    by `test_retrieval_dense_fetch.py::test_not_fetched_error_names_the_new_fetch_command`, which
+    documents that message as the module-CLI-only front door). A no-op when the raw hint is absent
+    (e.g. a dim-mismatch or malformed-shape `DenseUnavailableError`, which never mentions fetch).
+    """
+    return str(exc).replace(_DENSE_FETCH_RAW_HINT, _DENSE_FETCH_FRIENDLY_HINT)
+
+
 # #189 (ledger DENSE-WEIGHT SWEEP, agent a8580b6e 2026-07-16): the golden-set sweep measured a
 # real ndcg@10/recall lift (1:5 bm25:dense -> +0.1419 ndcg@10, recall 0.55->0.80, ZERO
 # per-category regression) on the 40 NL vocab-mismatch golden queries -- but that set is 100% NL
@@ -4344,8 +4386,9 @@ def _execute_find(
             model = load_dense_model(default_model_dir())
             dense_index = DenseIndex(chunks, model)
         except DenseUnavailableError as exc:
-            result.rank_fallback_reason = str(exc)
-            sys.stderr.write(f"tg: {exc}\n")
+            message = _friendly_dense_unavailable_message(exc)
+            result.rank_fallback_reason = message
+            sys.stderr.write(f"tg: {message}\n")
         # BackendExecutionError (e.g. a corrupt model directory) deliberately propagates -- the
         # command boundary (C1) must catch it and exit 2, never degrade here.
 
@@ -13811,76 +13854,81 @@ def _is_uv_tool_managed_python(executable: str) -> bool:
     return "/uv/tools/" in executable.replace("\\", "/").lower()
 
 
+# Module-level (not nested in `upgrade()`) so `tg install-dense` can reuse the identical
+# uv-tool -> uv pip -> pip cascade for the `semantic` extra install step, including the
+# uv-tool-managed-python trap handling (audit #2) -- CEO#7.
+def _upgrade_attempts(package_spec: str) -> list[tuple[str, list[str]]]:
+    pip_cmd = [
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "--upgrade",
+        "--no-cache-dir",
+        package_spec,
+    ]
+    attempts: list[tuple[str, list[str]]] = [
+        (
+            "uv",
+            [
+                "uv",
+                "pip",
+                "install",
+                "--python",
+                sys.executable,
+                "--upgrade",
+                "--refresh-package",
+                "tensor-grep",
+                package_spec,
+            ],
+        ),
+        ("pip", pip_cmd),
+    ]
+    # A uv-tool-managed launcher must be upgraded via the uv-tool front door, not `uv pip`/`pip`
+    # into its isolated interpreter — try it first when detected (audit #2).
+    if _is_uv_tool_managed_python(sys.executable):
+        attempts.insert(0, ("uv-tool", ["uv", "tool", "install", "--force", package_spec]))
+    return attempts
+
+
+def _run_upgrade(
+    attempts: list[tuple[str, list[str]]],
+) -> tuple[subprocess.CompletedProcess[str], str]:
+    errors: list[str] = []
+    for label, cmd in attempts:
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            return result, label
+        except FileNotFoundError as e:
+            errors.append(f"{label}: {e}")
+        except subprocess.CalledProcessError as e:
+            stderr = (e.stderr or "").strip()
+            stdout = (e.stdout or "").strip()
+            combined = stderr or stdout or str(e)
+            errors.append(f"{label}: {combined}")
+            if label == "pip" and "No module named pip" in combined:
+                try:
+                    subprocess.run(
+                        [sys.executable, "-m", "ensurepip", "--upgrade"],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                    return result, "pip+ensurepip"
+                except FileNotFoundError as ee:
+                    errors.append(f"ensurepip: {ee}")
+                except subprocess.CalledProcessError as ee:
+                    ee_stderr = (ee.stderr or "").strip()
+                    ee_stdout = (ee.stdout or "").strip()
+                    errors.append(f"ensurepip: {ee_stderr or ee_stdout or str(ee)}")
+    raise RuntimeError("; ".join(errors))
+
+
 @app.command()
 def upgrade() -> None:
     """Upgrade tensor-grep to the latest version published on PyPI."""
     import importlib.metadata
-
-    def _upgrade_attempts(package_spec: str) -> list[tuple[str, list[str]]]:
-        pip_cmd = [
-            sys.executable,
-            "-m",
-            "pip",
-            "install",
-            "--upgrade",
-            "--no-cache-dir",
-            package_spec,
-        ]
-        attempts: list[tuple[str, list[str]]] = [
-            (
-                "uv",
-                [
-                    "uv",
-                    "pip",
-                    "install",
-                    "--python",
-                    sys.executable,
-                    "--upgrade",
-                    "--refresh-package",
-                    "tensor-grep",
-                    package_spec,
-                ],
-            ),
-            ("pip", pip_cmd),
-        ]
-        # A uv-tool-managed launcher must be upgraded via the uv-tool front door, not `uv pip`/`pip`
-        # into its isolated interpreter — try it first when detected (audit #2).
-        if _is_uv_tool_managed_python(sys.executable):
-            attempts.insert(0, ("uv-tool", ["uv", "tool", "install", "--force", package_spec]))
-        return attempts
-
-    def _run_upgrade(
-        attempts: list[tuple[str, list[str]]],
-    ) -> tuple[subprocess.CompletedProcess[str], str]:
-        errors: list[str] = []
-        for label, cmd in attempts:
-            try:
-                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-                return result, label
-            except FileNotFoundError as e:
-                errors.append(f"{label}: {e}")
-            except subprocess.CalledProcessError as e:
-                stderr = (e.stderr or "").strip()
-                stdout = (e.stdout or "").strip()
-                combined = stderr or stdout or str(e)
-                errors.append(f"{label}: {combined}")
-                if label == "pip" and "No module named pip" in combined:
-                    try:
-                        subprocess.run(
-                            [sys.executable, "-m", "ensurepip", "--upgrade"],
-                            capture_output=True,
-                            text=True,
-                            check=True,
-                        )
-                        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-                        return result, "pip+ensurepip"
-                    except FileNotFoundError as ee:
-                        errors.append(f"ensurepip: {ee}")
-                    except subprocess.CalledProcessError as ee:
-                        ee_stderr = (ee.stderr or "").strip()
-                        ee_stdout = (ee.stdout or "").strip()
-                        errors.append(f"ensurepip: {ee_stderr or ee_stdout or str(ee)}")
-        raise RuntimeError("; ".join(errors))
 
     def _looks_like_windows_self_update_lock(message: str) -> bool:
         lowered = message.lower()
@@ -14570,6 +14618,116 @@ def upgrade() -> None:
         typer.echo("Error occurred while upgrading tensor-grep.", err=True)
         typer.echo(str(e), err=True)
         sys.exit(1)
+
+
+# CEO#7 (P1 -- "semantic find that works out of the box"): `tg find` / `tg search --semantic`
+# degrade to BM25-only until the `semantic` extra (model2vec + numpy, both torch/GPU-free) is
+# installed AND the potion-code-16M model has been fetched. `tg install-dense` is the one-shot,
+# explicitly opt-in command that does both steps; it deliberately does NOT run automatically from
+# `tg find` (that is Option 3, out of scope here) and the model is NOT bundled into the wheel
+# (a separate, CEO-gated packaging decision).
+_INSTALL_DENSE_PACKAGE_SPEC = "tensor-grep[semantic]"
+
+
+def _run_install_dense() -> dict[str, Any]:
+    """Do the actual `tg install-dense` work: install the `semantic` extra via the same
+    uv-tool -> uv pip -> pip cascade `tg upgrade` uses (`_upgrade_attempts`/`_run_upgrade`, module
+    level above), then run the hardened, checksum-pinned, deadline-bounded model fetch
+    (`retrieval_dense.fetch_dense_model` -- never hand-rolled here).
+
+    Never raises: every failure mode (the pip cascade exhausted, a network error, a checksum
+    mismatch, or the fetch's own wall-clock deadline) is captured into the returned payload so the
+    command layer picks exit code + rendering uniformly for both `--json` and text mode. Fail-
+    closed -- a failed fetch leaves no partial model directory, per `fetch_dense_model`'s own
+    atomic verify-before-install contract (retrieval_dense.py); a failed pip step never attempts
+    the network fetch at all (`fetch_model` is reported "skipped", not silently retried).
+    """
+    from tensor_grep.core.retrieval_dense import default_model_dir, fetch_dense_model
+
+    steps: dict[str, dict[str, Any]] = {}
+
+    try:
+        attempts = _upgrade_attempts(_INSTALL_DENSE_PACKAGE_SPEC)
+        result, method = _run_upgrade(attempts)
+        output = "\n".join(
+            part for part in ((result.stdout or "").strip(), (result.stderr or "").strip()) if part
+        )
+        steps["pip_install"] = {"status": "ok", "method": method, "detail": output or None}
+    except RuntimeError as exc:
+        steps["pip_install"] = {"status": "failed", "method": None, "detail": str(exc)}
+        steps["fetch_model"] = {
+            "status": "skipped",
+            "dir": None,
+            "detail": "skipped: installing the semantic extra failed",
+        }
+        return {
+            "ok": False,
+            "steps": steps,
+            "dense_model_dir": None,
+            "message": (
+                f"tg install-dense failed: could not install {_INSTALL_DENSE_PACKAGE_SPEC} "
+                f"({steps['pip_install']['detail']})"
+            ),
+        }
+
+    try:
+        dest = fetch_dense_model()
+    except Exception as exc:
+        # `fetch_dense_model` documents BackendExecutionError for every download/checksum/deadline
+        # failure (retrieval_dense.py), but this command boundary catches broadly so a lower-level
+        # unwrapped OSError (e.g. permission denied creating the cache dir) also exits cleanly
+        # with a message instead of a raw traceback -- fail-closed never means fail-silent.
+        steps["fetch_model"] = {
+            "status": "failed",
+            "dir": str(default_model_dir()),
+            "detail": str(exc),
+        }
+        return {
+            "ok": False,
+            "steps": steps,
+            "dense_model_dir": None,
+            "message": f"tg install-dense failed: dense model fetch failed ({exc})",
+        }
+
+    steps["fetch_model"] = {"status": "ok", "dir": str(dest), "detail": None}
+    return {
+        "ok": True,
+        "steps": steps,
+        "dense_model_dir": str(dest),
+        "message": f"tg install-dense complete: the dense semantic leg is ready (model at {dest}).",
+    }
+
+
+@app.command(name="install-dense")
+def install_dense(
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """One-shot install of the `tg find` / `tg search --semantic` dense-embedding leg.
+
+    Installs the `semantic` extra (model2vec + numpy -- pure CPU/numpy, no torch or GPU
+    dependency) via the same uv-tool -> uv pip -> pip cascade `tg upgrade` uses, then fetches the
+    checksum-pinned potion-code-16M model (~65MB) to the local model cache
+    (`~/.tensor-grep/models/potion-code-16M`, or `TG_SEMANTIC_MODEL_DIR` if set). Never runs
+    automatically -- `tg find` and `tg search --semantic` degrade visibly to BM25-only until this
+    has been run once. On any failure (pip install failure, network error, or a checksum mismatch
+    against the pinned HuggingFace revision) this exits non-zero with a clear message and leaves
+    no partial model directory behind.
+    """
+    payload = _run_install_dense()
+    if json_output:
+        typer.echo(json.dumps(_with_schema_version(payload, version=1), indent=2))
+    else:
+        typer.echo(payload["message"])
+        pip_step = payload["steps"].get("pip_install", {})
+        typer.echo(f"  pip_install: {pip_step.get('status')} (method={pip_step.get('method')})")
+        fetch_step = payload["steps"].get("fetch_model", {})
+        typer.echo(f"  fetch_model: {fetch_step.get('status')} (dir={fetch_step.get('dir')})")
+        if pip_step.get("status") == "failed" and pip_step.get("detail"):
+            typer.echo(f"  pip_install detail: {pip_step['detail']}", err=True)
+        if fetch_step.get("status") == "failed" and fetch_step.get("detail"):
+            typer.echo(f"  fetch_model detail: {fetch_step['detail']}", err=True)
+    if not payload["ok"]:
+        raise typer.Exit(code=1)
 
 
 def _audit_diff_error_payload(message: str, *, code: str) -> dict[str, object]:

@@ -87,6 +87,13 @@ tg find "verify login tokens" C:\repo --limit 20 --max-tokens 8000
 
 `tg find` (experimental) is for when you cannot predict a matching keyword or regex at all — unlike `tg search --rank` (which re-ranks an EXISTING regex match set), it walks and ranks the WHOLE repo via BM25 + local CPU dense-embedding relevance, no pattern pre-filter. No API key, no GPU. `rank_fallback_reason` present in JSON means the dense leg degraded to BM25-only (extra/model absent) — still a legitimate, fully supported result. `result_incomplete: true` + exit 2 means the repo walk or ranking corpus was truncated (`--max-repo-files` cap, `--deadline` cutoff, or an internal chunk cap) — treat the result as partial, not the full answer; widen `--max-repo-files`/`--deadline` and retry. Exit 1 means a complete scan found no ranked matches. Does not offer `--format rg`.
 
+```powershell
+tg install-dense            # one-shot: install the semantic extra + fetch the dense model
+tg install-dense --json
+```
+
+`tg install-dense` sets up `tg find`'s dense leg in one step: installs the `semantic` extra (`model2vec` + `numpy` — torch-free, no GPU) via the same install cascade `tg upgrade` uses, then fetches the checksum-pinned `potion-code-16M` model (~65MB, one-time, cached at `~/.tensor-grep/models/potion-code-16M` or `TG_SEMANTIC_MODEL_DIR`). Not run automatically by `tg find` and not bundled into the wheel. Offline or on a pip/network/checksum failure it exits non-zero with a clear per-step message and leaves no partial model directory; `tg find` keeps working BM25-only either way.
+
 ## Session Memory
 
 `tg session` caches the repo-map so repeated context-render, edit-plan, and blast-radius calls do not re-index from scratch. Real subcommands (from `tg session --help`):

@@ -64,6 +64,7 @@ PUBLIC_TOP_LEVEL_COMMANDS = {
     "doctor",
     "checkpoint",
     "dogfood",
+    "install-dense",
 }
 
 # Commands that are clap `visible_alias`es of another command (e.g. `update` -> `upgrade`).

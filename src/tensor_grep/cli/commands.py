@@ -60,4 +60,5 @@ KNOWN_COMMANDS = {
     "doctor",
     "checkpoint",
     "dogfood",
+    "install-dense",
 }
