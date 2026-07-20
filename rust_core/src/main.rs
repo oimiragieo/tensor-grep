@@ -1165,6 +1165,12 @@ pub enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// One-call edit-readiness capsule: primary target, blast-radius floor, validation, claims
+    #[command(name = "prepare", disable_help_flag = true)]
+    Prepare {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 
     #[command(external_subcommand)]
     PythonPassthrough(Vec<String>),
@@ -5440,6 +5446,7 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::Devices { args } => handle_python_passthrough("devices", args),
         Commands::Context { args } => handle_python_passthrough("context", args),
         Commands::RouteTest { args } => handle_python_passthrough("route-test", args),
+        Commands::Prepare { args } => handle_python_passthrough("prepare", args),
         Commands::PythonPassthrough(args) => {
             let command = args[0].clone();
             let command_args = args[1..].to_vec();

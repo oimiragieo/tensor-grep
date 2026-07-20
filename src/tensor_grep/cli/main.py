@@ -10126,6 +10126,391 @@ def route_test(
         raise typer.Exit(2)
 
 
+def _build_prepare_blast_radius_floor(
+    *,
+    path: str,
+    target: dict[str, Any],
+    call_site_evidence: dict[str, Any],
+    related_call_sites: list[dict[str, Any]],
+    deadline_monotonic: float | None,
+) -> tuple[dict[str, Any], bool]:
+    """Blast-radius floor keyed on the capsule's SELECTED ``primary_target.symbol`` (CEO #5).
+
+    ``_collect_capsule_call_site_evidence`` (agent_capsule.py:514) only collects call-site
+    evidence when the query names the primary symbol AND its pre-cap confidence is >=0.75
+    (agent_capsule.py:536,546) -- a natural-language task query fails that gate and leaves
+    ``related_call_sites`` EMPTY even though the SELECTED primary target may have real callers.
+    Reuse the capsule's own scan when it already ran (``status`` ``collected``/
+    ``collected_no_call_sites``); otherwise run exactly ONE supplementary FS-backed scan via the
+    literal-seed-rescue-equipped ``build_symbol_blast_radius`` (never the rescue-less
+    ``_from_map`` sibling -- see ``_collect_capsule_call_site_evidence_from_map``'s own TRAP A
+    docstring: a no_match against a possibly-truncated map with no rescue reads as a false-
+    complete absence) keyed on the symbol the capsule actually selected, not the raw query text.
+
+    Returns ``(floor, deadline_partial)``. ``deadline_partial`` is deliberately narrower than the
+    floor's own ``possibly_incomplete`` field: it is True ONLY when a ``--deadline`` cutoff
+    truncated the scan (folded into the caller's top-level ``partial``/exit-2 honesty gate,
+    mirroring ``capsule.get("partial")``), never for a plain ``max_callers`` OUTPUT cap -- an
+    output cap is a COMPLETE analysis capped only for display and must stay exit 0
+    (``_scan_incomplete``'s own documented contract).
+    """
+    from tensor_grep.cli.agent_capsule import _related_call_site_record
+    from tensor_grep.cli.repo_map import build_symbol_blast_radius
+
+    symbol = str(target.get("symbol") or "")
+    status = str(call_site_evidence.get("status") or "")
+
+    def _floor(
+        *,
+        source: str,
+        related: list[dict[str, Any]],
+        graph_trust_summary: dict[str, Any],
+        resolution_gaps: list[dict[str, Any]],
+        deadline_partial: bool,
+        omitted: int,
+        error: str | None = None,
+    ) -> tuple[dict[str, Any], bool]:
+        top_callers = [
+            {
+                "file": record.get("file"),
+                "line": record.get("line"),
+                "symbol": record.get("symbol"),
+                "provenance": record.get("provenance"),
+            }
+            for record in related
+        ]
+        floor: dict[str, Any] = {
+            "symbol": symbol,
+            "callers_count": len(top_callers),
+            "top_callers": top_callers,
+            "source": source,
+            "graph_trust_summary": graph_trust_summary,
+            "resolution_gaps": resolution_gaps,
+            "possibly_incomplete": bool(deadline_partial or omitted),
+        }
+        if error is not None:
+            floor["error"] = error
+        return floor, bool(deadline_partial)
+
+    if status in ("collected", "collected_no_call_sites"):
+        return _floor(
+            source="capsule_call_site_evidence",
+            related=related_call_sites,
+            graph_trust_summary=dict(call_site_evidence.get("graph_trust_summary") or {}),
+            resolution_gaps=list(call_site_evidence.get("resolution_gaps") or []),
+            deadline_partial=bool(call_site_evidence.get("partial")),
+            omitted=int(call_site_evidence.get("omitted_call_sites") or 0),
+        )
+
+    if not symbol:
+        # Degenerate capsule (no primary symbol resolved at all) -- nothing to scan.
+        return _floor(
+            source="no_primary_symbol",
+            related=[],
+            graph_trust_summary={},
+            resolution_gaps=[],
+            deadline_partial=False,
+            omitted=0,
+        )
+
+    if status == "skipped" and call_site_evidence.get("reason") == (
+        "primary symbol definition was not found by blast-radius"
+    ):
+        # The capsule's own rescue-equipped scan (agent_capsule.py's cold path always passes
+        # `_rescue_call_site_evidence=True`) already ran and confirmed no_match for this exact
+        # symbol -- a second identical FS scan would just repeat it. Report honestly without
+        # paying the cost twice.
+        return _floor(
+            source="capsule_call_site_evidence",
+            related=[],
+            graph_trust_summary=dict(call_site_evidence.get("graph_trust_summary") or {}),
+            resolution_gaps=list(call_site_evidence.get("resolution_gaps") or []),
+            deadline_partial=bool(call_site_evidence.get("partial")),
+            omitted=0,
+        )
+
+    deadline_seconds_remaining: float | None = None
+    if deadline_monotonic is not None:
+        deadline_seconds_remaining = max(0.1, deadline_monotonic - time.monotonic())
+    try:
+        # `max_repo_files` is deliberately OMITTED (max recall within the shared deadline, not a
+        # 2nd cap): this scan's only truncation source must stay the deadline, whose signal we
+        # already read back below (`radius_payload.get("partial")` -> `deadline_partial` ->
+        # top-level `partial`/exit-2). A file-count cap would truncate via `scan_limit` instead,
+        # which this floor never inspects -- that truncation would be silently invisible in
+        # `tg prepare`'s output. Do not "fix" this by adding a cap here.
+        radius_payload = build_symbol_blast_radius(
+            symbol,
+            path,
+            max_depth=1,
+            max_callers=8,
+            max_files=8,
+            deadline_seconds=deadline_seconds_remaining,
+        )
+    except Exception as exc:  # pragma: no cover - defensive evidence side path
+        return _floor(
+            source="supplementary_blast_radius",
+            related=[],
+            graph_trust_summary={},
+            resolution_gaps=[],
+            deadline_partial=False,
+            omitted=0,
+            error=str(exc),
+        )
+
+    if radius_payload.get("no_match"):
+        return _floor(
+            source="supplementary_blast_radius",
+            related=[],
+            graph_trust_summary=dict(radius_payload.get("graph_trust_summary") or {}),
+            resolution_gaps=list(radius_payload.get("resolution_gaps") or []),
+            deadline_partial=bool(radius_payload.get("partial")),
+            omitted=0,
+        )
+
+    related = [
+        record
+        for record in (
+            _related_call_site_record(caller, target_symbol=symbol)
+            for caller in (radius_payload.get("callers") or [])
+            if isinstance(caller, dict)
+        )
+        if record is not None
+    ]
+    output_limit = radius_payload.get("output_limit") or {}
+    return _floor(
+        source="supplementary_blast_radius",
+        related=related,
+        graph_trust_summary=dict(radius_payload.get("graph_trust_summary") or {}),
+        resolution_gaps=list(radius_payload.get("resolution_gaps") or []),
+        deadline_partial=bool(radius_payload.get("partial")),
+        omitted=int(output_limit.get("omitted_callers") or 0),
+    )
+
+
+def _build_prepare_payload(
+    *,
+    path: str,
+    query: str,
+    claim: bool,
+    deadline_monotonic: float | None = None,
+) -> dict[str, Any]:
+    """Thin composition (CEO #5): ONE ``build_agent_capsule`` call supplies primary target,
+    confidence, ask-user, and validation verbatim; the only NEW scan is the blast-radius floor
+    (see ``_build_prepare_blast_radius_floor``). No new ranking/scan logic lives here."""
+    from tensor_grep.cli.agent_capsule import _command_ref, build_agent_capsule
+    from tensor_grep.cli.repo_map import _copy_scan_limit
+
+    capsule = build_agent_capsule(query, path, deadline_monotonic=deadline_monotonic)
+
+    target = dict(capsule.get("primary_target") or {})
+    call_site_evidence = dict(capsule.get("call_site_evidence") or {})
+    related_call_sites = list(capsule.get("related_call_sites") or [])
+    resolved_path = str(capsule.get("path") or path)
+    resolved_query = str(capsule.get("query") or query)
+    floor, floor_deadline_partial = _build_prepare_blast_radius_floor(
+        path=resolved_path,
+        target=target,
+        call_site_evidence=call_site_evidence,
+        related_call_sites=related_call_sites,
+        deadline_monotonic=deadline_monotonic,
+    )
+
+    symbol = str(target.get("symbol") or "")
+    claim_argv: list[object] = ["tg", "ledger", "claim", resolved_path]
+    if symbol:
+        claim_argv += ["--symbol", symbol]
+    claim_argv += ["--intent", "edit", "--json"]
+    claim_ref = _command_ref(claim_argv)
+    claim_hook: dict[str, Any] = {
+        "command": claim_ref["command"],
+        "argv": claim_ref["argv"],
+        "submitted": False,
+        "advisory": True,
+    }
+    if claim:
+        if not symbol:
+            claim_hook["error"] = "no primary symbol resolved; nothing to claim"
+        else:
+            from tensor_grep.cli import ledger_store
+
+            try:
+                submitted = ledger_store.submit_claim(
+                    resolved_path, symbols=[symbol], intent="edit"
+                )
+            except Exception as exc:
+                # Advisory coordination hook: a claim failure must never fail prepare's primary
+                # read (mirrors ledger_store.submit_claim's own "NEVER blocks" contract one level
+                # up -- see ledger_store.py:445-461).
+                claim_hook["error"] = str(exc)
+            else:
+                claim_hook["submitted"] = True
+                claim_hook["result"] = {
+                    "claim": submitted["claim"],
+                    "overlaps": submitted["overlaps"],
+                }
+
+    evidence_ref = _command_ref([
+        "tg",
+        "evidence",
+        "emit",
+        resolved_path,
+        "--capsule",
+        "<capsule.json>",
+        "--query",
+        resolved_query,
+        "--json",
+    ])
+    evidence_hook = {
+        "command": evidence_ref["command"],
+        "argv": evidence_ref["argv"],
+        "note": (
+            "tg prepare does not persist a capsule file. Save this payload's JSON to disk (e.g. "
+            "capsule.json), then run the command above with --capsule pointing at it to attach "
+            "blast-radius/confidence evidence to a signed receipt."
+        ),
+    }
+
+    result: dict[str, Any] = {
+        "version": 1,
+        "schema_version": 1,
+        "routing_backend": "RepoMap",
+        "routing_reason": "prepare",
+        "prepare_version": 1,
+        "path": resolved_path,
+        "query": resolved_query,
+        "primary_target": target,
+        "alternative_targets": capsule.get("alternative_targets", []),
+        "confidence": capsule.get("confidence", {}),
+        "ask_user_before_editing": capsule.get(
+            "ask_user_before_editing", {"required": False, "reasons": []}
+        ),
+        "validation_plan": capsule.get("validation_plan", []),
+        "validation_commands": capsule.get("validation_commands", []),
+        "context_consistency": capsule.get("context_consistency", {}),
+        "rollback": capsule.get("rollback", {}),
+        "blast_radius_floor": floor,
+        "coordination": {"claim": claim_hook, "evidence": evidence_hook},
+    }
+    _copy_scan_limit(result, capsule)
+
+    capsule_partial = bool(capsule.get("partial"))
+    if capsule_partial or floor_deadline_partial:
+        result["partial"] = True
+        result["partial_reason"] = "deadline"
+        result["deadline_limit"] = {
+            "deadline_exceeded": True,
+            "capsule": capsule_partial,
+            "blast_radius_floor": floor_deadline_partial,
+        }
+    return result
+
+
+@app.command(name="prepare")
+def prepare(
+    path: str = typer.Argument(".", help="File or directory to prepare an edit for."),
+    query_arg: str | None = typer.Argument(
+        None, help="Natural-language task or symbol query to prepare an edit for."
+    ),
+    query: str | None = typer.Option(
+        None,
+        "--query",
+        help="Deprecated: use positional QUERY.",
+        hidden=True,
+    ),
+    claim: bool = typer.Option(
+        False,
+        "--claim",
+        help=(
+            "Actually submit the advisory coordination claim (writes .tensor-grep/ledger/ and "
+            "reports live overlaps from other agents). Default is emit-args-only: "
+            "coordination.claim.submitted stays false and nothing is written."
+        ),
+    ),
+    deadline: float | None = typer.Option(
+        None,
+        "--deadline",
+        min=0.1,
+        help=(
+            "Stop after N seconds, measured from CLI command entry, and mark the result partial "
+            '(partial=true, partial_reason="deadline") with whatever was found so far instead of '
+            "running unbounded. prepare runs the full agent capsule build PLUS a blast-radius "
+            "floor scan, so -- like route-test -- it defaults to 60s (mirrors tg agent's "
+            "cold-path default) rather than running unbounded. Pass --no-deadline to disable the "
+            "bound."
+        ),
+    ),
+    no_deadline: bool = typer.Option(
+        False,
+        "--no-deadline",
+        help="Disable prepare's default 60s --deadline bound; let it run unbounded.",
+    ),
+    json_output: bool = typer.Option(
+        True, "--json/--text", help="Emit machine-readable JSON output (default)."
+    ),
+) -> None:
+    """One-call edit-readiness capsule: primary target, confidence, a callers/blast-radius
+    floor, validation commands, and claim/evidence coordination hooks -- the single call meant
+    to replace the orient -> search -> agent -> route-test -> callers -> evidence -> ledger loop.
+    """
+    # Anchor deadline_monotonic at CLI command entry (mirrors route-test/agent's #197/#200 fix):
+    # computed BEFORE path/query resolution so front-door time counts against the bound the same
+    # way the underlying capsule build + blast-radius floor scan already do.
+    from tensor_grep.cli.agent_capsule import DEFAULT_AGENT_CLI_DEADLINE_SECONDS
+
+    effective_deadline = (
+        None
+        if no_deadline
+        else (deadline if deadline is not None else DEFAULT_AGENT_CLI_DEADLINE_SECONDS)
+    )
+    deadline_monotonic = _cli_deadline_monotonic(effective_deadline)
+
+    try:
+        resolved_path, resolved_query = _resolve_path_and_query(
+            path=path,
+            query_arg=query_arg,
+            query_option=query,
+            command_name="prepare",
+        )
+        payload = _build_prepare_payload(
+            path=resolved_path,
+            query=resolved_query,
+            claim=claim,
+            deadline_monotonic=deadline_monotonic,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    # Output-before-exit (mirrors context-render/edit-plan/agent/route-test): print the full
+    # payload FIRST, then exit 2 if either the capsule or the blast-radius floor was truncated --
+    # never a silent exit 0 that reads as a complete, full-confidence result.
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        primary = payload.get("primary_target", {})
+        floor = payload.get("blast_radius_floor", {})
+        claim_hook = payload.get("coordination", {}).get("claim", {})
+        typer.echo(f"Prepare for {payload['path']}")
+        typer.echo(f"query={payload['query']}")
+        typer.echo(f"primary={primary.get('file')}#L{primary.get('line')} {primary.get('symbol')}")
+        typer.echo(f"confidence={payload.get('confidence', {}).get('overall', 0)}")
+        typer.echo(
+            f"ask_required={bool(payload.get('ask_user_before_editing', {}).get('required'))}"
+        )
+        typer.echo(
+            "blast_radius_floor="
+            f"{floor.get('callers_count', 0)} callers (source={floor.get('source')})"
+        )
+        typer.echo(f"validation={len(payload.get('validation_commands', []))} commands")
+        typer.echo(f"claim_submitted={bool(claim_hook.get('submitted'))}")
+        if payload.get("partial"):
+            typer.echo(f"partial=true partial_reason={payload.get('partial_reason')}")
+
+    if _scan_incomplete(payload):
+        raise typer.Exit(2)
+
+
 def _positive_int(value: Any) -> int | None:
     try:
         number = int(value)
