@@ -16394,6 +16394,30 @@ def test_calibrate_command_delegates_to_native_tg(monkeypatch):
     assert seen == {"cmd": ["tg.exe", "calibrate"], "check": False}
 
 
+def test_calibrate_command_json_flag_forwards_to_native_tg(monkeypatch):
+    # v20 dogfood (GPU honesty / harness-misread): --json is additive -- it must not change
+    # the argv tg.exe sees other than appending "--json", and it must not swallow the native
+    # binary's real exit code (still 2 on a CPU-only no-cuda skip, per the fail-closed
+    # backend-unavailable convention pinned by crossover.rs -- KEPT, not flipped to 0).
+    seen: dict[str, object] = {}
+
+    class _Completed:
+        returncode = 2
+
+    monkeypatch.setattr(cli_main, "resolve_native_tg_binary", lambda: Path("tg.exe"))
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, check=False: seen.update({"cmd": list(cmd), "check": check}) or _Completed(),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["calibrate", "--json"])
+
+    assert result.exit_code == 2
+    assert seen == {"cmd": ["tg.exe", "calibrate", "--json"], "check": False}
+
+
 def test_main_entry_should_rewrite_raw_pattern_to_search_subcommand(monkeypatch):
 
     seen: dict[str, list[str]] = {}

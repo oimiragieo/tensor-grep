@@ -1,6 +1,7 @@
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::env;
+use std::fmt;
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -517,6 +518,41 @@ fn crossover_gpu_remediation_hint_device_not_found() -> String {
         .to_string()
 }
 
+/// Distinguishes "this build structurally cannot run GPU calibration because CUDA support
+/// isn't compiled in" from every other calibration failure (a bad device id on a
+/// cuda-enabled build, I/O errors, a failed benchmark subprocess, ...). `main.rs`'s
+/// `handle_calibrate_command` downcasts an `anyhow::Error` on this type to decide whether its
+/// `--json` flag should emit the machine-readable `calibration_status: skipped_no_cuda_build`
+/// signal -- string-matching the rendered message would work too, but a distinct error kind
+/// can't accidentally match an unrelated failure that happens to share wording. `reason` and
+/// `remediation` are kept as separate fields (rather than one pre-joined string) so the
+/// `--json` payload can expose them as two JSON fields without re-splitting formatted text.
+#[derive(Debug)]
+pub struct NoCudaBuildError {
+    pub reason: String,
+    pub remediation: String,
+}
+
+impl fmt::Display for NoCudaBuildError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "{}", self.reason)?;
+        write!(f, "{}", self.remediation)
+    }
+}
+
+impl std::error::Error for NoCudaBuildError {}
+
+/// Builds the `--json` skip-signal payload for `handle_calibrate_command`'s no-cuda-build
+/// path. Pulled out as a pure, allocation-only function (no `process::exit`, no I/O) so the
+/// JSON shape is unit-testable without spawning a subprocess to observe the real exit code.
+pub fn skip_signal_payload(err: &NoCudaBuildError) -> serde_json::Value {
+    serde_json::json!({
+        "calibration_status": "skipped_no_cuda_build",
+        "reason": err.reason.clone(),
+        "remediation": err.remediation.clone(),
+    })
+}
+
 fn detect_device_name(device_id: i32) -> Result<String> {
     #[cfg(feature = "cuda")]
     {
@@ -537,10 +573,11 @@ fn detect_device_name(device_id: i32) -> Result<String> {
     #[cfg(not(feature = "cuda"))]
     {
         let _ = device_id;
-        bail!(
-            "crossover calibration requires a CUDA-enabled build.\n{}",
-            crossover_gpu_remediation_hint_no_cuda_build()
-        )
+        let no_cuda_error = NoCudaBuildError {
+            reason: "crossover calibration requires a CUDA-enabled build.".to_string(),
+            remediation: crossover_gpu_remediation_hint_no_cuda_build(),
+        };
+        Err(no_cuda_error.into())
     }
 }
 
@@ -591,6 +628,61 @@ mod tests {
         assert!(
             message.contains("tg doctor"),
             "message should still point at `tg doctor` for diagnostics: {message}"
+        );
+    }
+
+    // v20 dogfood follow-up (GPU honesty / harness-misread): `tg calibrate` on a CPU-only
+    // build honestly fails closed (exit 2, see main.rs's `handle_calibrate_command`), but a
+    // dogfood harness misread that honest message as a bare FAILURE instead of a SKIP. Fix:
+    // `detect_device_name`'s no-cuda-build error must downcast to `NoCudaBuildError` (not just
+    // render matching substrings, per the prior test above) so `--json` can emit a structured
+    // `calibration_status: skipped_no_cuda_build` signal a harness can classify as SKIP. This
+    // must stay distinguishable from the cuda-enabled device-not-found `bail!` above, which is
+    // a real failure (bad device id), never a build-capability skip.
+    #[cfg(not(feature = "cuda"))]
+    #[test]
+    fn detect_device_name_without_cuda_feature_downcasts_to_no_cuda_build_error() {
+        let err = detect_device_name(0).expect_err("a non-cuda build must fail closed");
+        let no_cuda = err
+            .downcast_ref::<NoCudaBuildError>()
+            .expect("non-cuda detect_device_name failure must be a NoCudaBuildError");
+        assert_eq!(
+            no_cuda.reason,
+            "crossover calibration requires a CUDA-enabled build."
+        );
+        assert!(no_cuda.remediation.contains("not shipped in this build"));
+        assert!(no_cuda.remediation.contains("experimental"));
+
+        // Round-trip through Display must stay byte-identical to the pre-existing pinned
+        // message (the test above) -- this is what `eprintln!("{err}")` still prints when
+        // --json is not set.
+        assert_eq!(
+            err.to_string(),
+            format!("{}\n{}", no_cuda.reason, no_cuda.remediation)
+        );
+    }
+
+    // The JSON-formatting half of the same fix, isolated from `std::process::exit(2)` (which
+    // `handle_calibrate_command` calls directly and so cannot be exercised in-process without
+    // killing the test runner) -- asserts the pure payload-building helper produces the exact
+    // structured shape a dogfood harness classifies as SKIP-not-FAIL.
+    #[test]
+    fn skip_signal_payload_reports_skipped_no_cuda_build() {
+        let no_cuda = NoCudaBuildError {
+            reason: "crossover calibration requires a CUDA-enabled build.".to_string(),
+            remediation: "install a CUDA-enabled build and retry.".to_string(),
+        };
+
+        let payload = skip_signal_payload(&no_cuda);
+
+        assert_eq!(
+            payload["calibration_status"],
+            serde_json::json!("skipped_no_cuda_build")
+        );
+        assert_eq!(payload["reason"], serde_json::json!(no_cuda.reason));
+        assert_eq!(
+            payload["remediation"],
+            serde_json::json!(no_cuda.remediation)
         );
     }
 

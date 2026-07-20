@@ -8103,7 +8103,16 @@ def search_command(
 
 
 @app.command()
-def calibrate() -> None:
+def calibrate(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit a structured JSON result, including a machine-readable "
+        "calibration_status skip signal when GPU calibration cannot run, instead of the "
+        "default human-readable output. Forwarded to the native tg binary; does not change "
+        "the exit code.",
+    ),
+) -> None:
     """Measure CPU vs GPU crossover thresholds using the native Rust binary."""
     native_tg_binary = resolve_native_tg_binary()
     if native_tg_binary is None:
@@ -8126,6 +8135,13 @@ def calibrate() -> None:
         # capture its stderr (that would break streaming), so only THIS wrapper-owned
         # missing-binary message gets touched; the native binary's own calibrate-failure
         # remediation is Rust-owned (crossover.rs) and follows the same discipline there.
+        # v20 dogfood (GPU honesty / harness-misread, additive): a --json caller gets a
+        # structured stdout signal too, so a harness can tell "binary missing" apart from a
+        # generic exit-1 failure the same way it can now tell the Rust side's no-cuda-build
+        # skip apart from a genuine calibration failure. The human-readable stderr message
+        # below is unchanged either way (still exit 1, still the same remediation text).
+        if json_output:
+            _safe_stdout_line(json.dumps({"calibration_status": "native_binary_unavailable"}))
         typer.echo(
             "Error: native tg binary not found for calibrate command.\n"
             "Run 'tg upgrade' to install the native tg binary that calibrate requires. GPU "
@@ -8135,7 +8151,10 @@ def calibrate() -> None:
         )
         raise typer.Exit(1)
 
-    completed = subprocess.run([str(native_tg_binary), "calibrate"], check=False)
+    argv = [str(native_tg_binary), "calibrate"]
+    if json_output:
+        argv.append("--json")
+    completed = subprocess.run(argv, check=False)
     raise typer.Exit(int(completed.returncode))
 
 

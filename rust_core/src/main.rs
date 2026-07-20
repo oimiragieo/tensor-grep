@@ -28,7 +28,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tensor_grep_rs::backend_ast::{
     AstBackend, AstMatch, AstMetaVariables, BatchRewritePlan, BatchRewriteRule,
 };
-use tensor_grep_rs::crossover::{run_crossover_calibration, write_crossover_config};
+use tensor_grep_rs::crossover::{
+    run_crossover_calibration, skip_signal_payload, write_crossover_config, NoCudaBuildError,
+};
 #[cfg(feature = "cuda")]
 use tensor_grep_rs::gpu_native::{
     benchmark_cuda_graph_search_paths, benchmark_pageable_transfer_throughput,
@@ -833,7 +835,15 @@ pub struct RunArgs {
 }
 
 #[derive(Args, Debug, Clone, Default)]
-pub struct CalibrateArgs {}
+pub struct CalibrateArgs {
+    /// Emit a structured JSON result, including a machine-readable
+    /// `calibration_status: skipped_no_cuda_build` signal when this build cannot run GPU
+    /// calibration, instead of the default human-readable output. Does not change the exit
+    /// code (still 2 on the no-cuda skip, per the backend-unavailable convention) or the
+    /// success-path output (already JSON).
+    #[arg(long)]
+    pub json: bool,
+}
 
 #[derive(Args, Debug, Clone)]
 pub struct AuditVerifyArgs {
@@ -5541,15 +5551,32 @@ fn ast_test_requires_python_passthrough(args: &[String]) -> bool {
     false
 }
 
-fn handle_calibrate_command(_args: CalibrateArgs) -> anyhow::Result<()> {
+fn handle_calibrate_command(args: CalibrateArgs) -> anyhow::Result<()> {
     let executable = env::current_exe().context("failed to resolve current tg executable")?;
     match run_crossover_calibration(&executable) {
         Ok(config) => {
             write_crossover_config(&config, None)?;
+            // --json is a no-op on the success path: the config was already JSON before this
+            // flag existed, so there is nothing additive to do here.
             println!("{}", serde_json::to_string_pretty(&config)?);
             Ok(())
         }
         Err(err) => {
+            // Fail closed (exit 2) either way -- see the module-level comment above
+            // `require_ripgrep_or_exit`. `--json` only changes WHAT is printed for the one
+            // error kind a harness needs to tell apart from a genuine failure: this build
+            // structurally cannot run GPU calibration (no CUDA compiled in). Any other error
+            // (a bad device id on a cuda-enabled build, I/O, a failed benchmark subprocess,
+            // ...) is a real failure, not a skip, so it must NOT be relabeled -- it keeps the
+            // original human-readable eprintln even under --json (fail-closed honesty, no
+            // mislabeling a genuine failure as "skipped").
+            if args.json {
+                if let Some(no_cuda) = err.downcast_ref::<NoCudaBuildError>() {
+                    let payload = skip_signal_payload(no_cuda);
+                    println!("{payload}");
+                    std::process::exit(2);
+                }
+            }
             eprintln!("{err}");
             std::process::exit(2);
         }
