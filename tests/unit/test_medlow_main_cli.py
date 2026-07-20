@@ -400,3 +400,24 @@ def test_l10_calibrate_exits_one_when_unsupported(monkeypatch) -> None:
     # A "confirm before relying on TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR=nvidia" aside dangled
     # an override that no shipped asset honors -- the same permanent dead end, asymmetric.
     assert "TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# v20 dogfood follow-up - calibrate --json emits an additive structured skip signal
+# ---------------------------------------------------------------------------
+
+
+def test_calibrate_json_flag_missing_binary_emits_skip_signal(monkeypatch) -> None:
+    # Hermetic for the same reason as L10 above: force the no-native-binary branch instead of
+    # depending on whether a native tg binary happens to be on this runner.
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+    runner = CliRunner()
+    result = runner.invoke(app, ["calibrate", "--json"])
+
+    # --json is additive: the exit-1 "unsupported" convention (L10) is unchanged.
+    assert result.exit_code == 1, result.stdout
+    # A structured stdout line lets a harness classify this deterministically instead of
+    # parsing the human-readable remediation text.
+    assert '"calibration_status": "native_binary_unavailable"' in result.output
+    # The human-readable remediation stays present too (additive, not replaced).
+    assert "tg upgrade" in result.output
