@@ -2485,7 +2485,11 @@ def build_agent_capsule_from_map(
     # Local import avoids a module-level circular import (orient_capsule imports repo_map, which
     # this module also imports) -- same discipline repo_map.build_context_render's own reuse of
     # this helper uses, and the same reasoning as the _suggested_scope_from_map import below.
-    from tensor_grep.cli.orient_capsule import _apply_ignore_globs, _detect_vendored_subtrees
+    from tensor_grep.cli.orient_capsule import (
+        _apply_ignore_globs,
+        _detect_vendored_subtrees,
+        _detect_workspace_root,
+    )
 
     rm = _apply_ignore_globs(rm, ignore)
     # Cold-path assembly-tail SLA fix (#220): the top tail consumer profiled on a 25k-file/
@@ -2515,6 +2519,11 @@ def build_agent_capsule_from_map(
     )
     if detect_vendored_deadline_hit.hit:
         skipped_assembly_stages.append("vendored_subtree_detection")
+    # CEO #2 auto-narrow (advisory, additive): the SAME multi-project-workspace-root detection
+    # `tg orient` uses (see `orient_capsule._detect_workspace_root`'s docstring) -- computed once,
+    # here, so both the scan-limit-truncation `suggested_scope` gate below and the final result
+    # assembly (near this function's return) can read it without a second call.
+    workspace_root_detected = _detect_workspace_root(rm, deadline_monotonic=deadline_monotonic)
     resolved_path = str(rm["path"])
     requested_semantic_provider = semantic_provider
     effective_semantic_provider = (
@@ -2559,10 +2568,17 @@ def build_agent_capsule_from_map(
     # `build_context_render_from_map` -- replicate that exact block here (same gate, same
     # helper) against OUR OWN `rm`, or a warm capsule would silently drop `suggested_scope` on a
     # truncated scan. Mirrors repo_map.build_context_render's own comment/logic verbatim.
+    #
+    # CEO #2 auto-narrow (advisory, additive): OR in `workspace_root_detected` as a SECOND,
+    # independent trigger -- a genuine multi-project workspace root gets the same proactive
+    # suggested_scope narrowing even when the scan itself completed without truncating (see
+    # `orient_capsule._detect_workspace_root`'s docstring). The scan-limit-truncation trigger
+    # above is unchanged; this only widens when the block below can also run.
     scan_limit_for_suggested_scope = rm.get("scan_limit")
-    if isinstance(scan_limit_for_suggested_scope, dict) and scan_limit_for_suggested_scope.get(
-        "possibly_truncated"
-    ):
+    if (
+        isinstance(scan_limit_for_suggested_scope, dict)
+        and scan_limit_for_suggested_scope.get("possibly_truncated")
+    ) or workspace_root_detected:
         from tensor_grep.cli.orient_capsule import _suggested_scope_from_map
 
         # Cold-path assembly-tail SLA fix (#220): second-largest profiled tail consumer (a
@@ -3181,6 +3197,12 @@ def build_agent_capsule_from_map(
     suggested_scope = payload.get("suggested_scope")
     if suggested_scope:
         result["suggested_scope"] = suggested_scope
+    # CEO #2 auto-narrow (advisory, additive): present only when the scanned root itself looks
+    # like a multi-project workspace parent -- absent (never `False`) otherwise, so a non-
+    # workspace repo's capsule stays byte-identical to before this field existed (mirrors
+    # `suggested_scope`'s/`suggested_ignore`'s own additive-conditional convention).
+    if workspace_root_detected:
+        result["workspace_root_detected"] = True
     # suggested_ignore (M2): parity with `tg orient`, which already surfaces auto-deweighted vendor/
     # skill/tool-config subtree roots as ready-to-paste `--ignore` globs. `tg agent` already runs
     # the SAME de-weight during ranking (`_build_context_pack_from_map`'s own `auto_deweight` pass,
