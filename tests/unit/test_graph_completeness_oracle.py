@@ -64,7 +64,14 @@ import pytest
 from typer.testing import CliRunner
 
 import tensor_grep.cli.repo_map as repo_map
+from tensor_grep.cli import session_daemon
 from tensor_grep.cli.main import app
+from tests.unit.test_symbol_daemon_autostart import (
+    _autostart_env,
+    _probe_fake_for,
+    _real_daemon,
+    _serve,
+)
 
 runner = CliRunner()
 
@@ -389,4 +396,108 @@ def test_callers_deadline_cut_surfaces_late_test_file_caller_first(
     assert caller_files == {test_file.name}, (
         "the late-sorting test-file caller must be found despite the truncated scan, not "
         f"stranded past the cut: found callers from {caller_files}"
+    )
+
+
+# ---------------------------------------------------------------------------------------------
+# Piece 3 (#245) -- warm-daemon route coverage for callers/blast-radius.
+#
+# IMPORTANT SCOPE NOTE (verified against the real code, not assumed): callers/blast-radius
+# --deadline UNCONDITIONALLY forces the cold path. main.py's callers()/blast_radius() commands
+# only attempt `_maybe_symbol_command_via_running_daemon` `if deadline is None else None`
+# (main.py:11134-11145 / :11468-11479, both carrying the comment "a warm session's cached
+# repo_map cannot honor a fresh per-request scan deadline"), and session_daemon.py:61-66
+# documents the same fact from the daemon side: "The 5 symbol commands (defs/impact/refs/
+# callers/blast_radius) ... still run unbounded on THIS daemon path -- that residual is #390,
+# still open." There is therefore NO code path today where a REAL warm/daemon-SERVED
+# callers/blast-radius response is itself deadline-truncated -- "deadline truncation ON the
+# warm route" is unreachable by design, not an untested gap, and a test that tried to fake one
+# (e.g. by hand-crafting a mock daemon response with partial=True) would only be re-proving the
+# CLI's own `_scan_incomplete` gate (already covered by test_render_daemon_exit_codes.py), not
+# anything about the warm route's deadline handling.
+#
+# The closest bounded, genuinely-valuable warm-route coverage instead: prove the safety gate
+# itself (--deadline forces cold) holds even with a REAL warm daemon alive and reachable -- not
+# just "cold because no daemon exists", which is all Fixture C above can exercise (this whole
+# file's autouse fixture forces TG_SESSION_DAEMON_AUTOSTART=0, so no daemon is ever running
+# there). A regression that dropped or weakened the `if deadline is None` gate could silently
+# serve a stale, non-deadline-aware CACHED answer instead of honoring --deadline -- exactly the
+# class of silent completeness lie #200/#390 are about, just one seam further upstream than
+# Fixture C covers. Uses the same real in-process _ThreadedSessionDaemon harness
+# test_orient_agent_daemon.py reuses from test_symbol_daemon_autostart.py, and the same
+# deterministic-clock deadline-expiry injection (_force_deadline_conversion_expired) Fixture C
+# uses above -- never a real tight --deadline (OS-speed-fragile per
+# test_agent_cold_deadline_tail_sla_220.py:34-46).
+# ---------------------------------------------------------------------------------------------
+
+
+def _assert_deadline_forces_cold_despite_live_daemon(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    command: str,
+    warm_routing_reason: str,
+) -> None:
+    _write_complete_repo(tmp_path)
+
+    server = _real_daemon(tmp_path)
+    _serve(server)
+    try:
+        monkeypatch.setattr(session_daemon, "_probe_daemon", _probe_fake_for(server, "test-token"))
+        _autostart_env(monkeypatch, enabled=True)
+
+        # Sanity precondition: the daemon really is alive, reachable, and WOULD serve a
+        # no-deadline request warm -- otherwise "still forces cold despite a live daemon" below
+        # would be vacuously true (there'd be nothing live to bypass).
+        warm_probe = runner.invoke(app, [command, str(tmp_path), "f", "--json"])
+        assert warm_probe.exit_code == 0, warm_probe.output
+        assert json.loads(warm_probe.stdout)["routing_reason"] == warm_routing_reason, (
+            "precondition failed: the warm daemon route did not actually serve the undeadlined "
+            "sanity probe, so this test cannot prove anything about bypassing it"
+        )
+
+        # Spy (not a hard fail) on the daemon RPC seam so a real regression is diagnosable via
+        # the assertion message below rather than an opaque AssertionError from inside a
+        # monkeypatched stub.
+        calls: list[dict[str, Any]] = []
+        original_request = session_daemon.request_running_session_daemon
+
+        def _spy_request(path: str, request: dict[str, Any]) -> dict[str, Any] | None:
+            calls.append(request)
+            return original_request(path, request)
+
+        monkeypatch.setattr(session_daemon, "request_running_session_daemon", _spy_request)
+        _force_deadline_conversion_expired(monkeypatch)
+
+        result = runner.invoke(app, [command, str(tmp_path), "f", "--json", "--deadline", "5"])
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert not calls, (
+        f"{command} --deadline must never contact the daemon, even with a live reachable "
+        f"daemon standing by -- got {len(calls)} daemon request(s): {calls}"
+    )
+    assert result.exit_code == 2, result.output
+    assert result.exit_code != 0, "a deadline-truncated scan must never report exit 0"
+    payload = json.loads(result.stdout)
+    assert payload.get("partial") is True
+    assert payload.get("routing_reason") != warm_routing_reason, (
+        "a --deadline response must never carry the warm-daemon routing_reason"
+    )
+
+
+def test_callers_warm_daemon_alive_but_deadline_still_forces_cold_partial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _assert_deadline_forces_cold_despite_live_daemon(
+        monkeypatch, tmp_path, command="callers", warm_routing_reason="session-callers"
+    )
+
+
+def test_blast_radius_warm_daemon_alive_but_deadline_still_forces_cold_partial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _assert_deadline_forces_cold_despite_live_daemon(
+        monkeypatch, tmp_path, command="blast-radius", warm_routing_reason="session-blast-radius"
     )
