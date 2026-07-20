@@ -16370,7 +16370,11 @@ def ast_info(
     help=(
         "Run a validated AST slice for structural search and guarded rewrites. "
         "PowerShell users should single-quote AST patterns containing $ captures, "
-        "for example 'def $NAME($$$ARGS): $$$BODY'."
+        "for example 'def $NAME($$$ARGS): $$$BODY'. When the ast-grep `sg` binary is on "
+        "PATH, the pattern is delegated to it verbatim (full $NAME/$$$ARGS/--selector/"
+        "--strictness compatibility); without `sg`, a native-shaped pattern still runs "
+        "through tg's own tree-sitter backend, but a $-metavariable pattern needs `sg` and "
+        "fails with a clean error instead of a mistranslated result."
     ),
 )
 def run(

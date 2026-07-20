@@ -1064,3 +1064,318 @@ def test_typer_run_rejects_existing_path_with_semantic_options_without_pattern(t
     assert result.exit_code == 2
     assert "require --pattern <PATTERN> before PATH" in result.output
     assert "Traceback" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# CEO#6(b): tg run zero-match remediation (default text / --files-with-matches / --json).
+# ---------------------------------------------------------------------------
+
+
+class _ZeroMatchAstGrepWrapperBackend:
+    def search_many(self, file_paths, pattern, config=None) -> SearchResult:
+        _ = file_paths
+        _ = pattern
+        _ = config
+        return SearchResult(matches=[], matched_file_paths=[], total_files=0, total_matches=0)
+
+
+# run_command dispatches on `type(backend).__name__ == "AstGrepWrapperBackend"` (it checks the
+# STRING name, not isinstance), so these test doubles must be renamed to match -- the same
+# pattern the file already uses for `ErroringAstGrepWrapperBackend` above.
+_ZeroMatchAstGrepWrapperBackend.__name__ = "AstGrepWrapperBackend"
+
+
+class _OneMatchAstGrepWrapperBackend:
+    def search_many(self, file_paths, pattern, config=None) -> SearchResult:
+        _ = file_paths
+        _ = pattern
+        _ = config
+        return SearchResult(
+            matches=[MatchLine(line_number=1, text="def hello(): pass", file="a.py")],
+            matched_file_paths=["a.py"],
+            total_files=1,
+            total_matches=1,
+        )
+
+
+_OneMatchAstGrepWrapperBackend.__name__ = "AstGrepWrapperBackend"
+
+
+def test_run_command_emits_remediation_on_stderr_for_default_text_zero_matches(monkeypatch, capsys):
+    from tensor_grep.cli import ast_workflows
+    from tensor_grep.cli.ast_workflows import run_command
+
+    monkeypatch.setattr(
+        ast_workflows,
+        "_select_ast_backend_for_pattern",
+        lambda config, pattern: _ZeroMatchAstGrepWrapperBackend(),
+    )
+
+    exit_code = run_command("nonexistent_call($$$)", path=".", lang="python")
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "tg ast-info" in captured.err
+    assert "$NAME" in captured.err
+    # stdout must stay whatever the ripgrep formatter emits for zero matches -- the hint
+    # itself belongs on stderr only.
+    assert "tg ast-info" not in captured.out
+
+
+def test_run_command_emits_remediation_on_stderr_for_files_with_matches_zero_matches(
+    monkeypatch, capsys
+):
+    from tensor_grep.cli import ast_workflows
+    from tensor_grep.cli.ast_workflows import run_command
+
+    monkeypatch.setattr(
+        ast_workflows,
+        "_select_ast_backend_for_pattern",
+        lambda config, pattern: _ZeroMatchAstGrepWrapperBackend(),
+    )
+
+    exit_code = run_command(
+        "nonexistent_call($$$)", path=".", lang="python", files_with_matches=True
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "tg ast-info" in captured.err
+
+
+def test_run_command_json_mode_adds_additive_remediation_on_zero_matches(monkeypatch, capsys):
+    from tensor_grep.cli import ast_workflows
+    from tensor_grep.cli.ast_workflows import run_command
+
+    monkeypatch.setattr(
+        ast_workflows,
+        "_select_ast_backend_for_pattern",
+        lambda config, pattern: _ZeroMatchAstGrepWrapperBackend(),
+    )
+
+    exit_code = run_command("nonexistent_call($$$)", path=".", lang="python", json_mode=True)
+
+    assert exit_code == 1
+    payload = json.loads(capsys.readouterr().out)
+    # Existing envelope/schema keys must be byte-identical to before this change.
+    assert payload["version"] == 1
+    assert payload["schema_version"] == 1
+    assert payload["mode"] == "search"
+    assert payload["total_matches"] == 0
+    assert payload["routing_backend"] == "AstGrepWrapperBackend"
+    assert payload["routing_reason"] == "ast"
+    assert payload["sidecar_used"] is False
+    assert payload["query"] == "nonexistent_call($$$)"
+    assert payload["matches"] == []
+    # New additive key only.
+    assert "hints" in payload["remediation"]
+    assert any("tg ast-info" in hint for hint in payload["remediation"]["hints"])
+
+
+def test_run_command_does_not_emit_remediation_when_matches_found(monkeypatch, capsys):
+    """NEGATIVE: a matching pattern must exit 0 and never emit the zero-match remediation."""
+    from tensor_grep.cli import ast_workflows
+    from tensor_grep.cli.ast_workflows import run_command
+
+    monkeypatch.setattr(
+        ast_workflows,
+        "_select_ast_backend_for_pattern",
+        lambda config, pattern: _OneMatchAstGrepWrapperBackend(),
+    )
+
+    exit_code = run_command("def $NAME():", path=".", lang="python")
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "tg ast-info" not in captured.err
+    assert "tg ast-info" not in captured.out
+
+
+def test_run_command_does_not_emit_remediation_json_when_matches_found(monkeypatch, capsys):
+    """NEGATIVE (--json): a matching pattern must not carry a "remediation" key at all."""
+    from tensor_grep.cli import ast_workflows
+    from tensor_grep.cli.ast_workflows import run_command
+
+    monkeypatch.setattr(
+        ast_workflows,
+        "_select_ast_backend_for_pattern",
+        lambda config, pattern: _OneMatchAstGrepWrapperBackend(),
+    )
+
+    exit_code = run_command("def $NAME():", path=".", lang="python", json_mode=True)
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert "remediation" not in payload
+
+
+def test_run_command_remediation_flags_missing_metavariable(monkeypatch, capsys):
+    from tensor_grep.cli import ast_workflows
+    from tensor_grep.cli.ast_workflows import run_command
+
+    monkeypatch.setattr(
+        ast_workflows,
+        "_select_ast_backend_for_pattern",
+        lambda config, pattern: _ZeroMatchAstGrepWrapperBackend(),
+    )
+
+    exit_code = run_command("plain_identifier", path=".", lang="python")
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "metavariable" in captured.err
+    assert "$NAME" in captured.err
+
+
+def test_run_command_remediation_flags_missing_lang(monkeypatch, capsys):
+    from tensor_grep.cli import ast_workflows
+    from tensor_grep.cli.ast_workflows import run_command
+
+    monkeypatch.setattr(
+        ast_workflows,
+        "_select_ast_backend_for_pattern",
+        lambda config, pattern: _ZeroMatchAstGrepWrapperBackend(),
+    )
+
+    exit_code = run_command("def $NAME():", path=".")
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "--lang" in captured.err
+
+
+def test_scan_command_never_emits_run_remediation_on_zero_matches(monkeypatch, tmp_path, capsys):
+    """`tg scan` finding 0 matches is a clean pass (exit 0); the (b) `tg run` zero-match
+    remediation hook must never fire there -- it is scoped to `tg run` only."""
+    from tensor_grep.cli.ast_workflows import scan_command
+
+    class ZeroMatchAstGrepWrapperBackend:
+        def is_available(self):
+            return True
+
+        def search_project(self, root_path, config_path):
+            _ = root_path
+            _ = config_path
+            return {
+                "no-match-rule": SearchResult(
+                    matches=[], matched_file_paths=[], total_files=0, total_matches=0
+                )
+            }
+
+    ZeroMatchAstGrepWrapperBackend.__name__ = "AstGrepWrapperBackend"
+
+    monkeypatch.setattr("tensor_grep.backends.ast_backend.AstBackend", AstBackend)
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend",
+        ZeroMatchAstGrepWrapperBackend,
+    )
+
+    (tmp_path / "sgconfig.yml").write_text(
+        "ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8"
+    )
+    (tmp_path / "rules").mkdir()
+    (tmp_path / "rules" / "no_match.yml").write_text(
+        "id: no-match-rule\nlanguage: python\nrule:\n  pattern: NEVER_PRESENT\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "a.py").write_text("print('clean')\n", encoding="utf-8")
+
+    exit_code = scan_command(str(tmp_path / "sgconfig.yml"))
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "tg ast-info" not in captured.out
+    assert "tg ast-info" not in captured.err
+
+
+def test_scan_command_source_never_calls_run_remediation_helper():
+    """Structural guardrail: (b)'s `_emit_ast_run_remediation` is `tg run`-only wiring;
+    `scan_command`'s source must never reference it, so a future edit can't accidentally wire
+    a 0-finding-scan-is-a-failure behavior into `tg scan`."""
+    import inspect
+
+    from tensor_grep.cli.ast_workflows import scan_command
+
+    assert "_emit_ast_run_remediation" not in inspect.getsource(scan_command)
+
+
+# ---------------------------------------------------------------------------
+# CEO#6(a): honest error when a $-metavariable pattern needs ast-grep but `sg` is absent.
+# ---------------------------------------------------------------------------
+
+
+def test_run_command_reports_configuration_error_without_traceback(monkeypatch, capsys):
+    """(a) Honest-error mirror of Task #166's main.py ConfigurationError handler: a
+    wrapper-shaped ($) pattern with no usable ast-grep/native backend must surface a clean
+    stderr message + exit 2, never an uncaught ConfigurationError traceback."""
+    from tensor_grep.cli.ast_workflows import run_command
+
+    monkeypatch.setattr("tensor_grep.backends.ast_backend.AstBackend", AstBackend)
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend",
+        _UnavailableAstGrepWrapperBackend,
+    )
+
+    exit_code = run_command(pattern="$NAME", path=".", lang="python")
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "Traceback" not in captured.err
+    assert "Error:" in captured.err
+    assert "sg" in captured.err.lower() or "ast-grep" in captured.err.lower()
+
+
+def test_run_command_reports_configuration_error_as_additive_json_payload(monkeypatch, capsys):
+    from tensor_grep.cli.ast_workflows import run_command
+
+    monkeypatch.setattr("tensor_grep.backends.ast_backend.AstBackend", AstBackend)
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend",
+        _UnavailableAstGrepWrapperBackend,
+    )
+
+    exit_code = run_command(pattern="$NAME", path=".", lang="python", json_mode=True)
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "Traceback" not in captured.err
+    assert captured.err == ""
+    payload = json.loads(captured.out)
+    assert payload["ok"] is False
+    assert payload["error"] == "configuration_error"
+    assert payload["version"] == 1
+    assert payload["schema_version"] == 1
+
+
+def test_run_command_does_not_swallow_unrelated_exceptions_from_backend_selection(monkeypatch):
+    """Only ConfigurationError is caught -- a genuinely unexpected exception must still
+    surface loudly instead of being silently mapped to exit 2."""
+    from tensor_grep.cli import ast_workflows
+    from tensor_grep.cli.ast_workflows import run_command
+
+    def _boom(config, pattern):
+        raise RuntimeError("boom - not a ConfigurationError")
+
+    monkeypatch.setattr(ast_workflows, "_select_ast_backend_for_pattern", _boom)
+
+    with pytest.raises(RuntimeError, match="boom - not a ConfigurationError"):
+        run_command(pattern="$NAME", path=".", lang="python")
+
+
+@pytest.mark.skipif(
+    not RealAstGrepWrapperBackend().is_available(),
+    reason="requires ast-grep binary",
+)
+def test_run_command_metavariable_pattern_still_matches_when_sg_present(tmp_path, capsys):
+    """Regression: the honest-error path for (a) must not break the sg-present passthrough --
+    a $-metavariable pattern still matches normally when a real `sg` binary is on PATH."""
+    from tensor_grep.cli.ast_workflows import run_command
+
+    source = tmp_path / "sample.py"
+    source.write_text("def hello(a, b):\n    return a + b\n", encoding="utf-8")
+
+    exit_code = run_command("def $NAME($$$ARGS)", path=str(tmp_path), lang="python")
+
+    assert exit_code == 0
+    assert "def hello(a, b)" in capsys.readouterr().out
