@@ -4,11 +4,14 @@ import hashlib
 import hmac
 import json
 import re
+import subprocess
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from tensor_grep.cli._index_lock import atomic_write_json
+from tensor_grep.cli.subprocess_policy import configured_git_timeout_seconds, run_subprocess
 
 _AUDIT_INDEX_VERSION = 1
 _TG_DIRNAME = ".tensor-grep"
@@ -20,6 +23,14 @@ _REVIEW_BUNDLE_COMPONENTS = (
     "scan_results",
     "checkpoint_metadata",
     "diff",
+    # CEO#8 enterprise close-the-loop: an OPTIONAL list of embedded EvidenceReceipt objects.
+    # Deliberately NOT added to _REVIEW_BUNDLE_REQUIRED_COMPONENTS below -- every existing
+    # receipt-less bundle (on disk from a prior tg version, or freshly created without --receipt)
+    # must stay byte-valid and verify green. Because this tuple drives BOTH create_review_bundle's
+    # checksum loop and verify_review_bundle's generic checks loop, adding it here alone is
+    # sufficient to fold evidence_receipts into checksums/bundle_sha256/tamper-detection with no
+    # other changes to either loop.
+    "evidence_receipts",
 )
 _REVIEW_BUNDLE_REQUIRED_COMPONENTS = frozenset({"audit_manifest"})
 
@@ -160,6 +171,7 @@ def create_review_bundle(
     scan_path: str | Path | None = None,
     checkpoint_id: str | None = None,
     previous_manifest: str | Path | None = None,
+    receipt_paths: Sequence[str | Path] | None = None,
     output_path: str | Path | None = None,
 ) -> dict[str, Any]:
     from tensor_grep.cli.checkpoint_store import load_checkpoint_metadata
@@ -179,6 +191,16 @@ def create_review_bundle(
         if previous_manifest is not None
         else None
     )
+    evidence_receipts: list[dict[str, Any]] | None = None
+    if receipt_paths:
+        # Local import: evidence_signing imports FROM this module (_utc_now_iso), so a module-level
+        # import here would be circular. Reuse its bounded reader (5 MB pre-parse DoS guard, JSON-
+        # object validation) rather than hand-rolling a second receipt-file reader.
+        from tensor_grep.cli import evidence_signing
+
+        evidence_receipts = [
+            evidence_signing.read_receipt_file(receipt_path) for receipt_path in receipt_paths
+        ]
 
     payload = _envelope(routing_reason="review-bundle-create")
     payload["created_at"] = _review_bundle_created_at(
@@ -191,6 +213,7 @@ def create_review_bundle(
     payload["scan_results"] = scan_results
     payload["checkpoint_metadata"] = checkpoint_metadata
     payload["diff"] = diff_payload
+    payload["evidence_receipts"] = evidence_receipts
 
     checksums = {
         component: _component_checksum(payload[component])
@@ -226,6 +249,7 @@ def create_review_bundle_json(
     scan_path: str | Path | None = None,
     checkpoint_id: str | None = None,
     previous_manifest: str | Path | None = None,
+    receipt_paths: Sequence[str | Path] | None = None,
     output_path: str | Path | None = None,
 ) -> str:
     return json.dumps(
@@ -234,15 +258,154 @@ def create_review_bundle_json(
             scan_path=scan_path,
             checkpoint_id=checkpoint_id,
             previous_manifest=previous_manifest,
+            receipt_paths=receipt_paths,
             output_path=output_path,
         ),
         indent=2,
     )
 
 
-def verify_review_bundle(
-    bundle_path: str | Path, *, signing_key: str | Path | None = None
+def _resolve_git_ref_commit_sha(
+    ref: str, *, root: str | Path | None = None
+) -> tuple[str | None, str | None]:
+    """Fail-closed resolver for `tg review-bundle verify --against <ref>`: resolves `ref` to a
+    full commit SHA via `git rev-parse --verify <ref>^{commit}`, run against `root` (defaults to
+    the CURRENT WORKING DIRECTORY -- e.g. the CI checkout -- NEVER a bundle-embedded path; a
+    tampered bundle must never be able to redirect which repository the ref is resolved against).
+    `root` is an explicit, backward-compatible keyword only -- `verify_review_bundle` never passes
+    it from the CLI layer, so real invocations always resolve against the process CWD exactly as
+    documented; it exists so tests can pin an explicit temp-repo root without relying solely on
+    `monkeypatch.chdir`.
+
+    Mirrors `evidence_receipt._repo_revision_identity`'s subprocess+timeout plumbing. Returns
+    `(commit_sha, None)` on success or `(None, error_message)` on ANY failure (not a repo, git
+    missing/timeout, or an unresolvable ref) -- there is no "unknown, so skip the check" outcome;
+    every failure mode is surfaced as an explicit error the caller folds into a fail-closed
+    `valid=False`. This mirrors `ledger_store._finding_is_fresh`'s fail-closed contract, NOT
+    claims' `_revision_matches` (audit_manifest.py's sibling module), which returns `None` for
+    "unknown" -- that tri-state is correct for an advisory overlap report, but wrong for a gate.
+
+    CWE-88 / native-argv flag-injection guard (AGENTS.md "Security Hardening Patterns"): a
+    `--against` value starting with `-` would otherwise be parsed by `git rev-parse` as an OPTION
+    rather than a revision. A `--` sentinel does NOT safely close this for this exact invocation
+    shape -- verified empirically: `git rev-parse --verify -- "HEAD^{commit}"` fails ("fatal:
+    Needed a single revision") even for a perfectly valid ref, so inserting one here would trade a
+    security nit for a functional regression. Reject the leading-`-` case up front instead: no
+    legitimate git ref/branch/tag short name can start with `-` (`git branch`/`git tag` themselves
+    refuse to create one), so this can only ever reject a malformed or malicious `--against`
+    value, never a real ref -- and it fails closed the same way every other error path here does.
+    """
+    if ref.startswith("-"):
+        return (
+            None,
+            f"Ref {ref!r} looks like a command-line flag (starts with '-'); refusing to resolve it.",
+        )
+    resolved_root = (Path(root) if root is not None else Path.cwd()).expanduser().resolve()
+    timeout_seconds = configured_git_timeout_seconds()
+    try:
+        result = run_subprocess(
+            ["git", "-C", str(resolved_root), "rev-parse", "--verify", f"{ref}^{{commit}}"],
+            timeout_seconds=timeout_seconds,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, f"git rev-parse could not run: {exc}"
+    if result.returncode != 0:
+        stderr_text = result.stderr.strip()
+        stderr_tail = stderr_text.splitlines()[-1] if stderr_text else "unknown error"
+        return None, f"Could not resolve --against ref {ref!r}: {stderr_tail}"
+    commit_sha = result.stdout.strip()
+    if not commit_sha:
+        return None, f"git rev-parse returned no output for ref {ref!r}"
+    return commit_sha, None
+
+
+def _receipt_freshness_against(
+    receipt: dict[str, Any],
+    *,
+    against_ref: str,
+    resolved_against_sha: str | None,
+    against_error: str | None,
 ) -> dict[str, Any]:
+    """Fail-closed freshness check for ONE embedded EvidenceReceipt against a resolved `--against`
+    commit SHA. Mirrors `ledger_store._finding_is_fresh`'s fail-closed contract (status must be
+    "present"; an unresolvable side never reads as "skip") with two deliberate differences for the
+    CI-gate use case: (1) it compares against a caller-resolved git REF's commit SHA, not a second
+    live `_repo_revision_identity` snapshot; (2) it checks `dirty is False` rather than comparing
+    `dirty_tree_sha256` against a freshly recomputed CI working-tree hash -- the CI checkout may be
+    sitting on a MERGE commit whose tree legitimately differs from the PR-head tree the receipt was
+    captured against, so re-deriving and comparing a dirty-tree hash here would reintroduce the
+    exact $GITHUB_SHA-merge-commit trap this feature exists to close. A receipt captured against a
+    dirty working tree is never reproducible from a commit alone, so it fails regardless of
+    commit_sha match.
+    """
+    if resolved_against_sha is None:
+        return {
+            "valid": False,
+            "against": against_ref,
+            "resolved_commit_sha": None,
+            "receipt_commit_sha": None,
+            "receipt_dirty": None,
+            "error": against_error or f"Could not resolve --against ref {against_ref!r}.",
+        }
+    revision = receipt.get("revision")
+    if not isinstance(revision, dict) or revision.get("status") != "present":
+        return {
+            "valid": False,
+            "against": against_ref,
+            "resolved_commit_sha": resolved_against_sha,
+            "receipt_commit_sha": revision.get("commit_sha")
+            if isinstance(revision, dict)
+            else None,
+            "receipt_dirty": revision.get("dirty") if isinstance(revision, dict) else None,
+            "error": "Receipt revision status is not 'present' (unavailable repo identity).",
+        }
+
+    receipt_commit_sha = revision.get("commit_sha")
+    receipt_dirty = revision.get("dirty")
+    commit_matches = receipt_commit_sha == resolved_against_sha
+    dirty_clean = receipt_dirty is False
+    valid = commit_matches and dirty_clean
+
+    error: str | None = None
+    if not commit_matches:
+        error = (
+            f"Receipt revision commit_sha {receipt_commit_sha!r} does not match resolved "
+            f"--against commit {resolved_against_sha!r} (stale receipt)."
+        )
+    elif not dirty_clean:
+        error = (
+            "Receipt revision was captured against a dirty working tree (dirty is not False); "
+            "not reproducible from a commit alone."
+        )
+
+    return {
+        "valid": valid,
+        "against": against_ref,
+        "resolved_commit_sha": resolved_against_sha,
+        "receipt_commit_sha": receipt_commit_sha,
+        "receipt_dirty": receipt_dirty,
+        "error": error,
+    }
+
+
+def verify_review_bundle(
+    bundle_path: str | Path,
+    *,
+    signing_key: str | Path | None = None,
+    against: str | None = None,
+    trusted_public_keys: Sequence[str] | None = None,
+    require_trusted: bool = False,
+    min_receipts: int = 0,
+    expect_key_ids: Sequence[str] | None = None,
+    root: str | Path | None = None,
+) -> dict[str, Any]:
+    # Local import: evidence_signing imports FROM this module (_utc_now_iso); a module-level
+    # import here would be circular (mirrors the same local import in create_review_bundle above).
+    from tensor_grep.cli import evidence_signing
+
     resolved_bundle = Path(bundle_path).expanduser().resolve()
     bundle = _read_review_bundle_object(resolved_bundle)
     raw_checksums = bundle.get("checksums")
@@ -294,25 +457,158 @@ def verify_review_bundle(
             errs = manifest_result.get("errors") or []
             manifest_signature_error = errs[0] if errs else "Embedded manifest signature invalid."
 
+    # CEO#8 enterprise close-the-loop (Change B): re-verify each embedded EvidenceReceipt's
+    # signature/trust via the SAME crypto `tg evidence verify` uses (never reimplemented here), and
+    # -- only when `against` is supplied -- its freshness against a resolved git ref. An
+    # unresolvable `--against` ref fails the WHOLE bundle closed regardless of whether any receipts
+    # are embedded (trap: "unknown ref, so skip the check" is never an acceptable outcome for a gate).
+    trusted_keys_list = list(trusted_public_keys) if trusted_public_keys else None
+    against_check: dict[str, Any] | None = None
+    resolved_against_sha: str | None = None
+    against_error: str | None = None
+    if against is not None:
+        resolved_against_sha, against_error = _resolve_git_ref_commit_sha(against, root=root)
+        against_check = {
+            "ref": against,
+            "resolved_commit_sha": resolved_against_sha,
+            "valid": resolved_against_sha is not None,
+            "error": against_error,
+        }
+
+    receipt_checks: list[dict[str, Any]] = []
+    embedded_receipts = bundle.get("evidence_receipts")
+    if isinstance(embedded_receipts, list):
+        for index, raw_receipt in enumerate(embedded_receipts):
+            if not isinstance(raw_receipt, dict):
+                receipt_checks.append({
+                    "index": index,
+                    "receipt_sha256": None,
+                    "valid": False,
+                    "error": "evidence_receipts entry is not a JSON object.",
+                })
+                continue
+            signature_result = evidence_signing.verify_receipt(
+                raw_receipt,
+                trusted_public_keys=trusted_keys_list,
+                require_trusted=require_trusted,
+            )
+            entry: dict[str, Any] = {
+                "index": index,
+                "receipt_sha256": raw_receipt.get("receipt_sha256"),
+                "signature": signature_result,
+            }
+            entry_valid = bool(signature_result["valid"])
+            if against is not None:
+                freshness = _receipt_freshness_against(
+                    raw_receipt,
+                    against_ref=against,
+                    resolved_against_sha=resolved_against_sha,
+                    against_error=against_error,
+                )
+                entry["freshness"] = freshness
+                entry_valid = entry_valid and bool(freshness["valid"])
+            entry["valid"] = entry_valid
+            receipt_checks.append(entry)
+
+    against_resolution_valid = against_check is None or bool(against_check["valid"])
+    receipts_valid = all(bool(entry["valid"]) for entry in receipt_checks)
+
+    # NIT-1 (post-gate hardening, CEO#8): close the empty-bundle bypass. Without an opt-in
+    # minimum, `evidence_receipts` null/absent/[] trivially passes (`all([]) == True`) and
+    # `bundle_sha256` is cosmetic against an author who controls review-bundle.json -- they can
+    # strip every receipt, recompute the KEYLESS checksums, and greenlight the gate with NO
+    # evidence at all. `--min-receipts`/`--expect-key` are the org's opt-in POLICY lever: default
+    # 0 / empty is a no-op (both conditions below are trivially satisfied), so this is
+    # byte-identical to the pre-hardening contract until a caller actively opts in. Both counts
+    # are computed over `receipt_checks[].valid`, which already folds in well-formedness
+    # (a non-dict entry is `valid=False`), signature/digest validity, trust (when
+    # `require_trusted`), and freshness (when `against`) -- so "valid receipt" here means exactly
+    # what an operator combining `--require-trusted --trusted-key ... --against ...` would expect,
+    # not merely "present in the list."
+    expect_key_ids_list = list(expect_key_ids) if expect_key_ids else []
+    policy_enabled = min_receipts > 0 or bool(expect_key_ids_list)
+    valid_receipt_count = sum(1 for entry in receipt_checks if bool(entry.get("valid")))
+    min_receipts_satisfied = valid_receipt_count >= min_receipts
+    valid_key_ids = {
+        signature["key_id"]
+        for entry in receipt_checks
+        if bool(entry.get("valid")) and isinstance(entry.get("signature"), dict)
+        for signature in [entry["signature"]]
+        if signature.get("key_id")
+    }
+    missing_expect_key_ids = [
+        key_id for key_id in expect_key_ids_list if key_id not in valid_key_ids
+    ]
+    expect_keys_satisfied = not missing_expect_key_ids
+    policy_valid = min_receipts_satisfied and expect_keys_satisfied
+
+    policy_reasons: list[str] = []
+    if not min_receipts_satisfied:
+        policy_reasons.append(
+            f"policy requires >={min_receipts} valid evidence receipts; found {valid_receipt_count}"
+        )
+    for missing_key_id in missing_expect_key_ids:
+        policy_reasons.append(
+            f"policy requires evidence signed by key_id {missing_key_id!r}; not found among "
+            "valid receipts"
+        )
+
     payload = _envelope(routing_reason="review-bundle-verify")
     payload["bundle_path"] = str(resolved_bundle)
     payload["valid"] = (
         bundle_integrity["valid"]
         and all(bool(component_check["valid"]) for component_check in checks.values())
         and manifest_signature_valid
+        and against_resolution_valid
+        and receipts_valid
+        and policy_valid
     )
     payload["checks"] = checks
     payload["bundle_integrity"] = bundle_integrity
     payload["manifest_signature_valid"] = manifest_signature_valid
     if manifest_signature_error is not None:
         payload["manifest_signature_error"] = manifest_signature_error
+    payload["receipts"] = receipt_checks
+    if against_check is not None:
+        payload["against"] = against_check
+    if policy_enabled:
+        payload["policy"] = {
+            "min_receipts": min_receipts,
+            "valid_receipt_count": valid_receipt_count,
+            "min_receipts_satisfied": min_receipts_satisfied,
+            "expect_key_ids": expect_key_ids_list,
+            "missing_expect_key_ids": missing_expect_key_ids,
+            "expect_keys_satisfied": expect_keys_satisfied,
+            "valid": policy_valid,
+            "reasons": policy_reasons,
+        }
     return payload
 
 
 def verify_review_bundle_json(
-    bundle_path: str | Path, *, signing_key: str | Path | None = None
+    bundle_path: str | Path,
+    *,
+    signing_key: str | Path | None = None,
+    against: str | None = None,
+    trusted_public_keys: Sequence[str] | None = None,
+    require_trusted: bool = False,
+    min_receipts: int = 0,
+    expect_key_ids: Sequence[str] | None = None,
+    root: str | Path | None = None,
 ) -> str:
-    return json.dumps(verify_review_bundle(bundle_path, signing_key=signing_key), indent=2)
+    return json.dumps(
+        verify_review_bundle(
+            bundle_path,
+            signing_key=signing_key,
+            against=against,
+            trusted_public_keys=trusted_public_keys,
+            require_trusted=require_trusted,
+            min_receipts=min_receipts,
+            expect_key_ids=expect_key_ids,
+            root=root,
+        ),
+        indent=2,
+    )
 
 
 def _resolve_history_root(path: str | Path) -> Path:
