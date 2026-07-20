@@ -87,6 +87,17 @@ _BEST_EFFORT_PRIMARY_EVIDENCE = "deadline-truncated-best-effort"
 # discipline `_build_context_pack_from_map` applies with a live check at repo_map.py:7862, just
 # expressed as a slice since a live check would never let this particular pass run at all.
 _BEST_EFFORT_PRIMARY_SCAN_CAP = 500
+# Opus-gate nit (SHIP-WITH-NITS, structural-cap hardening): today a best-effort primary lands at
+# confidence 0.55 only EMERGENTLY -- because the empty upstream primary happens to force
+# `primary_file_included`/snippets-empty style downgrades through `_confidence`'s existing ladder.
+# That chain of reasoning is correct today but not guaranteed to stay true (e.g. a future change
+# to the render payload shape, or to the T2 corroborated-resolution uplift's own `scan_truncated`
+# disqualifier in `_capsule_token_budget_uplift_eligible`, could let a best-effort primary's
+# `confidence.overall` climb back to/above the 0.75 no-ask threshold). This cap makes the
+# guarantee STRUCTURAL instead: applied unconditionally, LAST, whenever `partial_primary` is set,
+# so "partial_primary implies confidence.overall <= 0.55 AND primary_target.confidence <= 0.55"
+# holds by construction -- independent of every other confidence computation in this function.
+_BEST_EFFORT_PRIMARY_MAX_CONFIDENCE = 0.55
 
 
 def _as_dict(value: object) -> dict[str, Any]:
@@ -2601,6 +2612,13 @@ def build_agent_capsule_from_map(
                 ],
                 _BEST_EFFORT_PRIMARY_EVIDENCE,
             ])
+    # NIT-2 (Opus gate): `partial_primary`/`primary_basis` live on `primary_target` ONLY -- `edit_
+    # order` and `rollback` below still carry this same best-effort `target["file"]` WITHOUT the
+    # flag. That is intentionally safe, not an oversight: both are advisory (a suggested edit
+    # order / a recommended checkpoint command), never an auto-apply, and `ask_user_before_editing.
+    # required` is forced True by the scan-truncated ask-reason below regardless, so nothing reads
+    # those two fields as a green light to act without a human first seeing the low-confidence,
+    # flagged primary_target.
     all_alternatives = _alternative_targets(payload, target, limit=None)
     alternatives = all_alternatives[:4]
     target, alternatives = _prefer_implementation_over_marker_helper(query, target, alternatives)
@@ -2962,6 +2980,25 @@ def build_agent_capsule_from_map(
         validation_alignment_status=validation_alignment_status,
         validation_kept_count=validation_kept_count,
     )
+    # NIT-1 (Opus gate, structural hardening): runs LAST -- after every existing confidence
+    # mutation in this function, including the T2 uplift immediately above, which is the ONLY
+    # place `confidence["overall"]` can be RAISED (via direct assignment) rather than merely
+    # clamped. Today a best-effort primary happens to land at confidence 0.55 EMERGENTLY, purely
+    # because the empty upstream primary forces `_confidence`'s existing downgrade ladder (empty
+    # snippets / primary-omitted-from-snippets); that chain relies on the T2 uplift's own
+    # `scan_truncated` disqualifier (`_capsule_token_budget_uplift_eligible`) continuing to hold,
+    # which is correct today but not a promise this function makes elsewhere. `partial_primary`
+    # (set only in the guarded best-effort block above) forces BOTH `confidence["overall"]` and
+    # `target["confidence"]` down to `_BEST_EFFORT_PRIMARY_MAX_CONFIDENCE` regardless of what every
+    # earlier stage computed, so "partial_primary implies confidence.overall <= 0.55 AND primary_
+    # target.confidence <= 0.55" holds BY CONSTRUCTION, independent of upstream. `min(...)` only ever
+    # LOWERS an existing value -- this can never raise a confidence some other gate pushed lower,
+    # and it is a no-op (byte-identical) whenever `partial_primary` is unset.
+    if target.get("partial_primary"):
+        confidence["overall"] = round(
+            min(float(confidence["overall"]), _BEST_EFFORT_PRIMARY_MAX_CONFIDENCE), 3
+        )
+        _cap_primary_target_confidence(target, _BEST_EFFORT_PRIMARY_MAX_CONFIDENCE)
     # DAR (arxiv steal #4): runs AFTER call-site collection so it can dedupe against
     # `related_call_sites`, and deliberately does NOT touch `target`/`confidence`/`consistency`/
     # `ask_reasons` -- see `_collect_outbound_dependencies`'s fail-safe + budget-isolation

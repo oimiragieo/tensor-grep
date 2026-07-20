@@ -15,10 +15,19 @@ contract (`main._scan_incomplete`, keyed only on `scan_limit`/`caller_scan_limit
 `caller_scan_truncated`) is untouched by construction -- this fix never sets or clears any of those
 fields, only `primary_target`.
 
+Opus-gate SHIP-WITH-NITS hardening: "partial_primary implies confidence.overall <= 0.55 AND
+primary_target.confidence <= 0.55" now holds STRUCTURALLY, not just emergently -- a dedicated cap
+(`_BEST_EFFORT_PRIMARY_MAX_CONFIDENCE`) runs LAST in `build_agent_capsule_from_map`, after every
+other confidence mutation including the T2 uplift, so a future change upstream cannot silently let
+a best-effort primary's confidence climb back to/above the 0.75 auto-edit threshold.
+
 Covers (per the build task):
   1. Positive: a truncated scan whose query matches a SYMBOL NAME (but no file PATH) gets a
      non-empty, clearly-flagged best-effort primary, with the exit-2/ask-required/confidence-cap
      contract fully preserved.
+  1b. Structural cap: an adversarially-constructed payload that would otherwise make `_confidence`
+      land >= 0.75 is still forced to <= 0.55 once `partial_primary` is set -- proving the cap is
+      structural, not merely a side effect of the ordinary downgrade ladder.
   2. Negative: a COMPLETE (non-truncated) scan is byte-identical to before this fix -- no new keys
      on `primary_target`.
   2b. A truncated scan that still resolved a NORMAL (non-empty) primary is likewise untouched --
@@ -130,6 +139,93 @@ def test_capsule_emits_best_effort_primary_on_truncated_scan_with_symbol_match(
     assert result["ask_user_before_editing"]["required"] is True
     assert result["confidence"]["overall"] < 0.75
     assert primary["confidence"] < 0.75
+
+
+# ---------------------------------------------------------------------------
+# 1b. Structural confidence cap (Opus-gate NIT-1): the <0.75 guarantee must hold BY
+# CONSTRUCTION, not merely because `_confidence`'s existing downgrade ladder happens to fire.
+# ---------------------------------------------------------------------------
+
+
+def test_structural_cap_defeats_artificially_high_upstream_confidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Construct an adversarial payload the real render pipeline would not naturally produce for
+    an UNRESOLVED primary: a high raw `edit_plan_seed.confidence.overall` seed (0.97) AND a
+    rendered snippet that happens to cover the exact file the best-effort pass will independently
+    pick -- which defeats every EMERGENT downgrade `_confidence` would otherwise apply (no empty
+    -snippets clamp, no "primary omitted from capsule snippets" clamp). Without the belt-and-
+    braces structural cap, this scenario would land `confidence.overall` at 0.97 (proven directly
+    below as a precondition) despite `primary_target` being a flagged, non-authoritative
+    best-effort guess. The cap must defeat it regardless of how "corroborated" the upstream looks.
+    """
+    project = _write_symbol_project(
+        tmp_path, file_name="impl.py", symbol_name="process_widget_report"
+    )
+    rm = repo_map.build_repo_map(project)
+    resolved_file = str((project / "impl.py").resolve())
+    adversarial_sources = [
+        {
+            "file": resolved_file,
+            "symbol": "process_widget_report",
+            "name": "process_widget_report",
+            "start_line": 1,
+            "end_line": 2,
+            "source": "def process_widget_report(payload):\n    return payload\n",
+        }
+    ]
+    adversarial_consistency = {
+        "primary_file_included": True,
+        "rendered_context_includes_primary": True,
+    }
+
+    # Precondition: prove `_confidence` really would land >= 0.75 on this exact payload shape
+    # ABSENT the new structural cap -- so the assertions below are credited to the cap, not to a
+    # pre-existing downgrade that happened to also land <= 0.55 for an unrelated reason.
+    precondition_payload = {
+        "sources": adversarial_sources,
+        "edit_plan_seed": {"confidence": {"overall": 0.97}},
+    }
+    precondition_confidence = agent_capsule._confidence(
+        precondition_payload, adversarial_sources, [], dict(adversarial_consistency)
+    )
+    assert precondition_confidence["overall"] >= 0.75
+
+    def _adversarial_render(*args: object, **kwargs: object) -> dict[str, Any]:
+        return {
+            "routing_backend": "RepoMap",
+            "routing_reason": "context-render",
+            "semantic_provider": "native",
+            "files": [resolved_file],
+            "sources": adversarial_sources,
+            "scan_limit": {"possibly_truncated": True, "reason": "deadline"},
+            "partial": True,
+            "validation_commands": [],
+            # No "primary_file" -- `_primary_target` must still resolve empty so the best-effort
+            # block fires, even though a high confidence seed is present.
+            "edit_plan_seed": {"confidence": {"overall": 0.97}},
+            "navigation_pack": {},
+            "candidate_edit_targets": {},
+            "context_consistency": dict(adversarial_consistency),
+        }
+
+    monkeypatch.setattr(repo_map, "build_context_render_from_map", _adversarial_render)
+
+    past_deadline = time.monotonic() - 5.0
+    result = agent_capsule.build_agent_capsule_from_map(
+        rm, "process_widget_report", deadline_monotonic=past_deadline, max_tokens=8000
+    )
+
+    primary = result["primary_target"]
+    assert primary["partial_primary"] is True
+    assert primary["file"] == resolved_file
+
+    # The structural guarantee: partial_primary implies confidence.overall <= 0.55 AND
+    # primary_target.confidence <= 0.55, by construction -- regardless of the engineered-high
+    # upstream seed proven above.
+    assert result["confidence"]["overall"] <= 0.55
+    assert primary["confidence"] <= 0.55
+    assert result["ask_user_before_editing"]["required"] is True
 
 
 # ---------------------------------------------------------------------------
