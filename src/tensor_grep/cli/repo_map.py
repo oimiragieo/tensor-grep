@@ -1643,8 +1643,26 @@ def _cap_caller_scan_files(
     F1-review HIGH fix: ``deadline_monotonic`` is threaded through to
     ``_order_caller_scan_candidates`` so the ordering PROBE (not just the later per-file scan
     loop) honors --deadline on a repo raised via --max-repo-files -- see that function's
-    docstring."""
+    docstring.
+
+    CEO #4 parity fix: below the ceiling, this used to return ``files`` UNORDERED whenever a
+    ``--deadline`` was supplied -- unlike ``tg importers``' reverse-candidate ordering
+    (``_tier_reverse_importer_candidates``, #221), which ALWAYS orders regardless of ceiling. A
+    slow-to-parse repo under the 2000-file ceiling can still blow a tight ``--deadline`` in the
+    main caller-scan loop below, so a caller/blast-radius scan got NO likely-first protection at
+    all in that regime and could strand a late-sorting/test-file caller past the cut -- while an
+    equally-truncated ceiling-exceeded scan (the branch below) always orders first. Order here
+    too whenever a deadline is actually in play and there are tests to interleave; nothing is
+    DROPPED by this branch (``ceiling_exceeded`` stays ``False``), so it is a pure candidate-order
+    change, invisible to a scan that completes."""
     if len(files) <= CALLER_SCAN_FILE_CEILING:
+        if deadline_monotonic is not None and test_files:
+            test_id_set = {str(current) for current in test_files}
+            source_only = [current for current in files if str(current) not in test_id_set]
+            ordered = _order_caller_scan_candidates(
+                source_only, test_files, symbol=symbol, deadline_monotonic=deadline_monotonic
+            )
+            return ordered, False
         return files, False
     if test_files:
         test_id_set = {str(current) for current in test_files}
