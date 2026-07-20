@@ -1,6 +1,72 @@
 # CHANGELOG
 
 
+## v1.84.0 (2026-07-20)
+
+### Continuous Integration
+
+- **audit**: Harden scheduled Security Audit against transient GitHub API errors
+  ([#677](https://github.com/oimiragieo/tensor-grep/pull/677),
+  [`7610955`](https://github.com/oimiragieo/tensor-grep/commit/7610955d119ada6785bfec94c1459745f64f5ebf))
+
+The scheduled Security Audit on v1.83.0 showed failure while the actual audit gate (cargo-audit /
+  cargo-deny / pip-audit) PASSED: the report-audit-status job's issue-bookkeeping github-script hit
+  a transient GitHub API 503 (the same outage window that failed the v1.83.0 release-assets job). A
+  transient API blip redding a scheduled security audit is a cry-wolf gap -- it trains observers to
+  ignore a red audit and masks a real future cargo/pip-audit failure.
+
+Wrap both issue-management github-script bodies (create-on-failure and close-on-success) in
+  try/catch + core.warning, so a transient API error is a visible warning instead of a
+  workflow-redding failure. The `audit` gate job is byte-unchanged (zero deletions; all hunks land
+  in report-audit-status), so a real dependency/license finding still reds the workflow.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Reconcile to v1.83.0 (/goal ultimate-toolkit campaign #668-#675)
+  ([#676](https://github.com/oimiragieo/tensor-grep/pull/676),
+  [`af4532a`](https://github.com/oimiragieo/tensor-grep/commit/af4532af21c079908dfcb4d57feaeceab8981c94))
+
+Ledger was ~8 releases stale (header said "Live PyPI v1.81.15"; listed #77 A2A as CEO-gated when the
+  /goal run actually un-gated and shipped it). Records the CEO /goal campaign #224: the deadline-SLA
+  wave #668-#672 (v1.81.17-.21), the A2A `tg ledger` plane -- claims #673/v1.82.0 + findings
+  #675/v1.83.0 -- codemap #674/v1.82.1, and creative-GPU ideation. Updates the Last-refreshed header
+  + prepends the v1.83.0 CURRENT STATE snapshot; #77 A2A moved from CEO-gated to DONE. Docs-only,
+  non-releasing.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+### Features
+
+- **calibrate**: Structured --json skip signal on CPU-only builds (v20 GPU-honesty)
+  ([#678](https://github.com/oimiragieo/tensor-grep/pull/678),
+  [`1b472c6`](https://github.com/oimiragieo/tensor-grep/commit/1b472c69e6c588d48fc2c1a04437c7d2f71f6075))
+
+A CPU-only (no-CUDA) build's tg calibrate honestly fails closed (exit 2, "requires a CUDA-enabled
+  build ... not shipped in this build" per crossover.rs's detect_device_name), but a v20 dogfood
+  harness misread that honest message as a bare failure instead of a skip.
+
+Add an additive --json flag so a harness can classify the no-cuda path deterministically instead of
+  string-scraping the human-readable message:
+
+- rust_core: CalibrateArgs gains --json. crossover.rs introduces NoCudaBuildError (a distinct,
+  downcastable error type) so the no-cuda build path is never confused with the cuda-enabled
+  device-not-found path. handle_calibrate_command downcasts on it and, only for that exact failure
+  kind, prints {"calibration_status":"skipped_no_cuda_build", "reason":...,"remediation":...} to
+  stdout under --json. Any other failure keeps the original eprintln (fail-closed honesty: never
+  mislabel a genuine failure as a skip). Exit code stays 2 either way -- this is additive signal
+  only, not a convention change. - Python wrapper (cli/main.py): calibrate() gains --json, forwarded
+  into the native argv. Additively emits a native_binary_unavailable JSON line on the missing-binary
+  path too, without changing its exit-1 convention or remediation text. - Success-path output is
+  unchanged under --json (already JSON).
+
+Rust unit tests extend the existing message-pin test with a downcast assertion and cover the
+  JSON-payload shape directly (process::exit can't be unit-tested in-process). Python tests cover
+  --json argv forwarding (delegates_to_native_tg stays green unmodified) and the missing-binary skip
+  signal.
+
+
 ## v1.83.0 (2026-07-19)
 
 ### Features
