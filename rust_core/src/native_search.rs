@@ -28,6 +28,15 @@ const JSON_OUTPUT_VERSION: u32 = 1;
 const LARGE_FILE_CHUNK_THRESHOLD_BYTES: usize = 50 * 1024 * 1024;
 const STREAMING_OUTPUT_FLUSH_BYTES: usize = 64 * 1024;
 const STREAMING_OUTPUT_FLUSH_BYTES_DEBUG: usize = 8 * 1024;
+/// Mirrors `grep_searcher::line_buffer::DEFAULT_BUFFER_CAPACITY` (64 KiB): the fixed-size prefix
+/// that `grep-searcher`'s `BinaryDetection::quit` guarantees to scan for the binary byte when
+/// searching mmap-backed content (see that type's doc comment in the `grep-searcher` crate --
+/// "only a fixed sized region at the beginning of the contents are detected for binary data").
+/// The serial (non-chunked) search path relies on exactly this guaranteed floor when a whole file
+/// is searched via one mmap-backed `Searcher`; `search_file_chunk_parallel` must apply the
+/// identical floor over the whole file before fanning out per-chunk, since its per-chunk `Lossy`
+/// sinks never surface `binary_data` callbacks back up to this caller.
+const BINARY_DETECTION_PREFIX_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NativeSearchMatch {
@@ -1529,6 +1538,22 @@ fn configured_chunk_parallelism_threads(config: &NativeSearchConfig) -> usize {
     })
 }
 
+/// Detects binary content the same way `build_searcher` configures every serial-path `Searcher`
+/// to: presence of a NUL byte within the guaranteed-detection prefix
+/// (`BINARY_DETECTION_PREFIX_BYTES`) means binary, UNLESS `config.text` is set (mirrors
+/// `BinaryDetection::none()` -- `--text` never treats input as binary). Returns the offset of the
+/// first NUL byte found (relative to the start of `contents`), or `None` if the prefix is clean.
+/// Deliberately does NOT scan past the guaranteed prefix -- doing so would make this path detect
+/// binary content the serial path would miss for the same file, which is its own divergent-
+/// detection bug.
+fn detect_binary_prefix(config: &NativeSearchConfig, contents: &[u8]) -> Option<u64> {
+    if config.text {
+        return None;
+    }
+    let prefix_len = contents.len().min(BINARY_DETECTION_PREFIX_BYTES);
+    memchr(b'\x00', &contents[..prefix_len]).map(|offset| offset as u64)
+}
+
 fn search_file_chunk_parallel(
     config: &NativeSearchConfig,
     matcher: &RegexMatcher,
@@ -1550,6 +1575,27 @@ fn search_file_chunk_parallel(
             return search_file_count_with_searcher(matcher, path, &mut searcher);
         }
         return search_file_json(config, matcher, path);
+    }
+
+    // The per-chunk searches below run on raw `&[u8]` slices via `search_slice` with a bare
+    // `Lossy` sink (not wrapped in `BinaryAwareSink`), so any `binary_data` callback a per-chunk
+    // `Searcher` fires internally never reaches this function. Detect binary content over the
+    // whole file up front -- mirroring the serial path's GUARANTEED detection floor (see
+    // `detect_binary_prefix`; grep_searcher's mmap `BinaryDetection::quit` also opportunistically
+    // scans bytes inside matched/context lines beyond that floor, which this check does not
+    // reproduce -- a conservative gap, since it can only under-flag relative to the serial path,
+    // never over-flag) -- so a binary file above the chunk-parallel threshold is flagged/skipped
+    // like the serial path instead of falling through to the parallel scan and emitting raw byte
+    // "matches" (mojibake).
+    if let Some(binary_byte_offset) = detect_binary_prefix(config, &mmap) {
+        let binary_match_detected = binary_file_matches_pattern(matcher, path, true)?;
+        return Ok(FileSearchResult {
+            matches: Vec::new(),
+            match_count: 0,
+            binary_detected: true,
+            binary_match_detected,
+            binary_byte_offset: Some(binary_byte_offset),
+        });
     }
 
     if config.verbose {
@@ -1577,6 +1623,7 @@ fn search_file_chunk_parallel(
         return Ok(FileSearchResult {
             matches: Vec::new(),
             match_count,
+            // Confirmed non-binary by the `detect_binary_prefix` early return above.
             binary_detected: false,
             binary_match_detected: false,
             binary_byte_offset: None,
@@ -1604,6 +1651,7 @@ fn search_file_chunk_parallel(
     Ok(FileSearchResult {
         match_count: matches.len(),
         matches,
+        // Confirmed non-binary by the `detect_binary_prefix` early return above.
         binary_detected: false,
         binary_match_detected: false,
         binary_byte_offset: None,
@@ -2224,5 +2272,212 @@ mod tests {
             .expect("run_native_search must return well within 20s for an explicit path");
 
         result.expect("an explicit oversized path must not be refused");
+    }
+
+    // --- Chunk-parallel binary detection parity ---------------------------------------------
+    // `search_file_chunk_parallel` used to hardcode `binary_detected: false` unconditionally in
+    // both its --count and match-collecting branches, bypassing the binary detection the serial
+    // (non-chunked) path performs via `BinaryAwareSink` + `build_searcher`'s
+    // `BinaryDetection::quit(b'\x00')`. A binary file above the chunk-parallel threshold would
+    // fall through to the parallel per-chunk scan and emit raw byte "matches" (mojibake) instead
+    // of being flagged/skipped like the serial path. These tests force the real multi-chunk
+    // branch (`chunk_parallelism_threads: Some(4)` over a newline-rich fixture, sanity-checked via
+    // `plan_file_chunks`) and assert parity against the serial leaf functions the fix mirrors
+    // (`search_file_collect_matches_with_searcher` / `search_file_count_with_searcher`).
+
+    fn force_multi_chunk_config(pattern: &str, count: bool) -> NativeSearchConfig {
+        NativeSearchConfig {
+            pattern: pattern.to_string(),
+            chunk_parallelism_threads: Some(4),
+            count,
+            ..NativeSearchConfig::default()
+        }
+    }
+
+    fn write_fixture(dir: &Path, name: &str, content: &[u8]) -> PathBuf {
+        let path = dir.join(name);
+        fs::write(&path, content).unwrap();
+        path
+    }
+
+    /// Text content only (no NUL byte anywhere), but large/newline-rich enough that
+    /// `chunk_parallelism_threads: Some(4)` plans more than one chunk. Every line contains
+    /// `needle` exactly once.
+    fn multi_chunk_text_fixture(needle: &str) -> Vec<u8> {
+        let mut content = Vec::new();
+        for i in 0..1200 {
+            content.extend_from_slice(format!("filler line {i:05} of {needle} data\n").as_bytes());
+        }
+        content
+    }
+
+    /// Same shape as `multi_chunk_text_fixture`, but with a run of NUL bytes spliced into the
+    /// middle -- binary content, still comfortably within the 64 KiB guaranteed-detection prefix
+    /// (`BINARY_DETECTION_PREFIX_BYTES`) so both the serial and chunk-parallel paths are expected
+    /// to detect it. Embeds `needle` in the surrounding text (same as `multi_chunk_text_fixture`)
+    /// on purpose: if a regression silently stops flagging this content as binary, the pattern
+    /// still lexically occurs on every line, so the old hardcoded `binary_detected: false` code
+    /// path would report 1200 spurious mojibake matches here -- not a vacuous `match_count == 0`
+    /// that would hold either way regardless of whether detection actually ran.
+    fn multi_chunk_binary_fixture(needle: &str) -> Vec<u8> {
+        let mut content = Vec::new();
+        for i in 0..1200 {
+            content.extend_from_slice(format!("filler line {i:05} of {needle} data\n").as_bytes());
+        }
+        let splice_at = content.len() / 2;
+        content.splice(splice_at..splice_at, std::iter::repeat(0u8).take(16));
+        content
+    }
+
+    /// Sanity precondition shared by the parity tests below: confirms the fixture actually forces
+    /// the real multi-chunk branch under test. Without this, a future change to the fixture size
+    /// or `plan_file_chunks`'s alignment could silently degrade these tests into only exercising
+    /// the `chunk_plan.len() <= 1` fallback (which was never buggy) instead of the parallel
+    /// fan-out this bug lived in.
+    fn assert_forces_multi_chunk(config: &NativeSearchConfig, content: &[u8]) {
+        let requested_chunks = configured_chunk_parallelism_threads(config);
+        let chunk_plan = plan_file_chunks(content, requested_chunks, config.count);
+        assert!(
+            chunk_plan.len() > 1,
+            "fixture must produce multiple chunks to exercise the parallel branch, got {}",
+            chunk_plan.len()
+        );
+    }
+
+    #[test]
+    fn search_file_chunk_parallel_flags_binary_content_like_the_serial_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let content = multi_chunk_binary_fixture("payload");
+        let path = write_fixture(dir.path(), "binary.dat", &content);
+        let config = force_multi_chunk_config("payload", false);
+        let matcher = build_matcher(&config).unwrap();
+        assert_forces_multi_chunk(&config, &content);
+
+        let chunk_parallel_result = search_file_chunk_parallel(&config, &matcher, &path).unwrap();
+        let mut serial_searcher = build_searcher(&config, true);
+        let serial_result = search_file_collect_matches_with_searcher(
+            &config,
+            &matcher,
+            &path,
+            &mut serial_searcher,
+        )
+        .unwrap();
+
+        assert!(
+            chunk_parallel_result.binary_detected,
+            "a binary file above the chunk-parallel threshold must be flagged binary, not \
+             silently searched for raw-byte matches"
+        );
+        assert_eq!(
+            chunk_parallel_result.binary_detected, serial_result.binary_detected,
+            "chunk-parallel binary_detected must match the serial path for identical content"
+        );
+        assert_eq!(
+            chunk_parallel_result.binary_match_detected, serial_result.binary_match_detected,
+            "chunk-parallel binary_match_detected must match the serial path"
+        );
+        assert_eq!(chunk_parallel_result.match_count, 0);
+        assert!(chunk_parallel_result.matches.is_empty());
+        assert_eq!(chunk_parallel_result.match_count, serial_result.match_count);
+    }
+
+    #[test]
+    fn search_file_chunk_parallel_count_mode_flags_binary_content_like_the_serial_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let content = multi_chunk_binary_fixture("payload");
+        let path = write_fixture(dir.path(), "binary_count.dat", &content);
+        let config = force_multi_chunk_config("payload", true);
+        let matcher = build_matcher(&config).unwrap();
+        assert_forces_multi_chunk(&config, &content);
+
+        let chunk_parallel_result = search_file_chunk_parallel(&config, &matcher, &path).unwrap();
+        let mut serial_searcher = build_searcher(&config, true);
+        let serial_result =
+            search_file_count_with_searcher(&matcher, &path, &mut serial_searcher).unwrap();
+
+        assert!(
+            chunk_parallel_result.binary_detected,
+            "--count mode must also flag a binary file above the chunk-parallel threshold"
+        );
+        assert_eq!(
+            chunk_parallel_result.binary_detected, serial_result.binary_detected,
+            "chunk-parallel binary_detected must match the serial --count path"
+        );
+        assert_eq!(chunk_parallel_result.match_count, 0);
+        assert_eq!(chunk_parallel_result.match_count, serial_result.match_count);
+    }
+
+    #[test]
+    fn search_file_chunk_parallel_matches_text_content_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let content = multi_chunk_text_fixture("payload");
+        let path = write_fixture(dir.path(), "text.txt", &content);
+        let config = force_multi_chunk_config("payload", false);
+        let matcher = build_matcher(&config).unwrap();
+        assert_forces_multi_chunk(&config, &content);
+
+        let chunk_parallel_result = search_file_chunk_parallel(&config, &matcher, &path).unwrap();
+        let mut serial_searcher = build_searcher(&config, true);
+        let serial_result = search_file_collect_matches_with_searcher(
+            &config,
+            &matcher,
+            &path,
+            &mut serial_searcher,
+        )
+        .unwrap();
+
+        assert!(
+            !chunk_parallel_result.binary_detected,
+            "a plain text file must never be flagged binary"
+        );
+        assert_eq!(chunk_parallel_result.match_count, 1200);
+        assert_eq!(
+            chunk_parallel_result.match_count, serial_result.match_count,
+            "chunk-parallel match_count must match the serial path for identical text content"
+        );
+        assert_eq!(
+            chunk_parallel_result.matches.len(),
+            serial_result.matches.len()
+        );
+    }
+
+    #[test]
+    fn detect_binary_prefix_finds_nul_byte_within_the_guaranteed_prefix() {
+        let config = NativeSearchConfig::default();
+        let mut contents = vec![b'a'; 100];
+        contents[42] = 0u8;
+
+        assert_eq!(detect_binary_prefix(&config, &contents), Some(42));
+    }
+
+    #[test]
+    fn detect_binary_prefix_returns_none_under_text_mode_even_with_a_nul_byte() {
+        let config = NativeSearchConfig {
+            text: true,
+            ..NativeSearchConfig::default()
+        };
+        let mut contents = vec![b'a'; 100];
+        contents[42] = 0u8;
+
+        assert_eq!(
+            detect_binary_prefix(&config, &contents),
+            None,
+            "--text must disable binary detection entirely, mirroring BinaryDetection::none()"
+        );
+    }
+
+    #[test]
+    fn detect_binary_prefix_does_not_scan_past_the_guaranteed_prefix() {
+        // Documents the intentional parity limit with grep_searcher's own guaranteed floor for
+        // mmap-backed binary detection (`BinaryDetection::quit`'s docs): only the fixed-size
+        // prefix at the beginning of the contents is guaranteed to be scanned. A NUL byte placed
+        // past that prefix must not be detected by this helper -- scanning further would make the
+        // chunk-parallel path MORE aggressive than the serial path for the same content, which is
+        // its own divergent-detection bug.
+        let config = NativeSearchConfig::default();
+        let mut contents = vec![b'a'; BINARY_DETECTION_PREFIX_BYTES + 10];
+        contents[BINARY_DETECTION_PREFIX_BYTES + 5] = 0u8;
+
+        assert_eq!(detect_binary_prefix(&config, &contents), None);
     }
 }
