@@ -1,6 +1,191 @@
 # CHANGELOG
 
 
+## v1.91.1 (2026-07-21)
+
+### Documentation
+
+- **backlog**: Reconcile to v1.91.0 (CEO /goal #232 9-point campaign closeout)
+  ([#688](https://github.com/oimiragieo/tensor-grep/pull/688),
+  [`70d6e67`](https://github.com/oimiragieo/tensor-grep/commit/70d6e679fcf43aa84665814e6783a83839ba9043))
+
+Ledger was last reconciled to v1.83.0 (header said "post-v1.83.0 ... #224 campaign"). Since then the
+  CEO /goal "make tg REQUIRED vs rg/ast" 9-point campaign (#232) mapped all 9 CEO gap-points to a
+  shipped release, one-per-publish, each independent-Opus-gated: CEO#9 GPU-honesty (#678/v1.84.0),
+  CEO#1 never-empty best-effort-primary (#679/v1.85.0), CEO#4 completeness bidirectional-oracle gate
+  (#680/v1.86.0), CEO#8 enterprise close-the-loop (#681/v1.87.0), CEO#5 tg prepare (#682/v1.88.0),
+  CEO#6 AST parity (#683/v1.89.0), CEO#2 mega-repo advisory auto-narrow (#684/v1.90.0), and CEO#7 tg
+  install-dense bundled with CEO#3's doc-honesty fix + a test nit (#687+#686+#685/v1.91.0). Drain is
+  now clear (0 open PRs).
+
+Updates the Last-refreshed header + prepends the v1.91.0 CURRENT STATE snapshot, SHIPPING queue
+  state, and a new SHIPPED v1.84.0-v1.91.0 window paragraph. Notes v1.91.0 was still publishing at
+  reconcile time (Semantic Release CI in progress, PyPI still reporting 1.90.0) per the repo's own
+  PyPI wheel-lag / push-race discipline -- verify `/simple` before citing v1.91.0 as fully live.
+  CEO-gated remainder (native front door #48, GPU compute build #169, benchmark publish #72,
+  per-platform wheels #240-opt2) carried forward unchanged. Docs-only, non-releasing; does not
+  delete any historical section (additive reconcile, matching prior BACKLOG updates).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+- **enterprise**: Turnkey review-bundle evidence-gate CI example (close-the-loop)
+  ([#689](https://github.com/oimiragieo/tensor-grep/pull/689),
+  [`588a220`](https://github.com/oimiragieo/tensor-grep/commit/588a22077fb04d06479969096eeeec2004d14622))
+
+docs/enterprise_review_bundle_ci.md already documented the evidence-receipt -> review-bundle ->
+  CI-gate chain (shipped in #681). This PR closes the remaining "Partial" gap:
+
+- Adds the missing optional adjunct to that runbook: `tg ledger record`/`find` for advisory,
+  content-addressed finding reuse across agents (docs/CONTRACTS.md section 10), so the full chain
+  (evidence emit --sign -> review-bundle create --receipt -> review-bundle verify
+  --against/--min-receipts/--expect-key -> optional ledger reuse) is documented in one place. -
+  Fixes a stale claim in docs/multi_agent_context_plane.md ("there is no ledger, no claims/findings
+  store") that predates the ledger shipping -- `tg ledger claim/release/list` and `tg ledger
+  record/find` are real, shipped EXPERIMENTAL commands. Corrected with file:line citations matching
+  that page's own house style. - Closes the discoverability gap behind the "Partial" status: adds
+  the runbook to mkdocs nav (so it's part of the published site), docs/index.md's
+  Enterprise/Operational Docs list, and README's Canonical docs table plus the `tg review-bundle`
+  bullet -- previously the only pointer to this runbook was one sentence buried in docs/CONTRACTS.md
+  section 11 prose.
+
+Verified against the installed v1.91.0 binary: `tg evidence emit/pubkey`, `tg review-bundle
+  create/verify`, and `tg ledger record/find --help` all match the documented flags exactly.
+
+Docs-only change: no code, no Rust, no CLI surface touched.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+### Performance Improvements
+
+- **agent**: Bound the post-deadline assembly-tail residual (#222 hard-SLA)
+  ([#691](https://github.com/oimiragieo/tensor-grep/pull/691),
+  [`d620b3a`](https://github.com/oimiragieo/tensor-grep/commit/d620b3a7d754ae9593d5f5b2d153ebc10cbc51d0))
+
+* perf(agent): bound the post-deadline assembly-tail residual (#222 hard-SLA)
+
+#669/#671 bounded `_detect_vendored_subtrees` and `_suggested_scope_from_map`, but
+  `_build_context_pack_from_map`'s reverse-import-GRAPH construction ran fully UNBOUNDED after them:
+  `_reverse_import_distances` (a 3-depth BFS whose inner loop re-scans every file per depth, doing
+  O(len(frontier)) work per candidate) had no deadline check anywhere in the function, even though
+  every sibling stage in the same call (symbol-scoring, pagerank, both vendored-subtree calls)
+  already honored `deadline_monotonic`.
+
+Measured (direct, non-subprocess probe, hub-fan-in synthetic tree, 5-seed BFS): 0.99s at 2,000 files
+  -> 13.6s at 6,000 (13.8x) -> 60.3s at 12,000 (61x for 6x files) -- a ~n^2.2 curve, and 84% of
+  `_build_context_pack_from_map`'s own total cost at 12,000 files (60.3s of 71.5s).
+  `_reverse_importers` sits in the same call block (cheaper, ~linear, but also un-gated).
+
+An OLD-vs-NEW re-profile of that first fix surfaced a SECOND, independent consumer of the same
+  `_import_graph_bonus` helper: a direct `for current in payload["files"]: ...
+  _import_graph_bonus(...)` loop later in the same function. A query term that fuzzy-matches many
+  files' import strings can pull hundreds-to-thousands of files into `dependency_seed_files`, and
+  this loop re-scores every file against that whole set -- it dominated a post-first-fix profile
+  (93s of 102s at 12,000 files).
+
+Fix: thread `deadline_monotonic`/`deadline_hit` into all three, checked per-item inside each
+  expensive inner loop (an outer-loop-only check would not bound anything here -- the outer BFS loop
+  only runs 3 times regardless of repo size). On expiry each returns the PARTIAL result already
+  accumulated, never discarded, matching how every caller already treats a missing entry as "no
+  signal for this file." `build_symbol_blast_radius_from_map` gained the identical fix for its own
+  direct reverse-import-graph derivation (reached from `tg agent`'s cold path via the
+  call-site-evidence blast-radius call), folded into a new `reverse_import_graph_deadline_hit_blast`
+  flag.
+
+Verifying the fix end-to-end (real CLI) surfaced a separate, smaller, COUNT-bounded (not
+  super-linear) gap: `_build_edit_plan_seed`'s validation-runner detection falls back to a fresh
+  `_iter_repo_files` walk in 4 places (`_discover_validation_tests_for_primary_file`,
+  `_detect_validation_runners_ from_root`, `_has_python_validation_fallback_evidence`,
+  `_raw_validation_plan_for_tests`'s "no tests" branch) without forwarding the
+  `deadline_monotonic`/`deadline_hit` those functions already accept, even though `_iter_repo_files`
+  already supports both. Threaded through all 4 (mechanical, byte-identical no-op when no deadline
+  is set).
+
+OLD-vs-NEW real-binary (6,000-file synthetic repo, `--deadline 3.0`, cold filesystem cache): 26.6s
+  -> 9.5s wall-to-exit. The mechanism-level proof is cache-immune: 11 new deterministic unit tests
+  (monkeypatched clock, no real wall-clock dependency) plus 1 real-subprocess integration test. One
+  pre-existing test double (`test_validation_commands.py`'s `fake_iter_repo_files` stub) needed its
+  signature widened to accept the two new optional kwargs.
+
+mypy src/tensor_grep clean (81 files), ruff check clean, ruff format --preview clean. Targeted suite
+  green: 452 unit + 11 integration tests (agent/deadline/
+  blast-radius/validation/inventory/file-deps/mcp-find/session-cli).
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* perf(agent): gate the reverse-import-graph on the tg callers path too (#691 gate NIT-1) +
+  importers symmetry
+
+Independent Opus gate on #691 returned SHIP-WITH-NITS: the fix was correct but under-claimed its
+  scope.
+
+NIT-1 (core-value, folds in before merge): `_relevant_tests_for_symbol` (repo_map.py:3825) already
+  declared `deadline_monotonic`/`deadline_hit` in its own signature (used by its
+  direct_definition_tests loop) but ran
+  `_reverse_importers`/`_reverse_import_distances`/`_personalized_reverse_import_ pagerank` UN-GATED
+  inside its `if caller_files:` block -- the same ~n^2.2 BFS bounded elsewhere in this module.
+  `build_symbol_callers_from_map` reaches this exact block with BOTH a non-None `caller_files`
+  (entering the branch) AND a real `deadline_monotonic` (the actual `tg callers --deadline SYMBOL`
+  budget), so a high-fan-in symbol on the `tg callers` cold path -- and the agent capsule's
+  caller-evidence path, which calls into the same builder -- could still run the whole-repo BFS this
+  fix exists to eliminate. Threaded the two kwargs already in scope into all three calls, identical
+  shape to every other site this PR fixed. Updated `_reverse_import_distances`'s own docstring,
+  which claimed the context-pack call was "the one un-gated... consumer" -- no longer accurate now
+  that a second, independently-reachable call site had the same gap.
+
+NIT-2 (symmetry, lower severity): `build_file_importers_from_map` (`tg importers`) had
+  `deadline_monotonic` in scope and its own confirm-edges loop already honored it, but left its
+  `_reverse_importers` call un-threaded. Folded into the same `deadline_hit` local the confirm-edges
+  loop already sets, so `tg importers --deadline` reports one honest signal regardless of which
+  stage consumed the budget.
+
+Added 6 new deterministic unit tests (monkeypatched clock / spy-based, no real wall-clock
+  dependency): two prove `_relevant_tests_for_symbol`'s wiring (forwards
+  deadline_monotonic/deadline_hit into all three graph helpers) and mechanism (bails when already
+  exceeded); one proves the reachability claim (`build_symbol_callers_from_map` really does call it
+  with non-None `caller_files` + a real deadline); one is a no-pressure byte-identical regression
+  guard; two cover NIT-2 (`build_file_importers_from_map` forwards the kwarg, and folds a trip into
+  `partial`/`deadline_limit` -- the latter deliberately targets a leaf file with zero importers so
+  the confirm-edges loop's own pre-existing check can't independently satisfy the assertion,
+  verified to actually discriminate: red without the fix, green with it).
+
+Verified via stash/pop: all 4 mechanism/wiring tests fail without this diff's source changes and
+  pass with them; the reachability and no-pressure tests correctly hold either way (they test
+  different, already-correct properties).
+
+mypy src/tensor_grep clean (81 files), ruff check clean, ruff format --preview clean. Targeted suite
+  green: 649 unit + 11 integration tests (agent/deadline/
+  blast-radius/validation/inventory/file-deps/mcp-find/mcp-caps/session-cli/ cap-fix-chokepoint).
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+### Testing
+
+- **eval**: Agent-accuracy gate -- golden task->primary_target set with conservative floor
+  ([#690](https://github.com/oimiragieo/tensor-grep/pull/690),
+  [`8bc58f5`](https://github.com/oimiragieo/tensor-grep/commit/8bc58f5012730aebc6033e7887de921538aac81d))
+
+Adds tests/eval/test_agent_accuracy.py: a measurable, deterministic pytest eval that runs the real
+  `tg prepare` binary against 15 unambiguous (task -> expected file) pairs on tensor-grep's own
+  src/tensor_grep tree and asserts the hit count stays at or above a conservative floor (12/15;
+  observed baseline is 15/15 via primary_target alone, verified reproducible across 3 runs). HIT =
+  expected file is primary_target.file OR appears in alternative_targets (already capped at <=4 by
+  agent_capsule.py). Scoped to src/tensor_grep (not the whole repo) to avoid this self-dogfooding
+  repo's own skills/docs/tests prose polluting the ranking signal, and uses a generous 60s
+  --deadline (tg prepare's own documented cold-path default) so runs complete without truncation.
+
+Registers a new `eval` pytest marker (pyproject.toml) and excludes it from the main `test-python` CI
+  job's blanket `pytest tests` sweep (ci.yml) so a failure here -- tests/eval/ collects ahead of
+  tests/unit/ and pyproject's `-x` fail-fast would otherwise abort before any unit test runs, the
+  same flaky-e2e-masks-unit-tests trap already hit on tests/e2e/ -- never masks unrelated unit-test
+  failures. Run explicitly via `pytest tests/eval -m eval -v -s`.
+
+No src/ code touched; stays out of agent_capsule.py/repo_map.py (concurrent edit in flight).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.91.0 (2026-07-21)
 
 ### Documentation
