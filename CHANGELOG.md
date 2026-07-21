@@ -1,6 +1,75 @@
 # CHANGELOG
 
 
+## v1.91.3 (2026-07-21)
+
+### Performance Improvements
+
+- **rust**: Intra-file parallel search for large files in CpuBackend
+  ([#695](https://github.com/oimiragieo/tensor-grep/pull/695),
+  [`45b3f09`](https://github.com/oimiragieo/tensor-grep/commit/45b3f09be81b0e834ea49a50e4be0549de9d025e))
+
+* perf(rust): intra-file parallel search for large files in CpuBackend
+
+CpuBackend::search_file_memmem/search_file_regex (backend_cpu.rs, the PyO3 RustBackend FFI path
+  Python's RustCoreBackend calls into) scanned every file with a single serial pass, even though
+  native_search.rs already ships a proven chunk-parallel path for large single files
+  (search_file_chunk_parallel, gated on --json/--count/--quiet). This mirrors that idiom for the
+  OTHER native CPU search implementation in this repo, which had zero intra-file parallelism.
+
+At/above 50MiB (LARGE_FILE_PARALLEL_THRESHOLD_BYTES, matching
+  native_search.rs::LARGE_FILE_CHUNK_THRESHOLD_BYTES so "large file" means the same thing everywhere
+  in tg), the file is split into line-aligned byte chunks via
+  plan_line_aligned_chunks/align_chunk_end_to_newline (every boundary snapped forward to the next
+  '\n' or EOF, so a chunk can never start/end mid-line) and each chunk is searched in parallel with
+  rayon (chunks.par_iter().map(..).collect()), using the exact same per-line
+  scan_lines_memmem/scan_lines_regex predicate the small-file path uses. Below the threshold, or
+  with fewer than 2 available cores, behavior is byte-for-byte unchanged (falls through to the same
+  whole-buffer scan).
+
+Correctness argument: matching was already strictly per-line before this change (never looks past a
+  '\n'), so a line-aligned split cannot change which lines match, only which thread checks them.
+  Vec<LineAlignedChunk>'s par_iter() stays an IndexedParallelIterator through the .map().collect(),
+  which rayon guarantees reassembles in source order regardless of thread completion order -- so
+  flattening the per-chunk results in chunk order reproduces the serial scan's exact match order.
+
+Deliberately does NOT touch native_search.rs's default plain-text/--ndjson streaming paths: those
+  are gated off chunk-parallelism today (should_use_chunk_parallel_search) because of a tested
+  "first match streams >=25ms before completion" contract
+  (test_native_search_default_output_streams_ before_search_completion) that a genuine speedup would
+  risk collapsing -- a different, larger design problem than this PR's scope.
+
+Tests (backend_cpu.rs inline #[cfg(test)] + rust_core/tests/test_search.rs): - chunk-boundary
+  coverage/contiguity/newline-alignment across 2..=16 chunk counts on variable-length-line content -
+  chunked-vs-whole-buffer-serial equality with needles at the first line, last line, and every
+  internal boundary (memmem, regex, and invert-match) - below-threshold behavior unchanged - a real
+  ~55MB on-disk file through the public CpuBackend::search API, confirming the dispatcher's own
+  chunk plan actually engages on the test machine before asserting result equality
+
+Verification note: written without a local cargo/rustc (CPU-safe, shared server) -- correctness
+  verified by manual type/trait/coercion tracing and cross-checking against native_search.rs's
+  already-compiling, already-CI-green identical chunk-parallel idiom. Timing/speedup is
+  intentionally not measured or claimed locally; CI (test-rust-core matrix) and the independent Opus
+  gate are the verification surface for both correctness and any speed claim.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* test(rust): add explicit no-match chunked-vs-serial coverage (backend_cpu)
+
+Closes the one edge case named in the task spec that wasn't yet its own dedicated test: a large,
+  multi-chunk buffer containing the needle nowhere must produce an empty result on the serial scan,
+  every individual chunk, the reassembled parallel result, and the real dispatcher.
+
+* style(rust): cargo fmt backend_cpu.rs test assertions
+
+Fixes the CI Formatting & Linting red on #695 (cargo fmt --check on the hand-formatted test module).
+  Pure rustfmt line-wrapping in #[cfg(test)], no logic change.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.91.2 (2026-07-21)
 
 ### Bug Fixes
