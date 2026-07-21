@@ -421,3 +421,17 @@ def test_calibrate_json_flag_missing_binary_emits_skip_signal(monkeypatch) -> No
     assert '"calibration_status": "native_binary_unavailable"' in result.output
     # The human-readable remediation stays present too (additive, not replaced).
     assert "tg upgrade" in result.output
+
+    # #678 gate nit: a caller doing `json.loads(subprocess_stdout)` on the real, separate stdout
+    # stream must see ONLY the structured line -- the human remediation text must land on
+    # stderr, never stdout, or a whole-stdout json.loads() chokes. `result.output` above is a
+    # THIRD, merged view (Click 8.2+, pinned 8.4.2 in uv.lock, keeps `.stdout`/`.stderr` as
+    # genuinely separate captured streams) that cannot distinguish which real stream the text
+    # landed on -- pin the stream-separation contract directly instead of only the merged one.
+    # (Verified against the real code before writing this: `typer.echo(..., err=True)` in
+    # calibrate()'s missing-binary branch, main.py, has routed this text to stderr since commit
+    # a4b3c05c (2026-07-14), predating #678 by six days -- this assertion makes that contract
+    # regression-proof instead of merely incidentally true.)
+    assert json.loads(result.stdout) == {"calibration_status": "native_binary_unavailable"}
+    assert "tg upgrade" not in result.stdout
+    assert "tg upgrade" in result.stderr

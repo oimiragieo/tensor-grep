@@ -290,16 +290,33 @@ def test_open_session_uncontended_hot_path_unaffected(tmp_path: Path) -> None:
 def test_create_checkpoint_uncontended_hot_path_unaffected(tmp_path: Path) -> None:
     root = _make_project(tmp_path)
 
+    # #244 release-blocker de-flake: the original assertion (`elapsed < 4.0`, an absolute
+    # wall-clock ceiling) flaked at 4.968s on a loaded Windows CI runner and needed a rerun --
+    # same class as the already-hardened #120/#204 flakes. The dominant real-world cost here is
+    # NOT the lock (an uncontended os.open/os.close acquire is microseconds) but
+    # create_checkpoint's PRE-lock work: _detect_checkpoint_scope shells out to
+    # `git rev-parse --show-toplevel` (fails fast on this non-git fixture, but process-spawn
+    # overhead on a loaded Windows runner is exactly the kind of noise that blew the flat
+    # ceiling), then _snapshot_entries walks the scope. Mirror the sibling
+    # test_open_session_uncontended_hot_path_unaffected fix immediately above: measure that same
+    # PRE-lock work as a same-run baseline (so a loaded runner inflates the baseline and the real
+    # call TOGETHER, correlated, instead of tripping an OS-load-fragile flat number) and assert a
+    # generous ratio, with a flat floor as a safety net for when the baseline itself is tiny
+    # (e.g. a fast Linux runner where the failed git spawn is near-instant). This stays
+    # BIDIRECTIONAL: a regression that widens the locked critical section to wrap expensive work
+    # (the exact class this test guards against, per the module docstring) inflates `elapsed`
+    # without inflating `baseline_elapsed` at all, so the ratio -- not just the flat floor --
+    # would still catch it.
+    baseline_start = time.monotonic()
+    scope = checkpoint_store._detect_checkpoint_scope(root)
+    checkpoint_store._snapshot_entries(scope)
+    baseline_elapsed = time.monotonic() - baseline_start
+
     start = time.monotonic()
     result = checkpoint_store.create_checkpoint(str(root))
     elapsed = time.monotonic() - start
 
-    # A tiny fixture root; an uncontended lock must not push this anywhere near the 5s
-    # acquire timeout. Threshold is 4.0s (matching the sibling checkpoint hot-path tests) to
-    # stay tolerant of a loaded/slow CI runner while still catching a genuinely-contended lock
-    # that would drift toward the 5s timeout (a marginal 2.25s spike on windows-py3.12 was the
-    # flake this widened).
-    assert elapsed < 4.0
+    assert elapsed < max(baseline_elapsed * 3.0, 4.0)
     indexed = {rec.checkpoint_id for rec in checkpoint_store._load_index(root)}
     assert result.checkpoint_id in indexed
     assert checkpoint_store._snapshot_path(root, result.checkpoint_id).exists()
