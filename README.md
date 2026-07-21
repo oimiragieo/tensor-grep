@@ -107,6 +107,14 @@ pip install tensor-grep
 uvx tensor-grep
 ```
 
+> **Which front door do you get?** `pip install`/`uvx tensor-grep` installs the **Python front door**;
+> a cold search pays a Python-interpreter startup tax (roughly 150-250ms) before the search itself
+> runs. The install script and npm below also set up the managed **native** `tg` binary
+> (`~/.tensor-grep/bin/tg`), which starts close to raw `rg` speed, and `tg upgrade` keeps an existing
+> native front door in sync with new releases. Either way, `rg` stays the fastest baseline for cold
+> literal search — tg's edge is agent-native context (`tg orient` / `tg callers` / `tg blast-radius` /
+> `tg find`), not raw grep speed.
+
 Supported on Windows, macOS, and Linux. See [docs/installation.md](docs/installation.md) for Homebrew, winget, and source build options.
 
 ---
