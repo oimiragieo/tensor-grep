@@ -377,8 +377,9 @@ def test_best_effort_helper_prefers_non_test_implementation_over_same_named_test
     rm = {
         "path": "/repo",
         "files": ["/repo/src/widgets.py", "/repo/tests/test_widgets.py"],
-        # test-file entry ordered FIRST on purpose -- a `>`-only replacement means a tie would
-        # otherwise resolve to whichever candidate the loop happens to visit first.
+        # test-file entry ordered FIRST on purpose -- the pre-fix `>`-only scan is a relevance-blind
+        # tie-break that keeps the FIRST candidate in the deterministically path-sorted list, so in a
+        # flat layout where `test_widgets.py` sorts before the impl, the test symbol wrongly wins.
         "symbols": [test_symbol, impl_symbol],
         "imports": [],
     }
