@@ -350,6 +350,68 @@ def test_best_effort_helper_symbol_pass_never_looks_past_the_scan_cap() -> None:
     assert candidate["symbol"] == "flow_handler_module"
 
 
+# ---------------------------------------------------------------------------
+# 4. Task #254 heuristic 2: test-file shadow demotion
+# ---------------------------------------------------------------------------
+
+
+def test_best_effort_helper_prefers_non_test_implementation_over_same_named_test_symbol() -> None:
+    """Task #254 heuristic 2, end-to-end through the one live consumer of `_score_symbol` that
+    never pre-filters test files (`_best_effort_primary_target_from_map`'s symbol-name pass --
+    unlike the main context-pack loop, which drops test-file symbols outright before ranking).
+
+    Before heuristic 2, `impl_symbol` and `test_symbol` score IDENTICALLY (same name, same kind,
+    symmetric file-path credit from "widgets.py" vs "test_widgets.py" both containing "widget").
+    The scan loop only replaces `best_symbol` on a STRICT `>`, so with `test_symbol` listed first,
+    a true tie left the WRONG (test-file) symbol as the best-effort pick -- exactly the
+    incident-#302-style tie fragility this heuristic exists to break, deterministically, in favor
+    of the non-test implementation.
+    """
+    query = "process widget report"
+    impl_symbol = _fake_symbol("process_widget_report", "/repo/src/widgets.py")
+    test_symbol = _fake_symbol("process_widget_report", "/repo/tests/test_widgets.py")
+    terms = repo_map._symbol_query_terms(query)
+    # Sanity precondition: without the heuristic, this really is a tie -- otherwise the test
+    # below would pass for the wrong reason (a pre-existing, unrelated scoring difference).
+    assert repo_map._score_symbol(test_symbol, terms) == repo_map._score_symbol(impl_symbol, terms)
+    rm = {
+        "path": "/repo",
+        "files": ["/repo/src/widgets.py", "/repo/tests/test_widgets.py"],
+        # test-file entry ordered FIRST on purpose -- the pre-fix `>`-only scan is a relevance-blind
+        # tie-break that keeps the FIRST candidate in the deterministically path-sorted list, so in a
+        # flat layout where `test_widgets.py` sorts before the impl, the test symbol wrongly wins.
+        "symbols": [test_symbol, impl_symbol],
+        "imports": [],
+    }
+
+    candidate = agent_capsule._best_effort_primary_target_from_map(rm, query)
+
+    assert candidate is not None
+    assert candidate["file"] == "/repo/src/widgets.py"
+
+
+def test_best_effort_helper_does_not_penalize_test_symbol_with_no_non_test_counterpart() -> None:
+    """The heuristic 2 penalty is conditional: a symbol that exists ONLY in a test file (no
+    same-named non-test implementation anywhere in the scanned map) is never demoted -- there is
+    nothing more appropriate to prefer it over."""
+    query = "assert widget invariants helper"
+    test_only_symbol = _fake_symbol(
+        "assert_widget_invariants_helper", "/repo/tests/test_widgets.py"
+    )
+    rm = {
+        "path": "/repo",
+        "files": ["/repo/tests/test_widgets.py"],
+        "symbols": [test_only_symbol],
+        "imports": [],
+    }
+
+    candidate = agent_capsule._best_effort_primary_target_from_map(rm, query)
+
+    assert candidate is not None
+    assert candidate["file"] == "/repo/tests/test_widgets.py"
+    assert candidate["symbol"] == "assert_widget_invariants_helper"
+
+
 def test_best_effort_pass_bounded_wall_clock_on_large_synthetic_tree(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

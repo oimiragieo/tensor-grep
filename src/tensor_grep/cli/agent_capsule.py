@@ -614,6 +614,10 @@ def _best_effort_primary_target_from_map(rm: dict[str, Any], query: str) -> dict
     symbols = _as_list_of_dicts(rm.get("symbols"))[:_BEST_EFFORT_PRIMARY_SCAN_CAP]
     symbol_terms = repo_map._symbol_query_terms(query)
     if symbols and symbol_terms:
+        # Task #254 heuristic 2: derived from the SAME already-capped `symbols` list (never a
+        # fresh unbounded pass over `rm["symbols"]`) so this stays within the bounded-cost
+        # contract `test_best_effort_helper_symbol_pass_never_looks_past_the_scan_cap` pins.
+        non_test_definition_names = repo_map._non_test_definition_names(symbols)
         best_symbol: dict[str, Any] | None = None
         best_symbol_score = 0
         for symbol in symbols:
@@ -625,7 +629,9 @@ def _best_effort_primary_target_from_map(rm: dict[str, Any], query: str) -> dict
             # this helper must never crash the capsule even if a language-specific extractor ever
             # omits "kind" on some symbol record.
             scoreable = {"name": name, "kind": symbol.get("kind") or "unknown", "file": file_path}
-            score = repo_map._score_symbol(scoreable, symbol_terms)
+            score = repo_map._score_symbol(
+                scoreable, symbol_terms, non_test_definition_names=non_test_definition_names
+            )
             if score > best_symbol_score:
                 best_symbol_score = score
                 best_symbol = symbol

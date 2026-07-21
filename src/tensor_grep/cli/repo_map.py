@@ -7137,14 +7137,80 @@ def _score_file_path(path: str, terms: list[str]) -> int:
     return _score_text_terms(path_obj.name, terms) + _score_text_terms(repo_like_tail, terms)
 
 
-def _score_symbol(symbol: dict[str, Any], terms: list[str]) -> int:
+# Task #254 (Blackbird-style ranking heuristics -- the CEO deep-research #251 steal). Two small,
+# additive signals layered onto the flat, no-IDF `_score_symbol` scorer (the known-weak point
+# named in the tensor-grep-architecture-contract skill): a soft test-file demotion (heuristic 2)
+# and an exact word-boundary bonus (heuristic 3). A third candidate signal from the same research
+# pass -- "weight definitions above references" -- was investigated and found to have NO live
+# insertion point here: `payload["symbols"]` (this scorer's entire input population, traced
+# end-to-end through `_python_imports_and_symbols`/`_js_ts_parser_symbols`/`_rust_parser_symbols`/
+# `_regex_imports_and_symbols`) is ALREADY exclusively AST/regex-matched DEFINITIONS (kind in
+# {class, function, method, struct, enum, trait}). References/call-sites are produced by a
+# structurally separate pipeline (`_python_references_and_calls` and its JS/TS/Rust/regex
+# siblings) that feeds `tg refs`/`tg callers`/blast-radius and never reaches `payload["symbols"]`
+# or this scorer -- a "definitions above references" bonus here would be permanently-inert dead
+# code (it could never fire on real data), not a real signal, so it was deliberately not added.
+_TEST_SHADOW_PENALTY = 2
+
+
+def _non_test_definition_names(symbols: list[dict[str, Any]]) -> frozenset[str]:
+    """Task #254 heuristic 2 support: names with at least one definition OUTSIDE a test file.
+
+    Query-independent (a structural fact about the scanned repo, not the search terms), so a
+    caller computes this ONCE per scoring pass -- cheaply, no I/O, no re-parsing -- and reuses it
+    for every `_score_symbol` call in that pass rather than re-deriving it per symbol.
+    """
+    return frozenset(
+        str(symbol["name"])
+        for symbol in symbols
+        if symbol.get("name")
+        and symbol.get("file")
+        and not _is_test_file(Path(str(symbol["file"])))
+    )
+
+
+def _symbol_name_exact_boundary_bonus(symbol_name: str, terms: list[str]) -> int:
+    """Task #254 heuristic 3: +1 when a query term matches ``symbol_name`` as a clean,
+    word-boundary-respecting token (a member of ``split_terms(symbol_name)``) rather than only
+    through ``_score_text_terms``'s looser RAW-SUBSTRING fallback (a long term merely embedded
+    inside a longer, differently-tokenized identifier -- e.g. term "underscore" inside a name
+    like "my_underscored_value"). Standard IR signal: an exact token match is stronger evidence of
+    relevance than mere containment. Restricted to ``len(term) > 3`` to mirror
+    ``_score_text_terms``'s own threshold -- a term of length <= 3 is ALREADY boundary-only there
+    (it only ever checks ``haystack_terms``), so there is no substring laxity to correct for short
+    terms. Deliberately additive and capped at +1 total (not per matching term) to keep the delta
+    small relative to the existing scoring scale -- this refines ORDER among candidates that
+    already match; it never changes WHICH symbols match (the base credit from
+    ``_score_text_terms`` already covers both the clean-token and substring cases).
+    """
+    name_terms = set(split_terms(symbol_name))
+    return 1 if any(len(term) > 3 and term.lower() in name_terms for term in terms) else 0
+
+
+def _score_symbol(
+    symbol: dict[str, Any],
+    terms: list[str],
+    *,
+    non_test_definition_names: frozenset[str] | None = None,
+) -> int:
+    symbol_name = str(symbol["name"])
     score = (
-        _score_text_terms(str(symbol["name"]), terms) * 3
+        _score_text_terms(symbol_name, terms) * 3
         + _score_text_terms(str(symbol["kind"]), terms)
         + _score_file_path(str(symbol["file"]), terms)
     )
-    if _symbol_name_terms_cover_query(str(symbol["name"]), terms):
+    if _symbol_name_terms_cover_query(symbol_name, terms):
         score += 2
+    score += _symbol_name_exact_boundary_bonus(symbol_name, terms)
+    if (
+        non_test_definition_names is not None
+        and symbol_name in non_test_definition_names
+        and _is_test_file(Path(str(symbol["file"])))
+    ):
+        # Task #254 heuristic 2: a test-file hit sinks below a same-named non-test
+        # implementation instead of competing with it on equal footing -- floored at 0 so a
+        # borderline match is never pushed to a misleading negative score.
+        score = max(0, score - _TEST_SHADOW_PENALTY)
     return score
 
 
@@ -8047,6 +8113,9 @@ def _build_context_pack_from_map(
         symbol_terms = _symbol_query_terms(query)
         query_language_hints = _query_language_hints(query)
         all_symbols = [dict(symbol) for symbol in payload["symbols"]]
+        # Task #254 heuristic 2: computed ONCE per scoring pass (query-independent), then reused
+        # for every `_score_symbol` call below instead of re-deriving it per symbol.
+        non_test_definition_names = _non_test_definition_names(payload["symbols"])
         imports_by_file = {
             str(entry["file"]): [str(item) for item in entry["imports"]]
             for entry in payload["imports"]
@@ -8074,7 +8143,9 @@ def _build_context_pack_from_map(
                 if deadline_hit is not None:
                     deadline_hit.hit = True
                 break
-            score = _score_symbol(symbol, symbol_terms)
+            score = _score_symbol(
+                symbol, symbol_terms, non_test_definition_names=non_test_definition_names
+            )
             if score <= 0:
                 continue
             scored_symbol = dict(symbol)

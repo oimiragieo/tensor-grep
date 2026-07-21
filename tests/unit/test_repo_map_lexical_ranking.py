@@ -151,3 +151,73 @@ def test_context_render_limits_source_sections_to_one_per_file(tmp_path: Path) -
     source_sections = [section for section in payload["sections"] if section["kind"] == "source"]
 
     assert [section["path"] for section in source_sections].count(str(module_path.resolve())) == 1
+
+
+# ---------------------------------------------------------------------------
+# Task #254: Blackbird-style ranking heuristics on the flat `_score_symbol` scorer.
+# ---------------------------------------------------------------------------
+
+
+def test_score_symbol_exact_boundary_beats_substring_only_match() -> None:
+    """Heuristic 3: a query term that hits a symbol's name as a whole, word-boundary-respecting
+    token (a `split_terms` member) outranks the same term only appearing embedded inside a
+    longer, differently-tokenized identifier -- a raw substring hit `_score_text_terms` already
+    credits identically to a clean token match. Isolated at the `_score_symbol` level (a direct
+    call, not the full context-pack loop) so the comparison is not entangled with the outer
+    loop's separate exact/bridge/covered query-match bonuses, which key off the symbol name
+    matching the WHOLE query rather than a single term.
+
+    Before heuristic 3, both symbols scored identically (3): `_score_text_terms` grants the same
+    +1 credit whether "rank" hits `rank_symbol`'s name as a clean token or merely as a substring
+    of `rerank_value_symbol`'s "rerank". The boundary bonus breaks that tie in favor of the
+    cleaner match.
+    """
+    terms = ["rank"]
+    boundary_symbol = {"name": "rank", "kind": "function", "file": "src/module_a.py"}
+    substring_symbol = {"name": "rerank_value", "kind": "function", "file": "src/module_b.py"}
+
+    boundary_score = repo_map._score_symbol(boundary_symbol, terms)
+    substring_score = repo_map._score_symbol(substring_symbol, terms)
+
+    assert boundary_score > substring_score
+    # Pin the exact pre/post values so a future scoring-scale change can't silently make this
+    # pass for the wrong reason (e.g. an unrelated bonus swamping the boundary delta).
+    assert boundary_score == 4
+    assert substring_score == 3
+
+
+def test_score_symbol_test_file_hit_sinks_below_non_test_implementation() -> None:
+    """Heuristic 2: a same-named symbol defined in a test file scores lower than a non-test
+    implementation once a caller supplies `non_test_definition_names` (computed once per scoring
+    pass via `_non_test_definition_names`). Without that opt-in (the default, `None`), the two
+    score identically -- existing callers that have not been updated stay byte-for-byte
+    unaffected, and a test-only symbol with NO non-test counterpart is never penalized."""
+    terms = ["process", "widget", "report"]
+    impl_symbol = {"name": "process_widget_report", "kind": "function", "file": "src/widgets.py"}
+    test_symbol = {
+        "name": "process_widget_report",
+        "kind": "function",
+        "file": "tests/test_widgets.py",
+    }
+    non_test_definition_names = repo_map._non_test_definition_names([impl_symbol, test_symbol])
+    assert non_test_definition_names == frozenset({"process_widget_report"})
+
+    impl_score = repo_map._score_symbol(
+        impl_symbol, terms, non_test_definition_names=non_test_definition_names
+    )
+    test_score = repo_map._score_symbol(
+        test_symbol, terms, non_test_definition_names=non_test_definition_names
+    )
+
+    assert test_score < impl_score
+
+    # Opt-in only: a caller that does not pass `non_test_definition_names` sees no penalty at
+    # all -- the two symbols still score identically, matching pre-#254 behavior exactly.
+    assert repo_map._score_symbol(test_symbol, terms) == impl_score
+
+    # A test-file symbol with NO non-test counterpart anywhere is never penalized -- there is
+    # nothing to prefer it over.
+    test_only_names = repo_map._non_test_definition_names([test_symbol])
+    assert repo_map._score_symbol(
+        test_symbol, terms, non_test_definition_names=test_only_names
+    ) == repo_map._score_symbol(test_symbol, terms)
