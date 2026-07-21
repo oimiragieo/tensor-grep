@@ -21,10 +21,10 @@ Design notes (each choice was verified empirically against the real binary, not 
   ``--ignore`` globs, and is also faster (a real 60s-class deadline never gets close to tripping).
 - A GENEROUS fixed ``--deadline`` (60s -- ``tg prepare``'s own documented cold-path default, see
   ``DEFAULT_AGENT_CLI_DEADLINE_SECONDS`` in ``agent_capsule.py``) so a normal run always completes
-  without truncation; the slowest of the 15 tasks measured ~14s against this same repo during
-  development, so 60s leaves wide margin for a slower CI runner. Truncation flakiness would be a
-  correctness bug in THIS test, not a signal about capsule accuracy, so a truncated task fails
-  loudly (see ``_run_tg_prepare``) instead of being silently scored.
+  without truncation; the slowest of the golden-set tasks measured ~14s against this same repo
+  during development, so 60s leaves wide margin for a slower CI runner. Truncation flakiness
+  would be a correctness bug in THIS test, not a signal about capsule accuracy, so a truncated
+  task fails loudly (see ``_run_tg_prepare``) instead of being silently scored.
 - HIT = the expected file is ``primary_target.file`` OR appears anywhere in
   ``alternative_targets`` (which ``agent_capsule.py``'s own ``_alternative_targets(..., limit=
   None)[:4]`` caps at <=4 entries -- there is no arbitrary extra "top-N" window here, this is
@@ -42,9 +42,9 @@ itself needs revisiting.
 
 Marked ``eval`` + ``slow`` (opt-in / isolable from the flaky-sensitive main suite -- see
 ``pyproject.toml``'s ``markers`` and the CI workflow's ``-m "not eval"`` exclusion on the main
-``test-python`` job): this suite makes 15 real subprocess calls against the live ranking pipeline,
-which is exactly the kind of test whose failure should never silently mask unrelated unit-test
-failures via ``pytest``'s repo-wide ``-x`` fail-fast. Run explicitly with
+``test-python`` job): this suite makes one real subprocess call per ``GOLDEN_SET`` entry against
+the live ranking pipeline, which is exactly the kind of test whose failure should never silently
+mask unrelated unit-test failures via ``pytest``'s repo-wide ``-x`` fail-fast. Run explicitly with
 ``pytest tests/eval -m eval -v -s``.
 """
 
@@ -76,11 +76,15 @@ _SUBPROCESS_TIMEOUT_S = 150.0
 
 # Observed baseline on origin/main (v1.91.0-era capsule ranking, measured on Windows during
 # development of this gate): 15/15 golden tasks resolved via primary_target alone (no alternative-
-# window fallback needed). The floor deliberately leaves 3 tasks of slack -- well beyond the 0
-# actually observed -- so a different OS's filesystem walk order or one benign ranking tweak does
-# not red this gate; a real capsule-ranking regression (several tasks losing their file at once)
-# still will. If you re-baseline this gate, record the new observed score and date here.
-_ACCURACY_FLOOR_HITS = 12
+# window fallback needed). Re-baselined (task #250, same day): a 16th task ("fix the ledger claim
+# TTL logic") was added back after fixing the thin-CLI-dispatcher ranking bug it had originally
+# exposed (see agent_capsule._prefer_implementation_over_cli_dispatcher_helper) -- now 16/16, with
+# the original 15 unchanged (byte-identical primary_target file per task). The floor deliberately
+# leaves 3 tasks of slack -- well beyond the 0 actually observed -- so a different OS's filesystem
+# walk order or one benign ranking tweak does not red this gate; a real capsule-ranking regression
+# (several tasks losing their file at once) still will. If you re-baseline this gate, record the
+# new observed score and date here.
+_ACCURACY_FLOOR_HITS = 13
 
 # Each entry: a task phrased the way an engineer would file it, and the small set of files a
 # competent engineer would consider correct. Every (task, file) pair below was verified two ways
@@ -198,6 +202,21 @@ GOLDEN_SET: list[dict[str, Any]] = [
             "forward it to ripgrep, AND the flag's actual typer.Option lives on the `search` "
             "command in main.py. A competent engineer touches both; this task exercises that this "
             "eval's scoring correctly treats either as a hit rather than forcing a single answer."
+        ),
+    },
+    {
+        "task": "fix the ledger claim TTL logic",
+        "expected_files": ["cli/ledger_store.py"],
+        "notes": (
+            "task #250: this task was DROPPED from the original golden set because it exposed a "
+            "real ranking bug -- `ledger_claim`, the thin `@ledger_app.command('claim')` Typer "
+            "dispatcher in cli/main.py, exact-lexically-matched both substantive query words "
+            "('ledger' + 'claim') at once and outranked the real implementation. ledger_store.py "
+            "owns the actual TTL logic (_DEFAULT_TTL_SECONDS/_TTL_ENV/_configured_ttl_seconds) "
+            "and the ClaimRecord.ttl_seconds field; ledger_claim's body is a single call-through "
+            "to ledger_store.submit_claim. Fixed by down-weighting a provable thin CLI-dispatcher "
+            "call-through against the implementation module it calls "
+            "(agent_capsule._prefer_implementation_over_cli_dispatcher_helper)."
         ),
     },
 ]
