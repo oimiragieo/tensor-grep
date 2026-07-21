@@ -1,6 +1,62 @@
 # CHANGELOG
 
 
+## v1.89.0 (2026-07-21)
+
+### Features
+
+- **run/scan**: Ast empty-result remediation + ruleset mental-model aliases + honest sg-absent error
+  (CEO#6) ([#683](https://github.com/oimiragieo/tensor-grep/pull/683),
+  [`06b7194`](https://github.com/oimiragieo/tensor-grep/commit/06b71946e32001cb9e7dafa7fc740ce41fa70382))
+
+Three small, additive changes that make tg run/tg scan easier to use without fighting ast-grep or
+  inventing a translation shim (task #141 stays out of scope; tg run already delegates verbatim to
+  sg when it is on PATH).
+
+(b) tg run zero-match remediation (highest value): all three zero-match exits in run_command
+  (--json, --files-with-matches, default text) now call a new _emit_ast_run_remediation() alongside
+  the existing Windows single-quote hint. Text modes print a static idiom catalog + a tg ast-info
+  pointer + cheap no-dollar/no-lang heuristics to STDERR (stdout stays clean); --json mode adds an
+  additive "remediation" key without touching any existing envelope key. Scoped to tg run only -- tg
+  scan's 0-finding pass is untouched and stays a clean exit 0.
+
+(c) Resolve-only 1:1 ruleset aliases: resolve_rule_pack() now accepts a mental-model alias table
+  (auth, secrets, crypto, tls/ssl, subprocess, deserialize/deserialization) that maps to the
+  matching canonical -safe/-basic pack. Real pack names always win (no alias key collides with a
+  real name). Aliases never leak into list_rule_packs()/tg rulesets. "security" (the shared category
+  across all 6 packs) now raises an actionable error listing the 6 packs instead of guessing or
+  silently unioning them into an undesigned meta-pack.
+
+(a) Honest error on sg-absent: a $-metavariable (wrapper-shaped) pattern with no usable
+  ast-grep/native backend previously raised an uncaught ConfigurationError out of run_command (the
+  _select_ast_backend_for_pattern call sat outside any try/except). It now surfaces a clean "Error:
+  ..." message + exit 2 in text mode, or an additive JSON error payload in --json mode, mirroring
+  the Task #166 ConfigurationError handling in main.py's search path. Only ConfigurationError is
+  caught; a genuinely unexpected exception still propagates. A wrapper-shaped pattern is never
+  silently rerouted to the native tree-sitter backend (different query DSL -- would return
+  wrong/empty results instead of an honest error).
+
+Docs: docs/CONTRACTS.md and the tensor-grep-run-and-operate skill each gain a short additive
+  paragraph on the sg-passthrough fact, the honest-error path, and the alias/category behavior; the
+  tg run --help text gains one sentence on the same. No Rust changes, no new tg command or search
+  flag (all three changes are internal to run_command/resolve_rule_pack), no MCP contract bump
+  (tg_ruleset_scan already takes a free-form str that flows into resolve_rule_pack).
+
+Tests: new unit coverage in test_ast_workflows.py (13 tests: remediation on all 3 zero-match paths,
+  additive JSON key, negative-on-match x2, no-dollar/ no-lang heuristics, scan never fires it x2
+  incl. a source-inspection guardrail, the ConfigurationError clean-exit path x2, an
+  unrelated-exception-not-swallowed regression, and a skip-guarded real-sg passthrough regression)
+  and test_new_rule_packs.py (16 tests: 8 alias resolutions, 4 case/whitespace-insensitive aliases,
+  real-names-win, the leaked-alias guardrail, a genuinely-unknown-name regression, and the
+  security-category smart error). Full local suite green except two pre-existing, unrelated failures
+  verified identical on a clean origin/main stash
+  (test_cli_modes.py::test_cli_search_warns_when_gpu_device_id_out_of_local_inventory,
+  test_mcp_server.py::test_tg_rewrite_plan_uses_embedded_fallback_without_native_binary). ruff
+  check/format --preview clean; mypy src/tensor_grep clean (81 files).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.88.0 (2026-07-20)
 
 ### Features
