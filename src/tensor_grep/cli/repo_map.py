@@ -6918,6 +6918,84 @@ def _symbol_span_length(symbol: dict[str, Any]) -> int:
     return max(1, end_line - start_line + 1)
 
 
+def _is_cli_command_module_path(file_path: str) -> bool:
+    """No-I/O, path-only check: does ``file_path`` live under a ``cli/`` package? Necessary but
+    NOT sufficient for "thin CLI dispatcher" (task #250) -- see
+    ``_thin_cli_dispatcher_call_targets``, which additionally requires the specific symbol to
+    carry a Typer/Click ``.command(...)`` registration decorator AND a provable call-through
+    before a ``cli/`` symbol is ever treated as a pass-through wrapper rather than genuine logic
+    (e.g. ``tg search``'s own flag-parsing in ``cli/main.py`` IS the real implementation for "add
+    a --flag to tg search" and must never be demoted by this check)."""
+    if not file_path.lower().endswith(".py"):
+        return False
+    try:
+        parts = {part.lower() for part in Path(file_path).parts}
+    except (OSError, ValueError):
+        return False
+    return "cli" in parts
+
+
+def _thin_cli_dispatcher_call_targets(
+    file_path: str, symbol_name: str, *, expected_line: int | None = None
+) -> set[str] | None:
+    """Task #250: does ``symbol_name`` (defined in ``file_path``) look like a thin Typer/Click
+    command dispatcher -- decorated with a ``.command(...)`` registration -- and if so, what
+    names does its body call?
+
+    Returns ``None`` when the file can't be parsed, the symbol isn't a function/method, or it is
+    NOT decorated as a command -- i.e. not provably a dispatcher, so the caller must leave the
+    primary target alone (this is what protects a genuine ``cli/main.py`` target, e.g. "add a
+    --flag to tg search", from ever being demoted). Returns the -- possibly empty -- set of names
+    the body calls otherwise; the caller intersects this against alternative-candidate symbol
+    names to find the SPECIFIC implementation a dispatcher hands off to (e.g. ``ledger_claim``'s
+    body calling ``ledger_store.submit_claim(...)``).
+
+    Reuses ``_read_source_text_cached``/``_cached_ast_parse`` (both content-addressed -- a cache
+    HIT, not a re-read/re-parse, for a file already scanned earlier in this same process) and
+    bounds the walk to the ONE matched function's own subtree: a structural re-check of a symbol
+    already selected as the primary-target candidate, not a new repo-wide scan.
+    """
+    if not _is_cli_command_module_path(file_path):
+        return None
+    try:
+        source = _read_source_text_cached(file_path)
+        tree = _cached_ast_parse(source)
+    except (OSError, SyntaxError, UnicodeDecodeError, ValueError, RecursionError):
+        return None
+
+    matches = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == symbol_name
+    ]
+    if not matches:
+        return None
+    if len(matches) > 1 and expected_line is not None:
+        matches.sort(key=lambda node: abs(node.lineno - expected_line))
+    match = matches[0]
+
+    decorator_names: set[str] = set()
+    for decorator in match.decorator_list:
+        target = decorator.func if isinstance(decorator, ast.Call) else decorator
+        if isinstance(target, ast.Attribute):
+            decorator_names.add(target.attr)
+        elif isinstance(target, ast.Name):
+            decorator_names.add(target.id)
+    if "command" not in decorator_names:
+        return None
+
+    called_names: set[str] = set()
+    for call_node in ast.walk(match):
+        if not isinstance(call_node, ast.Call):
+            continue
+        func = call_node.func
+        if isinstance(func, ast.Name):
+            called_names.add(func.id)
+        elif isinstance(func, ast.Attribute):
+            called_names.add(func.attr)
+    return called_names
+
+
 def _symbol_rank_key(symbol: dict[str, Any]) -> tuple[int, int, int, int, str, int, str]:
     if bool(symbol.get("exact_query_match")):
         query_match_rank = 0

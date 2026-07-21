@@ -368,6 +368,158 @@ def test_prefer_implementation_no_swap_when_no_implementation_candidate():
     assert alternatives == [other_marker]
 
 
+# --- #250: thin CLI-dispatcher ranking weakness -----------------------------
+# `tg prepare src/tensor_grep "fix the ledger claim TTL logic"` resolved `primary_target` to
+# `cli/main.py`'s `ledger_claim` Typer dispatcher (an exact-symbol-name match on the query's two
+# substantive words) instead of the real implementation in `cli/ledger_store.py`. These tests
+# cover the down-weight helper directly; the golden-set regression coverage lives in
+# tests/eval/test_agent_accuracy.py.
+
+
+def _write_ledger_dispatcher_fixture(tmp_path, *, decorated: bool, calls_through: bool):
+    from tensor_grep.cli.agent_capsule import _prefer_implementation_over_cli_dispatcher_helper
+
+    cli_dir = tmp_path / "src" / "tensor_grep" / "cli"
+    cli_dir.mkdir(parents=True)
+    decorator = "@ledger_app.command('claim')\n" if decorated else ""
+    call_line = (
+        "    return ledger_store.submit_claim(path)\n"
+        if calls_through
+        else "    return {'claim_id': 'x'}\n"
+    )
+    main_path = cli_dir / "main.py"
+    main_path.write_text(
+        f"from tensor_grep.cli import ledger_store\n\n{decorator}def ledger_claim(path):\n{call_line}",
+        encoding="utf-8",
+    )
+    store_path = cli_dir / "ledger_store.py"
+    store_path.write_text(
+        "def submit_claim(path):\n    return {'claim_id': path}\n",
+        encoding="utf-8",
+    )
+    primary_target = {
+        "file": str(main_path),
+        "symbol": "ledger_claim",
+        "kind": "function",
+        "line": 3 if decorated else 2,
+        "confidence": 0.75,
+    }
+    alternative = {
+        "file": str(store_path),
+        "symbol": "submit_claim",
+        "kind": "function",
+        "confidence": 0.75,
+    }
+    return _prefer_implementation_over_cli_dispatcher_helper, primary_target, alternative
+
+
+def test_prefer_implementation_over_cli_dispatcher_swaps_thin_wrapper(tmp_path):
+    """The reported #250 shape: a `.command`-decorated dispatcher whose body is a single
+    call-through to the real implementation must be demoted below that implementation."""
+    swap, primary_target, alternative = _write_ledger_dispatcher_fixture(
+        tmp_path, decorated=True, calls_through=True
+    )
+    primary, alternatives = swap(primary_target, [alternative])
+    assert primary["symbol"] == "submit_claim"
+    assert primary["file"] == alternative["file"]
+    assert alternatives[0]["symbol"] == "ledger_claim"
+
+
+def test_prefer_implementation_no_swap_when_cli_primary_is_genuine_target(tmp_path):
+    """The crux guard (task #250): a `.command`-decorated `cli/main.py` function that does NOT
+    call through to the alternative (i.e. it holds real logic of its own, like `tg search`'s own
+    flag handling) must NOT be demoted -- this is what keeps "add a --flag to tg search"-style
+    tasks resolving to cli/main.py correctly."""
+    swap, primary_target, alternative = _write_ledger_dispatcher_fixture(
+        tmp_path, decorated=True, calls_through=False
+    )
+    primary, alternatives = swap(primary_target, [alternative])
+    assert primary["symbol"] == "ledger_claim"
+    assert alternatives == [alternative]
+
+
+def test_prefer_implementation_no_swap_when_no_command_decorator(tmp_path):
+    """A plain (non-Typer-command) function that happens to call another module's function is
+    not provably a dispatcher -- the decorator, not the call alone, is the gating signal."""
+    swap, primary_target, alternative = _write_ledger_dispatcher_fixture(
+        tmp_path, decorated=False, calls_through=True
+    )
+    primary, alternatives = swap(primary_target, [alternative])
+    assert primary["symbol"] == "ledger_claim"
+    assert alternatives == [alternative]
+
+
+def test_prefer_implementation_no_swap_when_alternative_lives_in_same_file(tmp_path):
+    from tensor_grep.cli.agent_capsule import _prefer_implementation_over_cli_dispatcher_helper
+
+    cli_dir = tmp_path / "src" / "tensor_grep" / "cli"
+    cli_dir.mkdir(parents=True)
+    main_path = cli_dir / "main.py"
+    main_path.write_text(
+        "@ledger_app.command('claim')\n"
+        "def ledger_claim(path):\n"
+        "    return _submit(path)\n\n"
+        "def _submit(path):\n"
+        "    return {'claim_id': path}\n",
+        encoding="utf-8",
+    )
+    # Same-file "alternative" must never be treated as a cross-module implementation candidate.
+    same_file_alternative = {
+        "file": str(main_path),
+        "symbol": "_submit",
+        "kind": "function",
+        "confidence": 0.75,
+    }
+    primary_target = {
+        "file": str(main_path),
+        "symbol": "ledger_claim",
+        "kind": "function",
+        "line": 2,
+        "confidence": 0.75,
+    }
+    primary, alternatives = _prefer_implementation_over_cli_dispatcher_helper(
+        primary_target, [same_file_alternative]
+    )
+    assert primary["symbol"] == "ledger_claim"
+    assert alternatives == [same_file_alternative]
+
+
+def test_agent_capsule_prefers_ledger_store_implementation_over_dispatcher(tmp_path):
+    """End-to-end (full capsule pipeline, not just the isolated helper): the exact #250 repro
+    shape, scoped to a synthetic project so it is corpus-size-independent."""
+    project = tmp_path / "workspace"
+    cli_dir = project / "src" / "tensor_grep" / "cli"
+    cli_dir.mkdir(parents=True)
+    (project / "pyproject.toml").write_text(
+        '[project]\nname = "sample"\nversion = "0.1.0"\n',
+        encoding="utf-8",
+    )
+    (cli_dir / "main.py").write_text(
+        "from tensor_grep.cli import ledger_store\n\n"
+        "@ledger_app.command('claim')\n"
+        "def ledger_claim(path, ttl=None):\n"
+        '    """Claim TTL in seconds."""\n'
+        "    return ledger_store.submit_claim(path, ttl_seconds=ttl)\n",
+        encoding="utf-8",
+    )
+    (cli_dir / "ledger_store.py").write_text(
+        "_DEFAULT_TTL_SECONDS = 900\n\n\n"
+        "def _configured_ttl_seconds(explicit):\n"
+        "    return explicit or _DEFAULT_TTL_SECONDS\n\n\n"
+        "def submit_claim(path, ttl_seconds=None):\n"
+        "    resolved_ttl = _configured_ttl_seconds(ttl_seconds)\n"
+        "    return {'path': path, 'ttl_seconds': resolved_ttl}\n\n\n"
+        "def release_claim(claim_id):\n"
+        "    return {'claim_id': claim_id, 'released': True}\n",
+        encoding="utf-8",
+    )
+
+    payload = _agent_payload(project, "fix the ledger claim TTL logic")
+
+    assert payload["primary_target"]["file"] == str((cli_dir / "ledger_store.py").resolve())
+    assert payload["primary_target"]["symbol"] in {"submit_claim", "_configured_ttl_seconds"}
+
+
 def test_agent_capsule_prefers_ripgrep_resolver_for_binary_resolution_query(tmp_path):
     project = tmp_path / "workspace"
     cli_src = project / "src" / "tensor_grep" / "cli"

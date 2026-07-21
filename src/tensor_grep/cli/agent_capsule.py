@@ -337,6 +337,84 @@ def _prefer_implementation_over_marker_helper(
     return implementation, demoted
 
 
+def _cli_dispatcher_implementation_candidate(
+    primary_target: dict[str, Any],
+    alternatives: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Task #250: return the alternative a thin CLI-dispatcher primary target provably calls
+    through to, or ``None`` if the primary is not a provable pass-through.
+
+    Conservative by design: a bare "primary lives under cli/" is NOT enough on its own --
+    `cli/main.py` is the CORRECT target for plenty of tasks (e.g. "add a --flag to tg search",
+    where the flag registration itself lives in that Typer command's own signature). This only
+    fires when BOTH:
+
+      1. the primary symbol is decorated as a Typer/Click command (``@x.command(...)``) -- the
+         structural signature of a dispatcher, not a guess from its name or lexical score; and
+      2. the primary symbol's OWN body (``_thin_cli_dispatcher_call_targets`` -- a bounded,
+         already-selected span, not a new scan) contains a direct call to a SPECIFIC alternative
+         candidate's symbol, defined in a DIFFERENT file -- i.e. the dispatcher hands off to that
+         exact implementation.
+
+    Real repro (task #250): ``tg prepare`` resolving "fix the ledger claim TTL logic" to
+    ``cli/main.py``'s ``ledger_claim`` (a ``@ledger_app.command("claim")`` dispatcher whose body
+    is a single call to ``ledger_store.submit_claim(...)``) instead of the real implementation in
+    ``cli/ledger_store.py``, purely because ``ledger_claim`` happens to lexically match both
+    query words at once. This helper recognizes that shape and prefers the callee.
+    """
+    file_path = str(primary_target.get("file") or "")
+    symbol_name = str(primary_target.get("symbol") or "")
+    if not file_path or not symbol_name:
+        return None
+    if str(primary_target.get("kind") or "") not in {"function", "method"}:
+        return None
+
+    candidates = [
+        alternative
+        for alternative in alternatives
+        if str(alternative.get("symbol") or "")
+        and str(alternative.get("file") or "") not in ("", file_path)
+        and str(alternative.get("kind") or "") in {"function", "method"}
+    ]
+    if not candidates:
+        return None
+
+    line = primary_target.get("line")
+    expected_line: int | None = None
+    if isinstance(line, int):
+        expected_line = line
+    elif isinstance(line, str) and line.isdigit():
+        expected_line = int(line)
+    called_names = repo_map._thin_cli_dispatcher_call_targets(
+        file_path, symbol_name, expected_line=expected_line
+    )
+    if not called_names:
+        return None
+
+    matched = [candidate for candidate in candidates if str(candidate["symbol"]) in called_names]
+    if not matched:
+        return None
+    matched.sort(key=lambda candidate: _numeric_confidence(candidate.get("confidence"), 0.0))
+    return matched[-1]
+
+
+def _prefer_implementation_over_cli_dispatcher_helper(
+    primary_target: dict[str, Any],
+    alternatives: list[dict[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Analogous to `_prefer_implementation_over_marker_helper` above (task #250): when the
+    primary target is a provable thin CLI-dispatcher call-through
+    (`_cli_dispatcher_implementation_candidate`), swap it with the specific implementation
+    alternative it calls -- the dispatcher becomes a (still-surfaced) alternative instead of
+    silently disappearing, so the same tie/ambiguity signals still apply downstream."""
+    implementation = _cli_dispatcher_implementation_candidate(primary_target, alternatives)
+    if implementation is None:
+        return primary_target, alternatives
+    demoted = [alternative for alternative in alternatives if alternative is not implementation]
+    demoted.insert(0, primary_target)
+    return implementation, demoted
+
+
 def _dedupe(values: list[str]) -> list[str]:
     return list(dict.fromkeys(values))
 
@@ -2014,10 +2092,12 @@ def _capsule_confidence_and_ask_without_render(
     scan_truncated = _capsule_scan_incomplete(payload)
     # Build target + alternatives EXACTLY as `build_agent_capsule_from_map` does (agent_capsule.py:
     # `target = _primary_target(...)` -> `_alternative_targets(...)[:4]` ->
-    # `_prefer_implementation_over_marker_helper`), so tie/marker detection sees the same inputs.
+    # `_prefer_implementation_over_marker_helper` -> `_prefer_implementation_over_cli_dispatcher_
+    # helper`), so tie/marker/dispatcher detection sees the same inputs.
     target = _primary_target(payload)
     alternatives = _alternative_targets(payload, target, limit=None)[:4]
     target, alternatives = _prefer_implementation_over_marker_helper(query, target, alternatives)
+    target, alternatives = _prefer_implementation_over_cli_dispatcher_helper(target, alternatives)
 
     edit_plan_seed = _as_dict(payload.get("edit_plan_seed"))
     validation_plan = _as_list_of_dicts(edit_plan_seed.get("validation_plan"))
@@ -2638,6 +2718,7 @@ def build_agent_capsule_from_map(
     all_alternatives = _alternative_targets(payload, target, limit=None)
     alternatives = all_alternatives[:4]
     target, alternatives = _prefer_implementation_over_marker_helper(query, target, alternatives)
+    target, alternatives = _prefer_implementation_over_cli_dispatcher_helper(target, alternatives)
     # T2: capture the RAW pre-cap seed confidence now, before any of this function's own trust/
     # tie/budget caps mutate `target["confidence"]` in place -- `_collect_capsule_call_site_evidence`
     # must gate on this seed value, not the post-cap one, or a capped target could never earn the

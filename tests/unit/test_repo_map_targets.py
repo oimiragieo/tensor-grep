@@ -194,6 +194,59 @@ def test_symbol_name_exact_match_requires_full_query_or_distinctive_token() -> N
     )
 
 
+# --- #250: thin CLI-dispatcher call-through detection -----------------------
+# (down-weighting a thin Typer/Click command wrapper vs. the implementation it calls through to;
+# see agent_capsule.py's `_cli_dispatcher_implementation_candidate`, which consumes this signal)
+
+
+def test_thin_cli_dispatcher_call_targets_detects_command_call_through(tmp_path: Path) -> None:
+    main_path = tmp_path / "src" / "tensor_grep" / "cli" / "main.py"
+    main_path.parent.mkdir(parents=True, exist_ok=True)
+    main_path.write_text(
+        "from tensor_grep.cli import ledger_store\n\n"
+        "@ledger_app.command('claim')\n"
+        "def ledger_claim(path):\n"
+        "    result = ledger_store.submit_claim(path)\n"
+        "    return result\n",
+        encoding="utf-8",
+    )
+    called = repo_map._thin_cli_dispatcher_call_targets(str(main_path), "ledger_claim")
+    assert called is not None
+    assert "submit_claim" in called
+
+
+def test_thin_cli_dispatcher_call_targets_none_without_command_decorator(tmp_path: Path) -> None:
+    # Mirrors a genuine `cli/main.py` implementation (e.g. `tg search`'s own flag handling): a
+    # plain, undecorated function that also happens to call another module's function must NOT
+    # be treated as a dispatcher -- the decorator is the load-bearing signal, not the call alone.
+    main_path = tmp_path / "src" / "tensor_grep" / "cli" / "main.py"
+    main_path.parent.mkdir(parents=True, exist_ok=True)
+    main_path.write_text(
+        "from tensor_grep.cli import ledger_store\n\n"
+        "def search(path):\n"
+        "    return ledger_store.submit_claim(path)\n",
+        encoding="utf-8",
+    )
+    assert repo_map._thin_cli_dispatcher_call_targets(str(main_path), "search") is None
+
+
+def test_thin_cli_dispatcher_call_targets_none_outside_cli_module(tmp_path: Path) -> None:
+    module_path = tmp_path / "src" / "tensor_grep" / "core" / "ledger_store.py"
+    module_path.parent.mkdir(parents=True, exist_ok=True)
+    module_path.write_text(
+        "@ledger_app.command('claim')\ndef ledger_claim(path):\n    return submit_claim(path)\n",
+        encoding="utf-8",
+    )
+    assert repo_map._thin_cli_dispatcher_call_targets(str(module_path), "ledger_claim") is None
+
+
+def test_thin_cli_dispatcher_call_targets_none_when_symbol_missing(tmp_path: Path) -> None:
+    main_path = tmp_path / "src" / "tensor_grep" / "cli" / "main.py"
+    main_path.parent.mkdir(parents=True, exist_ok=True)
+    main_path.write_text("def other():\n    return 1\n", encoding="utf-8")
+    assert repo_map._thin_cli_dispatcher_call_targets(str(main_path), "ledger_claim") is None
+
+
 def test_context_render_and_edit_plan_prefer_multi_term_symbol_over_common_word(
     tmp_path: Path,
 ) -> None:
