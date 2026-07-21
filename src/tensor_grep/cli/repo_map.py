@@ -3865,21 +3865,36 @@ def _relevant_tests_for_symbol(
             str(entry["file"]): [str(item) for item in entry["imports"]]
             for entry in repo_map.get("imports", [])
         }
+        # #691 gate NIT-1 (#222 residual, still-reachable cold path): this function already
+        # declares `deadline_monotonic`/`deadline_hit` (used by the direct_definition_tests loop
+        # below) but left THESE three whole-repo graph calls un-gated -- the identical ~n^2.2 BFS
+        # `_reverse_import_distances` bounded elsewhere in this module. `build_symbol_callers_
+        # from_map` reaches this exact block with BOTH `caller_files=` (non-None, so this branch
+        # runs) AND a real `deadline_monotonic` (the `tg callers --deadline SYMBOL` budget), so a
+        # high-fan-in symbol could still blow the whole-repo BFS/reverse-index cost this PR exists
+        # to bound. Thread the two kwargs already in scope, same per-item-inside-the-expensive-
+        # loop shape as every other call site this PR fixed.
         reverse_importers = _reverse_importers(
             all_files,
             imports_by_file,
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=deadline_hit,
             _profiling_collector=_profiling_collector,
         )
         file_distances = _reverse_import_distances(
             source_files,
             all_files,
             imports_by_file,
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=deadline_hit,
             _profiling_collector=_profiling_collector,
         )
         graph_scores = _personalized_reverse_import_pagerank(
             source_files,
             all_files,
             reverse_importers,
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=deadline_hit,
             _profiling_collector=_profiling_collector,
         )
         file_scores: dict[str, int] = {}
@@ -4007,9 +4022,19 @@ def _discover_validation_tests_for_primary_file(
         deadline_hit=deadline_hit,
     )
     if candidate_files is None:
+        # #222 residual fix: this fallback (only reached when the caller has no `rm["files"]`
+        # list to reuse -- e.g. a bare `validation_root` outside the current repo map) did a
+        # FRESH, un-deadlined filesystem walk even though this function already has `deadline_
+        # monotonic`/`deadline_hit` in scope and threads them into the `_precomputed_validation_
+        # files_for_root` branch just above. `_iter_repo_files` already supports both kwargs
+        # (the main `build_repo_map` scan uses them) -- this was simply not wired here. Profiled
+        # contributing multiple seconds to `tg agent`'s post-deadline tail (via `_build_edit_
+        # plan_seed`'s validation-plan machinery) on a 6,000-file synthetic repo.
         candidate_files = _iter_repo_files(
             validation_root,
             max_files=_VALIDATION_RUNNER_SCAN_LIMIT,
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=deadline_hit,
         )
     for current in candidate_files:
         # #639 Opus-gate nit 1: the resolve loop above can be bounded and still hand back a
@@ -7579,8 +7604,46 @@ def _reverse_import_distances(
     all_files: list[str],
     imports_by_file: dict[str, list[str]],
     *,
+    deadline_monotonic: float | None = None,
+    deadline_hit: _DeadlineBreakFlag | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, int]:
+    """#222 residual fix (cold-path assembly-tail SLA, real-workspace-scale continuation of
+    #669/#671): this BFS's inner loop re-scans ALL of ``all_files`` at EACH of up to 3 depth
+    levels, and for every candidate does O(``len(frontier)``) work inside ``_import_graph_bonus``
+    -- so cost is O(depth x len(all_files) x len(frontier)), and ``frontier`` itself grows with
+    each wave once the import graph has any real fan-in (a popular shared module -- exactly the
+    common case). Pre-fix, this function itself had NO deadline check anywhere, even though every
+    sibling stage of its DOMINANT caller, ``_build_context_pack_from_map`` (the symbol-scoring
+    loop, ``_personalized_reverse_import_pagerank``, both ``_detect_vendored_subtrees`` calls),
+    already honored the shared budget -- by far the most expensive post-deadline tail consumer on
+    the `tg agent` path. A SECOND, independently-reachable call site had the identical gap:
+    ``_relevant_tests_for_symbol``'s ``if caller_files:`` block already declared ``deadline_
+    monotonic``/``deadline_hit`` in its own signature (used by its direct_definition_tests loop)
+    but never forwarded them here -- and ``build_symbol_callers_from_map`` reaches that block with
+    BOTH a non-None ``caller_files`` and a real ``deadline_monotonic``, so ``tg callers --deadline
+    SYMBOL`` on a high-fan-in symbol (and the agent capsule's caller-evidence path, which calls
+    into the same builder) could still run this whole-repo BFS unbounded (#691 gate NIT-1). Both
+    call sites are now gated identically.
+
+    Measured (direct, non-subprocess probe, a hub-fan-in-shaped synthetic tree, 5-seed BFS):
+    0.99s at 2,000 files -> 13.6s at 6,000 (13.8x for 3x files) -> 60.3s at 12,000 (61x for 6x
+    files, ~4.4x for the last 2x step alone) -- a ~n^2.2 curve, clearly super-linear, and the
+    dominant cost of ``_build_context_pack_from_map`` at scale (60.3s of that call's 71.5s total
+    at 12,000 files = 84%).
+
+    Fix shape mirrors every other sibling stage in this module (``_personalized_reverse_import_
+    pagerank``, the symbol-scoring loop above, ``_precomputed_validation_files_for_root``,
+    ``_detect_vendored_subtrees``): a per-ITEM check inside the expensive inner loop, not just a
+    per-depth (outer-loop) check -- the outer loop only ever runs 3 times regardless of repo size,
+    so an outer-only check would not bound anything (the #669/#671 lesson: bound the loop whose
+    OWN per-iteration cost is what scales). On expiry this returns the PARTIAL ``distances``
+    already accumulated -- never discarded -- exactly like every caller already treats a missing
+    entry (``file_distances.get(x)`` / ``current_path in file_distances``) as "no graph-distance
+    signal for this file," the same honest degrade ``_personalized_reverse_import_pagerank``'s own
+    docstring documents for its ``{}`` abandon. Optional, default ``None`` -- every pre-existing
+    call site (this function has 4) is a byte-identical no-op.
+    """
     with _profiling_phase(_profiling_collector, "graph_bfs"):
         distances: dict[str, int] = {}
         frontier = list(seed_files)
@@ -7592,6 +7655,10 @@ def _reverse_import_distances(
             }
             next_frontier: list[str] = []
             for current in all_files:
+                if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+                    if deadline_hit is not None:
+                        deadline_hit.hit = True
+                    return distances
                 if current in seen:
                     continue
                 bonus = _import_graph_bonus(current, dependency_aliases, imports_by_file)
@@ -7611,6 +7678,8 @@ def _reverse_importers(
     imports_by_file: dict[str, list[str]],
     *,
     include_directory_index_aliases: bool = False,
+    deadline_monotonic: float | None = None,
+    deadline_hit: _DeadlineBreakFlag | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, set[str]]:
     # `include_directory_index_aliases` is opt-in and defaults OFF so this function stays
@@ -7622,6 +7691,15 @@ def _reverse_importers(
     # reverse-resolution (`build_file_importers_from_map`) passes True, because ONLY it runs the
     # per-candidate CONFIRM step (`_confirm_import_edges`) that turns the widened prefilter back
     # into exact edges. See `_reverse_importer_extra_aliases` for the alias rationale.
+    #
+    # #222 residual fix: this function's own direct cost is comparatively cheap and scales close
+    # to linearly (measured ~0.02s/0.08s/0.15s at 2k/6k/12k files on the same synthetic tree that
+    # exposed ``_reverse_import_distances``' quadratic cost above) -- NOT the dominant residual --
+    # but it sits in the exact same unconditional, un-gated call block in `_build_context_pack_
+    # from_map` immediately after that function. Without a check here, a deadline tripped INSIDE
+    # `_reverse_import_distances` would still let this whole second whole-repo pass run
+    # unbounded afterward. Same per-item-in-the-expensive-loop shape as every sibling; optional,
+    # default `None`, byte-identical no-op for the 3 other pre-existing call sites.
     with _profiling_phase(_profiling_collector, "graph_construction"):
         alias_to_files: dict[str, set[str]] = {}
         for current in all_files:
@@ -7635,6 +7713,10 @@ def _reverse_importers(
                     alias_to_files.setdefault(alias, set()).add(current)
         reverse: dict[str, set[str]] = {current: set() for current in all_files}
         for importer in all_files:
+            if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+                if deadline_hit is not None:
+                    deadline_hit.hit = True
+                return reverse
             for import_name in imports_by_file.get(importer, []):
                 for alias in _import_alias_candidates(import_name):
                     for current in alias_to_files.get(alias, set()):
@@ -7982,18 +8064,42 @@ def _build_context_pack_from_map(
         dependency_aliases = {
             current: _module_aliases_for_path(current) for current in dependency_seed_files
         }
+        # #222 (real-workspace-scale residual of #220/#669/#671): these two whole-repo graph
+        # passes were the ONE un-gated post-deadline tail consumer left in this function -- every
+        # other sibling stage here (the symbol-scoring loop above, pagerank below, both
+        # `_detect_vendored_subtrees` calls) already honors `deadline_monotonic`. Reusing the SAME
+        # `deadline_hit` flag this function already threads into pagerank keeps `context_pack_
+        # assembly` in the caller's `assembly_stages_skipped` list honestly attributed to "some
+        # stage in this pack build," not a new, over-precise label this signal alone can't support.
         file_distances = _reverse_import_distances(
             dependency_seed_files,
             all_files,
             imports_by_file,
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=deadline_hit,
             _profiling_collector=_profiling_collector,
         )
         reverse_importers = _reverse_importers(
             all_files,
             imports_by_file,
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=deadline_hit,
             _profiling_collector=_profiling_collector,
         )
         for current in payload["files"]:
+            # #222 residual fix (found via OLD-vs-NEW re-profile of the fix above): a THIRD
+            # unconditional whole-repo loop calling `_import_graph_bonus` directly -- cost is
+            # O(len(payload["files"]) x len(dependency_aliases)), and `dependency_aliases` is NOT
+            # always small: a query term that fuzzy-matches many files' import strings (e.g. a
+            # short/common token) can pull hundreds-to-thousands of files into `dependency_seed_
+            # files`. Measured dominating a post-fix (deadline-honoring `_reverse_import_
+            # distances`/`_reverse_importers`) re-profile at 12,000 files: 93s of a 102s total,
+            # 208M `_import_graph_bonus` genexpr evaluations across only 10,006 outer calls. Same
+            # per-item check, same shared `deadline_hit` flag as its two siblings above.
+            if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+                if deadline_hit is not None:
+                    deadline_hit.hit = True
+                break
             current_path = str(current)
             if current_path in dependency_seed_files:
                 continue
@@ -9458,7 +9564,15 @@ def _detect_validation_runners_from_root(
         deadline_hit=deadline_hit,
     )
     if all_files is None:
-        all_files = _iter_repo_files(root, max_files=_VALIDATION_RUNNER_SCAN_LIMIT)
+        # #222 residual fix -- same gap and shape as `_discover_validation_tests_for_primary_
+        # file`'s identical fallback above: thread the deadline this function already accepts
+        # into the un-deadlined walk it falls back to.
+        all_files = _iter_repo_files(
+            root,
+            max_files=_VALIDATION_RUNNER_SCAN_LIMIT,
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=deadline_hit,
+        )
     has_python = any(current.suffix == ".py" for current in all_files)
     has_python_tests = any(
         current.suffix == ".py" and _is_test_file(current) for current in all_files
@@ -10020,7 +10134,13 @@ def _has_python_validation_fallback_evidence(
         deadline_hit=deadline_hit,
     )
     if candidate_files is None:
-        candidate_files = _iter_repo_files(root, max_files=_VALIDATION_RUNNER_SCAN_LIMIT)
+        # #222 residual fix -- same gap and shape as the two identical fallbacks above.
+        candidate_files = _iter_repo_files(
+            root,
+            max_files=_VALIDATION_RUNNER_SCAN_LIMIT,
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=deadline_hit,
+        )
     return any(current.suffix == ".py" and _is_test_file(current) for current in candidate_files)
 
 
@@ -10251,9 +10371,14 @@ def _raw_validation_plan_for_tests(
             deadline_hit=deadline_hit,
         )
         if local_files is None:
+            # #222 residual fix -- same gap and shape as `_detect_validation_runners_from_root`'s
+            # identical fallback (the "has tests" branch above): thread the deadline this
+            # function already accepts into the un-deadlined walk it falls back to.
             local_files = _iter_repo_files(
                 explicit_root,
                 max_files=_VALIDATION_RUNNER_SCAN_LIMIT,
+                deadline_monotonic=deadline_monotonic,
+                deadline_hit=deadline_hit,
             )
         local_has_python = any(current.suffix == ".py" for current in local_files)
         local_has_rust = any(current.suffix in _RUST_SUFFIXES for current in local_files)
@@ -16179,8 +16304,20 @@ def build_file_importers_from_map(
     # `require('./router')` importer of `router/index.js`). The blast-radius / context callers of
     # `_reverse_importers` leave this OFF -- they feed its output into PageRank scoring with no
     # confirm step, and widening it there reorders pinned output (see the note on that function).
+    # #691 gate NIT-2 (#222 residual symmetry): `_reverse_importers` is ~linear -- not the
+    # super-linear culprit `_reverse_import_distances` was -- so this is lower severity than
+    # NIT-1, but this function's OWN confirm-edges loop just below already honors `deadline_
+    # monotonic`; leaving this call un-threaded left one un-gated whole-repo pass in an otherwise
+    # deadline-aware pipeline. Fold its own trip into the SAME `deadline_hit` local the
+    # confirm-edges loop already sets, so `tg importers --deadline` reports one honest signal
+    # regardless of which stage actually consumed the budget.
+    reverse_importers_deadline_hit = _DeadlineBreakFlag()
     reverse_map = _reverse_importers(
-        all_files, imports_by_file, include_directory_index_aliases=True
+        all_files,
+        imports_by_file,
+        include_directory_index_aliases=True,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=reverse_importers_deadline_hit,
     )
     # Proximity-tiered, not a plain lexicographic path sort (dogfood flap fix) -- see
     # _tier_reverse_importer_candidates for why a bare alphabetical order strands a target
@@ -16194,7 +16331,7 @@ def build_file_importers_from_map(
     bounded_candidates = prefiltered[:CALLER_SCAN_FILE_CEILING]
 
     edges: list[dict[str, Any]] = []
-    deadline_hit = False
+    deadline_hit = reverse_importers_deadline_hit.hit
     scanned_count = 0
     for candidate in bounded_candidates:
         if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
@@ -17166,9 +17303,20 @@ def build_symbol_blast_radius_from_map(
         )
         for current in repo_map.get("imports", [])
     }
+    # #222 (real-workspace-scale residual of #220/#669/#671): this is blast-radius' OWN direct
+    # reverse-import-graph derivation (distinct from callers_payload/impact_payload's already-
+    # deadline-aware sub-scans read above) -- it fed the same un-gated `_reverse_import_distances`/
+    # `_reverse_importers` this PR bounds in `_build_context_pack_from_map`, reached from `tg
+    # agent`'s cold path via `_collect_capsule_call_site_evidence`'s blast-radius call whenever a
+    # symbol was explicitly requested at high seed confidence. Dedicated flag (not reusing
+    # `preferred_definition_deadline_hit_blast`, which names a DIFFERENT stage) folded into the
+    # SAME partial/deadline_limit union below.
+    reverse_import_graph_deadline_hit_blast = _DeadlineBreakFlag()
     reverse_importers = _reverse_importers(
         all_files,
         imports_by_file,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=reverse_import_graph_deadline_hit_blast,
         _profiling_collector=_profiling_collector,
     )
     definition_files = [str(current["file"]) for current in definitions]
@@ -17176,12 +17324,16 @@ def build_symbol_blast_radius_from_map(
         definition_files,
         all_files,
         imports_by_file,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=reverse_import_graph_deadline_hit_blast,
         _profiling_collector=_profiling_collector,
     )
     reverse_graph_scores = _personalized_reverse_import_pagerank(
         definition_files,
         all_files,
         reverse_importers,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=reverse_import_graph_deadline_hit_blast,
         _profiling_collector=_profiling_collector,
     )
 
@@ -17444,11 +17596,14 @@ def build_symbol_blast_radius_from_map(
     # defs calls inside callers_payload/impact_payload, which already fold into THEIR OWN partial
     # fields read above); a deadline blown during THIS call's stage-1 scan must not go unreported
     # just because it isn't otherwise read by name past this point.
+    # #222: ALSO OR in this function's OWN reverse-import-graph derivation (`reverse_importers`/
+    # `dependency_distances`/`reverse_graph_scores` above) -- previously un-gated and unreported.
     if (
         callers_payload.get("partial")
         or preferred_definition_deadline_hit_blast.hit
         or impact_payload.get("partial")
         or defs_payload.get("partial")
+        or reverse_import_graph_deadline_hit_blast.hit
     ):
         payload["partial"] = True
         payload["graph_completeness"] = "partial"
@@ -17461,6 +17616,8 @@ def build_symbol_blast_radius_from_map(
             payload["deadline_limit"] = dict(impact_payload["deadline_limit"])
         elif isinstance(defs_payload.get("deadline_limit"), dict):
             payload["deadline_limit"] = dict(defs_payload["deadline_limit"])
+        elif reverse_import_graph_deadline_hit_blast.hit:
+            payload["deadline_limit"] = {"deadline_exceeded": True}
     if callers_payload.get("result_incomplete"):
         # backlog #1 chokepoint: the direct-caller scan's internal ceiling (CALLER_SCAN_FILE_CEILING)
         # dropped files the map covers -> the blast radius built on top of it is not exhaustive
