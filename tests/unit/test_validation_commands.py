@@ -78,6 +78,12 @@ def test_validation_commands_without_precomputed_paths_uses_cold_file_walk(
         root: Path,
         *,
         max_files: int | None = None,
+        # #222 residual fix: `_raw_validation_plan_for_tests`'s "no tests" fallback now threads
+        # `deadline_monotonic`/`deadline_hit` into this call (previously omitted entirely) -- the
+        # stub must accept them like the real `_iter_repo_files` does, even though this test's own
+        # assertions are about `root`/`max_files`, not deadline behavior.
+        deadline_monotonic: float | None = None,
+        deadline_hit=None,
         _profiling_collector=None,
     ) -> list[Path]:
         calls.append((Path(root).resolve(), max_files))
