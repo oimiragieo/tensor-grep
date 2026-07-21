@@ -1,6 +1,41 @@
 # CHANGELOG
 
 
+## v1.90.0 (2026-07-21)
+
+### Features
+
+- **orient/agent**: Proactively surface suggested_scope on a detected multi-project workspace root
+  ([#684](https://github.com/oimiragieo/tensor-grep/pull/684),
+  [`c1b2989`](https://github.com/oimiragieo/tensor-grep/commit/c1b29892bb81fc4b370592ada3f4928c4445a549))
+
+CEO #2 auto-narrow (advisory): an agent pointed at a mega-repo root (e.g. a folder of several
+  independently-cloned projects) had no signal that complete results only live a few directories
+  down -- it had to already know that tribal knowledge. Add _detect_workspace_root
+  (orient_capsule.py, sibling of _detect_vendored_subtrees): a cheap, single-level detector that
+  reuses the SAME closed-vocabulary project-marker set and child-count thresholds already gating `tg
+  search`'s unbounded-workspace-root refusal (io/directory_scanner.py's
+  BROAD_WORKSPACE_PROJECT_MARKERS / _CHILD_THRESHOLD / _MARKED_ROOT_CHILD_THRESHOLD, via
+  cli/main.py's _workspace_project_child_names) rather than a second, independently hand-rolled
+  manifest/.git scan.
+
+Wire it into both `tg orient` and `tg agent` as a SECOND, independent trigger for the existing
+  suggested_scope centrality rollup (_suggested_scope_from_map) -- proactively, even absent any
+  scan-limit truncation or confirmation tie. Stamps an additive workspace_root_detected: true flag.
+
+Purely additive and advisory: the full, unscoped result is always returned unchanged (never a
+  re-scan, never a changed exit code); both fields are additive-conditional (present only when
+  true/non-null), so a single-project repo's capsule -- including this very repo -- stays
+  byte-identical to before this change. The full auto-apply (silently re-scanning a narrowed
+  sub-scope and answering as if the caller had asked for it) would break the honesty contract and is
+  a deliberately deferred, bigger project.
+
+Docs: documents the new proactive trigger in docs/CONTRACTS.md alongside the existing
+  scan-limit-truncation and confirmation-tie triggers.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.89.0 (2026-07-21)
 
 ### Features
