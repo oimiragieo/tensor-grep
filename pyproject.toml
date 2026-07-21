@@ -42,6 +42,7 @@ markers = [
   "characterization: ripgrep parity tests",
   "snapshot: output format regression tests",
   "performance: performance benchmarks",
+  "eval: agent-accuracy / capsule-ranking golden-set gate (tests/eval/, opt-in via -m eval)",
 ]
 addopts = [
   "--import-mode=importlib",

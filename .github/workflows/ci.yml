@@ -404,7 +404,13 @@ jobs:
           throw "Dependency install failed after 5 attempts."
           
       - name: Run Pytest
-        run: uv run pytest tests -v --tb=short
+        # `eval` (tests/eval/) is the agent-accuracy golden-set gate: 15 real `tg prepare`
+        # subprocess calls against this repo's own ranking pipeline. Deliberately excluded from
+        # this blanket run -- collection sorts tests/eval/ ahead of tests/unit/, and pyproject's
+        # `-x` fail-fast means a single failure here would abort before any unit test runs,
+        # exactly the flaky-e2e-masks-unit-tests trap already hit once on tests/e2e/. Run it
+        # explicitly via `pytest tests/eval -m eval -v -s`.
+        run: uv run pytest tests -v --tb=short -m "not eval"
 
   test-rust-core:
     name: test-rust-core (${{ matrix.os }}, ${{ matrix.rust_channel }})
