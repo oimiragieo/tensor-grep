@@ -1,6 +1,115 @@
 # CHANGELOG
 
 
+## v1.91.0 (2026-07-21)
+
+### Documentation
+
+- Pip/uvx installs the Python front door (~200ms floor); tg upgrade gets the native one (rg-parity
+  cold search) ([#686](https://github.com/oimiragieo/tensor-grep/pull/686),
+  [`b10a5fe`](https://github.com/oimiragieo/tensor-grep/commit/b10a5fe6c87bf3beada0d69cbbdb1429609e3f03))
+
+The native front door (curl|bash / PowerShell / npm) already ships on the stable channel
+  (scripts/install.sh:363-376, install.ps1, npm) and is close to raw rg cold-start speed, but the
+  README's headline install command is `pip install tensor-grep`, which silently pays a
+  Python-interpreter startup tax (roughly 150-250ms, tracked in issue #48) on every cold search.
+  Positioning elsewhere (CONTRACTS.md:73/:86) already says stable installs should prefer the native
+  binary and that rg stays the cold exact-text baseline; the install docs did not say so.
+
+Add a short, additive note to README.md's Install section and docs/installation.md's pip/uv option
+  explaining the tradeoff and pointing pip/uvx users at the install script or npm for the native
+  front door. Does not claim tg beats rg on cold search (rg stays the fastest baseline either way).
+
+Verified against the real code before writing (not just the scoping premise): `tg upgrade` only
+  refreshes an EXISTING managed native front door at ~/.tensor-grep/bin/tg
+  (_managed_native_frontdoor_path() returns None, and _refresh_managed_native_frontdoor
+  early-returns, when no native front door is present yet) -- it does not bootstrap one from a bare
+  pip install. The note is worded to say `tg upgrade` "keeps an existing native front door in sync",
+  not that it installs one from scratch; the install script / npm are the actual bootstrap path.
+
+Docs-only change; no .py files touched.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+### Features
+
+- **find**: Add tg install-dense, one-shot packaged dense semantic (CEO#7)
+  ([#687](https://github.com/oimiragieo/tensor-grep/pull/687),
+  [`2d116f4`](https://github.com/oimiragieo/tensor-grep/commit/2d116f4639408b1811110de1ff0068fc84edc5df))
+
+tg find / tg search --semantic silently stay BM25-only until a user manually installs the semantic
+  extra and fetches the dense model. Add tg install-dense: installs tensor-grep[semantic] (model2vec
+  + numpy, torch-free) via the same uv-tool -> uv pip -> pip cascade tg upgrade uses (hoisted
+  _upgrade_attempts / _run_upgrade to module level so both commands share one implementation), then
+  runs the already-hardened, checksum-pinned, deadline-bounded retrieval_dense.fetch_dense_model().
+  Reports per-step JSON or text status; fail-closed on any pip/network/checksum failure, never a
+  partial model.
+
+Also: tg find's Gate-B degrade message now names tg install-dense instead of the raw python -m
+  ...--fetch hint (main.py-side rewrite only; the pinned library exception message is untouched),
+  and tg doctor --json reports dense_model.fetched/dir.
+
+Registered at all 4 sites: commands.py KNOWN_COMMANDS, rust_core/src/main.rs (InstallDense enum
+  variant + dispatch arm, mirrors RouteTest), tests/e2e/ test_routing_parity.py
+  PUBLIC_TOP_LEVEL_COMMANDS, main.py @app.command.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+### Testing
+
+- Pin calibrate stdout-JSON-only contract + de-flake checkpoint hot-path + warm-daemon
+  deadline-route coverage ([#685](https://github.com/oimiragieo/tensor-grep/pull/685),
+  [`ab3cb34`](https://github.com/oimiragieo/tensor-grep/commit/ab3cb34528a4b8974142288aedf081bd200847f5))
+
+Post-wave-1 nit bundle, three independent low-risk hardening items.
+
+1. calibrate --json missing-binary stdout/stderr contract (#678 gate nit). Verified against the real
+  code (git blame, an isolated subprocess-level stream probe, and the installed/uv.lock-pinned Click
+  8.4.2 testing semantics) before touching anything: the human remediation text has routed to stderr
+  via typer.echo(..., err=True) since commit a4b3c05c (2026-07-14), six days before #678, and the
+  in-code comment already correctly calls it a "stderr message" -- so under --json, stdout already
+  carries only the {"calibration_status": "native_binary_unavailable"} line. No production bug
+  exists on current origin/main, so no src/ change is made. What was missing was a test that PINS
+  that stream-separation contract using the real, separate result.stdout/result.stderr (the existing
+  test only asserted against Click's merged result.output, which cannot distinguish which stream
+  text landed on and so would not catch a future regression that reintroduced stdout pollution).
+  Strengthens test_calibrate_json_flag_missing_binary_emits_skip_signal accordingly.
+
+2. De-flake test_create_checkpoint_uncontended_hot_path_unaffected (#244 release-blocker). The
+  absolute wall-clock ceiling (elapsed < 4.0) flaked at 4.968s on a loaded Windows CI runner.
+  Mirrors the sibling test_open_session_uncontended_hot_path_unaffected fix immediately above it:
+  measure create_checkpoint's real pre-lock cost (the _detect_checkpoint_scope git-subprocess-spawn
+  probe + _snapshot_entries walk) as a same-run baseline, then assert elapsed < max(baseline * 3.0,
+  4.0) instead of a flat number. A loaded runner now inflates the baseline and the real call
+  together (correlated), instead of tripping an OS-load-fragile constant. Stays bidirectional: a
+  regression that widens the locked critical section to wrap expensive work (the class this test
+  guards against per its own docstring) inflates elapsed without inflating the baseline, so the
+  ratio -- not just the flat floor -- would still catch it. Verified stable across 10 consecutive
+  local runs.
+
+3. Warm-daemon route coverage for callers/blast-radius --deadline (#245, gate N2 on #680). Also
+  verified against the real code before writing: callers()/blast_radius() in main.py only attempt
+  the warm-daemon route "if deadline is None else None", and session_daemon.py:61-66 documents the
+  same fact from the daemon side (issue #390, still open) -- a real warm/daemon-served response is
+  therefore NEVER itself deadline-truncated; that combination is unreachable by design, not an
+  untested gap. The closest bounded, genuinely valuable coverage: prove the safety gate itself holds
+  even with a REAL live, reachable warm daemon standing by (not just "cold because no daemon
+  exists", which is all Fixture C in test_graph_completeness_oracle.py can exercise, since the whole
+  file's autouse fixture forces TG_SESSION_DAEMON_AUTOSTART=0). Adds two new tests using the real
+  in-process _ThreadedSessionDaemon harness (test_symbol_daemon_autostart.py) plus the same
+  deterministic deadline-expiry clock injection Fixture C already uses: confirm the daemon really
+  would serve an undeadlined request warm, then confirm a --deadline request never reaches it and
+  still gets the correct exit-2/partial three-state contract via the forced cold fallback.
+
+Verification: targeted suites green (calibrate x5, index-lock-concurrency x13,
+  graph-completeness-oracle x14, symbol-daemon-autostart + orient-agent-daemon + cli_modes full
+  files). One pre-existing unrelated GPU-inventory test failure confirmed via git stash to already
+  fail identically on unmodified origin/main. ruff check / ruff format --preview / mypy
+  src/tensor_grep all clean.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.90.0 (2026-07-21)
 
 ### Features
