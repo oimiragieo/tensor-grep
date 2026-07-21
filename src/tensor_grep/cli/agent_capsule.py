@@ -1899,6 +1899,205 @@ def _build_snippets(
     return snippets, omitted, used_tokens
 
 
+# CodeAnchor steal (arXiv 2606.26979, "How Much Static Structure Do Code Agents Need?"): render a
+# lightweight caller/fan-in fact as an INLINE plain-text comment near the primary target's
+# definition, inside the rendered source excerpt itself, rather than requiring a separate tool
+# call -- the paper's own finding is that this ambient placement (not a structured sibling field)
+# is what drove +3.4pp Pass@1 and halved run-to-run variance, and it directly targets the
+# cross-paper "agents skip the graph tool 58% of the time" adoption gap (CodeCompass 2602.20048).
+#
+# SCOPE (verify-plan-against-code finding): this capsule already collects verified call-site
+# evidence for the PRIMARY target ONLY (`_collect_capsule_call_site_evidence[_from_map]`, gated on
+# confidence>=0.75 + an explicitly-requested symbol) via a real blast-radius scan the capsule pays
+# for regardless of this feature. Annotating that one already-evidenced snippet is therefore a pure
+# RENDERING-layer change -- no new graph computation. Annotating every OTHER rendered snippet would
+# need a fresh per-symbol blast-radius scan this function does not already run, which is exactly
+# the "big new per-symbol computation" this feature deliberately does NOT attempt; scope stays
+# primary-target-only rather than forcing that cost.
+_CAPSULE_INLINE_CALLER_ANNOTATION_ENV = "TG_CAPSULE_INLINE_CALLERS"
+_CAPSULE_INLINE_CALLER_ANNOTATION_TOP_LIMIT = 2
+
+
+def _capsule_inline_caller_annotation_enabled() -> bool:
+    """Opt-in flag (default OFF). Same polarity as `_capsule_outbound_dependencies_enabled`, for a
+    stronger reason than DAR's "pending a measured golden-set win": this feature MUTATES an
+    EXISTING field's byte content (`snippets[i]["source"]`, `["line_map"]`, `["token_estimate"]`)
+    rather than only adding new sibling keys, so a default-on flip would silently change output
+    shape for every existing consumer/test on this repo. Enable via `TG_CAPSULE_INLINE_CALLERS` in
+    {"1", "true", "yes", "on"} (case-insensitive).
+    """
+    raw = os.environ.get(_CAPSULE_INLINE_CALLER_ANNOTATION_ENV)
+    if raw is None:
+        return False
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _inline_annotation_comment_prefix(file_path: str) -> str | None:
+    """Line-comment token for the primary snippet's language, or None to skip annotation entirely
+    on a language this renderer does not confidently recognize -- fail-closed: never guess wrong on
+    comment syntax and risk corrupting the excerpt's copy-usability. Deliberately mirrors the exact
+    suffix sets `repo_map._render_source_block`/`repo_map._is_comment_line` already use for
+    comment-aware rendering, so "languages this feature understands" cannot drift from "languages
+    the renderer already strips comments for" into a second, independently-maintained list.
+    """
+    suffix = Path(file_path).suffix
+    if suffix == ".py":
+        return "#"
+    if suffix in repo_map._JS_TS_SUFFIXES or suffix in repo_map._RUST_SUFFIXES:
+        return "//"
+    return None
+
+
+def _top_caller_symbol_names(
+    rm: dict[str, Any],
+    related_call_sites: list[dict[str, Any]],
+    *,
+    limit: int,
+) -> list[str]:
+    """Resolve each call site's ENCLOSING function/method name via the already-built `rm`'s
+    per-file symbol table (`repo_map._enclosing_symbol_for_line` -- the same helper
+    `_related_spans_from_blast_radius` already uses for the edit-plan-seed's related spans), an
+    in-memory lookup against data the capsule already holds, not a new file scan. Never fabricates
+    a name: a call site whose enclosing symbol cannot be resolved (a module-level call, or a
+    language gap) is silently skipped rather than guessed. Deduplicated, order-preserving, capped
+    at `limit` so the rendered fact stays a single short line.
+    """
+    names: list[str] = []
+    seen: set[str] = set()
+    for site in related_call_sites:
+        if len(names) >= limit:
+            break
+        file_path = str(site.get("file") or "")
+        if not file_path:
+            continue
+        try:
+            line = int(site.get("line") or 0)
+        except (TypeError, ValueError):
+            continue
+        if line <= 0:
+            continue
+        enclosing = repo_map._enclosing_symbol_for_line(rm, file_path, line)
+        if not enclosing:
+            continue
+        name = str(enclosing.get("name") or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+    return names
+
+
+def _build_inline_caller_annotation_text(
+    comment_prefix: str,
+    call_site_evidence: dict[str, Any],
+    top_names: list[str],
+) -> str | None:
+    """Compact caller/fan-in fact, ~1 line: an INVERSE-only (who-calls-me) fact -- per the
+    CodeAnchor paper's own finding that forward-edge annotations add tokens without the
+    reliability win, this deliberately never renders callees/imports, only callers. Returns None
+    when `call_site_evidence` was never actually collected (status "disabled"/"skipped"/"error") --
+    honest absence, never a fabricated "callers=0" for a symbol nobody looked up.
+    """
+    status = call_site_evidence.get("status")
+    if status not in ("collected", "collected_no_call_sites"):
+        return None
+    returned = int(call_site_evidence.get("returned_call_sites", 0) or 0)
+    omitted = int(call_site_evidence.get("omitted_call_sites", 0) or 0)
+    truncated = omitted > 0 or bool(call_site_evidence.get("partial"))
+    count_text = f"{returned}+" if truncated else str(returned)
+    if top_names:
+        fact = f"callers={count_text} (top: {', '.join(top_names)})"
+    else:
+        fact = f"callers={count_text}"
+    return f"{comment_prefix} tg: {fact}"
+
+
+def _apply_inline_caller_annotation(
+    snippets: list[dict[str, Any]],
+    target: dict[str, Any],
+    call_site_evidence: dict[str, Any],
+    related_call_sites: list[dict[str, Any]],
+    rm: dict[str, Any],
+    *,
+    max_tokens: int | None,
+    used_tokens: int,
+) -> None:
+    """Prepend a one-line inline structural annotation to the PRIMARY target's rendered snippet --
+    the definition an agent is actually about to edit, which is the one snippet this capsule
+    already has verified call-site evidence for. Mutates the matching snippet dict in place; a
+    no-op (returns without touching anything) whenever the feature is off, the data was never
+    collected, the language is unrecognized, or the annotation would blow the caller's own
+    `max_tokens` ceiling.
+
+    ORDERING CONTRACT (enforced by the caller in `build_agent_capsule_from_map`, not here): this
+    must run AFTER `_collect_outbound_dependencies` (DAR). DAR resolves callee line numbers as
+    `start_line + offset` into the primary snippet's OWN rendered source
+    (`_outbound_dependency_call_tokens`); prepending a line to that source before DAR runs would
+    shift every subsequent line off by one in DAR's own arithmetic. Running last avoids that
+    entirely -- DAR always sees the unmodified snippet.
+
+    `line_map` uses the SAME "unknown/synthetic line -> None" convention `_expanded_line_map`
+    already emits for a truncated/unmapped rendered line (not a new shape), so a consumer that
+    already tolerates `line: None` there tolerates it here too.
+    """
+    if not snippets or not _capsule_inline_caller_annotation_enabled():
+        return
+    target_file = str(target.get("file") or "")
+    target_symbol = str(target.get("symbol") or "")
+    if not target_file or not target_symbol:
+        return
+    primary_snippet = next(
+        (
+            snippet
+            for snippet in snippets
+            if str(snippet.get("file") or "") == target_file
+            and str(snippet.get("symbol") or "") == target_symbol
+        ),
+        None,
+    )
+    if primary_snippet is None:
+        return
+    comment_prefix = _inline_annotation_comment_prefix(target_file)
+    if comment_prefix is None:
+        return
+    top_names = _top_caller_symbol_names(
+        rm, related_call_sites, limit=_CAPSULE_INLINE_CALLER_ANNOTATION_TOP_LIMIT
+    )
+    annotation_line = _build_inline_caller_annotation_text(
+        comment_prefix, call_site_evidence, top_names
+    )
+    if annotation_line is None:
+        return
+    annotation_token_estimate = repo_map._estimate_tokens(annotation_line)
+    if max_tokens is not None and used_tokens + annotation_token_estimate > max_tokens:
+        # Fail closed on the token budget: never silently exceed a caller-requested --max-tokens
+        # ceiling just to squeeze in an annotation. The snippet still renders, unmodified.
+        return
+    original_source = str(primary_snippet.get("source") or "")
+    primary_snippet["source"] = (
+        f"{annotation_line}\n{original_source}" if original_source else annotation_line
+    )
+    raw_line_map = primary_snippet.get("line_map")
+    expanded_line_map = raw_line_map if isinstance(raw_line_map, list) else []
+    primary_snippet["line_map"] = [
+        {"line": None, "text": annotation_line},
+        *expanded_line_map,
+    ]
+    primary_snippet["token_estimate"] = (
+        int(primary_snippet.get("token_estimate", 0) or 0) + annotation_token_estimate
+    )
+    primary_snippet["inline_structural_annotation"] = {
+        "applied": True,
+        "kind": "callers",
+        "callers_returned": int(call_site_evidence.get("returned_call_sites", 0) or 0),
+        "callers_truncated": bool(
+            int(call_site_evidence.get("omitted_call_sites", 0) or 0) > 0
+            or call_site_evidence.get("partial")
+        ),
+        "top_callers": top_names,
+    }
+
+
 def _follow_up_reads(
     payload: dict[str, Any],
     omitted_sources: list[dict[str, Any]],
@@ -3125,6 +3324,18 @@ def build_agent_capsule_from_map(
         preview_token_budget=outbound_dependency_preview_budget,
         deadline_monotonic=deadline_monotonic,
         deadline_hit=outbound_dependencies_deadline_hit,
+    )
+    # CodeAnchor inline structural annotation (arXiv 2606.26979): MUST run after DAR above, not
+    # before -- see `_apply_inline_caller_annotation`'s ordering-contract docstring. Mutates the
+    # primary snippet only, and only when `TG_CAPSULE_INLINE_CALLERS` opts in.
+    _apply_inline_caller_annotation(
+        snippets,
+        target,
+        call_site_evidence,
+        related_call_sites,
+        rm,
+        max_tokens=max_tokens,
+        used_tokens=used_tokens,
     )
     rollback_ref = _command_ref(["tg", "checkpoint", "create", resolved_path])
     route_rationale: list[dict[str, Any]] = [
