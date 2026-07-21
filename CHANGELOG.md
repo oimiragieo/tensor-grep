@@ -1,6 +1,143 @@
 # CHANGELOG
 
 
+## v1.91.2 (2026-07-21)
+
+### Bug Fixes
+
+- **agent-capsule**: Down-weight thin CLI-dispatcher wrappers in primary-target ranking (#250)
+  ([#693](https://github.com/oimiragieo/tensor-grep/pull/693),
+  [`09b5b5d`](https://github.com/oimiragieo/tensor-grep/commit/09b5b5da794a5935141b3ba45b891026002657fa))
+
+* fix(agent-capsule): down-weight thin CLI-dispatcher wrappers in primary-target ranking (#250)
+
+`tg prepare src/tensor_grep "fix the ledger claim TTL logic"` resolved primary_target to
+  cli/main.py's ledger_claim Typer command (a one-line call-through to ledger_store.submit_claim)
+  instead of cli/ledger_store.py, which owns the actual TTL logic
+  (_DEFAULT_TTL_SECONDS/_TTL_ENV/_configured_ttl_seconds, ClaimRecord.ttl_seconds). Root cause:
+  ledger_claim's name is a literal concatenation of the query's two substantive words ("ledger" +
+  "claim"), so repo_map._score_symbol's covered_query_match bonus (+2 embedded in the score, +24 at
+  the file-score level, plus top-rank-bucket precedence in _symbol_rank_key) let the dispatcher
+  outrank the real implementation even though ledger_store.py scored higher on every other signal.
+
+Fix: a conservative, structural down-weight applied only after ranking, not a change
+
+to the scorer itself. `repo_map._thin_cli_dispatcher_call_targets` (repo_map.py:6938, gated by
+  `_is_cli_command_module_path` at repo_map.py:6921) re-uses the already-cached AST parse of the
+  primary target's own file to check whether the symbol is (a) decorated as a Typer/Click command
+  (`.command(...)`) and (b) whether its body calls a specific alternative candidate directly. Only
+  when BOTH hold does `agent_capsule._prefer_implementation_over_cli_dispatcher_helper`
+  (agent_capsule.py:401, via `_cli_dispatcher_implementation_candidate` at agent_capsule.py:340)
+  swap it with that alternative -- mirroring the existing
+  `_prefer_implementation_over_marker_helper` pattern. The dispatcher is demoted to an alternative,
+  never dropped, so tie/ambiguity signals still apply downstream.
+
+Wired into both capsule-shaping call sites (agent_capsule.py:2100, :2721) right after the
+  marker-helper swap, so `tg prepare`, `tg agent`, and `tg edit-plan` all see the fix identically.
+
+Validation (tests/eval/test_agent_accuracy.py, the agent-accuracy gate): BEFORE (original 15-task
+  golden set): 15/15 hits. AFTER (same 15 tasks + fix applied): 15/15 hits, byte-identical
+  primary_target file per task -- including "add a new --flag to tg search" still resolving to
+  cli/bootstrap.py, proving the fix does not touch genuine cli/main.py targets. AFTER (16-task set,
+  "fix the ledger claim TTL logic" added back): 16/16 hits -- the previously-dropped task now
+  resolves to cli/ledger_store.py. Floor bumped 12 -> 13 to preserve the documented "3 tasks of
+  slack" policy against the new 16-task baseline.
+
+New unit tests: 4 in tests/unit/test_repo_map_targets.py (the AST-level detector: the
+  command-call-through, no-decorator, outside-cli, symbol-missing cases) + 6 in
+  tests/unit/test_agent_capsule_hardcases.py (the swap helper, including the crux guard -- a
+  `.command`-decorated cli/main.py primary that does NOT call through must NOT be demoted -- plus a
+  full synthetic end-to-end capsule repro).
+
+Verification run in this same session: ruff check, ruff format --check --preview, mypy
+  src/tensor_grep, the new unit tests, tests/integration/test_prepare_oneshot_cuj.py, and the eval
+  gate all green. A broader regression sweep (~900 tests across
+  agent_capsule/repo_map/codemap/edit_plan/context/cli_modes) showed 4 pre-existing failures in
+  test_cli_modes.py (terminal-width-dependent --help rendering, unrelated to this change) that
+  reproduce identically on origin/main with this diff stashed out.
+
+LOAD-BEARING: primary_target ranking is core capsule value. This needs an independent Opus gate
+  before merge (does it regress the golden set or shift other primary_targets?) per this repo's
+  change-control discipline -- not self-gated here.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* fix(agent-capsule): add structural thinness gate to CLI-dispatcher down-weight (#693 gate NIT-1)
+
+The independent Opus gate on #693 found `_thin_cli_dispatcher_call_targets` had NO actual thinness
+  check despite its name and the "only fires on a thin wrapper" docstring claim: `search_command`
+  (cli/main.py:6648, the real ~1500-line implementation of `tg search` -- 89 top-level body
+  statements, 104 distinct callee names, docstring excluded from both counts) is ALSO a
+  `.command`-decorated function, and would be treated identically to a genuine one-line passthrough
+  if any one of its many callees ever surfaced as a top-4 alternative for some future query. The
+  swap's safety was an EMERGENT property of which names happen to rank as alternatives today, not a
+  real structural guarantee.
+
+Fix: two calibrated thresholds in repo_map.py, both checked in `_thin_cli_dispatcher_call_targets`
+  right after the existing `.command` decorator check --
+
+- `_THIN_DISPATCHER_MAX_BODY_STATEMENTS = 20` -- top-level body statements, docstring excluded (a
+  leading docstring is boilerplate that scales with how well-documented a command is, not with its
+  implementation size). - `_THIN_DISPATCHER_MAX_CALL_TARGETS = 20` -- distinct callee names (the
+  same `called_names` set the function already builds for the call-through check; no extra AST walk
+  needed).
+
+Calibrated against the two known genuine dispatcher shapes in this repo -- `ledger_claim` (10 / 14)
+  and `ledger_release` (6 / 10) -- versus the one known fat command, `search_command` (89 / 104).
+  Both real dispatchers sit at or under 15 on each axis; search_command sits 6-10x over. 20 leaves
+  ~2x headroom above the largest observed genuine dispatcher on each axis while staying far below
+  any real implementation function measured in this repo. Exceeding either threshold returns None,
+  same as failing the decorator check -- the caller
+  (`agent_capsule._cli_dispatcher_implementation_candidate`) then leaves the primary target alone.
+
+Docstrings corrected in both files (`repo_map.py:_thin_cli_dispatcher_call_targets`,
+  `agent_capsule.py:_cli_dispatcher_implementation_candidate`) to state the TRUE precondition --
+  decorator AND structural thinness AND call-through, not just the first and third.
+
+New regression tests (the exact fragility the gate flagged): a synthetic 50-statement /
+  50-distinct-callee `.command` function, where one callee (`helper_17`) deliberately matches an
+  alternative candidate's symbol name -- -
+  `test_thin_cli_dispatcher_call_targets_none_for_fat_command` (repo_map-level: the detector itself
+  returns None) -
+  `test_thin_cli_dispatcher_call_targets_none_for_many_distinct_callees_even_if_few_statements` (the
+  call-target-count axis alone also rejects, independent of statement count) -
+  `test_prefer_implementation_no_swap_for_fat_command_even_if_a_callee_matches`
+  (agent_capsule-level, end-to-end: without the gate this synthetic command WOULD swap to
+  `helper_17`; with it, `search_command` correctly stays primary) All three were verified to FAIL
+  when the two threshold checks were temporarily disabled, confirming they are not vacuous.
+
+Delta-verification (tests/eval/test_agent_accuracy.py, the accuracy gate): 16/16 -- byte-identical
+  to the pre-NIT-1 fix. The genuinely thin `ledger_claim` dispatcher still passes both new
+  thresholds (10 statements / 14 callees, both well under 20) and still triggers the swap -- "fix
+  the ledger claim TTL logic" still resolves to cli/ledger_store.py. "add a new --flag to tg search"
+  still resolves to cli/bootstrap.py, unaffected.
+
+Verification: ruff check, ruff format --check --preview, mypy src/tensor_grep (81 files), all new +
+  existing unit tests (45/45 in the two touched test files),
+  tests/integration/test_prepare_oneshot_cuj.py (9/9), a 380-test regression sweep across
+  agent_capsule/repo_map/codemap/edit_plan/context, and the eval gate -- all green.
+
+NIT-2 (accuracy-gate floor slack) intentionally left untouched, tracked separately.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+### Testing
+
+- **search**: Many-fixed-pattern dedup guard at scale (+ root-cause finding of the latent native AC
+  dedup over-count) ([#694](https://github.com/oimiragieo/tensor-grep/pull/694),
+  [`08ec9a4`](https://github.com/oimiragieo/tensor-grep/commit/08ec9a4cefa41f5e45816e73886d8245c6880530))
+
+Adds test_many_fixed_patterns_dedupe_overlapping_lines_at_scale, characterizing the
+  `_combine_multi_patterns` rg-parity dedup contract at a realistic 100-pattern scale (the existing
+  tests only cover N=2). This is a safety net for the eventual perf fix: the already-shipped native
+  AhoCorasick multi-pattern path (native_search.rs::run_native_fixed_multi_pattern_search) is faster
+  but has a known, independently-reproduced dedup bug (one match row per line-times-matching-pattern
+  instead of one per line) -- exactly why bootstrap.py/cli/main.py both deliberately refuse to
+  delegate -e/-f searches to it today. No runtime behavior changes.
+
+
 ## v1.91.1 (2026-07-21)
 
 ### Documentation
