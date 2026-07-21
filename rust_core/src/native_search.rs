@@ -1580,10 +1580,13 @@ fn search_file_chunk_parallel(
     // The per-chunk searches below run on raw `&[u8]` slices via `search_slice` with a bare
     // `Lossy` sink (not wrapped in `BinaryAwareSink`), so any `binary_data` callback a per-chunk
     // `Searcher` fires internally never reaches this function. Detect binary content over the
-    // whole file up front -- mirroring the serial path's rule exactly, see `detect_binary_prefix`
-    // -- so a binary file above the chunk-parallel threshold is flagged/skipped like the serial
-    // path instead of falling through to the parallel scan and emitting raw byte "matches"
-    // (mojibake).
+    // whole file up front -- mirroring the serial path's GUARANTEED detection floor (see
+    // `detect_binary_prefix`; grep_searcher's mmap `BinaryDetection::quit` also opportunistically
+    // scans bytes inside matched/context lines beyond that floor, which this check does not
+    // reproduce -- a conservative gap, since it can only under-flag relative to the serial path,
+    // never over-flag) -- so a binary file above the chunk-parallel threshold is flagged/skipped
+    // like the serial path instead of falling through to the parallel scan and emitting raw byte
+    // "matches" (mojibake).
     if let Some(binary_byte_offset) = detect_binary_prefix(config, &mmap) {
         let binary_match_detected = binary_file_matches_pattern(matcher, path, true)?;
         return Ok(FileSearchResult {
@@ -2311,12 +2314,15 @@ mod tests {
     /// Same shape as `multi_chunk_text_fixture`, but with a run of NUL bytes spliced into the
     /// middle -- binary content, still comfortably within the 64 KiB guaranteed-detection prefix
     /// (`BINARY_DETECTION_PREFIX_BYTES`) so both the serial and chunk-parallel paths are expected
-    /// to detect it. Deliberately avoids the word "payload" so the pattern used in these tests
-    /// does not literally occur in the fixture text.
-    fn multi_chunk_binary_fixture() -> Vec<u8> {
+    /// to detect it. Embeds `needle` in the surrounding text (same as `multi_chunk_text_fixture`)
+    /// on purpose: if a regression silently stops flagging this content as binary, the pattern
+    /// still lexically occurs on every line, so the old hardcoded `binary_detected: false` code
+    /// path would report 1200 spurious mojibake matches here -- not a vacuous `match_count == 0`
+    /// that would hold either way regardless of whether detection actually ran.
+    fn multi_chunk_binary_fixture(needle: &str) -> Vec<u8> {
         let mut content = Vec::new();
         for i in 0..1200 {
-            content.extend_from_slice(format!("filler line {i:05} of sample data\n").as_bytes());
+            content.extend_from_slice(format!("filler line {i:05} of {needle} data\n").as_bytes());
         }
         let splice_at = content.len() / 2;
         content.splice(splice_at..splice_at, std::iter::repeat(0u8).take(16));
@@ -2341,7 +2347,7 @@ mod tests {
     #[test]
     fn search_file_chunk_parallel_flags_binary_content_like_the_serial_path() {
         let dir = tempfile::tempdir().unwrap();
-        let content = multi_chunk_binary_fixture();
+        let content = multi_chunk_binary_fixture("payload");
         let path = write_fixture(dir.path(), "binary.dat", &content);
         let config = force_multi_chunk_config("payload", false);
         let matcher = build_matcher(&config).unwrap();
@@ -2378,7 +2384,7 @@ mod tests {
     #[test]
     fn search_file_chunk_parallel_count_mode_flags_binary_content_like_the_serial_path() {
         let dir = tempfile::tempdir().unwrap();
-        let content = multi_chunk_binary_fixture();
+        let content = multi_chunk_binary_fixture("payload");
         let path = write_fixture(dir.path(), "binary_count.dat", &content);
         let config = force_multi_chunk_config("payload", true);
         let matcher = build_matcher(&config).unwrap();
