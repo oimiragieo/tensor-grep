@@ -231,6 +231,81 @@ def test_multi_pattern_golden_parity_pattern_file_deterministic_cpu_backend(
     ]
 
 
+# --- many-fixed-pattern scale: rg-parity dedup must hold at a REALISTIC pattern count, ---
+# not just N=2 (docs/gpu_crossover.md's documented ~2.3x-21x tg-vs-rg gap on 100-pattern ---
+# multi-literal search was profiled to this exact `_combine_multi_patterns` call; this pins ---
+# the CORRECTNESS side of that same code path at the SAME scale so a future performance fix ---
+# cannot silently regress it). ------------------------------------------------------------
+
+
+def test_many_fixed_patterns_dedupe_overlapping_lines_at_scale(
+    env: dict[str, str], tmp_path: Path
+) -> None:
+    """Regression/characterization test for the many-fixed-string CPU search path
+    (docs/gpu_crossover.md: 100 fixed patterns, rg=0.105s vs tg-CPU=2.220s, ~21x).
+
+    The existing tests above pin the OR-combine dedup contract
+    (`_combine_multi_patterns`, cli/main.py) at N=2 patterns
+    (`test_multi_e_native_reports_both_match_line_once` /
+    `test_multi_pattern_golden_parity_pattern_file_deterministic_cpu_backend`); this test
+    pins the SAME rg-parity "reported once, never once per matching pattern" contract at
+    a REALISTIC pattern count (100, matching the CEO benchmark's own scale) with TWO
+    distinct overlap widths (one line hit by exactly 2 patterns, one line hit by exactly
+    3), which a naive performance fix could regress if it swapped in the ALREADY-SHIPPED
+    but currently-buggy native AhoCorasick multi-pattern fast path
+    (`native_search.rs::run_native_fixed_multi_pattern_search` /
+    `collect_fixed_multi_pattern_line_matches`) as-is instead of via this Python
+    combine-into-one-alternation-regex path -- that native fast path emits ONE match
+    record per (line, matching-pattern) pair rather than per line, over-counting
+    `total_matches` whenever 2+ patterns hit the same line. Verified directly against the
+    published `tg` binary: a 2-line/2-pattern-overlap fixture
+    (`tg search -F --cpu --json -e A -e B overlap.txt`) reports `total_matches: 3`
+    instead of the rg-correct `2`. This is exactly why `bootstrap.py`'s
+    `_can_delegate_to_native_tg_search` and `cli/main.py`'s
+    `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` both deliberately refuse to delegate
+    ANY `-e`/`-f` search to the native binary (see the audit #69 comments at both sites)
+    -- this test's own combine-in-Python path is the CORRECT side of that trade-off; any
+    future fix that reuses the native/AC engine (for speed) MUST fix its per-line dedup
+    first, and this test must stay green throughout.
+    """
+    root = tmp_path / "many-pattern"
+    root.mkdir()
+    (root / "corpus.txt").write_text(
+        "line A has NEEDLE_01 only\n"
+        "line B has NEEDLE_02 only\n"
+        "line C has NEEDLE_01 and NEEDLE_02 together\n"
+        "line D has NEEDLE_03 and NEEDLE_04 and NEEDLE_05 together\n"
+        "line E has no needles at all\n",
+        encoding="utf-8",
+    )
+
+    real_needles = [f"NEEDLE_{i:02d}" for i in range(1, 6)]  # 5 patterns that DO match
+    absent_patterns = [f"ABSENT_{i:03d}_XYZQ" for i in range(95)]  # padding to 100 total
+    patterns = real_needles + absent_patterns
+    assert len(patterns) == 100
+
+    (tmp_path / "patterns.txt").write_text("\n".join(patterns) + "\n", encoding="utf-8")
+
+    result = _tg(
+        ["-F", "--cpu", "--json", "-f", "../patterns.txt", "."],
+        cwd=root,
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+
+    # rg parity: 4 LINES matched (A, B, C, D) -- never one row per (line, pattern) pair.
+    # Line C matches 2 of the 100 patterns; line D matches 3. Neither may be double- or
+    # triple-counted, and none of the 95 absent patterns may contribute a phantom match.
+    assert payload["total_matches"] == 4
+    assert sorted(match["text"] for match in payload["matches"]) == [
+        "line A has NEEDLE_01 only",
+        "line B has NEEDLE_02 only",
+        "line C has NEEDLE_01 and NEEDLE_02 together",
+        "line D has NEEDLE_03 and NEEDLE_04 and NEEDLE_05 together",
+    ]
+
+
 # --- -F multi-literal: each -e is re.escape'd, never interpreted as regex. --------------
 
 
