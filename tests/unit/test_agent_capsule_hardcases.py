@@ -484,6 +484,48 @@ def test_prefer_implementation_no_swap_when_alternative_lives_in_same_file(tmp_p
     assert alternatives == [same_file_alternative]
 
 
+def test_prefer_implementation_no_swap_for_fat_command_even_if_a_callee_matches(tmp_path):
+    """Gate NIT-1 on #693: the exact fragility the independent review flagged -- a fat
+    `.command`-decorated function (the `search_command` shape: many top-level statements, many
+    distinct callees) must NOT be demoted just because one of its callees happens to match an
+    alternative candidate's symbol name. Without the structural thinness gate in
+    `repo_map._thin_cli_dispatcher_call_targets`, this synthetic 50-call command would swap;
+    with it, it must not."""
+    from tensor_grep.cli.agent_capsule import _prefer_implementation_over_cli_dispatcher_helper
+
+    cli_dir = tmp_path / "src" / "tensor_grep" / "cli"
+    cli_dir.mkdir(parents=True)
+    main_path = cli_dir / "main.py"
+    # 50 top-level statements, each calling a distinct helper -- one of them (helper_17) matches
+    # the alternative candidate's symbol name below, exactly like `search_command` could plausibly
+    # call something matching a ranked alternative for some future query.
+    body_lines = "\n".join(f"    helper_{i}(path)" for i in range(50))
+    main_path.write_text(
+        f"@app.command()\ndef search_command(path):\n{body_lines}\n", encoding="utf-8"
+    )
+    impl_path = cli_dir / "cpu_backend.py"
+    impl_path.write_text("def helper_17(path):\n    return path\n", encoding="utf-8")
+
+    primary_target = {
+        "file": str(main_path),
+        "symbol": "search_command",
+        "kind": "function",
+        "line": 2,
+        "confidence": 0.75,
+    }
+    alternative = {
+        "file": str(impl_path),
+        "symbol": "helper_17",
+        "kind": "function",
+        "confidence": 0.75,
+    }
+    primary, alternatives = _prefer_implementation_over_cli_dispatcher_helper(
+        primary_target, [alternative]
+    )
+    assert primary["symbol"] == "search_command"
+    assert alternatives == [alternative]
+
+
 def test_agent_capsule_prefers_ledger_store_implementation_over_dispatcher(tmp_path):
     """End-to-end (full capsule pipeline, not just the isolated helper): the exact #250 repro
     shape, scoped to a synthetic project so it is corpus-size-independent."""

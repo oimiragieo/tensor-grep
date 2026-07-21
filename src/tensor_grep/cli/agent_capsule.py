@@ -341,17 +341,26 @@ def _cli_dispatcher_implementation_candidate(
     primary_target: dict[str, Any],
     alternatives: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
-    """Task #250: return the alternative a thin CLI-dispatcher primary target provably calls
-    through to, or ``None`` if the primary is not a provable pass-through.
+    """Task #250: return the alternative a GENUINELY THIN CLI-dispatcher primary target provably
+    calls through to, or ``None`` if the primary is not a provable thin pass-through.
 
     Conservative by design: a bare "primary lives under cli/" is NOT enough on its own --
     `cli/main.py` is the CORRECT target for plenty of tasks (e.g. "add a --flag to tg search",
     where the flag registration itself lives in that Typer command's own signature). This only
-    fires when BOTH:
+    fires when ALL THREE hold (all three are checked inside
+    ``repo_map._thin_cli_dispatcher_call_targets``, gate NIT-1 on #693):
 
       1. the primary symbol is decorated as a Typer/Click command (``@x.command(...)``) -- the
-         structural signature of a dispatcher, not a guess from its name or lexical score; and
-      2. the primary symbol's OWN body (``_thin_cli_dispatcher_call_targets`` -- a bounded,
+         structural signature of a dispatcher, not a guess from its name or lexical score;
+      2. the primary symbol is STRUCTURALLY small -- at most
+         ``repo_map._THIN_DISPATCHER_MAX_BODY_STATEMENTS`` top-level body statements (docstring
+         excluded) and at most ``repo_map._THIN_DISPATCHER_MAX_CALL_TARGETS`` distinct callee
+         names. Decoration alone is NOT sufficient: an independent review found
+         ``search_command`` (the real, ~1500-line implementation of ``tg search`` in
+         ``cli/main.py``) is ALSO a ``.command``-decorated function that calls dozens of names --
+         without this size gate, the swap's safety would be an EMERGENT property of which names
+         happen to rank as alternatives, not a real structural guarantee; and
+      3. the primary symbol's OWN body (``_thin_cli_dispatcher_call_targets`` -- a bounded,
          already-selected span, not a new scan) contains a direct call to a SPECIFIC alternative
          candidate's symbol, defined in a DIFFERENT file -- i.e. the dispatcher hands off to that
          exact implementation.

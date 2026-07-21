@@ -247,6 +247,42 @@ def test_thin_cli_dispatcher_call_targets_none_when_symbol_missing(tmp_path: Pat
     assert repo_map._thin_cli_dispatcher_call_targets(str(main_path), "ledger_claim") is None
 
 
+def test_thin_cli_dispatcher_call_targets_none_for_fat_command(tmp_path: Path) -> None:
+    """Gate NIT-1 on #693: a `.command`-decorated function that is NOT structurally thin (a real
+    implementation with many top-level statements and many distinct callees -- the
+    `search_command` shape the independent review flagged) must be rejected even though it DOES
+    call a name that could match some alternative candidate. Decoration + a call-through alone is
+    not enough; the thinness gate must fire independently of which names happen to be called."""
+    main_path = tmp_path / "src" / "tensor_grep" / "cli" / "main.py"
+    main_path.parent.mkdir(parents=True, exist_ok=True)
+    # 50 distinct top-level statements, each calling a distinct helper name -- comfortably over
+    # both _THIN_DISPATCHER_MAX_BODY_STATEMENTS and _THIN_DISPATCHER_MAX_CALL_TARGETS (20 each).
+    # One of the fifty (helper_17) is deliberately named to match a plausible alternative symbol,
+    # proving the rejection is NOT simply "no calls matched".
+    body_lines = "\n".join(f"    helper_{i}(path)" for i in range(50))
+    main_path.write_text(
+        f"@app.command()\ndef search_command(path):\n{body_lines}\n",
+        encoding="utf-8",
+    )
+    assert repo_map._thin_cli_dispatcher_call_targets(str(main_path), "search_command") is None
+
+
+def test_thin_cli_dispatcher_call_targets_none_for_many_distinct_callees_even_if_few_statements(
+    tmp_path: Path,
+) -> None:
+    """The call-target-count axis alone must also reject a fat command, independent of the
+    statement-count axis: one top-level statement that fans out to 30 distinct calls (e.g. a
+    single chained/nested expression) is still NOT a thin passthrough."""
+    main_path = tmp_path / "src" / "tensor_grep" / "cli" / "main.py"
+    main_path.parent.mkdir(parents=True, exist_ok=True)
+    calls = " + ".join(f"helper_{i}(path)" for i in range(30))
+    main_path.write_text(
+        f"@app.command()\ndef search_command(path):\n    return {calls}\n",
+        encoding="utf-8",
+    )
+    assert repo_map._thin_cli_dispatcher_call_targets(str(main_path), "search_command") is None
+
+
 def test_context_render_and_edit_plan_prefer_multi_term_symbol_over_common_word(
     tmp_path: Path,
 ) -> None:
