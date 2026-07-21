@@ -1069,6 +1069,51 @@ mod tests {
     }
 
     #[test]
+    fn scan_lines_memmem_no_match_chunked_matches_serial_empty_result() {
+        // The task's explicit "no-match" edge case: a large multi-line, multi-chunk buffer
+        // that contains the needle nowhere must produce an empty result on both the serial
+        // whole-buffer scan and every parallel chunk -- no false positive introduced by
+        // chunking, and no panic/hang on an all-empty-per-chunk result set.
+        const LINE_BYTES: usize = 40;
+        const TOTAL_LINES: usize = 400;
+        const REQUESTED_CHUNKS: usize = 6;
+
+        let mut content = Vec::new();
+        for line_number in 1..=TOTAL_LINES {
+            let mut line = format!("L{line_number:04} nothing-to-see-here");
+            assert!(line.len() < LINE_BYTES);
+            line.push_str(&"x".repeat(LINE_BYTES - line.len() - 1));
+            line.push('\n');
+            content.extend_from_slice(line.as_bytes());
+        }
+
+        let path = Path::new("no-match-fixture.log");
+        let serial = scan_lines_memmem(&content, b"NEEDLE", false, 1, path);
+        assert!(serial.is_empty(), "serial scan must find nothing");
+
+        let chunks = plan_line_aligned_chunks(&content, REQUESTED_CHUNKS);
+        assert!(chunks.len() > 1, "fixture must produce multiple chunks");
+
+        let mut parallel = Vec::new();
+        for chunk in &chunks {
+            parallel.extend(scan_lines_memmem(
+                &content[chunk.start..chunk.end],
+                b"NEEDLE",
+                false,
+                chunk.first_line,
+                path,
+            ));
+        }
+
+        assert_eq!(serial, parallel);
+        assert!(parallel.is_empty(), "no chunk may introduce a false-positive match");
+
+        // And through the real dispatcher (whichever path this machine takes):
+        let dispatched = search_contents_memmem_maybe_parallel(&content, b"NEEDLE", false, path);
+        assert!(dispatched.is_empty());
+    }
+
+    #[test]
     fn search_contents_memmem_maybe_parallel_small_buffer_matches_direct_scan() {
         // Below LARGE_FILE_PARALLEL_THRESHOLD_BYTES: must behave exactly like calling
         // `scan_lines_memmem` directly -- the "small files stay on the unchanged serial path"
