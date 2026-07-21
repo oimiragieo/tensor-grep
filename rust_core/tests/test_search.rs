@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use tempfile::tempdir;
 use tensor_grep_rs::backend_cpu::CpuBackend;
 
@@ -84,4 +84,65 @@ fn test_rust_cpu_backend_invert_includes_blank_lines() {
         .count_matches("alpha", file_path.to_str().unwrap(), false, true, false)
         .unwrap();
     assert_eq!(count_pos, 1);
+}
+
+#[test]
+fn test_rust_cpu_backend_large_file_engages_intra_file_parallel_search() {
+    // Public-API, real-file (not in-memory) proof that `CpuBackend::search`'s intra-file
+    // parallel chunking (backend_cpu.rs::search_contents_memmem_maybe_parallel, gated on
+    // LARGE_FILE_PARALLEL_THRESHOLD_BYTES = 50 MiB) produces exactly the matches a serial scan
+    // would: needles placed at the very first line, the very last line, and at the file's
+    // quarter/half/three-quarter marks (spread across whatever chunk boundaries this machine's
+    // core count produces), with nothing duplicated or dropped at a seam.
+    const LINE_BYTES: usize = 1024;
+    const TOTAL_LINES: usize = 56_000; // 56_000 * 1024 bytes ~= 54.7MB, over the 50MB threshold
+    const NEEDLE: &str = "NEEDLE";
+
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("large.log");
+    let file = File::create(&file_path).unwrap();
+    let mut writer = BufWriter::new(file);
+
+    let needle_lines: Vec<usize> = vec![
+        1,
+        TOTAL_LINES / 4,
+        TOTAL_LINES / 2,
+        (TOTAL_LINES * 3) / 4,
+        TOTAL_LINES,
+    ];
+
+    for line_number in 1..=TOTAL_LINES {
+        let mut line = if needle_lines.contains(&line_number) {
+            format!("L{line_number:06} {NEEDLE}")
+        } else {
+            format!("L{line_number:06} filler")
+        };
+        assert!(line.len() < LINE_BYTES);
+        line.push_str(&"x".repeat(LINE_BYTES - line.len() - 1));
+        line.push('\n');
+        writer.write_all(line.as_bytes()).unwrap();
+    }
+    writer.flush().unwrap();
+
+    let file_len = std::fs::metadata(&file_path).unwrap().len();
+    assert_eq!(file_len, (LINE_BYTES * TOTAL_LINES) as u64);
+    assert!(
+        file_len >= 50 * 1024 * 1024,
+        "fixture must actually cross the parallel threshold: {file_len} bytes"
+    );
+
+    let backend = CpuBackend::new();
+    let results = backend
+        .search(NEEDLE, file_path.to_str().unwrap(), false, true, false)
+        .unwrap();
+
+    assert_eq!(
+        results.iter().map(|(line, _)| *line).collect::<Vec<_>>(),
+        needle_lines,
+        "matched line numbers must be exactly the needle lines, in ascending order, with no \
+         duplicate or dropped match at a chunk seam"
+    );
+    for (_, text) in &results {
+        assert!(text.contains(NEEDLE), "unexpected match text: {text}");
+    }
 }
