@@ -594,6 +594,60 @@ def _detect_vendored_subtrees(
     return result
 
 
+def _detect_workspace_root(
+    rm: dict[str, Any],
+    *,
+    deadline_monotonic: float | None = None,
+) -> bool:
+    """CEO #2 auto-narrow (additive, advisory): cheap, single-level detection of whether the
+    scanned root itself looks like a MULTI-PROJECT workspace parent (e.g. a folder of several
+    independently-cloned repos) rather than a single project -- the exact "root/mega-repo often
+    partial/null-symbol" tribal-knowledge gap the CEO flagged: an agent pointed at such a root
+    should be TOLD to narrow, never left to discover it the hard way.
+
+    Deliberately reuses the SAME closed-vocabulary project-marker set and child-count thresholds
+    that already gate `tg search`'s unbounded-workspace-root refusal (`_workspace_project_child_
+    names`, `cli/main.py` -- single source of truth in `io/directory_scanner.py`'s `BROAD_
+    WORKSPACE_PROJECT_MARKERS` / `BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD` / `BROAD_WORKSPACE_
+    MARKED_ROOT_CHILD_THRESHOLD`) rather than a second, independently hand-rolled manifest/`.git`
+    scan that could drift from it -- so `tg search`'s hard refusal and `tg orient`/`tg agent`'s
+    advisory hint never disagree about what "looks like a workspace root" means for the same
+    directory. That helper already does exactly ONE `Path.iterdir()` call on the root (never a
+    recursive walk) plus up to ``len(BROAD_WORKSPACE_PROJECT_MARKERS)`` cheap `Path.exists()`
+    probes per DIRECT child -- bounded by the root's own immediate fan-out, not repo size or scan
+    depth, so (unlike `_detect_vendored_subtrees` above) a single pre-call deadline check is
+    sufficient here: there is no internal loop expensive enough on its own to need a
+    per-iteration checkpoint the way that function's manifest-probe/dedup loops do.
+
+    The dynamic marked-vs-unmarked-root threshold (3 vs 8 children) is what keeps a single
+    polyglot project -- e.g. this very repo, whose root `pyproject.toml` makes it a MARKED root
+    with only 2 manifest-bearing children (`npm/package.json`, `rust_core/Cargo.toml`), nowhere
+    near the marked-root threshold of 8 -- from ever being mistaken for a multi-project workspace;
+    a bare folder of unrelated sibling repos (no manifest of its own) needs only 3.
+
+    Returns ``False`` (never guesses) on a synthetic fixture with no ``path`` key, a non-existent
+    directory, or an already-exhausted deadline -- the same "nothing to report" shape every
+    sibling detector in this module uses for its own bail-out cases."""
+    if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+        return False
+    path_value = rm.get("path")
+    if not path_value:
+        return False
+    try:
+        root = Path(str(path_value)).resolve()
+    except OSError:
+        return False
+    if not root.is_dir():
+        return False
+
+    # Local import: avoids a module-level circular import with `cli.main` (which itself imports
+    # this module to build `tg orient`/`tg agent`'s builders) -- same discipline already used just
+    # above for `_BROAD_WORKSPACE_PROJECT_MARKERS` inside `_detect_vendored_subtrees`.
+    from tensor_grep.cli.main import _workspace_project_child_names
+
+    return bool(_workspace_project_child_names([str(root)]))
+
+
 def _suggested_ignore_from_deweighted_trees(
     deweighted_trees: dict[str, dict[str, Any]],
 ) -> list[str] | None:
@@ -958,11 +1012,18 @@ def build_orient_capsule_from_map(
     scan_possibly_truncated = bool(
         isinstance(scan_limit_info, dict) and scan_limit_info.get("possibly_truncated")
     )
+    # CEO #2 auto-narrow (advisory, additive): a genuine multi-project workspace root is told to
+    # narrow PROACTIVELY -- even on a scan that completed without truncating -- because the
+    # "wrong root" problem is orthogonal to the scan-limit cap (a small mega-repo folder full of
+    # tiny sibling repos can easily scan to completion while still being the wrong root to answer
+    # from). Never guesses: `_detect_workspace_root` only fires on the same closed-vocabulary
+    # marker set + child-count bar `tg search`'s own workspace-root refusal already uses.
+    workspace_root_detected = _detect_workspace_root(rm)
     # `deweighted_trees` (#168) is threaded through so suggested_scope can never point an agent at
     # the same tree suggested_ignore (below) already says to ignore -- the two fields must agree.
     suggested_scope = (
         _suggested_scope_from_map(rm, deweighted_trees=deweighted_trees)
-        if scan_possibly_truncated
+        if (scan_possibly_truncated or workspace_root_detected)
         else None
     )
     # The capsule's own simplified `scan_limit` int (see the docstring above): the cap that
@@ -1075,6 +1136,12 @@ def build_orient_capsule_from_map(
         "deweighted_trees": deweighted_trees_list,
         "auto_deweight": auto_deweight,
     }
+    # CEO #2 auto-narrow (advisory, additive): present only when the scanned root itself looks
+    # like a multi-project workspace parent -- absent (never `False`) otherwise, so a non-
+    # workspace repo's capsule stays byte-identical to before this field existed (mirrors
+    # `suggested_ignore`'s/`outbound_dependencies`'s own additive-conditional convention).
+    if workspace_root_detected:
+        result["workspace_root_detected"] = True
     # CLI consistency fix (CEO v1.71.3 dogfood): carry a --deadline truncation forward from `rm`
     # (mirrors repo_map._copy_partial_signal's shape) so a deadline-bounded scan is never silently
     # dropped. INFORMATIONAL only -- `tg orient` has NO exit-2 contract (docs/CONTRACTS.md:110), so
