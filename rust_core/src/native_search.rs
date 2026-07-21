@@ -35,7 +35,7 @@ const STREAMING_OUTPUT_FLUSH_BYTES_DEBUG: usize = 8 * 1024;
 /// The serial (non-chunked) search path relies on exactly this guaranteed floor when a whole file
 /// is searched via one mmap-backed `Searcher`; `search_file_chunk_parallel` must apply the
 /// identical floor over the whole file before fanning out per-chunk, since its per-chunk `Lossy`
-/// sinks never surface `binary_data` callbacks back up to this caller (task #253).
+/// sinks never surface `binary_data` callbacks back up to this caller.
 const BINARY_DETECTION_PREFIX_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1545,7 +1545,7 @@ fn configured_chunk_parallelism_threads(config: &NativeSearchConfig) -> usize {
 /// first NUL byte found (relative to the start of `contents`), or `None` if the prefix is clean.
 /// Deliberately does NOT scan past the guaranteed prefix -- doing so would make this path detect
 /// binary content the serial path would miss for the same file, which is its own divergent-
-/// detection bug (task #253).
+/// detection bug.
 fn detect_binary_prefix(config: &NativeSearchConfig, contents: &[u8]) -> Option<u64> {
     if config.text {
         return None;
@@ -1583,7 +1583,7 @@ fn search_file_chunk_parallel(
     // whole file up front -- mirroring the serial path's rule exactly, see `detect_binary_prefix`
     // -- so a binary file above the chunk-parallel threshold is flagged/skipped like the serial
     // path instead of falling through to the parallel scan and emitting raw byte "matches"
-    // (mojibake) (task #253).
+    // (mojibake).
     if let Some(binary_byte_offset) = detect_binary_prefix(config, &mmap) {
         let binary_match_detected = binary_file_matches_pattern(matcher, path, true)?;
         return Ok(FileSearchResult {
@@ -2271,7 +2271,7 @@ mod tests {
         result.expect("an explicit oversized path must not be refused");
     }
 
-    // --- Task #253: chunk-parallel binary detection parity ---------------------------------
+    // --- Chunk-parallel binary detection parity ---------------------------------------------
     // `search_file_chunk_parallel` used to hardcode `binary_detected: false` unconditionally in
     // both its --count and match-collecting branches, bypassing the binary detection the serial
     // (non-chunked) path performs via `BinaryAwareSink` + `build_searcher`'s
