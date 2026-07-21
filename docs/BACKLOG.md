@@ -3,8 +3,77 @@
 > **Canonical prioritized work list.** Kept in sync with the CLI task store (`TaskUpdate`) and
 > GitHub (`gh pr list` is the source of truth for PRs). **CEO status** = summarize SHIPPING + P0/P1.
 > Update whenever a PR opens/merges or the queue changes. Task-store IDs (`#NNN`) cross-referenced.
-> Last refreshed 2026-07-20 (post-v1.83.0, the CEO `/goal` "ultimate agentic toolkit" campaign #224).
-> **Live PyPI is v1.83.0. PR queue: EMPTY (0 open).** The `/goal` campaign (CEO 2026-07-19, session Stop
+> Last refreshed 2026-07-20 (post-v1.91.0, the CEO `/goal` "make tg REQUIRED vs rg/ast" 9-point
+> campaign #232 closeout). **Live PyPI is v1.90.0; v1.91.0 (PRs #685-#687) was still publishing at
+> reconcile time (Semantic Release CI run in progress ~35min+, `/pypi/json` still reporting 1.90.0 --
+> verify `/simple` or `gh run list` before citing v1.91.0 as fully live; runner-scarcity can stretch a
+> release to 30-60min queued, this is healthy not stuck). PR queue: EMPTY (0 open).** The CEO `/goal`
+> #232 campaign (2026-07-20) mapped the CEO's 9-point spec ("make tg REQUIRED vs rg/ast") one
+> gap-point per release, one-per-publish, each independent-Opus-gated, all CPU-safe cloud+CI (never
+> the shared desktop): **8 releases v1.84.0 -> v1.91.0, ZERO broken *published* releases, drain now
+> CLEAR (0 open PRs).** **CEO#9 GPU-honesty:** `tg calibrate --json` now emits a structured
+> `{"calibration_status": "skipped_no_cuda_build", ...}` line on a CPU-only build (a new
+> `NoCudaBuildError` downcast in `crossover.rs`, exit code unchanged at 2) so a dogfood harness can't
+> misread an honest CPU-only skip as a bare FAIL -> **#678 -> v1.84.0**. **CEO#1 never-empty
+> best-effort-primary:** a `tg agent` scan truncated by `--deadline` before ranking ever resolved a
+> primary target used to return an empty `{"file": "", "symbol": null}` -- now
+> `_best_effort_primary_target_from_map` substitutes the best already-scanned symbol/file/most-central
+> file, flagged non-authoritative via `partial_primary: true` + `primary_basis:
+> "deadline_truncated_best_effort"`, with a STRUCTURAL `confidence.overall <= 0.55` cap (hardened by a
+> gate nit from an emergent to a construction-guaranteed bound) so a partial result can never
+> masquerade as confident -> **#679 -> v1.85.0**. **CEO#4 completeness you can trust:** a new
+> bidirectional-oracle regression gate (`test_graph_completeness_oracle.py`) proves the documented
+> three-state exit-code contract actually holds for `importers`/`callers`/`blast-radius` (exit 0 only
+> on a truly complete scan, exit 2 -- never 0 -- on any cap/deadline cut), and closes a real parity
+> gap it found along the way: `tg callers`' file-ordering only went likely-first above the 2000-file
+> caller-scan ceiling, unlike `importers`, so a deadline cut on a smaller repo could strand a
+> late-sorting caller -> **#680 -> v1.86.0**. **CEO#8 enterprise close-the-loop:** wires the existing
+> signed `EvidenceReceipt` into a first-class CI gate -- `review-bundle create --receipt` embeds
+> signed receipts, `review-bundle verify --against <PR-head-sha>` re-verifies each one's signature,
+> trust, and revision-freshness against the real PR head (never `$GITHUB_SHA`, which resolves to a
+> merge commit), and two new default-OFF policy levers (`--min-receipts N`, `--expect-key KEY_ID`)
+> close a genuine empty-bundle bypass a post-gate NIT caught (a stripped-to-`[]` receipts list
+> previously still verified `valid:true` because `all([])==True`) -> **#681 -> v1.87.0**. **CEO#5 `tg
+> prepare`:** a one-shot edit-readiness CUJ (`tg prepare REPO "task"`) composes orient -> search ->
+> agent -> route-test -> callers -> evidence -> ledger into one call -- primary target + confidence +
+> `ask_user`, a callers/blast-radius floor, validation commands, and claim/evidence coordination
+> hooks, all under the same `--deadline` exit-2 honesty contract as the rest of the agent-capsule
+> family -> **#682 -> v1.88.0**. **CEO#6 AST parity that doesn't fight ast-grep:** `tg run`/`tg scan`
+> zero-match exits now print a remediation idiom catalog instead of a silent empty result; the
+> ruleset pack resolver accepts mental-model aliases (`auth`, `secrets`, `crypto`, `tls/ssl`,
+> `subprocess`, `deserialize`) that resolve 1:1 to the matching canonical pack (never a guessed
+> meta-pack); and a `$`-metavariable pattern with no usable ast-grep/native backend now raises a
+> clean "Error: ..." + exit 2 instead of an uncaught traceback, and is NEVER silently rerouted to the
+> native tree-sitter backend (different query DSL -- would return wrong/empty results) -> **#683 ->
+> v1.89.0**. **CEO#2 mega-repo advisory auto-narrow:** a new `_detect_workspace_root` (reusing the
+> same closed-vocabulary project-marker set `tg search`'s unbounded-root refusal already uses) stamps
+> `workspace_root_detected: true` + a proactive `suggested_scope` on `tg orient`/`tg agent` when the
+> target looks like a folder of several independently-cloned projects -- purely additive/advisory,
+> the full unscoped result is always still returned, NEVER a silent re-scan or exit-code change ->
+> **#684 -> v1.90.0**. **CEO#7 `tg install-dense`:** a one-shot `tg install-dense` installs the
+> `semantic` extra (model2vec + numpy, torch-free) via the same `uv tool -> uv pip -> pip` cascade
+> `tg upgrade` uses, then fetches the checksum-pinned dense model -- fail-closed on any
+> pip/network/checksum failure, never a partial model; `tg find`'s BM25-only degrade message now
+> points at it -> **#687**, bundled at release with **CEO#3's $0 doc-honesty fix** (README /
+> `docs/installation.md` now say plainly that `pip`/`uvx` installs pay the ~150-250ms Python-
+> interpreter floor (#48) and point stable-channel users at the native curl\|bash/PowerShell/npm
+> front door for `rg`-parity cold search; `tg upgrade` already gets the native one) -> **#686**, plus
+> a calibrate-stdout-JSON-only contract pin + daemon-deadline-route de-flake test nit -> **#685** --
+> all three releasing together as **v1.91.0** (`#687`'s Rust command-enum collision with the
+> same-day `#682` merge was keep-both-resolved at `bd3a142`, both `install-dense` and `prepare` enum
+> variants + dispatch arms retained, re-verified CI-green across the full platform matrix, Opus-gated
+> for the stale-venv trap + subprocess-safety + fail-closed model-fetch behavior). **Two headline
+> fixes were BINARY-VERIFIED**, not just code-reviewed -- a clean-room `uvx --from
+> tensor-grep@1.87.0 tg ...` dogfood confirmed both the GPU-calibrate structured skip on stdout and
+> gap#2's truncated-agent emitting a real `primary_target` (never `null`). **CEO-gated, unchanged (out
+> of AI scope -- do not build without an explicit CEO decision):** CEO#3's architectural half -- the
+> native front door / public-shim startup-overhead reduction -- is **#48** (a currently-open GitHub
+> issue; the ~30-40ms Python-interpreter floor caps how far shim tuning alone can close the gap);
+> CEO#9's CUDA compute build is **#169** (>$100 spend); **#72** benchmark-numbers publish
+> (public/irreversible); **#240-opt2** per-platform native wheels (a public-distribution decision).
+> **#72/#169/#189-fork/#240-opt2 are this ledger's own task-store framing, not open GitHub issues** --
+> re-verify with `gh issue list`/`gh issue view` before citing any of them as a tracked GitHub item.
+> The prior CEO `/goal` "ultimate agentic toolkit" campaign (#224, CEO 2026-07-19, session Stop
 > hook: "dogfood + build the ultimate agentic toolkit that saves on searches, uses contracts, supports
 > agent-to-agent, [creative GPU], fix any regression, all tests green on the massive workspace incl LSP +
 > symbol/codebase mapping, make AI smart without wasting tokens") shipped **8 PRs #668-#675 (v1.81.17 ->
@@ -182,6 +251,7 @@ wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while 
 
 ## ⭐ CURRENT STATE (2026-07-20) — authoritative; every section BELOW is HISTORICAL until the next full refresh
 
+- **Live PyPI: v1.90.0 (2026-07-20); v1.91.0 (#685-#687) still publishing at reconcile time -- verify `/simple`/`gh run list` before citing it live. The CEO `/goal` "make tg REQUIRED vs rg/ast" 9-point campaign (#232) fully drained -- all 9 CEO gap-points mapped to a shipped release, PR queue EMPTY, drain CLEAR, ZERO broken published releases:** **CEO#9** GPU-honesty (`tg calibrate --json` structured `calibration_status` skip signal on a CPU-only build, #678/v1.84.0) -> **CEO#1** never-empty best-effort-primary under deadline truncation (`partial_primary` + a structural `confidence<=0.55` cap, #679/v1.85.0) -> **CEO#4** bidirectional-oracle exit-code completeness gate + `callers` likely-first parity (#680/v1.86.0) -> **CEO#8** enterprise close-the-loop (`EvidenceReceipt` -> `review-bundle --receipt` -> `verify --against` PR-head + `--min-receipts`/`--expect-key` policy enforcement, closing an empty-bundle bypass, #681/v1.87.0) -> **CEO#5** `tg prepare` one-shot edit-readiness CUJ (#682/v1.88.0) -> **CEO#6** AST parity that doesn't fight ast-grep (empty-result remediation + resolve-only ruleset aliases + honest sg-absent error, #683/v1.89.0) -> **CEO#2** mega-repo advisory auto-narrow (`workspace_root_detected` + proactive `suggested_scope`, NEVER a silent narrow, #684/v1.90.0) -> **CEO#7** `tg install-dense` one-shot packaged dense-embedding install, bundled with CEO#3's $0 doc-honesty fix (pip/uvx pays the Python-interpreter floor, #48; `tg upgrade` gets the native front door) and a calibrate-stdout-contract test nit (#687+#686+#685, all releasing as v1.91.0). **Two headline fixes BINARY-VERIFIED** via a clean-room `uvx --from tensor-grep@1.87.0 tg ...` dogfood: the GPU-calibrate structured skip on stdout, and gap#2's truncated-agent emitting a real `primary_target` (never null). **CEO desk (unchanged):** CEO#3-architectural native front door = **#48** (an open GitHub issue; ~30-40ms Python-interpreter floor); CEO#9-CUDA compute build = **#169** (>$100 spend); **#72** benchmark-publish (public/irreversible); **#240-opt2** per-platform native wheels (public-distribution decision) -- the latter three remain task-store framing, not open GitHub issues.
 - **Live PyPI: v1.83.0 (2026-07-20, published clean). The CEO `/goal` "ultimate agentic toolkit" campaign (#224) shipped every AI-actionable pillar; PR queue EMPTY, drain clear, ZERO broken published releases:** the on-moat **A2A `tg ledger`** plane is live and dogfood-verified on the published binary -- **claims** (advisory code-scoped locks, always exit-0 + `overlaps`, TTL-prune; #673/v1.82.0; #225 dogfood: agent-b sees agent-a's overlap in production) + **findings** (content-addressed reuse with revision-freshness + integrity tamper-detect; #675/v1.83.0; #227 dogfood), both EXPERIMENTAL/default-inert, each independent-Opus-gated, composing only existing primitives (no new crypto/transport/bus). The deadline-SLA wave (#668-#672, v1.81.17-.21) closed the CEO-dogfood enterprise-scale gaps -- headlined by **#671/v1.81.20**, a super-linear vendored-subtree `resolve()` dedup (90-144x, ~61% of `tg agent` wall) that the v19 real-workspace dogfood surfaced AFTER #669's synthetic-scoped tail fix (**#222 -- synthetic sets don't carry magnitude**), plus `importers` likely-first bounded scan (#670), `route-test` SLA-under-load (#672), and the queued LSP follow-ups (#668). **#674/v1.82.1** bounded `tg codemap`'s git-identity/`resolve()` storm (its gate caught a `--check` TypeError CI would have shipped). **Creative-GPU ideation** produced 3 amortization-passing Tier-A ideas, all build-gated behind #169's spend. **CEO desk (unchanged except #77 A2A now DONE):** #72 publish the moat numbers (public/irreversible; verified + ready), #169 GPU-compute build (spend), #189-fork query-gated signal channels vs accept-the-ranking-ceiling (taste), #48 native-front-door (the ~30-40ms Python-interpreter startup floor). Demand-gated: #98 MCP-consolidation, #141 native-AstBackend. **#207 (stale local checkout) stays inert; #219 (torch/CUDA-13 bump) waits on RAPIDS shipping a CUDA-13 `cudf-cu12`.**
 - **Live PyPI: v1.78.0 (2026-07-16, published clean). The `tg find` campaign (#189) SHIPPED end-to-end this session -- the CPU semantic moat / ColGrep response, the forward direction after GPU-for-search retired (#169):** whole-repo natural-language code search (BM25 + local CPU dense embeddings -> weighted RRF -> optional MaxSim -> budget-fitted file:line). Built via Fable plan -> 4-lens adversarial review (correctness/security/eval-integrity/architecture, unanimous GO-WITH-MUST-FIXES, each citing file:line) -> 3 TDD build waves + an MCP tool -> golden gate-run validation -> live dogfood, all cloud Agent subagents + GitHub CI (zero local CPU per the shared-server rule). **Per-wave receipts:** Wave 2a extracted the `rank_chunks` shared fail-closed core from `rerank_hybrid` (#624, `2393a7e`, byte-identical, Opus SHIP). Wave 1 built the T8 golden harness (`benchmarks/eval_late_rerank_quality.py`), a 40-query NL vocab-mismatch golden set, a 74-file corpus, and the P5 lane (#625, `d6fa824`, `chore(bench)` = no-release, bidirectional-oracle). Wave 2b/2c shipped the `tg find` CLI command -- registered at all sites, wired walk->chunk->legs->rank_chunks->budget-fit, with a fail-closed matrix (`BackendExecutionError`->exit-2 catch, chunk-cap->`result_incomplete`+exit-2, hand-written exit codes) (#626 -> **v1.77.0**, `501dc26`). Wave 2d shipped the MCP `tg_find` tool (agent-callable) as its OWN PR to de-risk the LLM-facing surface -- confine-root-first, an error-sanitization split, harness_api docs, and a contract-version bump (#627 -> **v1.78.0**, `6d79945`). **The gates earned their keep -- CI-green does not mean contract-correct, and they caught 2 real bugs, not nits:** the Wave-2c Opus gate caught a genuine F1 fail-closed violation (a query-time `DenseUnavailableError` would have crashed instead of BM25-degrading; fixed RED->GREEN, `045fadc`); the dual-Opus MCP gate caught a required contract-version bump the plan had missed (1.2.0->1.3.0, fixed `3fcca06`). **VALIDATION (INTERNAL; publishing stays CEO-gated #72):** the golden gate-run shows `tg find`'s hybrid ranking (rrf) beats plain BM25 by **+0.195 ndcg@10 (0.305 vs 0.109) / +0.30 recall@10 (0.55 vs 0.25)** on the 40-query NL golden set, positive in all 4 categories and essentially wins-or-ties per query (a single ndcg loss out of 40), bidirectional-oracle-validated twice, deterministic. Live dogfood of the published v1.77.0 wheel PASSED (real `uvx` wheel: `find` registered and not misrouted, honest BM25-only degrade when the `semantic` extra is absent, real relevant results for an NL query, exit 0). **IN FLIGHT: Wave 3 dense-weight knob (#628, still an open draft PR, checks green so far, not yet merged)** ships `TG_FIND_DENSE_WEIGHT` DEFAULT-OFF (1.0 = byte-identical no-op) plus a query-adaptive rule (queries over 2 `split_terms` tokens get the env weight; 2-token-or-shorter queries always stay at 1:1) plus a 10-query literal-query golden slice -- evidence infrastructure for the design pass's finding that a 1:5 bm25:dense weighting lifts NL ndcg@10 by +0.14 (0.305->0.4466) with zero per-category regression, while the literal slice stays protected by construction. Opus-gated SHIP-WITH-NITS, with 2 nits to close before any default-flip: a `math.isfinite` clamp on malformed `TG_FIND_DENSE_WEIGHT` input, and a 3-token-identifier re-sweep (multi-segment identifiers like `getUserName` classify as NL under `split_terms`). **The default-flip itself is a separate CEO checkpoint** (product taste; changes shipped ranking; evidence will be in hand once #628 lands). **Wave-4 stays HELD/evidence-gated:** `TG_LATE_RERANK` remains off -- the gate-run shows rrf+maxsim regressing vs bm25, but that is entangled with a known harness simplification (the late-rerank doc-role encoder is not query/doc role-aware yet, `retrieval_late.py:328-333`), so it is NOT a verdict on MaxSim itself; do not flip until role-aware encoding lands and it is re-measured. `TG_RRF_CHANNELS`/`TG_CHUNKER` remain evidence-gated too. **PR queue: 1 open** (draft #628). **CEO desk:** #72 publish the moat numbers (public/irreversible -- now covers both the original P1/P4 tokens-per-correct proof and this NL-search gate-run, verified + ready, still held); the dense-weight default-flip (product taste, pending #628 + evidence review); #77 tg-ledger; GPU retired-for-search (#169). Demand-gated: #98 MCP-consolidation, #141 native-AstBackend.
 - **Live PyPI: v1.76.13 (2026-07-16, published clean). The last AI-actionable item shipped as its own honest close-out -- ZERO broken releases:** #182 (the 3 SHIP-WITH-NITS Opus-gate follow-ups from #612 GPU-calibrate honesty) had been deferred as "opportunistic-batch, do NOT fire standalone." With the drain clear and no future GPU-calibrate PR coming to batch into (the GPU program is CEO-held #169), that deferral would have let real honesty fixes rot -- so #182 shipped as **v1.76.13 #621** (a one-time close-out that empties the queue is closure, not tail-churn). **NIT-1 (the real fix):** the Python `tg calibrate` no-binary message still name-dropped `TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR=nvidia` in a "confirm before relying on" aside -- asymmetric with the Rust side (`crossover.rs::detect_device_name`), whose test forbids that override as an obtainable path (no nvidia asset ships). Dropped it; added the symmetric `FLAVOR not in output` assertion (RED->GREEN). **NIT-3:** "so calibrate can run" -> "that calibrate requires" (calibrate still fails-closed on a CPU-only box post-upgrade). **NIT-2 (`crossover.rs`, comment-only):** the `#[cfg(feature="cuda")]` mirror-TEST fn is compiled by NO CI job (`cuda-feature-check` omits `--tests`; `test-rust-core` is cuda-off) -- the "Compile-checked only" comment overstated coverage; corrected to state the real gap (the production fn IS compile-checked via its `:533` call site; only the test assertion is uncovered) + why `--all-targets` is deferred (pre-existing cuda test debt in `main.rs`/`test_routing.rs`). **All text-only -- no logic, no control-flow, no CI-config change.** **Adversarial Opus gate: SHIP-CLEAN** -- every honesty claim independently verified TRUE against the shipped assets (default release profile `native-frontdoor` = CPU-only; nvidia legs `if:`-gated off; PyPI wheel carries no CUDA) + no stale assertion elsewhere + zero regression. **Non-blocking coupling banked on #169:** if the GPU release flag ever flips to `native-frontdoor-gpu`, BOTH this message ("not shipped in any current build") and the Rust mirror test ("not shipped in this build") must update in the same change. **PR queue EMPTY (0 open). AI-actionable backlog EMPTY.** **CEO desk unchanged:** #72 publish (public/irreversible; verified numbers ready), #77 tg-ledger, #169 GPU held; #98/#141 demand-deferred.
@@ -246,23 +316,41 @@ wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while 
 
 ## SHIPPING — open PRs (drain one-per-publish) — task #117
 
-**Queue empty -- 0 open PRs (verified 2026-07-18 via `gh pr list --state open`).** The senior-review +
-Rust-dogfood campaign (**#655-#666**) drained one-per-publish through v1.81.15; PR #665 merged and was
-publishing as v1.81.16 at reconcile time -- ZERO broken releases, full receipts in the header above. This
-BACKLOG reconcile (`docs:`, no release) is the next PR to open -- drain clear, no other build queued.
-**After it merges, next move is CEO-gated or demand-gated** (see CURRENT LIVE BACKLOG below -- note that
-section still reads as of its 2026-07-13 reconcile date and has not been re-walked against the
-senior-review/Rust-dogfood findings; treat the header above as authoritative for this campaign's items).
+**Queue empty -- 0 open PRs (verified 2026-07-20 via `gh pr list --state open`).** The CEO `/goal` #232
+9-point campaign (**#678-#687**, v1.84.0->v1.91.0) drained one-per-publish, ZERO broken *published*
+releases -- full per-point receipts in the header above; v1.91.0 (#685-#687) was still publishing at
+reconcile time (see the header's PyPI-verify note). This BACKLOG reconcile (`docs:`, no release) is the
+next PR to open -- drain clear, no other build queued. **Next move is CEO-gated** (native front door #48,
+GPU-CUDA compute build #169, benchmark-numbers publish #72, per-platform native wheels #240-opt2 -- see
+CEO-FACING below) or demand-gated; no AI-actionable backlog item is currently queued.
 
-**Prior drain waves:** the v1.75.0->v1.75.4 GPU Phase-0 wave (#593/#594/#595/#596/#597) drained
-one-per-publish, ZERO broken releases, closing out **#171** (GPU Phase-0 program, P0-1..P0-5) + **#172**
-(gate-nits). Before that: v1.73.0->v1.74.4 (#584/#585/#131-F3/#164/#166/#591); v1.70.0->v1.72.1
-(#152/#127/#90b/#153/#154/#158/#159/#580/#581); the v1.68.1 CEO WSL-dogfood 3-PR drain (#562/#563/#564
--> v1.69.0/.1/.2); campaign #142's 4-PR queue (#554-557 -> v1.67.1-v1.68.2) -- all clean.
+**Prior drain waves:** the CEO `/goal` "ultimate agentic toolkit" campaign (**#668-#675**, v1.81.17->
+v1.83.0) drained one-per-publish, ZERO broken releases, un-gating A2A (`tg ledger`) + GPU ideation. Before
+that: the senior-review + Rust-dogfood campaign (**#655-#666**, v1.81.6->v1.81.16); the v1.75.0->v1.75.4
+GPU Phase-0 wave (#593/#594/#595/#596/#597) drained one-per-publish, ZERO broken releases, closing out
+**#171** (GPU Phase-0 program, P0-1..P0-5) + **#172** (gate-nits). Before that: v1.73.0->v1.74.4
+(#584/#585/#131-F3/#164/#166/#591); v1.70.0->v1.72.1 (#152/#127/#90b/#153/#154/#158/#159/#580/#581); the
+v1.68.1 CEO WSL-dogfood 3-PR drain (#562/#563/#564 -> v1.69.0/.1/.2); campaign #142's 4-PR queue
+(#554-557 -> v1.67.1-v1.68.2) -- all clean.
 
-## SHIPPED — live on PyPI up to **v1.81.15** (v1.81.16/PR #665 publishing at reconcile time; v1.76.0-.9
-detail in CURRENT STATE above; v1.76.10-v1.81.15 not yet individually backfilled into this section --
+## SHIPPED — live on PyPI up to **v1.90.0** (v1.91.0/PRs #685-#687 publishing at reconcile time; v1.76.0-.9
+detail in CURRENT STATE above; v1.76.10-v1.83.0 not yet individually backfilled into this section --
 see CHANGELOG.md for the authoritative per-version detail in that gap)
+
+**v1.84.0-v1.91.0 window (2026-07-20, merged, on PyPI/publishing) -- the CEO `/goal` #232 9-point
+campaign, full per-point receipts in the header above:** #678 `tg calibrate --json` structured
+`skipped_no_cuda_build` signal, CEO#9 (v1.84.0) | #679 `tg agent` best-effort primary under deadline
+truncation + a structural `confidence<=0.55` cap, CEO#1 (v1.85.0) | #680 bidirectional-oracle
+completeness exit-code gate + `callers` likely-first parity, CEO#4 (v1.86.0) | #681 `EvidenceReceipt` ->
+`review-bundle --receipt` -> `verify --against` PR-head + `--min-receipts`/`--expect-key` policy
+enforcement, CEO#8 (v1.87.0) | #682 `tg prepare` one-shot edit-readiness CUJ, CEO#5 (v1.88.0) | #683 AST
+empty-result remediation + resolve-only ruleset aliases + honest sg-absent error, CEO#6 (v1.89.0) | #684
+`suggested_scope`/`workspace_root_detected` proactive mega-repo auto-narrow (advisory), CEO#2 (v1.90.0) |
+#687 `tg install-dense` one-shot packaged dense-embedding install, CEO#7, bundled with #686 pip-vs-native
+cold-search doc-honesty (CEO#3, $0) + #685 calibrate-stdout-contract/de-flake test nit, all publishing
+together as v1.91.0. Two headline fixes (GPU-calibrate structured skip, gap#2 best-effort primary)
+BINARY-VERIFIED via a clean-room `uvx --from tensor-grep@1.87.0` dogfood. #677 (CI-audit
+transient-503 hardening, no-release) rode between this campaign and the prior #676 backlog reconcile.
 
 **v1.81.6-v1.81.15 window (2026-07-17/18, merged, on PyPI) -- the senior-review + Rust-dogfood campaign,
 full receipts in the header above:** #655 public-shim cold-start partial win (v1.81.6) | #656 stderr
