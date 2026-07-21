@@ -39,6 +39,7 @@ prefer the canonical path-first form.
    - Workspace-root search is refused in ~1s unless scoped (`--glob` / `--type` / `--max-depth`) or `--allow-broad-generated-scan`
    - `tg source REPO_PATH/src SYMBOL`
    - No good pattern/keyword to anchor on? `tg find "natural language query" REPO_PATH` (experimental) ranks the whole repo by BM25 + dense relevance instead of requiring a regex match at all. `result_incomplete: true` + exit 2 means the scan/ranking covered only PART of the repo (raise `--max-repo-files` / `--deadline`); a missing `rank_fallback_reason` means the dense leg ran, present means it degraded to BM25-only (still a legitimate result, just lexical-only).
+   - `rank_fallback_reason` present because the dense leg was never set up? Run `tg install-dense` once — a one-shot command that installs the `semantic` extra (torch-free) and fetches the ~65MB dense-embedding model (cached under `~/.tensor-grep/models/`); `tg find` keeps working BM25-only either way, and offline this exits non-zero with a clear message instead of leaving a partial model.
 4. Symbol navigation — prefer `src/` for complete callers (root often returns `partial`):
    - `tg callers REPO_PATH/src SYMBOL --deadline 15 --json`
    - `tg defs` / `tg refs` / `tg blast-radius` similarly
