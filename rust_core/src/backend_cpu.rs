@@ -833,7 +833,10 @@ mod tests {
         let content = line_bytes(&line_refs);
 
         let chunks = plan_line_aligned_chunks(&content, 7);
-        assert!(chunks.len() > 1, "expected multiple chunks for this fixture");
+        assert!(
+            chunks.len() > 1,
+            "expected multiple chunks for this fixture"
+        );
 
         assert_eq!(chunks[0].start, 0);
         assert_eq!(chunks.last().unwrap().end, content.len());
@@ -1044,9 +1047,7 @@ mod tests {
             content.extend_from_slice(line.as_bytes());
         }
 
-        let re = regex::bytes::RegexBuilder::new(r"ERR\d+")
-            .build()
-            .unwrap();
+        let re = regex::bytes::RegexBuilder::new(r"ERR\d+").build().unwrap();
         let path = Path::new("regex-fixture.log");
         let serial = scan_lines_regex(&content, &re, false, 1, path);
 
@@ -1106,7 +1107,10 @@ mod tests {
         }
 
         assert_eq!(serial, parallel);
-        assert!(parallel.is_empty(), "no chunk may introduce a false-positive match");
+        assert!(
+            parallel.is_empty(),
+            "no chunk may introduce a false-positive match"
+        );
 
         // And through the real dispatcher (whichever path this machine takes):
         let dispatched = search_contents_memmem_maybe_parallel(&content, b"NEEDLE", false, path);
