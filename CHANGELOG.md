@@ -1,6 +1,110 @@
 # CHANGELOG
 
 
+## v1.92.0 (2026-07-21)
+
+### Features
+
+- **agent-capsule**: Codeanchor-style inline caller/fan-in annotation (experimental, opt-in)
+  ([#697](https://github.com/oimiragieo/tensor-grep/pull/697),
+  [`68b4898`](https://github.com/oimiragieo/tensor-grep/commit/68b4898d7c46a380cc1ef2355ffb53110ad839be))
+
+Renders a compact `# tg: callers=N (top: foo, bar)` comment inline, prepended to the PRIMARY
+  target's rendered source excerpt in the `tg agent` capsule -- the CodeAnchor steal (arXiv
+  2606.26979, "How Much Static Structure Do Code Agents Need?"): the paper's own finding is that
+  surfacing lightweight caller facts AMBIENTLY inside the code an agent already reads (rather than
+  requiring a separate tool call) drove +3.4pp Pass@1 and halved run-to-run variance, at ~10% more
+  tokens. It also targets the cross-paper "agents skip the graph tool 58% of the time" adoption gap
+  (CodeCompass 2602.20048).
+
+verify-plan-against-code finding: the capsule already collects verified call-site evidence for the
+  PRIMARY target only (`_collect_capsule_call_site_evidence[_from_map]`, gated on confidence>=0.75 +
+  an explicitly-requested symbol) via a blast-radius scan it pays for regardless of this feature.
+  Annotating that one already-evidenced snippet is a pure RENDERING-layer change -- no new graph
+  computation. Every other rendered snippet is deliberately left unannotated rather than paying for
+  a fresh per-symbol blast-radius scan the capsule does not already run for it.
+
+- New (all in src/tensor_grep/cli/agent_capsule.py): - `_capsule_inline_caller_annotation_enabled`
+  -- opt-in via `TG_CAPSULE_INLINE_CALLERS` (default OFF: this mutates an EXISTING field's byte
+  content, `snippets[i]["source"]`, unlike DAR's purely-additive new keys, so it ships gated pending
+  a measured win). - `_inline_annotation_comment_prefix` -- `#`/`//` by language, `None` (skip,
+  fail-closed) for anything the renderer doesn't already comment-strip for. -
+  `_top_caller_symbol_names` -- resolves each caller's enclosing function name via the already-built
+  repo map's symbol table (`repo_map._enclosing_symbol_for_line`, the same helper
+  `_related_spans_from_blast_radius` already uses) -- an in-memory lookup, not a new scan. Never
+  fabricates a name for an unresolved call site. - `_build_inline_caller_annotation_text` --
+  inverse-only (who-calls-me) fact; `None` when evidence was never collected (honest absence, never
+  a fabricated "callers=0"). - `_apply_inline_caller_annotation` -- mutates the one matching primary
+  snippet's `source`/`line_map`/`token_estimate` and adds an additive `inline_structural_annotation`
+  metadata field. Fails closed on the caller's own `--max-tokens` budget.
+
+- Ordering contract (enforced in `build_agent_capsule_from_map`): runs strictly AFTER
+  `_collect_outbound_dependencies` (DAR), never before -- DAR resolves call-token line numbers as
+  `start_line + offset` into the primary snippet's own rendered `source`, so prepending the
+  annotation line first would shift every subsequent line off by one in DAR's own arithmetic.
+  Regression-pinned by `test_inline_caller_annotation_runs_after_dar_ordering_contract`.
+
+- `line_map` uses the SAME "unmapped line -> None" convention `_expanded_line_map` already emits for
+  a truncated/unmapped rendered line -- not a new shape.
+
+Measured token-cost delta on a real 44-line function from this repo (`_build_snippets`): +15 tokens
+  (2.8% of that snippet's own budget) for one real caller name resolved.
+
+38 new tests in tests/unit/test_agent_capsule_inline_caller_annotation.py: default-off
+  byte-identical output, real end-to-end rendering + honest zero-callers case,
+  evidence-not-collected graceful absence, token-budget fail-closed, kill-switch parity, confidence/
+  consistency isolation, the DAR-ordering contract, and direct unit coverage of each helper
+  (language mapping, text variants, name dedup/cap, multi-snippet targeting).
+
+ruff check / ruff format --check --preview / mypy --strict (81 files) all clean.
+
+### Testing
+
+- **eval**: Pin agent-accuracy gate per-task, drop floor slack (#252)
+  ([#696](https://github.com/oimiragieo/tensor-grep/pull/696),
+  [`9842359`](https://github.com/oimiragieo/tensor-grep/commit/98423599b176de655cbb87b2cebb69b38afebf8b))
+
+The agent-accuracy gate (tests/eval/test_agent_accuracy.py) used a floor (hits >= 13 of 16) with
+  3-task slack to absorb an assumed cross-OS filesystem walk-order variance. Consequence: a 1-3-task
+  ranking regression -- including the exact single-task #250-class regression this gate exists to
+  catch -- passed SILENTLY; only a 4+-task collapse reds it. Flagged by the #693 independent Opus
+  gate as a sensitivity gap (task #252).
+
+Measured first, per task #252's own instruction, rather than assuming: ran the eval 3 fresh times on
+  this repo (Windows) pre-edit. All 3 show 16/16, byte-identical primary_target file per task, zero
+  alternative_targets fallback use, zero flips -- matching the 2 runs #693's own commit message
+  already reports across its two commits (5 independent same-repo runs total, all in agreement). The
+  walk-order-variance hypothesis was never actually tested cross-OS either: the eval marker is
+  excluded from every CI OS's test-python job (-m "not eval"), so no automated run has ever
+  exercised it. It also doesn't hold up against repo_map.py's own ranking code: every
+  ranking-relevant sort key (_symbol_rank_key, the _repo_walk_*_sort_key family, file-score
+  tie-breaks) is keyed on the symbol/file NAME string, never on raw os.scandir order, so filesystem
+  enumeration order cannot change the final ranked order.
+
+Per task #252's explicit branch ("if measurement shows all 16 are deterministic, pin all 16 strictly
+  and drop the floor"): removed _ACCURACY_FLOOR_HITS entirely and rewrote test_agent_accuracy_gate
+  to assert per-task -- every golden task must individually hit (primary_target or an
+  alternative_targets entry matches its expected_files), and a MISS on any single task fails the
+  gate. No task needed a widened expected_files allowlist. The full per-task report is still always
+  printed first (pytest -s), unchanged from the prior design.
+
+Also fixed an adjacent stale docstring ("... share the same 15 subprocess calls ...", stale since
+  #693 added a 16th task) while in the neighborhood.
+
+Verification: - ruff check, ruff format --check --preview (whole-repo; the 4 files it flags are
+  pre-existing docs/*.md drift unrelated to this diff -- git status confirms only this file
+  changed), mypy: all clean. - pytest tests/eval -m eval -v -s: green 16/16 both before and after
+  the rewrite (4 runs total). - RED demonstration: temporarily set the "fix the ledger claim TTL
+  logic" task's expected_files to ["cli/mcp_server.py"] (a real file, but the wrong one) -- the gate
+  correctly FAILED with exactly 1/16 reported MISS (that task only; the other 15 still HIT), then
+  reverted and re-ran green (16/16) to confirm no residue.
+
+Test-only: no src/ change, non-releasing. The eval marker stays excluded from CI's test-python job
+  (opt-in-only, unchanged).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.91.3 (2026-07-21)
 
 ### Performance Improvements
