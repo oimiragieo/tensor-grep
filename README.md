@@ -68,7 +68,7 @@ It ships as a native CLI on Windows, macOS, and Linux — no server required for
 - **`tg rulesets`** — built-in security and compliance AST rule packs.
 - **`tg audit`** — audit-verify / audit-history / audit-diff with signed manifest digests and semantic diff.
 - **`tg classify`** — log and code classification. Default path is local deterministic heuristics; set `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` to opt into the CyBERT/Triton path.
-- **`tg review-bundle`** — produce enterprise review bundles.
+- **`tg review-bundle`** — produce enterprise review bundles. See [docs/enterprise_review_bundle_ci.md](docs/enterprise_review_bundle_ci.md) for a turnkey CI PR-gate recipe.
 
 ### Edit safety & audit
 - **`tg checkpoint create/list/undo`** — create, list, and undo edit checkpoints before applying rewrites.
@@ -181,6 +181,7 @@ tg dogfood
 | [docs/installation.md](docs/installation.md) | Supported install paths |
 | [docs/EXPERIMENTAL.md](docs/EXPERIMENTAL.md) | Opt-in and hidden features outside the stable surface |
 | [docs/CONTRACTS.md](docs/CONTRACTS.md) | Compatibility guarantees for configs, caches, and outputs |
+| [docs/enterprise_review_bundle_ci.md](docs/enterprise_review_bundle_ci.md) | Turnkey CI PR-gate recipe: signed evidence receipts -> review bundle -> fail-closed verify |
 | [docs/CI_PIPELINE.md](docs/CI_PIPELINE.md) | CI, release, audit, and dependency-maintenance automation |
 | [docs/SUPPORT_MATRIX.md](docs/SUPPORT_MATRIX.md) | Supported platforms, runtimes, and distribution channels |
 | [docs/HOTFIX_PROCEDURE.md](docs/HOTFIX_PROCEDURE.md) | Patch, rollback, and verification process |

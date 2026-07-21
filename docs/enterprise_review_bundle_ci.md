@@ -126,6 +126,30 @@ trust at all"; `--expect-key` answers "which of those trusted signers MUST actua
 in this bundle" -- an org can trust several keys while requiring this particular gate to see
 evidence from one specific one (e.g. the CI service account, not just any developer's key).
 
+## Optional: reuse findings across agents (`tg ledger`)
+
+The chain above is the minimum for a CI gate and does not depend on this. In a multi-agent
+workflow, `tg ledger record` / `tg ledger find` (`docs/CONTRACTS.md` section 10, EXPERIMENTAL
+Slice 2) add a content-addressed cache on top of it so a sibling agent can reuse evidence another
+agent already captured for the same symbol instead of recomputing it:
+
+```bash
+# Agent A: after emitting a receipt, publish it for reuse
+tg ledger record . --receipt receipt.json --artifact-kind evidence-receipt \
+  --symbol my_symbol --agent-id "$AGENT_ID" --json
+
+# Agent B: look up a fresh finding before recomputing (3-state exit: 0 = fresh hit, 1 = nothing
+# fresh, 2 = fail-closed on a corrupt index/blob -- only 0 means "safe to reuse")
+tg ledger find . --symbol my_symbol --artifact-kind evidence-receipt --fresh-only --json
+```
+
+A finding is only served when its captured revision (commit SHA + dirty-tree hash) matches the
+CURRENT repo state -- the same freshness discipline `review-bundle verify --against` applies to
+receipts, so a finding recorded against a now-stale commit is never reused as current. This is
+**advisory and never blocks**: it is a separate, explicit-invoke cache that nothing in the CI gate
+above consults automatically, not a policy lever like `--min-receipts`/`--expect-key` -- skip it
+entirely and the gate above is unaffected.
+
 ## What this gate does and does not prove
 
 - **It proves presence only when `--min-receipts >= 1` was actually passed.** Integrity checks

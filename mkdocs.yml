@@ -34,6 +34,7 @@ nav:
     - CI Pipeline: CI_PIPELINE.md
     - Support Matrix: SUPPORT_MATRIX.md
     - Contracts: CONTRACTS.md
+    - Review Bundle CI Gate: enterprise_review_bundle_ci.md
     - Experimental Features: EXPERIMENTAL.md
     - Release Checklist: RELEASE_CHECKLIST.md
     - Hotfix Procedure: HOTFIX_PROCEDURE.md
