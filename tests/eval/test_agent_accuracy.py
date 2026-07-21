@@ -31,14 +31,29 @@ Design notes (each choice was verified empirically against the real binary, not 
   simply "everything the capsule already surfaced"). A real engineer would accept a correct
   top-of-list alternative as "found it", and this absorbs benign tie-break churn from an unrelated
   ranking tweak without weakening the floor.
-- The floor (``_ACCURACY_FLOOR_HITS``) is set BELOW the observed baseline so normal variance (a
-  different OS's directory-walk order, a benign ranking tweak) does not red the gate, but a real
-  regression -- the ranker starts missing several golden files at once -- does. See the constant's
-  docstring for the exact baseline this was measured against.
+- PER-TASK PINNING, not a floor (task #252, re-measured 2026-07-21). Every golden task is asserted
+  individually in ``test_agent_accuracy_gate`` -- a single task losing its ``primary_target`` (and
+  every ``alternative_targets`` entry) is a real capsule-ranking regression and REDS the gate
+  immediately. This replaces an earlier floor design (a removed ``_ACCURACY_FLOOR_HITS`` constant,
+  "N of 16 must hit") whose 3-task slack was sized against an UNTESTED hypothesis -- "a different
+  OS's directory-walk order ... does not red the gate" -- never actually measured cross-OS (the
+  ``eval`` marker is excluded from every CI OS's ``test-python`` job, so no automated run ever
+  exercised this claim). The floor's real consequence: a 1-3-task regression, including the exact
+  single-task #250-class regression this gate exists to catch, passed SILENTLY. Re-measured across
+  5 independent same-repo runs (2 by the #693 author across two commits, 3 fresh runs during #252)
+  -- all 16 tasks resolved via ``primary_target`` alone, byte-identical every time; zero
+  ``alternative_targets`` fallback use, zero flips. The walk-order-variance concern also does not
+  hold up against ``repo_map.py``'s own ranking code: every ranking-relevant sort
+  (``_symbol_rank_key``, the ``_repo_walk_*_sort_key`` family, file-score tie-breaks) keys on the
+  symbol/file NAME string, never on raw ``os.scandir`` order, so the underlying filesystem's native
+  enumeration order cannot change the final ranked order -- only an actual ranking-logic change
+  can. No task in this set is known to be platform-variant, so none carries a widened allowlist; if
+  a future re-baseline ever finds a genuinely platform-variant task, widen THAT task's own
+  ``expected_files`` with a cited repro instead of reintroducing a blanket floor.
 
 This is a MEASUREMENT gate, not a brittle exact-match gate: on a failure, read the printed
-per-task table (``pytest -s``) to see exactly which task(s) regressed before assuming the floor
-itself needs revisiting.
+per-task table (``pytest -s``) to see exactly which task(s) regressed -- every task is pinned
+individually, so any single miss is real signal, never noise to be absorbed.
 
 Marked ``eval`` + ``slow`` (opt-in / isolable from the flaky-sensitive main suite -- see
 ``pyproject.toml``'s ``markers`` and the CI workflow's ``-m "not eval"`` exclusion on the main
@@ -74,17 +89,16 @@ _TG_PREPARE_DEADLINE_S = 60.0
 # "pytest's own subprocess.run timed out first" -- and comfortably below "this hangs pytest".
 _SUBPROCESS_TIMEOUT_S = 150.0
 
-# Observed baseline on origin/main (v1.91.0-era capsule ranking, measured on Windows during
-# development of this gate): 15/15 golden tasks resolved via primary_target alone (no alternative-
-# window fallback needed). Re-baselined (task #250, same day): a 16th task ("fix the ledger claim
-# TTL logic") was added back after fixing the thin-CLI-dispatcher ranking bug it had originally
-# exposed (see agent_capsule._prefer_implementation_over_cli_dispatcher_helper) -- now 16/16, with
-# the original 15 unchanged (byte-identical primary_target file per task). The floor deliberately
-# leaves 3 tasks of slack -- well beyond the 0 actually observed -- so a different OS's filesystem
-# walk order or one benign ranking tweak does not red this gate; a real capsule-ranking regression
-# (several tasks losing their file at once) still will. If you re-baseline this gate, record the
-# new observed score and date here.
-_ACCURACY_FLOOR_HITS = 13
+# Task #252 (2026-07-21): the floor is GONE -- every task below is pinned individually in
+# ``test_agent_accuracy_gate`` (see the module docstring's "PER-TASK PINNING" note for the full
+# rationale). History for context: 15/15 (initial golden set, v1.91.0-era capsule ranking) -> 16/16
+# (task #250 added "fix the ledger claim TTL logic" back after fixing the thin-CLI-dispatcher
+# ranking bug it had originally exposed) -- both measured on Windows during #693's development,
+# plus 3 additional fresh Windows runs during #252, all 16/16 byte-identical (same primary_target
+# file per task, zero alternative-window fallback use). There is no floor constant to update on a
+# re-baseline; if a task is ever found to be genuinely platform-variant, widen that task's own
+# ``expected_files`` with a cited repro (see the module docstring) rather than reintroducing a
+# blanket floor.
 
 # Each entry: a task phrased the way an engineer would file it, and the small set of files a
 # competent engineer would consider correct. Every (task, file) pair below was verified two ways
@@ -297,7 +311,8 @@ def _score_task(payload: dict[str, Any], expected_files: list[str]) -> tuple[boo
 @pytest.fixture(scope="module")
 def golden_set_results() -> list[dict[str, Any]]:
     """Run every golden-set task through the real `tg prepare` binary exactly once (module-scoped
-    so both tests below share the same 15 subprocess calls instead of doubling the run)."""
+    so both tests below share the same ``len(GOLDEN_SET)`` subprocess calls instead of doubling the
+    run)."""
     results: list[dict[str, Any]] = []
     for item in GOLDEN_SET:
         task = item["task"]
@@ -332,18 +347,26 @@ def test_golden_set_targets_exist() -> None:
 
 
 def test_agent_accuracy_gate(golden_set_results: list[dict[str, Any]]) -> None:
-    """The gate: assert the observed hit count stays at or above the conservative floor, printing
-    a full per-task report either way so a failure is immediately diagnosable (pytest -s)."""
-    hits = sum(1 for result in golden_set_results if result["hit"])
+    """The gate: every golden task is pinned INDIVIDUALLY (task #252) -- a MISS on any single task
+    fails this test, no floor slack. Always prints the full per-task report first (pytest -s) so a
+    failure is immediately diagnosable without a re-run, exactly like the prior floor-based design;
+    only the pass/fail rule changed, from "hits >= floor" to "zero misses"."""
     total = len(golden_set_results)
+    hits = sum(1 for result in golden_set_results if result["hit"])
     report_lines = [
         f"  [{'HIT ' if result['hit'] else 'MISS'}] {result['task']!r}: {result['detail']}"
         for result in golden_set_results
     ]
     report = "\n".join(report_lines)
-    print(f"\nAgent-accuracy golden set: {hits}/{total} (floor={_ACCURACY_FLOOR_HITS})\n{report}")
+    print(
+        f"\nAgent-accuracy golden set: {hits}/{total} (per-task pinned -- every task must hit)\n"
+        f"{report}"
+    )
 
-    assert hits >= _ACCURACY_FLOOR_HITS, (
-        f"agent-accuracy gate: only {hits}/{total} golden tasks hit "
-        f"(floor={_ACCURACY_FLOOR_HITS}) -- per-task detail:\n{report}"
+    misses = [result for result in golden_set_results if not result["hit"]]
+    assert not misses, (
+        f"agent-accuracy gate: {len(misses)}/{total} golden task(s) MISSED (per-task pinning -- "
+        "every task must hit, no floor slack) -- failing task(s):\n"
+        + "\n".join(f"  {m['task']!r}: {m['detail']}" for m in misses)
+        + f"\n\nfull per-task detail:\n{report}"
     )
