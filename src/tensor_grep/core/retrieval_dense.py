@@ -37,6 +37,9 @@ import sys
 import tempfile
 import time
 import urllib.request
+from dataclasses import dataclass
+from enum import StrEnum
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -160,53 +163,340 @@ def _l2_normalize(matrix: np.ndarray) -> np.ndarray:
     return matrix / norms
 
 
+# ---------------------------------------------------------------------------------------------
+# Dense-leg compression (tensor-grep-semantic-search-campaign, dense-leg compression wave):
+# int8 scalar quantization, binary(1-bit)+int8-rescore, and post-hoc dim-truncation. Every lever
+# is opt-in via `DenseCompressionConfig`, default OFF (`DenseCompressionConfig()` is a no-op) --
+# see that class's docstring for the full design rationale. Learning-free, $0, deterministic; no
+# new third-party dependency (pure numpy over the SAME model2vec output this module already
+# produces).
+# ---------------------------------------------------------------------------------------------
+
+
+class DenseQuantizationMode(StrEnum):
+    """Compression mode for :class:`DenseIndex`'s scoring representation. ``NONE`` (the default)
+    is the plain fp32 matrix this module has always used -- selecting it is a byte-identical
+    no-op against the pre-compression code."""
+
+    NONE = "none"
+    INT8 = "int8"
+    BINARY_RESCORE = "binary_rescore"
+
+
+_ENV_DENSE_QUANTIZATION = "TG_SEMANTIC_DENSE_QUANTIZATION"
+_ENV_DENSE_TRUNCATE_DIMS = "TG_SEMANTIC_DENSE_TRUNCATE_DIMS"
+_ENV_DENSE_RESCORE_CANDIDATES = "TG_SEMANTIC_DENSE_RESCORE_CANDIDATES"
+_DEFAULT_RESCORE_CANDIDATES = 50
+
+
+@dataclass(frozen=True)
+class DenseCompressionConfig:
+    """Opt-in, default-OFF compression for :class:`DenseIndex`'s scoring representation.
+
+    Every existing caller that builds a ``DenseIndex`` without passing ``compression=`` gets
+    ``DenseCompressionConfig()`` -- ``quantization=NONE, truncate_dims=None`` -- which is a
+    byte-identical no-op against the fp32 path this module shipped with; nothing about default
+    behavior changes by adding this class.
+
+    Two ORTHOGONAL, freely-combinable levers (both learning-free, $0, deterministic):
+
+    - ``truncate_dims``: keep only the first N dimensions of the embedding (Model2Vec applies PCA
+      as a post-processing step, so the dims are already variance-ordered -- this is principled
+      truncation, not an arbitrary slice), then re-L2-normalize. ``None`` (default) keeps the
+      model's full dimensionality.
+    - ``quantization``: ``NONE`` (fp32, default), ``INT8`` (per-dimension symmetric int8 scalar
+      quantization; dequantized elementwise before the cosine dot product), or
+      ``BINARY_RESCORE`` (sign-bit binarization for an O(N) Hamming-distance shortlist over the
+      WHOLE corpus via packed-byte XOR + popcount, then an int8-dequantized rescore of only the
+      ``rescore_candidates`` closest candidates -- the corpus-scale matmul against every chunk is
+      never computed in this mode).
+
+    Combining ``truncate_dims`` with ``quantization=INT8`` composes both levers (truncate first,
+    then quantize the truncated vectors) -- the "best combo" candidate the campaign specifies.
+    """
+
+    quantization: DenseQuantizationMode = DenseQuantizationMode.NONE
+    truncate_dims: int | None = None
+    rescore_candidates: int = _DEFAULT_RESCORE_CANDIDATES
+
+    def __post_init__(self) -> None:
+        if self.truncate_dims is not None and self.truncate_dims <= 0:
+            raise ValueError(f"truncate_dims must be positive, got {self.truncate_dims}")
+        if self.rescore_candidates <= 0:
+            raise ValueError(f"rescore_candidates must be positive, got {self.rescore_candidates}")
+
+    @property
+    def is_noop(self) -> bool:
+        """``True`` iff this config changes nothing vs. the pre-compression fp32 behavior."""
+        return self.quantization == DenseQuantizationMode.NONE and self.truncate_dims is None
+
+    @classmethod
+    def from_env(cls) -> DenseCompressionConfig:
+        """Read the default-OFF compression knobs from the environment.
+
+        Fail-closed: an unset/blank ``TG_SEMANTIC_DENSE_QUANTIZATION`` resolves to ``NONE`` (the
+        safe, unchanged default), but a SET-and-unrecognized value raises :class:`ValueError`
+        rather than silently falling back to ``NONE`` -- a typo'd env var must never silently
+        no-op the compression the caller thought they were turning on.
+        """
+        raw_mode = os.environ.get(_ENV_DENSE_QUANTIZATION, "").strip().lower()
+        if not raw_mode:
+            quantization = DenseQuantizationMode.NONE
+        else:
+            try:
+                quantization = DenseQuantizationMode(raw_mode)
+            except ValueError:
+                valid = ", ".join(mode.value for mode in DenseQuantizationMode)
+                raise ValueError(
+                    f"{_ENV_DENSE_QUANTIZATION}={raw_mode!r} is not a recognized dense "
+                    f"quantization mode (expected one of: {valid})"
+                ) from None
+
+        raw_truncate = os.environ.get(_ENV_DENSE_TRUNCATE_DIMS, "").strip()
+        try:
+            truncate_dims = int(raw_truncate) if raw_truncate else None
+        except ValueError:
+            raise ValueError(
+                f"{_ENV_DENSE_TRUNCATE_DIMS}={raw_truncate!r} is not a valid integer"
+            ) from None
+
+        raw_candidates = os.environ.get(_ENV_DENSE_RESCORE_CANDIDATES, "").strip()
+        try:
+            rescore_candidates = (
+                int(raw_candidates) if raw_candidates else _DEFAULT_RESCORE_CANDIDATES
+            )
+        except ValueError:
+            raise ValueError(
+                f"{_ENV_DENSE_RESCORE_CANDIDATES}={raw_candidates!r} is not a valid integer"
+            ) from None
+
+        return cls(
+            quantization=quantization,
+            truncate_dims=truncate_dims,
+            rescore_candidates=rescore_candidates,
+        )
+
+
+def _truncate_and_renormalize(matrix: np.ndarray, n_dims: int) -> np.ndarray:
+    """Keep the first ``n_dims`` columns and re-L2-normalize.
+
+    Mathematically equivalent to truncating the RAW vector before its first L2-normalization (a
+    per-row positive scalar division commutes with a fixed column slice: for unit vector
+    ``n = x / ||x||``, ``truncate(n) / ||truncate(n)|| == truncate(x) / ||truncate(x)||``), so
+    this can be applied to an already-normalized matrix without changing the result versus
+    truncating pre-normalization.
+    """
+    return _l2_normalize(matrix[:, :n_dims])
+
+
+_INT8_MAX = 127
+
+
+def _quantize_int8(matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Per-dimension symmetric int8 scalar quantization.
+
+    Returns ``(codes, scale)`` where ``codes`` is ``int8`` shape ``(N, D)`` and ``scale`` is
+    ``float32`` shape ``(D,)``, such that ``codes.astype(float32) * scale`` recovers ``matrix``
+    within ``+/- scale[d] / 2`` per component (the standard round-to-nearest quantization error
+    bound). A column that is exactly all-zero gets ``scale=1.0`` (never a division by zero) and
+    every code in it is exactly ``0``, so it round-trips EXACTLY, not just within a bound.
+
+    Clipping to ``[-127, 127]`` (not the full int8 range down to -128) keeps the quantization
+    symmetric around zero and is ALSO load-bearing correctness, not decoration: rounding a
+    component whose true value sits fractionally above ``127 * scale`` could otherwise produce a
+    code of ``128``, which silently WRAPS to ``-128`` on ``.astype(np.int8)`` (numpy does not
+    clip on integer-cast overflow) -- a wrong-sign corruption, not just extra error.
+    """
+    import numpy as np
+
+    absmax = np.max(np.abs(matrix), axis=0)
+    absmax = np.where(absmax == 0.0, 1.0, absmax)
+    scale = (absmax / _INT8_MAX).astype(np.float32)
+    codes = np.clip(np.round(matrix / scale), -_INT8_MAX, _INT8_MAX).astype(np.int8)
+    return codes, scale
+
+
+def _pack_binary(matrix: np.ndarray) -> np.ndarray:
+    """Sign-bit binarization (``1`` if a component is ``>= 0`` else ``0``), packed 8-per-byte via
+    ``np.packbits`` -- the compact representation the Hamming-distance shortlist scans."""
+    import numpy as np
+
+    bits = (matrix >= 0).astype(np.uint8)
+    return np.packbits(bits, axis=1)
+
+
+_POPCOUNT_BITS: tuple[int, ...] = tuple(bin(i).count("1") for i in range(256))
+
+
+@lru_cache(maxsize=1)
+def _popcount_table() -> np.ndarray:
+    """8-bit popcount lookup table, built once (numpy stays a lazy/optional import at module
+    scope -- see the module docstring's fail-closed contract -- so this cannot be a module-level
+    numpy array literal)."""
+    import numpy as np
+
+    return np.asarray(_POPCOUNT_BITS, dtype=np.uint8)
+
+
+def _hamming_distances(packed_codes: np.ndarray, query_packed: np.ndarray) -> np.ndarray:
+    """Hamming distance from every row of ``packed_codes`` to the single ``query_packed`` code,
+    via byte-wise XOR + the precomputed popcount table (no per-bit Python loop, no per-query
+    table rebuild)."""
+    import numpy as np
+
+    table = _popcount_table()
+    xor = np.bitwise_xor(packed_codes, query_packed)
+    return table[xor].sum(axis=1).astype(np.int64)
+
+
 class DenseIndex:
     """In-memory dense (cosine) index over a chunk corpus.
 
     Vectors are L2-normalized so a plain dot product IS cosine similarity. Chunk text is fed to
     the model RAW -- static embeddings tokenize internally, so this deliberately does NOT reuse
     ``retrieval_lexical.split_terms`` (that tokenizer stays the BM25 leg's alone).
+
+    ``compression`` (default ``None``, treated as ``DenseCompressionConfig()``) is an OPT-IN,
+    default-OFF experimental knob -- see :class:`DenseCompressionConfig`. Every caller in this
+    repo today omits it, and gets exactly the fp32 behavior this class has always had.
     """
 
-    def __init__(self, chunks: list[Chunk], model: Any) -> None:
+    def __init__(
+        self,
+        chunks: list[Chunk],
+        model: Any,
+        *,
+        compression: DenseCompressionConfig | None = None,
+    ) -> None:
         import numpy as np
 
         self.chunks = list(chunks)
         self.model = model
+        self.compression = compression if compression is not None else DenseCompressionConfig()
+        self._dim = 0
+        self._matrix: np.ndarray = np.zeros((0, 0), dtype=np.float32)
+        self._int8_codes: np.ndarray | None = None
+        self._int8_scale: np.ndarray | None = None
+        self._binary_codes: np.ndarray | None = None
         if not self.chunks:
-            self._matrix: np.ndarray = np.zeros((0, 0), dtype=np.float32)
             return
 
         vectors = _encode_matrix(model, [c.text for c in self.chunks])
-        self._matrix = _l2_normalize(vectors)
+        matrix = _l2_normalize(vectors)
+
+        if self.compression.truncate_dims is not None:
+            if self.compression.truncate_dims >= matrix.shape[1]:
+                raise ValueError(
+                    f"truncate_dims={self.compression.truncate_dims} must be less than the "
+                    f"model's embedding dimensionality ({matrix.shape[1]}) -- truncating to a "
+                    "value >= the full dimensionality is a no-op; omit truncate_dims instead of "
+                    "setting it to a non-reducing value"
+                )
+            matrix = _truncate_and_renormalize(matrix, self.compression.truncate_dims)
+
+        self._dim = int(matrix.shape[1])
+
+        if self.compression.quantization == DenseQuantizationMode.NONE:
+            self._matrix = matrix
+        elif self.compression.quantization == DenseQuantizationMode.INT8:
+            self._int8_codes, self._int8_scale = _quantize_int8(matrix)
+        elif self.compression.quantization == DenseQuantizationMode.BINARY_RESCORE:
+            self._binary_codes = _pack_binary(matrix)
+            self._int8_codes, self._int8_scale = _quantize_int8(matrix)
+        else:  # pragma: no cover -- exhaustive enum; defensive only.
+            raise AssertionError(
+                f"unhandled DenseQuantizationMode: {self.compression.quantization!r}"
+            )
 
     @property
     def dim(self) -> int:
-        return int(self._matrix.shape[1]) if self._matrix.size else 0
+        return self._dim
 
-    def query(self, text: str, *, top_k: int = 10) -> list[tuple[int, float]]:
-        """Rank chunks by cosine similarity to ``text``; returns ``(chunk_index, score)`` desc.
+    @property
+    def index_nbytes(self) -> int:
+        """Actual heap footprint (bytes) of the active scoring representation -- the numeric
+        arrays this instance retains, NOT ``self.chunks``/the model. A REAL measured number per
+        compression mode, not an assumed theoretical multiplier."""
+        total = int(self._matrix.nbytes)
+        if self._int8_codes is not None:
+            total += int(self._int8_codes.nbytes)
+        if self._int8_scale is not None:
+            total += int(self._int8_scale.nbytes)
+        if self._binary_codes is not None:
+            total += int(self._binary_codes.nbytes)
+        return total
 
-        Ties break by ascending chunk index (mirrors ``Bm25Index.query``), so results are fully
-        deterministic. Raises :class:`DenseUnavailableError` -- NOT a raw ``IndexError``/
-        ``ValueError`` -- if the query embedding's dimensionality does not match the index's: a
-        defensive shape check so a broken/inconsistent model degrades visibly (BM25-only) instead
-        of crashing deep inside a numpy matrix multiply.
+    def _prepare_query_vec(self, text: str) -> np.ndarray:
+        """Encode + (if configured) truncate + L2-normalize ``text`` into the SAME space the
+        index's chunk vectors live in. Raises :class:`DenseUnavailableError` on a dimensionality
+        mismatch (a broken/inconsistent model), mirroring the pre-compression check exactly.
         """
-        if not self.chunks or self._matrix.size == 0:
-            return []
-
         query_matrix = _encode_matrix(self.model, [text])
-        if query_matrix.shape[1] != self._matrix.shape[1]:
+        if self.compression.truncate_dims is not None:
+            if query_matrix.shape[1] < self.compression.truncate_dims:
+                raise DenseUnavailableError(
+                    "semantic ranking unavailable: query embedding dim "
+                    f"{query_matrix.shape[1]} is smaller than the configured truncate_dims "
+                    f"{self.compression.truncate_dims} (dim mismatch)"
+                )
+            query_matrix = query_matrix[:, : self.compression.truncate_dims]
+        if query_matrix.shape[1] != self._dim:
             raise DenseUnavailableError(
                 "semantic ranking unavailable: query embedding dim "
-                f"{query_matrix.shape[1]} does not match index dim {self._matrix.shape[1]} "
-                "(dim mismatch)"
+                f"{query_matrix.shape[1]} does not match index dim {self._dim} (dim mismatch)"
             )
-        query_vec = _l2_normalize(query_matrix)[0]
-        scores = self._matrix @ query_vec
-        ranked = sorted(enumerate(scores.tolist()), key=lambda item: (-item[1], item[0]))
-        return ranked[:top_k]
+        return _l2_normalize(query_matrix)[0]
+
+    def query(self, text: str, *, top_k: int = 10) -> list[tuple[int, float]]:
+        """Rank chunks by similarity to ``text``; returns ``(chunk_index, score)`` desc.
+
+        Ties break by ascending chunk index (mirrors ``Bm25Index.query``), so results are fully
+        deterministic regardless of ``compression`` mode. Raises :class:`DenseUnavailableError` --
+        NOT a raw ``IndexError``/``ValueError`` -- on a dimensionality mismatch: a defensive shape
+        check so a broken/inconsistent model degrades visibly (BM25-only) instead of crashing deep
+        inside a numpy matrix multiply.
+
+        ``BINARY_RESCORE`` mode returns AT MOST ``compression.rescore_candidates`` results (an
+        honest ANN-shortlist recall bound, not a bug) -- the corpus-scale similarity computation
+        against every chunk is deliberately never performed in that mode.
+        """
+        import numpy as np
+
+        if not self.chunks or self._dim == 0:
+            return []
+
+        query_vec = self._prepare_query_vec(text)
+
+        if self.compression.quantization == DenseQuantizationMode.NONE:
+            scores = self._matrix @ query_vec
+            ranked = sorted(enumerate(scores.tolist()), key=lambda item: (-item[1], item[0]))
+            return ranked[:top_k]
+
+        if self.compression.quantization == DenseQuantizationMode.INT8:
+            assert self._int8_codes is not None and self._int8_scale is not None
+            dequantized = self._int8_codes.astype(np.float32) * self._int8_scale
+            scores = dequantized @ query_vec
+            ranked = sorted(enumerate(scores.tolist()), key=lambda item: (-item[1], item[0]))
+            return ranked[:top_k]
+
+        # BINARY_RESCORE: Hamming-shortlist over the WHOLE corpus (cheap: packed-byte XOR +
+        # popcount), then an int8-dequantized rescore of only the closest `rescore_candidates` --
+        # the full-corpus fp32/int8 matmul is never computed.
+        assert self._binary_codes is not None
+        assert self._int8_codes is not None and self._int8_scale is not None
+        query_packed = _pack_binary(query_vec.reshape(1, -1))[0]
+        hamming = _hamming_distances(self._binary_codes, query_packed)
+        candidate_count = min(self.compression.rescore_candidates, len(self.chunks))
+        shortlist = sorted(range(len(hamming)), key=lambda i: (int(hamming[i]), i))[
+            :candidate_count
+        ]
+        shortlist_idx = np.asarray(shortlist, dtype=np.int64)
+        dequantized_shortlist = (
+            self._int8_codes[shortlist_idx].astype(np.float32) * self._int8_scale
+        )
+        scores = dequantized_shortlist @ query_vec
+        order = sorted(range(len(shortlist)), key=lambda i: (-float(scores[i]), shortlist[i]))
+        return [(shortlist[i], float(scores[i])) for i in order][:top_k]
 
 
 # ---------------------------------------------------------------------------------------------
