@@ -1,6 +1,112 @@
 # CHANGELOG
 
 
+## v1.92.1 (2026-07-21)
+
+### Bug Fixes
+
+- **search**: Detect binary content in chunk-parallel native search
+  ([#698](https://github.com/oimiragieo/tensor-grep/pull/698),
+  [`5e0234f`](https://github.com/oimiragieo/tensor-grep/commit/5e0234f4f3c1457f295e9f0ed58e8ce76ed5417f))
+
+* fix(search): detect binary content in chunk-parallel native search (#253)
+
+`search_file_chunk_parallel` (rust_core/src/native_search.rs) hardcoded `binary_detected: false` in
+  both its --count (previously line 1580) and match-collecting (previously line 1607) return paths,
+  unconditionally, for every file routed through the chunk-parallel fan-out. That bypassed the
+  binary detection every serial (non-chunked) path performs.
+
+Root cause: the serial path's `Searcher`s are always built via `build_searcher()`, which sets
+  `BinaryDetection::quit(b'\x00')` unless `config.text` is set (then `BinaryDetection::none()`). Per
+  grep-searcher 0.1.17's own doc comment (searcher/mod.rs, `BinaryDetection::quit`), for mmap-backed
+  search -- which the chunk-parallel path requires (`config.mmap` gates
+  `should_use_chunk_parallel_search`) -- this detection is only GUARANTEED over a fixed prefix at
+  the start of the contents: `grep_searcher::line_buffer::DEFAULT_BUFFER_CAPACITY` (64 KiB), plus an
+  opportunistic (non-guaranteed) check of whatever bytes land inside a matched/context line.
+  Downstream, `binary_detected: true` causes every caller (`run_native_search_files`,
+  `ParallelWalkWorker`) to zero out matches/match_count and treat the file as skipped/binary instead
+  of emitting raw byte "matches" (mojibake).
+
+`search_chunk`/`search_chunk_count` do build a `Searcher` per chunk via `build_searcher()`, so each
+  chunk's OWN grep_searcher instance still applies its own binary heuristic internally -- but their
+  sink is a bare `Lossy` closure, never wrapped in `BinaryAwareSink`, so any internal `binary_data`
+  callback never surfaces back up to `search_file_chunk_parallel`. Combined with the hardcoded
+  `false`, a binary file above the chunk-parallel threshold fell straight through to the parallel
+  scan and emitted raw, lossily-decoded byte "matches" instead of being flagged/skipped like the
+  serial path.
+
+Fix: before fanning out to the parallel per-chunk scan, scan the same 64 KiB guaranteed-detection
+  prefix of the whole mmap'd file for a NUL byte (respecting `config.text`, mirroring
+  `BinaryDetection::none()`) via a new `detect_binary_prefix` helper. If found, short-circuit with
+  the same shape the serial leaf functions return: empty matches, zero count, `binary_detected:
+  true`, and `binary_match_detected` computed via the existing `binary_file_matches_pattern` helper
+  (unchanged, re-reads the file and checks the pattern against the raw bytes) -- byte-for-byte the
+  same downstream contract the serial path already guarantees. The two remaining `binary_detected:
+  false` sites are now provably correct (guarded by the early return above) rather than blind
+  hardcodes, and are commented as such.
+
+Deliberately scans ONLY the guaranteed 64 KiB prefix, not the whole buffer -- scanning further would
+  make the chunk-parallel path detect binary content the serial path could miss for the same file,
+  which would be its own divergent-detection bug (a incorrect fix mode this PR explicitly avoids).
+
+Text-file behavior is byte-for-byte unchanged: the new check only short-circuits when a NUL byte is
+  found in the prefix; otherwise execution falls through to the existing parallel scan unmodified.
+
+Tests added (rust_core/src/native_search.rs, mod tests): -
+  search_file_chunk_parallel_flags_binary_content_like_the_serial_path -
+  search_file_chunk_parallel_count_mode_flags_binary_content_like_the_serial_path -
+  search_file_chunk_parallel_matches_text_content_unchanged (non-regression) -
+  detect_binary_prefix_finds_nul_byte_within_the_guaranteed_prefix -
+  detect_binary_prefix_returns_none_under_text_mode_even_with_a_nul_byte -
+  detect_binary_prefix_does_not_scan_past_the_guaranteed_prefix
+
+Each binary/text test forces the real multi-chunk branch (chunk_parallelism_threads: Some(4) over a
+  newline-rich fixture, sanity-checked via plan_file_chunks so the test can't silently degrade into
+  only exercising the chunk_plan.len() <= 1 fallback) and asserts parity against the serial leaf
+  functions the fix mirrors (search_file_collect_matches_with_searcher /
+  search_file_count_with_searcher) rather than only hardcoded values.
+
+Scope: touches only rust_core/src/native_search.rs (+ its own tests). Does not touch backend_cpu.rs,
+  agent_capsule.py, repo_map.py, or tests/eval. `cargo fmt --check` passes with no changes (verified
+  locally; cargo build/test/check intentionally not run per this session's CPU-safe constraint --
+  verified by manual type/trait tracing against grep-searcher 0.1.17's cached registry source and
+  cross-referenced against this file's own existing call-site conventions).
+
+* fix(search): drop misleading #253 cross-reference from code comments
+
+GitHub issue/PR #253 in this repo is an unrelated, already-merged winget release-readiness fix --
+  not this bug's tracking number. Referencing "#253" in source comments risks GitHub auto-linking to
+  the wrong PR wherever this text is later quoted (e.g. in review comments). Replaced with plain
+  descriptive text; no functional change.
+
+* fix(search): address independent-gate nits on binary-detection parity
+
+An independent review of the chunk-parallel binary-detection fix verified the core mechanism against
+  grep-searcher 0.1.17's actual pinned source and confirmed it is correct and safe, with two
+  non-blocking nits -- both addressed here:
+
+1. multi_chunk_binary_fixture's lines previously avoided the word "payload" (the pattern the tests
+  search for), so match_count == 0 and matches.is_empty() held even on the OLD hardcoded
+  `binary_detected: false` code, since there was nothing to match either way -- the regression was
+  only caught by the binary_detected == true assertion. The fixture now embeds the needle in every
+  line (parameterized, matching multi_chunk_text_fixture's shape), so a future regression that
+  silently stops flagging this content as binary would surface as 1200 spurious mojibake matches,
+  not a vacuously-true zero count. This also makes the binary_match_detected parity assertion
+  non-vacuous (true == true via binary_file_matches_pattern actually finding the pattern in the raw
+  bytes, not false == false).
+
+2. The inline comment in search_file_chunk_parallel said the new check mirrors the serial path's
+  rule "exactly". More precisely: it mirrors the GUARANTEED detection floor (the fixed-size prefix).
+  The real grep_searcher mmap `BinaryDetection::quit` also opportunistically scans bytes inside
+  matched/context lines beyond that floor -- this fix does not reproduce that secondary heuristic
+  (as documented already on detect_binary_prefix's own doc comment). Reworded to say so explicitly
+  and note the gap is conservative (can only under-flag relative to the serial path, never over-flag
+  raw bytes as false matches).
+
+No functional/behavioral change beyond the two test fixtures and two doc comments. cargo fmt --check
+  still passes with no diff.
+
+
 ## v1.92.0 (2026-07-21)
 
 ### Features
