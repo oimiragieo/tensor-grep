@@ -23,6 +23,7 @@
 
 - [docs/SUPPORT_MATRIX.md](SUPPORT_MATRIX.md)
 - [docs/CONTRACTS.md](CONTRACTS.md)
+- [docs/enterprise_review_bundle_ci.md](enterprise_review_bundle_ci.md) for a turnkey evidence-receipt CI PR-gate recipe
 - [docs/HOTFIX_PROCEDURE.md](HOTFIX_PROCEDURE.md)
 - [docs/RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)
 - [docs/CI_PIPELINE.md](CI_PIPELINE.md)

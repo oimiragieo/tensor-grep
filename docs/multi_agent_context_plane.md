@@ -136,9 +136,16 @@ To keep harnesses from overclaiming, be precise about the current limits:
   (`_DAEMON_RESPONSE_CACHE_STALE_DETECTION` / `_DAEMON_RESPONSE_CACHE_ADDED_FILE_DETECTION`,
   `session_daemon.py`). After creating files, run `tg session refresh` (or request
   `refresh_on_stale`) so the new files invalidate cached hits.
-- **There is no ledger, no claims/findings store, no message bus, and no agent-to-agent
-  protocol.** `tg` shares code facts through the session store and daemon cache described above,
-  and nothing more. Anything beyond that is not shipped.
+- **A ledger exists, but is EXPERIMENTAL/preview and explicit-invoke only.** `tg ledger
+  claim`/`release`/`list` (advisory, code-scoped coordination -- `ledger_app`, `main.py:278`,
+  mounted at `main.py:14161`; `submit_claim`/`release_claim`/`list_claims`,
+  `ledger_store.py:445,507,562`) and `tg ledger record`/`find` (content-addressed artifact reuse
+  -- `record_finding`/`find_findings`, `ledger_store.py:886,1023`) are real, shipped commands --
+  see `docs/CONTRACTS.md` sections 9-10 for the full contract, and
+  `docs/enterprise_review_bundle_ci.md` for how `record`/`find` compose with the evidence-receipt
+  CI gate. Still true: nothing in `tg agent`/`tg edit-plan`/the daemon consults the ledger
+  automatically (explicit-invoke only), there is no MCP tool surface for it, and it does not
+  extend into a general message bus or cross-repo lookup.
 
 ## Demand instrumentation (step 0 for a possible shared-context surface)
 
