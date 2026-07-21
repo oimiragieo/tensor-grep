@@ -3865,21 +3865,36 @@ def _relevant_tests_for_symbol(
             str(entry["file"]): [str(item) for item in entry["imports"]]
             for entry in repo_map.get("imports", [])
         }
+        # #691 gate NIT-1 (#222 residual, still-reachable cold path): this function already
+        # declares `deadline_monotonic`/`deadline_hit` (used by the direct_definition_tests loop
+        # below) but left THESE three whole-repo graph calls un-gated -- the identical ~n^2.2 BFS
+        # `_reverse_import_distances` bounded elsewhere in this module. `build_symbol_callers_
+        # from_map` reaches this exact block with BOTH `caller_files=` (non-None, so this branch
+        # runs) AND a real `deadline_monotonic` (the `tg callers --deadline SYMBOL` budget), so a
+        # high-fan-in symbol could still blow the whole-repo BFS/reverse-index cost this PR exists
+        # to bound. Thread the two kwargs already in scope, same per-item-inside-the-expensive-
+        # loop shape as every other call site this PR fixed.
         reverse_importers = _reverse_importers(
             all_files,
             imports_by_file,
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=deadline_hit,
             _profiling_collector=_profiling_collector,
         )
         file_distances = _reverse_import_distances(
             source_files,
             all_files,
             imports_by_file,
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=deadline_hit,
             _profiling_collector=_profiling_collector,
         )
         graph_scores = _personalized_reverse_import_pagerank(
             source_files,
             all_files,
             reverse_importers,
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=deadline_hit,
             _profiling_collector=_profiling_collector,
         )
         file_scores: dict[str, int] = {}
@@ -7598,11 +7613,18 @@ def _reverse_import_distances(
     levels, and for every candidate does O(``len(frontier)``) work inside ``_import_graph_bonus``
     -- so cost is O(depth x len(all_files) x len(frontier)), and ``frontier`` itself grows with
     each wave once the import graph has any real fan-in (a popular shared module -- exactly the
-    common case). Called UNCONDITIONALLY from ``_build_context_pack_from_map`` with no deadline
-    check anywhere in this function, even though every sibling stage in that caller (the
-    symbol-scoring loop, ``_personalized_reverse_import_pagerank``, both ``_detect_vendored_
-    subtrees`` calls) already honors the shared budget -- so THIS was the one un-gated, and by
-    far the most expensive, post-deadline tail consumer.
+    common case). Pre-fix, this function itself had NO deadline check anywhere, even though every
+    sibling stage of its DOMINANT caller, ``_build_context_pack_from_map`` (the symbol-scoring
+    loop, ``_personalized_reverse_import_pagerank``, both ``_detect_vendored_subtrees`` calls),
+    already honored the shared budget -- by far the most expensive post-deadline tail consumer on
+    the `tg agent` path. A SECOND, independently-reachable call site had the identical gap:
+    ``_relevant_tests_for_symbol``'s ``if caller_files:`` block already declared ``deadline_
+    monotonic``/``deadline_hit`` in its own signature (used by its direct_definition_tests loop)
+    but never forwarded them here -- and ``build_symbol_callers_from_map`` reaches that block with
+    BOTH a non-None ``caller_files`` and a real ``deadline_monotonic``, so ``tg callers --deadline
+    SYMBOL`` on a high-fan-in symbol (and the agent capsule's caller-evidence path, which calls
+    into the same builder) could still run this whole-repo BFS unbounded (#691 gate NIT-1). Both
+    call sites are now gated identically.
 
     Measured (direct, non-subprocess probe, a hub-fan-in-shaped synthetic tree, 5-seed BFS):
     0.99s at 2,000 files -> 13.6s at 6,000 (13.8x for 3x files) -> 60.3s at 12,000 (61x for 6x
@@ -16282,8 +16304,20 @@ def build_file_importers_from_map(
     # `require('./router')` importer of `router/index.js`). The blast-radius / context callers of
     # `_reverse_importers` leave this OFF -- they feed its output into PageRank scoring with no
     # confirm step, and widening it there reorders pinned output (see the note on that function).
+    # #691 gate NIT-2 (#222 residual symmetry): `_reverse_importers` is ~linear -- not the
+    # super-linear culprit `_reverse_import_distances` was -- so this is lower severity than
+    # NIT-1, but this function's OWN confirm-edges loop just below already honors `deadline_
+    # monotonic`; leaving this call un-threaded left one un-gated whole-repo pass in an otherwise
+    # deadline-aware pipeline. Fold its own trip into the SAME `deadline_hit` local the
+    # confirm-edges loop already sets, so `tg importers --deadline` reports one honest signal
+    # regardless of which stage actually consumed the budget.
+    reverse_importers_deadline_hit = _DeadlineBreakFlag()
     reverse_map = _reverse_importers(
-        all_files, imports_by_file, include_directory_index_aliases=True
+        all_files,
+        imports_by_file,
+        include_directory_index_aliases=True,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=reverse_importers_deadline_hit,
     )
     # Proximity-tiered, not a plain lexicographic path sort (dogfood flap fix) -- see
     # _tier_reverse_importer_candidates for why a bare alphabetical order strands a target
@@ -16297,7 +16331,7 @@ def build_file_importers_from_map(
     bounded_candidates = prefiltered[:CALLER_SCAN_FILE_CEILING]
 
     edges: list[dict[str, Any]] = []
-    deadline_hit = False
+    deadline_hit = reverse_importers_deadline_hit.hit
     scanned_count = 0
     for candidate in bounded_candidates:
         if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:

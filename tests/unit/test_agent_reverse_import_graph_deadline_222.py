@@ -31,6 +31,23 @@ call), folded into a new, dedicated `reverse_import_graph_deadline_hit_blast` fl
 This file proves the MECHANISM at the function level: fast, deterministic, no subprocess, no real
 wall-clock dependency (a fake `time.monotonic()` forces the trip). The real-binary wall-to-exit
 proof lives in `tests/integration/test_agent_reverse_import_graph_scale_sla_222.py`.
+
+#691 GATE FOLLOW-UP (independent Opus review of the fix above, SHIP-WITH-NITS): the initial fix
+left TWO more un-gated call sites of the same pattern:
+
+  NIT-1 (core-value, folded in before merge): `_relevant_tests_for_symbol`'s `if caller_files:`
+  block already declared `deadline_monotonic`/`deadline_hit` in its OWN signature (used by its
+  direct_definition_tests loop) but never forwarded them to `_reverse_importers`/`_reverse_import_
+  distances`/`_personalized_reverse_import_pagerank` -- and `build_symbol_callers_from_map` (the
+  `tg callers` builder) reaches this exact block with BOTH a non-None `caller_files` and a real
+  `deadline_monotonic`, so `tg callers --deadline SYMBOL` on a high-fan-in symbol (and the agent
+  capsule's caller-evidence path) could still run the whole-repo BFS this fix exists to bound.
+
+  NIT-2 (symmetry, lower severity -- `_reverse_importers` alone is ~linear): `build_file_
+  importers_from_map` (`tg importers`) had `deadline_monotonic` in scope and its own confirm-edges
+  loop already honored it, but left its `_reverse_importers` call un-threaded.
+
+Both are now gated identically to every other call site in this file.
 """
 
 from __future__ import annotations
@@ -341,3 +358,225 @@ def test_raw_validation_plan_for_tests_no_tests_branch_forwards_deadline(
     )
 
     assert captured.get("deadline_monotonic") == 500_000.0
+
+
+# ---------------------------------------------------------------------------------------------
+# #691 gate NIT-1: `_relevant_tests_for_symbol`'s `if caller_files:` block already declared
+# `deadline_monotonic`/`deadline_hit` in its own signature but left `_reverse_importers`/
+# `_reverse_import_distances`/`_personalized_reverse_import_pagerank` UN-GATED -- the identical
+# ~n^2.2 BFS bounded everywhere else in this module. `build_symbol_callers_from_map` reaches this
+# exact block with BOTH a non-None `caller_files` AND a real `deadline_monotonic` (the `tg callers
+# --deadline SYMBOL` budget), so a high-fan-in symbol could still run the whole-repo BFS this PR
+# exists to eliminate. Two properties: (1) the MECHANISM -- `_relevant_tests_for_symbol` itself now
+# honors the deadline in that block; (2) REACHABILITY -- `build_symbol_callers_from_map` actually
+# forwards both kwargs into the call, proving the live cold path (not just the isolated function)
+# is fixed.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_relevant_tests_for_symbol_caller_files_block_forwards_deadline_to_all_three_helpers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#691 gate NIT-1 wiring: the fix shape here is the SAME as every other call site in this
+    module -- the outer function still CALLS `_reverse_importers`/`_reverse_import_distances`/
+    `_personalized_reverse_import_pagerank` unconditionally, and relies on THOSE functions' own
+    already-proven internal per-item checks (see the `_reverse_import*` tests above) to bail out
+    fast. What this test proves is the WIRING: all three must receive the real `deadline_
+    monotonic`/`deadline_hit` `_relevant_tests_for_symbol` was given, not silently drop them (the
+    pre-fix bug -- the kwargs were declared in this function's own signature but never forwarded
+    here)."""
+    rm = _hub_and_leaves_rm(tmp_path)
+    all_files, _imports_by_file = _all_files_and_imports(rm)
+    hub = _hub_path(all_files)
+    leaves = [current for current in all_files if current != hub]
+
+    captured: dict[str, dict[str, Any]] = {}
+    real_reverse_importers = _repo_map._reverse_importers
+    real_reverse_import_distances = _repo_map._reverse_import_distances
+    real_pagerank = _repo_map._personalized_reverse_import_pagerank
+
+    def spy_reverse_importers(*args: Any, **kwargs: Any) -> dict[str, set[str]]:
+        captured["reverse_importers"] = dict(kwargs)
+        return real_reverse_importers(*args, **kwargs)
+
+    def spy_reverse_import_distances(*args: Any, **kwargs: Any) -> dict[str, int]:
+        captured["reverse_import_distances"] = dict(kwargs)
+        return real_reverse_import_distances(*args, **kwargs)
+
+    def spy_pagerank(*args: Any, **kwargs: Any) -> dict[str, float]:
+        captured["pagerank"] = dict(kwargs)
+        return real_pagerank(*args, **kwargs)
+
+    monkeypatch.setattr(_repo_map, "_reverse_importers", spy_reverse_importers)
+    monkeypatch.setattr(_repo_map, "_reverse_import_distances", spy_reverse_import_distances)
+    monkeypatch.setattr(_repo_map, "_personalized_reverse_import_pagerank", spy_pagerank)
+
+    deadline = _repo_map.time.monotonic() + 3600.0
+    flag = _repo_map._DeadlineBreakFlag()
+    _repo_map._relevant_tests_for_symbol(
+        rm,
+        "shared_target",
+        [hub],
+        caller_files=leaves,
+        deadline_monotonic=deadline,
+        deadline_hit=flag,
+    )
+
+    assert set(captured) == {"reverse_importers", "reverse_import_distances", "pagerank"}, (
+        "not all three graph helpers were reached -- fixture assumption drifted"
+    )
+    for name, kwargs in captured.items():
+        assert kwargs.get("deadline_monotonic") == deadline, (
+            f"_relevant_tests_for_symbol did not forward deadline_monotonic into {name} -- "
+            "#691 gate NIT-1 regressed"
+        )
+        assert kwargs.get("deadline_hit") is flag, (
+            f"_relevant_tests_for_symbol did not forward the shared deadline_hit flag into "
+            f"{name} -- #691 gate NIT-1 regressed"
+        )
+
+
+def test_relevant_tests_for_symbol_caller_files_block_bails_on_deadline_already_exceeded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end (not mocked) proof that an already-exceeded deadline threaded through this
+    block actually bounds the work and sets the shared flag -- mirrors the direct `_reverse_
+    importers`/`_reverse_import_distances` tests above, but exercised through the wiring this
+    fix added rather than calling those functions directly."""
+    rm = _hub_and_leaves_rm(tmp_path)
+    all_files, _imports_by_file = _all_files_and_imports(rm)
+    hub = _hub_path(all_files)
+    leaves = [current for current in all_files if current != hub]
+
+    monkeypatch.setattr(_repo_map.time, "monotonic", lambda: 1_000_000.0)
+    flag = _repo_map._DeadlineBreakFlag()
+    result = _repo_map._relevant_tests_for_symbol(
+        rm,
+        "shared_target",
+        [hub],
+        caller_files=leaves,
+        deadline_monotonic=500_000.0,
+        deadline_hit=flag,
+    )
+
+    assert flag.hit is True
+    assert isinstance(result, list)
+
+
+def test_relevant_tests_for_symbol_caller_files_block_no_pressure_path_unchanged(
+    tmp_path: Path,
+) -> None:
+    """`deadline_monotonic=None` and a comfortably-future deadline must produce byte-identical
+    output -- the no-deadline-pressure path is unaffected by this fix."""
+    rm = _hub_and_leaves_rm(tmp_path)
+    all_files, _imports_by_file = _all_files_and_imports(rm)
+    hub = _hub_path(all_files)
+    leaves = [current for current in all_files if current != hub]
+
+    no_deadline = _repo_map._relevant_tests_for_symbol(
+        rm, "shared_target", [hub], caller_files=leaves
+    )
+    flag = _repo_map._DeadlineBreakFlag()
+    future_deadline = _repo_map._relevant_tests_for_symbol(
+        rm,
+        "shared_target",
+        [hub],
+        caller_files=leaves,
+        deadline_monotonic=_repo_map.time.monotonic() + 3600.0,
+        deadline_hit=flag,
+    )
+
+    assert future_deadline == no_deadline
+    assert flag.hit is False
+
+
+def test_build_symbol_callers_from_map_forwards_caller_files_and_deadline_into_relevant_tests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#691 gate NIT-1 reachability: the exact live cold path the gate flagged --
+    `build_symbol_callers_from_map` (the `tg callers` builder) must call `_relevant_tests_for_
+    symbol` with a non-None `caller_files` (entering the un-gated block) AND the real
+    `deadline_monotonic` it was given -- not a bare call that silently drops the budget."""
+    rm = _hub_and_leaves_rm(tmp_path)
+    captured: dict[str, Any] = {}
+    real_relevant_tests_for_symbol = _repo_map._relevant_tests_for_symbol
+
+    def spy(*args: Any, **kwargs: Any) -> list[str]:
+        captured["caller_files"] = kwargs.get("caller_files")
+        captured["deadline_monotonic"] = kwargs.get("deadline_monotonic")
+        return real_relevant_tests_for_symbol(*args, **kwargs)
+
+    monkeypatch.setattr(_repo_map, "_relevant_tests_for_symbol", spy)
+
+    payload = _repo_map.build_symbol_callers_from_map(
+        rm, "shared_target", deadline_monotonic=_repo_map.time.monotonic() + 3600.0
+    )
+
+    assert payload.get("no_match") is not True, "fixture assumption drifted -- no callers found"
+    assert captured.get("caller_files"), (
+        "build_symbol_callers_from_map did not reach _relevant_tests_for_symbol with real "
+        "caller_files -- the #691 gate NIT-1 reachability claim could not be verified"
+    )
+    assert captured.get("deadline_monotonic") is not None
+
+
+# ---------------------------------------------------------------------------------------------
+# #691 gate NIT-2 (symmetry, lower severity -- `_reverse_importers` is ~linear, not the
+# super-linear culprit): `build_file_importers_from_map` (`tg importers`) already had `deadline_
+# monotonic` in scope and its own confirm-edges loop already honors it, but left its
+# `_reverse_importers` call un-threaded -- one un-gated whole-repo pass in an otherwise
+# deadline-aware pipeline.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_build_file_importers_from_map_forwards_deadline_into_reverse_importers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rm = _hub_and_leaves_rm(tmp_path)
+    all_files, _imports_by_file = _all_files_and_imports(rm)
+    hub = _hub_path(all_files)
+
+    captured: dict[str, Any] = {}
+    real_reverse_importers = _repo_map._reverse_importers
+
+    def spy(*args: Any, **kwargs: Any) -> dict[str, set[str]]:
+        captured["deadline_monotonic"] = kwargs.get("deadline_monotonic")
+        captured["deadline_hit"] = kwargs.get("deadline_hit")
+        return real_reverse_importers(*args, **kwargs)
+
+    monkeypatch.setattr(_repo_map, "_reverse_importers", spy)
+
+    deadline = _repo_map.time.monotonic() + 3600.0
+    payload = _repo_map.build_file_importers_from_map(rm, hub, deadline_monotonic=deadline)
+
+    assert captured.get("deadline_monotonic") == deadline
+    assert captured.get("deadline_hit") is not None
+    # No-pressure sanity: a comfortably-future deadline must not itself trigger truncation.
+    assert payload.get("partial") is not True
+
+
+def test_build_file_importers_from_map_deadline_hit_folds_into_partial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When `_reverse_importers` itself trips the deadline, `build_file_importers_from_map` must
+    fold that into its existing `deadline_hit`/`partial` honesty contract (the same local the
+    confirm-edges loop already sets), not silently drop the signal.
+
+    Deliberately targets a LEAF file (imported by nobody), not `hub.py`: `hub.py`'s reverse-
+    importer set is non-empty, so the confirm-edges loop below would ALSO iterate and could trip
+    its own PRE-EXISTING deadline check under an always-past clock -- passing this test even
+    without NIT-2's fix and making it non-discriminating (verified: it does). A leaf's reverse-
+    importer set is empty (nothing imports a leaf), so `bounded_candidates` is empty and the
+    confirm-edges loop never runs at all -- isolating this assertion to ONLY the newly-threaded
+    `_reverse_importers` deadline check."""
+    rm = _hub_and_leaves_rm(tmp_path)
+    all_files, _imports_by_file = _all_files_and_imports(rm)
+    hub = _hub_path(all_files)
+    leaf = next(current for current in all_files if current != hub)
+
+    monkeypatch.setattr(_repo_map.time, "monotonic", lambda: 1_000_000.0)
+    payload = _repo_map.build_file_importers_from_map(rm, leaf, deadline_monotonic=500_000.0)
+
+    assert payload.get("importer_count") == 0, "fixture assumption drifted -- leaf has importers"
+    assert payload.get("partial") is True
+    assert payload.get("deadline_limit", {}).get("deadline_exceeded") is True
