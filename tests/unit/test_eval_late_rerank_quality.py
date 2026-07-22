@@ -521,3 +521,19 @@ def test_build_report_is_deterministic_across_repeated_calls() -> None:
     second = mod.render_report(mod.build_report(queries, mod.DEFAULT_CORPUS_DIR, (5, 10)), (5, 10))
 
     assert first == second
+
+
+def test_shipped_dense_weight_mirror_matches_the_real_cli_default() -> None:
+    """Drift pin (item-#7 fold): the harness deliberately mirrors the CLI's private
+    default as a local ``SHIPPED_DENSE_WEIGHT`` constant instead of importing across the
+    benchmarks/cli boundary. That is the right layering -- but an UN-PINNED mirror recreates
+    the exact blind spot this harness change closes: if ``tg find``'s shipped default ever
+    moves, the regression floor would silently keep measuring the old weight. This test is
+    the sync contract: change one, change both (and re-derive the floor)."""
+    from tensor_grep.cli.main import _FIND_DENSE_WEIGHT_ADAPTIVE_DEFAULT
+
+    assert _load_eval_module().SHIPPED_DENSE_WEIGHT == _FIND_DENSE_WEIGHT_ADAPTIVE_DEFAULT, (
+        "benchmarks/eval_late_rerank_quality.SHIPPED_DENSE_WEIGHT no longer matches "
+        "cli/main._FIND_DENSE_WEIGHT_ADAPTIVE_DEFAULT -- update the mirror AND re-derive "
+        "the ndcg regression floor in tests/eval/test_retrieval_quality_regression.py"
+    )
