@@ -300,6 +300,93 @@ def test_prepare_claim_flag_submits(billing_repo: Path) -> None:
     assert (billing_repo / ".tensor-grep" / "ledger").exists()
 
 
+def test_prepare_claim_anonymous_agent_id_gets_hint(
+    billing_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item 3 (v1.92.1 dogfood UX/honesty batch): a --claim submitted with the ledger's
+    anonymous default (neither TG_LEDGER_AGENT_ID nor TG_EVIDENCE_AGENT_ID set) must
+    self-diagnose via an additive agent_id_hint field, instead of silently recording an
+    untraceable identity with no signal to the caller that it happened."""
+    monkeypatch.delenv("TG_LEDGER_AGENT_ID", raising=False)
+    monkeypatch.delenv("TG_EVIDENCE_AGENT_ID", raising=False)
+
+    result = _run_tg(
+        ["prepare", str(billing_repo), "calculate_late_fee", "--claim", "--json"],
+        cwd=billing_repo,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    claim = payload["coordination"]["claim"]
+    assert claim.get("submitted") is True, claim
+    assert claim["result"]["claim"]["agent_id"] == "anonymous", claim
+    assert claim.get("agent_id_hint") == "set TG_LEDGER_AGENT_ID for a stable identity", claim
+
+
+def test_prepare_claim_explicit_agent_id_env_has_no_hint(
+    billing_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sibling negative control: once TG_LEDGER_AGENT_ID is set, the resulting claim must carry
+    that identity verbatim and NEVER the agent_id_hint (which would be a false "you forgot to
+    set an identity" nag for an operator who already did)."""
+    monkeypatch.setenv("TG_LEDGER_AGENT_ID", "ci-worker-7")
+
+    result = _run_tg(
+        ["prepare", str(billing_repo), "calculate_late_fee", "--claim", "--json"],
+        cwd=billing_repo,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    claim = payload["coordination"]["claim"]
+    assert claim.get("submitted") is True, claim
+    assert claim["result"]["claim"]["agent_id"] == "ci-worker-7", claim
+    assert "agent_id_hint" not in claim, claim
+
+
+def test_prepare_out_writes_full_capsule_json_matching_stdout(
+    billing_repo: Path, tmp_path: Path
+) -> None:
+    """Item 4 (v1.92.1 dogfood UX/honesty batch): --out persists the FULL capsule JSON so `tg
+    evidence emit --capsule FILE` can reuse it without a manual save. The file's JSON content
+    must match the --json stdout payload exactly (same json.dumps(..., indent=2) serialization,
+    reusing the house atomic-write helper -- session_store._write_json_atomic /
+    _index_lock.atomic_write_json -- rather than a bare write); stdout itself is unchanged."""
+    out_path = tmp_path / "capsule.json"
+    result = _run_tg(
+        ["prepare", str(billing_repo), "calculate_late_fee", "--out", str(out_path), "--json"],
+        cwd=billing_repo,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert out_path.exists(), "tg prepare --out must create the file"
+
+    stdout_payload = json.loads(result.stdout)
+    assert stdout_payload["primary_target"]["symbol"] == "calculate_late_fee", stdout_payload
+    file_payload = json.loads(out_path.read_text(encoding="utf-8"))
+    assert file_payload == stdout_payload
+    # `_write_json_atomic`/`atomic_write_json` serializes with json.dumps(payload, indent=2) and
+    # no trailing newline (the same shape `tg evidence emit --out` already produces) -- confirm
+    # the on-disk bytes match that exact serialization, not just the round-tripped dict.
+    assert out_path.read_text(encoding="utf-8") == json.dumps(stdout_payload, indent=2)
+
+
+def test_prepare_out_persists_full_json_even_in_text_mode(
+    billing_repo: Path, tmp_path: Path
+) -> None:
+    """--out must persist the FULL JSON capsule even when stdout renders the --text summary --
+    the whole point is a reusable capsule.json for `tg evidence emit --capsule`, not a copy of
+    whatever stdout happened to show; --text's own stdout stays exactly as before (additive)."""
+    out_path = tmp_path / "capsule_text_mode.json"
+    result = _run_tg(
+        ["prepare", str(billing_repo), "calculate_late_fee", "--out", str(out_path), "--text"],
+        cwd=billing_repo,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "primary=" in result.stdout, result.stdout  # text-mode stdout unaffected
+
+    file_payload = json.loads(out_path.read_text(encoding="utf-8"))
+    assert file_payload["primary_target"]["symbol"] == "calculate_late_fee", file_payload
+    assert file_payload["blast_radius_floor"]["callers_count"] >= 1, file_payload
+
+
 def test_prepare_exits_2_on_truncation(large_billing_repo: Path) -> None:
     """Test 5: a tiny --deadline must truncate the (padded) scan, exit 2, and still print the
     full honest JSON -- never a silent exit 0 that reads as a complete result."""
