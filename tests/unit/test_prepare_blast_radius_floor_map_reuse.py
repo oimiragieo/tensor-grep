@@ -282,46 +282,62 @@ def test_prepare_builds_repo_map_once_and_matches_fs_backed_reference(
     assert floor.get("callers_count") == len(reference.get("callers", [])), floor
 
 
-_LARGE_TREE_PADDING_DIR_COUNT = 50
-_LARGE_TREE_PADDING_FILES_PER_DIR = 45
+# >= 2000 same-dir files sort before the caller -> its within-dir index exceeds the max
+# round-robin round reachable before the 2000-file cap, so the caller is guaranteed dropped.
+_LARGE_TREE_BURY_FILE_COUNT = 2100
 
 
 def _make_large_truncated_repo(root: Path) -> None:
     """The same proven billing shape as `_make_small_billing_repo`, padded to comfortably exceed
-    `DEFAULT_AGENT_REPO_MAP_LIMIT` (2000 files) with `run.py` -- the ONE caller of the selected
-    primary target `process_billing_cycle` -- deliberately placed OUTSIDE the capped scan window,
-    so a naive always-reuse fix would silently report zero callers while the correct (guarded)
-    behavior still finds it via the preserved uncapped rescan.
+    `DEFAULT_AGENT_REPO_MAP_LIMIT` (2000 files) with `zzzz_run.py` -- the ONE caller of the
+    selected primary target `process_billing_cycle` -- deliberately placed OUTSIDE the capped scan
+    window, so a naive always-reuse fix would silently report zero callers while the correct
+    (guarded) behavior still finds it via the preserved uncapped rescan.
 
-    Placement relies on `_iter_repo_files`'s documented walk order (repo_map.py:836-865,
-    1006-1070): a top-level FILE (`billing.py`, `pyproject.toml`) is bucket-group 2
-    (`_repo_walk_path_sort_key`), and `tests/` is bucket-group 1 (`_TEST_DIR_NAMES`) -- both
-    scanned before any bucket-group-3 directory, so `billing.py` (and hence the
-    `process_billing_cycle` definition) is always inside the 2000-file cap regardless of padding
-    size. Padding directories are named to sort alphabetically BEFORE the caller's directory
-    ("pad###" < "zzz_caller"); with `_LARGE_TREE_PADDING_DIR_COUNT` group-3 buckets round-robin
-    filling the (2000 - 3)-file remaining budget (billing.py + pyproject.toml + tests/test_
-    billing.py already consumed 3) at `_LARGE_TREE_PADDING_FILES_PER_DIR` files/bucket
-    (comfortably > ceil(1997 / 50) = 40), the cap is exhausted entirely within the padding
-    buckets, one full bucket-turn before "zzz_caller" is ever visited. Empirically confirmed
-    (opt10 #2 dev session): `scan_limit.possibly_truncated=True` and the caller is found only
-    once the uncapped rescan actually runs."""
+    The definition stays IN-window while the caller is buried OUT-of-window, both by construction:
+
+    - `billing.py` (holding the `process_billing_cycle` definition) and `pyproject.toml` are
+      top-level FILES -- bucket-group 2 in `_repo_walk_path_sort_key` -- and `tests/` is
+      bucket-group 1 (`_TEST_DIR_NAMES`); all three are scanned before any bucket-group-3
+      directory, so the definition is always inside the 2000-file cap regardless of padding size.
+
+    - The caller is buried at a within-directory sorted index >= 2000. The repo-map walk is
+      round-robin across directories, drawing AT MOST one file per directory per round, so the
+      maximum round reached before the 2000-file cap bites is <= 2000. Any file at within-dir
+      index >= 2000 is therefore GUARANTEED dropped -- independent of how many sibling directories
+      exist. We put `zzzz_run.py` in a single `zzz_caller/` dir behind `_LARGE_TREE_BURY_FILE_COUNT`
+      (>= 2000) `pad#####.py` files that all sort before it (`pad#####` < `zzzz_run`), so the
+      caller's within-dir index is exactly `_LARGE_TREE_BURY_FILE_COUNT`.
+
+    This is the gate-#714 fidelity fix over the original 1-file-per-padding-dir layout, whose
+    lone `zzz_caller/` file landed in round 0 and SURVIVED the cap -- leaving the caller actually
+    in-window, so a naive always-reuse would ALSO have found it and the recall claim went
+    untested. `test_prepare_recall_preserved_on_large_truncated_repo` now asserts BOTH halves: a
+    naive from-map reuse MISSES the buried caller, and the guarded floor still FINDS it via the
+    uncapped rescan (`scan_limit.possibly_truncated=True`)."""
     _make_small_billing_repo(root)
-    for dir_index in range(_LARGE_TREE_PADDING_DIR_COUNT):
-        pad_dir = root / f"pad{dir_index:03d}"
-        pad_dir.mkdir(parents=True)
-        for file_index in range(_LARGE_TREE_PADDING_FILES_PER_DIR):
-            (pad_dir / f"mod{file_index:03d}.py").write_text(
-                f"def pad_fn_{dir_index:03d}_{file_index:03d}():\n    return {file_index}\n",
-                encoding="utf-8",
-            )
+    # billing.py's own pre-existing top-level run.py (always-scanned group 2) would ALSO be a
+    # caller of process_billing_cycle and defeat the "outside the window" setup.
+    (root / "run.py").unlink()
+    # ROBUST out-of-window placement (gate #714 fix): the repo-map walk draws AT MOST one file
+    # per directory per round-robin round, so the maximum round reached before the 2000-file cap
+    # bites is <= 2000. Therefore ANY file at within-directory sorted index >= 2000 is GUARANTEED
+    # dropped, independent of how many sibling directories exist -- unlike a 1-file `zzz_caller/`
+    # dir whose sole file lands in round 0 and survives (the original fixture's latent bug: the
+    # caller was actually IN-window, so a naive always-reuse would ALSO have found it and the
+    # recall claim went untested). Bury the caller behind >=2000 same-directory pad files that
+    # sort before it; the definition (`billing.py`, top-level group 2) stays in-window so the
+    # symbol still resolves.
     caller_dir = root / "zzz_caller"
     caller_dir.mkdir(parents=True)
-    (caller_dir / "run.py").write_text(_RUN_MODULE, encoding="utf-8")
-    # billing.py's own pre-existing run.py (inside the always-scanned top-level group) would
-    # ALSO be a caller of process_billing_cycle and defeat the "outside the window" setup --
-    # _make_small_billing_repo's run.py must not coexist with this one.
-    (root / "run.py").unlink()
+    for file_index in range(_LARGE_TREE_BURY_FILE_COUNT):
+        (caller_dir / f"pad{file_index:05d}.py").write_text(
+            f"def pad_fn_{file_index:05d}():\n    return {file_index}\n",
+            encoding="utf-8",
+        )
+    # `zzzz_run.py` sorts AFTER every `pad#####.py` -> within-dir index == _LARGE_TREE_BURY_FILE_
+    # COUNT (>= 2000) -> guaranteed outside the capped window.
+    (caller_dir / "zzzz_run.py").write_text(_RUN_MODULE, encoding="utf-8")
 
 
 def test_prepare_recall_preserved_on_large_truncated_repo(tmp_path: Path, monkeypatch) -> None:
@@ -344,7 +360,7 @@ def test_prepare_recall_preserved_on_large_truncated_repo(tmp_path: Path, monkey
     unrelated subsystem at 2000+ files would make this a flaky test of code this item does not
     touch, not a reliable correctness check of the guard it adds."""
     _make_large_truncated_repo(tmp_path)
-    total_files = 3 + _LARGE_TREE_PADDING_DIR_COUNT * _LARGE_TREE_PADDING_FILES_PER_DIR + 1
+    total_files = 3 + _LARGE_TREE_BURY_FILE_COUNT + 1  # billing/pyproject/test + pads + caller
     assert total_files > 2000, total_files  # sanity: this really is a >2000-file tree
 
     for symbol_name in ("calculate_late_fee", "apply_late_fee", "process_billing_cycle"):
@@ -366,6 +382,24 @@ def test_prepare_recall_preserved_on_large_truncated_repo(tmp_path: Path, monkey
     assert scan_limit.get("possibly_truncated") is True, (
         "test setup sanity check failed -- rm was not actually truncated, so this test cannot "
         f"exercise the load-bearing guard at all: {scan_limit}"
+    )
+
+    # Gate #714 CONTRAST -- the load-bearing half of this test's fidelity: prove the fixture
+    # genuinely buries `zzzz_run.py` OUTSIDE the 2000-file capped scan window. A naive "always
+    # reuse the capped map" fix (calling build_symbol_blast_radius_from_map straight on the
+    # truncated `rm`, exactly as the floor's reuse branch does -- main.py, max_depth=1) MUST MISS
+    # the caller: that file was dropped from the scan and is therefore absent from the map's
+    # caller universe (build_symbol_callers_from_map draws strictly from the map, no fresh FS
+    # scan). This is precisely the silent recall regression the possibly_truncated guard exists to
+    # prevent; without asserting the naive path misses it, the "guard finds it" check below could
+    # pass even if the caller were accidentally in-window (the original fixture's latent bug).
+    naive_reuse = repo_map.build_symbol_blast_radius_from_map(
+        rm, "process_billing_cycle", max_depth=1
+    )
+    naive_caller_files = {str(c.get("file")) for c in naive_reuse.get("callers", [])}
+    assert not any("run.py" in current for current in naive_caller_files), (
+        "fixture no longer buries the caller out-of-window -- a naive from-map reuse already "
+        f"finds it, so this test would NOT exercise the guard: {naive_caller_files}"
     )
 
     floor, deadline_partial = _build_prepare_blast_radius_floor(
