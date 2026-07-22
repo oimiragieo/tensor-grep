@@ -136,10 +136,18 @@ def native_frontdoor_metadata_path(native_binary: Path) -> Path:
 def _read_native_frontdoor_metadata(native_binary: Path) -> dict[str, str]:
     metadata_path = native_frontdoor_metadata_path(native_binary)
     try:
+        # Bounded + fail-closed (gate NIT-2 on #704): this reader now also runs on the agent
+        # GPU-evidence path via is_cross_domain_native_binary, so a corrupt sidecar file must
+        # degrade to "invalid", never propagate. UnicodeDecodeError is a ValueError (NOT an
+        # OSError, and json.JSONDecodeError is itself a ValueError subclass), so catching
+        # (OSError, ValueError) covers unreadable, non-UTF8, and malformed-JSON uniformly.
+        # The size cap keeps a bogus multi-GB file from stalling a diagnostic probe.
+        if metadata_path.stat().st_size > 1_048_576:
+            return {"native_frontdoor_metadata_status": "invalid"}
         raw = json.loads(metadata_path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return {}
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):
         return {"native_frontdoor_metadata_status": "invalid"}
     if not isinstance(raw, dict):
         return {"native_frontdoor_metadata_status": "invalid"}

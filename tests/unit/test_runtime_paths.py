@@ -691,6 +691,29 @@ class TestNativeFrontdoorMetadataTargetsWindows:
 
         assert runtime_paths._native_frontdoor_metadata_targets_windows(shim) is False
 
+    def test_false_when_metadata_is_not_utf8(self, tmp_path):
+        """Gate NIT-2 on #704: a non-UTF8 sidecar must fail CLOSED (invalid), never raise.
+
+        UnicodeDecodeError is a ValueError, not an OSError -- the pre-fix except tuple let it
+        propagate through is_cross_domain_native_binary into the GPU probes.
+        """
+        shim = tmp_path / "bin" / "tg"
+        shim.parent.mkdir(parents=True, exist_ok=True)
+        shim.write_text("#!/usr/bin/env bash\nexec true\n", encoding="utf-8")
+        (shim.parent / "tg-native-metadata.json").write_bytes(b"\xff\xfe{invalid\x00utf8}")
+
+        assert runtime_paths._native_frontdoor_metadata_targets_windows(shim) is False
+
+    def test_false_when_metadata_is_oversized(self, tmp_path):
+        """Gate NIT-2 on #704: a bogus multi-MB sidecar is refused before the read (bounded)."""
+        shim = tmp_path / "bin" / "tg"
+        shim.parent.mkdir(parents=True, exist_ok=True)
+        shim.write_text("#!/usr/bin/env bash\nexec true\n", encoding="utf-8")
+        oversized = b'{"asset_name": "' + b"a" * 1_100_000 + b'"}'
+        (shim.parent / "tg-native-metadata.json").write_bytes(oversized)
+
+        assert runtime_paths._native_frontdoor_metadata_targets_windows(shim) is False
+
     def test_false_when_asset_name_field_missing(self, tmp_path):
         shim = tmp_path / "bin" / "tg"
         shim.parent.mkdir(parents=True, exist_ok=True)
