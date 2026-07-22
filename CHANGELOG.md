@@ -1,6 +1,42 @@
 # CHANGELOG
 
 
+## v1.93.1 (2026-07-22)
+
+### Bug Fixes
+
+- **search,gpu**: Gate-findings close-out (probe parity, cost pin, which-resolution, citation)
+  ([#708](https://github.com/oimiragieo/tensor-grep/pull/708),
+  [`0fdac34`](https://github.com/oimiragieo/tensor-grep/commit/0fdac340368673c8512de50271cfc66d41acc2e0))
+
+Three banked LOW-class fixes from the independent Opus gates on the just-merged #702/#704/#705
+  campaign (all live in v1.93.0), plus a trivial stale-citation fix the #706 builder flagged in the
+  same region. Queue is empty, so this closes the wave rather than letting the findings rot.
+
+- #702 gate NIT-1: bootstrap.py's oversized-implicit-root probe now forwards each --no-ignore* flag
+  to its own SearchConfig field instead of collapsing all 7 onto a single no_ignore=True, matching
+  cli/main.py's sibling probe field-for-field. - #702 gate NIT-2: pin the probe's ceiling+1
+  short-circuit as a structural (not wall-clock) test. - #704 gate CRUX-4: agent_capsule.py's
+  _agent_gpu_tg_command() pre-resolves via shutil.which() instead of falling through to a bare,
+  un-checked "tg" string. - #705 region: fix the stale ledger_store.py:445-461 citation in main.py's
+  prepare-claim-hook comment to point at submit_claim's current docstring.
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Reconcile to v1.93.0 (dogfood goal campaign, 7/7 published-wheel verdict)
+  ([#707](https://github.com/oimiragieo/tensor-grep/pull/707),
+  [`ee13df8`](https://github.com/oimiragieo/tensor-grep/commit/ee13df8c61e3b3f8575cb7c728318e2ecc03aa8b))
+
+Adds the 2026-07-22 CURRENT STATE bullet: the CEO v1.92.1-dogfood goal campaign end-to-end (6 items
+  -> 5 Opus-gated PRs #702-#706 + the GPU HOLD adjudication -> v1.92.3 + batch v1.93.0 -> closing
+  dogfood 7/7 PASS on published wheels), the #701 flaky-kill, banked follow-ups, and the refreshed
+  CEO desk. Header bumped to v1.93.0.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.93.0 (2026-07-22)
 
 ### Bug Fixes
