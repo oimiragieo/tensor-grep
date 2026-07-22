@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 from typer.testing import CliRunner
@@ -613,3 +614,145 @@ def test_build_context_edit_plan_from_map_threads_deadline_into_edit_plan_metada
     )
 
     assert recorded.get("deadline_monotonic") == sentinel_deadline, recorded
+
+
+# ==================================================================================================
+# Item 6 (+10% campaign, ranked-queue #5): `tg agent`'s WARM/DAEMON call-site-evidence collector,
+# `_collect_capsule_call_site_evidence_from_map` (agent_capsule.py), had NO `deadline_monotonic`
+# parameter at all -- its own `build_symbol_blast_radius_from_map` call (repo_map.py, itself already
+# deadline-aware and internally deadline-gated since the #691/#222 BFS-bounding wave) was reached
+# with no deadline, making the DEFAULT branch of `build_agent_capsule_from_map`
+# (`_rescue_call_site_evidence=False`, taken by every warm/daemon `tg agent`/`tg prepare` call --
+# `session_store.py`'s "agent" command handler) run this scan structurally unbounded regardless of
+# `--deadline`. The cold sibling (`_collect_capsule_call_site_evidence`, covered by Item 3 above)
+# already threads its own deadline correctly; this closes the warm sibling's gap. Purely additive:
+# `deadline_monotonic` defaults to `None`, identical in effect to every pre-fix caller (none of
+# which could pass it at all, since the parameter did not exist).
+# ==================================================================================================
+
+
+def _write_ambiguous_symbol_fixture(tmp_path: Path, *, padding_files: int) -> None:
+    """Two files define the SAME top-level symbol name ("helper") -- the one shape that forces
+    `_preferred_definition_files`' own deadline-checked loop (repo_map.py) to actually iterate; with
+    a single definition file it early-returns before ever consulting the deadline. `padding_files`
+    extra tiny modules pad out the repo-map file universe that loop iterates, so an injected
+    per-file delay (see the budget test below) accumulates into a measurable, controllable total."""
+    (tmp_path / "helper.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "helper_dup.py").write_text("def helper():\n    return 2\n", encoding="utf-8")
+    for i in range(padding_files):
+        (tmp_path / f"pad_{i}.py").write_text(f"PAD_{i} = {i}\n", encoding="utf-8")
+
+
+def test_warm_call_site_evidence_respects_deadline_budget(tmp_path: Path, monkeypatch) -> None:
+    """Part (a): with the fix, a tight deadline bounds the ACTUAL wall clock of
+    `_collect_capsule_call_site_evidence_from_map`, not just the flags it returns. Deterministic --
+    no wall-clock racing against real scan cost: an artificial per-file delay is injected into
+    `_file_imports_symbol_from_definition` (the innermost call inside `_preferred_definition_files`'
+    own deadline-checked loop), so the fully-unbounded total (40 padding files x up to 2 definition
+    candidates x 0.01s <= 0.8s) is far larger than the budget, and the bounded total must stay close
+    to it instead. RED pre-fix: this call would raise TypeError (no such parameter existed) --
+    proving the seam itself, not just its timing, was previously absent."""
+    _write_ambiguous_symbol_fixture(tmp_path, padding_files=40)
+    original = repo_map._file_imports_symbol_from_definition
+
+    def _slow_check(*args, **kwargs):
+        time.sleep(0.01)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(repo_map, "_file_imports_symbol_from_definition", _slow_check)
+
+    rm = repo_map.build_repo_map(str(tmp_path))
+    target = {"symbol": "helper", "confidence": 0.9}
+    deadline = time.monotonic() + 0.15
+
+    start = time.monotonic()
+    agent_capsule._collect_capsule_call_site_evidence_from_map(
+        "helper",
+        rm,
+        target,
+        include_blast_radius=True,
+        max_files=3,
+        seed_confidence=0.9,
+        deadline_monotonic=deadline,
+    )
+    elapsed = time.monotonic() - start
+
+    # Budget (0.15s) + generous slack for scheduler jitter -- comfortably below the ~0.8s the
+    # fully-unbounded loop would take if the deadline were silently dropped (the pre-fix bug).
+    assert elapsed < 0.6, f"elapsed={elapsed:.3f}s -- deadline was not threaded into the warm scan"
+
+
+def test_warm_call_site_evidence_reports_partial_honestly_on_deadline(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Part (b): an ALREADY-EXPIRED shared deadline must make the collected evidence dict report
+    partial=True / deadline_limit.deadline_exceeded=True honestly (not silently succeed), mirroring
+    Item 4's `test_collect_capsule_call_site_evidence_propagates_inner_partial_signal` for the cold
+    sibling. Deterministic: the deadline is already in the past when the collector is entered, so
+    `_preferred_definition_files`' very first loop iteration trips the deadline check -- no
+    sleeping, no timing assertions."""
+    _write_ambiguous_symbol_fixture(tmp_path, padding_files=5)
+    rm = repo_map.build_repo_map(str(tmp_path))
+    target = {"symbol": "helper", "confidence": 0.9}
+    already_expired = time.monotonic() - 5.0
+
+    _related, evidence, _unreliable = agent_capsule._collect_capsule_call_site_evidence_from_map(
+        "helper",
+        rm,
+        target,
+        include_blast_radius=True,
+        max_files=3,
+        seed_confidence=0.9,
+        deadline_monotonic=already_expired,
+    )
+
+    assert evidence.get("partial") is True, evidence
+    assert evidence.get("deadline_limit", {}).get("deadline_exceeded") is True, evidence
+
+
+def test_warm_call_site_evidence_deadline_none_is_byte_identical_noop(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Part (c): the new `deadline_monotonic` parameter defaults to `None`, and passing `None`
+    explicitly must be indistinguishable from every pre-fix caller (which could not pass it at all,
+    since the parameter did not exist -- the callee's OWN default was already `None` either way).
+    Pins BOTH the exact kwarg `build_symbol_blast_radius_from_map` receives AND the full returned
+    payload, proving the two call shapes (omit the kwarg vs pass `deadline_monotonic=None`) are
+    byte-identical."""
+    _write_helper_and_caller(tmp_path)
+    rm = repo_map.build_repo_map(str(tmp_path))
+    target = {"symbol": "helper", "confidence": 0.9}
+    recorded: list[Any] = []
+    original = repo_map.build_symbol_blast_radius_from_map
+
+    def _spy(*args, **kwargs):
+        recorded.append(kwargs.get("deadline_monotonic", "<absent>"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(agent_capsule.repo_map, "build_symbol_blast_radius_from_map", _spy)
+
+    omitted = agent_capsule._collect_capsule_call_site_evidence_from_map(
+        "helper",
+        rm,
+        target,
+        include_blast_radius=True,
+        max_files=3,
+        seed_confidence=0.9,
+    )
+    explicit_none = agent_capsule._collect_capsule_call_site_evidence_from_map(
+        "helper",
+        rm,
+        target,
+        include_blast_radius=True,
+        max_files=3,
+        seed_confidence=0.9,
+        deadline_monotonic=None,
+    )
+
+    assert recorded == [None, None], recorded
+    assert omitted == explicit_none, (omitted, explicit_none)
+    related, evidence, unreliable = omitted
+    assert evidence["status"] == "collected"
+    assert evidence["symbol"] == "helper"
+    assert unreliable is False
+    assert related and Path(related[0]["file"]).name == "caller.py", related
