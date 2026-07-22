@@ -25,10 +25,11 @@ tg find "session daemon timeout handling" REPO --deadline 30 --json
 
 - Bounded by default (`--max-repo-files`, `--deadline`, internal chunk cap).
 - Truncation → `result_incomplete` + exit `2` (never silent partial-as-complete).
-- **Bare `tg find "query"` with no PATH refuses fast (A9, v1.92.3), same as bare `tg search`:** dropping
-  PATH triggers the generic `IMPLICIT_SEARCH_WALK_FILE_CEILING=1500` fast-refuse (~1.7s, all 3 doors)
-  when the defaulted root is over the ceiling — always scope `tg find` to a PATH, both for ranking
-  quality and to avoid the refuse.
+- **Bare `tg find "query"` with no PATH does NOT hit the search fast-refuse** — `find` defaults PATH to
+  `.` (it is not bootstrap-intercepted; the `IMPLICIT_SEARCH_WALK_FILE_CEILING=1500` fast-refuse is a
+  `tg search` front-door behavior, v1.92.3). `find` bounds itself via `--max-repo-files` (default 2000)
+  plus `--deadline`/chunk caps, and marks truncation honestly (`result_incomplete` + exit `2`). Still:
+  always scope `tg find` to a PATH — for ranking quality and so a big root doesn't truncate the corpus.
 - Dense leg: prefer **`tg install-dense`** (one-shot pip + pinned potion-code-16M). Without it, find is
   BM25-only and reports `rank_fallback_reason` — supported, not silent. The fallback message is now the
   literal `retrieval_dense.py` string (A12(a), v1.93.0/#705): `` semantic ranking unavailable: model2vec
