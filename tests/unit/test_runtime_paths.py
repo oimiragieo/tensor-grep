@@ -631,6 +631,120 @@ class TestNativeBinaryTargetsWindows:
         )
 
 
+class TestNativeFrontdoorMetadataTargetsWindows:
+    """2026-07-21 CEO WSL dogfood: both installers generate a bare-named (`tg`, no `.exe`) POSIX
+    shim that internally `exec`s the real `tg.exe` -- the extension-only check can't see through
+    it, so this second signal reads the sibling `tg-native-metadata.json` instead."""
+
+    def test_true_when_sibling_metadata_names_a_windows_asset(self, tmp_path):
+        shim = tmp_path / ".tensor-grep" / "bin" / "tg"
+        shim.parent.mkdir(parents=True, exist_ok=True)
+        shim.write_text("#!/usr/bin/env bash\nexec true\n", encoding="utf-8")
+        (shim.parent / "tg-native-metadata.json").write_text(
+            json.dumps({
+                "artifact": "tensor_grep_native_frontdoor_metadata",
+                "asset_flavor": "cpu",
+                "requested_asset_flavor": "cpu",
+                "asset_name": "tg-windows-amd64-cpu.exe",
+                "version": "1.92.1",
+            }),
+            encoding="utf-8",
+        )
+
+        assert runtime_paths._native_frontdoor_metadata_targets_windows(shim) is True
+
+    def test_true_is_case_insensitive_on_exe_suffix(self, tmp_path):
+        shim = tmp_path / "bin" / "tg"
+        shim.parent.mkdir(parents=True, exist_ok=True)
+        shim.write_text("#!/usr/bin/env bash\nexec true\n", encoding="utf-8")
+        (shim.parent / "tg-native-metadata.json").write_text(
+            json.dumps({"asset_name": "tg-windows-amd64-nvidia.EXE"}), encoding="utf-8"
+        )
+
+        assert runtime_paths._native_frontdoor_metadata_targets_windows(shim) is True
+
+    def test_false_when_sibling_metadata_names_a_linux_asset(self, tmp_path):
+        """The install.sh flow run natively under WSL: a genuine Linux `tg-native` asset next to
+        the shim. Must NOT be flagged cross-domain -- that would translate a same-domain ELF's
+        `/tmp` path to a UNC path it cannot open, breaking a working config."""
+        shim = tmp_path / ".tensor-grep" / "bin" / "tg"
+        shim.parent.mkdir(parents=True, exist_ok=True)
+        shim.write_text("#!/usr/bin/env bash\nexec true\n", encoding="utf-8")
+        (shim.parent / "tg-native-metadata.json").write_text(
+            json.dumps({"asset_name": "tg-linux-amd64-cpu"}), encoding="utf-8"
+        )
+
+        assert runtime_paths._native_frontdoor_metadata_targets_windows(shim) is False
+
+    def test_false_when_no_sibling_metadata_file_exists(self, tmp_path):
+        in_tree_dev_binary = tmp_path / "rust_core" / "target" / "release" / "tg"
+        in_tree_dev_binary.parent.mkdir(parents=True, exist_ok=True)
+        in_tree_dev_binary.write_text("elf\n", encoding="utf-8")
+
+        assert runtime_paths._native_frontdoor_metadata_targets_windows(in_tree_dev_binary) is False
+
+    def test_false_when_metadata_is_malformed_json(self, tmp_path):
+        shim = tmp_path / "bin" / "tg"
+        shim.parent.mkdir(parents=True, exist_ok=True)
+        shim.write_text("#!/usr/bin/env bash\nexec true\n", encoding="utf-8")
+        (shim.parent / "tg-native-metadata.json").write_text("{not json", encoding="utf-8")
+
+        assert runtime_paths._native_frontdoor_metadata_targets_windows(shim) is False
+
+    def test_false_when_asset_name_field_missing(self, tmp_path):
+        shim = tmp_path / "bin" / "tg"
+        shim.parent.mkdir(parents=True, exist_ok=True)
+        shim.write_text("#!/usr/bin/env bash\nexec true\n", encoding="utf-8")
+        (shim.parent / "tg-native-metadata.json").write_text(
+            json.dumps({"artifact": "tensor_grep_native_frontdoor_metadata"}), encoding="utf-8"
+        )
+
+        assert runtime_paths._native_frontdoor_metadata_targets_windows(shim) is False
+
+    def test_accepts_str_path_not_just_path_object(self, tmp_path):
+        shim = tmp_path / "bin" / "tg"
+        shim.parent.mkdir(parents=True, exist_ok=True)
+        shim.write_text("#!/usr/bin/env bash\nexec true\n", encoding="utf-8")
+        (shim.parent / "tg-native-metadata.json").write_text(
+            json.dumps({"asset_name": "tg-windows-amd64-cpu.exe"}), encoding="utf-8"
+        )
+
+        assert runtime_paths._native_frontdoor_metadata_targets_windows(str(shim)) is True
+
+
+class TestSiblingNativeWindowsBinaryExists:
+    """2026-07-21 CEO WSL dogfood: the signal that actually catches the live repro -- the
+    distributed shim-dir copies (`~/bin/tg`, `~/.local/bin/tg`) that installer wiring puts on
+    `$PATH` carry a co-located `tg.exe` but NOT a copy of `tg-native-metadata.json`."""
+
+    def test_true_when_exe_sibling_exists(self, tmp_path):
+        shim = tmp_path / "bin" / "tg"
+        shim.parent.mkdir(parents=True, exist_ok=True)
+        shim.write_text("#!/usr/bin/env bash\nexec true\n", encoding="utf-8")
+        (shim.parent / "tg.exe").write_bytes(b"MZ fake pe\n")
+
+        assert runtime_paths._sibling_native_windows_binary_exists(shim) is True
+
+    def test_false_when_no_exe_sibling(self, tmp_path):
+        elf = tmp_path / "rust_core" / "target" / "release" / "tg"
+        elf.parent.mkdir(parents=True, exist_ok=True)
+        elf.write_text("elf\n", encoding="utf-8")
+
+        assert runtime_paths._sibling_native_windows_binary_exists(elf) is False
+
+    def test_false_on_nonexistent_directory(self, tmp_path):
+        missing = tmp_path / "does-not-exist" / "tg"
+        assert runtime_paths._sibling_native_windows_binary_exists(missing) is False
+
+    def test_accepts_str_path_not_just_path_object(self, tmp_path):
+        shim = tmp_path / "bin" / "tg"
+        shim.parent.mkdir(parents=True, exist_ok=True)
+        shim.write_text("#!/usr/bin/env bash\nexec true\n", encoding="utf-8")
+        (shim.parent / "tg.exe").write_bytes(b"MZ fake pe\n")
+
+        assert runtime_paths._sibling_native_windows_binary_exists(str(shim)) is True
+
+
 class TestIsWslHost:
     def test_true_when_wsl_distro_name_set(self, monkeypatch):
         monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
@@ -754,6 +868,56 @@ class TestIsCrossDomainNativeBinary:
         monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
         linux_elf_on_mount = Path("/mnt/c/dev/tensor-grep/rust_core/target/release/tg")
         assert runtime_paths.is_cross_domain_native_binary(linux_elf_on_mount) is False
+
+    def test_true_on_bare_shim_via_sibling_windows_metadata(self, monkeypatch, tmp_path):
+        """2026-07-21 CEO WSL dogfood repro: `resolve_native_tg_binary()` returns the managed
+        installer's bare-named (`tg`, no `.exe`) POSIX shim, which internally `exec`s the real
+        `tg.exe`. The `.exe`-suffix check alone misses this; the sibling metadata signal must
+        catch it so the doctor/agent probes translate the path instead of reporting the
+        misleading same-domain `failed_probe_path`."""
+        monkeypatch.setattr(runtime_paths.sys, "platform", "linux")
+        monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
+        shim = tmp_path / ".tensor-grep" / "bin" / "tg"
+        shim.parent.mkdir(parents=True, exist_ok=True)
+        shim.write_text("#!/usr/bin/env bash\nexec true\n", encoding="utf-8")
+        (shim.parent / "tg-native-metadata.json").write_text(
+            json.dumps({"asset_name": "tg-windows-amd64-cpu.exe"}), encoding="utf-8"
+        )
+
+        assert runtime_paths.is_cross_domain_native_binary(shim) is True
+
+    def test_false_on_bare_shim_via_sibling_linux_metadata(self, monkeypatch, tmp_path):
+        """The install.sh flow run natively under WSL installs a genuine Linux `tg-native` asset
+        next to the same bare-named shim shape -- must stay same-domain."""
+        monkeypatch.setattr(runtime_paths.sys, "platform", "linux")
+        monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
+        shim = tmp_path / ".tensor-grep" / "bin" / "tg"
+        shim.parent.mkdir(parents=True, exist_ok=True)
+        shim.write_text("#!/usr/bin/env bash\nexec true\n", encoding="utf-8")
+        (shim.parent / "tg-native-metadata.json").write_text(
+            json.dumps({"asset_name": "tg-linux-amd64-cpu"}), encoding="utf-8"
+        )
+
+        assert runtime_paths.is_cross_domain_native_binary(shim) is False
+
+    def test_true_on_shim_dir_copy_with_no_metadata_only_exe_sibling(self, monkeypatch, tmp_path):
+        """The LIVE repro shape: `resolve_native_tg_binary()` resolved a shim-dir copy
+        (`~/bin/tg`-class path, not the original `.tensor-grep/bin/tg`) that installer wiring
+        actually puts on `$PATH`. `scripts/install.ps1`'s `$shimDirs` loop copies a real `tg.exe`
+        next to each shim copy (line 841) but does NOT copy `tg-native-metadata.json` there (only
+        the original front-door directory gets it) -- so this case has NO metadata signal and must
+        be caught by the co-located `.exe` alone."""
+        monkeypatch.setattr(runtime_paths.sys, "platform", "linux")
+        monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
+        shim = tmp_path / "home" / "user" / ".local" / "bin" / "tg"
+        shim.parent.mkdir(parents=True, exist_ok=True)
+        shim.write_text("#!/usr/bin/env bash\nexec true\n", encoding="utf-8")
+        (shim.parent / "tg.exe").write_bytes(b"MZ fake pe\n")
+        # No tg-native-metadata.json in this directory -- confirms the .exe-sibling signal alone
+        # (not the metadata signal) is what makes this detect as cross-domain.
+        assert not (shim.parent / "tg-native-metadata.json").exists()
+
+        assert runtime_paths.is_cross_domain_native_binary(shim) is True
 
 
 class TestTranslatePathForWindowsBinary:
