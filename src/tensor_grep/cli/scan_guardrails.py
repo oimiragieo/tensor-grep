@@ -4,7 +4,13 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from tensor_grep.io.directory_scanner import (
+# perf (+10% campaign #6 / F2.4): import from the zero-dependency `tensor_grep.io.scan_limits`
+# module, not `tensor_grep.io.directory_scanner` (which does `from tensor_grep.core.config import
+# SearchConfig` at its own module level). This module is imported eagerly by `cli/ast_workflows.py`
+# (itself lazily imported, but unconditionally for every `tg scan`/`tg test`/`tg ast-info`/`tg run`
+# invocation that reaches it), and only ever needs these 3 plain constants -- never SearchConfig or
+# DirectoryScanner -- so there is no reason to pay for the heavier module here.
+from tensor_grep.io.scan_limits import (
     BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD,
     BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD,
     BROAD_WORKSPACE_PROJECT_MARKERS,

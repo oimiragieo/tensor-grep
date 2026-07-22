@@ -40,15 +40,17 @@ def test_vendored_root_dir_names_match_source_of_truth() -> None:
 
     perf/#48: bootstrap.py no longer binds `_UNBOUNDED_VENDORED_ROOT_DIR_NAMES` as a
     persistent module attribute -- `_search_paths_include_vendored_root` now does its own
-    function-local `from tensor_grep.io.directory_scanner import UNBOUNDED_VENDORED_ROOT_DIR_NAMES`
-    so that heavy import (which transitively pulls in `tensor_grep.core.config` and stdlib
-    `dataclasses`/`inspect`) is not paid by the `tg --version` fast path
-    (`tests/unit/test_bootstrap_fast_path_imports.py` pins that). Structurally this makes
+    function-local `from tensor_grep.io.scan_limits import UNBOUNDED_VENDORED_ROOT_DIR_NAMES`
+    (campaign #6 / F2.4: moved from `tensor_grep.io.directory_scanner`, which transitively pulls
+    in `tensor_grep.core.config` and stdlib `dataclasses`/`inspect` -- `scan_limits` is
+    zero-dependency) so that heavy import is not paid by the `tg --version` fast path NOR by a
+    real search invocation whose guard check never needs `SearchConfig` at all
+    (`tests/unit/test_bootstrap_fast_path_imports.py` pins both). Structurally this makes
     bootstrap.py's copy DRIFT-PROOF -- it always re-reads the canonical set fresh, it can no
     longer hold a stale independent copy -- so this test now (a) checks cli/main.py's own
     still-module-level copy against the canonical source directly, and (b) behaviorally proves
     bootstrap's guard function actually consults that same canonical set."""
-    from tensor_grep.io.directory_scanner import UNBOUNDED_VENDORED_ROOT_DIR_NAMES
+    from tensor_grep.io.scan_limits import UNBOUNDED_VENDORED_ROOT_DIR_NAMES
 
     assert cli_main._UNBOUNDED_VENDORED_ROOT_DIR_NAMES == UNBOUNDED_VENDORED_ROOT_DIR_NAMES, (
         "cli/main.py's vendored-root trigger set must match the canonical source of truth exactly"
@@ -64,7 +66,7 @@ def test_vendored_root_guard_triggers_on_every_canonical_name(tmp_path: Path) ->
     `UNBOUNDED_VENDORED_ROOT_DIR_NAMES` set, and must NOT fire for an unrelated child name --
     proving the perf/#48 function-local import actually wires the guard to the real set rather
     than silently going stale/empty."""
-    from tensor_grep.io.directory_scanner import UNBOUNDED_VENDORED_ROOT_DIR_NAMES
+    from tensor_grep.io.scan_limits import UNBOUNDED_VENDORED_ROOT_DIR_NAMES
 
     for name in UNBOUNDED_VENDORED_ROOT_DIR_NAMES:
         root = tmp_path / f"root-{name}"
@@ -81,14 +83,84 @@ def test_vendored_root_guard_triggers_on_every_canonical_name(tmp_path: Path) ->
 def test_implicit_search_walk_file_ceiling_matches_source_of_truth() -> None:
     """Item #105-parity: cli/main.py's `_LARGE_ROOT_SCAN_FILE_CEILING` and cli/bootstrap.py's
     front-door mirror `_search_paths_include_oversized_implicit_root` must both consult the
-    SAME ceiling value (`io/directory_scanner.IMPLICIT_SEARCH_WALK_FILE_CEILING`), or the two
-    front doors (native/rg fast path vs full CLI) can disagree about whether an implicit-path
-    root is oversized -- exactly the class of drift the vendored/workspace constants above were
+    SAME ceiling value (`io/scan_limits.IMPLICIT_SEARCH_WALK_FILE_CEILING` -- campaign #6 / F2.4:
+    moved from `io/directory_scanner.py`, which still re-exports it), or the two front doors
+    (native/rg fast path vs full CLI) can disagree about whether an implicit-path root is
+    oversized -- exactly the class of drift the vendored/workspace constants above were
     centralized to prevent."""
-    from tensor_grep.io.directory_scanner import IMPLICIT_SEARCH_WALK_FILE_CEILING
+    from tensor_grep.io.scan_limits import IMPLICIT_SEARCH_WALK_FILE_CEILING
 
     assert cli_main._LARGE_ROOT_SCAN_FILE_CEILING == IMPLICIT_SEARCH_WALK_FILE_CEILING
     assert IMPLICIT_SEARCH_WALK_FILE_CEILING > 0
+
+
+def test_scan_limits_single_source_of_truth_across_every_re_export() -> None:
+    """Campaign #6 / F2.4 sync-pin (TDD requirement b): all 5 broad-scan-guard constants now
+    DEFINED in the zero-dependency `tensor_grep.io.scan_limits` module must be IDENTICAL --
+    same object, via `is`, not just `==` -- to every module that re-exports or copies them:
+    `io/directory_scanner.py`'s compatibility re-export (`import ... as ...`), `cli/main.py`'s
+    module-level broad-scan literals (`_UNBOUNDED_VENDORED_ROOT_DIR_NAMES`,
+    `_BROAD_WORKSPACE_PROJECT_MARKERS`, `_BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD`,
+    `_BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD`, `_LARGE_ROOT_SCAN_FILE_CEILING`), and
+    `cli/scan_guardrails.py`'s own private aliases (`_BROAD_WORKSPACE_PROJECT_MARKERS`,
+    `_BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD`, `_BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD`).
+    `is` (not `==`) makes the single-source-of-truth contract a BUILD-TIME fact for the
+    frozenset-valued constants: two independently-constructed-but-equal frozensets would pass an
+    `==` check even after a future edit accidentally re-literals one copy instead of importing
+    it -- `is` can only pass when every site imports the exact same object. int constants have no
+    separate identity to lose (Python interns small ints), so `==` is the meaningful check for
+    those two; the assertion below uses `==` uniformly since it is the STRICTER check for
+    frozensets too (`is` implies `==`) and the weakest link (an accidental re-literal) is what
+    this test exists to catch."""
+    from tensor_grep.cli import scan_guardrails
+    from tensor_grep.io import directory_scanner, scan_limits
+
+    # scan_limits (the canonical definition) vs directory_scanner (the compatibility re-export):
+    # `is` -- a straight `import ... as ...` re-export must be the identical object, never a copy.
+    for name in (
+        "UNBOUNDED_VENDORED_ROOT_DIR_NAMES",
+        "BROAD_WORKSPACE_PROJECT_MARKERS",
+        "BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD",
+        "BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD",
+        "IMPLICIT_SEARCH_WALK_FILE_CEILING",
+    ):
+        canonical = getattr(scan_limits, name)
+        reexported = getattr(directory_scanner, name)
+        assert reexported is canonical, (
+            f"directory_scanner.{name} must be the SAME object as scan_limits.{name} "
+            "(a straight re-export, not a copy)"
+        )
+
+    # cli/main.py's module-level broad-scan literals ("bootstrap's view" of the constants --
+    # main.py:46-52 imports directly from scan_limits, the same path bootstrap.py's 3 guard
+    # helpers use function-locally):
+    assert (
+        cli_main._UNBOUNDED_VENDORED_ROOT_DIR_NAMES is scan_limits.UNBOUNDED_VENDORED_ROOT_DIR_NAMES
+    )
+    assert cli_main._BROAD_WORKSPACE_PROJECT_MARKERS is scan_limits.BROAD_WORKSPACE_PROJECT_MARKERS
+    assert (
+        cli_main._BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD
+        == scan_limits.BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD
+    )
+    assert (
+        cli_main._BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD
+        == scan_limits.BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD
+    )
+    assert cli_main._LARGE_ROOT_SCAN_FILE_CEILING == scan_limits.IMPLICIT_SEARCH_WALK_FILE_CEILING
+
+    # cli/scan_guardrails.py's own private aliases (the `tg scan` guard's view):
+    assert (
+        scan_guardrails._BROAD_WORKSPACE_PROJECT_MARKERS
+        is scan_limits.BROAD_WORKSPACE_PROJECT_MARKERS
+    )
+    assert (
+        scan_guardrails._BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD
+        == scan_limits.BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD
+    )
+    assert (
+        scan_guardrails._BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD
+        == scan_limits.BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD
+    )
 
 
 def test_oversized_implicit_root_probe_triggers_over_ceiling_real_walk(tmp_path: Path) -> None:
@@ -97,7 +169,7 @@ def test_oversized_implicit_root_probe_triggers_over_ceiling_real_walk(tmp_path:
     `test_implicit_glob_walk_probe_exceeds_ceiling_even_with_zero_matching_files` fixture style
     (real files on disk, not a monkeypatched-down ceiling), so this proves the SAME real-scale
     behavior at the bootstrap layer."""
-    from tensor_grep.io.directory_scanner import IMPLICIT_SEARCH_WALK_FILE_CEILING
+    from tensor_grep.io.scan_limits import IMPLICIT_SEARCH_WALK_FILE_CEILING
 
     root = tmp_path / "bigrepo"
     root.mkdir()
@@ -122,7 +194,7 @@ def test_oversized_implicit_root_probe_widens_for_no_ignore_flag(tmp_path: Path)
     because `--no-ignore` was requested must still be counted toward the ceiling, or a huge
     `--no-ignore` walk could slip through as "under ceiling" while the real search walks far
     more than the probe measured."""
-    from tensor_grep.io.directory_scanner import IMPLICIT_SEARCH_WALK_FILE_CEILING
+    from tensor_grep.io.scan_limits import IMPLICIT_SEARCH_WALK_FILE_CEILING
 
     root = tmp_path / "repo"
     root.mkdir()
@@ -147,7 +219,7 @@ def _gitignored_heavy_tree(tmp_path_factory):
     `.gitignore` hides a subdirectory containing more than `IMPLICIT_SEARCH_WALK_FILE_CEILING`
     files. Built ONCE (module-scoped) and only ever READ by the parametrized cases below -- 7
     independent 1500+-file trees would multiply this suite's I/O for no benefit."""
-    from tensor_grep.io.directory_scanner import IMPLICIT_SEARCH_WALK_FILE_CEILING
+    from tensor_grep.io.scan_limits import IMPLICIT_SEARCH_WALK_FILE_CEILING
 
     root = tmp_path_factory.mktemp("gitignored_heavy_tree")
     (root / ".gitignore").write_text("ignored/\n", encoding="utf-8")
@@ -182,7 +254,7 @@ def test_oversized_implicit_root_probe_matches_sibling_per_no_ignore_field(
     flip the sibling (which gets its `SearchConfig` for free from real Typer parsing rather than
     hand-building one from raw argv)."""
     from tensor_grep.core.config import SearchConfig
-    from tensor_grep.io.directory_scanner import IMPLICIT_SEARCH_WALK_FILE_CEILING
+    from tensor_grep.io.scan_limits import IMPLICIT_SEARCH_WALK_FILE_CEILING
 
     root = _gitignored_heavy_tree
     bootstrap_result = bootstrap._search_paths_include_oversized_implicit_root(
@@ -214,7 +286,7 @@ def test_oversized_implicit_root_probe_stops_short_of_full_walk(
     assertion is that it stayed at exactly ceiling+1 -- far short of the fabricated tree's full
     (10x-ceiling) size."""
     from tensor_grep.io import directory_scanner as ds_module
-    from tensor_grep.io.directory_scanner import IMPLICIT_SEARCH_WALK_FILE_CEILING
+    from tensor_grep.io.scan_limits import IMPLICIT_SEARCH_WALK_FILE_CEILING
 
     root = tmp_path / "hugerepo"
     root.mkdir()
@@ -489,7 +561,7 @@ def test_main_entry_should_not_passthrough_oversized_implicit_single_project_roo
     never even ran. It must now fall through to the full CLI instead, which owns the actual
     fast (<1s, no full-tree walk to timeout) refusal via `_should_refuse_unbounded_large_root_scan`.
     """
-    from tensor_grep.io.directory_scanner import IMPLICIT_SEARCH_WALK_FILE_CEILING
+    from tensor_grep.io.scan_limits import IMPLICIT_SEARCH_WALK_FILE_CEILING
 
     called = {"full_cli": False}
     root = tmp_path / "repo"
@@ -529,7 +601,7 @@ def test_main_entry_should_passthrough_oversized_EXPLICIT_root_search(
     explicit path is a deliberately-scoped root even when huge. Proves the new #105 guard does
     not regress the common scoped-search case (no added latency: the probe is gated on
     `paths_defaulted` and must never even run here)."""
-    from tensor_grep.io.directory_scanner import IMPLICIT_SEARCH_WALK_FILE_CEILING
+    from tensor_grep.io.scan_limits import IMPLICIT_SEARCH_WALK_FILE_CEILING
 
     root = tmp_path / "repo"
     root.mkdir()
@@ -1050,7 +1122,7 @@ def test_search_args_include_unbounded_broad_scan_refuses_oversized_implicit_sin
     unbounded broad scan when the path is implicit, and is exempted the moment either an
     explicit path or an explicit `--max-depth` bound is present -- same escape-hatch contract
     as the workspace/vendored guards above."""
-    from tensor_grep.io.directory_scanner import IMPLICIT_SEARCH_WALK_FILE_CEILING
+    from tensor_grep.io.scan_limits import IMPLICIT_SEARCH_WALK_FILE_CEILING
 
     root = tmp_path / "repo"
     root.mkdir()
