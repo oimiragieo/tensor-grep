@@ -279,7 +279,12 @@ evidence_app = typer.Typer(
 ledger_app = typer.Typer(
     help="EXPERIMENTAL: advisory, code-scoped agent-to-agent coordination. Slice 1 (claim/"
     "release/list) never blocks an edit; Slice 2 (record/find) is content-addressed artifact "
-    "reuse with revision-freshness. Surface and JSON schema may change in a minor release.",
+    "reuse with revision-freshness. PATH SCOPING (Slice 1): claim/release/list all "
+    "canonicalize to the SAME repository root regardless of which subtree PATH names -- `list` "
+    "rolls up (listing a broader/ancestor PATH, e.g. the default `.`, shows every live claim "
+    "scoped to it or to any descendant subtree, each tagged with its own `scope`); `release` "
+    "keeps exact `--claim-id`/`--symbol` matching but names live claims elsewhere when nothing "
+    "matches. Surface and JSON schema may change in a minor release.",
     no_args_is_help=True,
 )
 
@@ -16156,7 +16161,14 @@ def _emit_ledger_error(
 
 @ledger_app.command("claim")
 def ledger_claim(
-    path: str = typer.Argument(".", help="Repository path the claim is scoped to."),
+    path: str = typer.Argument(
+        ".",
+        help="Repository subtree this claim is scoped to (e.g. 'core/hooks', or '.' for the "
+        "whole repo). Recorded as the claim's `scope` -- claim/list/release all canonicalize "
+        "to the SAME repository root regardless of which subtree PATH names, so `tg ledger "
+        "list` (broader/ancestor PATH, e.g. the default '.') rolls this claim up. See "
+        "`tg ledger --help`.",
+    ),
     symbol: list[str] = typer.Option(
         [], "--symbol", help="Symbol name to claim. Repeatable (--symbol A --symbol B)."
     ),
@@ -16188,6 +16200,11 @@ def ledger_claim(
 ) -> None:
     """EXPERIMENTAL (Slice 1): record an advisory claim on symbols/files and report live
     overlaps from other agents. Surface and JSON schema may change in a minor release.
+
+    PATH SCOPING: PATH is this claim's `scope`, not an isolated storage location -- claim/
+    list/release all canonicalize to the SAME repository root (the nearest `.git` ancestor)
+    regardless of which subtree PATH names, so `tg ledger list` (default PATH `.`) always
+    rolls up every live claim in the repo, each tagged with its own `scope`.
 
     ADVISORY ONLY: this never blocks an edit. It always exits 0 on success -- even when
     other agents hold live overlapping claims, which are reported in `overlaps` for the
@@ -16247,7 +16264,7 @@ def ledger_claim(
     claim = cast(dict[str, object], result["claim"])
     overlaps = cast(list[dict[str, object]], result["overlaps"])
     typer.echo(f"Claim {claim['claim_id']} recorded for agent={claim['agent_id']}")
-    typer.echo(f"  symbols={claim['symbols']} files={claim['files']}")
+    typer.echo(f"  scope={claim['scope']} symbols={claim['symbols']} files={claim['files']}")
     typer.echo(f"  expires_at={claim['expires_at']}")
     if overlaps:
         typer.echo(f"  overlaps: {len(overlaps)} live claim(s) from other agents")
@@ -16262,7 +16279,13 @@ def ledger_claim(
 
 @ledger_app.command("release")
 def ledger_release(
-    path: str = typer.Argument(".", help="Repository path the claim is scoped to."),
+    path: str = typer.Argument(
+        ".",
+        help="Repository subtree used to resolve the SHARED repo-wide claims index (claim/"
+        "list/release all canonicalize to the SAME repository root regardless of which "
+        "subtree PATH names). PATH does NOT filter which claim gets released -- "
+        "`--claim-id`/`--symbol` do that. See `tg ledger --help`.",
+    ),
     claim_id: str | None = typer.Option(
         None, "--claim-id", help="Release the claim with this exact ID."
     ),
@@ -16281,9 +16304,16 @@ def ledger_release(
 ) -> None:
     """EXPERIMENTAL (Slice 1): release a claim by exact `--claim-id` (any caller who knows
     the id) or by `--symbol` (scoped to the resolved `--agent-id`'s own claims only). Surface
-    and JSON schema may change in a minor release. Always exits 0 on success, including when
-    nothing matched -- releasing an already-expired or unknown claim is not an error. Exits 2
-    only on a fail-closed condition (lock timeout or a write failure)."""
+    and JSON schema may change in a minor release.
+
+    PATH SCOPING: PATH only resolves WHICH repository's shared claims index this call
+    operates on (canonicalized to the nearest `.git` ancestor regardless of subtree) -- it
+    never filters which claim matches. Always exits 0 on success, including when nothing
+    matched -- releasing an already-expired or unknown claim is not an error, and when
+    nothing matches, the response names any live claims elsewhere in the repository
+    (`unmatched_reason`/`live_claims_elsewhere`) so a wrong `--claim-id`/`--symbol` is
+    self-diagnosing instead of a silent no-op. Exits 2 only on a fail-closed condition (lock
+    timeout or a write failure)."""
     from tensor_grep.cli import _index_lock, ledger_store
 
     try:
@@ -16312,6 +16342,7 @@ def ledger_release(
         raise typer.Exit(code=2) from exc
 
     released = cast(list[dict[str, object]], result["released"])
+    live_claims_elsewhere = cast(list[dict[str, object]], result["live_claims_elsewhere"])
     payload = {
         "version": _json_output_version(),
         "schema_version": _json_output_version(),
@@ -16322,20 +16353,48 @@ def ledger_release(
         "advisory": True,
         "released": released,
         "released_count": result["released_count"],
+        "listed_scope": result["listed_scope"],
+        "unmatched_reason": result["unmatched_reason"],
+        "live_claims_elsewhere": live_claims_elsewhere,
+        "live_claims_elsewhere_count": result["live_claims_elsewhere_count"],
+        "live_claims_elsewhere_truncated": result["live_claims_elsewhere_truncated"],
     }
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
         return
     if not released:
-        typer.echo("No matching live claim found (already released or expired).")
+        typer.echo(f"No matching live claim found (listed_scope={result['listed_scope']!r}).")
+        if live_claims_elsewhere:
+            typer.echo(
+                f"  {result['live_claims_elsewhere_count']} live claim(s) exist elsewhere in "
+                "this repository:"
+            )
+            for entry in live_claims_elsewhere:
+                typer.echo(
+                    f"    {entry['claim_id']} agent={entry['agent_id']} scope={entry['scope']} "
+                    f"symbols={entry['symbols']}"
+                )
+            if result["live_claims_elsewhere_truncated"]:
+                typer.echo("    ... (truncated)")
+        else:
+            typer.echo("  No live claims exist for this repository.")
         return
     for entry in released:
-        typer.echo(f"Released {entry['claim_id']} (agent={entry['agent_id']})")
+        typer.echo(
+            f"Released {entry['claim_id']} (agent={entry['agent_id']}, scope={entry['scope']})"
+        )
 
 
 @ledger_app.command("list")
 def ledger_list(
-    path: str = typer.Argument(".", help="Repository path the claims are scoped to."),
+    path: str = typer.Argument(
+        ".",
+        help="Repository subtree to list claims within. ROLLS UP: listing a broader/ancestor "
+        "path (e.g. '.', the default) shows every live claim scoped to it OR to any "
+        "descendant subtree -- e.g. `tg ledger claim core/hooks` shows up in `tg ledger "
+        "list` (default '.') and in `tg ledger list core`, but not in `tg ledger list docs`. "
+        "See `tg ledger --help`.",
+    ),
     symbol: str | None = typer.Option(
         None, "--symbol", help="Filter to live claims covering this symbol."
     ),
@@ -16344,9 +16403,10 @@ def ledger_list(
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
-    """EXPERIMENTAL (Slice 1): list live (non-expired) claims for the current root. Surface
-    and JSON schema may change in a minor release. Always exits 0, including an empty result
-    -- an empty claims list is a normal outcome, not a not-found error."""
+    """EXPERIMENTAL (Slice 1): list live (non-expired) claims scoped to PATH or to any of its
+    descendant subtrees (rollup -- each returned claim carries its own `scope`). Surface and
+    JSON schema may change in a minor release. Always exits 0, including an empty result --
+    an empty claims list is a normal outcome, not a not-found error."""
     from tensor_grep.cli import ledger_store
 
     try:
@@ -16383,11 +16443,12 @@ def ledger_list(
         typer.echo(json.dumps(payload, indent=2))
         return
     if not claims:
-        typer.echo("No live claims.")
+        typer.echo(f"No live claims (listed path={path!r}, includes descendant subtrees).")
         return
+    typer.echo(f"Live claims within path={path!r} (includes descendant subtrees):")
     for entry in claims:
         typer.echo(
-            f"{entry['claim_id']}  agent={entry['agent_id']}  "
+            f"{entry['claim_id']}  agent={entry['agent_id']}  scope={entry.get('scope')}  "
             f"symbols={entry.get('symbols')}  files={entry.get('files')}  "
             f"expires_at={entry.get('expires_at')}"
         )

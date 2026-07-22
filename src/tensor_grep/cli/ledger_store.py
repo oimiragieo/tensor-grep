@@ -8,8 +8,8 @@ lock on an edit. ``submit_claim`` always returns normally on success (even when 
 claims overlap); the caller decides what to do with that information. A dead agent's claim
 simply TTL-expires, so crash-semantics need no special handling.
 
-On-disk layout mirrors ``session_store.py`` / ``checkpoint_store.py`` deliberately (same
-q10 RMW-race fix, same audit-I2 retention-cap shape, same traversal-refusal contract):
+On-disk layout mirrors ``session_store.py`` / ``checkpoint_store.py`` in SHAPE (same q10
+RMW-race fix, same audit-I2 retention-cap shape, same traversal-refusal contract):
 ``<root>/.tensor-grep/ledger/claims/index.json`` -- a single JSON array of claim records,
 read-modify-written under :func:`tensor_grep.cli._index_lock.index_lock` (never a bare
 load->mutate->write), expired-pruned on every WRITE path (``claim``/``release``), and capped
@@ -19,6 +19,33 @@ grow the index without limit even though none of them are individually expired y
 ``list_claims`` is a pure read (mirrors ``session_store.list_sessions``): it prunes expired
 entries for DISPLAY only and never writes, so listing claims cannot itself create
 ``.tensor-grep/ledger/`` (default-inert until the first ``claim``).
+
+PATH scoping (claims subtree only -- fix for the CEO v1.92.1 dogfood #1 "PATH-scope footgun"):
+unlike every sibling store, ``root`` for ``submit_claim``/``release_claim``/``list_claims`` is
+NOT simply ``session_store._resolve_root(path)`` (the literal, caller-supplied directory) --
+that was the bug. ``claim core/hooks`` and ``list .`` each independently resolved to a
+DIFFERENT physical directory (``core/hooks/.tensor-grep/...`` vs ``./.tensor-grep/...``), so a
+claim filed from one subtree was invisible to a list/release call from another, even within the
+SAME repository, with no error or signal -- "same-PATH-everywhere" was an undocumented sharp
+edge. :func:`_ledger_physical_root` fixes this by canonicalizing to the nearest ``.git``
+ancestor (:func:`_discover_repo_root`) -- git is the one unambiguous, universally-understood
+repo-boundary signal, so every claim/list/release call for the SAME repository now reads and
+writes the SAME physical index regardless of which subtree of it ``path`` names (falls back to
+today's literal-path behavior, unchanged, when no ``.git`` is found -- a non-git working
+directory is not regressed, just not unified). The caller's original ``path`` is preserved
+separately as each claim's ``scope`` (root-relative, POSIX-normalized via
+:func:`_normalize_scope`) rather than being (mis)used as the physical storage location.
+``list_claims`` rolls scope UP: listing a broader/ancestor path shows every live claim scoped to
+it or to any descendant subtree (:func:`_scope_contains`, segment-wise lexical containment --
+never a raw string-prefix test, so ``"core/ho"`` cannot false-match ``"core/hoodie"``);
+``release_claim`` keeps its EXACT ``--claim-id``/``--symbol`` matching semantics unchanged (this
+fix does not add rollup matching to release -- a release call could otherwise silently drop an
+unrelated sibling agent's claim just because it happens to share a symbol name and live under an
+ancestor scope), but when nothing matches, it now names what IS live elsewhere
+(``unmatched_reason``/``live_claims_elsewhere``) instead of a bare, indistinguishable
+``released_count: 0``. Slice 2 (``record_finding``/``find_findings`` below) deliberately keeps
+plain ``session_store._resolve_root`` -- untouched by this fix, per the same footgun it has not
+(yet) been reported for.
 
 Backend Fail-Closed Contract (AGENTS.md): a lock-acquire timeout
 (:class:`tensor_grep.cli._index_lock.IndexLockTimeoutError`), a symlink at the index
@@ -56,10 +83,11 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import tempfile
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, TypeGuard
 from uuid import uuid4
 
@@ -85,6 +113,12 @@ _DEFAULT_AGENT_ID = "anonymous"
 # DoS bound distinct from TTL pruning (see module docstring): mirrors audit I2's
 # session-index retention cap (session_store._DEFAULT_SESSION_MAX) applied to claims.
 _MAX_LIVE_CLAIMS = 256
+
+# Release-honesty diagnostic bound (PATH-scope footgun fix): when a `release` call matches
+# nothing, `live_claims_elsewhere` names OTHER live claims so the caller can self-diagnose a
+# wrong `--claim-id`/`--symbol` -- bounded independently of `_MAX_LIVE_CLAIMS` (the store's own
+# DoS cap) so a busy, near-the-cap ledger never balloons a single release response.
+_MAX_LIVE_CLAIMS_ELSEWHERE_SHOWN = 10
 
 # Pre-parse bounded read (mirrors evidence_signing._MAX_RECEIPT_FILE_BYTES's "pre-auth
 # unbounded read" rationale, AGENTS.md Security Hardening Patterns): a claims index is a
@@ -185,6 +219,7 @@ class ClaimRecord:
     agent_id: str
     symbols: list[str]
     files: list[str]
+    scope: str
     intent: str
     note: str | None
     created_at: str
@@ -308,6 +343,107 @@ def _normalize_relative_file(root: Path, raw: str) -> str:
     if resolved != root_resolved and root_resolved not in resolved.parents:
         raise LedgerTraversalError(f"Refusing claim --files entry outside repo root: {raw!r}")
     return candidate.as_posix()
+
+
+# ---------------------------------------------------------------------------
+# PATH-scope footgun fix (CEO v1.92.1 dogfood #1): physical-root canonicalization + the claim
+# `scope` concept it enables. See the module docstring's "PATH scoping" paragraph for the full
+# rationale. Claims-subtree (Slice 1) only -- record_finding/find_findings (Slice 2) below
+# deliberately keep plain `_resolve_root`, untouched.
+# ---------------------------------------------------------------------------
+
+
+def _discover_repo_root(start: Path) -> Path:
+    """Walk upward from ``start`` (an already-``_resolve_root``-resolved, existing directory)
+    looking for the nearest ancestor -- including ``start`` itself -- that carries a ``.git``
+    entry (a directory for a normal checkout, a FILE for a git worktree/submodule; ``.exists()``
+    does not care which). ``.git`` is the one unambiguous, universally-understood repo-boundary
+    signal (mirrors the ``.git``-detection half of ``repo_map._validation_repo_root``'s boundary
+    logic, deliberately WITHOUT that function's npm/python/rust marker-file short-circuit -- a
+    nested ``package.json``/``pyproject.toml`` inside a monorepo SUBTREE must not trap this walk
+    early: ledger's coordination plane needs the OUTERMOST checkout boundary every agent shares,
+    not the nearest runnable-package boundary ``_validation_repo_root`` is tuned for).
+
+    Falls back to ``start`` UNCHANGED when no ``.git`` is found before the filesystem root (or
+    the OS temp-dir boundary, mirroring ``_validation_repo_root``'s own stop condition so a
+    pytest ``tmp_path`` fixture -- itself created under the system temp dir -- can never
+    accidentally walk into an unrelated repo that happens to contain the temp dir) -- a non-git
+    working directory keeps today's exact ``_resolve_root``-only behavior; every EXISTING test
+    fixture (none of which ``git init`` by default) is therefore byte-for-byte unaffected.
+
+    Pure filesystem ``.exists()`` stat calls only, no subprocess -- keeps ``list_claims``/
+    ``release_claim`` on their pre-existing "no subprocess" cost profile. Bounded by filesystem
+    depth (a handful of stat calls, never a directory walk/enumeration) -- no new DoS or
+    symlink-disclosure surface, since this only tests existence of a fixed-name entry at each
+    ancestor and never lists or reads directory contents."""
+    try:
+        temp_boundary = Path(tempfile.gettempdir()).resolve()
+        current = start
+        while True:
+            if current == temp_boundary and start != temp_boundary:
+                break
+            if (current / ".git").exists():
+                return current
+            parent = current.parent
+            if parent == current:
+                break
+            current = parent
+    except OSError:
+        return start
+    return start
+
+
+def _ledger_physical_root(path: str) -> Path:
+    """The canonical physical location for THIS repository's claims index: today's literal
+    ``_resolve_root(path)`` resolution followed by the ``.git``-boundary walk-up above. Used by
+    ``submit_claim``/``release_claim``/``list_claims`` ONLY -- Slice 2 keeps plain
+    ``_resolve_root`` (see module docstring)."""
+    return _discover_repo_root(_resolve_root(Path(path)))
+
+
+def _normalize_scope(path: str, root: Path) -> str:
+    """The caller's ``path`` argument, normalized to a ``root``-relative, POSIX-separated
+    "scope" string -- ``"."`` for the repository root itself, ``"core/hooks"`` for a subtree.
+    Pathlib normalizes Windows separators (native ``\\`` is accepted alongside ``/`` on that
+    platform), a leading ``./``, and a trailing ``/`` for free once resolved through ``Path`` +
+    ``.resolve()`` + ``.as_posix()`` -- no bespoke string handling needed for any of those traps.
+
+    ``resolved`` (``path``'s own literal resolution) is always ``root`` itself or a descendant
+    of it BY CONSTRUCTION: ``root`` is discovered by walking upward from exactly this same
+    resolution (see ``_ledger_physical_root``), so it is always ``resolved`` or one of its
+    ancestors -- the ``ValueError`` branch below is defensive only."""
+    resolved = _resolve_root(Path(path))
+    try:
+        relative = resolved.relative_to(root)
+    except ValueError:
+        return "."
+    return relative.as_posix()
+
+
+def _entry_scope(entry: dict[str, Any]) -> str:
+    """A claim record's scope, defaulting a MISSING/malformed field (an index entry written by
+    a pre-fix ``tg`` binary, before ``scope`` existed) to ``"."`` -- the repo-root-wide, maximally
+    -VISIBLE default, so an old on-disk claim stays visible under the new rollup filter rather
+    than silently vanishing from every ``list`` the moment a caller upgrades ``tg``. Mirrors this
+    module's general "never silently omit / never silently narrow visibility" posture."""
+    scope = entry.get("scope")
+    return scope if isinstance(scope, str) and scope else "."
+
+
+def _scope_contains(broader: str, narrower: str) -> bool:
+    """``True`` when ``narrower`` is scoped EQUAL TO or WITHIN ``broader`` -- segment-wise
+    (never a raw string-prefix test: ``"core/ho"`` must NOT match ``"core/hoodie"``;
+    ``PurePosixPath.parts`` gives this for free). ``"."`` (the repository root) contains every
+    scope, including itself. Deliberately one-directional: a claim scoped to an ANCESTOR of the
+    listed path (e.g. listing ``core/hooks`` when a claim is scoped to ``core``, or to ``"."``)
+    is NOT considered contained -- only DESCENDANT (or equal) scopes roll up into a broader/
+    ancestor listing, matching the exact rollup direction requested (list a root, see its
+    subtrees) without also claiming the reverse (list a subtree, see everything above it)."""
+    if broader == ".":
+        return True
+    broader_parts = PurePosixPath(broader).parts
+    narrower_parts = PurePosixPath(narrower).parts
+    return narrower_parts[: len(broader_parts)] == broader_parts
 
 
 # ---------------------------------------------------------------------------
@@ -459,8 +595,16 @@ def submit_claim(
     list for the caller to act on, not raised as an error. It raises ONLY on a fail-closed
     condition (:class:`LedgerError` subclass, or the sibling ``IndexLockTimeoutError`` /
     write-path ``OSError``), in which case nothing is written.
+
+    PATH SCOPING (fix for the PATH-scope footgun): ``root`` -- the PHYSICAL location of
+    ``claims/index.json`` -- is now :func:`_ledger_physical_root`'s ``.git``-canonicalized
+    root, not ``path`` taken literally, so this claim lands in the SAME shared index every
+    ``list``/``release`` call for this repository reads, regardless of which subtree ``path``
+    names. ``path`` itself is preserved as this claim's ``scope`` (see :func:`_normalize_scope`)
+    for ``list_claims``'s rollup filter.
     """
-    root = _resolve_root(Path(path))
+    root = _ledger_physical_root(path)
+    scope = _normalize_scope(path, root)
     resolved_symbols = _dedupe_preserve_order(
         symbol.strip() for symbol in (symbols or []) if symbol and symbol.strip()
     )
@@ -484,6 +628,7 @@ def submit_claim(
         agent_id=resolved_agent_id,
         symbols=resolved_symbols,
         files=resolved_files,
+        scope=scope,
         intent=resolved_intent,
         note=resolved_note,
         created_at=now.isoformat(),
@@ -504,6 +649,68 @@ def submit_claim(
     return {"claim": record.to_dict(), "overlaps": overlaps}
 
 
+def _release_result(
+    released: list[dict[str, Any]],
+    remaining: list[dict[str, Any]],
+    *,
+    listed_scope: str,
+) -> dict[str, Any]:
+    """Shared shape for ``release_claim``'s two return points (the default-inert fast path and
+    the normal RMW path). ``released``/``released_count`` are the pre-fix contract, UNCHANGED in
+    key name and meaning. The fields below are ADDITIVE and populated only when nothing was
+    released, so a caller who got what they asked for never has to look past ``released_count``
+    -- but a mismatched ``--claim-id``/``--symbol`` (e.g. a claim actually scoped elsewhere),
+    which used to return a bare ``released_count: 0`` indistinguishable from "there was
+    genuinely nothing to release," now says why and names what IS live instead (bounded --
+    :data:`_MAX_LIVE_CLAIMS_ELSEWHERE_SHOWN`), so a wrong `--claim-id`/`--symbol` self-diagnoses
+    rather than failing silently. Exit code is untouched by any of this -- `release_claim` never
+    raises for a zero-match outcome (see its own docstring); this only enriches the SAME
+    non-raising return value."""
+    if released:
+        return {
+            "released": released,
+            "released_count": len(released),
+            "listed_scope": listed_scope,
+            "unmatched_reason": None,
+            "live_claims_elsewhere": [],
+            "live_claims_elsewhere_count": 0,
+            "live_claims_elsewhere_truncated": False,
+        }
+    total_elsewhere = len(remaining)
+    if total_elsewhere == 0:
+        reason = "No live claims exist for this repository."
+    else:
+        reason = (
+            "No live claim matched the given --claim-id/--symbol; "
+            f"{total_elsewhere} live claim(s) exist in this repository -- "
+            "see live_claims_elsewhere."
+        )
+    shown = sorted(remaining, key=lambda entry: str(entry.get("created_at", "")), reverse=True)[
+        :_MAX_LIVE_CLAIMS_ELSEWHERE_SHOWN
+    ]
+    elsewhere = [
+        {
+            "claim_id": entry.get("claim_id"),
+            "agent_id": entry.get("agent_id"),
+            "scope": _entry_scope(entry),
+            "symbols": entry.get("symbols"),
+            "files": entry.get("files"),
+            "intent": entry.get("intent"),
+            "expires_at": entry.get("expires_at"),
+        }
+        for entry in shown
+    ]
+    return {
+        "released": released,
+        "released_count": 0,
+        "listed_scope": listed_scope,
+        "unmatched_reason": reason,
+        "live_claims_elsewhere": elsewhere,
+        "live_claims_elsewhere_count": total_elsewhere,
+        "live_claims_elsewhere_truncated": total_elsewhere > len(elsewhere),
+    }
+
+
 def release_claim(
     path: str,
     *,
@@ -518,12 +725,25 @@ def release_claim(
     another agent's claim by accident).
 
     Releasing zero matching claims (already released, already expired, or never existed) is
-    NOT an error -- always returns normally with ``released == []``.
+    NOT an error -- always returns normally with ``released == []``; see ``_release_result``
+    for the additive ``unmatched_reason``/``live_claims_elsewhere`` honesty fields that
+    accompany a zero-match return.
+
+    PATH SCOPING (fix for the PATH-scope footgun): ``root`` -- WHICH repository's shared claims
+    index this call operates on -- is :func:`_ledger_physical_root`'s ``.git``-canonicalized
+    root, exactly like ``submit_claim``, so a release call reads/writes the SAME index a claim
+    made from a different subtree of the SAME repository did. ``path`` does NOT filter WHICH
+    claim matches -- ``--claim-id``/``--symbol`` do that, deliberately unchanged (adding scope-
+    rollup matching here, unlike ``list_claims``, would let a release call silently drop an
+    unrelated sibling agent's claim just because it shares a symbol name under a broader/
+    ancestor scope -- release stays exact-match, only its failure message gained rollup-scope
+    awareness).
     """
     if not claim_id and not symbol:
         raise LedgerUsageError("tg ledger release requires --claim-id or --symbol")
 
-    root = _resolve_root(Path(path))
+    root = _ledger_physical_root(path)
+    listed_scope = _normalize_scope(path, root)
     index_path = _index_path(root)
     if not index_path.exists():
         # Default-inert fast path: `index_lock` would itself create
@@ -533,7 +753,7 @@ def release_claim(
         # release` on a repo with no claims never creates ledger state -- mirrors `claim`
         # legitimately creating it once (there IS something to write) without release ever
         # doing so for nothing.
-        return {"released": [], "released_count": 0}
+        return _release_result([], [], listed_scope=listed_scope)
 
     resolved_agent_id = resolve_agent_id(agent_id)
     now = datetime.now(UTC)
@@ -556,7 +776,7 @@ def release_claim(
         if len(remaining) != len(existing):
             _write_index(root, remaining)
 
-    return {"released": released, "released_count": len(released)}
+    return _release_result(released, remaining, listed_scope=listed_scope)
 
 
 def list_claims(
@@ -565,19 +785,31 @@ def list_claims(
     symbol: str | None = None,
     agent_id: str | None = None,
 ) -> dict[str, Any]:
-    """Pure read: live (non-expired) claims for the current root, optionally filtered by
-    ``symbol`` and/or ``agent_id``. Never acquires the write lock and never writes -- expired
-    entries are pruned for DISPLAY only, matching ``session_store.list_sessions``'s read-only
-    shape (physical cleanup happens lazily on the next ``claim``/``release`` write)."""
-    root = _resolve_root(Path(path))
+    """Pure read: live (non-expired) claims scoped to ``path`` OR to any of its descendant
+    subtrees (rollup -- see :func:`_scope_contains`), optionally further filtered by ``symbol``
+    and/or ``agent_id``. Each returned claim carries its own ``scope`` (an old, pre-fix on-disk
+    record missing the field is stamped ``"."``, per :func:`_entry_scope`). Never acquires the
+    write lock and never writes -- expired entries are pruned for DISPLAY only, matching
+    ``session_store.list_sessions``'s read-only shape (physical cleanup happens lazily on the
+    next ``claim``/``release`` write).
+
+    PATH SCOPING (fix for the PATH-scope footgun): ``root`` is
+    :func:`_ledger_physical_root`'s ``.git``-canonicalized root, exactly like ``submit_claim``,
+    so this reads the SAME shared index a claim made from a different subtree of the SAME
+    repository wrote to -- ``list .`` (the default) now sees every live claim in the repo,
+    regardless of which subtree each one was claimed under.
+    """
+    root = _ledger_physical_root(path)
+    listed_scope = _normalize_scope(path, root)
     now = datetime.now(UTC)
     live = _prune_expired(_load_index(root), now=now)
-    filtered = live
+    filtered = [entry for entry in live if _scope_contains(listed_scope, _entry_scope(entry))]
     if symbol is not None:
         filtered = [entry for entry in filtered if symbol in (entry.get("symbols") or [])]
     if agent_id is not None:
         filtered = [entry for entry in filtered if entry.get("agent_id") == agent_id]
-    return {"claims": filtered, "count": len(filtered)}
+    stamped = [{**entry, "scope": _entry_scope(entry)} for entry in filtered]
+    return {"claims": stamped, "count": len(stamped)}
 
 
 # ---------------------------------------------------------------------------
