@@ -1,6 +1,233 @@
 # CHANGELOG
 
 
+## v1.93.0 (2026-07-22)
+
+### Bug Fixes
+
+- **gpu**: Detect a bare-named WSL front-door shim as cross-domain (#171 GPU-P0-1 follow-up)
+  ([#704](https://github.com/oimiragieo/tensor-grep/pull/704),
+  [`058c34f`](https://github.com/oimiragieo/tensor-grep/commit/058c34f0a63881aea03384f5f6812e1aeed916e5))
+
+* fix(gpu): detect a bare-named WSL front-door shim as cross-domain (#171 GPU-P0-1 follow-up)
+
+`is_cross_domain_native_binary()` keyed Windows-target detection on the resolved binary's own `.exe`
+  suffix alone. That misses the bare-named (`tg`, no extension) POSIX shim both `scripts/install.sh`
+  and `scripts/install.ps1` generate for WSL/git-bash shells, which internally `exec`s the real
+  `tg.exe` -- `resolve_native_tg_binary()` on a WSL/Linux host looks for a literal `tg`
+  (runtime_paths.py:263) and legitimately returns the SHIM, not the `.exe` it delegates to, so the
+  doctor/agent GPU probes handed it an untranslated `/tmp/...` path. The shim's real Windows-target
+  child process can't open that path, so the probe reported the honest-looking but wrong
+  `failed_probe_path` (same-domain bucket) instead of `failed_path_bridging`/`path_domain_mismatch`.
+
+Verified live via CEO WSL dogfood repro (gotcontext-saddle): `tg doctor --json` resolved a shim-dir
+  copy (`~/bin/tg`-class path, not the original `.tensor-grep/bin/tg`) with a co-located `tg.exe`
+  but no `tg-native-metadata.json` copy (installer wiring puts the shim-dir copies, not the original
+  front-door directory, on `$PATH`).
+
+Add two independent, filesystem-observable signals, composed with the existing `.exe`-suffix check
+  in `is_cross_domain_native_binary()`: - `_native_frontdoor_metadata_targets_windows()`: reads the
+  sibling `tg-native-metadata.json`'s `asset_name` (present next to the original front door). -
+  `_sibling_native_windows_binary_exists()`: a co-located `<name>.exe` file -- the signal that
+  actually catches the live repro, since the distributed shim-dir copies carry the `.exe` but not
+  the metadata.
+
+Both fail closed to False on any miss, so this can only ever ADD a cross-domain detection, never
+  remove the pre-existing one (no risk to the `/mnt/<drive>/`-mounted same-domain Linux ELF case the
+  original P0-1 fix protects).
+
+Tests: tests/unit/test_runtime_paths.py (new TestNativeFrontdoorMetadataTargetsWindows,
+  TestSiblingNativeWindowsBinaryExists classes, plus two new TestIsCrossDomainNativeBinary cases
+  reproducing the exact shim-dir-copy shape). Live-verified against the real WSL box both at the
+  runtime_paths helper level and end-to-end through `_doctor_gpu_search_runtime_probe`/
+  `_agent_gpu_evidence`: before, `status=failed_probe_path`, `native_error_kind=path_not_found`,
+  `exit_code=2`; after, `status=unsupported`, `routing_backend=NativeCpuBackend`,
+  `routing_reason=gpu-auto-fallback-cpu`, `exit_code=0` (the path resolves and the probe reports the
+  true reason -- this native binary has no CUDA support -- instead of a spurious path failure).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+* fix(gpu): fail-closed + bounded native-frontdoor metadata read (gate NIT-2)
+
+UnicodeDecodeError is a ValueError, not an OSError -- a non-UTF8 tg-native-metadata.json propagated
+  through is_cross_domain_native_binary into the GPU probes instead of degrading to "invalid".
+  Broaden the except to (OSError, ValueError) and refuse >1MiB sidecars before the read.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+---------
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+- **ledger**: Canonicalize claim/release/list to repo root, fix the PATH-scope footgun
+  ([#706](https://github.com/oimiragieo/tensor-grep/pull/706),
+  [`4874c97`](https://github.com/oimiragieo/tensor-grep/commit/4874c9769a397210de3899c0ea6e03f85c7c280d))
+
+* fix(ledger): fix PATH-scope footgun -- canonicalize claims to repo root + rollup + release honesty
+
+CEO v1.92.1 dogfood #1: `tg ledger claim core/hooks ...` then `tg ledger list` (or `list .`)
+  returned an EMPTY claims list, and `tg ledger release` from a different PATH returned
+  `released_count: 0` while the claim silently lived on.
+
+Root cause (ledger_store.py, pre-fix `submit_claim`/`release_claim`/`list_claims`): each call
+  independently did `root = _resolve_root(Path(path))` -- the CLI's literal PATH argument taken at
+  face value as the PHYSICAL storage location for `.tensor-grep/ledger/claims/index.json` (mirrors
+  session_store.py's `_resolve_root`, by design for that sibling store). `claim core/hooks` and
+  `list .` therefore wrote/read two entirely different index.json files even within the same
+  repository -- not a filtering bug, a physically different file.
+
+Fix (Slice 1 -- claims -- only; Slice 2 record/find deliberately untouched): - New
+  `_discover_repo_root`/`_ledger_physical_root` (ledger_store.py): canonicalize to the nearest
+  `.git` ancestor (a pure filesystem walk, no subprocess), falling back to today's literal-path
+  behavior when no `.git` is found -- a non-git working directory is unaffected; every existing test
+  fixture (none of which `git init` by default) is byte-for-byte unchanged. - `ClaimRecord` gains a
+  `scope` field (the caller's original PATH, normalized root-relative POSIX) so `list_claims` can
+  roll scope UP: listing a broader/ancestor path shows every claim scoped to it or any descendant
+  subtree (`_scope_contains`, segment-wise containment -- never a raw string-prefix test, so
+  `core/ho` cannot false-match `core/hoodie`). One-directional by design: a root-scoped claim does
+  not roll DOWN into a narrower listing. - `release_claim` keeps its exact `--claim-id`/`--symbol`
+  matching unchanged (rollup matching here could silently drop an unrelated sibling agent's claim),
+  but a zero-match response now carries `unmatched_reason` + bounded `live_claims_elsewhere`
+  (scope/agent/symbols named) so a wrong selector self-diagnoses instead of an indistinguishable
+  `released_count: 0`. - Help text + docstrings on all three CLI commands (+ the `ledger_app` group)
+  state the canonicalization/rollup rule loudly, per the CEO's ask.
+
+JSON additivity: `claim.scope` and release's 5 new fields (`listed_scope`, `unmatched_reason`,
+  `live_claims_elsewhere*`) are additive-only; no existing key changed meaning. `list_claims`'s
+  top-level shape is unchanged (no new top-level key) -- only per-claim contents gained `scope`.
+  `LEDGER_SCHEMA_VERSION` stays 1 (additive, not breaking). Advisory exit-0 contract preserved
+  (verified against docs/CONTRACTS.md + ledger_store.py docstrings before building; release never
+  raises on a zero-match outcome, still exit 0).
+
+Tests (TDD, store-level + CLI-level): the exact dogfood sequence (claim subpath -> list root shows
+  it; release from a different subpath succeeds; release with a wrong selector names live claims
+  elsewhere), rollup direction guards (root-scoped claim not visible from a narrower list; disjoint
+  sibling isolation; segment-wise false-prefix guard), Windows-separator/./-prefix normalization,
+  non-git sibling-directory isolation preserved (mirrors the existing per-root lock-isolation
+  concurrency test), and backward-read for a pre-fix on-disk record missing `scope`. All 196
+  ledger/prepare/docs-governance tests + full-tree `mypy --strict` (81 files) + `ruff check` + `ruff
+  format --check --preview` pass.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+* docs(ledger): state the pre-fix subtree-store migration behavior (gate nit)
+
+Pre-fix claims written through a subtree PATH live in that subtree's old physical store, which
+  post-fix commands never touch again -- invisible to list, unreleasable, TTL-expired within
+  <=15min, safe to delete by hand. Closes the gate's honesty gap on the release-points-at-new-store
+  window.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+---------
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+### Features
+
+- **imports**: Resolve literal dynamic imports (import_module/__import__) with dynamic:true
+  ([#703](https://github.com/oimiragieo/tensor-grep/pull/703),
+  [`075d09b`](https://github.com/oimiragieo/tensor-grep/commit/075d09b87cb18057542a5d1d15f14365f5f33678))
+
+CEO dogfood feature 6 (dynamic-import / string-dispatch coverage beyond sys.path.insert). Scope:
+  importlib.import_module("literal.string") and __import__("literal.string") calls with a
+  STRING-LITERAL argument, both directions (`tg imports` forward, `tg importers` reverse). Dispatch
+  tables and entry-points stay out of scope for a future slice.
+
+Verification found the base feature already shipped in #504 (audit #93 SUB-1):
+  `_python_dynamic_import_entries` (repo_map.py) already turns a literal
+  import_module/__import__/bare-import_module call into a resolvable edge with an additive `dynamic:
+  true` marker, feeding BOTH `_python_imports_with_lines` (forward, `tg imports`) and
+  `_python_imports_and_symbols` (reverse prefilter, `tg importers`) through the SAME resolution path
+  static imports use (`_resolve_raw_import_entry`/`_confirm_import_edges` ->
+  `_python_module_candidates`) -- so #152's sys.path.insert roots already apply automatically, and
+  #563's ast.walk already gives whole-tree recall (nested inside a function/conditional/try). No
+  JSON shape changes were needed: both fields already existed, additive-only per the existing
+  payload-bloat-guard test.
+
+Re-verifying that base feature against real execution (not just reading it) surfaced two provable
+  false-edge bugs, reproduced directly against `build_file_imports`/`build_file_importers` before
+  any fix:
+
+- `import_module(".sibling", package="pkg.subpkg")` -- a RELATIVE literal (leading dot) -- resolved
+  to an UNRELATED top-level `sibling.py` file. Root cause: `_python_module_parts` strips the leading
+  empty component from `".sibling".split(".")`, so the relative literal was silently searched for as
+  the ABSOLUTE module "sibling". - `__import__("sibling", level=1)` (and the 5-positional-arg form)
+  -- same false-edge shape, since `_python_dynamic_import_entries` hardcoded `level: 0` regardless
+  of an explicit nonzero `level` argument (`__import__`'s own relative-import marker, separate from
+  `import_module`'s leading-dot convention).
+
+Fix: a new `_python_dynamic_import_call_is_relative` helper detects an explicit
+  non-default/non-literal `level` on `__import__`; combined with a `.startswith(".")` check on the
+  literal module string, both relative forms now set `dynamic_unresolved = True` in the single
+  upstream extractor both directions consume -- reusing the EXISTING, already-tested unresolved-skip
+  logic in `_resolve_raw_import_entry`/ `_confirm_import_edges` rather than adding new branches
+  there. The literal text is kept (not blanked to "" like the true non-literal case -- nothing is
+  fabricated) so it surfaces honestly in the `unresolved` summary. Resolving the relative+package
+  form correctly would need a second, chained lookup (resolve `package` to a directory first) that
+  is out of scope for this slice -- "no false edges, missing is fine".
+
+Tests added (tests/unit/test_file_deps.py, 12 new, TDD-first against a real pre-fix repro for the
+  two bug-fix tests): - relative import_module literal -> external, no false edge (forward +
+  reverse, decoy-file proof) - __import__ explicit level=1 (keyword form and 5-positional form) ->
+  external, no false edge - __import__ explicit level=0 still resolves (regression guard: a
+  present-but-zero level must not be swept into the relative path) - dynamic import composes with
+  #152 sys.path.insert roots (forward + reverse, provenance/path_provenance asserted) --
+  regression-lock, already worked by composition - reverse-direction coverage for the bare `from
+  importlib import import_module` alias form and for __import__ resolving to a local file (both
+  previously untested on the reverse side) - dynamic import nested 2 levels deep (function -> if ->
+  try) and at bare module top level (no function wrapper) - unresolvable literal -> external,
+  decoupled from stdlib-name ambiguity
+
+All green: ruff check, ruff format --check --preview, mypy (one real Optional-narrowing fix), the
+  full test_file_deps.py suite (85 tests), plus a targeted 329-test regression net across
+  agent-capsule/orient/callers/ blast-radius/repo_map. Also dogfooded end-to-end through the real
+  published `tg` CLI (not just CliRunner): `tg imports`/`tg importers` --json on a live fixture
+  confirm the absolute case resolves with dynamic:true and the relative case reports
+  `dynamic_unresolved: true` with zero false edges against a planted decoy file.
+
+Load-bearing: changes `tg imports`/`tg importers` output membership (fewer, but never wrong, edges
+  for relative dynamic imports). Flagging for an independent Opus gate per house policy.
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+- **prepare**: Capsule --out + dogfood UX honesty batch
+  ([#705](https://github.com/oimiragieo/tensor-grep/pull/705),
+  [`91b7b5b`](https://github.com/oimiragieo/tensor-grep/commit/91b7b5bff9f15b5a991cf9534351f444c69586a7))
+
+CEO v1.92.1 dogfood UX/honesty batch, four small related items:
+
+1. Install-hint alignment: dense_available()'s "not installed" message now leads with `tg
+  install-dense` (pip extra kept as a parenthetical), and `tg search --semantic`'s "model not
+  fetched" degrade now gets the same `_friendly_dense_unavailable_message` rewrite `tg find` already
+  had, so both search surfaces are consistent. Copy-only; no error class/exit code change.
+
+2. Cold-doctor daemon honesty: `tg doctor --json`'s session_daemon block gains an additive
+  `autostart` field (present only when running=false), reusing the exact
+  `_session_daemon_autostart_enabled` gate the real Tier-1 fast path checks, so a cold box's
+  running:false reads as "on-first-use (not yet warmed)" instead of "broken".
+
+3. prepare --claim anonymous agent_id: when a submitted claim resolved to the ledger's "anonymous"
+  default (no TG_LEDGER_AGENT_ID/ TG_EVIDENCE_AGENT_ID set), coordination.claim gains an additive
+  agent_id_hint pointing at TG_LEDGER_AGENT_ID. Reads the actual recorded agent_id back off the
+  submitted claim rather than re-deriving the resolution rule. ledger_store.py itself is untouched.
+
+4. tg prepare --out FILE: additive flag persisting the full capsule JSON to FILE (so `tg evidence
+  emit --capsule FILE` works without a manual save), reusing the house atomic-write helper
+  (session_store._write_json_atomic / _index_lock.atomic_write_json) with the same
+  symlink-precheck-then-resolve shape `tg evidence emit --out` uses. Written after stdout (never
+  before), regardless of --json/--text, so the file is always usable as a capsule. Refuses a live or
+  dangling symlink, and fails cleanly (not a traceback) when the destination is an existing
+  directory.
+
+Verified: ruff check + ruff format --preview --check (src/tests) + mypy src/tensor_grep all clean;
+  594 targeted tests pass (semantic/dense, doctor, prepare integration + CliRunner edge cases);
+  dogfooded live via `python -m tensor_grep` for all four items. No changes to ledger_store.py,
+  ledger CLI commands, or bootstrap.py.
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+
 ## v1.92.3 (2026-07-22)
 
 ### Bug Fixes
