@@ -14,13 +14,24 @@ mean_reciprocal_rank_at_k, ndcg_at_k) -- no new metric is invented here (verific
 Correction #7: golden labels are relevant-FILE sets; scoring is file-granularity, matching this
 repo's existing ``eval_bm25_quality.py`` precedent).
 
-Arms: ``bm25`` (always scored), ``dense``/``rrf``/``rrf+maxsim`` (scored when their leg is
-available, else SKIPPED with a loud, specific reason -- never silently degraded into a vacuous
-comparison), ``find``/``find+stack`` (ALWAYS skipped this wave -- ``tg find`` is Wave 2c/Wave 3,
-not built yet; reported as ``skipped: awaiting-wave-2``). A comparison/verdict is REFUSED
+Arms: ``bm25`` (always scored), ``dense``/``rrf``/``rrf_shipped``/``rrf+maxsim`` (scored when their
+leg is available, else SKIPPED with a loud, specific reason -- never silently degraded into a
+vacuous comparison), ``find``/``find+stack`` (ALWAYS skipped -- see
+:data:`SKIP_FIND_ARM_NOT_WIRED`: ``tg find``'s own CLI/MCP pipeline is built and shipped
+(v1.77.0/v1.78.0, docs/BACKLOG.md #189's "tg find campaign" history), this harness has simply never
+been wired to invoke it end-to-end as a scored arm). A comparison/verdict is REFUSED
 (``GoldenSetError``) whenever either side of the pair is not ``scored`` (E1's "never a vacuous
 comparison" discipline generalized to the arm-skip mechanism, per the review ledger's WAVE 1 E1/E4
 items and plan Correction #2).
+
+``rrf_shipped`` (accuracy-leg regression protection, added after the dense-weight flip -- #191/#634
+-- landed in production and shipped live in v1.93.2): the SAME bm25+dense RRF fusion as ``rrf``,
+but weighted with :data:`SHIPPED_DENSE_WEIGHT` -- the value ``tg find`` actually uses by default
+for a multi-word NL query once ``TG_FIND_DENSE_WEIGHT`` is unset (``cli/main.py``'s
+``_find_dense_weight``). Before this arm existed, the harness could only ever measure the OLD 1:1
+fusion (``rrf``, kept exactly as-is below as a clearly-labeled comparison baseline, never removed)
+-- meaning the shipped behavior itself had zero regression protection. See
+:func:`run_rrf_arm`'s own docstring for the byte-identical-at-default-weight contract.
 
 The 4 mandatory must-fixes from the adversarial review (tg_find_review_ledger.md, "WAVE 1"):
 
@@ -56,6 +67,13 @@ Usage (always via ``uv run --no-sync``, this repo's convention):
 Exit 0 on success (including "every arm skipped but ran cleanly"); exit 1 on a loud config/oracle
 error (missing corpus, malformed golden set, non-deterministic --runs); exit 2 is not used here
 (this is a benchmarks script, not a `tg` command -- no rg-parity exit-code contract applies).
+
+Regression protection: ``tests/eval/test_retrieval_quality_regression.py`` asserts the
+``rrf_shipped`` arm's ndcg@10 stays above a floor on the committed golden set -- opt-in, ``eval``
+marker (excluded from the default ``-m "not eval"`` CI sweep, no CI workflow currently installs
+the `semantic` extra + fetches the model). Run it explicitly:
+
+    uv run --no-sync pytest tests/eval/test_retrieval_quality_regression.py -m eval -v -s
 """
 
 from __future__ import annotations
@@ -102,10 +120,34 @@ DEFAULT_TOP_KS: tuple[int, ...] = (5, 10)
 # name is a private module constant of reranker.py, not part of its public contract.
 DEFAULT_POOL_K = 50
 
-# find/find+stack depend on Wave 2c (the tg find pipeline) and Wave 3 (the CPU rank stack), which
-# are not built yet -- see docs/BACKLOG.md #189 and tg_find_plan.md Sec.3 WAVE 2/3. Reported as an
-# explicit, permanent skip stub this wave; never silently omitted from the arm list.
-SKIP_AWAITING_WAVE2 = "skipped: awaiting-wave-2 (tg find pipeline not built yet)"
+# Accuracy-leg regression protection (2026-07-22): mirrors cli/main.py's
+# `_FIND_DENSE_WEIGHT_ADAPTIVE_DEFAULT` (main.py ~:4171) -- the `dense_weight` `tg find` actually
+# passes to `rank_chunks` for a genuinely multi-word NL query once `TG_FIND_DENSE_WEIGHT` is
+# unset, since the #191/#634 dense-weight flip went live (shipped in v1.93.2). Every golden query
+# in this harness's corpus is multi-word NL (see the module docstring's "NL 40-query set"), so this
+# one weight reproduces the shipped default across the whole set. A fresh LOCAL constant, not an
+# import, for the exact reason `DEFAULT_POOL_K` above is one: `_FIND_DENSE_WEIGHT_ADAPTIVE_DEFAULT`
+# is a private module constant of `cli/main.py`, not part of its public contract -- and importing
+# it would drag a ~17k-line Typer CLI module (with its own heavyweight dataclass/typer import
+# surface) into a benchmarks script that needs exactly one float. If `cli/main.py`'s shipped
+# default ever changes, update this constant to match and re-run the golden-set report to confirm
+# the new number, rather than importing across the module boundary.
+SHIPPED_DENSE_WEIGHT = 5.0
+
+# STALE-CLAIM FIX (accuracy-leg blind-spot audit, 2026-07-22): this constant used to read
+# "awaiting-wave-2 (tg find pipeline not built yet)" -- true when this harness was first written
+# (Wave 1, #625) but FALSE since v1.77.0: `tg find`'s CLI pipeline shipped that release (Wave
+# 2b/2c, #626) and its MCP tool followed in v1.78.0 (Wave 2d, #627) -- see docs/BACKLOG.md #189's
+# "tg find campaign" history. find/find+stack are still skipped below, but for the HONEST reason:
+# nobody has wired THIS golden-set harness to invoke the real `tg find` pipeline end-to-end and
+# score its output yet -- a distinct, not-yet-scheduled integration task, not a missing dependency.
+# Reported as an explicit, permanent skip stub until that wiring lands; never silently omitted from
+# the arm list.
+SKIP_FIND_ARM_NOT_WIRED = (
+    "skipped: tg find's CLI/MCP pipeline is built and shipped (v1.77.0/v1.78.0) -- this harness "
+    "has not been wired to invoke it end-to-end as a scored arm yet (a separate integration task, "
+    "not a missing dependency)"
+)
 
 _METRIC_NAMES: tuple[str, ...] = (
     "recall@5",
@@ -363,16 +405,36 @@ def run_rrf_arm(
     top_ks: tuple[int, ...],
     bm25_index: Bm25Index,
     dense_index: DenseIndex,
+    *,
+    dense_weight: float = 1.0,
+    name: str = "rrf",
 ) -> ArmResult:
+    """Fuse the bm25 + dense leg via plain RRF -- mirrors ``rank_chunks``'s own fusion step
+    (reranker.py:258-267), minus the late-rerank/path-channel extras this harness either scores
+    separately (``rrf+maxsim``) or never exercises (the ``TG_RRF_CHANNELS`` path channel).
+
+    ``dense_weight`` (accuracy-leg regression protection): a per-leg RRF weight, identical in
+    meaning to ``rank_chunks``'s own parameter of the same name. ``dense_weight=1.0`` (the
+    default, and every call site that predates this parameter) is a BYTE-IDENTICAL no-op:
+    ``reciprocal_rank_fusion`` is called with ``weights=None`` exactly as before, so the original
+    unweighted ``rrf`` arm this function has always produced is unchanged by this parameter's
+    existence. A non-default value builds ``weights=[1.0, dense_weight]``, the same two-entry
+    shape ``rank_chunks`` builds internally for the identical reason.
+
+    ``name`` lets a caller build a second, differently-weighted ``ArmResult`` from this same
+    function without a second copy-pasted implementation (see ``build_report``'s ``rrf_shipped``);
+    the returned ``ArmResult`` is otherwise identical in shape to the un-parameterized original.
+    """
     per_query: dict[str, dict[str, float]] = {}
     total = max(1, len(chunks))
+    weights: list[float] | None = [1.0, dense_weight] if dense_weight != 1.0 else None
     for query in queries:
         bm25_ranking = [i for i, _score in bm25_index.query(query.query, top_k=total)]
         dense_ranking = [i for i, _score in dense_index.query(query.query, top_k=total)]
-        fused = reciprocal_rank_fusion([bm25_ranking, dense_ranking], k=DEFAULT_K)
+        fused = reciprocal_rank_fusion([bm25_ranking, dense_ranking], k=DEFAULT_K, weights=weights)
         ranked_files = _dedupe_ranked_files(fused, chunks, corpus_dir)
         per_query[query.id] = _score_ranking(ranked_files, query.relevant_files, top_ks)
-    return ArmResult(name="rrf", status="scored", per_query=per_query)
+    return ArmResult(name=name, status="scored", per_query=per_query)
 
 
 def build_late_reranker() -> tuple[LateReranker | None, str | None]:
@@ -398,8 +460,18 @@ def run_rrf_maxsim_arm(
     late_reranker: LateReranker,
     *,
     pool_k: int = DEFAULT_POOL_K,
+    dense_weight: float = 1.0,
 ) -> ArmResult:
     """Composes the SAME leg functions ``rrf`` uses, then MaxSim-reranks the fused head.
+
+    ``dense_weight`` (accuracy-leg regression protection): threaded through for the same reason,
+    and with the same byte-identical-at-1.0 contract, as :func:`run_rrf_arm` above -- it closes
+    the identical latent no-weights gap in this arm's own ``reciprocal_rank_fusion`` call.
+    ``build_report`` does not currently build a weighted ``rrf+maxsim`` variant by default: the
+    unweighted arm already scores BELOW bm25 on this golden set (ndcg@10 0.068 vs 0.109 -- see the
+    optimization queue's KILL LIST item F8.4, "late-rerank... twice-confirmed dead at the current
+    model tier"), so a second maxsim variant is not a useful regression signal yet. The parameter
+    exists so a future caller can measure a weighted maxsim arm without another signature change.
 
     Deliberately does NOT call ``reranker.rerank_hybrid`` -- that function operates over
     ``SearchResult.matches`` (grep-hit reordering) and wraps its late-interaction splice in a
@@ -411,10 +483,11 @@ def run_rrf_maxsim_arm(
     """
     per_query: dict[str, dict[str, float]] = {}
     total = max(1, len(chunks))
+    weights: list[float] | None = [1.0, dense_weight] if dense_weight != 1.0 else None
     for query in queries:
         bm25_ranking = [i for i, _score in bm25_index.query(query.query, top_k=total)]
         dense_ranking = [i for i, _score in dense_index.query(query.query, top_k=total)]
-        fused = reciprocal_rank_fusion([bm25_ranking, dense_ranking], k=DEFAULT_K)
+        fused = reciprocal_rank_fusion([bm25_ranking, dense_ranking], k=DEFAULT_K, weights=weights)
         head = fused[:pool_k]
         tail = fused[pool_k:]
         if head:
@@ -577,10 +650,10 @@ def build_report(
     ``*_override`` parameters exist ONLY for tests (dependency injection mirroring
     ``test_search_semantic_rerank.py``'s ``_stub_dense_clean``/``_FakeDenseModel`` and
     ``test_reranker_hybrid.py``'s ``_FixedVectorModel`` conventions) -- they let a test exercise
-    the "dense/rrf/rrf+maxsim actually SCORED" path deterministically without the `semantic`/
-    `rerank` extras or a fetched model being present in CI. When both are ``None`` (the default,
-    used by the real CLI), availability is probed for real via :func:`build_dense_index` /
-    :func:`build_late_reranker`.
+    the "dense/rrf/rrf_shipped/rrf+maxsim actually SCORED" path deterministically without the
+    `semantic`/`rerank` extras or a fetched model being present in CI. When both are ``None``
+    (the default, used by the real CLI), availability is probed for real via
+    :func:`build_dense_index` / :func:`build_late_reranker`.
     """
     corpus_files = load_corpus_files(corpus_dir)
     chunks: list[Chunk] = []
@@ -601,10 +674,25 @@ def build_report(
     if dense_index is None:
         arms["dense"] = skipped_arm("dense", dense_reason or "dense leg unavailable")
         arms["rrf"] = skipped_arm("rrf", f"dense leg unavailable: {dense_reason}")
+        arms["rrf_shipped"] = skipped_arm("rrf_shipped", f"dense leg unavailable: {dense_reason}")
         arms["rrf+maxsim"] = skipped_arm("rrf+maxsim", f"dense leg unavailable: {dense_reason}")
     else:
         arms["dense"] = run_dense_arm(chunks, corpus_dir, queries, top_ks, dense_index)
         arms["rrf"] = run_rrf_arm(chunks, corpus_dir, queries, top_ks, bm25_index, dense_index)
+        # Accuracy-leg regression protection: the SAME rrf fusion, weighted to match what `tg
+        # find` actually ships by default (SHIPPED_DENSE_WEIGHT) -- this is the arm
+        # tests/eval/test_retrieval_quality_regression.py's ndcg@10 floor measures. `rrf` above is
+        # untouched (still the old 1:1 comparison baseline), so this is purely additive.
+        arms["rrf_shipped"] = run_rrf_arm(
+            chunks,
+            corpus_dir,
+            queries,
+            top_ks,
+            bm25_index,
+            dense_index,
+            dense_weight=SHIPPED_DENSE_WEIGHT,
+            name="rrf_shipped",
+        )
 
         if late_reranker_override is not None:
             late_reranker, late_reason = late_reranker_override, None
@@ -629,10 +717,12 @@ def build_report(
                 pool_k=pool_k,
             )
 
-    # find/find+stack: ALWAYS skipped this wave (Wave 2c/Wave 3 not built) -- never silently
-    # omitted from the arm list.
-    arms["find"] = skipped_arm("find", SKIP_AWAITING_WAVE2)
-    arms["find+stack"] = skipped_arm("find+stack", SKIP_AWAITING_WAVE2)
+    # find/find+stack: `tg find`'s own CLI/MCP pipeline is built and shipped (v1.77.0/v1.78.0);
+    # this harness just has not been wired to invoke it end-to-end as a scored arm -- see
+    # SKIP_FIND_ARM_NOT_WIRED's own comment for the full history. Never silently omitted from the
+    # arm list.
+    arms["find"] = skipped_arm("find", SKIP_FIND_ARM_NOT_WIRED)
+    arms["find+stack"] = skipped_arm("find+stack", SKIP_FIND_ARM_NOT_WIRED)
 
     return Report(
         corpus_dir=str(corpus_dir),
@@ -667,9 +757,9 @@ def render_report(report: Report, top_ks: tuple[int, ...]) -> str:
             lines.append(f"  {name:12} scored")
         else:
             # `arm.reason` may already carry its own "skipped: ..." framing (e.g. find/find+stack's
-            # SKIP_AWAITING_WAVE2) or a bare unavailability message (e.g. dense's dense_available()
-            # reason) -- a single "--" separator reads cleanly either way, unlike wrapping every
-            # reason in a second, possibly-redundant "skipped (...)".
+            # SKIP_FIND_ARM_NOT_WIRED) or a bare unavailability message (e.g. dense's
+            # dense_available() reason) -- a single "--" separator reads cleanly either way,
+            # unlike wrapping every reason in a second, possibly-redundant "skipped (...)".
             lines.append(f"  {name:12} skipped -- {arm.reason}")
     lines.append("")
 
