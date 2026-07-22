@@ -2092,6 +2092,94 @@ def test_doctor_json_no_lsp_keeps_empty_schema_compatibility(monkeypatch, tmp_pa
     assert payload["lsp_providers"] == {}
 
 
+# ---------------------------------------------------------------------------------------------
+# v1.92.1 dogfood item 5 (cold-doctor daemon honesty): `session_daemon.running: false` on a cold
+# box (no daemon has ever been started) reads as broken even though the Tier-1 fast path will
+# autostart one transparently on the next symbol-command call. `autostart` is an additive JSON
+# field, present only when `running` is falsy, mirroring the conditional `install_hint` style
+# already used by `_doctor_ast_grep_status`/`_doctor_dense_model_status`.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_doctor_session_daemon_autostart_status_reflects_the_live_gate(monkeypatch) -> None:
+    """The pure status-string function must reuse `_session_daemon_autostart_enabled` (the SAME
+    gate the real Tier-1 fast path checks) rather than re-deriving its own copy of the rule."""
+    monkeypatch.setattr(cli_main, "_session_daemon_autostart_enabled", lambda: True)
+    assert cli_main._doctor_session_daemon_autostart_status() == "on-first-use (not yet warmed)"
+
+    monkeypatch.setattr(cli_main, "_session_daemon_autostart_enabled", lambda: False)
+    disabled = cli_main._doctor_session_daemon_autostart_status()
+    assert "disabled" in disabled
+    assert disabled != "on-first-use (not yet warmed)"
+
+
+def test_doctor_session_daemon_status_adds_autostart_hint_when_stopped(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """`_doctor_session_daemon_status` (the real wrapper, unpatched) must enrich a stopped-daemon
+    status with `autostart` -- patch the INNER `get_session_daemon_status` (not the wrapper
+    itself) so the new enrichment logic actually executes."""
+    monkeypatch.setattr(
+        "tensor_grep.cli.session_daemon.get_session_daemon_status",
+        lambda path: {"version": 1, "root": path, "discovered": False, "running": False},
+    )
+    monkeypatch.setattr(cli_main, "_session_daemon_autostart_enabled", lambda: True)
+
+    status = cli_main._doctor_session_daemon_status(str(tmp_path))
+
+    assert status["running"] is False
+    assert status["autostart"] == "on-first-use (not yet warmed)"
+
+
+def test_doctor_session_daemon_status_omits_autostart_hint_when_running(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A WARM daemon must not carry a meaningless `autostart` hint -- additive-only, conditional
+    on the not-running state (mirrors the `install_hint` precedent's own conditional-add style)."""
+    monkeypatch.setattr(
+        "tensor_grep.cli.session_daemon.get_session_daemon_status",
+        lambda path: {
+            "version": 1,
+            "root": path,
+            "discovered": False,
+            "running": True,
+            "host": "127.0.0.1",
+            "port": 43123,
+            "pid": 9001,
+            "started_at": "2026-07-21T00:00:00Z",
+        },
+    )
+
+    status = cli_main._doctor_session_daemon_status(str(tmp_path))
+
+    assert status["running"] is True
+    assert "autostart" not in status
+
+
+def test_doctor_json_reports_cold_daemon_autostart_hint(monkeypatch, tmp_path: Path) -> None:
+    """End-to-end through `tg doctor --json`: a cold box's `session_daemon.running: false` must
+    come with the additive `autostart` field, without touching any other doctor field."""
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "9.9.9")
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(
+        "tensor_grep.cli.session_daemon.get_session_daemon_status",
+        lambda path: {"version": 1, "root": path, "discovered": False, "running": False},
+    )
+    monkeypatch.setattr("tensor_grep.cli.main._session_daemon_autostart_enabled", lambda: True)
+
+    result = CliRunner().invoke(app, ["doctor", str(tmp_path), "--json", "--no-lsp"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["session_daemon"]["running"] is False
+    assert payload["session_daemon"]["autostart"] == "on-first-use (not yet warmed)"
+    # Additive-only: doctor's own top-level schema_version must NOT need a bump for a nested,
+    # conditionally-present diagnostic field (CONTRACTS.md section 5: "Individual diagnostic
+    # fields may grow as new probes are added").
+    assert payload["schema_version"] == 2
+    assert payload["doctor_schema_version"] == 2
+
+
 def test_doctor_text_reports_ast_grep_availability(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "9.9.9")
     monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)

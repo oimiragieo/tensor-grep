@@ -12,6 +12,11 @@ symlink's TARGET (CWE-59); a crash/kill mid-write had no atomic fallback and cou
 truncated receipt/bundle. Both sites now route through the same hardened
 ``session_store._write_json_atomic`` helper already used for session/daemon state, extended
 here with a symlink-refusal guard mirroring ``evidence_signing._write_private_key_atomic``.
+
+Section 6 (v1.92.1 dogfood feature 4) adds ``tg prepare --out <path>`` -- a NEW writer, not a
+retrofit -- which opted into the exact same ``session_store._write_json_atomic`` symlink-guard
+shape from the start rather than a bare ``open().write()``. Its tests mirror the ``evidence
+emit --out`` cases above (section 1) so a third writer never regresses the C4 contract either.
 """
 
 from __future__ import annotations
@@ -338,3 +343,95 @@ def test_record_audit_manifest_refuses_when_history_index_is_a_pre_existing_syml
 
     assert index_path.is_symlink()
     assert json.loads(real_target.read_text(encoding="utf-8")) == {"untouched": True}
+
+
+# ---------------------------------------------------------------------------
+# 6. v1.92.1 dogfood feature 4: `tg prepare --out <path>` -- a THIRD writer opting into the same
+#    C4-hardened `_write_json_atomic` contract from inception. Mirrors section 1's evidence-emit
+#    symlink cases, plus a dangling-symlink and a directory-destination case (`tg prepare --out`
+#    must refuse both cleanly, never a raw traceback, per the dogfood batch's explicit ask).
+# ---------------------------------------------------------------------------
+
+
+def _make_prepare_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "prepare_repo"
+    repo.mkdir()
+    (repo / "sample.py").write_text(
+        "def make_invoice(invoice_id):\n    return invoice_id\n", encoding="utf-8"
+    )
+    return repo
+
+
+def test_prepare_out_refuses_to_write_through_a_symlink(tmp_path: Path) -> None:
+    real_target = tmp_path / "real_target.txt"
+    real_target.write_text("do-not-touch-me", encoding="utf-8")
+    link_path = tmp_path / "capsule.json"
+    _symlink_or_skip(link_path, real_target)
+
+    repo = _make_prepare_repo(tmp_path)
+
+    result = CliRunner().invoke(
+        app, ["prepare", str(repo), "make_invoice", "--out", str(link_path), "--json"]
+    )
+
+    assert result.exit_code == 1, result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert "symlink" in result.output.lower()
+    assert real_target.read_text(encoding="utf-8") == "do-not-touch-me"
+    assert link_path.is_symlink()
+
+
+def test_prepare_out_refuses_a_dangling_symlink_too(tmp_path: Path) -> None:
+    """A symlink whose TARGET does not exist is still a symlink -- `Path.is_symlink()` is True
+    regardless of target existence -- so the guard must refuse a dangling link exactly like a
+    live one, and must never create the missing target as a side effect of the refused write."""
+    missing_target = tmp_path / "does-not-exist.json"
+    link_path = tmp_path / "dangling_capsule.json"
+    _symlink_or_skip(link_path, missing_target)
+
+    repo = _make_prepare_repo(tmp_path)
+
+    result = CliRunner().invoke(
+        app, ["prepare", str(repo), "make_invoice", "--out", str(link_path), "--json"]
+    )
+
+    assert result.exit_code == 1, result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert "symlink" in result.output.lower()
+    assert not missing_target.exists()
+    assert link_path.is_symlink()
+
+
+def test_prepare_out_refuses_a_directory_destination(tmp_path: Path) -> None:
+    """A --out path that IS an existing directory must fail cleanly (no raw traceback, no
+    replacing/writing into the directory) -- `os.replace` cannot swap a file in for a directory,
+    and that OSError must surface through the same fail-closed `except OSError` handling as the
+    symlink cases, not escape as an unhandled exception."""
+    dir_path = tmp_path / "capsule_is_a_dir"
+    dir_path.mkdir()
+    (dir_path / "sentinel.txt").write_text("do-not-touch-me", encoding="utf-8")
+
+    repo = _make_prepare_repo(tmp_path)
+
+    result = CliRunner().invoke(
+        app, ["prepare", str(repo), "make_invoice", "--out", str(dir_path), "--json"]
+    )
+
+    assert result.exit_code != 0, result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert dir_path.is_dir()
+    assert (dir_path / "sentinel.txt").read_text(encoding="utf-8") == "do-not-touch-me"
+
+
+def test_prepare_out_writes_a_valid_complete_json_file(tmp_path: Path) -> None:
+    repo = _make_prepare_repo(tmp_path)
+    output_path = tmp_path / "capsule.json"
+
+    result = CliRunner().invoke(
+        app, ["prepare", str(repo), "make_invoice", "--out", str(output_path), "--json"]
+    )
+
+    assert result.exit_code == 0, result.output
+    on_disk = json.loads(output_path.read_text(encoding="utf-8"))
+    assert on_disk["primary_target"]["symbol"] == "make_invoice"
+    assert on_disk == json.loads(result.output)

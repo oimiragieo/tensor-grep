@@ -84,6 +84,35 @@ def test_search_semantic_zero_matches_still_probes_availability(
     assert "semantic ranking unavailable" in result.stderr
 
 
+def test_search_semantic_not_fetched_uses_friendly_install_dense_hint(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """v1.92.1 dogfood item 3 (install-hint alignment): `tg search --semantic`'s "model not
+    fetched" degrade (extra installed, but `default_model_dir()` does not exist) must show the
+    friendly `tg install-dense` one-shot -- matching `tg find`'s existing
+    `_friendly_dense_unavailable_message` treatment -- not the raw
+    `python -m tensor_grep.core.retrieval_dense --fetch` module-CLI command. Regression guard for
+    the gap where only `tg find` got the friendly rewrite and `tg search --semantic` did not."""
+    monkeypatch.setattr("tensor_grep.core.retrieval_dense.dense_available", lambda: (True, None))
+    monkeypatch.setattr(
+        "tensor_grep.core.retrieval_dense.default_model_dir",
+        lambda: tmp_path / "does-not-exist-model-dir",
+    )
+
+    sample = tmp_path / "sample.py"
+    sample.write_text("def make_invoice(invoice_id):\n    return invoice_id\n", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["search", "--semantic", "--json", "invoice", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+
+    payload = json.loads(result.stdout)
+    reason = payload.get("rank_fallback_reason")
+    assert reason is not None
+    assert "tg install-dense" in reason, reason
+    assert "python -m tensor_grep.core.retrieval_dense --fetch" not in reason, reason
+    assert "tg install-dense" in result.stderr, result.stderr
+
+
 def test_search_semantic_query_time_dim_mismatch_degrades_to_bm25(
     tmp_path: Path, monkeypatch
 ) -> None:

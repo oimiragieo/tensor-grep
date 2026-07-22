@@ -71,9 +71,14 @@ def dense_available() -> tuple[bool, str | None]:
     try:
         import model2vec  # noqa: F401
     except ImportError as exc:
+        # v1.92.1 dogfood item 3 (UX/honesty batch): lead with the one-shot `tg install-dense`
+        # command (CEO#7) -- the pip extra stays as a parenthetical alternative for a caller who
+        # wants to script the install directly. Keep both "model2vec not installed" and
+        # "tensor-grep[semantic]" verbatim in the message: pinned by
+        # test_retrieval_dense.py::test_false_when_model2vec_missing.
         return False, (
             "semantic ranking unavailable: model2vec not installed -- "
-            f"pip install 'tensor-grep[semantic]' ({exc})"
+            f"run `tg install-dense` (or pip install 'tensor-grep[semantic]') ({exc})"
         )
     try:
         import numpy  # noqa: F401

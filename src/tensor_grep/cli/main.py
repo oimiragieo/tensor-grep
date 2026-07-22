@@ -1984,10 +1984,32 @@ def _doctor_installed_version() -> str:
     return _cli_package_version()
 
 
+def _doctor_session_daemon_autostart_status() -> str:
+    """v1.92.1 dogfood item 5: human-readable autostart posture for a STOPPED daemon.
+
+    `session_daemon.running: false` on a cold box (nothing has ever warmed a daemon for this
+    root) reads as broken even though the Tier-1 fast path
+    (`_session_daemon_autostart_enabled`, defined further below in this module) will spin one up
+    transparently, non-blocking, on the very next defs/impact/refs/callers/blast-radius call.
+    Reuses that SAME gate function -- the one the real autostart dispatch actually checks -- so
+    this string can never drift from the runtime behavior it describes into a new lie of its
+    own (e.g. claiming "on-first-use" while an operator has explicitly disabled autostart).
+    """
+    if _session_daemon_autostart_enabled():
+        return "on-first-use (not yet warmed)"
+    return "disabled (TG_SESSION_DAEMON_AUTOSTART is off, or CI was detected)"
+
+
 def _doctor_session_daemon_status(path: str) -> dict[str, Any]:
     from tensor_grep.cli.session_daemon import get_session_daemon_status
 
-    return get_session_daemon_status(path)
+    status = get_session_daemon_status(path)
+    if not status.get("running"):
+        # Additive-only field, present only in the not-running state -- mirrors the
+        # conditional `install_hint` precedent (_doctor_ast_grep_status/_doctor_dense_model_
+        # status below) rather than always emitting a field that is meaningless once warm.
+        status["autostart"] = _doctor_session_daemon_autostart_status()
+    return status
 
 
 def _upgrade_running_session_daemon_snapshot(path: str = ".") -> dict[str, Any] | None:
@@ -4026,8 +4048,16 @@ def _apply_semantic_rerank(all_results: "SearchResult", pattern: str) -> "Search
             model = load_dense_model(default_model_dir())
             dense_index = DenseIndex(chunks, model)
         except DenseUnavailableError as exc:
-            all_results.rank_fallback_reason = str(exc)
-            sys.stderr.write(f"tg: {exc}\n")
+            # v1.92.1 dogfood item 3: rewrite the raw module-CLI fetch hint into the friendly
+            # `tg install-dense` one-shot -- mirrors `tg find`'s identical treatment below
+            # (`_friendly_dense_unavailable_message`); previously only `tg find` got this, so
+            # `tg search --semantic`'s "model not fetched" degrade still showed the raw
+            # `python -m tensor_grep.core.retrieval_dense --fetch` command. A no-op for any
+            # DenseUnavailableError that doesn't carry the raw hint (e.g. a malformed-shape
+            # message never mentions fetch).
+            message = _friendly_dense_unavailable_message(exc)
+            all_results.rank_fallback_reason = message
+            sys.stderr.write(f"tg: {message}\n")
         # BackendExecutionError (e.g. a corrupt model directory) deliberately propagates: that is
         # an unrecoverable fault the CLI boundary must catch and exit on (F4), not degrade here.
 
@@ -10392,6 +10422,19 @@ def _build_prepare_payload(
                     "claim": submitted["claim"],
                     "overlaps": submitted["overlaps"],
                 }
+                # v1.92.1 dogfood item 6: `ledger_store.resolve_agent_id` falls back to the
+                # literal "anonymous" (CONTRACTS.md section 9 "agent_id resolution"; also
+                # ledger_store._DEFAULT_AGENT_ID, not imported here to stay decoupled from that
+                # module's private surface) whenever neither TG_LEDGER_AGENT_ID nor
+                # TG_EVIDENCE_AGENT_ID is set -- `prepare` has no --agent-id flag of its own, so
+                # that env-var pair is the only way a caller sets identity through this path.
+                # Read the ACTUAL recorded value back off the submitted claim (never re-derive
+                # the resolution rule here) so this hint can never drift from what was really
+                # written to the ledger. Additive-only field, present only in the anonymous
+                # case -- mirrors the conditional install_hint/autostart precedent elsewhere in
+                # this module.
+                if str(submitted["claim"].get("agent_id") or "") == "anonymous":
+                    claim_hook["agent_id_hint"] = "set TG_LEDGER_AGENT_ID for a stable identity"
 
     evidence_ref = _command_ref([
         "tg",
@@ -10491,6 +10534,15 @@ def prepare(
     json_output: bool = typer.Option(
         True, "--json/--text", help="Emit machine-readable JSON output (default)."
     ),
+    out: str | None = typer.Option(
+        None,
+        "--out",
+        help=(
+            "Also persist the full capsule JSON to FILE, byte-identical to the --json stdout "
+            "payload regardless of --text, so `tg evidence emit --capsule FILE` can reuse it "
+            "without a manual save. Refuses to write through a pre-existing symlink."
+        ),
+    ),
 ) -> None:
     """One-call edit-readiness capsule: primary target, confidence, a callers/blast-radius
     floor, validation commands, and claim/evidence coordination hooks -- the single call meant
@@ -10549,6 +10601,37 @@ def prepare(
         typer.echo(f"claim_submitted={bool(claim_hook.get('submitted'))}")
         if payload.get("partial"):
             typer.echo(f"partial=true partial_reason={payload.get('partial_reason')}")
+
+    if out is not None:
+        # v1.92.1 dogfood feature 4: persist the FULL capsule JSON regardless of --text, so the
+        # file always works with `tg evidence emit --capsule FILE` (a text-mode summary would
+        # not). Written AFTER stdout above (never before) -- mirrors this command's own
+        # "output-before-exit" contract: an --out failure must not hide the payload that was
+        # already computed. Reuses the house atomic-write helper
+        # (_index_lock.atomic_write_json via session_store._write_json_atomic) with the exact
+        # same symlink-precheck-then-resolve shape `tg evidence emit --out` uses
+        # (main.py's evidence_emit, "audit C4 / CWE-59") rather than a bare open().write().
+        from tensor_grep.cli.session_store import _write_json_atomic
+
+        try:
+            # C4/CWE-59: check for a symlink BEFORE `.resolve()` -- resolving first would
+            # follow the symlink to its real target and make `is_symlink()` on the result
+            # always False, silently defeating `_write_json_atomic`'s own symlink guard. This
+            # also refuses a DANGLING symlink (a broken target still makes `is_symlink()` True
+            # regardless of whether the target exists). A destination that is an existing
+            # directory is refused too, via the OSError `atomic_write_bytes`'s own
+            # `os.replace` raises when a file cannot replace a directory -- caught by the same
+            # `except OSError` below, never a raw traceback.
+            expanded_out = Path(out).expanduser()
+            if expanded_out.is_symlink():
+                raise OSError(
+                    f"Refusing to write the prepare capsule through a symlink: {expanded_out}"
+                )
+            resolved_out = expanded_out.resolve()
+            _write_json_atomic(resolved_out, payload)
+        except OSError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
 
     if _scan_incomplete(payload):
         raise typer.Exit(2)
