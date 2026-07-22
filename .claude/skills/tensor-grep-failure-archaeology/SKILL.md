@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-failure-archaeology
-description: Use when about to "fix" or "optimize" something in tensor-grep that feels novel — before proposing PyO3/FFI for directory walking, re-enabling free-threading, adding a --json self-test, tightening a dependency upper-cap, blaming an IDF/ranking flip, trusting a green mock/FFI test, diagnosing a release that "didn't publish", chasing a reported latency "regression" without profiling at scale, shipping a doc-drift/precision heuristic off green fixtures alone, adding a "differs-from-default" native-delegation gate, reading a `capfd`-based CliRunner test result, or micro-optimizing a hot loop without checking who actually consumes the value. A chronicle of settled battles (symptom -> root cause -> evidence -> status) so no one re-fights them. Load it to check "has this already been tried and lost?" before spending effort. For a live NEW failure use tensor-grep-debugging-playbook; for the process gates to re-attempt one use tensor-grep-change-control.
+description: Use when about to "fix" or "optimize" something in tensor-grep that feels novel — before proposing PyO3/FFI for directory walking, re-enabling free-threading, adding a --json self-test, tightening a dependency upper-cap, blaming an IDF/ranking flip, trusting a green mock/FFI test, diagnosing a release that "didn't publish", chasing a reported latency "regression" without profiling at scale, shipping a doc-drift/precision heuristic off green fixtures alone, adding a "differs-from-default" native-delegation gate, reading a `capfd`-based CliRunner test result, micro-optimizing a hot loop without checking who actually consumes the value, re-proposing cAST structural chunking as the default, re-proposing dense int8/binary/PCA embedding compression, proposing a warm-session/daemon search-index shortcut, proposing GPU-for-search or re-litigating the PFAC-vs-brute-force kernel claim, hitting the many-pattern Aho-Corasick dedup bug, or trusting an unverified "cheap win" from a paper/research steal-list. A chronicle of settled battles (symptom -> root cause -> evidence -> status) so no one re-fights them. Load it to check "has this already been tried and lost?" before spending effort. For a live NEW failure use tensor-grep-debugging-playbook; for the process gates to re-attempt one use tensor-grep-change-control.
 ---
 
 # Tensor-Grep Failure Archaeology
@@ -10,10 +10,12 @@ verdict. Each entry is `symptom -> root cause -> evidence -> status` so a future
 model does not burn a day re-discovering the same wall.
 
 Facts below were verified against the repo on **2026-07-02 at v1.17.25**, with a second pass on
-**2026-07-03 at v1.19.3** (Battles 9-14), a third pass adding Battle 15 (`release-tag-smoke`), and a
+**2026-07-03 at v1.19.3** (Battles 9-14), a third pass adding Battle 15 (`release-tag-smoke`), a
 fourth pass **2026-07-16 at v1.78.1** fixing the stale `case_sensitive` KNOWN_GAP claim in Battle 9 and
-adding Battle 16 (the `tg find` Opus-gate catches). Re-verify anything load-bearing with the commands in
-**Provenance and maintenance** before you act on it.
+adding Battle 16 (the `tg find` Opus-gate catches), and a fifth pass **2026-07-22 at v1.93.2** adding
+Battles 17-22 (the CEO deep-research campaign's research retirements — cAST, dense int8, warm-session,
+GPU-for-search, the many-pattern dedup bug, and the "5/5 mirage" meta-lesson). Re-verify anything
+load-bearing with the commands in **Provenance and maintenance** before you act on it.
 
 ## When to use this skill
 
@@ -37,6 +39,18 @@ Load this **before** you spend effort on any of these, because each has already 
   skipped value first.
 - Gating a **second** sequential merge-watcher on "did the tag change since I started" instead of
   an absolute condition.
+- Re-proposing **cAST structural chunking as the default chunker** — evaluated and REJECTED (Battle 17).
+- Re-proposing **dense-embedding int8/binary/PCA compression** for speed — evaluated and DEFERRED, it's
+  slower in numpy (Battle 18).
+- Proposing a **warm-session/daemon search-index shortcut** ("just serve search from the daemon's cached
+  state") — the daemon holds a symbol map, not a search index; this is a big refactor, not a quick win
+  (Battle 19).
+- Proposing **GPU-for-search**, or describing the shipped GPU kernel as PFAC/Aho-Corasick — it is a
+  brute-force byte-compare with no crossover at any scale (Battle 20).
+- Hitting a **many-pattern `-e`/`-f` count that looks off** — a live native aho-corasick dedup
+  over-count bug is already diagnosed and guarded, not yet root-fixed (Battle 21).
+- Trusting an unverified **"cheap win" from a paper or research steal-list** without checking it against
+  the real code first — 5 of 6 recent steals came back negative once verified (Battle 22, the meta-lesson).
 
 ## When NOT to use this skill (use a sibling instead)
 
@@ -322,6 +336,91 @@ Backend Fail-Closed Contract explicitly, even when it "obviously" mirrors an exi
 
 ---
 
+## Battle 17 -- cAST structural chunking as the DEFAULT chunker: REJECTED on a real-corpus eval (2026-07-21, #251)
+
+| Field | Detail |
+|---|---|
+| **Symptom** | A proposal to promote `TG_CHUNKER=structural` (cAST-style AST-shaped chunking, shipped opt-in since v1.47.0) from an experimental opt-in to the DEFAULT chunker for the BM25/dense/RRF retrieval stack. |
+| **Root cause** | The proposal was evaluated against a REAL-corpus retrieval-quality eval, not the toy fixture — the retrieval-quality delta came back a net WASH (no measurable improvement over the shipped line-window `chunk_file`), while cAST chunking ran **24.4x SLOWER** and produced **~38% LARGER** chunks. A structural chunker sounds like it should produce more semantically coherent units, but the measured cost/benefit did not support default promotion. |
+| **Evidence** | `benchmarks/eval_late_rerank_quality.py` (the LIVE, chunker-sensitive harness — it actually imports and calls `chunk_file`/`chunk_file_structural`) produced the wash/24.4x/38% numbers. Recorded as a documented retirement in `docs/PAPER.md` §3.10, item 8. **Do not cite `benchmarks/run_repo_retrieval_benchmarks.py` for this class of claim** — it is a static-fixture REPLAY that never calls `chunk_file` and cannot detect a chunker change at all; using it was the original harness-selection mistake this evaluation corrected. |
+| **Status** | **SETTLED / REJECTED-as-default.** The opt-in code (`TG_CHUNKER=structural`) remains shipped for experimentation; it is not promoted. Do not re-run this experiment expecting a different verdict without new evidence — see `tensor-grep-semantic-search-campaign` STATUS UPDATE 3. |
+
+**Rule:** A structural/semantically-motivated redesign of an already-shipped, already-tuned mechanism
+(here: line-window chunking) needs to clear the SAME real-corpus bar as any other optimization claim —
+"more principled" is not evidence. Use the live chunker-sensitive harness, not a static replay that
+can't even see the change.
+
+## Battle 18 -- dense-embedding int8/binary/PCA compression: DEFERRED, slower in numpy (2026-07-21, #251/#692)
+
+| Field | Detail |
+|---|---|
+| **Symptom** | A proposal to compress the dense-embedding vectors (int8 quantization, binary hashing, or PCA dimensionality reduction) for a claimed speed/memory win on the CPU-only dense-retrieval leg. |
+| **Root cause** | The memory win is real (3.79x smaller on disk) but the CPU has no int8 SIMD path reachable from pure numpy on this stack, so the "faster" half of the pitch INVERTED under measurement: ~2x SLOWER than the uncompressed float path. A real speed win here needs a native kernel, which is a genuinely different, multi-day scope than a quick numpy dtype change. |
+| **Evidence** | PR #692, CLOSED not merged. `#255` in project tracking is a task-store label for the banked moat-investment options (native int8 kernel among them) — NOT a GitHub issue; re-verify with `gh issue list` before citing it as a tracked item. |
+| **Status** | **SETTLED / DEFERRED.** Memory-only win banked as a future moat-investment option gated on a native kernel; do not re-propose a pure-numpy int8/PCA path expecting a speed win. |
+
+**Rule:** A compression technique's memory-footprint win and its speed-claim are SEPARATE measurements
+— confirm both independently before pitching either half, and check whether the runtime (here, pure
+numpy with no SIMD path) can actually realize the theoretical speed benefit before promising it.
+
+## Battle 19 -- warm-session/daemon search-index shortcut: a BIG REFACTOR, not a quick win (2026-07-21, #251)
+
+| Field | Detail |
+|---|---|
+| **Symptom** | "The session daemon is already warm and long-lived — just serve repeated `tg search` queries from its cached state instead of re-walking/re-searching cold each time." |
+| **Root cause** | The premise doesn't hold: `session_daemon.py`'s cached state is a **symbol map** (the repo-map graph used by `orient`/`callers`/`blast-radius`/`agent`), not a search index. There is no PyO3 binding for the Rust `TrigramIndex` struct reachable from the daemon's Python process, and the common `tg search` path is a raw `rg` passthrough that never touches the daemon at all. Wiring warm-session search would mean building a new binding + a new serving path, not flipping a flag on an existing cache. |
+| **Evidence** | Verified directly against `session_daemon.py`'s cached-state shape and `rust_core/src/index.rs`'s `TrigramIndex` (no PyO3 export) during the 2026-07-21 research campaign (#251). |
+| **Status** | **SETTLED / BIG-REFACTOR, not a quick win.** The free partial win that DOES exist today: `tg mcp` is itself a long-lived process, so `CPUBackend` in-process caches stay warm across one MCP session — that is a different, already-available mechanism from "warm-session search," and citing it does not require the daemon rework this battle rejects. |
+
+**Rule:** "It's already warm, just reuse it" is only true if the warm state is actually the RIGHT
+KIND of state for the new use case — check what a cache/daemon/session actually holds (a symbol map
+vs. a search index are not interchangeable) before proposing to repurpose it.
+
+## Battle 20 -- GPU-for-search: NO crossover at any scale, and the shipped kernel is NOT PFAC (2026-07-21, #251)
+
+| Field | Detail |
+|---|---|
+| **Symptom** | A recurring pitch to invest further in GPU-accelerated text search, sometimes phrased as "the PFAC kernel should give a crossover at scale" or "surely a big-enough corpus favors GPU." |
+| **Root cause** | Re-tested across 10MB-5GB corpora: **no crossover at any scale**, historical worst case ~30-35x SLOWER than `rg` at 5GB. Crucially, the premise "we have a PFAC kernel" is itself wrong: the shipped `gpu_text_search_positions` kernel is a **position-parallel brute-force byte-compare**, not a PFAC/Aho-Corasick automaton (`docs/gpu_crossover.md:133-138` — PFAC remains documented future work). Even the best-case candidate wedge (many fixed patterns resident over a large corpus) loses to the fair single-invocation baseline: 100 patterns over 1GB measured `rg -F -e ... -e ...` at 0.169s vs the GPU-requested path at 0.448s (itself a CPU-fallback measurement, not a real GPU number). |
+| **Evidence** | `docs/gpu_crossover.md:133-138`; the CEO deep-research decision package (2026-07-21) adjudicated public CUDA-asset publishing to a deliberate **HOLD** (task-store #169, not a GitHub issue). Release checksums currently ship 3 CPU-only rows. |
+| **Status** | **SETTLED / HOLD.** Do not re-propose GPU-for-search without a genuinely new mechanism (not a re-measurement of the same brute-force kernel), and never describe the shipped kernel as PFAC. |
+
+**Rule:** Before re-pitching a GPU program, confirm what kernel is ACTUALLY shipped (read the source,
+don't trust the roadmap's aspirational language) — "we have kernel X" claims drift from "we shipped a
+simpler placeholder for X" easily, and the gap matters for whether a crossover claim is even plausible.
+
+## Battle 21 -- many-pattern `-e`/`-f` Aho-Corasick: a LIVE dedup over-count bug, diagnosed not yet fixed (2026-07-21, #251/#694)
+
+| Field | Detail |
+|---|---|
+| **Symptom** | A many-fixed-pattern search (`-e pat1 -e pat2 ...` / `-f patterns.txt`) over the same 100-pattern path used elsewhere in this campaign's benchmarks reproduces a live over-count: `total_matches: 3` where the rg-correct answer is `2`, on a case where one line matches two different patterns from the set. |
+| **Root cause** | The fast native Aho-Corasick delegation path counts one match per `(line, pattern)` pair rather than deduplicating by line when multiple patterns hit the same line — a real correctness bug in the delegation path, not a benchmark artifact. |
+| **Evidence** | PR #694 — a guard test that reproduces and pins the bug (asserts the CURRENT, wrong behavior so a future accidental "fix" doesn't silently change semantics without review), not a root-cause fix. The many-pattern fast path is deliberately blocked from delegation until this is resolved. |
+| **Status** | **OPEN, GUARDED.** The real fix is native dedup + FFI-level correctness work, banked as a moat-investment option (task-store #255, not a GitHub issue). Do not re-describe this as "the code is still correct" — #694 falsified that framing; treat any many-pattern count claim as suspect until the dedup fix lands. |
+
+**Rule:** A benchmark that measures a wrong-but-plausible-looking number (`3` instead of `2`) can hide a
+real correctness bug behind what looks like a performance measurement — when a fast-path count doesn't
+match the naive/reference tool's count, suspect the fast path's correctness before assuming it's just
+"differently implemented."
+
+## Battle 22 (meta) -- the 5/5 mirage: every "cheap win" from the research steal-list came back negative once verified (2026-07-21, #251)
+
+| Field | Detail |
+|---|---|
+| **Symptom** | A CEO deep-research directive produced a steal-list of 6 candidate "cheap wins" from papers/prior-art (cAST chunking, dense-int8 compression, warm-session search, GPU-for-search viability, a many-pattern speed claim, and a "code is still correct" framing) — the kind of list that FEELS like free value sitting on the table. |
+| **Root cause** | Every single one, when verified against the REAL code and REAL measurements (not the paper's claims or a plausible-sounding mechanism), came back negative, a big-refactor, or a secondary-path finding — Battles 17-21 above are the individual verdicts. Separately, 2 of 6 unrelated "dogfood ask" items in the same research pass turned out to be ALREADY-SHIPPED features whose real defect differed from what was reported — another instance of not verifying the premise before acting on it. |
+| **Evidence** | Battles 17-21 (this file); the closing research-campaign summary in `docs/BACKLOG.md` / MEMORY.md for the 2026-07-21 session. |
+| **Status** | **SETTLED discipline.** The 5/5-negative result IS itself the deliverable of a properly-run research pass, not a failure of the research — a steal-list that returns "no, and here's the file:line evidence why" for every item is a SUCCESSFUL verification pass, not a wasted one. |
+
+**Rule:** Treat every item on a "cheap win from research" list as an unverified hypothesis, exactly like
+an AI-drafted plan — verify each one against the real code and real measurements before spending a build
+cycle on it. A high hit-rate of "looked promising, turned out negative" is not evidence the research
+process is broken; it is evidence the verification gate is working. See `tensor-grep-research-methodology`
+Part 4 for where good ideas come from and how to weight them, and treat this battle as the worked example
+of Test A/Test C (this skill's evidence bar) firing at portfolio scale rather than on one claim at a time.
+
+---
+
 ## Cross-cutting lessons (the meta-patterns behind the battles)
 
 These recur across the chronicle; internalize them and you avoid the next re-fight too.
@@ -354,17 +453,29 @@ These recur across the chronicle; internalize them and you avoid the next re-fig
 8. **A test that breaks under your "obvious" cleanup is telling you something.** Battle 11's
    vimgrep/column stash-gate looked free until a consumer-contract test caught it — grep the real
    consumers before trusting a profiler-motivated guess that a value is unused off one path.
+9. **Verify every steal/dogfood-ask against the LIVE code before building, not just against the
+   paper/report that suggested it.** Battle 22's 5/5-negative research steal-list, and the 2-of-6
+   "already-shipped, real defect differs from the report" dogfood-ask surprise in the same pass, both
+   trace to skipping this step. A cheap-looking win from an external source (a paper's benchmark, a
+   report of a bug) is a HYPOTHESIS about THIS codebase until you've read the actual file:line and, for
+   a speed/quality claim, run the actual measurement here — never assume the source material's claim
+   transfers unchanged.
 
 ## Provenance and maintenance
 
 Re-verify these before treating any claim above as current (drift-prone facts are date-stamped
-**as of 2026-07-02, v1.17.25**, with Battles 9-14 verified **2026-07-03, v1.19.3**, and Battle 9's
-`case_sensitive` correction + Battle 16 verified **2026-07-16, v1.78.1**):
+**as of 2026-07-02, v1.17.25**, with Battles 9-14 verified **2026-07-03, v1.19.3**, Battle 9's
+`case_sensitive` correction + Battle 16 verified **2026-07-16, v1.78.1**, and Battles 17-22 +
+cross-cutting lesson 9 added **2026-07-22, v1.93.2**):
 
 ```bash
 # Current version + latest settled entries
-grep -E '^version' pyproject.toml               # expect 1.78.1 (or newer)
+grep -E '^version' pyproject.toml               # expect 1.93.2 (or newer)
 head -20 CHANGELOG.md
+
+# Battles 17-21 (research retirements) + Battle 22 (meta)
+grep -n "cAST\|structural chunking" docs/PAPER.md
+grep -n "gpu_text_search_positions" rust_core/src/gpu_native.rs
 
 # Battle 9 correction (case_sensitive graduated OUT of KNOWN_GAP, audit #19)
 grep -n "case_sensitive" tests/unit/test_native_delegation_field_coverage.py

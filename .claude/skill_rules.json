@@ -1,0 +1,63 @@
+{
+    "version": "1.0",
+    "description": "Project-local skill triggers for tensor-grep (consumed by the global ~/.claude/hooks/skill_activation_gate.py engine; merged over global rules, invisible outside this project). Seeded 2026-07-17 from the project's local skill library -- see AGENTS.md's skill index for the current, authoritative skill count and set; expand from gate_fires.jsonl conversion data. This file is harness config for the activation hook, not a product contract, and is invisible to tests/unit/test_skill_index_sync.py.",
+    "skills": {
+        "tensor-grep-debugging-playbook": {
+            "priority": "high",
+            "intentPatterns": ["\\b(fix|debug|investigate|diagnose|why is)\\b.{0,60}\\b(bug|error|failure|crash|panic|test)\\b"]
+        },
+        "tensor-grep-release-and-positioning": {
+            "priority": "high",
+            "intentPatterns": ["\\b(ship|cut|push|publish)\\b.{0,30}\\b(release|v\\d|crates|pypi|npm)\\b"]
+        },
+        "tensor-grep-build-and-env": {
+            "priority": "medium",
+            "minKeywordHits": 1,
+            "keywords": ["cargo build", "maturin", "build fails", "rust toolchain"]
+        },
+        "tensor-grep-gpu": {
+            "priority": "medium",
+            "minKeywordHits": 1,
+            "keywords": ["cuda", "gpu index", "gpu search"]
+        },
+        "tensor-grep-semantic-search-campaign": {
+            "priority": "medium",
+            "minKeywordHits": 1,
+            "keywords": ["semantic search", "embedding index", "lsh"]
+        },
+        "tensor-grep-validation-and-qa": {
+            "priority": "medium",
+            "keywords": ["validation", "qa pass", "regression", "benchmark suite"]
+        },
+        "tensor-grep-workspace-dogfood": {
+            "priority": "medium",
+            "minKeywordHits": 1,
+            "keywords": ["dogfood", "tg callers", "tg blast", "tg scan"]
+        },
+        "tensor-grep-ledger": {
+            "priority": "medium",
+            "minKeywordHits": 1,
+            "keywords": ["tg ledger", "claim symbols", "coordinate agents", "advisory lock", "overlapping edits"]
+        },
+        "tensor-grep-prepare": {
+            "priority": "medium",
+            "minKeywordHits": 1,
+            "keywords": ["tg prepare", "edit readiness", "prepare an edit", "one-call edit"]
+        },
+        "tensor-grep-find-and-route": {
+            "priority": "medium",
+            "minKeywordHits": 1,
+            "keywords": ["tg find", "route-test", "hybrid search", "vocabulary mismatch"]
+        },
+        "tensor-grep-multi-project-search": {
+            "priority": "medium",
+            "minKeywordHits": 1,
+            "keywords": ["multi-project search", "workspace root", "unscoped search", "sibling repos"]
+        },
+        "tensor-grep-enterprise-review-bundle": {
+            "priority": "medium",
+            "minKeywordHits": 1,
+            "keywords": ["review-bundle", "review bundle", "change review package", "audit-history"]
+        }
+    }
+}

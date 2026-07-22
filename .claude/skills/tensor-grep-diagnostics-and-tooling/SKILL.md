@@ -58,7 +58,7 @@ dogfood only after a version actually publishes.
 ## Tool 1: `tg doctor --json` — field-by-field interpretation
 
 Source: `_build_doctor_payload` / `_render_doctor_payload` in `src/tensor_grep/cli/main.py`
-(command registration at `main.py:9903`, payload builder at `main.py:2745`).
+(command registration at `main.py:14302`, payload builder at `main.py:3131`, `_build_doctor_payload`).
 
 ```powershell
 tg doctor --json --no-lsp        # fast (~2-5s); always prefer this while iterating
@@ -86,13 +86,13 @@ gap.
 | `fresh_shell_path_tg_first_launcher_kind` / `*_version_matches` | same shape as above, but simulated for a **brand-new shell** (reads Windows registry `PATH` on Windows) | catches "your current shell is fixed but a fresh terminal still resolves the wrong `tg`" |
 | `python_subprocess_path_tg_first_*` (Windows only) | same shape | Python's own `subprocess.run(["tg", ...])` can resolve **differently** than your interactive shell (e.g. Windows `CreateProcess` picks `.exe` ahead of a `.com` bridge) — this is what MCP servers and other Python tooling actually see |
 | `rust_binary_version_status` | `matches` or `stale-skipped` | `missing` is often benign (no standalone native binary in play; check `search_acceleration_backend`). `stale` or `mismatch` is a real problem — see remediation below. |
-| `rust_binary_remediation` | `null` except for `mismatch`, `stale`, and the healthy `stale-skipped` case | when non-null, it is a copy-pasteable fix string, e.g. rebuild-the-in-tree-binary guidance; note `stale-skipped` always carries this rebuild-hint string even though it needs no action (`_doctor_rust_binary_remediation`, `main.py:2153-2168`, unconditionally returns it on `stale-skipped`) |
+| `rust_binary_remediation` | `null` except for `mismatch`, `stale`, and the healthy `stale-skipped` case | when non-null, it is a copy-pasteable fix string, e.g. rebuild-the-in-tree-binary guidance; note `stale-skipped` always carries this rebuild-hint string even though it needs no action (`_doctor_rust_binary_remediation`, `main.py:2421`, unconditionally returns it on `stale-skipped`) |
 | `skipped_native_tg_binaries` | `[]`, or a list of correctly-ignored stale in-tree binaries | a non-empty list here is the **healthy** outcome when you have an old local dev build lying around — it means doctor correctly did NOT select it |
 | `mcp_stdio_launcher_warning` | `null` | non-null on Windows usually means a PowerShell shim (`tg.ps1`) is ambiguous for MCP stdio clients; the message tells you to point the MCP client at the native `tg.exe` directly |
 | `gpu.available` / `gpu.search_ready` / `gpu.tier.promotion_proof` | `available` reflects CUDA device presence; `search_ready` reflects whether a real search actually routed through `NativeGpuBackend` | **`gpu.available=true` does NOT mean GPU search works.** Always read `search_ready` and `tier.promotion_proof`, not just `available`. GPU is experimental-until-proven (see `docs/gpu_crossover.md`) — never a PASS/FAIL signal, always informational. |
-| `gpu.search_runtime_probe.status` (v1.75.2, #595 + gate-nits v1.75.4, #597) | `supported`, or one of the failure-taxonomy statuses: `not_run`, `path_domain_mismatch`, `failed_input`, `failed_gpu_unavailable`, `failed_path_bridging` (WSL cross-domain), `failed_probe_path` (same-domain path vanished), `failed_other` (unrecognized/unparseable -- fails closed) | Replaces a single opaque `"failed"` for every `rc!=0` outcome -- read the specific status before assuming "GPU is just broken"; `failed_input` (e.g. `gpu_invalid_device_id`) means a bad request, not an unavailable GPU (`_doctor_gpu_search_runtime_probe`/`_doctor_gpu_probe_failure_status`, `main.py:2774-2874`) |
+| `gpu.search_runtime_probe.status` (v1.75.2, #595 + gate-nits v1.75.4, #597) | `supported`, or one of the failure-taxonomy statuses: `not_run`, `path_domain_mismatch`, `failed_input`, `failed_gpu_unavailable`, `failed_path_bridging` (WSL cross-domain), `failed_probe_path` (same-domain path vanished), `failed_other` (unrecognized/unparseable -- fails closed) | Replaces a single opaque `"failed"` for every `rc!=0` outcome -- read the specific status before assuming "GPU is just broken"; `failed_input` (e.g. `gpu_invalid_device_id`) means a bad request, not an unavailable GPU (`_doctor_gpu_probe_failure_status`, `main.py:2894`; `_doctor_gpu_search_runtime_probe`, `main.py:2910`) |
 | `gpu.search_runtime_probe.native_error_kind` | `null`, or the native binary's own structured `--json` error kind (e.g. `path_not_found`, `empty_pattern`, `invalid_regex`, `gpu_fatal`, `gpu_invalid_device_id`) | the raw kind behind the mapped `status` above -- `null` means stdout wasn't the expected structured JSON at all (a raw panic, empty output), not that there was no error |
-| `native_frontdoor_flavor` / `native_frontdoor_requested_flavor` / `native_frontdoor_asset_name` / `native_frontdoor_metadata_status` / `native_frontdoor_flavor_mismatch_note` | populated strings when a managed native front door is installed | surfaces "you asked for `nvidia` but got `cpu`" (`_doctor_native_frontdoor_flavor_mismatch_note`, `main.py:2990`) -- previously only a benchmark script could see this; now visible in plain `tg doctor` |
+| `native_frontdoor_flavor` / `native_frontdoor_requested_flavor` / `native_frontdoor_asset_name` / `native_frontdoor_metadata_status` / `native_frontdoor_flavor_mismatch_note` | populated strings when a managed native front door is installed | surfaces "you asked for `nvidia` but got `cpu`" (`_doctor_native_frontdoor_flavor_mismatch_note`, `main.py:3110`) -- previously only a benchmark script could see this; now visible in plain `tg doctor`. **A14/#708 (v1.93.1):** `_agent_gpu_tg_command` (`agent_capsule.py:1508`) now pre-resolves a bare `"tg"` via `shutil.which` before it reaches the WSL cross-domain gate, closing a residual case where an unresolved bare command name skipped the check entirely; field semantics here are unchanged by that fix. |
 | `lsp.enabled` / `lsp.providers[].health_status` | `health_status` in `{ready, available_unverified, unhealthy, missing}` | **provider availability is not navigation proof.** A provider counts as real LSP evidence only when a completed request set `lsp_provider_response = true` — `provenance = "lsp-*"` alone is not enough (`AGENTS.md` LSP rules). |
 | `ast_grep.available` / `ast_grep.binary` | `true` / a resolved path | `false` degrades `tg run`'s semantic (`--selector`/`--strictness`) options; AST structural search itself still works via the native backend |
 | `session_daemon.running` | informational | `true` means a warm localhost daemon is serving cached repo-map/session state for this root |
@@ -213,7 +213,7 @@ useful when the shell-probe phase is slow.
 ## Tool 3: `tg dogfood` — verdict + JSON envelope around `agent_readiness.py`
 
 Source: `src/tensor_grep/cli/dogfood.py` (`run_dogfood_readiness`), CLI command at
-`main.py:9651`.
+`main.py:14032`.
 
 ```powershell
 tg dogfood --output artifacts/dogfood_readiness.json
@@ -294,7 +294,7 @@ Two newer JSON surfaces belong in this skill's "what does the field actually pro
 neither is a health-check tool like Tools 1-4 above, but both need the same field-by-field
 interpretation discipline before you trust them.
 
-**`tg find` (`main.py:4340-4440`):**
+**`tg find` (`main.py:4525` onward — re-verify with `grep -n "^def find(" src/tensor_grep/cli/main.py`):**
 
 | Field | Healthy value | What a bad/absent value means |
 |---|---|---|
@@ -302,7 +302,7 @@ interpretation discipline before you trust them.
 | `result_incomplete` | `false`/absent on a complete scan | `true` means `--deadline`/`--max-repo-files`/the internal corpus-wide chunk cap truncated the walk — the ranked results are a FLOOR, not the full answer. Exit code confirms this independent of the JSON: any truncation exits **2**, whether or not matches were found (`tensor-grep-run-and-operate` §11c, `tensor-grep-large-repo-scale-campaign` §1/§5). |
 | exit code | `0` = complete + found; `1` = complete + empty; `2` = `BackendExecutionError` OR any truncation | do not read exit `2` here as a plain usage error the way `tg search`'s exit-2 convention works (§11b) — `tg find` follows the symbol-command-style "truncation trumps found" shape, a DIFFERENT convention than `tg search`. |
 
-**`tg route-test` (`main.py:9833-9925`) — diagnoses routing agreement between `context-render` and `edit-plan`:**
+**`tg route-test` (`main.py:10074` onward — re-verify with `grep -n "^def route_test(" src/tensor_grep/cli/main.py`) — diagnoses routing agreement between `context-render` and `edit-plan`:**
 
 | Field | Healthy value | What a bad value means |
 |---|---|---|
@@ -386,9 +386,14 @@ Base doctor/dogfood facts verified against v1.17.25 (2026-07-02); the GPU doctor
 (failure taxonomy, `native_error_kind`, `native_frontdoor_*` flavor fields, the honest
 out-of-range device-id warning) re-verified against **v1.75.4 (2026-07-14)** -- both by reading the
 cited source directly; the `tg find`/`tg route-test` interpretation section is new as of
-**v1.78.1 (2026-07-16)**, verified directly against `main.py:4340-4440`/`:9833-9925`. Re-verify if
-this skill feels stale, and treat the v1.17.25-era claims as the ones most likely to have drifted
-furthest, not the GPU section:
+**v1.78.1 (2026-07-16)**, originally verified against `main.py:4340-4440`/`:9833-9925`. A consolidated
+re-grep pass **2026-07-22 (v1.93.2)** found EVERY `main.py:NNNN` citation in this file had drifted
+(several by 1200-4400 lines — `main.py` is now 16897 lines) and refreshed them: doctor def `:14302`,
+`_build_doctor_payload` `:3131`, `_doctor_rust_binary_remediation` `:2421`, the GPU-probe functions
+`:2894`/`:2910`, the flavor-mismatch function `:3110`, `dogfood` `:14032`, `find` `:4525`,
+`route_test` `:10074` — plus a one-line mention of A14/#708 (bootstrap no-ignore flag-field parity;
+`_agent_gpu_tg_command`'s `shutil.which` pre-resolution). Field SEMANTICS in every table above are
+UNCHANGED by this pass — only the line-number citations moved. Re-verify if this skill feels stale:
 
 ```powershell
 # current version

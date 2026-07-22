@@ -59,7 +59,7 @@ If your symptom isn't in the table below, it's probably not covered here — che
 | Symptom | Likely cause | Discriminating experiment | Fix pointer |
 |---|---|---|---|
 | CI check is red, unclear why | Wrong assumption from the traceback instead of the actual failing check (e.g. registration-completeness gate, not the code you touched) | `gh pr checks <PR>` → find the *named* failing job, then `gh run view <run-id> --json jobs` → `gh run view <run-id> --log-failed` | [§1](#1-ci-red-decode-the-structured-check-first) |
-| PR merged, `main` CI green, but the version never showed up on PyPI / no `chore(release)` commit | Push-race: another merge landed on `main` while the `Semantic Release` job (~6 min, compiles native assets) was still running, so its final push was rejected | `gh run view <run-id> --log-failed` on the `Semantic Release` job; look for `! [rejected]  main -> main` | [§2](#2-release-did-not-publish-push-race) |
+| PR merged, `main` CI green, but the version never showed up on PyPI / no `chore(release)` commit | EITHER a push-race (another merge landed mid-flight) OR a `needs:`-job flake (`Semantic Release` itself `skipped`) — these need DIFFERENT recovery, don't assume push-race by default | `gh run view <run-id> --json jobs` on the `Semantic Release` job: `! [rejected] main -> main` in its log = push-race (self-heals, don't rerun); a bare `skipped` conclusion with no rejection line = flaky upstream job (`gh run rerun --failed`) | [§2](#2-release-did-not-publish-push-race) |
 | `tg search` hangs, or errors after a long wait | Whole-repo / unscoped search hit the 60s fail-fast timeout, often because `.tensor-grep/`, `_tg_refs/`, or a vendored `external_repos/` dir got walked | Check the exit code — `124` means the configured timeout fired, not a crash | [§3](#3-search-hangsslow) |
 | `tg` returns 0 matches / empty result but you expect matches | A backend swallowed a real failure (native panic, PCRE2 semantics mismatch, OOM'd subprocess) and returned a clean empty `SearchResult` instead of raising | Re-run with `--format rg` or check `routing_reason` / `fallback_reason` in `--json` output; compare against `rg` directly on the same pattern/path | [§4](#4-silent-empty-result-fail-closed-contract) |
 | A pattern/path argument starting with `-` is silently interpreted as a flag by `rg`/`tg`/`git` (wrong output, not a crash) | A subprocess argv builder appended a user-controlled value as a bare positional with no `--` end-of-options sentinel | `tg search -- --weird-pattern PATH` vs `tg search --weird-pattern PATH` (should error) — same probe against any MCP tool call path | [§5](#5-argvflag-injection) |
@@ -70,6 +70,8 @@ If your symptom isn't in the table below, it's probably not covered here — che
 | A latency "fix" doesn't move the needle, or a reported regression can't be reproduced / doesn't match the diff | The hot path was inferred by reading code (a review/design pass) instead of measured — the real bottleneck is often a pure helper called redundantly in a hot loop, invisible from reading the "expensive-looking" function alone | Profile the **actual** slow command at realistic scale (not a toy input) and check top cumulative-time frames; Counter-wrap a suspect function to see call-count-vs-unique-input redundancy before designing a cache | [§10](#10-profile-at-scale-discipline-latency-claims) |
 | PyPI/`chore(release)` published fine, "latest `main` run green" -- but a real regression shipped anyway | The workflow run's *aggregate* status hides one late-stage job's own red conclusion -- specifically the NEEDS-gated `release-tag-smoke` job (re-runs `scripts/agent_readiness.py` against the actually-published wheel), which can stay red for releases at a time while `publish-pypi`/`publish-success-gate` keep going green | `gh run view <run-id> --json jobs` on the release run -> find the job named **`release-tag-smoke`** specifically -> read its own `conclusion`, don't infer from the run's overall status | [S11](#11-release-published-but-release-tag-smoke-stayed-red-masked-regression) |
 | `Dependency & License Audit` job is red, but your diff doesn't touch any dependency file, and it reds EVERY open PR at once | A newly-disclosed CVE/RUSTSEC advisory against an already-pinned, unmodified dependency -- the strict-on-fixable `pip-audit`/`cargo-audit` gate fails for everyone until the floor moves, not just your branch | `gh run view <run-id> --log-failed` on the `Dependency & License Audit` job -- decode pip-audit's/cargo-audit's OWN structured output for the exact package + advisory ID + fixed-version | [S12](#12-dependency--license-audit-red-on-an-untouched-dependency-newly-disclosed-cve) |
+| A shell one-liner that pipes `tg`/a probe script into `tail`/`grep`/`python -c ...` reports success (`exit 0`) even though the FIRST command in the pipe actually failed | Pipe exit-code masking: a shell pipeline's exit code is the LAST command's, not the first's | Re-run the first command alone and check its own `$?`/`$LASTEXITCODE`; or use `${PIPESTATUS[0]}` (bash) / split into two statements | [S13](#13-pipe-exit-code-masking) |
+| An automated dogfood/verdict script says PASS or FAIL, but the underlying behavior looks wrong when you inspect it directly | The scoring logic misread the JSON shape (a renamed field, a nested-vs-top-level key) — a shape misread can silently read as either a clean pass or a clean fail | Read the RAW `--json` output at least once by eye before trusting the automated verdict for a new/changed probe | [S14](#14-raw-json-before-scoring) |
 
 ---
 
@@ -125,6 +127,21 @@ failure self-heals on the next push-to-`main` (version is derived from git tags,
 run's state). Full mechanism, the `v1.17.23`/#318/#319 receipt, and the one-merge-per-tick
 discipline to prevent recurrence: `tensor-grep-release-and-positioning` §1.5 /
 `tensor-grep-failure-archaeology` Battle 6.
+
+**A SECOND, different release-failure branch does NOT self-heal — read the job conclusion before
+picking a recovery, don't assume every "release didn't publish" is a push-race:**
+
+| Branch | Signature | Recovery |
+|---|---|---|
+| **Push-race** (this section) | `! [rejected] main -> main` in the `Semantic Release` job's own log | Self-heals on the next push. Do NOT rerun. |
+| **`needs:`-job flake (C-release-flake)** | `Semantic Release` shows `skipped` (not `failure`), no rejection line — a flaky upstream job in its `needs:` list failed | Does NOT self-heal — the flaky job's cause doesn't change between pushes. Run `gh run rerun --failed` on the SAME run (re-executes only the failed job). Receipts: v1.76.9/#612-613 (a timing-flaky heartbeat test); v1.92.2/#701 (the index-lock concurrency test rewritten after 2 releases of flaking). |
+
+**Rapid-window batch-merge is a third, benign shape — don't misdiagnose it as either of the above.**
+Several independently-green PRs merging ~15-20s apart can show an intermediate `cancelled` or
+rejected-push run that looks alarming in isolation, but is fine IF the LAST run in the sequence
+completes and publishes (receipt: v1.93.0/#703-706, runs `29890576036` rejected-only / `29890612228`
+published). See `tensor-grep-change-control` Part 7 (C-batch) before treating a mid-sequence
+`cancelled` conclusion as a failure needing recovery at all.
 
 ## 3. Search hangs/slow
 
@@ -382,7 +399,7 @@ instead of `capfd.readouterr().out`; the now-unused `pytest.CaptureFixture` impo
 **Discriminating experiment:** if a `CliRunner` test that reads `capfd` starts failing right after a
 delegation/routing/gating change, first ask "does this flag/config still delegate to a real
 subprocess after my change?" — grep the refuse-tuple
-(`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, `src/tensor_grep/cli/main.py:1783`) for the field
+(`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, `src/tensor_grep/cli/main.py:1883`) for the field
 you touched. If it now refuses delegation (or newly allows it), the correct capture fixture flips
 too.
 
@@ -534,6 +551,66 @@ simultaneous cross-PR failure on this specific job is the tell.
 
 ---
 
+## 13. Pipe exit-code masking
+
+**Symptom:** a one-liner like `tg some-probe ... | tail -5` or `some_script.py | python -c "..."`
+reports success (`$?`/`$LASTEXITCODE == 0`) even though the FIRST command in the pipe genuinely
+failed — the failure is invisible because nothing downstream noticed it crashed.
+
+**Root cause:** a shell pipeline's exit code (in bash, without `pipefail`; always in a naive
+PowerShell pipe) is the LAST command's exit code, not the first's. `tail`/`grep`/`python -c` almost
+always exit 0 regardless of what the upstream command produced (even empty input), so a crashed or
+error-exiting first command is silently swallowed by whatever reads its output next.
+
+**Discriminating experiment:** run the first command alone and check its own exit code before
+trusting any pipeline built on top of it:
+
+```bash
+tg some-probe ...            # run alone first, check $?/$LASTEXITCODE directly
+tg some-probe ... | tail -5  # only trust this AFTER the line above confirms exit 0
+```
+
+**Fix:** in bash, `set -o pipefail` (or check `${PIPESTATUS[0]}` for the first command's own exit
+code specifically) before trusting a piped one-liner's exit code; in PowerShell, don't chain `|`
+into a text-processing cmdlet when you need the upstream command's own exit code — capture it to a
+variable first. Or simplest: split into two statements instead of one pipe when you need the exit
+code AND the trimmed output.
+
+**Rule:** never write a diagnostic/verification one-liner as `real-command | text-filter` when the
+real command's own exit code is part of what you're checking — this is exactly how a genuinely
+failing probe can read as a clean pass during a closing-dogfood pass (2026-07-22 closing-dogfood
+receipt: caught mid-pass, before it produced a false PASS in the final verdict table).
+
+## 14. Raw-JSON-before-scoring
+
+**Symptom:** an automated dogfood/verdict script reports PASS or FAIL for a check, but the
+underlying behavior — read by eye — doesn't match what the script concluded.
+
+**Root cause:** the scoring logic read the wrong shape out of the JSON payload (a field that moved
+from top-level to nested, a renamed key, a list where a dict was expected) — a shape mismatch can
+silently produce EITHER a false PASS (the check reads a default/None value that happens to satisfy
+a lenient assertion) or a false FAIL (a real, correct field the checker looked for under the wrong
+name). Neither failure mode looks different from a genuine result without inspecting the payload.
+
+**Discriminating experiment:** before trusting a new or changed probe's automated verdict, read the
+RAW `--json` output at least once:
+
+```bash
+tg some-command ... --json | python -m json.tool   # eyeball the actual shape once
+```
+
+Confirm the field the scorer reads actually exists at the path the scorer expects, on a REAL (not
+synthetic) run, before trusting a batch of automated PASS/FAIL rows built on the same scoring logic.
+
+**Rule:** treat a first-time or freshly-changed automated verdict as unverified until you've read at
+least one raw JSON payload behind it by eye — this is the same discipline as `trustworthy-cuj-scoring`'s
+bidirectional-oracle rule (a correct answer must PASS and a wrong one must FAIL), applied to ad hoc
+dogfood/verdict scripts rather than a formal eval harness. 2026-07-22 closing-dogfood receipt: this
+step is what turned a suspicious-looking automated result into either a confirmed PASS or a real,
+actionable finding, rather than a guess either way.
+
+---
+
 ## Provenance and maintenance
 
 Facts here were originally verified **2026-07-02, tensor-grep v1.17.25** for §1–§8, and
@@ -541,8 +618,12 @@ Facts here were originally verified **2026-07-02, tensor-grep v1.17.25** for §1
 (`pyproject.toml:430`) for the §5 rg-passthrough-sentinel status, §8 `score_term_overlap`/degrade-
 to-ask citations, §3 exit-124 citations, and the §9 `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`
 line number; **2026-07-16 against v1.78.1** added §12 (dependency-CVE-audit triage) and the §4
-`tg find rank_fallback_reason` example. Re-verify anything below before trusting it on a later
-version — this table drifts whenever the cited line numbers, defaults, or contracts change.
+`tg find rank_fallback_reason` example; **2026-07-22 against v1.93.2** extended §2 with the
+push-race-vs-`needs:`-flake-vs-batch-merge triage (three distinct shapes, three different recovery
+paths), refreshed the §9 line citation to `main.py:1883`, and added §13 (pipe exit-code masking) and
+§14 (raw-JSON-before-scoring), both from the 2026-07-22 closing-dogfood pass. Re-verify anything
+below before trusting it on a later version — this table drifts whenever the cited line numbers,
+defaults, or contracts change.
 
 Re-verification commands:
 

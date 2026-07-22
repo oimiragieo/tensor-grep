@@ -6,7 +6,7 @@ description: Use when adding, changing, or auditing a tg environment variable, C
 # tensor-grep config and flags
 
 A ground-truthed catalog of every tg config axis — env vars, CLI flags, provider modes — plus the
-registration checklist for adding a new one. Verified against source as of 2026-07-16, **v1.78.1**
+registration checklist for adding a new one. Verified against source as of 2026-07-22, **v1.93.2**
 (`pyproject.toml`). Re-verify commands are in [Provenance and maintenance](#provenance-and-maintenance)
 because these drift with every release.
 
@@ -148,6 +148,12 @@ The daemon binds to `127.0.0.1` only (`session_daemon.py:46`) — it is not expo
 detail (starting/stopping the daemon, `tg session daemon start|status|stop`) lives in
 `.claude/skills/tensor-grep/REFERENCE.md`, not here.
 
+### Agent capsule
+
+| Var | Default | Effect | Source |
+|---|---|---|---|
+| `TG_CAPSULE_INLINE_CALLERS` | off (`env_flag_enabled`-style on-values: `1`/`true`/`yes`/`on`) | When on, `tg agent`/`tg prepare` prepend `# tg: callers=N (top: a, b)` to the PRIMARY snippet's source, reusing already-collected blast-radius evidence (no new scan). Off by default for a stronger reason than most flags here: it **mutates** `snippets[i].source`/`line_map`/`token_estimate` on the primary snippet (an inserted line shifts both the displayed source and its line-number mapping, and raises the token estimate ~+2.8%), rather than only adding a new field — a consumer that diffs/re-parses `source` byte-for-byte will see it change. An additive `snippets[i].inline_structural_annotation` field is also added. py/js/ts/rs comment syntax only; fails closed (no annotation) for any other language. `callers=N` is only ever emitted on a verified count; token-budget truncation is fail-closed (never silently drops the annotation without accounting for its cost). | `agent_capsule.py:1941` (`_CAPSULE_INLINE_CALLER_ANNOTATION_ENV`) |
+
 ### MCP security gate (default-OFF)
 
 | Var | Default | Effect | Source |
@@ -174,6 +180,26 @@ cited module if you need the exact number) — this skill's job is to tell you *
 - `TENSOR_GREP_REPO_CONTEXT_CACHE_MAX_ROOTS`
 - `TENSOR_GREP_LSP_PROVIDER_CLIENT_CACHE_MAX_ENTRIES`
 - `TENSOR_GREP_LSP_PROVIDER_OPEN_DOCUMENT_MAX_ENTRIES`
+
+### Internal constants (not env-configurable)
+
+Not every load-bearing bound in `tg` is an environment variable — some are deliberately hardcoded
+constants, single-sourced so multiple call sites cannot drift apart. Distinguish these from the
+env-configurable knobs above before assuming a behavior can be tuned at runtime:
+
+- **`IMPLICIT_SEARCH_WALK_FILE_CEILING = 1500`** (`src/tensor_grep/io/directory_scanner.py:92`) — the
+  fast-refuse ceiling for an unscoped/defaulted-path search or `tg find` walk (A9, v1.92.3/#702). It is
+  imported by both `src/tensor_grep/cli/main.py`'s `_LARGE_ROOT_SCAN_FILE_CEILING` and
+  `src/tensor_grep/cli/bootstrap.py`'s `_search_paths_include_oversized_implicit_root` — one constant,
+  two Python call sites, so a future change to the ceiling cannot silently desync the Typer-app path
+  from the flag-less bootstrap-passthrough path. The Rust `rust_core/src/rg_passthrough.rs` keeps its
+  own copy of the same numeral, synced by convention (not a shared build-time constant across the
+  Python/Rust boundary) — if you ever change the Python value, grep `rg_passthrough.rs` for the
+  matching literal and update it in the same PR, or the two front doors will silently disagree on
+  where the ceiling sits.
+- This is a distinct axis from **`TG_DIR_SCAN_MAX_ENTRIES`** (env-configurable, a different directory-
+  scan bound) — do not conflate the two when reading a scan-refusal report; check which constant/env
+  var actually produced the observed refusal before describing the mechanism.
 
 ### LSP provider
 
@@ -292,17 +318,27 @@ binary. **See `tensor-grep-architecture-contract` for the full 4-site command / 
 registration table and the rationale for why each site exists**, and `tensor-grep-change-control` for
 the PR/merge gate around it (`AGENTS.md:178-196`) — this skill does not restate that table.
 
+**Worked non-registration example — `tg prepare --out FILE` (v1.93.0/#705, A12(d)).** Not every new
+flag triggers all 3 registration concerns this skill and its siblings track — a useful example of
+"none of the above applied" to calibrate against: adding `--out` to the already-registered `tg prepare`
+command needed (1) no new 4-site command registration (the command already existed), (2) no 2-site
+search-flag registration (`--out` is not a search flag — it never reaches `bootstrap`'s rg-passthrough
+front door), and (3) no `SearchConfig` field-coverage classification (`prepare` doesn't build a
+`SearchConfig` at all). It was a same-command, same-registration-footprint addition — a new `typer.Option`
+on an existing `@app.command`, nothing else. Recognizing when a change genuinely needs none of the 3
+checklist items (vs. assuming every new flag does) saves a wasted registration audit.
+
 ### The third checklist item: native-delegation field coverage (`SearchConfig`)
 
 Adding a new field to `SearchConfig` (`src/tensor_grep/core/config.py`) is a **third** registration
 concern, separate from the 4-site command table and the 2-site search-flag table above — and it is
 easy to miss because it fails silently, not loudly.
 
-**Why it exists**: `_can_delegate_to_native_tg_search` (`main.py:3263-3282`) hands an entire search
+**Why it exists**: `_can_delegate_to_native_tg_search` (`main.py:3698`) hands an entire search
 off to the native `tg` subprocess, which `sys.exit()`s **before** the Python-side BM25 rerank and
 the in-backend file sort ever run. Any `SearchConfig` field that is output-affecting but neither
-forwarded into the native argv (`_build_native_tg_search_command`) nor listed in the refuse-tuple
-`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` (`main.py:1755` onward) gets **silently dropped** —
+forwarded into the native argv (`_build_native_tg_search_command`, `main.py:3720`) nor listed in the refuse-tuple
+`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` (`main.py:1883` onward) gets **silently dropped** —
 the search still runs and returns a result, just the wrong one (unranked/unsorted), which is worse
 than a crash because suppression reads as absence. This is the same bug class as the `-u`/`-uu`
 no-op fixed in `#336`; the receipt this time was `#342` (commit `5e6f780`, v1.18.6->v1.19.0 range):
@@ -440,7 +476,14 @@ native-delegation field-coverage ratchet including `case_sensitive`'s removal fr
 (audit #19); the new `TG_SESSION_DAEMON_RESPONSE_TIMEOUT_SECONDS` env var (#390).
 
 Re-verified as of 2026-07-16 (v1.78.1): the new `TG_FIND_DENSE_WEIGHT` row above, read directly
-against `main.py:4007-4072`. The rest of this file (env-var catalog, front-door tables, GPU/LSP/
+against `main.py:4007-4072`.
+
+Re-verified as of 2026-07-22 (v1.93.2): the 3 native-delegation cites (`_can_delegate_to_native_tg_search`
+→ `main.py:3698`, `_build_native_tg_search_command` → `main.py:3720`,
+`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` → `main.py:1883`); the new `TG_CAPSULE_INLINE_CALLERS`
+catalog row (`agent_capsule.py:1941`); the new "Internal constants" subsection
+(`IMPLICIT_SEARCH_WALK_FILE_CEILING = 1500`, `io/directory_scanner.py:92`); and the `tg prepare --out`
+worked non-registration example. The rest of this file (env-var catalog, front-door tables, GPU/LSP/
 provider sections above) was **not** re-walked line-by-line in this pass — treat those sections'
 exact line numbers as needing a fresh check per the rule below, independent of the sections just
 re-verified.

@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-release-and-positioning
-description: Use when merging a release-bearing PR, writing a PR title for tensor-grep, diagnosing "why didn't my release publish" or "why hasn't npm/the docs site updated", running the post-publish dogfood, or making any external-facing speed/GPU/LSP/benchmark claim about tg. Covers semantic-release mechanics in ci.yml, the push-race + one-merge-per-tick discipline (worked example: the #384-#399 sequence), the npm/docs manual-dispatch publish gap, PyPI/npm/Homebrew/winget publish gates, and the not-faster-grep positioning + reproducibility standard for comparator claims. As of 2026-07-16, v1.78.1.
+description: Use when merging a release-bearing PR, writing a PR title for tensor-grep, diagnosing "why didn't my release publish" or "why hasn't npm/the docs site updated", running the post-publish dogfood, or making any external-facing speed/GPU/LSP/benchmark claim about tg. Covers semantic-release mechanics in ci.yml, the push-race + one-merge-per-tick discipline (worked example: the #384-#399 sequence), the npm/docs manual-dispatch publish gap, PyPI/npm/Homebrew/winget publish gates, and the not-faster-grep positioning + reproducibility standard for comparator claims. As of 2026-07-22, v1.93.2.
 ---
 
 # tensor-grep: Release Mechanics and Public Positioning
@@ -44,9 +44,9 @@ release-intent (PR-only title check)
         │
 repo-hygiene → smoke → {release-readiness, agent-readiness, windows-agent-readiness,
                          package-manager-readiness, static-analysis, test-python,
-                         test-rust-core, search-golden-parity, native-build-smoke,
-                         test-gpu-linux, benchmark-regression}
-        │  (ALL of the above must succeed — ci.yml:862)
+                         test-rust-core, cuda-feature-check, search-golden-parity,
+                         native-build-smoke, test-gpu-linux, benchmark-regression}
+        │  (ALL of the above must succeed — ci.yml:932)
         ▼
    release  ("Semantic Release" job — creates tag + chore(release) commit)
         │
@@ -65,13 +65,18 @@ repo-hygiene → smoke → {release-readiness, agent-readiness, windows-agent-re
         ▼
    release-tag-smoke
 ```
-(`ci.yml:862,936,981,1023,1049,1147,1149,1222,1224,1259-1261,1339-1341`)
+(`ci.yml:930,1004,1049,1091,1119,1217,1219,1292,1294,1329,1331,1409,1411` — re-grepped 2026-07-22
+against `ci.yml`'s current 1443 lines; every line number in this block had drifted from the prior
+pass, job names and DAG shape unchanged except the addition of `cuda-feature-check` to `release`'s
+`needs:` list, which this diagram previously omitted)
 
 A release is **not** done just because `release` (Semantic Release) went green. It is done when
-`publish-success-gate` is green — that job re-verifies GitHub release asset coverage
-(`ci.yml:1311-1323`, `scripts/verify_github_release_assets.py`) and PyPI parity
-(`ci.yml:1324-1337`, `scripts/validate_release_version_parity.py`) for the exact tag semantic-release
-produced.
+`publish-success-gate` is green — that job RE-VERIFIES (not merely re-checks job results) GitHub
+release asset coverage (`ci.yml:1386`, `scripts/verify_github_release_assets.py`) and PyPI parity
+(`ci.yml:1407`, `scripts/validate_release_version_parity.py`) for the exact tag semantic-release
+produced — both scripts also run once earlier, inside `publish-github-release-assets`/`publish-pypi`
+themselves (`ci.yml:1284`/`1321`), so `publish-success-gate` is a second, independent confirmation
+pass, not the only place these checks run.
 
 ### 1.3 PR title → release intent
 
@@ -453,7 +458,16 @@ numbers."** Concretely:
 
 ## Provenance and maintenance
 
-Volatile facts here will drift. Re-verify before trusting this skill on a stale clone:
+Volatile facts here will drift. Re-verify before trusting this skill on a stale clone. **2026-07-22,
+release `v1.93.2`**: re-grepped the entire `ci.yml` DAG (now 1443 lines; every job/needs: line number in
+section 1.2 had drifted since the 2026-07-16/v1.78.1 pass, though job names and DAG shape are unchanged) —
+found the section 1.2 diagram had been missing `cuda-feature-check` from the `release` job's `needs:`
+list and added it; fixed the `verify_github_release_assets.py` (called from both
+`publish-github-release-assets` and `publish-success-gate`) and `validate_release_version_parity.py`
+citations to their current line numbers. No mechanics or GPU-HOLD positioning changed, only citations
+and the one missing DAG edge.
+
+```bash
 
 ```bash
 # Current version + release doc tag

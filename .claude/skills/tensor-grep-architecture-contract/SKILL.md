@@ -7,7 +7,7 @@ description: Use when you need the load-bearing design of tensor-grep and WHY it
 
 **What this is.** A ground-truthed map of tensor-grep's load-bearing design: the invariants a change must not break, and the weak points you must not oversell. Read it to understand *why* the code is shaped this way before you touch it. It is not a how-to — for that, hand off to a sibling (routing table below).
 
-**What tensor-grep is** (as of 2026-07-16, v1.78.1, `pyproject.toml`): a code-intelligence CLI named `tg`. A Rust core (`rust_core/` — both a PyO3 extension *and* a standalone `tg` binary) plus a Python CLI (`src/tensor_grep/`). Apache-2.0. Ships to PyPI (package `tensor-grep`), npm, Homebrew, winget. CONTRIBUTING.md calls it a "benchmark-governed, contract-heavy codebase" — that is the whole point: the contracts below are enforced by tests and a CI gate, not by convention.
+**What tensor-grep is** (as of 2026-07-22, v1.93.2, `pyproject.toml`): a code-intelligence CLI named `tg`. A Rust core (`rust_core/` — both a PyO3 extension *and* a standalone `tg` binary) plus a Python CLI (`src/tensor_grep/`). Apache-2.0. Ships to PyPI (package `tensor-grep`), npm, Homebrew, winget. CONTRIBUTING.md calls it a "benchmark-governed, contract-heavy codebase" — that is the whole point: the contracts below are enforced by tests and a CI gate, not by convention.
 
 ## When to use this skill vs a sibling
 
@@ -38,7 +38,7 @@ description: Use when you need the load-bearing design of tensor-grep and WHY it
 
 ## The front door: intercept before Typer
 
-`tg` is not "a Typer app." The published entry point is `bootstrap.main_entry` (`src/tensor_grep/cli/bootstrap.py:926`). It parses `argv` itself and, for a **plain text search**, forwards to the native `tg` binary or to ripgrep *before Typer ever runs* (`bootstrap.py:959-984`). The Typer app is only reached for TG-only flags, help, or commands that require full CLI (`_requires_full_cli`, `bootstrap.py:298`).
+`tg` is not "a Typer app." The published entry point is `bootstrap.main_entry` (`src/tensor_grep/cli/bootstrap.py:1140`). It parses `argv` itself and, for a **plain text search**, forwards to the native `tg` binary or to ripgrep *before Typer ever runs* (`bootstrap.py:959-984` — re-verify these two supporting line numbers, only `main_entry`'s own line was re-grepped in this pass). The Typer app is only reached for TG-only flags, help, or commands that require full CLI (`_requires_full_cli`, `bootstrap.py:298`).
 
 Why this matters, concretely:
 
@@ -65,6 +65,7 @@ Load-bearing consequences:
 - **Warm-index auto-routing is gated:** pattern ≥ 3 bytes, no `-v`, `-C`, `--max-count`, `-w`, `-g`, and the cache must exist + be non-stale + index-compatible (routing_policy.md notes). JSON/NDJSON no longer bypass a warm index.
 - **Auto-GPU is conservative and effectively dormant** when rg is installed: no fresh positive calibration ⇒ stay CPU-side. GPU CPU-fallback emits `routing_gpu_device_ids = []` and must be called *CPU fallback*, never GPU acceleration (routing_policy.md §GPU).
 - **AST routing is policy vs runtime-capability split:** `tg run` policy-routes to `AstBackend`, but real execution needs `AstBackend().is_available()`, which requires `torch_geometric` **and** `tree_sitter` **and a CUDA device** — `is_available()` returns `bool(torch.cuda.is_available())` (`ast_backend.py:508-521`). So on the common **non-GPU** box the native AST path never runs; `tg run` always falls back to the `ast-grep` CLI sidecar (also for string metavar queries like `def $F($$$ARGS)`) — visibly, per the fail-closed contract below. This matches `code-search-and-retrieval-reference` §2.
+- **`NativeCpuBackend` is not one engine — it is two distinct code paths, and a change proven for one is NOT automatically true for the other (A3, v1.91.3/#695).** `rust_core/src/native_search.rs` is the **default streaming** path: it is deliberately kept SERIAL, held to a tested **≥25ms first-match latency contract** — do not parallelize this path casually; its whole design point is fast first-byte-out, and parallelizing it risks regressing that contract even if aggregate throughput looks better in a microbenchmark. `rust_core/src/backend_cpu.rs` is the separate **PyO3/FFI fallback path** (reached only when the search doesn't route through the primary native front door) — this is where #695 shipped intra-file `rayon` parallel search, gated to files **≥50MiB**, byte-identical to the serial result. Before citing a `backend_cpu.rs` benchmark number as evidence for `native_search.rs` (or vice versa), confirm which file the change/measurement actually touched — these are two engines behind one routing label, not one engine with two code paths.
 
 ## The registration sites (miss one → silent misroute)
 
@@ -75,16 +76,16 @@ This is a **universal bug class**: "register in N places, miss one, fail *quietl
 | # | Site | File |
 |---|---|---|
 | 1 | `KNOWN_COMMANDS` set | `src/tensor_grep/cli/commands.py:9` |
-| 2 | `Commands::X` variant + dispatch arm | `rust_core/src/main.rs:860` (enum) |
-| 3 | `PUBLIC_TOP_LEVEL_COMMANDS` (parity test) | `tests/e2e/test_routing_parity.py:17` |
+| 2 | `Commands::X` variant + dispatch arm | `rust_core/src/main.rs:889` (enum); e.g. `Commands::Prepare`/`Commands::Ledger` dispatch arms at `main.rs:5456`/`5451` |
+| 3 | `PUBLIC_TOP_LEVEL_COMMANDS` (parity test) | `tests/e2e/test_routing_parity.py:18` |
 | 4 | `@app.command` function | `src/tensor_grep/cli/main.py` |
 
 **A new search flag needs two front doors** (AGENTS.md, same section, "two front doors") or it leaks to ripgrep and crashes with `rg: unrecognized flag` for anyone on the published binary:
 
 | # | Site | File |
 |---|---|---|
-| 1 | `SEARCH_PYTHON_PASSTHROUGH_FLAGS` (native allowlist) | `rust_core/src/main.rs:170` |
-| 2 | `bootstrap._TG_ONLY_SEARCH_FLAGS` (Python front-door allowlist) | `src/tensor_grep/cli/bootstrap.py:24` |
+| 1 | `SEARCH_PYTHON_PASSTHROUGH_FLAGS` (native allowlist) | `rust_core/src/main.rs:183` |
+| 2 | `bootstrap._TG_ONLY_SEARCH_FLAGS` (Python front-door allowlist) | `src/tensor_grep/cli/bootstrap.py:38` |
 
 **Blind spot to internalize:** `tg callers <fn>` finds *callable* registration sites in ~1s, but the call graph **cannot see set/list/decorator registrations** — `_TG_ONLY_SEARCH_FLAGS` is a set, `@app.command` is a decorator, the Rust dispatch is a match arm. Those are the sites most often missed (`--rank` lived in a *set*). So `tg callers` for the reachable ones **and** grep / `tg scan` for the declarative ones, then confirm your entry appears in *all* sites. (The actual add-a-thing procedure lives in `tensor-grep-change-control`; this skill only explains why the sites exist.)
 
@@ -124,9 +125,9 @@ The 5-site fix, cite `file:line`:
 
 ## Native-delegation forward-or-refuse contract (`_can_delegate_to_native_tg_search`)
 
-`cli/main.py:3311+` gates whether a Python-side `tg search` hands the **entire** search to the native `tg` subprocess (`_build_native_tg_search_command`, `cli/main.py:3333+`) and then `sys.exit()`s on its result — a delegation that runs *before* the Python-side BM25 rerank (`--rank`) and the in-backend sort (`--sort-files`) ever execute.
+`cli/main.py:3698` (`_can_delegate_to_native_tg_search`) gates whether a Python-side `tg search` hands the **entire** search to the native `tg` subprocess (`_build_native_tg_search_command`, `cli/main.py:3720`) and then `sys.exit()`s on its result — a delegation that runs *before* the Python-side BM25 rerank (`--rank`) and the in-backend sort (`--sort-files`) ever execute.
 
-**The invariant:** delegation is permitted only when native execution is byte-equivalent to the Python path for the requested config. The gate enforces this mechanically, not by convention — it loops every field name in `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` (`cli/main.py:1783-1886`) and **refuses** delegation (falls through to the Python/backend path) if *any* of those fields differs from a fresh `SearchConfig()`'s default. Every `SearchConfig` field must land in exactly one bucket:
+**The invariant:** delegation is permitted only when native execution is byte-equivalent to the Python path for the requested config. The gate enforces this mechanically, not by convention — it loops every field name in `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` (`cli/main.py:1883` onward) and **refuses** delegation (falls through to the Python/backend path) if *any* of those fields differs from a fresh `SearchConfig()`'s default. Every `SearchConfig` field must land in exactly one bucket:
 
 1. **Forwarded** — read by `_build_native_tg_search_command` and translated into native argv.
 2. **Refused** — listed in `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, so a non-default value forces the gate closed.
@@ -140,6 +141,75 @@ This is enforced by a governance **ratchet**, `tests/unit/test_native_delegation
 **Landmine already hit once — do not re-propose it:** the tempting "just gate on any field differing from defaults" fix is wrong. `query_pattern` is auto-set to the search pattern on *every* search, so a differs-from-default check would always see a difference and refuse delegation on every call, killing the fast path entirely (the exact failure mode from the 2026-06-30 #1 audit finding — see `tensor-grep-failure-archaeology`). The fix has to be per-field, not "any field changed."
 
 **Rule when adding a new `SearchConfig` field that affects search output:** decide immediately whether native delegation can reproduce it byte-for-byte. If not, add the field name to `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`. The ratchet test refuses to let you skip this decision silently — it is a hard gate, not a lint suggestion.
+
+## The walk-ceiling fast-refuse: 3 doors, 2 constants, 1 value (A9, v1.92.3/#702)
+
+Before #702, the plain flag-less `bootstrap._run_rg_passthrough` path (`bootstrap.py:1074` — the front
+door a bare `tg search PATTERN` with no scoping flags hits, *before* `main.py`'s Typer app is ever
+reached) had **no walk ceiling at all**. `main.py`'s three vendored/workspace/large-root refusal guards
+never ran for this path, so an unscoped search on a large defaulted-path root silently walked unbounded
+until it hit the 60s `TG_RG_TIMEOUT_SECONDS` subprocess backstop — natively reproduced, not a WSL
+filesystem artifact.
+
+The fix is one constant, enforced coherently across **3 doors**, not three independent numbers that can
+drift apart:
+
+- **The single constant**: `IMPLICIT_SEARCH_WALK_FILE_CEILING = 1500`
+  (`src/tensor_grep/io/directory_scanner.py:92`).
+- **Door 1 — Python bootstrap probe**: `bootstrap._search_paths_include_oversized_implicit_root`
+  (`bootstrap.py:790`), gated on `paths_defaulted` (fires only when no explicit PATH was given, not on
+  every search).
+- **Door 2 — Python Typer app**: `main.py`'s `_LARGE_ROOT_SCAN_FILE_CEILING = IMPLICIT_SEARCH_WALK_FILE_CEILING`
+  (`main.py:5101`), the alias that keeps the Typer-app-side ceiling from silently drifting from the
+  bootstrap door's value.
+- **Door 3 — Rust native front door**: `rust_core/src/rg_passthrough.rs` keeps its own copy of the same
+  numeral, synced by convention (not a shared cross-language build constant) — a future change to the
+  Python-side value needs a matching edit here or the two front doors will disagree on where the
+  ceiling sits.
+
+**Escape hatches**: an explicit PATH, `--max-depth`, or `--allow-broad-generated-scan` — `--glob`/
+`--type` alone do **not** bypass the ceiling when the path itself was defaulted. Result: an over-ceiling
+implicit root now refuses in ~1.7s (exit 2) instead of silently walking for up to 60s.
+
+## The `dynamic_unresolved` honesty marker — every downstream consumer must re-check it, not inherit it (A10/A15, v1.93.0/#703 + v1.93.2/#709)
+
+`tg imports`/`tg importers`/`tg blast-radius` mark a **relative** dynamic import
+(`import_module(".x", package=...)`, `__import__(..., level>=1)`) as `dynamic_unresolved` rather than
+resolving it to a guessed target — the literal text is preserved in `unresolved`, and it is **never**
+silently pointed at a same-named decoy top-level file (both the forward `tg imports` direction and the
+reverse `tg importers` direction). Absolute-literal dynamic imports (`import_module("pkg.mod")`) still
+resolve normally (`"dynamic": true`) — only the genuinely ambiguous relative/computed form degrades to
+the honesty marker. Rule: **a wrong edge is worse than a missing one.**
+
+**The #709 lesson is the reason this gets its own subsection instead of living as a one-line note next
+to #703:** shipping the honesty marker at the import-graph layer (#703) was NOT sufficient by itself —
+`tg blast-radius`'s reverse **scoring prefilter** had its own, separate code path that fuzzy-matched
+`dynamic_unresolved` literals against real symbol names, so a same-named decoy could still leak into
+`affected_files`/`dependent_files` through the scoring layer even though the import-resolution layer
+correctly refused to link it. #709 fixed the prefilter to exclude `dynamic_unresolved` literals too,
+with a pinned ranking test proving zero legitimate reorder. **Generalize this:** when a marker like
+`dynamic_unresolved` is introduced at one layer (import resolution), audit every OTHER layer that reads
+import/symbol data for its own independent path that could re-introduce the same class of false edge
+(a scoring prefilter, a cache, a graph-traversal shortcut) — do not assume a single fix point closes the
+whole surface.
+
+## Cross-domain native-binary detection (A11, v1.93.0/#704)
+
+`is_cross_domain_native_binary` (`runtime_paths.py:463`) decides whether a resolved `tg` binary lives in
+a different OS/filesystem domain than the current process (the concrete case: a WSL Linux process
+resolving a Windows-built `tg.exe` via a translated `/mnt/c/...` path). Before #704, cross-domain
+detection was **`.exe`-suffix-only** — but the managed installer also ships a bare-named POSIX shim
+`tg` that wraps `tg.exe`, and that shim has no `.exe` suffix to detect. The bare shim was misclassified
+as same-domain, so its sentinel probe used an **untranslated** `/tmp/...` path against the Windows
+binary and failed with a confusing `path_not_found`/`failed_probe_path` — a probe bug, not a genuine
+GPU unavailability signal. The fix adds two more signals: a sibling `tg-native-metadata.json` file, and
+a co-located `<name>.exe` file next to the bare-named shim — both checks are **fail-closed-only**
+(reading the metadata file is capped at 1MiB and guarded against `OSError`/`ValueError`; a read failure
+never *promotes* a binary to cross-domain, it only affects whether the extra signal is available) and
+**non-WSL hosts never run these checks at all**, so the fix cannot introduce a false-positive on a
+plain Windows or Linux box. Post-fix, the same WSL bare-shim probe reports an honest
+`status=unsupported, routing_backend=NativeCpuBackend, routing_reason=gpu-auto-fallback-cpu, exit 0`
+instead of the misleading path error.
 
 ## `MatchLine` is a frozen, HASHABLE dataclass
 
@@ -177,7 +247,7 @@ These are enforced by the capsule/context contract (`docs/CONTRACTS.md` §3, "Co
 Encode these honestly; the dogfood report itself emits `world_class_readiness.status = "not_claimed"` (CONTRACTS.md:85). Everything unproven stays labeled candidate/experimental. Experimental, default-OFF: GPU, LSP, semantic, CyBERT/provider paths.
 
 1. **Flat, no-IDF ranking scorer.** Repo-map scoring uses flat integer term counts (`_score_text_terms`/`_score_file_path`/`_score_symbol` in `src/tensor_grep/cli/repo_map.py:5819,5896,5923`), not IDF/term-rarity weighting. Ranking surfaces (`search --rank`, the agent capsule, semantic) can silently **flip** on a corpus change, and the blast radius of a ranking change is **invisible to the call graph**. A degrade-to-ask safety floor was added in #302; the flat scorer itself remains open debt. Treat any ranking-affecting change as high-risk and benchmark it.
-2. **GPU Phase-0 SHIPPED (v1.75.0-v1.75.4, PRs #593-#597) but no speed crossover is proven.** NVIDIA native assets are built and locally correctness-proven (RTX 4070 `sm_89` / RTX 5070 `sm_120`, 1GB/5GB match+file-set correctness -- `docs/gpu_crossover.md`), but gated OFF the public release by the CI Actions var `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE` (default `native-frontdoor`, CPU-only; GPU asset publishing needs the non-default `native-frontdoor-gpu`). Phase 1 (publishing those already-built assets) is now a **reversible flag-flip**, not a multi-week rebuild -- but flipping the var publishes assets only: it does **not** promote GPU, does **not** change the CPU-default auto-recommendation, and does **not** prove a speed crossover. Keep the honesty floor verbatim: no speed crossover is proven vs `rg`/`tg_cpu` (GPU remains slower after CUDA startup/H2D transfer/output materialization for the only *candidate* wedge, many-fixed-strings resident over a large corpus — **not** single-pattern cold grep, where PCIe/setup cost loses), GPU auto-recommendation stays `false`, and the reviewer-gated `public-gpu-proof.yml` speed-crossover gate remains unmet (CONTRACTS.md:80-82). Explicit `--gpu-device-ids` stays supported and must fail loud when unhonorable; sidecar-routed GPU output is compatibility evidence, never GPU-acceleration proof.
+2. **GPU Phase-0 SHIPPED (v1.75.0-v1.75.4, PRs #593-#597) but no speed crossover is proven, and the shipped kernel is NOT what the roadmap language implies.** NVIDIA native assets are built and locally correctness-proven (RTX 4070 `sm_89` / RTX 5070 `sm_120`, 1GB/5GB match+file-set correctness -- `docs/gpu_crossover.md`), but gated OFF the public release by the CI Actions var `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE` (default `native-frontdoor`, CPU-only; GPU asset publishing needs the non-default `native-frontdoor-gpu`). Phase 1 (publishing those already-built assets) is now a **reversible flag-flip**, not a multi-week rebuild -- but flipping the var publishes assets only: it does **not** promote GPU, does **not** change the CPU-default auto-recommendation, and does **not** prove a speed crossover. **The shipped kernel (`gpu_text_search_positions`) is a position-parallel brute-force byte-compare, NOT a PFAC/Aho-Corasick automaton** (`docs/gpu_crossover.md:133-138` — PFAC remains documented future work, not what runs today). No crossover is proven at ANY scale, including the best-case many-fixed-pattern lane (100 patterns over 1GB: fair-baseline `rg -F -e ... -e ...` at 0.169s vs the GPU-requested path at 0.448s, itself a CPU-fallback measurement, not even a real GPU number); historical worst case at 5GB is ~30-35x slower than `rg`. Keep the honesty floor verbatim: no speed crossover is proven vs `rg`/`tg_cpu`, GPU auto-recommendation stays `false`, and the reviewer-gated `public-gpu-proof.yml` speed-crossover gate remains unmet (CONTRACTS.md:80-82). **Public CUDA-asset publishing is on a deliberate HOLD** (CEO decision package, task-store #169 — not a GitHub issue, re-verify with `gh issue list`); release checksums currently ship 3 CPU-only rows. Explicit `--gpu-device-ids` stays supported and must fail loud when unhonorable; sidecar-routed GPU output is compatibility evidence, never GPU-acceleration proof.
 3. **The raw-grep parity gap is control-plane latency, not backend cleverness.** When tg trails rg on cold text it is launcher/dispatch overhead; the likely fix is a more native launcher path, not Python micro-tuning. Benchmark artifacts must record `tg_launcher_mode` + `tg_launcher_command_kind` and refuse stale in-tree binaries by default (CONTRACTS.md:82) so you never mix a `.cmd`-shim timing into a speed claim.
 4. **FFI is not the directory-scan speed path.** PyO3 FFI overhead for directory walking was measured too high and reverted to native CPython directory scanning — a settled battle. Do not re-propose "just move the dir walk into the Rust extension" without new measurements. Full story + the mock-FFI-passed-while-the-real-bridge-was-dead lesson: `tensor-grep-failure-archaeology`.
 5. **rg-parsing edge cases (round-4, open, narrowed):** `rg#3364` (`--multiline --pcre2 --json` emits one match with two submatches), `rg#3131` (`rg -c` omits NUL-byte files), BOM-in-`.gitignore` remain open/unverified against this repo. **The native-argv `--` sentinel gap this point used to describe is now FIXED, not open:** `rust_core/src/rg_passthrough.rs`'s `ripgrep_operand_args` (`:397-422`) forwards patterns safely via `-e` and inserts a `--` sentinel before any user paths (`:415-419`), closing the "a directory literally named `-l` flips rg to files-with-matches" CWE-88 gap; 3 unit tests pin it (`:609-648`). Do not cite this as open. See `code-search-and-retrieval-reference` §7 for the full detail.
@@ -195,7 +265,7 @@ Encode these honestly; the dogfood report itself emits `world_class_readiness.st
 
 ```powershell
 # Front door + version identity
-uv run tg --version                                  # expect: tensor-grep 1.78.1 (or current)
+uv run tg --version                                  # expect: tensor-grep 1.93.2 (or current)
 # The published entry point (must be bootstrap.main_entry, not a Typer callback)
 uv run python -c "import tensor_grep.cli.bootstrap as b; print(b.main_entry)"
 # Routing / launcher observability
@@ -209,13 +279,22 @@ Never claim a speedup, a fixed weak point, or "tests pass" from a model self-rep
 ## Provenance and maintenance
 
 All facts verified against the live repo on 2026-07-08 at v1.49.3; the `tg find` fail-closed-boundary
-paragraph and moat-command-list addition were verified 2026-07-16 at v1.78.1 (the rest was not
-re-walked in this pass). Re-verify anything volatile before relying on it:
+paragraph and moat-command-list addition were verified 2026-07-16 at v1.78.1; a consolidated grep pass
+on 2026-07-22 at **v1.93.2** re-verified and corrected all 7 previously-drifted `file:line` cites
+(front-door entry point, command registration sites, flag front doors, and the 3 native-delegation
+cites) and added the A9/A10-A15/A11 subsections plus the A3 `backend_cpu.rs`-vs-`native_search.rs`
+split — the rest of the file (Invariants, moat, ASCII-output, `MatchLine` sections) was not re-walked
+line-by-line in this pass. Re-verify anything volatile before relying on it:
 
-- **Version:** `grep '^version' pyproject.toml` (was `1.78.1`).
-- **Front-door entry point:** read `src/tensor_grep/cli/bootstrap.py:926` (`def main_entry`) and confirm `pyproject.toml`/`packaging` still points `tg` at `tensor_grep.cli.bootstrap:main_entry`.
-- **Command registration sites (4):** `commands.py:9` (`KNOWN_COMMANDS`), `rust_core/src/main.rs:860` (`enum Commands`), `tests/e2e/test_routing_parity.py:17` (`PUBLIC_TOP_LEVEL_COMMANDS`), `@app.command` in `src/tensor_grep/cli/main.py`.
-- **Flag front doors (2):** `rust_core/src/main.rs:170` (`SEARCH_PYTHON_PASSTHROUGH_FLAGS`), `bootstrap.py:24` (`_TG_ONLY_SEARCH_FLAGS`).
+- **Version:** `grep '^version' pyproject.toml` (was `1.93.2`).
+- **Front-door entry point:** read `src/tensor_grep/cli/bootstrap.py:1140` (`def main_entry`) and confirm `pyproject.toml`/`packaging` still points `tg` at `tensor_grep.cli.bootstrap:main_entry`.
+- **Command registration sites (4):** `commands.py:9` (`KNOWN_COMMANDS`), `rust_core/src/main.rs:889` (`enum Commands`; `Commands::Prepare`/`Commands::Ledger` dispatch arms at `:5456`/`:5451`), `tests/e2e/test_routing_parity.py:18` (`PUBLIC_TOP_LEVEL_COMMANDS`), `@app.command` in `src/tensor_grep/cli/main.py`.
+- **Flag front doors (2):** `rust_core/src/main.rs:183` (`SEARCH_PYTHON_PASSTHROUGH_FLAGS`), `bootstrap.py:38` (`_TG_ONLY_SEARCH_FLAGS`).
+- **Native-delegation cites (3):** `main.py:3698` (`_can_delegate_to_native_tg_search`), `main.py:3720` (`_build_native_tg_search_command`), `main.py:1883` (`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`).
+- **A9 walk-ceiling:** `grep -n IMPLICIT_SEARCH_WALK_FILE_CEILING src/tensor_grep/io/directory_scanner.py`; `grep -n _search_paths_include_oversized_implicit_root src/tensor_grep/cli/bootstrap.py`.
+- **A10/A15 dynamic_unresolved:** `grep -n dynamic_unresolved src/tensor_grep/cli/repo_map.py`.
+- **A11 cross-domain detection:** `grep -n is_cross_domain_native_binary src/tensor_grep/cli/runtime_paths.py`.
+- **A3 native_search.rs vs backend_cpu.rs:** `ls rust_core/src/native_search.rs rust_core/src/backend_cpu.rs`.
 - **Fail-closed contract:** `src/tensor_grep/backends/base.py` (`BackendExecutionError`, `ComputeBackend`).
 - **Routing tree:** `docs/routing_policy.md` + `rust_core/src/routing.rs::route_search`.
 - **Capsule/context invariants:** `docs/CONTRACTS.md` §3 (search for `context_consistency`, `ambiguity.status`, `validation_alignment`).
@@ -225,7 +304,7 @@ re-walked in this pass). Re-verify anything volatile before relying on it:
 - **Partial-results contract (added 2026-07-03, #341/`f11ce28`; exit-code side made stricter by #398/#399/#401):** `src/tensor_grep/core/result.py:54-55` (`SearchResult.result_incomplete`/`incomplete_reason`) + `:67+` (`merge_runtime_routing` OR-merge); exit-code wiring `src/tensor_grep/cli/main.py:6918-6953` (exit 2 fires regardless of found, per #401 — `docs/CONTRACTS.md:109`); envelope `src/tensor_grep/cli/formatters/json_fmt.py:126-127,189-190`; MCP `src/tensor_grep/cli/mcp_server.py:1645,3117,3174,3202,3261` (multiple sites). Re-verify: `tests/unit/test_rg_exit2_partial.py` green.
 - **C14 (scoped file-dep primitive):** RESOLVED — `tg imports` / `tg importers` are in `KNOWN_COMMANDS` as of v1.54+; do not re-open as a gap. Re-verify with `tg imports --help` / `tg importers --help` before citing.
 - **B9 (ReDoS gate, RESOLVED audit #6/#16/#111):** `grep -n "_fallback_pattern_is_provably_linear\|needs_word_or_context_rust_routing" src/tensor_grep/backends/cpu_backend.py` should find the fixed_strings-only gate (`:280`) plus its call sites in BOTH the `_RustUtf8DecodeMismatch` handler AND the generic native-failure `except Exception` handler; the gate must admit ONLY `fixed_strings` (a static pattern-char allow-list was proven unsound by the Opus gate — the `(a|aa)...b` alternation bomb). Re-check before citing closed — a future new fallback path could reopen the class the way #111 did after #6/#16.
-- **Native-delegation forward-or-refuse contract (added 2026-07-03, #342/`5e6f780`):** gate `src/tensor_grep/cli/main.py:3263-3282` (`_can_delegate_to_native_tg_search`), refuse-tuple `:1755-1855` (`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`). Re-verify: run `tests/unit/test_native_delegation_field_coverage.py` after touching `SearchConfig` — a new unclassified field turns it red immediately, which is the point.
+- **Native-delegation forward-or-refuse contract (added 2026-07-03, #342/`5e6f780`):** gate `src/tensor_grep/cli/main.py:3698` (`_can_delegate_to_native_tg_search`), forward builder `:3720` (`_build_native_tg_search_command`), refuse-tuple `:1883` (`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`). Re-verify: run `tests/unit/test_native_delegation_field_coverage.py` after touching `SearchConfig` — a new unclassified field turns it red immediately, which is the point.
 - **`MatchLine` hashability (added 2026-07-03, #344/`80de0b4`):** `src/tensor_grep/core/result.py:4-17` (`submatches` field uses `compare=False`). Re-verify: `python -c "from tensor_grep.core.result import MatchLine; hash(MatchLine(1,'x','f.py',submatches=({'start':0,'end':1},)))"` must not raise.
 - **ASCII-only CLI output (added 2026-07-03, #346/`6b7b518`):** fixed call site `src/tensor_grep/cli/inventory.py`. Re-verify: grep new CLI-rendered string literals for non-ASCII before shipping; no automated gate enforces this yet (a governance test is a reasonable follow-up, not yet shipped).
 

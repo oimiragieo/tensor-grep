@@ -9,7 +9,8 @@ The domain-theory pack a mid-level engineer (or a model working cold) usually la
 **only the slice that governs tensor-grep's actual behavior**. Every claim below cites the tg file
 that uses it — read that file before relying on the claim in a review or a fix, because code drifts
 and this document does not update itself. Verified against the repo **as of 2026-07-08, v1.49.3**;
-§9's `tg find` addition and the new §10 (query-shape classification) verified **2026-07-16, v1.78.1**.
+§9's `tg find` addition and the new §10 (query-shape classification) verified **2026-07-16, v1.78.1**;
+§3's `_score_symbol`/`_symbol_rank_key` breakdown re-verified and corrected **2026-07-22, v1.93.2**.
 
 ## When NOT to use this skill (use a sibling instead)
 
@@ -167,26 +168,56 @@ tg has **two independent ranking surfaces**, and only one of them actually imple
 1. **`retrieval_bm25.py`** (`src/tensor_grep/core/retrieval_bm25.py`) — a real Okapi BM25 index
    (`k1=1.5`, `b=0.75`, standard defaults; `DEFAULT_K1`/`DEFAULT_B`, lines 18-19), full IDF term
    `math.log(1.0 + (n - freq + 0.5) / (freq + 0.5))` (line 44). This backs `tg search --rank`
-   (alias `--bm25`; `main.py:6036-6037`) via `reranker.py::rerank_by_bm25`, which chunks matched
+   (alias `--bm25`; `main.py:7085-7086`) via `reranker.py::rerank_by_bm25`, which chunks matched
    files and re-sorts matches by the BM25 score of the chunk containing each match
-   (`reranker.py:62-96`) — a stable sort, so ties keep original grep order.
-2. **`_score_text_terms`** (`src/tensor_grep/cli/repo_map.py:5819`) — a **flat presence count, no
-   IDF at all** — used by `tg orient`'s symbol ranking and the `tg agent` capsule's target
-   selection. This is the ranker behind `_symbol_rank_key` (`repo_map.py:5840`) and the top-N
-   candidate cap `ranked_symbols[: max(max_symbols, 8)]` (`repo_map.py:10797,10964`).
+   (`reranker.py:161-214`, stable sort at line 203) — a stable sort, so ties keep original grep order.
+2. **The `tg orient` / capsule symbol-ranking family** (`src/tensor_grep/cli/repo_map.py`) — **a flat
+   presence-count stack, no IDF anywhere in it.** Three layered pieces, not one function — do not
+   conflate them:
+   - `_score_text_terms` (`repo_map.py:7001`) — the primitive: counts term hits in a haystack, no
+     rarity weighting.
+   - `_score_symbol` (`repo_map.py:7266`) — the actual per-symbol composite scorer, and the thing
+     that produces `symbol["score"]`: name-match (`_score_text_terms` on the symbol name, `x3`
+     weight) + kind-match + file-path score (`_score_file_path`, `repo_map.py:7189`), plus two
+     additive heuristics shipped for task #254 (the CEO deep-research #251 steal / A7): a **+1
+     word-boundary bonus** (`_symbol_name_exact_boundary_bonus`, `repo_map.py:7248`; fires when a
+     query term longer than 3 chars matches a clean token in `split_terms(symbol_name)` rather than
+     only a raw substring) and a **`_TEST_SHADOW_PENALTY = 2`** demotion (`repo_map.py:7229`, floored
+     at 0 in `_score_symbol`) that sinks a test-file hit below a same-named non-test definition
+     instead of letting it compete on equal footing. Both are additive refinements to *order among
+     already-matching candidates* — neither changes *which* symbols match, and neither adds IDF.
+   - `_symbol_rank_key` (`repo_map.py:7133`) — the final sort key, called as
+     `scored_symbols.sort(key=_symbol_rank_key)` (`repo_map.py:8249`). Its 7-tuple is
+     `(query_match_rank, -score, kind-is-function?, -span_length, file, line, name)`. The **first**
+     field, `query_match_rank`, is a query-relevance bucket (0 = `exact_query_match`, 1 =
+     `bridge_query_match`, 2 = `covered_query_match`, 3 = none) evaluated **before** the flat
+     `_score_symbol` score — so a query-name-match bucket dominates the flat count, it doesn't lose
+     to it. The **final** tie-break field is `str(symbol.name)`, **not** a file-path string.
 
-**Why this is a known weak point, not just a style difference:** because scorer #2 has no IDF, ties
-are common, and the tie-break falls through to alphabetical file-path string
-(`_symbol_rank_key`'s final field). A corpus change with **zero call-graph edge** to the query — an
-unrelated file added elsewhere in the repo — can shift which candidate wins a tie and flip the
-capsule's primary target, including flipping "ask before editing" (`ambiguity=tie_requires_confirmation,
-ask_user=True`) to "confidently pick a target" (`ask_user=False`) with no code-level connection an
-agent could see via `tg callers`. This actually happened (PR #302, receipt in project memory
-`tensor-grep-idf-ranking-fragility-2026-06-29`) and is now covered by a **degrade-to-ask safety
-floor**, not a ranking fix: if the post-tie primary target is still an unrequested "marker" helper,
-`agent_capsule.py`'s `_primary_target_is_unrequested_marker_helper` (line 197) forces `ask_user=True`
-rather than silently auto-picking it. The flat no-IDF scorer itself remains deferred debt — do not
-assume it has been fixed just because the unsafe *consequence* was mitigated.
+   This whole stack feeds `tg orient`'s symbol ranking and the `tg agent` capsule's target selection;
+   the top-N candidate cap is `ranked_symbols[: max(max_symbols, 8)]` (`repo_map.py:12710,12887`).
+
+**Why this is still a known weak point, just a narrower one than it used to be:** `_score_symbol`
+still has no IDF, so two symbols in the same `query_match_rank` bucket can still tie on the flat
+`score` — but `query_match_rank` being evaluated first, plus four more tie-break fields (kind, span
+length, file, line) sitting ahead of `name`, make an *unrelated* corpus change flipping the final pick
+considerably less likely — and less exactly reproducible — than it was when this was first found. The
+original incident (receipt in project memory `tensor-grep-idf-ranking-fragility-2026-06-29`): a corpus
+change with **zero call-graph edge** to the query — an unrelated file added elsewhere in the repo —
+shifted which candidate won a flat-score tie and flipped the capsule's primary target, including
+flipping "ask before editing" (`ambiguity=tie_requires_confirmation, ask_user=True`) to "confidently
+pick a target" (`ask_user=False`) with no code-level connection an agent could see via `tg callers`
+(PR #302). That incident predates both the `query_match_rank` first-field and the `_score_symbol`
+heuristics documented above, so do not assume today's tuple shape reproduces it step-for-step on a
+fresh repro attempt — but the underlying hazard (a flat, no-IDF score can tie, and a tie still falls
+through several non-relevance fields before `name`) is real and unresolved. It is covered by a
+**degrade-to-ask safety floor**, not a ranking fix: if the post-tie primary target is still an
+unrequested "marker" helper, `agent_capsule.py`'s `_primary_target_is_unrequested_marker_helper`
+(`agent_capsule.py:294`) forces `ask_user=True` rather than silently auto-picking it. The flat no-IDF
+scorer family itself remains deferred debt — do not assume it has been fixed just because the unsafe
+*consequence* was mitigated, and do not mistake the `query_match_rank` bucketing or the #254/A7
+heuristics for an IDF fix: they are relevance refinements layered on the same rarity-blind foundation,
+not term-rarity weighting.
 
 If you are reviewing a PR that touches ranking-feature tests: an edit that reddens a live-repo
 ranking assertion is not automatically a "brittle test" to relax — inspect whether the actual
@@ -532,8 +563,15 @@ or fail closed.
 
 Facts here were verified by reading the cited files on **2026-07-08, tensor-grep v1.49.3**; §9's `tg
 find` paragraph and §10 (query-shape classification, with its external citations re-verified live via
-Exa on 2026-07-16) were added and verified against **v1.78.1**. Code drifts; re-verify before treating
-a citation as current, especially line numbers.
+Exa on 2026-07-16) were added and verified against **v1.78.1**. **2026-07-22, v1.93.2**: re-grepped §3
+by symbol against `repo_map.py` — every cited line number had drifted (file grew past 7000 lines) and
+one claim was substantively wrong for the current code: `_symbol_rank_key`'s tuple no longer leads
+with the flat score (it now leads with a `query_match_rank` bucket) and no longer tie-breaks on a
+file-path string (it now tie-breaks on `symbol.name`). Also documented `_score_symbol` as a named
+third scorer (it wasn't called out by name before) including its task #254/A7 word-boundary-bonus and
+test-shadow-penalty heuristics, and softened the PR #302 incident framing to note it predates both.
+`agent_capsule.py`'s `_primary_target_is_unrequested_marker_helper` citation also moved (was line 197,
+now line 294). Code drifts; re-verify before treating a citation as current, especially line numbers.
 
 Re-verification commands:
 
@@ -544,7 +582,7 @@ grep -n '^version' C:/dev/projects/tensor-grep/pyproject.toml
 
 # Re-check the cited line numbers haven't drifted (grep, don't trust the number blindly)
 grep -n "def supports_pcre2" C:/dev/projects/tensor-grep/src/tensor_grep/backends/ripgrep_backend.py
-grep -n "_score_text_terms\|_symbol_rank_key" C:/dev/projects/tensor-grep/src/tensor_grep/cli/repo_map.py
+grep -n "_score_text_terms\|_score_symbol\|_symbol_rank_key\|_TEST_SHADOW_PENALTY" C:/dev/projects/tensor-grep/src/tensor_grep/cli/repo_map.py
 grep -n "_personalized_reverse_import_pagerank\|_GRAPH_PAGERANK_SEED_FILE_LIMIT" C:/dev/projects/tensor-grep/src/tensor_grep/cli/repo_map.py
 grep -n "_central_files_from_map" C:/dev/projects/tensor-grep/src/tensor_grep/cli/orient_capsule.py
 grep -n "py.detach\|gil_used" C:/dev/projects/tensor-grep/rust_core/src/lib.rs

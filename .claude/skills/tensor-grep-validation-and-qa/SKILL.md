@@ -167,6 +167,39 @@ Ranked by how hard each is to fake, cheapest-to-check first:
     any new golden/oracle-graded query, confirm it has (a) a genuinely non-empty gold-label set and (b)
     a metric that demonstrably fails on a deliberately-wrong answer, not just passes on a correct one —
     see `tests/unit/test_eval_late_rerank_quality.py::test_empty_gold_label_is_loud`.
+13. **A capability-regression gate is a DISTINCT evidence tier from a contract test — a per-task-pinned
+    accuracy gate, not a floor.** `tests/eval/test_agent_accuracy.py` (`test_agent_accuracy_gate`, #690/
+    #696/#693) runs the golden agent-capsule task set and asserts `not misses` — ANY single golden task
+    regressing reds the gate, not an aggregate-score floor that could silently absorb one task's
+    regression inside a rising average elsewhere. This is the **loop-4 hill-climbing instrument**: the
+    gate itself surfaced a real primary-target ranking bug (#250 — a thin CLI-dispatcher wrapper
+    outranking its real implementation), which #693 fixed, lifting the golden set from 15/16 to 16/16.
+    Treat a new "`tg prepare`/`tg agent` misrouted in the wild" finding as a signal to ADD a new
+    permanently-pinned task here (generalize the finding), not just patch the code and move on — #250
+    is the template for this discipline.
+14. **A concurrency test must assert the CONTRACT via Event handshakes, never wall-clock overlap (C-concurrency).**
+    `tests/unit/test_index_lock_concurrency.py::test_index_lock_is_per_root_not_global` (#701) is the
+    worked example: it proves independence (root-B acquires with a bounded timeout while root-A is
+    held) AND the converse mutual-exclusion control (root-A's own re-acquire attempt must time out) via
+    `threading.Event` handshakes and bounded `acquire()` calls — never by asserting two threads
+    overlapped in wall-clock time, which is exactly the assertion shape that flaked for two releases
+    (v1.81.1, and again on the first v1.92.2 attempt) on a loaded/scheduler-starved CI runner. A starved
+    runner can legitimately serialize two threads that are contractually independent; the test must not
+    mistake that for a broken lock.
+15. **Published-wheel verdict-table dogfood is its own methodology, distinct from the release-tag-smoke
+    CI gate (C-wheel).** After a campaign drains, verify EVERY fixed item individually against the
+    PUBLISHED wheel in a clean environment (`uvx --from tensor-grep@<version> tg ...`, never the local
+    editable checkout), producing one PASS/FAIL row per item with the raw JSON receipt attached — not a
+    single aggregate "dogfood passed" claim. Pre-build any fixture the probes need before the loop
+    starts (not ad hoc per-probe). Read the RAW JSON at least once before trusting an automated
+    pass/fail verdict — a probe-shape misread reads as a clean pass or fail either way and is easy to
+    miss without eyeballing the payload. Watch for pipe exit-code masking: `cmd | tail` or `cmd |
+    python -c ...` reports the LAST command's exit code, not `cmd`'s — a real failure upstream of the
+    pipe can silently read as success. **Receipt (2026-07-22):** a 7-item closing dogfood against the
+    published v1.93.0 wheel ran 7/7 PASS this way, each with its own raw-JSON row, catching what an
+    aggregate "looks fine" claim would have hidden. Cross-reference, don't duplicate: the pipe-exit-mask
+    and raw-JSON-first traps also live in `tensor-grep-debugging-playbook` (§13/§14) as debugging
+    fix-pointers; this item is the QA-tier methodology framing of the same two traps.
 
 ---
 
@@ -329,6 +362,19 @@ of drifting unnoticed:
   (`test_output_snapshots.py:5-46`). Marker: `pytest.mark.snapshot` (registered in
   `pyproject.toml:43`).
 
+### Per-task-pinned agent-accuracy gate (a fifth certified surface, `tests/eval/`, new directory)
+
+`tests/eval/test_agent_accuracy.py` is its own top-level test directory, distinct from `unit`/`e2e`/
+`integration` — a **capability-regression** gate, not a code-contract test. `test_agent_accuracy_gate`
+asserts `not misses` over a golden set of agent-capsule tasks (`#690`/`#696`/`#693`): any single task
+regressing fails the gate, with no aggregate-score floor to absorb it. This is the loop-4
+hill-climbing instrument for this repo (see Part 1 point 13 above for the full discipline and the
+#250 receipt). All 16 golden tasks live inside `src/tensor_grep` itself, which is a known
+self-referential-corpus risk (a visible answer key, a Goodhart/contamination surface) — the standing
+mitigation is that every real `tg prepare`/`tg agent` misroute found in the wild becomes a NEW
+permanent pinned task rather than a one-off patch, generalizing the fix instead of just closing the
+symptom.
+
 ---
 
 ## Part 4 — Agent-readiness / `tg dogfood`
@@ -402,9 +448,10 @@ future agent (human or model) retries the losing idea — see `tensor-grep-resea
 
 | Directory | What lives there | Run cost |
 |---|---|---|
-| `tests/unit/` (239 files as of 2026-07-16) | Fast, isolated; heavy `CliRunner` usage (400+ call sites) — good for flag-parsing/formatter/validator logic, **not sufficient alone for routing changes** (Part 1 point 3) | seconds each |
+| `tests/unit/` (263 files as of 2026-07-22) | Fast, isolated; heavy `CliRunner` usage (400+ call sites) — good for flag-parsing/formatter/validator logic, **not sufficient alone for routing changes** (Part 1 point 3) | seconds each |
 | `tests/e2e/` (16 files) | Cross-launcher parity (`python-m`/`native`/`bootstrap`), golden/snapshot output, backend/IO contracts, rg characterization, hypothesis property tests, throughput floors | seconds-minutes; some spawn real subprocesses |
-| `tests/integration/` (11 files) | Needs real external state — GPU/cuDF, MCP stdio protocol, cross-backend runs, the harness-adoption smoke, `tg orient`/pipeline end-to-end | slow, sometimes GPU-gated |
+| `tests/integration/` (16 files as of 2026-07-22, up from 11) | Needs real external state — GPU/cuDF, MCP stdio protocol, cross-backend runs, the harness-adoption smoke, `tg orient`/pipeline end-to-end, the `tg prepare` one-shot CUJ (`test_prepare_oneshot_cuj.py`) | slow, sometimes GPU-gated |
+| `tests/eval/` (1 file as of 2026-07-22 — `test_agent_accuracy.py`) | The per-task-pinned capability-regression gate (Part 1 point 13) — a distinct evidence tier from a contract test, opt-in via its own marker, not run by a bare `pytest tests` collection the same way as `unit`/`e2e`/`integration` | seconds-minutes; requires a built repo-map over real fixtures |
 | `tests/golden/` | Committed golden-output fixtures consumed by `rust_core/tests/test_search_golden.rs`, not itself a pytest dir | n/a |
 | `tests/fixtures/`, `tests/schemas/`, `tests/helpers/` | Shared fixture data (`ast_smoke`, `retrieval`), `tg_output.schema.json`, `rg_parity.py` helper (ripgrep binary resolution + `RGContractRow`) | n/a |
 
@@ -493,6 +540,12 @@ was never observed to fail cannot be trusted to catch a regression.
       green functional tests.
 - [ ] If the test itself exercises a hang-class bug (ReDoS/deadlock/lock-race): the test run is wrapped
       in both an outer shell timeout and an inner thread-based per-test timeout (Part 1 point 11).
+- [ ] If it touches a scorer/graph/ranking surface: a **pin test** locked the pre-change ranked output
+      first (Part 1 point 13's sibling in `tensor-grep-change-control` Part 1 Rule 6, C-pin).
+- [ ] If it touches a concurrency/lock surface: the test asserts the **contract via Event handshakes**,
+      never wall-clock thread overlap (Part 1 point 14, C-concurrency).
+- [ ] A campaign/release drain closed → every fixed item verified against the **published wheel**, one
+      PASS/FAIL row + raw JSON each, not one aggregate claim (Part 1 point 15, C-wheel).
 
 ---
 
@@ -500,12 +553,16 @@ was never observed to fail cannot be trusted to catch a regression.
 
 Volatile facts re-verified **2026-07-08, release `v1.49.3`**; the 2nd fixture-blind-spot receipt
 (Part 1 pt 4), the vacuous-truth-oracle checklist item (Part 1 pt 12), and the test-file counts were
-re-verified **2026-07-16, release `v1.78.1`**. Re-verify before relying on them:
+re-verified **2026-07-16, release `v1.78.1`**. A further pass **2026-07-22, release `v1.93.2`**
+re-verified test-file counts (unit 263 / e2e 16 / integration 16, up from 239/16/11), added the new
+`tests/eval/` directory (Part 3 + Part 6), and added Part 1 points 13-15 (per-task-pinned accuracy gate,
+scheduler-independent concurrency tests, published-wheel verdict-table dogfood). Re-verify before
+relying on them:
 
 | Claim | Re-verify command |
 |---|---|
 | Total collected tests | `uv run pytest tests --collect-only -q` (tail line; re-run to check — grows every release, do not trust a stale snapshot number here) |
-| Test file counts (239 unit / 16 e2e / 11 integration as of 2026-07-16) | `Get-ChildItem tests/unit,tests/e2e,tests/integration -Filter test_*.py -Recurse \| Measure-Object` (PowerShell) or `find tests/unit tests/e2e tests/integration -name 'test_*.py' \| wc -l` |
+| Test file counts (263 unit / 16 e2e / 16 integration / 1 eval as of 2026-07-22) | `Get-ChildItem tests/unit,tests/e2e,tests/integration,tests/eval -Filter test_*.py -Recurse \| Measure-Object` (PowerShell) or `find tests/unit tests/e2e tests/integration tests/eval -name 'test_*.py' \| wc -l` |
 | `tg find` classifier receipt + vacuous-truth oracle guard | `grep -n "test_empty_gold_label_is_loud" tests/unit/test_eval_late_rerank_quality.py`; `grep -n "GoldenSetError\|vacuous" benchmarks/eval_late_rerank_quality.py` |
 | `dogfood()` CLI entry point (symbol anchor, not a line number) | `grep -n "^def dogfood" src/tensor_grep/cli/main.py` |
 | `CliRunner` usage count in unit tests | `grep -rc CliRunner tests/unit/*.py \| awk -F: '{s+=$2} END{print s}'` |

@@ -94,7 +94,34 @@ flag-flip** (see Phase 5).
 > `reciprocal_rank_fusion` all split into 3+ morphemes) — fixed by switching to a
 > whitespace word-count gate (`len(query.split()) <= 1` stays literal), #191/#630.
 > See `tensor-grep-run-and-operate` §1/§7/§11c for the CLI/MCP command surface and
-> exit contract.
+> exit contract, and the dedicated operator skill **`tensor-grep-find-and-route`** for the
+> day-to-day `tg find`/`tg route-test` CUJ (this skill stays the BUILD/campaign history; that one is
+> the how-to-run doc).
+>
+> **STATUS UPDATE 3 (2026-07-21, research campaign #251) — cAST structural chunking REJECTED as
+> default; do not re-propose it.** `TG_CHUNKER=structural` (shipped v1.47.0, mentioned above as an
+> opt-in refinement) was evaluated as a candidate for the DEFAULT chunker on a real-corpus retrieval
+> eval: the retrieval-quality delta was a net WASH, while cAST chunking ran **24.4x SLOWER** and
+> produced **~38% LARGER** chunks than the shipped line-window `chunk_file`. The opt-in code remains
+> shipped for experimentation; it is **not** promoted, and this is now a documented retirement in
+> `docs/PAPER.md` §3.10 — do not re-run this experiment expecting a different verdict without new
+> evidence. **Use the right harness when re-measuring anything chunker-sensitive:**
+> `benchmarks/eval_late_rerank_quality.py` (live — imports and calls `chunk_file`/`chunk_file_structural`)
+> is the correct instrument; `benchmarks/run_repo_retrieval_benchmarks.py` is a **static-fixture
+> REPLAY that never calls `chunk_file` at all** — it cannot detect a chunker regression or improvement
+> and was mistakenly cited as the Phase-4 discriminating gate earlier in this skill (§0/Phase 4 below
+> now point at the correct script).
+>
+> **One-line caution (do not re-propose): dense-embedding compression (int8/binary/PCA) was
+> evaluated and DEFERRED** — memory-only win (3.79x smaller on disk), but ~2x SLOWER in numpy (no
+> int8 SIMD on the CPU-only path this campaign targets); a real speed win needs a native kernel
+> (banked as a moat-investment option, not a quick follow-up here).
+>
+> **Sibling hardening, not a semantic-search change:** `#699`/A7 hardened the SIBLING flat lexical
+> scorer (`_score_symbol` in `repo_map.py` — exact word-boundary bonus + test-file demotion), which
+> is a DIFFERENT scorer from this campaign's BM25/dense/RRF stack (see
+> `code-search-and-retrieval-reference` §3) — do not conflate the two when reading a "ranking fixed"
+> claim.
 
 ---
 
@@ -142,6 +169,7 @@ of v1.17.25.
 | `src/tensor_grep/core/retrieval_bm25.py` | Okapi BM25 over chunks | `Bm25Index`, `k1=1.5`, `b=0.75`, IDF with +1 smoothing (non-negative weights). Dedupes query terms so a repeated token isn't double-counted. Returns `[(chunk_index, score)]`, zero-score chunks excluded, ties break by chunk index (deterministic). |
 | `src/tensor_grep/core/reranker.py` | The LIVE `tg search --rank` path | `rerank_by_bm25(result, query, file_paths)` re-orders matches by the best BM25 score of the chunk containing each match; stable sort (ties keep grep order); non-scoring matches sink. Builds the BM25 index **in memory every call** over just the matched files — no persisted index. |
 | `src/tensor_grep/core/semantic_index.py` | Persisted chunk-BM25 index building blocks | `build_and_save` / `load_or_warn` under `.tg_semantic_index/` (env `TG_SEMANTIC_INDEX_DIR`), **SEPARATE** from the Rust TGI v3 `.tg_index` (trigram). `INDEX_VERSION=1`. Stale check = SHA-256 fingerprint over sorted paths + mtimes → on mismatch, warn to stderr + return `None` → in-memory fallback. **NOT wired to the CLI — there is no `tg index` command yet.** |
+| `tg install-dense` (CLI command, v1.91.0) | One-shot dense-leg setup | Installs the `semantic` extra (`model2vec`+`numpy`, torch-free) via the same `uv tool → uv pip → pip` cascade `tg upgrade` uses, then fetches the checksum-pinned `potion-code-16M` model; fails closed (non-zero exit, no partial model directory) on any pip/network/checksum failure — never a silent half-installed state. Every dense-absent hint across the CLI (`tg search --semantic`, `tg find`'s `rank_fallback_reason`) now leads with `tg install-dense` (v1.93.0/#705) instead of a bare "pip install the extra" instruction. |
 | `src/tensor_grep/core/retrieval_scoring.py` | Metrics | `recall_at_k`, `precision_at_k`, `mean_reciprocal_rank_at_k`, `ndcg_at_k`, `f1_score`, `RetrievalMetrics`. These are the promotion yardsticks — use them, don't invent new ones. |
 
 **How `--rank` is wired (verify before changing):**
@@ -341,14 +369,19 @@ confirm `--rank` is actually wired in `main.py`.
 Two measurements, both required (`README.md:194`):
 
 1. **Retrieval quality on a realistic corpus** (not the toy). Use
-   `benchmarks/run_repo_retrieval_benchmarks.py` (it computes `RetrievalMetrics`:
-   recall/precision/mrr/ndcg on a real repo). Produce three rows: **BM25-only**,
-   **dense-only**, **RRF-hybrid**, on the SAME corpus + queries.
+   `benchmarks/eval_late_rerank_quality.py` — the LIVE, chunker/ranking-sensitive harness (it actually
+   imports and calls `chunk_file`/`rank_chunks`, and computes `RetrievalMetrics`: recall/precision/
+   mrr/ndcg on a real repo + the 40-query NL golden set). **Do not use
+   `benchmarks/run_repo_retrieval_benchmarks.py`** for this — it is a static-fixture REPLAY that never
+   calls `chunk_file` and cannot detect a chunker or dense/RRF-weighting change at all (this was the
+   cAST-chunking evaluation's own harness-selection mistake before STATUS UPDATE 3 above corrected
+   it). Produce three rows: **BM25-only**, **dense-only**, **RRF-hybrid**, on the SAME corpus + queries.
 
    ```powershell
-   uv run --no-sync python benchmarks/run_repo_retrieval_benchmarks.py --help
+   uv run --no-sync python benchmarks/eval_late_rerank_quality.py --output artifacts/bench_find_quality.json
    ```
-   (Read its args first; it self-inserts `src/` on the path.)
+   (Read its args first; see `tensor-grep-benchmark-and-proof-toolkit` §7 for the corpus-hardness and
+   paired win/loss/tie reporting rigor this gate specifically needs.)
 
 2. **Editor-plane latency** — the ranking overlay must not blow the interactive
    budget:
@@ -462,10 +495,12 @@ drifted; date-stamp any change.
 - **Version / date:** facts originally verified `v1.17.25` (2026-07-02); re-verified
   UNCHANGED against released `v1.40.2` (origin/main `8829441`) on 2026-07-05; spot-checked
   again 2026-07-08 against `v1.49.3` and found the dense/RRF leg now SHIPPED (see STATUS
-  UPDATE near the top); **spot-checked again 2026-07-16 against `v1.78.1` and found the
-  architecture graduated into `tg find` (see STATUS UPDATE 2 near the top — this was
-  targeted at the `tg find` delta, not a full re-walk of Phases 0-8 below).** Re-check:
-  `grep -m1 release_docs_current_tag AGENTS.md` and `grep -m1 '"version"' npm/package.json`.
+  UPDATE near the top); spot-checked again 2026-07-16 against `v1.78.1` and found the
+  architecture graduated into `tg find` (see STATUS UPDATE 2 near the top); **spot-checked again
+  2026-07-22 against `v1.93.2` and recorded the cAST-chunking rejection + dense-int8 deferral +
+  install-dense row (see STATUS UPDATE 3 near the top — this was targeted at the research-campaign
+  #251 retirements and the harness-selection correction, not a full re-walk of Phases 0-8 below).**
+  Re-check: `grep -m1 release_docs_current_tag AGENTS.md` and `grep -m1 '"version"' npm/package.json`.
 - **Dense leg + RRF now shipped:** `ls src/tensor_grep/core/retrieval_dense.py src/tensor_grep/core/retrieval_fusion.py`;
   `grep -n "\-\-semantic" src/tensor_grep/cli/main.py src/tensor_grep/cli/bootstrap.py`;
   `grep -n "semantic = " pyproject.toml` (the optional extra).
@@ -481,7 +516,7 @@ drifted; date-stamp any change.
   the "only when it demonstrably beats the shipped baseline on both retrieval quality
   and editor-plane" rule `grep -n "editor-plane" README.md`; backend contract
   `AGENTS.md` §"Backend Fail-Closed Contract".
-- **Benchmarks:** `ls benchmarks/eval_bm25_quality.py benchmarks/run_repo_retrieval_benchmarks.py benchmarks/run_editor_plane_benchmarks.py`.
+- **Benchmarks:** `ls benchmarks/eval_bm25_quality.py benchmarks/eval_late_rerank_quality.py benchmarks/run_editor_plane_benchmarks.py` — `run_repo_retrieval_benchmarks.py` still exists but is a static-fixture replay, not the live chunker-sensitive gate (see STATUS UPDATE 3 / Phase 4 above).
 - **Persisted-index building blocks (unwired):** `Read src/tensor_grep/core/semantic_index.py`
   (env `TG_SEMANTIC_INDEX_DIR`, `.tg_semantic_index/`, INDEX_VERSION=1, no `tg index` command).
 
