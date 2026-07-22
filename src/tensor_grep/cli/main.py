@@ -10425,7 +10425,7 @@ def _build_prepare_payload(
             except Exception as exc:
                 # Advisory coordination hook: a claim failure must never fail prepare's primary
                 # read (mirrors ledger_store.submit_claim's own "NEVER blocks" contract one level
-                # up -- see ledger_store.py:445-461).
+                # up -- see ledger_store.py:591-597, submit_claim's docstring).
                 claim_hook["error"] = str(exc)
             else:
                 claim_hook["submitted"] = True

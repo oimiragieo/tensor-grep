@@ -141,6 +141,105 @@ def test_oversized_implicit_root_probe_widens_for_no_ignore_flag(tmp_path: Path)
     )
 
 
+@pytest.fixture(scope="module")
+def _gitignored_heavy_tree(tmp_path_factory):
+    """Shared fixture for the no-ignore-family parity tests below: a repo root whose
+    `.gitignore` hides a subdirectory containing more than `IMPLICIT_SEARCH_WALK_FILE_CEILING`
+    files. Built ONCE (module-scoped) and only ever READ by the parametrized cases below -- 7
+    independent 1500+-file trees would multiply this suite's I/O for no benefit."""
+    from tensor_grep.io.directory_scanner import IMPLICIT_SEARCH_WALK_FILE_CEILING
+
+    root = tmp_path_factory.mktemp("gitignored_heavy_tree")
+    (root / ".gitignore").write_text("ignored/\n", encoding="utf-8")
+    ignored_dir = root / "ignored"
+    ignored_dir.mkdir()
+    for index in range(IMPLICIT_SEARCH_WALK_FILE_CEILING + 10):
+        (ignored_dir / f"mod_{index}.py").write_text("x\n", encoding="utf-8")
+    return root
+
+
+@pytest.mark.parametrize(
+    ("flag", "field_name", "expected_widens"),
+    [
+        ("--no-ignore", "no_ignore", True),
+        ("--no-ignore-vcs", "no_ignore_vcs", True),
+        ("--no-ignore-files", "no_ignore_files", True),
+        ("--no-ignore-dot", "no_ignore_dot", False),
+        ("--no-ignore-exclude", "no_ignore_exclude", False),
+        ("--no-ignore-global", "no_ignore_global", False),
+        ("--no-ignore-parent", "no_ignore_parent", False),
+    ],
+)
+def test_oversized_implicit_root_probe_matches_sibling_per_no_ignore_field(
+    _gitignored_heavy_tree: Path, flag: str, field_name: str, expected_widens: bool
+) -> None:
+    """#702 gate NIT-1: bootstrap's front-door probe must mirror cli/main.py's
+    `_implicit_glob_search_walk_exceeds_ceiling` field-for-field, not collapse every
+    `--no-ignore*` flag onto a single `no_ignore=True`. `DirectoryScanner._load_ignore_spec`
+    (`io/directory_scanner.py:154`) only disables `.gitignore` for `no_ignore`/`no_ignore_vcs`/
+    `no_ignore_files` -- `--no-ignore-dot`/`-exclude`/`-global`/`-parent` are no-ops for this
+    scanner's single ignore mechanism, so they must NOT flip the probe, exactly like they don't
+    flip the sibling (which gets its `SearchConfig` for free from real Typer parsing rather than
+    hand-building one from raw argv)."""
+    from tensor_grep.core.config import SearchConfig
+    from tensor_grep.io.directory_scanner import IMPLICIT_SEARCH_WALK_FILE_CEILING
+
+    root = _gitignored_heavy_tree
+    bootstrap_result = bootstrap._search_paths_include_oversized_implicit_root(
+        [str(root)], ["pat", flag]
+    )
+    sibling_config = SearchConfig(**{field_name: True})
+    sibling_result = cli_main._implicit_glob_search_walk_exceeds_ceiling(
+        [str(root)], sibling_config, IMPLICIT_SEARCH_WALK_FILE_CEILING
+    )
+
+    assert bootstrap_result is expected_widens, (
+        f"{flag} widened={bootstrap_result}, expected {expected_widens}"
+    )
+    assert bootstrap_result == sibling_result, (
+        f"{flag}: bootstrap probe ({bootstrap_result}) diverged from cli/main.py's sibling "
+        f"probe ({sibling_result}) -- the two front doors disagree"
+    )
+
+
+def test_oversized_implicit_root_probe_stops_short_of_full_walk(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """#702 gate NIT-2: pin the short-circuit's COST, not just its boolean outcome -- the probe
+    must stop consuming `DirectoryScanner.walk()` the moment its own running count exceeds
+    `IMPLICIT_SEARCH_WALK_FILE_CEILING`, rather than draining a full walk and counting after the
+    fact. Fakes `os.walk` (instead of writing a real multi-thousand-entry tree to disk) so this
+    is a deterministic structural assertion, not a wall-clock floor: a mutable counter records
+    how many synthetic directories the walk actually produced before the probe returned, and the
+    assertion is that it stayed at exactly ceiling+1 -- far short of the fabricated tree's full
+    (10x-ceiling) size."""
+    from tensor_grep.io import directory_scanner as ds_module
+    from tensor_grep.io.directory_scanner import IMPLICIT_SEARCH_WALK_FILE_CEILING
+
+    root = tmp_path / "hugerepo"
+    root.mkdir()
+
+    total_synthetic_dirs = IMPLICIT_SEARCH_WALK_FILE_CEILING * 10
+    produced = {"count": 0}
+
+    def _fake_os_walk(_top, *_args, **_kwargs):
+        for index in range(total_synthetic_dirs):
+            produced["count"] += 1
+            yield (str(root / f"d{index}"), [], [f"f{index}.py"])
+
+    monkeypatch.setattr(ds_module.os, "walk", _fake_os_walk)
+
+    assert bootstrap._search_paths_include_oversized_implicit_root([str(root)], ["pat"]) is True
+    # The probe returns True the instant its running count exceeds the ceiling -- it must not
+    # have pulled anywhere near the full fabricated tree (10x the ceiling).
+    expected_pulled = IMPLICIT_SEARCH_WALK_FILE_CEILING + 1
+    assert produced["count"] == expected_pulled, (
+        f"probe pulled {produced['count']} entries from the walk before short-circuiting; "
+        f"expected exactly ceiling+1 ({expected_pulled}), proving the bound is real, not a "
+        "post-hoc count-then-truncate"
+    )
+
+
 def test_typer_app_commands_match_source_of_truth() -> None:
     typer_commands = set()
     for cmd in app.registered_commands:

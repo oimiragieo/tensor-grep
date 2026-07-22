@@ -272,3 +272,64 @@ def test_agent_gpu_evidence_timeout_env_override_honored(monkeypatch, tmp_path):
     )
 
     assert captured_kwargs[0]["timeout"] == pytest.approx(12.5)
+
+
+# #704 gate CRUX-4: `_agent_gpu_tg_command()`'s bare-"tg" fallback (when `resolve_native_tg_binary()`
+# finds nothing) used to hand `subprocess.run` an un-checked PATH lookup, invisible to
+# `is_cross_domain_native_binary()`'s sibling-`.exe`/metadata classification (a relative name has no
+# directory component for those checks to inspect). These tests exercise `_agent_gpu_tg_command()`
+# directly rather than the full `_agent_gpu_evidence()` flow, mirroring the direct-unit-test style
+# already used for the collaborator helpers in tests/unit/test_runtime_paths.py.
+
+
+def test_agent_gpu_tg_command_uses_resolved_binary_when_available(monkeypatch):
+    """Baseline (unaffected by this fix): a resolved native binary is returned as-is."""
+    monkeypatch.setattr(
+        agent_capsule, "resolve_native_tg_binary", lambda: Path("/mnt/c/fake/tg.exe")
+    )
+    assert agent_capsule._agent_gpu_tg_command() == str(Path("/mnt/c/fake/tg.exe"))
+
+
+def test_agent_gpu_tg_command_resolves_via_shutil_which_when_unresolved(monkeypatch):
+    """When `resolve_native_tg_binary()` finds nothing but a `tg` IS on PATH, the fallback must
+    return the ABSOLUTE resolved path (so the existing `is_cross_domain_native_binary()` gate at
+    the call site can classify the real location), not the bare, un-checked string "tg"."""
+    monkeypatch.setattr(agent_capsule, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(agent_capsule.shutil, "which", lambda name: "/usr/local/bin/tg")
+
+    assert agent_capsule._agent_gpu_tg_command() == "/usr/local/bin/tg"
+
+
+def test_agent_gpu_tg_command_degrades_honestly_when_nothing_resolves(monkeypatch):
+    """When neither `resolve_native_tg_binary()` nor `shutil.which("tg")` find anything, the
+    function must still return a plain string rather than raise, so the probe falls through to
+    its existing honest failure path: `_run_agent_gpu_json_command`'s `OSError` handler turns the
+    resulting spawn failure into a `status: "failed"` result instead of crashing the capsule."""
+    monkeypatch.setattr(agent_capsule, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(agent_capsule.shutil, "which", lambda name: None)
+
+    assert agent_capsule._agent_gpu_tg_command() == "tg"
+
+
+def test_agent_gpu_evidence_classifies_shutil_which_result_cross_domain(monkeypatch, tmp_path):
+    """End-to-end (through `_agent_gpu_evidence`, not just the helper): a `shutil.which`-resolved
+    fallback binary must reach the SAME `is_cross_domain_native_binary()` gate a resolved native
+    binary would, proving the call site needs no separate handling for this path."""
+    monkeypatch.setattr(agent_capsule, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(agent_capsule.shutil, "which", lambda name: "/mnt/c/fake/tg")
+
+    seen_binaries: list[str] = []
+
+    def _fake_is_cross_domain(binary):
+        seen_binaries.append(str(binary))
+        return True
+
+    monkeypatch.setattr(agent_capsule, "is_cross_domain_native_binary", _fake_is_cross_domain)
+    monkeypatch.setattr(agent_capsule, "translate_path_for_windows_binary", lambda _path: None)
+
+    result = agent_capsule._agent_gpu_evidence(
+        query="", path=str(tmp_path), gpu_device_ids=[0], max_files=5, timeout_s=5.0
+    )
+
+    assert seen_binaries == ["/mnt/c/fake/tg"]
+    assert result["status"] == "path_domain_mismatch"
