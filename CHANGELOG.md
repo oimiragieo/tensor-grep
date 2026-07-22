@@ -1,6 +1,31 @@
 # CHANGELOG
 
 
+## v1.93.2 (2026-07-22)
+
+### Bug Fixes
+
+- **blast-radius**: Exclude unresolved dynamic literals from the reverse scoring prefilter
+  ([#709](https://github.com/oimiragieo/tensor-grep/pull/709),
+  [`17f354b`](https://github.com/oimiragieo/tensor-grep/commit/17f354bb602558368dfb767243364c01c21ea469))
+
+`_python_imports_and_symbols`'s dynamic-import fold-in (repo_map.py:1988) appended
+  `dynamic_entry["module"]` into the alias-graph prefilter list whenever it was non-empty, without
+  checking `dynamic_unresolved`. #703 taught `_python_dynamic_import_entries` to keep the real
+  literal text (not blank it) for a RELATIVE literal (leading-dot `import_module(".sibling",
+  package=...)`) or an explicit-nonzero-`level` `__import__(...)` call, marking it
+  `dynamic_unresolved` instead -- so that literal text now slipped past the truthiness check into
+  `repo_map["imports"]`, which `tg blast-radius`'s reverse SCORING prefilter
+  (`_reverse_import_distances`/`_reverse_importers`) reads. `_import_alias_candidates` + the
+  substring test in `_import_graph_bonus` then fuzzy-matched any same-named-but-unrelated top-level
+  file, pulling it into `affected_files`/`dependent_files` even though the precise `tg importers`
+  edge already excludes it correctly.
+
+Guard: `if dynamic_entry["module"] and not dynamic_entry["dynamic_unresolved"]:`
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+
 ## v1.93.1 (2026-07-22)
 
 ### Bug Fixes
