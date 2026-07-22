@@ -751,6 +751,56 @@ def _search_paths_include_vendored_root(paths: list[str]) -> bool:
     return False
 
 
+# Item #105 (bootstrap raw-rg-passthrough gap, CEO dogfood v1.92.x directive): neither
+# `_search_paths_include_workspace_root` above (needs >=3/>=8 independently-MARKED sibling
+# dirs) nor `_search_paths_include_vendored_root` (needs a top-level vendored dir NAME) catches
+# a plain, single, large repo root -- e.g. a flat monorepo `src/` with thousands of files, no
+# vendored subdir, and no marked siblings. That shape sailed straight into `_run_rg_passthrough`
+# (a raw `rg` subprocess spawn bounded ONLY by a wall-clock timeout --
+# `TG_RG_TIMEOUT_SECONDS`/`TG_SIDECAR_TIMEOUT_MS`, no proactive refusal) because bootstrap's fast
+# path never delegates a bare, flag-less search to the native binary by default --
+# `_can_delegate_to_native_tg_search` requires a "supported trigger" flag (`--cpu`/
+# `--force-cpu`/`--json`/`--ndjson`/`--gpu-device-ids`) and `TG_RUST_FIRST_SEARCH` is off by
+# default -- so the native binary's OWN `check_implicit_walk_ceiling`
+# (`rust_core/src/rg_passthrough.rs`, audit #100/#105/#109, verified via direct invocation to
+# refuse in ~34ms) never gets a chance to run for the common bare `tg search PATTERN` shape.
+# `cli/main.py`'s full-CLI path already refuses this shape correctly (Bug #88 fix,
+# `_should_refuse_unbounded_large_root_scan`) -- this mirror sends the SAME unscoped search
+# there instead of into an unguarded raw `rg` spawn, matching the pattern already used above for
+# the workspace-root/vendored-root guards (both of which bypass cli/main.py's Python guards
+# entirely without a front-door mirror).
+#
+# Deliberately WALKS (bounded to ceiling+1 entries, never a full-tree enumeration) rather than a
+# one-level `iterdir()` probe like the vendored/workspace guards above -- there is no shallow
+# signal for "this tree is huge"; the walk itself is the only honest measurement, same approach
+# as cli/main.py's `_implicit_glob_search_walk_exceeds_ceiling`. Mirrors `--hidden`/
+# `--no-ignore*` flags into the probe config (conservatively: ANY no-ignore-family flag widens
+# the probe to `no_ignore=True`, the most inclusive walk `DirectoryScanner` supports) so this
+# probe does not UNDER-count relative to the real invocation and let an oversized
+# `--hidden`/`--no-ignore` walk slip through as "under ceiling".
+def _search_paths_include_oversized_implicit_root(paths: list[str], search_args: list[str]) -> bool:
+    from tensor_grep.core.config import SearchConfig
+    from tensor_grep.io.directory_scanner import (
+        IMPLICIT_SEARCH_WALK_FILE_CEILING,
+        DirectoryScanner,
+    )
+
+    probe_config = SearchConfig(
+        hidden=any(arg in _SEARCH_HIDDEN_FLAGS for arg in search_args),
+        no_ignore=any(arg in _SEARCH_NO_IGNORE_FLAGS for arg in search_args),
+    )
+    count = 0
+    for raw_path in paths:
+        if not raw_path or raw_path == "-" or raw_path.startswith("-"):
+            continue
+        scanner = DirectoryScanner(probe_config)
+        for _ in scanner.walk(raw_path):
+            count += 1
+            if count > IMPLICIT_SEARCH_WALK_FILE_CEILING:
+                return True
+    return False
+
+
 def _search_args_include_unbounded_broad_scan(search_args: list[str]) -> bool:
     if "--allow-broad-generated-scan" in search_args:
         return False
@@ -761,6 +811,8 @@ def _search_args_include_unbounded_broad_scan(search_args: list[str]) -> bool:
     if _search_paths_include_workspace_root(paths):
         return True
     if _search_paths_include_vendored_root(paths):
+        return True
+    if paths_defaulted and _search_paths_include_oversized_implicit_root(paths, search_args):
         return True
     return _search_args_request_unrestricted_generated_scan(
         search_args

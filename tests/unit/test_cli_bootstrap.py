@@ -78,6 +78,69 @@ def test_vendored_root_guard_triggers_on_every_canonical_name(tmp_path: Path) ->
     assert bootstrap._search_paths_include_vendored_root([str(unrelated_root)]) is False
 
 
+def test_implicit_search_walk_file_ceiling_matches_source_of_truth() -> None:
+    """Item #105-parity: cli/main.py's `_LARGE_ROOT_SCAN_FILE_CEILING` and cli/bootstrap.py's
+    front-door mirror `_search_paths_include_oversized_implicit_root` must both consult the
+    SAME ceiling value (`io/directory_scanner.IMPLICIT_SEARCH_WALK_FILE_CEILING`), or the two
+    front doors (native/rg fast path vs full CLI) can disagree about whether an implicit-path
+    root is oversized -- exactly the class of drift the vendored/workspace constants above were
+    centralized to prevent."""
+    from tensor_grep.io.directory_scanner import IMPLICIT_SEARCH_WALK_FILE_CEILING
+
+    assert cli_main._LARGE_ROOT_SCAN_FILE_CEILING == IMPLICIT_SEARCH_WALK_FILE_CEILING
+    assert IMPLICIT_SEARCH_WALK_FILE_CEILING > 0
+
+
+def test_oversized_implicit_root_probe_triggers_over_ceiling_real_walk(tmp_path: Path) -> None:
+    """Item #105: bootstrap's front-door ceiling probe must fire on a REAL walk exceeding the
+    canonical ceiling -- mirrors cli/main.py's own
+    `test_implicit_glob_walk_probe_exceeds_ceiling_even_with_zero_matching_files` fixture style
+    (real files on disk, not a monkeypatched-down ceiling), so this proves the SAME real-scale
+    behavior at the bootstrap layer."""
+    from tensor_grep.io.directory_scanner import IMPLICIT_SEARCH_WALK_FILE_CEILING
+
+    root = tmp_path / "bigrepo"
+    root.mkdir()
+    for index in range(IMPLICIT_SEARCH_WALK_FILE_CEILING + 100):
+        (root / f"mod_{index}.py").write_text("x\n", encoding="utf-8")
+
+    assert bootstrap._search_paths_include_oversized_implicit_root([str(root)], ["pat"]) is True
+
+
+def test_oversized_implicit_root_probe_allows_small_tree(tmp_path: Path) -> None:
+    """Non-regression: a small tree well under the ceiling must not be flagged."""
+    root = tmp_path / "smallrepo"
+    root.mkdir()
+    for index in range(20):
+        (root / f"mod_{index}.py").write_text("x\n", encoding="utf-8")
+
+    assert bootstrap._search_paths_include_oversized_implicit_root([str(root)], ["pat"]) is False
+
+
+def test_oversized_implicit_root_probe_widens_for_no_ignore_flag(tmp_path: Path) -> None:
+    """The probe must not UNDER-count relative to the real invocation: files that only exist
+    because `--no-ignore` was requested must still be counted toward the ceiling, or a huge
+    `--no-ignore` walk could slip through as "under ceiling" while the real search walks far
+    more than the probe measured."""
+    from tensor_grep.io.directory_scanner import IMPLICIT_SEARCH_WALK_FILE_CEILING
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / ".gitignore").write_text("ignored/\n", encoding="utf-8")
+    ignored_dir = root / "ignored"
+    ignored_dir.mkdir()
+    for index in range(IMPLICIT_SEARCH_WALK_FILE_CEILING + 100):
+        (ignored_dir / f"mod_{index}.py").write_text("x\n", encoding="utf-8")
+
+    # Default config respects .gitignore -- the probe must NOT see the ignored files.
+    assert bootstrap._search_paths_include_oversized_implicit_root([str(root)], ["pat"]) is False
+    # `--no-ignore` widens the walk to include them -- the probe must now catch it.
+    assert (
+        bootstrap._search_paths_include_oversized_implicit_root([str(root)], ["pat", "--no-ignore"])
+        is True
+    )
+
+
 def test_typer_app_commands_match_source_of_truth() -> None:
     typer_commands = set()
     for cmd in app.registered_commands:
@@ -311,6 +374,86 @@ def test_main_entry_should_not_passthrough_single_project_root_with_top_level_ve
     bootstrap.main_entry()
 
     assert called["full_cli"] is True
+
+
+def test_main_entry_should_not_passthrough_oversized_implicit_single_project_root(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Item #105 (CEO dogfood v1.92.x directive): a bare, flag-less, unscoped `tg search
+    PATTERN` on a large ORDINARY single-project root -- no top-level vendored dir name, no
+    independently-marked sibling projects, so NEITHER `_search_paths_include_workspace_root`
+    NOR `_search_paths_include_vendored_root` fires -- used to sail straight into
+    `_run_rg_passthrough` (a raw `rg` subprocess spawn bounded only by a wall-clock timeout,
+    `TG_RG_TIMEOUT_SECONDS`, no proactive refusal), because `_can_delegate_to_native_tg_search`
+    requires a "supported trigger" flag (`--cpu`/`--json`/...) that a bare search never carries
+    and `TG_RUST_FIRST_SEARCH` is off by default, so the native binary's own walk-ceiling gate
+    never even ran. It must now fall through to the full CLI instead, which owns the actual
+    fast (<1s, no full-tree walk to timeout) refusal via `_should_refuse_unbounded_large_root_scan`.
+    """
+    from tensor_grep.io.directory_scanner import IMPLICIT_SEARCH_WALK_FILE_CEILING
+
+    called = {"full_cli": False}
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / ".git").mkdir()  # single ordinary project marker, not a workspace parent
+    for index in range(IMPLICIT_SEARCH_WALK_FILE_CEILING + 100):
+        (root / f"mod_{index}.py").write_text("x\n", encoding="utf-8")
+
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "needle"])
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: "tg.exe")
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: "rg")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_native_tg_search",
+        lambda *_args, **_kwargs: pytest.fail("native passthrough should not run"),
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_rg_passthrough",
+        lambda *_args, **_kwargs: pytest.fail(
+            "rg passthrough should not run (raw rg has no walk-ceiling guard)"
+        ),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: called.__setitem__("full_cli", True))
+
+    bootstrap.main_entry()
+
+    assert called["full_cli"] is True
+
+
+def test_main_entry_should_passthrough_oversized_EXPLICIT_root_search(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Non-regression companion (Trap #3 parity): the SAME oversized single-project root, but
+    with an EXPLICIT path positional, must still take the fast native/rg path uninhibited -- an
+    explicit path is a deliberately-scoped root even when huge. Proves the new #105 guard does
+    not regress the common scoped-search case (no added latency: the probe is gated on
+    `paths_defaulted` and must never even run here)."""
+    from tensor_grep.io.directory_scanner import IMPLICIT_SEARCH_WALK_FILE_CEILING
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / ".git").mkdir()
+    for index in range(IMPLICIT_SEARCH_WALK_FILE_CEILING + 100):
+        (root / f"mod_{index}.py").write_text("x\n", encoding="utf-8")
+
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "needle", str(root)])
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: "rg")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_rg_passthrough",
+        lambda binary_name, argv: seen.update({"argv": list(argv)}) or 0,
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: pytest.fail("full cli should not run"))
+
+    with pytest.raises(SystemExit) as excinfo:
+        bootstrap.main_entry()
+
+    assert excinfo.value.code == 0
+    assert seen["argv"] == ["needle", str(root)]
 
 
 def test_main_entry_should_not_native_delegate_bare_type_filter_with_json_trigger_from_vendored_root(
@@ -798,6 +941,32 @@ def test_search_args_include_unbounded_broad_scan_refuses_bare_type_filter_from_
     assert bootstrap._search_args_include_unbounded_broad_scan(["pat", "-t", "py"]) is True
     assert bootstrap._search_args_include_unbounded_broad_scan(["pat", ".", "-t", "py"]) is False
     assert bootstrap._search_args_include_unbounded_broad_scan(["pat", "-d", "3"]) is False
+
+
+def test_search_args_include_unbounded_broad_scan_refuses_oversized_implicit_single_root(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Item #105: end-to-end (within bootstrap.py, no main_entry monkeypatching) proof that a
+    large ORDINARY single-project root (no vendored dir, no marked siblings) now flags as an
+    unbounded broad scan when the path is implicit, and is exempted the moment either an
+    explicit path or an explicit `--max-depth` bound is present -- same escape-hatch contract
+    as the workspace/vendored guards above."""
+    from tensor_grep.io.directory_scanner import IMPLICIT_SEARCH_WALK_FILE_CEILING
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / ".git").mkdir()
+    for index in range(IMPLICIT_SEARCH_WALK_FILE_CEILING + 100):
+        (root / f"mod_{index}.py").write_text("x\n", encoding="utf-8")
+    monkeypatch.chdir(root)
+
+    assert bootstrap._search_args_include_unbounded_broad_scan(["pat"]) is True
+    assert bootstrap._search_args_include_unbounded_broad_scan(["pat", "."]) is False
+    assert bootstrap._search_args_include_unbounded_broad_scan(["pat", "-d", "3"]) is False
+    assert (
+        bootstrap._search_args_include_unbounded_broad_scan(["pat", "--allow-broad-generated-scan"])
+        is False
+    )
 
 
 def test_main_entry_should_strip_noop_rg_format_and_keep_sort_for_rg_passthrough(monkeypatch):
