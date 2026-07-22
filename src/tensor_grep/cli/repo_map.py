@@ -8856,15 +8856,23 @@ def _render_context_parts(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return parts
 
 
+def _estimate_tokens_for_len(length: int) -> int:
+    """The SINGLE source of the chars->tokens estimate. `_estimate_tokens` (the text-taking
+    wrapper) and `_truncate_source_text_to_budget`'s running-length fast path MUST both go
+    through here -- a duplicated formula would let the truncation loop silently desync from
+    the budget check if the estimate ever changes."""
+    if length <= 0:
+        return 0
+    return max(1, math.ceil(length / 3.5))
+
+
 def _estimate_tokens(
     text: str,
     *,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> int:
     with _profiling_phase(_profiling_collector, "token_estimation"):
-        if not text:
-            return 0
-        return max(1, math.ceil(len(text) / 3.5))
+        return _estimate_tokens_for_len(len(text))
 
 
 def _line_map_for_budgeted_lines(
@@ -8951,10 +8959,8 @@ def _truncate_source_text_to_budget(
     def _within_budget_for_len(candidate_len: int) -> bool:
         if max_chars is not None and candidate_len > max_chars:
             return False
-        if max_tokens is not None:
-            estimated_tokens = 0 if candidate_len <= 0 else max(1, math.ceil(candidate_len / 3.5))
-            if estimated_tokens > max_tokens:
-                return False
+        if max_tokens is not None and _estimate_tokens_for_len(candidate_len) > max_tokens:
+            return False
         return True
 
     lines = text.splitlines(keepends=True)
