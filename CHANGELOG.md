@@ -1,6 +1,124 @@
 # CHANGELOG
 
 
+## v1.92.3 (2026-07-22)
+
+### Bug Fixes
+
+- **search**: Close #105 gap -- front-door raw-rg-passthrough had no walk-ceiling guard
+  ([#702](https://github.com/oimiragieo/tensor-grep/pull/702),
+  [`12d2610`](https://github.com/oimiragieo/tensor-grep/commit/12d2610301d9cbb4661cbd710e89355111873344))
+
+`bootstrap.py`'s `_run_rg_passthrough` spawns `rg` directly for an unscoped `tg search PATTERN` (the
+  common, flag-less shape) whenever `rg` resolves and the root trips neither the workspace-root nor
+  vendored-root guard. That direct spawn was bounded ONLY by a wall-clock timeout
+  (`TG_RG_TIMEOUT_SECONDS`/`TG_SIDECAR_TIMEOUT_MS`, default 60s) -- no proactive refusal -- because
+  bootstrap never delegates a bare, flag-less search to the native binary by default
+  (`_can_delegate_to_native_tg_search` requires a "supported trigger" flag such as
+  `--cpu`/`--json`/`--ndjson`/`--gpu-device-ids`, and `TG_RUST_FIRST_SEARCH` is off by default), so
+  the native front door's own walk-ceiling gate (`rust_core/src/rg_passthrough.rs`, audit
+  #100/#105/#109) never got a chance to run for this shape.
+
+A single large, ordinary, non-vendored, non-workspace-marked repo root (no top-level
+  `node_modules`/`vendor`/etc, no >=3/>=8 independently-marked sibling projects) slipped past every
+  existing fast-refuse guard and either ran to completion (fine on a fast local disk) or sat waiting
+  for the full timeout before an honest-but-late message -- exactly the "timeout-first, not a fast
+  refuse" symptom reported from dogfood.
+
+Fix: add `_search_paths_include_oversized_implicit_root`, a bounded (ceiling+1 entries, never a
+  full-tree walk) probe mirroring `cli/main.py`'s existing
+  `_implicit_glob_search_walk_exceeds_ceiling` (Bug #88), wired into
+  `_search_args_include_unbounded_broad_scan` gated on `paths_defaulted` only -- an explicit PATH
+  still runs uninhibited (Trap #3), so the common scoped-search case pays zero added latency. The
+  shared ceiling (`IMPLICIT_SEARCH_WALK_FILE_CEILING = 1500`) moves to `io/directory_scanner.py` as
+  the single source of truth for both `cli/main.py`'s `_LARGE_ROOT_SCAN_FILE_CEILING` and this new
+  bootstrap mirror, matching the existing pattern for `UNBOUNDED_VENDORED_ROOT_DIR_NAMES` /
+  `BROAD_WORKSPACE_PROJECT_MARKERS`.
+
+Verified: the fail-closed timeout contract was already sound (a genuine `_run_rg_passthrough`
+  timeout returns exit 124 + an honest stderr message, never a silent empty exit 0) -- falsifying
+  hypothesis (ii). This fix targets confirmed hypothesis (a): a real residual gap on an unguarded
+  implicit-path shape, reproduced natively (not a WSL artifact).
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Reconcile to v1.92.2 (world-class-tier #249 + deep-research #251)
+  ([#700](https://github.com/oimiragieo/tensor-grep/pull/700),
+  [`a466fae`](https://github.com/oimiragieo/tensor-grep/commit/a466fae835f7f9997ca38944e776ab9bbd5b8e77))
+
+Adds the v1.91.1->v1.92.2 wave to CURRENT STATE: the world-class-readiness tier (#249) + the CEO
+  deep-research steal-list campaign (#251, closed) -- 6 steals verified, 5 production improvements +
+  a guard shipped one-per-publish (#693-#699), each independent-Opus-gated. Records the honest
+  research verdict (cheap wins are a mirage; genuine moat gains are multi-day cross-language, banked
+  #255) and refreshes the header to v1.92.1/v1.92.2-publishing.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+### Testing
+
+- **locks**: Prove per-root lock independence as a contract, not a wall-clock race
+  ([#701](https://github.com/oimiragieo/tensor-grep/pull/701),
+  [`3e247a2`](https://github.com/oimiragieo/tensor-grep/commit/3e247a2d87f1bd61ff6b707d53feecbe9803bb38))
+
+test_index_lock_is_per_root_not_global has now red-ed CI TWICE on loaded windows-latest runners:
+
+- v1.81.1 release run: the original `concurrent_elapsed < baseline_elapsed * 1.8 + 0.5` wall-clock
+  RATIO tripped at concurrent=0.906s vs a 0.894s ceiling -- pure runner jitter. - #204/#650 (this
+  repo's prior harden): replaced the ratio with "the two roots' write-lock hold intervals must
+  OVERLAP in wall time", believed jitter-immune. It red-ed again today on v1.92.2, CI run
+  29873888662: `project_a=[1034.781, 1035.281] project_b=[1034.265, ...]` -- 1 failed / 2649 passed,
+  i.e. project_b's hold window had already closed before project_a's opened.
+
+Root cause of why #204 was still insufficient: OVERLAP is still a wall-clock claim. Two per-root
+  locks being genuinely independent only guarantees neither *blocks* the other -- it does NOT
+  guarantee the OS schedules both threads into their monkeypatched-slow write at the same instant.
+  On a sufficiently starved/loaded runner, thread B can simply not get scheduled until thread A's
+  0.5s hold has already finished, even though the two locks never contended on each other at all. No
+  wall-clock window (ratio or overlap) can be made both sharp and immune to an adversarial
+  scheduler, because the property under test (lock independence) does not imply the property being
+  measured (simultaneous wall-clock execution).
+
+Fix: assert the CONTRACT directly instead of a timing artifact, using
+
+threading.Event handshakes (never sleeps) so there is no window to race:
+
+1. A background thread acquires root_a's lock (via `_index_lock. index_lock` directly, on the same
+  `_index_path` production helper `open_session` uses) and holds it until told to let go. 2.
+  INDEPENDENCE: the main thread acquires root_b's lock with a short (2.0s) timeout while root_a's is
+  held. Success proves root_b was never blocked by root_a -- a shared/global lockfile would instead
+  block until root_a releases (which never happens inside this check), turning the bug into a fast,
+  deterministic IndexLockTimeoutError instead of a scheduler-dependent artifact. 3. CONVERSE
+  CONTROL: a second acquisition of root_a's own lock, while genuinely held, must itself
+  block/timeout (0.3s) -- proves the lock is a real mutual-exclusion primitive, not a no-op that
+  would let check 2 pass vacuously.
+
+Both checks are pass/fail the instant they run; nothing needs to overlap, race, or outrun the CI
+  scheduler. Verified the new test actually detects the regression it guards against: temporarily
+  forced `_lock_path_for` to return one fixed path regardless of input (simulating a global lock)
+  and confirmed the test fails fast (2.7s, at the independence check) with IndexLockTimeoutError,
+  then reverted and reconfirmed green.
+
+Stability evidence: 20/20 passes in a fresh-process loop (~1.4s/run, dominated by interpreter
+  startup, not the test body) plus 10/10 passes with 4 self-bounded CPU-busy processes running
+  concurrently to emulate a loaded runner (~1.55s/run avg, only mild slowdown, no flakes/no hangs).
+  Whole file: 13/13 passing. ruff check, ruff format --check --preview, and mypy all pass on the
+  file (mypy's 9 pre-existing findings are all above the diff's line-399 hunk boundary, in untouched
+  sibling tests).
+
+Concurrent-write correctness through the real open_session/_write_index path (lost inserts,
+  retention, ownership-token races) stays covered by the sibling tests in this same file
+  (test_concurrent_open_session_no_lost_insert et al.); this test's sole job -- proving the lock is
+  keyed per-index-file rather than global -- is now proven directly against the lock primitive
+  instead of indirectly through open_session's full pipeline, removing the extra timing surface that
+  pipeline was adding without adding any coverage of its own.
+
+Test-only; no shipped-code change.
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+
 ## v1.92.2 (2026-07-22)
 
 ### Bug Fixes
