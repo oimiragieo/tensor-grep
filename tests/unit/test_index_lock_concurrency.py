@@ -399,73 +399,94 @@ def test_open_session_reclaims_stale_lock_two_racing_threads(tmp_path: Path) -> 
 
 
 # --------------------------------------------------------------------------------------
-# Per-root isolation (tdd_test_legit bonus): locks are per-index-file, not global -- two
-# different roots opened concurrently must not block each other.
+# Per-root isolation (tdd_test_legit bonus): locks are per-index-file, not global --
+# holding one root's lock must never block another root's lock. Proven directly against
+# the lock primitive as a scheduler-independent CONTRACT; see the docstring below for why
+# both prior wall-clock versions (ratio, then overlap) still flaked.
 # --------------------------------------------------------------------------------------
 
 
-def test_index_lock_is_per_root_not_global(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_index_lock_is_per_root_not_global(tmp_path: Path) -> None:
+    """Per-root isolation, proven as a scheduler-independent CONTRACT instead of a
+    wall-clock timing heuristic.
+
+    History of the flake this replaces:
+      - Original: ``concurrent_elapsed < baseline_elapsed * 1.8 + 0.5`` (a wall-clock
+        RATIO). Red on the v1.81.1 release run (concurrent=0.906s vs a 0.894s ceiling --
+        pure runner jitter, not serialization).
+      - #204/#650 harden: replaced the ratio with "the two roots' write-lock hold
+        intervals must OVERLAP in wall time" -- believed jitter-immune, but it red-ed
+        AGAIN on v1.92.2 (windows-latest CI run 29873888662, loaded runner):
+            project_a=[1034.781, 1035.281] project_b=[1034.265, ...]
+        i.e. project_b's hold window had already closed before project_a's opened.
+        Overlap is STILL a wall-clock claim: on a sufficiently starved runner the OS can
+        simply fail to schedule thread B until thread A's hold has already finished, even
+        though the two per-root locks never contended on each other at all. Two
+        independent locks are not guaranteed to be *simultaneously held* under an
+        adversarial scheduler -- only guaranteed not to *block* each other. Racing the
+        scheduler to observe "simultaneous" can never be made both sharp and non-flaky.
+
+    The only scheduler-independent way to prove "per-root, not global" is to test the
+    BLOCKING behavior directly, Event-gated (never sleep-gated, so there is no timing
+    window to race):
+      1. Hold root_a's lock on a background thread until told to let go.
+      2. INDEPENDENCE: acquiring root_b's lock while root_a's is held must succeed
+         promptly (bounded timeout) -- a shared/global lockfile would instead block
+         root_b until root_a releases, which never happens inside this check, so the bug
+         now surfaces as a fast, deterministic ``IndexLockTimeoutError`` rather than a
+         hang or a scheduler-dependent timing artifact.
+      3. CONVERSE CONTROL: a second acquisition of root_a's OWN lock, while genuinely
+         held, must itself BLOCK/timeout -- proving the lock is a real mutual-exclusion
+         primitive and not a no-op that would let check 2 pass vacuously.
+    Both checks are pass/fail the instant they run; nothing needs to overlap, race, or
+    outrun the CI scheduler for either to be correct.
+
+    Concurrent-write CORRECTNESS through the real ``open_session``/``_write_index`` path
+    (lost inserts, retention, ownership-token races) is already covered by the sibling
+    tests above (``test_concurrent_open_session_no_lost_insert`` et al.); this test's only
+    job is proving the lock is keyed per-index-file rather than global, which
+    ``_index_lock.index_lock`` is the direct, minimal unit to prove it against -- using
+    the SAME ``_index_path`` production helper ``open_session`` itself calls, so a
+    routing bug that collapsed two roots onto the same lock target would still surface
+    here too.
+    """
     root_a = _make_project(tmp_path, name="project_a")
     root_b = _make_project(tmp_path, name="project_b")
+    index_a = session_store._index_path(root_a)
+    index_b = session_store._index_path(root_b)
+    assert index_a != index_b  # sanity: the two roots really do map to different lock targets
 
-    orig_write_index = session_store._write_index
+    holder_ready = threading.Event()
+    release_holder = threading.Event()
+    holder_errors: list[BaseException] = []
 
-    # Record the write-lock hold interval per root so we can assert the two
-    # concurrent writes OVERLAP in time -- a causal, jitter-immune proof that
-    # per-root locks did not serialize. The previous wall-clock RATIO assertion
-    # (concurrent < baseline*1.8 + 0.5) flaked on contended CI runners: the
-    # v1.81.1 release run saw concurrent=0.906s vs a 0.894s ceiling, pure runner
-    # jitter, not serialization -- and the jitter even exceeded 2x baseline, so no
-    # ratio bound stays both sharp AND non-flaky. Overlap is unaffected by absolute
-    # timing: two per-root locks held at the same instant overlap no matter how
-    # slow the runner is, while a shared/global lockfile forces one write to wait
-    # for the other to release -> zero overlap -> the assertion still fails.
-    HOLD_SECONDS = 0.5
-    intervals: dict[str, tuple[float, float]] = {}
-    intervals_lock = threading.Lock()
+    def hold_root_a() -> None:
+        try:
+            with _index_lock.index_lock(index_a):
+                holder_ready.set()
+                # Bounded: never hang the suite even if the main thread's asserts raise
+                # before reaching the `finally: release_holder.set()` below (index_lock's
+                # own 12s acquire timeout is the ultimate backstop regardless).
+                release_holder.wait(timeout=10.0)
+        except BaseException as exc:  # surface into the main thread, not a silent thread death
+            holder_errors.append(exc)
 
-    def slow_write_index(r: Path, recs: list) -> None:
-        enter = time.monotonic()
-        time.sleep(HOLD_SECONDS)
-        leave = time.monotonic()
-        with intervals_lock:
-            intervals[r.name] = (enter, leave)
-        return orig_write_index(r, recs)
+    holder = threading.Thread(target=hold_root_a)
+    holder.start()
+    try:
+        assert holder_ready.wait(timeout=5.0), "root_a holder thread never acquired its lock"
 
-    monkeypatch.setattr(session_store, "_write_index", slow_write_index)
+        # (2) Independence.
+        with _index_lock.index_lock(index_b, timeout_s=2.0):
+            pass  # success == root_b was NOT blocked by root_a's held lock
 
-    results: dict[str, session_store.SessionOpenResult] = {}
-    # Release both threads together so thread-start skew is not a flake vector. The
-    # barrier is BEFORE open_session, not inside the locked write, so a hypothetical
-    # global lock still serializes (one thread blocks on lock acquisition) instead
-    # of deadlocking the barrier. timeout guards against an anti-hang stall.
-    ready = threading.Barrier(2)
+        # (3) Converse control -- proves the lock is real, not a no-op.
+        with pytest.raises(_index_lock.IndexLockTimeoutError):
+            with _index_lock.index_lock(index_a, timeout_s=0.3, stale_after_s=60.0):
+                pass
+    finally:
+        release_holder.set()
+        holder.join(timeout=15.0)  # generous headroom past index_lock's own 12s acquire ceiling
 
-    def worker(key: str, root: Path) -> None:
-        ready.wait(timeout=10)
-        results[key] = session_store.open_session(str(root))
-
-    threads = [
-        threading.Thread(target=worker, args=("a", root_a)),
-        threading.Thread(target=worker, args=("b", root_b)),
-    ]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-
-    # Two DIFFERENT roots must not serialize against each other's lock: their
-    # write-lock hold intervals must OVERLAP. A shared/global lockfile would make
-    # one write wait for the other to release (a_leave <= b_enter, or vice versa)
-    # -> no overlap -> this assertion fails, catching the regression.
-    assert "project_a" in intervals and "project_b" in intervals, (
-        f"expected one slowed write per root; got {sorted(intervals)}"
-    )
-    a_enter, a_leave = intervals["project_a"]
-    b_enter, b_leave = intervals["project_b"]
-    assert a_enter < b_leave and b_enter < a_leave, (
-        "per-root locks serialized (write-hold intervals did not overlap): "
-        f"project_a=[{a_enter:.3f}, {a_leave:.3f}] project_b=[{b_enter:.3f}, {b_leave:.3f}]"
-    )
-    assert results["a"].session_id in {r.session_id for r in session_store._load_index(root_a)}
-    assert results["b"].session_id in {r.session_id for r in session_store._load_index(root_b)}
+    assert not holder.is_alive(), "root_a holder thread did not exit after release"
+    assert not holder_errors, f"root_a holder thread raised: {holder_errors!r}"
