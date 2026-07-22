@@ -1,6 +1,29 @@
 # CHANGELOG
 
 
+## v1.92.2 (2026-07-22)
+
+### Bug Fixes
+
+- **ranking**: Test-file demotion + exact word-boundary bonus on the flat symbol scorer (#254)
+  ([#699](https://github.com/oimiragieo/tensor-grep/pull/699),
+  [`fd08a93`](https://github.com/oimiragieo/tensor-grep/commit/fd08a93159d6d4bb9354a59562655a9bc6e0ac4c))
+
+Adds two Blackbird-style signals to the flat symbol scorer: - H3 exact word-boundary bonus (+1
+  capped): a clean-token name match outranks a mere substring — a standard IR tie-refiner on the
+  main tg prepare/agent path, subordinate to the match-tier rank so it only reorders same-tier ties
+  within 1 point (provably non-destabilizing). - H2 test-file demotion on the best-effort
+  truncated-scan fallback: prefer a non-test implementation over a same-named test symbol, replacing
+  a relevance-blind (path-sort-arbitrary) tie-break — NOT a flaky one; the input is
+  deterministically path-sorted.
+
+H1 (defs>refs) deliberately omitted — payload symbols are already exclusively AST definitions (refs
+  are a separate pipeline). Accuracy gate holds 16/16. Independent Opus gate: SHIP (low-risk scorer
+  hardening).
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.92.1 (2026-07-21)
 
 ### Bug Fixes
