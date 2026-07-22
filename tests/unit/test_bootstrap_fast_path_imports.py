@@ -404,13 +404,34 @@ def test_cli_package_init_has_no_eager_typing_import() -> None:
     `click`/`typer` import it once the full CLI is reached) -- the actual, durable regression
     surface is this file's OWN source no longer NEEDING the import, not whether `typing` happens
     to be in `sys.modules` for some other reason."""
+    import ast
+
     init_source = (Path(_REPO_SRC) / "tensor_grep" / "cli" / "__init__.py").read_text(
         encoding="utf-8"
     )
-    assert "import typing" not in init_source, (
-        "cli/__init__.py must not import typing at module level -- it is the parent-package "
-        "init paid on every tg invocation; __getattr__'s return annotation should be the "
-        "builtin `object`, which needs no import"
+    # AST-parse the TOP-LEVEL statements (module-load-time cost) so the pin catches BOTH import
+    # forms. A bare `"import typing" not in init_source` substring check MISSES the exact
+    # `from typing import Any` this move removed -- that text contains "typing import", not
+    # "import typing" -- making the pin weaker than its own contract. Assert the real invariant:
+    # no top-level `import typing[.*]` and no top-level `from typing[.*] import ...`. (Imports
+    # nested under a function or an `if TYPE_CHECKING:` guard are not module-load cost and are not
+    # children of the Module node, so they are correctly ignored.)
+    eager_typing_imports: list[str] = []
+    for node in ast.iter_child_nodes(ast.parse(init_source)):
+        if isinstance(node, ast.Import):
+            eager_typing_imports += [
+                f"import {alias.name}"
+                for alias in node.names
+                if alias.name == "typing" or alias.name.startswith("typing.")
+            ]
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module == "typing" or module.startswith("typing."):
+                eager_typing_imports.append(f"from {module} import ...")
+    assert not eager_typing_imports, (
+        "cli/__init__.py must not import `typing` at module level (neither `import typing` nor "
+        "`from typing import ...`) -- it is the parent-package init paid on every tg invocation; "
+        f"__getattr__'s return annotation should be the builtin `object`. Found: {eager_typing_imports}"
     )
 
 
