@@ -1695,18 +1695,67 @@ def _is_python_dynamic_import_call(node: ast.Call) -> bool:
     )
 
 
+def _python_dynamic_import_call_is_relative(node: ast.Call) -> bool:
+    """True when a ``__import__(...)`` call is unambiguously or possibly RELATIVE via its
+    ``level`` argument (5th positional, or the ``level=`` keyword) -- ``__import__``'s own
+    relative-import marker is this integer, separate from ``import_module``'s leading-dot
+    module-string convention (the caller checks that with a plain ``.startswith(".")`` on the
+    literal module name instead, since ``import_module`` has no ``level`` parameter at all --
+    this always returns ``False`` for an ``import_module``/bare-``import_module`` call, harmlessly).
+
+    A non-literal ``level`` value (a variable, an expression) can't be proven to be the safe
+    default of ``0``, so it is conservatively treated as relative too -- the same "can't prove
+    it's safe" fail-closed posture as every other honesty check in this module (e.g. the
+    non-literal-argument case just above, or the #152 sys.path-hack idiom matcher).
+    """
+    level_arg: ast.expr | None = None
+    if len(node.args) >= 5:
+        level_arg = node.args[4]
+    else:
+        for keyword in node.keywords:
+            if keyword.arg == "level":
+                level_arg = keyword.value
+                break
+    if level_arg is None:
+        return False
+    if isinstance(level_arg, ast.Constant) and isinstance(level_arg.value, int):
+        return level_arg.value != 0
+    return True  # non-literal level -- can't prove it's 0, fail closed (treat as relative)
+
+
 def _python_dynamic_import_entries(tree: ast.AST) -> list[dict[str, Any]]:
     """Raw per-call dynamic-import entries: one dict per ``__import__``/``import_module``/
     ``importlib.import_module`` call anywhere in ``tree``, shaped like the static entries
     ``_python_imports_with_lines`` emits (``module``, ``line``, ``level``) plus the two #93 SUB-1
-    markers -- ``dynamic`` (always ``True`` here) and ``dynamic_unresolved`` (``True`` when the
-    first argument isn't a static string literal, e.g. a variable or an f-string).
+    markers -- ``dynamic`` (always ``True`` here) and ``dynamic_unresolved`` (``True`` when there
+    is no static-string-literal target to resolve at all -- the first argument isn't a literal,
+    e.g. a variable or an f-string -- OR when the literal names a RELATIVE import this slice
+    deliberately does not attempt to resolve, see below).
 
-    Fails CLOSED on the unresolved case: ``module`` is ``""`` rather than a guessed name --
-    asserting a fabricated edge for an import whose target we can't actually read would be a
-    precision regression in a moat feature (see ``_resolve_raw_import_entry`` /
+    Fails CLOSED on the non-literal-argument case: ``module`` is ``""`` rather than a guessed
+    name -- asserting a fabricated edge for an import whose target we can't actually read would
+    be a precision regression in a moat feature (see ``_resolve_raw_import_entry`` /
     ``_confirm_import_edges``, which both skip resolution entirely when ``dynamic_unresolved``
     is set).
+
+    Also fails CLOSED on a RELATIVE literal -- a leading-dot ``import_module(".sibling",
+    package=...)`` module string, or an ``__import__(name, ..., level=N)`` call with a nonzero
+    (or non-literal, unprovable) ``level`` (``_python_dynamic_import_call_is_relative`` above --
+    scope slice #6, the tractable dynamic-import LITERAL slice). Both forms carry a real literal
+    name, kept here (unlike the non-literal case, ``module`` is NOT blanked to ``""`` -- nothing
+    is fabricated, the literal text is exactly what the source says), but the downstream absolute
+    resolver (``_python_module_candidates``) must never see it: its ``_python_module_parts``
+    splitter drops a leading empty component from ``".sibling".split(".")``, so an unguarded
+    relative literal would silently be searched for as if it were the ABSOLUTE module "sibling" --
+    a PROVEN false-edge risk (a same-named-but-unrelated top-level file can exist anywhere in the
+    search roots) not merely a theoretical one. Resolving the relative form correctly needs a
+    second, chained lookup (resolve the ``package``/enclosing-package argument to a directory
+    FIRST, only then walk it by the relative level) that this slice does not build -- out of scope
+    per the "no false edges, missing is fine" contract; a future slice can add it. ``package``
+    itself is never read here (a non-literal ``package`` -- the overwhelmingly common real-world
+    shape, ``package=__name__``/``package=__package__`` -- couldn't be resolved statically anyway,
+    and even a literal ``package`` string is left for that future slice), so this is a pure
+    detect-and-refuse guard on the ``module``/``level`` shape alone.
     """
     entries: list[dict[str, Any]] = []
     for node in ast.walk(tree):
@@ -1719,12 +1768,17 @@ def _python_dynamic_import_entries(tree: ast.AST) -> list[dict[str, Any]]:
             and isinstance(node.args[0].value, str)
         ):
             literal_module = node.args[0].value
+        dynamic_unresolved = literal_module is None
+        if literal_module is not None and (
+            literal_module.startswith(".") or _python_dynamic_import_call_is_relative(node)
+        ):
+            dynamic_unresolved = True
         entries.append({
             "module": literal_module or "",
             "line": int(node.lineno),
             "level": 0,
             "dynamic": True,
-            "dynamic_unresolved": literal_module is None,
+            "dynamic_unresolved": dynamic_unresolved,
         })
     return entries
 
