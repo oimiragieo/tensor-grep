@@ -1731,6 +1731,376 @@ def test_build_file_imports_sys_path_insert_here_alias_resolves(tmp_path: Path) 
 
 
 # ---------------------------------------------------------------------------------------------
+# CEO dogfood feature 6 -- the dynamic-import LITERAL slice. The base recall (#93 SUB-1, block
+# above) already turns a literal `importlib.import_module("x")` / bare `import_module("x")` /
+# `__import__("x")` call into a resolvable edge with `dynamic: true`. This block closes three
+# real gaps found by re-verifying that base feature against the ACTUAL code (not just reading
+# it): two are PROVEN FALSE-EDGE bugs (relative-form literals silently mis-resolved as absolute),
+# fixed in `_python_dynamic_import_entries`/`_python_dynamic_import_call_is_relative`; the rest
+# are regression-lock coverage for behavior that was already correct by composition (the dynamic
+# entries flow through the exact same `_resolve_raw_import_entry`/`_confirm_import_edges` ->
+# `_python_module_candidates` path as static imports) but had no dedicated test.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_build_file_imports_relative_import_module_literal_stays_external_no_false_edge(
+    tmp_path: Path,
+) -> None:
+    """The false-edge bug this slice fixes: `import_module(".sibling", package="pkg.subpkg")`
+    is a RELATIVE literal (leading dot). Naively resolving it through the absolute-module path
+    (`_python_module_parts` strips the leading empty component from `".sibling".split(".")`)
+    would search for it as if it were the ABSOLUTE module "sibling" -- proven here by planting an
+    UNRELATED top-level `sibling.py` decoy that must NEVER be reported as this call's target.
+    `package` is a literal string too, but this slice does not attempt the chained
+    package-to-directory resolution that would be needed to resolve it correctly -- it must fail
+    closed (external/unresolved), not guess."""
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    subpkg = pkg / "subpkg"
+    subpkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (subpkg / "__init__.py").write_text("", encoding="utf-8")
+    decoy = project / "sibling.py"
+    decoy.write_text("DECOY = True\n", encoding="utf-8")
+    consumer = subpkg / "loader.py"
+    consumer.write_text(
+        "from importlib import import_module\n\n"
+        "def load():\n"
+        '    return import_module(".sibling", package="pkg.subpkg")\n',
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_imports(consumer)
+
+    dynamic_entries = [current for current in payload["imports"] if current.get("dynamic")]
+    assert len(dynamic_entries) == 1
+    entry = dynamic_entries[0]
+    assert entry["module"] == ".sibling"  # the literal text, not fabricated/blanked
+    assert entry["dynamic_unresolved"] is True
+    assert entry["resolved"] is None
+    assert entry["resolved"] != str(decoy.resolve())
+    assert str(decoy.resolve()) not in payload["resolved_files"]
+
+
+def test_build_file_importers_relative_import_module_literal_asserts_no_edge(
+    tmp_path: Path,
+) -> None:
+    """Reverse direction of the same false-edge bug: `tg importers` on the decoy file must NOT
+    report `loader.py` as a confirmed importer just because its relative dynamic literal shares a
+    bare name with the decoy."""
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    subpkg = pkg / "subpkg"
+    subpkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (subpkg / "__init__.py").write_text("", encoding="utf-8")
+    decoy = project / "sibling.py"
+    decoy.write_text("DECOY = True\n", encoding="utf-8")
+    consumer = subpkg / "loader.py"
+    consumer.write_text(
+        "from importlib import import_module\n\n"
+        "def load():\n"
+        '    return import_module(".sibling", package="pkg.subpkg")\n',
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_importers(decoy, project)
+
+    assert payload["importer_files"] == []
+    assert str(consumer.resolve()) not in payload["importer_files"]
+
+
+def test_build_file_imports_dunder_import_explicit_level_keyword_stays_external(
+    tmp_path: Path,
+) -> None:
+    """`__import__`'s relative marker is its `level` INTEGER argument, not a leading dot in the
+    name -- `__import__("sibling", level=1)` is relative even though `"sibling"` itself has no
+    dot. Same false-edge risk as the `import_module` case above if `level` is ignored: proven via
+    the same unrelated-decoy-file pattern."""
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    subpkg = pkg / "subpkg"
+    subpkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (subpkg / "__init__.py").write_text("", encoding="utf-8")
+    decoy = project / "sibling.py"
+    decoy.write_text("DECOY = True\n", encoding="utf-8")
+    consumer = subpkg / "loader.py"
+    consumer.write_text(
+        'def load():\n    return __import__("sibling", level=1)\n',
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_imports(consumer)
+
+    dynamic_entries = [current for current in payload["imports"] if current.get("dynamic")]
+    assert len(dynamic_entries) == 1
+    entry = dynamic_entries[0]
+    assert entry["dynamic_unresolved"] is True
+    assert entry["resolved"] is None
+    assert entry["resolved"] != str(decoy.resolve())
+
+
+def test_build_file_imports_dunder_import_explicit_level_positional_stays_external(
+    tmp_path: Path,
+) -> None:
+    """Same as above, but `level` passed as the 5th POSITIONAL argument
+    (`__import__(name, globals, locals, fromlist, level)`) -- the full stdlib call shape."""
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    subpkg = pkg / "subpkg"
+    subpkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (subpkg / "__init__.py").write_text("", encoding="utf-8")
+    decoy = project / "sibling.py"
+    decoy.write_text("DECOY = True\n", encoding="utf-8")
+    consumer = subpkg / "loader.py"
+    consumer.write_text(
+        'def load():\n    return __import__("sibling", globals(), locals(), [], 1)\n',
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_imports(consumer)
+
+    dynamic_entries = [current for current in payload["imports"] if current.get("dynamic")]
+    assert len(dynamic_entries) == 1
+    entry = dynamic_entries[0]
+    assert entry["dynamic_unresolved"] is True
+    assert entry["resolved"] is None
+    assert entry["resolved"] != str(decoy.resolve())
+
+
+def test_build_file_imports_dunder_import_explicit_level_zero_still_resolves(
+    tmp_path: Path,
+) -> None:
+    """Regression guard: an explicit but ZERO `level=0` keyword is still the safe absolute case
+    (Python's own default) -- must not be swept into the relative fail-closed path just because a
+    `level` keyword is textually present."""
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    target = pkg / "helpers.py"
+    target.write_text("def foo():\n    return 1\n", encoding="utf-8")
+    consumer = pkg / "loader.py"
+    consumer.write_text(
+        'mod = __import__("pkg.helpers", level=0)\n',
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_imports(consumer)
+
+    entry = next(current for current in payload["imports"] if current["module"] == "pkg.helpers")
+    assert entry["dynamic"] is True
+    assert entry["dynamic_unresolved"] is False
+    assert entry["resolved"] == str(target.resolve())
+
+
+def test_build_file_imports_dynamic_import_resolves_through_sys_path_insert_root(
+    tmp_path: Path,
+) -> None:
+    """Composition with #152: a module ONLY reachable via a `sys.path.insert` hack must still
+    resolve when reached through `importlib.import_module(...)` instead of a static `from x
+    import y` -- both raw-entry shapes (`_python_imports_with_lines`'s static loop and its
+    `_python_dynamic_import_entries` extension) feed the SAME `_resolve_raw_import_entry` ->
+    `_python_module_candidates` resolver, which tries the sys-path-hacked roots first."""
+    project = tmp_path / "project"
+    lib_dir = project / "lib"
+    lib_dir.mkdir(parents=True)
+    mymod_path = lib_dir / "mymod.py"
+    mymod_path.write_text("def x():\n    return 1\n", encoding="utf-8")
+    app_py = project / "app.py"
+    app_py.write_text(
+        "import sys, os, importlib\n"
+        'sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lib"))\n'
+        "def load():\n"
+        '    return importlib.import_module("mymod")\n',
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_imports(app_py)
+
+    entry = next(current for current in payload["imports"] if current["module"] == "mymod")
+    assert entry["dynamic"] is True
+    assert entry["dynamic_unresolved"] is False
+    assert entry["resolved"] == str(mymod_path.resolve())
+    assert entry["external"] is False
+    assert entry["provenance"] == ["sys-path-insert"]
+
+
+def test_build_file_importers_dynamic_import_finds_importer_through_sys_path_insert_root(
+    tmp_path: Path,
+) -> None:
+    """Reverse direction of the composition-with-#152 test above: `tg importers` must find the
+    sys.path-hacking consumer as a confirmed importer via its DYNAMIC `import_module(...)` call,
+    with the sys-path-hack provenance honestly reported on the edge (mirrors the static #155 fix
+    at `test_build_file_importers_finds_sys_path_insert_hacked_importer`)."""
+    project = tmp_path / "project"
+    lib_dir = project / "lib"
+    lib_dir.mkdir(parents=True)
+    mymod_path = lib_dir / "mymod.py"
+    mymod_path.write_text("def x():\n    return 1\n", encoding="utf-8")
+    app_py = project / "app.py"
+    app_py.write_text(
+        "import sys, os, importlib\n"
+        'sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lib"))\n'
+        "def load():\n"
+        '    return importlib.import_module("mymod")\n',
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_importers(mymod_path, project)
+
+    assert str(app_py.resolve()) in set(payload["importer_files"])
+    edge = next(
+        current for current in payload["importers"] if current["file"] == str(app_py.resolve())
+    )
+    assert edge["dynamic"] is True
+    assert edge["dynamic_unresolved"] is False
+    assert edge["module"] == "mymod"
+    assert edge["path_provenance"] == "sys-path-insert"
+
+
+def test_build_file_importers_recalls_bare_import_module_call(tmp_path: Path) -> None:
+    """Reverse-direction coverage for the bare `from importlib import import_module` alias form
+    -- the forward side already covers this
+    (`test_build_file_imports_detects_bare_import_module_call`); the reverse side had no
+    dedicated test (only the `importlib.import_module` attribute form did, via
+    `test_build_file_importers_recalls_dynamic_importlib_import_module`)."""
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    target = pkg / "helpers.py"
+    target.write_text("def foo():\n    return 1\n", encoding="utf-8")
+    consumer = pkg / "loader.py"
+    consumer.write_text(
+        "from importlib import import_module\n\n"
+        "def load():\n"
+        '    return import_module("pkg.helpers")\n',
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_importers(target, project)
+
+    assert str(consumer.resolve()) in set(payload["importer_files"])
+    edge = next(
+        current for current in payload["importers"] if current["file"] == str(consumer.resolve())
+    )
+    assert edge["dynamic"] is True
+    assert edge["dynamic_unresolved"] is False
+    assert edge["module"] == "pkg.helpers"
+
+
+def test_build_file_importers_recalls_dunder_import_to_local_file(tmp_path: Path) -> None:
+    """Reverse-direction coverage for `__import__(...)` resolving to a LOCAL repo file -- the
+    existing `__import__` reverse test only exercised the JS `import(...)` call form; the
+    existing Python `__import__` test only exercised the forward direction against a stdlib name
+    (`json`, always external)."""
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    target = pkg / "helpers.py"
+    target.write_text("def foo():\n    return 1\n", encoding="utf-8")
+    consumer = pkg / "loader.py"
+    consumer.write_text('mod = __import__("pkg.helpers")\n', encoding="utf-8")
+
+    payload = repo_map.build_file_importers(target, project)
+
+    assert str(consumer.resolve()) in set(payload["importer_files"])
+    edge = next(
+        current for current in payload["importers"] if current["file"] == str(consumer.resolve())
+    )
+    assert edge["dynamic"] is True
+    assert edge["dynamic_unresolved"] is False
+    assert edge["module"] == "pkg.helpers"
+
+
+def test_build_file_imports_detects_dynamic_import_nested_in_conditional_inside_function(
+    tmp_path: Path,
+) -> None:
+    """Deeper-nesting recall: a dynamic-import call two scopes down (function -> if -> try), not
+    just directly in a function body like the other fixtures in this file -- `ast.walk` visits
+    every depth uniformly, this locks that in explicitly."""
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    target = pkg / "helpers.py"
+    target.write_text("def foo():\n    return 1\n", encoding="utf-8")
+    consumer = pkg / "loader.py"
+    consumer.write_text(
+        "import importlib\n\n"
+        "def load(flag):\n"
+        "    if flag:\n"
+        "        try:\n"
+        '            return importlib.import_module("pkg.helpers")\n'
+        "        except ImportError:\n"
+        "            return None\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_imports(consumer)
+
+    entry = next(current for current in payload["imports"] if current["module"] == "pkg.helpers")
+    assert entry["dynamic"] is True
+    assert entry["resolved"] == str(target.resolve())
+    assert entry["line"] == 6
+
+
+def test_build_file_imports_detects_dynamic_import_at_module_top_level(tmp_path: Path) -> None:
+    """Opposite extreme from the nested fixtures: a dynamic-import call with NO function wrapper
+    at all, directly at module scope -- `ast.walk` doesn't require nesting either."""
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    target = pkg / "helpers.py"
+    target.write_text("def foo():\n    return 1\n", encoding="utf-8")
+    consumer = pkg / "loader.py"
+    consumer.write_text(
+        'import importlib\nmod = importlib.import_module("pkg.helpers")\n',
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_imports(consumer)
+
+    entry = next(current for current in payload["imports"] if current["module"] == "pkg.helpers")
+    assert entry["dynamic"] is True
+    assert entry["resolved"] == str(target.resolve())
+    assert entry["line"] == 2
+
+
+def test_build_file_imports_unresolvable_dynamic_literal_stays_external(tmp_path: Path) -> None:
+    """A literal (resolvable-in-principle) module name that simply doesn't exist anywhere in the
+    search roots must be honestly `external`, decoupled from the existing dunder-import test's
+    stdlib-name ambiguity (`json` is external partly because it's a real stdlib module tg doesn't
+    special-case -- this uses a name that is definitely not any real package)."""
+    project = tmp_path / "project"
+    project.mkdir()
+    consumer = project / "app.py"
+    consumer.write_text(
+        "import importlib\n"
+        'mod = importlib.import_module("totally.nonexistent.repo_local_module")\n',
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_imports(consumer)
+
+    entry = next(
+        current
+        for current in payload["imports"]
+        if current["module"] == "totally.nonexistent.repo_local_module"
+    )
+    assert entry["dynamic"] is True
+    assert entry["dynamic_unresolved"] is False
+    assert entry["external"] is True
+    assert entry["resolved"] is None
+    assert "totally.nonexistent.repo_local_module" in payload["external_modules"]
+
+
+# ---------------------------------------------------------------------------------------------
 # Proximity-tiered reverse-import candidate ordering. Dogfood flap (v1.81.15 PASS
 # -> v1.81.17 INCOMPLETE "0 importers @ 330/1035 files scanned" on a 50k-file WSL multi-repo
 # workspace) traced to `build_file_importers_from_map` slicing its CALLER_SCAN_FILE_CEILING /
