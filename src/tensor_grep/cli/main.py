@@ -47,6 +47,7 @@ from tensor_grep.io.directory_scanner import (
     BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD,
     BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD,
     BROAD_WORKSPACE_PROJECT_MARKERS,
+    IMPLICIT_SEARCH_WALK_FILE_CEILING,
     UNBOUNDED_VENDORED_ROOT_DIR_NAMES,
 )
 from tensor_grep.sidecar import DEFAULT_CLASSIFY_MAX_LINES
@@ -5057,7 +5058,12 @@ def _format_unbounded_vendored_root_scan_error(vendored_dirs: list[str]) -> str:
 # guards, which are cheap top-level probes that never see the real count). Bypassing on
 # `--glob` alone (the pre-fix `_has_generated_scan_bound` check) defeated this guard for
 # exactly the bare-`--glob`-no-PATH shape it exists to catch; see `_has_walk_scope_bound`.
-_LARGE_ROOT_SCAN_FILE_CEILING = 1500
+#
+# Item #105-parity: imported (not hardcoded) from `io/directory_scanner.py` so this ceiling and
+# `cli/bootstrap.py`'s front-door mirror `_search_paths_include_oversized_implicit_root` can
+# never drift out of sync -- the same single-source-of-truth pattern already used above for
+# `UNBOUNDED_VENDORED_ROOT_DIR_NAMES` / `BROAD_WORKSPACE_PROJECT_MARKERS`.
+_LARGE_ROOT_SCAN_FILE_CEILING = IMPLICIT_SEARCH_WALK_FILE_CEILING
 
 
 def _should_refuse_unbounded_large_root_scan(

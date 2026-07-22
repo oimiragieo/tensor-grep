@@ -76,6 +76,21 @@ BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD = 3
 # being a workspace parent.
 BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD = 8
 
+# Item #105-parity (bootstrap raw-rg-passthrough gap, CEO dogfood v1.92.x): the ceiling above
+# which an IMPLICIT-path (no explicit PATH positional) search walk must be refused rather than
+# run to completion/timeout. Neither the workspace-root guard above (needs >=3/>=8
+# independently-MARKED sibling dirs) nor the vendored-root guard (needs a top-level vendored dir
+# NAME) catches a plain, single, large repo root -- e.g. a flat monorepo `src/` with thousands of
+# files, no vendored subdir, and no marked siblings. `cli/main.py`'s `_LARGE_ROOT_SCAN_FILE_CEILING`
+# (Bug #88 fix, the full-CLI-side guard) and `cli/bootstrap.py`'s front-door mirror
+# `_search_paths_include_oversized_implicit_root` both import this single source of truth so the
+# two guards can never drift out of sync (same pattern as `UNBOUNDED_VENDORED_ROOT_DIR_NAMES` and
+# `BROAD_WORKSPACE_PROJECT_MARKERS` above). Matches the Rust native front door's own
+# `IMPLICIT_SEARCH_WALK_FILE_CEILING` (`rust_core/src/rg_passthrough.rs`, audit #100/#105/#109) --
+# kept at the same numeric value by convention across the language boundary (a literal constant
+# cannot be shared across Python/Rust).
+IMPLICIT_SEARCH_WALK_FILE_CEILING = 1500
+
 # The Rust PyO3 directory scanner (`RustDirectoryScanner`) is NOT exported by the `rust_core`
 # extension (only `RustBackend` + functions are), so the old `from rust_core import
 # RustDirectoryScanner` always raised and this flag was permanently False — the Python walk below was
