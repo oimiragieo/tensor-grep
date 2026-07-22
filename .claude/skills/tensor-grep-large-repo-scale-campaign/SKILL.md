@@ -3,16 +3,18 @@ name: tensor-grep-large-repo-scale-campaign
 description: >
   Use when tg hangs, stalls, or runs for minutes on a large/unscoped repo; when
   `--deadline` "seems ignored" and a symbol query still overruns its budget; when
-  working task #52 (end-to-end deadline ineffective on a ~1800-file TS repo), the
-  #390 daemon-path deadline gap, caller-scan / build_repo_map latency, the
-  unscoped-`tg search` hang, or the exit-2 partial-result semantics. The
+  working task #52 (CLOSED, end-to-end deadline ineffective on a ~1800-file TS repo)
+  or #390 (CLOSED, the daemon-path deadline gap) for historical context, caller-scan /
+  build_repo_map latency, the unscoped-`tg search` hang, the generic >1500-file
+  implicit-root fast-refuse (A9/#702), or the exit-2 partial-result semantics. The
   decision-gated campaign to finish agent-native SCALE HONESTY: tg must never hang
   and never silently lie (return an empty/partial result as if it were complete) on
   a customer-scale repo. Gives the reproduce -> phase-instrument (cProfile) -> ranked
   solution menu -> fail-closed build -> change-control promotion runbook with exact
-  commands, expected numbers, and branch-on-mismatch forks. Verified against v1.49.3
-  on 2026-07-08 (#400 fully shipped since v1.40.4; the exit-code contract is exit-2-
-  regardless-of-found, per #401); `tg find` addition spot-checked 2026-07-16 at v1.78.1.
+  commands, expected numbers, and branch-on-mismatch forks. Verified against v1.93.2
+  on 2026-07-22 (#400/#413/#428/#702 fully shipped; #52 and #390 both CLOSED; the
+  exit-code contract is exit-2-regardless-of-found, per #401); `tg find` addition
+  spot-checked 2026-07-16 at v1.78.1.
 ---
 
 # tensor-grep — Large-Repo Scale-Honesty Campaign
@@ -106,8 +108,8 @@ flip is a `tensor-grep-change-control` decision (Phase 4).
 ## 1. What already shipped (verify each before you build on it)
 
 The **P0-6 "moat" deadline program** (#384-#401) + the now-shipped unscoped-hang fix (#400,
-#413, #428). Every anchor below is at HEAD on 2026-07-08 (v1.49.3); re-verify line numbers,
-they drift.
+#413, #428, #702). Every anchor below is at HEAD on 2026-07-22 (v1.93.2); re-verify line numbers,
+they drift — `main.py` is 16897 lines as of this pass, do not trust an older total.
 
 | Ship | What it does | Verify |
 | --- | --- | --- |
@@ -121,9 +123,10 @@ they drift.
 | **#478** (`67f9779`, shipped v1.54.3) -- **CLOSES #52**, the 4 residual unbounded loops | (A) `_iter_repo_files`' file-tree walk gains `deadline_monotonic`/`deadline_hit` params (was count-only bound); `build_inventory` now computes its deadline BEFORE the walk, not after. (B) `_relevant_tests_for_symbol`'s two unguarded `any()` loops (the dominant cause on a high-fan-out symbol like `"main"`) now break on a shared deadline. (C) `build_symbol_impact_from_map` (`repo_map.py:14608`) gained a `deadline_monotonic` parameter it never had, threaded into its `_preferred_definition_files`/`_relevant_tests_for_symbol` calls, plus a new `partial`/`deadline_limit` payload block; `build_symbol_impact`/`build_symbol_blast_radius_from_map` updated to pass it through. (D) the `string_refs` second pass in `build_symbol_refs_from_map` folds into the existing `refs_scan_deadline_hit` local. All four guarded `if deadline_monotonic is not None` (byte-identical no-op otherwise). **Scope note:** the design doc explicitly keeps `session_store.py` (the daemon call sites) out of scope -- see #390 in S2, which #478 narrows but does not close. | `git show --stat 67f9779`; `grep -n "deadline_monotonic" src/tensor_grep/cli/repo_map.py | grep -i impact` |
 
 | **`tg find`** (v1.77.0, #189, `main.py:4340-4440`) — whole-repo hybrid NL search, a NEW command that reuses this campaign's bounding shape from day one rather than retrofitting it later | Takes `--deadline`/`--max-repo-files` plus an internal corpus-wide chunk cap (`_FIND_CORPUS_CHUNK_CAP`); a truncated scan sets `result_incomplete=true` and exits 2 (found-but-truncated prints results THEN exits 2 -- same "truncation trumps found" rule as #401 below, not the found-exits-0 shape #399 walked back). **Unlike `tg search`, `tg find` does NOT get the instant vendored/workspace-root refusal (#400)** -- it always attempts the bounded scan rather than refusing outright, because ranking the whole repo (not raw-text matching it) is the command's entire point. | `tensor-grep-run-and-operate` §11c has the full exit-contract prose; `main.py:4340-4440` |
+| **#702** (v1.92.3, A9) -- a **4th** unscoped front-door fix alongside #400/#413/#428, closing a gap those three never covered | `bootstrap._run_rg_passthrough` (`bootstrap.py:1074`) -- the plain **flag-less** search front door that runs *before* `main.py`'s Typer app is ever reached -- had **NO walk ceiling at all** until this shipped; the three existing `main.py`-side refusal guards (#400/#413) never ran for this path. Fixed by adding `bootstrap._search_paths_include_oversized_implicit_root` (`bootstrap.py:790`), gated on `paths_defaulted`, sharing the SAME `IMPLICIT_SEARCH_WALK_FILE_CEILING = 1500` constant (`io/directory_scanner.py:92`) the other 3 doors already used -- natively reproduced, not a WSL artifact. An over-ceiling implicit root now refuses in ~1.7s instead of silently walking up to the 60s `TG_RG_TIMEOUT_SECONDS` backstop. | `grep -n _search_paths_include_oversized_implicit_root src/tensor_grep/cli/bootstrap.py`; `grep -n IMPLICIT_SEARCH_WALK_FILE_CEILING src/tensor_grep/io/directory_scanner.py` |
 
-**Merge/release state to stamp every session:** #400/#413/#428 are all in the **installed
-binary** as of v1.49.3 — this is not a source-only or in-flight fix. If a future session finds
+**Merge/release state to stamp every session:** #400/#413/#428/#702 are all in the **installed
+binary** as of v1.93.2 — this is not a source-only or in-flight fix. If a future session finds
 a NEW in-flight PR referenced by this skill, do not describe it as shipped until
 `git log --oneline origin/main | head` shows a `chore(release)` commit above it (see the
 project's merge-gate guardrail: an open PR is guidance, not a receipt, until it lands on main).
@@ -142,23 +145,20 @@ project's merge-gate guardrail: an open PR is guidance, not a receipt, until it 
   Phase-0 re-measure** on a real large TS repo before citing a specific wall-clock number in a
   benchmark claim or PR -- "the mechanism is closed" and "I have re-confirmed the number on my
   reference repo" are different claims; S3 Phase 0 gives the exact command.
-- **#390 — daemon-path deadline gap -- narrowed by #478, still OPEN.** The `_from_map` builders
-  that operate on a cached session `repo_map` are inconsistently bounded, AND the daemon
-  (`session_store.py`) call sites for the commands it does route never pass a deadline at all --
-  two separate gaps. VERIFY per command:
-  `build_symbol_callers_from_map` (`repo_map.py:13777`) **does** take `deadline_monotonic`;
-  `build_symbol_impact_from_map` (`repo_map.py:14608`) **now also accepts a
-  `deadline_monotonic` parameter as of #478** (it genuinely did not before) -- but that closed
-  only the builder-side plumbing gap (candidate (c)'s prerequisite), not the daemon path
-  itself: `session_store.py`'s `_dispatch_session_command`-style handlers call both
-  `build_symbol_impact_from_map` (`session_store.py:1267`) and `build_symbol_callers_from_map`
-  (`session_store.py:1289`) **without ever passing `deadline_monotonic`**, confirmed by reading
-  those call sites directly -- so a daemon-served `impact`/`callers` query on a cached session
-  map is still unbounded for the part it computes, regardless of what the CLI-path `--deadline`
-  flag would have done. The #478 design doc explicitly scoped `session_store.py` OUT ("do NOT
-  touch session/daemon territory... Fixes B/C/D are correct no-ops there") -- closing #390 for
-  real is threading an actual deadline value through those two call sites, which is now a
-  smaller remaining PR than it was before #478 (the builder already accepts the parameter).
+- **#390 — daemon-path deadline gap — CLOSED (task #203, shipped #647/#652/#653, v1.81.2-.4).**
+  This was **framed OPEN in earlier passes of this skill — that framing is now STALE and risks a
+  future session re-implementing already-shipped code.** Verify directly rather than trusting
+  either framing: `session_store.py` (the daemon's request-dispatch module) now threads a real
+  `deadline_monotonic` value into its `build_symbol_impact_from_map` (`session_store.py:1276`) and
+  `build_symbol_callers_from_map` (`session_store.py:1317`) call sites — the code comment at
+  `session_store.py:1311-1315` states explicitly: *"the exact #390 daemon-path shape this task
+  (#203) closes."* The same threading was extended to `refs`/`blast-radius`/`file_importers`
+  (search `session_store.py` for `WARM_DAEMON_DEFAULT_DEADLINE_SECONDS` to see every site). A
+  daemon-served graph query on a cached session `repo_map` is now bounded the same way a fresh
+  CLI invocation is — the #478 design doc's explicit "session/daemon territory out of scope" carve-out
+  from **Candidate (c)** below has since been executed as its own follow-up, not left open.
+  **Candidate (c) below is retained as the historical solution-menu entry that predicted this fix's
+  shape, not as an open task — do not re-propose closing #390 as new work.**
 - **Default budget.** The native-walk bound reuses `configured_ripgrep_timeout_seconds()`,
   which now defaults to **60 s** (`subprocess_policy.py:44`, was 600 s). `AGENTS.md:184`
   still narrates the pre-#400 "600 s" symptom — that doc lags; the resolver is the source of
@@ -281,21 +281,18 @@ If Phase 1 shows re-parses that #396's caches miss, widen coverage.
 - Caching bounds the *common* case but does **not** bound a pathological single file —
   ship it WITH candidate (a), not instead of it.
 
-#### Candidate (c) — close the #390 daemon-path deadline gap (NARROWED by #478, still open)
-Thread an actual `deadline_monotonic` value through the `session_store.py` daemon call
-sites so a daemon-served query on a cached map is still bounded. **The builder-side
-prerequisite is now done:** `build_symbol_impact_from_map` (`repo_map.py:14608`) gained a
-`deadline_monotonic` parameter via #478's Loop C -- the design doc explicitly scoped
-`session_store.py` itself OUT of that PR. What remains is strictly the call-site wiring:
-`session_store.py:1267` (`build_symbol_impact_from_map`) and `session_store.py:1289`
-(`build_symbol_callers_from_map`) both currently call these builders with no
-`deadline_monotonic` argument at all.
-- **Obligation:** the daemon serves from a **cached** `repo_map`, so `build_repo_map`'s
-  deadline never fires; the bound must live in the per-symbol traversal (now available on
-  the impact builder; already available on the callers builder). Decide where the deadline
-  value itself comes from for a daemon request (a new request field? a fixed server-side
-  cap?) and verify the daemon path actually reaches the bounded code (dogfood via the
-  running daemon, not just the in-process function). Separate gate from #52 — a distinct PR.
+#### Candidate (c) — close the #390 daemon-path deadline gap — SHIPPED (task #203, #647/#652/#653, v1.81.2-.4); retained here as historical record, not an open candidate
+This entry correctly predicted the shape of the eventual fix and is kept for that reason, but the
+work itself is DONE — do not re-propose it as new. What actually shipped: `session_store.py`'s
+daemon call sites (`build_symbol_impact_from_map` at `session_store.py:1276`,
+`build_symbol_callers_from_map` at `session_store.py:1317`, plus `refs`/`blast-radius`/
+`file_importers` siblings) now pass a real `deadline_monotonic` value
+(`WARM_DAEMON_DEFAULT_DEADLINE_SECONDS`-derived) into every builder call — exactly the call-site
+wiring this candidate originally scoped as the remaining work after #478's builder-side prerequisite.
+See S2 above for the closing citation (`session_store.py:1311-1315`'s own code comment names task
+#203 as the closer). If a NEW daemon-served command is added in the future, use this shipped pattern
+as the template — thread `deadline_monotonic` at the call site, mirroring the sibling commands in
+the same file, rather than assuming the daemon path is unbounded by default going forward.
 
 #### Candidate (d) — replace the regex/slow TS parse with tree-sitter (HIGHEST RISK — fenced)
 Only if (a)+(b)+(c) leave the parse itself as the irreducible hotspot.
@@ -448,13 +445,12 @@ question. Re-run these when a claim may have drifted; date-stamp any change.
   also `grep -n "CALLER_SCAN_FILE_CEILING\|DEFAULT_AGENT_REPO_MAP_LIMIT" src/tensor_grep/cli/repo_map.py`
   to confirm the two constants are still deliberately decoupled (2000 map limit / 512 caller-scan
   ceiling).
-- **#390 daemon gap:** `grep -n "def build_symbol_.*_from_map" src/tensor_grep/cli/repo_map.py`
-  then check which take `deadline_monotonic` (callers: yes, `repo_map.py:13777`; impact: yes as
-  of #478, `repo_map.py:14608`/`:14613` -- this flipped from the prior "impact: no"). Then check
-  whether the gap is actually closed by grepping the DAEMON call sites, not just the builder
-  signature: `grep -n "build_symbol_impact_from_map\|build_symbol_callers_from_map" src/tensor_grep/cli/session_store.py`
-  -- as of this writing neither call passes `deadline_monotonic`, so #390 stays open at the
-  daemon layer even though the builder-side blocker is gone.
+- **#390 daemon gap — CLOSED, verify the daemon call sites directly, not just the builder
+  signatures:** `grep -n "deadline_monotonic" src/tensor_grep/cli/session_store.py` should show
+  `WARM_DAEMON_DEFAULT_DEADLINE_SECONDS`-derived values threaded into `build_symbol_impact_from_map`
+  (`session_store.py:1276`), `build_symbol_callers_from_map` (`session_store.py:1317`), and the
+  `refs`/`blast-radius`/`file_importers` siblings — read the code comment directly above each call
+  site, which names task #203 as the closing fix.
 - **Native-walk bound + default budget:** `grep -n "native_walk_deadline\|compute_native_walk_deadline" src/tensor_grep/backends/cpu_backend.py`;
   `grep -n TG_RG_TIMEOUT_SECONDS src/tensor_grep/cli/subprocess_policy.py` (default 60 s, not the
   pre-#400 600 s `AGENTS.md:184` still narrates as the historical symptom).
@@ -464,11 +460,10 @@ question. Re-run these when a claim may have drifted; date-stamp any change.
 - **Profiling / parity harness:** `ls benchmarks/run_ast_parity_check.py benchmarks/check_regression.py`; `grep -n "class _ProfileCollector" src/tensor_grep/cli/repo_map.py`.
 
 **Open / candidate (not settled — do not present as done):**
-- **#390 (daemon gap) is OPEN, narrower than before** — the builder-side blocker
-  (`build_symbol_impact_from_map` lacking `deadline_monotonic`) is now fixed by #478, but
-  `session_store.py`'s daemon call sites still pass no deadline to either `_from_map` builder
-  they use (confirmed above) -- closing it now means wiring those two call sites, not fixing the
-  builders.
+- **#390 (daemon gap) is CLOSED, not open** — task #203 (#647/#652/#653, v1.81.2-.4) threaded
+  `deadline_monotonic` through every `session_store.py` daemon call site that #478 had explicitly
+  left out of scope. Do not re-list this as open work; if you find a NEW daemon-served command
+  missing the same threading, that is a fresh, narrower finding, not a reopening of #390 itself.
 - **#52 is CLOSED** — PR #478 (`67f9779`, shipped v1.54.3) bounded the four residual unbounded
   loops (S1/S2) that #396/#440/the `CALLER_SCAN_FILE_CEILING` chokepoint alone left live. Still
   do a one-time fresh Phase-0 re-measurement on a real large TS repo before citing a specific

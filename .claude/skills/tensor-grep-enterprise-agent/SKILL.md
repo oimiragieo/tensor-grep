@@ -1,66 +1,55 @@
 ---
 name: tensor-grep-enterprise-agent
-description: Use when designing or evaluating tensor-grep as an enterprise agentic code-intelligence tool — PATH narrowing for complete graphs, EvidenceReceipts, codemap, multi-repo workspaces, accuracy gates, and world-class readiness gaps.
+description: Use when designing or evaluating tensor-grep as an enterprise agentic code-intelligence tool — tg prepare one-call edit readiness, PATH narrowing, agent --deadline, find/route-test/ledger, install-dense, EvidenceReceipts, review-bundle, GPU honesty, world-class readiness gaps.
 ---
 
 # tensor-grep for enterprise agents
 
-Verified against **tg 1.71.1** (2026-07-13 workspace dogfood on `/mnt/c/dev/projects`).
+Verified against **tg 1.93.2** (last full WSL workspace+GPU dogfood 2026-07-21 at v1.91.0; individual
+gaps below re-verified against the shipped v1.91.1-v1.93.2 line, not a re-run whole-workspace sweep).
 
-## Guidance (updated)
+## Guidance
 
-- **Prefer `REPO/src` (or package root) for `tg agent` latency.** Whole-repo agent works NATIVELY (~26s on tensor-grep, exit 0, valid capsule); the 75s WSL `/mnt/c` timeout is a 9p-latency artifact (reproduce natively before calling it a regression), NOT a v1.71.1 native regression.
-- **For exhaustive callers, use `REPO/src`.** Root often returns `partial` with empty callers and exit 2.
-- Workspace `tg orient .` works (~53s) but per-repo orient is faster (~24s).
-- Multi-project workspace search is **refused in ~1s** unless scoped (`--glob` / `--type` / `--max-depth`) or `--allow-broad-generated-scan`.
-- Built-in `tg scan --ruleset` works again on WSL; still check stderr for skipped-path warnings.
-
-## Shipped toolkit
-
-| Job | Command |
-| --- | --- |
-| Orient | `tg orient REPO --ignore … --json` |
-| Ranked search | `tg search PATTERN REPO --rank --json` |
-| Scoped workspace search | `tg search PATTERN . --glob "*.py" --max-depth N --json` |
-| File deps | `tg imports` / `tg importers` (absolute paths) |
-| Agent capsule | `tg agent REPO/src "task" --json` |
-| Callers / blast | `tg callers REPO/src SYMBOL --deadline 15 --json` |
-| Evidence | `tg evidence emit REPO --capsule … --json` |
-| Session cache | `tg session open` → `context-render` |
-| Ruleset scan | `tg scan --ruleset auth-safe --path REPO/src --json` |
-| Browsable map | `tg codemap REPO --out /tmp/code-map` (slow; optional) |
+- **Default edit gate:** `tg prepare REPO/src "task" --json` (replaces orient→agent→route-test→callers→evidence argv guessing). Use `--claim` when multi-agent coordination is needed; use `--out FILE` to persist the capsule for `tg evidence emit --capsule FILE` with no manual save.
+- Prefer `REPO/src`. Whole-repo: `tg prepare|agent REPO --deadline N` → expect partial / ask_user.
+- Do not trust bare cold-path default alone on WSL (`tg agent REPO` still empty TIMEOUT @75s).
+- Dense find: run `tg install-dense` once per machine (never auto); then `tg find`. Every dense-absent hint across the CLI now leads with `tg install-dense`.
+- Ledger remains advisory — see `tensor-grep-ledger`. Claim/release/list now canonicalize to the nearest `.git` ancestor (worktree-aware); the PATH-mismatch footgun from 1.92.1-era dogfood is fixed.
+- Skip `tg codemap` on WSL. GPU inventory ≠ acceleration; the WSL bare-shim cross-domain misclassification that produced a bogus `path_not_found` is fixed (v1.93.0).
 
 ## Hard stops
 
-1. `ambiguity.status == tie_requires_confirmation`
-2. `partial` / `result_incomplete` / exit `2` on graph cmds (incomplete ≠ absent)
-3. Unscoped workspace search (now fail-fast refuse — still a hard stop unless scoped/opt-in)
-4. Whole-repo / mega-tree `tg agent` timeouts — narrow PATH before raising budgets
-5. Treat `tg scan` path-skip warnings as coverage loss
+1. `ask_user_before_editing.required`
+2. Full-coverage claims on `partial` / exit `2`
+3. Unscoped workspace search refuse
+4. GPU promotion without `search_ready`
+5. `review-bundle create` without `--manifest`
+6. `route-test.agreement == false` (when not using prepare's floor)
+7. Treating ledger overlaps as hard locks
 
 ## Enterprise gaps (`world_class_readiness = not_claimed`)
 
-| Gap | 1.71.1 status |
+| Gap | v1.93.2 status |
 | --- | --- |
-| Unscoped multi-root refuse | **Fixed** (fast exit 2 + remediation text) |
-| Cross-OS / WSL `scan` runnable | **Mostly fixed** (PASS; residual path-skip warnings) |
-| Whole-repo agent (native) | **OK** (~26s on tensor-grep, exit 0); WSL `/mnt/c` amplifies to 75s = 9p artifact, not a native regression |
-| Large JS/TS agent trees | Open — `agent-studio` slow on WSL; needs NATIVE repro before claiming a real timeout |
-| Complete callers at repo root | Still prefer `src/` |
-| `codemap` agent-loop-safe | **Fixed** (#153 deadline; native ~41s whole-repo, bounded/partial) |
-| Agent accuracy gate (top-k / MRR / false-primary) | Missing |
-| GPU promotion / LSP proof | Experimental / not claimed -- GPU Phase-0 SHIPPED v1.75.0-v1.75.4 (native assets locally correctness-proven, gated off the public release behind `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE`), but no speed crossover is proven vs `rg`/`tg_cpu` and `public-gpu-proof.yml` remains unmet (`docs/gpu_crossover.md`) |
-| Cold text search vs `rg` claims | `rg` remains baseline |
+| Whole-repo agent/prepare default deadline reliability | Open (explicit deadline partial OK; bare agent TIMEOUT) |
+| CUDA-native GPU promotion | Open (adjudicated HOLD, #169 CEO-gated; kernel is brute-force byte-compare, not PFAC) |
+| `codemap` on WSL | Open (TIMEOUT) |
+| Mega-repo auto-narrow + accurate deadline primaries | Partial (`suggested_scope`/`workspace_root_detected` shipped, #684; deadline-primary accuracy still open) |
+| Unscoped-search fast-refuse on the default flag-less path | **Shipped** (A9; generic 1500-file ceiling, ~1.7s, all 3 doors) |
+| Dynamic-import / blast-radius decoy honesty | **Shipped** (A10/A15; `dynamic_unresolved` excluded from forward/reverse resolution and the blast-radius scoring prefilter) |
+| One-call prepare CUJ | **Shipped** (prefer `src/`; `--out FILE` persists the capsule) |
+| Packaged dense semantic | **Shipped via `install-dense`** (opt-in, once; every dense-absent hint now leads with it) |
+| Ledger → CI / review-bundle bridge | Partial — `review-bundle --receipt`/`--against` CI gate chain shipped (#681); ledger itself stays advisory, not wired into a CI gate |
+| Agent accuracy gate | **Shipped** (`tests/eval/test_agent_accuracy.py`, per-task-pinned, 16/16 golden tasks — the loop-4 measurement instrument that surfaced and fixed #250) |
+| Beat-`rg` cold search + LSP proof | Open |
 
 ## Recommended loop
 
 ```bash
-tg doctor --json REPO
-tg orient REPO --ignore "node_modules/**" --json
-tg search "intent" REPO --rank --json
-tg agent REPO/src "task" --json > /tmp/capsule.json
-tg evidence emit REPO --capsule /tmp/capsule.json --query "task" --json --agent-id "$AGENT_ID"
-tg callers REPO/src SYMBOL --deadline 15 --json
-SID=$(tg session open REPO --json | jq -r .session_id)
-tg session context-render "$SID" REPO "task" --json
+tg install-dense --json   # once per host
+tg prepare REPO/src "task" --out /tmp/prep.json --json
+# if ask_user / partial: narrow PATH or raise --deadline; do not edit yet
+# optional: tg prepare REPO/src "task" --claim --json
+# then edit from primary_target; run validation_commands; optionally:
+tg evidence emit REPO --capsule /tmp/prep.json --query "task" --json --agent-id "$AGENT_ID"
 ```

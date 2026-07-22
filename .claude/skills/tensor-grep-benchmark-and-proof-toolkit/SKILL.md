@@ -51,7 +51,7 @@ Five corollaries, all stated in AGENTS.md:
 | GPU / NLP backend (`--gpu-device-ids`, CyBERT) | `benchmarks/run_gpu_benchmarks.py` (Python sidecar scale/correctness) or `benchmarks/run_gpu_native_benchmarks.py` (native CUDA crossover) | GPU is experimental — see the GPU section below before trusting any GPU number |
 | context-render / edit-plan latency | `benchmarks/run_context_render_benchmarks.py` | editor-plane latency, not search speed |
 | blast-radius latency | `benchmarks/run_blast_radius_benchmarks.py` | impact-analysis latency |
-| repo-map / retrieval quality (not speed) | `benchmarks/run_repo_retrieval_benchmarks.py` | recall/precision/MRR/nDCG/F1/token-budget, a quality metric, not a timing one |
+| repo-map / retrieval quality (not speed) | `benchmarks/run_repo_retrieval_benchmarks.py` | recall/precision/MRR/nDCG/F1/token-budget, a quality metric, not a timing one — **caveat (2026-07-21): this script is a STATIC-FIXTURE REPLAY that never calls `chunk_file`/`rank_chunks`, so it cannot detect a chunker or dense/RRF-weighting change at all.** For anything chunker- or ranking-sensitive (cAST, `TG_FIND_DENSE_WEIGHT`, RRF channels), use the sibling `benchmarks/eval_late_rerank_quality.py` instead — see `tensor-grep-semantic-search-campaign` |
 | `tg find` / `tg_find` ranking, `TG_FIND_DENSE_WEIGHT`, RRF channels, chunker, late-rerank | `benchmarks/eval_late_rerank_quality.py` | quality gate (ndcg@10/recall@10) on the NL golden set + literal/identifier golden slices — NOT a speed benchmark; see `tensor-grep-semantic-search-campaign` STATUS UPDATE 2 |
 | tokens-per-correct-answer / token-economy (the moat metric — CANDIDATE, not yet a committed script, gated on #72) | none committed yet — see "6. Token-economy" below | a task-level cost metric (tokens spent to reach a correct answer, oracle-validated), not a latency metric — do not conflate with any row above |
 
@@ -265,6 +265,22 @@ launcher modes side by side (as the roadmap-1 control-plane probes in `docs/benc
 each row with its `tg_launcher_mode`/`tg_launcher_command_kind` explicitly and state which one is the
 control-plane experiment vs. the accepted baseline — do not average them.
 
+### Large-file benchmarks route through TWO different engines — disclose which one (A3, v1.91.3/#695)
+
+`NativeCpuBackend` is not one code path for benchmarking purposes. `rust_core/src/native_search.rs`
+is the **default streaming** route, deliberately kept SERIAL and held to a tested ≥25ms first-match
+latency contract. `rust_core/src/backend_cpu.rs` is a **separate PyO3/FFI fallback** route, reached
+only when the search doesn't go through the primary native front door — this is where #695 shipped
+intra-file `rayon` parallel search, gated to files **≥50MiB**, byte-identical to the serial result.
+A large-file (e.g. the 200MB row referenced in the worked example above) benchmark artifact can hit
+EITHER engine depending on how the search was dispatched, and a number produced by one is not
+evidence for the other. **Mirror the launcher-attribution discipline above**: before citing a
+large-file timing as evidence of a change, confirm (don't assume) which of the two files the run
+actually exercised — a `backend_cpu.rs` parallel-search improvement and a `native_search.rs` streaming
+number are not interchangeable, and blending them the way a `.cmd`-shim timing gets blended into a
+native-exe number would produce the same class of misleading artifact this section exists to prevent.
+See `tensor-grep-architecture-contract`'s Native-vs-Python routing section for the full split.
+
 ### Regression gate mechanics you must understand before reading a red/green result
 
 `check_regression.py` (full flow: `benchmarks/check_regression.py:39-146`):
@@ -349,6 +365,19 @@ non-gating: `thresholds.large_file_200mb_fixed_multi_pattern_rows_are_diagnostic
 sequential-`rg` framing, and `docs/benchmarks.md` records it as "still failed the credibility bar
 against the fair baseline" rather than as an accepted win.
 
+**UPDATE (2026-07-21, #251/#694) — "the code is still correct" is now FALSIFIED for the many-pattern
+delegation path; re-read this worked example with that correction in mind.** A live dogfood on the
+SAME 100-pattern many-pattern path reproduced a real dedup over-count in the fast native Aho-Corasick
+delegation route: `total_matches: 3` where the rg-correct answer is `2` (one line matching two
+different patterns from the set is counted once per `(line, pattern)` pair instead of once per line).
+PR #694 shipped a guard test that reproduces and pins the CURRENT wrong behavior (not a fix), and the
+many-pattern fast path is deliberately blocked from delegation until the real fix lands — native dedup
++ FFI-level correctness work, banked as a moat-investment option (task-store `#255`, not a GitHub
+issue). This does not change the fair-baseline SPEED verdict above (Aho-Corasick is still slower than
+fair `rg` regardless), but it means the CORRECTNESS half of "the code is still correct, just not fast
+enough" is no longer true — treat any future many-pattern count from this path as suspect until the
+dedup bug is fixed. Full detail: `tensor-grep-failure-archaeology` Battle 21.
+
 **The reusable lesson**: when you batch/amortize N operations into one pass, benchmark against the
 comparator's *own* batched primitive if it has one (`rg -F -e ... -e ...`, not N `rg` calls) — a
 sequential-loop strawman will make almost any batching change look like a win. Ship the code if it's
@@ -367,7 +396,11 @@ the row diagnostic (not release-gating) until it actually beats that number.
 - [ ] For any row under ~10ms, verified there is an absolute-seconds tolerance, not a bare percentage
       gate.
 - [ ] For any multi-pattern/batched claim, compared against the comparator's own batched primitive,
-      not a sequential-loop strawman.
+      not a sequential-loop strawman — and did not cite a many-pattern match COUNT as correct without
+      checking the known live dedup over-count bug (#694) first.
+- [ ] For any large-file claim, confirmed WHICH engine the run hit (`backend_cpu.rs` PyO3/FFI
+      ≥50MiB rayon path vs `native_search.rs` default streaming-serial path) — the two are not
+      interchangeable evidence.
 - [ ] For any GPU claim, confirmed `gpu_proof`/`native_gpu_unavailable`/`sidecar_used` fields show a
       real native route, not CPU/sidecar fallback wearing a GPU label.
 - [ ] `check_regression.py` exit code is 0, or the regression is explicitly accepted and recorded in
@@ -379,7 +412,11 @@ the row diagnostic (not release-gating) until it actually beats that number.
 
 Facts here re-verified at tensor-grep **v1.49.3** (2026-07-08); the §6 P4 close-out, the new §7
 `tg find` retrieval-quality section, and the decision-table row were added and verified **v1.78.1**
-(2026-07-16) — the rest was not re-walked in this pass. Re-verify before trusting a stale number:
+(2026-07-16); **v1.93.2** (2026-07-22) added the B-many-pattern dedup-bug caveat to the worked example
+(the "code is still correct" framing is now falsified for that path, #694), the static-replay caveat
+on the `run_repo_retrieval_benchmarks.py` decision-table row, and the A3 large-file
+`backend_cpu.rs`-vs-`native_search.rs` disclosure hazard — the rest was not re-walked in this pass.
+Re-verify before trusting a stale number:
 
 - Script inventory / artifact paths drift: `grep -n "| .* | \`benchmarks/run_" docs/benchmarks.md`
   or re-read the "Benchmark Matrix" table.

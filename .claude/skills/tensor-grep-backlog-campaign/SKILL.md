@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-backlog-campaign
-description: Use when asked to deep-dive, audit, fix, or drain tensor-grep backlog — OR investigate/rank next work and produce SPEC/TDD plans (docs/plans/requirements|design|tasks-*.md) without implementing. Triggers: "work the backlog", "what next", "investigate and plan", backlog-completion campaign. META-ORCHESTRATOR — 20-skill library. Semantic-search flagship: tensor-grep-semantic-search-campaign. Scale/hang campaign: tensor-grep-large-repo-scale-campaign. Load tensor-grep-change-control before edit.
+description: Use when asked to deep-dive, audit, fix, or drain tensor-grep backlog — OR investigate/rank next work and produce SPEC/TDD plans (docs/plans/requirements|design|tasks-*.md) without implementing. Triggers: "work the backlog", "what next", "investigate and plan", backlog-completion campaign. META-ORCHESTRATOR — 26-skill library. Semantic-search flagship: tensor-grep-semantic-search-campaign. Scale/hang campaign: tensor-grep-large-repo-scale-campaign. Load tensor-grep-change-control before edit.
 ---
 
 # tensor-grep backlog campaign
@@ -87,7 +87,7 @@ Executive summary · evidence · skills used · tools (gaps only) · plan pointe
 7. **Plans are hypotheses** — `verify-plan-against-code` BEFORE multi-file dispatch; `subagent-verification-workflow` + `worktree-fanout-verification-gate` AFTER.
 8. **Never trust a self-report** — re-run verification gates yourself in the real venv; worktree/subagent "tests pass" is a hypothesis.
 9. **Draft-PR-only autonomy** — endpoint is a draft PR a human merges. Never auto-merge.
-10. **WIP CAP (2026-07-08 receipt)** — do NOT dispatch a new BUILD while **>5 PRs are undrained** OR the **main gate is red**. Generating fixes faster than the ~40–66 min/publish drain empties the queue produces "churning, not completing" (backlog stays constant-size while PRs pile up). Design fork: complete-then-start, not start-then-hope. A red main gate is a drop-everything hotfix that jumps the queue ahead of any new build. Check `gh pr list` count and `gh run list --branch main` conclusion before authorizing a new fan-out. **Build-vs-merge decoupling:** the WIP cap and one-merge-per-tick both gate *merge* timing, not when work may *start* -- a PR sequenced "after vX publishes" purely for a CODE-COLLISION reason (it touches the same file, or wants vX's already-merged code as its base) may branch and build off the just-merged `main` in parallel with an in-flight release; only the final merge stays gated. This saves ~40 min/PR across a campaign. See `tensor-grep-change-control` Part 7 for the full pattern (named after merge-queue/speculative-CI, release-train, and build-once-promote-everywhere).
+10. **WIP CAP (2026-07-08 receipt)** — do NOT dispatch a new BUILD while **>5 PRs are undrained** OR the **main gate is red**. Generating fixes faster than the ~40–66 min/publish drain empties the queue produces "churning, not completing" (backlog stays constant-size while PRs pile up). Design fork: complete-then-start, not start-then-hope. A red main gate is a drop-everything hotfix that jumps the queue ahead of any new build. Check `gh pr list` count and `gh run list --branch main` conclusion before authorizing a new fan-out. **Build-vs-merge decoupling:** the WIP cap and one-merge-per-tick both gate *merge* timing, not when work may *start* -- a PR sequenced "after vX publishes" purely for a CODE-COLLISION reason (it touches the same file, or wants vX's already-merged code as its base) may branch and build off the just-merged `main` in parallel with an in-flight release; only the final merge stays gated. This saves ~40 min/PR across a campaign. See `tensor-grep-change-control` Part 7 for the full pattern (named after merge-queue/speculative-CI, release-train, and build-once-promote-everywhere). **Batch-merge exception (C-batch, v1.93.0/#703-706):** several INDEPENDENTLY already-CI-green PRs may land ~15-20s apart in one tight window and still produce ONE combined, fully-published release — this is not a WIP-cap or one-merge-per-tick violation, provided the operator watches the LAST run in the sequence to full completion (intermediate `cancelled`/rejected-push runs are benign). Do not confuse a monitored rapid batch with an accidental push-race collision (the v1.17.23/#318/#319 incident) — the discipline is watching the final run through, not merging blind. Full mechanism + the v1.93.0 receipt: `tensor-grep-change-control` Part 7 (C-batch).
 11. **Mandatory adversarial security gate before merge** — every security-class PR (`apply_policy` / `mcp_server` / `cpu_backend` / `index_lock`/`session_daemon` / auth / money / migration / **native asset, installer, or doctor-probe construction**) gets an adversarial "try-to-BREAK-it, cite `file:line`, default FIX-FIRST-if-uncertain" review **before merge**, in addition to (not instead of) the mandatory `codex` gate below. This is not a rubber stamp: on the 2026-07-08 session it returned SHIP on 3 PRs and caught real issues on 2 — a symlink-follow RCE bypass (`.resolve()` followed the symlink; fixed with `os.path.abspath`) and a lock-release TOCTOU (accepted-as-documented after proving a heartbeat thread makes it unreachable). The native-asset/installer/doctor-probe addition is the v1.75.2/v1.75.3 GPU Phase-0 precedent -- PR #596 (P0-5, loud nvidia-to-cpu installer downgrade) was held in draft with an explicit "Opus gate pending before merge" per its council-reviewed plan, because a silent wrong-flavor install or a misleading `doctor` probe status is a security-relevant integrity failure, not a UX nit. `codex` is the nominal 2nd-vendor tool but its WSL path is unreliable on this box — an Opus **Agent** subagent (`model: opus`) is the reliable substitute when `codex` is dead, not a reason to skip the gate. Verdict shape: `SHIP` | `FIX-FIRST(+file:line+repro+minimal-fix)`.
 
 ---
@@ -119,10 +119,17 @@ Executive summary · evidence · skills used · tools (gaps only) · plan pointe
 | 17 | `tensor-grep-large-repo-scale-campaign` | Hang/scale-honesty: unscoped-search refusal, `--deadline` end-to-end, exit-2 partial contract |
 | 18 | `tensor-grep-enterprise-agent` | Enterprise agentic readiness gaps -- EvidenceReceipts, codemap, multi-repo workspaces |
 | 19 | `tensor-grep-workspace-dogfood` | Stress-test against a multi-project workspace (monorepo parent, many languages) |
-| 20 | `tensor-grep-backlog-campaign` | This skill — the meta-orchestrator itself |
+| 20 | `tensor-grep-prepare` | One-call edit readiness (`tg prepare`) |
+| 21 | `tensor-grep-ledger` | Advisory multi-agent claim/finding-reuse (`tg ledger`) |
+| 22 | `tensor-grep-find-and-route` | Whole-repo hybrid find + route-test (`tg find` / `tg route-test`) |
+| 23 | `tensor-grep-multi-project-search` | Scoped cross-repo search in a workspace-parent root |
+| 24 | `tensor-grep-enterprise-review-bundle` | `review-bundle create/verify` + CI-gate chain |
+| 25 | `tensor-grep-gpu` | Experimental GPU probes (devices/doctor, `--gpu-device-ids`) |
+| 26 | `tensor-grep-backlog-campaign` | This skill — the meta-orchestrator itself |
 | — | `tensor-grep` + `REFERENCE.md` | **Using** `tg` to navigate any repo |
 
-**This skill** = meta-orchestrator for generic backlog drain (skill #20 of the library it indexes).
+**This skill** = meta-orchestrator for generic backlog drain (skill #26 of the library it indexes, up
+from #20 as of the 2026-07-22 session-capture — 6 new registrations, #20-25 above).
 **Semantic-search flagship → #13**, not here. **Scale/hang campaign → #17**, not here.
 
 **Also load:** `tensor-grep` (usage), global `~/.claude/skills/` (`verify-plan-against-code`, `dogfood-the-shipped-artifact`, …). **NO `docs/skill_index.md`** — use `AGENTS.md` skills section + table above.
@@ -238,6 +245,25 @@ Arm it with the `loop` skill (`/loop 30m <the one-shot prompt below>`) or an equ
 scheduler — never a backgrounded `&` shell loop. Cadence **~30 min** matches the achievable
 ~1-PR-per-publish rate (a release-bearing merge's own wait window is ~40–66 min, so firing much
 faster than that just re-checks a still-in-flight release).
+
+**`/loop` vs `CronCreate` — pick based on how long the drain needs to survive, not habit.** `/loop`
+is **session-bound**: it stops firing the moment the current session ends (context compaction, a
+crash, the user closing the terminal) — fine for a drain you expect to finish within one sitting, but
+it silently dies on anything longer. `CronCreate` schedules a job that **survives session end and a
+process crash**, re-arming on its own cron schedule independent of whether this session is still
+alive — the right choice for a multi-hour/multi-day drain campaign. **Whichever you use, re-verify it
+is still armed at the start of a NEW session** (a session-scoped `/loop` from a prior session is
+already dead; a `CronCreate` job persists but its id/schedule should still be confirmed via a listing
+call, not assumed from a stale note — see the Steward-cron caution below).
+
+**Event-driven alternative to blind polling: `gh run watch <run-id> --exit-status` (or the `Monitor`
+tool) beats a fixed cadence for latency-sensitive waits.** The 30-min cadence above is sized for
+*drain* throughput (don't check faster than a release can possibly finish), but if you specifically
+need to know the MOMENT one release finishes (to chain the next action immediately rather than wait
+out to the next cron tick), block on the run directly instead of polling on a timer — `gh run watch`
+returns as soon as the run's conclusion is known, and `Monitor` gives the same event-driven wakeup for
+a backgrounded process. Use the cadence-based cron for the drain loop itself; use the event-driven
+watch for "tell me the instant this ONE release publishes so I can act."
 
 **One-shot logic per fire** (pseudocode; adapt the `gh` calls to the live PR queue):
 
@@ -419,13 +445,17 @@ Process/orchestration facts re-verified **2026-07-08** against **v1.49.3** (`pyp
 v1.75.4** (see the docs-accuracy PR that added this note); the **Steward-cron line was de-hardcoded
 2026-07-16 against v1.78.1** after three sources (this file, MEMORY.md, a handoff note) were each
 found citing a different stale cron id/schedule — the session-scoped nature of the tick means any
-recorded id is a landmine, not a fact to stamp. This skill has no pinned `file:line` code
-citations of its own to drift — it indexes the 20-skill library, which DOES carry code citations;
-re-verify the count with `ls .claude/skills | grep -c '^tensor-grep-'` (expect **19** -- 19 of the
-table's 20 numbered rows are `tensor-grep-*`-named; `code-search-and-retrieval-reference` (row 5) is
-the one row that doesn't match that grep pattern, so 19 + 1 = the 20 numbered library rows; the bare
-`tensor-grep` dash-row is a 21st folder on disk, intentionally not counted in the "20 skills" figure
-since it's usage-docs for the tool itself, not a library entry) before trusting the "20 skills" stamp
+recorded id is a landmine, not a fact to stamp; the **skill-count table was re-verified again
+2026-07-22 against v1.93.2**, registering 6 new skills (`tensor-grep-prepare`, `tensor-grep-ledger`,
+`tensor-grep-find-and-route`, `tensor-grep-multi-project-search`, `tensor-grep-enterprise-review-bundle`,
+`tensor-grep-gpu`) and adding the C-batch batch-merge exception + the `/loop`-vs-`CronCreate`
+reconciliation. This skill has no pinned `file:line` code
+citations of its own to drift — it indexes the library, which DOES carry code citations;
+re-verify the count with `ls .claude/skills | grep -c '^tensor-grep-'` (expect **25** -- 25 of the
+table's 26 numbered rows are `tensor-grep-*`-named; `code-search-and-retrieval-reference` (row 5) is
+the one row that doesn't match that grep pattern, so 25 + 1 = the 26 numbered library rows; the bare
+`tensor-grep` dash-row is a 27th folder on disk, intentionally not counted in the "26 skills" figure
+since it's usage-docs for the tool itself, not a library entry) before trusting the "26 skills" stamp
 on a later session. Process
 receipts dated 2026-07-08 (WIP CAP, adversarial security gate, resume-from-transcript, don't-kill-
 on-staleness, harvest pattern, self-firing drain-cron) come from the same session's `session_learnings`

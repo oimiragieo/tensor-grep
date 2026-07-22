@@ -249,6 +249,27 @@ as the format to copy:
   §3.8). A correctness/strategy retirement, not a speed one.
 - A whole list of **"correct but slower"** posting/decode/cache micro-optimizations that "looked
   mathematically plausible but lost empirically" (`docs/PAPER.md` §3.10 "Important rejected candidates").
+- **cAST structural chunking as the default chunker** (2026-07-21, #251) — net-wash retrieval quality,
+  24.4x slower, ~38% bigger chunks vs the shipped line-window `chunk_file` (`docs/PAPER.md` §3.10, item
+  8; `tensor-grep-failure-archaeology` Battle 17).
+- **GPU-accelerated text search** (adjudicated HOLD, 2026-07-21, #251) — no crossover at any measured
+  scale; the shipped kernel is a brute-force byte-compare, not PFAC (`docs/PAPER.md` §3.10, item 9;
+  `tensor-grep-failure-archaeology` Battle 20).
+
+**Worked example — the B-META "5/5 mirage" (2026-07-21, #251): a whole RESEARCH PASS as one Test A/Test
+C application, not just one idea.** A CEO deep-research directive produced a 6-item steal-list of
+candidate "cheap wins" from papers/prior-art. Applying this skill's Test A (does the mechanism survive
+every observation, including the disconfirming ones) and Test C (does it survive an adversarial,
+citation-enforced check against the real code) to EVERY item at once — rather than to one idea in
+isolation — is what this skill's evidence bar looks like run at portfolio scale. The result: 5 of 6 came
+back negative/big-refactor/secondary-path once verified against real code and real measurements (cAST
+chunking, dense-int8 compression, a warm-session search shortcut, GPU-for-search, and a many-pattern
+"code is still correct" framing that turned out to be a live dedup bug), and 2 of 6 unrelated dogfood-ask
+items in the same pass turned out to be ALREADY-SHIPPED features whose real defect differed from the
+report. **The 5/5-negative result IS the deliverable of a properly-run research pass** — a steal-list
+that returns "no, and here is the `file:line` evidence why" for every item is a successful verification
+pass, not a wasted one; the alternative (building 5 negative results) would have cost real cycles for
+zero durable value. Full per-item verdicts: `tensor-grep-failure-archaeology` Battles 17-22.
 
 The discipline is blunt (`tensor-grep-change-control` Part 1, rule 3): **if a candidate is correct but
 slower, revert it and record the attempt in `docs/PAPER.md`.** Do not ship a clean regression because "the
@@ -338,30 +359,32 @@ If you cannot tick a box, you have a **candidate**, not a result. Say "candidate
 
 Volatile facts were originally dated **2026-07-02, release `v1.17.25`**; AGENTS.md citations
 re-grepped and re-anchored **2026-07-08 against `v1.49.3`**; the C14 lifecycle extension and the
-`TG_FIND_DENSE_WEIGHT` worked example were added and verified **2026-07-16 against `v1.78.1`** (AGENTS.md
-has continued to gain sections since 2026-07-08 that shift downstream line numbers — **do not trust a
-stale number, re-grep it**; the table below carries the numbers verified at v1.49.3, not yet re-walked
-for v1.78.1). Re-verify before relying on any of them — a wrong methodology runbook lets a bad result
-through, which is worse than none.
+`TG_FIND_DENSE_WEIGHT` worked example were added and verified **2026-07-16 against `v1.78.1`**; a
+fresh consolidated grep pass **2026-07-22 against `v1.93.2`** re-anchored every AGENTS.md citation
+below (every one had drifted +150-190 lines since the v1.49.3 pass — AGENTS.md keeps growing new
+sections above these) and added the B-META 5/5-mirage worked example (Part 3/4). Re-verify before
+relying on any of them — a wrong methodology runbook lets a bad result through, which is worse than
+none.
 
 | Claim | Re-verify command |
 |---|---|
-| Current release tag | `grep -n release_docs_current_tag AGENTS.md` (currently `v1.49.3`) |
+| Current release tag | `grep -n release_docs_current_tag AGENTS.md` (currently `v1.93.2`) |
 | "Benchmark-governed, do not optimize by guesswork" | `grep -n "benchmark-governed" AGENTS.md` (`:15`, unchanged) |
-| Product wedge is not "faster grep" | `grep -n "not \"faster grep\"\|agentic code-intelligence" AGENTS.md` (`:177`) |
-| Verify-plan + adversarial-audit + "no citation is DISCARDED" | `grep -n "DISCARDED\|ADVERSARIAL AUDIT\|caught 5 blockers\|CUDA-fork hazard" AGENTS.md` (`:227,:229,:231,:271,:295`) |
-| Backend fail-closed / PCRE2-changes-results | `grep -n "Backend Fail-Closed\|BackendExecutionError" AGENTS.md`; `grep -n "class BackendExecutionError" src/tensor_grep/backends/base.py` (AGENTS.md block now `:233-244`) |
-| No-match is a valid comparator outcome; fair many-fixed-strings baseline | `grep -n "no-match as a real comparator\|many fixed strings" AGENTS.md` (`:173,:174`) |
-| Ranking flip: harden, don't relax the test | `grep -n "IDF blast-radius\|robust to IDF shifts" AGENTS.md` (`:185`) |
-| Roadmap sequencing (3 CPU wins; GPU paused; Semble; #1 user ask; registration-check) | `grep -n "Roadmap Sequencing" -A 12 AGENTS.md` (`:245-253`; Semble item `:249`, registration-check item `:250`) |
-| Security round-3 as an audit lens | `grep -n "Security Hardening Patterns" -A 8 AGENTS.md` (`:255-262`) |
-| Retirement ledger (accepted wins + rejected dead ends) | `grep -n "Optimization Ledger\|Important rejected candidates\|Why Pure Python Traversals" docs/PAPER.md` (§3.7, §3.8, §3.10) |
+| Product wedge is not "faster grep" | `grep -n "not \"faster grep\"\|agentic code-intelligence" AGENTS.md` (`:290`) |
+| Verify-plan + adversarial-audit + "no citation is DISCARDED" | `grep -n "DISCARDED\|ADVERSARIAL AUDIT\|caught 5 blockers\|CUDA-fork hazard" AGENTS.md` (`:351,:355,:481`) |
+| Backend fail-closed / PCRE2-changes-results | `grep -n "Backend Fail-Closed\|BackendExecutionError" AGENTS.md`; `grep -n "class BackendExecutionError" src/tensor_grep/backends/base.py` (AGENTS.md block now starts `:357`) |
+| No-match is a valid comparator outcome; fair many-fixed-strings baseline | `grep -n "no-match as a real comparator\|many fixed strings" AGENTS.md` (`:286,:287`) |
+| Ranking flip: harden, don't relax the test | `grep -n "IDF blast-radius\|robust to IDF shifts" AGENTS.md` (`:298`) |
+| Roadmap sequencing (Semble; #1 user ask; registration-check) | `grep -n "Roadmap Sequencing" -A 35 AGENTS.md` (`:386` onward; Semble item `:418`, registration-check item `:419`) |
+| Security round-3 as an audit lens | `grep -n "Security Hardening Patterns" -A 8 AGENTS.md` (`:430`) |
+| Retirement ledger (accepted wins + rejected dead ends, incl. cAST/GPU retirements) | `grep -n "Optimization Ledger\|Important rejected candidates\|Why Pure Python Traversals" docs/PAPER.md` (§3.7, §3.8, §3.10 — items 8/9, cAST + GPU-search, added in this same capture pass) |
 | Lifecycle gates (autonomy draft-PR-only, self-report, no-claim-without-numbers, experimental-until-proven) | Read `tensor-grep-change-control` Part 1 |
 | Noise-floor / jitter constants for the predict-the-number rule | Read `tensor-grep-benchmark-and-proof-toolkit` "Noise-floor / jitter discipline" |
 | Instrumented-build-gate discipline (Part 3, C12) | global skill `instrumented-build-gate`; worked example memory `tensor-grep-a2a-ledger-audit-2026-07-08` |
+| B-META 5/5-mirage worked example (Part 3/4) | `tensor-grep-failure-archaeology` Battle 22; `docs/BACKLOG.md` 2026-07-21 research-campaign entry |
 
 If any command above no longer matches, update this skill in the same change — and check whether the sibling
 that *owns* the fact (change-control, benchmark-toolkit, failure-archaeology, research-frontier) needs the
 same update. **Do not trust the numbers stamped here on a future session without re-running the greps** —
-AGENTS.md line numbers have already drifted once this way (a new section inserted upstream silently
-invalidated every downstream citation in this file simultaneously).
+AGENTS.md line numbers have already drifted TWICE this way (a new section inserted upstream silently
+invalidated every downstream citation in this file simultaneously, both times).

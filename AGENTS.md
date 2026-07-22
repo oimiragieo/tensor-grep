@@ -100,6 +100,49 @@ concrete failure observed this session.
   not the problem — local process SPAWNS (codex/droid/gemini/cargo/rustc) are. Receipt: a 2026-07-16 GPU
   deep-dive fanned out local codex+droid + a cold cuda `cargo check` and saturated the CPU (3 orphaned codex
   procs killed).
+- **A13 — Rapid-window batch-merge collapses N release cycles to 1 (C-batch).** Several independently-green,
+  already-CI-passing PRs can land ~15-20s apart in one gate-open window as a SINGLE combined release;
+  intermediate concurrency-cancelled/rejected-looking runs on the earlier pushes in that window are benign
+  as long as the newest `main` run goes fully green. Receipts: v1.91.0 and v1.93.0 (the latter combining
+  #703-706: run `29890576036` rejected-only, `29890612228` published). Distinguish deliberately from the
+  ACCIDENTAL v1.17.23/#318/#319 push-race (an unintended two-writer collision, not a planned drain).
+- **A14 — Event-driven release watching + a cron floor (C-event).** Prefer a background `gh run watch
+  <run-id> --exit-status` (chained off its own ~10-min expiry notification) over blind long-interval polling
+  when waiting on a release; pair it with a cron floor (e.g. :02/:32-style offsets) that embeds the FULL
+  remaining pipeline instructions in the prompt itself so completion survives a crash or context loss.
+- **A15 — Session-only crons die on crash/reboot; always recreate (C-cron).** A `/loop` invocation is
+  session-bound and is not a durability substitute for a `CronCreate` drain-cron; `MEMORY.md` is the
+  crash-safe state carrier that lets a recreated cron resume correctly (proven across a real PC crash
+  mid-campaign).
+- **A16 — Pin-first ranking gate (C-pin).** Before touching any scorer/graph/ranking code, write a test that
+  pins the CURRENT ranked output GREEN on base; after the change, the only acceptable diff is the intended
+  one — any legitimate-entry reorder is a STOP-finding, not noise to relax away. Receipt: #709,
+  `test_blast_radius_legitimate_dependent_ranking_pin`.
+- **A17 — Scheduler-independent concurrency tests (C-concurrency).** Never assert wall-clock thread overlap
+  (a starved runner serializes legitimately and false-fails); assert the CONTRACT with `threading.Event`
+  handshakes plus bounded acquire attempts (independence case + the converse mutual-exclusion case). This
+  killed a 2-release flaky. Receipt: #701, `test_index_lock_is_per_root_not_global`.
+- **A18 — A build agent's self-gate is a hypothesis, not clearance (C-independent-gate, extends A3).** A
+  SEPARATE, independently-framed gate can still return SHIP-WITH-NITS on one pass and a distinct verdict on
+  a re-drafted pass of the same PR — re-draft until the independent gate (not the build agent's own review)
+  says SHIP. Receipt: #698.
+- **A19 — Fold safety/honesty nits before merge; bank cosmetic ones (C-nit).** A gate finding that changes
+  observable behavior (a fail-open read, a misleading status, a missing migration-honesty note) folds into
+  the SAME PR before merge; a purely cosmetic nit (naming, comment wording, a stale citation) is banked as a
+  follow-up and batch-closed later. Receipts: #704/#706 folded pre-merge, #708 batch-closed the banked
+  cosmetic set.
+- **A20 — Published-wheel verdict-table dogfood closes a campaign (C-wheel).** Before declaring a multi-PR
+  campaign done, probe every fixed item against the ACTUALLY PUBLISHED wheel in a clean env (`uvx --from
+  tensor-grep@<ver>`), one PASS/FAIL row per item backed by the raw JSON, not a verdict word alone —
+  pre-build fixtures, read the raw JSON before scoring (a probe-shape misread reads as a false fail), and
+  watch for pipe exit-code masking (`cmd | tail` reports `tail`'s exit code, not `cmd`'s). Receipt:
+  2026-07-22, 7/7 clean.
+- **A21 — The per-task-pinned accuracy gate is the loop-4 instrument (C-loop4).**
+  `tests/eval/test_agent_accuracy.py::test_agent_accuracy_gate` (`assert not misses`) surfaces exactly the
+  kind of ranking/routing regression a code-review gate rationalizes away — it caught #250 (a `tg prepare`
+  CLI-dispatcher misroute), which was then fixed and locked as a new permanent pinned task. Every real
+  misroute found in the wild becomes a new permanent pinned task; this is a capability-regression gate,
+  distinct from a contract test.
 
 ## Current Handoff
 
@@ -149,6 +192,44 @@ default-OFF, NOT the flip. BM25-only degrade is visible/legitimate (`rank_fallba
 `DenseUnavailableError` that would have crashed instead of BM25-degrading (a Backend Fail-Closed
 Contract violation, fixed `045fadc`), and a missed MCP contract-version bump (fixed `3fcca06`; see the
 5th-registration-site note below).
+
+**2026-07-22 Current-Handoff addendum -- session-capture wave (v1.91.1 -> v1.93.2, 15 shipped items,
+A1-A15 in `scratchpad/ground_truth_v1932.md`).** Headline shape: a cold-path SLA fix, a ranking-accuracy
+fix, three honesty/fail-closed fixes (dynamic-import resolution, GPU cross-domain probing, blast-radius
+scoring), one intra-file-parallelism ship scoped to a single fallback engine, one test-harness hardening
+(per-task-pinned accuracy gate), and a UX/coordination batch (install-dense hint unification, doctor
+autostart honesty, `tg prepare --out`/`--claim` agent-id-hint, `tg ledger` PATH canonicalization).
+`#691` (v1.91.1) bounded the quadratic reverse-import BFS + 4 sibling call sites under `--deadline`
+(26.6s -> 9.5s class). `#693`/#250 (v1.91.2) demoted thin CLI-dispatcher wrappers below real
+implementations in `tg prepare`/`tg agent` primary-target ranking, taking the per-task-pinned
+agent-accuracy gate (`#696`/#252) from 15/16 to 16/16 -- this is the loop-4 receipt (A21/C-loop4 above).
+`#695` (v1.91.3) shipped intra-file rayon parallelism ONLY on the `backend_cpu.rs` PyO3/FFI fallback
+path (fresh-pip/`TG_DISABLE_NATIVE_TG`/no-rg); the default `native_search.rs` streaming path stays
+deliberately serial for its tested >=25ms first-match contract -- do not cite one engine's numbers for
+the other (see `tensor-grep-architecture-contract`'s A3 split). `#697` (v1.92.0) shipped the
+default-OFF `TG_CAPSULE_INLINE_CALLERS` inline-annotation env var. `#698`/#253 (v1.92.1) closed a
+chunk-parallel binary-detection gap via an independent-gate re-draft (A18/C-independent-gate). `#699`/
+#254 (v1.92.2) hardened the flat `_score_symbol` scorer with a word-boundary bonus and a test-file
+demotion (see `code-search-and-retrieval-reference` section 3). `#701` redesigned the index-lock
+concurrency test to a scheduler-independent Event-handshake contract (A17/C-concurrency), killing a
+2-release flaky. `#702` (v1.92.3) closed the flag-less bootstrap unscoped-search fast-refuse gap (the
+same `IMPLICIT_SEARCH_WALK_FILE_CEILING=1500` constant now fires on all 3 doors). `#703`-`#706` landed
+in one rapid-window batch-merge as combined release v1.93.0 (A13/C-batch): dynamic-import honesty
+(`dynamic_unresolved`, never a same-named decoy), the WSL cross-domain GPU-probe fix, a UX/honesty
+batch (install-dense hint, doctor `session_daemon.autostart`, `tg prepare --out`/`agent_id_hint`), and
+the `tg ledger` PATH-canonicalization fix (claim/release/list now resolve to the nearest `.git`
+ancestor; Slice 2 record/find UNCHANGED). `#708` (v1.93.1) batch-closed banked cosmetic gate-nits
+(A19/C-nit). `#709` (v1.93.2) closed the blast-radius scoring-prefilter's fuzzy-match of
+`dynamic_unresolved` literals, behind a pin-first ranking gate (A16/C-pin) that proved zero legitimate
+reorder. **Research retirements from the same wave (durable, do not re-chase):** cAST structural
+chunking REJECTED as default (net-wash quality, 24.4x slower, 38% bigger chunks -- see
+`tensor-grep-failure-archaeology` Battle 17); dense int8/PCA compression DEFERRED (numpy is ~2x SLOWER
+without SIMD, banked #255); many-pattern Aho-Corasick has a LIVE dedup over-count bug, guarded not
+fixed (#694, banked #255); warm-session search serving is a BIG-REFACTOR (the daemon holds a symbol
+map, not a search index; free partial win: `tg mcp`'s long-lived process keeps CPUBackend caches warm);
+GPU-for-search has NO crossover at any scale and the shipped kernel is brute-force, NOT PFAC (publish
+stays HOLD, #169). Meta-lesson: verify every "cheap win" against the live code before building -- 5 of
+5 candidates this wave came back negative/big-refactor/secondary-path once checked.
 
 - Recent fix commits:
   - `a840cd4 fix(search): tg search --rank errored in plain-text mode (#275)`
@@ -405,6 +486,14 @@ wins ship" rule:
   true` / `public_managed_promotion_ready = true` verdict -- the exact requirements are pinned in
   [docs/CONTRACTS.md](docs/CONTRACTS.md) (the "Public managed GPU promotion" bullets, currently around
   lines 80-82). Do not flip the variable to promote GPU as a default route until that gate passes.
+  **2026-07-21 re-adjudication (B-GPU):** re-tested across 10MB-5GB corpora -- still **no crossover at
+  any scale** (historical worst ~30-35x slower at 5GB; even the best-case 100-pattern fixed-string lane
+  loses to fair-baseline `rg -F -e ...`), and the shipped `gpu_text_search_positions` kernel is a
+  **position-parallel brute-force byte-compare, not a PFAC/Aho-Corasick automaton**
+  (`docs/gpu_crossover.md:133-138` -- PFAC remains documented future work, not shipped code). Public
+  CUDA-asset publishing is on a deliberate **HOLD** (CEO decision, #169); release checksums currently
+  ship 3 CPU-only rows. Do not describe the shipped kernel as PFAC, and do not re-propose "just publish
+  the GPU asset" without re-reading this verdict first.
 - **Phase 2 -- self-hosted GPU CI runner, CEO-gated.** Proving Phase 1's crossover claim at 1GB/5GB scale
   in CI (rather than only on local RTX 4070/5070 dogfood boxes) requires a self-hosted GPU-capable runner
   wired into `public-gpu-proof.yml`. That is a real recurring infra cost and access-control surface, so
@@ -456,13 +545,14 @@ Three kinds of skills apply to this repo; load the relevant one before non-trivi
   - `instrumented-build-gate` — measure real demand before building a speculative feature.
   - `agent-liveness-probe` — before killing, restarting, or `TaskStop`-ing a background subagent that looks stalled, probe liveness via `SendMessage` rather than trusting output-file mtime/size (see A9 above).
   (the global-skill half of this list is manually maintained — no CI gate — diff it by hand against `CLAUDE.md`'s copy.)
-- **Carrying the project forward -- the in-repo skill library** (`.claude/skills/tensor-grep-*` + `code-search-and-retrieval-reference`, **20 skills**): the onboarding handbook so a new engineer or a Sonnet-class session can debug, extend, validate, and advance `tg` without the original authors. Each auto-loads by its `description`; load the one matching your task. Index by intent -- this exact bucket list is kept byte-identical with `CLAUDE.md`'s skill index; `tests/unit/test_skill_index_sync.py` fails if either doc drifts from the real `.claude/skills/` folder set:
+- **Carrying the project forward -- the in-repo skill library** (`.claude/skills/tensor-grep-*` + `code-search-and-retrieval-reference`, **26 skills**): the onboarding handbook so a new engineer or a Sonnet-class session can debug, extend, validate, and advance `tg` without the original authors. Each auto-loads by its `description`; load the one matching your task. Index by intent -- this exact bucket list is kept byte-identical with `CLAUDE.md`'s skill index; `tests/unit/test_skill_index_sync.py` fails if either doc drifts from the real `.claude/skills/` folder set:
   - **Change safely:** `tensor-grep-change-control` (the gates), `tensor-grep-debugging-playbook`, `tensor-grep-failure-archaeology` (don't re-fight settled battles), `tensor-grep-validation-and-qa`.
   - **Understand:** `tensor-grep-architecture-contract`, `code-search-and-retrieval-reference` (domain theory), `tensor-grep-config-and-flags`.
-  - **Operate:** `tensor-grep-build-and-env`, `tensor-grep-run-and-operate`, `tensor-grep-diagnostics-and-tooling`, `tensor-grep-docs-and-writing`, `tensor-grep-release-and-positioning`, `tensor-grep-workspace-dogfood` (multi-repo stress dogfood), `tensor-grep-enterprise-agent` (enterprise readiness gaps + agent hard-stops).
+  - **Operate:** `tensor-grep-build-and-env`, `tensor-grep-run-and-operate`, `tensor-grep-diagnostics-and-tooling`, `tensor-grep-docs-and-writing`, `tensor-grep-release-and-positioning`, `tensor-grep-workspace-dogfood` (multi-repo stress dogfood), `tensor-grep-enterprise-agent` (enterprise readiness gaps + agent hard-stops), `tensor-grep-prepare` (one-call edit readiness), `tensor-grep-ledger` (advisory multi-agent claim/finding-reuse), `tensor-grep-find-and-route` (whole-repo hybrid find + route-test), `tensor-grep-multi-project-search` (scoped cross-repo search), `tensor-grep-enterprise-review-bundle` (review-bundle create/verify), `tensor-grep-gpu` (experimental GPU probes).
   - **Advance (SOTA):** `tensor-grep-semantic-search-campaign`, `tensor-grep-benchmark-and-proof-toolkit`, `tensor-grep-research-frontier`, `tensor-grep-research-methodology`, `tensor-grep-large-repo-scale-campaign` (bounding scale/deadline on large repos).
   - **Orchestrate:** `tensor-grep-backlog-campaign` (the multi-PR drain+build campaign playbook).
 - When working ON tensor-grep, use `tg search`/`tg defs`/`tg callers` for code navigation rather than generic grep/find — this exercises the tool's own surfaces and catches routing regressions early (mind the scoped-path workaround above).
+- `.claude/skill_rules.json` is Claude-Code harness config for the global `skill_activation_gate.py` hook (trigger keywords that auto-suggest a skill) — it is **not a product contract** and is invisible to `test_skill_index_sync.py` (it has no `SKILL.md`); update its per-skill trigger entries when a skill is added/renamed, but do not treat its content as authoritative over a skill's own frontmatter `description`.
 
 These encode the "Adding a Command or Flag", "Dogfood the Real Binary", and "Verify AI-Drafted Plans" sections above as reusable, project-independent skills.
 

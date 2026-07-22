@@ -103,6 +103,24 @@ misleading probe status is a security-relevant integrity failure, not just a UX 
 **Applies to:** any PR in the security-sensitive surface list above; extend the list as new
 security-relevant subsystems appear (this is a floor, not an exhaustive enumeration).
 
+### 6. Pin-first ranking gate (C-pin)
+
+**Rule:** Before touching ANY scorer/graph/ranking code (a symbol scorer, a centrality/PageRank pass,
+a blast-radius/import-graph traversal, a BM25/RRF weighting), write a test that **pins the CURRENT
+ranked output GREEN on base** first. After the change, the ONLY acceptable diff against that pin is
+the one the change intended — any OTHER legitimate-entry reorder is a STOP-finding, not a nit to wave
+through.
+
+**Why / incident (#709, v1.93.2):** the blast-radius reverse scoring prefilter was changed to exclude
+`dynamic_unresolved` literals (a correctness fix, A10/A15). `test_blast_radius_legitimate_dependent_ranking_pin`
+locked the pre-change ranked output first, so the fix's actual diff — removing exactly the decoy edges,
+with zero reordering of legitimate dependents — was provable, not asserted. Ranking code is the class of
+change where "the fix looks right" and "the fix didn't silently reorder something else" are different
+claims; only a pin catches the second one.
+
+**Applies to:** any PR touching `repo_map.py`'s scorers, the reverse-import/blast-radius graph, PageRank/
+centrality, or any BM25/RRF/dense-fusion weighting.
+
 ---
 
 ## Part 2 — The written Operating Rules
@@ -132,7 +150,7 @@ Rule 6 is easy to underrate: if you touch `.github/workflows/ci.yml`, `.github/w
 | 1 | `KNOWN_COMMANDS` (Python known-command registry) | `src/tensor_grep/cli/commands.py` | `commands.py:9` |
 | 2 | `Commands::X` enum variant + dispatch arm (native front door) | `rust_core/src/main.rs` | `enum Commands` at `main.rs:838` |
 | 3 | `PUBLIC_TOP_LEVEL_COMMANDS` (parity contract test) | `tests/e2e/test_routing_parity.py` | `:17` (asserted at `:502-503`) |
-| 4 | `@app.command` function (Typer entry point) | `src/tensor_grep/cli/main.py` | `grep -c "@app.command" src/tensor_grep/cli/main.py` (44 as of 2026-07-16 -- re-run, do not trust a stamped count) |
+| 4 | `@app.command` function (Typer entry point) | `src/tensor_grep/cli/main.py` | `grep -c "@app.command" src/tensor_grep/cli/main.py` (re-run before citing a count — it drifts every release; do not trust a stamped number) |
 
 ### Adding a search flag (`tg search --myflag`) — 2 front doors (miss one → `rg: unrecognized flag` crash for installed users)
 
@@ -207,7 +225,34 @@ That job **compiles native assets before publishing → it runs ~6 minutes**, an
 
 **Recovery — do NOT panic-rerun:** the failure self-heals. The next push-to-`main` re-runs `Semantic Release`; because the version is **derived from git tags** (not the failed run's state), it recomputes the correct next version and covers the orphaned `fix:`/`feat:` commit. The fix's *code* was already on `main` — only the publish step was behind. Diagnose by decoding the structured job result first: `gh run view <id> --json jobs` → find `Semantic Release` → `--log-failed`. A `! [rejected] main -> main` line is the push-race signature (`AGENTS.md:506-508`).
 
+**A second, DIFFERENT release-failure shape does NOT self-heal (C-release-flake) — do not apply the "just push again" recovery to it blind.** A flaky `needs:`-list job (e.g. a timing-sensitive lock-concurrency test, a transient dependency-install flake) can make `Semantic Release` report `skipped` rather than `failure` — no tag, no `chore(release)` commit, PyPI unchanged. This is **not** the push-race shape (no `! [rejected]` line) and it will **not** resolve itself on the next ordinary push, because nothing about the flaky job's cause changes between runs. Recovery here is `gh run rerun --failed` on the SAME run (re-executes only the failed job, not the whole pipeline) — receipts: v1.76.9/#612-613 (a timing-flaky heartbeat test widened + rerun), v1.92.2/#701 (the index-lock concurrency test rewritten to a scheduler-independent Event-handshake contract after 2 releases of flaking). **Tell the two shapes apart by reading the job conclusion, not by symptom-guessing:** `! [rejected] main -> main` in the `Semantic Release` job's own log = push-race, self-heals; a `skipped` conclusion with no rejection line = a `needs:`-job flake, needs `gh run rerun --failed`. Cross-link: `tensor-grep-debugging-playbook` §2.
+
 Other push rules: don't push from a dirty worktree if `origin/main` moved with unrelated local changes; a branch push / open PR starts **PR CI only** — it is not a release (`AGENTS.md:492-496`).
+
+### Rapid-window batch-merge — several already-green releasing PRs in one window (C-batch)
+
+**Individually-green, releasing PRs may merge ~15-20s apart in one gate-open window and still produce
+ONE combined, fully-published release** — this is not a violation of one-merge-per-tick, it is the same
+discipline applied to a batch instead of a single PR. The tell that distinguishes a safe batch-merge from
+a push-race collision: **only the LAST run in the window needs to go fully green.** Intermediate runs
+that report `cancelled` (the CI concurrency group superseding an in-flight run with a newer push) or even
+`failure` on their own push step are benign IF the final run in the sequence completes the full pipeline
+and publishes — the cumulative state is validated by whichever run actually finishes on top.
+
+**Receipt (v1.93.0, #703→#706):** four independently-green PRs merged in a tight window; run
+`29890576036` shows a rejected-only intermediate push (superseded, not a real failure); run
+`29890612228` completed and published — the combined result was ONE release, `v1.93.0`, covering all
+four PRs' commits, with zero actual push-race damage. Earlier precedent: v1.91.0 (a similar rapid
+4-in-a-row window).
+
+**How this differs from the accidental push-race (do not confuse the two):** the v1.17.23/#318 incident
+(Part 1 above) was an UNPLANNED collision — a `docs:` PR merged mid-flight killed a security batch's
+publish, and that version never came out at all. The v1.93.0/#703-706 sequence was a DELIBERATE,
+monitored batch where every intermediate `cancelled`/rejected state was expected and the operator
+confirmed the final run's full green before declaring the batch shipped. **The discipline is: know
+which one you're doing** — an accidental collision is a bug to prevent (one-merge-per-tick); a
+monitored rapid batch is a valid pattern IF you watch the final run to completion, not just each
+individual PR's own CI.
 
 ### Build-vs-merge decoupling -- the push-race gates MERGE, not BUILD
 
@@ -302,6 +347,7 @@ tg dogfood --output artifacts/dogfood_readiness.json
 - [ ] New command → all **4 registration sites** present (Part 3); new search flag → **both front doors** present.
 - [ ] Any registration in a **set/decorator/table** confirmed by grep/`tg scan`, not just `tg callers`.
 - [ ] Backend/router/pipeline touched → **fail-closed** verified; no bare `except` swallow; degraded fallback carries `fallback_reason`.
+- [ ] Touches a scorer/graph/ranking surface → a **pin test locked the pre-change ranked output** first; only the intended diff shows (Part 1 Rule 6, C-pin).
 - [ ] Touches `apply_policy`/`mcp_server`/native-argv/`index_lock`/auth/money/a migration → a dedicated **adversarial "try to break it"** security pass ran and returned `SHIP` (Part 1 Rule 5) — not just green functional tests.
 - [ ] Flag/command touched → **dogfooded on the real binary** (`scripts/dogfood/`), not CliRunner alone.
 - [ ] FFI/PyO3 change → proven with a **live call into the built extension**, not mocks.
@@ -317,7 +363,7 @@ tg dogfood --output artifacts/dogfood_readiness.json
 
 ## Provenance and maintenance
 
-Volatile facts are dated **2026-07-02, release `v1.17.25`**, with a round-4 refresh dated **2026-07-03, release `v1.19.3`** (Part 7 wall-time section + this table's tag/wall-time rows), a **2026-07-08, release `v1.49.3`** touch-up (Part 1 Rule 5 / Part 10 adversarial-security-gate addition — the Part 7 wall-time numbers themselves are NOT re-measured at v1.49.3, treat them as an illustrative historical sample, not a current SLA), and a **2026-07-16, release `v1.78.1`** fix (the stale `37 @app.command` count, actual 44, replaced with a re-verify command instead of a stamped number). Re-verify anything below before relying on it:
+Volatile facts are dated **2026-07-02, release `v1.17.25`**, with a round-4 refresh dated **2026-07-03, release `v1.19.3`** (Part 7 wall-time section + this table's tag/wall-time rows), a **2026-07-08, release `v1.49.3`** touch-up (Part 1 Rule 5 / Part 10 adversarial-security-gate addition — the Part 7 wall-time numbers themselves are NOT re-measured at v1.49.3, treat them as an illustrative historical sample, not a current SLA), a **2026-07-16, release `v1.78.1`** fix (the stale `37 @app.command` count, actual 44, replaced with a re-verify command instead of a stamped number), and a **2026-07-22, release `v1.93.2`** addition (Part 1 Rule 6 pin-first ranking gate / C-pin, #709; Part 7 rapid-window batch-merge / C-batch, #703-706; Part 7 second release-failure shape / C-release-flake, v1.76.9/#612-613 and v1.92.2/#701 — the Part 7 wall-time numbers again NOT re-measured in this pass). Re-verify anything below before relying on it:
 
 | Claim | Re-verify command |
 |---|---|

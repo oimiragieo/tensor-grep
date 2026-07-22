@@ -46,6 +46,7 @@ Every governed doc has one job. Do not duplicate another doc's job into it — t
 | `docs/SESSION_HANDOFF.md` | **Live** handoff: current release state, weak spots, per-slice PR/dogfood evidence ledger | yes | `test_public_docs_governance.py` (heavy) |
 | `docs/CONTINUATION_PLAN.md` | Historical workstream map; secondary to `SESSION_HANDOFF.md` for "what's current" | yes | `test_public_docs_governance.py` |
 | `docs/CONTRACTS.md` | API/CLI/data backward-compatibility guarantees, validated compatibility set | yes | `test_public_docs_governance.py` + `test_enterprise_docs_governance.py` |
+| `docs/BACKLOG.md` | **The canonical prioritized work list** — task-store-synced, CEO-status source, per-release ledger (SHIPPING/SHIPPED/CEO-FACING sections). A major, actively-maintained doc of record, but **deliberately NOT pytest-pinned** — it changes too fast (multiple times per session during an active campaign) for content-pinning to be worth the churn; its accuracy discipline is "keep it in sync as work lands" (AGENTS.md "Backlog & working process"), not a governance test. Do not add a pinning test for it without a specific reason — the fast-changing nature is the point, not a gap to close. | no | none — see the note above |
 | `docs/PAPER.md` | Optimization/benchmark history, **including rejected/failed attempts** — append dated notes, never delete history | GPU dogfood `post-\`vX\`` labels only | `test_public_docs_governance.py` (GPU-story tests) |
 | `docs/benchmarks.md` | Accepted benchmark artifacts, frozen comparator sets/scenario packs | GPU dogfood labels | heavy pins across both governance files |
 | `docs/gpu_crossover.md` | GPU crossover story / promotion gates | GPU dogfood labels | pinned |
@@ -126,6 +127,17 @@ Three different files share (or nearly share) the name `SKILL.md`. Confusing the
 1. **`SKILL.md`** (repo root) — a **governed release/product-positioning doc**, pinned heavily by `test_public_docs_governance.py` under the variable `SKILL_DOC_PATH = Path("SKILL.md")`. Auto-stamped (Part 2, Layer A). Treat edits here with the same discipline as `AGENTS.md`.
 2. **`.claude/skills/tensor-grep/SKILL.md`** — the **tg-usage skill**: command patterns, argument order, the registration-audit workflow, for an agent *driving* `tg`. Same basename, unrelated content and governance. It has **no release-state section and no `release_docs_current_tag:` line** — it is NOT part of the version-stamping set (Part 2, Layer A). Its only version reference is an inline `As of vX.Y.Z` note inside the Registration-Audit Workflow section (`.claude/skills/tensor-grep/SKILL.md:69`, currently `v1.17.1`), which is not machine-stamped and must be hand-updated if it goes stale; **do not assume the two `SKILL.md` files need the same edit.** Exactly one pytest reads it: `tests/unit/test_benchmark_scripts.py::test_tensor_grep_claude_skill_should_require_non_interactive_action`, which asserts the file still contains `"do not ask for confirmation"` and `"make the change directly"` (Non-Interactive Mode section, `.claude/skills/tensor-grep/SKILL.md:73,75`) **and** `"want me to apply this?"` (separate Rules section, `.claude/skills/tensor-grep/SKILL.md:86`) (`tests/unit/test_benchmark_scripts.py:9758-9760`). AGENTS.md's own Skills section (`AGENTS.md:249`) says to "Keep it in sync whenever commands/flags change" — that sync is currently **discipline, not full pytest coverage**; only those three literal fragments are machine-checked.
 3. **`.claude/skills/<topic>/SKILL.md`** (this file's siblings — `tensor-grep-change-control`, `tensor-grep-architecture-contract`, etc.) — narrow runbooks, one per topic. As of 2026-07-02, **none of these are pytest-pinned** (verified: `grep -rln '\.claude/skills' tests/` matches only `test_benchmark_scripts.py`, which reads only file #2 above). Re-run that grep before relying on this — a future governance test could start pinning this library.
+
+**Why this library deliberately does NOT carry independent per-skill SemVer frontmatter.** Each
+`SKILL.md` in this library stamps its own body prose with the CURRENT release tag (e.g. "Verified
+against tg 1.93.2") rather than an independent version COUNTER of its own. This is a conscious choice,
+not an oversight: the monorepo is already versioned atomically via `pyproject.toml`'s single
+`version` field, which `CURRENT_RELEASE_TAG`-style stamps (Part 2) pull live from — a second,
+per-skill version-counter system would just be bookkeeping the repo already solves, with its own
+staleness-drift risk on top. Anthropic's skill spec treats a skill's own `version:` frontmatter field
+as an unenforced convention, not a load-bearing contract, so there is no external requirement forcing
+one either. If you are tempted to add `version: 1.2.0`-style frontmatter to a skill in this library,
+don't — stamp the body prose with the current release tag instead, matching the existing house style.
 
 ## `CLAUDE.md` stays a pointer — do not duplicate AGENTS.md into it
 
@@ -244,7 +256,10 @@ Required fields, per `AGENTS.md:275` and pinned by `test_agent_workflow_docs_sho
 
 ## Provenance and maintenance
 
-Volatile facts re-verified **2026-07-08, release `v1.49.3`**. Re-verify anything below before relying on it — a wrong runbook is worse than none.
+Volatile facts re-verified **2026-07-08, release `v1.49.3`**; the `docs/BACKLOG.md` scope note and the
+per-skill-version-pins rationale added **2026-07-22, release `v1.93.2`** (governance mechanics
+themselves re-checked and found still accurate, no other change). Re-verify anything below before
+relying on it — a wrong runbook is worse than none.
 
 | Claim | Re-verify command |
 |---|---|

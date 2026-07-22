@@ -8,9 +8,10 @@ description: Use when setting up the tensor-grep dev environment from a fresh cl
 Recreate a working tensor-grep dev environment from nothing, and rebuild it correctly after
 touching Rust. Every command below is verified against `pyproject.toml`, `rust_core/Cargo.toml`,
 `rust_core/rust-toolchain.toml`, `CONTRIBUTING.md`, `AGENTS.md`, and `.github/workflows/ci.yml` as
-of **2026-07-08, v1.49.3** (toolchain pins + test counts re-verified **2026-07-16, v1.78.1**, still
-accurate). Re-verify anything version-shaped before trusting it long-term — see
-"Provenance and maintenance" at the bottom.
+of **2026-07-08, v1.49.3** (toolchain pins + test counts re-verified **2026-07-16, v1.78.1**, and
+again **2026-07-22, v1.93.2** — the LTO `Cargo.toml` cite had drifted `234-235` → `463-464` and test
+counts moved to 263/16/16; all other version pins verified still current). Re-verify anything
+version-shaped before trusting it long-term — see "Provenance and maintenance" at the bottom.
 
 ## When to use this skill
 
@@ -213,7 +214,7 @@ PATH.") Source: `AGENTS.md:546`.
 
 **Symptom:** `cargo build --release` or `maturin develop --release` appears to sit for minutes with
 no output.
-**Cause:** `rust_core/Cargo.toml:234-235` sets `[profile.release] lto = true` — link-time optimization
+**Cause:** `rust_core/Cargo.toml:463-464` sets `[profile.release] lto = true` — link-time optimization
 is slow to run but does complete.
 **Fix:** don't kill it; let it finish. Use plain `maturin develop` (no `--release`, ~15s) for the fast
 inner dev loop, and reserve `--release` builds for when you actually need release-profile
@@ -351,14 +352,17 @@ Volatile facts stated above and how to re-check them if this skill feels stale:
 - **Version pins** (Python floor, uv, maturin, Rust toolchain, ruff, mypy, pyo3):
   `grep -nE "requires-python|version|channel" pyproject.toml rust_core/Cargo.toml rust_core/rust-toolchain.toml`
 - **uv version CI pins**: `grep -n "uv==" .github/workflows/ci.yml`
-- **Test file counts** (239 unit / 16 e2e / 11 integration as of 2026-07-16):
-  `find tests/unit tests/e2e tests/integration -name "test_*.py" | wc -l` run per directory, or one
-  combined `find tests -name "test_*.py" | wc -l` for the total file count.
+- **Test file counts** (263 unit / 16 e2e / 16 integration as of 2026-07-22, up from 239/16/11 —
+  plus a new `tests/eval/` directory with 1 file, `test_agent_accuracy.py`, not part of this count):
+  `find tests/unit tests/e2e tests/integration tests/eval -name "test_*.py" | wc -l` run per
+  directory, or one combined `find tests -name "test_*.py" | wc -l` for the total file count.
   Note this counts *files*, not individual `def test_*` cases — the suite has thousands of the latter.
+  **Re-run this yourself before trusting the stamped numbers** — they drift every session.
 - **CI job names/order**: read `.github/workflows/ci.yml` directly (`grep -n "^  [a-z][a-z-]*:$" .github/workflows/ci.yml`).
-- **LTO / release-profile setting**: `grep -n "profile.release" -A2 rust_core/Cargo.toml`
+- **LTO / release-profile setting**: `grep -n "profile.release" -A2 rust_core/Cargo.toml` (currently `:463-464`)
 - **Registration-completeness gate presence**: `ls .tg-registration.toml` and
   `grep -n "registration_check" .github/workflows/ci.yml`
-- **Current versions re-verified 2026-07-08, toolchain pins RE-CONFIRMED unchanged 2026-07-16**:
-  tensor-grep `v1.78.1`, Rust toolchain `1.96.0`, uv `0.11.25`, ruff `==0.15.20`, mypy `==1.19.1`,
-  pyo3 `0.29.0`, maturin build-system pin `>=1.5,<2.0`, Python floor `>=3.11`.
+- **Current versions re-verified 2026-07-08, toolchain pins RE-CONFIRMED unchanged 2026-07-16 and
+  again 2026-07-22**: tensor-grep `v1.93.2`, Rust toolchain `1.96.0`, uv `0.11.25`, ruff `==0.15.20`,
+  mypy `==1.19.1`, pyo3 `0.29.0`, maturin build-system pin `>=1.5,<2.0`, Python floor `>=3.11` — all
+  other version pins verified current, no change from the v1.78.1 pass.

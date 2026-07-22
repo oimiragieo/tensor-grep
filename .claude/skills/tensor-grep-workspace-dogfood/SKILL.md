@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-workspace-dogfood
-description: Use when stress-testing tensor-grep against a multi-project workspace (monorepo parent, many languages) — orientation, scoped search, symbol graphs, imports/importers, codemap, evidence receipts, sessions, and readiness gates. Not the PyPI release dogfood harness (see global dogfood-the-shipped-artifact).
+description: Use when stress-testing tensor-grep against a multi-project workspace — orientation, scoped search, tg find, prepare, route-test, ledger, install-dense, symbol graphs, GPU, evidence, sessions, readiness gates. Not the PyPI release dogfood harness.
 ---
 
 # tensor-grep workspace dogfood
@@ -10,63 +10,64 @@ description: Use when stress-testing tensor-grep against a multi-project workspa
 ```bash
 tg --version
 tg doctor --json ROOT
+tg devices
 ```
 
-## Recommended sweep (v1.71.1)
+## Recommended sweep (v1.93.2)
 
 ```bash
 cd /path/to/workspace
+tg calibrate
+tg search PATTERN tensor-grep/src --type py --gpu-device-ids 0 --json
+tg agent tensor-grep/src "task" --gpu-device-ids 0 --gpu-timeout-s 15 --json | jq .gpu_acceleration
+
 tg inventory tensor-grep --json
 tg orient tensor-grep --ignore "node_modules/**" --json
-tg search "session daemon" tensor-grep --rank --json
-# workspace-root search is refused unless scoped:
 tg search TODO . --glob "*.py" --max-depth 3 --json
-tg imports "$PWD/tensor-grep/src/tensor_grep/cli/main.py" --json
-tg callers tensor-grep/src SYMBOL --deadline 15 --json   # prefer src for complete
-tg agent tensor-grep/src "task" --json > /tmp/capsule.json  # do NOT default to repo root
-tg evidence emit tensor-grep --capsule /tmp/capsule.json --query "task" --json --agent-id dogfood
-tg scan --ruleset auth-safe --path tensor-grep/src --json
+tg find "session daemon timeout" tensor-grep/src --deadline 20 --json
+# Prefer prepare over the multi-step agent loop for edit readiness:
+tg prepare tensor-grep/src "task" --json
+tg prepare tensor-grep/src "task" --claim --json
+tg prepare tensor-grep/src "task" --out /tmp/capsule.json --json   # persist for evidence emit --capsule
+tg prepare tensor-grep "task" --deadline 20 --json   # expect partial on whole-repo
+tg route-test tensor-grep/src "task" --json
+tg agent tensor-grep "task" --deadline 20 --json     # still flaky without explicit deadline
+tg evidence emit tensor-grep --capsule /tmp/capsule.json --query "task" --json --agent-id dogfood > /tmp/receipt.json
+tg ledger claim|record|find|release …                # see tensor-grep-ledger
+tg install-dense --json                              # once; then re-try tg find
+tg agent agent-studio/.claude/lib/routing "task" --json
 tg dogfood --root . --output /tmp/dogfood-ws.json
 ```
 
-## Latest sweep (2026-07-13, tg 1.71.1, `/mnt/c/dev/projects`)
+## Latest sweep (2026-07-22, tg 1.92.1, gotcontext-saddle) — historical; 4 rows fixed since, not re-run as one workspace sweep
 
 | Category | Result | Notes |
 | --- | --- | --- |
-| Diagnostics | ✅ | doctor ~17.5s; 2 GPUs detected |
-| Multi-lang search | ✅ | py/js/ts/rust + `--rank`; omega-main inventory/search OK |
-| Workspace orient | ✅ | ~53s |
-| `tg agent` src | ✅ | ~24s, primary + validation_commands |
-| `tg agent` root | WSL-slow | ~26s NATIVE (OK, exit 0); 75s on WSL `/mnt/c` = 9p artifact, not a regression |
-| `tg agent` agent-studio | ❌ | TIMEOUT 60s |
-| callers src | ✅ | complete 3 callers ~6s |
-| callers root | ⚠️ | partial / 0 callers — narrow PATH |
-| blast/impact/defs/source/context*/evidence/session | ✅ | |
-| Unscoped workspace search | ✅** | **fixed** — refuse in ~1.1s (exit 2), was 60s hang |
-| `tg scan` WSL | ✅** | **fixed** — exit 0 (~1.4s); may warn on WSL path shim |
-| `tg codemap` | ✅ | native ~41s whole-repo complete; #153 deadline bounds it (WSL 90s = 9p artifact) |
-| inventory/map/importers deadlines | ⚠️ | incomplete floors |
+| Symbol ladder / imports / orient / map / route-test / evidence | ✅ | route agreement=true; trunc hard-stop exit 2 |
+| `tg agent` scoped + root `--deadline 90` | ✅ | root ~50s rc 0 non-partial (improved vs tight deadline) |
+| **`tg prepare`** | ✅ | ~8–9s; blast_radius_floor; `--claim` submits |
+| ledger claim/list/record/find/release | ⚠️→**fixed v1.93.0 (A13, #706)** | was: **list PATH must match claim PATH**; now canonicalizes to the nearest `.git` ancestor, `list [PATH]` rolls scope UP — the footgun is closed for Slice 1 (claim/release/list); Slice 2 (record/find) stays literal-path-rooted |
+| `tg find` without dense | ✅ | BM25 + `rank_fallback_reason` (message now leads with `tg install-dense`, A12(a)) |
+| GPU | ⚠️→**partially fixed v1.93.0 (A11, #704)** | was: CPU front door; probe `failed_probe_path` on WSL — that specific bare-shim cross-domain misclassification is fixed (honest `unsupported`/`gpu-auto-fallback-cpu` now); GPU search itself is still CPU-fallback on a non-CUDA build, unchanged |
+| Unscoped search | ⚠️→**fixed v1.92.3 (A9, #702)** | was: timeout-first / empty under short TG_* timeout, not a fast refuse; now a generic `IMPLICIT_SEARCH_WALK_FILE_CEILING=1500` fast-refuse fires in ~1.7s on any defaulted PATH across all 3 doors |
+| Cold `doctor` session_daemon | ⚠️ | often `running: false` until warm traffic; now additively reports `autostart` (A12(b)) explaining why |
 
-TSV: `/tmp/tg-dogfood-v8/report.tsv` — **37 PASS / 5 INCOMPLETE / 3 TIMEOUT** (no FAIL)
+Prior workspace (2026-07-21, 1.91.0): **57 PASS / 8 INCOMPLETE / 2 TIMEOUT / 1 FAIL**
+(`/tmp/tg-dogfood-v21/report.tsv`). Suite artifact this run: `/tmp/tg-dogfood-1921.json`. No fresh
+whole-workspace re-run has been recorded past v1.92.1 as of v1.93.2 — the four fixed rows above are
+individually verified against their shipping PRs' own gate-run/dogfood evidence (docs/BACKLOG.md), not
+a repeat of this sweep.
 
-## Trend vs prior dogfoods
+## Trend
 
 | Version | PASS | TIMEOUT | Notable |
 | --- | ---: | ---: | --- |
-| 1.63.2 | 27 | 10 | agent/graph hangs |
-| 1.68.1 | 29 | 6 | agent root still hangs |
-| 1.69.3 | 37 | 2 | agent root + workspace orient fixed; unscoped+scan still bad |
-| **1.71.1** | **37** | **3** | unscoped refuse + scan fixed; the 3 "timeouts" are WSL `/mnt/c` 9p artifacts (native agent ~26s) |
-
-## Pitfalls
-
-1. Prefer `REPO/src` for complete callers and reliable agent capsules (root agent flaky again).
-2. Unscoped multi-project search now fails fast — scope or opt in explicitly; do not treat exit 2 as “zero matches”.
-3. `codemap` is agent-loop-safe (#153 deadline; native ~41s whole-repo) — the WSL 90s was a 9p artifact.
-4. `tg scan` may PASS while still skipping paths under WSL — read stderr warnings.
-5. Honor `tie_requires_confirmation` / `partial` / `result_incomplete` hard stops.
-6. Harness/noisy repos can pick weak primaries — corroborate with `callers` + search.
+| 1.81.18 | 46 | 2 | deadline symbol flaky |
+| 1.83.0 | 52 | 2 | ledger ships |
+| 1.91.0 | 57 | 2 | prepare + install-dense |
+| 1.92.1 | saddle ✅ | — | prepare solid; ledger PATH-scope footgun documented |
+| **1.93.2** | not re-swept | — | ledger PATH fix (A13), unscoped fast-refuse (A9), WSL GPU-probe fix (A11), dynamic-import honesty (A10/A15), install-dense/doctor-autostart/prepare-`--out` UX batch (A12) all shipped since 1.92.1 — see the row-by-row fixes above; a fresh whole-workspace PASS/TIMEOUT count is not yet recorded |
 
 ## Sibling skills
 
-- `tensor-grep`, `tensor-grep-enterprise-agent`, `tensor-grep-code-audit`, `dogfood-the-shipped-artifact`
+- `tensor-grep`, `tensor-grep-prepare`, `tensor-grep-ledger`, `tensor-grep-find-and-route`, `tensor-grep-gpu`, `tensor-grep-enterprise-agent`, `tensor-grep-multi-project-search`
