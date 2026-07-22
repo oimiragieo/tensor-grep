@@ -1,6 +1,151 @@
 # CHANGELOG
 
 
+## v1.93.3 (2026-07-22)
+
+### Bug Fixes
+
+- **agent**: Thread --deadline through the warm call-site-evidence branch
+  ([#711](https://github.com/oimiragieo/tensor-grep/pull/711),
+  [`0401477`](https://github.com/oimiragieo/tensor-grep/commit/040147770fa1671f0d399fabca250e3cd6560cdd))
+
+`_collect_capsule_call_site_evidence_from_map` (agent_capsule.py) had no `deadline_monotonic`
+  parameter, so its `build_symbol_blast_radius_from_map` call ran with no deadline at all --
+  structurally unbounded (~8.1s isolated / ~13.9s total wall on a 552-file corpus, measured) even
+  under an explicit `--deadline`, despite that callee already accepting and internally threading
+  `deadline_monotonic` (repo_map.py, deadline-gated since the #691/#222 BFS-bounding wave).
+  `build_agent_capsule_from_map`'s dispatcher already had `deadline_monotonic` in scope and threads
+  it into every sibling stage (the cold rescue branch, DAR outbound deps, vendored-subtree
+  detection) but dropped it specifically at the WARM/DAEMON call-site-evidence call -- the branch
+  taken by every `_rescue_call_site_ evidence=False` caller, i.e. every real warm session-daemon
+  "agent" request (session_store.py), since `_rescue_call_site_evidence` defaults False.
+
+Purely additive: `deadline_monotonic: float | None = None` added to the warm collector's signature,
+  forwarded verbatim into `build_symbol_blast_radius_from_map` (no unit conversion needed -- unlike
+  the cold sibling, which converts to a relative `deadline_seconds` for its FS-backed callee, this
+  warm callee already accepts an absolute `deadline_monotonic` directly), and threaded at the one
+  warm call site inside `build_agent_capsule_from_map`. `None` (every pre-fix caller's only possible
+  shape, since the parameter did not exist) is a byte-identical no-op -- pinned by a spy test
+  asserting the callee receives `None` either way and the two call shapes (omit the kwarg vs pass
+  `deadline_monotonic=None`) return an identical payload.
+
+Tests (tests/unit/test_cli_deadline_coverage_gaps.py, "Item 6"): (a) a tight deadline bounds the
+  actual wall clock, not just the flags (deterministic per-file delay injection into
+  `_file_imports_symbol_from_definition`, no wall-clock racing); (b) an already-expired deadline
+  makes `call_site_evidence.partial`/`deadline_limit.deadline_exceeded` report honestly; (c)
+  `deadline_monotonic=None` is a pinned byte-identical no-op. All three raise `TypeError` pre-fix
+  (the parameter did not exist) and pass post-fix.
+
+A/B receipt (3 reps, medians; pinned tg-pinned clone @ v1.93.2/4e471cc, 552-file `build_repo_map`;
+  query "build_agent_capsule_from_map", explicit-symbol/single-definition, 5.0s budget mirroring
+  `--deadline 5`; `_rescue_call_site_evidence` at its real default):
+
+| metric | before | after | delta |
+  |-------------------------------------------|--------:|-------:|------------------:| | total
+  capsule wall | 13.890s | 6.594s | -52.5% | | evidence-stage wall (isolated) | 8.141s | 1.282s |
+  -84.3% | | call_site_evidence.partial | null | True | now honest | |
+  call_site_evidence.returned_call_sites | 6 | 0 | honest truncation |
+
+Note: a literal `tg agent ... --deadline 5` subprocess can't reach this branch -- main.py's `agent`
+  command only attempts daemon routing when no `--deadline` was passed (main.py:9524-9539), so an
+  explicit `--deadline` always takes the cold (`_rescue_call_site_evidence=True`) path. The warm
+  branch is reached only via a running session daemon, whose own dispatch anchors its own default
+  budget (`WARM_DAEMON_DEFAULT_DEADLINE_SECONDS = 60.0`, session_store.py:77) rather than the
+  caller's `--deadline` -- threading the CLI value into the daemon request is the separate,
+  not-yet-built "W1" queue item. This receipt drives the exact function the daemon calls directly,
+  matching this codebase's own existing convention for testing this seam
+  (test_orient_agent_daemon.py).
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+### Documentation
+
+- **capture**: Session capture to v1.93.2 — skills, indexes, retirements, disciplines
+  ([#710](https://github.com/oimiragieo/tensor-grep/pull/710),
+  [`151dd9f`](https://github.com/oimiragieo/tensor-grep/commit/151dd9f74293eddebc1781423676b05830c33934))
+
+* docs(capture): session capture to v1.93.2 -- skills, indexes, retirements, disciplines
+
+Reconcile the in-repo skill library, AGENTS.md, CLAUDE.md, docs/PAPER.md, and docs/BACKLOG.md
+  against the real v1.93.2 tree after 15 shipped items (v1.91.1 -> v1.93.2, #691-#709) and the
+  2026-07-21 deep-research retirement wave went undocumented in the working skill set.
+
+- Register 6 new skills (tensor-grep-ledger, -prepare, -gpu, -find-and-route, -multi-project-search,
+  -enterprise-review-bundle) in AGENTS.md + CLAUDE.md's skill index (26 skills total), fixing each
+  skill's stale ~1.92.1-era body claims (ledger PATH-scope footgun now fixed/A13, GPU probe
+  misclassification fixed/A11, unscoped-search refuse generalized/A9) while keeping every skill's
+  routing `description` verbatim. - Re-verify every stale `file:line` citation across 19
+  origin/main-based skills by symbol (line numbers had drifted 1000-4000+ lines); correct two
+  substantive stale claims found in the process: tensor-grep-run-and-operate's false "--deadline not
+  accepted on defs/source/ orient/agent/context/docs-coverage" claim, and
+  tensor-grep-release-and-positioning's gate-DAG diagram missing the cuda-feature-check job. -
+  Record 5 research retirements as new Battles in tensor-grep-failure-archaeology (cAST chunking
+  rejected, dense int8/PCA deferred, warm-session serving is a big refactor, many-pattern dedup bug,
+  the "5/5 mirage" meta-lesson) and thread them through tensor-grep-research-methodology,
+  -research-frontier, and -benchmark-and-proof-toolkit. - Fold 9 new campaign-orchestration
+  disciplines (rapid-window batch-merge, event-driven release watching,
+  session-only-crons-die-recreate, pin-first ranking gate, scheduler-independent concurrency tests,
+  independent-gate-is-a-hypothesis, gate-nit folding, published-wheel closing dogfood,
+  loop-4-via-accuracy-gate) into AGENTS.md as A13-A21, add a 2026-07-22 Current-Handoff addendum,
+  and fold the GPU no-crossover/HOLD verdict into Roadmap Sequencing. - docs/PAPER.md: append items
+  8-9 to Sec 3.10 (cAST rejected, GPU-based text search HOLD -- reworded from the draft's
+  "GPU-accelerated" title, which trips the existing no-marketing-claims governance test) and fix Sec
+  3.3's misleading GPU-advantage heading. - docs/BACKLOG.md: add the v1.93.1 (#708) and v1.93.2
+  (#709) bullets the CURRENT STATE section was missing, and refresh the header's stale
+  "post-v1.93.0" framing. - code-search-and-retrieval-reference: rewrite Section 3's
+  `_symbol_rank_key` description -- its first tie-break field is now `query_match_rank`, not the
+  flat score, and the final field is `symbol.name`, not a file path, making the historical PR #302
+  tie-flip less reproducible than the section previously implied; document `_score_symbol` as a
+  named third scorer with its #699 word-boundary/test-shadow hardening.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+* test(dogfood): extend the black-box harness for the v1.93.0-v1.93.2 UX/honesty batch
+
+Add 5 permanent check() lines to scripts/dogfood/dogfood_features.py covering behavior shipped since
+  the harness was last extended: ledger claim/list PATH canonicalization + subtree rollup (#706),
+  the install-dense hint wording on tg find's BM25-only degrade (#705), tg doctor's
+  session_daemon.autostart honesty field (#705), tg prepare --out FILE persistence + its
+  symlink-destination refusal (#705), and the dynamic-import decoy-exclusion fix (#703).
+
+Extends check()'s json_key to accept a dotted path (e.g. "session_daemon.autostart") for a nested
+  field, and adds three small helpers (_check_json, check_output_file, _record) for assertions the
+  existing stdout/stderr/flat-json-key primitives cannot express: a specific list entry's fields, a
+  value captured for reuse in a later command, or a file written to disk as a side effect rather
+  than printed.
+
+The doctor check needs its own never-touched fixture directory: the existing "agent --json" check
+  earlier in the same run non-blockingly autostarts a session daemon for whichever path it targets,
+  which flips session_daemon.running to true and makes the autostart field correctly disappear if
+  the doctor check reuses that same path -- caught by actually running the extended harness against
+  the real current source (via PYTHONPATH, not a stale prebuilt binary), not by code review alone.
+
+Verified 17/17 PASS running against the real current tensor_grep source (confirmed
+  tensor_grep.__file__ resolves into this worktree, not the shared venv's stale install).
+
+* chore(skills): commit skill_rules.json, add triggers for the 5 newly-registered skills
+
+Track .claude/skill_rules.json (harness config for the global skill_activation_gate.py hook;
+  invisible to tests/unit/test_skill_index_sync.py since it carries no SKILL.md). Drop the stale "24
+  local skills" count from its description without hardcoding a new number (points at AGENTS.md's
+  skill index instead, which is what actually stays current), and add trigger entries for
+  tensor-grep-ledger, tensor-grep-prepare, tensor-grep-find-and-route,
+  tensor-grep-multi-project-search, and tensor-grep-enterprise-review-bundle -- the 5 of the 6
+  newly-registered skills that lacked one (tensor-grep-gpu already had an entry).
+
+* docs(skills): correct find-and-route bare-invocation mechanism (gate finding #1)
+
+Bare `tg find` defaults PATH to '.' and bounds via --max-repo-files=2000 + result_incomplete/exit-2
+  -- it is NOT bootstrap-intercepted and never hits the tg-search 1500-file fast-refuse. The prior
+  sentence stated a false mechanism/magnitude (builder-introduced, absent from the CEO draft).
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+---------
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+
 ## v1.93.2 (2026-07-22)
 
 ### Bug Fixes
