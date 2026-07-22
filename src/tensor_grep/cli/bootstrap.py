@@ -774,10 +774,19 @@ def _search_paths_include_vendored_root(paths: list[str]) -> bool:
 # one-level `iterdir()` probe like the vendored/workspace guards above -- there is no shallow
 # signal for "this tree is huge"; the walk itself is the only honest measurement, same approach
 # as cli/main.py's `_implicit_glob_search_walk_exceeds_ceiling`. Mirrors `--hidden`/
-# `--no-ignore*` flags into the probe config (conservatively: ANY no-ignore-family flag widens
-# the probe to `no_ignore=True`, the most inclusive walk `DirectoryScanner` supports) so this
-# probe does not UNDER-count relative to the real invocation and let an oversized
-# `--hidden`/`--no-ignore` walk slip through as "under ceiling".
+# `--no-ignore*` flags into the probe config by forwarding each raw flag to its OWN
+# `SearchConfig` field -- the same shape `_implicit_glob_search_walk_exceeds_ceiling` gets for
+# free from its already-Typer-parsed `config` argument (`dataclasses.replace(config, ...)`,
+# main.py). #702 gate NIT-1: an earlier version of this probe collapsed every flag in
+# `_SEARCH_NO_IGNORE_FLAGS` onto the single `no_ignore` field -- but `DirectoryScanner` only
+# actually disables `.gitignore` loading when `no_ignore`/`no_ignore_vcs`/`no_ignore_files` is
+# set (`_load_ignore_spec`, `io/directory_scanner.py:154`); `--no-ignore-dot`/`-exclude`/
+# `-global`/`-parent` are no-ops for this scanner's single ignore mechanism. Collapsing them all
+# onto `no_ignore` OVER-widened the probe (a latency-only over-count, not a correctness bug --
+# it could only make the guard refuse MORE often, never less), but drifted from the sibling's
+# field-exact behavior; passing each flag to its own field restores parity and still never
+# UNDER-counts relative to the real invocation (each flag maps 1:1 to the field the real,
+# Typer-parsed `SearchConfig` would carry for that same raw argv).
 def _search_paths_include_oversized_implicit_root(paths: list[str], search_args: list[str]) -> bool:
     from tensor_grep.core.config import SearchConfig
     from tensor_grep.io.directory_scanner import (
@@ -787,7 +796,13 @@ def _search_paths_include_oversized_implicit_root(paths: list[str], search_args:
 
     probe_config = SearchConfig(
         hidden=any(arg in _SEARCH_HIDDEN_FLAGS for arg in search_args),
-        no_ignore=any(arg in _SEARCH_NO_IGNORE_FLAGS for arg in search_args),
+        no_ignore="--no-ignore" in search_args,
+        no_ignore_dot="--no-ignore-dot" in search_args,
+        no_ignore_exclude="--no-ignore-exclude" in search_args,
+        no_ignore_files="--no-ignore-files" in search_args,
+        no_ignore_global="--no-ignore-global" in search_args,
+        no_ignore_parent="--no-ignore-parent" in search_args,
+        no_ignore_vcs="--no-ignore-vcs" in search_args,
     )
     count = 0
     for raw_path in paths:

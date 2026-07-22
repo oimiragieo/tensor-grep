@@ -5,6 +5,7 @@ import json
 import keyword
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -1506,7 +1507,24 @@ def _summarize_agent_gpu_json_result(
 
 def _agent_gpu_tg_command() -> str:
     native_tg = resolve_native_tg_binary()
-    return str(native_tg) if native_tg is not None else "tg"
+    if native_tg is not None:
+        return str(native_tg)
+    # #704 gate CRUX-4: falling straight through to the bare string "tg" here handed
+    # `subprocess.run` an UN-checked PATH lookup -- `resolve_native_tg_binary()` (above)
+    # deliberately filters out e.g. a Python console-script shim
+    # (`_looks_like_python_scripts_launcher`) and enforces a version match, but a bare "tg"
+    # bypasses all of that vetting AND is invisible to the cross-domain classifier below: a
+    # relative name has no directory component, so `is_cross_domain_native_binary()`'s
+    # sibling-`.exe`/metadata checks (`runtime_paths.py`) resolve against the CWD instead of
+    # wherever the shell would actually have found "tg". Pre-resolving via `shutil.which`
+    # gives an explicit absolute path that the SAME `is_cross_domain_native_binary(tg_command)`
+    # gate the call site already applies (`_agent_gpu_evidence`, below) can classify correctly
+    # -- no separate gate call needed here. If nothing resolves at all, preserve the prior
+    # behavior exactly: return the bare name rather than raising, so the probe still degrades
+    # to its existing honest failure path (`_run_agent_gpu_json_command`'s `OSError` handler
+    # turns the resulting spawn failure into a `status: "failed"` result, never a crash).
+    which_tg = shutil.which("tg")
+    return which_tg if which_tg is not None else "tg"
 
 
 def _native_gpu_route_rejection(payload: dict[str, Any]) -> str | None:
