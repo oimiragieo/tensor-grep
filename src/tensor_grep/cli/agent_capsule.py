@@ -826,11 +826,24 @@ def _collect_capsule_call_site_evidence_from_map(
     include_blast_radius: bool,
     max_files: int,
     seed_confidence: float,
+    deadline_monotonic: float | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], bool]:
     """Task #108 (Tier-2 daemon moat) map-based sibling of ``_collect_capsule_call_site_evidence``:
     identical gating + evidence shape, but resolves the blast radius against an already-built
     ``rm`` (e.g. the warm session daemon's cached map) via ``build_symbol_blast_radius_from_map``
     instead of re-scanning through the cold ``build_symbol_blast_radius`` wrapper.
+
+    ``deadline_monotonic`` (SLA-honesty fix, +10% campaign #5): this warm branch used to call
+    ``build_symbol_blast_radius_from_map`` with no deadline at all -- structurally unbounded even
+    though the caller (``build_agent_capsule_from_map``) already has an in-scope
+    ``deadline_monotonic`` it threads into every OTHER sibling stage (context-render, DAR outbound
+    deps, vendored-subtree detection). The cold sibling above already threads its own
+    ``deadline_monotonic`` into the FS-backed ``build_symbol_blast_radius`` (converted to a
+    relative ``deadline_seconds`` there, since that is the shape ITS callee accepts); this warm
+    callee, ``build_symbol_blast_radius_from_map``, already accepts ``deadline_monotonic`` directly
+    (repo_map.py) and threads it into its own defs/callers/impact sub-calls, so no conversion is
+    needed here -- a straight pass-through. ``None`` (the default, and every existing caller's
+    behavior before this fix) is byte-identical to the pre-fix call.
 
     TRAP A (audit #107 class): the cold wrapper transparently retries a truncated no_match via
     ``_literal_symbol_seed_files`` (see ``build_symbol_blast_radius``); the map-based lookup here
@@ -890,6 +903,7 @@ def _collect_capsule_call_site_evidence_from_map(
             rm,
             target_symbol,
             max_depth=1,
+            deadline_monotonic=deadline_monotonic,
         )
         radius_payload = repo_map._apply_blast_radius_output_limits(
             radius_payload,
@@ -3281,6 +3295,10 @@ def build_agent_capsule_from_map(
     else:
         # WARM/DAEMON path: rescue-less _from_map collector (single cached map, no second scan);
         # on a truncated no_match it flags daemon_unreliable so the client falls back to cold.
+        # SLA-honesty fix (+10% campaign #5): thread the SAME in-scope deadline_monotonic this
+        # function's other sibling stages already receive (cold branch above, DAR outbound deps
+        # below) -- previously dropped here, leaving this branch's build_symbol_blast_radius_from_
+        # map call structurally unbounded even under an explicit --deadline.
         related_call_sites, call_site_evidence, call_site_evidence_daemon_unreliable = (
             _collect_capsule_call_site_evidence_from_map(
                 query,
@@ -3289,6 +3307,7 @@ def build_agent_capsule_from_map(
                 include_blast_radius=include_blast_radius,
                 max_files=max_files,
                 seed_confidence=primary_target_seed_confidence,
+                deadline_monotonic=deadline_monotonic,
             )
         )
     # F4: verified call-site evidence is only available NOW (after the collection above), so the
