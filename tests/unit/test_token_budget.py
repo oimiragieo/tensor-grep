@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -1012,3 +1013,190 @@ def test_cli_session_context_render_accepts_max_tokens_and_model(tmp_path: Path)
     assert payload["max_tokens"] == 48
     assert payload["model"] == "gpt-test"
     _assert_within_budget(payload, 48)
+
+
+# --- perf campaign #1: O(k^2) source-truncation rebuild -> O(k) running length -------------------
+#
+# `_truncate_source_text_to_budget` used to rebuild the whole candidate string on every line
+# (`"".join([*selected_lines, line])`) just to hand it to `_source_text_within_budget`, which only
+# ever reads `len(text)` -- an O(k) loop doing O(current-length) work per iteration, i.e. O(k^2)
+# overall, with the same shape in the tail-rescue loop. The fix replaces the string-rebuild with a
+# running integer length. These tests pin the EXACT (byte-identical) output of the unmodified
+# function on 3+ realistic inputs -- captured from the real (pre-fix) implementation -- so the
+# rewrite can be checked against them: green before, green after, or the two are not behaviorally
+# equivalent and the PR must stop and report the divergence.
+
+
+def _large_synthetic_source(function_count: int, lines_per_function: int) -> str:
+    """Deterministic large multi-function synthetic source: many small functions, each ending in a
+    `return` line -- shaped like this repo's own large modules (repo_map.py/main.py) without
+    depending on their live content, which would churn the pinned hash on unrelated edits.
+    """
+    parts: list[str] = []
+    for fn_index in range(function_count):
+        parts.append(f"def helper_function_{fn_index:05d}(value):\n")
+        for line_index in range(lines_per_function):
+            parts.append(f"    step_{line_index} = value + {fn_index} + {line_index}\n")
+        parts.append(f"    return step_{lines_per_function - 1}\n")
+        parts.append("\n")
+    return "".join(parts)
+
+
+def _tail_rescue_source(filler_count: int) -> str:
+    return (
+        "def build_payload():\n"
+        "    payload = {\n"
+        + "".join(f"        'field_{index:05d}': {index},\n" for index in range(filler_count))
+        + "    }\n"
+        "    raise RuntimeError('boom')\n"
+    )
+
+
+def test_truncate_no_truncation_case_is_byte_identical_to_pinned_golden() -> None:
+    text = (
+        "def add_totals(values):\n"
+        "    total = 0\n"
+        "    for value in values:\n"
+        "        total += value\n"
+        "    return total\n"
+    )
+
+    truncated, selected_indexes, was_truncated = repo_map._truncate_source_text_to_budget(
+        text,
+        max_tokens=10_000,
+        max_chars=None,
+    )
+
+    assert was_truncated is False
+    assert truncated == text
+    assert selected_indexes == [1, 2, 3, 4, 5]
+    assert (
+        hashlib.sha256(truncated.encode("utf-8")).hexdigest()
+        == "11c508bd37d3bcfed7d71adf072fb2f2288deea653aba1e25a6eb553b4e9ea08"
+    )
+
+
+def test_truncate_tail_rescue_with_pops_is_byte_identical_to_pinned_golden() -> None:
+    text = _tail_rescue_source(300)
+
+    truncated, selected_indexes, was_truncated = repo_map._truncate_source_text_to_budget(
+        text,
+        max_tokens=60,
+        max_chars=None,
+    )
+
+    assert was_truncated is True
+    assert selected_indexes == [1, 2, 3, 4, 5, 0, 304]
+    assert len(truncated) == 190
+    assert (
+        hashlib.sha256(truncated.encode("utf-8")).hexdigest()
+        == "a539cbd75bb6c6c7198077e3b5929940b7c85c5b809a8fdd9f59878062c58d30"
+    )
+
+
+def test_truncate_tail_rescue_pops_down_to_marker_and_tail_is_byte_identical() -> None:
+    text = _tail_rescue_source(300)
+
+    truncated, selected_indexes, was_truncated = repo_map._truncate_source_text_to_budget(
+        text,
+        max_tokens=24,
+        max_chars=None,
+    )
+
+    assert was_truncated is True
+    assert selected_indexes == [0, 304]
+    assert len(truncated) == 75
+    assert (
+        hashlib.sha256(truncated.encode("utf-8")).hexdigest()
+        == "139cdd360f744d148afd092e18fc8b422d5ef34295dad3cc680db83aad950ffb"
+    )
+
+
+def test_truncate_large_file_default_16000_token_budget_is_byte_identical() -> None:
+    text = _large_synthetic_source(function_count=1000, lines_per_function=8)
+    assert len(text.splitlines()) == 11_000  # sanity: matches the pinned capture below
+
+    truncated, selected_indexes, was_truncated = repo_map._truncate_source_text_to_budget(
+        text,
+        max_tokens=16_000,
+        max_chars=None,
+    )
+
+    assert was_truncated is True
+    assert len(truncated) == 55_990
+    assert len(selected_indexes) == 2194
+    assert selected_indexes[:5] == [1, 2, 3, 4, 5]
+    assert selected_indexes[-5:] == [2190, 2191, 2192, 0, 10999]
+    assert (
+        hashlib.sha256(truncated.encode("utf-8")).hexdigest()
+        == "4be53b46493acd231dd83a05c2838a192e6b4907a45cad3ad7af45839f7f19b4"
+    )
+
+
+def test_truncate_large_file_raised_60000_token_budget_is_byte_identical() -> None:
+    text = _large_synthetic_source(function_count=1000, lines_per_function=8)
+
+    truncated, selected_indexes, was_truncated = repo_map._truncate_source_text_to_budget(
+        text,
+        max_tokens=60_000,
+        max_chars=None,
+    )
+
+    assert was_truncated is True
+    assert len(truncated) == 209_977
+    assert len(selected_indexes) == 8137
+    assert selected_indexes[:5] == [1, 2, 3, 4, 5]
+    assert selected_indexes[-5:] == [8133, 8134, 8135, 0, 10999]
+    assert (
+        hashlib.sha256(truncated.encode("utf-8")).hexdigest()
+        == "f9c937012d96bd76fbeb0fa121b2cb675ae17e3547ade35e19bba90e1c640846"
+    )
+
+
+def test_truncate_large_file_does_not_call_budget_check_proportionally_to_line_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Structural (non-flaky) perf-sanity check for the O(k^2) fix.
+
+    The OLD implementation called the real `_source_text_within_budget` (and therefore
+    `_estimate_tokens`) once per surviving line inside the main truncation loop -- 2194 times for
+    this exact 11,000-line/16000-token case (see the golden test above) -- each call handed a
+    freshly `"".join(...)`-rebuilt candidate string, which is what made it O(k^2). The fixed
+    implementation tracks a running integer length via a local closure instead, so it must call the
+    module-level `_source_text_within_budget` at most a small constant number of times (just the
+    single upfront "does the whole text already fit" check), independent of the file's line count.
+    A wall-clock bound would be a flaky floor on a shared box (anti-hang-test-protocol); a call-count
+    bound is deterministic regardless of machine speed.
+    """
+    call_count = 0
+    real_within_budget = repo_map._source_text_within_budget
+
+    def _counting_within_budget(
+        text: str,
+        *,
+        max_tokens: int | None,
+        max_chars: int | None,
+        _profiling_collector: object | None = None,
+    ) -> bool:
+        nonlocal call_count
+        call_count += 1
+        return real_within_budget(
+            text,
+            max_tokens=max_tokens,
+            max_chars=max_chars,
+            _profiling_collector=_profiling_collector,  # type: ignore[arg-type]
+        )
+
+    monkeypatch.setattr(repo_map, "_source_text_within_budget", _counting_within_budget)
+
+    text = _large_synthetic_source(function_count=1000, lines_per_function=8)
+    assert len(text.splitlines()) == 11_000
+
+    repo_map._truncate_source_text_to_budget(text, max_tokens=16_000, max_chars=None)
+
+    assert call_count <= 5, (
+        f"_source_text_within_budget was called {call_count} times while truncating an "
+        "11,000-line file at a 16000-token budget (2194 lines survive) -- expected a small "
+        "constant independent of line count, not one call per surviving line (O(k) rebuild "
+        "regression?)."
+    )
