@@ -235,7 +235,173 @@ def test_ledger_list_text_mode_no_claims(tmp_path: Path) -> None:
     root = _make_project(tmp_path)
     result = runner.invoke(app, ["ledger", "list", str(root)])
     assert result.exit_code == 0, result.output
-    assert "No live claims." in result.stdout
+    assert "No live claims" in result.stdout
+    assert "descendant subtrees" in result.stdout
+
+
+# ========================================================================================
+# PATH-scope footgun fix (CEO v1.92.1 dogfood #1): CLI-level reproduction of the exact
+# reported sequence, `unmatched_reason`/`live_claims_elsewhere` release honesty, and the
+# `scope` field on claim/list output.
+# ========================================================================================
+
+
+def test_ledger_claim_json_includes_scope_field(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    result = runner.invoke(
+        app,
+        ["ledger", "claim", str(root), "--symbol", "value", "--agent-id", "agent-a", "--json"],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["claim"]["scope"] == "."
+
+
+def test_ledger_dogfood_repro_claim_subpath_then_bare_list(tmp_path: Path, monkeypatch) -> None:
+    """THE literal CLI dogfood repro: `tg ledger claim core/hooks ...` then bare `tg ledger
+    list` (default PATH `.`), invoked from the repo root's own cwd exactly as a real agent
+    would type it. Pre-fix this returned an EMPTY claims list."""
+    root = _make_project(tmp_path)
+    _git_init(root)
+    (root / "core" / "hooks").mkdir(parents=True)
+    monkeypatch.chdir(root)
+
+    claimed = runner.invoke(
+        app,
+        [
+            "ledger",
+            "claim",
+            "core/hooks",
+            "--symbol",
+            "open_session",
+            "--agent-id",
+            "agent-a",
+            "--json",
+        ],
+    )
+    assert claimed.exit_code == 0, claimed.output
+    assert json.loads(claimed.stdout)["claim"]["scope"] == "core/hooks"
+
+    listed = runner.invoke(app, ["ledger", "list", "--json"])
+    assert listed.exit_code == 0, listed.output
+    payload = json.loads(listed.stdout)
+    assert payload["count"] == 1
+    assert payload["claims"][0]["scope"] == "core/hooks"
+
+    listed_explicit_dot = runner.invoke(app, ["ledger", "list", ".", "--json"])
+    assert json.loads(listed_explicit_dot.stdout)["count"] == 1
+
+
+def test_ledger_release_right_selector_succeeds_from_different_subpath(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The release half of the dogfood repro: releasing by `--symbol`/`--agent-id` from a
+    DIFFERENT subpath than the claim now succeeds (pre-fix: `released_count: 0`, claim
+    silently lived on)."""
+    root = _make_project(tmp_path)
+    _git_init(root)
+    (root / "core" / "hooks").mkdir(parents=True)
+    monkeypatch.chdir(root)
+
+    runner.invoke(
+        app,
+        [
+            "ledger",
+            "claim",
+            "core/hooks",
+            "--symbol",
+            "open_session",
+            "--agent-id",
+            "agent-a",
+            "--json",
+        ],
+    )
+
+    released = runner.invoke(
+        app,
+        ["ledger", "release", ".", "--symbol", "open_session", "--agent-id", "agent-a", "--json"],
+    )
+    assert released.exit_code == 0, released.output
+    payload = json.loads(released.stdout)
+    assert payload["released_count"] == 1
+    assert payload["unmatched_reason"] is None
+    assert payload["live_claims_elsewhere"] == []
+
+
+def test_ledger_release_no_match_json_includes_honesty_fields(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    runner.invoke(
+        app,
+        ["ledger", "claim", str(root), "--symbol", "value", "--agent-id", "agent-a", "--json"],
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "ledger",
+            "release",
+            str(root),
+            "--symbol",
+            "nonexistent",
+            "--agent-id",
+            "agent-a",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["released_count"] == 0
+    assert payload["listed_scope"] == "."
+    assert payload["unmatched_reason"] is not None
+    assert payload["live_claims_elsewhere_count"] == 1
+    assert len(payload["live_claims_elsewhere"]) == 1
+    assert payload["live_claims_elsewhere"][0]["symbols"] == ["value"]
+    assert payload["live_claims_elsewhere_truncated"] is False
+
+
+def test_ledger_release_no_match_text_mode_names_live_claims_elsewhere(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    runner.invoke(
+        app,
+        ["ledger", "claim", str(root), "--symbol", "value", "--agent-id", "agent-a", "--json"],
+    )
+
+    result = runner.invoke(
+        app, ["ledger", "release", str(root), "--symbol", "nonexistent", "--agent-id", "agent-a"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "No matching live claim found" in result.stdout
+    assert "live claim(s) exist elsewhere" in result.stdout
+    assert "value" in result.stdout  # the OTHER claim's symbol is actually named
+
+
+def test_ledger_release_no_match_on_empty_ledger_text_mode(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    result = runner.invoke(app, ["ledger", "release", str(root), "--claim-id", "claim-nope"])
+    assert result.exit_code == 0, result.output
+    assert "No live claims exist for this repository." in result.stdout
+
+
+def test_ledger_help_text_states_path_scoping_rule() -> None:
+    """Ask 3: help text loudly states the PATH-scoping/rollup rule."""
+    group_help = runner.invoke(app, ["ledger", "--help"])
+    assert group_help.exit_code == 0, group_help.output
+    assert "canonicalize" in group_help.stdout
+    assert "rolls up" in group_help.stdout
+
+    claim_help = runner.invoke(app, ["ledger", "claim", "--help"])
+    assert claim_help.exit_code == 0, claim_help.output
+    assert "scope" in claim_help.stdout.lower()
+
+    list_help = runner.invoke(app, ["ledger", "list", "--help"])
+    assert list_help.exit_code == 0, list_help.output
+    assert "rolls up" in list_help.stdout.lower() or "rollup" in list_help.stdout.lower()
+
+    release_help = runner.invoke(app, ["ledger", "release", "--help"])
+    assert release_help.exit_code == 0, release_help.output
+    assert "does not filter" in release_help.stdout.lower() or "never filter" in (
+        release_help.stdout.lower()
+    )
 
 
 def test_ledger_top_level_help_lists_subcommands() -> None:

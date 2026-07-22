@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -62,7 +63,15 @@ def test_no_ledger_dir_created_until_first_claim(tmp_path: Path) -> None:
 def test_release_on_empty_ledger_does_not_create_dir(tmp_path: Path) -> None:
     root = _make_project(tmp_path)
     result = ledger_store.release_claim(str(root), claim_id="claim-does-not-exist")
-    assert result == {"released": [], "released_count": 0}
+    assert result == {
+        "released": [],
+        "released_count": 0,
+        "listed_scope": ".",
+        "unmatched_reason": "No live claims exist for this repository.",
+        "live_claims_elsewhere": [],
+        "live_claims_elsewhere_count": 0,
+        "live_claims_elsewhere_truncated": False,
+    }
     assert not (root / ".tensor-grep").exists()
 
 
@@ -349,15 +358,226 @@ def test_release_requires_claim_id_or_symbol(tmp_path: Path) -> None:
 def test_release_nonexistent_claim_is_not_an_error(tmp_path: Path) -> None:
     root = _make_project(tmp_path)
     result = ledger_store.release_claim(str(root), claim_id="claim-nonexistent")
-    assert result == {"released": [], "released_count": 0}
+    assert result == {
+        "released": [],
+        "released_count": 0,
+        "listed_scope": ".",
+        "unmatched_reason": "No live claims exist for this repository.",
+        "live_claims_elsewhere": [],
+        "live_claims_elsewhere_count": 0,
+        "live_claims_elsewhere_truncated": False,
+    }
 
 
 def test_release_by_symbol_does_not_cross_agents(tmp_path: Path) -> None:
+    """Release-mismatch honesty: agent-b's release matches nothing (the live claim belongs to
+    agent-a) -- `released_count` stays 0 (unchanged contract), but the response now NAMES what
+    IS live instead of a bare, indistinguishable zero."""
+    root = _make_project(tmp_path)
+    claimed = ledger_store.submit_claim(str(root), symbols=["value"], agent_id="agent-a")
+    claim_id = claimed["claim"]["claim_id"]
+
+    result = ledger_store.release_claim(str(root), symbol="value", agent_id="agent-b")
+    assert result["released"] == []
+    assert result["released_count"] == 0
+    assert result["listed_scope"] == "."
+    assert result["unmatched_reason"] is not None
+    assert "1 live claim(s)" in result["unmatched_reason"]
+    assert result["live_claims_elsewhere_count"] == 1
+    assert result["live_claims_elsewhere_truncated"] is False
+    assert len(result["live_claims_elsewhere"]) == 1
+    elsewhere = result["live_claims_elsewhere"][0]
+    assert elsewhere["claim_id"] == claim_id
+    assert elsewhere["agent_id"] == "agent-a"
+    assert elsewhere["scope"] == "."
+    assert elsewhere["symbols"] == ["value"]
+    assert ledger_store.list_claims(str(root))["count"] == 1
+
+
+# --------------------------------------------------------------------------------------
+# PATH-scope footgun fix (CEO v1.92.1 dogfood #1): claim/list/release canonicalize to the
+# SAME repository root regardless of which subtree PATH names; `list` rolls scope up; a
+# `release` that matches nothing names what IS live. Reproduces the exact dogfood sequence:
+# `tg ledger claim core/hooks ...` then `tg ledger list` (or `list .`) used to return EMPTY,
+# and `tg ledger release` from a different PATH used to return `released_count: 0` while the
+# claim silently lived on.
+# --------------------------------------------------------------------------------------
+
+
+def test_claim_subpath_rolls_up_into_root_list(tmp_path: Path) -> None:
+    """THE dogfood repro: `claim core/hooks` then `list .` (here: `list(str(root))`, the
+    absolute equivalent of `.` from `root`'s own cwd) must show it -- pre-fix this returned
+    EMPTY because `core/hooks` and `.` resolved to two different physical index.json files."""
+    root = _make_project(tmp_path)
+    _git_init(root)
+    (root / "core" / "hooks").mkdir(parents=True)
+
+    claimed = ledger_store.submit_claim(
+        str(root / "core" / "hooks"), symbols=["open_session"], agent_id="agent-a"
+    )
+    assert claimed["claim"]["scope"] == "core/hooks"
+
+    listed = ledger_store.list_claims(str(root))
+    assert listed["count"] == 1
+    assert listed["claims"][0]["scope"] == "core/hooks"
+    assert listed["claims"][0]["claim_id"] == claimed["claim"]["claim_id"]
+
+
+def test_claim_subpath_rolls_up_into_intermediate_ancestor_list(tmp_path: Path) -> None:
+    """Rollup is not root-only: listing ANY ancestor of the claimed scope (not just the repo
+    root) must also show it."""
+    root = _make_project(tmp_path)
+    _git_init(root)
+    (root / "core" / "hooks").mkdir(parents=True)
+    ledger_store.submit_claim(
+        str(root / "core" / "hooks"), symbols=["open_session"], agent_id="agent-a"
+    )
+
+    listed = ledger_store.list_claims(str(root / "core"))
+    assert listed["count"] == 1
+    assert listed["claims"][0]["scope"] == "core/hooks"
+
+
+def test_root_scoped_claim_not_shown_in_narrower_list(tmp_path: Path) -> None:
+    """The rollup is one-directional (list docstring / module docstring): a claim scoped to
+    the repo root (or any ancestor of the listed path) does NOT roll DOWN into a narrower
+    listing -- "Keep exact behavior for claims outside the listed subtree."""
+    root = _make_project(tmp_path)
+    _git_init(root)
+    (root / "sub").mkdir()
+    ledger_store.submit_claim(str(root), symbols=["whole_repo_symbol"], agent_id="agent-a")
+
+    narrow = ledger_store.list_claims(str(root / "sub"))
+    assert narrow == {"claims": [], "count": 0}
+    # ...but it's still visible from the root itself.
+    assert ledger_store.list_claims(str(root))["count"] == 1
+
+
+def test_disjoint_sibling_subpath_not_shown(tmp_path: Path) -> None:
+    """A claim scoped to one subtree must not appear when listing a DISJOINT sibling
+    subtree."""
+    root = _make_project(tmp_path)
+    _git_init(root)
+    (root / "core" / "hooks").mkdir(parents=True)
+    (root / "docs").mkdir()
+    ledger_store.submit_claim(str(root / "core" / "hooks"), symbols=["foo"], agent_id="agent-a")
+
+    listed = ledger_store.list_claims(str(root / "docs"))
+    assert listed == {"claims": [], "count": 0}
+
+
+def test_scope_containment_is_segment_wise_not_string_prefix(tmp_path: Path) -> None:
+    """False-prefix trap: a claim scoped to `core/hoodie` must NOT match a list of
+    `core/ho` -- a lexical (segment-wise) containment check, never a raw string-prefix
+    test."""
+    root = _make_project(tmp_path)
+    _git_init(root)
+    (root / "core" / "hoodie").mkdir(parents=True)
+    (root / "core" / "ho").mkdir(parents=True)
+    ledger_store.submit_claim(str(root / "core" / "hoodie"), symbols=["foo"], agent_id="agent-a")
+
+    listed = ledger_store.list_claims(str(root / "core" / "ho"))
+    assert listed == {"claims": [], "count": 0}
+
+
+def test_scope_normalizes_dot_slash_prefix_and_trailing_slash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Path normalization traps: a `./`-prefixed relative PATH and a trailing-slash PATH must
+    both normalize to the same clean, POSIX-separated scope as the plain form. Requires a
+    `.git` anchor at `root` -- without one, canonicalization is a no-op (see
+    `test_non_git_sibling_directories_keep_isolated_roots`) and the physical root would stop
+    AT the claimed subdirectory itself, making every scope trivially "."."""
+    root = _make_project(tmp_path)
+    _git_init(root)
+    (root / "core" / "hooks").mkdir(parents=True)
+    monkeypatch.chdir(root)
+
+    dot_slash = ledger_store.submit_claim("./core/hooks", symbols=["a"], agent_id="agent-a")
+    assert dot_slash["claim"]["scope"] == "core/hooks"
+
+    trailing_slash = ledger_store.submit_claim("core/hooks/", symbols=["b"], agent_id="agent-a")
+    assert trailing_slash["claim"]["scope"] == "core/hooks"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="backslash is only a separator on Windows")
+def test_scope_normalizes_windows_separators(tmp_path: Path) -> None:
+    """Windows-separator normalization trap: a backslash-separated (or mixed) PATH must
+    normalize to the same clean POSIX scope as a forward-slash PATH. Requires a `.git` anchor
+    at `root` for the same reason as the `./`-prefix test above."""
+    root = _make_project(tmp_path)
+    _git_init(root)
+    (root / "core" / "hooks").mkdir(parents=True)
+
+    mixed = ledger_store.submit_claim(str(root) + "\\core/hooks", symbols=["c"], agent_id="agent-a")
+    assert mixed["claim"]["scope"] == "core/hooks"
+
+    backslash = ledger_store.submit_claim(
+        str(root) + "\\core\\hooks", symbols=["d"], agent_id="agent-a"
+    )
+    assert backslash["claim"]["scope"] == "core/hooks"
+
+
+def test_release_right_selector_succeeds_from_different_subpath(tmp_path: Path) -> None:
+    """Physical unification proof (the release half of the dogfood repro): a claim filed
+    under `core/hooks` is releasable by `--symbol`/`--agent-id` from a DIFFERENT subpath of
+    the SAME repository ('.') -- pre-fix this returned `released_count: 0` because `core/
+    hooks` and `.` were different physical index.json files."""
+    root = _make_project(tmp_path)
+    _git_init(root)
+    (root / "core" / "hooks").mkdir(parents=True)
+    ledger_store.submit_claim(
+        str(root / "core" / "hooks"), symbols=["open_session"], agent_id="agent-a"
+    )
+
+    result = ledger_store.release_claim(str(root), symbol="open_session", agent_id="agent-a")
+    assert result["released_count"] == 1
+    assert result["released"][0]["scope"] == "core/hooks"
+    assert ledger_store.list_claims(str(root))["count"] == 0
+
+
+def test_release_by_claim_id_succeeds_from_different_subpath(tmp_path: Path) -> None:
+    root = _make_project(tmp_path)
+    _git_init(root)
+    (root / "core" / "hooks").mkdir(parents=True)
+    claimed = ledger_store.submit_claim(
+        str(root / "core" / "hooks"), symbols=["foo"], agent_id="agent-a"
+    )
+    claim_id = claimed["claim"]["claim_id"]
+
+    result = ledger_store.release_claim(str(root), claim_id=claim_id)
+    assert result["released_count"] == 1
+
+
+def test_non_git_sibling_directories_keep_isolated_roots(tmp_path: Path) -> None:
+    """Fallback safety net: two SIBLING non-git directories must NOT be unified into one
+    ledger just because they share a parent -- canonicalization only kicks in when a `.git`
+    boundary is actually found; without one, today's exact `_resolve_root`-only (per-literal
+    -path) behavior is preserved unchanged."""
+    project_a = _make_project(tmp_path, name="project_a")
+    project_b = _make_project(tmp_path, name="project_b")
+    ledger_store.submit_claim(str(project_a), symbols=["only_in_a"], agent_id="agent-a")
+
+    assert ledger_store.list_claims(str(project_b)) == {"claims": [], "count": 0}
+    assert ledger_store.list_claims(str(project_a))["count"] == 1
+
+
+def test_old_format_claim_missing_scope_defaults_to_root_and_stays_visible(
+    tmp_path: Path,
+) -> None:
+    """Backward-read: an on-disk claim written by a pre-fix `tg` (no `scope` key at all) must
+    not silently vanish from `list` after upgrading -- it defaults to `"."` (repo-root-wide,
+    the maximally-visible default) and is stamped onto the returned entry."""
     root = _make_project(tmp_path)
     ledger_store.submit_claim(str(root), symbols=["value"], agent_id="agent-a")
-    result = ledger_store.release_claim(str(root), symbol="value", agent_id="agent-b")
-    assert result == {"released": [], "released_count": 0}
-    assert ledger_store.list_claims(str(root))["count"] == 1
+
+    records = json.loads(_index_path(root).read_text(encoding="utf-8"))
+    del records[0]["scope"]
+    _index_path(root).write_text(json.dumps(records), encoding="utf-8")
+
+    listed = ledger_store.list_claims(str(root))
+    assert listed["count"] == 1
+    assert listed["claims"][0]["scope"] == "."
 
 
 # --------------------------------------------------------------------------------------

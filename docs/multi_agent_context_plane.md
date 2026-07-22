@@ -138,14 +138,17 @@ To keep harnesses from overclaiming, be precise about the current limits:
   `refresh_on_stale`) so the new files invalidate cached hits.
 - **A ledger exists, but is EXPERIMENTAL/preview and explicit-invoke only.** `tg ledger
   claim`/`release`/`list` (advisory, code-scoped coordination -- `ledger_app`, `main.py:278`,
-  mounted at `main.py:14161`; `submit_claim`/`release_claim`/`list_claims`,
-  `ledger_store.py:445,507,562`) and `tg ledger record`/`find` (content-addressed artifact reuse
-  -- `record_finding`/`find_findings`, `ledger_store.py:886,1023`) are real, shipped commands --
+  mounted at `main.py:14166`; `submit_claim`/`release_claim`/`list_claims`,
+  `ledger_store.py:581,714,782`) and `tg ledger record`/`find` (content-addressed artifact reuse
+  -- `record_finding`/`find_findings`, `ledger_store.py:1118,1255`) are real, shipped commands --
   see `docs/CONTRACTS.md` sections 9-10 for the full contract, and
   `docs/enterprise_review_bundle_ci.md` for how `record`/`find` compose with the evidence-receipt
   CI gate. Still true: nothing in `tg agent`/`tg edit-plan`/the daemon consults the ledger
   automatically (explicit-invoke only), there is no MCP tool surface for it, and it does not
-  extend into a general message bus or cross-repo lookup.
+  extend into a general message bus or cross-repo lookup. Since 2026-07-22, `claim`/`release`/
+  `list` (Slice 1 only) canonicalize `PATH` to the nearest `.git` ancestor rather than rooting
+  themselves at `PATH` taken literally -- see `docs/CONTRACTS.md` section 9's "PATH scoping"
+  bullet for the fixed footgun and the new claim `scope` field.
 
 ## Demand instrumentation (step 0 for a possible shared-context surface)
 
