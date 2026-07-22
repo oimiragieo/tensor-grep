@@ -136,10 +136,18 @@ def native_frontdoor_metadata_path(native_binary: Path) -> Path:
 def _read_native_frontdoor_metadata(native_binary: Path) -> dict[str, str]:
     metadata_path = native_frontdoor_metadata_path(native_binary)
     try:
+        # Bounded + fail-closed (gate NIT-2 on #704): this reader now also runs on the agent
+        # GPU-evidence path via is_cross_domain_native_binary, so a corrupt sidecar file must
+        # degrade to "invalid", never propagate. UnicodeDecodeError is a ValueError (NOT an
+        # OSError, and json.JSONDecodeError is itself a ValueError subclass), so catching
+        # (OSError, ValueError) covers unreadable, non-UTF8, and malformed-JSON uniformly.
+        # The size cap keeps a bogus multi-GB file from stalling a diagnostic probe.
+        if metadata_path.stat().st_size > 1_048_576:
+            return {"native_frontdoor_metadata_status": "invalid"}
         raw = json.loads(metadata_path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return {}
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):
         return {"native_frontdoor_metadata_status": "invalid"}
     if not isinstance(raw, dict):
         return {"native_frontdoor_metadata_status": "invalid"}
@@ -378,16 +386,94 @@ def native_binary_targets_windows(binary: Path | str) -> bool:
     return str(binary).lower().endswith(".exe")
 
 
+# GPU-P0-1 follow-up (2026-07-21 CEO WSL dogfood, gotcontext-saddle): `native_binary_targets_windows()`
+# is keyed on the `.exe` suffix of the resolved candidate ITSELF, which is correct for a raw
+# binary but blind to the bare-named (`tg`, no extension) POSIX shim that BOTH managed installers
+# generate for WSL/git-bash/MSYS shells: `scripts/install.sh`'s staged `bin/tg` heredoc (copied via
+# `cp "$INSTALL_DIR/bin/tg" "$SHIM_PATH"` into every `SHIM_DIRS` entry, install.sh:395-401) and
+# `scripts/install.ps1`'s `$frontdoorBashContent` (`Write-BashFile -Path $stagingFrontdoorBashPath`
+# for the original `.tensor-grep/bin/tg`, then a byte-identical copy into every `$shimDirs` entry
+# via `Write-BashFile -Path $bashShimPath -Value $frontdoorBashContent`, install.ps1:837-852). Both
+# shims detect WSL via their own `/proc/version` "microsoft" check and then `exec` the real
+# `tg.exe` -- but the SHIM itself, not the `.exe` it delegates to, is what
+# `resolve_native_tg_binary()` returns on a WSL/Linux host (it looks for a literal `tg`, no
+# extension: `binary_name = "tg.exe" if sys.platform.startswith("win") else "tg"` above). The
+# `.exe`-suffix check alone therefore reads this shim as same-domain, so the doctor/agent probes
+# hand it an untranslated `/tmp/...` path; the shim's real Windows-target child process can't open
+# it and returns the native binary's own structured `path_not_found` -- which the doctor then
+# reports as the honest-LOOKING but WRONG `failed_probe_path` (same-domain bucket) instead of
+# `failed_path_bridging`/`path_domain_mismatch` (verified live: `tg doctor --json` under WSL
+# resolved a `~/bin/tg`-class shim (bash script, no `.exe`) that internally `exec`s `tg.exe`).
+#
+# Two independent signals below, both filesystem-observable from the shim's own resolved path:
+#   1. `_native_frontdoor_metadata_targets_windows()` -- the sibling `tg-native-metadata.json`
+#      written next to the ORIGINAL front door (`.tensor-grep/bin/tg-native-metadata.json`).
+#   2. `_sibling_native_windows_binary_exists()` -- a co-located `tg.exe`. This is the one that
+#      actually catches the live repro: install.ps1's `Copy-Item -LiteralPath $nativeFrontdoorPath
+#      -Destination $exeShimPath` (line 841) copies a REAL `tg.exe` into every `$shimDirs` entry
+#      alongside the bash shim, but does NOT copy `tg-native-metadata.json` there (only the
+#      original `.tensor-grep/bin/` gets it) -- so a shim resolved via `~/bin/tg` or
+#      `~/.local/bin/tg` (the common case; these, not `.tensor-grep/bin/`, are what installer
+#      wiring puts on `$PATH`) has signal 2 but NOT signal 1. Confirmed empirically: on the CEO's
+#      WSL dogfood box, `resolve_native_tg_binary()` resolved exactly such a shimDir copy, and
+#      re-running the doctor probe logic against it post-fix (signal 2 present, signal 1 absent)
+#      correctly flips `is_cross_domain_native_binary()` to True and the translated path opens
+#      cleanly via the real `tg.exe`. Keeping signal 1 too: it survives a `tg.exe` later being
+#      deleted out from under an otherwise-intact managed install (the shim's own fallback branch
+#      then execs the managed venv's Windows-side `python.exe`, still cross-domain).
+def _native_frontdoor_metadata_targets_windows(binary: Path | str) -> bool:
+    """True when the sibling `tg-native-metadata.json` records a Windows-target asset.
+
+    Reads `asset_name` (written by the installer next to whatever front-door entry point it
+    creates: `tg-windows-amd64-{cpu,nvidia}.exe` vs `tg-linux-amd64-{cpu,nvidia}`/`tg-macos-amd64-
+    cpu`) via the existing `native_frontdoor_metadata_path()`/`_read_native_frontdoor_metadata()`
+    helpers. Fails closed to False on any miss -- no metadata file, unreadable, malformed, or no
+    `asset_name` field -- so this can only ever ADD a cross-domain detection, never remove one.
+    """
+    try:
+        binary_path = binary if isinstance(binary, Path) else Path(binary)
+    except TypeError:
+        return False
+    metadata = _read_native_frontdoor_metadata(binary_path)
+    asset_name = metadata.get("native_frontdoor_asset_name")
+    return isinstance(asset_name, str) and asset_name.lower().endswith(".exe")
+
+
+def _sibling_native_windows_binary_exists(binary: Path | str) -> bool:
+    """True when a `<name>.exe` file exists alongside `binary` in the same directory.
+
+    Both managed installers place a real copy of the native `tg.exe` in the SAME directory as the
+    bare-named POSIX shim that `exec`s it (install.ps1:841's `Copy-Item ... -Destination
+    $exeShimPath`; install.sh's `STAGING_NATIVE_BINARY`/shim both live under the same staged
+    `bin/`), so this is a filesystem-observable signal independent of whether install-time metadata
+    happens to be co-located too (it usually is NOT for the distributed shim-dir copies -- see the
+    module comment above). Fails closed to False when `binary` has no name component or the sibling
+    does not exist, so this can only ever ADD a cross-domain detection, never remove one.
+    """
+    try:
+        binary_path = binary if isinstance(binary, Path) else Path(binary)
+    except TypeError:
+        return False
+    name = binary_path.name
+    if not name:
+        return False
+    return (binary_path.parent / f"{name}.exe").is_file()
+
+
 def is_cross_domain_native_binary(binary: Path | str | None) -> bool:
     """True when the host is Linux/WSL but the resolved native `tg` binary targets Windows.
 
-    Requires ALL THREE: a Linux host (`sys.platform`), a genuine WSL signal (`is_wsl_host()`),
-    and a Windows-shaped binary path (`native_binary_targets_windows()`). Dropping the WSL-signal
-    check would false-positive on any bare Linux CI runner whose test fixtures happen to use a
-    `.exe`-suffixed name for unrelated reasons; dropping the platform check would be redundant but
-    harmless. The downstream `wslpath` lookup also fails closed (returns None) when unavailable,
-    so even a false positive here degrades to the honest `path_domain_mismatch` status rather than
-    a silently wrong argv.
+    Requires a Linux host (`sys.platform`), a genuine WSL signal (`is_wsl_host()`), and a
+    Windows-shaped target -- the resolved path itself carrying the `.exe` suffix
+    (`native_binary_targets_windows()`), OR either of two install-time signals for the bare-named
+    POSIX shim case documented above: its sibling metadata naming a Windows asset
+    (`_native_frontdoor_metadata_targets_windows()`) or a co-located `tg.exe` on disk
+    (`_sibling_native_windows_binary_exists()`). Dropping the WSL-signal check would
+    false-positive on any bare Linux CI runner whose test fixtures happen to use a `.exe`-suffixed
+    name for unrelated reasons; dropping the platform check would be redundant but harmless. The
+    downstream `wslpath` lookup also fails closed (returns None) when unavailable, so even a false
+    positive here degrades to the honest `path_domain_mismatch` status rather than a silently wrong
+    argv.
     """
     if binary is None:
         return False
@@ -395,7 +481,11 @@ def is_cross_domain_native_binary(binary: Path | str | None) -> bool:
         return False
     if not is_wsl_host():
         return False
-    return native_binary_targets_windows(binary)
+    return (
+        native_binary_targets_windows(binary)
+        or _native_frontdoor_metadata_targets_windows(binary)
+        or _sibling_native_windows_binary_exists(binary)
+    )
 
 
 def translate_path_for_windows_binary(
