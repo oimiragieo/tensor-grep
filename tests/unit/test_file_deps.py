@@ -2101,6 +2101,132 @@ def test_build_file_imports_unresolvable_dynamic_literal_stays_external(tmp_path
 
 
 # ---------------------------------------------------------------------------------------------
+# #703 gate NIT-1 (banked follow-up, independent Opus gate on PR #703 -- "SHIP-WITH-NITS"):
+# `_python_imports_and_symbols`'s prefilter emission (repo_map.py:1988, just above the false-edge
+# test block above) keys on `dynamic_entry["module"]` truthiness ALONE, ignoring
+# `dynamic_unresolved` -- so the SAME unresolved relative literal (`".sibling"`) that
+# `test_build_file_imports_relative_import_module_literal_stays_external_no_false_edge` and
+# `test_build_file_importers_relative_import_module_literal_asserts_no_edge` above prove stays
+# honestly EXTERNAL through the precise forward/reverse resolvers still lands in `imports_by_file`
+# -- the alias graph `tg blast-radius`'s reverse SCORING prefilter reads. `_import_alias_
+# candidates(".sibling")` -> `{".sibling", "sibling"}`, and the substring test inside
+# `_import_graph_bonus` (repo_map.py:~7827) then fuzzy-matches ANY top-level `sibling.py` --
+# planting the loader file into blast-radius `affected_files`/`radius_files` for a symbol DEFINED
+# in the decoy `sibling.py`, even though the precise edge (proven above) correctly excludes it.
+# `affected_files` is a deliberately broad proximity superset, not the exact edge list -- a
+# QUALITY tightening, not a correctness emergency -- but narrowing the graph can reorder
+# `dependent_files` for the LEGITIMATE dependents (repo_map.py:7916-7924), so the gate mandated a
+# ranking PIN test before the guard changes anything.
+# ---------------------------------------------------------------------------------------------
+
+
+def _build_decoy_dynamic_import_blast_radius_project(tmp_path: Path) -> dict[str, Path]:
+    """Mirrors the exact #703 decoy shape (`test_build_file_imports_relative_import_module_
+    literal_stays_external_no_false_edge` above): a top-level `sibling.py` decoy (which also
+    defines the symbol this block runs `tg blast-radius` against) plus a `pkg/subpkg/loader.py`
+    whose ONLY reference to it is the unresolved RELATIVE dynamic literal
+    `import_module(".sibling", package="pkg.subpkg")`. Adds a genuine 2-hop static importer chain
+    -- `consumer.py` calls the decoy's symbol directly (depth 1, a real caller); `chain_consumer.py`
+    calls `consumer.py`, never referencing the decoy directly (depth 2, graph-only) -- plus 2
+    bystander files with no import relationship to the decoy at all."""
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    subpkg = pkg / "subpkg"
+    subpkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (subpkg / "__init__.py").write_text("", encoding="utf-8")
+
+    decoy = project / "sibling.py"
+    decoy.write_text("def decoy_target():\n    return 1\n", encoding="utf-8")
+
+    loader = subpkg / "loader.py"
+    loader.write_text(
+        "from importlib import import_module\n\n"
+        "def load():\n"
+        '    return import_module(".sibling", package="pkg.subpkg")\n',
+        encoding="utf-8",
+    )
+
+    consumer = project / "consumer.py"
+    consumer.write_text(
+        "from sibling import decoy_target\n\ndef use_it():\n    return decoy_target()\n",
+        encoding="utf-8",
+    )
+
+    chain_consumer = project / "chain_consumer.py"
+    chain_consumer.write_text(
+        "from consumer import use_it\n\ndef use_it_too():\n    return use_it()\n",
+        encoding="utf-8",
+    )
+
+    bystander_one = project / "bystander_one.py"
+    bystander_one.write_text("def noop():\n    return 0\n", encoding="utf-8")
+    bystander_two = project / "bystander_two.py"
+    bystander_two.write_text("def noop_two():\n    return 0\n", encoding="utf-8")
+
+    return {
+        "project": project,
+        "decoy": decoy,
+        "loader": loader,
+        "consumer": consumer,
+        "chain_consumer": chain_consumer,
+        "bystander_one": bystander_one,
+        "bystander_two": bystander_two,
+    }
+
+
+def test_blast_radius_legitimate_dependent_ranking_pin(tmp_path: Path) -> None:
+    """THE PIN (gate NIT-1 mandated order, step 1): membership + RELATIVE order for the
+    legitimately-related files must survive the repo_map.py:1988 guard fix byte-identical --
+    narrowing the reverse-scoring graph can reorder `dependent_files` (repo_map.py:7916-7924), and
+    this test exists to CATCH that if it ever happens, not to assert what the order should be.
+    Deliberately does NOT assert anything about the decoy's fuzzy-matched loader file (present in
+    `dependent_files` on the unfixed base, between `consumer` and `chain_consumer` -- see the gate
+    finding above) -- that is `test_blast_radius_excludes_unresolved_dynamic_literal_fuzzy_match`
+    below. Must stay GREEN both before and after the guard fix; this is the pin, not a red test."""
+    paths = _build_decoy_dynamic_import_blast_radius_project(tmp_path)
+
+    payload = repo_map.build_symbol_blast_radius_render("decoy_target", paths["project"])
+
+    affected_files = set(payload["affected_files"])
+    decoy_str = str(paths["decoy"].resolve())
+    consumer_str = str(paths["consumer"].resolve())
+    chain_str = str(paths["chain_consumer"].resolve())
+    bystander_strs = {str(paths["bystander_one"].resolve()), str(paths["bystander_two"].resolve())}
+
+    # Membership: the definition + the genuine 2-hop static chain are always present; unrelated
+    # bystanders (zero import relationship to the decoy) never enter the graph at all.
+    assert {decoy_str, consumer_str, chain_str} <= affected_files
+    assert bystander_strs.isdisjoint(affected_files)
+
+    # Order: the direct depth-1 caller must rank ahead of the depth-2 transitive dependent in
+    # `dependent_files` -- a RELATIVE check (not a hardcoded literal list), because the loader's
+    # own position in this list is exactly what the guard fix is expected to remove.
+    dependent_files = list(payload["edit_plan_seed"]["dependent_files"])
+    assert consumer_str in dependent_files
+    assert chain_str in dependent_files
+    assert dependent_files.index(consumer_str) < dependent_files.index(chain_str)
+
+
+def test_blast_radius_excludes_unresolved_dynamic_literal_fuzzy_match(tmp_path: Path) -> None:
+    """THE TIGHTENING (gate NIT-1 mandated order, step 4): a file whose ONLY reference to the
+    decoy is an UNRESOLVED dynamic literal must never enter `tg blast-radius` `affected_files` (or
+    the edit-plan seed's `dependent_files`) via the reverse-scoring prefilter's fuzzy alias match
+    -- the precise `tg importers` edge already excludes it
+    (`test_build_file_importers_relative_import_module_literal_asserts_no_edge` above); this pins
+    the same honesty for the proximity-SCORING consumer. RED on the unfixed base (the loader IS
+    present, proving the gate's finding is real, not hypothetical); GREEN after the
+    repo_map.py:1988 guard fix."""
+    paths = _build_decoy_dynamic_import_blast_radius_project(tmp_path)
+
+    payload = repo_map.build_symbol_blast_radius_render("decoy_target", paths["project"])
+
+    loader_str = str(paths["loader"].resolve())
+    assert loader_str not in set(payload["affected_files"])
+    assert loader_str not in payload["edit_plan_seed"]["dependent_files"]
+
+
+# ---------------------------------------------------------------------------------------------
 # Proximity-tiered reverse-import candidate ordering. Dogfood flap (v1.81.15 PASS
 # -> v1.81.17 INCOMPLETE "0 importers @ 330/1035 files scanned" on a 50k-file WSL multi-repo
 # workspace) traced to `build_file_importers_from_map` slicing its CALLER_SCAN_FILE_CEILING /

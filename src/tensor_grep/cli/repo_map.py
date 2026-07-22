@@ -1985,8 +1985,30 @@ def _python_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, A
     # see `_python_dynamic_import_entries`) so a file that ONLY reaches a target dynamically is
     # still discoverable as a candidate by the reverse `tg importers` prefilter
     # (`_reverse_importers`), not just by the forward `tg imports` primitive.
+    #
+    # #703 gate NIT-1 fix: a plain `dynamic_entry["module"]` truthiness check was NOT actually
+    # equivalent to "statically resolvable" once #703 taught `_python_dynamic_import_entries` to
+    # also mark a RELATIVE literal (leading-dot `import_module(".sibling", package=...)`) or an
+    # explicit-nonzero-`level` `__import__(...)` as `dynamic_unresolved` -- unlike the original
+    # non-literal-argument case, those keep their real literal text in `module` (nothing is
+    # fabricated/blanked, see that function's docstring) rather than blanking it to `""`. So an
+    # unresolved-but-non-blank literal like `".sibling"` used to slip past this `if` into
+    # `imports`, which becomes `repo_map["imports"]` -- the alias graph `tg blast-radius`'s
+    # reverse SCORING prefilter (`_reverse_import_distances`/`_reverse_importers`) reads. A
+    # same-named-but-unrelated top-level file (`_import_alias_candidates` + the substring test in
+    # `_import_graph_bonus`) could then fuzzy-match that unresolved literal and be pulled into
+    # `affected_files`/`dependent_files` -- even though the precise `tg importers` edge
+    # (`_resolve_raw_import_entry` / `_confirm_import_edges`) already excluded it correctly, since
+    # THAT path has always skipped resolution whenever `dynamic_unresolved` is set. Requiring
+    # `not dynamic_entry["dynamic_unresolved"]` here makes this prefilter honor the exact same
+    # "no false edges, missing is fine" contract the precise resolvers already enforce -- an
+    # unresolved dynamic import (relative-literal or non-literal-argument alike) now contributes
+    # nothing to the alias graph, closing the fuzzy-match gap. Pinned by
+    # test_blast_radius_excludes_unresolved_dynamic_literal_fuzzy_match (regression-lock) and
+    # test_blast_radius_legitimate_dependent_ranking_pin (proves the legitimate reverse-scoring
+    # ranking is unaffected) in tests/unit/test_file_deps.py.
     for dynamic_entry in _python_dynamic_import_entries(tree):
-        if dynamic_entry["module"]:
+        if dynamic_entry["module"] and not dynamic_entry["dynamic_unresolved"]:
             imports.append(str(dynamic_entry["module"]))
 
     imports = sorted(dict.fromkeys(imports))
