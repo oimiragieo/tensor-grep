@@ -1,6 +1,100 @@
 # CHANGELOG
 
 
+## v1.93.10 (2026-07-23)
+
+### Continuous Integration
+
+- **test-rust-core**: Retry the pinned-toolchain fetch to fix the macos network flake
+  ([#722](https://github.com/oimiragieo/tensor-grep/pull/722),
+  [`714fbc8`](https://github.com/oimiragieo/tensor-grep/commit/714fbc8ff764601761b5dfca5885fc47171e6e0a))
+
+test-rust-core's `cargo test` runs in rust_core/, whose rust-toolchain.toml pins 1.96.0. When that
+  pinned toolchain isn't already installed, cargo triggers an ON-DEMAND rustup download of the
+  1.96.0 manifest mid-test -- and that fetch has NO retry (the rustup-init curl in Setup Rust is
+  --retry 10, but rustup's own toolchain fetch is not). A transient macos-runner network timeout on
+  `channel-rust-1.96.0.toml.sha256` red-failed CI on 2 consecutive PRs (#720, #721), each needing a
+  manual rerun.
+
+Fix: pre-fetch the pin in Setup Rust inside a 3x retry loop (a cheap `cargo --version` in rust_core
+  triggers rustup to install the toml pin), so `cargo test` finds it cached and never does the
+  un-retried on-demand download. Behavior-preserving (same toolchains installed); scoped to
+  test-rust-core; fails the step only if the fetch genuinely fails 3x. The PR's own matrix CI
+  (ubuntu/windows/macos x stable/nightly) validates it.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Reconcile CURRENT STATE to v1.93.9 — post-campaign ast.walk-merge optimization
+  ([#721](https://github.com/oimiragieo/tensor-grep/pull/721),
+  [`f06614d`](https://github.com/oimiragieo/tensor-grep/commit/f06614da3c01c93ab68c91461dd69b1c96d1e132))
+
+Documents the post-+10%-campaign optimization pass: a cProfile probe of the published v1.93.8 hot
+  paths found 2 levers. The clean one shipped as #719/v1.93.9 (merge 3 redundant full-tree ast.walk
+  passes in _python_imports_and_symbols into one — 82% of tg-orient's cold wall,
+  byte-identical/Opus-gated via a 386-file differential), DOGFOOD-VERIFIED ~54% faster on the target
+  function (microbench 961ms -> 446ms). The 2nd lever (framework-scan) was measure-first deferred
+  (no clean path). Also #720 (test-only) de-flaked the perf-floor asserts that flaked. Walk-merge
+  lever class now exhausted. Docs-only, no release.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+### Performance Improvements
+
+- **edit-plan**: Textual pre-check before per-candidate validation-test AST parse (byte-identical)
+  ([#723](https://github.com/oimiragieo/tensor-grep/pull/723),
+  [`d2c1266`](https://github.com/oimiragieo/tensor-grep/commit/d2c1266d4b877d76650a5eda56248dbab98abcbf))
+
+_framework_test_pattern_bonus unconditionally called _framework_test_function_candidates (an
+  expensive AST parse for every .py candidate, via _python_parametrized_test_function_candidates ->
+  _cached_ast_parse) for every test-file candidate _discover_validation_tests_for_primary_file
+  scores, even though most candidates contribute a 0 bonus. Profiled at 46% of `tg context-render`'s
+  wall / 23.9% of `tg prepare`'s.
+
+Read the candidate file's raw text once and short-circuit to return 0 when nothing in expanded_terms
+  could possibly score, before triggering the parse. Verified byte-identical: every string
+  _score_text_terms scores against is a literal substring of the raw file text, except the JS/TS
+  describe+test synthesized join (f"{suite_name} {target_name}"), which can only score via a literal
+  substring of one half or a straddle across the synthetic space -- so checking each
+  whitespace-split word of a term (not the term as one contiguous run) against the raw text is a
+  sound, strictly safer over-approximation that closes that seam. Confirmed empirically that a naive
+  whole-term check breaks identity on a constructed straddle case; the word-split refinement fixes
+  it.
+
+Lever 2 (thread precomputed_file_paths into the second validation-plan chain via
+  _detect_validation_runners_from_root) was verified already shipped in #645 (78a6a37) -- skipped,
+  not bundled.
+
+5 new tests in tests/unit/test_validation_commands.py assert output-identity against a same-file
+  reimplementation of the pre-fix body, and that the no-match case never calls
+  _framework_test_function_candidates (proving the parse is actually skipped). TDD: RED (4/5
+  baseline-pass, 1/5 fails pre-fix) -> GREEN (5/5). Regression sweep: 1544/1544 passed across
+  test_validation_commands.py, test_framework_test_patterns.py, edit-plan-seed,
+  context-render/blast-radius max-files, and a broader repo_map/agent_capsule/cli-deadline batch.
+  ruff format/check clean, mypy clean.
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+### Testing
+
+- **index-lock**: De-flake the 2 uncontended hot-path perf-floor asserts (2nd de-flake)
+  ([#720](https://github.com/oimiragieo/tensor-grep/pull/720),
+  [`1ba8a72`](https://github.com/oimiragieo/tensor-grep/commit/1ba8a72425d7d80c2b950e8a37cbb5b28a072acb))
+
+test_create_checkpoint_uncontended_hot_path_unaffected flaked at elapsed=4.531s vs the #244 flat
+  4.0s floor on a loaded Windows CI runner (blocked a clean PR, passed on rerun). Root cause #244
+  missed: baseline_elapsed measures only the PRE-lock work, not the snapshot-WRITE I/O that elapsed
+  also pays, so a loaded runner inflates elapsed more than the baseline and both the ratio and the
+  flat floor trip on pure OS noise. This is a noisy-CI wall-clock SMOKE test (can only reliably
+  catch a GROSS slowdown), so widen the two uncontended hot-path asserts (checkpoint + sibling
+  session) to max(baseline*6, 8.0). The bidirectional guard is preserved (a lock-scope regression
+  still inflates elapsed far past 6x). The stale-lock-reclaim asserts keep their flat < 4.0 -- there
+  4.0 is SEMANTIC (must beat the 5s acquire timeout), not noise. Test-only, no release.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.93.9 (2026-07-23)
 
 ### Documentation
