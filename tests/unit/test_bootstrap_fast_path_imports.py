@@ -169,14 +169,19 @@ def test_runtime_paths_bare_import_does_not_pull_json_or_shutil() -> None:
     -- calling none of its functions -- must not load the stdlib ``json``/``shutil`` modules.
     Both are now function-local at their only call sites (``_read_native_frontdoor_metadata``,
     ``translate_path_for_windows_binary``, ``resolve_ripgrep_binary``), so a bare import should
-    cost neither."""
+    cost neither. Measured as the sys.modules DELTA across the import (not an absolute
+    ) so a process that pre-loads json/shutil at interpreter startup --
+    e.g. the cuDF/GPU-dep env's site customization on the test-gpu runner -- does not false-fail.
+    """
     probe_source = f"""
 import sys
 sys.path.insert(0, {_REPO_SRC!r})
+_before = set(sys.modules)
 import tensor_grep.cli.runtime_paths
+_added = set(sys.modules) - _before
 _status = {{
-    "json_loaded": "json" in sys.modules,
-    "shutil_loaded": "shutil" in sys.modules,
+    "json_loaded": "json" in _added,
+    "shutil_loaded": "shutil" in _added,
 }}
 import json as _json
 print(_json.dumps(_status))
