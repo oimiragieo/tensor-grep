@@ -280,11 +280,12 @@ def test_arm_skipped_vs_scored_distinct() -> None:
     assert report.arms["bm25"].status == "scored"
     assert report.arms["dense"].status == "scored"
     assert report.arms["rrf"].status == "scored"
+    assert report.arms["rrf_shipped"].status == "scored"
     assert report.arms["rrf+maxsim"].status == "scored"
     assert report.arms["find"].status == "skipped"
-    assert report.arms["find"].reason == mod.SKIP_AWAITING_WAVE2
+    assert report.arms["find"].reason == mod.SKIP_FIND_ARM_NOT_WIRED
     assert report.arms["find+stack"].status == "skipped"
-    assert report.arms["find+stack"].reason == mod.SKIP_AWAITING_WAVE2
+    assert report.arms["find+stack"].reason == mod.SKIP_FIND_ARM_NOT_WIRED
 
     # a paired comparison across two SCORED arms works and covers every query exactly once...
     comparison = mod.paired_comparison(report.arms["bm25"], report.arms["dense"], "ndcg@10")
@@ -299,16 +300,31 @@ def test_arm_skipped_vs_scored_distinct() -> None:
 
 
 def test_dense_rrf_and_maxsim_skip_cleanly_without_the_optional_extras() -> None:
-    """In THIS environment (CI installs only [dev], per test_retrieval_dense.py's own
-    docstring), model2vec/onnxruntime are not installed -- dense/rrf/rrf+maxsim must degrade to
-    a clean, specific SKIPPED status, never crash and never silently score as though they ran."""
+    """When the dense leg is unavailable (CI installs only [dev], per test_retrieval_dense.py's
+    own docstring) -- dense/rrf/rrf_shipped/rrf+maxsim must degrade to a clean, specific SKIPPED
+    status, never crash and never silently score as though they ran.
+
+    ``dense_reason_override`` FORCES this scenario explicitly rather than relying on the ambient
+    environment actually lacking `model2vec`/a fetched model: a semantic-enabled dev venv (e.g. a
+    local `[semantic]` install with the model already fetched) would otherwise silently make this
+    assertion false and this test would incorrectly fail on a perfectly healthy machine -- proven
+    empirically while building the `rrf_shipped` arm (a semantic-enabled venv scored every leg
+    here before this override was added). Mirrors `test_corpus_hardness_bm25_near_floor`'s own
+    `dense_reason_override` usage above for the identical reason.
+    """
     mod = _load_eval_module()
     queries = mod.load_golden_queries(mod.DEFAULT_GOLDEN_PATH)[:2]
 
-    report = mod.build_report(queries, mod.DEFAULT_CORPUS_DIR, (5, 10))
+    report = mod.build_report(
+        queries,
+        mod.DEFAULT_CORPUS_DIR,
+        (5, 10),
+        dense_reason_override="test: dense leg forced off to verify the skip-cleanly contract "
+        "regardless of the ambient environment's installed extras",
+    )
 
     assert report.arms["bm25"].status == "scored"
-    for name in ("dense", "rrf", "rrf+maxsim"):
+    for name in ("dense", "rrf", "rrf_shipped", "rrf+maxsim"):
         arm = report.arms[name]
         assert arm.status == "skipped"
         assert arm.reason  # a specific, human-readable reason, never a bare None/empty string
@@ -318,12 +334,168 @@ def test_render_report_never_prints_a_verdict_over_skipped_arms() -> None:
     mod = _load_eval_module()
     queries = mod.load_golden_queries(mod.DEFAULT_GOLDEN_PATH)[:2]
 
-    report = mod.build_report(queries, mod.DEFAULT_CORPUS_DIR, (5, 10))
+    # Forced off for the same reason as test_dense_rrf_and_maxsim_skip_cleanly_without_the_
+    # optional_extras above: this test's premise ("only bm25 scores") must hold on ANY machine,
+    # not just one that happens to lack the `semantic` extra.
+    report = mod.build_report(
+        queries,
+        mod.DEFAULT_CORPUS_DIR,
+        (5, 10),
+        dense_reason_override="test: dense leg forced off so only bm25 is scored",
+    )
     text = mod.render_report(report, (5, 10))
 
     assert "not computed" in text  # only bm25 is scored -> no >=2-arm verdict is possible
     assert "find" in text
-    assert mod.SKIP_AWAITING_WAVE2 in text
+    assert mod.SKIP_FIND_ARM_NOT_WIRED in text
+
+
+# ---------------------------------------------------------------------------------------
+# Accuracy-leg regression protection (#7): dense_weight threading through run_rrf_arm /
+# run_rrf_maxsim_arm is a BYTE-IDENTICAL no-op at the default (every call site that predates #7),
+# and the new `rrf_shipped` arm is wired to the documented SHIPPED_DENSE_WEIGHT constant, not an
+# independently-drifting number. Pinned by spying on the real `reciprocal_rank_fusion` (mirrors
+# `test_oracle_bidirectional_catches_a_broken_metric`'s own module-attribute monkeypatch style
+# above) -- this pins the WIRING CONTRACT directly instead of depending on corpus-specific RRF
+# arithmetic, which is already covered end-to-end by test_retrieval_fusion.py's own
+# test_weights_changes_fused_order_in_expected_direction. The real ndcg@10 NUMBERS this wiring
+# produces on the full golden set (0.4466 at SHIPPED_DENSE_WEIGHT, requiring the real `semantic`
+# extra + a fetched model) are the separate regression FLOOR in
+# tests/eval/test_retrieval_quality_regression.py (opt-in, `eval` marker).
+# ---------------------------------------------------------------------------------------
+
+
+def test_run_rrf_arm_dense_weight_wiring_contract() -> None:
+    """dense_weight=1.0 (the default, and every pre-#7 call site) must call
+    `reciprocal_rank_fusion` with weights=None -- byte-identical to the function's original,
+    unparameterized behavior. A non-default value must build weights=[1.0, dense_weight], the
+    same two-entry shape `rank_chunks` (the production caller) builds internally."""
+    mod = _load_eval_module()
+    queries = mod.load_golden_queries(mod.DEFAULT_GOLDEN_PATH)[:2]
+    # A small corpus slice keeps this test fast -- only the wiring is under test, not the numbers.
+    corpus_files = mod.load_corpus_files(mod.DEFAULT_CORPUS_DIR)[:3]
+    chunks = []
+    for path in corpus_files:
+        chunks.extend(mod.chunk_file(path))
+    bm25_index = mod.Bm25Index(chunks)
+    dense_index = mod.DenseIndex(chunks, _FakeDenseModel())
+
+    seen_weights: list[list[float] | None] = []
+    original_fusion = mod.reciprocal_rank_fusion
+
+    def _spy_fusion(
+        rankings: list[list[int]], *, k: int = mod.DEFAULT_K, weights: list[float] | None = None
+    ) -> list[int]:
+        seen_weights.append(weights)
+        return original_fusion(rankings, k=k, weights=weights)  # type: ignore[no-any-return]
+
+    try:
+        mod.reciprocal_rank_fusion = _spy_fusion  # type: ignore[attr-defined]
+        mod.run_rrf_arm(chunks, mod.DEFAULT_CORPUS_DIR, queries, (10,), bm25_index, dense_index)
+        assert seen_weights == [None] * len(queries), (
+            f"default dense_weight=1.0 must pass weights=None, got {seen_weights}"
+        )
+
+        seen_weights.clear()
+        mod.run_rrf_arm(
+            chunks,
+            mod.DEFAULT_CORPUS_DIR,
+            queries,
+            (10,),
+            bm25_index,
+            dense_index,
+            dense_weight=mod.SHIPPED_DENSE_WEIGHT,
+            name="rrf_shipped",
+        )
+    finally:
+        mod.reciprocal_rank_fusion = original_fusion  # type: ignore[attr-defined]
+
+    assert seen_weights == [[1.0, mod.SHIPPED_DENSE_WEIGHT]] * len(queries), (
+        f"dense_weight={mod.SHIPPED_DENSE_WEIGHT} must pass "
+        f"weights=[1.0, {mod.SHIPPED_DENSE_WEIGHT}], got {seen_weights}"
+    )
+
+
+def test_run_rrf_maxsim_arm_dense_weight_wiring_contract() -> None:
+    """The identical wiring contract as run_rrf_arm above, for run_rrf_maxsim_arm's OWN
+    `reciprocal_rank_fusion` call -- a separate call site with the same latent no-weights gap
+    before #7."""
+    mod = _load_eval_module()
+    queries = mod.load_golden_queries(mod.DEFAULT_GOLDEN_PATH)[:2]
+    corpus_files = mod.load_corpus_files(mod.DEFAULT_CORPUS_DIR)[:3]
+    chunks = []
+    for path in corpus_files:
+        chunks.extend(mod.chunk_file(path))
+    bm25_index = mod.Bm25Index(chunks)
+    dense_index = mod.DenseIndex(chunks, _FakeDenseModel())
+    late_reranker = mod.LateReranker(encode=_fake_late_encode)
+
+    seen_weights: list[list[float] | None] = []
+    original_fusion = mod.reciprocal_rank_fusion
+
+    def _spy_fusion(
+        rankings: list[list[int]], *, k: int = mod.DEFAULT_K, weights: list[float] | None = None
+    ) -> list[int]:
+        seen_weights.append(weights)
+        return original_fusion(rankings, k=k, weights=weights)  # type: ignore[no-any-return]
+
+    try:
+        mod.reciprocal_rank_fusion = _spy_fusion  # type: ignore[attr-defined]
+        mod.run_rrf_maxsim_arm(
+            chunks, mod.DEFAULT_CORPUS_DIR, queries, (10,), bm25_index, dense_index, late_reranker
+        )
+        assert seen_weights == [None] * len(queries), (
+            f"default dense_weight=1.0 must pass weights=None, got {seen_weights}"
+        )
+
+        seen_weights.clear()
+        mod.run_rrf_maxsim_arm(
+            chunks,
+            mod.DEFAULT_CORPUS_DIR,
+            queries,
+            (10,),
+            bm25_index,
+            dense_index,
+            late_reranker,
+            dense_weight=3.0,
+        )
+    finally:
+        mod.reciprocal_rank_fusion = original_fusion  # type: ignore[attr-defined]
+
+    assert seen_weights == [[1.0, 3.0]] * len(queries), (
+        f"dense_weight=3.0 must pass weights=[1.0, 3.0], got {seen_weights}"
+    )
+
+
+def test_build_report_rrf_shipped_matches_direct_call_at_shipped_weight() -> None:
+    """`build_report`'s `rrf_shipped` arm must be EXACTLY what calling `run_rrf_arm(...,
+    dense_weight=SHIPPED_DENSE_WEIGHT)` produces on the same corpus -- no second, independently
+    drifting weight value hardcoded inside build_report."""
+    mod = _load_eval_module()
+    queries = mod.load_golden_queries(mod.DEFAULT_GOLDEN_PATH)[:6]
+    corpus_files = mod.load_corpus_files(mod.DEFAULT_CORPUS_DIR)
+    chunks = []
+    for path in corpus_files:
+        chunks.extend(mod.chunk_file(path))
+    dense_index = mod.DenseIndex(chunks, _FakeDenseModel())
+    bm25_index = mod.Bm25Index(chunks)
+
+    report = mod.build_report(
+        queries, mod.DEFAULT_CORPUS_DIR, (5, 10), dense_index_override=dense_index
+    )
+    direct = mod.run_rrf_arm(
+        chunks,
+        mod.DEFAULT_CORPUS_DIR,
+        queries,
+        (5, 10),
+        bm25_index,
+        dense_index,
+        dense_weight=mod.SHIPPED_DENSE_WEIGHT,
+        name="rrf_shipped",
+    )
+
+    assert report.arms["rrf_shipped"].status == "scored"
+    assert report.arms["rrf_shipped"].per_query == direct.per_query
 
 
 # ---------------------------------------------------------------------------------------
@@ -349,3 +521,19 @@ def test_build_report_is_deterministic_across_repeated_calls() -> None:
     second = mod.render_report(mod.build_report(queries, mod.DEFAULT_CORPUS_DIR, (5, 10)), (5, 10))
 
     assert first == second
+
+
+def test_shipped_dense_weight_mirror_matches_the_real_cli_default() -> None:
+    """Drift pin (item-#7 fold): the harness deliberately mirrors the CLI's private
+    default as a local ``SHIPPED_DENSE_WEIGHT`` constant instead of importing across the
+    benchmarks/cli boundary. That is the right layering -- but an UN-PINNED mirror recreates
+    the exact blind spot this harness change closes: if ``tg find``'s shipped default ever
+    moves, the regression floor would silently keep measuring the old weight. This test is
+    the sync contract: change one, change both (and re-derive the floor)."""
+    from tensor_grep.cli.main import _FIND_DENSE_WEIGHT_ADAPTIVE_DEFAULT
+
+    assert _load_eval_module().SHIPPED_DENSE_WEIGHT == _FIND_DENSE_WEIGHT_ADAPTIVE_DEFAULT, (
+        "benchmarks/eval_late_rerank_quality.SHIPPED_DENSE_WEIGHT no longer matches "
+        "cli/main._FIND_DENSE_WEIGHT_ADAPTIVE_DEFAULT -- update the mirror AND re-derive "
+        "the ndcg regression floor in tests/eval/test_retrieval_quality_regression.py"
+    )
