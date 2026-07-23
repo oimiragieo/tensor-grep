@@ -1,6 +1,96 @@
 # CHANGELOG
 
 
+## v1.93.4 (2026-07-23)
+
+### Performance Improvements
+
+- **repo-map**: O(k) source truncation via running length (byte-identical)
+  ([#713](https://github.com/oimiragieo/tensor-grep/pull/713),
+  [`40f2fb7`](https://github.com/oimiragieo/tensor-grep/commit/40f2fb7428d2f2695c7c71fa5bd7cef3919cac37))
+
+* perf(repo-map): O(k) source truncation via running length (byte-identical)
+
+`_truncate_source_text_to_budget` rebuilt the whole candidate string on every line
+  (`"".join([*selected_lines, line])`) inside an O(k) loop just to hand it to
+  `_source_text_within_budget`, which only ever reads `len(text)` -- an O(k) loop doing
+  O(current-length) work per iteration, i.e. O(k^2) overall on a k-line file. The tail-rescue loop
+  had the same shape.
+
+`_estimate_tokens`/`_source_text_within_budget` are pure functions of `len(text)` (never text
+  content) -- verified by reading both functions and `_profiling_phase` (a pure timing side-channel,
+  no output effect) before touching anything. That equivalence is what makes a
+  running-integer-length rewrite behavior-preserving: a local `_within_budget_for_len` closure
+  reproduces the identical pass/fail decision from a running integer length instead of a rebuilt
+  string, so both loops become O(k).
+
+Proof of byte-identical output: - 5 golden tests pin the unmodified function's exact output (sha256
+  + length + selected_indexes) on a no-truncation case, two tail-rescue-with-pops cases, and a
+  synthetic 11,000-line/284KB "large file" case at both the 16000-token default and a raised
+  60000-token budget -- captured from the OLD code first (green), still green after the rewrite. - A
+  structural (non-flaky) perf-sanity test spies on `_source_text_within_budget` and asserts it's
+  called at most a small constant number of times regardless of line count; RED on the old code
+  (2200 calls, proportional to k) and GREEN after the fix (O(1) calls). - A separate micro-benchmark
+  (old snapshot vs fixed, real files from a pinned tg v1.93.2 clone) confirms sha256+length equality
+  on every (file, budget) pair while measuring 3.5x-63.6x wall-clock speedups.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+* perf(repo-map): single-source the token estimate (review fold)
+
+Extract _estimate_tokens_for_len as the one chars->tokens formula; _estimate_tokens delegates and
+  the truncation fast path calls it instead of carrying a duplicated copy that could silently
+  desync. Golden sha256 pins re-proven green through the shared core (44/44).
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+---------
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+### Testing
+
+- **retrieval**: Measure the shipped dense-weight config + ndcg regression floor
+  ([#712](https://github.com/oimiragieo/tensor-grep/pull/712),
+  [`b7d4725`](https://github.com/oimiragieo/tensor-grep/commit/b7d47250b1bedeeef586d8b98e90a2b2f1b0b9a7))
+
+* test(retrieval): measure the shipped dense-weight config + ndcg regression floor
+
+The v1.93.2 dense-weight flip (#191/#634, NL ndcg@10 0.3047->0.4466) shipped with ZERO regression
+  protection: benchmarks/eval_late_rerank_quality.py's run_rrf_arm called RRF with no weights (the
+  old pre-flip 1:1 fusion), the find/find+stack skip stub claimed "tg find pipeline not built yet"
+  (false since v1.77.0), and nothing under .github/workflows/ invokes this harness.
+
+- Thread dense_weight through run_rrf_arm/run_rrf_maxsim_arm (byte-identical no-op at the default
+  1.0). Fresh local SHIPPED_DENSE_WEIGHT=5.0 constant mirrors cli/main.py's private
+  _FIND_DENSE_WEIGHT_ADAPTIVE_DEFAULT without importing it. - New rrf_shipped arm in build_report
+  measures the actual shipped config; the old rrf arm is untouched (kept as the 1:1 comparison
+  baseline). - New opt-in tests/eval/test_retrieval_quality_regression.py (eval marker, excluded
+  from the default `-m "not eval"` CI sweep) asserts ndcg@10 >= 0.40 on the real 40-query golden
+  set. Bidirectional-oracle verified: PASSES at the shipped weight (0.4466), FAILS at the corrupted
+  weight (0.3047) via a test-only env override. - Renamed SKIP_AWAITING_WAVE2 ->
+  SKIP_FIND_ARM_NOT_WIRED with an honest message (tg find's CLI/MCP pipeline is built and shipped;
+  this harness just isn't wired to invoke it end-to-end yet -- a separate task, not a missing
+  dependency). - Hardened 2 pre-existing tests that silently assumed the ambient environment lacks
+  model2vec; added 4 new tests pinning the dense_weight wiring contract.
+
+No CI wiring added: no existing workflow installs the `semantic` extra or fetches the (63MB) dense
+  model, so this stays opt-in-local per the low-risk/benchmarks-only scope of this change. No
+  production source (main.py/repo_map.py/agent_capsule.py) touched.
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+* test(eval): pin the SHIPPED_DENSE_WEIGHT mirror to the real CLI default
+
+An un-pinned mirror recreates the exact blind spot this PR closes: if tg find's shipped default
+  moves, the floor silently measures the old weight. The sync contract: change one, change both,
+  re-derive the floor.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+---------
+
+
 ## v1.93.3 (2026-07-22)
 
 ### Bug Fixes
