@@ -446,6 +446,17 @@ jobs:
             rustup toolchain install ${{ matrix.rust_channel }} --profile minimal --no-self-update
           fi
           rustup default ${{ matrix.rust_channel }}
+          # CI-harden: pre-fetch the rust_core/rust-toolchain.toml PIN (1.96.0) here, inside a
+          # retry loop, so the later `cargo test` (working-directory rust_core) does NOT trigger
+          # an un-retried on-demand toolchain download. A transient macos-runner network timeout
+          # on that pinned-manifest fetch red-failed CI on 2 consecutive PRs (#720, #721). The
+          # rustup-init curl above is already --retry 10; rustup's own toolchain fetch was not.
+          ( cd rust_core
+            for attempt in 1 2 3; do
+              cargo --version && break
+              [ "$attempt" = 3 ] && { echo "pinned-toolchain fetch failed after 3 attempts"; exit 1; }
+              echo "pinned-toolchain fetch attempt $attempt failed; retrying in 15s..."; sleep 15
+            done )
           rustc --version
           cargo --version
           
