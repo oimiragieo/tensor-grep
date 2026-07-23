@@ -43,7 +43,18 @@ from tensor_grep.cli.runtime_paths import (
 )
 from tensor_grep.core.observability import nvtx_range
 from tensor_grep.core.retrieval_chunker import MAX_CHUNKS
-from tensor_grep.io.directory_scanner import (
+
+# perf (+10% campaign #6 / F2.4): import the 5 broad-scan-guard constants from the
+# zero-dependency `tensor_grep.io.scan_limits` module directly, NOT from
+# `tensor_grep.io.directory_scanner` (which does `from tensor_grep.core.config import
+# SearchConfig` at its own module level -- SearchConfig transitively pulls in the stdlib
+# `dataclasses`/`inspect` chain). This module-level import runs for every full-CLI command
+# (--help, scan, test, ast-info, ...); these 5 names are plain frozensets/ints consumed only by
+# the module-level broad-scan literals below, never SearchConfig itself, so there is no reason
+# to pay for the heavier module merely to read 5 constants from it. `DirectoryScanner` itself is
+# still imported lazily, function-local, at each call site that actually walks a tree (unchanged
+# by this PR). See `tensor_grep.io.scan_limits`'s module docstring for the full rationale.
+from tensor_grep.io.scan_limits import (
     BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD,
     BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD,
     BROAD_WORKSPACE_PROJECT_MARKERS,

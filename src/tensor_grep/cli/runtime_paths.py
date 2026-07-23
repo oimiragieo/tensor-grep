@@ -1,7 +1,14 @@
-import json
+# perf (+10% campaign #6 / F2.5): `json` and `shutil` moved to function-local imports at their
+# only call sites below (`_read_native_frontdoor_metadata`, `translate_path_for_windows_binary`,
+# `resolve_ripgrep_binary`) -- this whole module is imported EAGERLY at `cli/bootstrap.py`'s
+# module level (`from tensor_grep.cli.runtime_paths import (env_flag_enabled,
+# resolve_native_tg_binary, resolve_ripgrep_binary)`), so its own top-level imports are paid on
+# EVERY `tg` invocation, including the trivial `--version`/`-V` fast path -- which calls neither
+# `resolve_ripgrep_binary` nor `_read_native_frontdoor_metadata`/`translate_path_for_windows_binary`
+# (see `bootstrap._print_version`, which never touches this module beyond names already imported).
+# See `tests/unit/test_bootstrap_fast_path_imports.py` for the regression test that pins this.
 import os
 import re
-import shutil
 import subprocess
 import sys
 from functools import lru_cache
@@ -134,6 +141,8 @@ def native_frontdoor_metadata_path(native_binary: Path) -> Path:
 
 
 def _read_native_frontdoor_metadata(native_binary: Path) -> dict[str, str]:
+    import json
+
     metadata_path = native_frontdoor_metadata_path(native_binary)
     try:
         # Bounded + fail-closed (gate NIT-2 on #704): this reader now also runs on the agent
@@ -500,6 +509,8 @@ def translate_path_for_windows_binary(
     caller can report a distinct `path_domain_mismatch` status instead of silently handing the
     Windows binary a Linux path it cannot open.
     """
+    import shutil
+
     wslpath_bin = shutil.which("wslpath")
     if wslpath_bin is None:
         return None
@@ -549,6 +560,8 @@ def gpu_probe_timeout_s(
 
 @lru_cache(maxsize=1)
 def resolve_ripgrep_binary() -> Path | None:
+    import shutil
+
     binary_name = "rg.exe" if sys.platform.startswith("win") else "rg"
 
     # Priority 1: Explicit override

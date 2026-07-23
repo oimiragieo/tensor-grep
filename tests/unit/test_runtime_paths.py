@@ -96,7 +96,7 @@ def test_resolve_native_tg_binary_ignores_legacy_benchmark_binary(monkeypatch, t
     monkeypatch.delenv("TG_NATIVE_TG_BINARY", raising=False)
     monkeypatch.delenv("TG_MCP_TG_BINARY", raising=False)
     monkeypatch.setenv("PATH", "")
-    monkeypatch.setattr(runtime_paths.shutil, "which", lambda _: None)
+    monkeypatch.setattr(shutil, "which", lambda _: None)
     resolve_native_tg_binary.cache_clear()
 
     assert resolve_native_tg_binary() is None
@@ -119,7 +119,7 @@ def test_resolve_native_tg_binary_ignores_stale_in_tree_binary_without_explicit_
     monkeypatch.delenv("TG_NATIVE_TG_BINARY", raising=False)
     monkeypatch.delenv("TG_MCP_TG_BINARY", raising=False)
     monkeypatch.setenv("PATH", "")
-    monkeypatch.setattr(runtime_paths.shutil, "which", lambda _: None)
+    monkeypatch.setattr(shutil, "which", lambda _: None)
     monkeypatch.setattr(runtime_paths, "_expected_tg_version", lambda: "1.8.21", raising=False)
     monkeypatch.setattr(runtime_paths, "_native_tg_version", lambda _: "tg 1.8.14", raising=False)
     resolve_native_tg_binary.cache_clear()
@@ -142,7 +142,7 @@ def test_resolve_native_tg_binary_uses_matching_in_tree_binary(monkeypatch, tmp_
     monkeypatch.delenv("TG_NATIVE_TG_BINARY", raising=False)
     monkeypatch.delenv("TG_MCP_TG_BINARY", raising=False)
     monkeypatch.setenv("PATH", "")
-    monkeypatch.setattr(runtime_paths.shutil, "which", lambda _: None)
+    monkeypatch.setattr(shutil, "which", lambda _: None)
     monkeypatch.setattr(runtime_paths, "_expected_tg_version", lambda: "1.8.21", raising=False)
     monkeypatch.setattr(runtime_paths, "_native_tg_version", lambda _: "tg 1.8.21", raising=False)
     resolve_native_tg_binary.cache_clear()
@@ -329,7 +329,7 @@ def test_resolve_native_tg_binary_ignores_current_python_launcher(monkeypatch, t
     monkeypatch.delenv("TG_MCP_TG_BINARY", raising=False)
     monkeypatch.setenv("PATH", str(venv_dir))
     monkeypatch.setattr(
-        runtime_paths.shutil,
+        shutil,
         "which",
         lambda name: str(tg_path) if name in {"tg", "tg.exe"} else None,
     )
@@ -371,7 +371,7 @@ def test_resolve_native_tg_binary_ignores_current_python_launcher_when_python_re
     monkeypatch.setattr(runtime_paths.Path, "resolve", fake_resolve)
     monkeypatch.setenv("PATH", str(venv_dir))
     monkeypatch.setattr(
-        runtime_paths.shutil,
+        shutil,
         "which",
         lambda name: str(tg_path) if name in {"tg", "tg.exe"} else None,
     )
@@ -450,7 +450,7 @@ def test_resolve_native_tg_binary_ignores_foreign_python_install_scripts_launche
     monkeypatch.delenv("TG_MCP_TG_BINARY", raising=False)
     monkeypatch.setenv("PATH", str(foreign_scripts_dir))
     monkeypatch.setattr(
-        runtime_paths.shutil,
+        shutil,
         "which",
         lambda name: str(foreign_tg) if name in {"tg", "tg.exe"} else None,
     )
@@ -536,9 +536,7 @@ def test_resolve_ripgrep_binary_prefers_path_rg_before_bundled(monkeypatch, tmp_
 
     monkeypatch.setattr(runtime_paths, "__file__", str(runtime_file))
     monkeypatch.delenv("TG_RG_PATH", raising=False)
-    monkeypatch.setattr(
-        runtime_paths.shutil, "which", lambda name: str(path_rg) if name == binary_name else None
-    )
+    monkeypatch.setattr(shutil, "which", lambda name: str(path_rg) if name == binary_name else None)
     resolve_ripgrep_binary.cache_clear()
 
     assert resolve_ripgrep_binary() == path_rg.resolve()
@@ -948,7 +946,7 @@ class TestTranslatePathForWindowsBinary:
         probe_file = tmp_path / "probe.log"
         probe_file.write_text("sentinel\n", encoding="utf-8")
         monkeypatch.setattr(
-            runtime_paths.shutil,
+            shutil,
             "which",
             lambda name: "/usr/bin/wslpath" if name == "wslpath" else None,
         )
@@ -966,12 +964,12 @@ class TestTranslatePathForWindowsBinary:
         assert translated == "C:\\Users\\x\\AppData\\Local\\Temp\\probe.log"
 
     def test_returns_none_when_wslpath_absent(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(runtime_paths.shutil, "which", lambda _name: None)
+        monkeypatch.setattr(shutil, "which", lambda _name: None)
         assert runtime_paths.translate_path_for_windows_binary(tmp_path / "probe.log") is None
 
     def test_returns_none_on_nonzero_exit(self, monkeypatch, tmp_path):
         monkeypatch.setattr(
-            runtime_paths.shutil,
+            shutil,
             "which",
             lambda name: "/usr/bin/wslpath" if name == "wslpath" else None,
         )
@@ -984,7 +982,7 @@ class TestTranslatePathForWindowsBinary:
 
     def test_returns_none_on_timeout(self, monkeypatch, tmp_path):
         monkeypatch.setattr(
-            runtime_paths.shutil,
+            shutil,
             "which",
             lambda name: "/usr/bin/wslpath" if name == "wslpath" else None,
         )
@@ -997,7 +995,7 @@ class TestTranslatePathForWindowsBinary:
 
     def test_returns_none_on_os_error(self, monkeypatch, tmp_path):
         monkeypatch.setattr(
-            runtime_paths.shutil,
+            shutil,
             "which",
             lambda name: "/usr/bin/wslpath" if name == "wslpath" else None,
         )

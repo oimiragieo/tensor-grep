@@ -27,9 +27,21 @@ from tensor_grep.cli.subprocess_policy import run_subprocess as run_subprocess
 # transitively pulls in the stdlib `dataclasses` module -- and `dataclasses` imports `inspect`
 # (plus `ast`/`dis`/`tokenize`/`copy`/`weakref`), a chain measured at ~25ms cumulative
 # (`python -X importtime -c "import tensor_grep.cli.bootstrap"`, warm cache) that a trivial
-# `--version` call has no reason to pay. Each of the 3 helper functions does its own
-# function-local `from tensor_grep.io.directory_scanner import ...` instead; see
-# `tests/unit/test_bootstrap_fast_path_imports.py` for the regression test that pins this.
+# `--version` call has no reason to pay.
+#
+# perf (+10% campaign #6 / F2.4, follow-up): each of the 3 helper functions used to do its own
+# function-local `from tensor_grep.io.directory_scanner import ...` -- which, being function-local,
+# already kept the cost OFF the `--version` fast path (this docstring's original claim), but still
+# paid the full `SearchConfig`/`dataclasses`/`inspect` chain the MOMENT any of the three actually
+# ran (i.e. on every real search invocation that reaches the broad-scan guard, REGARDLESS of
+# whether the search ultimately gets delegated to the native binary or `rg` -- both of which do
+# their own walk in a separate process and never touch Python's `DirectoryScanner` at all). Each
+# helper now does `from tensor_grep.io.scan_limits import ...` instead -- the same zero-dependency
+# module `cli/main.py`'s module-level broad-scan literals read from -- so the guard-only path no
+# longer drags in `SearchConfig` at all; `directory_scanner` is still imported exactly when a real
+# Python-side walk needs it (e.g. `_search_paths_include_oversized_implicit_root` below, which
+# constructs a real `DirectoryScanner`). See `tests/unit/test_bootstrap_fast_path_imports.py` for
+# the regression tests that pin both claims.
 
 # Saved at import time so _streaming_passthrough_returncode can detect when
 # run_subprocess has been monkey-patched by a test (old mock pattern).
@@ -154,11 +166,12 @@ _BROAD_GENERATED_SCAN_DIR_NAMES = {
     "target",
     "venv",
 }
-# Single source of truth: `io/directory_scanner.py` (item #154) -- keeps this file and
-# `cli/main.py`'s equivalent guard from drifting out of sync. perf/#48: no longer aliased at
-# module level -- `_path_has_project_marker` / `_search_paths_include_workspace_root` below
-# import these constants function-locally (fast-path-unused; see the deferred-import note above
-# the `tensor_grep.cli.subprocess_policy` import).
+# Single source of truth: `io/scan_limits.py` (item #154; moved from `io/directory_scanner.py`
+# in campaign #6 / F2.4 -- `directory_scanner.py` still re-exports the same names for back-compat)
+# -- keeps this file and `cli/main.py`'s equivalent guard from drifting out of sync. perf/#48: no
+# longer aliased at module level -- `_path_has_project_marker` / `_search_paths_include_workspace_
+# root` below import these constants function-locally (fast-path-unused; see the deferred-import
+# note above the `tensor_grep.cli.subprocess_policy` import).
 _SEARCH_PATTERN_FLAGS = {"-e", "--regexp"}
 _SEARCH_LITERAL_FLAGS = {"-F", "--fixed-strings"}
 _SEARCH_PCRE2_FLAGS = {"-P", "--pcre2"}
@@ -635,7 +648,7 @@ def _search_args_paths_defaulted(search_args: list[str]) -> bool:
 
 
 def _path_has_project_marker(path: Path) -> bool:
-    from tensor_grep.io.directory_scanner import BROAD_WORKSPACE_PROJECT_MARKERS
+    from tensor_grep.io.scan_limits import BROAD_WORKSPACE_PROJECT_MARKERS
 
     for marker in BROAD_WORKSPACE_PROJECT_MARKERS:
         try:
@@ -671,7 +684,7 @@ def _search_paths_include_generated_root(paths: list[str]) -> bool:
 
 
 def _search_paths_include_workspace_root(paths: list[str]) -> bool:
-    from tensor_grep.io.directory_scanner import (
+    from tensor_grep.io.scan_limits import (
         BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD,
         BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD,
     )
@@ -730,11 +743,12 @@ def _search_paths_include_workspace_root(paths: list[str]) -> bool:
 # `DirectoryScanner`'s `_GENERATED_DIR_NAMES` (currently just `node_modules` of the four
 # above) -- that dir was already bounded (walker-skipped + normally `.gitignore`d + Fix B's
 # per-file deadline), so refusing it was a pure false positive against every ordinary
-# Node/React repo. Imported (not hardcoded) from `io/directory_scanner.py` so this set and
-# cli/main.py's equivalent guard can never drift out of sync.
+# Node/React repo. Imported (not hardcoded) from `io/scan_limits.py` (campaign #6 / F2.4; was
+# `io/directory_scanner.py`, which still re-exports it) so this set and cli/main.py's equivalent
+# guard can never drift out of sync.
 def _search_paths_include_vendored_root(paths: list[str]) -> bool:
     """O(top-level-entries) probe: never walks -- only `Path.iterdir()` one level deep."""
-    from tensor_grep.io.directory_scanner import UNBOUNDED_VENDORED_ROOT_DIR_NAMES
+    from tensor_grep.io.scan_limits import UNBOUNDED_VENDORED_ROOT_DIR_NAMES
 
     for raw_path in paths:
         if not raw_path or raw_path == "-" or raw_path.startswith("-"):
