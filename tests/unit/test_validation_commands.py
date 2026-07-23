@@ -1622,3 +1622,193 @@ def test_build_agent_capsule_tie_confidence_and_ask_unchanged_by_edit_plan_parit
             "context consistency requires confirmation",
         ],
     }
+
+
+# --- perf(edit-plan): textual pre-check before per-candidate validation-test AST parse ---------
+#
+# `_framework_test_pattern_bonus` unconditionally called `_framework_test_function_candidates`
+# (an expensive AST parse for every `.py` candidate, via `_python_parametrized_test_function_
+# candidates` -> `_cached_ast_parse`) for EVERY test-file candidate `_discover_validation_tests_
+# for_primary_file` scores, even though most candidates contribute a 0 bonus. The fix reads the
+# candidate file's raw text ONCE up front and short-circuits to `return 0` when nothing in
+# `expanded_terms` could possibly score, before triggering that parse.
+#
+# Byte-identity argument: every string `_score_text_terms` is ever asked to score against is a
+# literal substring of the candidate file's raw text -- EXCEPT the JS/TS `describe`+`test` name
+# synthesized in `_javascript_test_function_candidates` (`f"{suite_name} {target_name}"`), which
+# joins two literal-but-non-adjacent quoted-string substrings with an artificial single space. A
+# term can only score against that synthesized string by being a literal substring of
+# `suite_name` or of `target_name` alone (both real file substrings), OR by straddling exactly
+# that one synthetic join space -- and in the straddle case each half is still individually a
+# literal file substring. Checking each whitespace-split WORD of a term (not just the term as one
+# contiguous run) against the raw file text closes that seam: it is a strictly safer
+# over-approximation (a substring of a term that would have scored is still checked), so the
+# short-circuit never produces a different answer than the un-short-circuited computation.
+#
+# `_bonus_without_textual_precheck` below reimplements the PRE-FIX function body directly from its
+# unchanged building blocks (`_framework_test_function_candidates` / `_candidate_terms` /
+# `_score_text_terms`), so every identity assertion compares the optimized function's real output
+# against what the un-short-circuited computation actually produces -- not a hard-coded number.
+
+
+def _bonus_without_textual_precheck(
+    test_path: str, terms: list[str], *, raw_query: str | None
+) -> int:
+    candidates = repo_map._framework_test_function_candidates(test_path)
+    if not candidates:
+        return 0
+    expanded_terms: list[str] = list(terms)
+    for candidate_term in repo_map._candidate_terms(raw_query):
+        if candidate_term not in expanded_terms:
+            expanded_terms.append(candidate_term)
+    if not expanded_terms:
+        return 0
+    return (
+        max(
+            (repo_map._score_text_terms(candidate, expanded_terms) for candidate in candidates),
+            default=0,
+        )
+        * 3
+    )
+
+
+def _counting_wrapper(
+    monkeypatch: pytest.MonkeyPatch, name: str
+) -> list[tuple[tuple[object, ...], dict[str, object]]]:
+    """Wrap ``repo_map.<name>`` to record every call while still delegating to the real
+    implementation, so callers get both an accurate call count AND a real return value."""
+    original = getattr(repo_map, name)
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def _wrapped(*args: object, **kwargs: object) -> object:
+        calls.append((args, kwargs))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(repo_map, name, _wrapped)
+    return calls
+
+
+def test_framework_test_pattern_bonus_matches_via_substring_term(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A long (>3 char) query term appearing as a plain substring of a Rust test function name
+    scores via `_score_text_terms`'s substring branch; the pre-check must let it through
+    unchanged."""
+    test_path = tmp_path / "widget_tests.rs"
+    test_path.write_text(
+        "#[test]\nfn test_widget_creation() {\n    assert!(true);\n}\n",
+        encoding="utf-8",
+    )
+    calls = _counting_wrapper(monkeypatch, "_framework_test_function_candidates")
+
+    bonus = repo_map._framework_test_pattern_bonus(str(test_path), ["widget"], raw_query="widget")
+
+    assert bonus > 0
+    assert len(calls) == 1  # candidate extraction DID run -- a real match must not be skipped
+    assert bonus == _bonus_without_textual_precheck(str(test_path), ["widget"], raw_query="widget")
+
+
+def test_framework_test_pattern_bonus_matches_via_short_token_term(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A <=3 char query term matches via `_score_text_terms`'s token-only branch (short terms
+    never match as a raw substring fragment -- they must be their own underscore-delimited
+    token); the pre-check must let it through unchanged."""
+    test_path = tmp_path / "io_tests.rs"
+    test_path.write_text(
+        "#[test]\nfn test_io_stream() {\n    assert!(true);\n}\n",
+        encoding="utf-8",
+    )
+    calls = _counting_wrapper(monkeypatch, "_framework_test_function_candidates")
+
+    bonus = repo_map._framework_test_pattern_bonus(str(test_path), ["io"], raw_query="io")
+
+    assert bonus > 0
+    assert len(calls) == 1
+    assert bonus == _bonus_without_textual_precheck(str(test_path), ["io"], raw_query="io")
+
+
+def test_framework_test_pattern_bonus_no_match_returns_zero_and_skips_extraction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Headline regression guard: when NONE of the query terms appear anywhere in the candidate
+    file's raw text, the textual pre-check must return 0 WITHOUT ever calling
+    `_framework_test_function_candidates` -- proving the expensive per-candidate AST parse
+    (`_python_parametrized_test_function_candidates` -> `_cached_ast_parse`) is actually skipped,
+    not just coincidentally equal to 0."""
+    test_path = tmp_path / "test_zeta.py"
+    test_path.write_text(
+        "import pytest\n\n\n@pytest.mark.parametrize('value', [1, 2, 3])\n"
+        "def test_zeta_response(value):\n    assert value\n",
+        encoding="utf-8",
+    )
+    calls = _counting_wrapper(monkeypatch, "_framework_test_function_candidates")
+
+    bonus = repo_map._framework_test_pattern_bonus(
+        str(test_path), ["widget", "gadget"], raw_query="widget gadget"
+    )
+
+    assert bonus == 0
+    assert calls == []  # the short-circuit fired -- candidate extraction (AST parse) never ran
+    assert bonus == _bonus_without_textual_precheck(
+        str(test_path), ["widget", "gadget"], raw_query="widget gadget"
+    )
+
+
+def test_framework_test_pattern_bonus_matches_parametrized_test(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Python candidates come ONLY from `_python_parametrized_test_function_candidates`, which
+    yields ONLY `@pytest.mark.parametrize`-decorated functions -- exercise that gate directly and
+    confirm the pre-check still lets a real Python match through."""
+    test_path = tmp_path / "test_discounts.py"
+    test_path.write_text(
+        "import pytest\n\n\n@pytest.mark.parametrize('value', [1, 2, 3])\n"
+        "def test_discount_applied(value):\n    assert value\n",
+        encoding="utf-8",
+    )
+    calls = _counting_wrapper(monkeypatch, "_framework_test_function_candidates")
+
+    bonus = repo_map._framework_test_pattern_bonus(
+        str(test_path), ["discount"], raw_query="discount"
+    )
+
+    assert bonus > 0
+    assert len(calls) == 1
+    assert bonus == _bonus_without_textual_precheck(
+        str(test_path), ["discount"], raw_query="discount"
+    )
+
+
+def test_framework_test_pattern_bonus_identity_holds_across_js_synthesized_suite_join(
+    tmp_path: Path,
+) -> None:
+    """Adversarial identity case found during plan verification (not in the original ask, added
+    for rigor): `_javascript_test_function_candidates` synthesizes a
+    ``f"{suite_name} {target_name}"`` candidate joining two literal-but-non-adjacent quoted
+    strings with an artificial single space. A multi-word TERM can straddle exactly that
+    synthetic join and score via `_score_text_terms`'s substring check even though the joined
+    phrase never appears literally in the file -- e.g. term "my component" against
+    ``describe("widgets and my")`` + ``it("component renders correctly")``. A NAIVE textual
+    pre-check (checking each whole term as one contiguous run against the raw file text) would
+    wrongly short-circuit to 0 here, since "my component" (with its internal space) is not a
+    literal file substring -- a byte-identity violation. The shipped fix splits each term on
+    whitespace before the membership check, which finds "my" and "component" independently (both
+    ARE literal file substrings) and correctly lets this candidate through to the real scoring
+    pass."""
+    test_path = tmp_path / "widget.test.js"
+    test_path.write_text(
+        "describe('widgets and my', () => {\n"
+        "  it('component renders correctly', () => {\n"
+        "    expect(true).toBe(true);\n"
+        "  });\n"
+        "});\n",
+        encoding="utf-8",
+    )
+
+    bonus = repo_map._framework_test_pattern_bonus(str(test_path), ["my component"], raw_query=None)
+
+    assert bonus > 0
+    assert bonus == _bonus_without_textual_precheck(
+        str(test_path), ["my component"], raw_query=None
+    )
