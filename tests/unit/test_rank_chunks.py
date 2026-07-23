@@ -223,9 +223,9 @@ def test_rank_chunks_dense_weight(monkeypatch) -> None:  # type: ignore[no-untyp
     real_fusion = reranker_module.reciprocal_rank_fusion
     captured_weights: list[list[float] | None] = []
 
-    def _spy_fusion(rankings, *, k=DEFAULT_K, weights=None):  # type: ignore[no-untyped-def]
+    def _spy_fusion(rankings, *, k=DEFAULT_K, weights=None, combine="max"):  # type: ignore[no-untyped-def]
         captured_weights.append(list(weights) if weights is not None else None)
-        return real_fusion(rankings, k=k, weights=weights)
+        return real_fusion(rankings, k=k, weights=weights, combine=combine)
 
     monkeypatch.setattr(reranker_module, "reciprocal_rank_fusion", _spy_fusion)
 
@@ -313,3 +313,104 @@ def test_rank_chunks_dense_weight_ignored_without_dense_index() -> None:
         dense_weight=5.0,
     )
     assert with_weight == baseline == [0]
+
+
+def test_rank_chunks_combine_parameter_threads_to_fusion(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """``combine`` (accuracy-leg max-fusion regression fix, PR #717): threads verbatim into
+    ``reciprocal_rank_fusion``, spied the same way ``test_rank_chunks_dense_weight`` proves
+    ``dense_weight``/``weights`` thread through -- an omitted kwarg (the implicit default here,
+    "max") must match ``reciprocal_rank_fusion``'s own default exactly, and an explicit "sum" must
+    be threaded through, not silently coerced back to "max"."""
+    from tensor_grep.core import reranker as reranker_module
+
+    real_fusion = reranker_module.reciprocal_rank_fusion
+    captured_combine: list[str] = []
+
+    def _spy_fusion(rankings, *, k=DEFAULT_K, weights=None, combine="max"):  # type: ignore[no-untyped-def]
+        captured_combine.append(combine)
+        return real_fusion(rankings, k=k, weights=weights, combine=combine)
+
+    monkeypatch.setattr(reranker_module, "reciprocal_rank_fusion", _spy_fusion)
+
+    chunks, bm25_index = _build_chunks()
+
+    rank_chunks("invoice", chunks, bm25_index=bm25_index, dense_index=None, late_reranker=None)
+    assert captured_combine[-1] == "max", "an omitted combine kwarg must default to 'max'"
+
+    rank_chunks(
+        "invoice",
+        chunks,
+        bm25_index=bm25_index,
+        dense_index=None,
+        late_reranker=None,
+        combine="sum",
+    )
+    assert captured_combine[-1] == "sum", "an explicit combine='sum' must thread through verbatim"
+
+
+def test_rank_chunks_combine_sum_recovers_literal_regression_scenario() -> None:
+    """A black-box (output-order) proof of WHY the routing fix matters, reproducing the exact
+    mechanism the Opus gate found on ``literal_golden.jsonl`` (query "bind_address", the set's own
+    first entry) with real ``Bm25Index``/``DenseIndex`` objects, not hand-rolled score dicts.
+
+    chunk 0 ("competitor.py") is absent from bm25 for this query but ranks BEST on the dense leg
+    (an unrelated file the embedding happens to favor). chunk 1 ("true_answer.py") is the ONLY bm25
+    match (its text contains the "bind"+"address" tokens) and ranks SECOND on dense -- the doc
+    BOTH legs partially agree on, which is exactly the "true answer" shape a literal lookup has.
+    (Chunk 1's text is deliberately NOT byte-identical to the query string itself -- a fake
+    dict-keyed encoder maps exact strings to vectors, so reusing the query string verbatim as a
+    chunk's text would make the query's own encode() call collide with that chunk's entry.)
+
+    Both chunks' BEST single-leg term is identically ``1/(k+1)`` (chunk 0's dense-rank-1 term;
+    chunk 1's bm25-rank-1 term) -- k is shared across every leg by ``reciprocal_rank_fusion``'s own
+    contract, so a rank-1 term is worth the same regardless of which leg produced it. Under
+    combine="max" this is a genuine bit-identical TIE, broken by ascending chunk index -- chunk 0
+    (the wrong doc, lower index) wins. Under combine="sum" chunk 1's second-leg (dense rank 2)
+    contribution breaks the tie correctly in its favor, exactly as it always did pre-max-flip.
+    """
+    chunks = [
+        Chunk(file_path="competitor.py", start_line=1, end_line=1, text="server_config"),
+        Chunk(
+            file_path="true_answer.py", start_line=1, end_line=1, text="target_bind_address_value"
+        ),
+    ]
+    bm25_index = Bm25Index(chunks)
+    # true_answer (1) is the ONLY bm25 match ("bind"+"address" tokens); competitor (0) shares none.
+    assert [i for i, _ in bm25_index.query("bind_address", top_k=2)] == [1]
+
+    dense_model = _FixedVectorModel({
+        "bind_address": [1.0, 0.0],  # the QUERY's own vector
+        "server_config": [1.0, 0.0],  # chunk 0 text: cosine 1.0 -> dense rank 1 (BEST dense match)
+        "target_bind_address_value": [1.0, 0.5],  # chunk 1 text: cosine ~0.894 -> dense rank 2
+    })
+    dense_index = DenseIndex(chunks, dense_model)
+    assert [i for i, _ in dense_index.query("bind_address", top_k=2)] == [0, 1], (
+        "sanity-check the scenario setup: chunk 0 must be the BEST dense match, chunk 1 second"
+    )
+
+    max_order, _ = rank_chunks(
+        "bind_address",
+        chunks,
+        bm25_index=bm25_index,
+        dense_index=dense_index,
+        late_reranker=None,
+        combine="max",
+    )
+    assert max_order[0] == 0, (
+        "max: chunk 0 (dense-only) and chunk 1 (bm25+dense) tie at the same best-single-leg term "
+        "1/(k+1) -- the ascending-index tie-break picks chunk 0, reproducing the literal-query "
+        "regression the Opus gate found"
+    )
+
+    sum_order, _ = rank_chunks(
+        "bind_address",
+        chunks,
+        bm25_index=bm25_index,
+        dense_index=dense_index,
+        late_reranker=None,
+        combine="sum",
+    )
+    assert sum_order[0] == 1, (
+        "sum: chunk 1's second-leg (dense rank 2) contribution correctly breaks the tie in its "
+        "favor -- the doc both legs partially agree on wins, recovering the regression"
+    )

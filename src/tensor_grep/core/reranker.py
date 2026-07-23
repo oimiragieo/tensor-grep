@@ -15,6 +15,7 @@ import os
 import sys
 import threading
 from collections import defaultdict
+from typing import Literal
 
 from tensor_grep.core.result import SearchResult
 from tensor_grep.core.retrieval_bm25 import Bm25Index
@@ -223,6 +224,7 @@ def rank_chunks(
     late_reranker: LateReranker | None,
     k: int = DEFAULT_K,
     dense_weight: float = 1.0,
+    combine: Literal["sum", "max"] = "max",
 ) -> tuple[list[int], str | None]:
     """Fuse BM25 [+ dense] [+ path] chunk rankings via RRF, then optionally MaxSim-rerank the head
     via ``late_reranker`` -- the pure, fail-closed rank core shared by :func:`rerank_hybrid` and
@@ -243,6 +245,20 @@ def rank_chunks(
     ``dense_index is None``: there is no dense leg to weight. Callers own picking a non-default
     value; `tg find` is the only current caller that ever does (``cli/main.py``'s
     ``_find_dense_weight``, itself gated behind ``TG_FIND_DENSE_WEIGHT`` and default-OFF).
+
+    ``combine`` (accuracy-leg campaign; passed straight through to
+    :func:`~tensor_grep.core.retrieval_fusion.reciprocal_rank_fusion`, see its own docstring for
+    the full derivation): ``"max"`` (this function's default, matching that function's own default
+    -- an omitted kwarg here is therefore byte-identical to one there) lifts NL/vocabulary-mismatched
+    queries (ndcg@10 +62.6% on the frozen 40-query golden set) but REGRESSES single-token
+    literal/identifier lookups (measured on ``benchmarks/datasets/literal_golden.jsonl``: sum=1.0
+    exact vs max=0.9631) -- a literal query's true answer is often independently ranked #1 by BOTH
+    legs, and ``"sum"``'s per-leg-agreement bonus is exactly the signal ``"max"`` discards. `tg
+    find` (``cli/main.py``'s ``_find_combine_mode``) is the one caller that ever passes a
+    non-default value, choosing per-query on the SAME whitespace predicate
+    ``_find_dense_weight`` already uses for its own knob, so the two adaptive decisions can never
+    disagree on what counts as literal. :func:`rerank_hybrid` (the ``tg search --semantic`` path)
+    never passes this kwarg, so it always gets the default ``"max"`` -- unaffected by this fix.
 
     Returns ``(fused_order, late_fallback_reason)``:
 
@@ -272,7 +288,7 @@ def rank_chunks(
             rankings.append(path_ranking)
             weights.append(PATH_CHANNEL_WEIGHT)
 
-    fused_order = reciprocal_rank_fusion(rankings, k=k, weights=weights)
+    fused_order = reciprocal_rank_fusion(rankings, k=k, weights=weights, combine=combine)
 
     # T5/T6: the late-interaction splice. Order-only over `fused_order`'s chunk indices -- same
     # matches, same membership, same JSON shape (design doc "The seam"). `late_reranker=None`
