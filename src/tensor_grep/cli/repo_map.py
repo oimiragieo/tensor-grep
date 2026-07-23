@@ -8856,15 +8856,23 @@ def _render_context_parts(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return parts
 
 
+def _estimate_tokens_for_len(length: int) -> int:
+    """The SINGLE source of the chars->tokens estimate. `_estimate_tokens` (the text-taking
+    wrapper) and `_truncate_source_text_to_budget`'s running-length fast path MUST both go
+    through here -- a duplicated formula would let the truncation loop silently desync from
+    the budget check if the estimate ever changes."""
+    if length <= 0:
+        return 0
+    return max(1, math.ceil(length / 3.5))
+
+
 def _estimate_tokens(
     text: str,
     *,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> int:
     with _profiling_phase(_profiling_collector, "token_estimation"):
-        if not text:
-            return 0
-        return max(1, math.ceil(len(text) / 3.5))
+        return _estimate_tokens_for_len(len(text))
 
 
 def _line_map_for_budgeted_lines(
@@ -8936,21 +8944,37 @@ def _truncate_source_text_to_budget(
         line_count = len(text.splitlines())
         return text, list(range(1, line_count + 1)), False
 
+    # perf (O(k^2) -> O(k)): `_source_text_within_budget` (and the `_estimate_tokens` it calls) is
+    # a PURE function of `len(text)` -- `_estimate_tokens` is `max(1, ceil(len(text)/3.5))` (0 for
+    # an empty string) and never reads text content, only `len(text)`, `max_tokens`, `max_chars`
+    # (see the two functions right above this one). The two loops below used to rebuild the FULL
+    # candidate string on every iteration just to hand it to that length-only check
+    # (`"".join([*selected_lines, line])`, and the same shape rebuilding `candidate_lines` in the
+    # tail-rescue loop) -- each rebuild is O(current total length), making the loops O(k^2) on a
+    # k-line file. `_within_budget_for_len` reproduces the identical pass/fail decision from a
+    # running integer length instead, so `selected_lines`/`selected_indexes`/the final joined text
+    # come out byte-identical while both loops become O(k) (see
+    # tests/unit/test_token_budget.py::test_truncate_*_is_byte_identical for the pinned-output
+    # regression coverage, captured from this function before the rewrite).
+    def _within_budget_for_len(candidate_len: int) -> bool:
+        if max_chars is not None and candidate_len > max_chars:
+            return False
+        if max_tokens is not None and _estimate_tokens_for_len(candidate_len) > max_tokens:
+            return False
+        return True
+
     lines = text.splitlines(keepends=True)
     selected_lines: list[str] = []
     selected_indexes: list[int] = []
+    running_len = 0
 
     for index, line in enumerate(lines, start=1):
-        candidate = "".join([*selected_lines, line])
-        if not _source_text_within_budget(
-            candidate,
-            max_tokens=max_tokens,
-            max_chars=max_chars,
-            _profiling_collector=_profiling_collector,
-        ):
+        candidate_len = running_len + len(line)
+        if not _within_budget_for_len(candidate_len):
             break
         selected_lines.append(line)
         selected_indexes.append(index)
+        running_len = candidate_len
 
     tail_line: tuple[int, str] | None = None
     for index in range(len(lines), 0, -1):
@@ -8961,32 +8985,23 @@ def _truncate_source_text_to_budget(
             break
 
     if tail_line is not None and tail_line[0] not in selected_indexes:
+        tail_text = tail_line[1]
+        tail_len = len(tail_text)
         last_selected = max(selected_indexes, default=0)
         omitted_between = max(0, tail_line[0] - last_selected - 1)
         marker = f"# ... {omitted_between} lines omitted by source budget ...\n"
-        candidate_lines = [*selected_lines, marker, tail_line[1]]
-        candidate_indexes = [*selected_indexes, 0, tail_line[0]]
-        while selected_lines and not _source_text_within_budget(
-            "".join(candidate_lines),
-            max_tokens=max_tokens,
-            max_chars=max_chars,
-            _profiling_collector=_profiling_collector,
-        ):
-            selected_lines.pop()
+        candidate_len = running_len + len(marker) + tail_len
+        while selected_lines and not _within_budget_for_len(candidate_len):
+            popped = selected_lines.pop()
             selected_indexes.pop()
+            running_len -= len(popped)
             last_selected = max(selected_indexes, default=0)
             omitted_between = max(0, tail_line[0] - last_selected - 1)
             marker = f"# ... {omitted_between} lines omitted by source budget ...\n"
-            candidate_lines = [*selected_lines, marker, tail_line[1]]
-            candidate_indexes = [*selected_indexes, 0, tail_line[0]]
-        if _source_text_within_budget(
-            "".join(candidate_lines),
-            max_tokens=max_tokens,
-            max_chars=max_chars,
-            _profiling_collector=_profiling_collector,
-        ):
-            selected_lines = candidate_lines
-            selected_indexes = candidate_indexes
+            candidate_len = running_len + len(marker) + tail_len
+        if _within_budget_for_len(candidate_len):
+            selected_lines = [*selected_lines, marker, tail_text]
+            selected_indexes = [*selected_indexes, 0, tail_line[0]]
 
     if not selected_lines and lines:
         chunk = lines[0]
