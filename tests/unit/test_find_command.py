@@ -655,3 +655,140 @@ def test_find_dense_weight_nonfinite_env_never_reaches_rank_chunks(
         f"expected dense_weight=5.0 (adaptive, treated like unset) for every call with a "
         f"non-finite env value, got {captured}"
     )
+
+
+# --- Accuracy-leg regression fix (Opus-gate finding, PR #717): query-adaptive `combine` routing --
+# max-combine REGRESSES single-token literal/identifier queries (benchmarks/datasets/
+# literal_golden.jsonl: sum=1.0 exact vs max=0.9631, -0.0369 ndcg@10) because a literal query's
+# true answer is often independently ranked #1 by BOTH bm25 and dense -- sum's per-leg-agreement
+# bonus is exactly the signal max discards. `tg find` now routes combine="sum" for a single
+# whitespace-free token (recovering the exact pre-max-flip behavior) and combine="max" for
+# genuinely multi-word NL (keeping the +62.6% win), on the SAME whitespace predicate
+# `_find_dense_weight` already uses for its own knob.
+
+
+def _spy_on_rank_chunks_combine(monkeypatch) -> list[str]:  # type: ignore[no-untyped-def]
+    """Sibling of `_spy_on_rank_chunks` above that records the `combine` kwarg instead of
+    `dense_weight` -- same monkeypatch target/rationale (`rank_chunks` is imported LOCALLY inside
+    `_execute_find`, so the module attribute on `tensor_grep.core.reranker` is what must be
+    patched). Kept as a SEPARATE spy rather than extending the existing one so every pre-existing
+    test asserting `captured[-1] == <float>` on the dense_weight spy is untouched."""
+    from tensor_grep.core import reranker as reranker_module
+
+    real_rank_chunks = reranker_module.rank_chunks
+    captured: list[str] = []
+
+    def _spy(*args, **kwargs):  # type: ignore[no-untyped-def]
+        captured.append(kwargs.get("combine", "max"))
+        return real_rank_chunks(*args, **kwargs)
+
+    monkeypatch.setattr(reranker_module, "rank_chunks", _spy)
+    return captured
+
+
+def test_find_combine_mode_helper() -> None:
+    """Direct-call companion: pins `_find_combine_mode`'s routing decision across the SAME
+    identifier shapes `test_find_dense_weight_default_protects_literal_identifiers` already proves
+    stay at `dense_weight=1.0` -- the two query-adaptive knobs share one predicate
+    (`_find_is_single_token_query`) so they can never disagree on what counts as literal."""
+    from tensor_grep.cli.main import _find_combine_mode
+
+    protected_identifiers = [
+        "mint_access_token",
+        "getUserName",
+        "_confine_mcp_path",
+        "BackendExecutionError",
+        "reciprocal_rank_fusion",
+        "_iter_repo_files",
+        "rank_chunks",
+    ]
+    for identifier in protected_identifiers:
+        assert _find_combine_mode(identifier) == "sum", (
+            f"single-token identifier {identifier!r} must route to combine='sum', recovering "
+            "the literal_golden.jsonl regression"
+        )
+
+    for nl_query in (
+        "how does the retry backoff work",
+        "borrow a connection out of a shared pool",
+        "verify login credentials",
+        "shared pool",  # boundary: even a bare 2-word phrase is multi-word -> max
+    ):
+        assert _find_combine_mode(nl_query) == "max", (
+            f"multi-word query {nl_query!r} must keep combine='max' (the +62.6% ndcg@10 win)"
+        )
+
+
+def test_find_combine_mode_routes_single_token_to_sum_multiword_to_max_end_to_end(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """End-to-end companion: proves the routing decision reaches the real `rank_chunks` call
+    inside the full `tg find` CLI invocation, not just the helper in isolation -- mirrors
+    `test_find_dense_weight_default_is_adaptive_end_to_end`'s shape exactly, for `combine` instead
+    of `dense_weight`. Was RED before this fix: `_execute_find` used to call `rank_chunks(...)`
+    with no `combine` kwarg at all (implicit default "max"), regardless of query shape."""
+    monkeypatch.delenv("TG_FIND_DENSE_WEIGHT", raising=False)
+    _stub_dense_clean(monkeypatch)
+    captured = _spy_on_rank_chunks_combine(monkeypatch)
+    (tmp_path / "invoice.py").write_text(
+        "def make_invoice(invoice_id):\n    invoice = invoice_id\n    return invoice\n",
+        encoding="utf-8",
+    )
+
+    literal_result = CliRunner().invoke(app, ["find", "invoice", str(tmp_path), "--json"])
+    assert literal_result.exit_code == 0, literal_result.output
+    assert captured, "rank_chunks was never called"
+    assert captured[-1] == "sum", f"single-token query must route to combine='sum', got {captured}"
+
+    nl_result = CliRunner().invoke(
+        app, ["find", "invoice processing helper", str(tmp_path), "--json"]
+    )
+    assert nl_result.exit_code == 0, nl_result.output
+    assert captured[-1] == "max", f"multi-word NL query must keep combine='max', got {captured}"
+
+
+def test_find_combine_mode_dense_unavailable_retry_also_routes(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The F1 BM25-only retry path (a query-time DenseUnavailableError degrade, main.py's second
+    `rank_chunks` call site) must ALSO pass `combine=_find_combine_mode(query)`, not silently fall
+    back to the implicit "max" default -- mirrors the existing dense_weight retry coverage. Does
+    not assert an exact call count (CliRunner/Typer plumbing may invoke the command's underlying
+    callback more than the minimal primary+retry pair) -- the invariant that matters is that EVERY
+    call along the way, however many there are, routes this single-token query the same way."""
+    from tensor_grep.core.retrieval_dense import DenseUnavailableError
+
+    monkeypatch.delenv("TG_FIND_DENSE_WEIGHT", raising=False)
+    _stub_dense_clean(monkeypatch)
+    (tmp_path / "invoice.py").write_text(
+        "def make_invoice(invoice_id):\n    invoice = invoice_id\n    return invoice\n",
+        encoding="utf-8",
+    )
+
+    from tensor_grep.core import reranker as reranker_module
+
+    real_rank_chunks = reranker_module.rank_chunks
+    captured: list[str] = []
+    dense_leg_calls: list[bool] = []
+
+    def _raise_once_per_dense_leg_call(*args, **kwargs):  # type: ignore[no-untyped-def]
+        captured.append(kwargs.get("combine", "max"))
+        # Raise only the FIRST time a real dense leg is attached (the primary call for THIS
+        # query) -- a retry call always passes dense_index=None, so it is never re-raised into an
+        # infinite loop regardless of how many times the surrounding CLI plumbing invokes this.
+        has_dense = kwargs.get("dense_index") is not None
+        dense_leg_calls.append(has_dense)
+        if has_dense and dense_leg_calls.count(True) == 1:
+            raise DenseUnavailableError("query-time dim mismatch")
+        return real_rank_chunks(*args, **kwargs)
+
+    monkeypatch.setattr(reranker_module, "rank_chunks", _raise_once_per_dense_leg_call)
+
+    result = CliRunner().invoke(app, ["find", "invoice", str(tmp_path), "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert len(captured) >= 2, (
+        f"expected at least a primary call + a BM25-only retry, got {captured}"
+    )
+    assert all(c == "sum" for c in captured), (
+        f"every rank_chunks call along the retry path must route this single-token query to "
+        f"combine='sum', got {captured}"
+    )

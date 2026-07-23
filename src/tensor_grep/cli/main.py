@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from uuid import uuid4
 
 # Rich's legacy Windows renderer can raise EINVAL when long help is piped through
@@ -4261,9 +4261,45 @@ def _find_dense_weight(query: str) -> float:
     # genuinely multi-word (space-separated) query is NL and gets the resolved `weight` above.
     # Whitespace, not `split_terms` morphemes -- see the module comment above `_FIND_DENSE_WEIGHT_ENV`
     # for the dogfood finding (#191) this fixes.
-    if len(query.split()) <= 1:
+    if _find_is_single_token_query(query):
         return _FIND_DENSE_WEIGHT_DEFAULT
     return weight
+
+
+def _find_is_single_token_query(query: str) -> bool:
+    """Shared literal/identifier-query predicate for `tg find`'s two query-adaptive knobs --
+    `_find_dense_weight`'s dense_weight (above) AND `_find_combine_mode`'s RRF combine mode
+    (below). A single whitespace-free token (or an empty/whitespace-only query, whose ``split()``
+    -> ``[]``) is a literal identifier lookup; anything with 2+ whitespace-separated words is NL.
+    Whitespace, not `split_terms` morphemes -- see the module comment above
+    `_FIND_DENSE_WEIGHT_ENV` for the #191 dogfood finding this rule fixes. Factored out to a single
+    canonical definition so the two knobs can never silently disagree on what counts as literal.
+    """
+    return len(query.split()) <= 1
+
+
+def _find_combine_mode(query: str) -> Literal["sum", "max"]:
+    """Query-adaptive RRF `combine` mode for `tg find`'s `rank_chunks` calls (accuracy-leg
+    max-fusion regression fix, Opus-gate finding on PR #717): `combine="max"` (`rank_chunks`'s own
+    default, see its docstring) lifts genuinely multi-word/NL queries (ndcg@10 +62.6% on the frozen
+    40-query golden set) but REGRESSES single-token literal/identifier lookups -- measured on
+    `benchmarks/datasets/literal_golden.jsonl` (10 queries, `dense_weight=1.0` as
+    `_find_dense_weight` already protects them at): sum scores a perfect 1.0 ndcg@10 (as it always
+    has); max drops to 0.9631, a real -0.0369 regression. Mechanism: a literal query's true answer
+    is frequently ranked #1 by BOTH the bm25 leg and the dense leg independently -- `"sum"`'s
+    per-leg-agreement bonus is exactly the confirming signal `"max"` discards, letting a
+    single-leg-only competitor tie the true answer's now-undiscounted best-single-term score.
+
+    Routes on the EXACT SAME whitespace predicate `_find_dense_weight` already uses
+    (`_find_is_single_token_query`) so the two adaptive knobs can never disagree on what counts as
+    literal: a single whitespace-free token -> `"sum"` (byte-identical to the pre-max-flip
+    behavior, recovering the regression); a genuinely multi-word query -> `"max"` (keeps the NL
+    win, including composed with the adaptive `dense_weight=5.0`, which reaches the dense-alone
+    ndcg@10 ceiling exactly). This is scoped to `tg find` only -- `rerank_hybrid` (the `tg search
+    --semantic` path) never passes `combine`, so it is unaffected and stays on the plain "max"
+    default.
+    """
+    return "sum" if _find_is_single_token_query(query) else "max"
 
 
 def _find_representative_line(chunk: "Chunk", query_terms: set[str]) -> tuple[int, str]:
@@ -4466,6 +4502,7 @@ def _execute_find(
             dense_index=dense_index,
             late_reranker=late_reranker,
             dense_weight=_find_dense_weight(query),
+            combine=_find_combine_mode(query),
         )
     except DenseUnavailableError as exc:
         # F1 (Opus-gate blocker; mirrors `_apply_semantic_rerank`'s own query-time catch,
@@ -4491,6 +4528,7 @@ def _execute_find(
             dense_index=None,
             late_reranker=None,
             dense_weight=_find_dense_weight(query),
+            combine=_find_combine_mode(query),
         )
     if late_fallback_reason:
         result.rank_fallback_reason = (
