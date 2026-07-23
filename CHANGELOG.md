@@ -1,6 +1,31 @@
 # CHANGELOG
 
 
+## v1.93.6 (2026-07-23)
+
+### Performance Improvements
+
+- **imports**: Stdlib resolver fast-path + single-walk dynamic-import merge
+  ([#716](https://github.com/oimiragieo/tensor-grep/pull/716),
+  [`2e8f379`](https://github.com/oimiragieo/tensor-grep/commit/2e8f3798590c201c79c821bb0eac62d573ffab52))
+
+opt10 campaign #4. Two results-identical speed fixes in the Python import resolver shared by tg
+  imports/tg importers/tg agent/tg blast-radius:
+
+F4.3 (primary): _python_module_candidates now fast-paths a bare top-level stdlib import (import
+  os/sys/json, 59-100% of imports in sampled files) past its ~10-12-candidate filesystem probe,
+  gated behind a cheap shadow check over the same roots the general path already computes so a
+  repo-local module shadowing a stdlib name (e.g. a local json.py) still resolves to the local file.
+
+F4.2 (bonus, provably clean): _python_imports_with_lines merges its static-import walk with the
+  dynamic-import-call walk (previously a second full-tree ast.walk buried in
+  _python_dynamic_import_entries) into one pass, via a new pure per-node helper
+  _python_dynamic_import_entry_for_call that _python_dynamic_import_entries itself now delegates to
+  unchanged.
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+
 ## v1.93.5 (2026-07-23)
 
 ### Performance Improvements
