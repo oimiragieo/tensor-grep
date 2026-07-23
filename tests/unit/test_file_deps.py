@@ -2470,9 +2470,16 @@ def test_build_file_importers_unbounded_result_set_unaffected_by_tiering(tmp_pat
 # `_python_dynamic_import_entries` (called for the dynamic-import shape). The per-node dynamic-
 # import-detection logic was extracted into `_python_dynamic_import_entry_for_call` (a pure,
 # stateless per-node check) so `_python_imports_with_lines` can fold it into its EXISTING walk
-# instead of triggering a second one -- while `_python_dynamic_import_entries` itself is
-# UNCHANGED (same signature, same behavior, still does its own single walk) for its OTHER
-# caller, `_python_imports_and_symbols` (the reverse-import alias-graph prefilter).
+# instead of triggering a second one -- while `_python_dynamic_import_entries` itself, at the
+# time, stayed UNCHANGED (same signature, same behavior, still doing its own single walk) for
+# its OTHER caller, `_python_imports_and_symbols` (the reverse-import alias-graph prefilter).
+#
+# opt10 lever-1 (see tests further below): that OTHER caller was later migrated to call
+# `_python_dynamic_import_entry_for_call` directly too, folding its own dynamic-import check into
+# ITS single merged walk -- leaving `_python_dynamic_import_entries` with zero callers, so it was
+# removed as dead code. `test_python_dynamic_import_entries_unchanged_after_extraction` (the
+# regression guard for this function's post-extraction standalone behavior) was removed alongside
+# it for the same reason: there is no longer any caller whose behavior it could regress.
 # ---------------------------------------------------------------------------------------------
 
 
@@ -2765,29 +2772,111 @@ def test_python_imports_with_lines_merges_dynamic_walk_into_single_ast_walk_pass
         },
     ]
 
+    # NOTE: `test_python_dynamic_import_entries_unchanged_after_extraction` used to live here --
+    # a regression guard pinning `_python_dynamic_import_entries`'s standalone behavior for its
+    # then-last caller, `_python_imports_and_symbols`. opt10 lever-1 (below) migrated that caller
+    # to call `_python_dynamic_import_entry_for_call` directly instead, leaving
+    # `_python_dynamic_import_entries` with zero callers; it was removed as dead code, and this
+    # test was removed with it since there is no longer any caller whose behavior it could pin.
 
-def test_python_dynamic_import_entries_unchanged_after_extraction(tmp_path: Path) -> None:
-    """Regression guard for the F4.2 refactor: `_python_dynamic_import_entries` itself (the
-    OTHER caller of `_python_dynamic_import_entry_for_call`, used by
-    `_python_imports_and_symbols`'s reverse-import alias-graph prefilter at a SEPARATE call
-    site) must still walk `tree` on its own and return the identical entries it always did --
-    the extraction must not have changed its standalone behavior."""
+
+def test_python_imports_and_symbols_merges_all_three_walks_into_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Lever-1 walk-count assertion (mirrors
+    test_python_imports_with_lines_merges_dynamic_walk_into_single_ast_walk_pass above):
+    `_python_imports_and_symbols` used to call `ast.walk(tree)` THREE separate times -- once for
+    the imports scan (module-level function body, ~1953), once for the symbols scan (~1977), and
+    once more buried inside `_python_dynamic_import_entries` (called from a third loop, ~2026) --
+    all three walking the identical tree. This was `_python_dynamic_import_entries`'s last
+    remaining caller; once migrated to call the per-node `_python_dynamic_import_entry_for_call`
+    helper directly (like the merged walk below does), that whole-tree function had zero callers
+    left and was removed as dead code. A file mixing a module-top-level import, a
+    TYPE_CHECKING-nested import, a relative `from . import x`, a class, a sync function, an
+    async function, a RESOLVABLE dynamic `importlib.import_module("os.path")` call, and an
+    UNRESOLVABLE dynamic `import_module(name)` call (non-literal argument) must produce the exact
+    same `(imports, symbols)` tuple as before the merge (values captured from the pre-merge
+    implementation), while calling `ast.walk` exactly ONCE."""
+    import ast as ast_module
+
     project = tmp_path / "project"
     project.mkdir()
-    source_file = project / "dyn.py"
+    source_file = project / "mixed.py"
     source_file.write_text(
-        "import importlib\n"
-        "def load(name):\n"
-        "    return importlib.import_module(name)\n"
-        "def load_builtin():\n"
-        "    return __import__('re')\n",
+        "import os\n"
+        "from typing import TYPE_CHECKING\n"
+        "from importlib import import_module\n"
+        "\n"
+        "if TYPE_CHECKING:\n"
+        "    import collections.abc\n"
+        "\n"
+        "from . import sibling\n"
+        "\n"
+        "\n"
+        "class Widget:\n"
+        "    pass\n"
+        "\n"
+        "\n"
+        "def build(name):\n"
+        "    return import_module('os.path')\n"
+        "\n"
+        "\n"
+        "async def build_async(name):\n"
+        "    return import_module(name)\n",
         encoding="utf-8",
     )
-    tree = repo_map._cached_ast_parse(source_file.read_text(encoding="utf-8"))
 
-    entries = repo_map._python_dynamic_import_entries(tree)
+    walk_calls = 0
+    real_walk = ast_module.walk
 
-    assert entries == [
-        {"module": "", "line": 3, "level": 0, "dynamic": True, "dynamic_unresolved": True},
-        {"module": "re", "line": 5, "level": 0, "dynamic": True, "dynamic_unresolved": False},
+    def counting_walk(tree):
+        nonlocal walk_calls
+        walk_calls += 1
+        return real_walk(tree)
+
+    # `repo_map` did `import ast` at module scope, so `repo_map.ast is ast_module` -- patching
+    # the shared stdlib module object's `walk` attribute affects the call
+    # `_python_imports_and_symbols` makes internally too (its only `ast.walk` call now that the
+    # merge folds the dynamic-import check into the same walk via the per-node
+    # `_python_dynamic_import_entry_for_call` helper instead of a separate whole-tree call).
+    monkeypatch.setattr(ast_module, "walk", counting_walk)
+
+    imports, symbols = repo_map._python_imports_and_symbols(source_file)
+
+    assert walk_calls == 1, f"expected exactly 1 ast.walk call, got {walk_calls}"
+    assert imports == [
+        "collections.abc",
+        "importlib",
+        "importlib.import_module",
+        "os",
+        "os.path",
+        "sibling",
+        "typing",
+        "typing.TYPE_CHECKING",
+    ]
+    assert symbols == [
+        {
+            "name": "Widget",
+            "kind": "class",
+            "file": str(source_file),
+            "line": 11,
+            "start_line": 11,
+            "end_line": 12,
+        },
+        {
+            "name": "build",
+            "kind": "function",
+            "file": str(source_file),
+            "line": 15,
+            "start_line": 15,
+            "end_line": 16,
+        },
+        {
+            "name": "build_async",
+            "kind": "function",
+            "file": str(source_file),
+            "line": 19,
+            "start_line": 19,
+            "end_line": 20,
+        },
     ]
