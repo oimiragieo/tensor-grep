@@ -1,6 +1,136 @@
 # CHANGELOG
 
 
+## v1.93.7 (2026-07-23)
+
+### Performance Improvements
+
+- **cold-start**: Defer heavy imports off the fast paths (single-sourced scan limits)
+  ([#715](https://github.com/oimiragieo/tensor-grep/pull/715),
+  [`d91dd0c`](https://github.com/oimiragieo/tensor-grep/commit/d91dd0ceb034e09794c92f7755e70fbdc04c07b9))
+
+* perf(cold-start): defer heavy imports off the fast paths (single-sourced scan limits)
+
+Ranked-queue item #6 of the +10% campaign (import-deferral cold-floor bundle: F2.6 + F2.5 + F2.4),
+  results-identical.
+
+- F2.6: cli/__init__.py's `from typing import Any` removed -- the sole use (__getattr__'s return
+  annotation) is now the builtin `object`, which needs no import. This file is the parent-package
+  init for every tensor_grep.cli.* submodule, so its cost is paid on every `tg` invocation. Verified
+  `-> Any` without importing `typing` fails mypy strict even under `from __future__ import
+  annotations` (PEP 563 defers evaluation, not name resolution) -- `-> object` is the correct fix,
+  not a combination of both options.
+
+- F2.5: cli/runtime_paths.py's module-level `import json`/`import shutil` moved to function-local at
+  their only call sites (_read_native_frontdoor_metadata, translate_path_for_windows_binary,
+  resolve_ripgrep_binary). This module is imported eagerly by cli/bootstrap.py (for
+  env_flag_enabled/resolve_native_tg_binary/ resolve_ripgrep_binary), so its top-level imports were
+  paid on every invocation including --version, which calls none of the three functions.
+
+- F2.4 (contract-touching): the 5 directory_scanner broad-scan-guard constants
+  (UNBOUNDED_VENDORED_ROOT_DIR_NAMES, BROAD_WORKSPACE_PROJECT_ MARKERS,
+  BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD, BROAD_WORKSPACE_MARKED_ ROOT_CHILD_THRESHOLD,
+  IMPLICIT_SEARCH_WALK_FILE_CEILING) move to a new zero-dependency module, io/scan_limits.py.
+  io/directory_scanner.py re-exports them (`import ... as ...`, the same idiom bootstrap.py already
+  uses for run_subprocess) so its public surface is unchanged. cli/main.py's module-level import,
+  cli/bootstrap.py's 3 guard helpers, and cli/scan_guardrails.py now import directly from
+  scan_limits instead of directory_scanner, so none of them drag in SearchConfig/dataclasses/
+  inspect merely to read 5 plain constants -- even when a search is ultimately delegated to the
+  native binary or rg (both walk in a separate process and never touch Python's DirectoryScanner at
+  all). DirectoryScanner itself stays lazily/function-local imported everywhere it already was; only
+  the constants' source module changed.
+
+TDD: extended tests/unit/test_bootstrap_fast_path_imports.py with 11 new subprocess-based
+  sys.modules-absence pins (one per deferred import claim, plus 2 non-regression behavioral checks);
+  added a sync-pin test to tests/unit/test_cli_bootstrap.py asserting scan_limits' values are
+  identical (`is`, not just `==`) to directory_scanner's re-export, cli/main.py's private aliases,
+  and cli/scan_guardrails.py's private aliases -- the single-source-of-truth contract is now a
+  build-time fact. Re-pointed the ~13 existing constants-regression-test imports in
+  test_cli_bootstrap.py from directory_scanner to scan_limits.
+
+Verify-first findings (two claims narrowed after checking against the real import graph, not assumed
+  from the plan): - cli/formatters/json_fmt.py has its own unrelated, pre-existing module-level
+  `from tensor_grep.core.config import SearchConfig` (reached via cli/main.py's eager `from
+  tensor_grep.cli.formatters.base import OutputFormatter`), so a bare `cli.main` import (simulating
+  --help) still loads core.config -- just no longer via directory_scanner. Out of this PR's scope;
+  noted for a future cleanup, not silently absorbed into the headline claim. -
+  cli/subprocess_policy.py has an identical redundant `from typing import Any` (also eagerly loaded
+  by bootstrap.py), which would fully mask F2.6's saving for the whole-process --version case.
+  Attempted the same fix there and reverted it: `**kwargs: object` breaks 2 real mypy errors against
+  subprocess.run's overloaded stdlib stub (no-any-return, call-overload) -- not a safe drop-in, so
+  it stays out of scope.
+
+Measured (-X importtime, python -m tensor_grep, PYTHONPATH A/B against a reconstructed pre-#6 source
+  tree, 6 reps/side interleaved to average out this shared machine's background load, median
+  reported; see PR body for the full table and the shared-interpreter caveat): - --version:
+  directory_scanner/core.config already absent both sides (prior #48 fix); runtime_paths cumulative
+  15.3ms -> 0.6ms. - --help: directory_scanner 1.9ms -> absent; core.config unchanged (the
+  json_fmt.py residual above); runtime_paths 13.7ms -> 0.6ms. - explicit-path search:
+  directory_scanner 13.6ms -> absent; core.config 10.8ms -> absent (full elimination, the cleanest
+  cell); runtime_paths 13.8ms -> 0.6ms.
+
+Gates: ruff check . / ruff format --check --preview . (repo-wide; only 4 pre-existing, unrelated
+  doc-fence diffs, confirmed present on origin/main too) / mypy src/tensor_grep (82 files, clean)
+  all pass. ~950 tests run across the
+  bootstrap/directory_scanner/scan_guardrails/orient/ast/routing/ cli_modes suites, all green except
+  3 pre-existing failures verified byte-identical against origin/main via git stash (missing
+  compiled rust_core PyO3 extension in this fresh worktree -- unrelated to this Python-only change;
+  never touched cargo/rustc/maturin per CPU-SAFE).
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+* test(cold-start): AST-parse the eager-typing-import pin so it catches `from typing import` too
+  (#715 gate nit)
+
+The independent Opus gate on #715 flagged test_cli_package_init_has_no_eager_typing_import as
+  green-but-partially-vacuous: its `"import typing" not in init_source` substring assertion catches
+  a re-added plain `import typing` but MISSES `from typing import Any` -- the exact form F2.6
+  removed -- because the text "from typing import Any" contains "typing import", not "import
+  typing".
+
+Replace the substring check with an AST parse of the top-level statements that rejects BOTH forms
+  (`import typing[.*]` and `from typing[.*] import ...`) while correctly ignoring imports nested
+  under a function or an `if TYPE_CHECKING:` guard (not module-load cost, not Module children).
+  Bidirectionally validated: empty on the current `-> object` source, catches both import forms,
+  ignores nested/guarded. 13/13 pass; ruff/format clean.
+
+* fix(test): patch global shutil.which not the removed runtime_paths.shutil module attr (#715 F2.5
+  fallout)
+
+F2.5 in this PR moved `import shutil` from module-level to function-local in runtime_paths.py, so
+  the module attribute `runtime_paths.shutil` no longer exists. test_runtime_paths.py monkeypatched
+  `runtime_paths.shutil.which` at 12 sites → `AttributeError: module 'tensor_grep.cli.runtime_paths'
+  has no attribute 'shutil'` on the test-python matrix (surfaced on ubuntu at line 99; other
+  platform-gated siblings hit it on the other jobs).
+
+Fix is EXACTLY equivalent: before this PR `runtime_paths.shutil` WAS `sys.modules['shutil']` (a
+  plain module-level import binding), so patching `runtime_paths.shutil.which` == patching the real
+  `shutil.which`. Replace all 12 `runtime_paths.shutil` → `shutil` (module-level `import shutil`
+  already present at line 4); a function-local `import shutil; shutil.which(...)` picks up the
+  patched real module. Preserves F2.5's cold-start win (no revert of the function-local move). 67
+  passed / 1 skipped locally; ruff clean.
+
+* style: ruff format test_runtime_paths.py after the shutil-ref rename (#715)
+
+* test(cold-start): measure the sys.modules DELTA in the bare-import F2.5 probe (test-gpu
+  env-robustness)
+
+test_runtime_paths_bare_import_does_not_pull_json_or_shutil asserted `"shutil" in sys.modules is
+  False` in a fresh subprocess after `import tensor_grep.cli.runtime_paths`. That absolute check
+  false-fails in any environment that has shutil resident before the import — the test-gpu runner
+  (cuDF/GPU deps) does, so the test passed on test-python but failed on test-gpu (a NON-required
+  job). F2.5 itself is correct: runtime_paths' module-level imports are
+  os/re/subprocess/sys/functools/pathlib — no shutil.
+
+Fix: snapshot sys.modules BEFORE the import and assert the import did not ADD json/shutil (the
+  delta), which is exactly F2.5's claim and is immune to whatever a given interpreter pre-loads.
+  CPU-env behavior is unchanged (still passes). Docstring updated to explain the delta rationale.
+
+---------
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+
 ## v1.93.6 (2026-07-23)
 
 ### Performance Improvements
