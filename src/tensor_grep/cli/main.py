@@ -10213,6 +10213,7 @@ def route_test(
 def _build_prepare_blast_radius_floor(
     *,
     path: str,
+    rm: dict[str, Any],
     target: dict[str, Any],
     call_site_evidence: dict[str, Any],
     related_call_sites: list[dict[str, Any]],
@@ -10225,11 +10226,25 @@ def _build_prepare_blast_radius_floor(
     (agent_capsule.py:536,546) -- a natural-language task query fails that gate and leaves
     ``related_call_sites`` EMPTY even though the SELECTED primary target may have real callers.
     Reuse the capsule's own scan when it already ran (``status`` ``collected``/
-    ``collected_no_call_sites``); otherwise run exactly ONE supplementary FS-backed scan via the
-    literal-seed-rescue-equipped ``build_symbol_blast_radius`` (never the rescue-less
-    ``_from_map`` sibling -- see ``_collect_capsule_call_site_evidence_from_map``'s own TRAP A
-    docstring: a no_match against a possibly-truncated map with no rescue reads as a false-
-    complete absence) keyed on the symbol the capsule actually selected, not the raw query text.
+    ``collected_no_call_sites``); otherwise fall to a supplementary blast-radius scan keyed on
+    the symbol the capsule actually selected, not the raw query text.
+
+    opt10 campaign ranked-queue item #2: that supplementary scan used to ALWAYS pay a second
+    FS-backed ``build_repo_map`` walk+parse (via ``build_symbol_blast_radius``) even though
+    ``_build_prepare_payload`` already built one moments earlier and now passes it in as ``rm``
+    -- doubling prepare's dominant cost on every natural-language query (the common CUJ). Reuse
+    ``rm`` via the map-reusing sibling ``build_symbol_blast_radius_from_map`` UNLESS ``rm``'s own
+    truncation signal (``rm['scan_limit']['possibly_truncated']``, repo_map.py:6707-6715) says
+    the capsule's ``DEFAULT_AGENT_REPO_MAP_LIMIT``-capped map may be missing files a full scan
+    would find. THE LOAD-BEARING GUARD: the supplementary scan below is DELIBERATELY uncapped
+    (``max_repo_files`` omitted, see that branch's own comment) for large-repo recall, while
+    ``rm`` is capped at 2000 files -- blindly reusing a truncated ``rm`` would silently narrow
+    blast-radius recall on a >2000-file repo, a real correctness regression, not just a missed
+    speedup. When ``rm`` is complete (any repo at or under the cap, the common case), it already
+    IS the same file universe an uncapped rescan would produce, so reuse is recall-identical, not
+    just faster -- never stamps the rescue-less daemon ``TRAP A`` sentinel (see
+    ``_collect_capsule_call_site_evidence_from_map``'s docstring) because a no_match on a
+    ``possibly_truncated`` map is impossible on this branch by construction of the gate above it.
 
     Returns ``(floor, deadline_partial)``. ``deadline_partial`` is deliberately narrower than the
     floor's own ``possibly_incomplete`` field: it is True ONLY when a ``--deadline`` cutoff
@@ -10239,7 +10254,12 @@ def _build_prepare_blast_radius_floor(
     (``_scan_incomplete``'s own documented contract).
     """
     from tensor_grep.cli.agent_capsule import _related_call_site_record
-    from tensor_grep.cli.repo_map import build_symbol_blast_radius
+    from tensor_grep.cli.repo_map import (
+        _apply_blast_radius_output_limits,
+        _copy_partial_signal,
+        build_symbol_blast_radius,
+        build_symbol_blast_radius_from_map,
+    )
 
     symbol = str(target.get("symbol") or "")
     status = str(call_site_evidence.get("status") or "")
@@ -10275,6 +10295,38 @@ def _build_prepare_blast_radius_floor(
         if error is not None:
             floor["error"] = error
         return floor, bool(deadline_partial)
+
+    def _floor_from_radius_payload(radius_payload: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        # Shared tail for BOTH the from-map reuse branch and the FS-backed fallback branch below
+        # -- one definition so the two paths cannot silently drift apart on how a radius_payload
+        # becomes a floor.
+        if radius_payload.get("no_match"):
+            return _floor(
+                source="supplementary_blast_radius",
+                related=[],
+                graph_trust_summary=dict(radius_payload.get("graph_trust_summary") or {}),
+                resolution_gaps=list(radius_payload.get("resolution_gaps") or []),
+                deadline_partial=bool(radius_payload.get("partial")),
+                omitted=0,
+            )
+        related = [
+            record
+            for record in (
+                _related_call_site_record(caller, target_symbol=symbol)
+                for caller in (radius_payload.get("callers") or [])
+                if isinstance(caller, dict)
+            )
+            if record is not None
+        ]
+        output_limit = radius_payload.get("output_limit") or {}
+        return _floor(
+            source="supplementary_blast_radius",
+            related=related,
+            graph_trust_summary=dict(radius_payload.get("graph_trust_summary") or {}),
+            resolution_gaps=list(radius_payload.get("resolution_gaps") or []),
+            deadline_partial=bool(radius_payload.get("partial")),
+            omitted=int(output_limit.get("omitted_callers") or 0),
+        )
 
     if status in ("collected", "collected_no_call_sites"):
         return _floor(
@@ -10313,6 +10365,45 @@ def _build_prepare_blast_radius_floor(
             omitted=0,
         )
 
+    scan_limit = rm.get("scan_limit")
+    map_possibly_truncated = isinstance(scan_limit, dict) and bool(
+        scan_limit.get("possibly_truncated")
+    )
+
+    if not map_possibly_truncated:
+        # opt10 #2: `rm` is a COMPLETE map (the file-count cap never bit), so it already IS the
+        # file universe an uncapped rescan would produce below -- reuse it via the map-reusing
+        # sibling instead of paying a second build_repo_map walk+parse. Mirrors the established
+        # from_map reuse idiom this codebase already uses elsewhere (agent_capsule._collect_
+        # capsule_call_site_evidence_from_map; main.py's own blast-radius daemon gate): a
+        # build_symbol_blast_radius_from_map call, then the SAME _apply_blast_radius_output_
+        # limits + _copy_partial_signal tail build_symbol_blast_radius itself applies internally.
+        try:
+            radius_payload = build_symbol_blast_radius_from_map(
+                rm,
+                symbol,
+                max_depth=1,
+                deadline_monotonic=deadline_monotonic,
+            )
+            radius_payload = _apply_blast_radius_output_limits(
+                radius_payload, max_callers=8, max_files=8
+            )
+            _copy_partial_signal(radius_payload, rm)
+        except Exception as exc:  # pragma: no cover - defensive evidence side path
+            return _floor(
+                source="supplementary_blast_radius",
+                related=[],
+                graph_trust_summary={},
+                resolution_gaps=[],
+                deadline_partial=False,
+                omitted=0,
+                error=str(exc),
+            )
+        return _floor_from_radius_payload(radius_payload)
+
+    # `rm` is possibly_truncated (a repo bigger than DEFAULT_AGENT_REPO_MAP_LIMIT): PRESERVE the
+    # exact pre-#2 uncapped FS rescan below rather than reusing a map that may be missing the
+    # very caller this floor exists to find (the #2 load-bearing guard).
     deadline_seconds_remaining: float | None = None
     if deadline_monotonic is not None:
         deadline_seconds_remaining = max(0.1, deadline_monotonic - time.monotonic())
@@ -10341,35 +10432,7 @@ def _build_prepare_blast_radius_floor(
             omitted=0,
             error=str(exc),
         )
-
-    if radius_payload.get("no_match"):
-        return _floor(
-            source="supplementary_blast_radius",
-            related=[],
-            graph_trust_summary=dict(radius_payload.get("graph_trust_summary") or {}),
-            resolution_gaps=list(radius_payload.get("resolution_gaps") or []),
-            deadline_partial=bool(radius_payload.get("partial")),
-            omitted=0,
-        )
-
-    related = [
-        record
-        for record in (
-            _related_call_site_record(caller, target_symbol=symbol)
-            for caller in (radius_payload.get("callers") or [])
-            if isinstance(caller, dict)
-        )
-        if record is not None
-    ]
-    output_limit = radius_payload.get("output_limit") or {}
-    return _floor(
-        source="supplementary_blast_radius",
-        related=related,
-        graph_trust_summary=dict(radius_payload.get("graph_trust_summary") or {}),
-        resolution_gaps=list(radius_payload.get("resolution_gaps") or []),
-        deadline_partial=bool(radius_payload.get("partial")),
-        omitted=int(output_limit.get("omitted_callers") or 0),
-    )
+    return _floor_from_radius_payload(radius_payload)
 
 
 def _build_prepare_payload(
@@ -10379,13 +10442,35 @@ def _build_prepare_payload(
     claim: bool,
     deadline_monotonic: float | None = None,
 ) -> dict[str, Any]:
-    """Thin composition (CEO #5): ONE ``build_agent_capsule`` call supplies primary target,
-    confidence, ask-user, and validation verbatim; the only NEW scan is the blast-radius floor
-    (see ``_build_prepare_blast_radius_floor``). No new ranking/scan logic lives here."""
-    from tensor_grep.cli.agent_capsule import _command_ref, build_agent_capsule
-    from tensor_grep.cli.repo_map import _copy_scan_limit
+    """Thin composition (CEO #5): ONE repo-map build supplies primary target, confidence,
+    ask-user, and validation verbatim; the only NEW scan is the blast-radius floor (see
+    ``_build_prepare_blast_radius_floor``). No new ranking/scan logic lives here.
 
-    capsule = build_agent_capsule(query, path, deadline_monotonic=deadline_monotonic)
+    opt10 campaign ranked-queue item #2: builds ``rm`` directly instead of calling
+    ``build_agent_capsule`` -- byte-identical to that function's own 2-line body
+    (agent_capsule.py:2724-2731: same ``DEFAULT_AGENT_REPO_MAP_LIMIT`` cap, since this command
+    never overrides ``max_repo_files``; same ``deadline_monotonic``, already resolved by the
+    caller) followed by ``build_agent_capsule_from_map(..., _rescue_call_site_evidence=True)`` --
+    the exact cold-path value ``build_agent_capsule`` itself always passes internally. The
+    returned ``capsule`` is therefore byte-identical to calling ``build_agent_capsule(query,
+    path, deadline_monotonic=...)`` directly; this function additionally keeps its own ``rm``
+    reference to hand to the blast-radius floor below, so the floor can reuse it instead of
+    paying a second ``build_repo_map`` walk+parse for the common natural-language-query CUJ.
+    ``build_agent_capsule``'s own public contract/return is completely untouched by this --
+    `tg agent` / MCP / its existing tests keep calling it directly, exactly as before."""
+    from tensor_grep.cli.agent_capsule import _command_ref, build_agent_capsule_from_map
+    from tensor_grep.cli.repo_map import (
+        DEFAULT_AGENT_REPO_MAP_LIMIT,
+        _copy_scan_limit,
+        build_repo_map,
+    )
+
+    rm = build_repo_map(
+        path, max_repo_files=DEFAULT_AGENT_REPO_MAP_LIMIT, deadline_monotonic=deadline_monotonic
+    )
+    capsule = build_agent_capsule_from_map(
+        rm, query, deadline_monotonic=deadline_monotonic, _rescue_call_site_evidence=True
+    )
 
     target = dict(capsule.get("primary_target") or {})
     call_site_evidence = dict(capsule.get("call_site_evidence") or {})
@@ -10394,6 +10479,7 @@ def _build_prepare_payload(
     resolved_query = str(capsule.get("query") or query)
     floor, floor_deadline_partial = _build_prepare_blast_radius_floor(
         path=resolved_path,
+        rm=rm,
         target=target,
         call_site_evidence=call_site_evidence,
         related_call_sites=related_call_sites,
