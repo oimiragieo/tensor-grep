@@ -1,6 +1,56 @@
 # CHANGELOG
 
 
+## v1.93.9 (2026-07-23)
+
+### Documentation
+
+- **backlog**: Reconcile CURRENT STATE to v1.93.8 — CEO +10% campaign ACHIEVED (+25.3%)
+  ([#718](https://github.com/oimiragieo/tensor-grep/pull/718),
+  [`ad3b3d8`](https://github.com/oimiragieo/tensor-grep/commit/ad3b3d86c5cd3d06a381eed5ae114cf21ae904ae))
+
+Documents the CEO /goal "+10% overall (speed AND output AND accuracy), dogfood-verified" campaign,
+  shipped v1.93.3->v1.93.8 one-per-publish (zero broken releases). Closing composite on the
+  published v1.93.8 wheel = +25.3% overall (MET, 2.5x target): speed_leg +13.4% (prepare +29.8%,
+  imports +17.7%) + accuracy_leg +62.6% (rrf ndcg@10 0.3047->0.4953 via max-combine fusion #717) +
+  output_leg +0; capsule 16/16 hard floor held; no regression on any class (single-token literals
+  routed back to sum). Docs-only, no release.
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+### Performance Improvements
+
+- **repo-map**: Merge 3 redundant ast.walk passes in _python_imports_and_symbols into one
+  ([#719](https://github.com/oimiragieo/tensor-grep/pull/719),
+  [`9a2a01c`](https://github.com/oimiragieo/tensor-grep/commit/9a2a01c17213a9b5b23daa19abfa0f2893889df3))
+
+_python_imports_and_symbols (measured at 82% of `tg orient`'s cold wall, also 66.9% callers/53%
+  agent/27.3% prepare) walked the parsed AST three separate times: an imports walk, a symbols walk,
+  and a dynamic-imports walk (the third buried inside _python_dynamic_import_entries's own internal
+  ast.walk). Merges all three into a single ast.walk(tree) pass that dispatches each node by type,
+  reusing the already-tested per-node helper _python_dynamic_import_entry_for_call instead of
+  re-walking the tree a third time.
+
+Byte-identical: ast.Import/ImportFrom/ClassDef/FunctionDef/AsyncFunctionDef/Call are
+  mutually-exclusive node subclasses, so every node dispatches to exactly one branch. The trailing
+  sorted(dict.fromkeys(imports)) + symbols.sort(...) are unchanged and normalize final order
+  regardless of append order across the interleaved checks. Same single-walk-plus-helper-reuse
+  pattern #716 (2e8f379) already shipped for the sibling _python_imports_with_lines.
+
+Once this migrates _python_imports_and_symbols (the last remaining caller of
+  _python_dynamic_import_entries) to the per-node helper too, _python_dynamic_import_entries has
+  zero callers left, so it is removed as dead code along with its now-purposeless dedicated
+  regression test (test_python_dynamic_import_entries_unchanged_after_extraction) and 2 stale
+  comment blocks that described it as still-live.
+
+New test test_python_imports_and_symbols_merges_all_three_walks_into_one mirrors the #716 sibling
+  test: monkeypatches ast.walk to assert exactly one call, and asserts output identical to the
+  pre-merge baseline (captured empirically) across static/nested/relative imports, classes,
+  sync+async functions, and resolvable/unresolvable dynamic imports.
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+
 ## v1.93.8 (2026-07-23)
 
 ### Performance Improvements
