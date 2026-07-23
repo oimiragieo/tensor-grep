@@ -1682,8 +1682,9 @@ def _is_python_dynamic_import_call(node: ast.Call) -> bool:
     ``import_module(...)`` (from ``from importlib import import_module``), or
     ``importlib.import_module(...)``.  These are ``ast.Call`` EXPRESSIONS that can appear
     anywhere -- inside a function body, a conditional, a try/except -- which is exactly why they
-    need a whole-tree ``ast.walk`` (see ``_python_dynamic_import_entries``) instead of the
-    ``tree.body``-only scan below (#93 SUB-1 audit finding).
+    need a whole-tree ``ast.walk`` (see ``_python_dynamic_import_entry_for_call``, the per-node
+    detector built on top of this predicate) instead of the ``tree.body``-only scan below
+    (#93 SUB-1 audit finding).
     """
     func = node.func
     if isinstance(func, ast.Name):
@@ -1724,61 +1725,51 @@ def _python_dynamic_import_call_is_relative(node: ast.Call) -> bool:
     return True  # non-literal level -- can't prove it's 0, fail closed (treat as relative)
 
 
-def _python_dynamic_import_entries(tree: ast.AST) -> list[dict[str, Any]]:
-    """Raw per-call dynamic-import entries: one dict per ``__import__``/``import_module``/
-    ``importlib.import_module`` call anywhere in ``tree``, shaped like the static entries
-    ``_python_imports_with_lines`` emits (``module``, ``line``, ``level``) plus the two #93 SUB-1
-    markers -- ``dynamic`` (always ``True`` here) and ``dynamic_unresolved`` (``True`` when there
-    is no static-string-literal target to resolve at all -- the first argument isn't a literal,
-    e.g. a variable or an f-string -- OR when the literal names a RELATIVE import this slice
-    deliberately does not attempt to resolve, see below).
-
-    Fails CLOSED on the non-literal-argument case: ``module`` is ``""`` rather than a guessed
-    name -- asserting a fabricated edge for an import whose target we can't actually read would
-    be a precision regression in a moat feature (see ``_resolve_raw_import_entry`` /
-    ``_confirm_import_edges``, which both skip resolution entirely when ``dynamic_unresolved``
-    is set).
-
-    Also fails CLOSED on a RELATIVE literal -- a leading-dot ``import_module(".sibling",
-    package=...)`` module string, or an ``__import__(name, ..., level=N)`` call with a nonzero
-    (or non-literal, unprovable) ``level`` (``_python_dynamic_import_call_is_relative`` above --
-    scope slice #6, the tractable dynamic-import LITERAL slice). Both forms carry a real literal
-    name, kept here (unlike the non-literal case, ``module`` is NOT blanked to ``""`` -- nothing
-    is fabricated, the literal text is exactly what the source says), but the downstream absolute
-    resolver (``_python_module_candidates``) must never see it: its ``_python_module_parts``
-    splitter drops a leading empty component from ``".sibling".split(".")``, so an unguarded
-    relative literal would silently be searched for as if it were the ABSOLUTE module "sibling" --
-    a PROVEN false-edge risk (a same-named-but-unrelated top-level file can exist anywhere in the
-    search roots) not merely a theoretical one. Resolving the relative form correctly needs a
-    second, chained lookup (resolve the ``package``/enclosing-package argument to a directory
-    FIRST, only then walk it by the relative level) that this slice does not build -- out of scope
-    per the "no false edges, missing is fine" contract; a future slice can add it. ``package``
-    itself is never read here (a non-literal ``package`` -- the overwhelmingly common real-world
-    shape, ``package=__name__``/``package=__package__`` -- couldn't be resolved statically anyway,
-    and even a literal ``package`` string is left for that future slice), so this is a pure
-    detect-and-refuse guard on the ``module``/``level`` shape alone.
-    """
-    entries: list[dict[str, Any]] = []
-    for node in ast.walk(tree):
-        entry = _python_dynamic_import_entry_for_call(node)
-        if entry is not None:
-            entries.append(entry)
-    return entries
-
-
 def _python_dynamic_import_entry_for_call(node: ast.AST) -> dict[str, Any] | None:
-    """Per-node half of `_python_dynamic_import_entries` above: given a single AST node, return
-    its dynamic-import entry dict if `node` is one of the 3 dynamic-import call shapes (see
-    `_is_python_dynamic_import_call`), else `None`. Pulled out of that function's loop body
-    unchanged (same literal-extraction, same relative-literal fail-closed check, same entry
-    shape) so a caller that ALREADY walks `tree` for another purpose can fold this per-node check
-    into its own walk instead of paying for a second whole-tree `ast.walk` -- see
-    `_python_imports_with_lines` (opt10 F4.2), which merges its static-import walk with this one.
+    """Given a single AST node, return its dynamic-import entry dict if `node` is one of the 3
+    dynamic-import call shapes -- ``__import__(...)``, bare ``import_module(...)``, or
+    ``importlib.import_module(...)`` (see `_is_python_dynamic_import_call`) -- else `None`. The
+    returned dict is shaped like the static entries `_python_imports_with_lines` emits (`module`,
+    `line`, `level`) plus two #93 SUB-1 markers: `dynamic` (always `True` here) and
+    `dynamic_unresolved` (`True` when there is no static-string-literal target to resolve at all
+    -- the first argument isn't a literal, e.g. a variable or an f-string -- OR when the literal
+    names a RELATIVE import this slice deliberately does not attempt to resolve, see below).
 
-    `_python_dynamic_import_entries` itself keeps doing its own `ast.walk` and calling this once
-    per node exactly as its inlined loop body used to -- this extraction changes nothing about
-    its behavior, signature, or the entries it returns for its existing caller
-    (`_python_imports_and_symbols`'s reverse-import alias-graph prefilter).
+    Both `_python_imports_with_lines` (opt10 F4.2) and `_python_imports_and_symbols` (opt10
+    lever-1) fold this per-node check into their own single `ast.walk(tree)` pass instead of
+    paying for a second whole-tree walk. This used to be the loop body of a separate whole-tree
+    helper, `_python_dynamic_import_entries` -- pulled out unchanged (same literal-extraction,
+    same relative-literal fail-closed check, same entry shape) so `_python_imports_with_lines`
+    could fold it into its existing walk (opt10 F4.2) while `_python_imports_and_symbols` kept
+    calling `_python_dynamic_import_entries` wholesale for its own separate walk. Once opt10
+    lever-1 migrated that last remaining caller to call this per-node function directly too,
+    `_python_dynamic_import_entries` had zero callers left and was removed as dead code -- there
+    is no longer a standalone whole-tree dynamic-import walk anywhere in this module.
+
+    Fails CLOSED on the non-literal-argument case: `module` is `""` rather than a guessed name --
+    asserting a fabricated edge for an import whose target we can't actually read would be a
+    precision regression in a moat feature (see `_resolve_raw_import_entry` /
+    `_confirm_import_edges`, which both skip resolution entirely when `dynamic_unresolved` is
+    set).
+
+    Also fails CLOSED on a RELATIVE literal -- a leading-dot `import_module(".sibling",
+    package=...)` module string, or an `__import__(name, ..., level=N)` call with a nonzero (or
+    non-literal, unprovable) `level` (`_python_dynamic_import_call_is_relative` above -- scope
+    slice #6, the tractable dynamic-import LITERAL slice). Both forms carry a real literal name,
+    kept here (unlike the non-literal case, `module` is NOT blanked to `""` -- nothing is
+    fabricated, the literal text is exactly what the source says), but the downstream absolute
+    resolver (`_python_module_candidates`) must never see it: its `_python_module_parts` splitter
+    drops a leading empty component from `".sibling".split(".")`, so an unguarded relative
+    literal would silently be searched for as if it were the ABSOLUTE module "sibling" -- a
+    PROVEN false-edge risk (a same-named-but-unrelated top-level file can exist anywhere in the
+    search roots) not merely a theoretical one. Resolving the relative form correctly needs a
+    second, chained lookup (resolve the `package`/enclosing-package argument to a directory
+    FIRST, only then walk it by the relative level) that this slice does not build -- out of
+    scope per the "no false edges, missing is fine" contract; a future slice can add it.
+    `package` itself is never read here (a non-literal `package` -- the overwhelmingly common
+    real-world shape, `package=__name__`/`package=__package__` -- couldn't be resolved statically
+    anyway, and even a literal `package` string is left for that future slice), so this is a pure
+    detect-and-refuse guard on the `module`/`level` shape alone.
     """
     if not isinstance(node, ast.Call) or not _is_python_dynamic_import_call(node):
         return None
@@ -1936,6 +1927,21 @@ def _python_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, A
     imports: list[str] = []
     symbols: list[dict[str, Any]] = []
 
+    # opt10/lever-1 speed fix: merge the imports / symbols / dynamic-import scans into a SINGLE
+    # `ast.walk(tree)` pass instead of three separate whole-tree walks (one for imports, one for
+    # symbols, and a third buried inside `_python_dynamic_import_entries`) -- the same
+    # single-walk-plus-helper-reuse pattern #716 already shipped for the sibling
+    # `_python_imports_with_lines` (see that function's own comment, and its F4.2 test, in
+    # tests/unit/test_file_deps.py). `ast.Import`, `ast.ImportFrom`, `ast.ClassDef`,
+    # `ast.FunctionDef`/`ast.AsyncFunctionDef`, and `ast.Call` are mutually-exclusive node
+    # subclasses, so each node dispatches to at most one branch below -- identical in effect to
+    # filtering three separate walks for three disjoint predicates and concatenating the
+    # results. The trailing `sorted(dict.fromkeys(imports))` + `symbols.sort(...)` below make
+    # append ORDER irrelevant, so interleaving all three kinds of appends into one walk is
+    # byte-identical to the old three-walk output. See
+    # test_python_imports_and_symbols_merges_all_three_walks_into_one (walk-count + output-
+    # identity proof).
+    #
     # Nested-scope recall fix (companion to the same change in `_python_imports_with_lines`):
     # `ast.walk` (not `tree.body`) so a plain `import`/`from ... import` STATEMENT nested inside a
     # function body, an `if`/`try` block, or an `if TYPE_CHECKING:` guard feeds this alias-graph
@@ -1973,59 +1979,67 @@ def _python_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, A
                 # actually resolves to -- this only widens the prefilter's candidate set.
                 for alias in node.names:
                     imports.append(alias.name)
-
-    for symbol_node in ast.walk(tree):
-        if isinstance(symbol_node, ast.ClassDef):
+        elif isinstance(node, ast.ClassDef):
             symbols.append(
                 _symbol_record(
-                    name=symbol_node.name,
+                    name=node.name,
                     kind="class",
                     file=path,
-                    start_line=symbol_node.lineno,
-                    end_line=getattr(symbol_node, "end_lineno", symbol_node.lineno),
+                    start_line=node.lineno,
+                    end_line=getattr(node, "end_lineno", node.lineno),
                 )
             )
-        elif isinstance(symbol_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             symbols.append(
                 _symbol_record(
-                    name=symbol_node.name,
+                    name=node.name,
                     kind="function",
                     file=path,
-                    start_line=symbol_node.lineno,
-                    end_line=getattr(symbol_node, "end_lineno", symbol_node.lineno),
+                    start_line=node.lineno,
+                    end_line=getattr(node, "end_lineno", node.lineno),
                 )
             )
-
-    # #93 SUB-1: fold in dynamic-import call targets (only the STATICALLY resolvable ones -- an
-    # unresolved dynamic import has no literal name to add to this alias-graph prefilter list;
-    # see `_python_dynamic_import_entries`) so a file that ONLY reaches a target dynamically is
-    # still discoverable as a candidate by the reverse `tg importers` prefilter
-    # (`_reverse_importers`), not just by the forward `tg imports` primitive.
-    #
-    # #703 gate NIT-1 fix: a plain `dynamic_entry["module"]` truthiness check was NOT actually
-    # equivalent to "statically resolvable" once #703 taught `_python_dynamic_import_entries` to
-    # also mark a RELATIVE literal (leading-dot `import_module(".sibling", package=...)`) or an
-    # explicit-nonzero-`level` `__import__(...)` as `dynamic_unresolved` -- unlike the original
-    # non-literal-argument case, those keep their real literal text in `module` (nothing is
-    # fabricated/blanked, see that function's docstring) rather than blanking it to `""`. So an
-    # unresolved-but-non-blank literal like `".sibling"` used to slip past this `if` into
-    # `imports`, which becomes `repo_map["imports"]` -- the alias graph `tg blast-radius`'s
-    # reverse SCORING prefilter (`_reverse_import_distances`/`_reverse_importers`) reads. A
-    # same-named-but-unrelated top-level file (`_import_alias_candidates` + the substring test in
-    # `_import_graph_bonus`) could then fuzzy-match that unresolved literal and be pulled into
-    # `affected_files`/`dependent_files` -- even though the precise `tg importers` edge
-    # (`_resolve_raw_import_entry` / `_confirm_import_edges`) already excluded it correctly, since
-    # THAT path has always skipped resolution whenever `dynamic_unresolved` is set. Requiring
-    # `not dynamic_entry["dynamic_unresolved"]` here makes this prefilter honor the exact same
-    # "no false edges, missing is fine" contract the precise resolvers already enforce -- an
-    # unresolved dynamic import (relative-literal or non-literal-argument alike) now contributes
-    # nothing to the alias graph, closing the fuzzy-match gap. Pinned by
-    # test_blast_radius_excludes_unresolved_dynamic_literal_fuzzy_match (regression-lock) and
-    # test_blast_radius_legitimate_dependent_ranking_pin (proves the legitimate reverse-scoring
-    # ranking is unaffected) in tests/unit/test_file_deps.py.
-    for dynamic_entry in _python_dynamic_import_entries(tree):
-        if dynamic_entry["module"] and not dynamic_entry["dynamic_unresolved"]:
-            imports.append(str(dynamic_entry["module"]))
+        elif isinstance(node, ast.Call):
+            # #93 SUB-1: fold in dynamic-import call targets (only the STATICALLY resolvable
+            # ones -- an unresolved dynamic import has no literal name to add to this
+            # alias-graph prefilter list; see `_python_dynamic_import_entry_for_call`) so a file
+            # that ONLY reaches a target dynamically is still discoverable as a candidate by the
+            # reverse `tg importers` prefilter (`_reverse_importers`), not just by the forward
+            # `tg imports` primitive. Reuses `_python_dynamic_import_entry_for_call` -- the
+            # ALREADY-TESTED per-node helper `_python_imports_with_lines` folds into its own
+            # single walk too (see that function) -- instead of calling the whole-tree
+            # `_python_dynamic_import_entries(tree)` this call site used to call, so the
+            # dynamic-import check rides the SAME walk as the import/symbol checks above instead
+            # of paying for a separate (third) whole-tree `ast.walk`. This was
+            # `_python_dynamic_import_entries`'s last remaining caller -- with it migrated to the
+            # per-node helper too, that whole-tree function had zero callers left and was removed
+            # as dead code (opt10 lever-1).
+            #
+            # #703 gate NIT-1 fix: a plain `entry["module"]` truthiness check is NOT actually
+            # equivalent to "statically resolvable" -- `_python_dynamic_import_entry_for_call`
+            # marks a RELATIVE literal (leading-dot `import_module(".sibling", package=...)`) or
+            # an explicit-nonzero-`level` `__import__(...)` as `dynamic_unresolved` too, and
+            # unlike the non-literal-argument case, those keep their real literal text in
+            # `module` (nothing is fabricated/blanked, see that helper's docstring) rather than
+            # blanking it to `""`. So an unresolved-but-non-blank literal like `".sibling"` must
+            # not slip into `imports`, which becomes `repo_map["imports"]` -- the alias graph
+            # `tg blast-radius`'s reverse SCORING prefilter
+            # (`_reverse_import_distances`/`_reverse_importers`) reads. A
+            # same-named-but-unrelated top-level file (`_import_alias_candidates` + the
+            # substring test in `_import_graph_bonus`) could then fuzzy-match that unresolved
+            # literal and be pulled into `affected_files`/`dependent_files` -- even though the
+            # precise `tg importers` edge (`_resolve_raw_import_entry` / `_confirm_import_edges`)
+            # already excludes it correctly, since THAT path has always skipped resolution
+            # whenever `dynamic_unresolved` is set. Requiring `not entry["dynamic_unresolved"]`
+            # here makes this prefilter honor the exact same "no false edges, missing is fine"
+            # contract the precise resolvers already enforce. Pinned by
+            # test_blast_radius_excludes_unresolved_dynamic_literal_fuzzy_match
+            # (regression-lock) and test_blast_radius_legitimate_dependent_ranking_pin (proves
+            # the legitimate reverse-scoring ranking is unaffected) in
+            # tests/unit/test_file_deps.py.
+            entry = _python_dynamic_import_entry_for_call(node)
+            if entry is not None and entry["module"] and not entry["dynamic_unresolved"]:
+                imports.append(str(entry["module"]))
 
     imports = sorted(dict.fromkeys(imports))
     symbols.sort(key=lambda item: (item["file"], item["line"], item["kind"], item["name"]))
@@ -6008,19 +6022,23 @@ def _python_imports_with_lines(path: Path) -> list[dict[str, Any]]:
     #
     # opt10 F4.2 speed fix: this single walk ALSO picks up `__import__`/`import_module`/
     # `importlib.import_module` CALLS -- the #93 SUB-1 dynamic-import shape -- via
-    # `_python_dynamic_import_entry_for_call` (the extracted per-node half of
-    # `_python_dynamic_import_entries`), instead of a SEPARATE second `ast.walk(tree)` over the
-    # same tree the way this used to call that function wholesale. `ast.Import`/`ast.ImportFrom`
-    # and `ast.Call` are disjoint node types, so folding both checks into one walk and
-    # accumulating into two separate lists (`entries` for static, `dynamic_entries` for dynamic)
-    # produces the IDENTICAL two per-kind orderings `ast.walk` would produce run separately --
-    # `ast.walk` is a deterministic traversal of a fixed tree, so filtering it once for two
-    # disjoint predicates and concatenating the two result lists (`entries + dynamic_entries`,
-    # same order as the old `entries.extend(_python_dynamic_import_entries(tree))`) is exactly
-    # equivalent to filtering it twice. See
-    # test_python_imports_with_lines_merges_dynamic_walk_into_single_ast_walk_pass (walk-count +
-    # order-identity proof) and `_python_dynamic_import_entries`, which is UNCHANGED and still
-    # walks `tree` on its own for its other caller (`_python_imports_and_symbols`).
+    # `_python_dynamic_import_entry_for_call` (originally the extracted per-node half of a
+    # whole-tree helper, `_python_dynamic_import_entries`), instead of a SEPARATE second
+    # `ast.walk(tree)` over the same tree the way this used to call that function wholesale.
+    # `ast.Import`/`ast.ImportFrom` and `ast.Call` are disjoint node types, so folding both checks
+    # into one walk and accumulating into two separate lists (`entries` for static,
+    # `dynamic_entries` for dynamic) produces the IDENTICAL two per-kind orderings `ast.walk`
+    # would produce run separately -- `ast.walk` is a deterministic traversal of a fixed tree, so
+    # filtering it once for two disjoint predicates and concatenating the two result lists
+    # (`entries + dynamic_entries`, same order as the old
+    # `entries.extend(_python_dynamic_import_entries(tree))`) is exactly equivalent to filtering
+    # it twice. See test_python_imports_with_lines_merges_dynamic_walk_into_single_ast_walk_pass
+    # (walk-count + order-identity proof). `_python_dynamic_import_entries` itself -- the
+    # whole-tree helper this per-node check was extracted from -- kept its own separate `ast.walk`
+    # alive at the time (opt10 F4.2) purely for its OTHER remaining caller,
+    # `_python_imports_and_symbols`; opt10 lever-1 later migrated that caller to this same
+    # per-node helper too, leaving `_python_dynamic_import_entries` with zero callers, so it was
+    # removed as dead code.
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
