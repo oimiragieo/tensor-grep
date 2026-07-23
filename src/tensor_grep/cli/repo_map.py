@@ -10286,14 +10286,40 @@ def _framework_test_pattern_bonus(
     *,
     raw_query: str | None = None,
 ) -> int:
-    candidates = _framework_test_function_candidates(test_path)
-    if not candidates:
-        return 0
     expanded_terms: list[str] = list(terms)
     for candidate_term in _candidate_terms(raw_query):
         if candidate_term not in expanded_terms:
             expanded_terms.append(candidate_term)
     if not expanded_terms:
+        return 0
+    # perf(edit-plan): textual pre-check -- `_framework_test_function_candidates` triggers an
+    # expensive per-file AST parse for every `.py` candidate (`_python_parametrized_test_function_
+    # candidates` -> `_cached_ast_parse`), profiled at 46% of `tg context-render`'s wall / 23.9% of
+    # `tg prepare`'s, even though most candidates contribute a 0 bonus. Read the file's raw text
+    # ONCE and skip straight to the identical `return 0` outcome the expensive parse would have
+    # produced when nothing in `expanded_terms` could possibly score.
+    #
+    # BYTE-IDENTICAL: every string `_score_text_terms` is ever asked to score against is a literal
+    # substring of the raw file text -- EXCEPT the JS/TS `describe`+`test` name synthesized in
+    # `_javascript_test_function_candidates` (``f"{suite_name} {target_name}"``), which joins two
+    # literal-but-non-adjacent quoted-string substrings with an artificial single space. A term can
+    # only score against that synthesized string by being a literal substring of `suite_name` or of
+    # `target_name` alone (both real file substrings), OR by straddling exactly that one synthetic
+    # join space -- and in the straddle case each half is still individually a literal file
+    # substring. Checking each whitespace-split WORD of a term (not just the term as one contiguous
+    # run) against the raw file text closes that seam: it is a strictly safer over-approximation (a
+    # substring of a term that would have scored is still checked), so this short-circuit never
+    # produces a different answer than the un-short-circuited computation below.
+    try:
+        file_text = _read_source_text_cached(test_path).lower()
+    except (OSError, UnicodeDecodeError):
+        file_text = None  # can't prove absence -- fall through and let the real path handle it
+    if file_text is not None:
+        atoms = {word for term in expanded_terms for word in term.lower().split()}
+        if not any(atom in file_text for atom in atoms):
+            return 0
+    candidates = _framework_test_function_candidates(test_path)
+    if not candidates:
         return 0
     return (
         max((_score_text_terms(candidate, expanded_terms) for candidate in candidates), default=0)
