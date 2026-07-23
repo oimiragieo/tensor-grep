@@ -1,6 +1,90 @@
 # CHANGELOG
 
 
+## v1.93.5 (2026-07-23)
+
+### Performance Improvements
+
+- **prepare**: Reuse the capsule repo map for the blast-radius floor (truncation-gated)
+  ([#714](https://github.com/oimiragieo/tensor-grep/pull/714),
+  [`0d1dd9b`](https://github.com/oimiragieo/tensor-grep/commit/0d1dd9b05395e4e15024bd3849903bcf3491b4fc))
+
+* perf(prepare): reuse the capsule repo map for the blast-radius floor (truncation-gated)
+
+opt10 campaign ranked-queue item #2: `tg prepare` built the repo map twice on every
+  natural-language-task query (the common CUJ) -- once in `build_agent_capsule` and again inside
+  `_build_prepare_blast_radius_floor`'s supplementary scan, which always paid a fresh FS-backed
+  `build_symbol_blast_radius` walk+parse even though an equivalent map had just been built moments
+  earlier.
+
+`_build_prepare_payload` now builds `rm` directly (byte-identical to `build_agent_capsule`'s own
+  2-line body: same `DEFAULT_AGENT_REPO_MAP_LIMIT` cap, same `deadline_monotonic`) and calls
+  `build_agent_capsule_from_map(..., _rescue_call_site_evidence=True)` -- the exact cold-path value
+  `build_agent_capsule` itself always passes -- so the returned capsule and `build_agent_capsule`'s
+  own public contract are both untouched (`tg agent` / MCP / their existing tests are unaffected;
+  nothing in agent_capsule.py or repo_map.py changed). `_build_prepare_blast_radius_floor` now takes
+  that `rm` and reuses it via the map-reusing sibling `build_symbol_blast_radius_from_map` -- UNLESS
+  `rm['scan_limit']['possibly_truncated']` is True (a repo bigger than the 2000-file cap), in which
+  case the exact pre-fix uncapped FS-backed rescan is preserved so blast-radius recall never
+  silently narrows on a large repo.
+
+TDD: 4 new tests in tests/unit/test_prepare_blast_radius_floor_map_reuse.py, all confirmed RED
+
+against pre-fix main.py (via git stash) before this diff: - 2 fast gate unit tests directly on
+  `_build_prepare_blast_radius_floor` (synthetic `rm` dicts): not-truncated routes to
+  `build_symbol_blast_radius_from_map` and never touches the FS-backed function; possibly_truncated
+  does the reverse. - 1 small real-tree test (CliRunner + `build_repo_map` call counter): the
+  natural-language path now builds the repo map exactly once, and the resulting
+  `blast_radius_floor`'s caller set is byte-identical to calling the pre-fix FS-backed
+  `build_symbol_blast_radius` directly. - 1 real >2000-file tree test (a genuine truncated `rm`, not
+  synthetic): the load-bearing guard on real data -- a caller deliberately placed outside the
+  2000-file-capped scan window is still found, because `possibly_truncated=True` correctly preserves
+  the uncapped rescan.
+
+Full existing prepare/agent-capsule/blast-radius/deadline suites re-run green (recall-parity +
+  mechanism confirmed via call-count).
+
+A/B (frozen scorecard methodology, corpus A = tg-pinned v1.93.2, S5 cell `prepare <A>/src "add a
+  flag to tg prepare" --json`, same interpreter + PYTHONPATH-swapped source, 5 cold reps/arm,
+  serial): before median 11.4455s (spread 0.4113s) vs after median 11.0196s (spread 1.3206s) --
+  delta 0.4259s / 3.72%, which does NOT clearly exceed this shared box's measured noise band at N=5,
+  so the wall-clock win is reported as noise-level per the campaign's own noise-floor discipline,
+  not claimed as a confirmed speedup. The MECHANISM is independently and unambiguously confirmed via
+  direct call-count instrumentation on this exact corpus/query: 2 `build_repo_map` calls before this
+  fix, 1 after (isolated single-shot timings: ~21.2s before vs ~7.2s after, consistent in direction
+  with the median result but far noisier at N=1).
+
+Flagged for an independent Opus gate: recall-preservation is the crux (a blind reuse would be a
+  silent blast-radius recall regression on any repo over 2000 files).
+
+* test(prepare): make blast-radius-floor recall test bury the caller out-of-window (#714 gate nit-1)
+
+The Opus gate on #714 found test 4 (test_prepare_recall_preserved_on_large_truncated_repo) did not
+  actually place its caller outside the 2000-file capped scan window: the repo-map walk is
+  round-robin by directory, so a lone file in a 1-file `zzz_caller/` dir lands in round 0 and
+  SURVIVES the cap. The caller was therefore in-window, a naive always-reuse fix would have found it
+  too, and the recall claim went untested (the guard could not have been exercised).
+
+Fix: bury `zzzz_run.py` (the sole caller of `process_billing_cycle`) at within-directory sorted
+  index >= 2000 behind _LARGE_TREE_BURY_FILE_COUNT (2100) `pad#####.py` files. The walk draws at
+  most one file per directory per round, so max round reached before the 2000-file cap is <= 2000;
+  any file at within-dir index >= 2000 is GUARANTEED dropped regardless of sibling-dir count. The
+  definition (`billing.py`, top-level group-2) stays in-window so the symbol still resolves.
+
+Also add the gate-requested CONTRAST assertion: a naive from-map reuse
+  (build_symbol_blast_radius_from_map straight on the truncated rm, exactly as the floor's reuse
+  branch calls it, max_depth=1) MISSES the buried caller, while the guarded floor still FINDS it via
+  the preserved uncapped rescan -- both asserted in the same run, so the test is now non-vacuous.
+  Drops the orphaned _LARGE_TREE_PADDING_DIR_COUNT/_LARGE_TREE_PADDING_FILES_PER_DIR constants and
+  rewrites the fixture docstring to match. 4/4 pass (31.5s); ruff/format clean.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+---------
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+
 ## v1.93.4 (2026-07-23)
 
 ### Performance Improvements
