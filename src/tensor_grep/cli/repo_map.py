@@ -7,6 +7,7 @@ import json
 import math
 import os
 import re
+import sys
 import tempfile
 import threading
 import time
@@ -1759,28 +1760,43 @@ def _python_dynamic_import_entries(tree: ast.AST) -> list[dict[str, Any]]:
     """
     entries: list[dict[str, Any]] = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not _is_python_dynamic_import_call(node):
-            continue
-        literal_module: str | None = None
-        if (
-            node.args
-            and isinstance(node.args[0], ast.Constant)
-            and isinstance(node.args[0].value, str)
-        ):
-            literal_module = node.args[0].value
-        dynamic_unresolved = literal_module is None
-        if literal_module is not None and (
-            literal_module.startswith(".") or _python_dynamic_import_call_is_relative(node)
-        ):
-            dynamic_unresolved = True
-        entries.append({
-            "module": literal_module or "",
-            "line": int(node.lineno),
-            "level": 0,
-            "dynamic": True,
-            "dynamic_unresolved": dynamic_unresolved,
-        })
+        entry = _python_dynamic_import_entry_for_call(node)
+        if entry is not None:
+            entries.append(entry)
     return entries
+
+
+def _python_dynamic_import_entry_for_call(node: ast.AST) -> dict[str, Any] | None:
+    """Per-node half of `_python_dynamic_import_entries` above: given a single AST node, return
+    its dynamic-import entry dict if `node` is one of the 3 dynamic-import call shapes (see
+    `_is_python_dynamic_import_call`), else `None`. Pulled out of that function's loop body
+    unchanged (same literal-extraction, same relative-literal fail-closed check, same entry
+    shape) so a caller that ALREADY walks `tree` for another purpose can fold this per-node check
+    into its own walk instead of paying for a second whole-tree `ast.walk` -- see
+    `_python_imports_with_lines` (opt10 F4.2), which merges its static-import walk with this one.
+
+    `_python_dynamic_import_entries` itself keeps doing its own `ast.walk` and calling this once
+    per node exactly as its inlined loop body used to -- this extraction changes nothing about
+    its behavior, signature, or the entries it returns for its existing caller
+    (`_python_imports_and_symbols`'s reverse-import alias-graph prefilter).
+    """
+    if not isinstance(node, ast.Call) or not _is_python_dynamic_import_call(node):
+        return None
+    literal_module: str | None = None
+    if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+        literal_module = node.args[0].value
+    dynamic_unresolved = literal_module is None
+    if literal_module is not None and (
+        literal_module.startswith(".") or _python_dynamic_import_call_is_relative(node)
+    ):
+        dynamic_unresolved = True
+    return {
+        "module": literal_module or "",
+        "line": int(node.lineno),
+        "level": 0,
+        "dynamic": True,
+        "dynamic_unresolved": dynamic_unresolved,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -5983,14 +5999,28 @@ def _python_imports_with_lines(path: Path) -> list[dict[str, Any]]:
         return []
 
     entries: list[dict[str, Any]] = []
+    dynamic_entries: list[dict[str, Any]] = []
     # Nested-scope recall fix: `ast.walk` (not `tree.body`) so a plain `import`/`from ... import`
     # STATEMENT nested inside a function body, an `if`/`try` block, or an `if TYPE_CHECKING:`
     # guard is collected too -- `tree.body` only ever visited module-top-level statements,
     # silently missing anything scope-nested (a `tg imports`/`tg importers` recall gap;
-    # `result_incomplete` stayed False, so the omission was invisible). This mirrors
-    # `_python_dynamic_import_entries` below, which already whole-tree-walks for dynamic
-    # `__import__`/`import_module(...)` CALLS; this closes the same gap for static import
-    # statements, the shape `tg imports`/`tg importers` mostly see.
+    # `result_incomplete` stayed False, so the omission was invisible).
+    #
+    # opt10 F4.2 speed fix: this single walk ALSO picks up `__import__`/`import_module`/
+    # `importlib.import_module` CALLS -- the #93 SUB-1 dynamic-import shape -- via
+    # `_python_dynamic_import_entry_for_call` (the extracted per-node half of
+    # `_python_dynamic_import_entries`), instead of a SEPARATE second `ast.walk(tree)` over the
+    # same tree the way this used to call that function wholesale. `ast.Import`/`ast.ImportFrom`
+    # and `ast.Call` are disjoint node types, so folding both checks into one walk and
+    # accumulating into two separate lists (`entries` for static, `dynamic_entries` for dynamic)
+    # produces the IDENTICAL two per-kind orderings `ast.walk` would produce run separately --
+    # `ast.walk` is a deterministic traversal of a fixed tree, so filtering it once for two
+    # disjoint predicates and concatenating the two result lists (`entries + dynamic_entries`,
+    # same order as the old `entries.extend(_python_dynamic_import_entries(tree))`) is exactly
+    # equivalent to filtering it twice. See
+    # test_python_imports_with_lines_merges_dynamic_walk_into_single_ast_walk_pass (walk-count +
+    # order-identity proof) and `_python_dynamic_import_entries`, which is UNCHANGED and still
+    # walks `tree` on its own for its other caller (`_python_imports_and_symbols`).
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -6012,11 +6042,11 @@ def _python_imports_with_lines(path: Path) -> list[dict[str, Any]]:
                         "line": int(node.lineno),
                         "level": int(node.level),
                     })
-    # #93 SUB-1: `ast.walk` (not `tree.body`) picks up `__import__`/`import_module`/
-    # `importlib.import_module` calls anywhere -- inside a function, a conditional, a
-    # try/except -- that the static scan above (now itself an `ast.walk`, see above) never
-    # visits, since these are `ast.Call` expressions, a different node type entirely.
-    entries.extend(_python_dynamic_import_entries(tree))
+        elif isinstance(node, ast.Call):
+            dynamic_entry = _python_dynamic_import_entry_for_call(node)
+            if dynamic_entry is not None:
+                dynamic_entries.append(dynamic_entry)
+    entries.extend(dynamic_entries)
     return entries
 
 
@@ -6461,6 +6491,61 @@ def _python_module_candidates(
     parts = _python_module_parts(module_name)
     if not parts:
         return {"paths": [], "provenance": [], "confidence": 0.0, "path_provenance": {}}
+
+    # opt10 F4.3 speed fast-path: skip the multi-root candidate-path construction below (2
+    # `Path` builds per root, each pushed through the `_resolved_path_str` resolve-and-dedupe
+    # machinery -- ~10-12 `Path.resolve()` calls for a typical root count, PLUS the caller's own
+    # `.is_file()` probe of every returned candidate) for a bare top-level stdlib import
+    # (`import os` / `import sys` / `import json`) -- the dominant import shape, 59-100% of
+    # imports in sampled real files per the opt10 speed campaign.
+    #
+    # SHADOW-SAFETY (the whole correctness risk of this fast-path): `parts[0] in
+    # sys.stdlib_module_names` alone is NOT sufficient -- a repo can ship a same-named top-level
+    # module (e.g. a local `json.py` at its root) that MUST still resolve to that local file, the
+    # same way it would via the general path below (see
+    # test_build_file_imports_stdlib_shadowed_by_local_module_resolves_to_local_file). So this
+    # only returns the fast-path shape after confirming NEITHER shape the general path's
+    # level==0 branch would also probe (`<root>/<name>.py`, `<root>/<name>/__init__.py`) exists
+    # as a real file at ANY of `_python_candidate_roots`' roots -- the exact same roots (repo
+    # root, src/ layout, sys-path-hacked dirs, importer's own dir and ancestors, package-top)
+    # the general path already computes, just probed with a cheap `.is_file()`/`.is_dir()` stat
+    # instead of building+resolving+deduping the full candidate list. Any doubt (an `OSError`
+    # probing a candidate, or `parts[0]` existing locally at all) falls CLOSED to the unchanged
+    # general path below, never guesses.
+    #
+    # Narrowed to `len(parts) == 1` (a bare `import json`, not a dotted `import os.path`):
+    # a dotted stdlib access still needs `root/parts[0]` to be an existing local DIRECTORY for
+    # any local shadow to be possible at all, so the `is_dir()` probe below already catches that
+    # case too and correctly falls through -- but the deeper submodule candidates the general
+    # path would build (`root/parts[0]/parts[1]/...`) are not worth fast-pathing separately here,
+    # so leave every dotted access on the general path unconditionally.
+    #
+    # Returns EXACTLY the shape the general (non-relative) branch below always sets for
+    # `provenance`/`confidence` -- unconditionally, before any candidate is even probed for
+    # existence -- so `_resolve_raw_import_entry` / `_python_module_match_details` read the
+    # identical values off this dict as they would off the general path's result for a module
+    # that genuinely has zero real candidates (see the opt10 PR body's captured baseline: an
+    # empty `paths: []` here is observationally identical to the general path's non-empty-but-
+    # entirely-nonexistent candidate list -- both make `resolved`/`matched` come out the same on
+    # the calling side, since neither contains a real file).
+    if level == 0 and len(parts) == 1 and parts[0] in sys.stdlib_module_names:
+        name = parts[0]
+        shadowed = False
+        for root in _python_candidate_roots(importer_path, repo_root):
+            try:
+                if (root / f"{name}.py").is_file() or (root / name).is_dir():
+                    shadowed = True
+                    break
+            except OSError:
+                shadowed = True  # can't prove no local shadow -- fail closed to the slow path
+                break
+        if not shadowed:
+            return {
+                "paths": [],
+                "provenance": ["python-path-heuristic"],
+                "confidence": 0.7,
+                "path_provenance": {},
+            }
 
     candidates: list[Path] = []
     # #152 fix: per-candidate provenance override, keyed by the candidate's OWN resolved path

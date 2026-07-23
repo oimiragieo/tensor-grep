@@ -2448,3 +2448,346 @@ def test_build_file_importers_unbounded_result_set_unaffected_by_tiering(tmp_pat
     importer_files = set(payload["importer_files"])
     expected = fixture["same_repo_importers"] | {fixture["distant_importer"]}
     assert importer_files == expected
+
+
+# ---------------------------------------------------------------------------------------------
+# opt10 campaign #4: `tg imports` speed bundle.
+#
+# F4.3: `_python_module_candidates` (the Python absolute-import resolver, shared by the forward
+# `tg imports` primitive and the reverse `tg importers` confirm step) fast-paths a bare
+# top-level stdlib import (`import os` / `import sys` / `import json` -- 59-100% of imports in
+# sampled real files) past its ~10-12-candidate filesystem probe, returning the SAME
+# provenance/confidence shape the general path always sets for a level==0 absolute import,
+# unconditionally, before any candidate is even constructed. THE CORRECTNESS RISK: a repo that
+# SHADOWS a stdlib name with a same-named local top-level module/package must still resolve to
+# THAT local file -- never silently swallowed by the fast path. The fast path is therefore gated
+# behind a cheap `.is_file()`/`.is_dir()` shadow probe over the exact same roots
+# `_python_candidate_roots` already computes for the general path, and narrowed to
+# `len(parts) == 1` (a dotted `import os.path` always takes the general path).
+#
+# F4.2: `_python_imports_with_lines` used to do TWO full-tree `ast.walk()` passes over the same
+# parsed AST -- its own static-import scan, plus a second whole-tree walk buried inside
+# `_python_dynamic_import_entries` (called for the dynamic-import shape). The per-node dynamic-
+# import-detection logic was extracted into `_python_dynamic_import_entry_for_call` (a pure,
+# stateless per-node check) so `_python_imports_with_lines` can fold it into its EXISTING walk
+# instead of triggering a second one -- while `_python_dynamic_import_entries` itself is
+# UNCHANGED (same signature, same behavior, still does its own single walk) for its OTHER
+# caller, `_python_imports_and_symbols` (the reverse-import alias-graph prefilter).
+# ---------------------------------------------------------------------------------------------
+
+
+def test_python_module_candidates_stdlib_fastpath_returns_general_path_shape(
+    tmp_path: Path,
+) -> None:
+    """F4.3 direct unit test: a bare top-level stdlib import with no local shadow must get an
+    empty `paths` list plus EXACTLY the `provenance`/`confidence`/`path_provenance` values the
+    general (non-relative) branch below always sets for ANY level==0 absolute import -- so
+    `_resolve_raw_import_entry`/`_python_module_match_details` read the identical values off
+    this dict as they would off the general path's result for the same genuinely-external
+    module (captured from the pre-change baseline; see the PR body)."""
+    project = tmp_path / "project"
+    project.mkdir()
+    importer = project / "app.py"
+    importer.write_text("import os\n", encoding="utf-8")
+
+    for module_name in ("os", "sys", "json"):
+        info = repo_map._python_module_candidates(importer, module_name, project)
+        assert info == {
+            "paths": [],
+            "provenance": ["python-path-heuristic"],
+            "confidence": 0.7,
+            "path_provenance": {},
+        }, module_name
+
+
+def test_python_module_candidates_dotted_stdlib_access_does_not_take_fastpath(
+    tmp_path: Path,
+) -> None:
+    """The fast path is narrowed to `len(parts) == 1` -- a dotted stdlib access like
+    `collections.abc` must still go through the general multi-root candidate search, proven here
+    by a non-empty `paths` list (only the general path ever populates candidates)."""
+    project = tmp_path / "project"
+    project.mkdir()
+    importer = project / "app.py"
+    importer.write_text("import collections.abc\n", encoding="utf-8")
+
+    info = repo_map._python_module_candidates(importer, "collections.abc", project)
+
+    assert info["paths"] != []
+    assert info["provenance"] == ["python-path-heuristic"]
+    assert info["confidence"] == 0.7
+
+
+def test_build_file_imports_stdlib_shadowed_by_local_module_resolves_to_local_file(
+    tmp_path: Path,
+) -> None:
+    """THE load-bearing F4.3 correctness test. A repo that ships a same-named top-level module
+    shadowing a stdlib name (here: a local `json.py` at the repo root) must still resolve
+    `import json` to THAT LOCAL FILE, never to the stdlib fast-path's external/unresolved shape.
+
+    Proven to actually exercise the shadow gate (not just pass vacuously): temporarily
+    stripping the shadow-probe loop out of `_python_module_candidates` down to an unconditional
+    `if level == 0 and len(parts) == 1 and parts[0] in sys.stdlib_module_names: return
+    {"paths": [], ...}` makes this test FAIL with `external=True, resolved=None` instead of
+    resolving to the local file -- the probe loop over `_python_candidate_roots` is what makes
+    it pass."""
+    project = tmp_path / "project"
+    project.mkdir()
+    local_json = project / "json.py"
+    local_json.write_text("def local_marker():\n    return 'LOCAL'\n", encoding="utf-8")
+    consumer = project / "app.py"
+    consumer.write_text("import json\n", encoding="utf-8")
+
+    payload = repo_map.build_file_imports(consumer)
+
+    entry = next(current for current in payload["imports"] if current["module"] == "json")
+    assert entry["external"] is False
+    assert entry["resolved"] == str(local_json.resolve())
+    assert entry["resolution_confidence"] == 0.7
+
+
+def test_build_file_imports_stdlib_shadowed_by_local_package_resolves_to_local_file(
+    tmp_path: Path,
+) -> None:
+    """Sibling shadow shape: a local PACKAGE (a directory with `__init__.py`) rather than a bare
+    module file, shadowing a stdlib name -- `_python_module_candidates`'s general path resolves
+    a bare `import queue` to either `<root>/queue.py` OR `<root>/queue/__init__.py`, so the
+    shadow probe must catch both shapes, not just the module-file one."""
+    project = tmp_path / "project"
+    pkg_dir = project / "queue"
+    pkg_dir.mkdir(parents=True)
+    local_init = pkg_dir / "__init__.py"
+    local_init.write_text("def local_marker():\n    return 'LOCAL_PKG'\n", encoding="utf-8")
+    consumer = project / "app.py"
+    consumer.write_text("import queue\n", encoding="utf-8")
+
+    payload = repo_map.build_file_imports(consumer)
+
+    entry = next(current for current in payload["imports"] if current["module"] == "queue")
+    assert entry["external"] is False
+    assert entry["resolved"] == str(local_init.resolve())
+
+
+def test_build_file_imports_relative_import_of_stdlib_named_sibling_still_resolves(
+    tmp_path: Path,
+) -> None:
+    """The stdlib fast-path only applies when `level == 0` (absolute import) -- a RELATIVE
+    import of a stdlib-named sibling module (`from . import json`, `level=1`) must resolve to
+    the local sibling file exactly as before, never mistaken for the stdlib fast-path shape."""
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    sibling = pkg / "json.py"
+    sibling.write_text("def x():\n    return 1\n", encoding="utf-8")
+    consumer = pkg / "main.py"
+    consumer.write_text("from . import json\n", encoding="utf-8")
+
+    payload = repo_map.build_file_imports(consumer)
+
+    entry = payload["imports"][0]
+    assert entry["module"] == "json"
+    assert entry["resolved"] == str(sibling.resolve())
+    assert entry["external"] is False
+    assert entry["provenance"] == ["relative"]
+
+
+def test_build_file_imports_mixed_imports_results_identical_to_pre_fastpath_baseline(
+    tmp_path: Path,
+) -> None:
+    """Results-identical golden test for opt10 #4 (F4.3 + F4.2): a file with a realistic mix of
+    bare stdlib imports (single-part, the fast-path's target shape), a multi-part stdlib access,
+    a non-stdlib external, a real local dotted import, and a relative import. Expected values
+    were captured by running `build_file_imports` against the UNMODIFIED pre-change code on this
+    exact fixture (see the PR body for the captured receipts) -- every field
+    (module/line/resolved/external/provenance/resolution_confidence) must stay byte-identical
+    after the change; only the WORK done to get there should shrink."""
+    project = tmp_path / "project"
+    pkg = project / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    helpers_path = pkg / "helpers.py"
+    helpers_path.write_text("def foo():\n    return 1\n", encoding="utf-8")
+    consumer = pkg / "main.py"
+    consumer.write_text(
+        "import os\n"
+        "import sys\n"
+        "import json\n"
+        "import collections.abc\n"
+        "import numpy\n"
+        "import pkg.helpers\n"
+        "from . import helpers\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_file_imports(consumer)
+
+    resolved_helpers = str(helpers_path.resolve())
+    expected = [
+        {
+            "module": "os",
+            "line": 1,
+            "resolved": None,
+            "provenance": ["python-path-heuristic"],
+            "resolution_confidence": 0.0,
+            "external": True,
+        },
+        {
+            "module": "sys",
+            "line": 2,
+            "resolved": None,
+            "provenance": ["python-path-heuristic"],
+            "resolution_confidence": 0.0,
+            "external": True,
+        },
+        {
+            "module": "json",
+            "line": 3,
+            "resolved": None,
+            "provenance": ["python-path-heuristic"],
+            "resolution_confidence": 0.0,
+            "external": True,
+        },
+        {
+            "module": "collections.abc",
+            "line": 4,
+            "resolved": None,
+            "provenance": ["python-path-heuristic"],
+            "resolution_confidence": 0.0,
+            "external": True,
+        },
+        {
+            "module": "numpy",
+            "line": 5,
+            "resolved": None,
+            "provenance": ["python-path-heuristic"],
+            "resolution_confidence": 0.0,
+            "external": True,
+        },
+        {
+            "module": "pkg.helpers",
+            "line": 6,
+            "resolved": resolved_helpers,
+            "provenance": ["python-path-heuristic"],
+            "resolution_confidence": 0.7,
+            "external": False,
+        },
+        {
+            "module": "helpers",
+            "line": 7,
+            "resolved": resolved_helpers,
+            "provenance": ["relative"],
+            "resolution_confidence": 1.0,
+            "external": False,
+        },
+    ]
+
+    actual = [
+        {
+            "module": entry["module"],
+            "line": entry["line"],
+            "resolved": entry["resolved"],
+            "provenance": entry["provenance"],
+            "resolution_confidence": entry["resolution_confidence"],
+            "external": entry["external"],
+        }
+        for entry in payload["imports"]
+    ]
+    assert actual == expected
+
+
+def test_python_imports_with_lines_merges_dynamic_walk_into_single_ast_walk_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F4.2 walk-count assertion: a file mixing STATIC imports (module top-level and nested
+    inside an `if TYPE_CHECKING:` block) with DYNAMIC import calls (a non-literal
+    `importlib.import_module(name)` and a literal `__import__('re')`) must produce the exact
+    same entries, in the exact same order (all static entries first in AST-discovery order, then
+    all dynamic entries in AST-discovery order -- matching the pre-merge
+    `entries.extend(_python_dynamic_import_entries(tree))` shape), while calling `ast.walk`
+    exactly ONCE per file (was two: the static loop's own walk, plus a second whole-tree walk
+    buried inside `_python_dynamic_import_entries`)."""
+    import ast as ast_module
+
+    project = tmp_path / "project"
+    project.mkdir()
+    source_file = project / "mixed.py"
+    source_file.write_text(
+        "import os\n"
+        "from typing import TYPE_CHECKING\n"
+        "import importlib\n"
+        "\n"
+        "def load(name):\n"
+        "    return importlib.import_module(name)\n"
+        "\n"
+        "def load_builtin():\n"
+        "    return __import__('re')\n"
+        "\n"
+        "if TYPE_CHECKING:\n"
+        "    import collections.abc\n",
+        encoding="utf-8",
+    )
+
+    walk_calls = 0
+    real_walk = ast_module.walk
+
+    def counting_walk(tree):
+        nonlocal walk_calls
+        walk_calls += 1
+        return real_walk(tree)
+
+    # `repo_map` did `import ast` at module scope, so `repo_map.ast is ast_module` -- patching
+    # the shared stdlib module object's `walk` attribute affects the call
+    # `_python_imports_with_lines` makes internally too.
+    monkeypatch.setattr(ast_module, "walk", counting_walk)
+
+    entries = repo_map._python_imports_with_lines(source_file)
+
+    assert walk_calls == 1, f"expected exactly 1 ast.walk call, got {walk_calls}"
+    assert entries == [
+        {"module": "os", "line": 1, "level": 0},
+        {"module": "typing", "line": 2, "level": 0},
+        {"module": "importlib", "line": 3, "level": 0},
+        {"module": "collections.abc", "line": 12, "level": 0},
+        {
+            "module": "",
+            "line": 6,
+            "level": 0,
+            "dynamic": True,
+            "dynamic_unresolved": True,
+        },
+        {
+            "module": "re",
+            "line": 9,
+            "level": 0,
+            "dynamic": True,
+            "dynamic_unresolved": False,
+        },
+    ]
+
+
+def test_python_dynamic_import_entries_unchanged_after_extraction(tmp_path: Path) -> None:
+    """Regression guard for the F4.2 refactor: `_python_dynamic_import_entries` itself (the
+    OTHER caller of `_python_dynamic_import_entry_for_call`, used by
+    `_python_imports_and_symbols`'s reverse-import alias-graph prefilter at a SEPARATE call
+    site) must still walk `tree` on its own and return the identical entries it always did --
+    the extraction must not have changed its standalone behavior."""
+    project = tmp_path / "project"
+    project.mkdir()
+    source_file = project / "dyn.py"
+    source_file.write_text(
+        "import importlib\n"
+        "def load(name):\n"
+        "    return importlib.import_module(name)\n"
+        "def load_builtin():\n"
+        "    return __import__('re')\n",
+        encoding="utf-8",
+    )
+    tree = repo_map._cached_ast_parse(source_file.read_text(encoding="utf-8"))
+
+    entries = repo_map._python_dynamic_import_entries(tree)
+
+    assert entries == [
+        {"module": "", "line": 3, "level": 0, "dynamic": True, "dynamic_unresolved": True},
+        {"module": "re", "line": 5, "level": 0, "dynamic": True, "dynamic_unresolved": False},
+    ]
