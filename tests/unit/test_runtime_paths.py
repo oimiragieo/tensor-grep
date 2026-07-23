@@ -536,9 +536,7 @@ def test_resolve_ripgrep_binary_prefers_path_rg_before_bundled(monkeypatch, tmp_
 
     monkeypatch.setattr(runtime_paths, "__file__", str(runtime_file))
     monkeypatch.delenv("TG_RG_PATH", raising=False)
-    monkeypatch.setattr(
-        shutil, "which", lambda name: str(path_rg) if name == binary_name else None
-    )
+    monkeypatch.setattr(shutil, "which", lambda name: str(path_rg) if name == binary_name else None)
     resolve_ripgrep_binary.cache_clear()
 
     assert resolve_ripgrep_binary() == path_rg.resolve()
