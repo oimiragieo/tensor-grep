@@ -1,6 +1,71 @@
 # CHANGELOG
 
 
+## v1.93.8 (2026-07-23)
+
+### Performance Improvements
+
+- **retrieval**: Max-combine fusion — accuracy ndcg@10 +62.6%
+  ([#717](https://github.com/oimiragieo/tensor-grep/pull/717),
+  [`d40aa3d`](https://github.com/oimiragieo/tensor-grep/commit/d40aa3db0aeedd3224409e0ba6c42297b6695fd2))
+
+* perf(retrieval): max-combine fusion default -- accuracy ndcg@10 +62.6%
+
+reciprocal_rank_fusion (retrieval_fusion.py:18) gains a combine: Literal["sum","max"]="max"
+  parameter. combine="max" takes the best single-leg RRF term per chunk (best-rank-wins) instead of
+  summing every leg's term; combine="sum" reproduces the original formulation byte-identically for
+  any call site that must keep it. Every existing call site (reranker.py's rank_chunks, used by both
+  `tg search --semantic` and `tg find`; the eval harness's rrf/rrf_shipped arms) omits `combine`
+  entirely, so the default change moves them with zero call-site edits.
+
+Frozen golden-set harness (benchmarks/eval_late_rerank_quality.py), 40 queries, byte-reproduced
+  independently: rrf ndcg@10 0.3047 -> 0.4953 (+62.6%) recall@10 0.55->0.825 mrr 0.228->0.391 dense
+  ndcg@10 0.6026 -> 0.6026 (unchanged, as required) bm25 ndcg@10 0.1093 -> 0.1093 (unchanged, as
+  required) rrf_shipped (the real tg find production weight, dense_weight=5.0): 0.6026 -- reaches
+  the dense-alone ceiling exactly.
+
+Verified plain `tg search --rank`/`--bm25` does not touch reciprocal_rank_fusion at all
+  (rerank_by_bm25 has no dense leg) -- only `--semantic` and `tg find` do, and both are unaffected
+  (120 existing tests green, incl. the real dense model). Capsule agent-accuracy gate stays 16/16.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* fix(find): route single-token literal queries to combine="sum" (Opus-gate finding)
+
+Independent gate on #717 falsified the "never worse than sum" claim: on the committed
+  literal_golden.jsonl slice, max-combine is a real ndcg@10 regression vs sum (0.9631 vs 1.0,
+  -0.0369; identifier3_golden.jsonl is a wash, both 1.0). Mechanism: a literal query's true answer
+  is often independently ranked #1 by BOTH bm25 and dense -- sum's per-leg-agreement bonus is
+  exactly the signal max discards, letting a single-leg-only competitor tie the true answer's
+  now-undiscounted best-single-term score (ascending-index tie-break then picks whichever has the
+  lower chunk index, which can be the wrong doc).
+
+Fold, not just document: `rank_chunks` (reranker.py:275) gains `combine: Literal["sum","max"] =
+  "max"` (matching reciprocal_rank_fusion's own default -- an omitted kwarg is unaffected). `tg
+  find`'s two rank_chunks call sites (main.py's `_execute_find`) now also pass
+  `combine=_find_combine_mode(query)`, a new sibling of `_find_dense_weight` sharing the SAME
+  whitespace predicate (`_find_is_single_token_query`, factored out of both): a single
+  whitespace-free token -> "sum" (exact pre-max-flip behavior); multi-word NL -> "max" (keeps the
+  +62.6% win). reciprocal_rank_fusion's own DEFAULT is untouched -- the eval harness's rrf arm still
+  scores 0.4953.
+
+Verified: - rrf arm (default max, 40 NL, direct reciprocal_rank_fusion call): unchanged, 0.4953. -
+  literal_golden.jsonl via rank_chunks(dense_weight=1.0, combine=sum) -- what the shipped find path
+  now does for every one of its 10 real queries: ndcg@10 recovers 0.9631 -> 1.0000 exactly. -
+  identifier3_golden.jsonl: 1.0000 both modes, unaffected (as expected, a wash). - 40-query NL set
+  via rank_chunks(dense_weight=5.0, combine=max) -- what the shipped find path does for every one of
+  its queries: ndcg@10 = 0.6026, the dense-alone ceiling (unchanged). - Capsule agent-accuracy gate:
+  16/16, unchanged. - New tests: rank_chunks combine-threading + a hand-built tie-mechanism proof
+  (test_rank_chunks.py), _find_combine_mode direct-call + end-to-end CLI routing incl. the
+  DenseUnavailableError retry path (test_find_command.py). 128/128 across the full downstream suite
+  (retrieval_fusion, rank_chunks, reranker, reranker_hybrid, eval_late_rerank_quality, find_command,
+  search_semantic_rerank, semantic_search_flag, bm25_search_flag).
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.93.7 (2026-07-23)
 
 ### Performance Improvements
