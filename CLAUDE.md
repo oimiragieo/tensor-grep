@@ -55,23 +55,31 @@ Claude Code guidance for the **tensor-grep** repository.
   scheduler-independent concurrency tests, independent-gate-is-a-hypothesis, gate-nit folding,
   published-wheel closing dogfood, and the loop-4 accuracy gate (A13-A21) — are in `AGENTS.md`'s full
   list; this bullet is the gist, not the copy.
+- **Adding a Language** — the `lang_registry.register_language` + `lang_<x>.py` module
+  pattern (mirror `lang_go.py`, not inline `_rust_*`) and the 5 critical seams
+  (most-forgotten: `_target_language_for_path`, the capsule confidence gate).
+- **Optimization Discipline** — measure-first, cProfile the shipped wheel, byte-identical
+  PROOF (enumerate + differential-fuzz), and the warm-dogfood-hides-a-cold-path-win trap.
 - The ruff `--preview` (format only, not lint), line-ending, decode-the-structured-CI-failure-first,
   and release rules.
 
 ## Skills that apply here
 
 - **Using `tg`**: `.claude/skills/tensor-grep/SKILL.md` (+ `REFERENCE.md`).
-- **Carrying the project forward -- the in-repo skill library** (`.claude/skills/tensor-grep-*` + `code-search-and-retrieval-reference`, **26 skills**): the onboarding handbook so a new engineer or a Sonnet-class session can debug, extend, validate, and advance `tg` without the original authors. Each auto-loads by its `description`; load the one matching your task. Index by intent -- this exact bucket list is kept byte-identical with `AGENTS.md`'s skill index; `tests/unit/test_skill_index_sync.py` fails if either doc drifts from the real `.claude/skills/` folder set:
+- **Carrying the project forward -- the in-repo skill library** (`.claude/skills/tensor-grep-*` + `code-search-and-retrieval-reference`, **27 skills**): the onboarding handbook so a new engineer or a Sonnet-class session can debug, extend, validate, and advance `tg` without the original authors. Each auto-loads by its `description`; load the one matching your task. Index by intent -- this exact bucket list is kept byte-identical with `AGENTS.md`'s skill index; `tests/unit/test_skill_index_sync.py` fails if either doc drifts from the real `.claude/skills/` folder set:
   - **Change safely:** `tensor-grep-change-control` (the gates), `tensor-grep-debugging-playbook`, `tensor-grep-failure-archaeology` (don't re-fight settled battles), `tensor-grep-validation-and-qa`.
   - **Understand:** `tensor-grep-architecture-contract`, `code-search-and-retrieval-reference` (domain theory), `tensor-grep-config-and-flags`.
   - **Operate:** `tensor-grep-build-and-env`, `tensor-grep-run-and-operate`, `tensor-grep-diagnostics-and-tooling`, `tensor-grep-docs-and-writing`, `tensor-grep-release-and-positioning`, `tensor-grep-workspace-dogfood` (multi-repo stress dogfood), `tensor-grep-enterprise-agent` (enterprise readiness gaps + agent hard-stops), `tensor-grep-prepare` (one-call edit readiness), `tensor-grep-ledger` (advisory multi-agent claim/finding-reuse), `tensor-grep-find-and-route` (whole-repo hybrid find + route-test), `tensor-grep-multi-project-search` (scoped cross-repo search), `tensor-grep-enterprise-review-bundle` (review-bundle create/verify), `tensor-grep-gpu` (experimental GPU probes).
   - **Advance (SOTA):** `tensor-grep-semantic-search-campaign`, `tensor-grep-benchmark-and-proof-toolkit`, `tensor-grep-research-frontier`, `tensor-grep-research-methodology`, `tensor-grep-large-repo-scale-campaign` (bounding scale/deadline on large repos).
+  - **Extend:** `tensor-grep-add-language` (the symbol-graph language-onboarding checklist).
   - **Orchestrate:** `tensor-grep-backlog-campaign` (the multi-PR drain+build campaign playbook).
 - **Build/release discipline** (global, `~/.claude/skills/`): `dogfood-the-shipped-artifact`,
   `verify-plan-against-code`, `supply-chain-hardening`, `worktree-fanout-verification-gate`,
   `anti-hang-test-protocol` (hang-class test hygiene: shell-timeout + fix-before-red-test),
   `instrumented-build-gate` (measure demand before building a speculative feature),
-  `agent-liveness-probe` (probe via `SendMessage` before killing/`TaskStop`-ing a stalled subagent).
+  `agent-liveness-probe` (probe via `SendMessage` before killing/`TaskStop`-ing a stalled subagent),
+  `profile-guided-byte-identical-optimization` (find a lever on the shipped wheel + prove
+  output byte-identical; the warm/cold measurement trap).
 - **Post-release dogfood harness**: `scripts/dogfood/`.
 - `.claude/skill_rules.json` is harness config for the skill-activation hook, not a product contract —
   it has no `SKILL.md` and is invisible to `test_skill_index_sync.py`.

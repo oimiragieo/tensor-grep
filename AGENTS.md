@@ -143,6 +143,12 @@ concrete failure observed this session.
   CLI-dispatcher misroute), which was then fixed and locked as a new permanent pinned task. Every real
   misroute found in the wild becomes a new permanent pinned task; this is a capability-regression gate,
   distinct from a contract test.
+- **A22 — Sequential-drain-union-rebase for N PRs on a shared file.** When several parallel PRs each
+  edit the SAME file (e.g. `test_lang_registry`, the pyproject `ast` extra, `uv.lock`), drain ONE at a
+  time and rebase each onto the prior, UNIONing the assertions (assert the FULL set, never
+  take-one-side). A CLEAN rebase (no conflict marker) is NOT proof of correctness — a silent auto-merge
+  dropped a `lang_*` import, caught only by re-running pytest (`ImportError`). ALWAYS re-run the test
+  suite after every rebase.
 
 ## Current Handoff
 
@@ -419,6 +425,58 @@ envelope embeds `mcp_contract_version` from the single `_TG_MCP_SERVER_CONTRACT_
 sites" bug class: the `tg_find` MCP PR (#627) shipped with an un-bumped contract version, caught only by
 the mandatory adversarial Opus gate, not by tests or CI.
 
+## Adding a Language (symbol-graph tier)
+
+tg's deep symbol-graph tier covers 8 of the top-10 languages (Python, JS, TS, Java,
+C#, Go, Rust, PHP; C/C++ deferred — priority per TIOBE Jul-2026 + Stack Overflow 2025
++ GitHub Octoverse 2025 consensus). Adding one is a **registration-completeness**
+problem (see the universal bug class above): the CURRENT pattern is
+`lang_registry.register_language(LanguageSpec(...))` plus a self-contained
+`src/tensor_grep/cli/lang_<x>.py` module mirroring `lang_go.py` — NOT the inline
+`_rust_*` / `_parser_for_source_suffix` machinery (that is the STALE style; Rust and
+Python predate the registry). Java used inline+registry (mirrors Rust); C# and PHP
+used module+registry (mirrors Go). Both are contract-consistent.
+
+**Five critical seams — miss one = a silent half-integration.** Enumerate the seams
+`lang_go.py` touches and hit ALL:
+
+1. `_imports_and_symbols_for_path` — `tg imports`.
+2. `_imports_with_lines_for_path` — `tg imports` line spans.
+3. `build_symbol_source_from_map` — `tg source`.
+4. `_target_language_for_path` — **MOST-FORGOTTEN.** Feeds the `tg agent` capsule
+   confidence gate; without it a Java target won't filter a mismatched Python/pytest
+   validation suggestion.
+5. `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES`.
+
+**Fail closed (per the Backend Fail-Closed Contract).** Grammar-missing → labeled gap
+(`provenance_when_missing="grammar-missing"`, NO regex fallback). Deferred caller-graph
+fields → explicit `None` → an honest `resolution_gaps` entry (treat zero as UNKNOWN,
+never silent proven-zero). Symbol-kind mapping:
+class/interface/struct/enum/record/trait → "class"; method/constructor/function →
+"function".
+
+**Live-verify the grammar node shapes** — dump the real tree-sitter AST, do not guess.
+e.g. C# `using Alias = Target;` puts the alias identifier BEFORE the target, so
+`_csharp_using_directive_target` must record the TARGET, not the alias.
+
+**Verify the plan against the real code before dispatch** (see "Verify AI-Drafted Plans
+Against the Real Code" below): a brief that says "mirror inline `_rust_*`" is STALE —
+all three build agents caught it against the grown `lang_registry`. Verify against
+CURRENT code, not a mental model.
+
+**Positioning (the tiered model):** text search = ANY language (rg passthrough);
+structural scan/rewrite = 26 langs (`tg ast-info`, via ast-grep which tg WRAPS); deep
+symbol-graph = the tree-sitter grammars (the 8 above). tg = rg (text) + ast-grep
+(structural) + a symbol/retrieval/capsule LAYER on top. NOT "faster grep."
+
+**Parallel-drain hygiene:** a new grammar touches `test_lang_registry`, the pyproject
+`ast` extra, and `uv.lock` — apply the uv.lock hand-splice (Local Dev Gotchas) and the
+A22 sequential-drain-union-rebase discipline (Campaign Orchestration Disciplines).
+
+See `.claude/skills/tensor-grep-add-language/SKILL.md` for the full registration
+checklist (field-by-field `LanguageSpec` reference, live-verified `repo_map.py` seam
+locations, and the deferred C/C++ scoping notes) — this section is the gist, not the copy.
+
 ## Dogfood the Real Binary, Not CliRunner
 
 The `tg` entry point is `tensor_grep.cli.bootstrap:main_entry`. It intercepts plain text searches and forwards them to ripgrep **before** the Typer app sees the argv. `CliRunner` invokes the Typer app directly and bypasses this front door entirely — so bugs in the bootstrap routing layer are invisible to unit tests.
@@ -544,12 +602,15 @@ Three kinds of skills apply to this repo; load the relevant one before non-trivi
   - `anti-hang-test-protocol` — hang-class test hygiene: wrap every test run in a shell timeout, and write the fix BEFORE the red-phase adversarial test (a ReDoS/deadlock red-test executed against un-fixed code IS the hang it is testing).
   - `instrumented-build-gate` — measure real demand before building a speculative feature.
   - `agent-liveness-probe` — before killing, restarting, or `TaskStop`-ing a background subagent that looks stalled, probe liveness via `SendMessage` rather than trusting output-file mtime/size (see A9 above).
+  - `profile-guided-byte-identical-optimization` — find a lever on the shipped wheel + prove output
+    byte-identical; the warm/cold measurement trap (see "Optimization Discipline" above).
   (the global-skill half of this list is manually maintained — no CI gate — diff it by hand against `CLAUDE.md`'s copy.)
-- **Carrying the project forward -- the in-repo skill library** (`.claude/skills/tensor-grep-*` + `code-search-and-retrieval-reference`, **26 skills**): the onboarding handbook so a new engineer or a Sonnet-class session can debug, extend, validate, and advance `tg` without the original authors. Each auto-loads by its `description`; load the one matching your task. Index by intent -- this exact bucket list is kept byte-identical with `CLAUDE.md`'s skill index; `tests/unit/test_skill_index_sync.py` fails if either doc drifts from the real `.claude/skills/` folder set:
+- **Carrying the project forward -- the in-repo skill library** (`.claude/skills/tensor-grep-*` + `code-search-and-retrieval-reference`, **27 skills**): the onboarding handbook so a new engineer or a Sonnet-class session can debug, extend, validate, and advance `tg` without the original authors. Each auto-loads by its `description`; load the one matching your task. Index by intent -- this exact bucket list is kept byte-identical with `CLAUDE.md`'s skill index; `tests/unit/test_skill_index_sync.py` fails if either doc drifts from the real `.claude/skills/` folder set:
   - **Change safely:** `tensor-grep-change-control` (the gates), `tensor-grep-debugging-playbook`, `tensor-grep-failure-archaeology` (don't re-fight settled battles), `tensor-grep-validation-and-qa`.
   - **Understand:** `tensor-grep-architecture-contract`, `code-search-and-retrieval-reference` (domain theory), `tensor-grep-config-and-flags`.
   - **Operate:** `tensor-grep-build-and-env`, `tensor-grep-run-and-operate`, `tensor-grep-diagnostics-and-tooling`, `tensor-grep-docs-and-writing`, `tensor-grep-release-and-positioning`, `tensor-grep-workspace-dogfood` (multi-repo stress dogfood), `tensor-grep-enterprise-agent` (enterprise readiness gaps + agent hard-stops), `tensor-grep-prepare` (one-call edit readiness), `tensor-grep-ledger` (advisory multi-agent claim/finding-reuse), `tensor-grep-find-and-route` (whole-repo hybrid find + route-test), `tensor-grep-multi-project-search` (scoped cross-repo search), `tensor-grep-enterprise-review-bundle` (review-bundle create/verify), `tensor-grep-gpu` (experimental GPU probes).
   - **Advance (SOTA):** `tensor-grep-semantic-search-campaign`, `tensor-grep-benchmark-and-proof-toolkit`, `tensor-grep-research-frontier`, `tensor-grep-research-methodology`, `tensor-grep-large-repo-scale-campaign` (bounding scale/deadline on large repos).
+  - **Extend:** `tensor-grep-add-language` (the symbol-graph language-onboarding checklist).
   - **Orchestrate:** `tensor-grep-backlog-campaign` (the multi-PR drain+build campaign playbook).
 - When working ON tensor-grep, use `tg search`/`tg defs`/`tg callers` for code navigation rather than generic grep/find — this exercises the tool's own surfaces and catches routing regressions early (mind the scoped-path workaround above).
 - `.claude/skill_rules.json` is Claude-Code harness config for the global `skill_activation_gate.py` hook (trigger keywords that auto-suggest a skill) — it is **not a product contract** and is invisible to `test_skill_index_sync.py` (it has no `SKILL.md`); update its per-skill trigger entries when a skill is added/renamed, but do not treat its content as authoritative over a skill's own frontmatter `description`.
@@ -740,6 +801,39 @@ Use these rules consistently:
 4. Do not update docs or the paper with speed claims until the benchmark line is accepted.
 5. If a candidate is correct but slower, revert it and record the attempt.
 
+## Optimization Discipline (how to discover a lever and PROVE equivalence)
+
+"Benchmark Rules" says which script to run; "Performance Discipline" sets the
+acceptance bar. This is the third layer: how to FIND a lever and prove an
+output-preserving optimization is byte-identical. See the global skill
+`profile-guided-byte-identical-optimization`.
+
+1. **Measure-first — never project.** Do not declare a surface "optimized-out" by
+   reasoning; measure it. A validation-scan lever was deferred as "no clean path" (only
+   a recall-risky `score>0` gate had been considered); a fresh profiling probe found a
+   BYTE-IDENTICAL substring pre-check that had been missed → shipped ~68% faster.
+2. **Profiling-probe.** cProfile the hot commands on the PUBLISHED wheel
+   (`uvx --from tensor-grep==<ver>`), rank hot fns by cumtime%, EXCLUDE already-shipped
+   work, hunt redundant-work levers (a file parsed/walked >once; N full-tree passes
+   mergeable into 1; an index rebuilt per call). Output ranked levers with `file:line`
+   + measured %. An empty result is an honest null (valuable).
+3. **Byte-identical PROOF (load-bearing).** When merging/skipping work, prove output
+   byte-identical TWO ways: (a) ENUMERATE every producer/branch and argue exhaustiveness
+   (AST node types are mutually exclusive; a token is always a substring of its string;
+   candidate names ⊆ file text ⇒ no-term-in-text ⇒ bonus 0); (b) DIFFERENTIAL FUZZ —
+   run OLD-vs-NEW over N real files, assert 0 mismatches (386-file / 26-case receipts).
+   An INDEPENDENT Opus gate is the proof-of-record; a build agent's self-verify is a
+   hypothesis.
+4. **Warm dogfood HIDES a cold-path win.** A warm end-to-end run measures the CACHED
+   path where the optimized fn doesn't run → false read (`tg orient` warm dogfood read
+   −36% on a fn that is actually ~54% FASTER). To verify a cold-path optimization:
+   microbench the FUNCTION directly (isolate the change) OR clear the cache between
+   reps. NEVER a warm end-to-end run.
+5. **Microbench on the SHIPPED wheel.** Isolate the target fn on the published wheel,
+   single pass over DISTINCT inputs (fresh process = cold cache), old-vs-new + assert
+   OUTPUT-IDENTITY (`total == total` both sides = byte-identical AND faster). Receipts:
+   ast.walk-merge 961→446 ms (~54%); validation-scan 3657→1172 ms (~68%).
+
 ## CI / Release Rules
 
 CI is not just a test runner. It enforces:
@@ -764,6 +858,12 @@ below the patch on a future bare resolve. Regenerate the lockfile, then re-run t
 surface unmodified (`tests/unit/test_mcp_server.py`, `tests/unit/test_mcp_tg_find.py`,
 `tests/integration/test_mcp_stdio_protocol.py`, `tests/unit/test_harness_api_docs.py`) — a passing
 dependency bump with zero code changes is the expected GOOD outcome, not a reason to skip verification.
+
+(h) **Rustup's PINNED-toolchain fetch has NO retry (#720-#722).** `rust_core/rust-toolchain.toml`
+pins a version, so `cargo test` triggers an on-demand rustup toolchain fetch — and unlike
+Setup-Rust's `curl | sh` (`--retry 10`), rustup's own toolchain download is not retried, so a
+macOS runner network blip flakes the job (#720/#721). Pre-fetch the pinned toolchain in a 3×
+retry loop in the Setup Rust step (#722).
 
 Any Rust helper reachable only from a `#[cfg(feature = "cuda")]`-gated test must be re-gated
 `#[cfg(any(feature = "cuda", test))]` -- co-gating every helper it transitively calls -- instead of
@@ -905,6 +1005,19 @@ Small, non-obvious traps that have each cost a real cycle on this desktop. None 
 - **A stray `nul` file in the tree is a Windows `2>nul` redirect artifact.** Use `2>$null` (PowerShell) or `2>/dev/null` (bash); clean up with `rm -f ./nul`.
 - **CRLF makes a local bare `ruff format --check` false-alarm** over LF-committed blobs. Run `ruff format --preview <files>` (which normalizes) before commit — see "Required Local Validation" for why `--preview` is mandatory and must never be passed to `ruff check`.
 - **The full local gate is four steps, not two — and re-run them after your LAST edit.** `ruff check` + `pytest` passing is NOT green: the CI "Formatting & Linting" job also runs `ruff format --check --preview .` (a *formatter*, distinct from the `ruff check` *linter* — a post-edit line-wrap or over-long comment passes `ruff check` but fails `ruff format --check`) AND `mypy src/tensor_grep` (catches type errors nothing else flags, e.g. assigning to a `Final` attribute like click's `UsageError.message` — mutate it and mypy errors; raise a fresh `UsageError(...)` instead). Running only `ruff check` + `pytest` — or running the gate before an *intermediate* edit that a later edit then invalidates — cost two drain-blocking CI failures in a single session (a mypy `Final`-assign and a `ruff format` line-wrap). Run all four (`ruff check` · `ruff format --check --preview` · `mypy src/tensor_grep` · `pytest`) on the touched files AFTER the final edit.
+- **Editing a CRLF file in text mode flips every line ending.** Python
+  `open(path, newline="\n")` (or any text-mode write) on a CRLF-committed file
+  (`ci.yml`, `uv.lock` are CRLF) rewrites ALL line endings — an 11-line change becomes
+  a 1443-line diff. Fix: BINARY read (`rb`) + byte-replace preserving `\r\n` + binary
+  write (`wb`). Same failure one layer down from the `ruff format --check` CRLF
+  false-alarm above.
+- **`uv lock` churns ~280 unrelated lines; hand-splice a new dep instead.** A raw
+  `uv lock` reformats GPU/CUDA marker exprs (local-vs-CI uv-version mismatch). For a new
+  dependency, hand-splice ONLY its `[[package]]` block (alphabetical) plus its
+  requires-dist / optional-dependency refs. VERIFY with
+  `uv export --format requirements.txt --all-extras --no-emit-project --locked` (must
+  exit 0) — the exact `audit.yml` "Dependency & License Audit" gate that reddens every
+  new-dep PR.
 
 ## Documentation Discipline
 

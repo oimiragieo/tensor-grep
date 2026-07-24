@@ -58,6 +58,21 @@
             "priority": "medium",
             "minKeywordHits": 1,
             "keywords": ["review-bundle", "review bundle", "change review package", "audit-history"]
+        },
+        "tensor-grep-add-language": {
+            "priority": "medium",
+            "minKeywordHits": 1,
+            "keywords": ["add a language", "new grammar", "tree-sitter grammar", "lang_registry", "register_language", "symbol-graph language", "onboard a language"]
+        },
+        "profile-guided-byte-identical-optimization": {
+            "priority": "medium",
+            "minKeywordHits": 1,
+            "keywords": ["byte-identical", "cprofile", "profiling probe", "optimize hot path", "microbench", "warm dogfood", "cold path", "differential fuzz", "shipped wheel"]
+        },
+        "tensor-grep-large-repo-scale-campaign": {
+            "priority": "medium",
+            "minKeywordHits": 1,
+            "keywords": ["deadline", "hang", "large repo", "timeout", "scandir", "unscoped search", "workspace scale"]
         }
     }
 }
