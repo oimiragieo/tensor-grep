@@ -225,6 +225,270 @@ def test_defs_excludes_plain_field_and_variable_declarations(tmp_path: Path) -> 
 
 
 # ---------------------------------------------------------------------------
+# Declarator-shape matrix: the C sibling bug (#736/v1.98.2) -- a file-scope function-pointer
+# VARIABLE (`void (*handler)(int);`) was mis-kinded "function" because `_cpp_declarator_name_node`
+# unconditionally set `seen_function = True` for ANY `function_declarator` hop, but a
+# function-pointer variable's declarator chain is ALSO `function_declarator`-outermost. Ported
+# from `lang_c.py`'s own declarator-shape matrix (see `test_lang_c.py`'s identical section for the
+# full C-side narrative) -- live-verified against a REAL tree_sitter_cpp 0.23.4 parse (not ported
+# blind from C's shape, see `_cpp_parenthesized_declarator_wraps_bare_name`'s docstring) across
+# every shape below, PLUS two C++-only additions this matrix carries that C's never needed:
+# shape 9 (pointer-to-MEMBER-function variable, `void (C::*mp)(int);` -- its
+# `parenthesized_declarator` wraps a `qualified_identifier`, not a `pointer_declarator`, but the
+# exclusion rule ("wraps something other than a bare name") already covers it with no new branch)
+# and shape 12 (qualified out-of-class method definitions must not regress: still kind "function",
+# still bare-name "getValue", covered by the existing tests just below this matrix).
+#
+# Shape 9 (pointer-to-MEMBER-function VARIABLE, `void (C::*mp)(int);`) is SCOPE-DEPENDENT --
+# live-verified against real tree_sitter_cpp 0.23.4 parses of BOTH forms (see
+# `_cpp_parenthesized_declarator_wraps_bare_name`'s docstring for the full node dump):
+# - FILE/NAMESPACE scope: `parenthesized_declarator`'s single named child IS a
+#   `qualified_identifier` -- excluded by the bare-name TYPE check. THIS is the shape the fix
+#   actually repairs: on pre-fix `main` it resolved and was emitted as kind "function" (`mp`).
+# - IN-CLASS (`class C { public: void (C::*mp)(int); }; `): tree-sitter-cpp cannot resolve `C::`
+#   inside a class body and emits an `ERROR` node alongside a `pointer_declarator`, giving the
+#   `parenthesized_declarator` TWO named children -- excluded by the `len(named_children) != 1`
+#   EARLY RETURN, a completely different code path. This shape was ALREADY excluded on pre-fix
+#   `main` (name resolution fails regardless of the fix), so it is a no-regression PIN, not a
+#   guard for the bug. Both are exercised below, separately labeled.
+# ---------------------------------------------------------------------------
+
+_DECLARATOR_SHAPES_CPP_SOURCE = (
+    "void shape1_prototype(int x);\n"
+    "\n"
+    "int shape2_definition(void) {\n"
+    "    return 0;\n"
+    "}\n"
+    "\n"
+    "int *shape3_returns_pointer(void);\n"
+    "\n"
+    "void (*shape4_fn_ptr_variable)(int);\n"
+    "\n"
+    "typedef void (*Shape5FnPtrTypedef)(int);\n"
+    "\n"
+    "struct Shape6Struct {\n"
+    "    int x;\n"
+    "};\n"
+    "\n"
+    "int (shape7_redundant_paren_prototype)(void);\n"
+    "\n"
+    "class Shape9bClass {\n"
+    "public:\n"
+    "    void (Shape9bClass::*shape9b_inclass_member_fn_ptr_variable)(int);\n"
+    "};\n"
+    "\n"
+    "void (Shape9aFileScope::*shape9a_filescope_member_fn_ptr_variable)(int);\n"
+)
+
+
+def _write_declarator_shapes_fixture(root: Path) -> Path:
+    shapes_cpp = root / "declarator_shapes.cpp"
+    shapes_cpp.write_text(_DECLARATOR_SHAPES_CPP_SOURCE, encoding="utf-8")
+    return shapes_cpp
+
+
+def test_declarator_shape_1_prototype_is_kind_function(tmp_path: Path) -> None:
+    _write_declarator_shapes_fixture(tmp_path)
+
+    payload = repo_map.build_symbol_defs("shape1_prototype", tmp_path)
+
+    assert not payload.get("no_match")
+    assert payload["definitions"][0]["kind"] == "function"
+
+
+def test_declarator_shape_2_definition_is_kind_function(tmp_path: Path) -> None:
+    _write_declarator_shapes_fixture(tmp_path)
+
+    payload = repo_map.build_symbol_defs("shape2_definition", tmp_path)
+
+    assert not payload.get("no_match")
+    assert payload["definitions"][0]["kind"] == "function"
+
+
+def test_declarator_shape_3_function_returning_pointer_is_kind_function(tmp_path: Path) -> None:
+    """The trap: `int *make_ptr(void);` -- the return-type `pointer_declarator` is outermost,
+    wrapping `function_declarator` whose own `declarator` field is a bare identifier. A real
+    function; must NOT be excluded by the shape-4 fix below."""
+    _write_declarator_shapes_fixture(tmp_path)
+
+    payload = repo_map.build_symbol_defs("shape3_returns_pointer", tmp_path)
+
+    assert not payload.get("no_match")
+    assert payload["definitions"][0]["kind"] == "function"
+
+
+def test_declarator_shape_4_function_pointer_variable_is_excluded(tmp_path: Path) -> None:
+    """THE BUG (C sibling of #736): `void (*handler)(int);` is a file-scope function-pointer
+    VARIABLE, not a function -- `function_declarator` is outermost, but ITS OWN `declarator`
+    field is a `parenthesized_declarator` (wrapping `pointer_declarator` -> the name), not a bare
+    identifier. Must be excluded from the symbol table entirely (this module does not track
+    top-level variables), same as a plain `int counter;`."""
+    shapes_cpp = _write_declarator_shapes_fixture(tmp_path)
+
+    _imports, symbols = lang_cpp.cpp_imports_and_symbols(shapes_cpp)
+    names = {s["name"] for s in symbols}
+    assert "shape4_fn_ptr_variable" not in names
+
+    payload = repo_map.build_symbol_defs("shape4_fn_ptr_variable", tmp_path)
+    assert payload.get("no_match") is True
+
+
+def test_declarator_shape_5_function_pointer_typedef_is_kind_type(tmp_path: Path) -> None:
+    """Unchanged by the shape-4 fix: a function-pointer TYPEDEF goes through the separate
+    `type_definition` branch, which always emits kind "type" regardless of
+    `_cpp_declarator_name_node`'s boolean return (the branch discards it)."""
+    _write_declarator_shapes_fixture(tmp_path)
+
+    payload = repo_map.build_symbol_defs("Shape5FnPtrTypedef", tmp_path)
+
+    assert not payload.get("no_match")
+    assert payload["definitions"][0]["kind"] == "type"
+
+
+def test_declarator_shape_6_struct_is_kind_class(tmp_path: Path) -> None:
+    _write_declarator_shapes_fixture(tmp_path)
+
+    payload = repo_map.build_symbol_defs("Shape6Struct", tmp_path)
+
+    assert not payload.get("no_match")
+    assert payload["definitions"][0]["kind"] == "class"
+
+
+def test_declarator_shape_7_redundant_paren_prototype_is_kind_function(tmp_path: Path) -> None:
+    """Same Opus-gate-caught regression trap C's own fix disclosed: `int (foo)(void);` is a REAL
+    function prototype with meaningless redundant parens around the name -- its
+    `function_declarator` has its own `declarator` field as a `parenthesized_declarator`, the
+    exact same NODE TYPE as shape 4's function-pointer variable. The two are distinguished by
+    WHAT the parens wrap: shape 7 wraps a bare `identifier` directly (still a real function);
+    shape 4 wraps a `pointer_declarator` (a variable). A fix that treats "hop is
+    `parenthesized_declarator`" alone as the exclusion signal (rather than checking what it
+    wraps) wrongly excludes this real function too."""
+    _write_declarator_shapes_fixture(tmp_path)
+
+    payload = repo_map.build_symbol_defs("shape7_redundant_paren_prototype", tmp_path)
+
+    assert not payload.get("no_match")
+    assert payload["definitions"][0]["kind"] == "function"
+
+
+def test_declarator_function_returning_function_pointer_is_kind_function(tmp_path: Path) -> None:
+    """THE TRAP (shape 8 in the task matrix): a function that RETURNS a function pointer --
+    `void (*get_handler(int x))(int);`, the same shape as the standard library's `signal()`
+    prototype -- nests a SECOND `function_declarator` (the function's own parameter list) inside
+    the outer one's `parenthesized_declarator` wrap. The outer `function_declarator` hop is
+    skipped (its own declarator field is a `parenthesized_declarator` wrapping a
+    `pointer_declarator`, the same tell as shape 4 -- NOT a bare name, so shape 7's
+    redundant-parens carve-out does not apply here), but the INNER `function_declarator`'s own
+    declarator field is a bare identifier, so `seen_function` still ends up True. Guards against
+    an overly-broad fix that force-resets the signal to False the moment a
+    `parenthesized_declarator` appears anywhere in the chain, which would wrongly exclude this
+    real function too."""
+    root = tmp_path
+    (root / "returns_fn_ptr.cpp").write_text(
+        "void (*get_handler(int x))(int);\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_symbol_defs("get_handler", root)
+
+    assert not payload.get("no_match")
+    assert payload["definitions"][0]["kind"] == "function"
+
+
+def test_declarator_shape_9a_filescope_member_function_pointer_variable_is_excluded(
+    tmp_path: Path,
+) -> None:
+    """THE ACTUAL BUG THIS FIX REPAIRS (C++-only, not in C's matrix at all): a FILE-scope
+    pointer-to-MEMBER-function variable, `void (C::*mp)(int);`. On PRE-FIX `main` this resolved
+    all the way to a name and was mis-emitted as kind "function" (`mp`) -- verified by hand before
+    writing this fix (see the module docstring's dumped AST). Live-verified real AST shape: the
+    outer `function_declarator`'s own "declarator" field is a `parenthesized_declarator` whose
+    SINGLE named child is a `qualified_identifier` ("scope"=a `namespace_identifier`, "name"=a
+    `pointer_type_declarator` wrapping the member name) -- a DIFFERENT node type than shape 4's
+    plain `pointer_declarator` wrap, but `_cpp_parenthesized_declarator_wraps_bare_name` excludes
+    it via the exact same "not a bare identifier/type_identifier/field_identifier" TYPE check, no
+    dedicated branch needed. Guarded SEPARATELY from the in-class shape below (9b) -- that one is
+    excluded via a completely different code path (a length check, not the type check) and was
+    never actually broken."""
+    shapes_cpp = _write_declarator_shapes_fixture(tmp_path)
+
+    _imports, symbols = lang_cpp.cpp_imports_and_symbols(shapes_cpp)
+    names = {s["name"] for s in symbols}
+    assert "shape9a_filescope_member_fn_ptr_variable" not in names
+
+    payload = repo_map.build_symbol_defs("shape9a_filescope_member_fn_ptr_variable", tmp_path)
+    assert payload.get("no_match") is True
+
+
+def test_declarator_shape_9b_inclass_member_function_pointer_variable_is_excluded(
+    tmp_path: Path,
+) -> None:
+    """NO-REGRESSION PIN, not a guard for this fix (coverage-gap correction): an IN-CLASS
+    pointer-to-member-function variable, `void (C::*mp)(int);` written inside a class body. This
+    shape was ALREADY excluded on pre-fix `main` for an unrelated reason -- live-verified,
+    tree-sitter-cpp cannot resolve `C::` inside a class body and instead emits an `ERROR` node
+    sibling to a `pointer_declarator`, giving the `parenthesized_declarator` TWO named children
+    (`['ERROR', 'pointer_declarator']`). `_cpp_parenthesized_declarator_wraps_bare_name`'s own
+    `len(named_children) != 1` EARLY RETURN excludes it before the bare-name TYPE check even
+    runs -- a different code path than shape 9a above, exercised here so both parses stay
+    covered."""
+    shapes_cpp = _write_declarator_shapes_fixture(tmp_path)
+
+    _imports, symbols = lang_cpp.cpp_imports_and_symbols(shapes_cpp)
+    names = {s["name"] for s in symbols}
+    assert "shape9b_inclass_member_fn_ptr_variable" not in names
+    # The enclosing class itself must still resolve normally -- the exclusion is scoped to the
+    # member declaration, not the whole class body.
+    assert "Shape9bClass" in names
+
+    payload = repo_map.build_symbol_defs("shape9b_inclass_member_fn_ptr_variable", tmp_path)
+    assert payload.get("no_match") is True
+
+
+def test_declarator_shape_11_namespace_scoped_fnptr_variable_and_prototype(
+    tmp_path: Path,
+) -> None:
+    """Shapes 4 and 1, replayed inside a `namespace app { ... }` block -- same verdicts as at
+    file scope: the function-pointer variable is excluded, the prototype is kind "function", and
+    the namespace itself still resolves as kind "namespace"."""
+    root = tmp_path
+    (root / "ns_shapes.cpp").write_text(
+        "namespace app {\n"
+        "void (*ns_handler)(int);\n"
+        "\n"
+        "void ns_prototype(int x);\n"
+        "}  // namespace app\n",
+        encoding="utf-8",
+    )
+
+    _imports, symbols = lang_cpp.cpp_imports_and_symbols(root / "ns_shapes.cpp")
+    names = {s["name"]: s["kind"] for s in symbols}
+
+    assert "ns_handler" not in names
+    assert names.get("ns_prototype") == "function"
+    assert names.get("app") == "namespace"
+
+
+def test_using_alias_declaration_of_function_pointer_is_still_kind_type(tmp_path: Path) -> None:
+    """C++-ONLY requirement matrix item 10: `using FP2 = void (*)(int);` -- CURRENT behavior on
+    origin/main (unaffected by this fix): resolves via the `alias_declaration` branch, which reads
+    the alias's OWN "name" field (`FP2`) directly and always emits kind "type" -- it never touches
+    `_cpp_declarator_name_node`/the `function_declarator` walk at all (the aliased
+    `type_descriptor` -> `abstract_function_declarator` shape on the RHS is never traversed by the
+    declarator walker), so this fix cannot regress it. Documented here as a no-regression pin."""
+    root = tmp_path
+    (root / "alias_fnptr.cpp").write_text(
+        "using FP2 = void (*)(int);\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_symbol_defs("FP2", root)
+
+    assert not payload.get("no_match")
+    assert payload["definitions"][0]["kind"] == "type"
+
+
+# ---------------------------------------------------------------------------
 # defs: functions, incl. qualified out-of-class methods (the central C++ wrinkle)
 # ---------------------------------------------------------------------------
 
