@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-add-language
-description: Use when adding a new language to tensor-grep's tree-sitter symbol graph (defs/refs/callers/blast-radius, `tg source`, `tg imports`) — registering a `LanguageSpec` in `lang_registry.py`, writing a new `src/tensor_grep/cli/lang_<x>.py` extractor module, or scoping the deferred C/C++ language-expansion follow-up. Triggers and keywords include add a language, add <language> to tensor-grep, new grammar, tree-sitter grammar, lang_registry, register_language, new lang_<x>.py module, symbol-graph language, onboard a language, "tg doesn't find symbols in <language>", `_target_language_for_path`, grammar-missing provenance, C/C++ symbol graph.
+description: Use when adding a new language to tensor-grep's tree-sitter symbol graph (defs/refs/callers/blast-radius, `tg source`, `tg imports`) — registering a `LanguageSpec` in `lang_registry.py`, writing a new `src/tensor_grep/cli/lang_<x>.py` extractor module, debugging a C/C++ declarator-walker mis-kind, or verifying a banked "the fix is obviously X" hypothesis against a live parse tree before writing declarator-shape logic. Triggers and keywords include add a language, add <language> to tensor-grep, new grammar, tree-sitter grammar, lang_registry, register_language, new lang_<x>.py module, symbol-graph language, onboard a language, "tg doesn't find symbols in <language>", `_target_language_for_path`, grammar-missing provenance, C/C++ symbol graph, function-pointer variable mis-kinded as function, declarator shape.
 ---
 
 # tensor-grep: adding a language to the symbol graph
@@ -27,18 +27,22 @@ backend contract.
 | Drain several language PRs that all touch `test_lang_registry.py` / `uv.lock` / the pyproject `ast` extra | `tensor-grep-change-control`'s Campaign Orchestration cross-ref (AGENTS.md A22) |
 | Use `tg` as a consumer (search/orient/callers flags) | `code-search-and-retrieval-reference` |
 
-## Current status (verified against tg v1.96.1-pending, `origin/main` @ `29cf59f`)
+## Current status (verified against tg v1.98.2, `origin/main` @ `ba63aa0`)
 
-`repo_map.py` currently carries **8** `lang_registry.register_language(...)` call sites
+`repo_map.py` currently carries **10** `lang_registry.register_language(...)` call sites
 (`grep -n "register_language(" src/tensor_grep/cli/repo_map.py`): `python`, `javascript`,
 `typescript`, `rust` (the original four, inline in `repo_map.py`), plus `go`, `java`,
-`php`, and `csharp` — confirmed via `language_id=` greps and
+`php`, `csharp`, `c`, and `cpp` — confirmed via `language_id=` greps and
 `tests/unit/test_lang_registry.py::test_language_registry_has_exactly_the_stage2_languages`'s
-literal set-pin (which now includes `"csharp"`). C# landed via PR #726 as a
-module-shaped language (`lang_csharp.py`, mirrors `lang_go.py`, not Java's inline
-shape) — **all top-10 languages except C/C++ are now registered.** **Re-run the grep
-above before trusting any "N of top-10" count** — it is a snapshot, not a promise; this
-count changed twice in the span of authoring this skill.
+literal set-pin (which now includes `"c"` and `"cpp"`). **All top-10 languages are now
+registered — the "C/C++ deferred" framing below this line in earlier passes of this skill is
+STALE; C landed via PR #731 (v1.97.0) and C++ via PR #732 (v1.98.0), each a self-contained
+module (`lang_c.py`/`lang_cpp.py`, mirroring `lang_go.py`'s shape), both at the same
+foundational tier as Java/PHP/C# (defs/imports only, no `references_and_calls`).** A
+follow-up C fix (#736, v1.98.2) corrected a file-scope function-pointer-variable mis-kind —
+see B5's declarator-shape addendum below before writing similar C/C++ declarator-walking
+logic. **Re-run the grep above before trusting any "N of top-10" count** — it is a snapshot,
+not a promise; this count has changed on every pass of this skill so far.
 
 The tiered language model (unchanged shape, re-verify the coverage numbers):
 
@@ -46,7 +50,7 @@ The tiered language model (unchanged shape, re-verify the coverage numbers):
 |---|---|---|---|
 | Text search | any file | rg passthrough (bootstrap front door) | universal |
 | Structural scan/rewrite | many languages | ast-grep, which `tg` wraps (`tg ast-info`, `tg run`) | ~26 langs (ast-grep's own list) |
-| **Symbol graph (this skill)** | tree-sitter grammars in `lang_registry` | `defs`/`refs`/`callers`/`blast-radius`/`tg source`/`tg imports` | 8 of top-10 live on `main` (Python/JS/TS/Java/C#/Go/Rust/PHP); **C/C++ deferred** |
+| **Symbol graph (this skill)** | tree-sitter grammars in `lang_registry` | `defs`/`refs`/`callers`/`blast-radius`/`tg source`/`tg imports` | **10 of 10 top-10 languages live on `main`** (Python/JS/TS/Java/C#/C++/C/Go/Rust/PHP) |
 
 Positioning: tg = rg (text) + ast-grep (structural) + this symbol/retrieval/capsule layer —
 "not faster grep" (mirrors `tensor-grep-architecture-contract`'s moat framing). Top-10
@@ -290,6 +294,36 @@ child) — the reverse of what you might guess. `_csharp_using_directive_target`
 comment table). Getting this backwards would record every aliased import as its local
 alias name instead of the namespace actually being imported.
 
+**A fifth example, and the most important one for C-family declarator walkers (PR #736, v1.98.2):
+a "seems obviously right" tell was FALSIFIED by the live AST, not confirmed by it.** `lang_c.py`'s
+`_c_declarator_name_node` walks a declarator chain to decide `seen_function: bool` — "did the chain
+pass through a `function_declarator`?" A banked note from an earlier session proposed the fix as
+"require `function_declarator` to be OUTERMOST" to exclude a file-scope function-pointer VARIABLE
+(`void (*handler)(int);`, which this module deliberately must NOT report as a function). Dumping the
+real `tree_sitter_c` 0.24.2 AST before writing any code showed that hypothesis was simply wrong: a
+function-pointer variable's declarator chain ALSO has `function_declarator` outermost — identical in
+that one respect to a real prototype `void f(int);`. "Outermost" is not the discriminator at all. The
+real tell lives one level deeper, in what that `function_declarator` node's OWN `declarator` field
+WRAPS:
+
+| Shape | `function_declarator`'s own `declarator` field |
+|---|---|
+| `void f(int);` (real prototype) | bare `identifier` |
+| `int *make_ptr(void);` (returns pointer) | bare `identifier`, one hop under a `pointer_declarator` |
+| `void (*handler)(int);` (fn-ptr VARIABLE — exclude) | `parenthesized_declarator` wrapping a `pointer_declarator` |
+| `int (foo)(void);` (redundant-paren real prototype — keep, gate-caught refinement) | `parenthesized_declarator` wrapping a bare `identifier` directly |
+
+A `parenthesized_declarator` hop alone is not the signal — a real function can be wrapped in
+meaningless redundant parens too (row 4); what matters is whether the parens wrap a bare name (real
+function) or a pointer declarator (variable). `lang_cpp.py` has its OWN, independently-written
+declarator walker (`_cpp_declarator_name_node`) with the same latent bug shape — do not assume fixing
+one fixes the other; C++ also has a member-function-pointer wrinkle (`void (C::*mp)(int);`, which
+wraps a `qualified_identifier` instead of a `pointer_declarator`) that C alone does not have. **Rule
+for this skill's audience specifically:** a banked "the fix is obviously X" note — even one written in
+a prior session about this exact bug class — is a hypothesis about a declarator SHAPE, and declarator
+shapes are exactly the thing B5 already tells you not to guess. Dump the real parse tree for every
+shape you plan to include/exclude before trusting a one-line fix description, including your own.
+
 ## B6 — tiered model recap (see "Current status" above for the live table)
 
 text search (any language, rg passthrough) → structural scan/rewrite (~26 langs via the
@@ -302,28 +336,49 @@ ast-grep supports it) structural scan/rewrite; it just has no `defs`/`refs`/`cal
 ## E1 — priority and what's next
 
 Top-10 by TIOBE Jul-2026 + Stack Overflow 2025 + GitHub Octoverse 2025 consensus: Python,
-JavaScript, TypeScript, Java, C#, C++, C, Go, Rust, PHP. All 8 non-C/C++ entries are now
-registered on `main` (C# landed via PR #726). **C/C++ is the next concrete target**, and it
-is harder than any language shipped so far — scope before starting, not while coding:
+JavaScript, TypeScript, Java, C#, C++, C, Go, Rust, PHP. **All 10 are now registered on
+`main`** — C landed via PR #731 (v1.97.0), C++ via PR #732 (v1.98.0), both scoped exactly per
+items 1-5 below (a Stage-1, per-file, foundational-tier landing, not the full
+`#include`-graph resolution items 1-2 warn against blocking on). The five scoping notes
+below are kept as a worked EXAMPLE of "scope before starting, not while coding" for the
+next language beyond the top-10, not as an open task:
 
 1. **No module system.** Go has `go.mod`/`go.work`; C/C++ has no compiler-enforced
    namespace-to-directory mapping. The honest floor for a first landing is per-file symbol
    extraction (filename-as-scope), not a full `compile_commands.json`/CMake include-graph.
+   **Confirmed as shipped:** `#include` resolution stays deferred/BACKLOG for both C and
+   C++ (an honest `resolution_gaps` entry, never a fabricated resolved path) — a true
+   `#include`-graph resolver is a separate, much larger scope (clangd-grade), tracked but
+   not started.
 2. **`#include` is textual, not semantic.** tree-sitter has no preprocessor; a
    `#define`-wrapped declaration (export/visibility macros are common in real C/C++ headers)
    can hide or reshape the node the extractor expects — B5's live-verify discipline is
-   mandatory here, not optional, on a much larger surface than Go's.
+   mandatory here, not optional, on a much larger surface than Go's. **Confirmed as shipped:**
+   `class MACRO Name` (a macro-decorated class declaration) misparses on the installed C++
+   grammar — an INHERENT tree-sitter ceiling, not a bug in this codebase's extractor, and
+   disclosed as accepted in PR #732.
 3. **Declaration/definition split.** A C/C++ function typically appears twice (a header
    prototype, a body-bearing definition) — which one is canonical for `tg source`/`tg defs`
    is a design decision to make explicitly, not an assumption carried over from Go's
    one-declaration model.
 4. **C and C++ are two separate grammar packages** (`tree-sitter-c` vs. `tree-sitter-cpp`) —
    decide upfront whether they are one `LanguageSpec` or two (recommend two, mirroring how
-   JS/TS already get two specs rather than one with a mode flag).
+   JS/TS already get two specs rather than one with a mode flag). **Confirmed as shipped:**
+   they landed as two separate modules (`lang_c.py`/`lang_cpp.py`), each its own
+   `LanguageSpec`, exactly as recommended here.
 5. A first Stage 1 landing can reasonably scope to per-file extraction +
    declaration/definition dedup by name, in the same 0.7 `"receiver-heuristic"`-equivalent
    confidence band Go uses for anything short of confirmed resolution — a real,
    honestly-labeled feature now, rather than blocking on `#include`-graph resolution.
+
+**Known post-ship correction (PR #736, v1.98.2 — see B5's declarator-shape addendum above for
+the full worked example):** C's file-scope function-pointer VARIABLE
+(`void (*handler)(int);`) was initially mis-kinded `"function"` — fixed by distinguishing
+what a `function_declarator`'s own `declarator` field wraps, not whether it's outermost. A
+sibling fix for `lang_cpp.py`'s independently-written declarator walker (same bug shape, plus
+a C++-only member-function-pointer wrinkle) is tracked as a follow-up, not yet landed as of
+this pass — re-verify with `git log --oneline -- src/tensor_grep/cli/lang_cpp.py` before
+assuming it's done.
 
 ## Parallel-drain hygiene (cross-ref: AGENTS.md Campaign Orchestration A22)
 
@@ -398,6 +453,21 @@ tg --version
 
 ## Provenance and maintenance
 
+- **Third re-verify pass, 2026-07-24, against tg v1.98.2** (`main` HEAD `ba63aa0`). Corrected the
+  "Current status" section and E1 from stale "C/C++ deferred, C# is next" framing (accurate as of
+  the prior pass, staled by C landing in PR #731/v1.97.0 and C++ in PR #732/v1.98.0 — both merged
+  after the prior pass) to the current true state: all 10 top-10 languages are registered
+  (`grep -c "register_language(" src/tensor_grep/cli/repo_map.py` -> 10;
+  `test_language_registry_has_exactly_the_stage2_languages` now pins `c`/`cpp` alongside the prior
+  8). Added the B5 declarator-shape addendum documenting PR #736 (v1.98.2) — a banked "the fix is
+  obviously X" hypothesis for a C symbol-graph mis-kind that a live AST dump FALSIFIED before any
+  fix code was written; this is the single most directly relevant fact this skill carries for the
+  next C/C++-family declarator-walker change, since `lang_cpp.py`'s own independently-written
+  walker has the same latent bug shape and is not yet fixed (`lang_cpp.py`'s own log has no commit
+  past #732 as of this pass — re-verify with `git log --oneline -- src/tensor_grep/cli/lang_cpp.py`
+  before assuming a fix has landed). Ground truth this pass: `git log --oneline` for `lang_c.py`/
+  `lang_cpp.py`, PR #731/#732/#736's real commit messages and diffs, and
+  `tests/unit/test_lang_registry.py`'s current set-pin.
 - **Verified against tg v1.96.1-pending** (`main` HEAD `29cf59f`, `pyproject.toml` still
   stamps `1.96.0` since semantic-release derives the version at publish time — #728 is a
   `fix:` commit, so the next publish is v1.96.1). This is the skill's **second** re-verify

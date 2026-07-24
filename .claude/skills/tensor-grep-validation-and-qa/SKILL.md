@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-validation-and-qa
-description: Use when deciding what counts as proof that a tensor-grep (tg) change works — before trusting a subagent's "tests pass", writing a new test, claiming a routing/docs/release fix is done, shipping a doc-drift/ranking/classification heuristic off green fixture tests, or running the pre-push gate. Covers TDD-first discipline, the CliRunner-vs-real-binary trap, the fixture-green-vs-real-corpus-dogfood trap for precision/heuristic features, the `capfd`-vs-`result.stdout` capture-surface trap on routing/delegation changes (needs `tests/integration/` run with the native `tg` binary rebuilt, not just `tests/unit/`), the certified/golden inventory (routing parity, docs governance, release-asset validation), agent-readiness/`tg dogfood`, benchmark-gated speed claims, acceptance thresholds, and which suite/marker/fixture to use for a new test, plus the `--preview` / `--no-sync` / `-x` gotchas.
+description: Use when deciding what counts as proof that a tensor-grep (tg) change works — before trusting a subagent's "tests pass", writing a new test, claiming a routing/docs/release fix is done, shipping a doc-drift/ranking/classification heuristic off green fixture tests, proving a red-green baseline on a reverted/pre-fix commit, reviewing a payload-byte/ratio governance test, or running the pre-push gate. Covers TDD-first discipline, the CliRunner-vs-real-binary trap, the fixture-green-vs-real-corpus-dogfood trap for precision/heuristic features, the `capfd`-vs-`result.stdout` capture-surface trap on routing/delegation changes (needs `tests/integration/` run with the native `tg` binary rebuilt, not just `tests/unit/`), the `tests/conftest.py` `sys.path.insert`-outranks-`PYTHONPATH` trap that can falsify a red-green baseline even with `tensor_grep.__file__` verified, a shared-envelope field growth breaking a payload-ratio governance test plus its tmp-path-length platform sensitivity, the self-gate-suite-subset-is-not-full-CI-matrix trap, the certified/golden inventory (routing parity, docs governance, release-asset validation), agent-readiness/`tg dogfood`, benchmark-gated speed claims, acceptance thresholds, and which suite/marker/fixture to use for a new test, plus the `--preview` / `--no-sync` / `-x` gotchas.
 ---
 
 # tensor-grep validation and QA
@@ -161,6 +161,24 @@ Ranked by how hard each is to fake, cheapest-to-check first:
    the affected test suite after every rebase in a multi-branch drain, not only when a conflict marker
    forced a manual look; a dropped import surfaces as an `ImportError` the rebase itself will never
    flag.
+
+   **Amendment (2026-07-24) -- PYTHONPATH alone does not prove a RED-GREEN baseline; it only proves
+   which tree a normal run imported.** The standing stale-venv fix above ("pin PYTHONPATH to the
+   worktree src, verify `tensor_grep.__file__` resolves into the worktree") is necessary but NOT
+   sufficient the moment the goal shifts from "run tests against the right tree" to "prove this test
+   genuinely fails on a BASELINE commit" (pre-fix origin/main, a tag, a reverted file) -- the two are
+   different claims and need different verification. `tests/conftest.py:10` runs
+   `sys.path.insert(0, str(SRC_DIR))`, where SRC_DIR is derived from `conftest.py`'s own `__file__`
+   location, and `sys.path.insert(0, ...)` takes precedence over whatever PYTHONPATH points at. An
+   independent gate that reverted one source file to its pre-fix state and re-ran with PYTHONPATH
+   pointed at that reverted tree got a FALSE "passed on main" result, because the worktree's OWN
+   `conftest.py` silently re-pointed imports back at the worktree's unmodified src regardless of
+   PYTHONPATH -- and checking `tensor_grep.__file__` did not catch it either, since it correctly
+   reported the worktree's file, which was exactly the wrong tree for a baseline check. Fix: to prove
+   a test fails on a baseline commit, use a FULLY ISOLATED TREE COPY with the target file reverted
+   INSIDE that copy -- never a PYTHONPATH swap layered on top of the current working tree's own
+   `conftest.py`. This matters most for exactly the readers of this skill's Part 1 -- an independent
+   gate proving a fix's red-phase test is real, not a build agent's self-report of it.
 10. **A security-touching change is not "done" on green tests alone — it needs a mandatory adversarial
     review before merge.** Any PR touching `apply_policy`, `mcp_server`, `cpu_backend`/native-argv
     construction, `index_lock`, auth, money, a migration, or **native asset / installer / doctor-probe
@@ -231,6 +249,37 @@ Ranked by how hard each is to fake, cheapest-to-check first:
     aggregate "looks fine" claim would have hidden. Cross-reference, don't duplicate: the pipe-exit-mask
     and raw-JSON-first traps also live in `tensor-grep-debugging-playbook` (§13/§14) as debugging
     fix-pointers; this item is the QA-tier methodology framing of the same two traps.
+16. **A payload-byte-RATIO governance test is fragile to two things a code-review pass rarely
+    checks: a SHARED envelope field growing, and tmp-path LENGTH across platforms (#733/#734,
+    2026-07-24).** `test_importers_payload_is_far_smaller_than_map` (`tests/unit/test_file_deps.py`)
+    compares total serialized bytes of `tg importers` (deliberately tiny) against `tg map`
+    (deliberately large) as a proxy for "importers carries far less data." That proxy breaks the
+    moment a field in the SHARED `_envelope()` helper (`repo_map.py`, stamped byte-identically onto
+    both payloads) grows: an honest field-honesty fix in #733 made `coverage.language_scope`/
+    `symbol_navigation` dynamic (~28 -> ~116 chars) — a small fraction of the large `map` payload
+    but a large fraction of the tiny `importers` one, tripping the `< 0.1 * map` threshold with
+    **zero** change to either payload's actual data volume. Separately, the SAME test PASSED on
+    Windows and FAILED on Linux CI: Windows' longer `AppData\Local\Temp` paths inflate both
+    payloads and dilute the fixed-envelope fraction back under threshold; Linux's short `/tmp`
+    paths do not, so a Windows-local green run does not prove a Linux-CI green run. **Fix (#734):**
+    strip the shared `_envelope()` keys SYMMETRICALLY from both payloads before comparing bytes,
+    deriving the excluded-key set LIVE (`set(repo_map._envelope(project))`) rather than a
+    hand-copied literal — this makes the assertion robust to any future envelope growth instead of
+    re-breaking on the next honesty fix. Before adding or reviewing any payload-byte or
+    payload-ratio assertion: (a) check whether either side's payload includes a shared, non-data
+    envelope/header the assertion doesn't intend to measure, and (b) reproduce with a SHORT
+    `pytest --basetemp` locally before trusting a Windows-local pass as proof of a Linux-CI pass.
+17. **A self-gate's declared test SUBSET is not the full CI matrix — state what ran, not just that
+    "tests passed" (#733/#734, 2026-07-24).** The build agent's own pre-merge gate on #733 ran a
+    real, substantial suite (`test_harness_api_docs.py`, `test_session_cli.py`,
+    `test_mcp_server.py`, the full `lang_registry`/`test_lang_*.py` sweep) but never named
+    `tests/unit/test_file_deps.py` — the exact file whose invariant #733 broke, deterministically,
+    on every platform. This is an instance of Part 1 point 9 ("never trust a self-report") applied
+    to test **scope**, not just test **result**: a subagent that reports "N tests passed" without
+    naming which suites it ran and which it did NOT is not proof of a clean merge, even when every
+    number it reports is true. When reviewing or writing a self-gate report, require an explicit
+    ran/skipped suite list, and treat the CI run itself — not the self-gate's own suite selection —
+    as the actual merge arbiter.
 
 ---
 
@@ -601,6 +650,15 @@ was never observed to fail cannot be trusted to catch a regression.
       never wall-clock thread overlap (Part 1 point 14, C-concurrency).
 - [ ] A campaign/release drain closed → every fixed item verified against the **published wheel**, one
       PASS/FAIL row + raw JSON each, not one aggregate claim (Part 1 point 15, C-wheel).
+- [ ] If it grows a field inside a SHARED envelope/header (`_envelope()` or similar): every test that
+      compares two payloads' byte SIZE was audited, and any byte-ratio assertion was reproduced with a
+      short `pytest --basetemp` (not just a Windows-local run) before trusting it (Part 1 point 16).
+- [ ] A self-gate/subagent report names the SUITES it ran and the suites it skipped, not just a pass
+      count — the CI run, not the self-gate's suite selection, is the merge arbiter (Part 1 point 17).
+- [ ] A claimed red-green baseline (proving a test fails on a pre-fix/reverted commit) used a fully
+      isolated tree copy, not a `PYTHONPATH` swap — `tests/conftest.py`'s `sys.path.insert` outranks
+      `PYTHONPATH` and can silently re-point imports at the current worktree regardless (Part 1 point 9
+      amendment).
 
 ---
 
@@ -620,7 +678,11 @@ the new `test_retrieval_quality_regression.py` and the registered `eval` pytest 
 cold-path dogfood caveat to Part 1 point 3 and the byte-identical-optimization-proof technique plus the
 clean-rebase corollary to Part 1 point 9, added the `uv.lock` hand-splice gotcha to Part 2, and added
 the new-language/grammar test shape to Part 6 (tracking the Java/C#/PHP symbol-graph expansion,
-#724/#725/#726). Re-verify before relying on them:
+#724/#725/#726). A same-day second pass **2026-07-24, release `v1.98.2`** added Part 1 points 16-17
+(the shared-envelope payload-ratio governance-test trap plus its tmp-path-length platform sensitivity,
+and the self-gate-suite-subset-is-not-full-CI-matrix trap, both from #733/#734) and the PYTHONPATH/
+`conftest.py` red-green-baseline amendment to Part 1 point 9 (an independent gate's false "passed on
+main" result, caught the same day). Re-verify before relying on them:
 
 | Claim | Re-verify command |
 |---|---|
