@@ -378,9 +378,45 @@ _CPP_DEF_NODE_KINDS = (
 _MAX_DECLARATOR_HOPS = 64
 
 
+def _cpp_parenthesized_declarator_wraps_bare_name(node: Any) -> bool:
+    """Return True when a ``parenthesized_declarator`` node's single named child is a bare
+    ``identifier``/``type_identifier``/``field_identifier`` -- i.e. the parens are purely
+    REDUNDANT around a real name (``int (foo)(void);``) -- as opposed to wrapping a
+    ``pointer_declarator``/``array_declarator``/``qualified_identifier``/anything else (the tell
+    for a function-pointer or pointer-to-member-function VARIABLE, e.g. ``void (*handler)(int);``
+    or ``void (C::*mp)(int);``, where the same parenthesized shape instead wraps a
+    ``pointer_declarator`` or a ``qualified_identifier`` -- live-verified against a real
+    tree_sitter_cpp 0.23.4 parse: ``void (C::*mp)(int);``'s ``parenthesized_declarator``'s single
+    named child is a ``qualified_identifier`` node (fields "scope"=``C``, "name"=a
+    ``pointer_type_declarator`` wrapping ``mp``), a node TYPE this function does not special-case
+    -- it does not need to, since a ``qualified_identifier`` is not in the bare-name set either
+    way, so the pointer-to-member-function variable is excluded by the exact same "wraps
+    something other than a bare name" rule as a plain function-pointer variable, with no extra
+    branch required). Ported byte-for-byte from ``lang_c.py``'s
+    ``_c_parenthesized_declarator_wraps_bare_name`` (same tell, same live-verified reasoning) --
+    duplicated rather than imported per this module's no-cross-import convention (see the
+    top-of-file comment). Only a single hop's own wrapped shape is inspected here; a nested
+    ``parenthesized_declarator`` falls through to False like any other non-bare-name wrap, same
+    residual edge case C's own copy documents."""
+    named_children = [child for child in node.children if child.is_named]
+    if len(named_children) != 1:
+        return False
+    return named_children[0].type in {"identifier", "type_identifier", "field_identifier"}
+
+
 def _cpp_declarator_name_node(declarator: Any) -> tuple[Any | None, bool]:
     """Descend a declarator chain to its innermost identifier/type_identifier/field_identifier
-    NAME node, tracking whether the chain passed through a ``function_declarator`` along the way.
+    NAME node, tracking whether the chain passed through a ``function_declarator`` that names a
+    REAL function -- as opposed to a file-scope (or pointer-to-member) function-pointer
+    VARIABLE's declarator, which is also ``function_declarator``-shaped but must NOT set this
+    signal (see ``lang_c.py``'s ``_c_declarator_name_node`` docstring for the full explanation of
+    the underlying tell, unchanged here: a real function's ``function_declarator`` has its own
+    "declarator" field as a bare name -- directly, nested under a return-type
+    ``pointer_declarator``, or wrapped in REDUNDANT parens around a bare name -- while a
+    function-pointer/pointer-to-member-function VARIABLE's ``function_declarator`` instead has
+    its own "declarator" field as a ``parenthesized_declarator`` wrapping something OTHER than a
+    bare name. The boolean is never force-reset True->False, so a function that itself RETURNS a
+    function pointer still resolves True via its own INNER ``function_declarator`` hop).
 
     Extends ``lang_c.py``'s ``_c_declarator_name_node`` with ONE new branch (``qualified_
     identifier`` -> follow "name", never "scope") -- see the module docstring's "DECLARATOR NAME
@@ -399,20 +435,33 @@ def _cpp_declarator_name_node(declarator: Any) -> tuple[Any | None, bool]:
         hops += 1
         if current.type in {"identifier", "type_identifier", "field_identifier"}:
             return current, seen_function
+        next_node = current.child_by_field_name("declarator")
         if current.type == "function_declarator":
-            seen_function = True
+            # A `parenthesized_declarator` hop is not by itself the function-pointer-variable
+            # tell -- a redundant-paren prototype (`int (foo)(void);`) has one too, wrapping a
+            # bare identifier. Only a paren wrap around something ELSE (`pointer_declarator`,
+            # `qualified_identifier` for a pointer-to-member, ...) is the real tell (see the
+            # docstring). Not force-resetting `seen_function` to False here is deliberate: it lets
+            # a function that returns a function pointer still resolve True via its own (inner)
+            # function_declarator hop.
+            is_variable_shaped_parens = (
+                next_node is not None
+                and next_node.type == "parenthesized_declarator"
+                and not _cpp_parenthesized_declarator_wraps_bare_name(next_node)
+            )
+            if not is_variable_shaped_parens:
+                seen_function = True
         if current.type == "qualified_identifier":
             # Foo::bar / app::Thing::compute / Box<T>::get -- take the RHS "name" field (which
             # may itself be another qualified_identifier for a nested namespace::class chain, or
             # a destructor_name/operator_name leaf); NEVER the "scope" field (which may be a
             # template_type for a templated out-of-class method -- its <T> arguments must never
             # leak into the extracted name).
-            next_node = current.child_by_field_name("name")
-            if next_node is not None:
-                current = next_node
+            name_node = current.child_by_field_name("name")
+            if name_node is not None:
+                current = name_node
                 continue
             return None, seen_function
-        next_node = current.child_by_field_name("declarator")
         if next_node is not None:
             current = next_node
             continue
