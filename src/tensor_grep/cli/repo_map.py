@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Literal, NamedTuple, TypeVar, cast
 from urllib.parse import unquote, urlparse
 
-from tensor_grep.cli import lang_c, lang_csharp, lang_go, lang_php, lang_registry
+from tensor_grep.cli import lang_c, lang_cpp, lang_csharp, lang_go, lang_php, lang_registry
 from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager, LSPTransportError
 from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
 
@@ -266,6 +266,10 @@ _JS_TS_SUFFIXES = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
 _TS_SUFFIXES = {".ts", ".tsx"}
 _RUST_SUFFIXES = {".rs"}
 _JAVA_SUFFIXES = {".java"}
+# Top-10 language campaign (Phase 2, C++): matches lang_cpp.py's LanguageSpec.suffixes AND
+# _provider_language_for_path's pre-existing "cpp" assignment exactly -- ".h" is claimed by C++
+# (not C), see lang_cpp.py's module docstring for the header-ambiguity rationale.
+_CPP_SUFFIXES = {".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"}
 _SOURCE_FIRST_DIR_NAMES = {
     ".claude",
     "app",
@@ -288,9 +292,12 @@ _SOURCE_FIRST_SUFFIXES = {
     ".cpp",
     ".cs",
     ".css",
+    ".cxx",
     ".go",
     ".h",
+    ".hh",
     ".hpp",
+    ".hxx",
     ".java",
     ".js",
     ".jsx",
@@ -6266,6 +6273,60 @@ lang_registry.register_language(
     )
 )
 
+# PATH A Stage 3 (Phase 2 of C/C++): C++ joins the symbol graph as a FOUNDATIONAL-TIER language,
+# closing the top-10 language-support campaign to 10/10. Own module (lang_cpp.py) for the same
+# no-import-cycle reason as C/Go/PHP/C# -- a SEPARATE LanguageSpec + grammar package
+# (tree-sitter-cpp) from C's, mirroring the shipped JS/TS "two specs, not one mode flag"
+# precedent (``_SPEC_BY_SUFFIX`` is a flat suffix->ONE-spec dict, so ".h" cannot belong to both).
+# FOUNDATIONAL scope only -- defs/source/imports/agent via `extract_imports_and_symbols`-shaped
+# extraction, wired at the `_imports_and_symbols_for_path` / `build_symbol_source_from_map`
+# dispatch sites below. The cross-file caller-graph (references_and_calls /
+# file_imports_symbol_from_definition / import_update_target / repo-root context priming for a
+# future `#include`-path resolver) is DEFERRED to a follow-up -- all four stay None here, same
+# shape as C/Go/PHP/C#'s own `import_update_target=None` gap, so `tg refs`/`tg callers`/`tg
+# blast-radius` on a C++ symbol fall through to the generic `_regex_references_and_calls`
+# text-heuristic path instead of crashing or fabricating an AST-verified match.
+# provenance_when_missing="grammar-missing" (NOT "regex-heuristic") is what makes a
+# grammar-absent C++ file a genuine `resolution_gaps` entry instead of a silent empty result
+# (C++ has no regex fallback, unlike JS/TS/Rust).
+#
+# ".h" IS in suffixes here (unlike lang_c.py, which deliberately excludes it) --
+# `_provider_language_for_path` (below) ALREADY assigns every C/C++ header suffix to "cpp"
+# (tree-sitter-cpp is a strict grammar superset of C), so this module is the pre-existing,
+# forced owner of ".h"/".hh"/".hpp"/".hxx" as well as ".cc"/".cpp"/".cxx". See lang_cpp.py's
+# module docstring for the full header-ambiguity rationale.
+lang_registry.register_language(
+    lang_registry.LanguageSpec(
+        language_id="cpp",
+        suffixes=frozenset(_CPP_SUFFIXES),
+        grammar_modules=("tree_sitter", "tree_sitter_cpp"),
+        parser_for_path=lambda path: lang_cpp._cpp_parser(),
+        provenance_when_parsed="tree-sitter",
+        provenance_when_missing="grammar-missing",
+        import_markers=(b"#include",),
+        def_node_kinds=(
+            "function_definition",
+            "declaration",
+            "field_declaration",
+            "class_specifier",
+            "struct_specifier",
+            "union_specifier",
+            "enum_specifier",
+            "namespace_definition",
+            "template_declaration",
+            "type_definition",
+            "alias_declaration",
+        ),
+        extract_imports_and_symbols=None,
+        references_and_calls=None,
+        provider_alias_calls=None,
+        file_imports_symbol_from_definition=None,
+        import_update_target=None,
+        prime_repo_context=None,
+        classify_ref_kind=None,
+    )
+)
+
 
 def _prime_all_language_repo_contexts(context_root: Path) -> None:
     """Prime every registered language's per-repo-root context exactly once.
@@ -6335,6 +6396,11 @@ def _imports_and_symbols_for_path(
             # Fail-closed (Stage 1 trap, same as Go): NO regex fallback for C. A grammar-missing
             # .c file returns ([], []) here -- surfaced honestly via `resolution_gaps`.
             current_imports, current_symbols = lang_c.c_imports_and_symbols(path)
+        elif spec is not None and spec.language_id == "cpp":
+            # Fail-closed (Stage 1 trap, same as Go/C): NO regex fallback for C++ either. A
+            # grammar-missing C++ file returns ([], []) here -- surfaced honestly via
+            # `resolution_gaps`.
+            current_imports, current_symbols = lang_cpp.cpp_imports_and_symbols(path)
         elif not current_imports and not current_symbols:
             current_imports, current_symbols = _regex_imports_and_symbols(path)
         return current_imports, current_symbols
@@ -6488,7 +6554,7 @@ def _rust_imports_with_lines(path: Path) -> list[dict[str, Any]]:
 
 
 def _imports_with_lines_for_path(path: Path) -> list[dict[str, Any]]:
-    """Raw per-statement imports with 1-based line numbers for the 9 supported languages.
+    """Raw per-statement imports with 1-based line numbers for the 10 supported languages.
 
     Returns ``[]`` for an unsupported language (e.g. Kotlin) or an over-cap file -- callers that
     need to distinguish "genuinely no imports" from "not scanned" must check those conditions
@@ -6505,11 +6571,11 @@ def _imports_with_lines_for_path(path: Path) -> list[dict[str, Any]]:
         return _rust_imports_with_lines(path)
     if spec.language_id == "java":
         return _java_imports_with_lines(path)
-    if spec.language_id in ("go", "php", "csharp", "c"):
-        # go/php/csharp/c's own extractors (lang_go.py/lang_php.py/lang_csharp.py/lang_c.py)
-        # mirror their `_X_imports_and_symbols` siblings, which get this SAME cap check for free
-        # from THEIR caller (`_imports_and_symbols_for_path`, above) rather than self-guarding --
-        # applied here once, at this dispatcher, for the identical reason.
+    if spec.language_id in ("go", "php", "csharp", "c", "cpp"):
+        # go/php/csharp/c/cpp's own extractors (lang_go.py/lang_php.py/lang_csharp.py/lang_c.py/
+        # lang_cpp.py) mirror their `_X_imports_and_symbols` siblings, which get this SAME cap
+        # check for free from THEIR caller (`_imports_and_symbols_for_path`, above) rather than
+        # self-guarding -- applied here once, at this dispatcher, for the identical reason.
         try:
             file_size = path.stat().st_size
         except OSError:
@@ -6522,7 +6588,9 @@ def _imports_with_lines_for_path(path: Path) -> list[dict[str, Any]]:
             return lang_php.php_imports_with_lines(path)
         if spec.language_id == "csharp":
             return lang_csharp.csharp_imports_with_lines(path)
-        return lang_c.c_imports_with_lines(path)
+        if spec.language_id == "c":
+            return lang_c.c_imports_with_lines(path)
+        return lang_cpp.cpp_imports_with_lines(path)
     return []
 
 
@@ -7464,10 +7532,16 @@ def _target_language_for_path(path: str | Path | None) -> str | None:
         return "csharp"
     if suffix == ".c":
         # Same MOST-FORGOTTEN seam, now for C (PATH A Stage 3, top-10 language campaign). Note
-        # ".h" is deliberately absent here -- it stays unregistered until a future lang_cpp.py
-        # claims it (see lang_c.py's module docstring's header-ambiguity note); this branch must
-        # match ONLY the suffixes lang_c.py's LanguageSpec actually registers.
+        # ".h" is deliberately absent here -- lang_cpp.py (below) is the registered owner of
+        # every C/C++ header suffix (see lang_c.py's module docstring's header-ambiguity note);
+        # this branch must match ONLY the suffixes lang_c.py's LanguageSpec actually registers.
         return "c"
+    if suffix in _CPP_SUFFIXES:
+        # Same MOST-FORGOTTEN seam, now for C++ (PATH A Stage 3, Phase 2 -- closes the top-10
+        # language campaign to 10/10). Must match lang_cpp.py's LanguageSpec.suffixes AND
+        # _provider_language_for_path's pre-existing "cpp" assignment exactly, or
+        # test_target_and_provider_language_agree_with_registry fails.
+        return "cpp"
     return None
 
 
@@ -15918,6 +15992,8 @@ def build_symbol_source_from_map(
                 current_sources = lang_csharp.csharp_parser_symbol_sources(current_path, symbol)
             if not current_sources and current_path.suffix == ".c":
                 current_sources = lang_c.c_parser_symbol_sources(current_path, symbol)
+            if not current_sources and current_path.suffix in _CPP_SUFFIXES:
+                current_sources = lang_cpp.cpp_parser_symbol_sources(current_path, symbol)
             if not current_sources:
                 current_sources = _regex_symbol_sources(current_path, symbol)
             sources.extend(current_sources)
@@ -16708,12 +16784,14 @@ _SUPPORTED_FILE_DEPENDENCY_LANGUAGES = frozenset({
     "go",
     "php",
     "csharp",
-    # Top-10 language campaign (Phase 1, C only -- C++ is a separate follow-up): raw `#include`
-    # directives + line numbers via lang_c.c_imports_with_lines, `_resolve_raw_import_entry`
-    # reporting them honestly unresolved. TRUE `#include` -> file resolution is deferred and
-    # harder than go/php/csharp's own deferred resolvers -- C has no standardized manifest
-    # (no go.mod/composer.json/.csproj equivalent) to resolve against; see docs/BACKLOG.md.
+    # Top-10 language campaign (Phase 1, C; Phase 2, C++ -- closes the campaign to 10/10): raw
+    # `#include` directives + line numbers via lang_c.c_imports_with_lines /
+    # lang_cpp.cpp_imports_with_lines, `_resolve_raw_import_entry` reporting them honestly
+    # unresolved. TRUE `#include` -> file resolution is deferred and harder than go/php/csharp's
+    # own deferred resolvers -- C/C++ have no standardized manifest (no
+    # go.mod/composer.json/.csproj equivalent) to resolve against; see docs/BACKLOG.md.
     "c",
+    "cpp",
 })
 
 
@@ -16786,23 +16864,23 @@ def _resolve_raw_import_entry(
         # dynamic_unresolved branch above uses -- rather than guessing (never fabricate
         # resolution precision this extractor doesn't actually have).
         resolved, external, provenance, confidence = None, False, [], 0.0
-    elif language_id in ("go", "php", "csharp", "c"):
+    elif language_id in ("go", "php", "csharp", "c", "cpp"):
         # Foundational tier (mirrors the "java" branch above): raw import statements are
         # extracted with their line numbers (see lang_go.go_imports_with_lines /
         # lang_php.php_imports_with_lines / lang_csharp.csharp_imports_with_lines /
-        # lang_c.c_imports_with_lines), but resolving WHICH file/module an import points to is
-        # deferred -- each of these four needs DIFFERENT missing machinery: go's existing
-        # `_go_import_path_to_dir` resolves to a PACKAGE DIRECTORY, not a file (no 1:1
-        # import-to-file mapping to wire); php has no PSR-4/composer.json autoload-map reader;
-        # csharp has no `.csproj`/namespace-to-file map; c has no standardized manifest at all
-        # (no go.mod/composer.json/.csproj equivalent) -- a bare `#include "foo.h"` needs the
-        # including file's own directory plus the compiler's `-iquote`/`-I` search order, and a
-        # bare `#include <foo.h>` is ENTIRELY build-system/toolchain defined, not in the source
-        # at all (see lang_c.py's module docstring). None of that resolver machinery exists yet
-        # for any of the four. Report as unresolved-but-not-presumed-external -- the same
-        # conservative tuple every other "resolution not yet built" branch in this function uses
-        # -- rather than guessing (never fabricate resolution precision these extractors don't
-        # actually have).
+        # lang_c.c_imports_with_lines / lang_cpp.cpp_imports_with_lines), but resolving WHICH
+        # file/module an import points to is deferred -- each of these five needs DIFFERENT
+        # missing machinery: go's existing `_go_import_path_to_dir` resolves to a PACKAGE
+        # DIRECTORY, not a file (no 1:1 import-to-file mapping to wire); php has no
+        # PSR-4/composer.json autoload-map reader; csharp has no `.csproj`/namespace-to-file map;
+        # c/cpp have no standardized manifest at all (no go.mod/composer.json/.csproj
+        # equivalent) -- a bare `#include "foo.h"` needs the including file's own directory plus
+        # the compiler's `-iquote`/`-I` search order, and a bare `#include <foo.h>` is ENTIRELY
+        # build-system/toolchain defined, not in the source at all (see lang_c.py's and
+        # lang_cpp.py's module docstrings). None of that resolver machinery exists yet for any of
+        # the five. Report as unresolved-but-not-presumed-external -- the same conservative tuple
+        # every other "resolution not yet built" branch in this function uses -- rather than
+        # guessing (never fabricate resolution precision these extractors don't actually have).
         resolved, external, provenance, confidence = None, False, [], 0.0
     else:
         resolved, external, provenance, confidence = None, True, [], 0.0

@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tensor_grep.cli import lang_c, lang_csharp, lang_go, lang_registry, repo_map
+from tensor_grep.cli import lang_c, lang_cpp, lang_csharp, lang_go, lang_registry, repo_map
 
 # ---------------------------------------------------------------------------
 # spec_for_path / graph_suffixes
@@ -48,6 +48,15 @@ def test_spec_for_path_resolves_every_registered_suffix() -> None:
         "foo.php": "php",
         "foo.cs": "csharp",
         "foo.c": "c",
+        # Top-10 language campaign, Phase 2: C++ -- ".h" (and every other C/C++ header suffix)
+        # resolves to "cpp", NOT "c" (see lang_cpp.py's module docstring's header-ambiguity note).
+        "foo.cc": "cpp",
+        "foo.cpp": "cpp",
+        "foo.cxx": "cpp",
+        "foo.h": "cpp",
+        "foo.hh": "cpp",
+        "foo.hpp": "cpp",
+        "foo.hxx": "cpp",
     }
     for name, expected_language in expectations.items():
         spec = lang_registry.spec_for_path(Path(name))
@@ -56,11 +65,11 @@ def test_spec_for_path_resolves_every_registered_suffix() -> None:
 
 
 def test_spec_for_path_unknown_suffix_returns_none() -> None:
-    # PATH A Stage 1/2: .go, .java, and .php are now all REGISTERED languages (see
-    # test_spec_for_path_resolves_every_registered_suffix), so they moved out of this "still
-    # unsupported" list -- .kt/.rb stand in as still-unsupported examples for the
-    # resolution_gaps tests below instead (same substitution each stage made for its own
-    # newly-registered suffix).
+    # PATH A Stage 1/2/3: .go, .java, .php, .c, and .cpp (+ every C/C++ header suffix) are now
+    # all REGISTERED languages (see test_spec_for_path_resolves_every_registered_suffix), so
+    # they moved out of this "still unsupported" list -- .kt/.rb stand in as still-unsupported
+    # examples for the resolution_gaps tests below instead (same substitution each stage made
+    # for its own newly-registered suffix).
     for name in ("foo.kt", "foo.rb", "foo.txt", "foo", "foo.md"):
         assert lang_registry.spec_for_path(Path(name)) is None
 
@@ -80,6 +89,13 @@ def test_graph_suffixes_matches_the_historical_hardcoded_union() -> None:
         ".php",
         ".cs",
         ".c",
+        ".cc",
+        ".cpp",
+        ".cxx",
+        ".h",
+        ".hh",
+        ".hpp",
+        ".hxx",
     })
 
 
@@ -94,6 +110,7 @@ def test_language_registry_has_exactly_the_stage2_languages() -> None:
         "php",
         "csharp",
         "c",
+        "cpp",
     }
 
 
@@ -162,6 +179,11 @@ def test_c_provenance_is_tree_sitter_when_grammar_present() -> None:
     assert repo_map._symbol_navigation_provenance_for_path("foo.c") == "tree-sitter"
 
 
+def test_cpp_provenance_is_tree_sitter_when_grammar_present() -> None:
+    assert repo_map._symbol_navigation_provenance_for_path("foo.cpp") == "tree-sitter"
+    assert repo_map._symbol_navigation_provenance_for_path("foo.h") == "tree-sitter"
+
+
 def test_grammar_absent_monkeypatch_js_ts_provenance_flips_to_regex_heuristic(monkeypatch) -> None:
     """Simulate tree-sitter-javascript/typescript being uninstalled (ImportError inside the
     parser factory returns None, per repo_map._javascript_parser/_typescript_parser). The
@@ -216,6 +238,18 @@ def test_grammar_absent_monkeypatch_c_provenance_flips_to_grammar_missing(monkey
     monkeypatch.setattr(lang_c, "_c_parser", lambda: None)
 
     provenance = repo_map._symbol_navigation_provenance_for_path("foo.c")
+
+    assert provenance == "grammar-missing"
+    assert provenance != ""
+
+
+def test_grammar_absent_monkeypatch_cpp_provenance_flips_to_grammar_missing(monkeypatch) -> None:
+    """C++ has NO regex fallback (Stage 1 fail-closed trap, same as Go/PHP/C#/C): a
+    grammar-absent .cpp/.h file's provenance label must flip to "grammar-missing" (not
+    "regex-heuristic")."""
+    monkeypatch.setattr(lang_cpp, "_cpp_parser", lambda: None)
+
+    provenance = repo_map._symbol_navigation_provenance_for_path("foo.cpp")
 
     assert provenance == "grammar-missing"
     assert provenance != ""

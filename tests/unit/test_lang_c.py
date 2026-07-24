@@ -104,12 +104,17 @@ def test_target_language_for_path_reports_c() -> None:
     assert repo_map._provider_language_for_path("widget.c") == "c"
 
 
-def test_header_suffix_is_deliberately_unregistered() -> None:
-    """`.h` is reserved for a future lang_cpp.py (tree-sitter-cpp is a strict grammar superset of
-    C) -- this module must NOT claim it, or `_target_language_for_path` would disagree with
-    `_provider_language_for_path`'s pre-existing "cpp" assignment for header suffixes."""
-    assert lang_registry.spec_for_path("widget.h") is None
+def test_header_suffix_is_claimed_by_cpp_not_c() -> None:
+    """`.h` is claimed by lang_cpp.py (tree-sitter-cpp is a strict grammar superset of C), NOT by
+    this module -- this module must NOT claim it, or `_target_language_for_path` would disagree
+    with `_provider_language_for_path`'s pre-existing "cpp" assignment for header suffixes. Was
+    "deliberately unregistered" before lang_cpp.py existed (Phase 1 of the top-10 language
+    campaign, #731); now registered under "cpp" (Phase 2, this module's own sibling)."""
+    spec = lang_registry.spec_for_path("widget.h")
+    assert spec is not None
+    assert spec.language_id == "cpp"
     assert repo_map._provider_language_for_path("widget.h") == "cpp"
+    assert repo_map._target_language_for_path("widget.h") == "cpp"
 
 
 # ---------------------------------------------------------------------------
