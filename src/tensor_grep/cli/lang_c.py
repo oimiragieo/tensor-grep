@@ -65,14 +65,18 @@ real parses of plain/pointer/array/function-pointer declarators (including the
 see the module's originating PR description for the exact fixtures probed.
 
 A ``declaration`` node is ambiguous by TYPE ALONE -- it is a function PROTOTYPE
-(``int add(int a, int b);``) or a plain variable declaration (``int counter = 0;``,
-``extern int flag;``) depending purely on whether its declarator chain passes through a
-``function_declarator``. ``_c_declarator_name_node`` also returns that boolean so the extractor
-can gate: only a ``declaration`` whose chain passed through ``function_declarator`` is emitted
-(as kind "function"); a plain variable declaration is silently excluded from the symbol table,
-matching this module's foundational scope (top-level variables are not a tracked symbol kind
-here, mirroring every other ``lang_*.py`` module -- none of them track module-level variables
-either, except Go's explicit ``const_spec``/``var_spec`` kinds, which this module does not add).
+(``int add(int a, int b);``), a file-scope function-pointer VARIABLE (``void (*handler)(int);``),
+or a plain variable declaration (``int counter = 0;``, ``extern int flag;``) depending on its
+declarator shape. ``_c_declarator_name_node`` returns a ``seen_function`` boolean so the
+extractor can gate: only a ``declaration`` whose chain named a REAL function is emitted (as kind
+"function"); a plain variable declaration AND a function-pointer variable are both silently
+excluded from the symbol table, matching this module's foundational scope (top-level variables
+are not a tracked symbol kind here, mirroring every other ``lang_*.py`` module -- none of them
+track module-level variables either, except Go's explicit ``const_spec``/``var_spec`` kinds,
+which this module does not add). "Chain passes through ``function_declarator``" is NOT by itself
+the gate -- a function-pointer variable's chain also passes through one (it is
+``function_declarator``-outermost too); see ``_c_declarator_name_node``'s own docstring for the
+real, live-verified ``parenthesized_declarator`` tell that distinguishes the two.
 A ``struct_specifier``/``union_specifier``/``enum_specifier`` is similarly ambiguous by type
 alone -- ``struct Foo;`` (forward declaration) and ``struct Foo *p`` (usage as a type) both parse
 as the SAME node type with no ``body`` field, indistinguishable from a real definition except by
@@ -168,9 +172,29 @@ _C_DEF_NODE_KINDS = (
 _MAX_DECLARATOR_HOPS = 64
 
 
+def _c_parenthesized_declarator_wraps_bare_name(node: Any) -> bool:
+    """Return True when a ``parenthesized_declarator`` node's single named child is a bare
+    ``identifier``/``type_identifier``/``field_identifier`` -- i.e. the parens are purely
+    REDUNDANT around a real name (``int (foo)(void);``, live-verified: ``function_declarator``'s
+    own "declarator" field is a ``parenthesized_declarator`` wrapping ``identifier`` "foo"
+    directly) -- as opposed to wrapping a ``pointer_declarator``/``array_declarator``/anything
+    else (the tell for a function-pointer or array variable, e.g. ``void (*handler)(int);``,
+    where the same parenthesized shape instead wraps a ``pointer_declarator``). Only a single
+    hop's own wrapped shape is inspected here; a nested ``parenthesized_declarator`` (doubly
+    redundant parens) falls through to False like any other non-bare-name wrap -- a residual,
+    exceedingly rare edge case, not one any live-verified fixture has hit."""
+    named_children = [child for child in node.children if child.is_named]
+    if len(named_children) != 1:
+        return False
+    return named_children[0].type in {"identifier", "type_identifier", "field_identifier"}
+
+
 def _c_declarator_name_node(declarator: Any) -> tuple[Any | None, bool]:
     """Descend a declarator chain to its innermost identifier/type_identifier NAME node, tracking
-    whether the chain passed through a ``function_declarator`` along the way.
+    whether the chain passed through a ``function_declarator`` that names a REAL function --
+    a prototype/definition, or a function that returns a pointer or a function pointer -- as
+    opposed to a file-scope function-pointer VARIABLE's declarator, which is also
+    ``function_declarator``-shaped but must NOT set this signal (see below).
 
     Live-verified against real tree_sitter_c 0.24.2 parses (see the module docstring's
     "DECLARATOR NAME RESOLUTION" section) across every shape this module's callers hit:
@@ -181,6 +205,32 @@ def _c_declarator_name_node(declarator: Any) -> tuple[Any | None, bool]:
     (which, uniquely among these, exposes NO named "declarator" field -- the loop falls back to
     the wrapper's single NAMED child, which resolves through to the inner
     ``pointer_declarator``/name).
+
+    A file-scope function-pointer VARIABLE (``void (*handler)(int);``) is declarator-shaped
+    almost identically to a real function -- its outermost node is ALSO a
+    ``function_declarator`` ("outermost-direct" does NOT distinguish the two; both are
+    outermost-direct). The real, live-verified tell: a REAL function's ``function_declarator``
+    has its own "declarator" FIELD as a bare name -- directly (``void f(int);``), nested one hop
+    under a return-type ``pointer_declarator`` (``int *make_ptr(void);``), OR wrapped in
+    REDUNDANT parens (``int (foo)(void);`` -- ``function_declarator``'s own "declarator" field is
+    a ``parenthesized_declarator`` wrapping ``identifier`` "foo" directly, still a real function,
+    the parens are meaningless noise) -- while a function-pointer VARIABLE's
+    ``function_declarator`` instead has its own "declarator" field as a
+    ``parenthesized_declarator`` wrapping something OTHER than a bare name -- a
+    ``pointer_declarator`` down to the name (the paren-grouped ``(*name)``). So a
+    ``parenthesized_declarator`` hop is not by itself the tell (a redundant-paren prototype has
+    one too); ``_c_parenthesized_declarator_wraps_bare_name`` resolves the ambiguity by checking
+    what it wraps. A hop through the variable-shaped form does not, by itself, mark
+    ``seen_function`` True -- but the boolean is never force-reset to False either, so a function
+    that itself RETURNS a function pointer (``void (*get_handler(int))(int);``, the classic
+    ``signal()`` prototype shape) still resolves correctly: its outer ``function_declarator`` hop
+    is skipped (its parens wrap a ``pointer_declarator``, not a bare name), but the INNER
+    ``function_declarator`` -- the function's own parameter list -- has a bare-identifier
+    declarator field directly (no parens at all), so ``seen_function`` still ends up True from
+    that hop. Live-verified against real tree_sitter_c 0.24.2 parses of all of the above,
+    including the full ``void (*signal(int sig, void (*func)(int)))(int);`` shape (the
+    function-pointer PARAMETER inside is never visited -- only the top-level declarator chain
+    is walked).
 
     Returns ``(None, seen_function)`` if no name-bearing leaf was found (e.g. an abstract
     declarator with no name, such as a bare ``void`` parameter) -- callers must check for
@@ -193,9 +243,22 @@ def _c_declarator_name_node(declarator: Any) -> tuple[Any | None, bool]:
         hops += 1
         if current.type in {"identifier", "type_identifier", "field_identifier"}:
             return current, seen_function
-        if current.type == "function_declarator":
-            seen_function = True
         next_node = current.child_by_field_name("declarator")
+        if current.type == "function_declarator":
+            # A `parenthesized_declarator` hop is not by itself the function-pointer-variable
+            # tell -- a redundant-paren prototype (`int (foo)(void);`) has one too, wrapping a
+            # bare identifier. Only a paren wrap around something ELSE (`pointer_declarator`,
+            # `array_declarator`, ...) is the real tell (see the docstring). Not
+            # force-resetting `seen_function` to False here is deliberate: it lets a function
+            # that returns a function pointer still resolve True via its own (inner)
+            # function_declarator hop.
+            is_variable_shaped_parens = (
+                next_node is not None
+                and next_node.type == "parenthesized_declarator"
+                and not _c_parenthesized_declarator_wraps_bare_name(next_node)
+            )
+            if not is_variable_shaped_parens:
+                seen_function = True
         if next_node is not None:
             current = next_node
             continue
