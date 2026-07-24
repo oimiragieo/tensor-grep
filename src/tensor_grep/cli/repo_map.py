@@ -265,6 +265,7 @@ _VENDOR_CACHE_DIR_COMPONENTS: frozenset[str] = frozenset(
 _JS_TS_SUFFIXES = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
 _TS_SUFFIXES = {".ts", ".tsx"}
 _RUST_SUFFIXES = {".rs"}
+_JAVA_SUFFIXES = {".java"}
 _SOURCE_FIRST_DIR_NAMES = {
     ".claude",
     "app",
@@ -1321,6 +1322,8 @@ def _parser_for_source_suffix(suffix: str) -> Any | None:
         return _javascript_parser()
     if suffix in _RUST_SUFFIXES:
         return _rust_parser()
+    if suffix in _JAVA_SUFFIXES:
+        return _java_parser()
     return None
 
 
@@ -2084,6 +2087,18 @@ def _rust_parser() -> Any | None:
         return None
 
     language = tree_sitter.Language(tree_sitter_rust.language())
+    return tree_sitter.Parser(language)
+
+
+@lru_cache(maxsize=1)
+def _java_parser() -> Any | None:
+    try:
+        import tree_sitter
+        import tree_sitter_java
+    except ImportError:
+        return None
+
+    language = tree_sitter.Language(tree_sitter_java.language())
     return tree_sitter.Parser(language)
 
 
@@ -4497,6 +4512,166 @@ def _rust_parser_symbols(path: Path) -> list[dict[str, Any]]:
     return symbols
 
 
+# PATH A Stage 2: Java's kind map (shared between the symbol extractor below and
+# `_java_parser_symbol_sources`, mirroring the two Rust functions above that each inline their
+# own copy). classes/interfaces/enums/records -> "class"; methods/constructors -> "function",
+# matching the Python convention (`_python_imports_and_symbols` above: ClassDef -> "class",
+# every FunctionDef/AsyncFunctionDef -> "function") rather than Go's separate "method" kind.
+_JAVA_SYMBOL_KIND_MAP: dict[str, str] = {
+    "class_declaration": "class",
+    "interface_declaration": "class",
+    "enum_declaration": "class",
+    "record_declaration": "class",
+    "method_declaration": "function",
+    "constructor_declaration": "function",
+}
+
+# Verified against the real tree-sitter-java grammar (0.23.5): an `import_declaration` node has
+# NO `name` field (unlike class/method/etc.) -- its children are the `import` keyword, an
+# optional `static` keyword, a `scoped_identifier`/`identifier` (optionally followed by a
+# trailing `.` + `asterisk` for a wildcard import), and the closing `;`. Reconstructing the
+# dotted name via node-text + strip is therefore simpler and more robust than chasing child
+# field names, and naturally preserves a trailing `.*` for a wildcard import.
+_JAVA_IMPORT_STRIP_RE = re.compile(r"^import\s+(?:static\s+)?(.*?)\s*;?\s*$", re.DOTALL)
+
+
+def _java_import_declaration_text(node: Any, source_bytes: bytes) -> str:
+    text = _tree_sitter_node_text(source_bytes, node).strip()
+    match = _JAVA_IMPORT_STRIP_RE.match(text)
+    return match.group(1).strip() if match else text
+
+
+def _java_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
+    """Foundational-tier Java extractor: classes/interfaces/enums/records/methods/constructors
+    plus raw import declarations, in ONE tree walk (mirrors `_python_imports_and_symbols`'s
+    combined shape, since Java -- like Python -- has no separate regex-heuristic extractor to
+    split imports from symbols the way the JS/TS/Rust split does).
+
+    Fail-closed like Go (mirrors `_python_imports_and_symbols`'s guard): parser-None or a
+    read/parse error returns ``([], [])``, never a partial regex degrade -- Java has no regex
+    fallback (see the `.java` branch in `_imports_and_symbols_for_path` below).
+    """
+    if path.suffix not in _JAVA_SUFFIXES:
+        return [], []
+
+    parsed = _parsed_source_and_tree(str(path))
+    if parsed is None:
+        return [], []
+    _source, source_bytes, tree = parsed
+
+    imports: list[str] = []
+    symbols: list[dict[str, Any]] = []
+
+    def _node_text(node: Any) -> str:
+        return _tree_sitter_node_text(source_bytes, node)
+
+    def _walk(node: Any) -> None:
+        if node.type == "import_declaration":
+            imports.append(_java_import_declaration_text(node, source_bytes))
+        elif node.type in _JAVA_SYMBOL_KIND_MAP:
+            name_node = node.child_by_field_name("name")
+            if name_node is None:
+                for child in node.children:
+                    if child.type == "identifier":
+                        name_node = child
+                        break
+            if name_node is not None:
+                name = _node_text(name_node)
+                if _is_clean_symbol_name(name):
+                    symbols.append(
+                        _symbol_record(
+                            name=name,
+                            kind=_JAVA_SYMBOL_KIND_MAP[node.type],
+                            file=path,
+                            start_line=node.start_point[0] + 1,
+                            end_line=node.end_point[0] + 1,
+                        )
+                    )
+        for child in node.children:
+            _walk(child)
+
+    _walk(tree.root_node)
+    imports = sorted(dict.fromkeys(imports))
+    symbols.sort(key=lambda item: (item["file"], item["line"], item["kind"], item["name"]))
+    return imports, symbols
+
+
+def _java_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
+    """`tg source` extractor for Java -- exact source block for a named class/interface/enum/
+    record/method/constructor. Mirrors `_rust_parser_symbol_sources` exactly, reusing the shared
+    cached parse product (`_parsed_source_and_tree`) instead of re-parsing directly."""
+    if path.suffix not in _JAVA_SUFFIXES:
+        return []
+
+    parsed = _parsed_source_and_tree(str(path))
+    if parsed is None:
+        return []
+    _source, source_bytes, tree = parsed
+    sources: list[dict[str, Any]] = []
+
+    def _node_text(node: Any) -> str:
+        return _tree_sitter_node_text(source_bytes, node)
+
+    def _walk(node: Any) -> None:
+        if node.type in _JAVA_SYMBOL_KIND_MAP:
+            name_node = node.child_by_field_name("name")
+            if name_node is None:
+                for child in node.children:
+                    if child.type == "identifier":
+                        name_node = child
+                        break
+            if name_node is not None and _node_text(name_node) == symbol:
+                block = _node_text(node)
+                if block and not block.endswith("\n"):
+                    block = f"{block}\n"
+                sources.append({
+                    "name": symbol,
+                    "kind": _JAVA_SYMBOL_KIND_MAP[node.type],
+                    "file": str(path),
+                    "start_line": node.start_point[0] + 1,
+                    "end_line": node.end_point[0] + 1,
+                    "source": block,
+                })
+        for child in node.children:
+            _walk(child)
+
+    _walk(tree.root_node)
+    sources.sort(key=lambda item: (item["file"], item["start_line"], item["kind"], item["name"]))
+    return sources
+
+
+def _java_imports_with_lines(path: Path) -> list[dict[str, Any]]:
+    """`tg imports` extractor for Java -- one row per `import_declaration` STATEMENT with its
+    1-based line number (mirrors `_rust_imports_with_lines`'s shape/role exactly, but tree-sitter
+    -backed rather than regex-backed since Java has no regex fallback)."""
+    if path.suffix not in _JAVA_SUFFIXES:
+        return []
+    try:
+        file_size = path.stat().st_size
+    except OSError:
+        file_size = 0
+    if file_size > _max_parse_bytes():
+        return []
+    parsed = _parsed_source_and_tree(str(path))
+    if parsed is None:
+        return []
+    _source, source_bytes, tree = parsed
+
+    entries: list[dict[str, Any]] = []
+
+    def _walk(node: Any) -> None:
+        if node.type == "import_declaration":
+            entries.append({
+                "module": _java_import_declaration_text(node, source_bytes),
+                "line": node.start_point[0] + 1,
+            })
+        for child in node.children:
+            _walk(child)
+
+    _walk(tree.root_node)
+    return entries
+
+
 def _python_classify_ref_kind(node: ast.AST, parent: ast.AST | None, *, in_annotation: bool) -> str:
     """Classify an already-matched Python Name/Attribute reference node (T1 additive).
 
@@ -5931,6 +6106,43 @@ lang_registry.register_language(
     )
 )
 
+# PATH A Stage 2: Java joins the symbol graph as a FOUNDATIONAL-TIER language -- symbols
+# (classes/interfaces/enums/records/methods/constructors) and raw import declarations flow into
+# build_repo_map / `tg defs` / `tg source` / `tg imports` / `tg agent` via
+# _java_imports_and_symbols / _java_parser_symbol_sources / _java_imports_with_lines. The deep
+# caller-graph tier (references_and_calls, provider_alias_calls,
+# file_imports_symbol_from_definition, import_update_target, prime_repo_context,
+# classify_ref_kind -- cross-file method-call resolution powering `tg callers`/
+# `tg blast-radius`) is intentionally left None here, deferred to a follow-up PR (see the
+# feat/java-symbol-intelligence PR body). provenance_when_missing="grammar-missing" (NOT
+# "regex-heuristic"): Java has no regex fallback, mirroring Go's fail-closed contract.
+lang_registry.register_language(
+    lang_registry.LanguageSpec(
+        language_id="java",
+        suffixes=frozenset({".java"}),
+        grammar_modules=("tree_sitter", "tree_sitter_java"),
+        parser_for_path=lambda path: _java_parser(),
+        provenance_when_parsed="tree-sitter",
+        provenance_when_missing="grammar-missing",
+        import_markers=(b"import ",),
+        def_node_kinds=(
+            "class_declaration",
+            "interface_declaration",
+            "enum_declaration",
+            "record_declaration",
+            "method_declaration",
+            "constructor_declaration",
+        ),
+        extract_imports_and_symbols=_java_imports_and_symbols,
+        references_and_calls=None,
+        provider_alias_calls=None,
+        file_imports_symbol_from_definition=None,
+        import_update_target=None,
+        prime_repo_context=None,
+        classify_ref_kind=None,
+    )
+)
+
 
 def _prime_all_language_repo_contexts(context_root: Path) -> None:
     """Prime every registered language's per-repo-root context exactly once.
@@ -5985,6 +6197,9 @@ def _imports_and_symbols_for_path(
             # returns ([], []) here -- surfaced honestly via `resolution_gaps`, never silently
             # degraded to a text heuristic the way JS/TS/Rust are.
             current_imports, current_symbols = lang_go.go_imports_and_symbols(path)
+        elif spec is not None and spec.language_id == "java":
+            # Fail-closed (same Stage 1 trap as Go): NO regex fallback for Java either.
+            current_imports, current_symbols = _java_imports_and_symbols(path)
         elif not current_imports and not current_symbols:
             current_imports, current_symbols = _regex_imports_and_symbols(path)
         return current_imports, current_symbols
@@ -6138,7 +6353,7 @@ def _rust_imports_with_lines(path: Path) -> list[dict[str, Any]]:
 
 
 def _imports_with_lines_for_path(path: Path) -> list[dict[str, Any]]:
-    """Raw per-statement imports with 1-based line numbers for the 4 supported languages.
+    """Raw per-statement imports with 1-based line numbers for the 5 supported languages.
 
     Returns ``[]`` for an unsupported language (e.g. Go) or an over-cap file -- callers that
     need to distinguish "genuinely no imports" from "not scanned" must check those conditions
@@ -6153,6 +6368,8 @@ def _imports_with_lines_for_path(path: Path) -> list[dict[str, Any]]:
         return _js_ts_imports_with_lines(path)
     if spec.language_id == "rust":
         return _rust_imports_with_lines(path)
+    if spec.language_id == "java":
+        return _java_imports_with_lines(path)
     return []
 
 
@@ -7081,6 +7298,10 @@ def _target_language_for_path(path: str | Path | None) -> str | None:
         # e.g. treating a Go primary file as having "no target language" instead of correctly
         # reporting primary_target_language == "go".
         return "go"
+    if suffix in _JAVA_SUFFIXES:
+        # Same MOST-FORGOTTEN seam, Stage 2: without this, `tg agent`'s capsule never reports
+        # primary_target_language == "java" for a Java target.
+        return "java"
     return None
 
 
@@ -7656,13 +7877,17 @@ def _language_coverage_gaps_for_universe(bounded_files: list[Path]) -> list[dict
     fail-closed with no regex fallback, no usable parser) instead of silently degrading them.
     Zero behavior change for python/javascript/typescript/rust today -- every file with one of
     those suffixes always resolves a spec, so this only ever fires for a language tensor-grep's
-    symbol graph does not yet cover (e.g. .go, .java) that happens to sit in the scan universe.
+    symbol graph does not yet cover (e.g. .kt, .swift) that happens to sit in the scan universe.
 
     Also covers a NARROWER partial-capability gap (audit #81 #4): a language can be fully
     registered with a working parser (defs/refs/callers all resolve normally) yet still have
-    ``LanguageSpec.import_update_target is None`` -- Go today. Before this fix, that combination
-    fell through the two branches above straight to ``continue``, so a Go-only repo with the
-    grammar installed reported an EMPTY ``resolution_gaps`` even though
+    ``LanguageSpec.import_update_target is None`` -- Go today (PATH A Stage 2: Java hits this
+    same branch too, but for Java refs/callers are not just import-resolution-incomplete, they
+    are UNIMPLEMENTED entirely -- foundational tier only, see the Java LanguageSpec registration
+    above; `tg refs`/`tg callers` simply find nothing in a Java file rather than resolving
+    normally). Before this fix, that combination fell through the two branches above straight to
+    ``continue``, so a Go-only repo with the grammar installed reported an EMPTY
+    ``resolution_gaps`` even though
     ``_build_import_graph_consumers_from_map`` can never produce a single reverse-import edge for
     it -- indistinguishable from "genuinely has zero import-graph consumers". The third branch
     below flags that combination explicitly so `tg callers`/`tg blast-radius` stay honest about
@@ -15519,6 +15744,8 @@ def build_symbol_source_from_map(
                 current_sources = _rust_parser_symbol_sources(current_path, symbol)
             if not current_sources and current_path.suffix == ".go":
                 current_sources = lang_go.go_parser_symbol_sources(current_path, symbol)
+            if not current_sources and current_path.suffix in _JAVA_SUFFIXES:
+                current_sources = _java_parser_symbol_sources(current_path, symbol)
             if not current_sources:
                 current_sources = _regex_symbol_sources(current_path, symbol)
             sources.extend(current_sources)
@@ -16291,7 +16518,13 @@ def _infer_project_root(file_path: Path) -> Path:
     return current
 
 
-_SUPPORTED_FILE_DEPENDENCY_LANGUAGES = frozenset({"python", "javascript", "typescript", "rust"})
+_SUPPORTED_FILE_DEPENDENCY_LANGUAGES = frozenset({
+    "python",
+    "javascript",
+    "typescript",
+    "rust",
+    "java",
+})
 
 
 def _resolve_raw_import_entry(
@@ -16354,6 +16587,15 @@ def _resolve_raw_import_entry(
             if tagged_provenance is not None:
                 provenance = [tagged_provenance]
         confidence = float(candidate_info["confidence"]) if resolved is not None else 0.0
+    elif language_id == "java":
+        # Foundational tier (symbols+imports only): raw import statements are extracted and
+        # reported with their line numbers (see _java_imports_with_lines), but resolving WHICH
+        # file/module an import points to is cross-file resolution machinery (mirrors Rust/JS/
+        # Python's own `_*_module_candidates` helpers) deferred to a follow-up PR. Report as
+        # unresolved-but-not-presumed-external -- the same conservative tuple the
+        # dynamic_unresolved branch above uses -- rather than guessing (never fabricate
+        # resolution precision this extractor doesn't actually have).
+        resolved, external, provenance, confidence = None, False, [], 0.0
     else:
         resolved, external, provenance, confidence = None, True, [], 0.0
 

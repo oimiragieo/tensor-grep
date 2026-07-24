@@ -44,6 +44,7 @@ def test_spec_for_path_resolves_every_registered_suffix() -> None:
         "foo.tsx": "typescript",
         "foo.rs": "rust",
         "foo.go": "go",
+        "foo.java": "java",
     }
     for name, expected_language in expectations.items():
         spec = lang_registry.spec_for_path(Path(name))
@@ -56,7 +57,10 @@ def test_spec_for_path_unknown_suffix_returns_none() -> None:
     # test_spec_for_path_resolves_every_registered_suffix), so it moved out of this "still
     # unsupported" list -- .rb stands in as the still-unsupported example for the resolution_gaps
     # tests below instead.
-    for name in ("foo.java", "foo.rb", "foo.txt", "foo", "foo.md"):
+    # PATH A Stage 2: .java is now a REGISTERED language too (foundational tier: symbols +
+    # imports, see tests/unit/test_lang_java.py) -- .kt stands in as a second still-unsupported
+    # example, same substitution Stage 1 made for .go.
+    for name in ("foo.kt", "foo.rb", "foo.txt", "foo", "foo.md"):
         assert lang_registry.spec_for_path(Path(name)) is None
 
 
@@ -71,16 +75,18 @@ def test_graph_suffixes_matches_the_historical_hardcoded_union() -> None:
         ".tsx",
         ".rs",
         ".go",
+        ".java",
     })
 
 
-def test_language_registry_has_exactly_the_stage1_languages() -> None:
+def test_language_registry_has_exactly_the_stage2_languages() -> None:
     assert set(lang_registry.LANGUAGE_REGISTRY.keys()) == {
         "python",
         "javascript",
         "typescript",
         "rust",
         "go",
+        "java",
     }
 
 
@@ -185,22 +191,26 @@ def test_grammar_absent_monkeypatch_go_provenance_flips_to_grammar_missing(monke
 
 def _write_python_symbol_plus_unsupported_language_file(tmp_path: Path) -> tuple[Path, Path]:
     # PATH A Stage 1: .go moved from "unsupported" to "registered" (it has its own LanguageSpec
-    # now), so .java stands in here instead -- still genuinely unregistered, AND (like .go
-    # before it) already a member of _SOURCE_FIRST_SUFFIXES, so it actually enters the
-    # refs/callers scan universe (a suffix outside that set, e.g. .rb, would be invisible to
-    # the scan and never produce a gap at all). This fixture is about the resolution_gaps floor
-    # for a language tensor-grep does NOT yet cover.
+    # now), so .java stood in here instead. PATH A Stage 2: .java ALSO moved to "registered"
+    # (foundational tier: symbols + imports, see tests/unit/test_lang_java.py) -- .kt stands in
+    # now, still genuinely unregistered, AND (like .go and .java before it) already a member of
+    # _SOURCE_FIRST_SUFFIXES, so it actually enters the refs/callers scan universe (a suffix
+    # outside that set, e.g. .rb, would be invisible to the scan and never produce a gap at
+    # all). This fixture is about the resolution_gaps floor for a language tensor-grep does NOT
+    # yet cover at all (contrast with Java's own PARTIAL-capability gap, covered separately in
+    # test_lang_java.py's test_refs_and_callers_never_crash_and_flag_java_as_import_resolution_
+    # gap).
     py_path = tmp_path / "target.py"
     py_path.write_text(
         "def Target():\n    return 1\n\n\ndef caller():\n    return Target()\n",
         encoding="utf-8",
     )
-    java_path = tmp_path / "Helper.java"
-    java_path.write_text(
-        "class Helper {\n  void helper() { Target(); }\n}\n",
+    kt_path = tmp_path / "Helper.kt"
+    kt_path.write_text(
+        "class Helper {\n  fun helper() { Target() }\n}\n",
         encoding="utf-8",
     )
-    return py_path, java_path
+    return py_path, kt_path
 
 
 def test_refs_emits_resolution_gaps_for_unsupported_language_file(tmp_path: Path) -> None:
@@ -211,11 +221,11 @@ def test_refs_emits_resolution_gaps_for_unsupported_language_file(tmp_path: Path
     assert not payload.get("no_match")
     assert "resolution_gaps" in payload
     gaps = payload["resolution_gaps"]
-    assert any(gap["language"] == "java" for gap in gaps)
-    java_gap = next(gap for gap in gaps if gap["language"] == "java")
-    assert java_gap["files_affected"] >= 1
-    assert java_gap["reason"]
-    assert java_gap["remediation"]
+    assert any(gap["language"] == "kotlin" for gap in gaps)
+    kt_gap = next(gap for gap in gaps if gap["language"] == "kotlin")
+    assert kt_gap["files_affected"] >= 1
+    assert kt_gap["reason"]
+    assert kt_gap["remediation"]
     # Additive-only: existing fields must still be present and shaped as before.
     assert "coverage_summary" in payload
     assert "references" in payload
@@ -229,7 +239,7 @@ def test_callers_emits_resolution_gaps_for_unsupported_language_file(tmp_path: P
     assert not payload.get("no_match")
     assert "resolution_gaps" in payload
     gaps = payload["resolution_gaps"]
-    assert any(gap["language"] == "java" for gap in gaps)
+    assert any(gap["language"] == "kotlin" for gap in gaps)
     assert "coverage_summary" in payload
     assert "callers" in payload
 

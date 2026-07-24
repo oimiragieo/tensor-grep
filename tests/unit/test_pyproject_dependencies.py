@@ -41,6 +41,16 @@ def test_ast_dev_bench_extras_include_tree_sitter_go_for_path_a_stage1() -> None
         assert "tree-sitter-go" in deps[extra_name], f"tree-sitter-go missing from [{extra_name}]"
 
 
+def test_ast_dev_bench_extras_include_tree_sitter_java_for_path_a_stage2() -> None:
+    # PATH A Stage 2 (Java symbol graph, foundational tier -- symbols + imports): same rule as
+    # Stage 1's tree-sitter-go above, one extra later.
+    deps = _optional_dependencies()
+    for extra_name in ("ast", "dev", "bench"):
+        assert "tree-sitter-java" in deps[extra_name], (
+            f"tree-sitter-java missing from [{extra_name}]"
+        )
+
+
 def test_ast_extra_pins_pygls_floor_matching_lsp_server_import() -> None:
     # cli/lsp_server.py imports `from pygls.lsp.server import LanguageServer`, a module path
     # that exists only in pygls 2.x (pygls 1.x has no `pygls.lsp.server` module at all -- its
