@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Literal, NamedTuple, TypeVar, cast
 from urllib.parse import unquote, urlparse
 
-from tensor_grep.cli import lang_go, lang_php, lang_registry
+from tensor_grep.cli import lang_csharp, lang_go, lang_php, lang_registry
 from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager, LSPTransportError
 from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
 
@@ -6180,6 +6180,46 @@ lang_registry.register_language(
     )
 )
 
+# PATH A Stage 1 (second expansion, alongside Go): C# gets its own module (lang_csharp.py) for
+# the same no-import-cycle reason as Go. FOUNDATIONAL scope only -- defs/source/imports/agent
+# via `extract_imports_and_symbols`-shaped extraction, wired at the `_imports_and_symbols_for_path`
+# / `build_symbol_source_from_map` dispatch sites below. The cross-file caller-graph
+# (references_and_calls / file_imports_symbol_from_definition / import_update_target / repo-root
+# context priming for a future .csproj/namespace resolver) is DEFERRED to a follow-up -- all four
+# stay None here, same shape as Go's own `import_update_target=None` gap, so `tg refs`/`tg
+# callers`/`tg blast-radius` on a C# symbol fall through to the generic
+# `_regex_references_and_calls` text-heuristic path instead of crashing or fabricating an
+# AST-verified match. provenance_when_missing="grammar-missing" (NOT "regex-heuristic") is what
+# makes a grammar-absent C# file a genuine `resolution_gaps` entry instead of a silent empty
+# result (C# has no regex fallback, unlike JS/TS/Rust).
+lang_registry.register_language(
+    lang_registry.LanguageSpec(
+        language_id="csharp",
+        suffixes=frozenset({".cs"}),
+        grammar_modules=("tree_sitter", "tree_sitter_c_sharp"),
+        parser_for_path=lambda path: lang_csharp._csharp_parser(),
+        provenance_when_parsed="tree-sitter",
+        provenance_when_missing="grammar-missing",
+        import_markers=(b"using ",),
+        def_node_kinds=(
+            "class_declaration",
+            "interface_declaration",
+            "struct_declaration",
+            "enum_declaration",
+            "record_declaration",
+            "method_declaration",
+            "constructor_declaration",
+        ),
+        extract_imports_and_symbols=None,
+        references_and_calls=None,
+        provider_alias_calls=None,
+        file_imports_symbol_from_definition=None,
+        import_update_target=None,
+        prime_repo_context=None,
+        classify_ref_kind=None,
+    )
+)
+
 
 def _prime_all_language_repo_contexts(context_root: Path) -> None:
     """Prime every registered language's per-repo-root context exactly once.
@@ -6241,6 +6281,10 @@ def _imports_and_symbols_for_path(
             # Fail-closed (Stage 1 trap, same as Go): NO regex fallback for PHP either -- see
             # lang_php.py's module docstring.
             current_imports, current_symbols = lang_php.php_imports_and_symbols(path)
+        elif spec is not None and spec.language_id == "csharp":
+            # Fail-closed (Stage 1 trap, same as Go): NO regex fallback for C#. A grammar-missing
+            # .cs file returns ([], []) here -- surfaced honestly via `resolution_gaps`.
+            current_imports, current_symbols = lang_csharp.csharp_imports_and_symbols(path)
         elif not current_imports and not current_symbols:
             current_imports, current_symbols = _regex_imports_and_symbols(path)
         return current_imports, current_symbols
@@ -7347,6 +7391,9 @@ def _target_language_for_path(path: str | Path | None) -> str | None:
         # MOST-FORGOTTEN seam (see the ".go" branch above) -- same fix, same reason, for PHP's
         # Stage 1 registration.
         return "php"
+    if suffix == ".cs":
+        # Same MOST-FORGOTTEN seam, now for C# (PATH A Stage 1, second expansion).
+        return "csharp"
     return None
 
 
@@ -15793,6 +15840,8 @@ def build_symbol_source_from_map(
                 current_sources = _java_parser_symbol_sources(current_path, symbol)
             if not current_sources and current_path.suffix == ".php":
                 current_sources = lang_php.php_parser_symbol_sources(current_path, symbol)
+            if not current_sources and current_path.suffix == ".cs":
+                current_sources = lang_csharp.csharp_parser_symbol_sources(current_path, symbol)
             if not current_sources:
                 current_sources = _regex_symbol_sources(current_path, symbol)
             sources.extend(current_sources)
