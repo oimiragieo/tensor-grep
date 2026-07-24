@@ -1,6 +1,93 @@
 # CHANGELOG
 
 
+## v1.98.2 (2026-07-24)
+
+### Bug Fixes
+
+- **lang-c**: Exclude file-scope function-pointer variables (were mis-kinded "function")
+  ([#736](https://github.com/oimiragieo/tensor-grep/pull/736),
+  [`226d887`](https://github.com/oimiragieo/tensor-grep/commit/226d8879a3eadfcec20fba1106fcd7f4b3398f51))
+
+* fix(lang-c): exclude file-scope function-pointer variables (were mis-kinded "function")
+
+A file-scope C function-pointer VARIABLE (e.g. `void (*handler)(int);`) was mis-kinded "function" in
+  the symbol table. `_c_declarator_name_node` set `seen_function=True` whenever a
+  `function_declarator` appeared anywhere in the declarator chain -- but a function-pointer
+  variable's chain also passes through `function_declarator` (it is outermost-direct too, same as a
+  real prototype). Live-verified against a real tree-sitter-c 0.24.2 AST dump: the real tell is
+  whether that `function_declarator`'s own `declarator` field is a bare name (real function) or a
+  `parenthesized_declarator` (function-pointer variable). The boolean is never force-reset to False,
+  so a function that itself returns a function pointer (the `signal()` prototype shape) still
+  resolves correctly via its own nested function_declarator.
+
+TDD: 6-shape declarator matrix + 1 bonus regression guard added to test_lang_c.py, confirmed RED on
+  the bug shape before the fix, GREEN after (33/33 in test_lang_c.py; 161/161 across all
+  lang_*/registry tests; 173/173 repo_map+skill_index_sync; 128/128 agent_capsule).
+
+* fix(lang-c): distinguish redundant-paren prototypes from function-pointer variables
+
+Independent Opus gate on PR #736 caught a regression in the first cut: `int (foo)(void);` (a real
+  function prototype with meaningless redundant parens around the name) was wrongly excluded. Its
+  `function_declarator`'s own `declarator` field is a `parenthesized_declarator` -- the exact same
+  node type the shape-4 fix uses as its exclusion signal -- but here it wraps a bare `identifier`
+  directly, not a `pointer_declarator`. "Hop is `parenthesized_declarator`" is not by itself the
+  tell; what it WRAPS is.
+
+Adds `_c_parenthesized_declarator_wraps_bare_name`: True when the parenthesized wrap's single named
+  child is a bare identifier/type_identifier/field_identifier (redundant parens, still a real
+  function) vs. anything else (pointer_declarator/array_declarator/etc, the function-pointer or
+  array variable tell). `_c_declarator_name_node` now only withholds `seen_function=True` on a
+  parenthesized hop when that helper returns False.
+
+Live-verified against real tree-sitter-c 0.24.2 parses of all 4 gate-named shapes plus 3 sanity
+  baselines before coding (script + direct end-to-end calls against the real function, not
+  hand-traced): redundant-paren prototype, the get_handler trap, the full `signal()` prototype (both
+  named and abstract/unnamed parameter forms -- confirms the abstract_* parameter node types never
+  interfere, since only the top-level declarator chain is walked), and the original
+  function-pointer-variable bug (still excluded).
+
+Adds shape 7 (redundant-paren prototype) to the declarator-shape matrix, plus a dedicated test for
+  the full signal()-with-function-pointer-parameter shape. Full re-verification: 35/35
+  test_lang_c.py, 163/163 lang_*/registry sweep, 173/173 repo_map+skill_index_sync, 128/128
+  agent_capsule -- zero regressions.
+
+### Documentation
+
+- **backlog**: Reconcile to v1.98.1 (top-10 symbol-graph complete + coverage-fix)
+  ([#735](https://github.com/oimiragieo/tensor-grep/pull/735),
+  [`e920bf0`](https://github.com/oimiragieo/tensor-grep/commit/e920bf009853b7841cdd49a3ccd54bf5053d66ac))
+
+Reconciles docs/BACKLOG.md's stale "Last refreshed 2026-07-22 (post-v1.93.2)" receipt (narrating
+  only up to v1.93.9) to the current shipped head, v1.98.1.
+
+Every version->PR->feature claim below was verified against `git log origin/main`, tag commits, and
+  `gh pr view <N>` before writing it (per the sequential-drain-drift lesson) -- see the task report
+  for the full verified map and the one honesty correction made along the way (an ambiguous "none of
+  the 5" backreference in the CEO-FACING language-expansion bullet, tightened for clarity).
+
+- v1.93.10 -- #723 validation-scan optimization (~68% faster, byte-identical, microbench-verified;
+  the ~68% figure is sourced from AGENTS.md's own optimization receipt, not the PR body's "measured
+  headroom" framing). - v1.94.0 -- #725 Java symbol-graph (foundational tier). - v1.95.0 -- #724 PHP
+  symbol-graph (foundational tier). - v1.96.0 -- #726 C# symbol-graph (foundational tier). - v1.96.1
+  -- #728 file-dependency foundational tier for go/php/csharp (imports-with- lines,
+  honest-unresolved) + non-releasing docs #729/#730. - v1.97.0 -- #731 C symbol-graph (foundational
+  tier). - v1.98.0 -- #732 C++ symbol-graph (foundational tier) -- TOP-10 SYMBOL-GRAPH COMPLETE:
+  py/js/ts/java/c#/c++/c/go/rust/php. - v1.98.1 -- #733 coverage.language_scope honesty fix + #734
+  same-day fix for the importers-payload-ratio invariant #733's larger envelope tripped. -
+  Non-releasing capture work: #727 (AGENTS.md/CLAUDE.md/skill-index updates).
+
+Honesty caveats carried through: java/c#/php/c/cpp are FOUNDATIONAL tier (defs + imports,
+  regex-fallback refs) vs the parser-backed refs/callers on py/js/ts/rust/go; true C/C++ #include
+  resolution and true go/php/csharp import->file resolution stay BACKLOG (no manifest); the C
+  function-pointer-variable mis-kinding and the C++ `class MACRO Name` misparse are recorded as
+  known limitations, not TODOs; #48 stays CEO-gated/open, the rest of the CEO-gated list is
+  unchanged. PR queue kept honest at 0 open before this reconcile PR. LF endings preserved (autocrlf
+  round-trip verified).
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+
 ## v1.98.1 (2026-07-24)
 
 ### Bug Fixes
