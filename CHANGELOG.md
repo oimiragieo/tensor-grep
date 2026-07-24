@@ -1,6 +1,116 @@
 # CHANGELOG
 
 
+## v1.98.3 (2026-07-24)
+
+### Bug Fixes
+
+- **lang-cpp**: Exclude function-pointer variables (were mis-kinded "function")
+  ([#737](https://github.com/oimiragieo/tensor-grep/pull/737),
+  [`3c68a34`](https://github.com/oimiragieo/tensor-grep/commit/3c68a3449b224110d5eab9c42f5bbf61f32b5b64))
+
+* fix(lang-cpp): exclude function-pointer variables (were mis-kinded "function")
+
+The C++ sibling of #736/v1.98.2's C fix: `_cpp_declarator_name_node` set `seen_function = True` for
+  ANY `function_declarator` hop, so a file-scope (or member) function-pointer VARIABLE (`void
+  (*handler)(int);`) was emitted as kind "function" -- these modules deliberately do not track
+  top-level/member variables.
+
+Ports `lang_c.py`'s `_c_parenthesized_declarator_wraps_bare_name` tell: `function_declarator`'s own
+  "declarator" field is only withheld from setting `seen_function` when it is a
+  `parenthesized_declarator` wrapping something OTHER than a bare
+  identifier/type_identifier/field_identifier (a `pointer_declarator` -> a fn-ptr variable). A
+  redundant-paren real prototype (`int (foo)(void);`) still resolves True. The boolean is never
+  force-reset True->False, so a function returning a function pointer (`void
+  (*get_handler(int))(int);`) still resolves True via its own inner function_declarator hop.
+
+C++-only wrinkle verified against a real tree_sitter_cpp 0.23.4 parse: a pointer-to-MEMBER-function
+  variable (`void (C::*mp)(int);`) has its `parenthesized_declarator` wrap a `qualified_identifier`,
+  not a `pointer_declarator` -- a different node shape than plain C, but already excluded by the
+  same "not a bare name" rule with no extra branch needed.
+
+12-shape TDD matrix added to tests/unit/test_lang_cpp.py covering prototypes, definitions,
+  pointer-returning functions, the buggy fn-ptr variable, the fn-ptr typedef, struct/class,
+  redundant-paren prototypes, the returns-a-function-pointer trap, the member-fn-ptr-variable
+  exclusion, `using X = void (*)(int);` (unchanged, pinned), namespace-scoped variants, and the
+  qualified out-of-class method regression guard.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* fix(lang-cpp): correct docstring + close shape-9 test coverage hole (gate follow-up)
+
+Addresses the independent Opus gate's two non-behavioral findings on #737:
+
+1. The member-fn-ptr AST shape is SCOPE-DEPENDENT, and the prior docstring only documented the
+  file/namespace-scope form. Re-dumped both real tree_sitter_cpp 0.23.4 parses: - FILE/NAMESPACE
+  scope (`void (C::*mp)(int);`): `parenthesized_declarator`'s single named child IS a
+  `qualified_identifier` -- excluded via the bare-name TYPE check
+  (`_cpp_parenthesized_declarator_wraps_bare_name` returns False). - IN-CLASS (`class C { public:
+  void (C::*mp)(int); };`): tree-sitter-cpp cannot resolve `C::` inside a class body and emits an
+  `ERROR` node alongside a `pointer_declarator`, giving the `parenthesized_declarator` TWO named
+  children -- excluded via the `len(named_children) != 1` EARLY RETURN, a different code path
+  entirely, never reaching the type check. `_cpp_parenthesized_declarator_wraps_bare_name`'s
+  docstring now documents both shapes explicitly instead of only the file-scope one.
+
+2. The original shape-9 test used the IN-CLASS fixture only, which was ALREADY excluded on pre-fix
+  `main` (name resolution failed regardless of the fix, via the same ERROR-node path above) -- a
+  no-regression pin, not a guard for the actual bug. The shape this fix REPAIRED -- FILE-scope `void
+  (C::*mp)(int);`, which resolved to a name and was mis-emitted as kind "function" on pre-fix main
+  -- had no dedicated test. Split into two tests:
+  `test_declarator_shape_9a_filescope_member_function_pointer_variable_is_excluded` (the real
+  regression guard, new fixture entry `shape9a_filescope_member_fn_ptr_variable`) and
+  `test_declarator_shape_9b_inclass_member_function_pointer_variable_is_excluded` (the no-regression
+  pin, renamed fixture entries `Shape9bClass`/ `shape9b_inclass_member_fn_ptr_variable`), each
+  labeled by which code path excludes it.
+
+Re-verified: tests/unit/test_lang_cpp.py (50, +1) + the lang sweep (175 total) + repo_map suite
+  (169) all green, run WITHOUT a PYTHONPATH override (relying solely on tests/conftest.py's
+  sys.path.insert(0, SRC_DIR), which outranks PYTHONPATH and is the only trustworthy red/green
+  baseline per the gate's note). ruff check + ruff format --check --preview both clean.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- **agents**: Capture 9 session lessons (governance-test fragility, detached-HEAD push,
+  banked-hypothesis, restart backstops, PYTHONPATH baseline trap)
+  ([#738](https://github.com/oimiragieo/tensor-grep/pull/738),
+  [`763a19a`](https://github.com/oimiragieo/tensor-grep/commit/763a19aedc7f5671e6be987728010f14424b87c6))
+
+Captures 9 hard-won lessons from the 2026-07-24 session that shipped v1.97.0 (C), v1.98.0 (C++,
+  completing the top-10 symbol-graph languages), v1.98.1, and v1.98.2, into AGENTS.md and the
+  in-repo skill library so future sessions don't re-pay the same cost.
+
+L1 (banked fix hypothesis is a guess) + L8 (fix a gate's disclosed edge while draft) -> AGENTS.md
+  "Verify AI-Drafted Plans", tensor-grep-change-control Part 6, tensor-grep-failure-archaeology (new
+  Battle 25), tensor-grep-add-language (B5 declarator-shape addendum + corrected stale "C/C++
+  deferred" status to 10/10 registered).
+
+L2 (shared envelope breaks a payload-ratio governance test) + L3 (tmp-path length shifts it across
+  platforms) + L4 (a self-gate's test subset != full CI matrix) -> AGENTS.md CI/Release Rules item
+  (i), tensor-grep-validation-and-qa Part 1 points 16-17 + checklist.
+
+L5 (a "stopped" agent may have already committed) + L6 (a worktree agent can commit on a detached
+  HEAD; push the SHA not the branch name) + L7 (session-scoped crons die silently on restart/reboot)
+  -> AGENTS.md Campaign Orchestration A23-A25, tensor-grep-backlog-campaign,
+  tensor-grep-debugging-playbook (new symptom-table row + Section 16).
+
+L9 (tests/conftest.py's sys.path.insert outranks PYTHONPATH, so a PYTHONPATH-only baseline swap
+  gives a false red-green even with tensor_grep.__file__ verified) -> AGENTS.md Required Local
+  Validation, tensor-grep-validation-and-qa Part 1 point 9 amendment + checklist.
+
+No code changes. Verified: tests/unit/test_skill_index_sync.py (4/4), test_harness_api_docs.py +
+  test_public_docs_governance.py + test_enterprise_docs_governance.py (66/66), test_file_deps.py
+  (95/95), test_stamp_release_assets.py (7/7) — all green with PYTHONPATH pinned to this worktree's
+  src and tensor_grep.__file__ confirmed resolving into it. ruff format --check --preview on the 7
+  touched files is clean; the whole-repo run's 4 pre-existing failures (docs/architecture.md and 3
+  docs/plans/* files) are untouched by this PR and present on origin/main before this branch.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.98.2 (2026-07-24)
 
 ### Bug Fixes
