@@ -245,6 +245,42 @@ def test_build_repo_map_surfaces_csharp_imports_and_symbols(tmp_path: Path) -> N
 
 
 # ---------------------------------------------------------------------------
+# Deferred caller-graph, grammar PRESENT: honest resolution_gaps, not a silent proven-zero.
+#
+# Coordinator-flagged verification (parallel Go/PHP precedent): a language whose grammar IS
+# installed (defs/source/imports all work) but whose LanguageSpec.import_update_target is None
+# must still surface a resolution_gaps entry -- otherwise `tg refs`/`tg callers`/
+# `tg blast-radius` returning zero rows for a C# consumer is indistinguishable from "genuinely
+# zero", when it actually means "the reverse-import graph was never built for this language".
+# This is the SAME generic mechanism Go's own import_update_target=None gap exercises
+# (_language_coverage_gaps_for_universe, driven purely by `spec.import_update_target is None`) --
+# no C#-specific code required, but pinned here as an explicit regression guard.
+# ---------------------------------------------------------------------------
+
+
+def test_refs_grammar_present_still_reports_import_resolution_gap(tmp_path: Path) -> None:
+    _write_csharp_fixture(tmp_path)
+
+    payload = repo_map.build_symbol_refs("Widget", tmp_path)
+
+    assert not payload.get("no_match")
+    gaps = payload["resolution_gaps"]
+    csharp_gaps = [gap for gap in gaps if gap["language"] == "csharp"]
+    assert len(csharp_gaps) == 1
+    # NOT "fail-closed" (that's the grammar-ABSENT case, covered separately below) -- this is
+    # the narrower "grammar works fine, but no reverse-import resolver exists yet" gap.
+    assert "fail-closed" not in csharp_gaps[0]["reason"]
+    assert "reverse-import" in csharp_gaps[0]["reason"]
+    assert csharp_gaps[0]["files_affected"] >= 1
+    # Honesty floor: the remediation must tell an agent to treat a zero count as UNKNOWN, not
+    # proven-zero -- the exact failure mode this test guards against.
+    assert (
+        "not proven-zero" in csharp_gaps[0]["remediation"]
+        or "UNKNOWN" in (csharp_gaps[0]["remediation"])
+    )
+
+
+# ---------------------------------------------------------------------------
 # Grammar-absent: fail-closed, resolution_gaps, honest exit code.
 # ---------------------------------------------------------------------------
 
