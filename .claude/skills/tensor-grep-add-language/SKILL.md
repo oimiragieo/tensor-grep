@@ -106,10 +106,25 @@ version (`main.py`/`repo_map.py` churn every release):
 | 2 | `_imports_and_symbols_for_path` | `repo_map.py:6244` | symbol/def extraction dispatch | new language absent from defs/symbols |
 | 3 | `_imports_with_lines_for_path` | `repo_map.py:6440` | `tg imports` (line-numbered import entries) | `tg imports` silently empty even though defs exist |
 | 4 | `build_symbol_source_from_map` | `repo_map.py:15815` | `tg source` | `tg source` returns nothing for a real symbol |
-| 5 | **`_target_language_for_path` — MOST-FORGOTTEN** | `repo_map.py:7383` | `tg agent` capsule's `primary_target_language` / confidence gate | a target file in the new language does not filter a mismatched-language validation suggestion |
+| 5a | **`_target_language_for_path` — MOST-FORGOTTEN** | `repo_map.py:7383` | `tg agent` capsule's `primary_target_language` / confidence gate | a target file in the new language does not filter a mismatched-language validation suggestion |
+| 5b | **`_provider_language_for_path` — a SIBLING seam, easy to miss because 5a's own comments never mention it** | `repo_map.py:14711` | the LSP-provider language dispatch (sits just above `_path_from_lsp_file_uri`/`_lsp_symbol_kind_name` — a DIFFERENT purpose than 5a's symbol-graph capsule gate, but it must resolve the SAME `language_id` for any suffix a `LanguageSpec` registers) | `test_target_and_provider_language_agree_with_registry` (below) fails loudly for the new suffix; less obviously, an LSP-provider code path silently disagrees with the symbol graph about what language a file is |
 | 6 | `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` | `repo_map.py:16633` | gates whether `tg imports`/`tg importers` even attempts dependency resolution | file-dependency graph silently (but honestly, see B3) excludes the language |
 
-Seam 5 is not a hypothesis — the live code says so in its own comments. Reading
+**Seam 5b is easy to miss precisely because seam 5a's own code comments never mention it** —
+unlike every other seam in this table, nothing in `_target_language_for_path` points you at
+`_provider_language_for_path`. The two functions serve different callers (5a feeds the agent
+capsule's confidence gate; 5b feeds the LSP-provider dispatch, e.g. clangd-via-LSP for a
+language whose symbol-graph tier is only foundational or absent) but **both must return the
+SAME `language_id` for every suffix a `LanguageSpec` registers**, or the dynamic parity test
+below fails. `_provider_language_for_path` sometimes ALREADY recognizes a suffix before its
+`LanguageSpec` is registered (a latent pre-wiring, not a bug) — e.g. it independently maps
+`.c`/`.cc`/`.cpp`/`.cxx`/`.h`/`.hh`/`.hpp`/`.hxx` to `"c"`/`"cpp"` for the LSP provider even
+before a C or C++ `LanguageSpec` exists — which means the CHOICE of `language_id` for a new
+language is not always free: check `_provider_language_for_path` for an existing mapping
+BEFORE naming your new `LanguageSpec.language_id`, or the two functions will disagree the
+moment you register it.
+
+Seam 5a is not a hypothesis — the live code says so in its own comments. Reading
 `_target_language_for_path` on `main` today:
 
 ```text
@@ -127,6 +142,11 @@ if suffix == ".php":
     # MOST-FORGOTTEN seam (see the ".go" branch above) -- same fix, same reason...
     return "php"
 ```
+
+Seam 5b has NO equivalent per-branch comment on `main` today — it is a plain suffix
+dispatch (`repo_map.py:14711-14739`) with no "MOST-FORGOTTEN"-style warning attached to any
+of its branches, which is exactly why it is the one this skill itself omitted until this
+pass: nothing in the code nudges you toward it the way seam 5a's comments do.
 
 **Worked example, UPDATED after PR #728 — seam 6 was closed for go/php/csharp, but only at
 the FOUNDATIONAL tier, not full resolution; re-read this before assuming "in the frozenset"
@@ -337,7 +357,11 @@ rule, not specific to language PRs.
   already carries the pattern a new language must fit: `test_spec_for_path_resolves_every_
   registered_suffix`, `test_language_registry_has_exactly_the_stage2_languages` (the
   union-pin set — add your `language_id` here), `test_target_and_provider_language_agree_
-  with_registry`, and the `test_*_provenance_is_tree_sitter_when_grammar_present` /
+  with_registry` (this ONE dynamic test pins BOTH seam 5a `_target_language_for_path` AND
+  seam 5b `_provider_language_for_path` at once — it iterates every registered `LanguageSpec`
+  and asserts both functions return that spec's own `language_id` for each of its suffixes,
+  so it fails loudly if you wire only one of the pair), and the
+  `test_*_provenance_is_tree_sitter_when_grammar_present` /
   `test_grammar_absent_monkeypatch_*_provenance_flips_to_grammar_missing` pair (17 tests
   total as of this writing — `grep -c "def test_" tests/unit/test_lang_registry.py`).
 - **Fixture/parity dogfood**: write a minimal real-world-shaped fixture file in the new
@@ -363,9 +387,10 @@ uv run python -c "from tensor_grep.cli import lang_registry, repo_map; print(sor
 # Does a suffix resolve, and what does provenance_when_missing say?
 uv run python -c "from tensor_grep.cli import lang_registry, repo_map; s = lang_registry.spec_for_path('x.go'); print(s.language_id, s.provenance_when_missing)"
 
-# Re-derive the current registered-language set + re-locate the 5 seams before citing a line number
+# Re-derive the current registered-language set + re-locate the 6 seams (5a+5b count as two)
+# before citing a line number
 grep -n "register_language(" src/tensor_grep/cli/repo_map.py
-grep -n "^def _imports_and_symbols_for_path\|^def _imports_with_lines_for_path\|^def build_symbol_source_from_map\|^def _target_language_for_path\|_SUPPORTED_FILE_DEPENDENCY_LANGUAGES" src/tensor_grep/cli/repo_map.py
+grep -n "^def _imports_and_symbols_for_path\|^def _imports_with_lines_for_path\|^def build_symbol_source_from_map\|^def _target_language_for_path\|^def _provider_language_for_path\|_SUPPORTED_FILE_DEPENDENCY_LANGUAGES" src/tensor_grep/cli/repo_map.py
 
 # Version identity
 tg --version

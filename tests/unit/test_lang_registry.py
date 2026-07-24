@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tensor_grep.cli import lang_csharp, lang_go, lang_registry, repo_map
+from tensor_grep.cli import lang_c, lang_csharp, lang_go, lang_registry, repo_map
 
 # ---------------------------------------------------------------------------
 # spec_for_path / graph_suffixes
@@ -47,6 +47,7 @@ def test_spec_for_path_resolves_every_registered_suffix() -> None:
         "foo.java": "java",
         "foo.php": "php",
         "foo.cs": "csharp",
+        "foo.c": "c",
     }
     for name, expected_language in expectations.items():
         spec = lang_registry.spec_for_path(Path(name))
@@ -78,6 +79,7 @@ def test_graph_suffixes_matches_the_historical_hardcoded_union() -> None:
         ".java",
         ".php",
         ".cs",
+        ".c",
     })
 
 
@@ -91,6 +93,7 @@ def test_language_registry_has_exactly_the_stage2_languages() -> None:
         "java",
         "php",
         "csharp",
+        "c",
     }
 
 
@@ -155,6 +158,10 @@ def test_csharp_provenance_is_tree_sitter_when_grammar_present() -> None:
     assert repo_map._symbol_navigation_provenance_for_path("foo.cs") == "tree-sitter"
 
 
+def test_c_provenance_is_tree_sitter_when_grammar_present() -> None:
+    assert repo_map._symbol_navigation_provenance_for_path("foo.c") == "tree-sitter"
+
+
 def test_grammar_absent_monkeypatch_js_ts_provenance_flips_to_regex_heuristic(monkeypatch) -> None:
     """Simulate tree-sitter-javascript/typescript being uninstalled (ImportError inside the
     parser factory returns None, per repo_map._javascript_parser/_typescript_parser). The
@@ -198,6 +205,17 @@ def test_grammar_absent_monkeypatch_csharp_provenance_flips_to_grammar_missing(m
     monkeypatch.setattr(lang_csharp, "_csharp_parser", lambda: None)
 
     provenance = repo_map._symbol_navigation_provenance_for_path("foo.cs")
+
+    assert provenance == "grammar-missing"
+    assert provenance != ""
+
+
+def test_grammar_absent_monkeypatch_c_provenance_flips_to_grammar_missing(monkeypatch) -> None:
+    """C has NO regex fallback (Stage 1 fail-closed trap, same as Go/PHP/C#): a grammar-absent
+    .c file's provenance label must flip to "grammar-missing" (not "regex-heuristic")."""
+    monkeypatch.setattr(lang_c, "_c_parser", lambda: None)
+
+    provenance = repo_map._symbol_navigation_provenance_for_path("foo.c")
 
     assert provenance == "grammar-missing"
     assert provenance != ""

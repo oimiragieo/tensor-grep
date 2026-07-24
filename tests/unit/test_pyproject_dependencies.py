@@ -73,6 +73,18 @@ def test_ast_dev_bench_extras_include_tree_sitter_c_sharp_for_path_a_stage1() ->
         )
 
 
+def test_ast_dev_bench_extras_include_tree_sitter_c_for_path_a_stage3() -> None:
+    # PATH A Stage 3 (C symbol graph, top-10 language campaign, Phase 1 of C/C++ -- C++ is a
+    # separate follow-up): same rule as tree-sitter-go/java/php/c-sharp above -- tree-sitter-c
+    # must ship in every extra that already carries the other tree-sitter grammar packages, or
+    # an --all-extras --locked export silently drops C support. Bare package name (no `[core]`
+    # extra) so it does not pull in its own `tree-sitter~=0.24` constraint, which would conflict
+    # with this repo's pinned `tree-sitter>=0.22` (currently locked to 0.25.2) -- see uv.lock.
+    deps = _optional_dependencies()
+    for extra_name in ("ast", "dev", "bench"):
+        assert "tree-sitter-c" in deps[extra_name], f"tree-sitter-c missing from [{extra_name}]"
+
+
 def test_ast_extra_pins_pygls_floor_matching_lsp_server_import() -> None:
     # cli/lsp_server.py imports `from pygls.lsp.server import LanguageServer`, a module path
     # that exists only in pygls 2.x (pygls 1.x has no `pygls.lsp.server` module at all -- its

@@ -597,7 +597,7 @@ dependencies = [
 gpu = ["cudf-cu12", "kvikio-cu12", "torch>=2.0", "pyarrow>=23.0.1"]
 gpu-win = ["torch>=2.0"]
 nlp = ["transformers>=5.3.0", "tritonclient[http]"]
-ast = ["tree-sitter>=0.22", "tree-sitter-python", "tree-sitter-javascript", "tree-sitter-typescript", "tree-sitter-rust", "tree-sitter-go", "tree-sitter-java", "tree-sitter-php", "tree-sitter-c-sharp", "pygls>=2.0"]
+ast = ["tree-sitter>=0.22", "tree-sitter-python", "tree-sitter-javascript", "tree-sitter-typescript", "tree-sitter-rust", "tree-sitter-go", "tree-sitter-java", "tree-sitter-php", "tree-sitter-c-sharp", "tree-sitter-c", "pygls>=2.0"]
 # Local hybrid semantic search dense leg (`tg search --semantic`, roadmap #27, Path B Stage 1):
 # model2vec is a pure-numpy static-embedding runtime -- NO torch/GPU dependency, sub-ms CPU query
 # encode. Paired with the MIT-licensed minishlab/potion-code-16M model (fetched once, offline
@@ -628,6 +628,7 @@ dev = [
   "tree-sitter-java",
   "tree-sitter-php",
   "tree-sitter-c-sharp",
+  "tree-sitter-c",
   "types-PyYAML",
 ]
 bench = [
@@ -642,6 +643,7 @@ bench = [
   "tree-sitter-java",
   "tree-sitter-php",
   "tree-sitter-c-sharp",
+  "tree-sitter-c",
   "torch>=2.0",
   "nvtx>=0.2",
 ]
