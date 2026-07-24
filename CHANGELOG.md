@@ -1,6 +1,45 @@
 # CHANGELOG
 
 
+## v1.94.0 (2026-07-24)
+
+### Features
+
+- **lang**: Add Java symbol + import intelligence (orient/defs/imports)
+  ([#725](https://github.com/oimiragieo/tensor-grep/pull/725),
+  [`f3ad51b`](https://github.com/oimiragieo/tensor-grep/commit/f3ad51b4c60aecce1a8208a48be903e48d08093f))
+
+Java joins the multi-language symbol graph as a FOUNDATIONAL-TIER language, the same way Go did
+  (PATH A Stage 1) -- own tree-sitter-backed LanguageSpec, fail-closed with no regex fallback
+  (provenance_when_missing="grammar-missing").
+
+Scope: classes/interfaces/enums/records/methods/constructors + raw import declarations now flow into
+  build_repo_map, lighting up `tg orient`, `tg defs`, `tg source`, `tg imports`, and `tg agent` for
+  .java files. The deep caller-graph tier (references_and_calls, provider_alias_calls,
+  file_imports_symbol_from_ definition, import_update_target, prime_repo_context, classify_ref_kind
+  -- cross-file method-call resolution powering `tg callers`/`tg blast-radius`) is intentionally
+  left None, deferred to a follow-up PR.
+
+- _java_parser() / _java_imports_and_symbols() / _java_parser_symbol_sources() /
+  _java_imports_with_lines(), mirroring the Rust/Go extractor patterns. - Wired into every dispatch
+  site a real .java file needs to reach: _imports_and_symbols_for_path,
+  _imports_with_lines_for_path, build_symbol_source_from_map, _target_language_for_path (the
+  "MOST-FORGOTTEN seam" powering tg agent's primary_target_language),
+  _SUPPORTED_FILE_DEPENDENCY_LANGUAGES + _resolve_raw_import_entry (tg imports). - lang_registry
+  LanguageSpec registered with the caller-graph fields None. - tree-sitter-java added to the
+  ast/dev/bench extras + uv.lock (verified via `uv export --locked`, hand-spliced to avoid unrelated
+  uv-version lockfile churn from a raw `uv lock` run). - Updated the two existing tests that used
+  .java as their "still unregistered language" example (test_lang_registry.py, test_lang_go.py) to
+  .kt instead, mirroring the same substitution Stage 1 made when Go was promoted.
+
+16 new tests (tests/unit/test_lang_java.py) plus updates to test_lang_registry.py, test_lang_go.py,
+  and test_pyproject_dependencies.py. Verified against a real tree-sitter-java (0.23.5) AST dump
+  before writing the extractor (import_declaration has no `name` field;
+  class/interface/enum/record/method/constructor all do).
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+
 ## v1.93.10 (2026-07-23)
 
 ### Continuous Integration
