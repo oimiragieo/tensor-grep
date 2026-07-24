@@ -172,6 +172,23 @@ _C_DEF_NODE_KINDS = (
 _MAX_DECLARATOR_HOPS = 64
 
 
+def _c_parenthesized_declarator_wraps_bare_name(node: Any) -> bool:
+    """Return True when a ``parenthesized_declarator`` node's single named child is a bare
+    ``identifier``/``type_identifier``/``field_identifier`` -- i.e. the parens are purely
+    REDUNDANT around a real name (``int (foo)(void);``, live-verified: ``function_declarator``'s
+    own "declarator" field is a ``parenthesized_declarator`` wrapping ``identifier`` "foo"
+    directly) -- as opposed to wrapping a ``pointer_declarator``/``array_declarator``/anything
+    else (the tell for a function-pointer or array variable, e.g. ``void (*handler)(int);``,
+    where the same parenthesized shape instead wraps a ``pointer_declarator``). Only a single
+    hop's own wrapped shape is inspected here; a nested ``parenthesized_declarator`` (doubly
+    redundant parens) falls through to False like any other non-bare-name wrap -- a residual,
+    exceedingly rare edge case, not one any live-verified fixture has hit."""
+    named_children = [child for child in node.children if child.is_named]
+    if len(named_children) != 1:
+        return False
+    return named_children[0].type in {"identifier", "type_identifier", "field_identifier"}
+
+
 def _c_declarator_name_node(declarator: Any) -> tuple[Any | None, bool]:
     """Descend a declarator chain to its innermost identifier/type_identifier NAME node, tracking
     whether the chain passed through a ``function_declarator`` that names a REAL function --
@@ -193,17 +210,27 @@ def _c_declarator_name_node(declarator: Any) -> tuple[Any | None, bool]:
     almost identically to a real function -- its outermost node is ALSO a
     ``function_declarator`` ("outermost-direct" does NOT distinguish the two; both are
     outermost-direct). The real, live-verified tell: a REAL function's ``function_declarator``
-    has its own "declarator" FIELD as a bare name -- directly (``void f(int);``), or nested one
-    hop under a return-type ``pointer_declarator`` (``int *make_ptr(void);``) -- while a
-    function-pointer VARIABLE's ``function_declarator`` instead has its own "declarator" field as
-    a ``parenthesized_declarator`` (the paren-grouped ``(*name)``, wrapping a
-    ``pointer_declarator`` down to the name). A hop through that parenthesized shape does not, by
-    itself, mark ``seen_function`` True -- but the boolean is never force-reset to False either,
-    so a function that itself RETURNS a function pointer (``void (*get_handler(int))(int);``,
-    the classic ``signal()`` prototype shape) still resolves correctly: its outer
-    ``function_declarator`` hop is skipped by this same tell, but the INNER
+    has its own "declarator" FIELD as a bare name -- directly (``void f(int);``), nested one hop
+    under a return-type ``pointer_declarator`` (``int *make_ptr(void);``), OR wrapped in
+    REDUNDANT parens (``int (foo)(void);`` -- ``function_declarator``'s own "declarator" field is
+    a ``parenthesized_declarator`` wrapping ``identifier`` "foo" directly, still a real function,
+    the parens are meaningless noise) -- while a function-pointer VARIABLE's
+    ``function_declarator`` instead has its own "declarator" field as a
+    ``parenthesized_declarator`` wrapping something OTHER than a bare name -- a
+    ``pointer_declarator`` down to the name (the paren-grouped ``(*name)``). So a
+    ``parenthesized_declarator`` hop is not by itself the tell (a redundant-paren prototype has
+    one too); ``_c_parenthesized_declarator_wraps_bare_name`` resolves the ambiguity by checking
+    what it wraps. A hop through the variable-shaped form does not, by itself, mark
+    ``seen_function`` True -- but the boolean is never force-reset to False either, so a function
+    that itself RETURNS a function pointer (``void (*get_handler(int))(int);``, the classic
+    ``signal()`` prototype shape) still resolves correctly: its outer ``function_declarator`` hop
+    is skipped (its parens wrap a ``pointer_declarator``, not a bare name), but the INNER
     ``function_declarator`` -- the function's own parameter list -- has a bare-identifier
-    declarator field, so ``seen_function`` still ends up True from that hop.
+    declarator field directly (no parens at all), so ``seen_function`` still ends up True from
+    that hop. Live-verified against real tree_sitter_c 0.24.2 parses of all of the above,
+    including the full ``void (*signal(int sig, void (*func)(int)))(int);`` shape (the
+    function-pointer PARAMETER inside is never visited -- only the top-level declarator chain
+    is walked).
 
     Returns ``(None, seen_function)`` if no name-bearing leaf was found (e.g. an abstract
     declarator with no name, such as a bare ``void`` parameter) -- callers must check for
@@ -218,12 +245,19 @@ def _c_declarator_name_node(declarator: Any) -> tuple[Any | None, bool]:
             return current, seen_function
         next_node = current.child_by_field_name("declarator")
         if current.type == "function_declarator":
-            # A function-pointer VARIABLE's own declarator field is a `parenthesized_declarator`
-            # (`(*name)`), never a bare name directly -- that is the tell that rules it out as a
-            # real function on THIS hop (see the docstring). Not force-resetting `seen_function`
-            # to False here is deliberate: it lets a function that returns a function pointer
-            # still resolve True via its own (inner) function_declarator hop.
-            if next_node is None or next_node.type != "parenthesized_declarator":
+            # A `parenthesized_declarator` hop is not by itself the function-pointer-variable
+            # tell -- a redundant-paren prototype (`int (foo)(void);`) has one too, wrapping a
+            # bare identifier. Only a paren wrap around something ELSE (`pointer_declarator`,
+            # `array_declarator`, ...) is the real tell (see the docstring). Not
+            # force-resetting `seen_function` to False here is deliberate: it lets a function
+            # that returns a function pointer still resolve True via its own (inner)
+            # function_declarator hop.
+            is_variable_shaped_parens = (
+                next_node is not None
+                and next_node.type == "parenthesized_declarator"
+                and not _c_parenthesized_declarator_wraps_bare_name(next_node)
+            )
+            if not is_variable_shaped_parens:
                 seen_function = True
         if next_node is not None:
             current = next_node
