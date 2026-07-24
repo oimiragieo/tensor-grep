@@ -27,7 +27,7 @@ backend contract.
 | Drain several language PRs that all touch `test_lang_registry.py` / `uv.lock` / the pyproject `ast` extra | `tensor-grep-change-control`'s Campaign Orchestration cross-ref (AGENTS.md A22) |
 | Use `tg` as a consumer (search/orient/callers flags) | `code-search-and-retrieval-reference` |
 
-## Current status (verified against tg v1.96.0-pending, `origin/main` @ `6c09424`)
+## Current status (verified against tg v1.96.1-pending, `origin/main` @ `29cf59f`)
 
 `repo_map.py` currently carries **8** `lang_registry.register_language(...)` call sites
 (`grep -n "register_language(" src/tensor_grep/cli/repo_map.py`): `python`, `javascript`,
@@ -93,18 +93,21 @@ calls `register_language(...)` is imported — a bare `import lang_registry` wit
 ## B2 — the critical seams (miss one = a silent half-integration)
 
 Enumerate every seam `lang_go.py` touches and hit **all** of them. These are re-verified
-`repo_map.py` locations on v1.96.0-pending (re-grepped fresh after PR #726/C# shifted every
-line below its insertion point by roughly +40) — re-grep the symbol before trusting the line
-number on a later version (`main.py`/`repo_map.py` churn every release):
+`repo_map.py` locations on v1.96.1-pending (re-grepped fresh after PR #728 inserted a 16-line
+go/php/csharp dispatch block inside `_imports_with_lines_for_path`, shifting every seam below
+it by +16 — except `build_file_imports`, which shifted +41, because a 12-line frozenset
+addition and a 13-line `_resolve_raw_import_entry` branch both land between it and seam 6; see
+B2's worked example below) — re-grep the symbol before trusting the line number on a later
+version (`main.py`/`repo_map.py` churn every release):
 
 | # | Seam | Location | Feeds | Miss-it symptom |
 |---|---|---|---|---|
 | 1 | `lang_registry.register_language(LanguageSpec(...))` | `repo_map.py` (8 call sites, "near the bottom") | wiring the suffix at all | new suffix never resolves; silently excluded everywhere |
 | 2 | `_imports_and_symbols_for_path` | `repo_map.py:6244` | symbol/def extraction dispatch | new language absent from defs/symbols |
 | 3 | `_imports_with_lines_for_path` | `repo_map.py:6440` | `tg imports` (line-numbered import entries) | `tg imports` silently empty even though defs exist |
-| 4 | `build_symbol_source_from_map` | `repo_map.py:15799` | `tg source` | `tg source` returns nothing for a real symbol |
-| 5 | **`_target_language_for_path` — MOST-FORGOTTEN** | `repo_map.py:7367` | `tg agent` capsule's `primary_target_language` / confidence gate | a target file in the new language does not filter a mismatched-language validation suggestion |
-| 6 | `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` | `repo_map.py:16617` | gates whether `tg imports`/`tg importers` even attempts dependency resolution | file-dependency graph silently (but honestly, see B3) excludes the language |
+| 4 | `build_symbol_source_from_map` | `repo_map.py:15815` | `tg source` | `tg source` returns nothing for a real symbol |
+| 5 | **`_target_language_for_path` — MOST-FORGOTTEN** | `repo_map.py:7383` | `tg agent` capsule's `primary_target_language` / confidence gate | a target file in the new language does not filter a mismatched-language validation suggestion |
+| 6 | `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` | `repo_map.py:16633` | gates whether `tg imports`/`tg importers` even attempts dependency resolution | file-dependency graph silently (but honestly, see B3) excludes the language |
 
 Seam 5 is not a hypothesis — the live code says so in its own comments. Reading
 `_target_language_for_path` on `main` today:
@@ -125,30 +128,60 @@ if suffix == ".php":
     return "php"
 ```
 
-**Worked example that seam 6 is not theoretical — it is currently, honestly open for THREE
-shipped languages, not just two.** `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` on `main` today is
-still `frozenset({"python", "javascript", "typescript", "rust", "java"})` — **`go`, `php`,
-AND `csharp` are all registered languages with working defs/source/
-`_target_language_for_path` entries, but NONE of the three are in this set** (re-verified
-after #726 landed: C# did not add itself here either, same gap as Go/PHP). `build_file_imports`
-(`tg imports`, `repo_map.py:16719`) checks
-`language_id in _SUPPORTED_FILE_DEPENDENCY_LANGUAGES`; when it's absent it does **not**
-silently return an empty import list — it sets `result_incomplete=True` and
-`incomplete_reason="'go' has no import-resolution support in \`tg imports\` yet"` (same
-f-string shape for `php`/`csharp`). This is the fail-closed contract (B3) holding even where
-seam 6 was genuinely missed for three languages in a row — a live example of the difference
-between "forgot a seam" (bad, silent) and "forgot a seam but the honesty floor caught it"
-(recoverable, visible), and a reminder that copying an existing module (C# copied Go's shape
-closely) does not automatically close a gap the template itself never closed. Closing this
-for `go`/`php`/`csharp` is a good first PR for whoever reads this skill next; the fix is a
-one-line frozenset addition plus whatever real import-path resolution each language needs
-behind it.
+**Worked example, UPDATED after PR #728 — seam 6 was closed for go/php/csharp, but only at
+the FOUNDATIONAL tier, not full resolution; re-read this before assuming "in the frozenset"
+means "fully working."** `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` (`repo_map.py:16633`) on
+`main` today is `frozenset({"python", "javascript", "typescript", "rust", "java", "go",
+"php", "csharp"})` — **all 8 registered languages are now members**, closing the exact gap
+this worked example used to describe (go/php/csharp were absent; as of #728, none are). PR
+#728 shipped three new per-language extractors — `lang_go.go_imports_with_lines`,
+`lang_php.php_imports_with_lines`, `lang_csharp.csharp_imports_with_lines` — dispatched from
+`_imports_with_lines_for_path` (`repo_map.py:6440`); each walks the same node kind its
+`*_imports_and_symbols` sibling already walks (`import_spec` / `namespace_use_clause` /
+`using_directive` respectively) and emits one `{"module": ..., "line": ...}` row per
+statement. `tg imports` on a `.go`/`.php`/`.cs` file no longer reports `result_incomplete`
+with an empty list the way it did before this PR — it returns real, line-numbered rows.
+
+**But resolution — WHICH file/module each row's `module` string actually points to — is
+still deferred for all three, and it is honestly deferred, never silently faked.**
+`_resolve_raw_import_entry` (`repo_map.py:16654`) gained an
+`elif language_id in ("go", "php", "csharp")` branch (`repo_map.py:16723-16735`, mirroring
+the `elif language_id == "java"` branch immediately above it at `repo_map.py:16714-16722`)
+that always returns `resolved, external, provenance, confidence = None, False, [], 0.0` —
+every row comes back `resolved=None, external=False` rather than a fabricated file path or a
+fabricated `external=True`. Each language is missing *different* resolver machinery: Go's own
+`_go_import_path_to_dir` (`lang_go.py`) already resolves an import path to a **package
+directory**, not a single file — a Go import names a package that can span many `.go` files
+with no 1:1 import-to-file mapping, so picking "the" file needs new design, not just wiring
+existing code; PHP has no PSR-4/`composer.json` autoload-map reader; C# has no `.csproj`/
+assembly-reference map. None of that resolver machinery is built by #728 — see
+`docs/BACKLOG.md`'s `#728` entry for the exact per-language scope still open. The fail-closed
+contract (B3) still fires exactly as before for any language genuinely outside the 8-member
+set: `build_file_imports` (`repo_map.py:16760`) sets `result_incomplete=True` with
+`incomplete_reason=f"'{language_id}' has no import-resolution support in \`tg imports\` yet"`
+for any registered-but-unsupported language, and `_imports_with_lines_for_path`'s own
+docstring (`repo_map.py:6440`) names Kotlin as its worked example of one — go/php/csharp just
+are not examples of it anymore.
+
+**A second, separate gate stays narrower still, and closing seam 6 does not close it too.**
+`_confirm_import_edges` (`repo_map.py:16839`, the `tg importers` reverse-confirm step that
+turns a prefiltered "maybe imports it" into a confirmed edge) has its own independent
+language allow-list — `if language_id not in ("javascript", "typescript", "rust", "python"):
+return []` — which still excludes java, go, php, AND csharp alike. Membership in
+`_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` does not imply membership in this second, stricter
+gate; a future PR that builds true forward resolution for go/php/csharp still would not make
+`tg importers`'s reverse-confirm step cover them without touching this allow-list too. This is
+the same "forgot a seam but the honesty floor caught it" lesson as before, one tier deeper:
+even a foundational landing must decide, per emitted row, whether to fabricate confidence it
+doesn't have — #728 chose not to, matching Java's (#725) precedent exactly. True forward
+resolution for go/php/csharp (and then extending `_confirm_import_edges`'s allow-list) remains
+a good next PR for whoever reads this skill next.
 
 Two more seams exist beyond this table, found by reading `lang_go.py` itself rather than
 the ledger (not independently re-grepped against `repo_map.py`'s call sites this pass —
 verify before citing a line number): (7) the per-language dispatch arms that call
 `references_and_calls` / `file_imports_symbol_from_definition` directly, which feed
-`tg callers`/`tg blast-radius`; (8) `clear_<lang>_repo_context_cache` (`lang_go.py:398`)
+`tg callers`/`tg blast-radius`; (8) `clear_<lang>_repo_context_cache` (`lang_go.py:449`)
 wired into the daemon-refresh sweep, so `tg session refresh` doesn't serve stale
 import-resolution context after a repo change.
 
@@ -182,10 +215,10 @@ import-resolution context after a repo change.
   `"class"`; method/constructor/function → `"function"`. Emit the real vocabulary in the new
   module; re-verify where the collapse actually happens before assuming its exact shape.
 - **`resolution_confidence` banding is the same fail-closed principle per-match.**
-  `go_references_and_calls` (`lang_go.py:660`) bands 0.95 for a confirmed resolution
+  `go_references_and_calls` (`lang_go.py:711`) bands 0.95 for a confirmed resolution
   (`resolution_provenance=["go-import-resolution"]`) vs. 0.7
   `"receiver-heuristic"` for a textually-plausible-but-statically-unconfirmed one
-  (`lang_go.py:769`) — an unconfirmed match is **demoted, never dropped**. This is the
+  (`lang_go.py:820`) — an unconfirmed match is **demoted, never dropped**. This is the
   per-match instance of the Backend Fail-Closed Contract: never fabricate certainty.
 
 ## B4 — verify the plan against current code before dispatch
@@ -340,32 +373,44 @@ tg --version
 
 ## Provenance and maintenance
 
-- **Verified against tg v1.96.0-pending** (`main` HEAD `6c09424`, `pyproject.toml` still
-  stamps `1.95.0` since semantic-release derives the version at publish time — #726 is a
-  `feat:` commit, so the next publish is v1.96.0). PR #726 (C#) merged mid-authoring-pass;
-  this skill was re-checked against the real post-merge code TWICE — once when #726 first
-  landed, and again after every `repo_map.py` line number below shifted by roughly +40 on a
-  rebase — rather than left stale either time. Ground truth read directly for this skill:
-  `src/tensor_grep/cli/lang_registry.py` (full file), `src/tensor_grep/cli/lang_go.py`
-  (docstring + parser/walk/seam functions), `src/tensor_grep/cli/lang_php.py` (docstring +
-  `__all__`), `src/tensor_grep/cli/lang_csharp.py` (the `using`-directive target-selection
-  logic + its own grammar-verification comment), every cited `repo_map.py` seam location
-  (re-grepped fresh post-#726, not carried over), `pyproject.toml`'s `ast` extra, and
-  `tests/unit/test_lang_registry.py` — all read live from `origin/main` this pass.
+- **Verified against tg v1.96.1-pending** (`main` HEAD `29cf59f`, `pyproject.toml` still
+  stamps `1.96.0` since semantic-release derives the version at publish time — #728 is a
+  `fix:` commit, so the next publish is v1.96.1). This is the skill's **second** re-verify
+  pass: #726 (C#) first, then **PR #728** (go/php/csharp foundational-tier file-dependency
+  wiring, merged after the prior pass) staled the B2 worked example — which had described
+  go/php/csharp as excluded from `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` — plus every
+  `repo_map.py` seam line number at or below the `_imports_with_lines_for_path` insertion
+  point (`_target_language_for_path`, `build_symbol_source_from_map`,
+  `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES`, and `build_file_imports` all shifted;
+  `_imports_and_symbols_for_path`/`_imports_with_lines_for_path` themselves did not, since
+  the insertion lands inside/after their own bodies) plus three `lang_go.py` citations below
+  its own new-function insertion point (`clear_go_repo_context_cache`,
+  `go_references_and_calls`, its `"receiver-heuristic"` band). This pass re-derived every
+  number directly against `origin/main` @ `29cf59f` (`git cat-file blob`, never the
+  possibly-stale local checkout) rather than carrying the prior pass's numbers forward, and
+  confirmed the diff hunk COUNT in every touched file (`repo_map.py`: 4 hunks; each of
+  `lang_go.py`/`lang_php.py`/`lang_csharp.py`: 1 hunk) before trusting any citation below an
+  insertion point as unaffected. Ground truth read directly this pass: PR #728's real diff
+  (`git show 29cf59f`), every cited `repo_map.py` seam (re-grepped fresh, not carried over)
+  plus the new `_resolve_raw_import_entry` go/php/csharp branch and `_confirm_import_edges`'s
+  own separate allow-list, the three new `*_imports_with_lines` extractor bodies in
+  `lang_go.py`/`lang_php.py`/`lang_csharp.py`, and `docs/BACKLOG.md`'s `#728` entry.
 - **Not independently verified this pass**: the exact `repo_map.py` line numbers for seam 7
   (per-language `references_and_calls`/`file_imports_symbol_from_definition` dispatch arms)
-  and seam 8 (the daemon-refresh cache-clear sweep call site); the Java inline extractor's
-  own line-level shape beyond its function names; C#'s def/import extraction logic beyond
-  the `using`-directive target-selection function cited above (`csharp_imports_and_symbols`
-  and any caller-graph fields were not read line-by-line this pass — check whether C#
-  shipped the narrower PHP-style defs+imports-only slice or the fuller Go-style caller graph
-  before citing either). Re-verify all of these — and every line number above — before
+  and the daemon-refresh cache-clear sweep CALL site (distinct from
+  `clear_go_repo_context_cache`'s own definition, which this pass did re-verify); the Java
+  inline extractor's own line-level shape beyond its function names; C#'s/PHP's
+  `*_imports_and_symbols` def/caller-graph line-level shape beyond the `using`-directive
+  target-selection function cited above and their new `*_imports_with_lines` siblings (only
+  the NEW functions and the diff that introduced them were read this pass — check whether
+  C#/PHP shipped the narrower PHP-style defs+imports-only slice or a fuller Go-style caller
+  graph before citing either). Re-verify all of these — and every line number above — before
   citing them in a later session; `repo_map.py` moves fast (~100+ lines/release, per
   `tensor-grep-run-and-operate`).
-- **Session ledger source**: `session_learnings_2026-07-24.md` (a scratch file, not a
-  permanent repo artifact) supplied the B1-B6/E1 framing and the original C# node-shape
-  lead (itself later independently confirmed against `lang_csharp.py` once #726 landed);
-  every claim above was re-derived against the live repo rather than copied, and is cited
-  to the real file where it was possible to check.
+- **Prior-pass provenance (kept for history)**: the original B1-B6/E1 framing and the C#
+  node-shape lead came from `session_learnings_2026-07-24.md` (a scratch file, not a
+  permanent repo artifact), later independently confirmed against `lang_csharp.py` once #726
+  landed. This pass's #728 corrections did not consult that file — they were re-derived
+  directly from the live repo and PR #728's real diff.
 - If a re-verify disagrees with this skill, fix the skill — a wrong runbook is worse than
   none — and route any actual code change through `tensor-grep-change-control`.
