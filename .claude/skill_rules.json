@@ -1,6 +1,6 @@
 {
     "version": "1.0",
-    "description": "Project-local skill triggers for tensor-grep (consumed by the global ~/.claude/hooks/skill_activation_gate.py engine; merged over global rules, invisible outside this project). Seeded 2026-07-17 from the project's local skill library -- see AGENTS.md's skill index for the current, authoritative skill count and set; expand from gate_fires.jsonl conversion data. This file is harness config for the activation hook, not a product contract, and is invisible to tests/unit/test_skill_index_sync.py.",
+    "description": "Project-local skill triggers for tensor-grep (consumed by the global ~/.claude/hooks/skill_activation_gate.py engine; merged over global rules, invisible outside this project). Seeded 2026-07-17 from the project's local skill library (12 initial entries; 15 as of 2026-07-23) -- see AGENTS.md's skill index for the current, authoritative skill count and set (this file's own entry count has no governance test, so treat it as a snapshot, not a promise); expand from gate_fires.jsonl conversion data. This file is harness config for the activation hook, not a product contract, and is invisible to tests/unit/test_skill_index_sync.py.",
     "skills": {
         "tensor-grep-debugging-playbook": {
             "priority": "high",
@@ -58,6 +58,21 @@
             "priority": "medium",
             "minKeywordHits": 1,
             "keywords": ["review-bundle", "review bundle", "change review package", "audit-history"]
+        },
+        "tensor-grep-add-language": {
+            "priority": "medium",
+            "minKeywordHits": 1,
+            "keywords": ["add a language", "new grammar", "tree-sitter grammar", "lang_registry", "register_language", "symbol-graph language", "onboard a language"]
+        },
+        "profile-guided-byte-identical-optimization": {
+            "priority": "medium",
+            "minKeywordHits": 1,
+            "keywords": ["byte-identical", "cprofile", "profiling probe", "optimize hot path", "microbench", "warm dogfood", "cold path", "differential fuzz", "shipped wheel"]
+        },
+        "tensor-grep-large-repo-scale-campaign": {
+            "priority": "medium",
+            "minKeywordHits": 1,
+            "keywords": ["deadline", "hang", "large repo", "timeout", "scandir", "unscoped search", "workspace scale"]
         }
     }
 }
