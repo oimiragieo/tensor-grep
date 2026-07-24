@@ -189,15 +189,15 @@ language works for some commands and quietly does nothing for others):
 |---|---|---|---|---|
 | 1 | `_imports_and_symbols_for_path` | `tg imports` (import list + symbols) | `repo_map.py` | `:6244`; per-language branches at `:6272-6287` |
 | 2 | `_imports_with_lines_for_path` | `tg imports`' line-numbered spans | `repo_map.py` | `:6440` — currently dispatches only python/javascript/typescript/rust/java; go/php/csharp fall through to `[]` here today (matches seam 5's exclusion below) |
-| 3 | `build_symbol_source_from_map` | `tg source` | `repo_map.py` | `:15799`; per-language branches at `:15837-15844` |
-| 4 | `_target_language_for_path` | **MOST-FORGOTTEN.** Feeds the `tg agent` capsule's query-language-vs-target-language confidence gate (`agent_capsule.py`) | `repo_map.py` | `:7367` — the function's own comments say "MOST-FORGOTTEN seam" at each of the 4 newest branches (`:7380`, `:7387`, `:7391`, `:7395`); skip it and the capsule can silently report "no target language" for a real target instead of downgrading confidence honestly |
-| 5 | `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` | `tg imports <file>`'s file-dependency-resolution "supported" gate | `repo_map.py` | `:16617` — currently `{python, javascript, typescript, rust, java}`; go/php/csharp are deliberately excluded (their `import_update_target` is still `None`, a tracked follow-up), so those files get an honest `result_incomplete=True` instead of a silently-empty resolved-imports list |
+| 3 | `build_symbol_source_from_map` | `tg source` | `repo_map.py` | `:15815`; per-language branches at `:15853-15860` |
+| 4 | `_target_language_for_path` | **MOST-FORGOTTEN.** Feeds the `tg agent` capsule's query-language-vs-target-language confidence gate (`agent_capsule.py`) | `repo_map.py` | `:7383` — the function's own comments say "MOST-FORGOTTEN seam" at each of the 4 newest branches (`:7396`, `:7403`, `:7407`, `:7411`); skip it and the capsule can silently report "no target language" for a real target instead of downgrading confidence honestly |
+| 5 | `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` | `tg imports <file>`'s file-dependency-resolution "supported" gate | `repo_map.py` | `:16633` — currently `{python, javascript, typescript, rust, java}`; go/php/csharp are deliberately excluded (their `import_update_target` is still `None`, a tracked follow-up), so those files get an honest `result_incomplete=True` instead of a silently-empty resolved-imports list |
 
 **Fail closed for a missing grammar.** Every language added since the registry existed
 (go/java/php/csharp) sets `provenance_when_missing="grammar-missing"` in its `register_language(...)`
 call (e.g. `repo_map.py:6090` for go) — never `"regex-heuristic"` — so a file whose tree-sitter grammar
 package isn't installed surfaces as an honest `resolution_gaps` entry via
-`_language_coverage_gaps_for_universe` (`repo_map.py:7966`, the fail-closed branch at `:8003`) instead
+`_language_coverage_gaps_for_universe` (`repo_map.py:7982`, the fail-closed branch at `:8019`) instead
 of a silent empty result. This is Part 4's Backend Fail-Closed Contract, applied inside the language
 registry (see Part 4's own worked example below).
 
@@ -225,8 +225,8 @@ moment a rebase silently drops a language (see Part 7's sequential-drain corolla
 symbol registry (Part 3) applies this identically. `LanguageSpec.provenance_when_missing` must be
 `"grammar-missing"` (never `"regex-heuristic"`) for any language with no text-heuristic fallback —
 go/java/php/csharp all set it this way in their `register_language(...)` call (e.g. `repo_map.py:6090`)
-— so `_language_coverage_gaps_for_universe` (`repo_map.py:7966`) can tell "grammar not installed, fail
-closed" apart from "language has a regex fallback, degrade quietly" at its branch on line `:8003`. Get
+— so `_language_coverage_gaps_for_universe` (`repo_map.py:7982`) can tell "grammar not installed, fail
+closed" apart from "language has a regex fallback, degrade quietly" at its branch on line `:8019`. Get
 this backwards (label a no-fallback language `"regex-heuristic"`) and a grammar-missing file would read
 as a clean, silent "zero symbols found" instead of an honest gap — precisely the failure class this Part
 exists to prevent, just reached through a registry field instead of a bare `except`.

@@ -332,9 +332,9 @@ If a fresh install on a new Python resolves to an old `tg --version`, do not ass
 ## 8. Ranking flip
 
 The agent capsule's **primary-target candidate selection** (`score_term_overlap`,
-`src/tensor_grep/core/retrieval_lexical.py:15`, called from `repo_map.py:7721` inside
-`_score_file_source_terms`, one of the family of scoring helpers around `repo_map.py:7682`
-(`_score_symbol`) / `:7709` (`_score_import_entry`) / `:7716` (`_score_file_source_terms`) that feed
+`src/tensor_grep/core/retrieval_lexical.py:15`, called from `repo_map.py:7737` inside
+`_score_file_source_terms`, one of the family of scoring helpers around `repo_map.py:7698`
+(`_score_symbol`) / `:7725` (`_score_import_entry`) / `:7732` (`_score_file_source_terms`) that feed
 the capsule's `primary_target` selection) is a **flat, no-IDF** set-membership scorer plus a hard top-N candidate
 cap — an acknowledged, not-yet-fixed weak point. A small, unrelated corpus change can flip which
 candidate wins a near-tie, and that flip is invisible to the call graph (nothing "broke" in the
@@ -445,7 +445,7 @@ latency-diagnosis pass on `tg blast-radius` identified AST parsing (`compile()`)
 path by reading the code, and reasoned toward caching it. Profiling the *actual* `tg blast-radius`
 call at depth 2 on this repo showed `compile()` was only **3.6% of runtime** — caching it would
 have saved roughly 3%. The real hotspot, invisible from code review, was `_module_aliases_for_path`
-(`src/tensor_grep/cli/repo_map.py:8181`), called **1,431,341 times** for ~1,000 unique path inputs
+(`src/tensor_grep/cli/repo_map.py:8197`), called **1,431,341 times** for ~1,000 unique path inputs
 from the reverse-import-graph / PageRank loops — 6.1s self / 38s cumulative of a 62s run. The commit
 message states this directly: "this corrects the regression-hunt synthesis, which guessed AST-parse
 caching (would have saved ~3%) — the real hotspot only showed under measurement."
@@ -474,7 +474,7 @@ it is genuinely **~54% faster** (961ms→446ms on the probe corpus), verified by
 monkeypatched-`ast.walk`-call-count assertion plus an old-vs-new diff over a
 static/nested/relative-imports/classes/sync+async/dynamic-import corpus. The companion
 validation-scan optimization (`_framework_test_pattern_bonus`,
-`src/tensor_grep/cli/repo_map.py:10600`, commit `d2c1266`, PR #723, v1.93.10 — a textual pre-check
+`src/tensor_grep/cli/repo_map.py:10616`, commit `d2c1266`, PR #723, v1.93.10 — a textual pre-check
 that skips an expensive per-candidate AST parse when nothing in `expanded_terms` could possibly
 score) shows the identical shape: **~68% faster** (3657ms→1172ms) in isolation, invisible from a
 warm end-to-end read.

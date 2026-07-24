@@ -213,7 +213,7 @@ since (go/java/php/csharp) instead sets `provenance_when_missing="grammar-missin
 (`repo_map.py:6090`, `:6126`, `:6163`, `:6202` respectively) and ships **no regex fallback at
 all**: a grammar-absent file for one of these four returns `([], [])` from
 `_imports_and_symbols_for_path` (`repo_map.py:6244`) rather than silently degrading. That flag is
-consumed by `_language_coverage_gaps_for_universe` (`repo_map.py:7966`, the check at `:8003`:
+consumed by `_language_coverage_gaps_for_universe` (`repo_map.py:7982`, the check at `:8019`:
 `if spec.provenance_when_missing not in {"regex-heuristic", "heuristic"}:`), which turns it into an
 honest, labeled `resolution_gaps` entry instead of a silent empty result — the Backend Fail-Closed
 Contract's "treat a zero as UNKNOWN, never as a silently proven zero" rule, applied at the
@@ -222,7 +222,7 @@ precision/recall tradeoff, not an oversight; see `tensor-grep-change-control` if
 9th language and need the full seam checklist rather than the theory.
 
 **A concrete consequence of this design worth knowing (ties back to §3/§4's ranking theme below):**
-`_target_language_for_path` (`repo_map.py:7367`) feeds the `tg agent` capsule's
+`_target_language_for_path` (`repo_map.py:7383`) feeds the `tg agent` capsule's
 query-language-vs-target-language confidence cap (`agent_capsule.py`). Its own in-repo comment
 calls each new-language branch the "MOST-FORGOTTEN seam" — miss it, and the capsule never learns
 the new language exists as a candidate target, so it can silently misfire (e.g. reporting "no
@@ -260,20 +260,20 @@ tg has **two independent ranking surfaces**, and only one of them actually imple
 2. **The `tg orient` / capsule symbol-ranking family** (`src/tensor_grep/cli/repo_map.py`) — **a flat
    presence-count stack, no IDF anywhere in it.** Three layered pieces, not one function — do not
    conflate them:
-   - `_score_text_terms` (`repo_map.py:7417`) — the primitive: counts term hits in a haystack, no
+   - `_score_text_terms` (`repo_map.py:7433`) — the primitive: counts term hits in a haystack, no
      rarity weighting.
-   - `_score_symbol` (`repo_map.py:7682`) — the actual per-symbol composite scorer, and the thing
+   - `_score_symbol` (`repo_map.py:7698`) — the actual per-symbol composite scorer, and the thing
      that produces `symbol["score"]`: name-match (`_score_text_terms` on the symbol name, `x3`
-     weight) + kind-match + file-path score (`_score_file_path`, `repo_map.py:7605`), plus two
+     weight) + kind-match + file-path score (`_score_file_path`, `repo_map.py:7621`), plus two
      additive heuristics shipped for task #254 (the CEO deep-research #251 steal / A7): a **+1
-     word-boundary bonus** (`_symbol_name_exact_boundary_bonus`, `repo_map.py:7664`; fires when a
+     word-boundary bonus** (`_symbol_name_exact_boundary_bonus`, `repo_map.py:7680`; fires when a
      query term longer than 3 chars matches a clean token in `split_terms(symbol_name)` rather than
-     only a raw substring) and a **`_TEST_SHADOW_PENALTY = 2`** demotion (`repo_map.py:7645`, floored
+     only a raw substring) and a **`_TEST_SHADOW_PENALTY = 2`** demotion (`repo_map.py:7661`, floored
      at 0 in `_score_symbol`) that sinks a test-file hit below a same-named non-test definition
      instead of letting it compete on equal footing. Both are additive refinements to *order among
      already-matching candidates* — neither changes *which* symbols match, and neither adds IDF.
-   - `_symbol_rank_key` (`repo_map.py:7549`) — the final sort key, called as
-     `scored_symbols.sort(key=_symbol_rank_key)` (`repo_map.py:8669`). Its 7-tuple is
+   - `_symbol_rank_key` (`repo_map.py:7565`) — the final sort key, called as
+     `scored_symbols.sort(key=_symbol_rank_key)` (`repo_map.py:8685`). Its 7-tuple is
      `(query_match_rank, -score, kind-is-function?, -span_length, file, line, name)`. The **first**
      field, `query_match_rank`, is a query-relevance bucket (0 = `exact_query_match`, 1 =
      `bridge_query_match`, 2 = `covered_query_match`, 3 = none) evaluated **before** the flat
@@ -281,7 +281,7 @@ tg has **two independent ranking surfaces**, and only one of them actually imple
      to it. The **final** tie-break field is `str(symbol.name)`, **not** a file-path string.
 
    This whole stack feeds `tg orient`'s symbol ranking and the `tg agent` capsule's target selection;
-   the top-N candidate cap is `ranked_symbols[: max(max_symbols, 8)]` (`repo_map.py:13171,13348`).
+   the top-N candidate cap is `ranked_symbols[: max(max_symbols, 8)]` (`repo_map.py:13187,13364`).
 
 **Why this is still a known weak point, just a narrower one than it used to be:** `_score_symbol`
 still has no IDF, so two symbols in the same `query_match_rank` bucket can still tie on the flat
@@ -315,7 +315,7 @@ in project memory for the full incident writeup, and `tensor-grep-change-control
 ## 4. PageRank / centrality — and why `tg orient` deliberately does NOT use it
 
 tg has a real, hand-rolled **personalized PageRank** implementation over the reverse-import graph:
-`_personalized_reverse_import_pagerank` (`src/tensor_grep/cli/repo_map.py:8402`) — damping
+`_personalized_reverse_import_pagerank` (`src/tensor_grep/cli/repo_map.py:8418`) — damping
 factor `alpha=0.85` (the standard Google PageRank default), `12` power-iteration steps, a
 personalization vector seeded uniformly over up to `_GRAPH_PAGERANK_SEED_FILE_LIMIT = 64` query-
 relevant files (`repo_map.py:319`), teleporting back to those seeds rather than to a uniform distribution.
@@ -578,8 +578,8 @@ router, not just `tg find`.
 | AST native vs sidecar | `main.py:6655` (`_select_ast_backend_for_pattern`), `ast_backend.py:505` (`is_available`) | ast-grep WRAPPER is preferred whenever installed; native tree-sitter is a fallback-only path with no GPU gate anymore |
 | Symbol-graph language registry | `lang_registry.py`, `repo_map.py:6004-6222` (8 `register_language` calls) | 8 of top-10 languages; grammar-missing fails closed to `resolution_gaps`, never a silent empty result — see §2a |
 | BM25 (real IDF) | `retrieval_bm25.py`, `reranker.py` | backs `tg search --rank`/`--bm25` only |
-| Flat scorer (no IDF) | `repo_map.py:7417` (`_score_text_terms`) | backs `tg orient`/`tg agent` symbol ranking — known weak point |
-| Personalized PageRank | `repo_map.py:8402` (`_personalized_reverse_import_pagerank`) | alpha=0.85, seeded, answers "relevant to this query" |
+| Flat scorer (no IDF) | `repo_map.py:7433` (`_score_text_terms`) | backs `tg orient`/`tg agent` symbol ranking — known weak point |
+| Personalized PageRank | `repo_map.py:8418` (`_personalized_reverse_import_pagerank`) | alpha=0.85, seeded, answers "relevant to this query" |
 | Central-files centrality | `orient_capsule.py:694` (`_central_files_from_map`) | composite in-degree + fan-in/symbol-density caps — `tg orient`'s deliberate choice over PageRank, answers "what's foundational" |
 | Trigram index | `rust_core/src/index.rs:138,1131` | falls back to full scan when no literal is extractable (never drops matches) |
 | GIL release | `rust_core/src/lib.rs:32,55` | `py.detach` (formerly `allow_threads`) around the mmap/scan closure |

@@ -237,7 +237,7 @@ process per rep (cold cache by construction), a single pass over distinct inputs
 output-identity (`total == total` both sides) — or (b) explicitly clear the relevant cache between reps
 of an end-to-end run. Never trust a warm end-to-end number as evidence for or against a cold-path
 change. Second receipt, same shipped-wheel-microbench discipline applied to a different lever: a
-validation-scan pre-check (`_framework_test_pattern_bonus`, `src/tensor_grep/cli/repo_map.py:10553`)
+validation-scan pre-check (`_framework_test_pattern_bonus`, `src/tensor_grep/cli/repo_map.py:10616`)
 measured **~68% faster** (3657ms→1172ms) this way, output byte-identical. The general profiling/proof
 pipeline this recipe belongs to (profile the shipped wheel → prove byte-identical output → warm/cold
 microbench) lives in the global skill `profile-guided-byte-identical-optimization`; this is the
