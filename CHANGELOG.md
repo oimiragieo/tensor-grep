@@ -1,6 +1,64 @@
 # CHANGELOG
 
 
+## v1.95.0 (2026-07-24)
+
+### Features
+
+- **lang**: Add PHP symbol + import intelligence (orient/defs/imports)
+  ([#724](https://github.com/oimiragieo/tensor-grep/pull/724),
+  [`8659e87`](https://github.com/oimiragieo/tensor-grep/commit/8659e87d57a5f71d7b7e59e842c3b27ab489c613))
+
+* feat(lang): add PHP symbol + import intelligence (orient/defs/source/imports/agent)
+
+Registers PHP as a Stage 1 language in the multi-language symbol graph (lang_registry), mirroring
+  lang_go.py's module shape: a new lang_php.py extracts class/interface/trait/enum declarations
+  (kind "class") and function/method declarations (kind "function") plus `use` import paths
+  (backslash-qualified, as written -- e.g. "App\Contracts\Named") from a single tree-sitter pass,
+  via tree_sitter_php.language_php() (the full grammar, not language_php_only()).
+
+Wired at the three dispatch sites this scope touches: - _imports_and_symbols_for_path
+  (build_repo_map's per-file symbol/import extraction -- feeds orient/defs/agent) -
+  build_symbol_source_from_map's per-language source lookup (tg source) - _target_language_for_path
+  (the "MOST-FORGOTTEN seam" lang_go.py's own comments warn about -- feeds the agent capsule's
+  query-language-vs-target-language confidence gate)
+
+Deferred to a follow-up: the cross-file caller-graph (references_and_calls /
+  file_imports_symbol_from_definition / import_update_target / prime_repo_context all registered
+  None). This is a strict subset of an already-handled shape -- import_update_target=None already
+  makes _language_coverage_gaps_for_universe emit an honest resolution_gaps entry (verified
+  end-to-end via `tg agent --json`), so `tg callers`/`tg blast-radius` stay honest about PHP instead
+  of reading as a proven zero.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+* fix(deps): sync uv.lock for tree-sitter-php (CI Dependency & License Audit)
+
+uv export --format requirements.txt --all-extras --no-emit-project --locked was failing because
+  uv.lock never picked up the tree-sitter-php entry added to pyproject.toml's ast/dev/bench extras.
+
+A raw `uv lock` (local uv 0.10.7) resolves correctly but also reformats ~40 unrelated marker
+  expressions across GPU/cuda packages (cuda-python, rmm-cu12, librmm-cu12, zarr, donfig, ...) --
+  pure noise from a local-vs-CI uv version difference, nothing to do with this change. Kept that run
+  only to source the real PyPI metadata (version 0.24.1, per-wheel hashes), then hand-spliced just
+  the 5 tree-sitter-php-related hunks into the original lockfile: the 3 optional-dependencies arrays
+  (ast/bench/dev), the 3 requires-dist entries, and the new [[package]] block itself. Net diff: 20
+  insertions, 0 deletions, 0 unrelated churn.
+
+Verified: `uv export --format requirements.txt --all-extras --no-emit-project --locked` exits 0 and
+  includes tree-sitter-php==0.24.1.
+
+* test(deps): pin tree-sitter-php in ast/dev/bench extras (mirrors Java's gate)
+
+Mirrors test_ast_dev_bench_extras_include_tree_sitter_java_for_path_a_stage2 (added by #725) -- one
+  more ratchet so an --all-extras --locked export can never silently drop PHP support the way it
+  briefly could have for Go/Java before their own equivalent tests landed.
+
+---------
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+
 ## v1.94.0 (2026-07-24)
 
 ### Features
