@@ -28,7 +28,7 @@ prefer the canonical path-first form.
 
 1. Confirm the installed CLI is available:
    - `tg --version`
-0. (Unfamiliar repo) Orient — single repo preferred; workspace root works (~36s, last measured v1.91.0):
+0. (Unfamiliar repo) Orient — single repo preferred; workspace root works (~4.9s cold-scan, last measured v1.95.0; a warm session-daemon hit is faster still):
    - `tg orient REPO_PATH`
    - `tg inventory REPO_PATH --json`
 2. File deps (cheap):
@@ -103,7 +103,9 @@ A resolved zero-caller result is NOT dead code either — the call graph can't s
 
 **Last full workspace+GPU dogfood: v1.91.0** (WSL `/mnt/c/dev/projects`, `/tmp/tg-dogfood-v21/report.tsv` — 57 PASS / 8 INCOMPLETE / 2 TIMEOUT / 1 FAIL). 14 items have shipped since (v1.91.1→v1.93.2: cold-path SLA, CLI-dispatcher ranking fix, single-file rayon, accuracy-gate pinning, inline caller annotations, binary-detection parity, flat-scorer hardening, index-lock de-flake, unscoped fast-refuse, dynamic-import honesty, WSL GPU-probe fix, install-dense/doctor-autostart/prepare-out UX batch, ledger PATH fix, gate-findings close-out, blast-radius honesty) — not re-verified as one whole-workspace sweep past v1.91.0; the rows below reflect the shipped fixes individually, not a fresh 1.93.2 dogfood run.
 
-**New since 1.91.0:** `tg prepare --out FILE` (persists the capsule for `tg evidence emit --capsule FILE`, no manual redirect), ledger claim/list PATH-canonicalization fix (A13), the generic >1500-file unscoped fast-refuse (A9), `dynamic_unresolved` import honesty (A10/A15), `tg doctor` `session_daemon.autostart` (A12(b)), and every dense-absent hint now leading with `tg install-dense` (A12(a)). See `tensor-grep-prepare`, `tensor-grep-ledger`.
+**More shipped v1.93.3→v1.95.0** (also not re-verified as one fresh whole-workspace sweep): a CEO +10% perf campaign (+25.3% end-to-end, v1.93.3-v1.93.8), a post-campaign repo-map ast.walk-merge (~54% faster) and validation-scan textual pre-check (~68% faster), a macOS CI rustup-retry fix, and two new symbol-graph languages — Java (v1.94.0) and PHP (v1.95.0) — taking the tier to 7 of the top-10 languages as of v1.95.0 (python/js/ts/go/rust plus java/php; C# merged to `main` right after v1.95.0 with its release still pending — re-check `lang_registry.py`'s `register_language` calls for the live count rather than trusting this number; C/C++ still deferred). A narrower same-session spot-check on that same workspace (c:/dev/projects, now 300k+ files, v1.95.0) found `orient` ~4.9s cold-scan (bounded by the 2000-file scan ceiling + centrality; a warm session-daemon hit is faster still — was ~36s at v1.91.0 on this workspace), `search` degrading to a partial result with an honest "exceeded timeout" message instead of hanging (exit 124), and `inventory --deadline` bounding per-project — encouraging, but still narrower than a full PASS/INCOMPLETE/TIMEOUT/FAIL sweep.
+
+**Detail on a few v1.91.1→v1.93.2 items, still current at v1.95.0:** `tg prepare --out FILE` (persists the capsule for `tg evidence emit --capsule FILE`, no manual redirect), ledger claim/list PATH-canonicalization fix (A13), the generic >1500-file unscoped fast-refuse (A9), `dynamic_unresolved` import honesty (A10/A15), `tg doctor` `session_daemon.autostart` (A12(b)), and every dense-absent hint now leading with `tg install-dense` (A12(a)). See `tensor-grep-prepare`, `tensor-grep-ledger`.
 
 **Prefer `tg prepare REPO/src`** over the multi-step agent loop for routine edits. Whole-repo prepare/agent with `--deadline` still partial/null-symbol; bare agent TIMEOUT empty @75s.
 

@@ -5,7 +5,7 @@ description: Use when exercising tensor-grep experimental GPU paths — devices/
 
 # tensor-grep GPU (experimental)
 
-Verified against **tg 1.93.2** (2026-07-22).
+Verified against **tg 1.95.0** (2026-07-24).
 
 ## Verdict, up front (do not bury this under the honesty table)
 
@@ -58,7 +58,8 @@ tg agent REPO/src "task" --gpu-device-ids 0 --gpu-timeout-s 15 --json | jq .gpu_
 
 ## Verified (2026-07-21, tg 1.91.0; WSL probe fix landed v1.93.0/#704)
 
-Artifacts: `/tmp/tg-dogfood-v21/`
+Artifacts: `/tmp/tg-dogfood-v21/` (ephemeral scratch from that session — do not expect the path to
+still exist; the findings below are the durable record).
 
 - 2× GPU detected; calibrate FAIL; search GPU → CPU fallback; agent GPU evidence failed
 - doctor `search_ready=false`, tier not usable

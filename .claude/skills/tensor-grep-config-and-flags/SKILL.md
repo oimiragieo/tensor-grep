@@ -1,12 +1,12 @@
 ---
 name: tensor-grep-config-and-flags
-description: Use when adding, changing, or auditing a tg environment variable, CLI flag, or provider mode (native/lsp/hybrid); when a search flag silently leaks to ripgrep or a command misroutes; when deciding whether a config axis (GPU, LSP, classify, semantic) is production or EXPERIMENTAL default-OFF; when adding a new `SearchConfig` field and needing to know whether it must be forwarded/refused/KNOWN_GAP'd for native delegation; or before registering a new `tg search --flag` or `tg COMMAND` (including `tg inventory`'s `--max-repo-files`). Catalogs the load-bearing TG_*/TENSOR_GREP_* env vars (routing, timeouts, GPU, classify, session, MCP security, LSP) with their default and guard, the 2-front-door / 4-site registration checklist, and the native-delegation field-coverage ratchet.
+description: Use when adding, changing, or auditing a tg environment variable, CLI flag, or provider mode (native/lsp/hybrid); when a search flag silently leaks to ripgrep or a command misroutes; when deciding whether a config axis (GPU, LSP, classify, semantic) is production or EXPERIMENTAL default-OFF; when adding a new `SearchConfig` field and needing to know whether it must be forwarded/refused/KNOWN_GAP'd for native delegation; or before registering a new `tg search --flag` or `tg COMMAND` (including `tg inventory`'s `--max-repo-files`/`--deadline`). Catalogs the load-bearing TG_*/TENSOR_GREP_* env vars (routing, timeouts, GPU, classify, session, MCP security, LSP) with their default and guard, the 2-front-door / 4-site registration checklist, and the native-delegation field-coverage ratchet.
 ---
 
 # tensor-grep config and flags
 
 A ground-truthed catalog of every tg config axis — env vars, CLI flags, provider modes — plus the
-registration checklist for adding a new one. Verified against source as of 2026-07-22, **v1.93.2**
+registration checklist for adding a new one. Verified against source as of 2026-07-23, **v1.95.0**
 (`pyproject.toml`). Re-verify commands are in [Provenance and maintenance](#provenance-and-maintenance)
 because these drift with every release.
 
@@ -254,8 +254,8 @@ when it carries `lsp_provider_response = true` from a completed provider request
 
 ## `tg inventory`: walk-only repo manifest (v1.19.0, #343)
 
-`tg inventory PATH [--json] [--max-repo-files N]` (`src/tensor_grep/cli/inventory.py`,
-registered `main.py:7090-7091`) emits a single-pass file/byte/language/category manifest by
+`tg inventory PATH [--json] [--max-repo-files N] [--deadline SECONDS]` (`src/tensor_grep/cli/inventory.py`,
+registered `main.py:8403-8404`) emits a single-pass file/byte/language/category manifest by
 reusing the same gitignore-aware walker (`repo_map._iter_repo_files`) that `orient`/`callers`/
 `blast-radius` trust — so counts stay truth-consistent with every other `tg` command and inherit
 its `.tensor-grep`/`.git`/vendor exclusions for free.
@@ -263,38 +263,82 @@ its `.tensor-grep`/`.git`/vendor exclusions for free.
 **`--max-repo-files` defaults to `50_000`, still well above the AST map limit** — this is a
 deliberate, documented divergence, not an oversight. **The AST-side number changed underneath this
 divergence** (backlog #1, 2026-07-06): `DEFAULT_AGENT_REPO_MAP_LIMIT` was raised from `512` to
-**`2000`** (`repo_map.py:155`), and the CLI-side mirror `_DEFAULT_AGENT_REPO_SCAN_LIMIT` (`main.py:66`)
+**`2000`** (`repo_map.py:157`), and the CLI-side mirror `_DEFAULT_AGENT_REPO_SCAN_LIMIT` (`main.py:82`)
 was raised to match — do not describe the AST cap as `512` anymore.
 
-- `DEFAULT_MAX_INVENTORY_FILES = 50_000` (`inventory.py:36`), passed to the CLI option as a
-  literal `50_000` (`main.py:7093-7095`) rather than importing the constant, so the (heavy)
+- `DEFAULT_MAX_INVENTORY_FILES = 50_000` (`inventory.py:40`), passed to the CLI option as a
+  literal `50_000` (`main.py:8406-8413`) rather than importing the constant, so the (heavy)
   `repo_map` import stays lazy. A nearby code comment still says "matching `map`'s 512 pattern" —
   that comment is about the STYLE (keep-literal, don't import), not the current live number; `map`'s
   own limit is 2000 now, not 512. A guard test pins the `50_000` literals together; re-verify with
   `grep -rn "50_000" src/tensor_grep/cli/inventory.py src/tensor_grep/cli/main.py`.
-- `DEFAULT_AGENT_REPO_MAP_LIMIT = 2000` (`repo_map.py:155`) budgets a **full AST parse per file**
+- `DEFAULT_AGENT_REPO_MAP_LIMIT = 2000` (`repo_map.py:157`) budgets a **full AST parse per file**
   for `tg map`/`orient`/`context`/`edit-plan`/session repo-map defaults — reusing it for
   `inventory` would silently truncate any repo over ~2000 files and defeat the "whole-repo
-  manifest" purpose (`inventory.py:31-34` states this explicitly in a code comment).
+  manifest" purpose (`inventory.py:36-39` states this explicitly in a code comment).
   `inventory` is walk-only (`stat()` + an 8KB read for binary-sniffing per file), orders of
   magnitude cheaper than an AST parse, so a much higher cap (`50_000`) is still safe even after the
   AST-side raise.
-- **The trap: `CALLER_SCAN_FILE_CEILING = 512` (`repo_map.py:168`) is a DIFFERENT, deliberately
-  separate constant that now holds the old `512` numeral** — do not confuse it with
-  `DEFAULT_AGENT_REPO_MAP_LIMIT`. Per the code comment at `repo_map.py:161-164`: raising the AST map
-  limit to 2000 is safe for caller-scan latency *only because* this ceiling independently bounds the
-  slow per-file caller-scan hot loop (`callers`/`refs`/`blast-radius`/`impact`) at a single internal
-  chokepoint, regardless of how large the map itself is — "a naive raise [of the caller-scan ceiling]
-  to 2000 would make it worse" (reintroducing the task #52 ~100s-hang shape; see
-  `tensor-grep-large-repo-scale-campaign`). If you see the bare number `512` anywhere in this
-  subsystem going forward, check WHICH constant it is before assuming it's the map limit.
-- Truncation is **never silent**: a repo over the cap is surfaced via
-  `scan_limit.possibly_truncated` + `scan_limit.truncation_cause` in the JSON payload, and as an
-  ASCII `[!] truncated at max_files=...` line in text output (fixed from a U+26A0 emoji that
-  crashed `typer.echo` on Windows cp1252 consoles — `#346`, commit `6b7b518`; ASCII-only is now
-  the rule for all `tg` CLI output, not just `inventory`).
+- **`CALLER_SCAN_FILE_CEILING` was ALSO raised, `512`→`2000` (`repo_map.py:167-177`; backlog #57,
+  2026-07-09) — the "DIFFERENT constant that stays at 512" framing this file previously used is
+  itself now stale.** It remains logically separate from `DEFAULT_AGENT_REPO_MAP_LIMIT` (they just
+  now happen to share a value) — the raise was safe only because `#478` had already threaded a
+  `--deadline` hard-bound through the caller-scan loop, closing the task #52 ~100s-hang risk
+  ("~100s on a 1941-file repo at the old 512 cap", `repo_map.py:163-164`) that originally kept this
+  ceiling frozen below the map default (`repo_map.py:1638-1642`). It still backstops the flag-less
+  (`--deadline` omitted) default path and a `--max-repo-files`-raised mega-repo; raising past 2000
+  needs fresh cost data (`repo_map.py:167-177`). If you see the bare number `512` anywhere in this
+  subsystem going forward, it is describing HISTORY — check which constant before assuming either
+  reading is still live.
+- Truncation is **never silent**, and it now has two distinguishable causes
+  (`scan_limit.truncation_cause` in the JSON payload): `"project-files"` when `--max-repo-files`'
+  count cap was hit, or `"deadline"` when `--deadline` (below) fired first; the key is always
+  present, `null` when the scan completed. Text output mirrors the split (`inventory.py:348-359`): `[!] truncated at
+  max_files=... (cause=project-files)` vs. `[!] stopped after the time budget (cause=deadline)` —
+  both ASCII-only (fixed from a U+26A0 emoji that crashed `typer.echo` on Windows cp1252 consoles —
+  `#346`, commit `6b7b518`; ASCII-only is now the rule for all `tg` CLI output, not just
+  `inventory`). Either cause trips the same shared exit-2 gate, `_scan_incomplete`
+  (`main.py:10940`, checked at `main.py:8446-8447`) — it only looks at `possibly_truncated`, not
+  which cause fired.
 - Fails closed: a nonexistent `path` raises `FileNotFoundError` -> CLI exits 1
-  (`inventory.py:175-176`) — a missing path must never read as a valid empty repo.
+  (`inventory.py:201-202`) — a missing path must never read as a valid empty repo.
+
+### `--deadline SECONDS`: the wall-clock twin of `--max-repo-files` (registered `main.py:8414-8423`)
+
+Threads a `deadline_seconds` float (`inventory.py:187`) into `build_inventory()` so a huge/slow
+tree returns a partial, honestly-labeled manifest instead of hanging. `inventory`'s own
+`--deadline` predates and is unrelated to `#585` (2026-07-14), which extended `--deadline` to
+`source`/`docs-coverage`/`blast-radius-plan` instead (a disjoint set of commands) — `inventory`'s
+flag shipped earlier (`#395`, issue #53), was hardened into a true wall-clock bound by `#478`
+(issue #52), then had a zero-count bug fixed (next bullet) by `#516`.
+
+- **The walk and the per-file loop split the budget, they do not share it**
+  (`inventory.py:204-223`; `_WALK_PHASE_DEADLINE_FRACTION = 0.7`, `inventory.py:48`) — the
+  in-source comment calls this the "#130(a) fix" (shipped as `#516` per commit history). The walk
+  phase (`_iter_repo_files`) gets only the first 70% of `deadline_seconds`; the remainder is
+  reserved for the per-file `stat()`/binary-sniff loop. Before this split, a slow walk could
+  consume the *entire* deadline, so the per-file loop's very first deadline check fired
+  immediately and `totals.files` read `0` despite the walk having discovered real files — the
+  in-source comment names the repro outright (`inventory.py:204-208`: "the 76s dogfood gap on
+  `tg inventory --deadline 30`").
+- Either phase running out of budget sets `truncation_cause = "deadline"` (`inventory.py:297-306`)
+  — including when the walk was ALSO count-capped by `--max-repo-files`; "deadline" wins the label
+  because a longer `--deadline` would help where a higher `--max-repo-files` would not. An earlier
+  version of this same guard mislabeled a real 20s deadline hit on `C:/dev/projects` as a file-cap
+  truncation (`inventory.py:303-304`, dogfood 2026-07-05) — exactly the bug this two-cause split
+  exists to prevent from recurring.
+- **Known narrow gap (low-priority, not load-bearing): the walk's initial listing of the SCANNED
+  ROOT itself is not deadline-interruptible.** `_iter_repo_files` (`repo_map.py:987`), on the
+  `max_files is not None` branch `inventory` always takes (it always calls with
+  `max_files=max_files + 1`, `inventory.py:231-236`), does one eager, unconditional
+  `entries = list(os.scandir(normalized_root))` (`repo_map.py:1009-1010`) before any deadline
+  check exists in that branch — every subsequent bucket pull IS deadline-checked
+  (`repo_map.py:1052-1057`), just not this one root-level call. On a root whose own immediate
+  directory listing is itself pathologically large/slow, `--deadline` cannot preempt it. Dogfooded
+  against a 300k+-file workspace-union tree: `tg inventory --deadline` holds up fine per-project
+  and on most roots — this edge needs a pathologically huge flat fan-out sitting directly at the
+  scanned path to trigger, and is not worth a load-bearing lazy-scandir rewrite on its own; see
+  `tensor-grep-large-repo-scale-campaign` for the broader deadline-scale work this sits alongside.
 
 Registration follows the standard 4-site table (`KNOWN_COMMANDS` in `commands.py`, native Rust
 `Commands::Inventory` in `rust_core/src/main.rs`, `PUBLIC_TOP_LEVEL_COMMANDS` in
@@ -304,7 +348,11 @@ Registration follows the standard 4-site table (`KNOWN_COMMANDS` in `commands.py
 ```bash
 # Re-verify the two caps and why they differ
 grep -n 'DEFAULT_MAX_INVENTORY_FILES\|max_repo_files' src/tensor_grep/cli/inventory.py src/tensor_grep/cli/main.py
-grep -n 'DEFAULT_AGENT_REPO_MAP_LIMIT = ' src/tensor_grep/cli/repo_map.py
+grep -n 'DEFAULT_AGENT_REPO_MAP_LIMIT = \|CALLER_SCAN_FILE_CEILING = ' src/tensor_grep/cli/repo_map.py
+
+# Re-verify --deadline registration + the walk/per-file budget split
+grep -n '"--deadline"' src/tensor_grep/cli/main.py
+grep -n 'deadline_seconds\|_WALK_PHASE_DEADLINE_FRACTION' src/tensor_grep/cli/inventory.py
 
 # Smoke-test the command against the real binary (not CliRunner)
 tg inventory . --json | python -m json.tool | head -30
@@ -487,6 +535,28 @@ worked non-registration example. The rest of this file (env-var catalog, front-d
 provider sections above) was **not** re-walked line-by-line in this pass — treat those sections'
 exact line numbers as needing a fresh check per the rule below, independent of the sections just
 re-verified.
+
+Re-verified as of 2026-07-23 (v1.95.0): the `tg inventory` section end-to-end. One factual fix:
+the `CALLER_SCAN_FILE_CEILING` bullet had called it "the different constant that stays at 512" —
+`repo_map.py` shows backlog #57 (2026-07-09) raised it to `2000` alongside
+`DEFAULT_AGENT_REPO_MAP_LIMIT`, one day after this file's 2026-07-08 tg-inventory pass captured the
+`512` value accurately, and it went uncaught through the 2026-07-16 and 2026-07-22 passes because
+neither re-scoped to this section. Every other citation in the section was re-walked against
+current line numbers (`main.py`'s `inventory` registration moved 7090→8403 as the file grew past
+17k lines). Also added the previously entirely-undocumented `--deadline SECONDS` flag: registration,
+the walk/per-file budget-split history (the 76s-dogfood-gap bug, "`#130(a)`"/`#516`), the two-cause
+`truncation_cause` split, and a known narrow root-level-`os.scandir` gap that `--deadline` cannot
+preempt (low-priority, not load-bearing). The env-var catalog, front-door tables, GPU/LSP/provider
+sections, and the native-delegation checklist citations (all last verified 2026-07-22 or earlier)
+were **not** re-walked in this pass — treat every exact line number outside the `tg inventory`
+section as needing a fresh check, same rule as before.
+
+Release-cadence note (added 2026-07-23): `main` picked up two MINOR version bumps
+(`v1.93`→`v1.94`→`v1.95`) in roughly the one-day gap between this file's 2026-07-22 and 2026-07-23
+passes, and merges land one-at-a-time rather than batched, so line-number drift here is continuous,
+not occasional. Re-verify this file on a cadence of a few releases, not only when a citation is
+reported broken — the `CALLER_SCAN_FILE_CEILING` miss above sat wrong for two whole passes because
+nothing forced a re-check of a section nobody had reported as broken.
 
 If `AGENTS.md`'s `release_docs_current_tag` no longer says `v1.78.1`, treat every default/line-number
 claim in this file as needing re-verification, not just the version string.

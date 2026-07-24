@@ -5,8 +5,10 @@ description: Use when coordinating multiple agents on the same repo with tg ledg
 
 # tensor-grep ledger (EXPERIMENTAL, ADVISORY-tier)
 
-Verified against **tg 1.93.2** (2026-07-22; last full workspace sweep 2026-07-21 at v1.91.0 PASS;
-Slice 1 PATH-canonicalization fixed v1.93.0/#706, re-verified via that PR's own closing dogfood).
+Verified against **tg 1.95.0** (2026-07-24; last full workspace sweep 2026-07-21 at v1.91.0 PASS;
+Slice 1 PATH-canonicalization fixed v1.93.0/#706, re-verified via that PR's own closing dogfood;
+re-confirmed against origin/main — `ledger_store.py` and the `ledger` CLI wiring in `main.py` carry
+zero diff since v1.93.2, so every claim/release/list/record/find behavior below is still current).
 
 `tg ledger` is **ADVISORY-tier**, not MANDATORY or OPTIONAL, in the vocabulary a multi-agent-coordination
 ecosystem needs to stay legible (the same MANDATORY/OPTIONAL/ADVISORY split the `ruah` coordination
@@ -110,6 +112,15 @@ tg evidence emit REPO --capsule capsule.json --query "task" --json --agent-id "$
 tg ledger record REPO --receipt receipt.json --symbol SYM --agent-id "$AGENT_ID" --json
 tg ledger release REPO --symbol SYM --agent-id "$AGENT_ID" --json
 ```
+
+**Claim visibility is not proof of correctness — this loop is coordination, not verification.**
+A clean claim/release round-trip (like a conflict-free git rebase) only proves agents
+*coordinated*; it says nothing about whether the merged result is *right*. Motivating incident:
+a multi-PR drain sequentially rebased several parallel PRs onto a shared `test_lang_registry`
+file — every rebase was conflict-free, but a silent auto-merge had dropped a `lang_*` import,
+caught only when the test suite was re-run afterward (`ImportError`), not by the clean rebase
+itself. Run real validation (tests, dogfood) before/after `release`, not just an uncontested
+claim — the ledger tells you *who* touched *what*, never whether it's correct.
 
 ## Related
 

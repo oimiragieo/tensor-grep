@@ -13,7 +13,7 @@ tg doctor --json ROOT
 tg devices
 ```
 
-## Recommended sweep (v1.93.2)
+## Recommended sweep (v1.95.0)
 
 ```bash
 cd /path/to/workspace
@@ -43,7 +43,7 @@ tg dogfood --root . --output /tmp/dogfood-ws.json
 
 | Category | Result | Notes |
 | --- | --- | --- |
-| Symbol ladder / imports / orient / map / route-test / evidence | ✅ | route agreement=true; trunc hard-stop exit 2 |
+| Symbol ladder / imports / orient / map / route-test / evidence | ✅ | route agreement=true; trunc hard-stop exit 2; symbol-graph now 8/10 top languages (Java v1.94.0, PHP v1.95.0, C# v1.96.0 added via `lang_registry` + `lang_<x>.py`, B6) — no live Java/C#/PHP target swept in this workspace yet |
 | `tg agent` scoped + root `--deadline 90` | ✅ | root ~50s rc 0 non-partial (improved vs tight deadline) |
 | **`tg prepare`** | ✅ | ~8–9s; blast_radius_floor; `--claim` submits |
 | ledger claim/list/record/find/release | ⚠️→**fixed v1.93.0 (A13, #706)** | was: **list PATH must match claim PATH**; now canonicalizes to the nearest `.git` ancestor, `list [PATH]` rolls scope UP — the footgun is closed for Slice 1 (claim/release/list); Slice 2 (record/find) stays literal-path-rooted |
@@ -67,6 +67,7 @@ a repeat of this sweep.
 | 1.91.0 | 57 | 2 | prepare + install-dense |
 | 1.92.1 | saddle ✅ | — | prepare solid; ledger PATH-scope footgun documented |
 | **1.93.2** | not re-swept | — | ledger PATH fix (A13), unscoped fast-refuse (A9), WSL GPU-probe fix (A11), dynamic-import honesty (A10/A15), install-dense/doctor-autostart/prepare-`--out` UX batch (A12) all shipped since 1.92.1 — see the row-by-row fixes above; a fresh whole-workspace PASS/TIMEOUT count is not yet recorded |
+| **1.95.0** | not re-swept | — | Java (v1.94.0) + PHP (v1.95.0) join the symbol-graph tier (5→8 of top-10 languages, `lang_registry` + `lang_<x>.py` module pattern, B6; C# follows immediately as v1.96.0, C/C++ still deferred) — no live Java/C#/PHP target has been swept in this workspace yet; c:/dev workspace-scale dogfood (300k+ files, D1) confirms `orient` bounds at 4.9s (scan_limit+centrality) and `search` degrades to an honest partial/exit-124 on an unscoped run; known low-priority edge unchanged: a pathological cross-project union directory can still blow `inventory --deadline` — `_iter_repo_files`'s root-level `list(os.scandir(...))` (repo_map.py:1010) has no mid-scandir deadline check, rare, not a load-bearing fix |
 
 ## Sibling skills
 

@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-failure-archaeology
-description: Use when about to "fix" or "optimize" something in tensor-grep that feels novel — before proposing PyO3/FFI for directory walking, re-enabling free-threading, adding a --json self-test, tightening a dependency upper-cap, blaming an IDF/ranking flip, trusting a green mock/FFI test, diagnosing a release that "didn't publish", chasing a reported latency "regression" without profiling at scale, shipping a doc-drift/precision heuristic off green fixtures alone, adding a "differs-from-default" native-delegation gate, reading a `capfd`-based CliRunner test result, micro-optimizing a hot loop without checking who actually consumes the value, re-proposing cAST structural chunking as the default, re-proposing dense int8/binary/PCA embedding compression, proposing a warm-session/daemon search-index shortcut, proposing GPU-for-search or re-litigating the PFAC-vs-brute-force kernel claim, hitting the many-pattern Aho-Corasick dedup bug, or trusting an unverified "cheap win" from a paper/research steal-list. A chronicle of settled battles (symptom -> root cause -> evidence -> status) so no one re-fights them. Load it to check "has this already been tried and lost?" before spending effort. For a live NEW failure use tensor-grep-debugging-playbook; for the process gates to re-attempt one use tensor-grep-change-control.
+description: Use when about to "fix" or "optimize" something in tensor-grep that feels novel — before proposing PyO3/FFI for directory walking, re-enabling free-threading, adding a --json self-test, tightening a dependency upper-cap, blaming an IDF/ranking flip, trusting a green mock/FFI test, diagnosing a release that "didn't publish", chasing a reported latency "regression" without profiling at scale, shipping a doc-drift/precision heuristic off green fixtures alone, adding a "differs-from-default" native-delegation gate, reading a `capfd`-based CliRunner test result, micro-optimizing a hot loop without checking who actually consumes the value, re-proposing cAST structural chunking as the default, re-proposing dense int8/binary/PCA embedding compression, proposing a warm-session/daemon search-index shortcut, proposing GPU-for-search or re-litigating the PFAC-vs-brute-force kernel claim, hitting the many-pattern Aho-Corasick dedup bug, trusting an unverified "cheap win" from a paper/research steal-list, cloning a "mirror language X" onboarding brief without checking which module is the CURRENT template, or trusting a conflict-free git rebase across several PRs that touch the same shared registration file as proof nothing was silently dropped. A chronicle of settled battles (symptom -> root cause -> evidence -> status) so no one re-fights them. Load it to check "has this already been tried and lost?" before spending effort. For a live NEW failure use tensor-grep-debugging-playbook; for the process gates to re-attempt one use tensor-grep-change-control.
 ---
 
 # Tensor-Grep Failure Archaeology
@@ -12,10 +12,14 @@ model does not burn a day re-discovering the same wall.
 Facts below were verified against the repo on **2026-07-02 at v1.17.25**, with a second pass on
 **2026-07-03 at v1.19.3** (Battles 9-14), a third pass adding Battle 15 (`release-tag-smoke`), a
 fourth pass **2026-07-16 at v1.78.1** fixing the stale `case_sensitive` KNOWN_GAP claim in Battle 9 and
-adding Battle 16 (the `tg find` Opus-gate catches), and a fifth pass **2026-07-22 at v1.93.2** adding
+adding Battle 16 (the `tg find` Opus-gate catches), a fifth pass **2026-07-22 at v1.93.2** adding
 Battles 17-22 (the CEO deep-research campaign's research retirements — cAST, dense int8, warm-session,
-GPU-for-search, the many-pattern dedup bug, and the "5/5 mirage" meta-lesson). Re-verify anything
-load-bearing with the commands in **Provenance and maintenance** before you act on it.
+GPU-for-search, the many-pattern dedup bug, and the "5/5 mirage" meta-lesson), and a sixth pass
+**2026-07-24 at v1.96.0** adding Battles 23-24 (the language-expansion campaign's stale onboarding-brief
+catch and its sequential multi-PR shared-file union-rebase discipline), a warm-hides-cold addendum to
+Battle 12, and re-pointing Battle 16's evidence at its post-squash commit hashes (`501dc26`/`6d79945`)
+plus fixing a stale `AGENTS.md` section-letter reference. Re-verify anything load-bearing with the
+commands in **Provenance and maintenance** before you act on it.
 
 ## When to use this skill
 
@@ -51,6 +55,12 @@ Load this **before** you spend effort on any of these, because each has already 
   over-count bug is already diagnosed and guarded, not yet root-fixed (Battle 21).
 - Trusting an unverified **"cheap win" from a paper or research steal-list** without checking it against
   the real code first — 5 of 6 recent steals came back negative once verified (Battle 22, the meta-lesson).
+- Assuming a **"clone language X's extractor"** onboarding brief is still accurate without checking
+  which module is the CURRENT template — a brief that says "mirror inline `_rust_*`" is stale once the
+  codebase has grown a `lang_registry` + `lang_go.py`-style module (Battle 23).
+- Trusting a **conflict-free git rebase** across several PRs that all touch the same shared
+  registration file (a suffix dict, an extras list, a lockfile) as proof the merged file is still
+  complete (Battle 24).
 
 ## When NOT to use this skill (use a sibling instead)
 
@@ -265,6 +275,18 @@ called repeatedly inside a graph/loop algorithm is a near-free `@lru_cache` cand
 `dict[str, set]` → `dict[str, frozenset]` downstream type hints when the cached value is
 shared/iterated but never mutated in place.
 
+**Addendum (2026-07-24) — the mirror-image trap: a warm run can hide a real WIN too.** The same
+"measure the actual thing, not a proxy" discipline cuts the other way: a **warm** end-to-end dogfood
+rerun measures whatever CACHED path the optimized function no longer sits on, so a real improvement
+can read as noise, or even a false regression, if the changed function only runs on the **cold**/
+first-touch path. Two later optimizations — `9a2a01c` ("merge 3 redundant `ast.walk` passes in
+`_python_imports_and_symbols` into one") and `d2c1266` ("textual pre-check before per-candidate
+validation-test AST parse") — were verified with a **single-pass, fresh-process microbenchmark over
+distinct inputs** instead of a warm end-to-end dogfood rerun, specifically to avoid this trap; see
+`profile-guided-byte-identical-optimization` for the general technique. Same rule as this battle's
+own Rule paragraph, one layer deeper: the proxy trap this time is warm-cache reuse, not "profiled
+the wrong command."
+
 ## Battle 13 — `tg diff-docs`: 17 green fixture tests, 20k+ false positives on the real corpus (deliberately deferred)
 
 | Field | Detail |
@@ -324,8 +346,8 @@ and upload succeed"), check every gating job's own conclusion by name, not the r
 |---|---|
 | **Symptom** | Two `tg find` build-wave PRs (#626 CLI, #627 MCP) reached the mandatory adversarial Opus gate with all tests green and no CI failures, yet the gate still returned FIX-FIRST on both. |
 | **Root cause** | Two independent misses, each a known bug CLASS from earlier battles recurring in new code: (1) `_execute_find`'s dense-encode path could raise a query-time `DenseUnavailableError` that was NOT caught at the command boundary — it would have propagated as an uncaught exception (a crash) instead of degrading to BM25-only, violating the Backend Fail-Closed Contract the exact way Battle 8's dead bridge and this repo's `--pcre2` anti-pattern already taught (a real failure must never surface as a silent/uncontrolled path); (2) the `tg_find` MCP tool PR shipped without bumping `_TG_MCP_SERVER_CONTRACT_VERSION` — a fresh instance of the "enumerate all N registration sites" bug class (AGENTS.md "Adding a Command or Flag"), except a NEW site this repo had not previously named: a new MCP tool's request/response shape IS a registration site, just like the 4 command sites and 2 search-flag sites. Neither defect showed up in unit tests because neither test suite exercised the specific failure path (a corrupt/missing model at query time; a contract-version consumer diffing the reported version). |
-| **Evidence** | Fix commit `045fadc` ("fix(cli): F1 query-time dense degrade for tg find (Opus-gate blocker, #189)") catches `DenseUnavailableError` at the `find()` command boundary and degrades to BM25-only with a visible `rank_fallback_reason`, mirroring `search`'s existing catch. Fix commit `3fcca06` ("fix(mcp): bump contract version 1.3.0 for tg_find tool (Opus-gate blocker, #189)") bumps `_TG_MCP_SERVER_CONTRACT_VERSION` in `mcp_server.py`. Both fixes landed inside the same PR the gate blocked, before merge. |
-| **Status** | **SETTLED discipline, reinforced.** The mandatory adversarial Opus gate (`AGENTS.md` A3 / "Verify AI-Drafted Plans" post-build audit) is not a rubber stamp even on a well-tested, TDD-built feature — see the A3 bullet's own prior receipts (a symlink RCE bypass, a lock-release TOCTOU) for the pattern repeating. AGENTS.md now names a **5th** registration site for this reason: any new MCP tool bumps `_TG_MCP_SERVER_CONTRACT_VERSION` (see "Adding a Command or Flag"). |
+| **Evidence** | The fix ("fix(cli): F1 query-time dense degrade for tg find (Opus-gate blocker, #189)") catches `DenseUnavailableError` at the `find()` command boundary and degrades to BM25-only with a visible `rank_fallback_reason`, mirroring `search`'s existing catch — squashed into the `tg find` CLI PR's merge commit `501dc26` (#626) on `origin/main` (originally authored as `045fadc`, which is not itself an ancestor of `main` post-squash). The MCP fix ("fix(mcp): bump contract version 1.3.0 for tg_find tool (Opus-gate blocker, #189)") bumps `_TG_MCP_SERVER_CONTRACT_VERSION` in `mcp_server.py` — squashed into the MCP PR's merge commit `6d79945` (#627) (originally authored as `3fcca06`). Both fixes landed inside the PR the gate blocked, before merge. |
+| **Status** | **SETTLED discipline, reinforced.** The mandatory adversarial Opus gate (AGENTS.md's "Verify AI-Drafted Plans Against the Real Code" post-build audit) is not a rubber stamp even on a well-tested, TDD-built feature — see that section's own prior receipts (a symlink RCE bypass, a lock-release TOCTOU) for the pattern repeating. AGENTS.md now names a **5th** registration site for this reason: any new MCP tool bumps `_TG_MCP_SERVER_CONTRACT_VERSION` (see "Adding a Command or Flag"). |
 
 **Rule:** A green test suite proves the tests you wrote pass, not that every failure boundary is
 covered — a new compute path (a dense-model encode call, a new MCP tool) needs its OWN fail-closed
@@ -419,6 +441,39 @@ process is broken; it is evidence the verification gate is working. See `tensor-
 Part 4 for where good ideas come from and how to weight them, and treat this battle as the worked example
 of Test A/Test C (this skill's evidence bar) firing at portfolio scale rather than on one claim at a time.
 
+## Battle 23 -- a "mirror inline `_rust_*`" onboarding brief is stale; the current clone template is `lang_go.py` (2026-07-24, #724/#725/#726)
+
+| Field | Detail |
+|---|---|
+| **Symptom** | An orchestration brief for onboarding a new language into the symbol-graph tier instructed a build agent to "mirror the inline `_rust_*` / `_parser_for_source_suffix` machinery" — i.e. clone Rust's extractor style, since Rust and Python are the oldest, most-familiar languages in the codebase. |
+| **Root cause** | Rust and Python predate `lang_registry.py` (introduced by the Go PATH-A-Stage-0 refactor, #418) and still carry the OLD scattered-suffix-dispatch style the registry replaced. Go (#420) established the CURRENT pattern — `lang_registry.register_language(LanguageSpec(...))` plus a self-contained `lang_go.py` module — and every language PR since treats `lang_go.py`, not the Rust/Python inline code, as the reference template. A brief written from a stale mental model ("the two languages I remember") instead of the grown registry silently steers a build agent toward the wrong shape. |
+| **Evidence** | The C# PR (`6c09424`, #726) explicitly self-corrects this exact framing in its own commit message: "mirroring the Go precedent (`lang_go.py`) rather than the older pre-registry Rust/JS/TS inline pattern -- Go is the most current template since it was added after the `lang_registry` refactor." The PHP PR (`8659e87`, #724) independently states the same: "mirroring `lang_go.py`'s module shape." Both `lang_php.py` and `lang_csharp.py` exist as standalone modules on `origin/main`; there is no `lang_java.py` — Java (`f3ad51b`, #725) legitimately used the OTHER valid shape instead, with its extractor functions inline in `repo_map.py`, self-documented there as "mirroring the two Rust functions above" (`repo_map.py:4515-4519`). Both shapes register through `lang_registry` and are contract-consistent — see `_target_language_for_path` (`repo_map.py:7367-7397`), which every one of the four newly-registered suffixes (go/java/php/csharp) touches with its own inline "MOST-FORGOTTEN seam" comment reminding the next language's author why the branch matters. |
+| **Status** | **SETTLED discipline, reinforced.** |
+
+**Rule:** "Mirror language X" is only good guidance if X is still the CURRENT template — verify a
+cloning instruction against the actual registry/module layout on the branch you are building from,
+not a snapshot mental model of "the languages I remember being added first." This is the same lesson
+as Cross-cutting lesson 9 (verify a steal/brief against the LIVE code) and AGENTS.md's "Verify
+AI-Drafted Plans Against the Real Code" section, caught a second time here — inside a same-session
+orchestration brief this time, not an external paper.
+
+## Battle 24 -- sequential multi-PR shared-file drain: a conflict-free rebase is not proof of correctness (2026-07-24, #724/#725/#726)
+
+| Field | Detail |
+|---|---|
+| **Symptom** | Three independently-built language-onboarding PRs (Java #725, PHP #724, C# #726) each needed to add their own language to the SAME shared files — `tests/unit/test_lang_registry.py`'s per-suffix expectation table, `pyproject.toml`'s `ast`/`dev`/`bench` extras, and `uv.lock` — one drained and merged at a time, with the next rebased onto the just-merged prior. A rebase that applies without a conflict marker only proves the diff hunks landed on non-overlapping text; it does not by itself prove the resulting file still asserts every language every earlier sibling PR already added. |
+| **Root cause** | Each PR's diff to the shared suffix-expectation dict/frozenset looks, syntactically, like "add one more entry near the others already there" — exactly the shape a rebase or an automated merge can resolve by keeping only one side of an overlapping hunk instead of unioning both. Git's conflict detection is textual, not semantic: it has no notion that the post-rebase file is supposed to end up asserting python+js+ts+rust+go **plus** the prior sibling's addition **plus** this PR's own addition. Only re-running the affected test file (or a human/agent diff-reading the merged result) catches a hunk that silently reverted to a stale subset. |
+| **Evidence** | The three sequential squash-merges show the union holding at every step: `f3ad51b` (Java, #725) touches `test_lang_registry.py` (44 changed lines: registers `java`/`.java`, substitutes the "still-unregistered example" language from `.java` to `.kt`); `8659e87` (PHP, #724) touches it again (15 changed lines: adds `php`/`.php` alongside Java's entries); `6c09424` (C#, #726) touches it a third time (20 changed lines: adds `csharp`/`.cs` alongside both priors). The current file's `test_spec_for_path_resolves_every_registered_suffix` asserts all eight registered languages together (`tests/unit/test_lang_registry.py`), and the same union pattern holds in `pyproject.toml:600,622-630,636-644` (the `ast`/`dev`/`bench` extras list all eight `tree-sitter-*` packages) and `uv.lock` (all eight `tree-sitter-*` `[[package]]` blocks plus their per-extra marker entries). This is the discipline the campaign's own operating notes flagged as a landmine to guard against before each rebase: union the registered-lang set, re-resolve `uv.lock`, and verify `uv export --locked` exits 0 before merging — never assume a clean rebase alone proves the shared file is still complete. |
+| **Status** | **SETTLED discipline.** |
+
+**Rule:** When N PRs touch the same shared registration file (a suffix-dispatch dict, an extras list,
+a lockfile), drain them ONE at a time, rebase each onto the just-merged prior, and UNION the
+assertions — verify the post-rebase file still asserts everything every earlier sibling added, not
+just the new PR's own addition. A conflict-free rebase is a claim about textual non-overlap, not
+semantic completeness; re-run the affected tests after every rebase, before merging — the same
+"gate on verified state, not on the absence of a visible problem" discipline Battle 14 requires for
+a release watcher.
+
 ---
 
 ## Cross-cutting lessons (the meta-patterns behind the battles)
@@ -459,18 +514,20 @@ These recur across the chronicle; internalize them and you avoid the next re-fig
    trace to skipping this step. A cheap-looking win from an external source (a paper's benchmark, a
    report of a bug) is a HYPOTHESIS about THIS codebase until you've read the actual file:line and, for
    a speed/quality claim, run the actual measurement here — never assume the source material's claim
-   transfers unchanged.
+   transfers unchanged. Battle 23's stale "mirror inline `_rust_*`" onboarding brief is the same lesson
+   fired from INSIDE a same-session orchestration brief rather than an external paper.
 
 ## Provenance and maintenance
 
 Re-verify these before treating any claim above as current (drift-prone facts are date-stamped
 **as of 2026-07-02, v1.17.25**, with Battles 9-14 verified **2026-07-03, v1.19.3**, Battle 9's
-`case_sensitive` correction + Battle 16 verified **2026-07-16, v1.78.1**, and Battles 17-22 +
-cross-cutting lesson 9 added **2026-07-22, v1.93.2**):
+`case_sensitive` correction + Battle 16 verified **2026-07-16, v1.78.1**, Battles 17-22 +
+cross-cutting lesson 9 added **2026-07-22, v1.93.2**, and Battles 23-24 + the Battle 12 addendum +
+Battle 16's evidence-hash/section-letter correction added **2026-07-24, v1.96.0**):
 
 ```bash
 # Current version + latest settled entries
-grep -E '^version' pyproject.toml               # expect 1.93.2 (or newer)
+grep -E '^version' pyproject.toml               # expect 1.96.0 (or newer)
 head -20 CHANGELOG.md
 
 # Battles 17-21 (research retirements) + Battle 22 (meta)
@@ -480,9 +537,9 @@ grep -n "gpu_text_search_positions" rust_core/src/gpu_native.rs
 # Battle 9 correction (case_sensitive graduated OUT of KNOWN_GAP, audit #19)
 grep -n "case_sensitive" tests/unit/test_native_delegation_field_coverage.py
 
-# Battle 16 (tg find Opus-gate catches)
-git show 045fadc --stat
-git show 3fcca06 --stat
+# Battle 16 (tg find Opus-gate catches -- squash-merged; the PR-numbered commits are the durable citation)
+git show 501dc26 --stat   # #626 CLI squash-merge (contains the originally-authored 045fadc fix)
+git show 6d79945 --stat   # #627 MCP squash-merge (contains the originally-authored 3fcca06 fix)
 
 # Battle 1 (PyO3 dir-walk revert) + Battle 2 (free-threading revert)
 git show b2f3fdd --stat
@@ -515,6 +572,10 @@ git show 65022bc --stat; git show 4c34516 --stat  # the add-then-revert pair
 git show bb5dc59 --stat
 grep -n "lru_cache" src/tensor_grep/cli/repo_map.py
 
+# Battle 12 addendum (warm-hides-cold, verified on the shipped wheel via single-pass microbench)
+git show 9a2a01c --stat
+git show d2c1266 --stat
+
 # Battle 13 (tg diff-docs deferral — check it is STILL unmerged before citing as current)
 git branch -a | grep diff-docs
 git log -1 --format=%s 90b7042
@@ -523,6 +584,15 @@ grep -n "diff-docs" docs/SESSION_HANDOFF.md
 # Battle 14 (release pipeline duration — re-measure, this drifts with CI/runner changes)
 gh run list --workflow=ci.yml --limit 5 --json databaseId,displayTitle,conclusion
 gh run view <latest-release-run-id> --json jobs -q '.jobs[] | "\(.name)\t\(.startedAt)\t\(.completedAt)"'
+
+# Battle 23 (stale mirror-inline-rust onboarding brief)
+git show 6c09424 -s --format=%B | grep -n "mirroring the Go precedent"
+git show 8659e87 -s --format=%B | grep -n "mirroring lang_go.py"
+grep -n "MOST-FORGOTTEN" src/tensor_grep/cli/repo_map.py
+
+# Battle 24 (sequential multi-PR shared-file union-rebase discipline)
+grep -n "\"java\"\|\"php\"\|\"csharp\"" tests/unit/test_lang_registry.py
+grep -n "tree-sitter-java\|tree-sitter-php\|tree-sitter-c-sharp" pyproject.toml
 ```
 
 If any command's output no longer matches the entry (e.g. the typer cap moved, a guard file was

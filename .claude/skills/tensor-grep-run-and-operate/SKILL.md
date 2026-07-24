@@ -6,8 +6,8 @@ description: Use when running the `tg` CLI day-to-day — exact syntax for orien
 # tensor-grep run & operate
 
 An imperative, copy-pasteable runbook for **running** `tg` (the tensor-grep CLI). Ground-truthed
-against `src/tensor_grep/cli/main.py` at **released v1.93.2**, re-verified
-**2026-07-22**. Every command below is a real `@app.command` in that file — re-verify with the
+against `src/tensor_grep/cli/main.py` at **released v1.96.0**, re-verified
+**2026-07-24**. Every command below is a real `@app.command` in that file — re-verify with the
 commands in [Provenance and maintenance](#provenance-and-maintenance) before trusting a flag on a
 newer version. `main.py` churns ~100+ lines per release, so treat every `main.py:NNNN` cite as an
 approximate anchor: `grep` the symbol, don't trust the raw line.
@@ -90,7 +90,7 @@ tg orient C:\repo --json
 tg orient C:\repo --max-tokens 6000 --max-central-files 15          # widen the capsule
 tg orient C:\repo --ignore "vendor/**" --ignore "core/skills/**"    # drop vendor/skill trees from ranking
 ```
-`orient` (`main.py:6922`) takes `path` (default `.`), `--max-tokens` (default 3000, `orient`'s
+`orient` (`main.py:8582`) takes `path` (default `.`), `--max-tokens` (default 3000, `orient`'s
 snippet-token budget — **not** the same axis as `context --max-tokens`, §14), `--max-central-files`
 (default 10), `--ignore` (repeatable glob), `--json`.
 
@@ -103,7 +103,7 @@ exclusion — the files are still walked, just kept out of the "central files" /
 (Note: `tg search --ignore` is a **different**, boolean flag — "respect ignore files" — not this glob;
 `tg docs-coverage --ignore` (§13) is a coverage exclusion. See `tensor-grep-config-and-flags`.)
 
-`orient`'s JSON also carries a **`suggested_ignore`** field (`orient_capsule.py:872`,
+`orient`'s JSON also carries a **`suggested_ignore`** field (`orient_capsule.py:651`,
 `_suggested_ignore_from_deweighted_trees`) -- ready-to-paste `--ignore` globs for whatever
 auto-de-weighted vendor/skill trees it found (de-weight, never hard-exclude, by default). **v1.75.0
 (#593, "M1+M2") broadened this from narrow nested-manifest islands to whole vendor/skill trees**: a
@@ -118,21 +118,23 @@ mirroring `suggested_scope`'s convention (present only when non-empty).
 ```powershell
 tg search "invoice tax" C:\repo --rank --json
 ```
-`--rank` (alias `--bm25`, `main.py:5839`) re-ranks ripgrep hits by BM25 lexical relevance —
+`--rank` (alias `--bm25`, `main.py:7134`) re-ranks ripgrep hits by BM25 lexical relevance —
 pure CPU, no API key, no model download. Default `--format` for plain search is `rg` (exact
 ripgrep-style text); use `tg search PATTERN PATH --format rg --json` for ripgrep JSON Lines, or
 `--json` alone for tensor-grep's own aggregate JSON object, or `--ndjson` for tensor-grep's
 flattened streaming rows. These three JSON shapes are **not interchangeable** — `--json` is NOT
-`rg`'s JSON Lines schema (`--json`/`--rank`/`--ndjson`/`--format` at `main.py:5831-5897`).
+`rg`'s JSON Lines schema (`--json`/`--rank`/`--ndjson`/`--format` at `main.py:7126-7202`, in
+`search_command`).
 
 ```powershell
 tg agent C:\repo "change invoice tax rounding" --json
 ```
-`agent` (`main.py:7276`) is opt-in and takes `path` then positional `query` (not `--query`, which
-is a hidden deprecated alias, `main.py:7279-7284`). Key flags: `--max-files` (3), `--max-sources`
-(5), `--max-tokens` (1200), `--max-repo-files` (512), `--provider native|lsp|hybrid`,
+`agent` (`main.py:9461`) is opt-in and takes `path` then positional `query` (not `--query`, which
+is a hidden deprecated alias, `main.py:9464-9468`). Key flags: `--max-files` (3), `--max-sources`
+(5), `--max-tokens` (1200), `--max-repo-files` (2000, `_DEFAULT_AGENT_REPO_SCAN_LIMIT`; raised from
+the old 512 — see §11a's exit-code history below), `--provider native|lsp|hybrid`,
 `--gpu-device-ids` (opt-in native GPU evidence only — sidecar-routed GPU is reported unsupported),
-and `--ignore GLOB` (repeatable, `main.py:7324`) — the same vendor/skill-tree ranking exclusion as
+and `--ignore GLOB` (repeatable, `main.py:9509`) — the same vendor/skill-tree ranking exclusion as
 `orient` above, here keeping a vendor/skill tree from being picked as the capsule's **primary target**
 on a harness repo (`#397`). Before editing from a capsule, check top-level `ambiguity.status`:
 `"tie_requires_confirmation"` is a hard stop for autonomous edits.
@@ -150,10 +152,10 @@ tg prepare C:\repo\src "task" --claim --json      # also submits an advisory led
 tg prepare C:\repo\src "task" --out capsule.json --json   # persists the capsule to FILE, byte-identical to stdout JSON
 ```
 
-`prepare` (`main.py:10507`) composes the orient→search→agent→route-test→callers→evidence→ledger loop
+`prepare` (`main.py:10642`) composes the orient→search→agent→route-test→callers→evidence→ledger loop
 into one call: `path` then positional `query`, default 60s deadline (`DEFAULT_AGENT_CLI_DEADLINE_SECONDS`,
 same class as `tg agent`'s cold-path default), `--claim` (opt-in only, submits an advisory
-`tg ledger claim`), `--out FILE` (`main.py:10550`, v1.93.0/#705 — atomic write, refuses a symlink/
+`tg ledger claim`), `--out FILE` (`main.py:10685`, v1.93.0/#705 — atomic write, refuses a symlink/
 dangling-symlink/directory destination, works with `--text` too). Response carries `primary_target` +
 `confidence` + `ask_user_before_editing`, `validation_commands`, a `blast_radius_floor`
 (`callers_count`/`top_callers`/trust summary), and `coordination.claim`/`coordination.evidence` hooks so
@@ -172,10 +174,10 @@ tg ledger find C:\repo --symbol open_session --artifact-kind evidence-receipt --
 ```
 
 Never blocks an edit — a claim is advisory, and overlaps are reported for the caller to decide, not
-enforced. Slice 1 (`claim`/`release`/`list`, `main.py:16163`/`16281`/`16389`) canonicalizes its store to
+enforced. Slice 1 (`claim`/`release`/`list`, `main.py:16297`/`16415`/`16523`) canonicalizes its store to
 the nearest `.git` ancestor (worktree-aware; v1.93.0/#706 — before this, each command resolved the store
 from the literal PATH argument, so `claim core/hooks` + `list .` silently used two different stores).
-Slice 2 (`record`/`find`, `main.py:16458`/`16552`) is **unchanged and still literal-path-rooted** — do
+Slice 2 (`record`/`find`, `main.py:16592`/`16686`) is **unchanged and still literal-path-rooted** — do
 not assume it inherited the Slice-1 fix. `find`'s exit contract is a distinct 3-state family from §11a's
 symbol-command contract: `0` = at least one fresh finding (revision matches, safe to reuse); `1` =
 nothing matched, or matches exist but none are fresh (recompute); `2` = fail-closed (missing `--symbol`,
@@ -192,22 +194,23 @@ tg blast-radius C:\repo open_file --json
 ```
 
 All five share the same positional contract: `path` then `symbol_arg`, both optional Typer
-arguments (`defs` `main.py:7852` … `blast-radius` `main.py:8251`). If you type them reversed
+arguments (`defs` `main.py:11231` … `blast-radius` `main.py:12047`). If you type them reversed
 (`tg defs SYMBOL PATH`), the CLI auto-detects it — `path` that fails `Path(path).exists()` and a
 present `symbol_arg` get swapped, with a warning on stderr — but **write path-first** to avoid the
-extra hint round-trip (`_maybe_swap_reversed_positionals`, `main.py:7723`, called from
-`_resolve_path_and_symbol`, `main.py:7790`). A bare `tg defs SYMBOL` (single arg) resolves against
+extra hint round-trip (`_maybe_swap_reversed_positionals`, `main.py:11102`, called from
+`_resolve_path_and_symbol`, `main.py:11169`). A bare `tg defs SYMBOL` (single arg) resolves against
 the current directory.
 
 A hidden `--symbol` / `--query` flag still works and prints a deprecation warning to stderr
-(`main.py:7801`) — treat it as legacy, not the contract; the positional form is canonical.
+(`main.py:11179`) — treat it as legacy, not the contract; the positional form is canonical.
 
-Common flags: `--provider native|lsp|hybrid` (default `native`), `--max-repo-files` (512),
-`--json`. `callers`/`refs`/`impact`/`blast-radius` also take `--deadline SECONDS` to wall-clock-bound
-the scan (§12); `defs`/`source` do **not**. `blast-radius` additionally takes `--max-depth` (3),
-`--max-callers` (25), `--max-files` (25) (in the `blast_radius` def, `main.py:8251`+). `defs`
-additionally takes `--class TEXT` to disambiguate a common method name by its enclosing class
-(`main.py:7872`).
+Common flags: `--provider native|lsp|hybrid` (default `native`), `--max-repo-files` (2000,
+`_DEFAULT_AGENT_REPO_SCAN_LIMIT` — raised from the old 512 the #398→#399 exit-code history below
+calls out as "the actual friction"), `--json`. `callers`/`refs`/`impact`/`blast-radius` also take
+`--deadline SECONDS` to wall-clock-bound the scan (§12); `defs`/`source` do **not**. `blast-radius`
+additionally takes `--max-depth` (3), `--max-callers` (25), `--max-files` (25) (in the `blast_radius`
+def, `main.py:12047`+). `defs` additionally takes `--class TEXT` to disambiguate a common method name
+by its enclosing class (`main.py:11251`).
 
 **Truncation contract (read §11 before scripting an exit code):** when a `callers`/`refs`/`impact`/
 `blast-radius` JSON payload carries `"result_incomplete": true` (a scan cap) or `"partial": true`
@@ -235,15 +238,16 @@ tg session daemon status C:\repo --json
 tg session daemon stop C:\repo --json
 ```
 
-`session open` (`main.py:8563`) takes `path` (default `.`) and `--max-repo-files` (default 512,
-the agent-safe cap). `session refresh` (`main.py:8756`) and every `session <subcmd> SESSION_ID
+`session open` (`main.py:12407`) takes `path` (default `.`) and `--max-repo-files` (default 512,
+the agent-safe cap — this literal is unrelated to the agent-family 2000 default in §2/§3, still 512
+as of this pass). `session refresh` (`main.py:12600`) and every `session <subcmd> SESSION_ID
 [PATH]` command require `session_id` as the **first** positional argument — it is not implicit.
-`session serve` (`main.py:9375`) additionally accepts `--refresh-on-stale` to refresh once and
+`session serve` (`main.py:13278`) additionally accepts `--refresh-on-stale` to refresh once and
 retry a request when file changes are detected mid-stream; passing `--no-jsonl` errors (JSONL is
-currently the only serve mode, `main.py:9393`). `session context-render` / `session context` accept
+currently the only serve mode, `main.py:13296`). `session context-render` / `session context` accept
 `--max-tokens` (default 16000, `0` = unbounded) — see §14.
 
-`session daemon start/status/stop` (`session_daemon_app`, `main.py:214`) each take only
+`session daemon start/status/stop` (`session_daemon_app`, `main.py:238`) each take only
 `PATH` — there is no CLI flag for the daemon's idle/uptime limits; those are environment-only:
 `TG_SESSION_DAEMON_IDLE_SECONDS` and `TG_SESSION_DAEMON_MAX_UPTIME_SECONDS`. `daemon start` prints
 `host:port` and `pid`; `daemon status`/`stop` report whether a daemon is currently `running` for
@@ -261,10 +265,10 @@ tg checkpoint undo CHECKPOINT_ID C:\repo --json
 tg checkpoint undo --last C:\repo --json            # restore the newest checkpoint in scope
 ```
 
-`checkpoint undo` (`main.py:9582`) takes `checkpoint_id` as an optional positional, or `--last` to
+`checkpoint undo` (`main.py:13485`) takes `checkpoint_id` as an optional positional, or `--last` to
 restore the newest checkpoint for `path` without naming an ID — do not pass both
-(`main.py:9601`/`9607`). If `checkpoint_id` resolves to an existing filesystem path, the error
-message suggests `--last` explicitly (`main.py:9624`), which is a strong signal the two
+(`main.py:13504`/`13510`). If `checkpoint_id` resolves to an existing filesystem path, the error
+message suggests `--last` explicitly (`main.py:13527`), which is a strong signal the two
 positionals (`checkpoint_id`, `path`) got confused.
 
 ## 6. AST scan (built-in rule packs) and structural run/rewrite
@@ -276,9 +280,9 @@ tg scan --config sgconfig.yml --json                        # custom ast-grep pr
 tg scan --rule my-rule.yml --json                            # single custom rule, no sgconfig
 ```
 
-`scan` (`main.py:9747`) accepts positional `PATHS`, or `--path` (default `.`) when using a
-built-in ruleset — the two are mutually exclusive (`main.py:9873`), as are `--rule`,
-`--ruleset`, and `--inline-rules` with each other (`main.py:9866`). Useful narrowing flags:
+`scan` (`main.py:13706`) accepts positional `PATHS`, or `--path` (default `.`) when using a
+built-in ruleset — the two are mutually exclusive (`main.py:13834`), as are `--rule`,
+`--ruleset`, and `--inline-rules` with each other (`main.py:13827`). Useful narrowing flags:
 `--glob`/`-g`, `--type`/`-t`, `--max-depth`, `--filter`/`-f` (regex over loaded rule IDs). Baseline
 workflow: `--baseline FILE` / `--write-baseline FILE` compare or snapshot matched-finding
 fingerprints; `--suppressions FILE` / `--write-suppressions FILE` mark or record accepted findings
@@ -298,9 +302,9 @@ tg run "function_definition" C:\repo\src --lang python --json
 tg run --pattern 'def $NAME($$$ARGS): $$$BODY' --rewrite 'def $NAME($$$ARGS) -> None: $$$BODY' C:\repo --apply --verify
 ```
 
-`run` (`main.py:11701`) takes the AST pattern positionally (or via `--pattern`/`-p`) and an
+`run` (`main.py:16823`) takes the AST pattern positionally (or via `--pattern`/`-p`) and an
 optional `PATH`; supplying only a path that exists with no pattern is a hard error
-(`main.py:11799`, `typer.Exit(2)`), not a silent zero-match. `--rewrite`/`-r` sets the replacement,
+(`main.py:16921`, `typer.Exit(2)`), not a silent zero-match. `--rewrite`/`-r` sets the replacement,
 `--apply` writes it, `--verify` runs tests after applying, `--checkpoint` wraps the apply in a
 checkpoint, `-U`/`--update-all` is an ast-grep-compatible alias for apply-all (requires
 `--rewrite`). Read-only structural-search extras: `--selector`, `--strictness`, `--stdin`,
@@ -330,14 +334,15 @@ and never fires on `tg scan` (a 0-finding scan is a clean pass, exit `0`).
 tg mcp
 ```
 
-Starts a **stdio** MCP server (`FastMCP("tensor-grep")`, `mcp_server.py:64`, `anyio.run` over
-`_run_mcp_stdio_async`, `mcp_server.py:3881-3893`) — it is meant to be launched by an MCP client
+Starts a **stdio** MCP server (`FastMCP("tensor-grep")`, `mcp_server.py:120`, `anyio.run` over
+`_run_mcp_stdio_async`, `mcp_server.py:7727-7739`) — it is meant to be launched by an MCP client
 (Claude Desktop, an agent harness), not run interactively and left open in a terminal.
 
 Call `tg_mcp_capabilities` **first** in any new client/sandbox — it reports which tools work
-without a standalone native `tg` binary versus which require one (`mcp_server.py:1433`).
+without a standalone native `tg` binary versus which require one (`mcp_server.py:1948`).
 
-Representative tool names (**58** as of v1.93.2 — `grep -n "^def tg_\|^async def tg_" mcp_server.py
+Representative tool names (**58** as of v1.96.0 — count unchanged since the v1.93.2 pass, spot-
+re-verified this pass; `grep -n "^def tg_\|^async def tg_" mcp_server.py
 | wc -l`; re-run this before trusting the count on a later version, see Provenance below):
 `tg_search`, `tg_find` (whole-repo hybrid NL search, agent-callable form of `tg find`, v1.78.0/#189/#627 —
 see `docs/harness_api.md`), `tg_ast_search`, `tg_symbol_defs`, `tg_symbol_source`,
@@ -351,7 +356,7 @@ see `docs/harness_api.md`), `tg_ast_search`, `tg_symbol_defs`, `tg_symbol_source
 `tg_audit_history`, `tg_audit_diff`, `tg_review_bundle_create` / `_verify`, `tg_navigate`, `tg_impact`,
 `tg_query`, `tg_context`, `tg_explore`, `tg_session`, `tg_scan`, `tg_audit`, `tg_checkpoint`, `tg_rewrite`.
 
-**Gap worth knowing:** neither `tg prepare` nor `tg ledger` has an MCP tool counterpart as of v1.93.2 —
+**Gap worth knowing:** neither `tg prepare` nor `tg ledger` has an MCP tool counterpart as of v1.96.0 —
 both are CLI-only. An agent driving `tg` over MCP cannot reach the one-call edit-readiness CUJ or the
 advisory ledger the way a CLI-driven agent can; this is a real surface gap, not an oversight to route
 around silently.
@@ -360,7 +365,7 @@ around silently.
 the operator opts in with `TG_MCP_ALLOW_VALIDATION_COMMANDS=1`, returning
 `code="unsupported_option"` otherwise. The primary native `rg` passthrough now inserts a `--`
 end-of-options sentinel before user/LLM-controlled paths (CWE-88 / the MCP-276 CVE class) — shipped
-and unit-tested in `#370` (`rust_core/src/rg_passthrough.rs:397-398`). It is **not** solved
+and unit-tested in `#370` (`rust_core/src/rg_passthrough.rs:574-598`, `ripgrep_operand_args`). It is **not** solved
 forever: a second native rg-invocation path is the open follow-up (`#49`), so any **new** MCP tool
 or argv builder that shells out to `tg`/`rg` must still insert `--` before positionals itself. See
 `AGENTS.md` "Security Hardening Patterns" and `tensor-grep-debugging-playbook` /
@@ -373,7 +378,7 @@ tg doctor --json                       # full diagnostics, LSP included by defau
 tg doctor --no-lsp --json              # skip external LSP provider probes
 tg doctor C:\repo --config sgconfig.yml --json
 ```
-`doctor` (`main.py:14302`) takes `path` (default `.`), `--config` (default `sgconfig.yml`),
+`doctor` (`main.py:14437`) takes `path` (default `.`), `--config` (default `sgconfig.yml`),
 `--with-lsp/--no-lsp` (default **on**), `--json`. Inspect `path_tg_first_launcher_kind`,
 `fresh_shell_path_tg_first_launcher_kind`, `python_subprocess_path_tg_first_launcher_kind`,
 `shell_escaping_guidance`, and any `*_is_foreign` field before trusting a Windows timing or
@@ -389,9 +394,9 @@ that reads as broken.
 tg dogfood --output artifacts/dogfood_readiness.json
 tg dogfood --json --root C:\repo --timeout-s 170
 ```
-`dogfood` (`main.py:14032`) runs the agent-readiness gate and prints a one-page verdict; it "writes
+`dogfood` (`main.py:14167`) runs the agent-readiness gate and prints a one-page verdict; it "writes
 only explicit `--output` and a sibling readiness report" next to it — it does not write anywhere by
-default with no `--output` given (docstring at `main.py:14032`+). Flags:
+default with no `--output` given (docstring at `main.py:14167`+). Flags:
 `--root` (default `.`), `--output PATH`, `--expected-version` (defaults to `pyproject.toml`),
 `--json`, `--progress auto|always|never` (stderr only), `--progress-interval-s` (30.0),
 `--timeout-s` (170.0, the nested `agent_readiness.py` child budget), `--no-shell-probes`,
@@ -401,9 +406,9 @@ default with no `--output` given (docstring at `main.py:14032`+). Flags:
 ```powershell
 tg upgrade
 ```
-`upgrade` (`main.py:14408`) upgrades the installed `tensor-grep` package to the latest PyPI
+`upgrade` (`main.py:14543`) upgrades the installed `tensor-grep` package to the latest PyPI
 release. It tries, in order: `uv tool install --force` first **only** when the running Python is a
-`uv tool`-managed venv (`_is_uv_tool_managed_python`, `main.py:14328`, detects `.../uv/tools/`
+`uv tool`-managed venv (`_is_uv_tool_managed_python`, `main.py:14463`, detects `.../uv/tools/`
 in `sys.executable`), then `uv pip install --upgrade --refresh-package tensor-grep`, then `pip
 install --upgrade --no-cache-dir`. This is the source-aware upgrade path shipped to fix a WSL
 uv-tool install getting stranded at a stale version — see `tensor-grep-failure-archaeology` for
@@ -414,7 +419,7 @@ managed native front-door refresh when the sidecar version moved ahead of the na
 tg repair-launcher --json
 tg repair-launcher --allow-foreign-rename --json     # only for a foreign tg.exe you own
 ```
-`repair-launcher` (`main.py:14267`, Windows-relevant) removes a verified or self-identifying stale
+`repair-launcher` (`main.py:14402`, Windows-relevant) removes a verified or self-identifying stale
 `tensor-grep` Python `Scripts\tg.exe` launcher that shadows the managed native front door on PATH.
 `--allow-foreign-rename` additionally moves aside a **foreign** (non-tensor-grep) `tg.exe` — use it
 only when you own that binary.
@@ -443,33 +448,33 @@ the whole tree and could burn the full ripgrep-subprocess timeout before returni
 **shipped, released** fail-fast/refuse behavior, not an open hang — four layered guards catch the
 unscoped case before it reaches a slow walk, plus a wall-clock backstop if all four miss:
 
-1. **Vendored-root refusal** (`_should_refuse_unbounded_vendored_root_scan`, `main.py:4994`) — a
+1. **Vendored-root refusal** (`_should_refuse_unbounded_vendored_root_scan`, `main.py:5043`) — a
    root with a top-level `node_modules`/`vendor`/`external_repos`/`third_party` dir **exits 2
    instantly** (no scan at all) unless `--allow-broad-generated-scan` opts in.
-2. **Workspace-root refusal** (`_should_refuse_unbounded_workspace_root_scan`, `main.py:4936`) — a
+2. **Workspace-root refusal** (`_should_refuse_unbounded_workspace_root_scan`, `main.py:4985`) — a
    root with >=3 sibling project directories (a monorepo/workspace parent) is refused the same way.
-3. **Large single-project-root refusal** (`_should_refuse_unbounded_large_root_scan`, `main.py:5104`,
+3. **Large single-project-root refusal** (`_should_refuse_unbounded_large_root_scan`, `main.py:5153`,
    `#413`, dogfood v1.42.0) — closes the remaining gap: a large but non-vendored, non-workspace
    single-project root (matches neither guard above) refuses instantly via a **bounded scandir
    probe** — it checks the already-collected candidate-file count against a 1500-file ceiling
    (gated identically on `--allow-broad-generated-scan`/glob-type-depth scope) rather than falling
    through to the slow per-file Python match loop.
 4. **Flag-less bootstrap-passthrough refusal** (`bootstrap._search_paths_include_oversized_implicit_root`,
-   `bootstrap.py:790`, v1.92.3/#702, A9) — closes a DEFAULT-path gap the three guards above never
-   covered: `bootstrap._run_rg_passthrough` (`bootstrap.py:1074`, the plain flag-less search front door
+   `bootstrap.py:804`, v1.92.3/#702, A9) — closes a DEFAULT-path gap the three guards above never
+   covered: `bootstrap._run_rg_passthrough` (`bootstrap.py:1088`, the plain flag-less search front door
    that runs *before* `main.py`'s Typer app is ever reached) had **no walk ceiling at all** until this
    shipped — natively reproduced, not a WSL artifact. It fires only when `paths_defaulted` (no explicit
-   PATH given) and the implicit root is over `IMPLICIT_SEARCH_WALK_FILE_CEILING = 1500`
-   (`io/directory_scanner.py:92`) — the **same single constant** guards 1-3 above and the Rust
-   `rg_passthrough.rs` all import, so all four doors agree on one ceiling. Exits 2 in ~1.7s (was a
-   silent ~60s timeout before this shipped).
+   PATH given) and the implicit root is over `IMPLICIT_SEARCH_WALK_FILE_CEILING = 1500` (now defined
+   in `io/scan_limits.py:106`, re-exported for backward compat from `io/directory_scanner.py:34`) —
+   the **same single constant** guards 1-3 above and the Rust `rg_passthrough.rs` all import, so all
+   four doors agree on one ceiling. Exits 2 in ~1.7s (was a silent ~60s timeout before this shipped).
 5. **Native-walk wall-clock deadline** (`compute_native_walk_deadline` /
    `native_walk_deadline_exceeded`, `src/tensor_grep/backends/cpu_backend.py:22,36`, checked during the
    walk) — the last-resort backstop: if none of the four refusals above fire, the native per-file
    search walk still self-bounds and **breaks to a flagged partial** (`result_incomplete` + a stderr
    warning) instead of running unbounded.
 
-`TG_RG_TIMEOUT_SECONDS` (default **60.0 seconds**, `subprocess_policy.py:44`, lowered from 600s in
+`TG_RG_TIMEOUT_SECONDS` (default **60.0 seconds**, `subprocess_policy.py:75`, lowered from 600s in
 #288) remains the ripgrep-subprocess-level backstop for the plain rg-passthrough path, but the five
 guards above mean an unscoped *vendored*, *workspace*, or *large* root — scoped or not, flag-bearing or
 flag-less — now fails in well under two seconds; you should rarely see the 60s subprocess timeout
@@ -499,8 +504,8 @@ three-state agent contract where `2` means "incomplete", not "usage error".
 
 ### 11a. Symbol commands — `callers` / `refs` / `impact` / `blast-radius` / `defs` / `source`
 
-A **three-state** contract (authoritative source: `docs/CONTRACTS.md:108`; implemented in
-`_emit_symbol_command_result`, `main.py:10919`, and `blast-radius`'s own copy):
+A **three-state** contract (authoritative source: `docs/CONTRACTS.md:114`; implemented in
+`_emit_symbol_command_result`, `main.py:11054`, and `blast-radius`'s own copy):
 
 | Exit | Meaning | What an agent may conclude |
 | :--: | --- | --- |
@@ -514,8 +519,10 @@ truncated result is ALSO empty" (a found-but-capped result exited `0`). A **unan
 overturned #399** (2026-07-05): truncation **trumps** found, because a truncated caller-set silently
 trusted as exhaustive is a wrong-blast-radius/refactor risk, and forking the symbol commands away from
 `tg search`'s "exit 2 on `result_incomplete`" convention creates two contradictory contracts. The
-"every big-repo query exits 2" friction is a **default-cap miscalibration** (512), to fix separately —
-not a reason to fork the contract. The **restored, current** rule: any `partial`/`result_incomplete`
+"every big-repo query exits 2" friction is a **default-cap miscalibration** (512 at the time) — **since
+fixed**: the agent-family `--max-repo-files` default is now 2000 (`_DEFAULT_AGENT_REPO_SCAN_LIMIT`,
+re-verified this pass; see §2/§3), which was the separate fix this note originally deferred, not a
+reason to fork the contract. The **restored, current** rule: any `partial`/`result_incomplete`
 → exit `2`, regardless of whether results were found:
 
 ```python
@@ -536,7 +543,7 @@ flagged `callers_truncated`/`files_truncated`; only a **scan** cap (`partial` or
 Mirrors ripgrep's convention: **0** = match, **1** = clean no-match, **2** = usage/argument error
 (`typer.Exit(code=2)`) or unhandled error. Do **not** treat exit `1` from `tg search` as a failure
 in a script — check the output/JSON. Scan truncation surfaces as `result_incomplete` **in the JSON
-payload** (this is the "`2 = result_incomplete` convention" `docs/CONTRACTS.md:108` says the symbol
+payload** (this is the "`2 = result_incomplete` convention" `docs/CONTRACTS.md:114` says the symbol
 contract mirrors), not via a special exit code on a found search.
 
 ### 11c. Other commands
@@ -546,7 +553,7 @@ gate (§13). Plain command/usage/argument errors across the CLI exit **2** (`typ
 handled runtime errors exit **1**.
 
 `tg find` (v1.77.0, #189) has its own hybrid contract, closer to the symbol-command shape than to
-plain `tg search` (`main.py:4340-4440`): a `BackendExecutionError` (e.g. a corrupt dense model) is
+plain `tg search` (`main.py:4574-4672`, in `find`): a `BackendExecutionError` (e.g. a corrupt dense model) is
 caught at the command boundary and exits **2** (JSON error envelope with `code="find_backend_error"`
 under `--json`, else a `tg: ...` stderr line) — never a raw traceback. An empty result exits **2** if
 `result_incomplete` else **1**. A **found** result that is ALSO `result_incomplete` (a
@@ -581,18 +588,18 @@ the authoritative list):
 
 | Command | `--deadline` line | Notes |
 | --- | --- | --- |
-| `tg callers` | `main.py:11619` | bounds the caller-scan traversal (`#393`) |
-| `tg refs` | `main.py:11512` | bounds the reference-file scan |
-| `tg impact` | `main.py:11307` | bounds both the impact pass and its caller sub-pass |
-| `tg blast-radius` | `main.py:11950` | bounds the graph traversal |
-| `tg inventory` | `main.py:8367` | bounds the single-pass walk |
-| `tg defs` | `main.py:11139` | bounds the definition scan |
-| `tg source` | `main.py:11239` | bounds the source-block scan (was undefined pre-CEO-campaign #232; fixed same wave as `docs-coverage`/`blast-radius-plan`) |
-| `tg orient` | `main.py:8559` | bounds the orientation scan; **no exit-2 contract** — a truncated `orient` still exits 0, surfacing `partial`/`deadline_limit` as informational only, never a retry signal |
-| `tg context` | `main.py:8797` | bounds the context-pack scan |
-| `tg docs-coverage` | `main.py:8435` | bounds the coverage walk |
-| `tg agent` | `main.py:9468` | cold path (no running session daemon) defaults to **60s**; pass `--no-deadline` to disable |
-| `tg prepare` | `main.py:10529` | same 60s cold-path default as `tg agent`; reuses the §11a symbol-command exit contract |
+| `tg callers` | `main.py:11754` | bounds the caller-scan traversal (`#393`) |
+| `tg refs` | `main.py:11647` | bounds the reference-file scan |
+| `tg impact` | `main.py:11442` | bounds both the impact pass and its caller sub-pass |
+| `tg blast-radius` | `main.py:12085` | bounds the graph traversal |
+| `tg inventory` | `main.py:8416` | bounds the single-pass walk |
+| `tg defs` | `main.py:11274` | bounds the definition scan |
+| `tg source` | `main.py:11375` | bounds the source-block scan (was undefined pre-CEO-campaign #232; fixed same wave as `docs-coverage`/`blast-radius-plan`) |
+| `tg orient` | `main.py:8609` | bounds the orientation scan; **no exit-2 contract** — a truncated `orient` still exits 0, surfacing `partial`/`deadline_limit` as informational only, never a retry signal |
+| `tg context` | `main.py:8847` | bounds the context-pack scan |
+| `tg docs-coverage` | `main.py:8485` | bounds the coverage walk |
+| `tg agent` | `main.py:9518` | cold path (no running session daemon) defaults to **60s**; pass `--no-deadline` to disable |
+| `tg prepare` | `main.py:10664` | same 60s cold-path default as `tg agent`; reuses the §11a symbol-command exit contract |
 
 **This list has grown well past the older "graph commands only" framing** — a CEO-driven campaign
 (#232, `#585`) extended `--deadline` to `source`/`docs-coverage`/`blast-radius-plan` and several others
@@ -644,7 +651,7 @@ deliberately **reference-existence only** (does a doc mention the file at all?),
 and less noisy than the deferred semantic `diff-docs` (`#38`, deferred after a real-corpus dogfood
 produced 20,060 findings / 2,727 false "high" — reference-existence avoids that trap).
 
-`docs_coverage` (`main.py:6847`) takes `path` (default `.`) plus:
+`docs_coverage` (`main.py:8451`) takes `path` (default `.`) plus:
 
 | Flag | Effect |
 | --- | --- |
@@ -691,7 +698,7 @@ truncation_cause}`.
 
 `tg context PATH "query" --max-tokens N` returns a ranked context pack for edit planning, **bounded
 by default** so it is safe to inject into a prompt. Default **16000**, `min=0`, and **`0` = explicit
-unbounded opt-out** (`main.py:8791`, mirrors `repo_map._DEFAULT_CONTEXT_MAX_TOKENS` — re-verify the
+unbounded opt-out** (`main.py:8840`, mirrors `repo_map._DEFAULT_CONTEXT_MAX_TOKENS` — re-verify the
 current line with `grep -n _DEFAULT_CONTEXT_MAX_TOKENS src/tensor_grep/cli/repo_map.py`).
 The bound exists because an unbounded pack ballooned past 1MB (dogfood v1.19.9).
 
@@ -705,9 +712,9 @@ pack cannot sneak in through a side door:
 
 | Surface | Cap | Receipt |
 | --- | --- | --- |
-| `tg context` (standalone) | 16000, `0`=off | `main.py:8791` |
+| `tg context` (standalone) | 16000, `0`=off | `main.py:8840` |
 | `tg context-render` / `tg session context-render` / `tg session context` (incl. `--daemon`) | 16000, `0`=off | mirrored `#364`; daemon path capped `#373` (dogfood 1.27.0: `session context --daemon` was UNBOUNDED at ~557KB / 384 files) |
-| MCP context tools (`tg_context_pack` / `tg_context_render`) | `_DEFAULT_MCP_CONTEXT_MAX_TOKENS = 16000`, `0`/`None`=off | `mcp_server.py:82`; added `#372` (round-6 HIGH) after `#359`'s CLI cap never reached the MCP surface |
+| MCP context tools (`tg_context_pack` / `tg_context_render`) | `_DEFAULT_MCP_CONTEXT_MAX_TOKENS = 16000`, `0`/`None`=off | `mcp_server.py:188`; added `#372` (round-6 HIGH) after `#359`'s CLI cap never reached the MCP surface |
 
 **Do not conflate this axis with the other `--max-tokens` flags.** `orient --max-tokens` (default
 **3000**) is a *snippet* budget for the orientation capsule; `agent --max-tokens` (default **1200**)
@@ -733,20 +740,42 @@ tools use the 16000 pack budget. What the budget *proves* (vs. what it just boun
 | Running `tg upgrade` inside a `uv tool`-managed install expecting `pip`/`uv pip` to work | `tg upgrade` already detects this and uses `uv tool install --force` first; do not hand-roll a different upgrade command |
 | Starting `tg mcp` in an interactive terminal expecting text prompts | It is a stdio server for an MCP client, not an interactive REPL |
 | Assuming `defs`/`source`/`orient`/`context`/`docs-coverage` do not take `--deadline` | They ALL do now (§12) — the CEO campaign (#232/`#585`) and earlier waves extended it well past the original "graph commands only" set; re-verify with the grep in §12, don't trust a stale "these don't take it" claim |
-| Assuming `tg prepare`/`tg ledger` have an MCP tool counterpart | Neither does as of v1.93.2 (§7) — both are CLI-only |
+| Assuming `tg prepare`/`tg ledger` have an MCP tool counterpart | Neither does as of v1.96.0 (§7) — both are CLI-only |
 
 ## Provenance and maintenance
 
-Facts here were re-verified **2026-07-22** against **released v1.93.2** by reading
-`src/tensor_grep/cli/main.py`, `mcp_server.py`, `repo_map.py`, `docs_coverage.py`,
-`subprocess_policy.py`, `cpu_backend.py`, `bootstrap.py`, `io/directory_scanner.py`, and
-`docs/CONTRACTS.md` (`pyproject.toml` = `1.93.2`). This pass re-verified (and corrected drift on):
-every `def` line cited in §1/§2/§3/§8/§11a/§14 by symbol grep; the `--deadline` command set in §12
-(found FOUR additional commands — `defs`/`source`/`orient`/`context`/`docs-coverage` — that had
-silently gained the flag since the prior v1.78.1 pass, which claimed they lacked it); the MCP tool
-count in §7 (48→58); and added the new §2a (`tg prepare`) / §2b (`tg ledger`) sections plus the A9 5th
-unscoped-search guard in §10. The `tg find` (§1, §7, §11c) and `tg route-test` (§1) additions from the
-prior pass were spot-checked, not fully re-walked.
+Facts here were re-verified **2026-07-24** against **released v1.96.0** by reading
+`src/tensor_grep/cli/main.py`, `mcp_server.py`, `repo_map.py`, `orient_capsule.py`, `docs_coverage.py`,
+`subprocess_policy.py`, `cpu_backend.py`, `bootstrap.py`, `io/directory_scanner.py`, `io/scan_limits.py`,
+`ast_wrapper_backend.py`, `rg_passthrough.rs`, and `docs/CONTRACTS.md` (`pyproject.toml` = `1.96.0`;
+previously re-verified 2026-07-22 against v1.93.2). **Eleven** tagged releases separate the two passes
+(v1.93.3 through v1.96.0 — `git tag --sort=-creatordate`), most notably the three symbol-graph
+language additions (v1.94.0/#725 Java, v1.95.0/#724 PHP, v1.96.0/#726 C#) and an optimization wave
+(v1.93.9/#719, v1.93.10/#723). None of them touch `main.py`'s CLI surface directly, but `main.py` still drifted
+**non-uniformly by roughly 50 to over 5000 lines depending on region** (the `defs`/`source`/`refs`/
+`callers`/`blast-radius`/`run`/`scan` cluster shifted the most, the unscoped-search-refusal guards
+around line 5000 the least) — every `def`/flag/error-string citation in §1-§14 was re-grepped and
+corrected against the new positions; none were spot-checked. Two substantive (not just line-number)
+corrections came out of this pass:
+
+- **The agent-family `--max-repo-files` default is now 2000, not 512** (`_DEFAULT_AGENT_REPO_SCAN_LIMIT`,
+  `main.py:82`; confirmed on `agent`/`context-render`/`edit-plan`/`route-test`/`defs`/`source`/`impact`/
+  `refs`/`callers`/`importers`/`blast-radius*` and their `session` mirrors). `tg session open`'s own
+  `--max-repo-files` literal is unaffected and is still 512. This appears to be the fix the §11a
+  "default-cap miscalibration (512), to fix separately" note was waiting on.
+- **`IMPLICIT_SEARCH_WALK_FILE_CEILING` moved** from a literal in `io/directory_scanner.py` to
+  `io/scan_limits.py:106` (value unchanged at 1500); `directory_scanner.py:34` now only re-exports it
+  for backward compatibility, so a citation or grep pinned to the old file alone will miss the
+  definition.
+
+Everything else held steady: the `docs/CONTRACTS.md` three-state-contract bullet moved 108→114 but its
+text is unchanged; the MCP tool list and count (58) are unchanged (spot-verified: every name in §7's
+"representative" list, plus `tg_prepare`/`tg_ledger`'s continued absence, still resolves); the exit-code
+contracts, `--deadline` command set, and artifact directory conventions are unchanged in substance. This
+pass did not find the "header says v1.91.0 but the MCP count/provenance sections say v1.49.3"
+self-contradiction a prior audit pass flagged for this file — the version stamps were already internally
+consistent (all pinned to v1.93.2) before this pass touched them, so that specific claim looks like it
+was made against a stale copy of this document, not the version in `origin/main`.
 The unscoped-`tg search` hang fix (§10) is **shipped and released** (`#400` in v1.40.3, `#413` in
 v1.42.0, `#702`/A9 in v1.92.3) — it is no longer an in-flight branch. `main.py` moves ~100+ lines per
 release, so re-grep the symbol before trusting a cite:
@@ -763,7 +792,7 @@ grep -n "@app.command\|@session_app.command\|@session_daemon_app.command\|@check
 # NOTE: `grep -A1 "@mcp.tool" | grep "^def "` is BROKEN -- ripgrep/grep's `-A1` context lines are
 # prefixed "NNNN-", not "NNNN:", so `^def ` never matches and this silently returns 0. Count the
 # decorated function definitions directly instead (verified == the @mcp.tool decorator count, 58
-# as of v1.93.2):
+# as of v1.96.0, unchanged since v1.93.2):
 grep -n "^def tg_\|^async def tg_" src/tensor_grep/cli/mcp_server.py | wc -l
 
 # tg prepare / tg ledger still have no MCP tool counterpart? (re-check before citing as a gap)
@@ -788,7 +817,7 @@ grep -n "def orient\|def agent" src/tensor_grep/cli/main.py
 grep -n "_configured_positive_float(\"TG_RG_TIMEOUT_SECONDS\"" src/tensor_grep/cli/subprocess_policy.py
 grep -n "_should_refuse_unbounded_vendored_root_scan\|_should_refuse_unbounded_workspace_root_scan\|_should_refuse_unbounded_large_root_scan" src/tensor_grep/cli/main.py
 grep -n "_search_paths_include_oversized_implicit_root\|_run_rg_passthrough" src/tensor_grep/cli/bootstrap.py
-grep -n "IMPLICIT_SEARCH_WALK_FILE_CEILING" src/tensor_grep/io/directory_scanner.py
+grep -n "IMPLICIT_SEARCH_WALK_FILE_CEILING" src/tensor_grep/io/scan_limits.py src/tensor_grep/io/directory_scanner.py
 
 # tg prepare / tg ledger (SS 2a/2b)
 grep -n "^def prepare\|^def _emit_symbol_command_result" src/tensor_grep/cli/main.py

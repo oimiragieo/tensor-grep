@@ -5,8 +5,12 @@ description: Use when an agent needs one-call edit readiness before changing cod
 
 # tensor-grep prepare (one-call edit readiness)
 
-Verified against **tg 1.93.2** (2026-07-22; `--out` shipped v1.93.0/#705; prior full dogfood passes at
-1.92.1 gotcontext-saddle and 1.91.0 workspace sweep, both still representative of the core CUJ).
+Verified against **tg 1.95.0** (2026-07-24; re-verified the `prepare` CLI contract against
+`src/tensor_grep/cli/main.py` — `--claim`/`--deadline` (default 60s)/`--no-deadline`/`--out`
+(symlink + dangling-symlink + directory-destination refusal), the `agent_id_hint` claim-hook, and
+the #706 ledger PATH-canonicalization fix all still hold; `--out` shipped v1.93.0/#705; prior full
+dogfood passes at 1.92.1 gotcontext-saddle and 1.91.0 workspace sweep, both still representative of
+the core CUJ).
 
 ## When to use
 

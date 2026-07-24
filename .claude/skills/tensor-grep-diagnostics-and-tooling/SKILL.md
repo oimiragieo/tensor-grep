@@ -6,13 +6,16 @@ description: Use when you need to MEASURE tensor-grep's health instead of eyebal
 # tensor-grep Diagnostics and Tooling
 
 How to **measure, not eyeball**, whether a tensor-grep (`tg`) install or a repo checkout is
-healthy. Most facts below are verified against the repo at **v1.17.25 (2026-07-02)**; the GPU doctor-probe
+healthy. A full citation re-verify pass against **v1.95.0 (2026-07-23)** found every fact below
+still accurate -- only source line numbers had drifted (now refreshed; see "Provenance and
+maintenance" for the itemized diff). Most facts below were verified against the repo at
+**v1.17.25 (2026-07-02)**; the GPU doctor-probe
 fields (`gpu.search_runtime_probe.*`, `native_frontdoor_*`) were re-verified against **v1.75.4
 (2026-07-14)** by reading
 the cited files; the `agent_readiness.py` check count/names (13 repo-local, 23 total), the core
 doctor field names, and the new `tg find`/`tg route-test` interpretation section were spot-checked
 against **v1.78.1 (2026-07-16)** — re-verify with the commands in "Provenance and maintenance" if
-you suspect drift.
+you suspect further drift.
 
 ## When to use this skill (and when to use a sibling instead)
 
@@ -58,7 +61,7 @@ dogfood only after a version actually publishes.
 ## Tool 1: `tg doctor --json` — field-by-field interpretation
 
 Source: `_build_doctor_payload` / `_render_doctor_payload` in `src/tensor_grep/cli/main.py`
-(command registration at `main.py:14302`, payload builder at `main.py:3131`, `_build_doctor_payload`).
+(command registration at `main.py:14437`, payload builder at `main.py:3142`, `_build_doctor_payload`).
 
 ```powershell
 tg doctor --json --no-lsp        # fast (~2-5s); always prefer this while iterating
@@ -86,13 +89,13 @@ gap.
 | `fresh_shell_path_tg_first_launcher_kind` / `*_version_matches` | same shape as above, but simulated for a **brand-new shell** (reads Windows registry `PATH` on Windows) | catches "your current shell is fixed but a fresh terminal still resolves the wrong `tg`" |
 | `python_subprocess_path_tg_first_*` (Windows only) | same shape | Python's own `subprocess.run(["tg", ...])` can resolve **differently** than your interactive shell (e.g. Windows `CreateProcess` picks `.exe` ahead of a `.com` bridge) — this is what MCP servers and other Python tooling actually see |
 | `rust_binary_version_status` | `matches` or `stale-skipped` | `missing` is often benign (no standalone native binary in play; check `search_acceleration_backend`). `stale` or `mismatch` is a real problem — see remediation below. |
-| `rust_binary_remediation` | `null` except for `mismatch`, `stale`, and the healthy `stale-skipped` case | when non-null, it is a copy-pasteable fix string, e.g. rebuild-the-in-tree-binary guidance; note `stale-skipped` always carries this rebuild-hint string even though it needs no action (`_doctor_rust_binary_remediation`, `main.py:2421`, unconditionally returns it on `stale-skipped`) |
+| `rust_binary_remediation` | `null` except for `mismatch`, `stale`, and the healthy `stale-skipped` case | when non-null, it is a copy-pasteable fix string, e.g. rebuild-the-in-tree-binary guidance; note `stale-skipped` always carries this rebuild-hint string even though it needs no action (`_doctor_rust_binary_remediation`, `main.py:2432`, unconditionally returns it on `stale-skipped`) |
 | `skipped_native_tg_binaries` | `[]`, or a list of correctly-ignored stale in-tree binaries | a non-empty list here is the **healthy** outcome when you have an old local dev build lying around — it means doctor correctly did NOT select it |
 | `mcp_stdio_launcher_warning` | `null` | non-null on Windows usually means a PowerShell shim (`tg.ps1`) is ambiguous for MCP stdio clients; the message tells you to point the MCP client at the native `tg.exe` directly |
 | `gpu.available` / `gpu.search_ready` / `gpu.tier.promotion_proof` | `available` reflects CUDA device presence; `search_ready` reflects whether a real search actually routed through `NativeGpuBackend` | **`gpu.available=true` does NOT mean GPU search works.** Always read `search_ready` and `tier.promotion_proof`, not just `available`. GPU is experimental-until-proven (see `docs/gpu_crossover.md`) — never a PASS/FAIL signal, always informational. |
-| `gpu.search_runtime_probe.status` (v1.75.2, #595 + gate-nits v1.75.4, #597) | `supported`, or one of the failure-taxonomy statuses: `not_run`, `path_domain_mismatch`, `failed_input`, `failed_gpu_unavailable`, `failed_path_bridging` (WSL cross-domain), `failed_probe_path` (same-domain path vanished), `failed_other` (unrecognized/unparseable -- fails closed) | Replaces a single opaque `"failed"` for every `rc!=0` outcome -- read the specific status before assuming "GPU is just broken"; `failed_input` (e.g. `gpu_invalid_device_id`) means a bad request, not an unavailable GPU (`_doctor_gpu_probe_failure_status`, `main.py:2894`; `_doctor_gpu_search_runtime_probe`, `main.py:2910`) |
+| `gpu.search_runtime_probe.status` (v1.75.2, #595 + gate-nits v1.75.4, #597) | `supported`, or one of the failure-taxonomy statuses: `not_run`, `path_domain_mismatch`, `failed_input`, `failed_gpu_unavailable`, `failed_path_bridging` (WSL cross-domain), `failed_probe_path` (same-domain path vanished), `failed_other` (unrecognized/unparseable -- fails closed) | Replaces a single opaque `"failed"` for every `rc!=0` outcome -- read the specific status before assuming "GPU is just broken"; `failed_input` (e.g. `gpu_invalid_device_id`) means a bad request, not an unavailable GPU (`_doctor_gpu_probe_failure_status`, `main.py:2905`; `_doctor_gpu_search_runtime_probe`, `main.py:2921`) |
 | `gpu.search_runtime_probe.native_error_kind` | `null`, or the native binary's own structured `--json` error kind (e.g. `path_not_found`, `empty_pattern`, `invalid_regex`, `gpu_fatal`, `gpu_invalid_device_id`) | the raw kind behind the mapped `status` above -- `null` means stdout wasn't the expected structured JSON at all (a raw panic, empty output), not that there was no error |
-| `native_frontdoor_flavor` / `native_frontdoor_requested_flavor` / `native_frontdoor_asset_name` / `native_frontdoor_metadata_status` / `native_frontdoor_flavor_mismatch_note` | populated strings when a managed native front door is installed | surfaces "you asked for `nvidia` but got `cpu`" (`_doctor_native_frontdoor_flavor_mismatch_note`, `main.py:3110`) -- previously only a benchmark script could see this; now visible in plain `tg doctor`. **A14/#708 (v1.93.1):** `_agent_gpu_tg_command` (`agent_capsule.py:1508`) now pre-resolves a bare `"tg"` via `shutil.which` before it reaches the WSL cross-domain gate, closing a residual case where an unresolved bare command name skipped the check entirely; field semantics here are unchanged by that fix. |
+| `native_frontdoor_flavor` / `native_frontdoor_requested_flavor` / `native_frontdoor_asset_name` / `native_frontdoor_metadata_status` / `native_frontdoor_flavor_mismatch_note` | populated strings when a managed native front door is installed | surfaces "you asked for `nvidia` but got `cpu`" (`_doctor_native_frontdoor_flavor_mismatch_note`, `main.py:3121`) -- previously only a benchmark script could see this; now visible in plain `tg doctor`. **A14/#708 (v1.93.1):** `_agent_gpu_tg_command` (`agent_capsule.py:1522`) now pre-resolves a bare `"tg"` via `shutil.which` before it reaches the WSL cross-domain gate, closing a residual case where an unresolved bare command name skipped the check entirely; field semantics here are unchanged by that fix. |
 | `lsp.enabled` / `lsp.providers[].health_status` | `health_status` in `{ready, available_unverified, unhealthy, missing}` | **provider availability is not navigation proof.** A provider counts as real LSP evidence only when a completed request set `lsp_provider_response = true` — `provenance = "lsp-*"` alone is not enough (`AGENTS.md` LSP rules). |
 | `ast_grep.available` / `ast_grep.binary` | `true` / a resolved path | `false` degrades `tg run`'s semantic (`--selector`/`--strictness`) options; AST structural search itself still works via the native backend |
 | `session_daemon.running` | informational | `true` means a warm localhost daemon is serving cached repo-map/session state for this root |
@@ -133,7 +136,7 @@ presence.
 
 ## Tool 2: `python scripts/agent_readiness.py` — the governed pre-push gate
 
-Source: `scripts/agent_readiness.py` (entire file; `build_check_plan` at line 666).
+Source: `scripts/agent_readiness.py` (entire file; `build_check_plan` at line 698).
 
 ```powershell
 python scripts/agent_readiness.py --json --output artifacts/agent_readiness.json
@@ -179,7 +182,7 @@ alongside `tg dogfood` (`AGENTS.md:316-323`).
 | `agent-capsule-hardcases` | polyglot monorepo, generated-noise, Rust/Python/JS/TS hardcases | — |
 | `docs-claim-check` | **no subprocess** — reads `AGENTS.md`/`README.md`/`SKILL.md`/`docs/*.md` directly and checks required fragments + version-staleness prose patterns + a banned-phrase list on GPU docs | — |
 
-`docs-claim-check` (`validate_docs_claims` in `agent_readiness.py:537`) is the mechanism that
+`docs-claim-check` (`validate_docs_claims` in `agent_readiness.py:560`) is the mechanism that
 enforces the **no-oversell rule** described in `AGENTS.md`: it bans phrases like `"mathematically
 guaranteeing"`, `"0ms interpreter lag"`, `"peak theoretical throughput"`, `"GPU-ready"` from
 `docs/benchmarks.md`, `docs/gpu_crossover.md`, and `docs/PAPER.md`, and requires phrases like `"not
@@ -213,7 +216,7 @@ useful when the shell-probe phase is slow.
 ## Tool 3: `tg dogfood` — verdict + JSON envelope around `agent_readiness.py`
 
 Source: `src/tensor_grep/cli/dogfood.py` (`run_dogfood_readiness`), CLI command at
-`main.py:14032`.
+`main.py:14167`.
 
 ```powershell
 tg dogfood --output artifacts/dogfood_readiness.json
@@ -237,7 +240,7 @@ Tool 2) and wraps it with:
 ```
 
 **`world_class_readiness` is a STATIC disclaimer block, not a live signal.** `_build_world_class_readiness()`
-(`dogfood.py:203`) takes **zero arguments** and returns the identical literal content on every
+(`dogfood.py:207`) takes **zero arguments** and returns the identical literal content on every
 single run, regardless of repo state. Its `status` field is always `"not_claimed"`. Its purpose is
 purely governance: it exists so a passing `tg dogfood` run can never be misread as "tg replaces
 `rg`", "tg replaces `ast-grep`", "GPU is promotion-ready", or "LSP navigation is proven" — each of
@@ -259,6 +262,17 @@ timeout, `tg dogfood` kills the process tree (via `psutil` if available, else `t
 Windows) and injects a synthetic `agent-readiness-timeout` failed check plus `"status":
 "timed_out"` into the `agent_readiness` object — this is the ONLY place a timeout concept exists;
 `agent_readiness.py` run standalone has none.
+
+**Don't read `tg dogfood`'s wall-clock time as a speed signal, warm or cold.** Its checks invoke
+the CLI end-to-end (`tg orient`, `tg agent`, `tg search`, ...) against whatever repo/session state
+is already on disk — a warm session-daemon cache or an LRU-cached parse means the specific function
+you just changed may not even execute on this run, which can hide a real win just as easily as it
+can make a broken change look fine. Receipt: an end-to-end warm read of `tg orient` measured
+**-36%** (looked like a regression) on a function that was actually **~54% FASTER** once isolated
+and cold-microbenched — the warm run was timing the cached path, not the changed one. For an actual
+speed claim, cold-microbench the specific changed function on the shipped wheel (see the global
+skill `profile-guided-byte-identical-optimization`) or use the dedicated scripts in
+`tensor-grep-benchmark-and-proof-toolkit` — never an end-to-end dogfood run.
 
 ## Tool 4: post-release Docker dogfood (`scripts/dogfood/`)
 
@@ -288,13 +302,18 @@ every feature works on the shipped artifact; exit 1 = a named regression with ou
 For the full "why CliRunner alone is not enough" rationale and workflow discipline, see the global
 skill `dogfood-the-shipped-artifact` — this section only covers what the script measures.
 
+**The same warm-vs-cold caution applies here.** Even though each run builds a fresh fixture repo,
+this tool's per-check timing is incidental to a correctness pass/fail, not a controlled repeated
+measurement — do not read a fast or slow Docker-dogfood run as evidence a hot-path optimization
+landed or regressed; see the `tg dogfood` caveat above for the correct methodology.
+
 ## Interpreting `tg find` / `tg route-test` output (v1.77.0+, #189)
 
 Two newer JSON surfaces belong in this skill's "what does the field actually prove" territory —
 neither is a health-check tool like Tools 1-4 above, but both need the same field-by-field
 interpretation discipline before you trust them.
 
-**`tg find` (`main.py:4525` onward — re-verify with `grep -n "^def find(" src/tensor_grep/cli/main.py`):**
+**`tg find` (`main.py:4574` onward — re-verify with `grep -n "^def find(" src/tensor_grep/cli/main.py`):**
 
 | Field | Healthy value | What a bad/absent value means |
 |---|---|---|
@@ -302,7 +321,7 @@ interpretation discipline before you trust them.
 | `result_incomplete` | `false`/absent on a complete scan | `true` means `--deadline`/`--max-repo-files`/the internal corpus-wide chunk cap truncated the walk — the ranked results are a FLOOR, not the full answer. Exit code confirms this independent of the JSON: any truncation exits **2**, whether or not matches were found (`tensor-grep-run-and-operate` §11c, `tensor-grep-large-repo-scale-campaign` §1/§5). |
 | exit code | `0` = complete + found; `1` = complete + empty; `2` = `BackendExecutionError` OR any truncation | do not read exit `2` here as a plain usage error the way `tg search`'s exit-2 convention works (§11b) — `tg find` follows the symbol-command-style "truncation trumps found" shape, a DIFFERENT convention than `tg search`. |
 
-**`tg route-test` (`main.py:10074` onward — re-verify with `grep -n "^def route_test(" src/tensor_grep/cli/main.py`) — diagnoses routing agreement between `context-render` and `edit-plan`:**
+**`tg route-test` (`main.py:10123` onward — re-verify with `grep -n "^def route_test(" src/tensor_grep/cli/main.py`) — diagnoses routing agreement between `context-render` and `edit-plan`:**
 
 | Field | Healthy value | What a bad value means |
 |---|---|---|
@@ -393,7 +412,27 @@ re-grep pass **2026-07-22 (v1.93.2)** found EVERY `main.py:NNNN` citation in thi
 `:2894`/`:2910`, the flavor-mismatch function `:3110`, `dogfood` `:14032`, `find` `:4525`,
 `route_test` `:10074` — plus a one-line mention of A14/#708 (bootstrap no-ignore flag-field parity;
 `_agent_gpu_tg_command`'s `shutil.which` pre-resolution). Field SEMANTICS in every table above are
-UNCHANGED by this pass — only the line-number citations moved. Re-verify if this skill feels stale:
+UNCHANGED by this pass — only the line-number citations moved.
+
+A second consolidated re-grep pass **2026-07-23 (v1.95.0)** re-checked every citation above plus
+the full doctor payload field set (`_build_doctor_payload`'s literal dict, read end-to-end), the
+13 repo-local + 10 shell-probe check names (23 total, `build_check_plan` read end-to-end), the
+65-flag-token `public-search-advertised-flag-sweep` sweep (recounted by hand from
+`_public_search_flag_sweep_cases`), the GPU failure-taxonomy status strings, the
+`docs-claim-check` banned/required phrase list, and the 7-path `RELEASE_DOCS_GOVERNANCE_PATHS`
+tuple behind `release_docs_worktree` — every one of those facts is STILL accurate. Only line
+numbers had drifted again (`main.py` grew from 16897 to 17032 lines; `dogfood.py` and
+`agent_readiness.py` each grew too): `_build_doctor_payload` `:3142`, doctor command `:14437`,
+`_doctor_rust_binary_remediation` `:2432`, the GPU-probe functions `:2905`/`:2921`, the
+flavor-mismatch function `:3121`, `_agent_gpu_tg_command` (`agent_capsule.py:1522`), `dogfood`
+command `:14167`, `_build_world_class_readiness` (`dogfood.py:207`), `find` `:4574`, `route_test`
+`:10123`, `validate_docs_claims` (`agent_readiness.py:560`), `build_check_plan`
+(`agent_readiness.py:698`). `run_benchmarks.py`'s `benchmark_binary_warnings`/
+`benchmark_claim_blockers` block (`:194-225`) had NOT drifted and needed no change. Field
+SEMANTICS remain UNCHANGED by this pass too — only line-number citations moved. This pass also
+added the Tool 3/Tool 4 warm-dogfood-hides-a-cold-path-win caveat above (the `tg orient`
+-36%-vs-+54% receipt) — see the global skill `profile-guided-byte-identical-optimization` for the
+full methodology. Re-verify if this skill feels stale:
 
 ```powershell
 # current version
