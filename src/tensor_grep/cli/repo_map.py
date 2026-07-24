@@ -540,6 +540,66 @@ def _attach_profiling(
     return payload
 
 
+def _language_scope_descriptor() -> str:
+    """Dynamically derive the honest ``coverage.language_scope`` value from
+    ``lang_registry.LANGUAGE_REGISTRY`` -- the single source of truth for which languages have
+    a registered symbol-graph ``LanguageSpec`` (see lang_registry.py's module docstring) --
+    instead of a hand-maintained literal.
+
+    Dogfood-found honesty bug fix: this used to be the hardcoded 4-language literal
+    ``"python-js-ts-rust"``, which silently under-reported coverage to agent/MCP consumers
+    once go/java/php/csharp/c/cpp were onboarded (the language-support campaign registered 6
+    more languages in ``lang_registry`` without anyone updating this string -- a classic
+    N-site-registration miss, since nothing wired the envelope to the registry). Deriving it
+    live means the NEXT language onboarded (see AGENTS.md's "Adding a Language" section) can
+    never cause the same drift: as soon as its ``LanguageSpec`` is registered, it appears here
+    automatically. Sorted for a deterministic value independent of registration order.
+    """
+    return "-".join(sorted(lang_registry.LANGUAGE_REGISTRY))
+
+
+def _symbol_navigation_descriptor() -> str:
+    """Dynamically derive the honest ``coverage.symbol_navigation`` value, split into the two
+    real navigation tiers instead of one flat language list (same honesty-bug fix as
+    ``_language_scope_descriptor`` above -- see that function's docstring for the incident).
+
+    - ``parser-backed-refs-callers``: languages whose ``LanguageSpec.references_and_calls`` is
+      wired up get AST/tree-sitter-VERIFIED ``tg refs``/``tg callers``/``tg blast-radius``
+      (see the explicit per-``language_id`` dispatch branches in
+      ``build_symbol_refs_from_map`` / ``build_symbol_callers_from_map``, e.g. around the
+      ``current_spec.language_id == "go"`` branch). Verified live: this tier currently also
+      includes go, which several PR-comment summaries lump in with the "foundational-only"
+      languages below -- that undercounts it. Go's own dedicated
+      ``lang_go.go_references_and_calls`` is a full tree-sitter extractor (package-alias
+      resolution, node-type-based ref_kind), not a regex fallback, so it belongs here.
+    - ``foundational-defs-imports-only``: languages with ``references_and_calls is None``
+      still get parser-backed defs/imports (see ``_imports_and_symbols_for_path``'s
+      fail-closed per-language branches -- NO regex fallback, an unparseable file becomes an
+      honest ``resolution_gaps`` entry), but ``tg refs``/``tg callers``/``tg blast-radius``
+      fall through to the generic ``_regex_references_and_calls`` text heuristic instead of an
+      AST-verified match -- these languages' own registration comments in this module
+      self-label "FOUNDATIONAL-TIER" for exactly this reason.
+
+    Both groups are derived live from ``LANGUAGE_REGISTRY`` and sorted, so a newly onboarded
+    language lands in the correct bucket automatically the moment its ``LanguageSpec`` is
+    registered, without a repeat of the drift ``_language_scope_descriptor`` fixes.
+    """
+    parser_backed = sorted(
+        language_id
+        for language_id, spec in lang_registry.LANGUAGE_REGISTRY.items()
+        if spec.references_and_calls is not None
+    )
+    foundational = sorted(
+        language_id
+        for language_id, spec in lang_registry.LANGUAGE_REGISTRY.items()
+        if spec.references_and_calls is None
+    )
+    parts = [f"parser-backed-refs-callers:{'-'.join(parser_backed)}"]
+    if foundational:
+        parts.append(f"foundational-defs-imports-only:{'-'.join(foundational)}")
+    return "+".join(parts)
+
+
 def _envelope(path: Path) -> dict[str, Any]:
     return {
         "version": JSON_OUTPUT_VERSION,
@@ -548,8 +608,8 @@ def _envelope(path: Path) -> dict[str, Any]:
         "routing_reason": ROUTING_REASON,
         "sidecar_used": False,
         "coverage": {
-            "language_scope": "python-js-ts-rust",
-            "symbol_navigation": "python-ast+parser-js-ts-rust",
+            "language_scope": _language_scope_descriptor(),
+            "symbol_navigation": _symbol_navigation_descriptor(),
             "test_matching": "filename+import+graph-heuristic",
         },
         "path": str(path),

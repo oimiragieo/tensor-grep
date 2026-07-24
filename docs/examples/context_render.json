@@ -5,8 +5,8 @@
   "sidecar_used": false,
   "semantic_provider": "native",
   "coverage": {
-    "language_scope": "python-js-ts-rust",
-    "symbol_navigation": "python-ast+parser-js-ts-rust",
+    "language_scope": "c-cpp-csharp-go-java-javascript-php-python-rust-typescript",
+    "symbol_navigation": "parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-java-php",
     "test_matching": "filename+import+graph-heuristic"
   },
   "path": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\context_pack",
@@ -146,7 +146,7 @@
   ],
   "ranking_quality": "strong",
   "coverage_summary": {
-    "language_scope": "python-js-ts-rust",
+    "language_scope": "c-cpp-csharp-go-java-javascript-php-python-rust-typescript",
     "parser_backed_fields": [
       "defs",
       "source",
@@ -402,7 +402,7 @@
     ],
     "ranking_quality": "strong",
     "coverage_summary": {
-      "language_scope": "python-js-ts-rust",
+      "language_scope": "c-cpp-csharp-go-java-javascript-php-python-rust-typescript",
       "parser_backed_fields": [
         "defs",
         "source",

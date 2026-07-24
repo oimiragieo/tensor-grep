@@ -81,8 +81,8 @@ Recommended consumer behavior:
 
 Current coverage values describe the limits of this surface:
 
-- `"language_scope": "python-js-ts-rust"`
-- `"symbol_navigation": "python-ast+heuristic-js-ts-rust"`
+- `"language_scope": "c-cpp-csharp-go-java-javascript-php-python-rust-typescript"` -- every language with a registered symbol-graph `LanguageSpec`, derived live from `lang_registry.LANGUAGE_REGISTRY` (10 languages as of this writing).
+- `"symbol_navigation": "parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-java-php"` -- honest about tiers: `tg refs`/`tg callers`/`tg blast-radius` are AST/tree-sitter-verified only for the first group; the second group has parser-backed defs/imports but refs/callers fall back to a regex-heuristic text match.
 - `"test_matching": "filename+import+graph-heuristic"`
 
 ## Context Pack Flow

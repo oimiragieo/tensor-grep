@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+from tensor_grep.cli import repo_map
+
 DOC_PATH = Path("docs/harness_api.md")
 EXAMPLES_DIR = Path("docs/examples")
 EXPECTED_EXAMPLES = {
@@ -125,8 +127,11 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "routing_reason" in doc
     assert "version" in doc
     assert "coverage" in doc
-    assert "python-js-ts-rust" in doc
-    assert "python-ast+parser-js-ts-rust" in doc
+    assert "c-cpp-csharp-go-java-javascript-php-python-rust-typescript" in doc
+    assert (
+        "parser-backed-refs-callers:go-javascript-python-rust-typescript"
+        "+foundational-defs-imports-only:c-cpp-csharp-java-php" in doc
+    )
     assert "filename+import+graph-heuristic" in doc
     assert "tg_repo_map" in doc
     assert "tg_context_pack" in doc
@@ -363,8 +368,17 @@ def test_harness_api_examples_exist_and_have_unified_envelope() -> None:
                 "blast_radius_render.json",
                 "session_context.json",
             }:
-                assert payload["coverage"]["language_scope"] == "python-js-ts-rust"
-                assert payload["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts-rust"
+                # Invariant, not a re-rottable hardcoded literal (honesty-bug fix): assert
+                # against the SAME live lang_registry-derived value _envelope() computes, so a
+                # future language onboarded without regenerating these doc-example fixtures
+                # fails this test loudly instead of the fixtures silently drifting stale again.
+                assert (
+                    payload["coverage"]["language_scope"] == repo_map._language_scope_descriptor()
+                )
+                assert (
+                    payload["coverage"]["symbol_navigation"]
+                    == repo_map._symbol_navigation_descriptor()
+                )
                 assert payload["coverage"]["test_matching"] == "filename+import+graph-heuristic"
             if file_name == "rulesets.json":
                 assert isinstance(payload["rulesets"], list)
