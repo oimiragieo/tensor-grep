@@ -1,6 +1,157 @@
 # CHANGELOG
 
 
+## v1.96.1 (2026-07-24)
+
+### Bug Fixes
+
+- **imports**: Wire file-dependency support for go/php/csharp (fail-closed for the rest)
+  ([#728](https://github.com/oimiragieo/tensor-grep/pull/728),
+  [`29cf59f`](https://github.com/oimiragieo/tensor-grep/commit/29cf59fd076fc53ccdc0bd52e180f8ad758ee1fa))
+
+* fix(imports): wire file-dependency support for go/php/csharp (fail-closed for the rest)
+
+`tg imports`/`tg importers` gates FILE-DEPENDENCY extraction on
+  `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` (repo_map.py). go/php/csharp are registered symbol-graph
+  languages but were missing from that set, so `tg imports` on a .go/.php/.cs file always reported
+  `result_incomplete` with an empty imports list.
+
+Verify-first correction to the brief that scoped this gap: Java (this campaign's #725) is NOT a
+  full-resolution reference. Its own `_resolve_raw_import_entry` branch is foundational-tier only
+  (raw import extraction + honest `resolved=None`, target-file resolution deferred), and `tg
+  importers`' reverse confirm step (`_confirm_import_edges`) excludes java too, via its own separate
+  language allow-list independent of `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES`.
+
+All three languages classify the same way under a TRUE-resolution bar: resolver work still needed
+  (go's own `_go_import_path_to_dir` resolves import paths to a PACKAGE DIRECTORY, not a file -- no
+  1:1 import-to-file mapping exists to wire; php has no PSR-4/composer.json autoload map; csharp has
+  no .csproj/namespace map). None of that is built here.
+
+What IS safe and shipped: the same foundational tier Java already ships -- new
+  `go_imports_with_lines`/`php_imports_with_lines`/ `csharp_imports_with_lines` extractors (one row
+  per import statement with its line number, mirroring each language's existing
+  `_imports_and_symbols` walk), a shared honest-unresolved branch in `_resolve_raw_import_entry`
+  (never a fabricated `resolved` path or a fabricated `external=True`), and go/php/csharp added to
+  `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES`. `tg imports` on a .go/.php/.cs file now returns real
+  `{module, line}` rows instead of an empty, incomplete result.
+
+12 new TDD tests (4 per language, mirroring test_lang_java.py's
+  test_file_imports_returns_java_import_statements_with_lines pattern).
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* docs(backlog): note draft PR #728 (go/php/csharp imports foundational tier)
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+### Documentation
+
+- **skills**: Fold session learnings into AGENTS.md/CLAUDE.md + register add-language & optimization
+  skills ([#727](https://github.com/oimiragieo/tensor-grep/pull/727),
+  [`272d2cd`](https://github.com/oimiragieo/tensor-grep/commit/272d2cdf269d2fab61b43839abef3d5e0f8f8c03))
+
+* docs(skills): fold session learnings into AGENTS.md/CLAUDE.md + register add-language &
+  optimization skills
+
+Applies SECTION 1 (AGENTS.md), SECTION 2 (CLAUDE.md + skill_rules.json), and SECTION 4b (new
+  tensor-grep-add-language skill) of the 2026-07-23/24 session-learnings capture plan. Anchors
+  verified against v1.95.0 (main HEAD) by grepping real headings/line numbers rather than trusting
+  the plan's raw citations, which had drifted (A1-A21 and CI/Release (a)-(g) already existed, so the
+  new bullets are A22 and (h); release_docs_current_tag and the skill count were already partially
+  correct and only needed the +1 bump for the new skill).
+
+AGENTS.md: - New "Adding a Language (symbol-graph tier)" section (registration-completeness pattern,
+  the 5 critical seams, fail-closed contract, live-verify-grammar-node-shapes). - New "Optimization
+  Discipline" section (measure-first, profiling-probe, byte-identical proof, warm-hides-cold trap,
+  shipped-wheel microbench). - 2 new Local Dev Gotchas bullets (CRLF-binary-preserve edit; uv.lock
+  hand-splice). - New (h) CI/Release Rules bullet (rustup pinned-toolchain fetch has no retry,
+  #720-#722). - New A22 Campaign Orchestration bullet (sequential-drain-union-rebase for N PRs
+  sharing a file; clean rebase != correctness). - Registered tensor-grep-add-language in the Skills
+  section (27 skills) + a new Extend bucket, and mirrored the new global optimization skill into the
+  manually-synced global-skill list.
+
+CLAUDE.md: mirrored DRY-pointer bullets, the in-repo skill-library count/bucket, and the global
+  build/release skill list, keeping the AGENTS.md<->CLAUDE.md skill index byte-set identical
+  (tests/unit/test_skill_index_sync.py, 4/4 green).
+
+skill_rules.json: added tensor-grep-add-language, profile-guided-byte-identical-optimization, and
+  tensor-grep-large-repo-scale-campaign trigger entries; validated as parseable JSON.
+
+New skill .claude/skills/tensor-grep-add-language/SKILL.md (350 lines): condensed from a 31KB draft
+  into a tg-specific registration checklist, every seam claim re-grounded against the live
+  repo_map.py/lang_registry.py/lang_go.py/lang_php.py this pass (not copied from the draft) --
+  including a live, currently-true finding that _SUPPORTED_FILE_DEPENDENCY_LANGUAGES does not yet
+  include go/php despite both being registered languages, and that PHP's own Stage 1 landing
+  deliberately ships defs+imports only with the caller-graph fields honestly None. C# specifics are
+  flagged as ledger-sourced/unverified since PR #726 has not merged.
+
+No src/ changes. Gated on an independent Opus review before merge, and on the release pipe
+  (one-merge-per-publish; wait for the prior chore(release) + PyPI before this lands).
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+* docs(skills): re-verify tensor-grep-add-language against merged PR #726 (C#)
+
+PR #726 (C# symbol/import intelligence) merged onto main while this PR was in flight. Rather than
+  leave the new skill's C# references as a stale "PR #726 has not merged, ledger-sourced only"
+  caveat, re-verify against the real src/tensor_grep/cli/lang_csharp.py now that it exists and
+  update the skill with grounded facts:
+
+- Current status / tiered-model table / E1 priority section: 8 of top-10 languages are now
+  registered on main (was 7 + "C# draining"); the test_lang_registry.py union-pin set now includes
+  "csharp" (17 tests, was 15). - B5 live-verify-grammar-node-shapes: replaced the secondhand ledger
+  note with a direct citation of _csharp_using_directive_target (lang_csharp.py:138-150) and its own
+  grammar-verification comment (lang_csharp.py:113-124, verified against tree_sitter_c_sharp 0.23.x
+  for all four `using` directive forms) -- confirms the alias-before-target claim with the precise
+  mechanism (take the LAST matching identifier/qualified_name child, never the first). - B1: "Go and
+  PHP (two most recent)" -> "Go, PHP, and C# (three most recent)" module-shaped additions. -
+  Provenance section: recorded the mid-authoring merge and what remains unverified for C#
+  (def/import extraction logic beyond the using-directive target selector).
+
+No other files changed. Re-ran tests/unit/test_skill_index_sync.py (4/4) and
+  tests/unit/test_public_docs_governance.py (47/47) after the merge + this fixup; both still green.
+  ruff format --check --preview clean on all touched files.
+
+* docs(skills): apply independent-gate must-fix (re-verify seam line numbers post-#726)
+
+Independent Opus gate on PR #727 returned FIX (one must-fix + one nit) against a snapshot that
+  predated my own C# re-verification commit; re-confirmed each item against a freshly-rebased
+  origin/main (HEAD 6c09424) rather than trusting the gate's line-number hints blindly.
+
+MUST-FIX, tensor-grep-add-language/SKILL.md: - B2 seams table: register_language call-site count was
+  still "7" in one place (the table row) even though the "Current status" section already said 8 --
+  fixed to 8. Re-grepped and fixed all 5 repo_map.py seam line numbers, which shifted ~+40 when #726
+  inserted lang_csharp.py's registration + functions above them: _imports_and_symbols_for_path
+  6204->6244, _imports_with_lines_for_path 6396->6440, build_symbol_source_from_map 15752->15799,
+  _target_language_for_path 7323->7367, _SUPPORTED_FILE_DEPENDENCY_LANGUAGES 16568->16617. Every
+  number re-verified by grepping the symbol directly against the rebased tree, not copied from the
+  gate's own hints (all matched exactly on re-check). - Extended the seam-6 worked example: csharp
+  is ALSO absent from _SUPPORTED_FILE_DEPENDENCY_LANGUAGES (still {python,javascript,typescript,
+  rust,java} post-#726) -- C# copied Go's module shape closely but did not close this particular gap
+  either, same as go/php. Cited build_file_imports at its new location (repo_map.py:16719). -
+  Version stamp: "v1.95.0 + PR #726" -> "v1.96.0-pending" (main HEAD 6c09424; pyproject.toml still
+  stamps 1.95.0 since semantic-release derives the version at publish time -- #726 is a feat:
+  commit, so the next publish is v1.96.0). Noted this is re-verified TWICE now (once when #726 first
+  landed, again after the line-number shift).
+
+NIT, skill_rules.json: the "Seeded 2026-07-17..." description does not actually contain a hardcoded
+  skill count to refresh (it already defers to AGENTS.md's skill index by design -- re-confirmed,
+  same finding as my first pass). Rather than skip the nit or reintroduce an un-anchored hardcoded
+  number with no governance test behind it, added a small DATED count note (12 initial -> 15 as of
+  2026-07-23) plus an explicit "snapshot, not a promise" caveat, matching this repo's own "Current
+  Handoff"-style dated-stamp convention.
+
+Re-ran after every fix: tests/unit/test_skill_index_sync.py (4/4),
+  tests/unit/test_public_docs_governance.py (43/43), skill_rules.json JSON parse, SKILL.md YAML
+  frontmatter parse, ruff format --check --preview -- all clean.
+
+---------
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.96.0 (2026-07-24)
 
 ### Features
