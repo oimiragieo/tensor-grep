@@ -427,9 +427,11 @@ the mandatory adversarial Opus gate, not by tests or CI.
 
 ## Adding a Language (symbol-graph tier)
 
-tg's deep symbol-graph tier covers 8 of the top-10 languages (Python, JS, TS, Java,
-C#, Go, Rust, PHP; C/C++ deferred — priority per TIOBE Jul-2026 + Stack Overflow 2025
-+ GitHub Octoverse 2025 consensus). Adding one is a **registration-completeness**
+tg's deep symbol-graph tier covers all 10 of the top-10 languages (Python, JS, TS,
+Java, C#, Go, Rust, PHP, C, C++ — priority per TIOBE Jul-2026 + Stack Overflow 2025
++ GitHub Octoverse 2025 consensus; C and C++ both landed foundational-tier only —
+defs/source/imports/agent, caller-graph deferred, see `lang_c.py`/`lang_cpp.py`).
+Adding one is a **registration-completeness**
 problem (see the universal bug class above): the CURRENT pattern is
 `lang_registry.register_language(LanguageSpec(...))` plus a self-contained
 `src/tensor_grep/cli/lang_<x>.py` module mirroring `lang_go.py` — NOT the inline
@@ -466,7 +468,7 @@ CURRENT code, not a mental model.
 
 **Positioning (the tiered model):** text search = ANY language (rg passthrough);
 structural scan/rewrite = 26 langs (`tg ast-info`, via ast-grep which tg WRAPS); deep
-symbol-graph = the tree-sitter grammars (the 8 above). tg = rg (text) + ast-grep
+symbol-graph = the tree-sitter grammars (the 10 above). tg = rg (text) + ast-grep
 (structural) + a symbol/retrieval/capsule LAYER on top. NOT "faster grep."
 
 **Parallel-drain hygiene:** a new grammar touches `test_lang_registry`, the pyproject
