@@ -27,7 +27,7 @@ backend contract.
 | Drain several language PRs that all touch `test_lang_registry.py` / `uv.lock` / the pyproject `ast` extra | `tensor-grep-change-control`'s Campaign Orchestration cross-ref (AGENTS.md A22) |
 | Use `tg` as a consumer (search/orient/callers flags) | `code-search-and-retrieval-reference` |
 
-## Current status (verified against v1.95.0 + #726, `origin/main`)
+## Current status (verified against tg v1.96.0-pending, `origin/main` @ `6c09424`)
 
 `repo_map.py` currently carries **8** `lang_registry.register_language(...)` call sites
 (`grep -n "register_language(" src/tensor_grep/cli/repo_map.py`): `python`, `javascript`,
@@ -93,17 +93,18 @@ calls `register_language(...)` is imported — a bare `import lang_registry` wit
 ## B2 — the critical seams (miss one = a silent half-integration)
 
 Enumerate every seam `lang_go.py` touches and hit **all** of them. These are re-verified
-`repo_map.py` locations on v1.95.0 — re-grep the symbol before trusting the line number on a
-later version (`main.py`/`repo_map.py` churn every release):
+`repo_map.py` locations on v1.96.0-pending (re-grepped fresh after PR #726/C# shifted every
+line below its insertion point by roughly +40) — re-grep the symbol before trusting the line
+number on a later version (`main.py`/`repo_map.py` churn every release):
 
 | # | Seam | Location | Feeds | Miss-it symptom |
 |---|---|---|---|---|
-| 1 | `lang_registry.register_language(LanguageSpec(...))` | `repo_map.py` (7 call sites, "near the bottom") | wiring the suffix at all | new suffix never resolves; silently excluded everywhere |
-| 2 | `_imports_and_symbols_for_path` | `repo_map.py:6204` | symbol/def extraction dispatch | new language absent from defs/symbols |
-| 3 | `_imports_with_lines_for_path` | `repo_map.py:6396` | `tg imports` (line-numbered import entries) | `tg imports` silently empty even though defs exist |
-| 4 | `build_symbol_source_from_map` | `repo_map.py:15752` | `tg source` | `tg source` returns nothing for a real symbol |
-| 5 | **`_target_language_for_path` — MOST-FORGOTTEN** | `repo_map.py:7323` | `tg agent` capsule's `primary_target_language` / confidence gate | a target file in the new language does not filter a mismatched-language validation suggestion |
-| 6 | `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` | `repo_map.py:16568` | gates whether `tg imports`/`tg importers` even attempts dependency resolution | file-dependency graph silently (but honestly, see B3) excludes the language |
+| 1 | `lang_registry.register_language(LanguageSpec(...))` | `repo_map.py` (8 call sites, "near the bottom") | wiring the suffix at all | new suffix never resolves; silently excluded everywhere |
+| 2 | `_imports_and_symbols_for_path` | `repo_map.py:6244` | symbol/def extraction dispatch | new language absent from defs/symbols |
+| 3 | `_imports_with_lines_for_path` | `repo_map.py:6440` | `tg imports` (line-numbered import entries) | `tg imports` silently empty even though defs exist |
+| 4 | `build_symbol_source_from_map` | `repo_map.py:15799` | `tg source` | `tg source` returns nothing for a real symbol |
+| 5 | **`_target_language_for_path` — MOST-FORGOTTEN** | `repo_map.py:7367` | `tg agent` capsule's `primary_target_language` / confidence gate | a target file in the new language does not filter a mismatched-language validation suggestion |
+| 6 | `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` | `repo_map.py:16617` | gates whether `tg imports`/`tg importers` even attempts dependency resolution | file-dependency graph silently (but honestly, see B3) excludes the language |
 
 Seam 5 is not a hypothesis — the live code says so in its own comments. Reading
 `_target_language_for_path` on `main` today:
@@ -124,20 +125,24 @@ if suffix == ".php":
     return "php"
 ```
 
-**Worked example that seam 6 is not theoretical — it is currently, honestly open for two
-shipped languages.** `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` on `main` today is
-`frozenset({"python", "javascript", "typescript", "rust", "java"})` — **`go` and `php` are
-registered languages with working defs/source/`_target_language_for_path` entries, but are
-NOT in this set.** `build_file_imports` (`tg imports`) checks
+**Worked example that seam 6 is not theoretical — it is currently, honestly open for THREE
+shipped languages, not just two.** `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` on `main` today is
+still `frozenset({"python", "javascript", "typescript", "rust", "java"})` — **`go`, `php`,
+AND `csharp` are all registered languages with working defs/source/
+`_target_language_for_path` entries, but NONE of the three are in this set** (re-verified
+after #726 landed: C# did not add itself here either, same gap as Go/PHP). `build_file_imports`
+(`tg imports`, `repo_map.py:16719`) checks
 `language_id in _SUPPORTED_FILE_DEPENDENCY_LANGUAGES`; when it's absent it does **not**
 silently return an empty import list — it sets `result_incomplete=True` and
-`incomplete_reason="'go' has no import-resolution support in \`tg imports\` yet"`
-(`repo_map.py`, `build_file_imports`, ~line 16714). This is the fail-closed contract (B3)
-holding even where seam 6 was genuinely missed for Go/PHP — a live example of the
-difference between "forgot a seam" (bad, silent) and "forgot a seam but the honesty floor
-caught it" (recoverable, visible). Closing this for `go`/`php` is a good first PR for
-whoever reads this skill next; the fix is a one-line frozenset addition plus whatever real
-import-path resolution the language needs behind it.
+`incomplete_reason="'go' has no import-resolution support in \`tg imports\` yet"` (same
+f-string shape for `php`/`csharp`). This is the fail-closed contract (B3) holding even where
+seam 6 was genuinely missed for three languages in a row — a live example of the difference
+between "forgot a seam" (bad, silent) and "forgot a seam but the honesty floor caught it"
+(recoverable, visible), and a reminder that copying an existing module (C# copied Go's shape
+closely) does not automatically close a gap the template itself never closed. Closing this
+for `go`/`php`/`csharp` is a good first PR for whoever reads this skill next; the fix is a
+one-line frozenset addition plus whatever real import-path resolution each language needs
+behind it.
 
 Two more seams exist beyond this table, found by reading `lang_go.py` itself rather than
 the ledger (not independently re-grepped against `repo_map.py`'s call sites this pass —
@@ -335,15 +340,18 @@ tg --version
 
 ## Provenance and maintenance
 
-- **Verified against tg v1.95.0 + PR #726** (`main` HEAD at authoring time; PR #726 merged
-  mid-authoring-pass and this skill was re-checked against it before finalizing, rather than
-  left stale). Ground truth read directly for this skill: `src/tensor_grep/cli/
-  lang_registry.py` (full file), `src/tensor_grep/cli/lang_go.py` (docstring +
-  parser/walk/seam functions), `src/tensor_grep/cli/lang_php.py` (docstring + `__all__`),
-  `src/tensor_grep/cli/lang_csharp.py` (the `using`-directive target-selection logic + its
-  own grammar-verification comment), the cited `repo_map.py` seam locations,
-  `pyproject.toml`'s `ast` extra, and `tests/unit/test_lang_registry.py` — all read live
-  from `origin/main` this pass, not carried over from a prior draft.
+- **Verified against tg v1.96.0-pending** (`main` HEAD `6c09424`, `pyproject.toml` still
+  stamps `1.95.0` since semantic-release derives the version at publish time — #726 is a
+  `feat:` commit, so the next publish is v1.96.0). PR #726 (C#) merged mid-authoring-pass;
+  this skill was re-checked against the real post-merge code TWICE — once when #726 first
+  landed, and again after every `repo_map.py` line number below shifted by roughly +40 on a
+  rebase — rather than left stale either time. Ground truth read directly for this skill:
+  `src/tensor_grep/cli/lang_registry.py` (full file), `src/tensor_grep/cli/lang_go.py`
+  (docstring + parser/walk/seam functions), `src/tensor_grep/cli/lang_php.py` (docstring +
+  `__all__`), `src/tensor_grep/cli/lang_csharp.py` (the `using`-directive target-selection
+  logic + its own grammar-verification comment), every cited `repo_map.py` seam location
+  (re-grepped fresh post-#726, not carried over), `pyproject.toml`'s `ast` extra, and
+  `tests/unit/test_lang_registry.py` — all read live from `origin/main` this pass.
 - **Not independently verified this pass**: the exact `repo_map.py` line numbers for seam 7
   (per-language `references_and_calls`/`file_imports_symbol_from_definition` dispatch arms)
   and seam 8 (the daemon-refresh cache-clear sweep call site); the Java inline extractor's
