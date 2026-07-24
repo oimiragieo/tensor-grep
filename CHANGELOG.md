@@ -1,6 +1,91 @@
 # CHANGELOG
 
 
+## v1.97.0 (2026-07-24)
+
+### Documentation
+
+- **skills**: Refresh tensor-grep-add-language worked-example + seams after #728
+  ([#730](https://github.com/oimiragieo/tensor-grep/pull/730),
+  [`f5b7047`](https://github.com/oimiragieo/tensor-grep/commit/f5b7047e6e2f72ba40d5ab8722608bb7683ff9ac))
+
+PR #728 added go/php/csharp to _SUPPORTED_FILE_DEPENDENCY_LANGUAGES at the foundational tier (raw
+  {module, line} import rows via new lang_go.go_imports_with_lines / lang_php.php_imports_with_lines
+  / lang_csharp.csharp_imports_with_lines extractors, resolved via _resolve_raw_import_entry's
+  honest-unresolved branch: resolved=None, external=False). This staled the skill's B2 worked
+  example, which still described go/php/csharp as excluded from the frozenset and tg imports as
+  returning result_incomplete for them.
+
+- Rewrote the B2 worked example: the frozenset now has all 8 registered languages; explains the
+  foundational-tier extraction + the still-deferred true resolution (different missing machinery per
+  language: package-dir vs PSR-4 vs .csproj); adds the _confirm_import_edges nuance (a second,
+  separate, still-narrower allow-list that joining seam 6 does not close). - Re-grepped every
+  repo_map.py seam line number against origin/main @ 29cf59f (PR #728 shifted
+  build_symbol_source_from_map, _target_language_ for_path, and _SUPPORTED_FILE_DEPENDENCY_LANGUAGES
+  by +16, and build_file_imports by +41); also fixed three lang_go.py citations that shifted below
+  #728's new go_imports_with_lines insertion point (clear_go_repo_context_cache,
+  go_references_and_calls, its receiver-heuristic band). - Bumped the provenance stamp to
+  v1.96.1-pending / main HEAD 29cf59f (pyproject.toml still stamps 1.96.0; #728 is a fix: commit).
+
+Verified: all 47 tests in test_public_docs_governance.py + test_skill_index_sync.py pass;
+  frontmatter YAML validated; no CRLF/LF churn (file stays pure LF, matching origin/main).
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+- **skills**: Triple-check + refresh skill library vs v1.95.0 (re-verified citations + session
+  methods) ([#729](https://github.com/oimiragieo/tensor-grep/pull/729),
+  [`03dd0c0`](https://github.com/oimiragieo/tensor-grep/commit/03dd0c01ec72d100d86f076c054a77fa41fb7198))
+
+* docs(skills): triple-check + refresh skill library vs v1.95.0 (re-verified citations + session
+  methods)
+
+* fix(skills): correct post-#728 repo_map.py citation drift (Opus-gate finding)
+
+### Features
+
+- **lang**: Add C symbol + import intelligence (foundational tier, #include honest-unresolved)
+  ([#731](https://github.com/oimiragieo/tensor-grep/pull/731),
+  [`1153a62`](https://github.com/oimiragieo/tensor-grep/commit/1153a629a88dc54ad6e8d0b071897da7e69206e6))
+
+Registers "c" as a foundational-tier LanguageSpec (PATH A Stage 3, top-10 language campaign Phase 1
+  -- C++ is a separate follow-up, not built here), mirroring the lang_go.py/lang_php.py/
+  lang_csharp.py module pattern. New src/tensor_grep/cli/lang_c.py extracts function definitions +
+  prototypes (kind "function", both emitted when a file has both), struct/union/enum definitions
+  (kind "class"), typedefs (kind "type"), and #include directives (one row per directive,
+  honest-unresolved: resolved=None, external=False -- C has no standardized manifest to resolve
+  against, unlike go.mod/composer.json/.csproj).
+
+Wired at all 8 seams: register_language, _imports_and_symbols_for_path,
+  _imports_with_lines_for_path, build_symbol_source_from_map, _target_language_for_path,
+  _SUPPORTED_FILE_DEPENDENCY_LANGUAGES, and _resolve_raw_import_entry's honest-unresolved branch
+  (_provider_language_for_path already returned "c" pre-existing, confirmed, no change needed). ".h"
+  is deliberately left unregistered, reserved for a future lang_cpp.py.
+
+Declarator name resolution (the one real wrinkle vs Go/PHP/C#) is live-verified against real
+  tree-sitter-c 0.24.2 parses, not guessed: handles plain/pointer/array/function declarators plus
+  the function-pointer typedef's parenthesized_declarator wrapper, which uniquely exposes no named
+  "declarator" field.
+
+Packaging: tree-sitter-c added to the ast/dev/bench extras and hand-spliced into uv.lock
+  (CRLF-preserving byte splice, not a raw `uv lock` re-resolve) -- `uv export --locked` and `uv lock
+  --check` both exit 0.
+
+Also fixes a documented gap in the tensor-grep-add-language skill: seam 5b
+  (_provider_language_for_path) was never listed alongside seam 5a (_target_language_for_path), even
+  though test_target_and_provider_language_agree_with_registry pins both.
+
+Deferred to a follow-up (all None in this LanguageSpec, matching PHP's own precedent):
+  references_and_calls, provider_alias_calls, file_imports_symbol_from_definition,
+  import_update_target, prime_repo_context -- tg refs/callers/blast-radius on a C symbol fall
+  through to the generic regex text-heuristic path, never a crash or a fabricated match. True
+  #include -> file resolution stays deferred to BACKLOG (harder than go/php/csharp's own deferred
+  resolvers -- no manifest exists to resolve against at all).
+
+Gated on an independent Opus review and a CEO go/no-go on the C/C++ direction before merge.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.96.1 (2026-07-24)
 
 ### Bug Fixes

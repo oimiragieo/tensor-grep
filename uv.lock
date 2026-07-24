@@ -4110,7 +4110,7 @@ wheels = [
 
 [[package]]
 name = "tensor-grep"
-version = "1.96.1"
+version = "1.97.0"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
@@ -4245,10 +4245,10 @@ requires-dist = [
     { name = "tree-sitter", marker = "extra == 'bench'", specifier = ">=0.22" },
     { name = "tree-sitter", marker = "extra == 'dev'", specifier = ">=0.22" },
     { name = "tree-sitter-c", marker = "extra == 'ast'" },
-    { name = "tree-sitter-c-sharp", marker = "extra == 'ast'" },
     { name = "tree-sitter-c", marker = "extra == 'bench'" },
-    { name = "tree-sitter-c-sharp", marker = "extra == 'bench'" },
     { name = "tree-sitter-c", marker = "extra == 'dev'" },
+    { name = "tree-sitter-c-sharp", marker = "extra == 'ast'" },
+    { name = "tree-sitter-c-sharp", marker = "extra == 'bench'" },
     { name = "tree-sitter-c-sharp", marker = "extra == 'dev'" },
     { name = "tree-sitter-go", marker = "extra == 'ast'" },
     { name = "tree-sitter-go", marker = "extra == 'bench'" },
