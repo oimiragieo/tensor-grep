@@ -346,7 +346,8 @@ def test_grammar_absent_yields_no_fabricated_defs_and_resolution_gap(
     assert go_gap["files_affected"] >= 1
     # F12: the remediation text must be HONEST for Go -- it has no regex fallback, so it must not
     # claim "falls back to plain literal-text/regex matching" (that claim is only true for a
-    # genuinely UNREGISTERED language, e.g. .java).
+    # genuinely UNREGISTERED language, e.g. .kt -- PATH A Stage 2 registered .java too, see
+    # tests/unit/test_lang_java.py, so it no longer illustrates "genuinely unregistered").
     assert "fall back to plain literal-text/regex matching" not in go_gap["remediation"]
     assert (
         "NO rows" in go_gap["remediation"]
@@ -356,7 +357,7 @@ def test_grammar_absent_yields_no_fabricated_defs_and_resolution_gap(
 
 def test_go_coverage_gap_remediation_is_honest_about_zero_rows() -> None:
     fail_closed_text = repo_map._language_coverage_gap_remediation("go", fail_closed=True)
-    fallback_text = repo_map._language_coverage_gap_remediation("java", fail_closed=False)
+    fallback_text = repo_map._language_coverage_gap_remediation("kotlin", fail_closed=False)
 
     assert "fall back to plain literal-text/regex matching" not in fail_closed_text
     assert "fall back to plain literal-text/regex matching" in fallback_text
