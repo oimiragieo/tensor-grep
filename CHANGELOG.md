@@ -1,6 +1,109 @@
 # CHANGELOG
 
 
+## v1.98.1 (2026-07-24)
+
+### Bug Fixes
+
+- **agent**: Coverage.language_scope under-reported actual language coverage (dogfood-found; now
+  reflects 10 symbol-graph languages) ([#733](https://github.com/oimiragieo/tensor-grep/pull/733),
+  [`e3c04be`](https://github.com/oimiragieo/tensor-grep/commit/e3c04bef8de460f99469918ae8c11792b123efef))
+
+repo_map.py's coverage envelope (consumed by tg map/agent/context/session/MCP tools) hardcoded
+  coverage.language_scope="python-js-ts-rust" and symbol_navigation="python-ast+parser-js-ts-rust"
+  -- a stale 4-language literal from before the language-support campaign registered go, java, php,
+  csharp, c, and cpp in lang_registry.LANGUAGE_REGISTRY (10 languages total). Every LanguageSpec
+  registration is a classic N-site-registration gap: nothing wired the envelope string to the
+  registry, so 6 languages silently vanished from what agent/MCP consumers are told tg covers, even
+  though tg defs/imports/agent genuinely work on all 10.
+
+Fix: derive both fields live from lang_registry.LANGUAGE_REGISTRY instead of a hand-maintained
+  literal (_language_scope_descriptor / _symbol_navigation_descriptor in repo_map.py), so the next
+  onboarded language can never cause the same drift.
+
+- language_scope: sorted, hyphen-joined list of every registered language_id (10 today):
+  c-cpp-csharp-go-java-javascript-php-python-rust-typescript
+
+- symbol_navigation: honest about tiers instead of one flat list, using
+  LanguageSpec.references_and_calls as the objective criterion (verified against the real dispatch
+  branches in build_symbol_refs_from_map / build_symbol_callers_from_map, not just registration
+  comments -- go's own tree-sitter extractor gets AST-verified refs/callers same as js/ts/rust, so
+  it belongs in the deep tier, not lumped in with the foundational-only languages as some PR
+  summaries imply):
+  parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-java-php
+
+Atomically updated every pinned occurrence of the old contract so nothing re-rots: -
+  tests/unit/test_harness_api_docs.py: the doc-substring pins now assert against the live
+  repo_map._language_scope_descriptor()/_symbol_navigation_descriptor() invariant rather than a new
+  hardcoded string. - tests/unit/test_mcp_server.py (12 sites) and tests/unit/test_session_cli.py (2
+  sites): updated snapshot pins to the new value. - docs/harness_api.md, docs/harness_cookbook.md
+  (also fixed a pre-existing "heuristic" vs "parser" drift in the cookbook's symbol_navigation
+  example). - docs/examples/*.json (14 fixture files, including nested coverage_summary copies). -
+  rust_core/tests/test_schema_compat.rs: literal string pins updated to match (CPU-safe: not locally
+  compiled/run per this worktree's no-cargo-build constraint -- relies on CI's Rust matrix to
+  verify).
+
+Verified: PYTHONPATH pinned to this worktree's src (tensor_grep.__file__ confirmed resolving into
+  the worktree, not the shared venv's stale install). ruff check + ruff format --check --preview
+  clean. tests/unit/test_harness_api_docs.py (8/8), tests/unit/test_session_cli.py (72/72),
+  tests/unit/test_mcp_server.py (481/485 -- the 4 failures are a pre-existing,
+  unrelated-to-this-diff environment limit: they require the compiled native rust_core extension,
+  which is unavailable when testing via PYTHONPATH-override with no local cargo build, confirmed by
+  direct reproduction outside pytest), plus test_typed_ref_kinds.py/test_trust_planning.py/
+  test_trust_navigation.py/test_lang_registry.py (53/53) and all 7 test_lang_*.py files (170/170) as
+  a broader regression check on the shared lang_registry read path.
+
+Gated on an independent Opus review before merge.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+- **file-deps**: Restore importers-far-smaller-than-map invariant after #733 envelope growth
+  ([#734](https://github.com/oimiragieo/tensor-grep/pull/734),
+  [`610cf75`](https://github.com/oimiragieo/tensor-grep/commit/610cf758be2f142648f60e4fc7c334a67eb0c3a1))
+
+test_importers_payload_is_far_smaller_than_map failed on CI (ubuntu py3.11+py3.12) after #733 made
+  coverage.language_scope/symbol_navigation dynamic and registry-derived
+  (parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:
+  c-cpp-csharp-java-php, ~116 chars vs the old ~28-char literal).
+
+Root cause: that descriptor lives in the shared `_envelope()` helper (repo_map.py:603-616), which
+  BOTH `build_repo_map` (`tg map`) and `build_file_importers_from_map` (`tg importers`) stamp onto
+  their payload verbatim, byte-identical in both. The test compared raw total serialized bytes as a
+  proxy for "importers carries far less data than a whole-repo map" -- that proxy breaks down once
+  the shared, non-data envelope grows: the fixed cost is a small fraction of the large map payload
+  but a large fraction of the intentionally-tiny importers payload (~1 reverse edge), so an honest
+  envelope-field growth with ZERO change to either payload's actual data volume can tip a
+  total-bytes ratio over the 10% threshold. Reproduced locally with a short tmp root (mimicking
+  Linux CI's shorter /tmp paths vs Windows' longer AppData\Local\Temp ones, which is also why this
+  passed on local Windows runs).
+
+Fix chosen: (A) test robustness, not (B) descriptor scoping. Strip the shared `_envelope()` keys
+  (version/schema_version/routing_backend/routing_reason/sidecar_used/coverage/path) from both
+  payloads before comparing, so the assertion measures what it actually claims -- reverse EDGE DATA
+  vs whole-repo inventory DATA -- and stays robust to ANY future envelope growth instead of
+  re-breaking on the next honesty fix. Rejected (B): no documented contract or pinned test ties
+  `coverage.symbol_navigation` to the `tg importers` JSON shape specifically (checked
+  docs/harness_api.md, test_harness_api_docs.py's doc-example loop, test_mcp_server.py,
+  test_session_cli.py); `_envelope()` is deliberately ONE shared self-description builder used by ~9
+  call sites across repo_map.py, so carving out an importers-only lightweight envelope would
+  fragment that contract for a reason (an unrelated test's byte-ratio threshold) that has nothing to
+  do with whether the field belongs there. Not a magic-number threshold loosening either -- the
+  underlying "importers is lightweight" invariant is verified to still hold with comfortable margin
+  (~0.06-0.08 ratio) once boilerplate is excluded, on both short and long tmp roots.
+
+Verified: PYTHONPATH pinned to this worktree's src (tensor_grep.__file__ resolves into the worktree,
+  not the shared venv's stale install). tests/unit/test_file_deps.py 95/95 (including the fixed
+  test, forced through a short --basetemp to reproduce CI's Linux path-length regime).
+  tests/unit/test_harness_api_docs.py 8/8 and test_session_cli.py 72/72 (unaffected).
+  tests/unit/test_mcp_server.py 481/485 -- the same 4 failures #733 itself reported (rewrite-plan
+  native-binary-fallback tests requiring the compiled rust_core extension, unrelated to this
+  worktree's no-cargo-build CPU-safe constraint); every symbol_navigation/language_scope pin in that
+  file passed, confirming #733's 10-language honesty descriptor is intact and unchanged. ruff check
+  + ruff format --check --preview clean. LF line endings preserved.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.98.0 (2026-07-24)
 
 ### Features
