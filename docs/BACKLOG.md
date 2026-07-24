@@ -3,7 +3,7 @@
 > **Canonical prioritized work list.** Kept in sync with the CLI task store (`TaskUpdate`) and
 > GitHub (`gh pr list` is the source of truth for PRs). **CEO status** = summarize SHIPPING + P0/P1.
 > Update whenever a PR opens/merges or the queue changes. Task-store IDs (`#NNN`) cross-referenced.
-> Last refreshed 2026-07-22 (post-v1.93.2 — the CEO v1.92.1-dogfood "fix all + implement + dogfood" goal campaign (v1.93.0, #702-#706), executed end-to-end with a published-wheel 7/7 dogfood verdict, followed by the v1.93.1 (#708) banked-nit close-out and the v1.93.2 (#709) blast-radius scoring-prefilter fix + this session-capture skill/doc-library reconcile; prior: v1.92.2 world-class-tier #249 + deep-research #251). **Live PyPI is v1.93.9 (2026-07-23). The +10% campaign (v1.93.3-v1.93.8, ACHIEVED +25.3% dogfood-verified) closed, then a post-campaign profiling probe shipped v1.93.9 = an ast.walk-merge cold-path optimization (#719, ~54% faster on `_python_imports_and_symbols`, dogfood-verified on published wheels) + #720 test-deflake. Fully published (verify `/simple`/`gh run list` before citing a version live if you are reading this soon after a fresh push — runner-scarcity can stretch a release to 30-60min queued, this is healthy not stuck). PR queue: EMPTY (0 open) before this reconcile PR opens.** The CEO `/goal`
+> Last refreshed 2026-07-24 (post-v1.98.1 — the top-10 symbol-graph language campaign, v1.93.10->v1.98.1: #723 validation-scan optimization, then 5 new languages — java (#725, v1.94.0) / php (#724, v1.95.0) / csharp (#726, v1.96.0) / c (#731, v1.97.0) / cpp (#732, v1.98.0, closing 10/10) — plus a go/php/csharp file-dependency foundational tier (#728, v1.96.1) and a coverage-honesty + payload-invariant fix (#733+#734, v1.98.1); prior: v1.93.2 — the CEO v1.92.1-dogfood "fix all + implement + dogfood" goal campaign (v1.93.0, #702-#706), executed end-to-end with a published-wheel 7/7 dogfood verdict, followed by the v1.93.1 (#708) banked-nit close-out and the v1.93.2 (#709) blast-radius scoring-prefilter fix + a session-capture skill/doc-library reconcile; before that v1.92.2 world-class-tier #249 + deep-research #251). **Live PyPI is v1.98.1 (2026-07-24). TOP-10 SYMBOL-GRAPH LANGUAGE CAMPAIGN COMPLETE — the top-10 language campaign (CEO-approved design plan, v1.93.10->v1.98.1) shipped 5 new languages this pass, java/c#/php/c/cpp, all FOUNDATIONAL tier (defs + imports; regex-fallback refs/callers) alongside the existing parser-backed py/js/ts/rust/go, closing the long-CEO-gated "next-language expansion" item (Ruby was not part of this wave). Full per-release receipts in CURRENT STATE below. Fully published (verify `/simple`/`gh run list` before citing a version live if you are reading this soon after a fresh push — runner-scarcity can stretch a release to 30-60min queued, this is healthy not stuck). PR queue: EMPTY (0 open) before this reconcile PR opens.** The CEO `/goal`
 > #232 campaign (2026-07-20) mapped the CEO's 9-point spec ("make tg REQUIRED vs rg/ast") one
 > gap-point per release, one-per-publish, each independent-Opus-gated, all CPU-safe cloud+CI (never
 > the shared desktop): **8 releases v1.84.0 -> v1.91.0, ZERO broken *published* releases, drain now
@@ -245,25 +245,135 @@ wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while 
 
 ---
 
-## ⭐ CURRENT STATE (2026-07-23) — authoritative; every section BELOW is HISTORICAL until the next full refresh
+## ⭐ CURRENT STATE (2026-07-24) — authoritative; every section BELOW is HISTORICAL until the next full refresh
 
-- **DRAFT PR #728 (not yet merged/released): `tg imports`/`tg importers` file-dependency
-  completeness audit for go/php/csharp.** Verify-first investigation found the scoping brief's
-  premise partly wrong — java (this campaign's #725) is NOT a full-resolution reference; its own
-  `_resolve_raw_import_entry` branch is foundational-tier only (raw extraction + honest
-  `resolved=None`, resolution deferred), and `_confirm_import_edges` (the `tg importers` reverse
-  confirm step) excludes java too, via its own separate language allow-list independent of
-  `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES`. Classified all 3 candidates the same way under a
-  TRUE-resolution bar: **(B) needs resolver work** — go's `_go_import_path_to_dir` resolves to a
-  PACKAGE DIRECTORY not a file (no 1:1 import-to-file mapping to wire); php/csharp have no
-  PSR-4/`composer.json` or `.csproj`/namespace map at all. Safely SHIPPED (draft) the same
-  foundational tier java already has: new `go_imports_with_lines`/`php_imports_with_lines`/
-  `csharp_imports_with_lines` extractors + a shared honest-unresolved `_resolve_raw_import_entry`
-  branch + `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` membership — `tg imports` on a `.go`/`.php`/`.cs`
-  file now returns real `{module, line}` rows instead of `result_incomplete`, never a fabricated
-  `resolved` or `external=True`. 12 new tests, 197 related tests green locally. True forward
-  resolution + the reverse-confirm allow-list stay (B), scoped precisely in the PR body for a
-  follow-up.
+- **Live PyPI: v1.98.1 (2026-07-24). Coverage-honesty fix + the invariant repair it needed — the
+  campaign's clean close-out.** **#733** fixed `coverage.language_scope` (the `tg agent`/`tg orient`
+  capsule field advertising which languages the symbol graph covers): it was hardcoded to the
+  pre-campaign `python-js-ts-rust` 4-language list, so a dogfood run on a Java/PHP/C#/Go repo
+  under-reported real coverage; now derived DYNAMICALLY from `lang_registry` (the live 10-language
+  two-tier scope), dogfood-found, not review-found. **#733's own larger descriptor then tripped a
+  DIFFERENT governance test**: `test_importers_payload_is_far_smaller_than_map`'s <0.1x-map
+  byte-ratio invariant — the lightweight `tg importers` envelope shares a `_envelope()` helper with
+  the heavier `coverage` payload, so growing the coverage descriptor bloated importers' payload too
+  (1076B vs a 974.5B floor, DETERMINISTIC not flaky); the build agent's own Windows self-gate ran a
+  test subset that skipped `test_file_deps.py` and missed it. **#734** fixed it same-day by
+  stripping the shared envelope keys symmetrically before the byte-ratio comparison, restoring the
+  invariant without shrinking the coverage fix. **LESSON banked:** a dynamic descriptor that grows a
+  SHARED response envelope can trip a payload-ratio governance test on the SMALL-payload side of
+  that envelope; a self-gate's test subset is not the full CI matrix.
+- **Live PyPI: v1.98.0 (2026-07-24). TOP-10 SYMBOL-GRAPH LANGUAGE CAMPAIGN COMPLETE — py·js·ts·
+  java·c#·c++·c·go·rust·php, all 10 lit up for `tg orient`/`tg defs`/`tg source`/`tg imports`/`tg
+  agent`.** **#732** ships C++ (`lang_cpp.py`, foundational tier, mirrors `lang_c.py`'s shape):
+  functions (free/in-class/qualified out-of-class `Foo::bar()`/`Widget::~Widget()`/templated
+  `Box<T>::get()`, all resolved to the bare name so a prototype and its out-of-class definition pair
+  under one name), classes (`class`/`struct`/`union`/`enum`/`enum class`, forward declarations
+  excluded), namespaces, type aliases (`typedef` + C++11 `using X = ...`), and `#include` (all 4 real
+  `preproc_include` shapes). **Live-verified against two real, unmodified, fetched-fresh public
+  headers, not just synthetic fixtures:** CPython's `object.h` (49 symbols clean, incl. an
+  `#ifdef`/`#else`-guarded struct parsing both arms) and LLVM's `StringRef.h` — which surfaced and
+  HONESTLY DISCLOSED the one real gap in the PR body: `class LLVM_GSL_POINTER StringRef {...}`
+  misparses to kind `"function"` (the attribute macro becomes a fake return type) — an INHERENT
+  ceiling of a preprocessor-unaware parser, indistinguishable from the legitimate
+  `struct Point make_point() {...}` shape, so no guard was added (would suppress the legitimate case
+  too); member recall mostly survives (StringRef's ~85 methods still resolve individually, only the
+  enclosing class's own kind label is wrong). One related bug the same dogfood caught and DID fix: a
+  macro-prefixed anonymous union in `object.h` mis-extracted the bare keyword `union` as a symbol
+  name — fixed via a `_CPP_RESERVED_KEYWORDS` reject-list layered on the shared name-validity check.
+  True `#include -> file` resolution stays deferred to BACKLOG (harder than go/php/csharp's own
+  deferred resolvers — C/C++ has no standardized manifest at all). Also corrected a stale AGENTS.md
+  claim ("8 of the top-10... C/C++ deferred") that #731 had left unedited.
+- **Live PyPI: v1.97.0 (2026-07-24). C symbol + import intelligence (foundational tier) — Phase 1 of
+  the campaign's last gap.** **#731** registers `"c"` in `lang_registry` (`lang_c.py`, mirrors
+  `lang_go.py`/`lang_php.py`/`lang_csharp.py`): function definitions + prototypes (kind `"function"`,
+  gated on the declarator chain passing through a `function_declarator`), struct/union/enum WITH a
+  body (kind `"class"`; forward declarations excluded), typedefs (kind `"type"`, one record per
+  declarator), and all 4 real `#include` node shapes (plain/quoted/macro-expanded/macro-combined)
+  honest-unresolved. `.h` deliberately NOT claimed (already owned by the future C++ grammar per
+  `_provider_language_for_path`'s pre-existing cpp assignment for every C/C++ header suffix).
+  **Known limitation (code-verified this reconcile against the shipped module, not previously
+  written up in any PR — batch into the next C/C++ touch, ultra-low ROI):** a file-scope C
+  function-pointer VARIABLE (e.g. `void (*cb)(int);`, no `typedef`) is mis-kinded `"function"` —
+  `_c_declarator_name_node` (`lang_c.py:171-207`) sets `seen_function=True` whenever a
+  `function_declarator` node appears ANYWHERE in the declarator chain, which is true both for a real
+  prototype (`int add(int,int);`) and for a function-pointer-typed variable (the callable-signature
+  part of its type is still a `function_declarator` node); the fix is distinguishing an
+  outermost-direct `function_declarator` from one reached only through a wrapping
+  `pointer_declarator`/`parenthesized_declarator`. Name + location stay correct, only the `kind`
+  label is wrong — cosmetic. Cross-file caller-graph stays deferred (`references_and_calls=None`,
+  same foundational-tier contract as PHP/C#/Java/Go); `tg refs`/`callers`/`blast-radius` fall through
+  to the generic regex-heuristic path (never a crash, never a fabricated AST hit), with an honest
+  `resolution_gaps` entry.
+- **Live PyPI: v1.96.1 (2026-07-24). `tg imports`/`tg importers` file-dependency FOUNDATIONAL tier
+  for go/php/csharp.** **#728** (the investigation opened as a draft mid-campaign) extends the same
+  honest-unresolved tier Java already landed (#725) to three more languages: new
+  `go_imports_with_lines`/`php_imports_with_lines`/`csharp_imports_with_lines` extractors + shared
+  membership in `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES`/`_resolve_raw_import_entry`'s honest-unresolved
+  branch — `tg imports` on a `.go`/`.php`/`.cs` file now returns real `{module, line}` rows instead
+  of `result_incomplete`, every row `resolved=None, external=False` (never a fabricated path or a
+  fabricated `external=True`). **Verify-first correction of the campaign's own scoping brief:** the
+  investigation found java (already shipped, #725) was NOT actually a full-resolution reference as
+  the original brief assumed — its own `_resolve_raw_import_entry` branch is foundational-tier only
+  too, and `tg importers`'s reverse-confirm step (`_confirm_import_edges`) excludes java as well, via
+  its own separate language allow-list (unchanged, still `javascript`/`typescript`/`rust`/`python`
+  only) — so go/php/csharp were classified under one consistent TRUE-resolution bar: all three need
+  resolver work go's `_go_import_path_to_dir` resolves to a PACKAGE DIRECTORY not a 1:1 file map;
+  php/csharp have no `composer.json`/`.csproj`/namespace manifest at all. True forward resolution +
+  the reverse-confirm allow-list both stay deferred to BACKLOG for all three (scoped precisely in the
+  PR body for a follow-up). 12 new tests, 197 related tests green. **Also this pass (non-releasing
+  docs):** **#730** refreshed the `tensor-grep-add-language` skill's worked example + seam
+  line-number anchors after #728's insertions; **#729** triple-checked + refreshed the full
+  27-skill library's citations against v1.95.0 (re-verified file:line anchors, session methods).
+- **Live PyPI: v1.96.0 (2026-07-24). C# symbol + import intelligence (foundational tier).** **#726**
+  registers `"csharp"` in `lang_registry` (`lang_csharp.py`): classes/interfaces/structs/records/
+  enums -> kind `"class"`, methods/constructors -> kind `"function"` (an interface method signature
+  and its class implementation both resolve as separate records sharing a name — no dedup, matching
+  every real AST node being a legit hit); `using` directives -> imports. Lights up `tg
+  orient`/`defs`/`source`/`imports`/`agent` for `.cs` files. Cross-file caller-graph deferred
+  (`references_and_calls=None`), same foundational-tier contract as Go/PHP/Java. **Also this pass
+  (non-releasing docs):** **#727** folded the session's learnings into `AGENTS.md`/`CLAUDE.md` (new
+  *Adding a Language* + *Optimization Discipline* sections, the skill index, `.claude/skill_rules.json`)
+  and registered the new `tensor-grep-add-language` skill documenting the 5 critical seams
+  (most-forgotten: `_target_language_for_path`, the capsule confidence gate) — the handbook the rest
+  of this language wave (C/C++) then followed.
+- **Live PyPI: v1.95.0 (2026-07-24). PHP symbol + import intelligence (foundational tier).** **#724**
+  registers `"php"` in `lang_registry` (`lang_php.py`, mirrors `lang_go.py`'s self-contained module
+  shape, no import cycle with `repo_map.py`): classes/interfaces/traits/enums -> kind `"class"`,
+  functions/methods -> kind `"function"`; `namespace_use_clause` imports recorded with PHP's `\`
+  namespace separator preserved (an `as` alias not recorded, matching Python's own dotted-module
+  convention). Lights up `tg orient`/`defs`/`source`/`agent` for `.php` files; cross-file caller-graph
+  deferred, same foundational-tier contract.
+- **Live PyPI: v1.94.0 (2026-07-24). Java symbol + import intelligence (foundational tier) — the
+  top-10 language campaign's first new language.** **#725** registers `"java"` in `lang_registry`
+  (inline in `repo_map.py`'s registration block, not a separate `lang_java.py` module): classes/
+  interfaces/enums/records -> kind `"class"`, methods/constructors -> kind `"function"`; `import`
+  declarations (plain/multi-segment/`static`/wildcard `.*`) -> imports. Wired at every dispatch site
+  a real `.java` file needs (`_imports_and_symbols_for_path`, `build_symbol_source_from_map`,
+  `_imports_with_lines_for_path`, `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES`, `_resolve_raw_import_entry`,
+  and the MOST-FORGOTTEN seam `_target_language_for_path` per the Go precedent's own code comment).
+  Cross-file caller-graph explicitly deferred (`references_and_calls`/`provider_alias_calls`/
+  `file_imports_symbol_from_definition`/`import_update_target`/`prime_repo_context` all `None`) —
+  degrades HONESTLY: `tg callers`/`tg blast-radius` on a Java target return empty (never a crash,
+  never a fabricated hit) plus a labeled `resolution_gaps` entry.
+- **Live PyPI: v1.93.10 (2026-07-23). Post-#719 profiling probe's SECOND (previously-deferred) lever,
+  now shipped.** **#723** adds a byte-identical textual pre-check to `_framework_test_pattern_bonus`
+  (`repo_map.py`) before its per-candidate AST parse (`_framework_test_function_candidates` ->
+  `_python_parametrized_test_function_candidates` -> `_cached_ast_parse`) — the #719/v1.93.9 reconcile
+  had profiled this at 46% of `tg context-render`'s wall / 23.9% of `tg prepare`'s and DEFERRED it as
+  "no clean path"; a fresh profiling pass found the byte-identical substring pre-check that had been
+  missed. **Microbench on the shipped wheel: 3657ms -> 1172ms across the target function (~68%
+  faster).** Byte-identity holds via a WORD-SPLIT pre-check (not a naive whole-term contiguous check)
+  — verified against a constructed adversarial counter-example where a JS `describe`/`it` synthesized
+  suite-join candidate straddles the artificial join space; the naive check would have wrongly
+  short-circuited it to a false 0, the shipped word-split check correctly proceeds to real scoring. 5
+  new tests incl. a call-counting monkeypatch proving the AST parse is actually skipped, not
+  coincidentally equal; 69/69 `test_validation_commands.py` + a broader ~200-test regression sweep
+  green. **Lever 2** (threading `precomputed_file_paths` through the second validation-plan chain)
+  verified ALREADY shipped in #645 — skipped, not bundled, nothing left to build.
+
+- **PR #728 (opened as a draft mid-campaign, referenced here when this section was last touched
+  mid-flight) shipped as v1.96.1 — full receipt in the v1.96.1 entry above; this stub line is kept
+  only so the historical draft-state framing below it doesn't read as still-current.**
 - **Live PyPI: v1.93.9 (2026-07-23). Post-campaign optimization pass — a fresh `cProfile` probe of the published v1.93.8 hot paths (orient/callers/imports/agent/prepare) found 2 levers; the clean one SHIPPED and is DOGFOOD-VERIFIED ~54% faster on its target function.** **#719/v1.93.9** merges the 3 redundant full-tree `ast.walk()` passes in `_python_imports_and_symbols` (repo_map.py) into ONE — measured **82% of `tg orient`'s cold wall** (also ~53-67% of callers/agent). BYTE-IDENTICAL by construction (Import/ImportFrom/ClassDef/FunctionDef/AsyncFunctionDef/Call are mutually-exclusive node types; the trailing `sorted(dict.fromkeys)`/`symbols.sort` make interleaved append-order irrelevant); INDEPENDENT-OPUS-GATED **SHIP** via a 386-file OLD-vs-NEW differential (4960 imports + 10220 symbols compared, **0 mismatches**); the build also removed the now-orphaned `_python_dynamic_import_entries` (its last live caller went away -- #716 removed the other). **DOGFOOD-VERIFIED on the published wheels:** a microbench isolating the function (ast-parse lru-cached, so it times only the walk-merge) = v1.93.8 961ms -> v1.93.9 446ms across 80 files = **~54% faster (>2x)**. The 2nd probe lever (framework-test AST scan in `_discover_validation_tests_for_primary_file`, 23.9% of prepare) was measure-first **DEFERRED** -- no clean path (gate-it = validation-test recall regression risk; parallelize = GIL-uncertain + `@_mtime_aware_cache` thread-safety). Walk-merge lever class now EXHAUSTED (all `ast.walk` sites in repo_map.py swept; the hot redundant-walk fns were #716 `_python_imports_with_lines` + #719). Also this pass: **#720** (test-only, NON-releasing) de-flaked the 2 uncontended hot-path perf-floor asserts in `test_index_lock_concurrency.py` (the #244 ratio form itself flaked at elapsed=4.531s vs the flat 4.0s floor on a loaded runner -- root cause #244 missed: `baseline_elapsed` omits the snapshot-WRITE I/O that `elapsed` pays; widened to `max(baseline*6, 8.0)`, bidirectional guard preserved; the 2 stale-lock-reclaim asserts KEEP flat `<4.0` -- there 4.0 is SEMANTIC, must beat the 5s acquire timeout). LESSON: a WARM `tg orient` dogfood measured the CACHED repo-map path (the function never runs) -> a false -36% artifact; verify a COLD-path optimization by microbenching the function (parse-cached) or clearing `.tensor-grep` between reps, NOT a warm end-to-end run. Both #719/#720 worktrees pruned; drain clear. Tools: scratchpad/opt10/{microbench_astwalk,dogfood_v1939_orient}.py.
 
 - **Live PyPI: v1.93.8 (2026-07-23). The CEO `/goal` "deep-dive + optimize until a +10% overall increase in speed AND output AND accuracy, dogfood-verified" campaign — ACHIEVED at +25.3% overall on the published v1.93.8 wheel (2.5x the 10% target).** A scorecard + baseline were FROZEN before any work (scratchpad `scorecard_definition.md` + `baseline_results.json`, oracle-validated, commit a002d7f1); the goal is the frozen sec-4 composite `overall = mean(speed_leg, accuracy_leg, output_leg) >= 0.10`, 3 legs equally weighted. **RESULT (uvx published-wheel, clean env): speed_leg +13.4%** (median of 8 cold cells: S5 `prepare` +29.8% [map-reuse #714 + O(k) source-truncation #713], S6 `imports` +17.7% [walk-merge+stdlib-fastpath #716], S4 `callers` +15.0%) **· accuracy_leg +62.6%** (the scorecard's `rrf` arm ndcg@10 0.3047->0.4953 via **max-combine fusion #717**: best-rank-wins `max(1/(k+rank))` per leg vs the old `sum`, so the near-floor bm25 leg can no longer DRAG strong dense results down) **· output_leg +0** (results-identical). **Capsule 16/16 agent-accuracy HARD floor HELD; no regression on any class.** SHIPPED v1.93.3->v1.93.8 one-per-publish, ZERO broken *published* releases: the speed wave **#711-#716** (warm-deadline thread, O(k) truncation, prepare map-reuse, imports fast-path, cold-start import-deferral, accuracy-regression harness) then the accuracy lever **#717** (max-fusion default flip). DISCIPLINES that delivered it: **measure-before-build** overturned a cProfile-inflation pessimism (a lens predicted ~4%; the real combined wall was +13.4%); an experiment (`fusion_experiment.py`) VALIDATED the fusion lever on the frozen golden set BEFORE the load-bearing default flip; the **independent Opus gate caught a real single-token-literal regression** the build agent's NL-only dogfood missed (max -0.0369 ndcg on `literal_golden.jsonl`) -> folded a conservative fix (`_find_combine_mode` routes single-whitespace-token queries back to `combine="sum"`, NL keeps max; `reciprocal_rank_fusion`'s default stays max so the scorecard arm is preserved); the frozen scorecard was **NEVER goalpost-moved** (a goal-interpretation fork was surfaced to the CEO, who chose the strict 3-leg reading). HONEST framing: this is an accuracy-LED +25% (the frozen baseline's fusion was genuinely underperforming -- rrf 0.30 vs dense-alone 0.60 -- so the fix is a big relative gain), speed real-but-smaller, output flat. The output levers (O1 bytes/O2 completeness) and the incomplete #3 (`_context_tests` double-pay) are UNNEEDED -- accuracy alone cleared the target. Tools: scratchpad/opt10/{remeasure_speed,compute_speed_leg,compute_composite,fusion_experiment}.py.
@@ -353,15 +463,17 @@ wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while 
 
 ## SHIPPING — open PRs (drain one-per-publish) — task #117
 
-**Queue empty -- 0 open PRs (verified 2026-07-20 via `gh pr list --state open`).** The CEO `/goal` #232
-9-point campaign (**#678-#687**, v1.84.0->v1.91.0) drained one-per-publish, ZERO broken *published*
-releases -- full per-point receipts in the header above; v1.91.0 (#685-#687) was still publishing at
-reconcile time (see the header's PyPI-verify note). This BACKLOG reconcile (`docs:`, no release) is the
-next PR to open -- drain clear, no other build queued. **Next move is CEO-gated** (native front door #48,
-GPU-CUDA compute build #169, benchmark-numbers publish #72, per-platform native wheels #240-opt2 -- see
-CEO-FACING below) or demand-gated; no AI-actionable backlog item is currently queued.
+**Queue empty -- 0 open PRs (verified 2026-07-24 via `gh pr list --state open`).** The top-10
+symbol-graph language campaign (**#723-#734**, v1.93.10->v1.98.1) drained one-per-publish, ZERO
+broken *published* releases -- full per-release receipts in CURRENT STATE above. This BACKLOG
+reconcile (`docs:`, no release) is the next PR to open -- drain clear, no other build queued.
+**Next move is CEO-gated** (native front door #48, GPU-CUDA compute build #169, benchmark-numbers
+publish #72, per-platform native wheels #240-opt2 -- see CEO-FACING below) or demand-gated; no
+AI-actionable backlog item is currently queued.
 
-**Prior drain waves:** the CEO `/goal` "ultimate agentic toolkit" campaign (**#668-#675**, v1.81.17->
+**Prior drain waves:** the CEO `/goal` #232 9-point campaign (**#678-#687**, v1.84.0->v1.91.0)
+drained one-per-publish, ZERO broken *published* releases -- full per-point receipts in the header
+above. Before that: the CEO `/goal` "ultimate agentic toolkit" campaign (**#668-#675**, v1.81.17->
 v1.83.0) drained one-per-publish, ZERO broken releases, un-gating A2A (`tg ledger`) + GPU ideation. Before
 that: the senior-review + Rust-dogfood campaign (**#655-#666**, v1.81.6->v1.81.16); the v1.75.0->v1.75.4
 GPU Phase-0 wave (#593/#594/#595/#596/#597) drained one-per-publish, ZERO broken releases, closing out
@@ -370,9 +482,9 @@ GPU Phase-0 wave (#593/#594/#595/#596/#597) drained one-per-publish, ZERO broken
 v1.68.1 CEO WSL-dogfood 3-PR drain (#562/#563/#564 -> v1.69.0/.1/.2); campaign #142's 4-PR queue
 (#554-557 -> v1.67.1-v1.68.2) -- all clean.
 
-## SHIPPED — live on PyPI up to **v1.90.0** (v1.91.0/PRs #685-#687 publishing at reconcile time; v1.76.0-.9
-detail in CURRENT STATE above; v1.76.10-v1.83.0 not yet individually backfilled into this section --
-see CHANGELOG.md for the authoritative per-version detail in that gap)
+## SHIPPED — live on PyPI up to **v1.98.1** (v1.93.10-v1.98.1 detail in CURRENT STATE above;
+v1.76.10-v1.83.0 and v1.91.0-v1.93.9 not yet individually backfilled into this section -- see
+CHANGELOG.md for the authoritative per-version detail in those gaps)
 
 **v1.84.0-v1.91.0 window (2026-07-20, merged, on PyPI/publishing) -- the CEO `/goal` #232 9-point
 campaign, full per-point receipts in the header above:** #678 `tg calibrate --json` structured
@@ -579,13 +691,26 @@ for the next audit rather than re-opened as active work):**
 - **Enterprise gaps** (dogfood-surfaced, design-scale): **multi-root workspace primitive** (orient/
   search/blast across sibling repos, no manual fan-out) · target-selection accuracy scoreboard
   (top-k/MRR) · cross-OS managed ast-grep · LSP proof-mode (availability ≠ navigation proof).
-- **Next-language expansion** (Java/C#/C++/Ruby/PHP) — explicitly multi-week + CEO-gated (re-homed
-  from **#62**; cite `cluster-4-stale-reconcile.md`). The Go Stage-1 pattern (registry + fail-closed
-  grammar-missing + `resolution_gaps`, `3481742`/#420) is the proven template, so the marginal
-  per-language cost is now much lower than when this roadmap was first scoped.
-  `_provider_language_for_path` already maps java/c/cpp/csharp/php ids for the LSP-provider layer
-  today, but the graph layer does not — the same drift class **#63**'s F22 governance test (shipped,
-  `#548`/v1.65.5) now guards against.
+- **Next-language expansion** (Java/C#/C++/Ruby/PHP) — **SHIPPED 2026-07-24** (CEO-approved design
+  plan, v1.93.10->v1.98.1, #723-#734; full per-release receipts in CURRENT STATE above; re-homed from
+  **#62**; cite `cluster-4-stale-reconcile.md`). java/c#/php/c/cpp all landed at the FOUNDATIONAL tier
+  (defs + imports; regex-fallback refs/callers — `references_and_calls`/`provider_alias_calls`/
+  `file_imports_symbol_from_definition`/`import_update_target`/`prime_repo_context` all `None`),
+  completing the **top-10 symbol-graph milestone** alongside the existing parser-backed
+  py/js/ts/rust/go. **Honesty notes:** Ruby was NOT part of this wave (the original 5-item list
+  shipped java/c#/php; C was added instead, and C++ shipped as a bonus 6th language beyond the
+  original ask). True cross-file caller-graph resolution for all 5 new languages stays deferred to
+  BACKLOG, foundational-tier only (defs + imports, regex-fallback refs). True import->file resolution
+  is a SEPARATE, narrower gap that also stays deferred: `tg imports`/`tg importers` for go/php/csharp
+  (#728) — each HAS a real manifest (`go.mod`/`composer.json`/`.csproj`) but tg does not resolve
+  against it yet — and `#include->file` for c/cpp (#731/#732), which is harder still since C/C++ have
+  no manifest concept at all to resolve against. The Go Stage-1 pattern (registry + fail-closed
+  grammar-missing + `resolution_gaps`, `3481742`/#420) was the proven template that made the marginal
+  per-language cost low enough to execute this whole wave in one campaign, exactly as this entry
+  predicted.
+  `_provider_language_for_path` already mapped java/c/cpp/csharp/php ids for the LSP-provider layer
+  before this wave; the graph layer now does too — the same drift class **#63**'s F22 governance test
+  (shipped, `#548`/v1.65.5) continues to guard against future drift here.
 
 ## References
 - Cross-session resume anchor (memory): `tensor-grep-drain-resume-2026-07-09.md` (live drain/audit/dogfood/GPU state).
