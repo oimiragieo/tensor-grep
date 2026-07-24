@@ -6438,9 +6438,9 @@ def _rust_imports_with_lines(path: Path) -> list[dict[str, Any]]:
 
 
 def _imports_with_lines_for_path(path: Path) -> list[dict[str, Any]]:
-    """Raw per-statement imports with 1-based line numbers for the 5 supported languages.
+    """Raw per-statement imports with 1-based line numbers for the 8 supported languages.
 
-    Returns ``[]`` for an unsupported language (e.g. Go) or an over-cap file -- callers that
+    Returns ``[]`` for an unsupported language (e.g. Kotlin) or an over-cap file -- callers that
     need to distinguish "genuinely no imports" from "not scanned" must check those conditions
     themselves (see ``build_file_imports``'s ``result_incomplete`` handling).
     """
@@ -6455,6 +6455,22 @@ def _imports_with_lines_for_path(path: Path) -> list[dict[str, Any]]:
         return _rust_imports_with_lines(path)
     if spec.language_id == "java":
         return _java_imports_with_lines(path)
+    if spec.language_id in ("go", "php", "csharp"):
+        # go/php/csharp's own extractors (lang_go.py/lang_php.py/lang_csharp.py) mirror their
+        # `_X_imports_and_symbols` siblings, which get this SAME cap check for free from THEIR
+        # caller (`_imports_and_symbols_for_path`, above) rather than self-guarding -- applied
+        # here once, at this dispatcher, for the identical reason.
+        try:
+            file_size = path.stat().st_size
+        except OSError:
+            file_size = 0
+        if file_size > _max_parse_bytes():
+            return []
+        if spec.language_id == "go":
+            return lang_go.go_imports_with_lines(path)
+        if spec.language_id == "php":
+            return lang_php.php_imports_with_lines(path)
+        return lang_csharp.csharp_imports_with_lines(path)
     return []
 
 
@@ -16620,6 +16636,18 @@ _SUPPORTED_FILE_DEPENDENCY_LANGUAGES = frozenset({
     "typescript",
     "rust",
     "java",
+    # #74-follow-up (2026-07-23 completeness audit): go/php/csharp join at the SAME
+    # foundational tier java landed at -- raw import statements + line numbers via
+    # lang_go.go_imports_with_lines / lang_php.php_imports_with_lines /
+    # lang_csharp.csharp_imports_with_lines, `_resolve_raw_import_entry` reporting them honestly
+    # unresolved (never a fabricated `resolved` path or a fabricated `external=True`). TRUE
+    # import-string -> target-file resolution (and the `tg importers` reverse-edge CONFIRM step,
+    # gated separately by `_confirm_import_edges`'s own language tuple below) stays deferred for
+    # all three -- see docs/BACKLOG.md and this PR's body for the per-language resolver scope
+    # that is still missing.
+    "go",
+    "php",
+    "csharp",
 })
 
 
@@ -16691,6 +16719,19 @@ def _resolve_raw_import_entry(
         # unresolved-but-not-presumed-external -- the same conservative tuple the
         # dynamic_unresolved branch above uses -- rather than guessing (never fabricate
         # resolution precision this extractor doesn't actually have).
+        resolved, external, provenance, confidence = None, False, [], 0.0
+    elif language_id in ("go", "php", "csharp"):
+        # Foundational tier (mirrors the "java" branch above): raw import statements are
+        # extracted with their line numbers (see lang_go.go_imports_with_lines /
+        # lang_php.php_imports_with_lines / lang_csharp.csharp_imports_with_lines), but
+        # resolving WHICH file/module an import points to is deferred -- go/php/csharp each need
+        # DIFFERENT missing machinery: go's existing `_go_import_path_to_dir` resolves to a
+        # PACKAGE DIRECTORY, not a file (no 1:1 import-to-file mapping to wire); php has no PSR-4/
+        # composer.json autoload-map reader; csharp has no `.csproj`/namespace-to-file map. None
+        # of that resolver machinery exists yet for any of the three. Report as
+        # unresolved-but-not-presumed-external -- the same conservative tuple every other
+        # "resolution not yet built" branch in this function uses -- rather than guessing (never
+        # fabricate resolution precision these extractors don't actually have).
         resolved, external, provenance, confidence = None, False, [], 0.0
     else:
         resolved, external, provenance, confidence = None, True, [], 0.0

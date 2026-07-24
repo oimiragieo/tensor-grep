@@ -310,6 +310,57 @@ def go_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]
     return imports, symbols
 
 
+# #74-follow-up: `tg imports` foundational-tier extractor (mirrors repo_map.py's
+# `_java_imports_with_lines` shape/role exactly). One row per `import_spec` STATEMENT with its
+# 1-based line number -- same node walk / same recall as `go_imports_and_symbols` above (every
+# import_spec's path text, regardless of alias/dot/blank qualifier), just line-tagged instead of
+# deduped into a flat list.
+#
+# Deliberately NOT resolved to a target file: repo_map.py's `_resolve_raw_import_entry` "go"
+# branch keeps every row unresolved, because Go's own import-path resolver
+# (`_go_import_path_to_dir` below) maps an import path to a PACKAGE DIRECTORY -- a Go import
+# names a package, not a single file, and a package directory can hold many `.go` files with no
+# 1:1 import-to-file mapping, unlike Python/JS/TS/Rust's file-granular `resolved` field. Deciding
+# "the" file a Go import resolves to needs new design (which file in the target package -- an
+# arbitrary pick? all of them?), not just wiring this existing directory-granular machinery, so
+# it stays deferred rather than guessed.
+def go_imports_with_lines(path: Path) -> list[dict[str, Any]]:
+    if path.suffix != ".go":
+        return []
+
+    parser = _go_parser()
+    if parser is None:
+        return []
+
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+
+    source_bytes = source.encode("utf-8")
+    tree = parser.parse(source_bytes)
+
+    entries: list[dict[str, Any]] = []
+
+    def _walk(root: Any) -> None:
+        # Explicit-stack DFS -- see the identical comment on go_imports_and_symbols's `_walk`.
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            if node.type == "import_spec":
+                path_field = node.child_by_field_name("path")
+                import_path_text = _go_import_spec_path_text(path_field, source_bytes)
+                if import_path_text is not None:
+                    entries.append({
+                        "module": import_path_text,
+                        "line": node.start_point[0] + 1,
+                    })
+            stack.extend(reversed(node.children))
+
+    _walk(tree.root_node)
+    return entries
+
+
 def go_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
     """Full source text of every top-level def matching *symbol* (mirrors the Rust/JS-TS
     ``_parser_symbol_sources`` shape for the ``tg source`` command)."""

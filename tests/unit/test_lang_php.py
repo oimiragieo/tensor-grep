@@ -205,6 +205,50 @@ def test_php_trait_use_in_class_body_is_not_mistaken_for_a_namespace_import(
 
 
 # ---------------------------------------------------------------------------
+# #74-follow-up: tg imports (php_imports_with_lines / build_file_imports) -- foundational tier,
+# mirrors test_lang_java.py's test_file_imports_returns_java_import_statements_with_lines.
+# ---------------------------------------------------------------------------
+
+
+def test_php_imports_with_lines_extracts_use_statements_with_lines(tmp_path: Path) -> None:
+    php_file = _write_php_fixture(tmp_path)
+
+    entries = lang_php.php_imports_with_lines(php_file)
+
+    modules = {entry["module"]: entry["line"] for entry in entries}
+    assert modules == {"App\\Contracts\\Named": 5, "App\\Utils\\Str": 6}
+
+
+def test_php_imports_with_lines_non_php_suffix_returns_empty(tmp_path: Path) -> None:
+    not_php = tmp_path / "Widget.txt"
+    not_php.write_text("use App\\Contracts\\Named;\n", encoding="utf-8")
+
+    assert lang_php.php_imports_with_lines(not_php) == []
+
+
+def test_php_imports_with_lines_grammar_absent_returns_empty(tmp_path: Path, monkeypatch) -> None:
+    php_file = _write_php_fixture(tmp_path)
+    monkeypatch.setattr(lang_php, "_php_parser", lambda: None)
+
+    assert lang_php.php_imports_with_lines(php_file) == []
+
+
+def test_file_imports_returns_php_use_statements_with_lines(tmp_path: Path) -> None:
+    php_file = _write_php_fixture(tmp_path)
+
+    payload = repo_map.build_file_imports(php_file)
+
+    assert payload["result_incomplete"] is False
+    modules = {entry["module"]: entry["line"] for entry in payload["imports"]}
+    assert modules == {"App\\Contracts\\Named": 5, "App\\Utils\\Str": 6}
+    # Foundational tier: raw import statements are real, but resolving them to a specific file
+    # (PHP needs a PSR-4/composer.json autoload-map reader that does not exist yet) is deferred --
+    # every row must be unresolved and never presumed external, matching the fail-closed contract.
+    assert all(entry["resolved"] is None for entry in payload["imports"])
+    assert all(entry["external"] is False for entry in payload["imports"])
+
+
+# ---------------------------------------------------------------------------
 # php_parser_symbol_sources: `tg source` companion
 # ---------------------------------------------------------------------------
 
