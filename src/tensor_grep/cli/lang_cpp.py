@@ -384,20 +384,39 @@ def _cpp_parenthesized_declarator_wraps_bare_name(node: Any) -> bool:
     REDUNDANT around a real name (``int (foo)(void);``) -- as opposed to wrapping a
     ``pointer_declarator``/``array_declarator``/``qualified_identifier``/anything else (the tell
     for a function-pointer or pointer-to-member-function VARIABLE, e.g. ``void (*handler)(int);``
-    or ``void (C::*mp)(int);``, where the same parenthesized shape instead wraps a
-    ``pointer_declarator`` or a ``qualified_identifier`` -- live-verified against a real
-    tree_sitter_cpp 0.23.4 parse: ``void (C::*mp)(int);``'s ``parenthesized_declarator``'s single
-    named child is a ``qualified_identifier`` node (fields "scope"=``C``, "name"=a
-    ``pointer_type_declarator`` wrapping ``mp``), a node TYPE this function does not special-case
-    -- it does not need to, since a ``qualified_identifier`` is not in the bare-name set either
-    way, so the pointer-to-member-function variable is excluded by the exact same "wraps
-    something other than a bare name" rule as a plain function-pointer variable, with no extra
-    branch required). Ported byte-for-byte from ``lang_c.py``'s
-    ``_c_parenthesized_declarator_wraps_bare_name`` (same tell, same live-verified reasoning) --
-    duplicated rather than imported per this module's no-cross-import convention (see the
-    top-of-file comment). Only a single hop's own wrapped shape is inspected here; a nested
-    ``parenthesized_declarator`` falls through to False like any other non-bare-name wrap, same
-    residual edge case C's own copy documents."""
+    or a FILE/NAMESPACE-scope ``void (C::*mp)(int);``).
+
+    The pointer-to-member-function shape is DEPENDENT ON SCOPE -- live-verified against a real
+    tree_sitter_cpp 0.23.4 parse of BOTH forms, not assumed identical:
+
+    - At FILE or NAMESPACE scope (``void (C::*mp)(int);``, a plain ``declaration``), the
+      ``parenthesized_declarator``'s single named child IS a ``qualified_identifier`` node
+      (fields "scope"=``C`` a ``namespace_identifier``, "name"=a ``pointer_type_declarator``
+      wrapping ``mp``) -- exactly ONE named child, so this function's own ``len(named_children)
+      == 1`` check runs, and ``qualified_identifier`` is correctly rejected (it is not in the
+      bare-name set), so ``False`` is returned via the TYPE check on line below -- this is the
+      code path that actually excludes this shape from being (mis)treated as a real function.
+    - IN-CLASS (``class C { public: void (C::*mp)(int); };``, a ``field_declaration``),
+      tree-sitter-cpp's parser CANNOT resolve ``C::`` inside a class body the same way (there is
+      no enclosing scope for it to bind against in this local parse) and instead emits an
+      ``ERROR`` node for the ``C::`` portion, sibling to a plain ``pointer_declarator`` for
+      ``*mp`` -- so the ``parenthesized_declarator`` here has **TWO** named children
+      (``['ERROR', 'pointer_declarator']``), not one. This shape is excluded by the ``len(
+      named_children) != 1`` EARLY RETURN below -- a DIFFERENT code path than the file-scope
+      case, never reaching the bare-name TYPE check at all. (This in-class shape was already
+      excluded on the pre-fix ``main`` too, for an unrelated reason: the malformed 2-named-child
+      ``parenthesized_declarator`` also breaks ``_cpp_declarator_name_node``'s own single-
+      named-child fallback when it later tries to descend to a NAME, so ``name_node`` resolves
+      to ``None`` regardless of this function's verdict -- callers already discard a ``None``
+      name_node. Only the FILE-scope shape was the actual pre-fix bug, emitting ``mp`` as kind
+      "function".)
+
+    Ported (with the above scope-dependent nuance ADDED, not blindly copied) from ``lang_c.py``'s
+    ``_c_parenthesized_declarator_wraps_bare_name`` (C has no member-pointer syntax at all, so
+    this nuance is C++-only) -- duplicated rather than imported per this module's no-cross-import
+    convention (see the top-of-file comment). Only a single hop's own wrapped shape is inspected
+    here; a nested ``parenthesized_declarator`` falls through to False like any other
+    non-bare-name wrap, same residual edge case C's own copy documents."""
     named_children = [child for child in node.children if child.is_named]
     if len(named_children) != 1:
         return False

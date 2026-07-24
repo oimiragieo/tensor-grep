@@ -238,6 +238,19 @@ def test_defs_excludes_plain_field_and_variable_declarations(tmp_path: Path) -> 
 # exclusion rule ("wraps something other than a bare name") already covers it with no new branch)
 # and shape 12 (qualified out-of-class method definitions must not regress: still kind "function",
 # still bare-name "getValue", covered by the existing tests just below this matrix).
+#
+# Shape 9 (pointer-to-MEMBER-function VARIABLE, `void (C::*mp)(int);`) is SCOPE-DEPENDENT --
+# live-verified against real tree_sitter_cpp 0.23.4 parses of BOTH forms (see
+# `_cpp_parenthesized_declarator_wraps_bare_name`'s docstring for the full node dump):
+# - FILE/NAMESPACE scope: `parenthesized_declarator`'s single named child IS a
+#   `qualified_identifier` -- excluded by the bare-name TYPE check. THIS is the shape the fix
+#   actually repairs: on pre-fix `main` it resolved and was emitted as kind "function" (`mp`).
+# - IN-CLASS (`class C { public: void (C::*mp)(int); }; `): tree-sitter-cpp cannot resolve `C::`
+#   inside a class body and emits an `ERROR` node alongside a `pointer_declarator`, giving the
+#   `parenthesized_declarator` TWO named children -- excluded by the `len(named_children) != 1`
+#   EARLY RETURN, a completely different code path. This shape was ALREADY excluded on pre-fix
+#   `main` (name resolution fails regardless of the fix), so it is a no-regression PIN, not a
+#   guard for the bug. Both are exercised below, separately labeled.
 # ---------------------------------------------------------------------------
 
 _DECLARATOR_SHAPES_CPP_SOURCE = (
@@ -259,10 +272,12 @@ _DECLARATOR_SHAPES_CPP_SOURCE = (
     "\n"
     "int (shape7_redundant_paren_prototype)(void);\n"
     "\n"
-    "class Shape9Class {\n"
+    "class Shape9bClass {\n"
     "public:\n"
-    "    void (Shape9Class::*shape9_member_fn_ptr_variable)(int);\n"
+    "    void (Shape9bClass::*shape9b_inclass_member_fn_ptr_variable)(int);\n"
     "};\n"
+    "\n"
+    "void (Shape9aFileScope::*shape9a_filescope_member_fn_ptr_variable)(int);\n"
 )
 
 
@@ -380,27 +395,53 @@ def test_declarator_function_returning_function_pointer_is_kind_function(tmp_pat
     assert payload["definitions"][0]["kind"] == "function"
 
 
-def test_declarator_shape_9_pointer_to_member_function_variable_is_excluded(
+def test_declarator_shape_9a_filescope_member_function_pointer_variable_is_excluded(
     tmp_path: Path,
 ) -> None:
-    """C++-ONLY wrinkle (not in C's matrix at all): `void (C::*mp)(int);` is a
-    POINTER-TO-MEMBER-FUNCTION variable. Live-verified real AST shape: the outer
-    `function_declarator`'s own "declarator" field is a `parenthesized_declarator` whose single
-    named child is a `qualified_identifier` ("scope"=`C`, "name"=a `pointer_type_declarator`
-    wrapping `mp`) -- a DIFFERENT node type than shape 4's plain `pointer_declarator` wrap, but
-    `_cpp_parenthesized_declarator_wraps_bare_name` excludes it via the exact same "not a bare
-    identifier/type_identifier/field_identifier" rule, with no dedicated branch needed. Must be
-    excluded from the symbol table, same as shape 4."""
+    """THE ACTUAL BUG THIS FIX REPAIRS (C++-only, not in C's matrix at all): a FILE-scope
+    pointer-to-MEMBER-function variable, `void (C::*mp)(int);`. On PRE-FIX `main` this resolved
+    all the way to a name and was mis-emitted as kind "function" (`mp`) -- verified by hand before
+    writing this fix (see the module docstring's dumped AST). Live-verified real AST shape: the
+    outer `function_declarator`'s own "declarator" field is a `parenthesized_declarator` whose
+    SINGLE named child is a `qualified_identifier` ("scope"=a `namespace_identifier`, "name"=a
+    `pointer_type_declarator` wrapping the member name) -- a DIFFERENT node type than shape 4's
+    plain `pointer_declarator` wrap, but `_cpp_parenthesized_declarator_wraps_bare_name` excludes
+    it via the exact same "not a bare identifier/type_identifier/field_identifier" TYPE check, no
+    dedicated branch needed. Guarded SEPARATELY from the in-class shape below (9b) -- that one is
+    excluded via a completely different code path (a length check, not the type check) and was
+    never actually broken."""
     shapes_cpp = _write_declarator_shapes_fixture(tmp_path)
 
     _imports, symbols = lang_cpp.cpp_imports_and_symbols(shapes_cpp)
     names = {s["name"] for s in symbols}
-    assert "shape9_member_fn_ptr_variable" not in names
+    assert "shape9a_filescope_member_fn_ptr_variable" not in names
+
+    payload = repo_map.build_symbol_defs("shape9a_filescope_member_fn_ptr_variable", tmp_path)
+    assert payload.get("no_match") is True
+
+
+def test_declarator_shape_9b_inclass_member_function_pointer_variable_is_excluded(
+    tmp_path: Path,
+) -> None:
+    """NO-REGRESSION PIN, not a guard for this fix (coverage-gap correction): an IN-CLASS
+    pointer-to-member-function variable, `void (C::*mp)(int);` written inside a class body. This
+    shape was ALREADY excluded on pre-fix `main` for an unrelated reason -- live-verified,
+    tree-sitter-cpp cannot resolve `C::` inside a class body and instead emits an `ERROR` node
+    sibling to a `pointer_declarator`, giving the `parenthesized_declarator` TWO named children
+    (`['ERROR', 'pointer_declarator']`). `_cpp_parenthesized_declarator_wraps_bare_name`'s own
+    `len(named_children) != 1` EARLY RETURN excludes it before the bare-name TYPE check even
+    runs -- a different code path than shape 9a above, exercised here so both parses stay
+    covered."""
+    shapes_cpp = _write_declarator_shapes_fixture(tmp_path)
+
+    _imports, symbols = lang_cpp.cpp_imports_and_symbols(shapes_cpp)
+    names = {s["name"] for s in symbols}
+    assert "shape9b_inclass_member_fn_ptr_variable" not in names
     # The enclosing class itself must still resolve normally -- the exclusion is scoped to the
     # member declaration, not the whole class body.
-    assert "Shape9Class" in names
+    assert "Shape9bClass" in names
 
-    payload = repo_map.build_symbol_defs("shape9_member_fn_ptr_variable", tmp_path)
+    payload = repo_map.build_symbol_defs("shape9b_inclass_member_fn_ptr_variable", tmp_path)
     assert payload.get("no_match") is True
 
 
