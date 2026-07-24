@@ -1,6 +1,67 @@
 # CHANGELOG
 
 
+## v1.96.0 (2026-07-24)
+
+### Features
+
+- **lang**: Add C# symbol + import intelligence (orient/defs/imports)
+  ([#726](https://github.com/oimiragieo/tensor-grep/pull/726),
+  [`6c09424`](https://github.com/oimiragieo/tensor-grep/commit/6c094242c5c4f32c60f17d49937dc029b845785c))
+
+* feat(lang): add C# symbol + import intelligence (orient/defs/imports)
+
+Register a "csharp" LanguageSpec in the multi-language symbol graph (lang_registry, PATH A Stage 1)
+  so tg orient/defs/source/imports/agent light up for .cs files, mirroring the Go precedent
+  (lang_go.py) rather than the older pre-registry Rust/JS/TS inline pattern -- Go is the most
+  current template since it was added after the lang_registry refactor.
+
+New module src/tensor_grep/cli/lang_csharp.py: - _csharp_parser(): tree-sitter grammar factory
+  (package tree-sitter-c-sharp, import name tree_sitter_c_sharp). - csharp_imports_and_symbols():
+  one AST pass extracting class/interface/struct/enum/record declarations (kind "class") and
+  method/constructor declarations (kind "function", including an interface's body-less method
+  signature), plus using-directive target namespaces (plain/dotted/aliased/static/global forms,
+  verified against the real installed grammar's node shapes). - csharp_parser_symbol_sources(): full
+  source text for `tg source`.
+
+Wired at the same dispatch sites Go touches in repo_map.py: lang_registry.register_language,
+  _imports_and_symbols_for_path, _target_language_for_path, build_symbol_source_from_map.
+  _provider_language_for_path/_language_for_path already covered .cs.
+
+Deferred (LanguageSpec fields registered None, matching Go's own import_update_target=None gap): the
+  cross-file caller-graph (references_and_calls, file_imports_symbol_from_definition,
+  import_update_target, prime_repo_context) and tg imports' line-level resolved-edge view
+  (_imports_with_lines_for_path / _SUPPORTED_FILE_DEPENDENCY_LANGUAGES) -- both fall through to
+  existing generic/honest degrade paths, never a crash or fabricated match.
+
+Adds tree-sitter-c-sharp to the ast/dev/bench extras, a test_pyproject_dependencies.py pin test, and
+  43 new/updated unit tests (16 in a new test_lang_csharp.py + registry-shape updates in
+  test_lang_registry.py), all green. 154 adjacent-language regression tests unaffected. Dogfooded
+  via the real `tg` CLI entry point.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+* test(lang-csharp): pin the honest resolution_gaps floor with grammar present
+
+Coordinator-flagged verification (parallel Go/PHP precedent): confirm that a C# file with its
+  grammar INSTALLED (not just the already-tested grammar-absent case) still surfaces a
+  resolution_gaps entry once the caller-graph capability is deferred (import_update_target=None) --
+  never a silent proven-zero for tg refs/callers/blast-radius.
+
+Live-dogfooded first via the real tg CLI: tg refs <dir> Widget --json -> resolution_gaps:
+  [{"language": "csharp", "reason": "...no reverse-import resolver...", "files_affected": 2,
+  "remediation": "...Treat a zero import-graph-consumer count for a csharp definition as UNKNOWN,
+  not proven-zero..."}]
+
+This is the same generic _language_coverage_gaps_for_universe mechanism Go's own
+  import_update_target=None gap already exercises (driven purely by the LanguageSpec field, no
+  C#-specific code) -- adding the regression test locks the behavior in.
+
+---------
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+
 ## v1.95.0 (2026-07-24)
 
 ### Features
