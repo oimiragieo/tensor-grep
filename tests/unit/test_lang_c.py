@@ -194,6 +194,134 @@ def test_defs_excludes_plain_and_extern_variable_declarations(tmp_path: Path) ->
 
 
 # ---------------------------------------------------------------------------
+# Declarator-shape matrix: a file-scope function-pointer VARIABLE (e.g. `void (*handler)(int);`)
+# was mis-kinded "function" -- `_c_declarator_name_node`'s `seen_function` boolean went True for
+# ANY `function_declarator` anywhere in the chain, but a function-pointer variable's declarator
+# chain also passes through `function_declarator` (it is the OUTERMOST node). The distinguishing
+# tell (live-verified against a real tree-sitter-c 0.24.2 parse): a REAL function's
+# `function_declarator` has its own `declarator` FIELD as a bare identifier (directly or nested
+# under a return-type `pointer_declarator`); a function-pointer VARIABLE's `function_declarator`
+# has its own `declarator` field as a `parenthesized_declarator` (wrapping a `pointer_declarator`
+# -> the name) instead. Every shape below must resolve exactly as annotated -- this is the full
+# no-regression matrix, not just the bug being fixed.
+# ---------------------------------------------------------------------------
+
+_DECLARATOR_SHAPES_C_SOURCE = (
+    "void shape1_prototype(int x);\n"
+    "\n"
+    "int shape2_definition(void) {\n"
+    "    return 0;\n"
+    "}\n"
+    "\n"
+    "int *shape3_returns_pointer(void);\n"
+    "\n"
+    "void (*shape4_fn_ptr_variable)(int);\n"
+    "\n"
+    "typedef void (*Shape5FnPtrTypedef)(int);\n"
+    "\n"
+    "struct Shape6Struct {\n"
+    "    int x;\n"
+    "};\n"
+)
+
+
+def _write_declarator_shapes_fixture(root: Path) -> Path:
+    shapes_c = root / "declarator_shapes.c"
+    shapes_c.write_text(_DECLARATOR_SHAPES_C_SOURCE, encoding="utf-8")
+    return shapes_c
+
+
+def test_declarator_shape_1_prototype_is_kind_function(tmp_path: Path) -> None:
+    _write_declarator_shapes_fixture(tmp_path)
+
+    payload = repo_map.build_symbol_defs("shape1_prototype", tmp_path)
+
+    assert not payload.get("no_match")
+    assert payload["definitions"][0]["kind"] == "function"
+
+
+def test_declarator_shape_2_definition_is_kind_function(tmp_path: Path) -> None:
+    _write_declarator_shapes_fixture(tmp_path)
+
+    payload = repo_map.build_symbol_defs("shape2_definition", tmp_path)
+
+    assert not payload.get("no_match")
+    assert payload["definitions"][0]["kind"] == "function"
+
+
+def test_declarator_shape_3_function_returning_pointer_is_kind_function(tmp_path: Path) -> None:
+    """The trap: `int *make_ptr(void);` -- the return-type `pointer_declarator` is outermost,
+    wrapping `function_declarator` whose own `declarator` field is a bare identifier. A real
+    function; must NOT be excluded by the shape-4 fix below."""
+    _write_declarator_shapes_fixture(tmp_path)
+
+    payload = repo_map.build_symbol_defs("shape3_returns_pointer", tmp_path)
+
+    assert not payload.get("no_match")
+    assert payload["definitions"][0]["kind"] == "function"
+
+
+def test_declarator_shape_4_function_pointer_variable_is_excluded(tmp_path: Path) -> None:
+    """The bug: `void (*handler)(int);` is a file-scope function-pointer VARIABLE, not a
+    function -- `function_declarator` is outermost, but ITS OWN `declarator` field is a
+    `parenthesized_declarator` (wrapping `pointer_declarator` -> the name), not a bare
+    identifier. Must be excluded from the symbol table entirely (this module does not track
+    top-level variables), same as a plain `int counter;`."""
+    shapes_c = _write_declarator_shapes_fixture(tmp_path)
+
+    _imports, symbols = lang_c.c_imports_and_symbols(shapes_c)
+    names = {s["name"] for s in symbols}
+    assert "shape4_fn_ptr_variable" not in names
+
+    payload = repo_map.build_symbol_defs("shape4_fn_ptr_variable", tmp_path)
+    assert payload.get("no_match") is True
+
+
+def test_declarator_shape_5_function_pointer_typedef_is_kind_type(tmp_path: Path) -> None:
+    """Unchanged by the shape-4 fix: a function-pointer TYPEDEF goes through the separate
+    `type_definition` branch, which always emits kind "type" regardless of
+    `_c_declarator_name_node`'s boolean return (the branch discards it)."""
+    _write_declarator_shapes_fixture(tmp_path)
+
+    payload = repo_map.build_symbol_defs("Shape5FnPtrTypedef", tmp_path)
+
+    assert not payload.get("no_match")
+    assert payload["definitions"][0]["kind"] == "type"
+
+
+def test_declarator_shape_6_struct_is_kind_class(tmp_path: Path) -> None:
+    _write_declarator_shapes_fixture(tmp_path)
+
+    payload = repo_map.build_symbol_defs("Shape6Struct", tmp_path)
+
+    assert not payload.get("no_match")
+    assert payload["definitions"][0]["kind"] == "class"
+
+
+def test_declarator_function_returning_function_pointer_is_kind_function(tmp_path: Path) -> None:
+    """Bonus real-world guard (not in the required 6-shape matrix, but live-verified against a
+    real parse): a function that RETURNS a function pointer -- e.g.
+    `void (*get_handler(int x))(int);`, the same shape as the standard library's `signal()`
+    prototype -- nests a SECOND `function_declarator` (the function's own parameter list) inside
+    the outer one's `parenthesized_declarator` wrap. The outer `function_declarator` hop is
+    skipped (its own declarator field IS `parenthesized_declarator`, the same tell as shape 4),
+    but the INNER `function_declarator`'s own declarator field is a bare identifier, so
+    `seen_function` still ends up True. Guards against an overly-broad fix that force-resets the
+    signal to False the moment a `parenthesized_declarator` appears anywhere in the chain, which
+    would wrongly exclude this real function too."""
+    root = tmp_path
+    (root / "returns_fn_ptr.c").write_text(
+        "void (*get_handler(int x))(int);\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_symbol_defs("get_handler", root)
+
+    assert not payload.get("no_match")
+    assert payload["definitions"][0]["kind"] == "function"
+
+
+# ---------------------------------------------------------------------------
 # source
 # ---------------------------------------------------------------------------
 
