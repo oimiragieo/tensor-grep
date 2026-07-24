@@ -61,6 +61,18 @@ def test_ast_dev_bench_extras_include_tree_sitter_php_for_path_a_stage1() -> Non
         assert "tree-sitter-php" in deps[extra_name], f"tree-sitter-php missing from [{extra_name}]"
 
 
+def test_ast_dev_bench_extras_include_tree_sitter_c_sharp_for_path_a_stage1() -> None:
+    # PATH A Stage 1 (C# symbol graph, second language expansion, alongside Go): the PyPI
+    # package is "tree-sitter-c-sharp" (matching the upstream tree-sitter/tree-sitter-c-sharp
+    # GitHub repo name), NOT "tree-sitter-csharp" -- the latter does not exist on PyPI. Its
+    # Python import name is the underscored `tree_sitter_c_sharp` (see lang_csharp.py).
+    deps = _optional_dependencies()
+    for extra_name in ("ast", "dev", "bench"):
+        assert "tree-sitter-c-sharp" in deps[extra_name], (
+            f"tree-sitter-c-sharp missing from [{extra_name}]"
+        )
+
+
 def test_ast_extra_pins_pygls_floor_matching_lsp_server_import() -> None:
     # cli/lsp_server.py imports `from pygls.lsp.server import LanguageServer`, a module path
     # that exists only in pygls 2.x (pygls 1.x has no `pygls.lsp.server` module at all -- its
