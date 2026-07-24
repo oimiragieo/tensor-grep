@@ -8,10 +8,11 @@ description: Use when adding a new language to tensor-grep's tree-sitter symbol 
 The registration checklist for extending tensor-grep's tree-sitter symbol graph
 (`defs`/`refs`/`callers`/`blast-radius`/`tg source`/`tg imports`) to a new language.
 Ground-truthed directly against `src/tensor_grep/cli/lang_registry.py` (full file),
-`lang_go.py` and `lang_php.py` (the two shipped module-shaped languages), and
-`src/tensor_grep/cli/repo_map.py`'s real dispatch sites — not from memory or the
-session ledger alone. Sibling of `tensor-grep-architecture-contract`, scoped to one
-subsystem (the symbol-graph tier), not the front door / routing / backend contract.
+`lang_go.py`, `lang_php.py`, and `lang_csharp.py` (the three shipped module-shaped
+languages), and `src/tensor_grep/cli/repo_map.py`'s real dispatch sites — not from
+memory or the session ledger alone. Sibling of `tensor-grep-architecture-contract`,
+scoped to one subsystem (the symbol-graph tier), not the front door / routing /
+backend contract.
 
 ## When to use this skill vs. a sibling
 
@@ -26,17 +27,18 @@ subsystem (the symbol-graph tier), not the front door / routing / backend contra
 | Drain several language PRs that all touch `test_lang_registry.py` / `uv.lock` / the pyproject `ast` extra | `tensor-grep-change-control`'s Campaign Orchestration cross-ref (AGENTS.md A22) |
 | Use `tg` as a consumer (search/orient/callers flags) | `code-search-and-retrieval-reference` |
 
-## Current status (verified against v1.95.0, `origin/main`)
+## Current status (verified against v1.95.0 + #726, `origin/main`)
 
-`repo_map.py` currently carries **7** `lang_registry.register_language(...)` call sites
+`repo_map.py` currently carries **8** `lang_registry.register_language(...)` call sites
 (`grep -n "register_language(" src/tensor_grep/cli/repo_map.py`): `python`, `javascript`,
-`typescript`, `rust` (the original four, inline in `repo_map.py`), plus `go`, `java`, `php`
-— confirmed via `language_id=` greps and `tests/unit/test_lang_registry.py::
-test_language_registry_has_exactly_the_stage2_languages`'s literal set-pin. **C# (`csharp`)
-is NOT yet in this set** — PR #726 is still draining as of this writing; there is no
-`lang_csharp.py` on `main` and no `tree-sitter-csharp` in `pyproject.toml`'s `ast` extra
-yet. **Re-run the grep above before trusting any "N of top-10" count** — it is a snapshot,
-not a promise.
+`typescript`, `rust` (the original four, inline in `repo_map.py`), plus `go`, `java`,
+`php`, and `csharp` — confirmed via `language_id=` greps and
+`tests/unit/test_lang_registry.py::test_language_registry_has_exactly_the_stage2_languages`'s
+literal set-pin (which now includes `"csharp"`). C# landed via PR #726 as a
+module-shaped language (`lang_csharp.py`, mirrors `lang_go.py`, not Java's inline
+shape) — **all top-10 languages except C/C++ are now registered.** **Re-run the grep
+above before trusting any "N of top-10" count** — it is a snapshot, not a promise; this
+count changed twice in the span of authoring this skill.
 
 The tiered language model (unchanged shape, re-verify the coverage numbers):
 
@@ -44,7 +46,7 @@ The tiered language model (unchanged shape, re-verify the coverage numbers):
 |---|---|---|---|
 | Text search | any file | rg passthrough (bootstrap front door) | universal |
 | Structural scan/rewrite | many languages | ast-grep, which `tg` wraps (`tg ast-info`, `tg run`) | ~26 langs (ast-grep's own list) |
-| **Symbol graph (this skill)** | tree-sitter grammars in `lang_registry` | `defs`/`refs`/`callers`/`blast-radius`/`tg source`/`tg imports` | 7 live on `main` + C# draining (#726) = 8 of top-10; **C/C++ deferred** |
+| **Symbol graph (this skill)** | tree-sitter grammars in `lang_registry` | `defs`/`refs`/`callers`/`blast-radius`/`tg source`/`tg imports` | 8 of top-10 live on `main` (Python/JS/TS/Java/C#/Go/Rust/PHP); **C/C++ deferred** |
 
 Positioning: tg = rg (text) + ast-grep (structural) + this symbol/retrieval/capsule layer —
 "not faster grep" (mirrors `tensor-grep-architecture-contract`'s moat framing). Top-10
@@ -61,8 +63,8 @@ JavaScript, TypeScript, Java, C#, C++, C, Go, Rust, PHP.
 refactor wrapped it, it did not replace it). Java is the one exception that used
 inline-in-`repo_map.py` (`_java_imports_and_symbols` etc., `repo_map.py:4544`+) and still
 registers through `lang_registry` — both shapes are contract-consistent, but **the module
-shape is what Go and PHP (the two most recent additions) both converged on**, and is what
-`lang_go.py`'s own docstring recommends: it keeps `repo_map.py` from growing further.
+shape is what Go, PHP, and C# (the three most recent additions) all converged on**, and is
+what `lang_go.py`'s own docstring recommends: it keeps `repo_map.py` from growing further.
 
 One-directional import rule (stated in both `lang_registry.py:10-12` and `lang_go.py:9-15`):
 `repo_map.py` → `lang_<x>.py`, never the reverse. A helper the new module needs that
@@ -218,13 +220,17 @@ source covering every construct you plan to extract through the target `tree_sit
 package directly, and print `node.type`/`node.children` recursively, before writing
 extraction logic.
 
-**One example flagged as ledger-sourced, not independently re-verified this pass**: the
-session ledger records that C#'s `using Alias = Target;` parses with the alias identifier
-*before* the target, so a `_csharp_using_directive_target`-style extractor must record the
-target, not the alias — worth knowing as a preview of C#'s own node-shape surprise, but
-**PR #726 has not merged as of this writing**, so there is no `lang_csharp.py` on `main` to
-cite a line number against yet. Re-verify against the real file once #726 lands rather than
-trusting this secondhand.
+**A fourth, independently-verified example (PR #726 merged mid-authoring-pass — re-checked
+against the real file rather than left as a secondhand ledger note): C#'s aliased `using`
+directive.** `using MyAlias = System.Text.StringBuilder;` parses with the alias identifier
+emitted **first** (leftmost child) and the actual target namespace **last** (rightmost
+child) — the reverse of what you might guess. `_csharp_using_directive_target`
+(`lang_csharp.py:138-150`) handles all four `using` forms (plain, dotted, aliased,
+`static`/`global`-qualified) with one rule: take the **last** matching
+`identifier`/`qualified_name` child, never the first — verified against the installed
+`tree_sitter_c_sharp` 0.23.x grammar for all four forms (`lang_csharp.py:113-124`'s own
+comment table). Getting this backwards would record every aliased import as its local
+alias name instead of the namespace actually being imported.
 
 ## B6 — tiered model recap (see "Current status" above for the live table)
 
@@ -238,9 +244,9 @@ ast-grep supports it) structural scan/rewrite; it just has no `defs`/`refs`/`cal
 ## E1 — priority and what's next
 
 Top-10 by TIOBE Jul-2026 + Stack Overflow 2025 + GitHub Octoverse 2025 consensus: Python,
-JavaScript, TypeScript, Java, C#, C++, C, Go, Rust, PHP. 7 are registered on `main` today;
-C# is draining in PR #726. **C/C++ is the next concrete target after that lands**, and it is
-harder than any language shipped so far — scope before starting, not while coding:
+JavaScript, TypeScript, Java, C#, C++, C, Go, Rust, PHP. All 8 non-C/C++ entries are now
+registered on `main` (C# landed via PR #726). **C/C++ is the next concrete target**, and it
+is harder than any language shipped so far — scope before starting, not while coding:
 
 1. **No module system.** Go has `go.mod`/`go.work`; C/C++ has no compiler-enforced
    namespace-to-directory mapping. The honest floor for a first landing is per-file symbol
@@ -294,7 +300,7 @@ rule, not specific to language PRs.
   registered_suffix`, `test_language_registry_has_exactly_the_stage2_languages` (the
   union-pin set — add your `language_id` here), `test_target_and_provider_language_agree_
   with_registry`, and the `test_*_provenance_is_tree_sitter_when_grammar_present` /
-  `test_grammar_absent_monkeypatch_*_provenance_flips_to_grammar_missing` pair (15 tests
+  `test_grammar_absent_monkeypatch_*_provenance_flips_to_grammar_missing` pair (17 tests
   total as of this writing — `grep -c "def test_" tests/unit/test_lang_registry.py`).
 - **Fixture/parity dogfood**: write a minimal real-world-shaped fixture file in the new
   language exercising every construct you extract (functions, types/generics if the
@@ -329,22 +335,29 @@ tg --version
 
 ## Provenance and maintenance
 
-- **Verified against tg v1.95.0** (`main` HEAD at authoring time; PyPI publish completing).
-  Ground truth read directly for this skill: `src/tensor_grep/cli/lang_registry.py` (full
-  file), `src/tensor_grep/cli/lang_go.py` (docstring + parser/walk/seam functions),
-  `src/tensor_grep/cli/lang_php.py` (docstring + `__all__`), and the cited `repo_map.py`
-  seam locations, `pyproject.toml`'s `ast` extra, and `tests/unit/test_lang_registry.py` —
-  all read live from `origin/main` this pass, not carried over from a prior draft.
+- **Verified against tg v1.95.0 + PR #726** (`main` HEAD at authoring time; PR #726 merged
+  mid-authoring-pass and this skill was re-checked against it before finalizing, rather than
+  left stale). Ground truth read directly for this skill: `src/tensor_grep/cli/
+  lang_registry.py` (full file), `src/tensor_grep/cli/lang_go.py` (docstring +
+  parser/walk/seam functions), `src/tensor_grep/cli/lang_php.py` (docstring + `__all__`),
+  `src/tensor_grep/cli/lang_csharp.py` (the `using`-directive target-selection logic + its
+  own grammar-verification comment), the cited `repo_map.py` seam locations,
+  `pyproject.toml`'s `ast` extra, and `tests/unit/test_lang_registry.py` — all read live
+  from `origin/main` this pass, not carried over from a prior draft.
 - **Not independently verified this pass**: the exact `repo_map.py` line numbers for seam 7
   (per-language `references_and_calls`/`file_imports_symbol_from_definition` dispatch arms)
   and seam 8 (the daemon-refresh cache-clear sweep call site); the Java inline extractor's
-  own line-level shape beyond its function names; anything about C# beyond the ledger's
-  secondhand `using Alias` note (PR #726 not yet merged — no code to cite).
-  Re-verify all of these — and every line number above — before citing them in a later
-  session; `repo_map.py` moves fast (~100+ lines/release, per `tensor-grep-run-and-operate`).
+  own line-level shape beyond its function names; C#'s def/import extraction logic beyond
+  the `using`-directive target-selection function cited above (`csharp_imports_and_symbols`
+  and any caller-graph fields were not read line-by-line this pass — check whether C#
+  shipped the narrower PHP-style defs+imports-only slice or the fuller Go-style caller graph
+  before citing either). Re-verify all of these — and every line number above — before
+  citing them in a later session; `repo_map.py` moves fast (~100+ lines/release, per
+  `tensor-grep-run-and-operate`).
 - **Session ledger source**: `session_learnings_2026-07-24.md` (a scratch file, not a
-  permanent repo artifact) supplied the B1-B6/E1 framing and the C# node-shape lead; every
-  claim above was re-derived against the live repo rather than copied, and is cited to the
-  real file where it was possible to check.
+  permanent repo artifact) supplied the B1-B6/E1 framing and the original C# node-shape
+  lead (itself later independently confirmed against `lang_csharp.py` once #726 landed);
+  every claim above was re-derived against the live repo rather than copied, and is cited
+  to the real file where it was possible to check.
 - If a re-verify disagrees with this skill, fix the skill — a wrong runbook is worse than
   none — and route any actual code change through `tensor-grep-change-control`.
