@@ -3,7 +3,27 @@
 > **Canonical prioritized work list.** Kept in sync with the CLI task store (`TaskUpdate`) and
 > GitHub (`gh pr list` is the source of truth for PRs). **CEO status** = summarize SHIPPING + P0/P1.
 > Update whenever a PR opens/merges or the queue changes. Task-store IDs (`#NNN`) cross-referenced.
-> Last refreshed 2026-07-24 (post-v1.98.1 — the top-10 symbol-graph language campaign, v1.93.10->v1.98.1: #723 validation-scan optimization, then 5 new languages — java (#725, v1.94.0) / php (#724, v1.95.0) / csharp (#726, v1.96.0) / c (#731, v1.97.0) / cpp (#732, v1.98.0, closing 10/10) — plus a go/php/csharp file-dependency foundational tier (#728, v1.96.1) and a coverage-honesty + payload-invariant fix (#733+#734, v1.98.1); prior: v1.93.2 — the CEO v1.92.1-dogfood "fix all + implement + dogfood" goal campaign (v1.93.0, #702-#706), executed end-to-end with a published-wheel 7/7 dogfood verdict, followed by the v1.93.1 (#708) banked-nit close-out and the v1.93.2 (#709) blast-radius scoring-prefilter fix + a session-capture skill/doc-library reconcile; before that v1.92.2 world-class-tier #249 + deep-research #251). **Live PyPI is v1.98.1 (2026-07-24). TOP-10 SYMBOL-GRAPH LANGUAGE CAMPAIGN COMPLETE — the top-10 language campaign (CEO-approved design plan, v1.93.10->v1.98.1) shipped 5 new languages this pass, java/c#/php/c/cpp, all FOUNDATIONAL tier (defs + imports; regex-fallback refs/callers) alongside the existing parser-backed py/js/ts/rust/go, closing the long-CEO-gated "next-language expansion" item (Ruby was not part of this wave). Full per-release receipts in CURRENT STATE below. Fully published (verify `/simple`/`gh run list` before citing a version live if you are reading this soon after a fresh push — runner-scarcity can stretch a release to 30-60min queued, this is healthy not stuck). PR queue: EMPTY (0 open) before this reconcile PR opens.** The CEO `/goal`
+> Last refreshed 2026-07-24 (post-v1.98.3 — reconciling #735's v1.98.1 baseline forward four items:
+> **#736** (C file-scope function-pointer VARIABLE, e.g. `void (*handler)(int);`, was mis-kinded
+> `"function"`, now excluded — v1.98.2, two independent Opus gates; the banked one-line fix hypothesis
+> "require `function_declarator` outermost" was WRONG, since a fn-ptr variable has it outermost too —
+> the real tell is what that node's own `declarator` field WRAPS, a `parenthesized_declarator` around
+> a `pointer_declarator` = variable vs. around a bare identifier = a redundant-paren REAL function
+> `int (foo)(void);`) and **#737** (the C++ sibling of the same bug in `lang_cpp.py`, v1.98.3 —
+> CLOSES THE C/C++ DECLARATOR BUG CLASS ON BOTH SIDES; C++-specific wrinkle: the member-fn-ptr
+> `void (C::*mp)(int);` parses DIFFERENTLY BY SCOPE, at file/namespace scope its
+> `parenthesized_declarator` wraps a `qualified_identifier`, in-class tree-sitter-cpp cannot resolve
+> `C::` and emits an `ERROR` node beside a `pointer_declarator` instead — both excluded, but via two
+> different guards; dogfood-verified on the published wheel) — plus two non-releasing PRs, **#738**
+> (9 session lessons folded into AGENTS.md + 6 skills) and **#739** (replaced a twice-failed
+> wall-clock-flaky test with a structural marker-order assertion,
+> `test_create_checkpoint_lock_does_not_wrap_expensive_work`, 3 rounds/2 independent-gate rejections,
+> CI-verified green on windows-latest py3.11 AND py3.12 — the exact platform that flaked); before that
+> the top-10 symbol-graph language campaign, v1.93.10->v1.98.1: #723 validation-scan optimization,
+> then 5 new languages — java (#725, v1.94.0) / php (#724, v1.95.0) / csharp (#726, v1.96.0) / c
+> (#731, v1.97.0) / cpp (#732, v1.98.0, closing 10/10) — plus a go/php/csharp file-dependency
+> foundational tier (#728, v1.96.1) and a coverage-honesty + payload-invariant fix (#733+#734,
+> v1.98.1); prior: v1.93.2 — the CEO v1.92.1-dogfood "fix all + implement + dogfood" goal campaign (v1.93.0, #702-#706), executed end-to-end with a published-wheel 7/7 dogfood verdict, followed by the v1.93.1 (#708) banked-nit close-out and the v1.93.2 (#709) blast-radius scoring-prefilter fix + a session-capture skill/doc-library reconcile; before that v1.92.2 world-class-tier #249 + deep-research #251). **Live PyPI is v1.98.3 (2026-07-24). TOP-10 SYMBOL-GRAPH LANGUAGE CAMPAIGN COMPLETE — the top-10 language campaign (CEO-approved design plan, v1.93.10->v1.98.1) shipped 5 new languages this pass, java/c#/php/c/cpp, all FOUNDATIONAL tier (defs + imports; regex-fallback refs/callers) alongside the existing parser-backed py/js/ts/rust/go, closing the long-CEO-gated "next-language expansion" item (Ruby was not part of this wave). The symbol-graph tier split stays UNEVEN — java/c#/php/c/cpp are foundational (defs + imports, regex-fallback refs); python/js/ts/rust/go are parser-backed refs/callers — do not read "10/10 languages" as uniform depth. The two C/C++ function-pointer mis-kinding bugs disclosed during that campaign are now BOTH FIXED (#736 -> v1.98.2, #737 -> v1.98.3); true C/C++ `#include` resolution and true go/php/csharp import->file resolution remain DEFERRED to backlog (no manifest for C/C++; each of go/php/csharp needs its own project-config reader). Full per-release receipts in CURRENT STATE below. Fully published (verify `/simple`/`gh run list` before citing a version live if you are reading this soon after a fresh push — runner-scarcity can stretch a release to 30-60min queued, this is healthy not stuck). PR queue: EMPTY (0 open) before this reconcile PR opens.** The CEO `/goal`
 > #232 campaign (2026-07-20) mapped the CEO's 9-point spec ("make tg REQUIRED vs rg/ast") one
 > gap-point per release, one-per-publish, each independent-Opus-gated, all CPU-safe cloud+CI (never
 > the shared desktop): **8 releases v1.84.0 -> v1.91.0, ZERO broken *published* releases, drain now
@@ -247,6 +267,51 @@ wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while 
 
 ## ⭐ CURRENT STATE (2026-07-24) — authoritative; every section BELOW is HISTORICAL until the next full refresh
 
+- **Non-releasing (2026-07-24). Test de-flake.** **#739** replaced a twice-failed wall-clock-timed
+  assertion in `tests/unit/test_index_lock_concurrency.py` with a STRUCTURAL marker-order check
+  (`test_create_checkpoint_lock_does_not_wrap_expensive_work` — asserts the checkpoint hot path
+  never wraps the expensive work under the lock, via ordering markers, not elapsed time). Took 3
+  rounds and 2 independent-gate rejections before landing clean. CI-verified green on
+  windows-latest py3.11 AND py3.12 (run `30130861182`) — the exact platform/version combo that had
+  been flaking.
+- **Live PyPI: v1.98.3 (2026-07-24). C++ function-pointer variable fix — closes the C/C++
+  declarator bug class on both sides.** **#737** ports #736/v1.98.2's C fix to `lang_cpp.py`'s
+  duplicate declarator walker (`_cpp_declarator_name_node`): a file-scope or member function-pointer
+  VARIABLE (`void (*handler)(int);`) was mis-kinded `"function"`; now excluded via the same
+  parenthesized-declarator-wraps-what tell (`_cpp_parenthesized_declarator_wraps_bare_name`).
+  **C++-specific finding, live-verified against real tree-sitter-cpp 0.23.4 parses:** the
+  pointer-to-MEMBER-function shape `void (C::*mp)(int);` parses DIFFERENTLY BY SCOPE — at
+  file/namespace scope its `parenthesized_declarator`'s single named child IS a
+  `qualified_identifier` (excluded via the same bare-name type check as the plain C fix); IN-CLASS,
+  tree-sitter-cpp cannot resolve the `C::` qualifier and instead emits an `ERROR` node alongside a
+  `pointer_declarator` — TWO named children under the parenthesized wrap, excluded via a different,
+  earlier code path (`len(named_children) != 1`) that never reaches the bare-name check at all. Both
+  shapes end up excluded, but through two independently-verified guards, not one. A follow-up gate
+  pass corrected the docstring to document both shapes (the first cut's regression-guard test used
+  only the in-class fixture, which was already excluded pre-fix via the ERROR-node path regardless
+  of the fix — not a real regression guard; split into a dedicated file-scope test that actually
+  pins the repaired shape). Dogfood-verified on the published wheel. 12-shape TDD matrix added to
+  `tests/unit/test_lang_cpp.py` (50 tests total, +1 from the gate follow-up); 175 across the lang
+  sweep, 169 repo_map suite, all green.
+- **Live PyPI: v1.98.2 (2026-07-24). C function-pointer variable fix — the banked known
+  limitation from #731/v1.97.0, now closed.** **#736** fixes the file-scope C function-pointer
+  VARIABLE mis-kinding (`void (*handler)(int);` was emitted as kind `"function"`) flagged as a
+  known limitation when C landed (see the v1.97.0 entry below, now superseded). Two independent
+  Opus gates. **The notable part: the BANKED one-line fix hypothesis was WRONG.** The original
+  writeup guessed the fix was "require `function_declarator` outermost-direct" — but a
+  live-verified real tree-sitter-c 0.24.2 AST dump shows a fn-ptr variable's declarator chain
+  *also* has `function_declarator` outermost, same as a real prototype; that is not the
+  distinguishing signal. The real tell, found only by re-deriving against the actual AST rather
+  than trusting the banked guess: what the `function_declarator`'s own `declarator` field WRAPS —
+  a `parenthesized_declarator` wrapping a `pointer_declarator` = a function-pointer VARIABLE
+  (excluded); wrapping a bare identifier/type_identifier/field_identifier = a redundant-paren REAL
+  function (`int (foo)(void);`, still included). Gate-1 returned SHIP but disclosed that the first
+  cut then wrongly excluded that redundant-paren prototype shape; a same-PR refinement
+  (`_c_parenthesized_declarator_wraps_bare_name`) fixed it without regressing the original bug fix.
+  The `seen_function` boolean is never force-reset False->True, so a function that itself *returns*
+  a function pointer (the `signal()` prototype shape, `void (*get_handler(int))(int);`) still
+  resolves correctly via its own inner `function_declarator` hop. 35/35 `test_lang_c.py`, 163/163
+  lang/registry sweep, 173/173 repo_map+skill_index_sync, 128/128 agent_capsule — zero regressions.
 - **Live PyPI: v1.98.1 (2026-07-24). Coverage-honesty fix + the invariant repair it needed — the
   campaign's clean close-out.** **#733** fixed `coverage.language_scope` (the `tg agent`/`tg orient`
   capsule field advertising which languages the symbol graph covers): it was hardcoded to the
@@ -291,16 +356,20 @@ wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while 
   declarator), and all 4 real `#include` node shapes (plain/quoted/macro-expanded/macro-combined)
   honest-unresolved. `.h` deliberately NOT claimed (already owned by the future C++ grammar per
   `_provider_language_for_path`'s pre-existing cpp assignment for every C/C++ header suffix).
-  **Known limitation (code-verified this reconcile against the shipped module, not previously
-  written up in any PR — batch into the next C/C++ touch, ultra-low ROI):** a file-scope C
-  function-pointer VARIABLE (e.g. `void (*cb)(int);`, no `typedef`) is mis-kinded `"function"` —
-  `_c_declarator_name_node` (`lang_c.py:171-207`) sets `seen_function=True` whenever a
-  `function_declarator` node appears ANYWHERE in the declarator chain, which is true both for a real
-  prototype (`int add(int,int);`) and for a function-pointer-typed variable (the callable-signature
-  part of its type is still a `function_declarator` node); the fix is distinguishing an
-  outermost-direct `function_declarator` from one reached only through a wrapping
-  `pointer_declarator`/`parenthesized_declarator`. Name + location stay correct, only the `kind`
-  label is wrong — cosmetic. Cross-file caller-graph stays deferred (`references_and_calls=None`,
+  **Known limitation FIXED 2026-07-24 by #736 -> v1.98.2 (see the v1.98.2 entry above for the
+  full mechanism; kept here as the historical record of the original finding).** As originally
+  banked at this reconcile: a file-scope C function-pointer VARIABLE (e.g. `void (*cb)(int);`, no
+  `typedef`) was mis-kinded `"function"` — `_c_declarator_name_node` (`lang_c.py:171-207`) set
+  `seen_function=True` whenever a `function_declarator` node appeared ANYWHERE in the declarator
+  chain, true both for a real prototype (`int add(int,int);`) and for a function-pointer-typed
+  variable. **The fix hypothesis banked here at the time ("distinguish an outermost-direct
+  `function_declarator` from one reached only through a wrapping
+  `pointer_declarator`/`parenthesized_declarator`") turned out to be WRONG** — #736 found, via a
+  live real-AST dump, that a fn-ptr variable's chain *is* outermost-direct too, same as a real
+  function; the actual tell is what the `function_declarator`'s own `declarator` field wraps (see
+  the v1.98.2 entry). Lesson: a banked one-line fix guess is a hypothesis, not a spec — re-derive
+  against the real AST before coding it. Cross-file caller-graph stays deferred
+  (`references_and_calls=None`,
   same foundational-tier contract as PHP/C#/Java/Go); `tg refs`/`callers`/`blast-radius` fall through
   to the generic regex-heuristic path (never a crash, never a fabricated AST hit), with an honest
   `resolution_gaps` entry.
@@ -463,13 +532,16 @@ wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while 
 
 ## SHIPPING — open PRs (drain one-per-publish) — task #117
 
-**Queue empty -- 0 open PRs (verified 2026-07-24 via `gh pr list --state open`).** The top-10
-symbol-graph language campaign (**#723-#734**, v1.93.10->v1.98.1) drained one-per-publish, ZERO
-broken *published* releases -- full per-release receipts in CURRENT STATE above. This BACKLOG
-reconcile (`docs:`, no release) is the next PR to open -- drain clear, no other build queued.
-**Next move is CEO-gated** (native front door #48, GPU-CUDA compute build #169, benchmark-numbers
-publish #72, per-platform native wheels #240-opt2 -- see CEO-FACING below) or demand-gated; no
-AI-actionable backlog item is currently queued.
+**Queue empty -- 0 open PRs (verified 2026-07-24 via `gh pr list --state open`).** Since the prior
+BACKLOG reconcile (**#735**, v1.98.1), the banked C known-limitation was closed and its C++ sibling
+found and closed too: **#736** (v1.98.2) and **#737** (v1.98.3) drained one-per-publish, ZERO broken
+*published* releases, plus two non-releasing PRs (**#738** docs, **#739** test de-flake) -- full
+receipts in CURRENT STATE above. Before that, the top-10 symbol-graph language campaign
+(**#723-#734**, v1.93.10->v1.98.1) drained the same way -- full per-release receipts in CURRENT
+STATE above. This BACKLOG reconcile (`docs:`, no release) is the next PR to open -- drain clear, no
+other build queued. **Next move is CEO-gated** (native front door #48, GPU-CUDA compute build #169,
+benchmark-numbers publish #72, per-platform native wheels #240-opt2 -- see CEO-FACING below) or
+demand-gated; no AI-actionable backlog item is currently queued.
 
 **Prior drain waves:** the CEO `/goal` #232 9-point campaign (**#678-#687**, v1.84.0->v1.91.0)
 drained one-per-publish, ZERO broken *published* releases -- full per-point receipts in the header
@@ -482,7 +554,7 @@ GPU Phase-0 wave (#593/#594/#595/#596/#597) drained one-per-publish, ZERO broken
 v1.68.1 CEO WSL-dogfood 3-PR drain (#562/#563/#564 -> v1.69.0/.1/.2); campaign #142's 4-PR queue
 (#554-557 -> v1.67.1-v1.68.2) -- all clean.
 
-## SHIPPED — live on PyPI up to **v1.98.1** (v1.93.10-v1.98.1 detail in CURRENT STATE above;
+## SHIPPED — live on PyPI up to **v1.98.3** (v1.93.10-v1.98.3 detail in CURRENT STATE above;
 v1.76.10-v1.83.0 and v1.91.0-v1.93.9 not yet individually backfilled into this section -- see
 CHANGELOG.md for the authoritative per-version detail in those gaps)
 
@@ -710,7 +782,14 @@ for the next audit rather than re-opened as active work):**
   predicted.
   `_provider_language_for_path` already mapped java/c/cpp/csharp/php ids for the LSP-provider layer
   before this wave; the graph layer now does too — the same drift class **#63**'s F22 governance test
-  (shipped, `#548`/v1.65.5) continues to guard against future drift here.
+  (shipped, `#548`/v1.65.5) continues to guard against future drift here. **Follow-up (2026-07-24,
+  same day):** the campaign's own C `#include`-resolution reconcile disclosed a file-scope
+  function-pointer-VARIABLE mis-kinding bug in `lang_c.py`; it and its `lang_cpp.py` sibling are
+  both now FIXED (**#736** -> v1.98.2, **#737** -> v1.98.3 — see CURRENT STATE above), closing the
+  C/C++ declarator bug class on both sides. The ACCEPTED, not-fixable `class MACRO Name` misparse
+  (an inherent tree-sitter-cpp preprocessor-unaware ceiling, disclosed in #732) is unrelated and
+  remains as documented above — no guard was added there because it would suppress the legitimate
+  `struct Point make_point() {...}` shape too.
 
 ## References
 - Cross-session resume anchor (memory): `tensor-grep-drain-resume-2026-07-09.md` (live drain/audit/dogfood/GPU state).
