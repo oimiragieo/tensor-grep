@@ -330,8 +330,8 @@ Current `coverage` values:
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `language_scope` | `string` | Currently `python-js-ts-rust`. |
-| `symbol_navigation` | `string` | Currently `python-ast+parser-js-ts-rust`. |
+| `language_scope` | `string` | Every language with a registered symbol-graph `LanguageSpec` (`lang_registry.LANGUAGE_REGISTRY`), sorted and hyphen-joined. Currently `c-cpp-csharp-go-java-javascript-php-python-rust-typescript` (10 languages). Derived live from the registry, not a hand-maintained literal, so onboarding a new language updates this automatically. |
+| `symbol_navigation` | `string` | Two tiers, derived live from the same registry. `parser-backed-refs-callers:<languages>` lists languages whose `tg refs`/`tg callers`/`tg blast-radius` are AST/tree-sitter-verified. `foundational-defs-imports-only:<languages>` lists languages with parser-backed defs/imports but where refs/callers fall back to a generic regex-heuristic text match (no AST verification) -- these languages' own registration comments in `repo_map.py` self-label "FOUNDATIONAL-TIER". Currently `parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-java-php`. |
 | `test_matching` | `string` | Currently `filename+import+graph-heuristic`. |
 
 ## Context Pack JSON

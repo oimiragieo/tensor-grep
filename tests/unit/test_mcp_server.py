@@ -4601,8 +4601,14 @@ def test_tg_session_mcp_tools_wrap_session_store(tmp_path, monkeypatch):
     context = json.loads(mcp_server.tg_session_context(session_id, "add", str(project)))
     assert context["session_id"] == session_id
     assert context["routing_reason"] == "session-context"
-    assert context["coverage"]["language_scope"] == "python-js-ts-rust"
-    assert context["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts-rust"
+    assert (
+        context["coverage"]["language_scope"]
+        == "c-cpp-csharp-go-java-javascript-php-python-rust-typescript"
+    )
+    assert (
+        context["coverage"]["symbol_navigation"]
+        == "parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-java-php"
+    )
     assert context["coverage"]["test_matching"] == "filename+import+graph-heuristic"
     assert context["files"] == [str((src_dir / "sample.py").resolve())]
 
@@ -5226,7 +5232,10 @@ def test_tg_repo_map_returns_json_inventory(tmp_path, monkeypatch):
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "repo-map"
     assert payload["sidecar_used"] is False
-    assert payload["coverage"]["language_scope"] == "python-js-ts-rust"
+    assert (
+        payload["coverage"]["language_scope"]
+        == "c-cpp-csharp-go-java-javascript-php-python-rust-typescript"
+    )
     assert payload["path"] == str(project.resolve())
     assert payload["scan_limit"]["max_repo_files"] == mcp_server._DEFAULT_MCP_REPO_SCAN_LIMIT
     assert payload["scan_limit"]["possibly_truncated"] is False
@@ -5312,7 +5321,10 @@ def test_tg_repo_map_includes_typescript_and_rust_inventory(tmp_path, monkeypatc
 
     payload = json.loads(mcp_server.tg_repo_map(str(project)))
 
-    assert payload["coverage"]["language_scope"] == "python-js-ts-rust"
+    assert (
+        payload["coverage"]["language_scope"]
+        == "c-cpp-csharp-go-java-javascript-php-python-rust-typescript"
+    )
     assert any(
         symbol["name"] == "PaymentService"
         and symbol["kind"] == "class"
@@ -5552,7 +5564,10 @@ def test_tg_context_pack_returns_ranked_inventory(tmp_path, monkeypatch):
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "context-pack"
     assert payload["sidecar_used"] is False
-    assert payload["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts-rust"
+    assert (
+        payload["coverage"]["symbol_navigation"]
+        == "parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-java-php"
+    )
     assert payload["query"] == "invoice payment"
     assert payload["path"] == str(project.resolve())
     assert payload["files"][0] == str(module_path.resolve())
@@ -6190,7 +6205,10 @@ def test_tg_symbol_defs_returns_exact_definition_matches(tmp_path, monkeypatch):
 
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "symbol-defs"
-    assert payload["coverage"]["language_scope"] == "python-js-ts-rust"
+    assert (
+        payload["coverage"]["language_scope"]
+        == "c-cpp-csharp-go-java-javascript-php-python-rust-typescript"
+    )
     assert payload["symbol"] == "create_invoice"
     assert len(payload["definitions"]) == 1
     assert payload["definitions"][0]["file"] == str(module_path.resolve())
@@ -6220,7 +6238,10 @@ def test_tg_symbol_defs_can_find_rust_and_typescript_symbols(tmp_path, monkeypat
     ts_payload = json.loads(mcp_server.tg_symbol_defs("createInvoice", str(project)))
     rust_payload = json.loads(mcp_server.tg_symbol_defs("issue_invoice", str(project)))
 
-    assert ts_payload["coverage"]["language_scope"] == "python-js-ts-rust"
+    assert (
+        ts_payload["coverage"]["language_scope"]
+        == "c-cpp-csharp-go-java-javascript-php-python-rust-typescript"
+    )
     assert ts_payload["definitions"][0]["file"] == str(ts_path.resolve())
     assert ts_payload["definitions"][0]["kind"] == "function"
     assert rust_payload["definitions"][0]["file"] == str(rust_path.resolve())
@@ -6313,7 +6334,10 @@ def test_tg_symbol_impact_returns_related_files_and_tests(tmp_path, monkeypatch)
 
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "symbol-impact"
-    assert payload["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts-rust"
+    assert (
+        payload["coverage"]["symbol_navigation"]
+        == "parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-java-php"
+    )
     assert payload["symbol"] == "create_invoice"
     assert payload["files"][0] == str(module_path.resolve())
     assert str(other_path.resolve()) in payload["files"]
@@ -6513,7 +6537,10 @@ def test_tg_symbol_refs_returns_python_reference_sites(tmp_path, monkeypatch):
 
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "symbol-refs"
-    assert payload["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts-rust"
+    assert (
+        payload["coverage"]["symbol_navigation"]
+        == "parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-java-php"
+    )
     assert payload["graph_completeness"] == "moderate"
     assert any(ref["provenance"] == "python-ast" for ref in payload["references"])
     assert any(ref["file"] == str(other_path.resolve()) for ref in payload["references"])
@@ -6553,7 +6580,10 @@ def test_tg_symbol_refs_and_callers_include_typescript_and_rust_heuristics(tmp_p
     rust_refs = json.loads(mcp_server.tg_symbol_refs("issue_invoice", str(project)))
     rust_callers = json.loads(mcp_server.tg_symbol_callers("issue_invoice", str(project)))
 
-    assert ts_refs["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts-rust"
+    assert (
+        ts_refs["coverage"]["symbol_navigation"]
+        == "parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-java-php"
+    )
     assert any(ref["file"] == str(ts_path.resolve()) for ref in ts_refs["references"])
     assert any(
         ref["provenance"] in {"tree-sitter", "regex-heuristic"} for ref in ts_refs["references"]
@@ -6598,7 +6628,10 @@ def test_tg_symbol_callers_returns_python_call_sites(tmp_path, monkeypatch):
 
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "symbol-callers"
-    assert payload["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts-rust"
+    assert (
+        payload["coverage"]["symbol_navigation"]
+        == "parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-java-php"
+    )
     assert payload["coverage"]["test_matching"] == "filename+import+graph-heuristic"
     assert any(caller["file"] == str(other_path.resolve()) for caller in payload["callers"])
     assert payload["tests"][0] == str(test_path.resolve())
@@ -6684,7 +6717,10 @@ def test_tg_symbol_blast_radius_returns_transitive_call_tree(tmp_path, monkeypat
 
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "symbol-blast-radius"
-    assert payload["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts-rust"
+    assert (
+        payload["coverage"]["symbol_navigation"]
+        == "parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-java-php"
+    )
     assert payload["symbol"] == "create_invoice"
     assert payload["max_depth"] == 2
     assert payload["definitions"][0]["file"] == str(module_path.resolve())

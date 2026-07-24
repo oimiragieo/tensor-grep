@@ -49,8 +49,14 @@ def test_session_open_show_and_context_reuse_repo_map(tmp_path: Path) -> None:
     assert context["schema_version"] == context["version"]
     assert context["session_id"] == session_id
     assert context["routing_reason"] == "session-context"
-    assert context["coverage"]["language_scope"] == "python-js-ts-rust"
-    assert context["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts-rust"
+    assert (
+        context["coverage"]["language_scope"]
+        == "c-cpp-csharp-go-java-javascript-php-python-rust-typescript"
+    )
+    assert (
+        context["coverage"]["symbol_navigation"]
+        == "parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-java-php"
+    )
     assert context["coverage"]["test_matching"] == "filename+import+graph-heuristic"
     assert context["files"][0] == str(module_path.resolve())
     assert context["tests"][0] == str(test_path.resolve())

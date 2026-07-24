@@ -4322,16 +4322,21 @@ fn assert_common_envelope(path: &Path, version: u32, routing_backend: &str, rout
 }
 
 fn assert_repo_map_coverage(path: &Path, coverage: &CoverageExample) {
+    // Honesty-bug fix (dogfood-found): language_scope/symbol_navigation are now derived live
+    // from lang_registry.LANGUAGE_REGISTRY (see repo_map.py's _language_scope_descriptor /
+    // _symbol_navigation_descriptor) instead of a hand-maintained 4-language literal, so these
+    // pinned values track the full 10-language symbol-graph registry (python, javascript,
+    // typescript, rust, go, java, php, csharp, c, cpp) instead of under-reporting it.
     assert_eq!(
         coverage.language_scope,
-        "python-js-ts-rust",
-        "{} coverage.language_scope must stay python-js-ts-rust",
+        "c-cpp-csharp-go-java-javascript-php-python-rust-typescript",
+        "{} coverage.language_scope must stay c-cpp-csharp-go-java-javascript-php-python-rust-typescript",
         path.display()
     );
     assert_eq!(
         coverage.symbol_navigation,
-        "python-ast+parser-js-ts-rust",
-        "{} coverage.symbol_navigation must stay python-ast+parser-js-ts-rust",
+        "parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-java-php",
+        "{} coverage.symbol_navigation must stay parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-java-php",
         path.display()
     );
     assert_eq!(
