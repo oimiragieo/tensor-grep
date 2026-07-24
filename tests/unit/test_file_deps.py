@@ -833,11 +833,30 @@ def test_importers_payload_is_far_smaller_than_map(tmp_path: Path) -> None:
     importers_payload = repo_map.build_file_importers(target, project)
     map_payload = repo_map.build_repo_map(project)
 
-    importers_size = len(json.dumps(importers_payload))
-    map_size = len(json.dumps(map_payload))
+    # Both payloads carry the SAME shared `_envelope()` self-description block verbatim
+    # (version/schema_version/routing_backend/routing_reason/sidecar_used/coverage/path) --
+    # fixed metadata about tg's own capabilities, not DATA about this particular query. Its size
+    # legitimately grows over time (#733 made `coverage.language_scope`/`symbol_navigation`
+    # honest and derived live from the language registry, ~4x longer than the stale 4-language
+    # literal they replaced) with zero change to either payload's actual data volume. Comparing
+    # raw total serialized bytes conflates that identical-in-both-payloads fixed cost with real
+    # data; since the importers payload is intentionally tiny (one reverse edge), the fixed cost
+    # is a much larger FRACTION of its total than of the far-bigger map payload -- enough for an
+    # honest envelope-field growth to tip a total-bytes ratio over threshold with no data-volume
+    # regression at all (exactly what #733 did). Strip the shared envelope from BOTH payloads
+    # before comparing so the assertion proves what it actually claims -- the reverse EDGE DATA is
+    # far smaller than the whole-repo inventory DATA -- and stays robust to future envelope growth
+    # (any field, not just today's `coverage`) instead of re-breaking on the next honesty fix.
+    envelope_keys = set(repo_map._envelope(project))
+    importers_data = {k: v for k, v in importers_payload.items() if k not in envelope_keys}
+    map_data = {k: v for k, v in map_payload.items() if k not in envelope_keys}
+
+    importers_size = len(json.dumps(importers_data))
+    map_size = len(json.dumps(map_data))
 
     assert importers_size < 0.1 * map_size, (
-        f"importers payload ({importers_size}B) is not <0.1x the map payload ({map_size}B)"
+        f"importers payload data ({importers_size}B) is not <0.1x the map payload data "
+        f"({map_size}B), excluding the shared envelope keys {sorted(envelope_keys)}"
     )
 
 
