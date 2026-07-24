@@ -287,39 +287,69 @@ def test_open_session_uncontended_hot_path_unaffected(tmp_path: Path) -> None:
     assert result.session_id in indexed
 
 
-def test_create_checkpoint_uncontended_hot_path_unaffected(tmp_path: Path) -> None:
+def test_create_checkpoint_uncontended_hot_path_unaffected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     root = _make_project(tmp_path)
 
     # #244 release-blocker de-flake: the original assertion (`elapsed < 4.0`, an absolute
     # wall-clock ceiling) flaked at 4.968s on a loaded Windows CI runner and needed a rerun --
-    # same class as the already-hardened #120/#204 flakes. The dominant real-world cost here is
-    # NOT the lock (an uncontended os.open/os.close acquire is microseconds) but
-    # create_checkpoint's PRE-lock work: _detect_checkpoint_scope shells out to
-    # `git rev-parse --show-toplevel` (fails fast on this non-git fixture, but process-spawn
-    # overhead on a loaded Windows runner is exactly the kind of noise that blew the flat
-    # ceiling), then _snapshot_entries walks the scope. Mirror the sibling
-    # test_open_session_uncontended_hot_path_unaffected fix immediately above: measure that same
-    # PRE-lock work as a same-run baseline (so a loaded runner inflates the baseline and the real
-    # call TOGETHER, correlated, instead of tripping an OS-load-fragile flat number) and assert a
-    # generous ratio, with a flat floor as a safety net for when the baseline itself is tiny
-    # (e.g. a fast Linux runner where the failed git spawn is near-instant). This stays
-    # BIDIRECTIONAL: a regression that widens the locked critical section to wrap expensive work
-    # (the exact class this test guards against, per the module docstring) inflates `elapsed`
-    # without inflating `baseline_elapsed` at all, so the ratio -- not just the flat floor --
-    # would still catch it.
+    # same class as the already-hardened #120/#204 flakes. Fix #1 replaced the flat ceiling
+    # with `elapsed < max(baseline_elapsed * 6.0, 8.0)`, timing `_detect_checkpoint_scope` +
+    # `_snapshot_entries` as a same-run baseline.
     #
-    # 2nd de-flake (2026-07-23): the #244 ratio form ITSELF flaked at elapsed=4.531s vs the
-    # flat 4.0s floor on a loaded Windows CI runner (baseline stayed small, so max() picked
-    # the floor). Root cause the #244 fix missed: `baseline_elapsed` measures only the
-    # PRE-lock work (_detect_checkpoint_scope + _snapshot_entries) but NOT the snapshot-WRITE
-    # I/O that `elapsed` also pays -- so a loaded runner inflates `elapsed` MORE than the
-    # baseline and the ratio/floor both trip on pure OS noise, not a regression. This is a
-    # noisy-CI wall-clock SMOKE test: it can only reliably catch a GROSS slowdown, so widen
-    # to 6x / 8.0s (absorbs the observed 4.531s spike with margin). BIDIRECTIONAL property is
-    # preserved: a regression that wraps the snapshot write in the lock still inflates
-    # `elapsed` far past 6x baseline. Sibling test_open_session_uncontended_hot_path (same
-    # fragile pattern) widened identically. The stale-lock-reclaim tests below keep their
-    # flat `< 4.0` -- there the 4.0 is SEMANTIC (must beat the 5s acquire timeout), not noise.
+    # 2nd de-flake (2026-07-23): that ratio form ITSELF flaked at elapsed=4.531s vs the flat
+    # 4.0s floor (baseline stayed small, so max() picked the floor). Widened to 6x / 8.0s.
+    #
+    # 3rd failure (2026-07-24, run 30123607322): `assert 8.75 < 8.0` on a DOCS-ONLY commit
+    # that cannot affect checkpoint timing -- proof this is pure CI-runner-load noise, not a
+    # regression. Raising the floor a third time would only relocate the threshold until CI is
+    # loaded enough again (the two prior overshoot ratios, 4.97/4.0=1.24x and 8.75/8.0=1.09x,
+    # show the absolute floor converging toward whatever the runner happens to produce, not
+    # toward the invariant).
+    #
+    # Root cause common to BOTH the #244 and 2026-07-23 flakes, present but previously
+    # unaddressed: `_detect_checkpoint_scope` shells out to a REAL `git rev-parse
+    # --show-toplevel` subprocess (fails fast on this non-git fixture, but the OS-level
+    # process-SPAWN latency is the noise -- far noisier under Windows CI load than any
+    # in-process work). That spawn happens TWICE per test run: once in `baseline_elapsed`'s
+    # own call below, and independently AGAIN inside `create_checkpoint`'s internal call --
+    # two uncorrelated noisy draws, which is exactly why a same-run baseline still didn't make
+    # the ratio cancel runner load: `baseline_elapsed` and `elapsed` were each dominated by a
+    # DIFFERENT random subprocess-spawn delay, not by the same shared amount of "real work".
+    #
+    # Fix (3rd de-flake, relative-only, no new absolute floor): stub the git subprocess call
+    # out of BOTH measurements via `run_subprocess`, the same monkeypatch point already used
+    # throughout this suite for backend subprocess calls (see test_ripgrep_backend.py,
+    # test_codemap.py). `_detect_checkpoint_scope` already has a first-class fallback for this
+    # exact case (`except (FileNotFoundError, subprocess.CalledProcessError)` at
+    # checkpoint_store.py -- treats a missing/failing git as "filesystem-snapshot" mode), so
+    # this exercises a real, already-guarded code path, not a test-only shortcut. With the
+    # dominant uncorrelated noise source removed, what remains in both `baseline_elapsed` and
+    # `elapsed` is small, in-process, filesystem-bound work (repo scan, one tiny file copy,
+    # one JSON metadata write, the lock RMW, cache priming) that scales together under load --
+    # so the ratio now genuinely cancels runner load instead of merely outrunning it with an
+    # ever-larger floor. git-detection latency is orthogonal to the invariant this test
+    # protects (create_checkpoint's own cost staying within a generous multiple of its known
+    # pre/post-lock work), so excluding it from the timing narrows the measurement to what the
+    # test actually claims to guard.
+    #
+    # k=6.0 keeps the same generous multiplier as before. The floor drops from the noise-driven
+    # 8.0s to 2.0s: a safety net for when `baseline_elapsed` itself rounds to ~0 (division-by-
+    # near-zero would otherwise make the ratio alone unstable), sized well above any realistic
+    # worst case for this fixture's in-process-only work (a handful of tiny file/JSON
+    # operations) yet far below the ~4.5-8.75s noise spikes this de-flake removes the SOURCE of
+    # rather than merely re-budgeting for. BIDIRECTIONAL property is preserved and now testable
+    # deterministically (see the perturbation proof in the PR description / commit): a
+    # regression that adds real, uncontended-path work (e.g. widening the locked section to
+    # redundantly rescan the repo, or a spurious retry/sleep) still inflates `elapsed` without
+    # inflating `baseline_elapsed`, so the ratio -- now dominated by real signal instead of
+    # subprocess-spawn jitter -- still catches it.
+    def _no_git_subprocess(*args: object, **kwargs: object) -> None:
+        raise FileNotFoundError("git subprocess stubbed out for hot-path timing isolation")
+
+    monkeypatch.setattr(checkpoint_store, "run_subprocess", _no_git_subprocess)
+
     baseline_start = time.monotonic()
     scope = checkpoint_store._detect_checkpoint_scope(root)
     checkpoint_store._snapshot_entries(scope)
@@ -329,7 +359,7 @@ def test_create_checkpoint_uncontended_hot_path_unaffected(tmp_path: Path) -> No
     result = checkpoint_store.create_checkpoint(str(root))
     elapsed = time.monotonic() - start
 
-    assert elapsed < max(baseline_elapsed * 6.0, 8.0)
+    assert elapsed < max(baseline_elapsed * 6.0, 2.0)
     indexed = {rec.checkpoint_id for rec in checkpoint_store._load_index(root)}
     assert result.checkpoint_id in indexed
     assert checkpoint_store._snapshot_path(root, result.checkpoint_id).exists()
