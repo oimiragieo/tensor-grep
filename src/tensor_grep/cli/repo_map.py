@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Literal, NamedTuple, TypeVar, cast
 from urllib.parse import unquote, urlparse
 
-from tensor_grep.cli import lang_go, lang_registry
+from tensor_grep.cli import lang_go, lang_php, lang_registry
 from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager, LSPTransportError
 from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
 
@@ -6143,6 +6143,43 @@ lang_registry.register_language(
     )
 )
 
+# PATH A Stage 1 (second language expansion beyond Go): PHP's own module (lang_php.py), same
+# no-import-cycle rationale as lang_go.py. NARROWER than Go's landing -- this registration ships
+# defs + imports only; the cross-file caller-graph (references_and_calls and the other three
+# callables below) is explicitly deferred to a follow-up, so all four are None here. That is a
+# strict subset of an already-handled shape: _language_coverage_gaps_for_universe already treats
+# import_update_target=None as an honest resolution_gaps entry (see the "audit #81 #4" comment on
+# that function, and lang_go.py's own import_update_target=None precedent), so `tg callers`/
+# `tg blast-radius` stay honest about PHP instead of silently reading as a proven zero.
+# provenance_when_missing="grammar-missing" (NOT "regex-heuristic") for the same fail-closed
+# reason as Go: PHP has no regex-heuristic fallback.
+lang_registry.register_language(
+    lang_registry.LanguageSpec(
+        language_id="php",
+        suffixes=frozenset({".php"}),
+        grammar_modules=("tree_sitter", "tree_sitter_php"),
+        parser_for_path=lambda path: lang_php._php_parser(),
+        provenance_when_parsed="tree-sitter",
+        provenance_when_missing="grammar-missing",
+        import_markers=(b"use ",),
+        def_node_kinds=(
+            "class_declaration",
+            "interface_declaration",
+            "trait_declaration",
+            "enum_declaration",
+            "function_definition",
+            "method_declaration",
+        ),
+        extract_imports_and_symbols=None,
+        references_and_calls=None,
+        provider_alias_calls=None,
+        file_imports_symbol_from_definition=None,
+        import_update_target=None,
+        prime_repo_context=None,
+        classify_ref_kind=None,
+    )
+)
+
 
 def _prime_all_language_repo_contexts(context_root: Path) -> None:
     """Prime every registered language's per-repo-root context exactly once.
@@ -6200,6 +6237,10 @@ def _imports_and_symbols_for_path(
         elif spec is not None and spec.language_id == "java":
             # Fail-closed (same Stage 1 trap as Go): NO regex fallback for Java either.
             current_imports, current_symbols = _java_imports_and_symbols(path)
+        elif spec is not None and spec.language_id == "php":
+            # Fail-closed (Stage 1 trap, same as Go): NO regex fallback for PHP either -- see
+            # lang_php.py's module docstring.
+            current_imports, current_symbols = lang_php.php_imports_and_symbols(path)
         elif not current_imports and not current_symbols:
             current_imports, current_symbols = _regex_imports_and_symbols(path)
         return current_imports, current_symbols
@@ -7302,6 +7343,10 @@ def _target_language_for_path(path: str | Path | None) -> str | None:
         # Same MOST-FORGOTTEN seam, Stage 2: without this, `tg agent`'s capsule never reports
         # primary_target_language == "java" for a Java target.
         return "java"
+    if suffix == ".php":
+        # MOST-FORGOTTEN seam (see the ".go" branch above) -- same fix, same reason, for PHP's
+        # Stage 1 registration.
+        return "php"
     return None
 
 
@@ -15746,6 +15791,8 @@ def build_symbol_source_from_map(
                 current_sources = lang_go.go_parser_symbol_sources(current_path, symbol)
             if not current_sources and current_path.suffix in _JAVA_SUFFIXES:
                 current_sources = _java_parser_symbol_sources(current_path, symbol)
+            if not current_sources and current_path.suffix == ".php":
+                current_sources = lang_php.php_parser_symbol_sources(current_path, symbol)
             if not current_sources:
                 current_sources = _regex_symbol_sources(current_path, symbol)
             sources.extend(current_sources)

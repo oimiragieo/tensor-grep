@@ -45,6 +45,7 @@ def test_spec_for_path_resolves_every_registered_suffix() -> None:
         "foo.rs": "rust",
         "foo.go": "go",
         "foo.java": "java",
+        "foo.php": "php",
     }
     for name, expected_language in expectations.items():
         spec = lang_registry.spec_for_path(Path(name))
@@ -53,13 +54,11 @@ def test_spec_for_path_resolves_every_registered_suffix() -> None:
 
 
 def test_spec_for_path_unknown_suffix_returns_none() -> None:
-    # PATH A Stage 1: .go is now a REGISTERED language (see
-    # test_spec_for_path_resolves_every_registered_suffix), so it moved out of this "still
-    # unsupported" list -- .rb stands in as the still-unsupported example for the resolution_gaps
-    # tests below instead.
-    # PATH A Stage 2: .java is now a REGISTERED language too (foundational tier: symbols +
-    # imports, see tests/unit/test_lang_java.py) -- .kt stands in as a second still-unsupported
-    # example, same substitution Stage 1 made for .go.
+    # PATH A Stage 1/2: .go, .java, and .php are now all REGISTERED languages (see
+    # test_spec_for_path_resolves_every_registered_suffix), so they moved out of this "still
+    # unsupported" list -- .kt/.rb stand in as still-unsupported examples for the
+    # resolution_gaps tests below instead (same substitution each stage made for its own
+    # newly-registered suffix).
     for name in ("foo.kt", "foo.rb", "foo.txt", "foo", "foo.md"):
         assert lang_registry.spec_for_path(Path(name)) is None
 
@@ -76,6 +75,7 @@ def test_graph_suffixes_matches_the_historical_hardcoded_union() -> None:
         ".rs",
         ".go",
         ".java",
+        ".php",
     })
 
 
@@ -87,6 +87,7 @@ def test_language_registry_has_exactly_the_stage2_languages() -> None:
         "rust",
         "go",
         "java",
+        "php",
     }
 
 
