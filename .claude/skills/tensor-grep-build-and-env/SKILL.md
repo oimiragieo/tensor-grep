@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-build-and-env
-description: Use when setting up the tensor-grep dev environment from a fresh clone, rebuilding the Rust/PyO3 extension or standalone `tg` binary after touching `rust_core/`, or debugging a build/toolchain problem — uv install, `maturin develop`, `cargo build`, the pinned 1.96.0 Rust toolchain, Python >=3.11 floor, a "hanging" cargo build, cargo/rustc missing from PATH, ruff CRLF false-alarms, or a dependency upper-cap silently downgrading tensor-grep on a newer Python. Gives exact copy-paste setup commands and the traps that have each cost a real cycle.
+description: Use when setting up the tensor-grep dev environment from a fresh clone, rebuilding the Rust/PyO3 extension or standalone `tg` binary after touching `rust_core/`, or debugging a build/toolchain problem — uv install, `maturin develop`, `cargo build`, the pinned 1.96.0 Rust toolchain, Python >=3.11 floor, a "hanging" cargo build, cargo/rustc missing from PATH, ruff CRLF false-alarms, a dependency upper-cap silently downgrading tensor-grep on a newer Python, or a flaky/un-retried rustup pinned-toolchain fetch. Gives exact copy-paste setup commands and the traps that have each cost a real cycle.
 ---
 
 # tensor-grep: Build & Environment Runbook
@@ -8,9 +8,13 @@ description: Use when setting up the tensor-grep dev environment from a fresh cl
 Recreate a working tensor-grep dev environment from nothing, and rebuild it correctly after
 touching Rust. Every command below is verified against `pyproject.toml`, `rust_core/Cargo.toml`,
 `rust_core/rust-toolchain.toml`, `CONTRIBUTING.md`, `AGENTS.md`, and `.github/workflows/ci.yml` as
-of **2026-07-08, v1.49.3** (toolchain pins + test counts re-verified **2026-07-16, v1.78.1**, and
-again **2026-07-22, v1.93.2** — the LTO `Cargo.toml` cite had drifted `234-235` → `463-464` and test
-counts moved to 263/16/16; all other version pins verified still current). Re-verify anything
+of **2026-07-08, v1.49.3** (toolchain pins + test counts re-verified **2026-07-16, v1.78.1**, again
+**2026-07-22, v1.93.2** — the LTO `Cargo.toml` cite had drifted `234-235` → `463-464` and test
+counts moved to 263/16/16 — and again **2026-07-24, v1.95.0** — every `pyproject.toml`/`AGENTS.md`/
+`ci.yml` line citation below had drifted from the language-expansion campaign's growth
+(`pyproject.toml` +~230 lines of new dev-dependency/tree-sitter-grammar entries, `AGENTS.md` +~300
+lines), all re-pointed below; test counts moved to 266/16/16; a new Trap 11 added for an un-retried
+rustup toolchain fetch; all other version pins verified still current). Re-verify anything
 version-shaped before trusting it long-term — see "Provenance and maintenance" at the bottom.
 
 ## When to use this skill
@@ -53,7 +57,7 @@ version-shaped before trusting it long-term — see "Provenance and maintenance"
 ## Repo layout: two build systems, one package
 
 - **Python package**: `src/tensor_grep/` — driven by `pyproject.toml`. Entry point:
-  `tg = "tensor_grep.cli.bootstrap:main_entry"` (`pyproject.toml:382`).
+  `tg = "tensor_grep.cli.bootstrap:main_entry"` (`pyproject.toml:648`).
 - **Rust workspace**: `rust_core/` — driven by `rust_core/Cargo.toml` (crate `tensor_grep_rs`). It
   builds **two separate targets** from the same source:
   1. a `cdylib` PyO3 extension module, importable as `tensor_grep.rust_core`
@@ -70,13 +74,13 @@ editable Python install does **not** watch and recompile Rust for you. See the r
 
 | Tool | Version pin | Pinned where | Why it matters |
 |---|---|---|---|
-| Python | `>=3.11` | `pyproject.toml:325` | floor for the PyO3 `abi3-py311` stable ABI |
+| Python | `>=3.11` | `pyproject.toml:558` | floor for the PyO3 `abi3-py311` stable ABI |
 | uv | `0.11.25` | every `pip install uv==...` step in `.github/workflows/ci.yml` | exact CI parity |
 | maturin | `>=1.5,<2.0` | `pyproject.toml:2` `[build-system].requires` | PEP 517 backend that compiles `rust_core/` |
 | Rust toolchain | `1.96.0` | `rust_core/rust-toolchain.toml` | reproducible, supply-chain-safe builds (audit MEDIUM finding) |
 | rustfmt, clippy | bundled with 1.96.0 | `rust_core/rust-toolchain.toml` `components` | CI's "Check Rust Formatting" + clippy jobs need them; a channel-only pin on a minimal-profile runner would drop them |
 | ruff | `==0.15.20` | `pyproject.toml` `[project.optional-dependencies].dev` | lint + format gate |
-| mypy | `==1.19.1` | same | typecheck gate, `strict = true` (`pyproject.toml:112`) |
+| mypy | `==1.19.1` | same | typecheck gate, `strict = true` (`pyproject.toml:117`) |
 
 ## Zero-to-running setup (copy-paste)
 
@@ -102,7 +106,7 @@ rustup component add rustfmt clippy
 ```
 
 If `rustup` isn't installed yet, this is the exact bootstrap the release pipeline itself uses
-(`pyproject.toml:133`, semantic-release `build_command`):
+(`pyproject.toml:138`, semantic-release `build_command`):
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
@@ -160,7 +164,7 @@ uv run mypy src/tensor_grep
 uv run pytest -q
 ```
 
-Rust equivalents of CI's `static-analysis` job (`.github/workflows/ci.yml:260-324`) — that job runs
+Rust equivalents of CI's `static-analysis` job (`.github/workflows/ci.yml:277-342`) — that job runs
 `cargo fmt`/`cargo clippy` only, **not** `cargo test`:
 
 ```bash
@@ -170,7 +174,7 @@ cargo clippy -- -D warnings
 cd ..
 ```
 
-Rust equivalent of CI's separate `test-rust-core` job (`ci.yml:392-439`, a 3 OS × stable/nightly
+Rust equivalent of CI's separate `test-rust-core` job (`ci.yml:415-481`, a 3 OS × stable/nightly
 matrix — not covered by the block above):
 
 ```bash
@@ -193,11 +197,11 @@ python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 tg dogfood --output artifacts/dogfood_readiness.json
 ```
 
-**Test corpus size** (2026-07-16): `tests/` has 239 unit test files + 16 e2e test files + 11
-integration test files (`pyproject.toml` sets `testpaths = ["tests"]`, so a bare `uv run pytest -q`
+**Test corpus size** (2026-07-24, v1.95.0): `tests/` has 266 unit test files + 16 e2e test files +
+16 integration test files (`pyproject.toml` sets `testpaths = ["tests"]`, so a bare `uv run pytest -q`
 covers all three). `uv run pytest -q` "can take substantially longer than 70-90 seconds on
 [a Windows] machine when the full JS/TS and e2e surface is hot" — use a timeout of at least 120s for
-narrow suites and considerably more for the full run when automating this (`AGENTS.md:306`).
+narrow suites and considerably more for the full run when automating this (`AGENTS.md:606`).
 
 ## Known traps (each one has cost a real cycle — read before debugging blind)
 
@@ -208,7 +212,7 @@ narrow suites and considerably more for the full run when automating this (`AGEN
 **Fix:** prepend `~/.cargo/bin` to `PATH`, or call the binaries by full path. (This project's own dev
 box hits this concretely at `C:/Users/oimir/.cargo/bin/cargo.exe` — that exact path is a
 machine-specific example, not a portable claim; the general fix is "put *your* `~/.cargo/bin` on
-PATH.") Source: `AGENTS.md:546`.
+PATH.") Source: `AGENTS.md:900`.
 
 ### 2. A "hanging" Rust build is not hung — it's LTO
 
@@ -218,17 +222,17 @@ no output.
 is slow to run but does complete.
 **Fix:** don't kill it; let it finish. Use plain `maturin develop` (no `--release`, ~15s) for the fast
 inner dev loop, and reserve `--release` builds for when you actually need release-profile
-performance or are reproducing a release artifact. Source: `AGENTS.md:546`.
+performance or are reproducing a release artifact. Source: `AGENTS.md:900`.
 
 ### 3. Windows CRLF makes `ruff format --check` false-alarm
 
 **Symptom:** a bare local `ruff format --check .` flags files you never touched.
 **Cause:** `.gitattributes` pins `*.py`/`*.rs` to `eol=lf`; a Windows working tree can smudge lines to
 CRLF even though the committed blob is LF, and CI's Linux runner enforces LF.
-**Fix:** run `ruff format --preview .` (which normalizes line endings per `pyproject.toml:87`
+**Fix:** run `ruff format --preview .` (which normalizes line endings per `pyproject.toml:92`
 `line-ending = "lf"`) before committing, not just `--check`. Audit actual on-disk endings with
 `git ls-files --eol` — `git show`/`git cat-file -p` smudge output and can report false CR.
-Source: `CONTRIBUTING.md:24`, `AGENTS.md:552`.
+Source: `CONTRIBUTING.md:24`, `AGENTS.md:906`.
 
 ### 4. `ruff format` WITHOUT `--preview` is an active revert
 
@@ -239,7 +243,7 @@ CI runs an asymmetric split: `ruff format --check --preview .` for the format ga
 local lint was clean.
 **Rule:** always pass `--preview` to `ruff format`; never pass `--preview` to `ruff check` (preview
 lint rules like RUF056 produce false failures that don't match CI). Source: `CONTRIBUTING.md:22`,
-`AGENTS.md:304`.
+`AGENTS.md:604`.
 
 ### 5. A dependency upper-cap can silently downgrade the whole install
 
@@ -250,7 +254,7 @@ Python; `pip`/`uv` then silently resolve the **entire package** down to the newe
 dependency graph is satisfiable on that interpreter. `requires-python>=3.11` has no upper bound, so it
 can't catch this.
 **Fix:** when a fresh Python yields a suspiciously old `tg --version`, suspect a transitive
-dependency cap (`typer`/`click`/`pydantic` today — `pyproject.toml:333` currently pins
+dependency cap (`typer`/`click`/`pydantic` today — `pyproject.toml:566` currently pins
 `typer>=0.12,<0.26`), not `requires-python`. Fixed for the `typer` case in #310; see the
 `tensor-grep-dep-cap-silent-downgrade-2026-06-30` memory note for the full incident.
 
@@ -262,13 +266,13 @@ prior build can be resolved by the native-binary launcher path instead of your f
 **Fix:** `uv run tg doctor --json` reports these under `skipped_native_tg_binaries` with
 `rust_binary_version_status`. Rebuild explicitly with
 `cargo build --manifest-path rust_core/Cargo.toml --release`, or pin `TG_NATIVE_TG_BINARY` to the
-exact binary path you intend to exercise. Source: `AGENTS.md:145`.
+exact binary path you intend to exercise. Source: `AGENTS.md:357`.
 
 ### 7. Very new CPython + the `abi3-py311` floor (candidate/open)
 
 `rust_core/Cargo.toml:37` pins `pyo3 = { version = "0.29.0", features = ["anyhow", "abi3-py311"] }` —
 a stable-ABI build meant to load unmodified on any CPython `>=3.11`. CI sets
-`PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"` globally (`ci.yml:17`) so PyO3 doesn't refuse to compile
+`PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"` globally (`ci.yml:21`) so PyO3 doesn't refuse to compile
 against a CPython release newer than the PyO3 crate itself recognizes as supported. If a local build
 fails specifically on a bleeding-edge Python (3.14+) with an "unsupported Python version"-shaped PyO3
 error, set the same env var before building: `PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1`. **Labeled
@@ -326,6 +330,25 @@ both `cargo test --no-default-features` (tests now compile+run) and `cargo clipp
 -D warnings` (default features, no `--tests` -- the release-gating `static-analysis` job's exact
 invocation) locally before pushing. Source: PR #597 (`3fd3af7`, shipped v1.75.4).
 
+### 11. rustup's pinned-toolchain fetch has no built-in retry
+
+**Symptom:** a `cargo`/`rustc` invocation inside `rust_core/` (or even the setup step's `rustup
+default 1.96.0`) fails outright on a flaky network with no automatic retry — distinct from Trap 2's
+LTO "hang," which eventually completes on its own.
+**Cause:** `rust_core/rust-toolchain.toml` pins channel `1.96.0`, so the first `cargo`/`rustc`
+invocation inside `rust_core/` after that pin is set triggers rustup's own on-demand toolchain
+download if `1.96.0` isn't already installed. Unlike this repo's `curl | sh` rustup-bootstrap
+invocations (`--retry 10 --retry-connrefused`, e.g. `.github/workflows/ci.yml`'s Setup Rust steps),
+rustup's own toolchain-fetch logic has no retry of its own. This red-failed CI on 2 consecutive
+macOS runners (#720, #721) before being fixed with a 3-attempt/15s-backoff retry loop wrapped around
+the pinned-toolchain fetch (`.github/workflows/ci.yml:449-459`, PR #722, commit `714fbc8`, shipped
+in the same release wave as v1.93.10/v1.94.0).
+**Fix:** if a toolchain fetch times out locally, it's a transient network blip, not a broken pin —
+just retry the command (`rustup default 1.96.0`, or re-run the `cargo build`/`cargo test` that
+triggered the on-demand fetch). For a scripted or CI-style bootstrap where you can't rely on a human
+to notice and retry, wrap the first `cargo`/`rustc` invocation after the pin is set in a small
+retry loop, mirroring `test-rust-core`'s Setup Rust step in `.github/workflows/ci.yml`.
+
 ## CI parity cheat sheet
 
 What `.github/workflows/ci.yml` actually runs, and the closest local reproduction. Release/publish
@@ -352,8 +375,9 @@ Volatile facts stated above and how to re-check them if this skill feels stale:
 - **Version pins** (Python floor, uv, maturin, Rust toolchain, ruff, mypy, pyo3):
   `grep -nE "requires-python|version|channel" pyproject.toml rust_core/Cargo.toml rust_core/rust-toolchain.toml`
 - **uv version CI pins**: `grep -n "uv==" .github/workflows/ci.yml`
-- **Test file counts** (263 unit / 16 e2e / 16 integration as of 2026-07-22, up from 239/16/11 —
-  plus a new `tests/eval/` directory with 1 file, `test_agent_accuracy.py`, not part of this count):
+- **Test file counts** (266 unit / 16 e2e / 16 integration as of 2026-07-24 (v1.95.0), up from
+  263/16/16 — `tests/eval/` now has 2 files, `test_agent_accuracy.py` +
+  `test_retrieval_quality_regression.py` (up from 1), still not part of this count):
   `find tests/unit tests/e2e tests/integration tests/eval -name "test_*.py" | wc -l` run per
   directory, or one combined `find tests -name "test_*.py" | wc -l` for the total file count.
   Note this counts *files*, not individual `def test_*` cases — the suite has thousands of the latter.
@@ -362,7 +386,7 @@ Volatile facts stated above and how to re-check them if this skill feels stale:
 - **LTO / release-profile setting**: `grep -n "profile.release" -A2 rust_core/Cargo.toml` (currently `:463-464`)
 - **Registration-completeness gate presence**: `ls .tg-registration.toml` and
   `grep -n "registration_check" .github/workflows/ci.yml`
-- **Current versions re-verified 2026-07-08, toolchain pins RE-CONFIRMED unchanged 2026-07-16 and
-  again 2026-07-22**: tensor-grep `v1.93.2`, Rust toolchain `1.96.0`, uv `0.11.25`, ruff `==0.15.20`,
-  mypy `==1.19.1`, pyo3 `0.29.0`, maturin build-system pin `>=1.5,<2.0`, Python floor `>=3.11` — all
-  other version pins verified current, no change from the v1.78.1 pass.
+- **Current versions re-verified 2026-07-08, toolchain pins RE-CONFIRMED unchanged 2026-07-16, again
+  2026-07-22, and again 2026-07-24**: tensor-grep `v1.95.0`, Rust toolchain `1.96.0`, uv `0.11.25`,
+  ruff `==0.15.20`, mypy `==1.19.1`, pyo3 `0.29.0`, maturin build-system pin `>=1.5,<2.0`, Python
+  floor `>=3.11` — all other version pins verified current, no change from the v1.93.2 pass.

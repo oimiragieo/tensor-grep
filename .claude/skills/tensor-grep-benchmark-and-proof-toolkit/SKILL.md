@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-benchmark-and-proof-toolkit
-description: Use when about to claim, review, or dispute a speedup/regression in tensor-grep (tg vs rg, hot-cache, AST, agent-workflow, or GPU changes) — which benchmark script to run, how to read check_regression.py, the noise-floor/absolute-jitter rule for sub-10ms rows, the fair-baseline rule (never compare tg against a strawman comparator), and the launcher-attribution rules (tg_launcher_mode, tg_launcher_command_kind, stale-binary refusal) that make a benchmark artifact claim-quality instead of noise.
+description: Use when about to claim, review, or dispute a speedup/regression in tensor-grep (tg vs rg, hot-cache, AST, agent-workflow, or GPU changes) — which benchmark script to run, how to read check_regression.py, the noise-floor/absolute-jitter rule for sub-10ms rows, the warm-vs-cold measurement trap (a warm dogfood run can hide a real cold-path win), the byte-identical output-proof obligation before trusting any merge/skip/reorder speedup, the fair-baseline rule (never compare tg against a strawman comparator), and the launcher-attribution rules (tg_launcher_mode, tg_launcher_command_kind, stale-binary refusal) that make a benchmark artifact claim-quality instead of noise.
 ---
 
 # tensor-grep Benchmark and Proof Toolkit
@@ -55,8 +55,8 @@ Five corollaries, all stated in AGENTS.md:
 | `tg find` / `tg_find` ranking, `TG_FIND_DENSE_WEIGHT`, RRF channels, chunker, late-rerank | `benchmarks/eval_late_rerank_quality.py` | quality gate (ndcg@10/recall@10) on the NL golden set + literal/identifier golden slices — NOT a speed benchmark; see `tensor-grep-semantic-search-campaign` STATUS UPDATE 2 |
 | tokens-per-correct-answer / token-economy (the moat metric — CANDIDATE, not yet a committed script, gated on #72) | none committed yet — see "6. Token-economy" below | a task-level cost metric (tokens spent to reach a correct answer, oracle-validated), not a latency metric — do not conflate with any row above |
 
-Full matrix with default artifact paths: `docs/benchmarks.md` § "Benchmark Matrix" (19 scripts as of
-v1.49.3 — re-verify with the command in Provenance below, the list drifts).
+Full matrix with default artifact paths: `docs/benchmarks.md` § "Benchmark Matrix" (still 19 scripts as
+of v1.95.0, re-counted this pass — re-verify with the command in Provenance below, the list drifts).
 
 If your change does not obviously map to one row, run `benchmarks/run_benchmarks.py` first (the
 broadest cold-path net) and widen from there — do not invent a new ad hoc timing script.
@@ -223,6 +223,26 @@ do not gate on percentage delta alone — add an absolute-seconds floor the way
 scheduler noise. This is also the general `noise-floor-before-quantitative-claims` skill's territory
 if you are building a new (non-tg) measurement harness from scratch.
 
+**A related but distinct trap: a warm end-to-end run can hide a real cold-path win (or loss) —
+this is systematic, not jitter.** Jitter (above) is random noise around the true value; a warm/cold
+regime mismatch is a **wrong measurement of the wrong code path** and can point the wrong direction
+entirely. A warm dogfood run measures the CACHED path, where the function you actually changed may not
+even execute on that request. Receipt: a `tg orient` warm end-to-end dogfood read showed **-36%** on a
+symbol-merge change (`_python_imports_and_symbols`, `src/tensor_grep/cli/repo_map.py:1921`) that
+directly microbenchmarking the function then showed was actually **~54% faster** (961ms→446ms), because
+the warm run never re-parsed the file the change touched. This deepens corollary 3 above ("cold-start
+and repeated-query are different regimes") into a concrete verification recipe: to prove a cold-path
+lever, either (a) **microbench the target function directly on the published/shipped build** — a fresh
+process per rep (cold cache by construction), a single pass over distinct inputs, old-vs-new, asserting
+output-identity (`total == total` both sides) — or (b) explicitly clear the relevant cache between reps
+of an end-to-end run. Never trust a warm end-to-end number as evidence for or against a cold-path
+change. Second receipt, same shipped-wheel-microbench discipline applied to a different lever: a
+validation-scan pre-check (`_framework_test_pattern_bonus`, `src/tensor_grep/cli/repo_map.py:10616`)
+measured **~68% faster** (3657ms→1172ms) this way, output byte-identical. The general profiling/proof
+pipeline this recipe belongs to (profile the shipped wheel → prove byte-identical output → warm/cold
+microbench) lives in the global skill `profile-guided-byte-identical-optimization`; this is the
+benchmark-reading slice of it.
+
 ## Fair-benchmark rules
 
 These are what separates a claim-quality artifact from a number you cannot defend in a PR review.
@@ -281,6 +301,29 @@ number are not interchangeable, and blending them the way a `.cmd`-shim timing g
 native-exe number would produce the same class of misleading artifact this section exists to prevent.
 See `tensor-grep-architecture-contract`'s Native-vs-Python routing section for the full split.
 
+### A speed win is not proof of correctness — prove output-identity separately
+
+Corollary 5 above ("if a candidate is correct but slower, revert it") assumes you already know the
+candidate is correct before you get to the speed question. Nothing else in this skill establishes
+that — a benchmark script measures wall-clock; it does not diff output for you. When the change under
+benchmark merges, skips, or reorders work (the common shape of a real optimization — one file walk
+instead of two, one pass merging what used to be separate scans, an early-return pre-check), prove
+byte-identical output two ways before trusting the speed number at all:
+
+1. **Enumerate every producer/branch and argue exhaustiveness.** E.g. AST node types are mutually
+   exclusive, so merging two `ast.walk()` passes into one cannot drop a node type either pass would
+   have seen; a candidate name is always a substring of the file text it was extracted from, so a
+   substring pre-check that short-circuits can only ever skip work that was going to contribute a zero
+   bonus anyway.
+2. **Differential fuzz.** Run OLD vs NEW over N real files/cases from this repo and assert zero
+   mismatches — not a hand-picked pair, a real corpus sweep.
+
+Treat a build agent's own "I verified it's equivalent" as a hypothesis, not proof — an independent
+reviewer re-running the fuzz check is the proof-of-record, the same independent-gate discipline this
+repo applies to any other load-bearing self-report. Full recipe (profiling-probe on the shipped wheel →
+this proof step → warm/cold microbench) lives in the global skill
+`profile-guided-byte-identical-optimization`.
+
 ### Regression gate mechanics you must understand before reading a red/green result
 
 `check_regression.py` (full flow: `benchmarks/check_regression.py:39-146`):
@@ -313,6 +356,18 @@ Keep the honesty floor: no speed crossover is proven vs `rg`/`tg_cpu`, GPU auto-
 `false`, and the reviewer-gated `public-gpu-proof.yml` speed-crossover gate remains unmet
 (`docs/CONTRACTS.md:80-82`). Do not treat any GPU number you produce as promotion evidence; it is
 implementation history at best.
+
+**Re-verified current as of v1.95.0**: `docs/gpu_crossover.md` now carries its own "Current
+post-`v1.95.0` GPU dogfood Read" section, and the verdict above is unchanged in substance — still no
+single-pattern crossover, and the public managed binary still routes GPU requests through `GpuSidecar`
+(not `NativeGpuBackend`). Promotion has grown a more detailed contract since v1.75.4 (unchanged
+conclusion, more machinery): public promotion now additionally requires a managed NVIDIA front door
+with `tg-native-metadata.json` provenance, and `benchmarks/run_gpu_native_benchmarks.py
+--public-managed-proof` emitting `public_managed_promotion_ready = true` and `public_gpu_proof = true`.
+Public CUDA-asset publishing itself remains a deliberate CEO-decision hold (task-store `#169` — not a
+GitHub issue, re-verify with `gh issue list` before citing it as one). For the fuller current picture
+(devices/doctor probes, `--gpu-device-ids` search, the WSL cross-domain probe fix, the honesty table of
+what an observation does and does not license you to claim), see the sibling skill `tensor-grep-gpu`.
 
 Two hard-earned rules if you do run a GPU benchmark:
 
@@ -395,6 +450,11 @@ the row diagnostic (not release-gating) until it actually beats that number.
       exploratory, not accepted).
 - [ ] For any row under ~10ms, verified there is an absolute-seconds tolerance, not a bare percentage
       gate.
+- [ ] For any change that merges/skips/reorders work, proved byte-identical output (enumerate the
+      branches + differential fuzz — see "A speed win is not proof of correctness" above), not just
+      assumed equivalence from a self-report.
+- [ ] For any cold-path claim, confirmed the number came from a cold microbench or a cache-cleared rep,
+      not a warm end-to-end dogfood run that may never have executed the changed function.
 - [ ] For any multi-pattern/batched claim, compared against the comparator's own batched primitive,
       not a sequential-loop strawman — and did not cite a many-pattern match COUNT as correct without
       checking the known live dedup over-count bug (#694) first.
@@ -415,7 +475,21 @@ Facts here re-verified at tensor-grep **v1.49.3** (2026-07-08); the §6 P4 close
 (2026-07-16); **v1.93.2** (2026-07-22) added the B-many-pattern dedup-bug caveat to the worked example
 (the "code is still correct" framing is now falsified for that path, #694), the static-replay caveat
 on the `run_repo_retrieval_benchmarks.py` decision-table row, and the A3 large-file
-`backend_cpu.rs`-vs-`native_search.rs` disclosure hazard — the rest was not re-walked in this pass.
+`backend_cpu.rs`-vs-`native_search.rs` disclosure hazard; **v1.95.0** (2026-07-24) added the
+warm-vs-cold regime trap + shipped-wheel cold-microbench recipe to the noise-floor section and the
+byte-identical output-proof obligation (enumerate + differential-fuzz) to the fair-benchmark rules,
+re-verified the GPU-status block against the current `docs/gpu_crossover.md` top section and added the
+`tensor-grep-gpu` sibling-skill cross-reference, and re-counted the Benchmark Matrix (still 19). Every
+`file:line` citation in the Noise-floor, Fair-benchmark-rules, Recipe, and Regression-gate-mechanics
+sections was re-grepped this pass (`check_regression.py`, `perf_guard.py`,
+`run_hot_query_benchmarks.py`, `run_benchmarks.py`, `run_native_cpu_benchmarks.py`,
+`run_gpu_benchmarks.py`, `docs/CONTRACTS.md`) and all matched exactly — the Worked Example's historical
+commit hashes (`87d4ca4`, `27386f8`, `05f49b8`) were confirmed to still resolve but the prose around
+them was not re-walked. A candidate `benchmarks/run_ast_parity_check.py` decision-table row for the
+Java/C#/PHP language-registration work was considered and dropped: that script's 40 parity cases cover
+only python/javascript/typescript/rust (`benchmarks/gen_corpus.py` `AST_PARITY_CASES`), so it does not
+exercise the newly-registered languages — new-language correctness is a `test_lang_registry` pytest
+concern (see `tensor-grep-validation-and-qa`), not a `benchmarks/` one.
 Re-verify before trusting a stale number:
 
 - Script inventory / artifact paths drift: `grep -n "| .* | \`benchmarks/run_" docs/benchmarks.md`
@@ -432,7 +506,9 @@ Re-verify before trusting a stale number:
   `native-frontdoor` CPU-only) should be re-checked since it is the fact most likely to have moved
   further -- no speed crossover is proven vs `rg`/`tg_cpu` regardless of publish-flag state
   (`docs/CONTRACTS.md:80-82`).
-- GPU Phase-0/Phase-1 status: `grep -n "RELEASE_NATIVE_ASSET_PROFILE\|native-frontdoor-gpu" .github/workflows/ci.yml` and re-read `docs/gpu_crossover.md`'s current top section.
+- GPU Phase-0/Phase-1 status: `grep -n "RELEASE_NATIVE_ASSET_PROFILE\|native-frontdoor-gpu" .github/workflows/ci.yml` and re-read `docs/gpu_crossover.md`'s current top section (it carries its own
+  "Current post-`<version>` GPU dogfood Read" heading, updated per release) — cross-check the sibling
+  skill `tensor-grep-gpu`'s own provenance stamp for the fuller current picture.
 - Current release tag: `grep -n "release_docs_current_tag" AGENTS.md`.
 - Token-economy harness promotion status (#72 — still uncommitted as of 2026-07-08?):
   `ls benchmarks/ | grep -i token` and `grep -n "token" docs/benchmarks.md` (expect no hits until #72 lands).

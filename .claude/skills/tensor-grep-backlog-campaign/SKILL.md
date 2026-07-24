@@ -92,7 +92,7 @@ Executive summary · evidence · skills used · tools (gaps only) · plan pointe
 
 ---
 
-## Skill library — retiring-fellow taxonomy (20 skills, `.claude/skills/`)
+## Skill library — retiring-fellow taxonomy (26 skills, `.claude/skills/`)
 
 **Ground-truth rule:** verify commands/paths against repo + `tg --help`; re-read each skill's "Provenance and maintenance" when drift suspected. **No skill routes around `tensor-grep-change-control`.**
 
@@ -132,7 +132,7 @@ Executive summary · evidence · skills used · tools (gaps only) · plan pointe
 from #20 as of the 2026-07-22 session-capture — 6 new registrations, #20-25 above).
 **Semantic-search flagship → #13**, not here. **Scale/hang campaign → #17**, not here.
 
-**Also load:** `tensor-grep` (usage), global `~/.claude/skills/` (`verify-plan-against-code`, `dogfood-the-shipped-artifact`, …). **NO `docs/skill_index.md`** — use `AGENTS.md` skills section + table above.
+**Also load:** `tensor-grep` (usage), global `~/.claude/skills/` (`verify-plan-against-code`, `dogfood-the-shipped-artifact`, …). **NO `docs/skill_index.md`** — use `AGENTS.md` skills section + table above. **`.claude/skill_rules.json`** is a separate, harness-level mechanism, not this table: project-local keyword/intent triggers consumed by the global `skill_activation_gate.py` hook to auto-fire a skill on a matching prompt. It seeds only 12 of the 26 library skills today (`debugging-playbook`, `release-and-positioning`, `build-and-env`, `gpu`, `semantic-search-campaign`, `validation-and-qa`, `workspace-dogfood`, `ledger`, `prepare`, `find-and-route`, `multi-project-search`, `enterprise-review-bundle`) and has **zero rule** for this skill or for `tensor-grep-large-repo-scale-campaign` — its silence on a topic is not evidence a skill doesn't apply; the table above stays authoritative for manual routing.
 
 ---
 
@@ -310,7 +310,7 @@ uv run --no-sync pytest tests/<targeted>.py    # scoped locally on this desktop
 
 - **`uv run --no-sync` is mandatory** — plain `uv run` re-syncs away the `[dev]` tree-sitter tree.
 - **`ruff format --preview` is a SEPARATE gate from `ruff check`** — check-only misses format CI (#424). Never pass `--preview` to `ruff check`. Bare `ruff format` without `--preview` reverts preview style.
-- **Full pytest + Rust test/clippy matrix + benchmarks + release-asset builds → PR/main CI only** (`AGENTS.md:174` — high-memory; don't run full suite locally unless user explicitly approves).
+- **Full pytest + Rust test/clippy matrix + benchmarks + release-asset builds → PR/main CI only** (`AGENTS.md:385` — high-memory; don't run full suite locally unless user explicitly approves).
 - Rust changes: `maturin develop` + `cargo test --manifest-path rust_core/Cargo.toml`.
 
 ### Concurrent shared-checkout
@@ -350,7 +350,7 @@ worktree remove --force <path>`. Never open a PR straight from a worktree's own 
 | 1 | `SEARCH_PYTHON_PASSTHROUGH_FLAGS` | `rust_core/src/main.rs` |
 | 2 | `_TG_ONLY_SEARCH_FLAGS` | `src/tensor_grep/cli/bootstrap.py` |
 
-- `tg callers` for callables; **grep / `tg scan`** for sets/decorators/dispatch tables (`callers` cannot see them — `AGENTS.md:165`).
+- `tg callers` for callables; **grep / `tg scan`** for sets/decorators/dispatch tables (`callers` cannot see them — `AGENTS.md:412`).
 - Change a pinned contract → update its governance test in the **same PR**.
 
 ### CLI hygiene
@@ -361,7 +361,7 @@ ASCII-only CLI output (emoji → cp1252 crash). `git commit -m` backticks → ba
 
 Profiler is the oracle: `tg … --profile` on the actual slow command before designing.
 
-**IDF blast-radius (`AGENTS.md:168`):** BM25/IDF surfaces (`--rank`, agent-capsule, semantic search) are sensitive to corpus changes — adding query-adjacent terms lowers corpus-wide IDF and can silently flip rankings (invisible to call graph). Harden tie/marker detection for IDF shifts; **never relax a failing ranking test** (that masks real degradation). Tracked: capsule-hardening Task #4 (ledger B3).
+**IDF blast-radius (`AGENTS.md:379`):** BM25/IDF surfaces (`--rank`, agent-capsule, semantic search) are sensitive to corpus changes — adding query-adjacent terms lowers corpus-wide IDF and can silently flip rankings (invisible to call graph). Harden tie/marker detection for IDF shifts; **never relax a failing ranking test** (that masks real degradation). Tracked: capsule-hardening Task #4 (ledger B3).
 
 ### Dogfood
 
@@ -460,3 +460,22 @@ on a later session. Process
 receipts dated 2026-07-08 (WIP CAP, adversarial security gate, resume-from-transcript, don't-kill-
 on-staleness, harvest pattern, self-firing drain-cron) come from the same session's `session_learnings`
 ledger — treat them as durable orchestration discipline, not code facts that can be grep-verified.
+
+**Re-verified 2026-07-23 against v1.95.0** (`git cat-file blob origin/main:pyproject.toml` →
+`version = "1.95.0"`). Findings: (1) the "Skill library" heading had drifted to say **"20 skills"**
+while the table below it already listed 26 numbered rows and line 131-133 already said "#26... up
+from #20" — a stale leftover from before the 2026-07-22 table growth that nobody updated in the same
+pass; fixed the heading to **26**. (2) The skill-count table itself is unchanged and still accurate:
+`git ls-tree -r --name-only origin/main -- .claude/skills/` returns the same 27 folders (25
+`tensor-grep-*` + the bare `tensor-grep` usage row + `code-search-and-retrieval-reference`) as the
+2026-07-22/v1.93.2 count; the Java/PHP language-registry work (`#725`/`#724`, merged into v1.94.0 and
+v1.95.0) added no new skill directory. A candidate `tensor-grep-add-language` skill does **not** exist
+in the repo as of v1.95.0 — do not cite it as loadable until it actually ships as a real
+`.claude/skills/` directory. (3) Added a `.claude/skill_rules.json` pointer to the "Also load" line —
+the file exists on disk (confirmed via `git cat-file blob`) but wasn't referenced anywhere in this
+skill; it's a harness auto-trigger config, distinct from both this table and the (still-absent)
+`docs/skill_index.md`. (4) Fixed 3 stale `AGENTS.md:NNN` line citations that had drifted from unrelated
+insertions elsewhere in that file (930 lines at v1.95.0) — content at each anchor is unchanged, only
+the line number moved: the callers-blind-spot cite `:165`→`:412`, the IDF-blast-radius cite
+`:168`→`:379`, and the high-memory/full-suite cite `:174`→`:385`. Re-grep the phrase (not the number)
+before trusting any line cite into a fast-moving doc like `AGENTS.md` on a future pass.

@@ -7,7 +7,7 @@ description: Use when searching across a multi-project workspace root (many sibl
 
 Use this when the cwd is a **workspace parent** (e.g. `/mnt/c/dev/projects`) containing many unrelated repos, not a single git root.
 
-Verified against **tg 1.93.2** (2026-07-22; prior full dogfood 2026-07-21 WSL sweep at v1.91.0).
+Verified against **tg 1.95.0** (2026-07-24; prior full dogfood 2026-07-21 WSL sweep at v1.91.0).
 
 ## Do this
 
@@ -21,7 +21,7 @@ tg search PATTERN . --glob "*.js" --max-depth 3 --json
 tg search PATTERN my-repo --rank --json
 tg find "intent phrase" my-repo/src --deadline 20 --json
 tg orient my-repo --ignore "node_modules/**" --json
-tg orient . --ignore "node_modules/**" --json   # works (~55s on 1.91.0); slower than per-repo
+tg orient . --ignore "node_modules/**" --json   # bounded via scan_limit(2000)+centrality (~4.9s on a 300k+-file workspace); still prefer per-repo for a repo-focused capsule
 tg agent my-repo/src "task" --json              # preferred (~16s PASS)
 tg agent my-repo "task" --deadline 20 --json    # partial capsule OK; honor ask_user_before_editing
 # Do NOT rely on bare `tg agent my-repo` default 60s cold bound on WSL (TIMEOUT empty @75s)

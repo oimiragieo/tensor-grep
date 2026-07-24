@@ -23,7 +23,8 @@ description: >
 A decision-gated runbook for building the **APPROVED** local hybrid semantic search
 layer: **BM25 (lexical) + a CPU dense-embedding leg, fused with Reciprocal Rank
 Fusion (RRF), 100% local, no API key, no GPU.** This is roadmap item #1
-(`AGENTS.md:232`) — the #1 validated user ask and the biggest competitive gap.
+(`AGENTS.md:561-562`, re-verified 2026-07-24 against v1.96.0) — the #1 validated user
+ask and the biggest competitive gap.
 
 This skill is the campaign map. It tells you what already exists, what you are
 building, the exact commands + expected numbers at each gate, the wrong paths that
@@ -37,19 +38,25 @@ flag-flip** (see Phase 5).
 > `DenseUnavailableError`/`BackendExecutionError` fail-closed contract exactly as §6
 > specifies) and `src/tensor_grep/core/retrieval_fusion.py`
 > (`reciprocal_rank_fusion(rankings, k=DEFAULT_K=60)` — matches §3/§5 exactly), wired
-> as `tg search --semantic` (`main.py` typer option, default `False`; bootstrap front
-> door at `bootstrap.py:44,413`) gated on the optional `semantic` extra
-> (`pyproject.toml:467`, `model2vec>=0.5`+`numpy>=1.26`). **Sections 1-2 below still
+> as `tg search --semantic` (`main.py:7141` typer option, default `False`; bootstrap
+> front doors at `bootstrap.py:70` [`_TG_ONLY_SEARCH_FLAGS`, keeps it off the
+> rg-passthrough] and `bootstrap.py:478` [`_can_delegate_to_native_tg_search`'s
+> `unsupported_flags`, keeps it off native-Rust delegation]) gated on the optional
+> `semantic` extra (`pyproject.toml:606`, `model2vec>=0.5`+`numpy>=1.26`; all four
+> citations re-verified 2026-07-24 against v1.96.0). **Sections 1-2 below still
 > describe the PRE-BUILD state and are now WRONG on the "does not exist yet" claims —
 > read them as historical design intent, not current fact.** No `tg index` command
 > was added (the persisted-index building blocks in `semantic_index.py` remain
-> unwired, per the original §1 note). **Not yet re-verified: whether Phase 4's
-> promotion gate (RRF-hybrid beats BM25-only on a real corpus + editor-plane latency)
-> was actually measured before shipping, or whether `--semantic` graduated past
-> default-OFF** — re-run `grep -n "retrieval_dense\|retrieval_fusion\|--semantic"
-> AGENTS.md docs/PAPER.md` and check for a promotion PR before treating this as fully
-> closed-out; if you are extending it further (chunking, a `tg index` command, a
-> default-flip), Phases 4-5 below are still the right runbook.
+> unwired, per the original §1 note). **RESOLVED (2026-07-24, re-verified against
+> v1.96.0): `--semantic` has NOT graduated past default-OFF** —
+> `SearchConfig.semantic_rank: bool = False` (`config.py:188`) and AGENTS.md's own
+> Roadmap Sequencing section still describes the shipped win as "default-OFF"
+> (`AGENTS.md:561-562`). **Still not re-verified: whether Phase 4's promotion gate
+> (RRF-hybrid beats BM25-only on a real corpus + editor-plane latency) was actually
+> measured before the ORIGINAL ship** — that is a historical-PR question this pass did
+> not chase down; if you need it, check the `--semantic` flag's introducing PR for
+> attached benchmark evidence. If you are extending this further (chunking, a
+> `tg index` command, a default-flip), Phases 4-5 below are still the right runbook.
 >
 > **Two further opt-in refinements SHIPPED since (both default-OFF, additive):**
 > `TG_CHUNKER=structural` (PR #443, `9015238`, shipped v1.47.0) -- cAST AST-shaped
@@ -79,9 +86,15 @@ flag-flip** (see Phase 5).
 > `bm25` by **+0.195 ndcg@10 / +0.30 recall@10**, bidirectional-oracle-validated
 > (internal; public numbers stay CEO-gated #72). Two further pieces are STILL
 > evidence-gated, not shipped-as-default: (1) **optional MaxSim late rerank**
-> (`TG_LATE_RERANK`) stays OFF — the gate-run shows it regressing vs plain BM25, but
-> that is entangled with a known harness gap (`retrieval_late.py:328-333`'s doc-role
-> encoder is not query/doc role-aware yet), NOT a verdict on MaxSim itself; (2) the
+> (`TG_LATE_RERANK`) stays OFF — the original gate-run showed it regressing vs plain
+> BM25, entangled with a harness gap (`retrieval_late.py:328-333`'s `build_late_encoder`
+> was wired with a single DOCUMENT-role encoder for both roles). **That specific gap was
+> FIXED since (#189 Item 1, "role-aware query encoding", re-verified 2026-07-24 against
+> v1.96.0): `load_late_reranker` now wires a QUERY-role encoder
+> (`build_late_encoder(model, is_query=True)`) separately from the DOCUMENT-role
+> encoder.** Whether a fresh gate-run now shows MaxSim beating or still trailing plain
+> BM25 is UNVERIFIED by this pass — re-run the `tg find` gate before trusting either
+> the old regression verdict or assuming it now passes; (2) the
 > `TG_FIND_DENSE_WEIGHT` query-adaptive knob (see `tensor-grep-config-and-flags`) is
 > default-OFF (`1.0` = byte-identical no-op) with real evidence in hand (a 1:5
 > bm25:dense weight lifts NL ndcg@10 by +0.14 with zero per-category regression) — the
@@ -168,15 +181,15 @@ of v1.17.25.
 | `src/tensor_grep/core/retrieval_lexical.py` | Tokenizer + bare overlap counter | `split_terms()` is camelCase/underscore/hyphen aware, lowercased. This is the shared tokenizer — the dense leg MUST tokenize identically or scores diverge. |
 | `src/tensor_grep/core/retrieval_bm25.py` | Okapi BM25 over chunks | `Bm25Index`, `k1=1.5`, `b=0.75`, IDF with +1 smoothing (non-negative weights). Dedupes query terms so a repeated token isn't double-counted. Returns `[(chunk_index, score)]`, zero-score chunks excluded, ties break by chunk index (deterministic). |
 | `src/tensor_grep/core/reranker.py` | The LIVE `tg search --rank` path | `rerank_by_bm25(result, query, file_paths)` re-orders matches by the best BM25 score of the chunk containing each match; stable sort (ties keep grep order); non-scoring matches sink. Builds the BM25 index **in memory every call** over just the matched files — no persisted index. |
-| `src/tensor_grep/core/semantic_index.py` | Persisted chunk-BM25 index building blocks | `build_and_save` / `load_or_warn` under `.tg_semantic_index/` (env `TG_SEMANTIC_INDEX_DIR`), **SEPARATE** from the Rust TGI v3 `.tg_index` (trigram). `INDEX_VERSION=1`. Stale check = SHA-256 fingerprint over sorted paths + mtimes → on mismatch, warn to stderr + return `None` → in-memory fallback. **NOT wired to the CLI — there is no `tg index` command yet.** |
+| `src/tensor_grep/core/semantic_index.py` | Persisted chunk-BM25 index building blocks | `build_and_save` / `load_or_warn` under `.tg_semantic_index/` (env `TG_SEMANTIC_INDEX_DIR`), **SEPARATE** from the Rust TGI v3 `.tg_index` (trigram). `INDEX_VERSION=2` (re-verified 2026-07-24 against v1.96.0; bumped from 1 when the structural chunker folded its mode into the cache key, per the "Two further opt-in refinements" note above). Stale check = SHA-256 fingerprint over sorted paths + mtimes → on mismatch, warn to stderr + return `None` → in-memory fallback. **NOT wired to the CLI — there is no `tg index` command yet (still confirmed absent).** |
 | `tg install-dense` (CLI command, v1.91.0) | One-shot dense-leg setup | Installs the `semantic` extra (`model2vec`+`numpy`, torch-free) via the same `uv tool → uv pip → pip` cascade `tg upgrade` uses, then fetches the checksum-pinned `potion-code-16M` model; fails closed (non-zero exit, no partial model directory) on any pip/network/checksum failure — never a silent half-installed state. Every dense-absent hint across the CLI (`tg search --semantic`, `tg find`'s `rank_fallback_reason`) now leads with `tg install-dense` (v1.93.0/#705) instead of a bare "pip install the extra" instruction. |
 | `src/tensor_grep/core/retrieval_scoring.py` | Metrics | `recall_at_k`, `precision_at_k`, `mean_reciprocal_rank_at_k`, `ndcg_at_k`, `f1_score`, `RetrievalMetrics`. These are the promotion yardsticks — use them, don't invent new ones. |
 
 **How `--rank` is wired (verify before changing):**
-- Flag: `--rank` (alias `--bm25`), default OFF. `SearchConfig.rank_bm25 = False` (`config.py:181-183`). The dense leg is described there as "a separate gated flag."
-- It is a **TG-only** search flag: `bootstrap.py::_TG_ONLY_SEARCH_FLAGS` (`--rank` line 42, `--bm25` line 43) — the bootstrap front door intercepts it and does NOT forward it to ripgrep. This is one of the two flag front doors; see `tensor-grep-config-and-flags`.
-- Setting `--rank` **leaves the ripgrep passthrough fast-path**: the `_can_passthrough_rg()` condition includes `and not config.rank_bm25` (`src/tensor_grep/cli/main.py:3883`, re-verified 2026-07-05), so the request runs the tg engine and results are re-ordered right after match aggregation — the `if config.rank_bm25 and all_results.matches:` guard through the `rerank_by_bm25(...)` call at `main.py:6535-6538` (re-verified 2026-07-05).
-- User docs: `README.md:38` and `README.md:136-137`.
+- Flag: `--rank` (alias `--bm25`), default OFF. `SearchConfig.rank_bm25 = False` (`config.py:183`, re-verified 2026-07-24 against v1.96.0). The dense leg's own flag sits right below it: `SearchConfig.semantic_rank = False` (`config.py:188`).
+- It is a **TG-only** search flag: `bootstrap.py::_TG_ONLY_SEARCH_FLAGS` (`--rank` line 68, `--bm25` line 69, `--semantic` line 70 — re-verified 2026-07-24) — the bootstrap front door intercepts it and does NOT forward it to ripgrep. This is one of the two flag front doors; see `tensor-grep-config-and-flags`.
+- Setting `--rank` **leaves the ripgrep passthrough fast-path**: the `_can_passthrough_rg()` condition includes `and not config.rank_bm25` (`src/tensor_grep/cli/main.py:5249`, re-verified 2026-07-24 against v1.96.0; the same condition now also excludes `and not config.semantic_rank` at `main.py:5250`), so the request runs the tg engine and results are re-ordered right after match aggregation — the `elif config.rank_bm25 and all_results.matches:` guard through the `rerank_by_bm25(...)` call at `main.py:8067-8069` (re-verified 2026-07-24).
+- User docs: `README.md:38` and `README.md:147-148`.
 
 **Bottom line:** the **lexical leg (BM25) and the persisted-index building blocks
 already exist and ship default-OFF.** The campaign adds the **dense leg + RRF fusion
@@ -228,7 +241,9 @@ the finding. Route the research through `tensor-grep-research-frontier` +
 
 ### Candidate 1 (preferred): the Semble pattern
 Tree-sitter chunking + **`potion-code-16M`** Model2Vec static embeddings + BM25 + RRF
-(k=60). CPU-only, MIT. This is the reference architecture named in `AGENTS.md:230`.
+(k=60). CPU-only, MIT. This is the reference architecture named in `AGENTS.md:565`
+(re-verified 2026-07-24 against v1.96.0; the section moved to
+`AGENTS.md:525` "## Roadmap Sequencing" as the doc grew).
 
 Derivation obligations before you depend on it:
 1. **License** — confirm `potion-code-16M` (and the `model2vec` runtime) are
@@ -260,8 +275,9 @@ Ship nothing new. **This is a legitimate, non-embarrassing outcome** if the dens
 does not beat the BM25 baseline on both retrieval quality and editor-plane latency.
 "No speed/quality claim without measured numbers vs the baseline" (change-control
 gate C) cuts both ways: if the numbers aren't there, the correct move is to keep the
-shipped `--rank` baseline and record the negative result. `README.md:194` states the
-rule explicitly: extend BM25 re-ranking with semantic re-ranking **only when it
+shipped `--rank` baseline and record the negative result. `README.md:212`
+(re-verified 2026-07-24 against v1.96.0) states the rule explicitly: extend lexical
+(BM25) re-ranking with AST-shaped chunking or semantic re-ranking **only when it
 demonstrably beats the shipped `tg search --rank` baseline on both retrieval quality
 and editor-plane benchmarks.**
 
@@ -272,8 +288,8 @@ and editor-plane benchmarks.**
 | Forbidden | Why | If you're tempted |
 | --- | --- | --- |
 | **API-key / hosted embeddings** (OpenAI, Voyage, Cohere, any `*_API_KEY`) | Breaks "no API key, runs on every install, local-first." The whole point is $0, offline. | Static local model only. If a candidate needs a key or a network call at query time, it's disqualified. |
-| **GPU / CUDA dependency for the dense leg** | GPU is EXPERIMENTAL, default-OFF, and currently *slower* than CPU with no promotion-ready path (P1 kernel paused, `AGENTS.md:228-234`). A GPU-gated ranking layer would not run on the common install. | CPU static embeddings. GPU may be an *optional* future accelerator, never a requirement. |
-| **Breaking `--format rg` / `--json` / `--ndjson` semantics** | Those output contracts are the raw-grep parity surface. `--rank` is a **re-order overlay**: same matches, different order. When `--rank` is NOT set, the ripgrep passthrough fast-path (`main.py:3883`) must remain byte-for-byte. | Keep ranking strictly post-processing over an already-produced `SearchResult`. Never change match membership or the rg-shaped output when ranking is off. |
+| **GPU / CUDA dependency for the dense leg** | GPU is EXPERIMENTAL, default-OFF, and currently *slower* than CPU with no promotion-ready path (Roadmap Sequencing Phase 1, "reversible flag-flip, not yet authorized" — no crossover proven, `AGENTS.md:539-541`, re-verified 2026-07-24 against v1.96.0). A GPU-gated ranking layer would not run on the common install. | CPU static embeddings. GPU may be an *optional* future accelerator, never a requirement. |
+| **Breaking `--format rg` / `--json` / `--ndjson` semantics** | Those output contracts are the raw-grep parity surface. `--rank` is a **re-order overlay**: same matches, different order. When `--rank` is NOT set, the ripgrep passthrough fast-path (`main.py:5229`, `_can_passthrough_rg`, re-verified 2026-07-24) must remain byte-for-byte. | Keep ranking strictly post-processing over an already-produced `SearchResult`. Never change match membership or the rg-shaped output when ranking is off. |
 | **A hard new install dependency** | Every-install must keep working. | Make the dense model an optional extra; degrade to BM25-only when absent (see §6). |
 | **Shipping user-visible before the gate** | Violates experimental-until-proven (change-control gate D). | Default-OFF flag + benchmark + conscious flag-flip (Phase 5). |
 | **Eyeballing "it feels more relevant"** | Ranking surfaces silently FLIP on corpus change; the blast radius is invisible to the call graph (known weak point — flat scorer, incident #302). | Measure `recall@k` / `ndcg@k` on a real corpus. Numbers or it didn't happen. |
@@ -366,7 +382,7 @@ confirm `--rank` is actually wired in `main.py`.
 
 ### Phase 4 — Measure (the real gate)
 
-Two measurements, both required (`README.md:194`):
+Two measurements, both required (`README.md:212`, re-verified 2026-07-24):
 
 1. **Retrieval quality on a realistic corpus** (not the toy). Use
    `benchmarks/eval_late_rerank_quality.py` — the LIVE, chunker/ranking-sensitive harness (it actually
@@ -434,9 +450,9 @@ and `tensor-grep-architecture-contract`.
 ## 6. Backend Fail-Closed Contract for the dense leg
 
 The dense leg is a compute path; it is bound by `backends/base.py`
-(`BackendExecutionError`) and the `AGENTS.md:216-224` contract. The recurring
-anti-pattern to avoid: a bare `except Exception:` that silently returns empty or
-swaps engines.
+(`BackendExecutionError`) and the `AGENTS.md:496` §"Backend Fail-Closed Contract"
+contract (re-verified 2026-07-24 against v1.96.0). The recurring anti-pattern to
+avoid: a bare `except Exception:` that silently returns empty or swaps engines.
 
 - **Model missing / not installed** → this is a **legitimate degraded fallback** to
   BM25-only, but it MUST be **VISIBLE**: set a `fallback_reason` on the `SearchResult`
@@ -496,29 +512,46 @@ drifted; date-stamp any change.
   UNCHANGED against released `v1.40.2` (origin/main `8829441`) on 2026-07-05; spot-checked
   again 2026-07-08 against `v1.49.3` and found the dense/RRF leg now SHIPPED (see STATUS
   UPDATE near the top); spot-checked again 2026-07-16 against `v1.78.1` and found the
-  architecture graduated into `tg find` (see STATUS UPDATE 2 near the top); **spot-checked again
+  architecture graduated into `tg find` (see STATUS UPDATE 2 near the top); spot-checked again
   2026-07-22 against `v1.93.2` and recorded the cAST-chunking rejection + dense-int8 deferral +
   install-dense row (see STATUS UPDATE 3 near the top — this was targeted at the research-campaign
-  #251 retirements and the harness-selection correction, not a full re-walk of Phases 0-8 below).**
+  #251 retirements and the harness-selection correction, not a full re-walk of Phases 0-8 below).
+  **Spot-checked again 2026-07-24 against `v1.96.0` (origin/main `29cf59f`): deleted the
+  Provenance bullet below that directly contradicted the "Dense leg + RRF now shipped" bullet
+  (its own grep no longer produces the "expect no hits" result it claimed — 5 real hits in
+  `main.py`/`config.py`/`reranker.py`/`retrieval_dense.py`/`retrieval_fusion.py`); resolved the
+  open "has `--semantic` graduated past default-OFF" question (NO — see the STATUS UPDATE box
+  near the top); re-verified and fixed drifted `file:line` citations throughout §1/§3/§4/§6/
+  Provenance (`main.py`/`bootstrap.py`/`pyproject.toml`/`README.md`/`AGENTS.md` line numbers had
+  each drifted anywhere from ~10 to ~1500 lines since the v1.17.25-era pins — `main.py`'s
+  `_can_passthrough_rg` moved the most, `3883`→`5249`); fixed `INDEX_VERSION=1` → the
+  now-current `INDEX_VERSION=2`; and corrected a stale STATUS UPDATE 2 claim (the
+  `retrieval_late.py` doc-role-encoder harness gap it cited as blocking `TG_LATE_RERANK` was
+  fixed by #189 Item 1 since that note was written — the MaxSim verdict itself is unverified by
+  this pass). This was a targeted re-verification of THIS skill's own claims, not a full re-walk
+  of every sibling skill or every historical receipt (e.g. the 2026-07-16 `+0.195 ndcg@10`
+  gate-run number in STATUS UPDATE 2 is a dated point-in-time receipt, left as-is).
   Re-check: `grep -m1 release_docs_current_tag AGENTS.md` and `grep -m1 '"version"' npm/package.json`.
 - **Dense leg + RRF now shipped:** `ls src/tensor_grep/core/retrieval_dense.py src/tensor_grep/core/retrieval_fusion.py`;
   `grep -n "\-\-semantic" src/tensor_grep/cli/main.py src/tensor_grep/cli/bootstrap.py`;
-  `grep -n "semantic = " pyproject.toml` (the optional extra).
-- **BM25 leg + defaults:** `Read src/tensor_grep/core/retrieval_bm25.py` (k1=1.5, b=0.75),
-  `retrieval_chunker.py` (chunk_size=30, overlap=5, MAX_CHUNKS=100_000).
+  `grep -n "semantic = " pyproject.toml` (the optional extra, now at `pyproject.toml:606`).
+- **BM25 leg + defaults:** `Read src/tensor_grep/core/retrieval_bm25.py` (`DEFAULT_K1=1.5`,
+  `DEFAULT_B=0.75`, `retrieval_bm25.py:18-19`), `retrieval_chunker.py` (chunk_size=30, overlap=5,
+  `MAX_CHUNKS=100_000` at `retrieval_chunker.py:37`) — all re-verified 2026-07-24 against v1.96.0.
 - **`--rank` wiring + default-OFF:** `grep -n "rank_bm25" src/tensor_grep/core/config.py`
-  (default False), `grep -n "rerank_by_bm25\|not config.rank_bm25\|rank_bm25=rank" src/tensor_grep/cli/main.py`,
-  `grep -n "\-\-rank\|\-\-bm25" src/tensor_grep/cli/bootstrap.py` (TG-only flag front door).
-- **Dense/RRF genuinely unbuilt:** `grep -rin "model2vec\|potion\|reciprocal_rank_fusion\|StaticModel\|sentence_transformers" src/` → expect only comments/GPU words, no implementation.
+  (default False, `config.py:183`), `grep -n "rerank_by_bm25\|not config.rank_bm25\|rank_bm25=rank" src/tensor_grep/cli/main.py`,
+  `grep -n "\-\-rank\|\-\-bm25" src/tensor_grep/cli/bootstrap.py` (TG-only flag front door, now `bootstrap.py:68-69`).
 - **The gate:** `grep -n "V2_GATE_RECALL\|must beat" benchmarks/eval_bm25_quality.py` (0.60), and run
   `uv run --no-sync python benchmarks/eval_bm25_quality.py --top-k 3` (expect recall 1.000 — the floor).
-- **Governance:** roadmap item #1 `AGENTS.md` §"Roadmap Sequencing" (~line 230, Semble reference);
-  the "only when it demonstrably beats the shipped baseline on both retrieval quality
-  and editor-plane" rule `grep -n "editor-plane" README.md`; backend contract
-  `AGENTS.md` §"Backend Fail-Closed Contract".
-- **Benchmarks:** `ls benchmarks/eval_bm25_quality.py benchmarks/eval_late_rerank_quality.py benchmarks/run_editor_plane_benchmarks.py` — `run_repo_retrieval_benchmarks.py` still exists but is a static-fixture replay, not the live chunker-sensitive gate (see STATUS UPDATE 3 / Phase 4 above).
+- **Governance:** roadmap item #1 `AGENTS.md` §"Roadmap Sequencing" (heading now at
+  `AGENTS.md:525`, Semble reference at `AGENTS.md:565`, re-verified 2026-07-24); the "only when it
+  demonstrably beats the shipped baseline on both retrieval quality and editor-plane" rule
+  `grep -n "editor-plane" README.md` (now `README.md:212`); backend contract
+  `AGENTS.md` §"Backend Fail-Closed Contract" (heading now at `AGENTS.md:496`).
+- **Benchmarks:** `ls benchmarks/eval_bm25_quality.py benchmarks/eval_late_rerank_quality.py benchmarks/run_editor_plane_benchmarks.py` — `run_repo_retrieval_benchmarks.py` still exists but is a static-fixture replay, not the live chunker-sensitive gate (re-confirmed 2026-07-24: zero `chunk_file` hits in that file; see STATUS UPDATE 3 / Phase 4 above).
 - **Persisted-index building blocks (unwired):** `Read src/tensor_grep/core/semantic_index.py`
-  (env `TG_SEMANTIC_INDEX_DIR`, `.tg_semantic_index/`, INDEX_VERSION=1, no `tg index` command).
+  (env `TG_SEMANTIC_INDEX_DIR`, `.tg_semantic_index/`, `INDEX_VERSION=2` as of v1.96.0 — bumped
+  from 1 when the structural chunker landed, `semantic_index.py:34`; still no `tg index` command).
 
 **Open / candidate (not proven — do not present as fact):**
 - The exact `potion-code-16M` license, offline behavior, size, and dep footprint are

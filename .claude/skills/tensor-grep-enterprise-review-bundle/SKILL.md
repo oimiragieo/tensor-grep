@@ -5,7 +5,7 @@ description: Use when packaging tensor-grep outputs for enterprise change review
 
 # tensor-grep enterprise review bundle
 
-Verified against **tg 1.93.2** (2026-07-22).
+Verified against **tg 1.95.0** (2026-07-23).
 
 `tg review-bundle` is the enterprise packaging surface for change review. It is **not** a substitute for `tg agent` / `tg evidence emit`.
 
@@ -24,7 +24,7 @@ tg review-bundle create \
 
 tg review-bundle verify --help   # integrity / checksum verification
 tg audit-history --json          # discover known manifests
-tg audit-verify --manifest … --json
+tg audit-verify MANIFEST --json  # MANIFEST is positional, no --manifest flag
 ```
 
 ## CI gate chain (shipped #681)

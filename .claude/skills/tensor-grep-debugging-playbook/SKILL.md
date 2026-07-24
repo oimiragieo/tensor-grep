@@ -66,12 +66,13 @@ If your symptom isn't in the table below, it's probably not covered here — che
 | A test suite is green but the real binary/extension does the wrong thing (dropped flags, dead code path) | Test mocked the boundary (a monkeypatched function, a stubbed PyO3 class) instead of exercising the compiled extension or the published binary | Run the same call through the *installed* `tg` (not `CliRunner`, not a mocked backend) and check `tg doctor --json` / `HAVE_RUST` | [§6](#6-mock-green-real-dead) |
 | A fresh Python install resolves `tensor-grep` to an old version with no error | An upper-bound dependency pin (e.g. `typer<0.26`) has no release compatible with the new Python, so the resolver silently downgrades the *whole package* | `pip index versions tensor-grep` vs what actually installed; check `pyproject.toml` for `<` pins on `typer`/`click`/`pydantic` | [§7](#7-dependency-cap-silent-downgrade) |
 | Agent-capsule primary target flipped after an unrelated change (wrong file promoted to top) | The agent capsule's flat, no-IDF candidate scorer is corpus-fragile — a small corpus change can flip which candidate wins a tie. (`tg search --rank` and semantic search use a different, IDF-weighted BM25 scorer and are not known to share this bug.) | Re-run `tg agent PATH QUERY --json` before/after the change and diff `primary_target` + `ambiguity`/`ask_reasons` fields | [§8](#8-ranking-flip) |
-| A `CliRunner` test reading `capfd` starts returning empty output / `JSONDecodeError` right after a delegation, routing-gate, or `--rank`/`--sort-files`-style flag change — often only on `main`/release CI, green on the PR | The code path moved from a **delegated subprocess** (needs fd-level `capfd`) to **in-process** `typer.echo` (needs `result.stdout`), or vice versa — the test's capture fixture didn't move with it. PR CI often doesn't build the native binary, so the mismatch is invisible there. | Grep the refuse-tuple for the field you touched (`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, `src/tensor_grep/cli/main.py:1783`) — did it just start refusing (or allowing) native delegation? | [§9](#9-capture-surface-trap-capfd-vs-resultstdout) |
+| A `CliRunner` test reading `capfd` starts returning empty output / `JSONDecodeError` right after a delegation, routing-gate, or `--rank`/`--sort-files`-style flag change — often only on `main`/release CI, green on the PR | The code path moved from a **delegated subprocess** (needs fd-level `capfd`) to **in-process** `typer.echo` (needs `result.stdout`), or vice versa — the test's capture fixture didn't move with it. PR CI often doesn't build the native binary, so the mismatch is invisible there. | Grep the refuse-tuple for the field you touched (`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, `src/tensor_grep/cli/main.py:1894`) — did it just start refusing (or allowing) native delegation? | [§9](#9-capture-surface-trap-capfd-vs-resultstdout) |
 | A latency "fix" doesn't move the needle, or a reported regression can't be reproduced / doesn't match the diff | The hot path was inferred by reading code (a review/design pass) instead of measured — the real bottleneck is often a pure helper called redundantly in a hot loop, invisible from reading the "expensive-looking" function alone | Profile the **actual** slow command at realistic scale (not a toy input) and check top cumulative-time frames; Counter-wrap a suspect function to see call-count-vs-unique-input redundancy before designing a cache | [§10](#10-profile-at-scale-discipline-latency-claims) |
 | PyPI/`chore(release)` published fine, "latest `main` run green" -- but a real regression shipped anyway | The workflow run's *aggregate* status hides one late-stage job's own red conclusion -- specifically the NEEDS-gated `release-tag-smoke` job (re-runs `scripts/agent_readiness.py` against the actually-published wheel), which can stay red for releases at a time while `publish-pypi`/`publish-success-gate` keep going green | `gh run view <run-id> --json jobs` on the release run -> find the job named **`release-tag-smoke`** specifically -> read its own `conclusion`, don't infer from the run's overall status | [S11](#11-release-published-but-release-tag-smoke-stayed-red-masked-regression) |
 | `Dependency & License Audit` job is red, but your diff doesn't touch any dependency file, and it reds EVERY open PR at once | A newly-disclosed CVE/RUSTSEC advisory against an already-pinned, unmodified dependency -- the strict-on-fixable `pip-audit`/`cargo-audit` gate fails for everyone until the floor moves, not just your branch | `gh run view <run-id> --log-failed` on the `Dependency & License Audit` job -- decode pip-audit's/cargo-audit's OWN structured output for the exact package + advisory ID + fixed-version | [S12](#12-dependency--license-audit-red-on-an-untouched-dependency-newly-disclosed-cve) |
 | A shell one-liner that pipes `tg`/a probe script into `tail`/`grep`/`python -c ...` reports success (`exit 0`) even though the FIRST command in the pipe actually failed | Pipe exit-code masking: a shell pipeline's exit code is the LAST command's, not the first's | Re-run the first command alone and check its own `$?`/`$LASTEXITCODE`; or use `${PIPESTATUS[0]}` (bash) / split into two statements | [S13](#13-pipe-exit-code-masking) |
 | An automated dogfood/verdict script says PASS or FAIL, but the underlying behavior looks wrong when you inspect it directly | The scoring logic misread the JSON shape (a renamed field, a nested-vs-top-level key) — a shape misread can silently read as either a clean pass or a clean fail | Read the RAW `--json` output at least once by eye before trusting the automated verdict for a new/changed probe | [S14](#14-raw-json-before-scoring) |
+| A macOS-only CI job with a `Setup Rust` step (e.g. `test-rust-core`) fails with a network/timeout error during Rust toolchain setup — not a compile error, not something your diff touched | `rust_core/rust-toolchain.toml` pins an exact Rust version; the first `cargo` invocation with `rust_core/` as its working directory triggers an on-demand rustup fetch for that pin, and unlike the `rustup-init` bootstrap curl (`--retry 10`), rustup's own pinned-toolchain download had no retry | `gh run view <run-id> --log-failed` on the `Setup Rust` step specifically — a transient network/timeout message on the pinned-toolchain fetch, not a `rustc`/`cargo` compile error | [S15](#15-macos-rustup-pinned-toolchain-fetch-timeout-network-flake-already-mitigated) |
 
 ---
 
@@ -147,11 +148,11 @@ published). See `tensor-grep-change-control` Part 7 (C-batch) before treating a 
 
 `tg search` (both the Python bootstrap `rg`-forwarding path and the native ripgrep passthrough)
 fails fast rather than hanging: the configured ripgrep timeout defaults to **60 seconds**
-(`configured_ripgrep_timeout_seconds()`, `src/tensor_grep/cli/subprocess_policy.py:32-44`), lowered
+(`configured_ripgrep_timeout_seconds()`, `src/tensor_grep/cli/subprocess_policy.py:63-75`), lowered
 from 600s specifically because ripgrep does GB/s and a >60s search means something pathological is
 being scanned (an unexcluded huge/index directory), not a legitimately slow query. On timeout, the
 child is killed and the process exits **124** with a stderr hint to scope the search or raise the
-timeout (`src/tensor_grep/cli/bootstrap.py:789` backward-compat shim path, `836-843` the primary
+timeout (`src/tensor_grep/cli/bootstrap.py:1020` backward-compat shim path, `1063-1071` the primary
 `Popen`/`_terminate_child` path — re-verify with `grep -n "return 124" src/tensor_grep/cli/bootstrap.py`,
 line numbers drift every release).
 
@@ -173,6 +174,22 @@ root walks tg's own indices too.
 for a genuinely huge monorepo — do not raise it to paper over an unscoped-walk problem. A
 trigram-hybrid index is the tracked structural fix; own-dir excludes alone were tried and did not
 fully resolve full-tree speed. Full env-var reference: `tensor-grep-config-and-flags`.
+
+**Related, known limitation — `tg inventory --deadline` on a pathological workspace-union tree:**
+`tg inventory --deadline` is a *different* command from `tg search` but shares the same root-cause
+class as the hang above (an unbounded directory read), and normally bounds cleanly per project
+(truncates at N files, stamps `truncation_cause="deadline"`,
+`src/tensor_grep/cli/main.py:8404`/`:8420`). On a PATHOLOGICAL **workspace-union** tree — many
+unrelated repos flattened under one huge root, not a single normal project — it can still blow its
+deadline: the shared walker `_iter_repo_files` (`src/tensor_grep/cli/repo_map.py:987`) reads an
+entire huge directory's entries in one non-lazy `list(os.scandir(normalized_root))` call
+(`src/tensor_grep/cli/repo_map.py:1009`) before its own per-file deadline check gets a chance to
+run, so one abnormally large subdirectory can exceed the deadline before the mid-walk check fires
+even once. This is a KNOWN, accepted, low-priority edge (rare shape; verified against a real
+300k+-file multi-project workspace) — not worth a load-bearing lazy-`scandir` rewrite. Don't
+re-diagnose it as a new bug; if the SAME deadline-blown symptom shows up on a normal single-project
+repo (not a workspace union), that IS a regression and should be treated as a new incident, not
+this one.
 
 ## 4. Silent-empty result (fail-closed contract)
 
@@ -229,8 +246,8 @@ Run the same probe through any code path that builds subprocess argv from a
 pattern/path/replacement value (MCP tool handlers, rewrite commands) — a value beginning with `-`
 should error or be treated as data, never silently change tg's own behavior.
 
-**Fixed reference implementation** (`src/tensor_grep/cli/mcp_server.py:790`
-`_build_rewrite_command` / `:841` `_build_index_search_command` — re-verify with
+**Fixed reference implementation** (`src/tensor_grep/cli/mcp_server.py:1259`
+`_build_rewrite_command` / `:1310` `_build_index_search_command` — re-verify with
 `grep -n "def _build_rewrite_command\|def _build_index_search_command" src/tensor_grep/cli/mcp_server.py`):
 a `--` end-of-options sentinel is inserted before the user-controlled `pattern`/`path` positionals,
 with an inline comment explaining why.
@@ -239,7 +256,7 @@ with an inline comment explaining why.
 `rust_core/src/rg_passthrough.rs` appending `paths` directly with no `--` sentinel (a directory
 literally named `-l` parsed by `rg` as the `-l`/files-with-matches flag instead of a path) was fixed
 in `#326` (v1.17.26), silently regressed by a later refactor, then restored in `#370` (v1.28.1) as
-the extracted, unit-tested `ripgrep_operand_args` helper (`rust_core/src/rg_passthrough.rs:401-421`)
+the extracted, unit-tested `ripgrep_operand_args` helper (`rust_core/src/rg_passthrough.rs:581-600`)
 — the sentinel is now pushed unconditionally before the path loop whenever `!args.paths.is_empty()`.
 Patterns going through `-e` were never affected (`-e` consumes the next token as its value regardless
 of a leading `-`); only bare path positionals were ever at risk, and that risk is now closed. Verify
@@ -291,13 +308,13 @@ Python if no release in that range is compatible with it — `pip`/`uv` resolve 
 down to a stale version with **no error**, because `requires-python>=X` has no upper bound to catch
 the mismatch. Receipt: on Python 3.14, `uv tool install tensor-grep` with an unsatisfiable
 `typer<0.25` range resolved to a stale `1.13.35` instead of erroring. Current pin, chosen to thread
-both constraints (`pyproject.toml:327-333`):
+both constraints (`pyproject.toml:560-566`):
 
 ```
 typer>=0.12,<0.26
 ```
 
-The comment there (`pyproject.toml:327-329`) explains why the cap can't simply be dropped: typer
+The comment there (`pyproject.toml:560-565`) explains why the cap can't simply be dropped: typer
 0.26 removed `click.testing.CliRunner` inheritance, breaking `CliRunner.isolated_filesystem()`
 which ~49 tests rely on.
 
@@ -315,9 +332,9 @@ If a fresh install on a new Python resolves to an old `tg --version`, do not ass
 ## 8. Ranking flip
 
 The agent capsule's **primary-target candidate selection** (`score_term_overlap`,
-`src/tensor_grep/core/retrieval_lexical.py:15`, called from `repo_map.py:5946` inside
-`_score_file_source_terms`, one of the family of scoring helpers around `repo_map.py:5923`
-(`_score_symbol`) / `:5934` (`_score_import_entry`) / `:5941` (`_score_file_source_terms`) that feed
+`src/tensor_grep/core/retrieval_lexical.py:15`, called from `repo_map.py:7737` inside
+`_score_file_source_terms`, one of the family of scoring helpers around `repo_map.py:7698`
+(`_score_symbol`) / `:7725` (`_score_import_entry`) / `:7732` (`_score_file_source_terms`) that feed
 the capsule's `primary_target` selection) is a **flat, no-IDF** set-membership scorer plus a hard top-N candidate
 cap — an acknowledged, not-yet-fixed weak point. A small, unrelated corpus change can flip which
 candidate wins a near-tie, and that flip is invisible to the call graph (nothing "broke" in the
@@ -349,7 +366,7 @@ tg agent PATH QUERY --json > after.json                # on the post-change comm
 
 For the agent capsule specifically, check the `ambiguity` / `ask_reasons` fields
 (`src/tensor_grep/cli/agent_capsule.py`) rather than only the `primary_target` — a **degrade-to-ask
-safety floor** (`agent_capsule.py:2027`, the `# Degrade-to-ask safety floor:` comment — re-verify
+safety floor** (`agent_capsule.py:3224`, the `# Degrade-to-ask safety floor:` comment — re-verify
 with `grep -n "Degrade-to-ask safety floor" src/tensor_grep/cli/agent_capsule.py`) forces `ask_user`-style output whenever ranking
 buried the real implementation behind an unrequested marker/no-op helper, so a correctly-behaving
 flip should surface as `ambiguity`/`ask_user_before_editing` metadata, not a silent wrong answer.
@@ -380,8 +397,8 @@ output," not "you're reading the wrong stream." It is the same shape as the fail
 silent-empty trap in §4, one layer up in the test harness instead of the backend.
 
 **Real incident (round-4, commit `ab717a1`, #343 as a follow-up to #342, v1.19.0):** #342 added
-`rank_bm25`/`sort_files` to `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`
-(`src/tensor_grep/cli/main.py:1834-1835`) so `tg search --rank` correctly **refuses** native
+`rank_bm25`/`sort_files` to `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` (now at
+`src/tensor_grep/cli/main.py:1973-1974`, inside the tuple starting `:1894`) so `tg search --rank` correctly **refuses** native
 delegation and the BM25 rerank runs in-process instead of via a delegated subprocess.
 `test_search_rank_reorders_by_bm25` (`tests/integration/test_bm25_search_flag.py`) had been written
 against the *old* delegated behavior and read `capfd.readouterr().out`, which had only ever
@@ -399,7 +416,7 @@ instead of `capfd.readouterr().out`; the now-unused `pytest.CaptureFixture` impo
 **Discriminating experiment:** if a `CliRunner` test that reads `capfd` starts failing right after a
 delegation/routing/gating change, first ask "does this flag/config still delegate to a real
 subprocess after my change?" — grep the refuse-tuple
-(`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, `src/tensor_grep/cli/main.py:1883`) for the field
+(`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, `src/tensor_grep/cli/main.py:1894`) for the field
 you touched. If it now refuses delegation (or newly allows it), the correct capture fixture flips
 too.
 
@@ -428,7 +445,7 @@ latency-diagnosis pass on `tg blast-radius` identified AST parsing (`compile()`)
 path by reading the code, and reasoned toward caching it. Profiling the *actual* `tg blast-radius`
 call at depth 2 on this repo showed `compile()` was only **3.6% of runtime** — caching it would
 have saved roughly 3%. The real hotspot, invisible from code review, was `_module_aliases_for_path`
-(`src/tensor_grep/cli/repo_map.py:5178`), called **1,431,341 times** for ~1,000 unique path inputs
+(`src/tensor_grep/cli/repo_map.py:8197`), called **1,431,341 times** for ~1,000 unique path inputs
 from the reverse-import-graph / PageRank loops — 6.1s self / 38s cumulative of a 62s run. The commit
 message states this directly: "this corrects the regression-hunt synthesis, which guessed AST-parse
 caching (would have saved ~3%) — the real hotspot only showed under measurement."
@@ -439,6 +456,39 @@ separately investigated by profiling `tg callers` directly: the code path was by
 the two versions being compared (`v1.17.31`→`HEAD`), and a live `cProfile` capture had **zero
 `ripgrep_backend` frames** on the call path the regression theory required. Conclusion: noise, not a
 regression. Don't design a fix for a slowdown you have not reproduced under a profiler.
+
+**Incident 3 — a warm end-to-end dogfood run hid a real ~54% win (commit `9a2a01c`, PR #719,
+v1.93.9):** `_python_imports_and_symbols` (`src/tensor_grep/cli/repo_map.py:1921`) was merged from
+three separate `ast.walk(tree)` passes (imports, symbols, dynamic-imports) into one
+dispatch-by-node-type pass — the same general family of redundant-work-elimination fix as the
+"Technique" below (there it's redundant *calls*; here it's redundant *tree walks* over the same
+parsed data), proved byte-identical because the AST node subclasses it dispatches on are
+mutually-exclusive (every node still lands in exactly one branch) and output order is unchanged —
+the trailing `sorted(...)`/`.sort(...)` calls already normalize it regardless of append order.
+Measuring the fix through a **warm** `tg orient` dogfood run (repeat calls against files whose parse
+result was already cached) read as **-36%** — apparently a regression, not a win. The warm run never exercised
+the change: on a cache hit the merged-vs-unmerged `ast.walk` code doesn't run at all, so timing the
+optimization end-to-end through a warm path measures the cache, not the fix. Isolating the function
+directly — a fresh process (cold cache), a single pass over distinct real files, old-vs-new — showed
+it is genuinely **~54% faster** (961ms→446ms on the probe corpus), verified byte-identical by a
+monkeypatched-`ast.walk`-call-count assertion plus an old-vs-new diff over a
+static/nested/relative-imports/classes/sync+async/dynamic-import corpus. The companion
+validation-scan optimization (`_framework_test_pattern_bonus`,
+`src/tensor_grep/cli/repo_map.py:10616`, commit `d2c1266`, PR #723, v1.93.10 — a textual pre-check
+that skips an expensive per-candidate AST parse when nothing in `expanded_terms` could possibly
+score) shows the identical shape: **~68% faster** (3657ms→1172ms) in isolation, invisible from a
+warm end-to-end read.
+
+**Rule (microbench-on-the-shipped-wheel):** never validate — or reject — a cold-path optimization
+by timing a warm end-to-end dogfood command; a warm run's cache hits can make a real win invisible
+or a real regression look like a wash. Instead, microbenchmark the target function directly,
+isolated, in a **fresh process** (cold cache) against the **published wheel**
+(`uvx --from tensor-grep==<ver>`), a single pass over **distinct** inputs so no run benefits from an
+earlier run's warm cache, old-vs-new, and assert output-identity (not just wall-time) — e.g.
+`total == total` on both sides proves the speedup is real AND the change is byte-identical, not just
+fast. Re-verify with
+`grep -n "def _python_imports_and_symbols\|def _framework_test_pattern_bonus" src/tensor_grep/cli/repo_map.py`
+before trusting these line numbers on a later version.
 
 **Technique that found the real hotspot:** before designing a cache or optimization for a suspect
 function, wrap or monkeypatch it with a call counter keyed by its argument(s)
@@ -454,7 +504,7 @@ instrument.
 **Caching correctness check — don't cache blind:** before adding `@lru_cache` to a suspect
 function, confirm it is a **pure function of its arguments** (no file I/O, no external state). This
 repo already documents the opposite pattern in the same file: `_mtime_aware_cache`
-(`src/tensor_grep/cli/repo_map.py:26-36`) exists specifically because a plain `@lru_cache` on a
+(`src/tensor_grep/cli/repo_map.py:99-107`) exists specifically because a plain `@lru_cache` on a
 path-keyed function that reads *file content* returns **stale results** in the long-lived daemon
 after the file is edited. `_module_aliases_for_path` is safe with a plain `@lru_cache` only because
 it is a pure string transform of the path itself — it never touches the filesystem. If the function
@@ -611,6 +661,40 @@ actionable finding, rather than a guess either way.
 
 ---
 
+## 15. macOS rustup pinned-toolchain fetch timeout (network flake, already mitigated)
+
+**Symptom:** the `test-rust-core` matrix job (or any job whose `Setup Rust` step installs the
+`rust_core/rust-toolchain.toml`-pinned toolchain) fails on **macOS specifically** with a
+network/timeout error during Rust toolchain setup — not a compile error, and not something your
+diff touched.
+
+**Root cause:** `rust_core/rust-toolchain.toml` pins an exact Rust version (currently `1.96.0`), so
+the first `cargo`/`rustc` invocation with `rust_core/` as its working directory triggers an
+**on-demand** rustup toolchain fetch for that pin. The `rustup-init` bootstrap curl already retries
+(`--proto '=https' --tlsv1.2 --retry 10 --retry-connrefused ...`), but rustup's own pinned-toolchain
+download did not — a transient macOS-runner network timeout on that fetch red-failed CI on two
+consecutive PRs (#720, #721).
+
+**Fix (already shipped, #722):** the `test-rust-core` matrix job's `Setup Rust` step now pre-fetches
+the pin inside a 3x retry loop (`cd rust_core && for attempt in 1 2 3; do cargo --version && break;
+...; sleep 15; done`) so the later `cargo test` step never hits the un-retried path
+(`.github/workflows/ci.yml:449-459` — re-verify with
+`grep -n "pinned-toolchain fetch" .github/workflows/ci.yml`).
+
+**Discriminating experiment:**
+
+```bash
+gh run view <run-id> --json jobs             # find "test-rust-core (macos-latest, ...)"
+gh run view <run-id> --log-failed            # a network/timeout message inside the "Setup Rust"
+                                              # step specifically, not a rustc/cargo compile error
+```
+
+**Rule:** if you see this signature on a run predating #722, or on a *different* job/step that also
+runs `cargo` against the same pinned toolchain without going through this retry loop, extend the
+same pre-fetch-with-retry pattern rather than re-diagnosing it as a new class of flake.
+
+---
+
 ## Provenance and maintenance
 
 Facts here were originally verified **2026-07-02, tensor-grep v1.17.25** for §1–§8, and
@@ -621,9 +705,16 @@ line number; **2026-07-16 against v1.78.1** added §12 (dependency-CVE-audit tri
 `tg find rank_fallback_reason` example; **2026-07-22 against v1.93.2** extended §2 with the
 push-race-vs-`needs:`-flake-vs-batch-merge triage (three distinct shapes, three different recovery
 paths), refreshed the §9 line citation to `main.py:1883`, and added §13 (pipe exit-code masking) and
-§14 (raw-JSON-before-scoring), both from the 2026-07-22 closing-dogfood pass. Re-verify anything
-below before trusting it on a later version — this table drifts whenever the cited line numbers,
-defaults, or contracts change.
+§14 (raw-JSON-before-scoring), both from the 2026-07-22 closing-dogfood pass; **2026-07-23 against
+v1.95.0** re-verified and re-anchored every hardcoded file:line citation in §3/§5/§7/§8/§9/§10 (most
+had drifted 200-3,000 lines — `repo_map.py`'s citations moved the most, after the Java/C#/PHP
+language-support campaign landed a large amount of new code near its scoring/caching helpers),
+added the §3 `tg inventory --deadline` pathological-workspace-union-tree scandir edge (known,
+low-priority, not a regression — `repo_map.py:987`/`:1009`), added §10 Incident 3 (a warm
+`tg orient` dogfood run hid PR #719's real ~54% win, plus the microbench-on-the-shipped-wheel
+discipline that catches it), and added §15 (macOS rustup pinned-toolchain fetch timeout, already
+mitigated by #722). Re-verify anything below before trusting it on a later version — this table
+drifts whenever the cited line numbers, defaults, or contracts change.
 
 Re-verification commands:
 
@@ -650,6 +741,9 @@ grep -n "typer>=" pyproject.toml
 # degrade-to-ask safety floor still present (§8)
 grep -n "Degrade-to-ask safety floor" src/tensor_grep/cli/agent_capsule.py
 
+# score_symbol / score_import_entry / score_file_source_terms still current (§8)
+grep -n "def _score_symbol\|def _score_import_entry\|def _score_file_source_terms" src/tensor_grep/cli/repo_map.py
+
 # registration-completeness checker location unchanged
 grep -n "def check_group_smart" src/tensor_grep/core/registration_check.py
 
@@ -665,6 +759,15 @@ grep -n '"sort_files"\|"rank_bm25"' src/tensor_grep/cli/main.py
 # _module_aliases_for_path still memoized + frozenset-returning (§10)
 grep -n "^@lru_cache(maxsize=16384)" src/tensor_grep/cli/repo_map.py
 grep -n "^def _module_aliases_for_path" src/tensor_grep/cli/repo_map.py
+
+# Incident-3 optimization functions still present (§10)
+grep -n "def _python_imports_and_symbols\|def _framework_test_pattern_bonus" src/tensor_grep/cli/repo_map.py
+
+# tg inventory --deadline scandir edge still at the same shared walker (§3)
+grep -n "def _iter_repo_files" src/tensor_grep/cli/repo_map.py
+
+# rustup pinned-toolchain retry loop still present (§15)
+grep -n "pinned-toolchain fetch" .github/workflows/ci.yml
 ```
 
 If any of these greps come back empty or materially different, the corresponding row above is
