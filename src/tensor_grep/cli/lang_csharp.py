@@ -234,6 +234,54 @@ def csharp_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, An
     return imports, symbols
 
 
+# #74-follow-up: `tg imports` foundational-tier extractor (mirrors repo_map.py's
+# `_java_imports_with_lines` shape/role exactly). One row per `using_directive` STATEMENT with
+# its 1-based line number -- reuses `_csharp_using_directive_target` exactly like
+# `csharp_imports_and_symbols` above, so alias/static/global directives all record the namespace
+# actually being imported, never the local alias, just line-tagged instead of deduped into a
+# flat list.
+#
+# Deliberately NOT resolved to a target file: repo_map.py's `_resolve_raw_import_entry` "csharp"
+# branch keeps every row unresolved, because C# namespace-to-file resolution needs a `.csproj`/
+# assembly-reference map that does not exist yet (this module's `LanguageSpec` registers both
+# `import_update_target` and `prime_repo_context` as `None` -- see repo_map.py), so a real path
+# is not guessable without fabricating one.
+def csharp_imports_with_lines(path: Path) -> list[dict[str, Any]]:
+    if path.suffix != ".cs":
+        return []
+
+    parser = _csharp_parser()
+    if parser is None:
+        return []
+
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+
+    source_bytes = source.encode("utf-8")
+    tree = parser.parse(source_bytes)
+
+    entries: list[dict[str, Any]] = []
+
+    def _walk(root: Any) -> None:
+        # Explicit-stack DFS -- see the identical comment on csharp_imports_and_symbols's `_walk`.
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            if node.type == "using_directive":
+                target_text = _csharp_using_directive_target(node, source_bytes)
+                if target_text is not None:
+                    entries.append({
+                        "module": target_text,
+                        "line": node.start_point[0] + 1,
+                    })
+            stack.extend(reversed(node.children))
+
+    _walk(tree.root_node)
+    return entries
+
+
 def csharp_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
     """Full source text of every declaration matching *symbol* (mirrors the Rust/JS-TS/Go
     ``*_parser_symbol_sources`` shape for the ``tg source`` command)."""

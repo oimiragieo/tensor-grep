@@ -224,6 +224,60 @@ def php_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]
     return imports, symbols
 
 
+# #74-follow-up: `tg imports` foundational-tier extractor (mirrors repo_map.py's
+# `_java_imports_with_lines` shape/role exactly). One row per `namespace_use_clause` STATEMENT
+# with its 1-based line number -- same extraction source/gaps as `php_imports_and_symbols` above
+# (only a clause with a `qualified_name` child is recorded; see the module docstring's "KNOWN
+# EXTRACTION GAPS" note for the group-use / `use function` / `use const` forms this does not
+# cover), just line-tagged instead of deduped into a flat list.
+#
+# Deliberately NOT resolved to a target file: repo_map.py's `_resolve_raw_import_entry` "php"
+# branch keeps every row unresolved, because PHP namespace-to-file resolution needs a PSR-4/
+# composer.json autoload-map reader that does not exist yet (this module's `LanguageSpec`
+# registers both `import_update_target` and `prime_repo_context` as `None` -- see repo_map.py),
+# so a real path is not guessable without fabricating one.
+def php_imports_with_lines(path: Path) -> list[dict[str, Any]]:
+    if path.suffix != ".php":
+        return []
+
+    parser = _php_parser()
+    if parser is None:
+        return []
+
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+
+    source_bytes = source.encode("utf-8")
+    tree = parser.parse(source_bytes)
+
+    def _node_text(node: Any) -> str:
+        return _tree_sitter_node_text(source_bytes, node)
+
+    entries: list[dict[str, Any]] = []
+
+    def _walk(root: Any) -> None:
+        # Explicit-stack DFS -- see the identical comment on php_imports_and_symbols's `_walk`.
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            if node.type == "namespace_use_clause":
+                qualified_name_node = next(
+                    (child for child in node.children if child.type == "qualified_name"),
+                    None,
+                )
+                if qualified_name_node is not None:
+                    entries.append({
+                        "module": _node_text(qualified_name_node),
+                        "line": node.start_point[0] + 1,
+                    })
+            stack.extend(reversed(node.children))
+
+    _walk(tree.root_node)
+    return entries
+
+
 def php_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
     """Full source text of every class/interface/trait/enum/function/method matching *symbol*
     (mirrors the Go/Rust/JS-TS ``*_parser_symbol_sources`` shape for the ``tg source``

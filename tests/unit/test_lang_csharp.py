@@ -245,6 +245,62 @@ def test_build_repo_map_surfaces_csharp_imports_and_symbols(tmp_path: Path) -> N
 
 
 # ---------------------------------------------------------------------------
+# #74-follow-up: tg imports (csharp_imports_with_lines / build_file_imports) -- foundational
+# tier, mirrors test_lang_java.py's test_file_imports_returns_java_import_statements_with_lines.
+# ---------------------------------------------------------------------------
+
+
+def test_csharp_imports_with_lines_extracts_using_directives_with_lines(tmp_path: Path) -> None:
+    cs_file = _write_csharp_fixture(tmp_path)
+
+    entries = lang_csharp.csharp_imports_with_lines(cs_file)
+
+    modules = {entry["module"]: entry["line"] for entry in entries}
+    assert modules == {
+        "System": 1,
+        "System.Collections.Generic": 2,
+        # the ALIASED target, never the alias "MyAlias" itself (mirrors
+        # csharp_imports_and_symbols's own extraction).
+        "System.Text.StringBuilder": 3,
+    }
+
+
+def test_csharp_imports_with_lines_non_cs_suffix_returns_empty(tmp_path: Path) -> None:
+    not_cs = tmp_path / "Widget.txt"
+    not_cs.write_text("using System;\n", encoding="utf-8")
+
+    assert lang_csharp.csharp_imports_with_lines(not_cs) == []
+
+
+def test_csharp_imports_with_lines_grammar_absent_returns_empty(
+    tmp_path: Path, monkeypatch
+) -> None:
+    cs_file = _write_csharp_fixture(tmp_path)
+    monkeypatch.setattr(lang_csharp, "_csharp_parser", lambda: None)
+
+    assert lang_csharp.csharp_imports_with_lines(cs_file) == []
+
+
+def test_file_imports_returns_csharp_using_directives_with_lines(tmp_path: Path) -> None:
+    cs_file = _write_csharp_fixture(tmp_path)
+
+    payload = repo_map.build_file_imports(cs_file)
+
+    assert payload["result_incomplete"] is False
+    modules = {entry["module"]: entry["line"] for entry in payload["imports"]}
+    assert modules == {
+        "System": 1,
+        "System.Collections.Generic": 2,
+        "System.Text.StringBuilder": 3,
+    }
+    # Foundational tier: raw import statements are real, but resolving them to a specific file
+    # (C# needs a .csproj/assembly-reference map that does not exist yet) is deferred -- every
+    # row must be unresolved and never presumed external, matching the fail-closed contract.
+    assert all(entry["resolved"] is None for entry in payload["imports"])
+    assert all(entry["external"] is False for entry in payload["imports"])
+
+
+# ---------------------------------------------------------------------------
 # Deferred caller-graph, grammar PRESENT: honest resolution_gaps, not a silent proven-zero.
 #
 # Coordinator-flagged verification (parallel Go/PHP precedent): a language whose grammar IS

@@ -594,6 +594,72 @@ def test_go_package_defines_function_fallback_confirms_or_denies(tmp_path: Path)
 
 
 # ---------------------------------------------------------------------------
+# #74-follow-up: tg imports (go_imports_with_lines / build_file_imports) -- foundational tier,
+# mirrors test_lang_java.py's test_file_imports_returns_java_import_statements_with_lines.
+# ---------------------------------------------------------------------------
+
+
+def _write_go_imports_fixture(root: Path) -> Path:
+    go_file = root / "widgets.go"
+    go_file.write_text(
+        "package widgets\n"  # 1
+        "\n"  # 2
+        "import (\n"  # 3
+        '\t"fmt"\n'  # 4
+        '\t"strings"\n'  # 5
+        ")\n"  # 6
+        "\n"  # 7
+        'import "os"\n'  # 8
+        "\n"  # 9
+        "func Example() string {\n"  # 10
+        '\treturn fmt.Sprintf("%s", strings.ToUpper("x")) + os.Getenv("X")\n'  # 11
+        "}\n",  # 12
+        encoding="utf-8",
+    )
+    return go_file
+
+
+def test_go_imports_with_lines_extracts_grouped_and_single_import_statements(
+    tmp_path: Path,
+) -> None:
+    go_file = _write_go_imports_fixture(tmp_path)
+
+    entries = lang_go.go_imports_with_lines(go_file)
+
+    modules = {entry["module"]: entry["line"] for entry in entries}
+    assert modules == {"fmt": 4, "strings": 5, "os": 8}
+
+
+def test_go_imports_with_lines_non_go_suffix_returns_empty(tmp_path: Path) -> None:
+    not_go = tmp_path / "widgets.txt"
+    not_go.write_text('import "fmt"\n', encoding="utf-8")
+
+    assert lang_go.go_imports_with_lines(not_go) == []
+
+
+def test_go_imports_with_lines_grammar_absent_returns_empty(tmp_path: Path, monkeypatch) -> None:
+    go_file = _write_go_imports_fixture(tmp_path)
+    monkeypatch.setattr(lang_go, "_go_parser", lambda: None)
+
+    assert lang_go.go_imports_with_lines(go_file) == []
+
+
+def test_file_imports_returns_go_import_statements_with_lines(tmp_path: Path) -> None:
+    go_file = _write_go_imports_fixture(tmp_path)
+
+    payload = repo_map.build_file_imports(go_file)
+
+    assert payload["result_incomplete"] is False
+    modules = {entry["module"]: entry["line"] for entry in payload["imports"]}
+    assert modules == {"fmt": 4, "strings": 5, "os": 8}
+    # Foundational tier: raw import statements are real, but resolving them to a specific file
+    # (a Go import names a PACKAGE DIRECTORY, not a file) is deferred -- every row must be
+    # unresolved and never presumed external, matching the fail-closed contract.
+    assert all(entry["resolved"] is None for entry in payload["imports"])
+    assert all(entry["external"] is False for entry in payload["imports"])
+
+
+# ---------------------------------------------------------------------------
 # F11: import-path extraction falls back to quote-stripped literal text.
 # ---------------------------------------------------------------------------
 
