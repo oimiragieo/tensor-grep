@@ -1,6 +1,48 @@
 # CHANGELOG
 
 
+## v1.98.0 (2026-07-24)
+
+### Features
+
+- **lang**: Add C++ symbol + import intelligence (foundational tier, #include honest-unresolved)
+  ([#732](https://github.com/oimiragieo/tensor-grep/pull/732),
+  [`82d828a`](https://github.com/oimiragieo/tensor-grep/commit/82d828a83c1107ef40bde60ba4662464afe25db5))
+
+Closes the top-10 language-support campaign to 10/10 (C shipped first as Phase 1, #731/v1.97.0; this
+  is Phase 2). Adds a new lang_cpp.py module mirroring lang_c.py's foundational-tier shape: function
+  definitions (free functions, in-class methods, qualified out-of-class methods like Foo::bar()),
+  class/struct/union/enum(-class) definitions, namespaces, typedef + using-alias type declarations,
+  and #include directive extraction (angle/quoted/macro forms), all live-verified against a real
+  tree_sitter_cpp 0.23.4 parse (not guessed from the grammar README).
+
+All 8 symbol-graph seams wired: register_language("cpp"), _imports_and_symbols_for_path,
+  _imports_with_lines_for_path, build_symbol_source_from_map, _target_language_for_path,
+  _SUPPORTED_FILE_DEPENDENCY_LANGUAGES, _resolve_raw_import_entry (honest-unresolved:
+  resolved=None/external=False, never fabricated), and _provider_language_for_path (verified
+  pre-existing, no change needed). ".h" is claimed by this module (not lang_c.py), matching
+  _provider_language_for_path's pre-existing "cpp" assignment.
+
+Caller-graph (references_and_calls/file_imports_symbol_from_definition/
+  import_update_target/prime_repo_context) stays deferred, same as every other foundational-tier
+  language -- tg refs/callers/blast-radius fall through to the generic text-heuristic path, never a
+  crash or fabricated match.
+
+Dogfooded against two real, unmodified public headers (CPython's Include/object.h, LLVM's
+  llvm/ADT/StringRef.h): confirms the disclosed preprocessor-recall ceiling on live code, not just a
+  synthetic fixture -- a macro-prefixed class construct (`class LLVM_GSL_POINTER StringRef {...}`)
+  misparses to kind "function" (member recall mostly survives; only the container's own kind is
+  wrong), and a macro-prefixed anonymous union surfaced a real, safely-fixable bug (the bare keyword
+  "union" was being emitted as a symbol name) -- fixed via a reserved-keyword guard with zero
+  legitimate-code cost, since no valid C++ program can declare a symbol named a keyword.
+
+Packaging: tree-sitter-cpp added to the ast/dev/bench extras; uv.lock hand-spliced (real PyPI
+  metadata, CRLF preserved, binary-mode edit) rather than a full `uv lock` regeneration; tree-sitter
+  core stays pinned at 0.25.2. `uv export --locked` verified exit 0.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+
+
 ## v1.97.0 (2026-07-24)
 
 ### Documentation
