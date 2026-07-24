@@ -259,22 +259,33 @@ def test_concurrent_open_and_implicit_removal_no_lost_insert(
 #
 # The two sibling tests below deliberately use DIFFERENT proof strategies, and that is a
 # considered choice, not drift:
-#   - test_open_session_uncontended_hot_path_unaffected keeps the wall-clock ratio form.
-#     Its baseline (`build_repo_map`) does real, non-trivial repo-scan work that is itself
-#     I/O-bound and scales with runner load in roughly the same direction as the rest of
-#     open_session's own cost -- so `elapsed < max(baseline * 6.0, 8.0)` genuinely
-#     correlates and cancels load for THIS baseline. It has not (yet) shown the checkpoint
-#     sibling's flake.
+#   - test_open_session_uncontended_hot_path_unaffected keeps the wall-clock
+#     `elapsed < max(baseline * 6.0, 8.0)` form. Measured directly against this module's real
+#     `_make_project` fixture (no stubbing): `build_repo_map`'s baseline is ~0.000-0.016s, so
+#     `baseline * 6.0` is at most ~0.10s -- the ratio arm NEVER exceeds the 8.0s floor, which
+#     means the 8.0s floor is the sole OPERATIVE bound here, unconditionally. The ratio does
+#     NOT "cancel load" for this baseline; it is dead weight. This is left on wall-clock
+#     anyway because the FLOOR alone is still safe by a wide margin: measured `open_session`
+#     elapsed is ~0.015-0.016s against the 8.0s floor, ~500x headroom. By contrast, measured
+#     `create_checkpoint` elapsed (before this file's structural rewrite) was ~0.27-0.31s
+#     against the SAME 8.0s floor, ~26-30x headroom -- and 26-30x still flaked at 8.75s,
+#     because `create_checkpoint` (unlike `open_session`) runs
+#     `_prime_bounded_discovery_caches_for_root`'s fsync-heavy discovery-cache I/O (~93% of
+#     its own elapsed per an independent cProfile measurement), which is exactly the kind of
+#     disk-contention-sensitive cost that spikes hard on a loaded CI runner. `open_session`
+#     has no equivalent primer step, so its ~500x headroom has proven durable so far -- but
+#     that headroom, not ratio cancellation, is the real reason it is safe.
 #   - test_create_checkpoint_lock_does_not_wrap_expensive_work replaced its wall-clock ratio
 #     with a structural, event-order assertion (see its docstring) after that ratio flaked
-#     three times: its baseline (`_detect_checkpoint_scope` + `_snapshot_entries`) was small
-#     and uncorrelated with the REAL dominant cost (`_prime_bounded_discovery_caches_for_root`
-#     fsync I/O, ~93% of elapsed per an independent cProfile measurement), so no ratio/floor
-#     combination over it could be both tight and stable.
-# If open_session's sibling ever shows the same class of flake, apply the same structural
+#     three times, most recently through the exact "floor never fires, ratio is dead weight"
+#     failure mode described above -- once `_prime_bounded_discovery_caches_for_root`'s cost
+#     dominates, no fixed floor/ratio combination is both tight and CI-load-stable.
+# If open_session's sibling ever starts flaking (e.g. after it grows its own fsync-heavy or
+# otherwise load-sensitive step, eroding its current ~500x margin), apply the same structural
 # treatment (trace `index_lock` + `build_repo_map` + the payload/index writes as ordered
 # markers) rather than widening its floor again -- but do not pre-emptively convert a test
-# that is not observed to be flaky; that would be scope creep against a working ratio.
+# that is not observed to be flaky and still carries a wide, measured absolute margin; that
+# would be scope creep against a currently-safe test.
 # --------------------------------------------------------------------------------------
 
 
@@ -356,6 +367,13 @@ def test_create_checkpoint_lock_does_not_wrap_expensive_work(
     -- not any timestamp or duration -- fully determines whether a call happened before,
     during, or after the lock's held window. This cannot flake under CI load: a slow runner
     delays every marker equally without ever reordering them.
+
+    Deliberate gap: `_write_checkpoint_metadata` (checkpoint_store.py:855, called just before
+    the lock) is NOT traced. It is cheap (one small JSON write) and was not one of the three
+    operations the cProfile measurement identified as dominant, so a regression pulling only
+    that write inside the lock would not be caught here -- traded off to keep this test's
+    surface matched to the profiled, load-sensitive cost centers rather than every call in
+    create_checkpoint's body.
     """
     root = _make_project(tmp_path)
 
