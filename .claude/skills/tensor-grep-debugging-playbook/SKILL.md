@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-debugging-playbook
-description: Use when a tensor-grep (tg) run fails, hangs, returns wrong/empty/silently-degraded results, a CI check goes red, or a release doesn't publish. Symptom-to-triage table, each row giving a discriminating experiment and a fix pointer, for CI red, release not published (push-race), search hangs/slow, silent-empty result (fail-closed contract), argv/flag injection, mock-green-but-real-dead FFI, dependency-cap silent downgrade, ranking flip, a `CliRunner`/`capfd` test that goes green-on-PR-red-on-main after a delegation/routing change, and a latency fix/regression report that needs profiling-at-scale instead of a code-reading guess. Load BEFORE theorizing from a traceback or re-running a failing gate blind.
+description: Use when a tensor-grep (tg) run fails, hangs, returns wrong/empty/silently-degraded results, a CI check goes red, a release doesn't publish, or a worktree agent's PR reports "No commits between main and <branch>" after a reported commit. Symptom-to-triage table, each row giving a discriminating experiment and a fix pointer, for CI red, release not published (push-race), search hangs/slow, silent-empty result (fail-closed contract), argv/flag injection, mock-green-but-real-dead FFI, dependency-cap silent downgrade, ranking flip, a `CliRunner`/`capfd` test that goes green-on-PR-red-on-main after a delegation/routing change, a latency fix/regression report that needs profiling-at-scale instead of a code-reading guess, and a detached-HEAD worktree push that pushes a stale branch ref instead of the real commit. Load BEFORE theorizing from a traceback or re-running a failing gate blind.
 ---
 
 # tensor-grep Debugging Playbook
@@ -73,6 +73,7 @@ If your symptom isn't in the table below, it's probably not covered here — che
 | A shell one-liner that pipes `tg`/a probe script into `tail`/`grep`/`python -c ...` reports success (`exit 0`) even though the FIRST command in the pipe actually failed | Pipe exit-code masking: a shell pipeline's exit code is the LAST command's, not the first's | Re-run the first command alone and check its own `$?`/`$LASTEXITCODE`; or use `${PIPESTATUS[0]}` (bash) / split into two statements | [S13](#13-pipe-exit-code-masking) |
 | An automated dogfood/verdict script says PASS or FAIL, but the underlying behavior looks wrong when you inspect it directly | The scoring logic misread the JSON shape (a renamed field, a nested-vs-top-level key) — a shape misread can silently read as either a clean pass or a clean fail | Read the RAW `--json` output at least once by eye before trusting the automated verdict for a new/changed probe | [S14](#14-raw-json-before-scoring) |
 | A macOS-only CI job with a `Setup Rust` step (e.g. `test-rust-core`) fails with a network/timeout error during Rust toolchain setup — not a compile error, not something your diff touched | `rust_core/rust-toolchain.toml` pins an exact Rust version; the first `cargo` invocation with `rust_core/` as its working directory triggers an on-demand rustup fetch for that pin, and unlike the `rustup-init` bootstrap curl (`--retry 10`), rustup's own pinned-toolchain download had no retry | `gh run view <run-id> --log-failed` on the `Setup Rust` step specifically — a transient network/timeout message on the pinned-toolchain fetch, not a `rustc`/`cargo` compile error | [S15](#15-macos-rustup-pinned-toolchain-fetch-timeout-network-flake-already-mitigated) |
+| `gh pr create` (or the GitHub UI) rejects a branch push with **"No commits between main and `<branch>`"** even though a worktree agent reported it committed real work | The agent committed on a DETACHED `HEAD` (not the named branch), then `git push origin <branchname>` pushed the branch REF — still sitting at `main`'s tip — instead of the commit; the work is not lost, just not reachable from the ref that was pushed | `git -C <worktree> rev-parse HEAD` vs `git -C <worktree> rev-parse <branchname>` — if they differ, the commit is real but the branch ref never moved | [S16](#16-no-commits-between-main-and-branch-detached-head-push) |
 
 ---
 
@@ -695,6 +696,44 @@ same pre-fetch-with-retry pattern rather than re-diagnosing it as a new class of
 
 ---
 
+## 16. "No commits between main and `<branch>`" (detached-HEAD push)
+
+**Symptom:** a worktree agent reports it committed real work, but opening a PR (or `gh pr create`)
+fails with GitHub's "No commits between main and `<branch>`," or the diff shows nothing changed. This
+reads exactly like the work vanished.
+
+**Root cause:** the agent's commit landed on a **detached `HEAD`** inside its worktree, not on the
+named branch it was supposed to be working on (common after certain worktree-setup or checkout
+sequences). `git push origin <branchname>` then pushes the BRANCH REF — which never moved off `main`'s
+tip, because the commit isn't reachable from it — instead of the commit itself. The commit is real and
+sitting at the worktree's `HEAD`; it is simply not on the ref that got pushed.
+
+**Discriminating experiment:**
+
+```bash
+git -C <worktree> rev-parse HEAD          # the real commit, if one exists
+git -C <worktree> rev-parse <branchname>  # what actually got pushed
+git -C <worktree> log --oneline -3        # confirm the commit's content/message
+```
+
+If `HEAD` and `<branchname>` resolve to different SHAs, the work is intact — do not re-dispatch the
+agent to redo it.
+
+**Fix:** push the SHA explicitly instead of trusting the branch name:
+
+```bash
+git -C <worktree> push origin <sha>:refs/heads/<branchname>
+```
+
+Then open the PR against `<branchname>` as usual — it will now show the real diff.
+
+**Rule:** before opening a PR from a worktree agent's branch, compare `git rev-parse HEAD` against
+`git rev-parse <branch>` rather than assuming a plain `git push origin <branch>` moved the ref you
+expect. See `tensor-grep-backlog-campaign`'s harvest pattern for the broader worktree-to-PR sequence,
+and AGENTS.md's Campaign Orchestration Disciplines (A24) for the incident this section is drawn from.
+
+---
+
 ## Provenance and maintenance
 
 Facts here were originally verified **2026-07-02, tensor-grep v1.17.25** for §1–§8, and
@@ -713,7 +752,9 @@ added the §3 `tg inventory --deadline` pathological-workspace-union-tree scandi
 low-priority, not a regression — `repo_map.py:987`/`:1009`), added §10 Incident 3 (a warm
 `tg orient` dogfood run hid PR #719's real ~54% win, plus the microbench-on-the-shipped-wheel
 discipline that catches it), and added §15 (macOS rustup pinned-toolchain fetch timeout, already
-mitigated by #722). Re-verify anything below before trusting it on a later version — this table
+mitigated by #722); **2026-07-24 against v1.98.2** added §16 ("No commits between main and
+`<branch>`" — a detached-HEAD worktree push, cross-referenced to AGENTS.md's Campaign Orchestration
+A24). Re-verify anything below before trusting it on a later version — this table
 drifts whenever the cited line numbers, defaults, or contracts change.
 
 Re-verification commands:

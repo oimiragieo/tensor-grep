@@ -261,6 +261,23 @@ Before implementing any AI/subagent-drafted plan, **cite `file:line` for every f
 
 **Post-merge gotcha:** apply follow-up fixes **by SYMBOL, not line number** — a squash-merge shifts every line below the change, so "fix `main.py:8468`" is stale the moment anything above it lands. Re-anchor on the function/const name via `tg defs` or grep (`AGENTS.md:902`).
 
+**A banked hypothesis is not exempt from this gate, even your own (#736, 2026-07-24).** A one-line
+memory note claiming a C symbol-graph mis-kind was fixable by "requiring `function_declarator`
+outermost" was FALSIFIED by re-deriving it against a live-dumped AST before any fix code was written —
+a function-pointer variable's declarator chain also has `function_declarator` outermost, so that tell
+cannot distinguish it from a real function. The real tell lived one level deeper (what the node's own
+`declarator` field wraps). Treat a carried-forward "we already know the fix" note the same as a fresh
+AI-drafted plan: cite `file:line` against the CURRENT code before dispatching it, not just against your
+memory of a prior session. See `tensor-grep-failure-archaeology` and `tensor-grep-add-language` for the
+full worked example (the declarator-shape table).
+
+**A gate's disclosed edge case is still-open work, not a new backlog item, while the PR is draft (same
+#736).** An independent Opus gate returned `SHIP` on that fix but disclosed the first cut now dropped a
+narrower case (redundant-paren real-function prototypes, `int (foo)(void);`) it hadn't dropped before.
+Because the PR was still draft, the refinement landed in the SAME PR before un-drafting — zero new
+known-limitations shipped. Read a `SHIP`-with-disclosed-edge verdict as "fix this before un-drafting,"
+not "ship now, file it for later" — the marginal cost of fixing it in-PR is near zero.
+
 ---
 
 ## Part 7 — Push discipline & the push-race (one-merge-per-tick)

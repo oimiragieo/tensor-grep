@@ -149,6 +149,30 @@ concrete failure observed this session.
   take-one-side). A CLEAN rebase (no conflict marker) is NOT proof of correctness — a silent auto-merge
   dropped a `lang_*` import, caught only by re-running pytest (`ImportError`). ALWAYS re-run the test
   suite after every rebase.
+- **A23 — A "stopped" agent notification may mean the work already landed, not that it was lost
+  (2026-07-24).** A build agent's process exited after committing but before emitting its own
+  completion summary; the orchestrator's notification said no completion record was found — which
+  reads like the work vanished. It had not: `git -C <worktree> status`/`log` showed a clean tree with
+  both commits present and correct. **Rule:** on any "stopped"/"no completion record" notification,
+  inspect the worktree's `git status`/`git log` BEFORE re-dispatching fresh work — re-dispatching would
+  have duplicated (or conflicted with) work that was already done.
+- **A24 — A worktree agent can commit on a DETACHED HEAD; push the SHA, not the branch name
+  (2026-07-24).** `git push origin <branchname>` pushed the branch ref (still sitting at `main`'s tip,
+  since the agent's commit landed on a detached `HEAD` rather than that branch) instead of the new
+  commit — GitHub then rejected the PR with "No commits between main and `<branch>`," which reads like
+  the work vanished a second, distinct way from A23. It had not: the commit was sitting at the
+  worktree's `HEAD`, just not reachable from the branch ref being pushed. **Rule:** before pushing,
+  compare `git rev-parse HEAD` against `git rev-parse <branch>` — if they differ, push the SHA
+  explicitly (`git push origin <sha>:refs/heads/<name>`), then open the PR against that branch. See
+  `tensor-grep-debugging-playbook` for the symptom-table row.
+- **A25 — Session-scoped crons/monitors die silently on a CLI restart or reboot; always re-verify,
+  never re-dispatch on an assumption (2026-07-24).** This is the same lesson as A15 (session-only
+  crons die on crash/reboot) reconfirmed a session later — a steward cron was lost TWICE in one
+  session, once to a CLI restart and once to a PC reboot, and both times the backstop vanished with no
+  error, not a visible failure. **Rule:** after any restart or crash, re-create the recurring backstop
+  and CONFIRM it with `CronList` rather than assuming a previously-recorded id/schedule is still armed;
+  keep the durable state (queue, in-flight PRs, "resume here") in the task store + `MEMORY.md`, which
+  survive a restart even when the cron itself does not.
 
 ## Current Handoff
 
@@ -493,7 +517,26 @@ This matters because AI-generated plans have a consistent failure mode: they ide
 
 Re-run any validation a subagent claims to have passed — subagents can assert success without executing. For PRs that ship generated or detached code (install scripts, Windows self-upgrade helpers), adversarial-review by EXECUTING the code, not only reading it: `compile()` + `exec()` the generated string and assert the behavior (e.g. that the checksum gate fires BEFORE `os.replace`, and that the fail-closed branch is reachable). Test behavior, not substrings.
 
+**A banked "fix hypothesis" is a guess, not a plan (task #736, 2026-07-24).** A one-line note carried
+forward in memory claimed the C function-pointer-variable mis-kind was fixable by "requiring
+`function_declarator` outermost." `verify-plan-against-code` FALSIFIED it before a line of fix code
+was written: a function-pointer *variable*'s declarator chain also has `function_declarator`
+outermost — same as a real function prototype — so that tell cannot distinguish them. The real tell
+was one level deeper: what that node's OWN `declarator` field wraps (`parenthesized_declarator`
+wrapping a `pointer_declarator` -> variable, exclude; wrapping a bare `identifier` -> a
+redundant-paren real function `int (foo)(void);`, keep). Re-derive a banked hypothesis — including
+your own prior session's note — against the real AST/code before dispatching it as a plan; a
+carried-forward guess is not exempt from the same verification a fresh AI-drafted plan gets.
+
 After building, run a mandatory post-build ADVERSARIAL AUDIT — a distinct named stage from the pre-build planning council. This audit caught a HIGH CUDA-fork hazard that 203 passing tests missed. A finding or claim with no `file:line` citation is DISCARDED. Re-audit → fix-wave → re-audit until ZERO must-fix findings remain; that zero-finding state is the convergence gate before promoting a build to a draft PR.
+
+**A gate's disclosed edge case is in-scope while the PR is still draft, not a new backlog item (same
+task #736).** An independent Opus gate returned SHIP on the C function-pointer fix but disclosed that
+the first cut now dropped a rarer case (redundant-paren prototypes, `int (foo)(void);`) it hadn't
+before — trading one cosmetic bug for a narrower one. Because the PR was still draft, the refinement
+landed in the SAME PR before un-drafting, shipping with zero new known-limitations. Treat a
+SHIP-with-disclosed-edge verdict as work still owed on the open PR, not a "ship now, file a follow-up"
+signal — the cost of fixing it right there is near zero; the cost of a new tracked gap is real.
 
 ## Backend Fail-Closed Contract
 
@@ -667,6 +710,23 @@ uv run pytest -q
 CI runs `ruff format --check --preview .`. Running only `uv run ruff check .` is not enough to prove formatter parity, and running `ruff format` WITHOUT `--preview` actively REVERTS preview-style formatting on disk — a "clean" bare `ruff format` will undo CI-mandated style and red the next `ruff format --check --preview` run even when local lint passes. Always pass `--preview` to `ruff format` locally; never pass it to `ruff check`. The trailing `.` (whole repo) is load-bearing too: under `--preview`, ruff formats Python code fences INSIDE Markdown, so a scoped run (`ruff format --check --preview src/tensor_grep tests`) passes locally yet MISSES an unformatted `docs/**/*.md` snippet — which reds CI's release-gating `static-analysis` job and blocked v1.67.0. Always run the whole-repo `.` form; never a `src`/`tests` subset.
 
 `uv run pytest -q` can take substantially longer than 70-90 seconds on this Windows machine when the full JS/TS and e2e surface is hot; use a timeout of at least 120 seconds for narrow suites and a much larger timeout for the full suite when running it through automation.
+
+**`tests/conftest.py`'s `sys.path.insert` OUTRANKS `PYTHONPATH` — a `PYTHONPATH`-only baseline swap
+gives a FALSE red-green (2026-07-24).** The standing stale-venv discipline ("pin `PYTHONPATH` to the
+worktree `src`, verify `tensor_grep.__file__` resolves into the worktree") proves WHICH TREE you
+imported for a normal test run, but it is NOT sufficient to prove a test genuinely fails on a baseline
+commit. `tests/conftest.py:10` does `sys.path.insert(0, str(SRC_DIR))`, where `SRC_DIR` is derived from
+`conftest.py`'s own `__file__` location — this takes precedence over `PYTHONPATH` on `sys.path`. A gate
+that tried to prove a fix's regression test genuinely fails on `origin/main` (by reverting one source
+file to its pre-fix state and re-running with `PYTHONPATH` pointed at that reverted tree) got a FALSE
+"passed on main," because the *worktree's* `conftest.py` silently re-pointed imports back at the
+worktree's own `src`, not the reverted one, regardless of `PYTHONPATH`. Verifying
+`tensor_grep.__file__` does not catch this either — it correctly reports the worktree's file, which is
+exactly the wrong answer for a baseline check. **Rule:** to prove a test fails on a baseline commit
+(pre-fix `origin/main`, a specific tag, a reverted file), use a FULLY ISOLATED TREE COPY with the file
+reverted INSIDE that copy — never a `PYTHONPATH` swap layered on top of the working tree's own
+`conftest.py`. This applies doubly to an independent gate proving a fix's red-phase test is real, since
+gates are the primary consumers of a red-green baseline.
 
 For focused changes, run the relevant narrow suite first, then the full suite if the change is intended to land:
 
@@ -879,6 +939,32 @@ enabled (unchanged production behavior) OR whenever `cfg(test)` is set, so the t
 and is not itself dead code, while staying absent from the default non-test release build. Precedent:
 `GpuRouteFailureKind` / `sanitize_cuda_detail` / `classify_gpu_route_failure` in `rust_core/src/main.rs`
 (gate-nit #172 NIT-4 / MF-1, shipped in `#597` / v1.75.4).
+
+(i) **A dynamic value that grows a SHARED envelope can break a payload-RATIO governance test on the
+SMALL side (#733/#734).** PR #733 made `coverage.language_scope`/`symbol_navigation` dynamic and
+registry-derived (~28 -> ~116 chars). `_envelope()` in `repo_map.py` stamps that field byte-identically
+onto BOTH `tg map` (a large payload) and `tg importers` (a deliberately tiny one), so the same fixed
+growth was ~5% of the large payload but ~37% of the small one — tripping
+`test_importers_payload_is_far_smaller_than_map`'s `< 0.1 * map` invariant and reddening `main`. Fix
+(#734): strip the shared `_envelope()` keys SYMMETRICALLY from both payloads before comparing, deriving
+the excluded key set LIVE (`set(repo_map._envelope(project))`), never a hand-copied literal, so the
+test stays robust to any FUTURE envelope growth instead of re-breaking on the next honesty fix. Rule:
+when a shared self-description helper grows a field, audit every test that compares two payloads'
+byte sizes, not just the payload the new field conceptually belongs to.
+
+**Same incident, a second trap: PATH LENGTH shifts payload-byte governance tests across platforms.**
+The test above PASSED on Windows and FAILED on Linux CI for the SAME code — Windows' longer
+`AppData\Local\Temp` tmp paths inflate both payloads and dilute the fixed-envelope fraction back under
+the 10% threshold; Linux's shorter `/tmp` paths do not. Rule: reproduce a byte-size/ratio assertion
+that uses pytest's `tmp_path` with a short `--basetemp` before trusting a local green — a Windows-local
+pass does not prove the same assertion holds on Linux CI.
+
+**A self-gate's test SUBSET is not the full CI matrix.** The build agent's own pre-merge gate on #733
+ran a real but partial suite that omitted `tests/unit/test_file_deps.py` — the exact file containing
+the test #734 later had to fix — so a fully deterministic failure reached `main` anyway. Rule: when
+reporting what a self-gate verified, state explicitly which suites ran and which were skipped; treat
+the CI run itself, not a self-gate's suite selection, as the merge arbiter (this repo's "never trust a
+self-report" rule applied to test SCOPE, not just test RESULT).
 
 Do not casually edit:
 

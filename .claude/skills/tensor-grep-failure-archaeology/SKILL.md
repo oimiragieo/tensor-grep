@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-failure-archaeology
-description: Use when about to "fix" or "optimize" something in tensor-grep that feels novel — before proposing PyO3/FFI for directory walking, re-enabling free-threading, adding a --json self-test, tightening a dependency upper-cap, blaming an IDF/ranking flip, trusting a green mock/FFI test, diagnosing a release that "didn't publish", chasing a reported latency "regression" without profiling at scale, shipping a doc-drift/precision heuristic off green fixtures alone, adding a "differs-from-default" native-delegation gate, reading a `capfd`-based CliRunner test result, micro-optimizing a hot loop without checking who actually consumes the value, re-proposing cAST structural chunking as the default, re-proposing dense int8/binary/PCA embedding compression, proposing a warm-session/daemon search-index shortcut, proposing GPU-for-search or re-litigating the PFAC-vs-brute-force kernel claim, hitting the many-pattern Aho-Corasick dedup bug, trusting an unverified "cheap win" from a paper/research steal-list, cloning a "mirror language X" onboarding brief without checking which module is the CURRENT template, or trusting a conflict-free git rebase across several PRs that touch the same shared registration file as proof nothing was silently dropped. A chronicle of settled battles (symptom -> root cause -> evidence -> status) so no one re-fights them. Load it to check "has this already been tried and lost?" before spending effort. For a live NEW failure use tensor-grep-debugging-playbook; for the process gates to re-attempt one use tensor-grep-change-control.
+description: Use when about to "fix" or "optimize" something in tensor-grep that feels novel — before proposing PyO3/FFI for directory walking, re-enabling free-threading, adding a --json self-test, tightening a dependency upper-cap, blaming an IDF/ranking flip, trusting a green mock/FFI test, diagnosing a release that "didn't publish", chasing a reported latency "regression" without profiling at scale, shipping a doc-drift/precision heuristic off green fixtures alone, adding a "differs-from-default" native-delegation gate, reading a `capfd`-based CliRunner test result, micro-optimizing a hot loop without checking who actually consumes the value, re-proposing cAST structural chunking as the default, re-proposing dense int8/binary/PCA embedding compression, proposing a warm-session/daemon search-index shortcut, proposing GPU-for-search or re-litigating the PFAC-vs-brute-force kernel claim, hitting the many-pattern Aho-Corasick dedup bug, trusting an unverified "cheap win" from a paper/research steal-list, cloning a "mirror language X" onboarding brief without checking which module is the CURRENT template, trusting a conflict-free git rebase across several PRs that touch the same shared registration file as proof nothing was silently dropped, or trusting a BANKED fix hypothesis (a memory note from a prior session) without re-deriving it against the real AST/code. A chronicle of settled battles (symptom -> root cause -> evidence -> status) so no one re-fights them. Load it to check "has this already been tried and lost?" before spending effort. For a live NEW failure use tensor-grep-debugging-playbook; for the process gates to re-attempt one use tensor-grep-change-control.
 ---
 
 # Tensor-Grep Failure Archaeology
@@ -18,8 +18,10 @@ GPU-for-search, the many-pattern dedup bug, and the "5/5 mirage" meta-lesson), a
 **2026-07-24 at v1.96.0** adding Battles 23-24 (the language-expansion campaign's stale onboarding-brief
 catch and its sequential multi-PR shared-file union-rebase discipline), a warm-hides-cold addendum to
 Battle 12, and re-pointing Battle 16's evidence at its post-squash commit hashes (`501dc26`/`6d79945`)
-plus fixing a stale `AGENTS.md` section-letter reference. Re-verify anything load-bearing with the
-commands in **Provenance and maintenance** before you act on it.
+plus fixing a stale `AGENTS.md` section-letter reference, and a seventh, same-day pass **2026-07-24 at
+v1.98.2** adding Battle 25 (the banked C function-pointer fix hypothesis, falsified before any code was
+written). Re-verify anything load-bearing with the commands in **Provenance and maintenance** before
+you act on it.
 
 ## When to use this skill
 
@@ -474,6 +476,22 @@ semantic completeness; re-run the affected tests after every rebase, before merg
 "gate on verified state, not on the absence of a visible problem" discipline Battle 14 requires for
 a release watcher.
 
+## Battle 25 -- a banked "fix hypothesis" for the C function-pointer mis-kind was WRONG; the real tell was one level deeper (2026-07-24, #736)
+
+| Field | Detail |
+|---|---|
+| **Symptom** | A file-scope C function-pointer VARIABLE (`void (*handler)(int);`) was mis-kinded `"function"` in the symbol table. A one-line note carried forward from an earlier session proposed the fix: "require `function_declarator` outermost" to distinguish a real function from a function-pointer variable. |
+| **Root cause** | The banked hypothesis was FALSIFIED before any fix code was written, by `verify-plan-against-code` against a live-dumped `tree_sitter_c` 0.24.2 AST: a function-pointer variable's declarator chain ALSO has `function_declarator` outermost — identical in that respect to a real function prototype. "Outermost-direct `function_declarator`" cannot distinguish the two cases; it was never a valid discriminator, and the note that banked it as one had not been checked against a real parse tree. The actual tell lives one level deeper: what that `function_declarator` node's OWN `declarator` field WRAPS — a `parenthesized_declarator` wrapping a `pointer_declarator` (`(*handler)`) means a variable (exclude); wrapping a bare `identifier` directly means a real, redundantly-parenthesized function name (`int (foo)(void);`, keep). |
+| **Evidence** | PR #736 (`226d887`, merged into v1.98.2). Its own description states the root cause was "verified against a real, live-dumped AST — not assumed from the grammar docs" and that the banked "outermost-direct" framing "does NOT distinguish real functions from function-pointer variables, since both are outermost-direct." An independent Opus gate then caught a SECOND-order miss in the first cut (see the "Gate-caught refinement" note in the PR body) — the coarse rule also wrongly excluded a redundant-paren real prototype, fixed in the same still-draft PR before merge. |
+| **Status** | **SETTLED.** |
+
+**Rule:** A banked "we already know the fix" note is a HYPOTHESIS, not a fact, even when it's your own
+prior session's conclusion carried forward in memory — re-derive it against the real AST/code (dump the
+actual parse tree, don't reason from the grammar's shape in the abstract) before dispatching it as a
+plan. This is Cross-cutting lesson 9 (verify a steal/brief against the LIVE code) applied to a
+carried-forward memory note instead of an external paper or a same-session orchestration brief — same
+failure shape as Battle 23, a third venue.
+
 ---
 
 ## Cross-cutting lessons (the meta-patterns behind the battles)
@@ -593,6 +611,10 @@ grep -n "MOST-FORGOTTEN" src/tensor_grep/cli/repo_map.py
 # Battle 24 (sequential multi-PR shared-file union-rebase discipline)
 grep -n "\"java\"\|\"php\"\|\"csharp\"" tests/unit/test_lang_registry.py
 grep -n "tree-sitter-java\|tree-sitter-php\|tree-sitter-c-sharp" pyproject.toml
+
+# Battle 25 (banked C function-pointer fix hypothesis, falsified before code was written)
+git show 226d887 --stat
+grep -n "_c_parenthesized_declarator_wraps_bare_name\|def _c_declarator_name_node" src/tensor_grep/cli/lang_c.py
 ```
 
 If any command's output no longer matches the entry (e.g. the typer cap moved, a guard file was

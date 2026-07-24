@@ -149,6 +149,12 @@ from #20 as of the 2026-07-22 session-capture — 6 new registrations, #20-25 ab
 schedule every session, so any recorded id goes stale immediately. Do NOT trust a previously-recorded id
 (this file, MEMORY.md, a handoff note). Verify the live cron via `CronList` at session start; re-arm if
 absent. (Verified 2026-07-16: three different sources cited three different ids/schedules — all stale.)
+Re-confirmed **2026-07-24**: a session-scoped cron also dies SILENTLY on a mid-session CLI restart or a
+PC reboot, not only at session boundary — the same steward was lost twice in one session this way, once
+to each. There is no error or notification when it dies; the only way to know is to check. After ANY
+restart or crash — not only at the start of a fresh session — re-verify with `CronList` and re-arm if
+absent, and keep the durable state (queue, in-flight PRs, "resume here") in the task store + `MEMORY.md`,
+which survive a restart even when the cron itself does not (AGENTS.md A25).
 
 ---
 
@@ -172,6 +178,10 @@ absent. (Verified 2026-07-16: three different sources cited three different ids/
 **Resume-from-transcript, not re-dispatch (broadened 2026-07-08 — ANY transient failure, not just session-limit kills).** A background subagent (Fable or otherwise) that dies mid-task — a session-limit kill (`had-no-active-task`) **or** a transient `"Agent terminated early due to an API error: 500"` — is resumed via `SendMessage` to its agent ID, not re-dispatched fresh: the transcript carries the partial work forward. Message it plainly: *"you hit a transient error, your work is intact, continue + <the finish criteria>."* Receipt: happened 3x in one session (2 builds + 1 security-gate agent hit a transient API 500) and all 3 recovered cleanly with zero lost work. Re-dispatching fresh instead of resuming loses everything the agent had already done.
 
 **Don't kill a build on staleness (2026-07-08 receipt).** A complex build (a routing redesign, heavy test-rewiring) can legitimately run 10–15+ minutes between visible output flushes. A "stale, no output for N minutes → kill it" heuristic **destroys a working agent** — this exact heuristic killed an in-progress build TWICE on this session before the kill-notes proved it had been actively rewiring tests the whole time, not hung. Trust the harness's own completion notification; only intervene on a **genuine** hang, and diagnose from the kill-note's last line (or `anti-hang-test-protocol`'s exit-124/137 signal), never from an elapsed-time guess alone.
+
+**A "stopped" agent may have already committed — check the worktree before re-dispatching (2026-07-24 receipt).** A build agent's process exited after committing but before emitting its own completion summary; the notification read as "no completion record found," which looks like the work is lost. It was not: `git -C <worktree> status`/`log` showed a clean tree with the real commits present and correct. Re-dispatching fresh on a "stopped" notification without checking the worktree first risks duplicating (or conflicting with) work that already landed — run `git -C <worktree> status` and `git -C <worktree> log --oneline -5` BEFORE deciding the work needs to be redone. Full incident: AGENTS.md Campaign Orchestration A23.
+
+**A worktree agent can commit on a detached HEAD — verify `HEAD` matches the branch ref before pushing/opening a PR (2026-07-24 receipt).** `git push origin <branchname>` can push a stale branch REF (still at `main`'s tip) while the agent's real commit sits at the worktree's detached `HEAD`, unreachable from that ref — GitHub then rejects the PR with "No commits between main and `<branch>`," which reads like the work vanished a second, distinct way. Compare `git rev-parse HEAD` against `git rev-parse <branchname>`; if they differ, push the SHA explicitly (`git push origin <sha>:refs/heads/<branchname>`) before opening the PR. See `tensor-grep-debugging-playbook` §16 for the full triage row and AGENTS.md's A24.
 
 **External CLIs:**
 - **codex** — **MANDATORY** adversarial gate on every **money / auth / security / migration** diff before merge (separate quota; catches agent over-claims). **Fallback** for general peer review when Agent subagents are throttled. When `codex`'s WSL path is unreliable, an **Opus** Agent subagent is the reliable substitute for the mandatory gate (Hard Rule 11) — never skip the gate outright.
