@@ -1,6 +1,305 @@
 # CHANGELOG
 
 
+## v1.98.9 (2026-07-25)
+
+### Bug Fixes
+
+- **search**: Preserve CRLF/raw bytes in native --json emitter + binary-notice fixes (#266, #263,
+  #271) ([#746](https://github.com/oimiragieo/tensor-grep/pull/746),
+  [`e9082ac`](https://github.com/oimiragieo/tensor-grep/commit/e9082aca46996a67b341fa21ae34fa276ef351dc))
+
+* fix(search): preserve CRLF/raw bytes in native --json emitter + binary-notice fixes (#266, #263,
+  #271)
+
+#266 (live bug) -- the native walk emitter's `--json`/`--ndjson`/`--cpu` output diverged from real
+  `rg` on two data-level defects, both reachable today since MCP builds every command with `--json`
+  and no rg-fallback probe covers that route (only the separate plain-text fast-path optimization
+  does):
+
+* CRLF: every sink closure in native_search.rs did `line.trim_end_matches(['\n', '\r'])`, which
+  strips a CRLF source line's own trailing `\r` along with the line terminator. Replaced with
+  `strip_native_line_terminator`, which strips AT MOST the single trailing `\n` -- the byte-level
+  analogue of `core/result.py::strip_line_terminator` (#262/#743's Python-side fix for the same
+  defect class, kept consistent rather than re-solved differently). * Non-UTF-8: the shared sink was
+  `grep_searcher::sinks::Lossy`, whose internal `String::from_utf8_lossy` silently substitutes
+  U+FFFD for invalid bytes (e.g. Latin-1 content). Switched every sink to
+  `grep_searcher::sinks::Bytes` (raw `&[u8]`, verified against the pinned grep-searcher 0.1.16
+  source) so plain-text output writes the original bytes untouched. For JSON/NDJSON output, which
+  cannot embed literal invalid UTF-8 in a JSON string, added `native_json_text_fields`: valid-UTF-8
+  content goes in `text` unmodified, anything else is base64-encoded into a new `bytes` field
+  instead -- mirroring real `rg --json`'s own actual `text`/`bytes` protocol (verified via hexdump
+  against `rg.exe` 15.1.0). `base64` was promoted from an existing transitive dependency (via
+  arrow-cast) to a direct one at the exact already- resolved version, so no new crate/version enters
+  the graph.
+
+`NativeSearchMatch.text: String` became `raw: Vec<u8>` (the source of truth for both output paths);
+  `NativeJsonMatch`/`NativeNdjsonMatch` gained an additive, optional `bytes` field alongside `text`
+  (both `skip_serializing_if`, so the common valid-UTF-8 case is byte-identical to before). Also
+  fixed the same over-trim in the separate multi-pattern fast path
+  (`collect_fixed_multi_pattern_line_matches`); its own U+FFFD lossy conversion feeds a different
+  JSON struct in main.rs and is a disclosed, out-of-scope follow-up, not silently dropped.
+
+New test: tests/e2e/test_native_json_byte_fidelity.py, asserting both defects directly against
+  `--json` output with a minimal 2-line fixture (known CR, known invalid UTF-8) rather than a
+  curated repo subtree (a subtree comparison can trivially show zero divergences while the real
+  corpus shows thousands). Could not be executed locally -- CPU-SAFE forbids compiling the Rust
+  extension in this session -- so it currently SKIPs without a prebuilt binary; CI (which builds
+  one) is the confirming oracle. Verified by direct source reading that it fails against the pre-fix
+  emitter and by extracting the pinned grep-searcher/base64 crate sources to confirm the exact API
+  surfaces used here compile.
+
+#263 -- two more defects in the same file, folded into this PR:
+
+* `emit_binary_match_warning` took `_path` and never used it, so multiple binary files hit during
+  one walk produced identical, unattributed warnings. Now prefixes `"<path>: "` when `with_filename`
+  is set (mirrors the same rule every other match line already uses), matching `rg.exe` 15.1.0's own
+  verified behavior (bare notice for one explicit file, prefixed for several). * The
+  `"/0"`-vs-`"\0"` NUL-escape spelling bug, verified live and NOT limited to the "3-4 already
+  tracked" sites a prior review claimed: found and fixed 4 real sites (native_search.rs's own
+  message, rust_backend.py's Python-side twin, and 2 pinned test/snapshot assertions across Rust and
+  Python) plus a stale doc comment in routing.rs describing it as still-broken. * Verified (not just
+  read) against real `rg.exe`: a permission-denied subdirectory or file mid- walk makes `rg` log one
+  stderr line and keep searching everything else, while `search_walk_roots_parallel` aborted the
+  WHOLE walk on the first such error. Confirmed real via an `icacls`-denied fixture, then fixed both
+  call sites (walker entry errors, per-file search errors) to log and continue -- except a broken
+  output pipe, which still aborts immediately since every remaining file would hit the identical
+  error. * Ruled out per the task brief: the 64 KiB chunk-parallel NUL-detection cap is structurally
+  unreachable from any directory walk (traced, not touched).
+
+#271 -- `main.rs:SEARCH_PYTHON_PASSTHROUGH_FLAGS` lists `-u`/`--unrestricted`, but
+  `token_matches_any_flag` is exact-token-only, so it does not cover a ripgrep combined-short
+  cluster like `-uu`/`-iu`. Documented (at the flag list and at the actual fail-closed guarantee,
+  `parse_early_ripgrep_args`'s `_ if token.starts_with('-') => return None` catch-all) which one is
+  load-bearing, and added two Rust unit tests asserting the catch-all still fires for `-uu` and
+  `-iu` directly.
+
+rustfmt --check: clean on every touched .rs file. ruff format --preview / ruff check: clean on every
+  touched .py file and the touched .md file.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* fix(search): extend #266's raw-bytes/base64 JSON fix to the multi-pattern path (SearchMatchJson)
+
+CI caught a real gap, not a missed rename: `main.rs:8203` (`collect_native_multi_pattern_matches`'s
+  slow branch) built `SearchMatchJson.text: String` directly from `NativeSearchMatch.text`, which no
+  longer exists after #266 renamed it to `raw: Vec<u8>`. The adjacent `matched.text` a few lines
+  above (:8180, the fast branch) did NOT break -- it reads from the unrelated
+  `NativeMultiPatternMatch`, confirmed by reading both sites individually before touching either.
+
+The compiler had found a real design gap, not just a stale field name: `SearchMatchJson` is the
+  shared JSON/NDJSON/plain-text match representation for the multi-pattern native path, the
+  TrigramIndex warm-index path, the AST search path, and both GPU paths -- and multi-pattern
+  `--json` output is exactly as capable of carrying a non-UTF-8 match as single-pattern is. Coercing
+  the broken site to compile with `String::from_utf8_lossy(&matched.raw)` would have reintroduced
+  the precise U+FFFD defect #266 exists to remove, just one call site downstream.
+
+Fix: extended the same additive `text: Option<String>` / `bytes: Option<String>` (base64) protocol
+  from `NativeJsonMatch`/`NativeNdjsonMatch` to `SearchMatchJson`/`SearchMatchNdjson`, backed by a
+  new `raw: Vec<u8>` field (`#[serde(skip)]`) that both structs' shared plain-text writer
+  (`emit_plain_search_matches_with_line_number`) and dedup key (`unique_line_matches`) now read
+  directly instead of `text` -- otherwise two distinct non-UTF-8 matches would both report `text:
+  None` and silently collapse into one deduplicated entry, and plain-text output for a non-UTF-8
+  multi-pattern match would have nothing byte-correct to print.
+
+`NativeMultiPatternMatch.text: String` (native_search.rs) was ALSO renamed to `raw: Vec<u8>`, and
+  `collect_fixed_multi_pattern_line_matches` no longer lossily converts -- the fast multi-pattern
+  branch had the identical defect and is now fixed the same way, not just adapted to compile.
+  `native_json_text_fields` (the text/bytes helper #266 introduced) is now `pub` so `main.rs` can
+  reuse it across the crate boundary.
+
+The other 4 `SearchMatchJson` producers (TrigramIndex, AST, the GPU sidecar ndjson handler, and the
+  `#[cfg(feature = "cuda")]` GPU-native path) are wrapped via a new `guaranteed_utf8_match_fields`
+  helper with a comment at each site stating WHY: TrigramIndex persists `String`s, AST source is
+  read via `read_to_string` (fails closed on invalid UTF-8 before reaching this code), and the GPU
+  sidecar path is itself JSON-deserialized (UTF-8 by construction) -- all three are genuinely
+  exempt. The GPU-native site is explicitly NOT claimed exempt: `gpu_native.rs` builds its own
+  `text` via the identical `String::from_utf8_lossy(...).trim_end_matches('\r')` defect, left
+  unfixed here on purpose (CUDA-gated, `cargo check`-only in CI, not part of the "shared native
+  emitter" #266/#263 name, and this repo's own GPU program notes call the GPU path not currently
+  production-viable) -- a disclosed follow-up, not a silent gap.
+
+Reachability: `collect_native_multi_pattern_matches` is called directly from
+
+`BackendSelection::NativeCpu`'s `request.patterns.len() > 1` branch -- a normal `tg search -e A -e B
+  --json PATH` invocation, no GPU/experimental flag required. It was previously UNCOVERED by this
+  PR's new test file (which only exercised the single-pattern path). Added 4 parametrized cases to
+  tests/e2e/test_native_json_byte_fidelity.py (CRLF + invalid-UTF-8, each across both the fast
+  `--fixed-strings` branch and the slow default branch -- the exact site that failed to compile)
+  over the same fixture the single-pattern tests use. Still SKIPs locally (CPU-SAFE, no compiled
+  binary in this worktree) -- CI is the confirming oracle.
+
+* fix(test): sweep the remaining .text sites + fix a test-harness backslash bug (CAUSE A/B)
+
+CAUSE A -- `test-rust-core` was RED on all 6 legs (E0609, the exact same class as the earlier
+  `main.rs:8203` gap): `rust_core/tests/test_native_search.rs` still read `.text` on
+  `NativeSearchMatch` at 7 sites, never swept because the earlier round only fixed what CI named.
+
+Per the coordinator's instruction, closed the loop with a crate-wide grep instead of a named-site
+  patch: `grep -rn '\.text\b' rust_core/src rust_core/tests rust_core/benches` (80 raw hits) plus a
+
+type-name grep (`grep -rln 'NativeSearchMatch\|NativeMultiPatternMatch'`, 3 files: main.rs,
+  native_search.rs, and a false-positive substring match in gpu_native.rs's unrelated
+  `GpuNativeSearchMatch`). Individually verified every one of the 80 `.text` hits belongs to a
+  DIFFERENT type -- `AstMatch`/tree-sitter `Node.text()` (backend_ast.rs), `CpuMatch`
+  (backend_cpu.rs), a symbol-graph reference type (editor_plane.rs), `GpuNativeSearchMatch`
+  (gpu_native.rs -- `#[cfg(feature = "cuda")]`-gated at lib.rs:9-10, and its own 3 test files
+  self-gate `#![cfg(feature = "cuda")]`, never compiled by `cuda-feature-check`'s plain `cargo check
+  --features cuda` since that doesn't check test targets), `IndexResult`/TrigramIndex (index.rs), or
+  a local `SearchMatch` Deserialize-only struct in test_schema_compat.rs that validates STATIC
+  committed JSON example fixtures, never live code -- except the 7 in test_native_search.rs, which
+  are genuinely `NativeSearchMatch`. Fixed all 7: 5 direct `assert_eq!(...text, "...")` become
+  `assert_eq!(...raw, b"...".to_vec())`; 2 `.map(|entry| entry.text.as_str())`/`.contains(...)`
+  become `std::str::from_utf8(&entry.raw).expect(...)`-based equivalents.
+
+CAUSE B -- `test-python` was RED on all 6 legs,
+  `test_output_golden_contract[binary_single_file-python-m]` expecting `\0`, receiving `/0`. This
+  looked identical to task #263's defect, but is a DIFFERENT bug in a DIFFERENT layer: the
+  PRODUCTION code (`rust_backend.py::_binary_notice_text`, `RipgrepFormatter._binary_notice`) is
+  correct -- confirmed by direct, repeated local execution of `python -m tensor_grep search hello
+  file3.bin` end to end (backend search + formatter), which always produced `\0`. The corruption is
+  in the TEST HARNESS: `run_tg`'s plain-text normalization path called
+  `_normalize_relative_prefix(line)` -- `line.replace("\\", "/")` -- on the WHOLE output line, not
+  just a path prefix. A binary-match notice's own text contains a literal `\0` (backslash, zero);
+  the blanket replace turns it into `/0` AFTER a byte-correct subprocess call, which is why direct
+  reproduction outside `run_tg`'s post-processing kept showing the correct value while the actual
+  pytest run did not. This is the exact same shape of gap `tests/helpers/rg_parity.py`'s
+  `_normalize_line` already documents (a real backslash divergence inside matched TEXT content, not
+  a parsed-out path prefix, cancels out / corrupts) -- a separate occurrence in this file, not
+  covered by that disclosure.
+
+Root-caused via a REPRODUCIBLE bisection, not guessing: ran the exact failing pytest test locally
+  (reproduced), then compared a manual subprocess call (correct output) against `run_tg`'s internal
+  subprocess call (same command shape, wrong output) side by side in one process, which isolated the
+  divergence to `run_tg`'s own post-processing rather than the subprocess call itself.
+
+Fix: added `_normalize_output_line`, which finds the `"binary file matches"` marker in a line and
+  normalizes ONLY the prefix before it (a real path, when `--with-filename` is in effect), leaving
+  the notice text -- including its `\0` -- untouched. Every other line (no marker) normalizes
+  exactly as before, so this is scoped to the one class of content with a legitimate literal
+  backslash; behavior for every other golden case in this suite (verified: full local run, 22 passed
+  / 22 skipped, 0 failed) is unchanged. No multi-file binary+with-filename golden case exists in
+  this suite currently, so the prefix-preserving branch is currently unexercised but correctly
+  designed for it.
+
+rustfmt --check: clean on every touched .rs file. ruff format --preview / ruff check: clean on the
+  touched .py file.
+
+* fix: close independent-gate BLOCKING 1/2 + fold in N1/N3(doc)/N4 (task #266/#263)
+
+BLOCKING 1 -- tests/e2e/test_native_json_byte_fidelity.py never executes (not locally, not in CI),
+  so #266's headline claims were unproven. Two fixes, per the coordinator's corrected diagnosis
+  (their first relay of the gate's root cause was wrong -- TG_REQUIRE_RG_PARITY DOES exist, at
+  ci.yml:653, and native-build-smoke DOES build the binary and run pytest; it just named one
+  hardcoded file):
+
+* PRIMARY remedy -- two new #[test]s in rust_core/tests/test_native_search.rs, which already run
+  under test-rust-core on every OS regardless of e2e wiring: -
+  test_native_search_json_crlf_line_preserves_trailing_cr: a binary-written `b"needle crlf\r\n"`
+  fixture through the real `--json` path (`run_native_search` -> `emit_json_matches`), asserting the
+  emitted `text` field is `"needle crlf\r"`. -
+  test_native_search_json_invalid_utf8_line_uses_base64_bytes_fallback: a binary-written `b"caf\xe9
+  needle\n"` fixture through the same path, asserting `text` is absent, `bytes` is a base64 string
+  that decodes back to the exact original bytes, and U+FFFD's own encoding never appears in the
+  decoded output. FAILING-DIRECTION PROOF (CPU-SAFE this session; could not compile/run to observe
+  red directly, stated per the coordinator's explicit requirement): the CRLF assertion is a
+  mechanical proof about the shared pre-fix code (`line.trim_end_matches(['\n', '\r'])` strips both
+  `\r` and `\n` in one pass on `"needle crlf\r\n"`, a deterministic std function, not a heuristic --
+  the pre-fix 11-byte `"needle crlf"` cannot satisfy `== "needle crlf\r"`). The non-UTF-8 assertion
+  is grounded in the pinned grep-searcher 0.1.16 source (extracted and read directly from the local
+  Cargo registry cache during #266's development): `Lossy::matched()` calls
+  `String::from_utf8_lossy(mat.bytes())` unconditionally, and `NativeJsonMatch` pre-fix had no
+  `bytes` field at all, so both assertions fail on the pre-fix shape for distinct, structural
+  reasons -- not empirically observed, but exact. * CI wiring -- native-build-smoke's
+  `test_native_plain_text_parity.py`-only pytest invocation became a glob,
+  `tests/e2e/test_native_*.py`, so the new file actually runs (4 OSes, binary present,
+  TG_REQUIRE_RG_PARITY=1 already turns a missing binary into a failure, never a masquerading skip).
+  Verified the glob is exactly correct, not over- or under-inclusive: `grep -rl TG_REQUIRE_RG_PARITY
+  tests/` finds exactly these 2 files, both matching. "Fix the class, not the instance" -- the
+  hardcoded single filename was correct when written and silently rotted incomplete the moment a
+  sibling file was added; a glob can't rot the same way.
+
+BLOCKING 2 -- rust_core/Cargo.lock was missing the `base64` dependency EDGE (the package itself was
+  already present at the correct version via arrow-cast). Added the single line `"base64",` to the
+  tensor_grep_rs dependencies array, sorted position (between ast-grep-language and clap). Nothing
+  else in the lock file changes.
+
+N1 (folded in) -- emit_plain_search_matches_with_line_number's `let _ = stdout.write_all(...)`
+  silently swallowed every write error including genuine ones (disk full, I/O error), while its
+  sibling emit_count_search_matches used bare `println!` (which PANICS on any write failure,
+  including the routine closed-pipe case). Both now return anyhow::Result<()>: a closed pipe
+  (`ErrorKind::BrokenPipe`) returns Ok(()) quietly, any other error propagates. Updated all 6 call
+  sites (2 direct, 2 more via the same containing functions, and the 2 `#[cfg(feature = "cuda")]`
+  GPU wrappers, whose own signatures needed the same treatment since they now propagate too) -- all
+  of whose containing functions already returned anyhow::Result<()>, so this is a non-cascading,
+  self-contained change.
+
+N4 (folded in) -- two gaps in rust_core/tests/test_schema_compat.rs's schema model: *
+  `SearchMatch`/`SearchNdjsonExample` (the two structs modeling `SearchMatchJson`/
+  `SearchMatchNdjson`'s committed JSON-example schema) still modeled `text: String` as required,
+  understating the new text/bytes contract. Added `bytes: Option<String>` and made `text` optional
+  (both `#[serde(default)]`, so every existing valid-UTF-8-only example fixture deserializes
+  unchanged); updated the two `!matched.text.is_empty()`-style assertions to check "exactly one of
+  text/bytes populated" instead. Left the OTHER `text: String` fields in this file alone
+  (SymbolReference/BlastRadius/RulesetEvidenceSnippet/GpuSidecar/etc. model unrelated commands'
+  schemas, not SearchMatchJson). * The multi-file `--with-filename` binary-notice prefix (task
+  #263's first defect) had no test at all. Added
+  test_search_multiple_binary_files_emit_distinguishable_per_file_stderr_warnings to
+  rust_core/tests/test_routing.rs: two binary files in one directory walk must produce two
+  DISTINGUISHABLE notices, each attributable to its own filename -- deliberately not asserting an
+  exact absolute-path string (platform/temp-dir-fragile), asserting the actual claim task #263 fixes
+  instead.
+
+N2, N3 -- not folded in here per the coordinator's own offer ("say if you want it as a follow-up
+  task" / this is a wording-only PR-body fix, not a code change): flagged in the final report for
+  the coordinator to file/handle directly.
+
+rustfmt --check: clean on every touched .rs file. ci.yml: validated with `yaml.safe_load` (no YAML
+  linter available without a compile step) and the edited step's content spot-checked via the same
+  parse.
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+### Testing
+
+- **parity**: Pin rg_parity._normalize_line's known whole-line lossiness with a proof
+  ([#748](https://github.com/oimiragieo/tensor-grep/pull/748),
+  [`c6622c6`](https://github.com/oimiragieo/tensor-grep/commit/c6622c6bf0c3a494e1eadb0be0e1f0409b0ff8d2))
+
+`tests/helpers/rg_parity.py:560` carries a 13-line comment declaring its `.replace(b"\\", b"/")` a
+  "KNOWN, ACKNOWLEDGED LIMIT (not closed by task #262)" -- it runs against the WHOLE line, so a
+  backslash-vs-forward-slash divergence inside MATCHED CONTENT cancels identically on both arms and
+  reads as parity.
+
+That comment calls the gap "a structural gap, not a proven-safe one" and notes it "has not been
+  observed to mask a real failure". This converts that argued claim into a MEASURED one. Nothing in
+  production changes.
+
+Measured: two lines differing only in separators inside match CONTENT (same file, same line number)
+  are DISTINCT before normalization and IDENTICAL after it. The comparator cannot see the
+  divergence.
+
+Includes the control that makes the pin non-tautological: a hypothetical prefix-scoped normalizer
+  keeps the same pair DISTINCT. Without it, "these two become equal" would be satisfied by a
+  normalizer that mangled everything, or by inputs that were never really different. The control
+  proves the collapse is caused by the whole-line SCOPE specifically.
+
+The limit is deliberately NOT fixed here. The comparator backs every `test_rg_parity_matrix.py` row,
+  and rg_parity.py:560 argues -- correctly -- that a naive partition on b":" is unsafe when content
+  may contain its own ":" or "\\". An unproven path-prefix parse is the riskier change. If someone
+  does close it, the first test starts failing: that is the intended signal, and the comment says to
+  delete the test and update rg_parity.py:560.
+
+Lands in test_byte_parity_helper.py because that file IS task #262's bidirectional-oracle proof
+  file, and this is the residual #262 explicitly did not close.
+
+18 passed. ruff check + ruff format --check --preview clean.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.98.8 (2026-07-25)
 
 ### Bug Fixes
