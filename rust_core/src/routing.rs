@@ -189,7 +189,7 @@ pub struct PlainTextNativeRequest {
 ///
 /// The four structural refusals, each traced against real behavior rather than assumed:
 ///
-/// 1. `stdout_is_terminal` -- `execute_ripgrep_search` spawns `rg` with `Stdio::inherit()`, so on
+/// REFUSAL 1 -- `stdout_is_terminal` -- `execute_ripgrep_search` spawns `rg` with `Stdio::inherit()`, so on
 ///    a terminal `rg` auto-enables its heading/grouped layout AND color. The native engine's
 ///    `append_standard_match_bytes` always emits flat, uncolored `path:line:text`. Interactive
 ///    output would visibly change, so terminals keep the subprocess. (The measured ~16ms win is a
@@ -204,12 +204,12 @@ pub struct PlainTextNativeRequest {
 ///    route moves ownership of the write loop out of the `Stdio::inherit()` subprocess and into
 ///    tg's own process, and the two react oppositely to EPIPE. See that guard for the measurement.
 ///
-/// 2. `path_was_implicit` -- with no PATH operand `rg` walks `./` but prints paths WITHOUT the
+/// REFUSAL 2 -- `path_was_implicit` -- with no PATH operand `rg` walks `./` but prints paths WITHOUT the
 ///    `./` prefix, while the native engine is handed the literal `"."` default and prints
 ///    `./name`. Verified with ripgrep 15.1.0: `rg needle` prints `a.txt:...` and `rg needle .`
 ///    prints `.\a.txt:...`. An implicit path would therefore change every output line.
 ///
-/// 3. `path_count == 1 && single_path_is_regular_file` -- the native engine must not WALK. Two
+/// REFUSAL 3 -- `path_count == 1 && single_path_is_regular_file` -- the native engine must not WALK. Two
 ///    independent divergences appear the moment it does:
 ///    (a) `rg` silently skips binary files discovered by a directory walk (verified: a matching
 ///    `binary.bin` under a walked root produced no output at all from ripgrep 15.1.0), while
@@ -222,11 +222,11 @@ pub struct PlainTextNativeRequest {
 ///    semantics, no hidden-file rules, no ordering, no walk ceiling, and
 ///    `should_print_with_filename` is false on both sides so neither prints a path prefix.
 ///
-/// 4. `pattern_count == 1` -- multi-pattern requests take
+/// REFUSAL 4 -- `pattern_count == 1` -- multi-pattern requests take
 ///    `collect_native_multi_pattern_matches`/`emit_multi_pattern_native_results`, a different
 ///    emitter whose plain-text agreement with `rg -e A -e B` is not established.
 ///
-/// 5. `single_path_renders_identically` -- a FULL-CONTENT probe of the single file, refusing on
+/// REFUSAL 5 -- `single_path_renders_identically` -- a FULL-CONTENT probe of the single file, refusing on
 ///    any of three divergences the emitter has and that this PR deliberately does NOT try to fix
 ///    (the emitter is shared with `--json`/`--ndjson`/`--cpu` and its behavior is a governed
 ///    contract; changing shared rendering inside a perf PR is the wrong blast radius):
@@ -253,12 +253,12 @@ pub struct PlainTextNativeRequest {
 ///    more than it saves", which the measurements later disproved, leaving two load-bearing
 ///    comments in one PR claiming opposite facts about the same constant. One place owns it.
 ///
-/// 6. `pattern_is_empty` -- `tg search "" file.txt` is a legal rg invocation (every line matches),
+/// REFUSAL 6 -- `pattern_is_empty` -- `tg search "" file.txt` is a legal rg invocation (every line matches),
 ///    but `run_native_search` rejects an empty pattern outright, and the `allow_rg_fallback` net
 ///    then prints `warning: native CPU search failed, falling back to ripgrep: ...` to stderr
 ///    before the correct stdout. Correct results, but a stderr line that did not exist before.
 ///
-/// 7. `pattern_is_native_renderable` -- the file probe validates the FILE; this clause covers the
+/// REFUSAL 7 -- `pattern_is_native_renderable` -- the file probe validates the FILE; this clause covers the
 ///    divergences that are properties of the PATTERN, on an otherwise fully admitted request.
 ///    Two distinct failure shapes, both measured against ripgrep 15.1.0:
 ///    (a) EXIT-CODE REGRESSION 2 -> 1. `rg` refuses a pattern that can match a line terminator
@@ -279,7 +279,7 @@ pub struct PlainTextNativeRequest {
 ///    escaped) and any pattern the native matcher cannot compile. Over-refusal is free here: a
 ///    refused pattern simply keeps today's `rg` behavior.
 ///
-/// 8. `rg_config_env_present` -- every clause above validates the REQUEST, the PATTERN or the
+/// REFUSAL 8 -- `rg_config_env_present` -- every clause above validates the REQUEST, the PATTERN or the
 ///    FILE. None of them validates the process ENVIRONMENT that the `rg` subprocess inherits, and
 ///    `rg` has a first-class env config surface: `execute_ripgrep_search` never calls
 ///    `env_clear()`, and `rg_passthrough.rs` passes `--no-config` only when the user asks for it,
@@ -288,16 +288,16 @@ pub struct PlainTextNativeRequest {
 ///
 ///    Receipt on the shipped tg 1.98.3 + rg 15.1.0, stdout piped, a config file containing `-i`,
 ///    and `lf.txt` = `"needle alpha\nNEEDLE beta\nplain\n"`:
-///      - `tg search NEEDLE lf.txt`                        -> `NEEDLE beta`
-///      - `RIPGREP_CONFIG_PATH=cfg tg search NEEDLE lf.txt` -> `needle alpha` + `NEEDLE beta`
-///     That argv is the canonical admitted shape (no flags, one pattern, one explicit LF/UTF-8
-///     file, piped stdout), so without this clause the route would return SILENTLY WRONG RESULTS on
-///     the most common request it admits. `-i` is only the cheapest demonstration: a config
-///     `--vimgrep` changes the entire output format, `--color=always` injects escapes, and
-///     `-w`/`-F`/`-U`/`-A`/`-B`/`-C`/`--sort`/`--hidden`/`--max-columns` are all equally invisible
-///     to a predicate that only inspects argv. A DANGLING path is also observable: `rg` prints a
-///     read-failure diagnostic the native route would omit. An EMPTY value is ignored by `rg`, so
-///     the guard is "set AND non-empty", not merely "set".
+///    (a) `tg search NEEDLE lf.txt`                        -> `NEEDLE beta`
+///    (b) `RIPGREP_CONFIG_PATH=cfg tg search NEEDLE lf.txt` -> `needle alpha` + `NEEDLE beta`
+///    That argv is the canonical admitted shape (no flags, one pattern, one explicit LF/UTF-8
+///    file, piped stdout), so without this clause the route would return SILENTLY WRONG RESULTS on
+///    the most common request it admits. `-i` is only the cheapest demonstration: a config
+///    `--vimgrep` changes the entire output format, `--color=always` injects escapes, and
+///    `-w`/`-F`/`-U`/`-A`/`-B`/`-C`/`--sort`/`--hidden`/`--max-columns` are all equally invisible
+///    to a predicate that only inspects argv. A DANGLING path is also observable: `rg` prints a
+///    read-failure diagnostic the native route would omit. An EMPTY value is ignored by `rg`, so
+///    the guard is "set AND non-empty", not merely "set".
 ///
 ///    No oracle can catch this class -- CI never sets the variable and the parity helpers copy
 ///    `os.environ` -- which is exactly why it is a predicate clause and not a test.
@@ -312,7 +312,7 @@ pub struct PlainTextNativeRequest {
 ///    as note (9), one round later -- which is itself the point worth recording: this axis keeps
 ///    producing instances, so treat "no more found" as un-found rather than absent.
 ///
-/// 9. `single_path_is_stdin_sentinel` -- THE AXIS THIS CLAUSE NAMES: everything `rg` resolves
+/// REFUSAL 9 -- `single_path_is_stdin_sentinel` -- THE AXIS THIS CLAUSE NAMES: everything `rg` resolves
 ///    SPECIALLY that is neither the request, the pattern, the file's bytes, the environment, nor
 ///    the consumer. `-` is the instance that bit. It is the one PATH operand ripgrep gives a
 ///    special meaning (read STDIN), and this predicate modelled it as an ordinary path:
@@ -322,28 +322,28 @@ pub struct PlainTextNativeRequest {
 ///
 ///    Measured (file named `-` in cwd containing `needle in dashfile`, stdin piped
 ///    `needle from STDIN`), for `needle -`, `needle -- -` and `-e needle -` alike:
-///      - rg 15.1.0        -> `needle from STDIN`
-///      - shipped tg 1.98.3 -> `needle from STDIN`
-///      - native emitter    -> `needle in dashfile`
-///     rc=0, no stderr, plausible output -- from the WRONG DATA SOURCE. Confirmed POSIX-wide:
-///     `grep needle -` with a file named `-` present also reads stdin.
+///    (a) rg 15.1.0        -> `needle from STDIN`
+///    (b) shipped tg 1.98.3 -> `needle from STDIN`
+///    (c) native emitter    -> `needle in dashfile`
+///    rc=0, no stderr, plausible output -- from the WRONG DATA SOURCE. Confirmed POSIX-wide:
+///    `grep needle -` with a file named `-` present also reads stdin.
 ///
 ///    The rest of the axis was probed on Linux (WSL) rather than reasoned about, because an
 ///    earlier round cleared `-` by reasoning and was wrong. `Path::is_file()` is `S_ISREG`, so
 ///    admission is exactly decidable:
-///      - `/dev/null`, `/dev/zero`, FIFOs -- NOT `S_ISREG` -> already refused by clause 3.
-///      - a symlink to a regular file -- admitted, and correctly so: both engines follow an
-///        explicit symlink operand, size matches content, no divergence.
-///      - `/proc/self/status`, `/proc/version` -- `S_ISREG` TRUE, `st_size` 0, and a read returns
-///        1460 / 166 bytes of clean UTF-8. These were ADMITTED and are now refused by the
-///        size-vs-bytes invariant in `plain_text_native_probe_file` (see there): a pseudo-file
-///        whose reported size is a lie is exactly the shape where the probe cannot describe what
-///        the search will later read, which is the memoization-staleness window becoming a
-///        certainty by construction rather than a microsecond race.
+///    (a) `/dev/null`, `/dev/zero`, FIFOs -- NOT `S_ISREG` -> already refused by clause 3.
+///    (b) a symlink to a regular file -- admitted, and correctly so: both engines follow an
+///    explicit symlink operand, size matches content, no divergence.
+///    (a) `/proc/self/status`, `/proc/version` -- `S_ISREG` TRUE, `st_size` 0, and a read returns
+///    1460 / 166 bytes of clean UTF-8. These were ADMITTED and are now refused by the
+///    size-vs-bytes invariant in `plain_text_native_probe_file` (see there): a pseudo-file
+///    whose reported size is a lie is exactly the shape where the probe cannot describe what
+///    the search will later read, which is the memoization-staleness window becoming a
+///    certainty by construction rather than a microsecond race.
 ///
-/// `structured_output` and `explicit_format` are refused because those requests already have
-/// their own routes (`--json`/`--ndjson` land on `native_cpu_json`; `--format rg` must reach real
-/// `rg`), and this predicate must never redirect them.
+///    `structured_output` and `explicit_format` are refused because those requests already have
+///    their own routes (`--json`/`--ndjson` land on `native_cpu_json`; `--format rg` must reach real
+///    `rg`), and this predicate must never redirect them.
 pub const fn native_can_serve_plain_text(request: &PlainTextNativeRequest) -> bool {
     plain_text_native_cheap_checks_pass(request)
         && request.pattern_is_native_renderable
