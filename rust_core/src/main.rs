@@ -2042,7 +2042,6 @@ fn plain_text_native_request_for_search(
         stdout_is_terminal,
         // Overwritten by `finish_plain_text_native_request`, the single owner of these clauses.
         rg_config_env_present: false,
-        stdin_is_readable: false,
         only_allowed_flags: search_args_allow_plain_text_native(args),
     };
     finish_plain_text_native_request(
@@ -2100,12 +2099,9 @@ fn fill_plain_text_native_expensive_tier(
     word_boundary: bool,
     path: Option<&Path>,
 ) -> PlainTextNativeRequest {
-    // The environment and stdin clauses are filled HERE rather than by either constructor, so
-    // there is exactly one call path to each and the two adapters cannot disagree about them.
-    // Both are cheap-tier facts (one env lookup, one stat) and must be populated before
-    // `plain_text_native_cheap_checks_pass` reads them, or they would be dead guards.
+    // The environment clause is filled HERE rather than by either constructor, so there is exactly
+    // one call path to `rg_config_env_present()` and the two adapters cannot disagree about it.
     request.rg_config_env_present = rg_config_env_present();
-    request.stdin_is_readable = stdin_should_search_implicit_path();
     if !plain_text_native_cheap_checks_pass(&request) {
         return request;
     }
@@ -2291,7 +2287,6 @@ fn frontdoor_search_is_native_plain_text_eligible_with_terminal(
         stdout_is_terminal,
         // Overwritten by `finish_plain_text_native_request`, the single owner of these clauses.
         rg_config_env_present: false,
-        stdin_is_readable: false,
         only_allowed_flags: true,
     };
     let facts = finish_plain_text_native_request(
@@ -8225,9 +8220,21 @@ const BROKEN_PIPE_EXIT_CODE: i32 = 1;
 /// `io::Error`), and finally gets anyhow context from `search_path`'s caller. Only the INNERMOST
 /// link still says `BrokenPipe`; the outermost `io::Error` says `Other`.
 fn error_chain_has_broken_pipe(err: &anyhow::Error) -> bool {
-    err.chain()
+    if err
+        .chain()
         .filter_map(|cause| cause.downcast_ref::<io::Error>())
         .any(|cause| cause.kind() == io::ErrorKind::BrokenPipe)
+    {
+        return true;
+    }
+    // Belt-and-braces. The typed walk above is the primary check and now works because
+    // `native_search::sink_io_error` preserves the kind instead of flattening it to `Other` -- but
+    // an earlier revision relied on the walk alone and CI proved it did NOT fire on Linux, so the
+    // rendered chain is also matched. `format!("{err:#}")` renders every source, and an
+    // `io::Error(BrokenPipe)` renders as "Broken pipe (os error 32)" on Unix / "The pipe is being
+    // closed. (os error 232)" on Windows.
+    let rendered = format!("{err:#}").to_ascii_lowercase();
+    rendered.contains("broken pipe") || rendered.contains("pipe is being closed")
 }
 
 fn run_native_search_with_optional_rg_fallback(

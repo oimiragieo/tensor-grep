@@ -177,8 +177,6 @@ pub struct PlainTextNativeRequest {
     pub stdout_is_terminal: bool,
     /// `$RIPGREP_CONFIG_PATH` is set to a non-empty value. See refusal note (8).
     pub rg_config_env_present: bool,
-    /// stdin is a readable source (a pipe/file redirect, not a TTY or /dev/null). Refusal note (10).
-    pub stdin_is_readable: bool,
     /// Every flag on the command line is in `PLAIN_TEXT_NATIVE_ALLOWED_FLAGS`.
     pub only_allowed_flags: bool,
 }
@@ -214,12 +212,12 @@ pub struct PlainTextNativeRequest {
 /// 3. `path_count == 1 && single_path_is_regular_file` -- the native engine must not WALK. Two
 ///    independent divergences appear the moment it does:
 ///    (a) `rg` silently skips binary files discovered by a directory walk (verified: a matching
-///        `binary.bin` under a walked root produced no output at all from ripgrep 15.1.0), while
-///        `run_native_search_files` calls `emit_binary_match_warning` for any matching binary
-///        file it reaches -- an extra line `rg` never prints, and one no flag can suppress
-///        because it is a property of the DATA, not the request; and
+///    `binary.bin` under a walked root produced no output at all from ripgrep 15.1.0), while
+///    `run_native_search_files` calls `emit_binary_match_warning` for any matching binary
+///    file it reaches -- an extra line `rg` never prints, and one no flag can suppress
+///    because it is a property of the DATA, not the request; and
 ///    (b) both engines walk in parallel, so file emission ORDER is unstable across the two
-///        walkers while the parity oracle compares text output as an ordered sequence.
+///    walkers while the parity oracle compares text output as an ordered sequence.
 ///    Restricting to one explicit regular file removes the walk entirely: no ignore-file
 ///    semantics, no hidden-file rules, no ordering, no walk ceiling, and
 ///    `should_print_with_filename` is false on both sides so neither prints a path prefix.
@@ -233,22 +231,22 @@ pub struct PlainTextNativeRequest {
 ///    (the emitter is shared with `--json`/`--ndjson`/`--cpu` and its behavior is a governed
 ///    contract; changing shared rendering inside a perf PR is the wrong blast radius):
 ///    (a) CRLF -- `search_file_streaming_plain_sequential` does
-///        `line.trim_end_matches(['\n', '\r'])` (`native_search.rs`), and `build_searcher` only
-///        installs a CRLF line terminator when `config.crlf`, which nothing on this path ever
-///        sets (`--crlf` is a Python-passthrough flag). Measured: `rg` emits
-///        `b"needle alpha\r\n"` where the native engine emits `b"needle alpha\n"`. On a Windows
-///        or CRLF-normalized checkout this hits routine `tg search PATTERN file.py`, so ANY `\r`
-///        byte refuses.
+///    `line.trim_end_matches(['\n', '\r'])` (`native_search.rs`), and `build_searcher` only
+///    installs a CRLF line terminator when `config.crlf`, which nothing on this path ever
+///    sets (`--crlf` is a Python-passthrough flag). Measured: `rg` emits
+///    `b"needle alpha\r\n"` where the native engine emits `b"needle alpha\n"`. On a Windows
+///    or CRLF-normalized checkout this hits routine `tg search PATTERN file.py`, so ANY `\r`
+///    byte refuses.
 ///    (b) Non-UTF-8 -- the plain sink is `grep_searcher::sinks::Lossy`, which substitutes U+FFFD;
-///        `rg` writes the raw bytes. Measured: `rg` emits `b"cafe\xe9 needle here"` where the
-///        native engine emits `b"cafe\xef\xbf\xbd needle here"` -- silent corruption. A PREFIX
-///        probe cannot bound this (an invalid byte at 1 MB diverges just as hard), so the probe
-///        validates the WHOLE file and refuses anything that is not valid UTF-8.
+///    `rg` writes the raw bytes. Measured: `rg` emits `b"cafe\xe9 needle here"` where the
+///    native engine emits `b"cafe\xef\xbf\xbd needle here"` -- silent corruption. A PREFIX
+///    probe cannot bound this (an invalid byte at 1 MB diverges just as hard), so the probe
+///    validates the WHOLE file and refuses anything that is not valid UTF-8.
 ///    (c) NUL/binary -- `rg` prints `binary file matches (found "\0" byte around offset 6)` while
-///        `emit_binary_match_warning` prints the same sentence with `"/0"`, a spelling pinned by
-///        `tests/e2e/snapshots/.../native_binary_single_file.txt`,
-///        `src/tensor_grep/backends/rust_backend.py`, `tests/unit/test_rust_core.py` and a
-///        `rust_core/tests/test_routing.rs` assertion.
+///    `emit_binary_match_warning` prints the same sentence with `"/0"`, a spelling pinned by
+///    `tests/e2e/snapshots/.../native_binary_single_file.txt`,
+///    `src/tensor_grep/backends/rust_backend.py`, `tests/unit/test_rust_core.py` and a
+///    `rust_core/tests/test_routing.rs` assertion.
 ///    The probe is bounded by `PLAIN_TEXT_NATIVE_MAX_PROBE_BYTES` in `main.rs`; see the measured
 ///    cost table on that constant for the cap's actual justification. Do NOT restate the cost
 ///    tradeoff here -- an earlier revision of this very comment asserted the probe "can never cost
@@ -264,19 +262,19 @@ pub struct PlainTextNativeRequest {
 ///    divergences that are properties of the PATTERN, on an otherwise fully admitted request.
 ///    Two distinct failure shapes, both measured against ripgrep 15.1.0:
 ///    (a) EXIT-CODE REGRESSION 2 -> 1. `rg` refuses a pattern that can match a line terminator
-///        (`needle\n`, `\n`, `[\n]`, `needle\r\n`) with rc=2 and "the literal `\n` is not allowed
-///        in a regex ... consider --multiline", and a `\x00` pattern with rc=2 and "pattern
-///        contains `\0` but it is impossible to match". The native matcher accepts both and
-///        SUCCEEDS with zero matches -> rc=1 and empty stderr. `allow_rg_fallback` never fires
-///        because nothing failed. An agent branching on 2-vs-1 would read "no matches" where the
-///        truth is "bad query", and lose the diagnostic. Root cause: `build_matcher` never calls
-///        `RegexMatcherBuilder::line_terminator`, which is what makes `rg` reject these -- fixing
-///        that would change the matcher shared with `--json`/`--ndjson`/`--cpu`, so this route
-///        refuses instead.
+///    (`needle\n`, `\n`, `[\n]`, `needle\r\n`) with rc=2 and "the literal `\n` is not allowed
+///    in a regex ... consider --multiline", and a `\x00` pattern with rc=2 and "pattern
+///    contains `\0` but it is impossible to match". The native matcher accepts both and
+///    SUCCEEDS with zero matches -> rc=1 and empty stderr. `allow_rg_fallback` never fires
+///    because nothing failed. An agent branching on 2-vs-1 would read "no matches" where the
+///    truth is "bad query", and lose the diagnostic. Root cause: `build_matcher` never calls
+///    `RegexMatcherBuilder::line_terminator`, which is what makes `rg` reject these -- fixing
+///    that would change the matcher shared with `--json`/`--ndjson`/`--cpu`, so this route
+///    refuses instead.
 ///    (b) EXTRA STDERR. A pattern that fails to COMPILE (`[`, `(`, `\Qx\E`,
-///        `a{500}{500}{500}`) still exits 2, but only after `allow_rg_fallback` prints
-///        `warning: native CPU search failed, falling back to ripgrep: ...` -- the same
-///        extra-stderr class already treated as disqualifying for the empty pattern (note 6).
+///    `a{500}{500}{500}`) still exits 2, but only after `allow_rg_fallback` prints
+///    `warning: native CPU search failed, falling back to ripgrep: ...` -- the same
+///    extra-stderr class already treated as disqualifying for the empty pattern (note 6).
 ///    The adapter therefore refuses any pattern containing a line terminator or NUL (literal OR
 ///    escaped) and any pattern the native matcher cannot compile. Over-refusal is free here: a
 ///    refused pattern simply keeps today's `rg` behavior.
@@ -292,14 +290,14 @@ pub struct PlainTextNativeRequest {
 ///    and `lf.txt` = `"needle alpha\nNEEDLE beta\nplain\n"`:
 ///      - `tg search NEEDLE lf.txt`                        -> `NEEDLE beta`
 ///      - `RIPGREP_CONFIG_PATH=cfg tg search NEEDLE lf.txt` -> `needle alpha` + `NEEDLE beta`
-///    That argv is the canonical admitted shape (no flags, one pattern, one explicit LF/UTF-8
-///    file, piped stdout), so without this clause the route would return SILENTLY WRONG RESULTS on
-///    the most common request it admits. `-i` is only the cheapest demonstration: a config
-///    `--vimgrep` changes the entire output format, `--color=always` injects escapes, and
-///    `-w`/`-F`/`-U`/`-A`/`-B`/`-C`/`--sort`/`--hidden`/`--max-columns` are all equally invisible
-///    to a predicate that only inspects argv. A DANGLING path is also observable: `rg` prints a
-///    read-failure diagnostic the native route would omit. An EMPTY value is ignored by `rg`, so
-///    the guard is "set AND non-empty", not merely "set".
+///     That argv is the canonical admitted shape (no flags, one pattern, one explicit LF/UTF-8
+///     file, piped stdout), so without this clause the route would return SILENTLY WRONG RESULTS on
+///     the most common request it admits. `-i` is only the cheapest demonstration: a config
+///     `--vimgrep` changes the entire output format, `--color=always` injects escapes, and
+///     `-w`/`-F`/`-U`/`-A`/`-B`/`-C`/`--sort`/`--hidden`/`--max-columns` are all equally invisible
+///     to a predicate that only inspects argv. A DANGLING path is also observable: `rg` prints a
+///     read-failure diagnostic the native route would omit. An EMPTY value is ignored by `rg`, so
+///     the guard is "set AND non-empty", not merely "set".
 ///
 ///    No oracle can catch this class -- CI never sets the variable and the parity helpers copy
 ///    `os.environ` -- which is exactly why it is a predicate clause and not a test.
@@ -327,8 +325,8 @@ pub struct PlainTextNativeRequest {
 ///      - rg 15.1.0        -> `needle from STDIN`
 ///      - shipped tg 1.98.3 -> `needle from STDIN`
 ///      - native emitter    -> `needle in dashfile`
-///    rc=0, no stderr, plausible output -- from the WRONG DATA SOURCE. Confirmed POSIX-wide:
-///    `grep needle -` with a file named `-` present also reads stdin.
+///     rc=0, no stderr, plausible output -- from the WRONG DATA SOURCE. Confirmed POSIX-wide:
+///     `grep needle -` with a file named `-` present also reads stdin.
 ///
 ///    The rest of the axis was probed on Linux (WSL) rather than reasoned about, because an
 ///    earlier round cleared `-` by reasoning and was wrong. `Path::is_file()` is `S_ISREG`, so
@@ -342,25 +340,6 @@ pub struct PlainTextNativeRequest {
 ///        whose reported size is a lie is exactly the shape where the probe cannot describe what
 ///        the search will later read, which is the memoization-staleness window becoming a
 ///        certainty by construction rather than a microsecond race.
-///
-/// 10. `stdin_is_readable` -- the predicate modelled stdout (clause 1) and the paths on argv, but
-///    never modelled STDIN as an input source. With a readable stdin there are two candidate
-///    sources, and tg's own request resolution already branches on it
-///    (`resolve_search_request_with_stdin` takes `stdin_should_search_implicit_path()`, and
-///    `implicit_search_paths` drops the `"."` default when stdin is readable). Clause (2) covers
-///    only the IMPLICIT-path half of that; an EXPLICIT path with a readable stdin was admitted
-///    while the argv tg forwards to `rg` in that state is pinned by
-///    `test_public_native_cli_parity::test_search_explicit_path_keeps_path_when_stdin_is_piped`,
-///    which the native route bypasses entirely.
-///
-///    Measured: real rg with an explicit single path prints the SAME bytes whether stdin is piped
-///    or /dev/null (`needle file`, no filename prefix), so this is not a user-visible rendering
-///    divergence -- it is an unverified region of the tg/rg argv contract, and over-refusal is
-///    free. The condition reuses `stdin_should_search_implicit_path()` (i.e.
-///    `grep_cli::is_readable_stdin()`) rather than a fresh `is_terminal()` check, deliberately: it
-///    is TRUE for a pipe or file redirect and FALSE for a TTY or `/dev/null`. A naive
-///    `!stdin.is_terminal()` would refuse in every non-interactive context -- including CI, agents
-///    and this PR's own oracle -- and would silently delete the feature it is meant to protect.
 ///
 /// `structured_output` and `explicit_format` are refused because those requests already have
 /// their own routes (`--json`/`--ndjson` land on `native_cpu_json`; `--format rg` must reach real
@@ -386,7 +365,6 @@ pub const fn plain_text_native_cheap_checks_pass(request: &PlainTextNativeReques
         && !request.explicit_format
         && !request.stdout_is_terminal
         && !request.rg_config_env_present
-        && !request.stdin_is_readable
         && !request.path_was_implicit
         && request.pattern_count == 1
         && !request.pattern_is_empty

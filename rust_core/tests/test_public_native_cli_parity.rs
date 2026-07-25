@@ -278,9 +278,28 @@ fn test_search_explicit_path_keeps_path_when_stdin_is_piped() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
-        "fixture.txt:needle file\n"
+    // THE INVARIANT THIS TEST NAMES: with stdin piped, an explicit PATH still wins -- the file is
+    // searched and the piped stdin is NOT. That is asserted directly below, so it holds under
+    // either routing.
+    //
+    // It used to be asserted only as `== "fixture.txt:needle file\n"`, i.e. by requiring that the
+    // FAKE rg above was invoked and its canned stdout passed through. That is a mechanism, not the
+    // contract: the plain-text native route answers this shape in-process, so the fake rg is never
+    // spawned and the canned prefix never appears. Real `rg` prints `needle file` here with no
+    // prefix (measured, ripgrep 15.1.0, identical whether stdin is piped or /dev/null), so the
+    // prefix was an artifact of the fake, not ripgrep behavior.
+    //
+    // The fake rg's exact-argv assertion is still live and still fires if the request DOES reach
+    // rg, so the forwarding guarantee is not lost -- this only stops the test from mandating WHICH
+    // engine answers.
+    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    assert!(
+        !stdout.contains("stdin needle"),
+        "an explicit PATH must win over piped stdin; stdout={stdout}"
+    );
+    assert!(
+        stdout == "needle file\n" || stdout == "fixture.txt:needle file\n",
+        "expected the FILE to be searched (native or via rg); stdout={stdout}"
     );
 }
 
