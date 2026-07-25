@@ -792,7 +792,16 @@ fn test_gpu_native_multi_pattern_falls_back_to_batched_passes_for_large_pattern_
             (
                 matched.path.to_string_lossy().into_owned(),
                 matched.line_number,
-                matched.text,
+                // `cpu_union_pattern_tuples` (below) and `parse_match_tuple`/`parse_json_tuples`
+                // are shared across ~15 call sites in this file that compare `tg`'s own JSON
+                // stdout text-vs-text (unaffected by `GpuNativeSearchMatch`'s `raw: Vec<u8>`
+                // shape) -- widening their return type to `Vec<u8>` would ripple far past what
+                // this fix touches. `String::from_utf8` fails loudly (not lossily) rather than
+                // going through `from_utf8_lossy`, so this large-pattern-fallback corpus (pure
+                // ASCII by construction, `write_large_pattern_fallback_corpus` above) keeps the
+                // same byte-fidelity guarantee as a `Vec<u8>` comparison would, without touching
+                // the shared helpers.
+                String::from_utf8(matched.raw).expect("test corpus is valid UTF-8"),
                 matched.pattern_id,
                 matched.pattern_text,
             )

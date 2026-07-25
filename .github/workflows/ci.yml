@@ -532,9 +532,17 @@ jobs:
             echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
           fi
 
+      # `--all-targets` is load-bearing, not tidiness. A bare `cargo check` compiles only the
+      # normal targets, so `#[cfg(test)]` code is never even TYPE-CHECKED -- and because
+      # `gpu_native` is gated behind `#[cfg(feature = "cuda")]` at lib.rs:9-10, `test-rust-core`
+      # (default features) never compiles that module at all. The result was a blind spot where
+      # the entire gpu_native test module could fail to compile and no CI job would notice.
+      # This job is the ONLY oracle for cuda-gated code; `--all-targets` makes it cover the tests
+      # it is the only possible oracle for. It still does not RUN them (checking is not running) --
+      # executing cuda-gated tests needs a cargo test with the feature enabled, tracked separately.
       - name: cargo check --features cuda
         working-directory: rust_core
-        run: cargo check --features cuda
+        run: cargo check --features cuda --all-targets
 
   search-golden-parity:
     name: search-golden-parity (windows-latest)
