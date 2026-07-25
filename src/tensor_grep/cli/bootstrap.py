@@ -191,6 +191,16 @@ _SEARCH_PATTERN_SOURCE_FLAGS = _SEARCH_PATTERN_FLAGS | {"-f", "--file"}
 # independent-gate BLOCKING-3), not by a separate constant here -- a prior round's
 # `arg.startswith((...))` check using a tuple like this one only matched `-e`/`-f` as the
 # token's FIRST character and missed the mid-bundle form real rg accepts.
+# Independent-gate final-gate finding (differential fuzz against `.claude/
+# rg_argv_differential_fuzz.py`'s rg-grammar model, task #269): `--generate` takes a value in
+# real rg but was previously listed ONLY in `_TG_ONLY_SEARCH_FLAGS` above (which gates ROUTING
+# -- forcing full-CLI dispatch), never here (which gates VALUE CONSUMPTION in the positional
+# walk below). The two sets answer different questions and one flag can need to be in both;
+# `--generate`'s absence here made `_search_path_args_raw(["--generate", "py", ...])` treat
+# "py" as a positional/pattern instead of `--generate`'s own value -- unreachable through
+# `_run_rg_passthrough` today (routing already forces full-CLI first), but this function is
+# shared by several broad-scan guards that run BEFORE that routing decision, so a real grammar
+# gap here is not automatically inert. Found by exhaustive differential fuzzing, not by hand.
 _SEARCH_FLAGS_WITH_VALUES = {
     "-A",
     "-B",
@@ -213,6 +223,7 @@ _SEARCH_FLAGS_WITH_VALUES = {
     "--field-match-separator",
     "--file",
     "-f",
+    "--generate",
     "--glob",
     "--gpu-device-ids",
     "--hostname-bin",
@@ -701,9 +712,21 @@ def _search_args_contains_pattern_source_flag(search_args: list[str]) -> bool:
         if offset is not None:
             if arg[offset] in ("e", "f"):
                 return True
-            # Consumed as a non-pattern-source attached value (e.g. `-tpy`, `-im5`) -- nothing
-            # more to classify for this token; it carries no separate-token value to skip
-            # either way (attached values live inside the same token by definition).
+            # Independent-gate re-gate BLOCKING-2: a non-pattern-source attached-value flag
+            # (e.g. `-tpy`, `-im5`) is only self-contained when its value is ATTACHED within
+            # the same token. When the value char is the token's LAST character (`-ir`, `-ig`
+            # -- a bundled `-i` plus `-r`/`-g` with the value in the NEXT argv token, `-ir
+            # needle`), that next token is the flag's VALUE, not a genuine positional -- it
+            # must be skipped here too, exactly like the extraction walk below already does,
+            # or a value that happens to look like a pattern-source flag gets misclassified.
+            # The prior version of this pre-pass shared `_attached_cluster_value_offset` (the
+            # OFFSET) with the extraction walk but let each pass decide `skip_next`
+            # independently -- the offset was unified, the CONSUMPTION was not, and that
+            # asymmetry (`-r -e needle` correctly not a pattern source; `-ir -e needle`
+            # wrongly WAS, because the un-skipped "-e" got read as its own flag) is exactly
+            # the "one rule, two implementations" trap this whole PR exists to close.
+            if offset == len(arg) - 1:
+                skip_next = True
             continue
         if arg in _SEARCH_FLAGS_WITH_VALUES:
             skip_next = True

@@ -935,14 +935,37 @@ def test_search_args_contains_pattern_source_flag_stops_at_end_of_options_sentin
     assert bootstrap._search_args_contains_pattern_source_flag(["sub", "--", "-eneedle"]) is False
 
 
-def test_search_args_contains_pattern_source_flag_does_not_count_a_consumed_flag_value() -> None:
+# Independent-gate final-gate BLOCKING-2 (re-gate on the BLOCKING-1 round itself): the shared
+# `_attached_cluster_value_offset` helper unifies which OFFSET a mid-bundle attached-value flag
+# sits at, but the pre-pass previously decided `skip_next` INDEPENDENTLY of the extraction
+# walk -- and decided it wrong, never setting it at all. A mid-bundle value flag ending a token
+# (`-ir`, `-ig` -- `-i` plus `-r`/`-g`, whose value is the NEXT argv token) therefore failed to
+# consume its own value in the pre-pass, so a value that happens to look like a pattern-source
+# flag (`-e needle`, `-fpats.txt`) got misread as a SEPARATE, genuine flag instead of data.
+# `["--replace", "-eattached", "otherdir"]` alone did not catch this: `--replace` is the LONG
+# separated form, handled by the `_SEARCH_FLAGS_WITH_VALUES` arm, which already worked --
+# a negative control that only exercises the working arm proves nothing about the broken
+# mid-bundle short-flag arm. `-r` and `-g` are the only two value-taking short flags that
+# actually accept a `-e`-shaped value in real rg (verified live: `-t`/`-T` reject it as an
+# unrecognized file type, `-m`/`-A`/`-B`/`-C`/`-M`/`-d`/`-j`/`-E` reject it as a parse error) --
+# `-r` (`--replace`) and `-g` (`--glob`) both happily accept an arbitrary string.
+@pytest.mark.parametrize(
+    "search_args",
+    [
+        ["--replace", "-eattached", "otherdir"],
+        ["-ir", "-e", "needle"],
+        ["-ig", "-fpats.txt", "sub"],
+    ],
+    ids=["--replace-long-separated", "-ir-mid-bundle-r", "-ig-mid-bundle-g"],
+)
+def test_search_args_contains_pattern_source_flag_does_not_count_a_consumed_flag_value(
+    search_args: list[str],
+) -> None:
     """A token that LOOKS like a pattern-source flag but is actually another flag's VALUE
-    (e.g. `--replace -eattached`, where `-eattached` is `--replace`'s replacement string) must
-    not be misdetected as a real pattern-source flag."""
-    assert (
-        bootstrap._search_args_contains_pattern_source_flag(["--replace", "-eattached", "otherdir"])
-        is False
-    )
+    (e.g. `--replace -eattached`, where `-eattached` is `--replace`'s replacement string, or
+    the mid-bundle `-ir -e needle`/`-ig -fpats.txt sub`, where `-e`/`-f` are `-r`'s/`-g`'s own
+    value) must not be misdetected as a real pattern-source flag."""
+    assert bootstrap._search_args_contains_pattern_source_flag(search_args) is False, search_args
 
 
 def test_run_rg_passthrough_path_before_dash_e_injects_the_correct_roots_ignore_file(
