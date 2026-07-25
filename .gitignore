@@ -48,12 +48,16 @@ npm/node_modules/
 /*.patch
 /*.txt
 /.tmp*/
-/.tensor-grep/
+# tg writes its own session/index state into a `.tensor-grep/` dir at whatever root it is
+# scoped to -- which is NOT always the repo root. Two root-anchored entries (`/.tensor-grep/`
+# and `/src/.tensor-grep/`) used to enumerate the places it had been observed, so a real one
+# (`src/tensor_grep/.tensor-grep/`, created by running tg from inside the package dir) went
+# untracked-but-not-ignored and polluted `git status`. Match the CLASS at any depth instead.
+.tensor-grep/
 # .factory/ is Factory-AI/droid local tool state (contains machine-specific paths) -- never track any of it.
 /.factory/
 /_archive/
 /agent_out.json
-/src/.tensor-grep/
 /src/tensor_grep/cli/commands.txt
 /src/tensor_grep/core/import_trace.txt
 stream_test.py
