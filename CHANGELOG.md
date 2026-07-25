@@ -1,6 +1,258 @@
 # CHANGELOG
 
 
+## v1.98.12 (2026-07-25)
+
+### Bug Fixes
+
+- **search**: Honor unreadable/truncated dir scans on the CPU route + tg orient (#276 slice 1)
+  ([#757](https://github.com/oimiragieo/tensor-grep/pull/757),
+  [`c0c3404`](https://github.com/oimiragieo/tensor-grep/commit/c0c34046b67e3ab968791b0fd3e91d9c1f31f647))
+
+* fix(search): honor unreadable/truncated dir scans on the CPU route + tg orient (#276 slice 1)
+
+`os.walk()`'s default `onerror=None` silently swallowed a permission-denied (or since-deleted)
+  subdirectory in `DirectoryScanner.walk()` -- the subtree just disappeared with no exception, no
+  `scan_truncated` flag, and no way for a caller to know results were missing. `tg search
+  --cpu`/`--force-cpu` exited 0 with a confidently-empty-looking but actually-partial result;
+  `scanner.scan_truncated` was also never consumed anywhere, so even the scanner's own pre-existing
+  entry-count budget (`TG_DIR_SCAN_MAX_ENTRIES`) was silent on this route. The `rg`-backend route
+  already reported this correctly via its own soft exit-2 + `result_incomplete`.
+
+- `io/directory_scanner.py`: pass an `onerror` callback to `os.walk`; record a bounded sample + true
+  count of unreadable paths, flag `scan_truncated` with cause `"unreadable_path"` (kept distinct
+  from the existing `"max-scan-entries"` cause). - `cli/main.py`: consume `scanner.scan_truncated`
+  on the CPU/native search branch, setting `result_incomplete` + `incomplete_reason` + exit 2,
+  matching the rg route and real `rg`. - `core/result.py` / `cli/formatters/json_fmt.py`: new
+  closed-vocabulary `incomplete_reason_class` field (`"unreadable_path"` / `"scan_limit"` /
+  `"deadline"` / `"timeout"`) alongside the existing free-text `incomplete_reason`, on both `tg
+  search` routes -- omitted entirely on a complete result (byte-identical, per
+  `test_rg_exit2_partial.py`). - `backends/ripgrep_backend.py`: classify rg's own exit-2 soft error
+  and subprocess timeout with the same vocabulary. - `cli/repo_map.py` / `cli/orient_capsule.py`:
+  `tg orient` uses a SEPARATE walker (`_iter_repo_files`/`_iter_repo_bucket_files`) with the
+  identical silent-swallow defect; thread the same mutable-out-signal pattern already used for
+  `--deadline` (`_UnreadablePathFlag`, mirroring `_DeadlineBreakFlag`) so a truncated scan surfaces
+  `partial`/`partial_reason`/ `incomplete_reason_class`/`incomplete_reason` as informational fields
+  only -- `tg orient` keeps its documented exit-0 contract. - `docs/CONTRACTS.md`: document the new
+  field + amend the exit-2 retry guidance to consult `incomplete_reason_class` first (an
+  `unreadable_path` cause is not fixable by a bigger budget).
+
+Every new/changed test assertion was verified to fail on pre-fix `main` and pass after the fix (see
+  PR description for the fail/pass breakdown and which tests use a real permission-denied fixture vs
+  a monkeypatch fallback).
+
+Refs #276, #270.
+
+* fix(search): address the 3 gate blockers (getattr fail-open, doc overreach, find null)
+
+The independent Opus gate returned FIX with 3 BLOCKING. All three are addressed.
+
+1. THE `getattr` FALLBACK IS GONE. Five fail-OPEN reads (`False`, `None`, `'?'`, `()`) sat inside
+  the fix meant to CLOSE a fail-open silence: if a real scanner ever lacked or renamed the
+  attribute, `False` means "nothing was truncated" and the silence returns with no error and no
+  failing test. The gate did not argue this -- it ran it: bare attribute reads plus a 5-line
+  `_FakeScanner.__init__` gives 526 passed / 1 failed, byte-identical to the fallback version.
+  Breaking 37 tests was the SIGNAL (a duck-typed fake that lacks the attribute no longer matches the
+  contract), not a problem to suppress. Reverted to bare reads; `tests/unit/test_cli_modes.py`
+  `_FakeScanner` now carries the real shape. The cited `mcp_server.py` precedent did not transfer:
+  that one bool-coerces a MagicMock and ORs into an independently-computed flag, so the attribute is
+  a supplement there. Here it is the ONLY signal.
+
+2. THE CONTRACT NO LONGER OVERSTATES ITS REACH. Measured on the published wheel, `tg search ...
+  --cpu --json` against a genuinely denied directory is answered by `RustCoreBackend` -- exit 0, no
+  marker -- because `--cpu`/`--force-cpu`/`--json` are themselves native-delegation TRIGGERS. The
+  Python route runs only when delegation is refused. The doc now says exactly that, names the Rust
+  sites (`native_search.rs:1631`, `gpu_native.rs:3890`, task #280), and tells an agent to confirm
+  `routing_backend == "CPUBackend"` before treating the field's ABSENCE as proof of a complete scan.
+  A doc that promises a signal the shipped binary does not emit is worse than the silence.
+
+3. `"deadline"` IS NOW EMITTED, AND `tg find` NO LONGER EMITS `null`. The class was documented
+  vocabulary that nothing assigned, while `tg find` set `result_incomplete` for two deadline causes
+  and a `--max-repo-files` cap with no class -- and the formatter assigned unconditionally, putting
+  a new null-valued key on an existing partial payload, outside the closed vocabulary. Both remedies
+  applied: `tg find` classifies (first-cause-wins), and the formatter emits the key only when
+  non-None.
+
+Also folded in gate NON-BLOCKING 5: `main.py`'s cause dispatch is now an explicit `elif cause ==
+  "unreadable_path"` with a loud fallback, not an open-vocabulary `else` that would silently
+  mislabel any future third cause.
+
+RECOVERY NOTE: the build agent died on a transient API 500 with this work complete but uncommitted.
+  I verified each blocker against the diff, re-ran the gates, and committed it rather than
+  re-running the agent over work already done.
+
+Verified: `ruff check` clean; `ruff format --check --preview` clean on all 7 touched
+
+files; imports resolve into the worktree (not the shared venv). Tests: 583 passed, 1 skipped, 1
+  deselected. The deselected `test_cli_search_warns_when_gpu_device_id_ out_of_local_inventory` is
+  pre-existing -- I control-armed it on unmodified main and it fails identically there, rather than
+  taking the gate's word for it.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* docs(contracts): name the real native backend + make the trust check an allow-list
+
+The incomplete_reason_class paragraph told an agent to confirm routing_backend is not
+  "RustCoreBackend" before trusting the field's absence as proof of a complete scan. That is the
+  wrong constant, and it fails OPEN inside a paragraph whose entire purpose is fail-closed guidance:
+  an agent sees a value that is not on the deny-list, concludes "not the native engine", and trusts
+  an absence that proves nothing.
+
+Measured on the checksum-verified v1.98.11 release asset (SHA256 matched CHECKSUMS.txt) against a
+  directory whose unreadability was verified before the probe ran:
+
+tg search needle fx --json -> routing_backend "NativeCpuBackend", routing_reason "json_output", exit
+  0 tg search needle fx --cpu --json -> routing_backend "NativeCpuBackend", routing_reason
+  "force_cpu", exit 0 rg needle fx -> same match, exit 2
+
+All three printed the walk error to stderr and all three kept the readable match, so the native side
+  is keep-partial but reports COMPLETE. Corroborated by the NativeCpuBackend row in
+  docs/routing_policy.md, which maps that backend to force_cpu / json_output / plain-text-native /
+  gpu-auto-fallback-cpu / rg_unavailable.
+
+Rewrites the clause as a positive allow-list (absence is trustworthy only on the Python CPUBackend
+  route or the rg-backend route), records the exit-0-vs-2 divergence, and states explicitly that
+  this must not be written as a deny-list of native backend names -- an unanticipated name would
+  read as "safe".
+
+Refs #276, #280, #281.
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+### Continuous Integration
+
+- **cuda**: Run cuda-gated tests, not just type-check them (#279)
+  ([#756](https://github.com/oimiragieo/tensor-grep/pull/756),
+  [`9d45a76`](https://github.com/oimiragieo/tensor-grep/commit/9d45a76d34615ba434a655362782f6f095e7fc45))
+
+* ci(cuda): run cuda-gated tests, not just type-check them (task #279)
+
+`cuda-feature-check` gained `--all-targets` in #754, which made the cuda-gated test module
+  TYPE-CHECK for the first time -- and immediately caught eight `.text` reads no CI job had ever
+  compiled. But checking is not running: not one assertion in `gpu_native.rs`'s test module has ever
+  executed, so the 4 lossless-emitter regression tests that #273/#754 added are compile-time
+  protection only.
+
+Whether they CAN run on a GPU-less runner was genuinely unknown and not answerable locally --
+  CPU-SAFE forbids cargo on the dev box, so CI is the only oracle. The available evidence pointed to
+  yes: `cuda = ["dep:cudarc"]` with `cudarc 0.19.3` (feature `cuda-13010`) and NO `build.rs`, hence
+  no custom link directives, so cudarc loads the driver dynamically rather than linking it. The test
+  module imports only CPU-side helpers -- `line_matches_for_file`, walk-ceiling checks, capacity and
+  PTX-path math -- with no device initialisation.
+
+So this PR IS the experiment, and its own CI is the measurement. Both outcomes are useful and
+  neither reddens main:
+
+links + passes -> cuda-gated tests execute for the first time; #273's regression tests become real
+  gates. Merge. fails to link -> that is the answer. Revert the step, replace it with a comment
+  naming this run id, so the limitation lives where the next person looks instead of being
+  rediscovered.
+
+Also trimmed the now-redundant tail of the `--all-targets` comment, which said executing these tests
+  was "tracked separately" -- it is tracked here.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* test(gpu): #[ignore] the 8 tests that need a real CUDA device
+
+The experiment in this PR returned its answer, and it is the good branch: `cargo test --features
+  cuda` LINKS and RUNS on a GPU-less runner. 279 cuda-gated tests executed and passed -- including
+  `gpu_native.rs`'s own `#[cfg(test)]` module and the lossless-emitter regression tests from
+  #273/#754, which until now had only ever been type-checked.
+
+The `no build.rs` / dynamic-loading reasoning was right about the mechanism: cudarc does dlopen the
+  driver rather than link it. My follow-on inference that the step had therefore failed at LINK was
+  WRONG, and the log said so plainly:
+
+Unable to dynamically load the "cuda" shared library - searched for library names: ["libcuda.so",
+  ...]
+
+That is a RUNTIME failure with no driver present, not a link failure -- which is why reading the log
+  mattered instead of acting on the inference.
+
+Exactly one target failed: `tests/test_gpu_native.rs`, 8 of 8 tests, every one routed through
+  `first_device_id()` -> `enumerate_cuda_devices()`. So the file is gated, not the job.
+
+On what `#[ignore]` does and does not buy -- stated because this repo has paid for "SKIPPED IS NOT
+  PASSED": these 8 have NEVER executed in CI, since no CUDA runner exists. Marking them does not
+  reduce coverage by one assertion; it makes an existing invisible gap VISIBLE in the output (`8
+  ignored`) and unblocks the 279 that do run. A GPU machine runs them with:
+
+cargo test --features cuda --test test_gpu_native -- --ignored
+
+Verified: rustfmt --edition 2021 --check clean; 8 `#[test]`, 8 `#[ignore]`, each directly attached
+  (checked mechanically, not by eye).
+
+* ci(cuda): scope the test run to --lib (integration targets need a real GPU)
+
+My first fix was wrong, and wrong in an instructive way.
+
+`cargo test` BAILS at the first failing target. Run 1's log therefore showed exactly one failing
+  file -- `tests/test_gpu_native.rs`, 8 tests -- and hid every sibling. I `#[ignore]`d those 8 and
+  treated the census as complete. Run 2 failed again, because five of the six
+  `tests/test_gpu_native*.rs` files are device-dependent (34 tests total, only 10 tagged). I
+  enumerated from a LOG instead of from the SOURCE; the repo has a scar for exactly this ("CI named
+  2, it was 13 sites").
+
+The right scope is an invariant, not a census. `--lib` runs the library unit-test target -- 156
+  tests, including `gpu_native.rs`'s `#[cfg(test)]` module and the lossless-emitter regression tests
+  from #273/#754 that until now had only ever been type-checked. That is the entire value of task
+  #279, and it does not depend on my having tagged every device-touching test correctly, now or in
+  future.
+
+The integration targets stay out on purpose: they exist to drive the real GPU engine end-to-end, so
+  they call `enumerate_cuda_devices` / `gpu_native_search` and panic with `Unable to dynamically
+  load the "cuda" shared library` on a driver-less runner. That is correct behaviour for what they
+  are, not something to paper over.
+
+Kept: the `#[ignore]` tags on test_gpu_native.rs. They are true, they document the device
+  requirement where a human will read it, and they make `-- --ignored` the obvious way to run those
+  on a GPU box. ci.yml now records both invocations.
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Reconcile v1.98.3 -> v1.98.11 (the --json bug family, closed)
+  ([#758](https://github.com/oimiragieo/tensor-grep/pull/758),
+  [`8a4108b`](https://github.com/oimiragieo/tensor-grep/commit/8a4108bf70b9c0cf31164b045c71ac49d027f3be))
+
+The ledger was anchored at v1.98.3 while live was v1.98.11 -- 8 releases and 16 merged PRs of drift.
+
+Headline for the span: the campaign started as the CEO /goal "beat rg cold-start" and ended
+  somewhere better. A 3-seat council closed the speed lever for good -- tg's native walk IS
+  ripgrep's walk (same `ignore` crate, Cargo.toml:44), so widening it RELOCATES work and never
+  accelerates it. Chasing it surfaced one real defect wearing six faces.
+
+THE ROOT GENERATOR: the native-delegation gate keys on OUTPUT-FORMAT flags, so a RENDERER silently
+  picks the ENGINE and therefore the FILE SET. #264 (JSON searched fewer files), #266 (lossy emitter
+  corrupting CRLF/non-UTF-8 into U+FFFD), #267 (--no-ignore-vcs dropped natively), #269 (the Python
+  passthrough sibling), #272 (--format/--lang mis-parsed, so a filename could be eaten as a flag
+  value), #273 (the same lossy emitter in gpu_native.rs) -- one defect, all shipped. For an agent
+  reading tg's JSON this was a complete answer versus a quietly incomplete one.
+
+THE RATCHETS, because a fix without one comes back: #752 pins files(A) == files(A + renderer-flag)
+  in BOTH git and non-git topologies; #749 asserts CI actually RUNS every native-binary-dependent
+  e2e suite; #745 replaced five rounds of "one more argv form" with a differential fuzzer against an
+  independent rg grammar model. #279/#756 got cuda-gated tests EXECUTING for the first time -- 156
+  per job.
+
+The negatives are recorded too, deliberately: #270 downgraded from bug to guard after a
+  published-wheel matrix showed the invariant already held (the original divergence was measured on
+  a dev build on PATH), and #277 closed as NOT A DEFECT -- the index engine never joined this
+  family, having taken the stricter total-refusal route in #541 two weeks before the field it was
+  accused of dropping existed. Both are in the ledger so nobody re-spends the week.
+
+Verified: `ruff format --check --preview` clean; `test_public_docs_governance.py` 43 passed (it
+  substring-pins this file's prose, so a reconcile can break it).
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.98.11 (2026-07-25)
 
 ### Bug Fixes
