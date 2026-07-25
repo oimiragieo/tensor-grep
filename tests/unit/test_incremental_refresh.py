@@ -688,7 +688,8 @@ def test_unreadable_file_is_not_reported_as_removed(tmp_path: Path, monkeypatch)
     unreadable_reported_as_removed = [p for p in changeset["removed"] if "src" in p]
     assert unreadable_reported_as_removed == [], (
         "a permission-denied file was reported as REMOVED; that false report raises "
-        f"SessionStaleError and is re-served by the health request: {unreadable_reported_as_removed}"
+        "SessionStaleError and is recomputed and served again by the health request: "
+        f"{unreadable_reported_as_removed}"
     )
 
 

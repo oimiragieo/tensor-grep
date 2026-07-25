@@ -558,6 +558,15 @@ def _stale_changeset(
         except (FileNotFoundError, NotADirectoryError):
             # The file is genuinely GONE (or a parent stopped being a directory). This is the
             # only failure that means "removed".
+            #
+            # KNOWN GAP, and it lives HERE rather than in the OSError arm below: a disconnected
+            # Windows UNC share raises FileNotFoundError (winerror 53) for EVERY file under it, so
+            # a dropped network mount lands in this arm and reports the whole tree as removed --
+            # the same false-deletion class task #286 fixed, arriving through the one arm that is
+            # supposed to mean "really gone". Not fixable by widening the OSError split: at the
+            # single-file level winerror 53 is indistinguishable from a real deletion. The
+            # discriminator has to be at the TREE level (e.g. every entry under a root resolving
+            # to removed is likelier a mount drop than a mass delete). Tracked as task #287.
             removed.append(current_path)
             continue
         except OSError as exc:
@@ -594,8 +603,6 @@ def _stale_changeset(
             # (`payload["unreadable_paths"] = {count, sample}`, the #276 pattern) -- but that is a
             # consumer-contract change, tracked separately. Do NOT conflate it into `removed` to
             # make it visible; that is exactly the bug above.
-            # Also unhandled: a disconnected Windows UNC share raises FileNotFoundError for every
-            # file, so a dropped network mount still reports the whole tree as removed.
             indeterminate.append(current_path)
             indeterminate_kinds.add(type(exc).__name__)
             continue
