@@ -17,13 +17,32 @@
 > the Rust-side `.filter_map(|e| e.ok())` walk-error-discard class (10 sites, mechanically censused —
 > a prose note had said 6) so it cannot grow while #276's slices land.
 >
-> **Process receipts from this wave, both costly:** (1) PR #764 was NO-SHIPed TWICE by independent
-> gates, both times for a false MECHANISM attached to a correct one-line fix — draft 1 claimed repo-map
-> eviction (`build_repo_map_incremental` ignores `removed`; the cited line says so verbatim), draft 2
-> claimed a persisted list was re-served (it has no reader; health RECOMPUTES). **A disproved claim's
-> replacement needs the same verification the original failed.** (2) `tag == PyPI` is NOT a sufficient
-> drain gate — a `fix:` commit sitting on main with CI still queued is a release IN FLIGHT even though
-> the tag has not moved yet. Check for an unreleased release-triggering commit, not just tag equality.
+> **Process receipts from this wave, all four costly:**
+>
+> (1) **PR #764 was NO-SHIPed THREE times by independent gates — every time for a false MECHANISM
+> attached to a correct one-line fix, and every time by naming a consumer without checking it.**
+> Draft 1 claimed repo-map eviction (`build_repo_map_incremental` ignores `removed`; the line cited
+> as evidence says so verbatim). Draft 2 claimed a persisted list was re-served (it has no reader;
+> health RECOMPUTES). Draft 3 named **`tg session health`**, which does not exist — there is no
+> `@session_app.command("health")` and no `tg_session_health` MCP tool; `health` is only a request
+> kind on the session serve/daemon protocol. **A disproved claim's replacement needs the same
+> verification the original failed** — plausibility is not evidence. **GREP THE NAME FIRST.**
+>
+> (2) **Line numbers in prose about a file the PR EDITS rot by construction.** #764's citations went
+> stale twice; the second time the very commit that fixed them shifted 10 of 12 by 16 lines. Fixing
+> the instance a third time would have guaranteed a fourth, so the body now cites **SYMBOLS**, which
+> do not drift. Line numbers are fine for files a change does not touch.
+>
+> (3) **`tag == PyPI` is NOT a sufficient drain gate.** A release-triggering commit sitting on main
+> with CI still queued is a release IN FLIGHT even though the tag has not moved. And once the tag HAS
+> moved, the publish may still be running — merging then can cancel it via the branch concurrency
+> group and strand a tagged version with no artifact on PyPI. Check the release RUN's jobs.
+>
+> (4) **A subagent gate's result is EPHEMERAL** (#285, closed as an unrecoverable loss). Acting on a
+> gate's blockers feels like discharging it, but silently drops everything it classified
+> non-blocking — those items exist only in the returned text, not on the PR (`gh pr view --json
+> reviews` on #757 shows only Codex boilerplate). Transcribe NON-BLOCKING items into a task or the PR
+> body in the same turn the notification is read; the blockers self-record by being fixed.
 >
 > Prior refresh 2026-07-25 (post-**v1.98.11** — reconciling the v1.98.3 baseline forward across 8
 > releases and 16 merged PRs. Headline: **the `--json` bug family is CLOSED** (#264/#266/#267/#269/
