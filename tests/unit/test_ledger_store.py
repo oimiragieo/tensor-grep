@@ -20,6 +20,23 @@ import pytest
 
 from tensor_grep.cli import ledger_store
 
+# Expiry in this suite is always forced EXPLICITLY, by rewriting `expires_at` into the past via
+# `_rewrite_expires_at` / `_rewrite_finding_expires_at`. It is never produced by waiting for a TTL
+# to elapse. So the submit-time TTL only has to outlive the test body -- and a SHORT one is an
+# active hazard, because the record must stay live between the write and the rewrite.
+#
+# It used to be `ttl_seconds=1`, which read as "short" but actually meant "expires one second from
+# now, on a machine that may be slow". That reddened `test_list_excludes_expired_claims` on a loaded
+# windows-latest/py3.12 runner (`assert 0 == 1`): >1s elapsed between `submit_claim` and the
+# `count == 1` precondition, so the claim self-expired before the test could observe it live.
+# `test_finding_dedupe_after_expiry`'s two sequential `record_finding` calls carried the same latent
+# race -- a write-time prune could evict record 0 before the rewrite targeted `index=0`.
+#
+# One hour is far longer than any test body and cannot elapse mid-test, which removes the whole
+# class rather than patching the one site that happened to fail. Tests that assert on the TTL VALUE
+# itself pass their own explicit numbers and are deliberately untouched.
+_FORCED_EXPIRY_TTL = 3600
+
 
 def _make_project(tmp_path: Path, name: str = "project") -> Path:
     root = tmp_path / name
@@ -205,7 +222,9 @@ def test_claim_allows_legitimate_nested_relative_file(tmp_path: Path) -> None:
 
 def test_list_excludes_expired_claims(tmp_path: Path) -> None:
     root = _make_project(tmp_path)
-    ledger_store.submit_claim(str(root), symbols=["value"], agent_id="agent-a", ttl_seconds=1)
+    ledger_store.submit_claim(
+        str(root), symbols=["value"], agent_id="agent-a", ttl_seconds=_FORCED_EXPIRY_TTL
+    )
     assert ledger_store.list_claims(str(root))["count"] == 1
 
     _rewrite_expires_at(_index_path(root), when=datetime.now(UTC) - timedelta(seconds=5))
@@ -215,7 +234,9 @@ def test_list_excludes_expired_claims(tmp_path: Path) -> None:
 
 def test_expired_claim_is_not_reported_as_overlap(tmp_path: Path) -> None:
     root = _make_project(tmp_path)
-    ledger_store.submit_claim(str(root), symbols=["value"], agent_id="agent-a", ttl_seconds=1)
+    ledger_store.submit_claim(
+        str(root), symbols=["value"], agent_id="agent-a", ttl_seconds=_FORCED_EXPIRY_TTL
+    )
     _rewrite_expires_at(_index_path(root), when=datetime.now(UTC) - timedelta(seconds=5))
 
     result = ledger_store.submit_claim(str(root), symbols=["value"], agent_id="agent-b")
@@ -224,7 +245,9 @@ def test_expired_claim_is_not_reported_as_overlap(tmp_path: Path) -> None:
 
 def test_expired_claim_pruned_on_next_write(tmp_path: Path) -> None:
     root = _make_project(tmp_path)
-    ledger_store.submit_claim(str(root), symbols=["value"], agent_id="agent-a", ttl_seconds=1)
+    ledger_store.submit_claim(
+        str(root), symbols=["value"], agent_id="agent-a", ttl_seconds=_FORCED_EXPIRY_TTL
+    )
     _rewrite_expires_at(_index_path(root), when=datetime.now(UTC) - timedelta(seconds=5))
 
     ledger_store.submit_claim(str(root), symbols=["other"], agent_id="agent-b")
@@ -619,7 +642,9 @@ def test_list_is_read_only_and_does_not_prune_disk(tmp_path: Path) -> None:
     """list_claims must never write -- expired-pruning for display is not the same as
     physically rewriting index.json (that happens lazily on the next claim/release)."""
     root = _make_project(tmp_path)
-    ledger_store.submit_claim(str(root), symbols=["value"], agent_id="agent-a", ttl_seconds=1)
+    ledger_store.submit_claim(
+        str(root), symbols=["value"], agent_id="agent-a", ttl_seconds=_FORCED_EXPIRY_TTL
+    )
     _rewrite_expires_at(_index_path(root), when=datetime.now(UTC) - timedelta(seconds=5))
 
     before_mtime = _index_path(root).stat().st_mtime_ns
@@ -1155,7 +1180,7 @@ def test_expired_findings_pruned_and_orphaned_blob_gc_on_next_record(tmp_path: P
     root = _make_project(tmp_path)
     artifact_a = _write_artifact_json(tmp_path, "a.json", {"a": 1})
     result_a = ledger_store.record_finding(
-        str(root), receipt_path=str(artifact_a), symbol="alpha", ttl_seconds=1
+        str(root), receipt_path=str(artifact_a), symbol="alpha", ttl_seconds=_FORCED_EXPIRY_TTL
     )
     sha_a = result_a["finding"]["receipt_sha256"]
     _rewrite_finding_expires_at(
@@ -1177,7 +1202,7 @@ def test_shared_blob_not_gcd_while_any_referencing_finding_survives(tmp_path: Pa
     root = _make_project(tmp_path)
     artifact = _write_artifact_json(tmp_path, "same.json", {"same": True})
     first = ledger_store.record_finding(
-        str(root), receipt_path=str(artifact), symbol="alpha", ttl_seconds=1
+        str(root), receipt_path=str(artifact), symbol="alpha", ttl_seconds=_FORCED_EXPIRY_TTL
     )
     ledger_store.record_finding(str(root), receipt_path=str(artifact), symbol="beta")
     sha = first["finding"]["receipt_sha256"]
