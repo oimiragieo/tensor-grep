@@ -1,6 +1,139 @@
 # CHANGELOG
 
 
+## v1.98.14 (2026-07-25)
+
+### Bug Fixes
+
+- **mcp**: Say WHY a scan was truncated so tg_search stops giving wrong-knob advice (#283)
+  ([#762](https://github.com/oimiragieo/tensor-grep/pull/762),
+  [`c9081d0`](https://github.com/oimiragieo/tensor-grep/commit/c9081d09c91b0cc21eefdf47e7256edfd69a63b4))
+
+* fix(mcp): say WHY a scan was truncated so tg_search stops giving wrong-knob advice
+
+`tg_search`'s `scan_limit` payload is `max_repo_files`-shaped, and it folds
+  `DirectoryScanner.scan_truncated` into `possibly_truncated`. That was correct while
+  `scan_truncated` could ONLY mean a budget cap -- the comment above the line says exactly that.
+  #276 slice 1 (c0c3404) widened it to ALSO mean "the walk hit an unreadable path", a cause no
+  budget increase can fix, and left the comment describing the old assumption.
+
+Net effect: a single permission-denied directory surfaced to an MCP client as
+  `scan_limit.possibly_truncated` sitting next to a `max_repo_files` number, with nothing to
+  distinguish "raise the limit" from "the limit is irrelevant" -- the same wrong-knob advice #276
+  exists to eliminate on the CLI, recreated one surface over.
+
+Adds, ONLY when the scan was actually truncated: - `truncation_cause`: "scan_limit" |
+  "unreadable_path" | "unknown" - `budget_remediable`: bool - `unreadable_path_count`: present when
+  non-zero, reported even when the budget cap is the classified cause (the cap can fire AFTER a
+  separate unreadable-path truncation, and that count must not go unmentioned just because the cap
+  also tripped -- mirrors `search_command`'s CLI clarifier)
+
+`possibly_truncated` is unchanged and still honest. A complete scan emits neither new field, so it
+  stays byte-identical and no existing caller breaks.
+
+FAIL-CLOSED on an unrecognised cause: report "unknown" and do NOT claim budget-remediable. A cause
+  this code has never heard of must never be answered with "raise the limit" -- guidance about
+  whether a signal can be trusted is an allow-list, never a deny-list (AGENTS.md), and that rule
+  binds payloads as much as prose.
+
+CONTRACT: `_TG_MCP_SERVER_CONTRACT_VERSION` 1.4.0 -> 1.5.0 (additive fields = minor), with the
+  reasoning recorded in the version-history comment block that file maintains. THREE pins needed
+  updating, not the two I first found by grep -- my initial search was output-truncated and a RED
+  test surfaced `test_mcp_server.py:2405`. Enumerate mechanically, never from recollection.
+
+TESTS -- four arms, because one arm proves nothing: - unreadable -> cause unreadable_path,
+  budget_remediable False, count surfaced - budget cap -> cause scan_limit, budget_remediable True.
+  This is the control: without it the first test passes even if the code blanket- labelled every
+  truncation non-remediable. - unknown -> "unknown" + False (fail-closed) - complete -> neither
+  field present (byte-identical)
+
+The double uses an explicit `_StubScanner`, deliberately NOT a `MagicMock`: a bare MagicMock
+  auto-vivifies a truthy `.scan_truncated`, which is precisely why the sibling fold-in at the AST
+  tool was tried and reverted (see the comment at mcp_server.py's AST search path). Real values make
+  each arm mean what it says.
+
+Local: 521 passed (test_mcp_server.py + test_mcp_contract_fixes.py), ruff check and `ruff format
+  --check --preview` clean.
+
+NOT fixed here: the AST search tool still does not fold in `scan_truncated` at all, so it stays
+  fully silent on truncation. Its own comment shows that was a TEST-shape workaround, not a product
+  decision -- and this PR's explicit-stub pattern is the clean fix. Tracked in #283, which stays
+  open for it.
+
+Refs #283, #276.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* docs(mcp): define the new scan_limit cause fields + refresh two stale version comments
+
+The independent gate on #762 blocked on this. The contract bump to 1.5.0 exists precisely so a
+  version-pinning client can DISCOVER the new fields -- but nothing defined them, so discovery was
+  half-delivered.
+
+- `docs/harness_api.md:521` enumerated `scan_limit`'s keys verbatim ("Includes `max_repo_files`,
+  `scanned_files`, and `possibly_truncated`") and was factually incomplete for `tg_search` after
+  this PR. - `docs/CONTRACTS.md` documented the CLI's parallel `incomplete_reason_class` closed
+  vocabulary but not this one.
+
+Both now define `truncation_cause`, `budget_remediable` and `unreadable_path_count`, state that they
+  are absent on a complete scan (so a complete payload stays byte-identical to 1.4.0), and name
+  `budget_remediable` as the field to branch on before advising a retry.
+
+Records TWO asymmetries rather than papering over them, because a client that assumes either would
+  be wrong: 1. `possibly_truncated: true` can appear with NO `truncation_cause` -- the per-file cap
+  and the native-walk deadline set it independently of the scanner. "Truncated implies a cause is
+  present" is NOT an invariant. 2. This vocabulary is NOT identical to the CLI's
+  `incomplete_reason_class`: MCP has `"unknown"` where the CLI raises loudly, and the CLI has
+  `"deadline"`/`"timeout"` where MCP has nothing. Converging them is #283.
+
+Also refreshes the two stale comments the gate flagged at `test_mcp_stdio_protocol.py` (both still
+  read "bumped 1.3.0 -> 1.4.0" directly above asserts that now say `"1.5.0"`). In a PR whose whole
+  thesis is that a stale comment describing a changed assumption IS a defect, shipping two of them
+  in a file this PR edits was not defensible. The two sites differ in indentation, so they were
+  rewritten with an indentation-agnostic pattern under an assert-count guard rather than a literal
+  replace -- the first attempt found only 1 of 2 and correctly aborted instead of half-applying.
+
+Local: `tests/integration/test_mcp_stdio_protocol.py` 3 passed; ruff check and `ruff format --check
+  --preview` clean on all three files.
+
+Refs #283.
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+### Chores
+
+- Ignore repo-root pytest basetemp dirs so an unreadable one cannot spam git
+  ([#763](https://github.com/oimiragieo/tensor-grep/pull/763),
+  [`e2b9d35`](https://github.com/oimiragieo/tensor-grep/commit/e2b9d35ab42c86f003d2526bbc2bd3c3d33568fa))
+
+Review/dogfood flows drop `basetemp` directories at the repo root. On Windows one of these landed
+  with an ACL that denies the current user, and because the pattern was UNIGNORED, git traversed it
+  and emitted
+
+warning: could not open directory '.pytest_tmp_review_<hash>/': Permission denied
+
+on EVERY invocation -- for the operator and for every agent. The independent gate on #759 hit it too
+  and reported it as noise.
+
+`.pytest_cache/` was already ignored and `/.review_tmp/` was already ignored; the `basetemp` pattern
+  was the gap. Ignoring it stops git traversing the directory at all, so the warning disappears
+  without needing any permission on the directory itself.
+
+VERIFIED, both arms: `git status --short` emitted the warning immediately before this change and
+  emits clean output immediately after.
+
+This is the ignorable half of task #268. It does NOT delete the directory -- that still needs one
+  elevated shell, because `takeown` and `icacls /reset` both fail unelevated (the DACL belongs to a
+  different SID; `icacls /reset` DOES work unelevated on a directory this user locked, which is how
+  that was established). In the same pass I moved `.review_tmp/` out of the repo entirely into the
+  OS temp dir -- a rename needs write on the PARENT only, which we have, and that worked for three
+  of the four locked directories. The fourth denies rename too.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.98.13 (2026-07-25)
 
 ### Bug Fixes
