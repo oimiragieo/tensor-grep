@@ -639,14 +639,22 @@ jobs:
             Windows) echo "Windows resolves the committed benchmarks/rg.zip fallback" ;;
           esac
 
-      # The byte-exact rg-parity oracle for the plain-text native route MUST run against the real
-      # native binary: `test-python` never builds `rust_core/target/release/tg` (maturin builds
-      # only the `pyo3/extension-module` cdylib), so the suite would skip itself there and be a
+      # Every e2e suite that needs the real compiled native binary MUST run against it here:
+      # `test-python` never builds `rust_core/target/release/tg` (maturin builds only the
+      # `pyo3/extension-module` cdylib), so any such suite would skip itself there and be a
       # no-op gate. This job is the one place the release binary exists on all four OSes.
       # `tests/helpers/rg_parity` only needs `src/` on PYTHONPATH -- no package build required.
       # TG_REQUIRE_RG_PARITY=1 turns a missing binary from a skip into a FAILURE, so this can
       # never masquerade as coverage.
-      - name: Run native plain-text byte-parity oracle
+      #
+      # A GLOB (`tests/e2e/test_native_*.py`), not a hardcoded filename: task #266's independent
+      # gate found this step naming exactly one file (`test_native_plain_text_parity.py`), so a
+      # second native-binary-dependent suite added later (`test_native_json_byte_fidelity.py`)
+      # silently skipped everywhere -- correct when written, incomplete the moment a sibling file
+      # was added. Verified against every file using `TG_REQUIRE_RG_PARITY`
+      # (`grep -rl TG_REQUIRE_RG_PARITY tests/`): exactly these two, both matching this glob, so
+      # widening it introduces no accidental inclusion.
+      - name: Run native binary-dependent e2e suites
         shell: bash
         env:
           PYTHONPATH: src
@@ -654,7 +662,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --disable-pip-version-check pytest==8.4.2
-          python -m pytest tests/e2e/test_native_plain_text_parity.py -v --tb=short -p no:cacheprovider
+          python -m pytest tests/e2e/test_native_*.py -v --tb=short -p no:cacheprovider
 
   test-gpu-linux:
     name: test-gpu-nvidia (ubuntu-latest, cuDF)

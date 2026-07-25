@@ -6,6 +6,8 @@ use std::process::Command;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
 use serde_json::Value;
 use tempfile::tempdir;
 use tensor_grep_rs::native_search::{run_native_search, NativeOutputTarget, NativeSearchConfig};
@@ -236,9 +238,9 @@ fn test_native_search_literal_search_on_tempfile() {
     assert_eq!(stats.searched_files, 1);
     assert_eq!(stats.matches.len(), 2);
     assert_eq!(stats.matches[0].line_number, Some(2));
-    assert_eq!(stats.matches[0].text, "ERROR failed");
+    assert_eq!(stats.matches[0].raw, b"ERROR failed".to_vec());
     assert_eq!(stats.matches[1].line_number, Some(4));
-    assert_eq!(stats.matches[1].text, "ERROR timeout");
+    assert_eq!(stats.matches[1].raw, b"ERROR timeout".to_vec());
 }
 
 #[test]
@@ -261,7 +263,7 @@ fn test_native_search_regex_search() {
         stats
             .matches
             .iter()
-            .map(|entry| entry.text.as_str())
+            .map(|entry| std::str::from_utf8(&entry.raw).expect("test fixture is valid UTF-8"))
             .collect::<Vec<_>>(),
         vec!["ERROR network timeout", "WARN 503 retrying"]
     );
@@ -301,7 +303,7 @@ fn test_native_search_smart_case_lowercase_searches_insensitively() {
         stats
             .matches
             .iter()
-            .map(|entry| entry.text.as_str())
+            .map(|entry| std::str::from_utf8(&entry.raw).expect("test fixture is valid UTF-8"))
             .collect::<Vec<_>>(),
         vec!["warning lower", "WARNING upper"]
     );
@@ -321,7 +323,7 @@ fn test_native_search_smart_case_uppercase_stays_sensitive() {
     let stats = run_native_search(config).unwrap();
 
     assert_eq!(stats.total_matches, 1);
-    assert_eq!(stats.matches[0].text, "WARNING upper");
+    assert_eq!(stats.matches[0].raw, b"WARNING upper".to_vec());
 }
 
 #[test]
@@ -341,7 +343,104 @@ fn test_native_search_fixed_string_treats_meta_characters_literally() {
     let stats = run_native_search(config).unwrap();
 
     assert_eq!(stats.total_matches, 1);
-    assert_eq!(stats.matches[0].text, "ERROR.*timeout literal");
+    assert_eq!(stats.matches[0].raw, b"ERROR.*timeout literal".to_vec());
+}
+
+#[test]
+fn test_native_search_json_crlf_line_preserves_trailing_cr() {
+    // task #266 (independent-gate BLOCKING 1 remedy): a BINARY-WRITTEN fixture with a real CRLF
+    // line terminator, run through the actual `--json` code path (`run_native_search` with
+    // `config.json = true` -> `emit_json_matches`), proving the emitted `matches[0].text` JSON
+    // field keeps the source line's own trailing `\r` byte-for-byte -- matching real `rg --json`
+    // (verified via hexdump against `rg.exe` 15.1.0: `{"text":"needle crlf\r\n"}`, i.e. rg keeps
+    // even its own trailing `\n`; this engine's schema strips only the `\n`, so the expected
+    // value here is `"needle crlf\r"`).
+    //
+    // FAILING-DIRECTION PROOF (CPU-SAFE this session: cannot compile/run to observe a red
+    // result directly). This exact call chain -- `run_native_search` -> `emit_json_matches` ->
+    // a JSON `matches[].text` field -- existed byte-for-byte before task #266 too; only the
+    // FIELD VALUE differs. Pre-fix, every sink closure on this path did
+    // `line.trim_end_matches(['\n', '\r'])` on the matched line `"needle crlf\r\n"`: a char-SET
+    // trim removes every trailing character that is EITHER `\n` OR `\r`, in any order, until it
+    // hits a character outside the set -- so it strips BOTH the `\n` AND the `\r` in one pass,
+    // leaving `"needle crlf"` (no `\r`) as the pre-fix `NativeJsonMatch.text` value. This
+    // assertion checks for the 12-byte string `"needle crlf\r"` (`\r` present) exactly -- the
+    // pre-fix 11-byte value cannot satisfy `==` against it. This is a mechanical proof about the
+    // exact code both versions share (the trim call), not an empirical run, but it is precise:
+    // `trim_end_matches` with a `[char; N]` pattern is a well-defined, deterministic std
+    // function, not a heuristic whose behavior is in doubt.
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("crlf.bin");
+    fs::write(&file_path, b"needle crlf\r\n").unwrap();
+
+    let (target, buffer) = buffer_target();
+    let mut config = base_config("needle", &file_path, target);
+    config.json = true;
+
+    run_native_search(config).unwrap();
+
+    let payload: Value = serde_json::from_str(&read_buffer(&buffer)).unwrap();
+    let matches = payload["matches"].as_array().unwrap();
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0]["text"].as_str().unwrap(), "needle crlf\r");
+    assert!(
+        matches[0].get("bytes").is_none(),
+        "valid-UTF-8 content must not also carry a `bytes` fallback, got {:?}",
+        matches[0]
+    );
+}
+
+#[test]
+fn test_native_search_json_invalid_utf8_line_uses_base64_bytes_fallback() {
+    // task #266 (independent-gate BLOCKING 1 remedy): a BINARY-WRITTEN fixture with a genuinely
+    // invalid-UTF-8 byte (0xE9 standalone -- not a valid UTF-8 continuation sequence), run
+    // through the actual `--json` code path, proving `matches[0]` reports it via a base64
+    // `bytes` fallback field -- never a `text` string, and never U+FFFD. Mirrors real
+    // `rg --json`'s own protocol for exactly this case (verified via hexdump against `rg.exe`
+    // 15.1.0: `{"bytes":"Y2Fm6SBuZWVkbGUK"}` for the identical fixture content,
+    // `caf\xe9 needle\n`, which base64-decodes back to those exact raw bytes).
+    //
+    // FAILING-DIRECTION PROOF (CPU-SAFE this session: cannot compile/run to observe a red
+    // result directly). Pre-fix, this exact call chain (`run_native_search` ->
+    // `emit_json_matches`) used `grep_searcher::sinks::Lossy` as its sink. `Lossy::matched()`
+    // (pinned grep-searcher 0.1.16 source, extracted from the local Cargo registry cache and
+    // read directly during this fix's development) calls
+    // `String::from_utf8_lossy(mat.bytes())` UNCONDITIONALLY before the matched line ever
+    // reaches any caller code -- the raw `0xE9` byte is replaced with U+FFFD (`\xef\xbf\xbd` in
+    // the resulting UTF-8 string) at that point, with nothing downstream able to recover it.
+    // `NativeJsonMatch` pre-fix had only a `text: String` field (no `bytes` fallback existed at
+    // all), so `matches[0]["bytes"]` could not have been present pre-fix regardless of content,
+    // and `matches[0]["text"]` would have held the substituted U+FFFD character rather than
+    // being absent. The two assertions below -- `bytes` present, `text` absent -- each fail on
+    // the pre-fix shape for a different, structural reason (a field that did not exist yet;
+    // content that was always present, just corrupted), not by coincidence.
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("latin1.bin");
+    fs::write(&file_path, b"caf\xe9 needle\n").unwrap();
+
+    let (target, buffer) = buffer_target();
+    let mut config = base_config("needle", &file_path, target);
+    config.json = true;
+
+    run_native_search(config).unwrap();
+
+    let payload: Value = serde_json::from_str(&read_buffer(&buffer)).unwrap();
+    let matches = payload["matches"].as_array().unwrap();
+    assert_eq!(matches.len(), 1);
+    assert!(
+        matches[0].get("text").is_none(),
+        "invalid-UTF-8 content must not be reported via `text`, got {:?}",
+        matches[0]
+    );
+    let encoded = matches[0]["bytes"]
+        .as_str()
+        .expect("expected a base64 `bytes` fallback field");
+    let decoded = BASE64_STANDARD.decode(encoded).unwrap();
+    assert_eq!(decoded, b"caf\xe9 needle");
+    assert!(
+        !decoded.windows(3).any(|window| window == b"\xef\xbf\xbd"),
+        "decoded bytes must never contain U+FFFD's own UTF-8 encoding"
+    );
 }
 
 #[test]
@@ -720,10 +819,11 @@ fn test_native_search_large_file_chunk_parallelism_preserves_boundaries_and_glob
         expected_lines.len(),
         "duplicate boundary matches found"
     );
-    assert!(stats
-        .matches
-        .iter()
-        .all(|entry| entry.text.contains(LARGE_FILE_PATTERN)));
+    assert!(stats.matches.iter().all(|entry| {
+        std::str::from_utf8(&entry.raw)
+            .expect("large-file fixture is valid UTF-8")
+            .contains(LARGE_FILE_PATTERN)
+    }));
 }
 
 #[test]

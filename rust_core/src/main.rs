@@ -39,8 +39,9 @@ use tensor_grep_rs::gpu_native::{
 };
 use tensor_grep_rs::index::TrigramIndex;
 use tensor_grep_rs::native_search::{
-    native_search_pattern_compiles, run_native_fixed_multi_pattern_search, run_native_search,
-    smart_case_pattern_is_case_insensitive, NativeOutputTarget, NativeSearchConfig, SearchStats,
+    native_json_text_fields, native_search_pattern_compiles, run_native_fixed_multi_pattern_search,
+    run_native_search, smart_case_pattern_is_case_insensitive, NativeOutputTarget,
+    NativeSearchConfig, SearchStats,
 };
 use tensor_grep_rs::python_sidecar::{
     execute_python_passthrough_command, execute_python_passthrough_command_captured,
@@ -181,6 +182,25 @@ const SEARCH_OPTION_FIRST_FLAGS: &[&str] = &[
     "--no-json",
     "--no-stats",
 ];
+/// Flags that route a search to the Python passthrough front door rather than being handled by
+/// the native fast path. Matched via `token_matches_any_flag`/`search_args_contain_any_flag` /
+/// `raw_args_contain_any_flag`, which is **exact-token only** (plus a `--long-flag=value` prefix
+/// for the long spellings): a token matches an entry here only if it equals that entry
+/// character-for-character, or starts with `"{long_flag}="`. It does NOT understand ripgrep's
+/// combined short-flag clusters -- `-u` and `--unrestricted` are listed below, but `-uu`,
+/// `-uuu`, `-iu`, and `-Nu` are each a DIFFERENT literal token that never equals `"-u"`, so none
+/// of them match this list (task #271; confirmed empirically: `tg search --no-heading -Q needle
+/// .` prints `rg: unrecognized flag -Q`, i.e. the raw Python forwarder ran even though `-Q`
+/// itself is not in this list either). This list is a ROUTING OPTIMIZATION, not a safety net --
+/// it lets the RECOGNIZED spellings skip a `parse_early_ripgrep_args` round trip. The actual
+/// fail-closed guarantee that an unrecognized flag (including every `-u`-prefixed cluster) never
+/// silently reaches the native fast path is `parse_early_ripgrep_args`'s own catch-all arm,
+/// `_ if token.starts_with('-') => return None` -- returning `None` there is what forces
+/// the caller back to the full Python CLI for anything this list (or the rest of that function)
+/// does not explicitly recognize. A future change that makes this list PREFIX-match instead of
+/// exact-match (e.g. to "cover" `-uu` here directly) would not be wrong, but would be redundant
+/// with that catch-all and should not be read as filling a gap that catch-all does not already
+/// close.
 const SEARCH_PYTHON_PASSTHROUGH_FLAGS: &[&str] = &[
     "-H",
     "--with-filename",
@@ -2848,6 +2868,14 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
                 args.file_types
                     .push(token.split_once('=').map(|(_, value)| value.to_string())?);
             }
+            // LOAD-BEARING (task #271): this is the actual fail-closed guarantee that an
+            // unrecognized flag never silently reaches the native fast path -- every arm above
+            // is a finite, explicit allowlist, so any `-`-prefixed token this function does not
+            // otherwise understand (including a ripgrep combined-short-flag cluster like `-uu`,
+            // `-uuu`, or `-iu` that `SEARCH_PYTHON_PASSTHROUGH_FLAGS`'s exact-token matching
+            // also does not recognize) falls through to here and returns `None`, forcing the
+            // caller back to the full Python CLI rather than being silently misparsed or
+            // dropped. Do not narrow this arm without an equally fail-closed replacement.
             _ if token.starts_with('-') => return None,
             _ => positionals.push(token.clone()),
         }
@@ -2944,6 +2972,41 @@ mod tests {
     fn parse_args(tokens: &[&str]) -> RipgrepSearchArgs {
         let raw_args = tokens.iter().map(OsString::from).collect::<Vec<_>>();
         parse_early_ripgrep_args(&raw_args).expect("expected early rg args to parse")
+    }
+
+    // Task #271: `SEARCH_PYTHON_PASSTHROUGH_FLAGS` is exact-token matching, so it recognizes the
+    // literal spellings `-u`/`--unrestricted` but NOT a ripgrep combined-short-flag cluster like
+    // `-uu`/`-iu` -- those are each a different literal token. The actual fail-closed guarantee
+    // that such a cluster never silently reaches the native fast path is
+    // `parse_early_ripgrep_args`'s own catch-all arm (`_ if token.starts_with('-') => return
+    // None`), which forces a fall-through to the full Python CLI for any unrecognized
+    // `-`-prefixed token. These tests assert that guarantee directly, at the function it actually
+    // lives in, rather than only via the flags list this comment could otherwise be mistaken for
+    // covering it.
+    #[test]
+    fn parse_early_ripgrep_args_rejects_combined_unrestricted_short_cluster() {
+        let raw_args = ["tg", "search", "-uu", "needle", "."]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        assert!(
+            parse_early_ripgrep_args(&raw_args).is_none(),
+            "-uu must fall through to the Python CLI, not be silently misparsed by the native \
+             fast-path parser"
+        );
+    }
+
+    #[test]
+    fn parse_early_ripgrep_args_rejects_combined_ignore_case_unrestricted_cluster() {
+        let raw_args = ["tg", "search", "-iu", "needle", "."]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        assert!(
+            parse_early_ripgrep_args(&raw_args).is_none(),
+            "-iu must fall through to the Python CLI, not be silently misparsed by the native \
+             fast-path parser"
+        );
     }
 
     fn parse_default_frontdoor_args(tokens: &[&str]) -> RipgrepSearchArgs {
@@ -8112,14 +8175,20 @@ fn collect_native_multi_pattern_matches(
     if let Some(matches) = fast_path_matches {
         return Ok(matches
             .into_iter()
-            .map(|matched| SearchMatchJson {
-                file: matched.path.to_string_lossy().into_owned(),
-                line: matched.line_number as usize,
-                text: matched.text,
-                range: None,
-                meta_variables: None,
-                pattern_id: include_pattern_metadata.then_some(matched.pattern_id),
-                pattern_text: include_pattern_metadata.then_some(matched.pattern_text),
+            .map(|matched| {
+                let (text, bytes) = native_json_text_fields(&matched.raw);
+                let text = text.map(str::to_string);
+                SearchMatchJson {
+                    file: matched.path.to_string_lossy().into_owned(),
+                    line: matched.line_number as usize,
+                    text,
+                    bytes,
+                    raw: matched.raw,
+                    range: None,
+                    meta_variables: None,
+                    pattern_id: include_pattern_metadata.then_some(matched.pattern_id),
+                    pattern_text: include_pattern_metadata.then_some(matched.pattern_text),
+                }
             })
             .collect());
     }
@@ -8135,14 +8204,20 @@ fn collect_native_multi_pattern_matches(
         pattern_config.pattern = pattern.clone();
         let stats = execute_native_search(pattern_config)
             .map_err(exit_on_native_multi_pattern_ceiling_refusal)?;
-        matches.extend(stats.matches.into_iter().map(|matched| SearchMatchJson {
-            file: matched.path.to_string_lossy().into_owned(),
-            line: matched.line_number.unwrap_or(0) as usize,
-            text: matched.text,
-            range: None,
-            meta_variables: None,
-            pattern_id: include_pattern_metadata.then_some(pattern_id),
-            pattern_text: include_pattern_metadata.then(|| pattern.clone()),
+        matches.extend(stats.matches.into_iter().map(|matched| {
+            let (text, bytes) = native_json_text_fields(&matched.raw);
+            let text = text.map(str::to_string);
+            SearchMatchJson {
+                file: matched.path.to_string_lossy().into_owned(),
+                line: matched.line_number.unwrap_or(0) as usize,
+                text,
+                bytes,
+                raw: matched.raw,
+                range: None,
+                meta_variables: None,
+                pattern_id: include_pattern_metadata.then_some(pattern_id),
+                pattern_text: include_pattern_metadata.then(|| pattern.clone()),
+            }
         }));
     }
 
@@ -8182,9 +8257,9 @@ fn emit_multi_pattern_native_results(
             matches,
         )?;
     } else if options.count {
-        emit_count_search_matches(options.path, &matches);
+        emit_count_search_matches(options.path, &matches)?;
     } else {
-        emit_plain_search_matches_with_line_number(options.path, &matches, options.line_number);
+        emit_plain_search_matches_with_line_number(options.path, &matches, options.line_number)?;
     }
 
     if !has_matches {
@@ -8817,14 +8892,24 @@ fn run_index_query(
         let ignore_case = args.ignore_case
             || (args.smart_case && smart_case_pattern_is_case_insensitive(pattern));
         let results = index.search(pattern, ignore_case, args.fixed_strings)?;
-        matches.extend(results.into_iter().map(|result| SearchMatchJson {
-            file: result.file.to_string_lossy().into_owned(),
-            line: result.line,
-            text: result.text,
-            range: None,
-            meta_variables: None,
-            pattern_id: include_pattern_metadata.then_some(pattern_id),
-            pattern_text: include_pattern_metadata.then(|| pattern.clone()),
+        // EXEMPT from the raw-bytes/base64-fallback treatment (task #266): `TrigramIndex`
+        // persists and returns plain `String`s, so `result.text` is already guaranteed valid
+        // UTF-8 by construction -- there is no raw byte source here to preserve losslessly, and
+        // extending the persisted index format itself is a materially different, larger change
+        // than this fix's scope (the shared native walk emitter).
+        matches.extend(results.into_iter().map(|result| {
+            let (text, bytes, raw) = guaranteed_utf8_match_fields(result.text);
+            SearchMatchJson {
+                file: result.file.to_string_lossy().into_owned(),
+                line: result.line,
+                text,
+                bytes,
+                raw,
+                range: None,
+                meta_variables: None,
+                pattern_id: include_pattern_metadata.then_some(pattern_id),
+                pattern_text: include_pattern_metadata.then(|| pattern.clone()),
+            }
         }));
     }
 
@@ -8861,7 +8946,7 @@ fn run_index_query(
         // prevent. emit_count_search_matches omits zero-count files, byte-matching `rg -c` (the
         // rg-compat target); the native CPU engine's separate grep-style zero-count emission is its
         // own pre-existing divergence, deliberately not replicated on the index fast path.
-        emit_count_search_matches(request.primary_path(), &matches);
+        emit_count_search_matches(request.primary_path(), &matches)?;
         // fold-in (a): rg exit-parity. `rg -c` (and the native CPU / multi-pattern engines) exit 1
         // on zero matches; run_index_query never did, so `--index --count` on a no-match query
         // exited 0 -- indistinguishable from a successful search. `matches.is_empty()` is
@@ -8882,7 +8967,7 @@ fn run_index_query(
         request.primary_path(),
         &matches,
         args.line_number && !args.no_line_number,
-    );
+    )?;
 
     // fold-in (a): see the --count arm above for why this matches native/GPU exit-parity.
     if matches.is_empty() {
@@ -9149,11 +9234,28 @@ struct BatchRewriteConfig {
     verify: bool,
 }
 
+/// `text`/`bytes` mirror `NativeJsonMatch`'s rg-parity protocol (task #266): valid-UTF-8 content
+/// in `text`, otherwise a base64 `bytes` fallback -- exactly one present, computed via
+/// `native_json_text_fields`. `raw` is the byte-exact source of truth every producer must
+/// populate (`#[serde(skip)]`: never itself part of the JSON/NDJSON wire shape) -- both the
+/// plain-text writer (`emit_plain_search_matches_with_line_number`) and the dedup key
+/// (`unique_line_matches`) read `raw` directly instead of `text`, so a producer that supplies
+/// genuinely non-UTF-8 bytes (currently: the multi-pattern native path, `NativeSearchMatch`/
+/// `NativeMultiPatternMatch`) is never silently corrupted OR silently deduplicated against an
+/// unrelated match that merely shares the same `text: None`. A producer whose own source is
+/// ALWAYS valid UTF-8 by construction (TrigramIndex, AST, the GPU sidecar/native paths) simply
+/// sets `raw` to `text`'s own UTF-8 bytes -- `native_json_text_fields` then always returns
+/// `Some(text)`/`None`, identical to this struct's pre-#266 behavior for those producers.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 struct SearchMatchJson {
     file: String,
     line: usize,
-    text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bytes: Option<String>,
+    #[serde(skip)]
+    raw: Vec<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     range: Option<SearchRangeJson>,
     #[serde(rename = "metaVariables", skip_serializing_if = "Option::is_none")]
@@ -9162,6 +9264,19 @@ struct SearchMatchJson {
     pattern_id: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pattern_text: Option<String>,
+}
+
+/// Builds the `text`/`bytes`/`raw` trio for a `SearchMatchJson` (or `SearchMatchNdjson`) from a
+/// producer whose own source `String` is ALWAYS valid UTF-8 by construction -- TrigramIndex
+/// (persists `String`s), AST (`std::fs::read_to_string` fails closed on invalid UTF-8 before this
+/// point), and the GPU sidecar/native paths (JSON-deserialized, itself UTF-8). `native_json_text_
+/// fields` always returns `Some(text)`/`None` for these, so this is equivalent to (and clearer
+/// than) routing them through that helper -- it exists so each of those 4 call sites states its
+/// own exemption inline instead of repeating the same `native_json_text_fields(s.as_bytes())`
+/// call whose `None` branch can never actually fire for them.
+fn guaranteed_utf8_match_fields(text: String) -> (Option<String>, Option<String>, Vec<u8>) {
+    let raw = text.clone().into_bytes();
+    (Some(text), None, raw)
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -9223,7 +9338,11 @@ struct SearchMatchNdjson<'a> {
     path: &'a str,
     file: &'a str,
     line: usize,
-    text: &'a str,
+    // Same text/bytes protocol as `SearchMatchJson` above (task #266).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bytes: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pattern_id: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -9375,10 +9494,16 @@ fn ast_match_to_search_json(
     let context = source_contexts
         .get(&matched.file)
         .expect("AST source context should be present");
+    // EXEMPT from the raw-bytes/base64-fallback treatment (task #266): the source file was just
+    // read via `std::fs::read_to_string` above, which itself fails closed (returns `Err`, never
+    // reaches this point) on invalid UTF-8 -- an AST match can never carry non-UTF-8 bytes.
+    let (text, bytes, raw) = guaranteed_utf8_match_fields(matched.matched_text.clone());
     Ok(SearchMatchJson {
         file: matched.file.to_string_lossy().into_owned(),
         line: matched.line,
-        text: matched.matched_text.clone(),
+        text,
+        bytes,
+        raw,
         range: Some(search_range_json(
             &context.line_starts,
             &matched.candidate.byte_range,
@@ -12307,9 +12432,9 @@ fn execute_gpu_native_route(
             gpu_native_match_json_entries(&stats),
         )?;
     } else if params.count {
-        emit_gpu_native_count_results(params, &stats);
+        emit_gpu_native_count_results(params, &stats)?;
     } else {
-        emit_gpu_native_plain_results(params, &stats);
+        emit_gpu_native_plain_results(params, &stats)?;
     }
 
     if stats.total_matches == 0 {
@@ -12612,17 +12737,26 @@ fn handle_gpu_sidecar_search(params: GpuSearchParams) -> anyhow::Result<()> {
             }
             if !result.stdout.is_empty() {
                 if params.ndjson {
+                    // EXEMPT from the raw-bytes/base64-fallback treatment (task #266): `entry`
+                    // was JSON-deserialized from the Python sidecar's own stdout, which is
+                    // itself a UTF-8-only wire format -- a non-UTF-8 byte could never have
+                    // survived the sidecar's own JSON encoding to reach this point.
                     let matches = parse_gpu_sidecar_search_payload(&result.stdout)?
                         .matches
                         .into_iter()
-                        .map(|entry| SearchMatchJson {
-                            file: entry.file,
-                            line: entry.line_number,
-                            text: entry.text,
-                            range: None,
-                            meta_variables: None,
-                            pattern_id: entry.pattern_id,
-                            pattern_text: entry.pattern_text,
+                        .map(|entry| {
+                            let (text, bytes, raw) = guaranteed_utf8_match_fields(entry.text);
+                            SearchMatchJson {
+                                file: entry.file,
+                                line: entry.line_number,
+                                text,
+                                bytes,
+                                raw,
+                                range: None,
+                                meta_variables: None,
+                                pattern_id: entry.pattern_id,
+                                pattern_text: entry.pattern_text,
+                            }
                         })
                         .collect();
                     emit_ndjson_search_results(
@@ -12843,7 +12977,11 @@ fn unique_line_matches(matches: &[SearchMatchJson]) -> Vec<SearchMatchJson> {
     let mut seen = std::collections::BTreeSet::new();
     let mut unique = Vec::new();
     for matched in matches {
-        let key = (matched.file.clone(), matched.line, matched.text.clone());
+        // `raw`, not `text` (task #266): two matches with genuinely different non-UTF-8 content
+        // both report `text: None`, so keying on `text` would wrongly collapse them into a
+        // single deduped entry -- `raw` is the byte-exact source of truth every producer
+        // populates, valid-UTF-8 or not.
+        let key = (matched.file.clone(), matched.line, matched.raw.clone());
         if seen.insert(key) {
             let mut deduped = matched.clone();
             deduped.pattern_id = None;
@@ -12854,11 +12992,21 @@ fn unique_line_matches(matches: &[SearchMatchJson]) -> Vec<SearchMatchJson> {
     unique
 }
 
+/// Writes each matched line's raw bytes directly to stdout (never through `println!`/`Display`
+/// on `matched.text`), so a genuinely non-UTF-8 match -- currently only reachable via the
+/// multi-pattern native path -- prints byte-for-byte instead of via a lossy `Option<String>`
+/// unwrap (task #266: the same byte-fidelity guarantee `append_standard_match_bytes` gives the
+/// single-pattern native emitter, extended to this shared plain-text writer).
+///
+/// A closed output pipe (`tg ... | head -1`) is a normal, expected termination and returns
+/// `Ok(())` quietly; any OTHER write failure (disk full, I/O error) is a real error and is
+/// propagated rather than silently swallowed. `emit_count_search_matches` below applies the
+/// identical rule, so the two plain-text emitters no longer disagree on write-failure behavior.
 fn emit_plain_search_matches_with_line_number(
     path: &str,
     matches: &[SearchMatchJson],
     line_number: bool,
-) {
+) -> anyhow::Result<()> {
     let unique = unique_line_matches(matches);
     let with_filename = unique
         .iter()
@@ -12867,17 +13015,40 @@ fn emit_plain_search_matches_with_line_number(
         .len()
         > 1
         || Path::new(path).is_dir();
+    let stdout = io::stdout();
+    let mut stdout = stdout.lock();
     for matched in unique {
+        let mut line = Vec::with_capacity(matched.raw.len() + matched.file.len() + 32);
         match (with_filename, line_number) {
-            (true, true) => println!("{}:{}:{}", matched.file, matched.line, matched.text),
-            (true, false) => println!("{}:{}", matched.file, matched.text),
-            (false, true) => println!("{}:{}", matched.line, matched.text),
-            (false, false) => println!("{}", matched.text),
+            (true, true) => {
+                write!(line, "{}:{}:", matched.file, matched.line)?;
+            }
+            (true, false) => {
+                write!(line, "{}:", matched.file)?;
+            }
+            (false, true) => {
+                write!(line, "{}:", matched.line)?;
+            }
+            (false, false) => {}
+        }
+        line.extend_from_slice(&matched.raw);
+        line.push(b'\n');
+        if let Err(err) = stdout.write_all(&line) {
+            if err.kind() == io::ErrorKind::BrokenPipe {
+                return Ok(());
+            }
+            return Err(err.into());
         }
     }
+    Ok(())
 }
 
-fn emit_count_search_matches(path: &str, matches: &[SearchMatchJson]) {
+/// Same closed-pipe-is-quiet / other-errors-propagate rule as
+/// `emit_plain_search_matches_with_line_number` above (task #266 cleanup): this used to be bare
+/// `println!`, which PANICS on any write failure (the stdlib `print!`/`println!` macros
+/// `.expect(...)` internally) -- including the routine closed-pipe case every other emitter in
+/// this file already handles quietly.
+fn emit_count_search_matches(path: &str, matches: &[SearchMatchJson]) -> anyhow::Result<()> {
     let unique = unique_line_matches(matches);
     let with_filename = unique
         .iter()
@@ -12891,28 +13062,54 @@ fn emit_count_search_matches(path: &str, matches: &[SearchMatchJson]) {
         *counts.entry(matched.file).or_default() += 1;
     }
 
-    if with_filename {
-        for (file, count) in counts {
-            println!("{file}:{count}");
-        }
+    let stdout = io::stdout();
+    let mut stdout = stdout.lock();
+    let write_result = if with_filename {
+        counts
+            .into_iter()
+            .try_for_each(|(file, count)| writeln!(stdout, "{file}:{count}"))
     } else {
-        println!("{}", counts.values().copied().next().unwrap_or(0));
+        writeln!(stdout, "{}", counts.values().copied().next().unwrap_or(0))
+    };
+    if let Err(err) = write_result {
+        if err.kind() == io::ErrorKind::BrokenPipe {
+            return Ok(());
+        }
+        return Err(err.into());
     }
+    Ok(())
 }
 
 #[cfg(feature = "cuda")]
 fn gpu_native_match_json_entries(stats: &GpuNativeSearchStats) -> Vec<SearchMatchJson> {
+    // NOT exempt the way TrigramIndex/AST/the GPU sidecar are (those three have a real, cited
+    // guarantee their source text is always valid UTF-8). `GpuNativeSearchMatch.text` is built
+    // in `gpu_native.rs` via `String::from_utf8_lossy(line_bytes).trim_end_matches('\r')` -- the
+    // IDENTICAL lossy-conversion + over-trim defect class task #266 fixes in the CPU emitter.
+    // Left unfixed here deliberately: this is the CUDA-gated, experimental GPU-native search
+    // path (not the "shared native emitter" #266/#263 name), off by default
+    // (`cuda-feature-check` CI only `cargo check`s it, never runs it), and per this repo's own
+    // GPU program notes, not a currently-viable production path. `guaranteed_utf8_match_fields`
+    // here is a straight type-compatibility wrap of whatever `matched.text` already is -- it
+    // does NOT certify losslessness for this producer the way it does for the other three.
+    // Fixing gpu_native.rs's own conversion is a disclosed, separate follow-up, not silently
+    // dropped.
     stats
         .matches
         .iter()
-        .map(|matched| SearchMatchJson {
-            file: matched.path.to_string_lossy().into_owned(),
-            line: matched.line_number,
-            text: matched.text.clone(),
-            range: None,
-            meta_variables: None,
-            pattern_id: (stats.pattern_count > 1).then_some(matched.pattern_id),
-            pattern_text: (stats.pattern_count > 1).then(|| matched.pattern_text.clone()),
+        .map(|matched| {
+            let (text, bytes, raw) = guaranteed_utf8_match_fields(matched.text.clone());
+            SearchMatchJson {
+                file: matched.path.to_string_lossy().into_owned(),
+                line: matched.line_number,
+                text,
+                bytes,
+                raw,
+                range: None,
+                meta_variables: None,
+                pattern_id: (stats.pattern_count > 1).then_some(matched.pattern_id),
+                pattern_text: (stats.pattern_count > 1).then(|| matched.pattern_text.clone()),
+            }
         })
         .collect()
 }
@@ -12956,19 +13153,25 @@ fn emit_gpu_native_json_results(
 }
 
 #[cfg(feature = "cuda")]
-fn emit_gpu_native_plain_results(params: &GpuSearchParams<'_>, stats: &GpuNativeSearchStats) {
+fn emit_gpu_native_plain_results(
+    params: &GpuSearchParams<'_>,
+    stats: &GpuNativeSearchStats,
+) -> anyhow::Result<()> {
     // Task #131 F3: this used to call the now-removed `emit_plain_search_matches`, which
     // hardcoded `line_number: true` regardless of `-N`/`--no-line-number` -- the double bug
     // (`GpuSearchParams::line_number` was ALSO hardcoded at every construction site until this
     // same fix). Thread the real, derived value through instead.
     let matches = gpu_native_match_json_entries(stats);
-    emit_plain_search_matches_with_line_number(params.path, &matches, params.line_number);
+    emit_plain_search_matches_with_line_number(params.path, &matches, params.line_number)
 }
 
 #[cfg(feature = "cuda")]
-fn emit_gpu_native_count_results(params: &GpuSearchParams<'_>, stats: &GpuNativeSearchStats) {
+fn emit_gpu_native_count_results(
+    params: &GpuSearchParams<'_>,
+    stats: &GpuNativeSearchStats,
+) -> anyhow::Result<()> {
     let matches = gpu_native_match_json_entries(stats);
-    emit_count_search_matches(params.path, &matches);
+    emit_count_search_matches(params.path, &matches)
 }
 
 #[cfg(feature = "cuda")]
@@ -13087,7 +13290,10 @@ fn emit_ndjson_search_results(
             path,
             file: &matched.file,
             line: matched.line,
-            text: &matched.text,
+            // Reuse the fields the producer already computed (via `native_json_text_fields` or
+            // `guaranteed_utf8_match_fields`) -- no need to re-derive from `matched.raw` here.
+            text: matched.text.as_deref(),
+            bytes: matched.bytes.clone(),
             pattern_id: matched.pattern_id,
             pattern_text: matched.pattern_text.as_deref(),
         };

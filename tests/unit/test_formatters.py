@@ -170,11 +170,14 @@ class TestFormatters:
         assert fmt.format(result) == 'binary file matches (found "\\0" byte around offset 16)'
 
     def test_binary_notice_sentinel_formats_clean_text_and_json(self):
+        # Fixture text uses "\0" (not "/0") to match what `_binary_notice_text`/
+        # `RipgrepFormatter._binary_notice` actually produce post-#263; this test itself only
+        # exercises sentinel passthrough (the exact text is opaque to the formatters here).
         result = SearchResult(
             matches=[
                 MatchLine(
                     line_number=1,
-                    text='binary file matches (found "/0" byte around offset 16)',
+                    text='binary file matches (found "\\0" byte around offset 16)',
                     file="sample.bin",
                     meta_variables={"binary_notice": True},
                 )
@@ -189,7 +192,7 @@ class TestFormatters:
         json_output = json.loads(JsonFormatter().format(result))
         ndjson_output = json.loads(NdjsonFormatter().format(result))
 
-        assert text_output == 'binary file matches (found "/0" byte around offset 16)'
+        assert text_output == 'binary file matches (found "\\0" byte around offset 16)'
         assert json_output["matches"][0]["text"] == text_output
         assert json_output["matches"][0]["metaVariables"] == {"binary_notice": True}
         assert ndjson_output["text"] == text_output

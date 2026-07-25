@@ -227,26 +227,33 @@ pub struct PlainTextNativeRequest {
 ///    emitter whose plain-text agreement with `rg -e A -e B` is not established.
 ///
 /// REFUSAL 5 -- `single_path_renders_identically` -- a FULL-CONTENT probe of the single file, refusing on
-///    any of three divergences the emitter has and that this PR deliberately does NOT try to fix
-///    (the emitter is shared with `--json`/`--ndjson`/`--cpu` and its behavior is a governed
-///    contract; changing shared rendering inside a perf PR is the wrong blast radius):
-///    (a) CRLF -- `search_file_streaming_plain_sequential` does
+///    any of three divergences the emitter USED TO have (this PR deliberately did NOT try to
+///    fix them: the emitter is shared with `--json`/`--ndjson`/`--cpu` and its behavior is a
+///    governed contract; changing shared rendering inside a perf PR is the wrong blast radius).
+///    **UPDATE (task #266/#263): all three are now fixed in the shared emitter itself** (see
+///    `native_search.rs`'s `strip_native_line_terminator`, `native_json_text_fields`, and
+///    `emit_binary_match_warning`). This probe's clause still refuses all three cases -- that is
+///    now a deliberate CONSERVATIVE MARGIN, not a live correctness gap, and relaxing it to
+///    reclaim the `rg`-subprocess-skip perf win for CRLF/non-UTF-8/binary content is a
+///    disclosed, not-yet-done follow-up (out of #266/#263's scope, which was the emitter only).
+///    The divergences as originally measured, for history:
+///    (a) CRLF -- `search_file_streaming_plain_sequential` did
 ///    `line.trim_end_matches(['\n', '\r'])` (`native_search.rs`), and `build_searcher` only
 ///    installs a CRLF line terminator when `config.crlf`, which nothing on this path ever
 ///    sets (`--crlf` is a Python-passthrough flag). Measured: `rg` emits
-///    `b"needle alpha\r\n"` where the native engine emits `b"needle alpha\n"`. On a Windows
-///    or CRLF-normalized checkout this hits routine `tg search PATTERN file.py`, so ANY `\r`
-///    byte refuses.
-///    (b) Non-UTF-8 -- the plain sink is `grep_searcher::sinks::Lossy`, which substitutes U+FFFD;
-///    `rg` writes the raw bytes. Measured: `rg` emits `b"cafe\xe9 needle here"` where the
-///    native engine emits `b"cafe\xef\xbf\xbd needle here"` -- silent corruption. A PREFIX
-///    probe cannot bound this (an invalid byte at 1 MB diverges just as hard), so the probe
-///    validates the WHOLE file and refuses anything that is not valid UTF-8.
-///    (c) NUL/binary -- `rg` prints `binary file matches (found "\0" byte around offset 6)` while
-///    `emit_binary_match_warning` prints the same sentence with `"/0"`, a spelling pinned by
-///    `tests/e2e/snapshots/.../native_binary_single_file.txt`,
+///    `b"needle alpha\r\n"` where the native engine emitted `b"needle alpha\n"`. On a Windows
+///    or CRLF-normalized checkout this hit routine `tg search PATTERN file.py`, so ANY `\r`
+///    byte refused.
+///    (b) Non-UTF-8 -- the plain sink was `grep_searcher::sinks::Lossy`, which substituted
+///    U+FFFD; `rg` writes the raw bytes. Measured: `rg` emits `b"cafe\xe9 needle here"` where
+///    the native engine emitted `b"cafe\xef\xbf\xbd needle here"` -- silent corruption. A
+///    PREFIX probe cannot bound this (an invalid byte at 1 MB diverges just as hard), so the
+///    probe validates the WHOLE file and refuses anything that is not valid UTF-8.
+///    (c) NUL/binary -- `rg` prints `binary file matches (found "\0" byte around offset 6)`
+///    while `emit_binary_match_warning` used to print the same sentence with `"/0"`, a spelling
+///    that was pinned by `tests/e2e/snapshots/.../native_binary_single_file.txt`,
 ///    `src/tensor_grep/backends/rust_backend.py`, `tests/unit/test_rust_core.py` and a
-///    `rust_core/tests/test_routing.rs` assertion.
+///    `rust_core/tests/test_routing.rs` assertion -- all corrected alongside the emitter fix.
 ///    The probe is bounded by `PLAIN_TEXT_NATIVE_MAX_PROBE_BYTES` in `main.rs`; see the measured
 ///    cost table on that constant for the cap's actual justification. Do NOT restate the cost
 ///    tradeoff here -- an earlier revision of this very comment asserted the probe "can never cost
