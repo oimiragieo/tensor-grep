@@ -1,4 +1,21 @@
 #![cfg(feature = "cuda")]
+//! Every test in this file needs a REAL CUDA driver and device -- each one reaches
+//! `first_device_id()` (or a device entry point directly), which calls `enumerate_cuda_devices`.
+//! On a runner without the driver, cudarc panics with
+//! `Unable to dynamically load the "cuda" shared library`.
+//!
+//! They are therefore all `#[ignore]`d (task #279). Being explicit about this is what LETS the
+//! rest of the cuda-gated suite run: `cargo test --features cuda` in `cuda-feature-check`
+//! executes 279 other tests -- including `gpu_native.rs`'s own `#[cfg(test)]` module and the
+//! lossless-emitter regression tests from #273/#754 -- and this file was the only thing failing
+//! the job.
+//!
+//! To be precise about what `#[ignore]` does and does not buy: these 8 have NEVER executed in
+//! CI, because no CUDA runner exists. Marking them makes that pre-existing reality visible in
+//! the test output (`8 ignored`) instead of invisible, and it is NOT a claim that they pass.
+//! On a machine with a GPU, run them with:
+//!
+//!     cargo test --features cuda --test test_gpu_native -- --ignored
 
 use tensor_grep_rs::gpu_native::{
     compile_search_kernel, detect_compute_capability, enumerate_cuda_devices, gpu_native_search,
@@ -49,11 +66,13 @@ fn first_device_id() -> i32 {
 }
 
 #[test]
+#[ignore = "requires a real CUDA driver + device; run with `--ignored` on a GPU runner"]
 fn test_compile_search_kernel_succeeds() {
     compile_search_kernel(first_device_id()).unwrap();
 }
 
 #[test]
+#[ignore = "requires a real CUDA driver + device; run with `--ignored` on a GPU runner"]
 fn test_gpu_native_search_finds_known_pattern() {
     let haystack = b"INFO start\nERROR one\nWARN mid\nERROR two\n";
     let matches = gpu_native_search("ERROR", haystack, first_device_id()).unwrap();
@@ -62,6 +81,7 @@ fn test_gpu_native_search_finds_known_pattern() {
 }
 
 #[test]
+#[ignore = "requires a real CUDA driver + device; run with `--ignored` on a GPU runner"]
 fn test_gpu_native_matches_cpu_for_same_input() {
     let haystack = "cafe\ncaf\u{00e9}\n\u{65e5}\u{672c}\u{8a9e}\ncaf\u{00e9}\n".as_bytes();
     let matches = gpu_native_search("caf\u{00e9}", haystack, first_device_id()).unwrap();
@@ -70,6 +90,7 @@ fn test_gpu_native_matches_cpu_for_same_input() {
 }
 
 #[test]
+#[ignore = "requires a real CUDA driver + device; run with `--ignored` on a GPU runner"]
 fn test_gpu_native_search_patterns_reports_pattern_ids() {
     let haystack = b"INFO\nERROR one\nWARN two\nERRORWARN combo\nFATAL three\n";
     let patterns = ["ERROR", "WARN", "FATAL"];
@@ -82,6 +103,7 @@ fn test_gpu_native_search_patterns_reports_pattern_ids() {
 }
 
 #[test]
+#[ignore = "requires a real CUDA driver + device; run with `--ignored` on a GPU runner"]
 fn test_gpu_native_search_patterns_matches_cpu_for_unicode_inputs() {
     let haystack = "cafe\ncaf\u{00e9}\n\u{65e5}\u{672c}\u{8a9e}\nemoji \u{1f50d}\n".as_bytes();
     let patterns = ["caf\u{00e9}", "\u{65e5}\u{672c}\u{8a9e}", "\u{1f50d}"];
@@ -94,6 +116,7 @@ fn test_gpu_native_search_patterns_matches_cpu_for_unicode_inputs() {
 }
 
 #[test]
+#[ignore = "requires a real CUDA driver + device; run with `--ignored` on a GPU runner"]
 fn test_device_enumeration_lists_available_gpus() {
     let devices = enumerate_cuda_devices().unwrap();
 
@@ -105,6 +128,7 @@ fn test_device_enumeration_lists_available_gpus() {
 }
 
 #[test]
+#[ignore = "requires a real CUDA driver + device; run with `--ignored` on a GPU runner"]
 fn test_compute_capability_detected_for_selected_device() {
     let capability = detect_compute_capability(first_device_id()).unwrap();
 
@@ -113,6 +137,7 @@ fn test_compute_capability_detected_for_selected_device() {
 }
 
 #[test]
+#[ignore = "requires a real CUDA driver + device; run with `--ignored` on a GPU runner"]
 fn test_invalid_device_id_returns_clear_error() {
     let err = gpu_native_search("needle", b"needle", 99).unwrap_err();
     let message = err.to_string();
