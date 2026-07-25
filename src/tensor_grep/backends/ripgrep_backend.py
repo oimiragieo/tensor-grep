@@ -7,7 +7,7 @@ from pathlib import Path
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.cli.subprocess_policy import configured_ripgrep_timeout_seconds, run_subprocess
 from tensor_grep.core.config import SearchConfig
-from tensor_grep.core.result import MatchLine, SearchResult
+from tensor_grep.core.result import MatchLine, SearchResult, strip_line_terminator
 
 
 def _decode_rg_field(field: dict[str, object] | None) -> str:
@@ -227,7 +227,11 @@ class RipgrepBackend(ComputeBackend):
                     line_number = data_match.get("line_number", 0)
                     # Decode text-or-bytes: non-UTF-8 files arrive as lines.bytes (base64),
                     # not lines.text — reading only .text produced a phantom empty match.
-                    text = _decode_rg_field(data_match.get("lines")).rstrip("\n\r")
+                    # strip_line_terminator (not .rstrip("\n\r")): rg's own "lines" field
+                    # includes the source line's real trailing `\r` for a CRLF file (verified
+                    # directly against `rg.exe --json`) -- `.rstrip("\n\r")` ate that `\r` too,
+                    # a genuine tg-vs-rg `--json` divergence task #262 uncovered.
+                    text = strip_line_terminator(_decode_rg_field(data_match.get("lines")))
 
                     _path_obj = data_match.get("path", {})
                     path_str = _decode_rg_field(_path_obj)
@@ -262,7 +266,7 @@ class RipgrepBackend(ComputeBackend):
                 elif data.get("type") == "context":
                     data_match = data["data"]
                     line_number = data_match.get("line_number", 0)
-                    text = _decode_rg_field(data_match.get("lines")).rstrip("\n\r")
+                    text = strip_line_terminator(_decode_rg_field(data_match.get("lines")))
                     _path_obj = data_match.get("path", {})
                     path_str = _decode_rg_field(_path_obj)
                     if "text" not in _path_obj and isinstance(file_path, str):

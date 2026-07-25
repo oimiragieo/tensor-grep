@@ -20,16 +20,19 @@ def test_reconfigures_a_cp1252_stream(monkeypatch):
     monkeypatch.setattr(sys, "stdout", out)
     monkeypatch.setattr(sys, "stderr", err)
     _force_utf8_streams()
-    out.reconfigure.assert_called_once_with(encoding="utf-8", errors="replace")
-    err.reconfigure.assert_called_once_with(encoding="utf-8", errors="replace")
+    out.reconfigure.assert_called_once_with(encoding="utf-8", errors="replace", newline="\n")
+    err.reconfigure.assert_called_once_with(encoding="utf-8", errors="replace", newline="\n")
 
 
-def test_noop_when_already_utf8(monkeypatch):
+def test_newline_only_reconfigured_when_already_utf8(monkeypatch):
+    # task #262: this is NOT a full no-op anymore -- the stream is already UTF-8 so the
+    # encoding/errors kwargs are skipped, but newline="\n" must still be applied so a
+    # plain print() on this stream does not silently rewrite \n -> \r\n on Windows.
     out = _fake_stream("utf-8")
     monkeypatch.setattr(sys, "stdout", out)
     monkeypatch.setattr(sys, "stderr", _fake_stream("UTF-8"))
     _force_utf8_streams()
-    out.reconfigure.assert_not_called()
+    out.reconfigure.assert_called_once_with(newline="\n")
 
 
 def test_survives_reconfigure_error(monkeypatch):

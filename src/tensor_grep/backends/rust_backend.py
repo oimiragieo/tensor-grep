@@ -4,7 +4,7 @@ from pathlib import Path
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.backends.cpu_backend import InvalidRegexError
 from tensor_grep.core.config import SearchConfig
-from tensor_grep.core.result import MatchLine, SearchResult
+from tensor_grep.core.result import MatchLine, SearchResult, strip_line_terminator
 
 try:
     from tensor_grep.rust_core import RustBackend as NativeRustBackend
@@ -330,7 +330,7 @@ class RustCoreBackend(ComputeBackend):
 
         matches = []
         for line_num, text in results:
-            clean_text = text.rstrip("\r\n")
+            clean_text = strip_line_terminator(text)
             matches.append(MatchLine(line_number=line_num, text=clean_text, file=str(file_path)))
 
         total_matches = len(matches)

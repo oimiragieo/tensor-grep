@@ -1134,17 +1134,31 @@ def _force_utf8_streams() -> None:
     filesystem path with a non-English username, a U+2028 in a match, an emoji marker, ...). The
     root fix for the whole ``typer.echo``/``print`` sweep -- one reconfigure at the entry point
     covers every command instead of routing each site through ``_safe_stdout_line``. No-op where the
-    stream is already UTF-8 or cannot be reconfigured (a pipe with pending bytes, a non-TextIO
-    stream); ``errors="replace"`` guarantees it can never itself raise on write.
+    stream cannot be reconfigured (a pipe with pending bytes, a non-TextIO stream); ``errors="replace"``
+    guarantees it can never itself raise on write.
+
+    Also pins ``newline="\\n"`` on every reconfigurable stream, encoding fix or not (task #262).
+    A plain ``TextIOWrapper`` (the default for ``sys.stdout``/``sys.stderr``) is opened with
+    ``newline=None`` -- universal-newlines mode -- which on Windows silently rewrites every ``\\n``
+    a formatter emits into ``os.linesep`` (``\\r\\n``) on WRITE, corrupting an LF-only matched line
+    (or a CRLF-file line already carrying its own trailing ``\\r``, which would come out
+    double-CR'd) before it ever leaves the process. ``rg``'s own subprocess output and the native
+    ``tg`` binary bypass this entirely (their bytes are inherited/streamed raw, never routed
+    through a Python text stream), which is why only the CPU/native-Python search path showed the
+    corruption. ``newline="\\n"`` disables the translation -- bytes written are exactly the bytes
+    the formatter produced. This must apply even when the stream is ALREADY UTF-8 (the pre-fix
+    early-``continue`` below skipped the newline fix together with the now-skipped encoding fix).
     """
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if not callable(reconfigure):
             continue
-        if "utf" in (getattr(stream, "encoding", None) or "").lower():
-            continue
+        kwargs: dict[str, str] = {"newline": "\n"}
+        if "utf" not in (getattr(stream, "encoding", None) or "").lower():
+            kwargs["encoding"] = "utf-8"
+            kwargs["errors"] = "replace"
         try:
-            reconfigure(encoding="utf-8", errors="replace")
+            reconfigure(**kwargs)
         except (ValueError, OSError):
             # Stream already has buffered output or is detached -- degrade to the per-line
             # _safe_stdout_line fallback still in place at the call sites; do not crash startup.

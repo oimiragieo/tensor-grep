@@ -99,7 +99,9 @@ def native_gpu_available(
     command_env: dict[str, str],
 ) -> None:
     probe = tmp_path / "gpu_probe.log"
-    probe.write_text("gpu probe sentinel\n", encoding="utf-8")
+    # newline="\n" pins this fixture to LF regardless of platform default (task #262: without
+    # it, Path.write_text() would silently write CRLF on Windows).
+    probe.write_text("gpu probe sentinel\n", encoding="utf-8", newline="\n")
     result = _run_command(
         [
             str(native_tg_binary),
@@ -131,16 +133,34 @@ def native_gpu_available(
 
 
 def _run_command(command: list[str], *, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    # Raw bytes, decoded afterwards -- no `text=True`. `text=True` runs the pipe through
+    # Python's universal-newlines TextIOWrapper, which translates a real `\r\n` in ANY of the
+    # four backends' stdout (native CPU, native GPU, TrigramIndex, rg-passthrough) to `\n` on
+    # Windows BEFORE `json.loads` ever sees it -- so all four would come out uniformly
+    # \r-less and "match" even if only some of them actually preserve a CRLF source file's
+    # own `\r` (the cross-backend comparisons below parse this JSON and diff the resulting
+    # `text` fields, so this masking applies even though the comparison itself is on parsed
+    # values, not raw bytes -- task #262). `bytes.decode()` (unlike `text=True`) performs no
+    # newline translation, so this closes that blind spot while keeping every downstream
+    # string-based assertion in this file working unchanged. `errors="replace"` on the decode
+    # (not on the newline handling) is intentionally KEPT here, unlike the newline fix: this
+    # file's corpus/error-message content is not exercising the encoding-divergence leg of
+    # task #262, and a hard decode failure here would abort the whole integration run instead
+    # of failing one assertion -- a worse failure mode for a suite that cannot be re-run
+    # locally without a compiled native binary.
+    completed_bytes = subprocess.run(
         command,
         cwd=REPO_ROOT,
         env=env,
         stdin=subprocess.DEVNULL,
         capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
         check=False,
+    )
+    return subprocess.CompletedProcess(
+        args=completed_bytes.args,
+        returncode=completed_bytes.returncode,
+        stdout=completed_bytes.stdout.decode("utf-8", errors="replace"),
+        stderr=completed_bytes.stderr.decode("utf-8", errors="replace"),
     )
 
 
@@ -157,6 +177,7 @@ def _write_cross_backend_corpus(root: Path, *, file_count: int) -> Path:
         (root / f"shard_{file_index:03}.log").write_text(
             "\n".join(lines) + "\n",
             encoding="utf-8",
+            newline="\n",
         )
     return root
 
@@ -171,6 +192,7 @@ def _write_ast_fixture(root: Path) -> Path:
         "        return y\n"
         "    return None\n",
         encoding="utf-8",
+        newline="\n",
     )
     return file_path
 
@@ -369,7 +391,7 @@ def test_positional_replace_should_not_mutate_files(
 ) -> None:
     target = tmp_path / "replace-target.txt"
     original = "hello world\n"
-    target.write_text(original, encoding="utf-8")
+    target.write_text(original, encoding="utf-8", newline="\n")
 
     result = _run_command(
         [

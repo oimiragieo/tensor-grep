@@ -114,7 +114,12 @@ class TestCPUBackend:
         from tensor_grep.core.config import SearchConfig
 
         log = tmp_path / "context.log"
-        log.write_text("line 1\nERROR MATCH\nline 3\nline 4\nline 5\n")
+        # newline="\n" pins this fixture to LF regardless of platform default: without it,
+        # Path.write_text() silently writes CRLF on Windows, and task #262's
+        # strip_line_terminator fix now correctly preserves a CRLF line's own trailing \r
+        # instead of over-stripping it, which would otherwise make every .text assertion
+        # below fail on an incidental platform-default newline, not a real bug.
+        log.write_text("line 1\nERROR MATCH\nline 3\nline 4\nline 5\n", newline="\n")
 
         backend = CPUBackend()
         config = SearchConfig(after_context=2)
@@ -133,7 +138,7 @@ class TestCPUBackend:
         from tensor_grep.core.config import SearchConfig
 
         log = tmp_path / "context_before.log"
-        log.write_text("line 1\nline 2\nERROR MATCH\nline 4\n")
+        log.write_text("line 1\nline 2\nERROR MATCH\nline 4\n", newline="\n")
 
         backend = CPUBackend()
         config = SearchConfig(before_context=2)
@@ -214,8 +219,44 @@ class TestCPUBackend:
         assert (str(files[1]), False) in cache
         assert (str(files[2]), False) in cache
 
-    def test_should_strip_line_terminators_from_rust_backend_matches(self, tmp_path):
+    def test_should_strip_only_the_trailing_newline_from_rust_backend_matches(self, tmp_path):
+        """task #262: the OLD `.rstrip("\n\r")` here stripped ANY trailing run of `\r`/`\n`,
+        which silently ate a genuine trailing `\r` from a CRLF source line too (real `rg` and
+        Rust's own line-splitter both preserve that `\r` -- verified directly against
+        `rg.exe`). `strip_line_terminator` must remove ONLY the single trailing `\n`.
+
+        This is the bidirectional pair: an LF-only match text loses just its `\n` (this test),
+        while `test_should_preserve_a_genuine_trailing_cr_from_a_crlf_rust_backend_match`
+        below proves a real `\r` immediately before it survives.
+        """
         log = tmp_path / "rust_newlines.log"
+        log.write_text("apple\nbanana\n", encoding="utf-8")
+
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+
+        class FakeRustBackend:
+            def search(self, **kwargs):
+                return [(1, "apple\n")]
+
+        rust_mod.RustBackend = FakeRustBackend
+
+        backend = CPUBackend()
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            result = backend.search(str(log), "apple")
+
+        assert result.total_matches == 1
+        assert result.matches[0].line_number == 1
+        assert result.matches[0].text == "apple"
+        assert result.routing_backend == "CPUBackend"
+
+    def test_should_preserve_a_genuine_trailing_cr_from_a_crlf_rust_backend_match(self, tmp_path):
+        """The other half of the task #262 bidirectional fix -- see the sibling test above.
+        Rust's own line-splitter keeps a CRLF line's trailing `\r` (only the `\n` record
+        separator is removed by the split itself); the fake backend below mirrors that real
+        shape. This must NOT be corrupted into "apple" (over-stripped) OR "apple\r\r"
+        (doubled).
+        """
+        log = tmp_path / "rust_newlines_crlf.log"
         log.write_text("apple\nbanana\n", encoding="utf-8")
 
         rust_mod = types.ModuleType("tensor_grep.rust_core")
@@ -232,7 +273,7 @@ class TestCPUBackend:
 
         assert result.total_matches == 1
         assert result.matches[0].line_number == 1
-        assert result.matches[0].text == "apple"
+        assert result.matches[0].text == "apple\r"
         assert result.routing_backend == "CPUBackend"
         assert result.routing_reason == "cpu_rust_regex"
 
@@ -263,7 +304,9 @@ class TestCPUBackend:
         # linear-time Rust engine (context windows are assembled in pure Python around it)
         # instead of unconditionally falling to Python's unbounded backtracking `re`.
         log = tmp_path / "rust_context.log"
-        log.write_text("before\napple\nafter\n", encoding="utf-8")
+        # newline="\n": see the comment on test_should_includeAfterContext_when_dashA_isProvided
+        # above -- this fixture feeds _assemble_context_matches, which reads the REAL file.
+        log.write_text("before\napple\nafter\n", encoding="utf-8", newline="\n")
 
         rust_mod = types.ModuleType("tensor_grep.rust_core")
         calls = []
@@ -341,7 +384,8 @@ class TestCPUBackend:
 
     def test_should_combine_word_regexp_with_context_via_rust(self, tmp_path):
         log = tmp_path / "word_context.log"
-        log.write_text("before\ncat\nconcatenate\nafter\n", encoding="utf-8")
+        # newline="\n": same reasoning as the sibling context-fixture comments above.
+        log.write_text("before\ncat\nconcatenate\nafter\n", encoding="utf-8", newline="\n")
 
         backend = CPUBackend()
         result = backend.search(

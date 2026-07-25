@@ -1,6 +1,30 @@
 from dataclasses import dataclass, field
 
 
+def strip_line_terminator(text: str) -> str:
+    r"""Strip AT MOST one trailing ``\n`` from a raw line's text -- never a trailing ``\r``.
+
+    ``MatchLine.text`` must hold a line's content with its own terminating newline removed,
+    but with everything else -- including a genuine trailing ``\r`` from a CRLF-terminated
+    source line -- left byte-for-byte intact, matching how real ``rg`` reports a CRLF line's
+    content (verified directly against ``rg.exe``: its plain-text AND ``--json`` output both
+    keep the file's own ``\r``).
+
+    Every backend used to call ``text.rstrip("\n\r")`` / ``text.rstrip("\r\n")`` here, which
+    strips ANY trailing run of ``\r``/``\n`` in ANY order -- e.g. for a CRLF line whose
+    content itself legitimately ends in ``\r`` (Rust's line-splitter, and a raw ``rg --json``
+    "lines" field, both include that ``\r``), this silently ate it too. On Windows that
+    divergence used to be masked (or, once the rg-parity test suites started comparing raw
+    bytes instead of `text=True`-decoded strings, exposed) by the SEPARATE stdout
+    universal-newlines bug this fix is paired with (task #262) -- but even with stdout fixed,
+    every one of these `rstrip` call sites would still corrupt a CRLF file's OWN `\r` on the
+    way in, independent of anything happening at the stdout layer. ``removesuffix`` only ever
+    removes the single trailing ``\n`` that every engine here is known to append; a real
+    trailing ``\r`` survives.
+    """
+    return text.removesuffix("\n")
+
+
 @dataclass(frozen=True)
 class MatchLine:
     line_number: int

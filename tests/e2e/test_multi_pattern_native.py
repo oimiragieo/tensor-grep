@@ -165,28 +165,46 @@ def test_multi_e_native_reports_both_match_line_once(corpus: Path, env: dict[str
     # both.txt matches "foo" AND "bar" but must be reported as ONE line, never two
     # independent passes (rg parity: OR-combine, not N separate searches).
     #
-    # KNOWN REAL DIVERGENCE (task #262, uncovered by de-blinding this comparison -- left
-    # intentionally RED, not xfailed/normalized away, per task instructions): on Windows,
-    # `tg search --cpu` (the Python/native, non-rg-routed backend) emits a matched line
-    # terminated `\r\n` even when the source file and every OTHER engine emit plain `\n`.
-    # Repro argv: `python -m tensor_grep search --cpu -e foo -e bar both.txt` against an
-    # LF-only `both.txt` (`b"foo and bar together\n"` on disk):
-    #   tg --cpu stdout:            b"foo and bar together\r\n"   (WRONG -- extra \r)
-    #   tg (rg-routed, no --cpu):   b"foo and bar together\n"     (matches the file)
-    #   real `rg` on the same file: b"foo and bar together\n"     (matches the file)
-    # The extra `\r` is not present in the input file and is not emitted by `rg` or by tg's
-    # own rg-routed path on the identical file, so it is introduced by the CPU/native
-    # backend's own Python stdout write (Windows' universal-newlines translation applied on
-    # write, `\n` -> `os.linesep`), not by anything file- or fixture-dependent. This was
-    # invisible before task #262 because the old `_normalize` collapsed `\r\n` -> `\n` before
-    # ever comparing. Fixing the emitter is out of this PR's scope (`src/tensor_grep/` is
-    # off-limits here) -- this assertion is left honest so CI documents the real bug rather
-    # than re-hiding it.
+    # FIXED (task #262): de-blinding this comparison (raw bytes instead of a
+    # `\r\n`-collapsing `_normalize`) first caught `tg search --cpu` emitting a matched line
+    # terminated `\r\n` on Windows even though this fixture's `both.txt` is LF-only. Root
+    # cause was `bootstrap.py::_force_utf8_streams` never pinning `newline="\n"` on
+    # `sys.stdout` -- Python's default universal-newlines TEXT mode rewrites every `\n` a
+    # formatter emits to `os.linesep` on WRITE. Fixed there (now unconditional, even when the
+    # stream is already UTF-8). This is the LF-in-LF-out half of the bidirectional check; see
+    # `test_multi_e_native_crlf_file_round_trips_its_own_crlf` below for the CRLF-in-CRLF-out
+    # half real `rg` was already getting right.
     result = _tg(["--cpu", "-e", "foo", "-e", "bar", "both.txt"], cwd=corpus, env=env)
     assert result.returncode == 0, decode_for_display(result.stderr)
     matched_lines = _normalize(result.stdout, corpus)
     assert len(matched_lines) == 1
     assert matched_lines[0] == b"foo and bar together"
+
+
+def test_multi_e_native_crlf_file_round_trips_its_own_crlf(
+    env: dict[str, str], tmp_path: Path
+) -> None:
+    """The OTHER half of the task #262 bidirectional fix: a genuinely CRLF-terminated source
+    file must still round-trip its own `\\r\\n` through `--cpu` -- fixing the LF-corruption
+    bug above must NOT start stripping (or doubling) a real `\\r` that was already there.
+    Verified directly against real `rg.exe` on the identical file: both must agree.
+    """
+    root = tmp_path / "crlf-multi-pattern"
+    root.mkdir()
+    (root / "both.txt").write_bytes(b"foo and bar together\r\n")
+
+    result = _tg(["--cpu", "-e", "foo", "-e", "bar", "both.txt"], cwd=root, env=env)
+    assert result.returncode == 0, decode_for_display(result.stderr)
+    assert result.stdout == b"foo and bar together\r\n"
+
+    rg_parity = _helpers()
+    rg_binary = rg_parity.resolve_pinned_rg_binary()
+    if rg_binary is None:
+        pytest.skip("ripgrep binary not available for CRLF round-trip cross-check")
+    rg_env = dict(env)
+    rg_env["TG_RG_PATH"] = str(rg_binary)
+    rg_result = _run([str(rg_binary), "-e", "foo", "-e", "bar", "both.txt"], cwd=root, env=rg_env)
+    assert rg_result.stdout == result.stdout
 
 
 # --- (b) -f patterns.txt: the file must actually be read, and only its patterns match. --
@@ -313,6 +331,7 @@ def test_many_fixed_patterns_dedupe_overlapping_lines_at_scale(
         "line D has NEEDLE_03 and NEEDLE_04 and NEEDLE_05 together\n"
         "line E has no needles at all\n",
         encoding="utf-8",
+        newline="\n",
     )
 
     real_needles = [f"NEEDLE_{i:02d}" for i in range(1, 6)]  # 5 patterns that DO match
