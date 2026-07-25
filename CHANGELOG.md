@@ -1,6 +1,125 @@
 # CHANGELOG
 
 
+## v1.98.13 (2026-07-25)
+
+### Bug Fixes
+
+- **native**: Report walk errors from the file-collector instead of dropping them
+  ([#759](https://github.com/oimiragieo/tensor-grep/pull/759),
+  [`f512114`](https://github.com/oimiragieo/tensor-grep/commit/f512114e274fa1791b9fcc4a72eedd4e22b2bb53))
+
+`collect_walked_files` in both engines matched only the `Ok` arm of the walk entry (`if let
+  Ok(entry) = entry`), so a permission-denied subtree was dropped from the file list with NO output
+  at all. That is strictly worse than the streaming walker beside it, which has printed one stderr
+  line per unreadable path since #263, and it diverges from `rg`, which prints one line per
+  unreadable path and keeps searching every readable file.
+
+Measured on the checksum-verified v1.98.11 release asset against a directory whose unreadability was
+  verified before the probe ran (SHA256 matched CHECKSUMS.txt; the deny ACE was confirmed to
+  actually raise before use, since an ACL that silently fails to apply makes both arms of the test
+  pass):
+
+rg needle fx -> prints `rg: fx\denied: Access is denied.`, exits 2, still reports the match in the
+  readable sibling
+
+Both collectors now mirror the `search_walk_roots_parallel` site: log and continue.
+
+SCOPE -- this is the stderr half of #280 only. `rg` also exits 2 on an unreadable path, and since
+  #276 slice 1 (c0c3404) the Python routes carry `result_incomplete` + `incomplete_reason_class` in
+  the JSON envelope. The native engine still does neither, so it remains honest on stderr while
+  reporting success. Wiring that needs an error count threaded through `SearchStats` into
+  `emit_json_matches` and the process exit code, touching a signature used at three call sites; it
+  is deliberately a separate slice rather than landed blind, since Rust cannot be compiled in this
+  environment and CI is the only oracle. Both sites carry a comment recording exactly what is still
+  missing so the gap cannot read as complete.
+
+`rustfmt --check` clean on both files (rustfmt 1.9.0-stable, repo has no rustfmt.toml so local
+  defaults match CI).
+
+Refs #280, #276.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+### Documentation
+
+- **agents,skills**: Capture 3 lesson classes from the #276/#281 wave
+  ([#760](https://github.com/oimiragieo/tensor-grep/pull/760),
+  [`9f92409`](https://github.com/oimiragieo/tensor-grep/commit/9f92409c1c7183e47721c55263a0ff4a7448f808))
+
+* fix(native): report walk errors from the file-collector instead of dropping them
+
+`collect_walked_files` in both engines matched only the `Ok` arm of the walk entry (`if let
+  Ok(entry) = entry`), so a permission-denied subtree was dropped from the file list with NO output
+  at all. That is strictly worse than the streaming walker beside it, which has printed one stderr
+  line per unreadable path since #263, and it diverges from `rg`, which prints one line per
+  unreadable path and keeps searching every readable file.
+
+Measured on the checksum-verified v1.98.11 release asset against a directory whose unreadability was
+  verified before the probe ran (SHA256 matched CHECKSUMS.txt; the deny ACE was confirmed to
+  actually raise before use, since an ACL that silently fails to apply makes both arms of the test
+  pass):
+
+rg needle fx -> prints `rg: fx\denied: Access is denied.`, exits 2, still reports the match in the
+  readable sibling
+
+Both collectors now mirror the `search_walk_roots_parallel` site: log and continue.
+
+SCOPE -- this is the stderr half of #280 only. `rg` also exits 2 on an unreadable path, and since
+  #276 slice 1 (c0c3404) the Python routes carry `result_incomplete` + `incomplete_reason_class` in
+  the JSON envelope. The native engine still does neither, so it remains honest on stderr while
+  reporting success. Wiring that needs an error count threaded through `SearchStats` into
+  `emit_json_matches` and the process exit code, touching a signature used at three call sites; it
+  is deliberately a separate slice rather than landed blind, since Rust cannot be compiled in this
+  environment and CI is the only oracle. Both sites carry a comment recording exactly what is still
+  missing so the gap cannot read as complete.
+
+`rustfmt --check` clean on both files (rustfmt 1.9.0-stable, repo has no rustfmt.toml so local
+  defaults match CI).
+
+Refs #280, #276.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* docs(agents,skills): capture 3 lesson classes — fixture-never-applied, allow-list guidance,
+  CI-verifiable slicing
+
+AGENTS.md gains three sections and the skill mirrors the first:
+
+1. Verification-Oracle Family Form 6 — the FIXTURE never applied. Forms 1-5 all assume the setup
+  worked and the comparison was wrong; this one inverts it. `icacls` failed to apply a deny ACE
+  twice ("No mapping between account names and security IDs was done. Successfully processed 0
+  files"), so an unreadable-directory probe would have run against a perfectly readable directory
+  and concluded "no defect". A precondition check that requires a PermissionError before probing is
+  what caught it. A hostile fixture is a claim about the world, and claims get verified.
+
+The QA skill also gains a worked "writing a hostile fixture" recipe plus the Windows ACL specifics:
+  apply via PowerShell with the SID, remove via `icacls /reset` (takes no account name, works
+  unelevated on a dir your own user locked), and a mapping failure is NOT a privilege failure --
+  that distinction is what proved #268 genuinely operator-gated.
+
+2. Fail-closed guidance must be an ALLOW-LIST. "confirm it is NOT X" fails open on the first
+  unanticipated value. docs/CONTRACTS.md told an agent to check routing_backend != "RustCoreBackend"
+  before trusting an absent field; the shipped binary emits "NativeCpuBackend" there, so the check
+  passed and the absence was trusted -- exactly the hazard the paragraph existed to prevent. Carries
+  the twin rule: widening what a flag MEANS obliges you to grep its consumers, and a comment stating
+  the old assumption is the tell.
+
+3. Slice by what CI can actually verify. CPU-SAFE forbids compiling, so CI is the only oracle for
+  Rust, which makes change SIZE a correctness concern. Ship the provable portion and leave the gap
+  AT THE CODE SITE -- a partial fix with no marker at the seam reads as complete, which is defect
+  class 2 wearing different clothes.
+
+`ruff format --check --preview` clean on both files (the skill's python fence needed reformatting --
+  the whole-repo markdown-fence gate that has reddened CI twice before).
+
+Refs #276, #280, #281, #282.
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.98.12 (2026-07-25)
 
 ### Bug Fixes
