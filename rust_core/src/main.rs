@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 #[cfg(feature = "cuda")]
 use std::fs;
 use std::io::{self, Read, Write};
@@ -1840,6 +1840,25 @@ fn stdout_is_terminal() -> bool {
     std::io::stdout().is_terminal()
 }
 
+/// ripgrep's config-file environment surface. `rg` reads this on startup, and
+/// `execute_ripgrep_search` neither clears the environment nor passes `--no-config` (that is sent
+/// only when the USER asks for it), so a plain-text search routed to `rg` today applies whatever
+/// this points at. See `native_can_serve_plain_text` refusal note (8).
+const RIPGREP_CONFIG_PATH_ENV: &str = "RIPGREP_CONFIG_PATH";
+
+/// THE single computation of the environment clause. Called from exactly one place
+/// (`finish_plain_text_native_request`), so the two eligibility adapters cannot drift on it.
+fn rg_config_env_present() -> bool {
+    rg_config_env_is_active(env::var_os(RIPGREP_CONFIG_PATH_ENV).as_deref())
+}
+
+/// Decision half of `rg_config_env_present`, split out so its semantics are unit-testable without
+/// mutating the process environment (which would race every other test that computes eligibility).
+/// `rg` IGNORES an empty value, so "set" alone is not the condition -- it must be set AND non-empty.
+fn rg_config_env_is_active(value: Option<&OsStr>) -> bool {
+    value.is_some_and(|value| !value.is_empty())
+}
+
 /// Size cap for `plain_text_native_file_renders_identically`: a file above this is REFUSED rather
 /// than probed.
 ///
@@ -1969,6 +1988,13 @@ fn plain_text_native_pattern_is_renderable(
     }
 
     // `smart_case` is never admitted, so it is always false on this route.
+    //
+    // TODO(perf): this builds a matcher and throws it away, and `run_native_search` then rebuilds
+    // an identical one. Microseconds for an ordinary pattern, but it is duplicated work on the very
+    // hot path this route exists to speed up, and a pathological pattern pays the regex-size-limit
+    // walk twice. Threading the compiled matcher through to the search would remove both, at the
+    // cost of widening the shared engine's entry signature -- deliberately out of this PR's blast
+    // radius, and worth doing when the engine next changes shape.
     native_search_pattern_compiles(pattern, ignore_case, false, fixed_strings, word_boundary)
 }
 
@@ -1992,6 +2018,8 @@ fn plain_text_native_request_for_search(
         structured_output: args.json || args.ndjson,
         explicit_format: args.format.is_some(),
         stdout_is_terminal,
+        // Overwritten by `finish_plain_text_native_request`, the single owner of this clause.
+        rg_config_env_present: false,
         only_allowed_flags: search_args_allow_plain_text_native(args),
     };
     finish_plain_text_native_request(
@@ -2018,6 +2046,9 @@ fn finish_plain_text_native_request(
     word_boundary: bool,
     path: Option<&Path>,
 ) -> PlainTextNativeRequest {
+    // The environment clause is filled HERE rather than by either constructor, so there is exactly
+    // one call path to `rg_config_env_present()` and the two adapters cannot disagree about it.
+    request.rg_config_env_present = rg_config_env_present();
     if !plain_text_native_cheap_checks_pass(&request) {
         return request;
     }
@@ -2144,6 +2175,8 @@ fn frontdoor_search_is_native_plain_text_eligible_with_terminal(
         structured_output: false,
         explicit_format: false,
         stdout_is_terminal,
+        // Overwritten by `finish_plain_text_native_request`, the single owner of this clause.
+        rg_config_env_present: false,
         only_allowed_flags: true,
     };
     let facts = finish_plain_text_native_request(
@@ -5559,6 +5592,22 @@ mod tests {
             let clap_side = native_can_serve_plain_text(&facts);
             assert!(!frontdoor || clap_side, "front door looser than clap on {shape:?}");
         }
+    }
+
+    /// The environment clause's semantics, tested WITHOUT mutating the process environment --
+    /// `env::set_var` is process-global and Rust tests run in parallel, so a test that set
+    /// `RIPGREP_CONFIG_PATH` would silently flip the verdict of every concurrently-running
+    /// eligibility test. The end-to-end proof (a real config file changing real results) lives in
+    /// `tests/e2e/test_native_plain_text_parity.py`, where the variable is scoped to a subprocess.
+    #[test]
+    fn rg_config_env_is_active_requires_a_set_and_non_empty_value() {
+        assert!(!rg_config_env_is_active(None));
+        // `rg` IGNORES an empty value, so "set" alone must not disqualify.
+        assert!(!rg_config_env_is_active(Some(OsStr::new(""))));
+        assert!(rg_config_env_is_active(Some(OsStr::new("/etc/rgrc"))));
+        // A DANGLING path still counts: rg emits a read-failure diagnostic the native route omits.
+        assert!(rg_config_env_is_active(Some(OsStr::new("/nonexistent/rgrc"))));
+        assert_eq!(RIPGREP_CONFIG_PATH_ENV, "RIPGREP_CONFIG_PATH");
     }
 
     /// Constant <-> predicate drift guard. `PLAIN_TEXT_NATIVE_ALLOWED_FLAGS` does not DRIVE

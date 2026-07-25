@@ -171,6 +171,8 @@ pub struct PlainTextNativeRequest {
     pub explicit_format: bool,
     /// stdout is attached to a terminal.
     pub stdout_is_terminal: bool,
+    /// `$RIPGREP_CONFIG_PATH` is set to a non-empty value. See refusal note (8).
+    pub rg_config_env_present: bool,
     /// Every flag on the command line is in `PLAIN_TEXT_NATIVE_ALLOWED_FLAGS`.
     pub only_allowed_flags: bool,
 }
@@ -232,10 +234,11 @@ pub struct PlainTextNativeRequest {
 ///        `tests/e2e/snapshots/.../native_binary_single_file.txt`,
 ///        `src/tensor_grep/backends/rust_backend.py`, `tests/unit/test_rust_core.py` and a
 ///        `rust_core/tests/test_routing.rs` assertion.
-///    The probe is bounded by `PLAIN_TEXT_NATIVE_MAX_PROBE_BYTES` in `main.rs`: a file larger
-///    than the cap is refused rather than read twice, so the probe can never cost more than it
-///    saves. Reading the file is affordable precisely because the admitted subset is ONE file --
-///    the engine is about to read it anyway.
+///    The probe is bounded by `PLAIN_TEXT_NATIVE_MAX_PROBE_BYTES` in `main.rs`; see the measured
+///    cost table on that constant for the cap's actual justification. Do NOT restate the cost
+///    tradeoff here -- an earlier revision of this very comment asserted the probe "can never cost
+///    more than it saves", which the measurements later disproved, leaving two load-bearing
+///    comments in one PR claiming opposite facts about the same constant. One place owns it.
 ///
 /// 6. `pattern_is_empty` -- `tg search "" file.txt` is a legal rg invocation (every line matches),
 ///    but `run_native_search` rejects an empty pattern outright, and the `allow_rg_fallback` net
@@ -263,6 +266,29 @@ pub struct PlainTextNativeRequest {
 ///    escaped) and any pattern the native matcher cannot compile. Over-refusal is free here: a
 ///    refused pattern simply keeps today's `rg` behavior.
 ///
+/// 8. `rg_config_env_present` -- every clause above validates the REQUEST, the PATTERN or the
+///    FILE. None of them validates the process ENVIRONMENT that the `rg` subprocess inherits, and
+///    `rg` has a first-class env config surface: `execute_ripgrep_search` never calls
+///    `env_clear()`, and `rg_passthrough.rs` passes `--no-config` only when the user asks for it,
+///    so today every plain-text search that reaches `rg` applies whatever `$RIPGREP_CONFIG_PATH`
+///    points at. The in-process native engine reads no rg config at all.
+///
+///    Receipt on the shipped tg 1.98.3 + rg 15.1.0, stdout piped, a config file containing `-i`,
+///    and `lf.txt` = `"needle alpha\nNEEDLE beta\nplain\n"`:
+///      - `tg search NEEDLE lf.txt`                        -> `NEEDLE beta`
+///      - `RIPGREP_CONFIG_PATH=cfg tg search NEEDLE lf.txt` -> `needle alpha` + `NEEDLE beta`
+///    That argv is the canonical admitted shape (no flags, one pattern, one explicit LF/UTF-8
+///    file, piped stdout), so without this clause the route would return SILENTLY WRONG RESULTS on
+///    the most common request it admits. `-i` is only the cheapest demonstration: a config
+///    `--vimgrep` changes the entire output format, `--color=always` injects escapes, and
+///    `-w`/`-F`/`-U`/`-A`/`-B`/`-C`/`--sort`/`--hidden`/`--max-columns` are all equally invisible
+///    to a predicate that only inspects argv. A DANGLING path is also observable: `rg` prints a
+///    read-failure diagnostic the native route would omit. An EMPTY value is ignored by `rg`, so
+///    the guard is "set AND non-empty", not merely "set".
+///
+///    No oracle can catch this class -- CI never sets the variable and the parity helpers copy
+///    `os.environ` -- which is exactly why it is a predicate clause and not a test.
+///
 /// `structured_output` and `explicit_format` are refused because those requests already have
 /// their own routes (`--json`/`--ndjson` land on `native_cpu_json`; `--format rg` must reach real
 /// `rg`), and this predicate must never redirect them.
@@ -286,6 +312,7 @@ pub const fn plain_text_native_cheap_checks_pass(request: &PlainTextNativeReques
         && !request.structured_output
         && !request.explicit_format
         && !request.stdout_is_terminal
+        && !request.rg_config_env_present
         && !request.path_was_implicit
         && request.pattern_count == 1
         && !request.pattern_is_empty

@@ -36,6 +36,7 @@ fn admitted_plain_text_request() -> PlainTextNativeRequest {
         structured_output: false,
         explicit_format: false,
         stdout_is_terminal: false,
+        rg_config_env_present: false,
         only_allowed_flags: true,
     }
 }
@@ -450,6 +451,12 @@ fn test_cheap_checks_gate_the_expensive_tier() {
             pattern_is_empty: true,
             ..admitted_plain_text_request()
         },
+        // The environment clause lives in the CHEAP tier deliberately: it is one env lookup with
+        // no I/O, and putting it here means an rg-config user never pays for a file read either.
+        PlainTextNativeRequest {
+            rg_config_env_present: true,
+            ..admitted_plain_text_request()
+        },
     ] {
         assert!(!plain_text_native_cheap_checks_pass(&disqualified));
         assert!(!native_can_serve_plain_text(&disqualified));
@@ -497,6 +504,15 @@ fn test_native_can_serve_plain_text_refuses_each_disqualifier() {
         ..admitted_plain_text_request()
     };
     assert!(!native_can_serve_plain_text(&unrenderable_pattern));
+
+    // Refusal note 8: `$RIPGREP_CONFIG_PATH` applies to the rg subprocess and NOT to the native
+    // engine, so the canonical admitted shape would return silently wrong results (a config
+    // containing `-i` changes which lines match; `--vimgrep` changes the whole output format).
+    let rg_config_env = PlainTextNativeRequest {
+        rg_config_env_present: true,
+        ..admitted_plain_text_request()
+    };
+    assert!(!native_can_serve_plain_text(&rg_config_env));
 
     let multiple_paths = PlainTextNativeRequest {
         path_count: 2,

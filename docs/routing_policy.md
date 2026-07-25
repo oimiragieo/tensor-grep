@@ -68,6 +68,7 @@ Spawning `rg` costs a fixed process round trip on every plain-text search. `nati
   - NUL: `rg` spells its binary-match notice `"\0"` while the native engine's governed snapshot contract spells it `"/0"`.
 - The PATH was supplied explicitly (an implicit path makes `rg` print `name` where the native engine prints `./name`).
 - stdout is **not** a terminal (`rg` is spawned with inherited stdio, so on a terminal it renders its grouped/heading layout with color).
+- `$RIPGREP_CONFIG_PATH` is **not** set to a non-empty value. This is the one clause about the process ENVIRONMENT rather than the request: `execute_ripgrep_search` never clears the environment and passes `--no-config` only when the user asks for it, so a plain-text search that reaches `rg` today applies the user's rg config, while the in-process native engine reads no rg config at all. A config containing `-i` changes which lines match, `--vimgrep` changes the entire output format, and a dangling path makes `rg` print a read-failure diagnostic the native route would omit. An empty value is ignored by `rg`, so the guard is "set AND non-empty".
 - No `--json`, `--ndjson`, or `--format`.
 - Every flag on the command line is in `PLAIN_TEXT_NATIVE_ALLOWED_FLAGS`: `-i`/`--ignore-case`, `-F`/`--fixed-strings`, `-w`/`--word-regexp`, `-n`/`--line-number`, `--verbose` (combined short clusters such as `-in` are accepted, matching clap).
 
