@@ -599,7 +599,7 @@ zero behavioral change, and is strictly stronger than reading the diff by eye. U
 on `test_index_lock_concurrency.py`'s comment-only revisions; cheap enough to run on every claimed no-op
 commit before skipping a gate on the strength of "it's just a comment."
 
-## The Verification-Oracle Family — four forms, one session (2026-07-25)
+## The Verification-Oracle Family — six forms (2026-07-25)
 
 **The single most repeated failure mode this project has.** Every form shares one shape: *something that
 looks like verification isn't.* Before trusting ANY green signal, ask: **what would this check show if the
@@ -667,6 +667,67 @@ property cannot discriminate on that property. Related receipt: an earlier sessi
 
 Corollary for reviewers: when a fix and its tests share a fixture shape, that shape is an untested
 assumption. Ask what topology the mechanism behaves differently in, and demand one case there.
+
+**Form 6 — the FIXTURE never applied (2026-07-25, #281).** Forms 1-5 assume the setup worked and the
+comparison was wrong. This one inverts it: the assertion is fine, the **setup silently no-opped**, so
+the "hostile" arm was never hostile. Probing whether the native front door drops its JSON payload on a
+walk error needs a genuinely unreadable directory. `icacls` failed to apply the deny ACE **twice** —
+`"No mapping between account names and security IDs was done. Successfully processed 0 files"` for both
+`%USERNAME%` and `MACHINE\user` — and printed that on stderr while exiting in a way easy to skim past.
+Had the probe run anyway, the directory would have been perfectly readable, tg would have returned a
+complete result, and the honest-looking conclusion would have been *"no defect — the payload is intact."*
+The bug would have been declared absent by a test that never tested anything.
+
+What saved it was a **precondition check that asserts the fixture BITES before the probe runs** — read
+the directory and require a `PermissionError`; print `STILL VACUOUS` and abort otherwise. Write that
+check for every hostile fixture: permission denials, network partitions, disk-full, killed processes,
+corrupted files. **A fixture is a claim about the world, and claims get verified.**
+
+Two diagnostics worth keeping: an account-name **mapping** failure is not a **privilege** failure —
+`icacls <dir> /reset` takes no account name and works unelevated on a directory your own user locked,
+so if `/reset` ALSO fails the DACL belongs to a different SID (that is how #268 was proven genuinely
+operator-gated rather than a tooling quirk). And to APPLY a deny ACE reliably on Windows, go through
+PowerShell with the SID from `WindowsIdentity::GetCurrent().User`, not an `icacls` account string.
+
+## Fail-Closed Guidance Must Be An Allow-List, Not A Deny-List (2026-07-25, #282)
+
+A trust check written as "confirm it is NOT *X*" fails open the moment a value appears that the author
+did not anticipate. Receipt: the `incomplete_reason_class` paragraph in `docs/CONTRACTS.md` told an agent
+to confirm `routing_backend` is **not** `"RustCoreBackend"` before trusting the field's ABSENCE as proof
+of a complete scan. Two things were wrong at once. The constant was wrong — measurement on the shipped
+v1.98.11 asset shows `--json` and `--cpu --json` both emit `"NativeCpuBackend"` (`routing_reason`
+`json_output` / `force_cpu`), corroborated by the `NativeCpuBackend` row in `docs/routing_policy.md`;
+`RustCoreBackend` is the PyO3 backend in `backends/rust_backend.py` and is not what a user sees there.
+And the SHAPE was wrong — even with the right constant, an agent meeting any third backend name would
+conclude "not the native engine" and trust an absence that proves nothing. **A deny-list in a fail-closed
+paragraph fails open by construction.** Fixed in `d35d243` as a positive allow-list: absence is
+trustworthy ONLY on the Python `CPUBackend` route or the `rg`-backend route; every other value means it
+proves nothing.
+
+Generalise: this is the documentation twin of the Backend Fail-Closed Contract. Whenever prose or code
+decides *"is it safe to trust this signal?"*, enumerate the SAFE cases and reject everything else. And
+when you widen what an existing flag MEANS, grep its CONSUMERS — a comment stating the old assumption is
+the tell that a downstream reader is about to be wrong (receipt: `mcp_server.py:4794` ORs
+`scanner.scan_truncated` into a `max_repo_files`-shaped payload under a comment explaining that the flag
+means a *budget cap*; #276 slice 1 made it also mean "unreadable path", which no budget increase fixes).
+
+## Slice By What CI Can Actually Verify (2026-07-25, #280)
+
+CPU-SAFE forbids compiling, so **CI is the only oracle for Rust** — which makes change SIZE a
+correctness concern, not a style preference. A large native change landed blind burns CI cycles and
+arrives unverifiable; the discipline is to ship the portion whose correctness is provable now and defer
+the rest as its own slice.
+
+Receipt: #280 wanted stderr parity AND exit-2 AND a JSON envelope marker on the native engine. The
+stderr half is a self-contained 4-line change per site, `rustfmt --check`-clean locally, mirroring a
+sibling that already exists. The other half needs an error count threaded through `SearchStats` into
+`emit_json_matches` and the process exit code, changing a signature used at three call sites plus a
+test. Those shipped separately.
+
+**The rule that makes this honest rather than lazy: leave the gap AT THE CODE SITE, not only in the
+tracker.** Both collectors carry a comment naming exactly what is still missing (exit code, envelope
+field) and why. A partial fix with no marker at the seam reads as complete to the next reader — that is
+the same fail-open-by-inference defect as the deny-list above, wearing different clothes.
 
 ## Model The Class, Don't Enumerate The Cases (2026-07-25, #745/#749/#272)
 
