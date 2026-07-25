@@ -553,25 +553,40 @@ def _stale_changeset(
             # only failure that means "removed".
             removed.append(current_path)
             continue
-        except OSError:
+        except OSError as exc:
             # Task #286: a bare `except OSError` here previously reported ANY stat failure as a
-            # deletion -- including PermissionError. That is not an under-report, it is data loss:
-            # `removed` is consumed by `build_repo_map_incremental` (repo_map.py, see its
-            # `normalized_changeset["removed"]` comment), so a TRANSIENT permission problem
-            # silently EVICTED real files from the repo map. Measured: denying read on one
-            # subdirectory reported every file under it as removed. Reachable from MCP on every
-            # `tg_session_*` call with `refresh_on_stale=True`.
+            # deletion -- including PermissionError. Measured: denying read on one subdirectory
+            # reported every file under it as removed.
             #
-            # Fail SAFE in the direction that cannot destroy data: an indeterminate file is left
-            # OUT of all three buckets, so it is treated as unchanged. The opposite error (a real
-            # deletion we failed to notice) merely leaves a stale entry the next successful scan
-            # corrects; reporting a false deletion is unrecoverable from here.
+            # What that actually breaks (verified by execution -- an earlier version of this
+            # comment claimed repo-map EVICTION and was WRONG; `build_repo_map_incremental`
+            # ignores `removed` entirely today, see repo_map.py's `normalized_changeset["removed"]`
+            # D2 comment, and a probe passing a false `removed` evicted nothing):
+            #   1. `_changeset_has_entries` -> `_ensure_session_not_stale` raises SessionStaleError
+            #      naming files nobody touched.
+            #   2. The false list is PERSISTED into the session payload (`"changeset"` below) and
+            #      re-served by `_session_health_payload` -- an agent reads "deleted" for files
+            #      that exist.
+            #   3. On MCP `refresh_on_stale=True` that false-stale forces a needless rebuild.
+            # So: false reporting + wasted work, not data loss.
             #
-            # NOT YET SURFACED as an explicit signal: the changeset vocabulary is
-            # {added, modified, removed} with no way to say "I could not tell". Adding that
-            # fourth state is a consumer-contract change (the same closed-vocabulary problem
-            # #276/#283 solved on other surfaces) and is tracked separately -- do not conflate it
-            # into `removed` to make the signal visible.
+            # Fail SAFE anyway: an indeterminate file is left OUT of all three buckets and treated
+            # as unchanged. A real deletion we failed to notice leaves a stale entry that the next
+            # successful scan corrects; a false deletion is unrecoverable from here.
+            #
+            # Log it rather than degrade in total silence. A structured signal in the changeset
+            # itself would be better -- `build_repo_map` already ships the right shape
+            # (`payload["unreadable_paths"] = {count, sample}`, the #276 pattern) -- but that is a
+            # consumer-contract change, tracked separately. Do NOT conflate it into `removed` to
+            # make it visible; that is exactly the bug above.
+            # Also unhandled: a disconnected Windows UNC share raises FileNotFoundError for every
+            # file, so a dropped network mount still reports the whole tree as removed.
+            logger.warning(
+                "session staleness check could not stat %s (%s); treating it as unchanged rather "
+                "than removed -- the changeset for this session is incomplete",
+                current_path,
+                type(exc).__name__,
+            )
             continue
         if int(stat.st_size) != int(snapshot_entry["size"]) or int(stat.st_mtime_ns) != int(
             snapshot_entry["mtime_ns"]

@@ -647,25 +647,35 @@ def test_unreadable_file_is_not_reported_as_removed(tmp_path: Path, monkeypatch)
     and appended to `removed`, so it could not tell "the file is gone" (FileNotFoundError) from
     "I am not allowed to look at it" (PermissionError).
 
-    That matters because `removed` is consumed by `build_repo_map_incremental`
-    (repo_map.py:7422), so a TRANSIENT permission problem silently EVICTED real files from the
-    repo map -- data-loss-shaped, not merely an under-report. Reachable from MCP on every
-    `tg_session_*` call with `refresh_on_stale=True`.
+    What that breaks: a false `removed` entry reaches `_changeset_has_entries` ->
+    `_ensure_session_not_stale`, which raises SessionStaleError naming files nobody touched; the
+    false list is then PERSISTED into the session payload and re-served by
+    `_session_health_payload`; and on MCP `refresh_on_stale=True` it forces a needless rebuild.
+    NOTE: it does NOT evict anything from the repo map -- `build_repo_map_incremental` ignores
+    `removed` entirely (see its D2 comment), which an earlier version of this docstring got wrong.
     """
     paths = _build_project(tmp_path)
     session_id = _open_session(paths["project"])
     denied_dir = paths["project"] / "src"
 
-    _deny_stat_under(monkeypatch, denied_dir)
-    changeset = session_store._stale_changeset(
-        _session_payload(paths["project"], session_id), detect_added_files=False
+    # PRECONDITION: without this the test can go inert. If `_build_project`'s layout ever stops
+    # putting files under src/, the "in p" filter below matches nothing and the assertion passes
+    # vacuously -- declaring the defect absent instead of testing for it.
+    payload = _session_payload(paths["project"], session_id)
+    snapshot_src_entries = [e for e in payload["snapshot"] if "src" in str(e["path"])]
+    assert len(snapshot_src_entries) == 3, (
+        "fixture drift: expected 3 snapshot entries under src/ for the deny-stat arm to bite, "
+        f"got {len(snapshot_src_entries)}"
     )
+
+    _deny_stat_under(monkeypatch, denied_dir)
+    changeset = session_store._stale_changeset(payload, detect_added_files=False)
 
     assert changeset is not None
     unreadable_reported_as_removed = [p for p in changeset["removed"] if "src" in p]
     assert unreadable_reported_as_removed == [], (
-        "a permission-denied file was reported as REMOVED; that eviction propagates into "
-        f"build_repo_map_incremental: {unreadable_reported_as_removed}"
+        "a permission-denied file was reported as REMOVED; that false report raises "
+        f"SessionStaleError and is persisted into the session payload: {unreadable_reported_as_removed}"
     )
 
 
