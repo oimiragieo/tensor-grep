@@ -269,11 +269,7 @@ fn test_search_explicit_path_keeps_path_when_stdin_is_piped() {
     // narrow -- but a narrow race is still a flake, and this suite has been de-flaked before. A
     // failed write is CONSISTENT with the invariant under test (stdin must not be consumed), so
     // discarding the error removes the timing dependency without weakening anything.
-    let _ = child
-        .stdin
-        .as_mut()
-        .unwrap()
-        .write_all(b"stdin needle\n");
+    let _ = child.stdin.as_mut().unwrap().write_all(b"stdin needle\n");
     drop(child.stdin.take());
     let output = child.wait_with_output().unwrap();
 
