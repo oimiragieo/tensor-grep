@@ -407,6 +407,612 @@ def test_main_entry_should_passthrough_search_subcommand_to_rg(monkeypatch):
     assert seen == {"binary_name": "rg", "search_args": ["-i", "ERROR", "."]}
 
 
+def test_main_entry_bare_plain_text_search_bypasses_native_delegation_even_when_native_binary_present(
+    monkeypatch,
+) -> None:
+    """Task #269 map finding, independently confirmed (also root-caused by the sibling #744
+    fix on PR c597b85): `_can_delegate_to_native_tg_search` only
+    forwards a search to the compiled native binary when argv contains one of
+    `{--cpu, --force-cpu, --json, --ndjson, --gpu-device-ids}`, or `TG_RUST_FIRST_SEARCH=1`
+    (default off). A bare `tg search PATTERN .` has none of those triggers, so bootstrap ALWAYS
+    falls through to its own `_run_rg_passthrough` -- REGARDLESS of whether a native `tg`
+    binary is discoverable. This is the actual mechanism behind the #264/#269 "an output-format
+    flag changes the file set" bug family: the flag doesn't touch ignore-handling directly, it
+    changes WHICH ENGINE runs (native, which already honored root ignore files correctly via
+    #127, vs. Python's own naive passthrough). Unlike the sibling test above (which patches
+    `resolve_native_tg_binary` to `None`), this test proves the SAME routing decision holds when
+    a native binary IS resolvable -- the trigger-set gate is what refuses delegation, not binary
+    absence."""
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "needle", "."])
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: "tg.exe")
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: "rg")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_native_tg_search",
+        lambda *_args, **_kwargs: pytest.fail(
+            "a bare plain-text search must never delegate to the native binary"
+        ),
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_rg_passthrough",
+        lambda binary_name, search_args: (
+            seen.update({"binary_name": binary_name, "search_args": list(search_args)}) or 0
+        ),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: pytest.fail("full cli should not run"))
+
+    with pytest.raises(SystemExit) as excinfo:
+        bootstrap.main_entry()
+
+    assert excinfo.value.code == 0
+    assert seen == {"binary_name": "rg", "search_args": ["needle", "."]}
+
+
+# --- Task #269: bootstrap._run_rg_passthrough root-ignore-file injection ----------------------
+# Mirrors rust_core/src/rg_passthrough.rs's own `root_ignore_file_args` unit tests (task #264 /
+# PR #744): this is the Python-only rg-passthrough path reached whenever no compiled native `tg`
+# binary is discoverable, which shares the identical pre-#264-fix defect the Rust side already
+# closed. See `tensor_grep.cli.rg_root_ignore.root_ignore_file_args` for the shared helper both
+# this module and `RipgrepBackend._build_cmd` call.
+
+
+def _capture_streaming_passthrough_argv(monkeypatch) -> dict[str, object]:
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(
+        bootstrap,
+        "_streaming_passthrough_returncode",
+        lambda argv, timeout_env_var=None: (
+            seen.update({"argv": list(argv), "timeout_env_var": timeout_env_var}) or 0
+        ),
+    )
+    return seen
+
+
+def test_run_rg_passthrough_injects_root_gitignore_outside_git_repo(
+    monkeypatch, tmp_path: Path
+) -> None:
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    rc = bootstrap._run_rg_passthrough("rg", ["needle", str(tmp_path)])
+
+    assert rc == 0
+    argv = seen["argv"]
+    assert argv[0] == "rg"
+    flag_index = argv.index("--ignore-file")
+    assert argv[flag_index + 1] == str(tmp_path / ".gitignore")
+    # The injected operands must precede the user's own search_args so a `--` sentinel the user
+    # supplied (if any) still applies only to their own positionals.
+    assert argv.index("needle") > flag_index + 1
+
+
+def test_run_rg_passthrough_defaults_root_to_dot_when_path_omitted(
+    monkeypatch, tmp_path: Path
+) -> None:
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    bootstrap._run_rg_passthrough("rg", ["needle"])
+
+    argv = seen["argv"]
+    assert "--ignore-file" in argv
+    value = argv[argv.index("--ignore-file") + 1]
+    assert Path(value).resolve() == (tmp_path / ".gitignore").resolve()
+
+
+def test_run_rg_passthrough_empty_when_no_ignore_files_present(monkeypatch, tmp_path: Path) -> None:
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    bootstrap._run_rg_passthrough("rg", ["needle", str(tmp_path)])
+
+    assert seen["argv"] == ["rg", "needle", str(tmp_path)]
+
+
+def test_run_rg_passthrough_no_ignore_suppresses_injection(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    (tmp_path / ".ignore").write_text("skipme.txt\n", encoding="utf-8")
+    (tmp_path / ".rgignore").write_text("skipme.txt\n", encoding="utf-8")
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    bootstrap._run_rg_passthrough("rg", ["--no-ignore", "needle", str(tmp_path)])
+
+    assert "--ignore-file" not in seen["argv"]
+
+
+def test_run_rg_passthrough_no_ignore_files_suppresses_injection(
+    monkeypatch, tmp_path: Path
+) -> None:
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    bootstrap._run_rg_passthrough("rg", ["--no-ignore-files", "needle", str(tmp_path)])
+
+    assert "--ignore-file" not in seen["argv"]
+
+
+def test_run_rg_passthrough_no_ignore_vcs_skips_only_gitignore(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    (tmp_path / ".ignore").write_text("skipme.txt\n", encoding="utf-8")
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    bootstrap._run_rg_passthrough("rg", ["--no-ignore-vcs", "needle", str(tmp_path)])
+
+    argv = seen["argv"]
+    values = [argv[i + 1] for i, tok in enumerate(argv) if tok == "--ignore-file"]
+    assert not any(v.endswith(".gitignore") for v in values), values
+    assert any(v.endswith(".ignore") for v in values), values
+
+
+def test_run_rg_passthrough_no_ignore_dot_skips_ignore_and_rgignore_not_gitignore(
+    monkeypatch, tmp_path: Path
+) -> None:
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    (tmp_path / ".ignore").write_text("skipme.txt\n", encoding="utf-8")
+    (tmp_path / ".rgignore").write_text("skipme.txt\n", encoding="utf-8")
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    bootstrap._run_rg_passthrough("rg", ["--no-ignore-dot", "needle", str(tmp_path)])
+
+    argv = seen["argv"]
+    values = [argv[i + 1] for i, tok in enumerate(argv) if tok == "--ignore-file"]
+    assert any(v.endswith(".gitignore") for v in values), values
+    assert not any(v.endswith(".ignore") and not v.endswith(".rgignore") for v in values), values
+    assert not any(v.endswith(".rgignore") for v in values), values
+
+
+# --- Task #269 independent-gate finding (BLOCKING on first pass): `-u`/`-uu`/`-uuu`/
+# `--unrestricted` is rg's documented alias for `--no-ignore` (`-uu` additionally implies
+# `--hidden`, `-uuu` additionally implies `--binary`), forwarded raw to real rg
+# (`_streaming_passthrough_returncode` just hands argv straight through). Neither the original
+# fix nor its tests observed it: only the four literal `--no-ignore*` long tokens were checked,
+# so `-u` left the injected `--ignore-file` in place -- and since `--ignore-file` survives
+# `--no-ignore` by design, `-u` came out STRICTER than passing no flag at all. Fixed via
+# `_search_args_request_unrestricted`, shared with the pre-existing
+# `_search_args_request_unrestricted_generated_scan` broad-scan guardrail so the two cannot
+# silently drift out of parity with each other.
+
+
+def test_run_rg_passthrough_unrestricted_suppresses_injection(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    bootstrap._run_rg_passthrough("rg", ["-u", "needle", str(tmp_path)])
+
+    assert "--ignore-file" not in seen["argv"]
+
+
+def test_run_rg_passthrough_unrestricted_double_and_triple_suppress_injection(
+    monkeypatch, tmp_path: Path
+) -> None:
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+
+    for flag in ("-uu", "-uuu"):
+        seen = _capture_streaming_passthrough_argv(monkeypatch)
+        bootstrap._run_rg_passthrough("rg", [flag, "needle", str(tmp_path)])
+        assert "--ignore-file" not in seen["argv"], (flag, seen["argv"])
+
+
+def test_run_rg_passthrough_unrestricted_long_form_suppresses_injection(
+    monkeypatch, tmp_path: Path
+) -> None:
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    bootstrap._run_rg_passthrough("rg", ["--unrestricted", "needle", str(tmp_path)])
+
+    assert "--ignore-file" not in seen["argv"]
+
+
+def test_run_rg_passthrough_clustered_unrestricted_short_flag_suppresses_injection(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """`-iu` (ignore-case + unrestricted bundled into one token) is what the naive
+    `arg.startswith("-u")` predicate this replaced would have missed entirely -- `"-iu"` does
+    not start with `"-u"`. rg's own clap-style parser accepts this cluster identically to
+    `-i -u`."""
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    bootstrap._run_rg_passthrough("rg", ["-iu", "needle", str(tmp_path)])
+
+    assert "--ignore-file" not in seen["argv"]
+
+
+def test_search_args_request_unrestricted_matches_bare_short_flags() -> None:
+    assert bootstrap._search_args_request_unrestricted(["-u"]) is True
+    assert bootstrap._search_args_request_unrestricted(["-uu"]) is True
+    assert bootstrap._search_args_request_unrestricted(["-uuu"]) is True
+    assert bootstrap._search_args_request_unrestricted(["--unrestricted"]) is True
+
+
+def test_search_args_request_unrestricted_matches_clustered_short_flags() -> None:
+    # -iu == -i -u; -nu == -n -u (n is not an attached-value flag, so u is still reachable).
+    assert bootstrap._search_args_request_unrestricted(["-iu"]) is True
+    assert bootstrap._search_args_request_unrestricted(["-nu"]) is True
+
+
+def test_search_args_request_unrestricted_does_not_false_positive_on_attached_value_flags() -> None:
+    # -t is an ATTACHED-VALUE short flag (file type): "-tu" means `--type u`, i.e. a file type
+    # literally named "u" -- not `-t -u`. The `u` here is DATA, not a flag, and must not trip
+    # the unrestricted gate (a false positive here would UNDER-emit --ignore-file, not
+    # over-emit -- still a correctness bug, just the safer direction than the BLOCKING one).
+    assert bootstrap._search_args_request_unrestricted(["-tu"]) is False
+    # A bare, unrelated flag/pattern must not match.
+    assert bootstrap._search_args_request_unrestricted(["-i", "needle", "."]) is False
+    assert bootstrap._search_args_request_unrestricted(["needle", "."]) is False
+
+
+def test_search_args_request_unrestricted_generated_scan_shares_the_same_helper() -> None:
+    """The pre-existing broad-scan guardrail must widen identically to the new gate -- both
+    call `_search_args_request_unrestricted` rather than maintaining separate predicates."""
+    assert bootstrap._search_args_request_unrestricted_generated_scan(["-iu", "needle"]) is True
+    assert bootstrap._search_args_request_unrestricted_generated_scan(["needle", "."]) is False
+
+
+# --- Task #269 independent-gate re-gate FIX-2 (BLOCKING, introduced by the FIX-1 round's own
+# extraction): `-e` was missing from `_SEARCH_ATTACHED_VALUE_SHORT_FLAGS`, so `-eunwrap`
+# (== `-e unwrap`, a pattern that merely happens to contain the letter `u`) walked past `e` and
+# matched the `u` in "unwrap", reporting a false "unrestricted requested". That forced
+# `guarded_broad_root` and misrouted a valid rg-passthrough search into the full Python CLI,
+# which then rejected the rg-only `--no-heading` flag with exit 2. `-e` is now in
+# `_SEARCH_ATTACHED_VALUE_SHORT_FLAGS`, matching real rg's own attached-value semantics.
+
+
+def test_search_args_request_unrestricted_does_not_false_positive_on_pattern_containing_u() -> None:
+    # The exact regression: a pattern attached to -e that happens to contain the letter "u"
+    # must not be misread as -u (unrestricted).
+    assert bootstrap._search_args_request_unrestricted(["-eunwrap"]) is False
+    assert bootstrap._search_args_request_unrestricted(["-eunicorn"]) is False
+    # Control: the same pattern minus any "u" must also be False (was already False pre-fix;
+    # pins that this fix did not change the no-match case).
+    assert bootstrap._search_args_request_unrestricted(["-enicorn"]) is False
+    # A GENUINE -u after a real -e-consumed value is still correctly detected as two separate
+    # tokens (not attached) -- -e consumes its own token via skip_next elsewhere, this helper
+    # only sees raw argv, so an actual "-e", "pattern", "-u" sequence must still trip True.
+    assert bootstrap._search_args_request_unrestricted(["-e", "pattern", "-u"]) is True
+
+
+def test_search_args_request_unrestricted_e_flag_does_not_regress_clustered_forms() -> None:
+    """Parity check requested by the independent gate: `-iu`/`-nu`/`-au` must remain True after
+    adding `-e` to the attached-value tuple (this fix only changes how `-e<val>` clusters are
+    scanned, not `-i`/`-n`/`-a`-led ones)."""
+    assert bootstrap._search_args_request_unrestricted(["-iu"]) is True
+    assert bootstrap._search_args_request_unrestricted(["-nu"]) is True
+    assert bootstrap._search_args_request_unrestricted(["-au"]) is True
+
+
+def test_requires_full_cli_does_not_misread_dash_e_glob_looking_pattern_as_glob_flag() -> None:
+    """The independent gate's cited symmetrical false positive: `-eg*.py` means `-e "g*.py"`
+    (a literal pattern), not `-g *.py` (a glob walk-scope flag) -- `_requires_full_cli`'s own
+    bundled-short-flag scan must not force full-CLI routing for it now that `-e` is
+    a recognized attached-value flag (the scan stops at `e`, never reaching the `g`)."""
+    assert bootstrap._requires_full_cli(["-eg*.py", "."]) is False
+
+
+# --- Task #269 independent-gate re-gate FIX-1 (BLOCKING, and SILENT): `-f`/`--file`/`-fVAL`/
+# `-eVAL` supply a PATTERN (from a file, or attached), but `_search_path_args_raw` only
+# recognized the bare `-e`/`--regexp` forms as "a pattern is already supplied" -- `-f`/`--file`
+# fell into the generic "flag with a value" bucket, which does NOT mark a pattern as seen. The
+# consequence: the REAL positional PATH immediately after got silently misread as the bare
+# pattern (the "first non-flag token is the pattern" rule), `_search_path_args_raw` returned
+# `[]`, `_search_path_args` fell back to `["."]`, and `_run_rg_passthrough` injected the ROOT
+# `.gitignore` for the WRONG directory (cwd, not the actual search target) -- a silent
+# wrong-file-set, the exact class this whole PR family exists to close. Fixed via
+# `_SEARCH_PATTERN_SOURCE_FLAGS` plus the bundled/clustered cluster walk further below (which
+# also closes the mid-bundle attached form -- see the BLOCKING-3 test block after this one).
+
+
+def test_search_path_args_raw_treats_file_flag_as_pattern_source_not_a_path() -> None:
+    assert bootstrap._search_path_args_raw(["--file", "pats.txt", "otherdir"]) == ["otherdir"]
+    assert bootstrap._search_path_args_raw(["-f", "pats.txt", "otherdir"]) == ["otherdir"]
+    assert bootstrap._search_path_args_raw(["-fpats.txt", "otherdir"]) == ["otherdir"]
+    assert bootstrap._search_path_args_raw(["--file=pats.txt", "otherdir"]) == ["otherdir"]
+
+
+def test_search_path_args_raw_treats_attached_dash_e_as_pattern_source_not_a_path() -> None:
+    assert bootstrap._search_path_args_raw(["-eneedle", "otherdir"]) == ["otherdir"]
+    # Control: the un-attached form already worked before this fix.
+    assert bootstrap._search_path_args_raw(["-e", "needle", "otherdir"]) == ["otherdir"]
+
+
+# --- Task #269 independent-gate re-gate BLOCKING-3 (introduced by the FIX-1 round itself) +
+# NB-1: `-e`/`-f` mid-BUNDLE with a leading boolean short flag (`-ieneedle` == `-i -e needle`,
+# `-ie needle` == `-i -e` <value in next arg>) was NOT caught by the FIX-1 round's
+# `arg.startswith(("-e", "-f"))` check (which only matches `-e`/`-f` as literally the first
+# character), so the token fell through as opaque, the real PATH after it was misread as the
+# bare pattern, and the WRONG root's `.gitignore` got injected -- same failure shape as FIX-1,
+# and origin/main was correct, so this was a genuine regression introduced by this PR. Fixed by
+# replacing the narrow `startswith` check with the general cluster walk `_requires_full_cli`
+# and `_search_args_request_unrestricted` already use elsewhere in this file. NB-1 (`-im 5
+# needle otherdir` misreading the PATTERN "needle" as a PATH) is the exact same underlying
+# defect for a NON-pattern-source attached flag (`-m`) and is closed by the same walk.
+#
+# `-ie needle otherdir` / `-if pats.txt otherdir` are explicitly pinned here because they
+# produced the RIGHT ANSWER BY ACCIDENT under the BLOCKING-3 bug (the un-consumed value token
+# got swept up as the bare pattern instead of a path, which happened to leave the real PATH
+# correctly identified) -- without a test pinning the CORRECT MECHANISM (regexp_pattern_seen
+# set via the flag, not via an accidental bare-pattern misread), a future change could
+# reintroduce BLOCKING-3 for the "value in a separate token" shape while this suite stayed
+# green.
+
+
+def test_search_path_args_raw_treats_mid_bundle_attached_dash_e_as_pattern_source() -> None:
+    # -ieneedle == -i -e needle (attached, mid-bundle).
+    assert bootstrap._search_path_args_raw(["-ieneedle", "otherdir"]) == ["otherdir"]
+    # -ifpats.txt == -i -f pats.txt (attached, mid-bundle).
+    assert bootstrap._search_path_args_raw(["-ifpats.txt", "otherdir"]) == ["otherdir"]
+
+
+def test_search_path_args_raw_treats_mid_bundle_dash_e_with_separate_value_as_pattern_source() -> (
+    None
+):
+    """Pins the CORRECT MECHANISM for the "value in the next token" bundled form, not just the
+    right final answer -- see the module comment above for why the by-accident form is
+    insufficient on its own."""
+    raw = bootstrap._search_path_args_raw(["-ie", "needle", "otherdir"])
+    assert raw == ["otherdir"], raw
+    raw = bootstrap._search_path_args_raw(["-if", "pats.txt", "otherdir"])
+    assert raw == ["otherdir"], raw
+
+
+def test_search_path_args_paths_defaulted_is_false_for_mid_bundle_attached_forms() -> None:
+    assert bootstrap._search_args_paths_defaulted(["-ieneedle", "otherdir"]) is False
+    assert bootstrap._search_args_paths_defaulted(["-ie", "needle", "otherdir"]) is False
+
+
+def test_search_path_args_raw_closes_nb1_non_pattern_source_mid_bundle_value() -> None:
+    """NB-1: `-im 5 needle otherdir` (`-i -m 5`, i.e. ignore-case + max-count=5) is NOT a
+    pattern-source flag -- "needle" is the real bare pattern, "otherdir" the real path. Before
+    this fix, "5" (which should be consumed as `-m`'s value) was silently misread as the bare
+    pattern instead, cascading "needle" into `paths` alongside "otherdir"."""
+    assert bootstrap._search_path_args_raw(["-im", "5", "needle", "otherdir"]) == ["otherdir"]
+
+
+def test_run_rg_passthrough_mid_bundle_attached_dash_e_injects_the_correct_roots_ignore_file(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cwd_root = tmp_path / "wrongroot3"
+    other_dir = cwd_root / "otherdir"
+    other_dir.mkdir(parents=True)
+    (cwd_root / ".gitignore").write_text("should-not-apply.log\n", encoding="utf-8")
+    (other_dir / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    monkeypatch.chdir(cwd_root)
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    bootstrap._run_rg_passthrough("rg", ["-ieneedle", "otherdir"])
+
+    argv = seen["argv"]
+    flag_index = argv.index("--ignore-file")
+    injected_path = (cwd_root / argv[flag_index + 1]).resolve()
+    assert injected_path == (other_dir / ".gitignore").resolve(), (
+        f"must inject otherdir's .gitignore, not cwd's: got {injected_path}"
+    )
+
+
+def test_run_rg_passthrough_mid_bundle_dash_e_separate_value_injects_the_correct_roots_ignore_file(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Pins the `-ie needle otherdir` by-accident form's CORRECT MECHANISM through the real
+    `_run_rg_passthrough` entry point -- not just `_search_path_args_raw` in isolation."""
+    cwd_root = tmp_path / "wrongroot4"
+    other_dir = cwd_root / "otherdir"
+    other_dir.mkdir(parents=True)
+    (cwd_root / ".gitignore").write_text("should-not-apply.log\n", encoding="utf-8")
+    (other_dir / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    monkeypatch.chdir(cwd_root)
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    bootstrap._run_rg_passthrough("rg", ["-ie", "needle", "otherdir"])
+
+    argv = seen["argv"]
+    flag_index = argv.index("--ignore-file")
+    injected_path = (cwd_root / argv[flag_index + 1]).resolve()
+    assert injected_path == (other_dir / ".gitignore").resolve(), (
+        f"must inject otherdir's .gitignore, not cwd's: got {injected_path}"
+    )
+
+
+def test_search_path_args_paths_defaulted_is_false_for_file_flag_with_explicit_path() -> None:
+    """The `_search_args_paths_defaulted` predicate (used to decide whether a walk-scope flag
+    like `-g`/`-t` counts as a genuine bound, and by the broad-scan guardrails) derives from
+    `_search_path_args_raw` and shares the exact same bug: pre-fix, `-f pats.txt otherdir` read
+    as paths-defaulted (no explicit path) even though `otherdir` WAS an explicit path -- just
+    misclassified as the bare pattern."""
+    assert bootstrap._search_args_paths_defaulted(["--file", "pats.txt", "otherdir"]) is False
+    assert bootstrap._search_args_paths_defaulted(["-eneedle", "otherdir"]) is False
+
+
+def test_run_rg_passthrough_file_flag_injects_the_correct_roots_ignore_file_not_cwds(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """The measured regression table's shape: cwd holds a root `.gitignore` that must NOT be
+    consulted; the real search target (`otherdir`, an explicit PATH positional) has its OWN
+    `.gitignore` that MUST be. Pre-fix, `_run_rg_passthrough` silently injected cwd's file
+    instead (or, depending on exact walk state, injected nothing useful) -- either way, the
+    WRONG root's ignore file, not `otherdir`'s."""
+    cwd_root = tmp_path / "wrongroot"
+    other_dir = cwd_root / "otherdir"
+    other_dir.mkdir(parents=True)
+    (cwd_root / ".gitignore").write_text("should-not-apply.log\n", encoding="utf-8")
+    (other_dir / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    monkeypatch.chdir(cwd_root)
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    bootstrap._run_rg_passthrough("rg", ["--file", "pats.txt", "otherdir"])
+
+    argv = seen["argv"]
+    flag_index = argv.index("--ignore-file")
+    # The injected path is emitted relative to the passed root ("otherdir"), matching real rg's
+    # own relative-argv convention -- resolve against cwd (which this test pinned via
+    # monkeypatch.chdir) before comparing, rather than expecting an absolute path verbatim.
+    injected_path = (cwd_root / argv[flag_index + 1]).resolve()
+    assert injected_path == (other_dir / ".gitignore").resolve(), (
+        f"must inject otherdir's .gitignore, not cwd's: got {injected_path}"
+    )
+
+
+def test_run_rg_passthrough_attached_dash_e_injects_the_correct_roots_ignore_file(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cwd_root = tmp_path / "wrongroot2"
+    other_dir = cwd_root / "otherdir"
+    other_dir.mkdir(parents=True)
+    (cwd_root / ".gitignore").write_text("should-not-apply.log\n", encoding="utf-8")
+    (other_dir / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    monkeypatch.chdir(cwd_root)
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    bootstrap._run_rg_passthrough("rg", ["-eneedle", "otherdir"])
+
+    argv = seen["argv"]
+    flag_index = argv.index("--ignore-file")
+    injected_path = (cwd_root / argv[flag_index + 1]).resolve()
+    assert injected_path == (other_dir / ".gitignore").resolve(), (
+        f"must inject otherdir's .gitignore, not cwd's: got {injected_path}"
+    )
+
+
+# --- Task #269 independent-gate FINAL-GATE BLOCKING-1 (a different DIMENSION than rounds 1-3,
+# each of which enumerated HOW a pattern-source flag is spelled): rg's grammar is
+# ORDER-INDEPENDENT -- a pattern-source flag can appear BEFORE or AFTER the positional PATH
+# (`rg sub -eneedle` produces the same output as `rg -eneedle sub`) -- but
+# `_search_path_args_raw` was a single left-to-right pass whose `regexp_pattern_seen` state
+# only flipped True at the MOMENT it encountered the flag. `tg search otherdir -eneedle` (PATH
+# first) silently misread "otherdir" as the bare pattern, `_search_path_args_raw` returned an
+# empty root list, and `_run_rg_passthrough` injected the WRONG root's `.gitignore` --
+# reproducing the #264 signature (plain-text and `--json` disagreeing on the file set) a FOURTH
+# time, inside this same PR, with zero prior test coverage (no test among the prior 205 put a
+# positional before the pattern-source flag). Fixed via a genuine two-pass walk: a pre-pass
+# (`_search_args_contains_pattern_source_flag`) determines whether ANY pattern-source flag
+# appears anywhere before `--`, seeding `regexp_pattern_seen`'s STARTING value instead of
+# letting the extraction walk discover it mid-stream.
+
+
+@pytest.mark.parametrize(
+    "search_args",
+    [
+        ["otherdir", "-eneedle"],
+        ["otherdir", "-e", "needle"],
+        ["otherdir", "-fpats.txt"],
+        ["otherdir", "-f", "pats.txt"],
+        ["otherdir", "--regexp=needle"],
+        ["otherdir", "--file=pats.txt"],
+    ],
+    ids=["-eVAL", "-e VAL", "-fFILE", "-f FILE", "--regexp=VAL", "--file=FILE"],
+)
+def test_search_path_args_raw_path_before_pattern_source_flag_all_six_spellings(
+    search_args: list[str],
+) -> None:
+    """All six rg-accepted pattern-source spellings, with the PATH positional appearing FIRST
+    -- the exact dimension BLOCKING-1 found uncovered. Every one of these previously returned
+    `[]` (the PATH silently misread as the bare pattern) instead of `["otherdir"]`."""
+    assert bootstrap._search_path_args_raw(search_args) == ["otherdir"], search_args
+
+
+def test_search_path_args_raw_path_before_mid_bundle_pattern_source_flag() -> None:
+    """Mid-bundle spelling (BLOCKING-3's dimension) combined with PATH-first ordering
+    (BLOCKING-1's dimension) -- both must compose correctly."""
+    assert bootstrap._search_path_args_raw(["otherdir", "-ieneedle"]) == ["otherdir"]
+    assert bootstrap._search_path_args_raw(["otherdir", "-ie", "needle"]) == ["otherdir"]
+
+
+def test_search_path_args_paths_defaulted_is_false_when_path_precedes_pattern_source_flag() -> None:
+    assert bootstrap._search_args_paths_defaulted(["otherdir", "-eneedle"]) is False
+    assert bootstrap._search_args_paths_defaulted(["otherdir", "-e", "needle"]) is False
+
+
+def test_search_args_contains_pattern_source_flag_stops_at_end_of_options_sentinel() -> None:
+    """`-e needle -- sub` (pattern-source flag BEFORE `--`) already worked correctly before
+    this fix and must stay that way; a hypothetical pattern-source-shaped token appearing AFTER
+    `--` is a literal positional, not a flag, and must not be misdetected by the pre-pass."""
+    assert bootstrap._search_args_contains_pattern_source_flag(["-e", "needle", "--", "sub"]) is (
+        True
+    )
+    assert bootstrap._search_args_contains_pattern_source_flag(["sub", "--", "-eneedle"]) is False
+
+
+# Independent-gate final-gate BLOCKING-2 (re-gate on the BLOCKING-1 round itself): the shared
+# `_attached_cluster_value_offset` helper unifies which OFFSET a mid-bundle attached-value flag
+# sits at, but the pre-pass previously decided `skip_next` INDEPENDENTLY of the extraction
+# walk -- and decided it wrong, never setting it at all. A mid-bundle value flag ending a token
+# (`-ir`, `-ig` -- `-i` plus `-r`/`-g`, whose value is the NEXT argv token) therefore failed to
+# consume its own value in the pre-pass, so a value that happens to look like a pattern-source
+# flag (`-e needle`, `-fpats.txt`) got misread as a SEPARATE, genuine flag instead of data.
+# `["--replace", "-eattached", "otherdir"]` alone did not catch this: `--replace` is the LONG
+# separated form, handled by the `_SEARCH_FLAGS_WITH_VALUES` arm, which already worked --
+# a negative control that only exercises the working arm proves nothing about the broken
+# mid-bundle short-flag arm. `-r` and `-g` are the only two value-taking short flags that
+# actually accept a `-e`-shaped value in real rg (verified live: `-t`/`-T` reject it as an
+# unrecognized file type, `-m`/`-A`/`-B`/`-C`/`-M`/`-d`/`-j`/`-E` reject it as a parse error) --
+# `-r` (`--replace`) and `-g` (`--glob`) both happily accept an arbitrary string.
+@pytest.mark.parametrize(
+    "search_args",
+    [
+        ["--replace", "-eattached", "otherdir"],
+        ["-ir", "-e", "needle"],
+        ["-ig", "-fpats.txt", "sub"],
+    ],
+    ids=["--replace-long-separated", "-ir-mid-bundle-r", "-ig-mid-bundle-g"],
+)
+def test_search_args_contains_pattern_source_flag_does_not_count_a_consumed_flag_value(
+    search_args: list[str],
+) -> None:
+    """A token that LOOKS like a pattern-source flag but is actually another flag's VALUE
+    (e.g. `--replace -eattached`, where `-eattached` is `--replace`'s replacement string, or
+    the mid-bundle `-ir -e needle`/`-ig -fpats.txt sub`, where `-e`/`-f` are `-r`'s/`-g`'s own
+    value) must not be misdetected as a real pattern-source flag."""
+    assert bootstrap._search_args_contains_pattern_source_flag(search_args) is False, search_args
+
+
+def test_run_rg_passthrough_path_before_dash_e_injects_the_correct_roots_ignore_file(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Outcome-level pin through the real `_run_rg_passthrough` entry point, mirroring the
+    independent gate's own measured repro: `otherdir` (no ignore file of its own) must get
+    NOTHING injected -- not cwd's `.gitignore` -- when the pattern-source flag comes after it
+    in argv."""
+    cwd_root = tmp_path / "wrongroot5"
+    other_dir = cwd_root / "otherdir"
+    other_dir.mkdir(parents=True)
+    (cwd_root / ".gitignore").write_text("should-not-apply.log\n", encoding="utf-8")
+    monkeypatch.chdir(cwd_root)
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    bootstrap._run_rg_passthrough("rg", ["otherdir", "-eneedle"])
+
+    argv = seen["argv"]
+    assert "--ignore-file" not in argv, (
+        f"otherdir has no ignore file of its own -- nothing must be injected: {argv}"
+    )
+
+
+def test_run_rg_passthrough_path_before_dash_e_still_finds_the_correct_roots_own_ignore_file(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """The positive-injection counterpart: when the PATH-first target DOES have its own
+    ignore file, that file (not cwd's) must be injected."""
+    cwd_root = tmp_path / "wrongroot6"
+    sub = cwd_root / "sub"
+    sub.mkdir(parents=True)
+    (cwd_root / ".gitignore").write_text("should-not-apply.log\n", encoding="utf-8")
+    (sub / ".gitignore").write_text("d.log\n", encoding="utf-8")
+    monkeypatch.chdir(cwd_root)
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    bootstrap._run_rg_passthrough("rg", ["sub", "-eneedle"])
+
+    argv = seen["argv"]
+    flag_index = argv.index("--ignore-file")
+    injected_path = (cwd_root / argv[flag_index + 1]).resolve()
+    assert injected_path == (sub / ".gitignore").resolve(), (
+        f"must inject sub's .gitignore, not cwd's: got {injected_path}"
+    )
+
+
 def test_main_entry_should_not_passthrough_unbounded_generated_root_search(
     monkeypatch, tmp_path: Path
 ) -> None:

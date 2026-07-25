@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
+from tensor_grep.cli.rg_root_ignore import root_ignore_file_args
 from tensor_grep.cli.subprocess_policy import configured_ripgrep_timeout_seconds, run_subprocess
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult, strip_line_terminator
@@ -513,6 +514,14 @@ class RipgrepBackend(ComputeBackend):
             cmd.append("--json")
 
         # We enforce JSON output so we can seamlessly parse it back into our SearchResult dataclasses
+        # Task #269 non-blocking note (independent gate, Part B): every flag in this block --
+        # including the root-ignore-file injection below -- is gated on `config` being truthy.
+        # `search_passthrough(file_path, pattern)` (no third arg) defaults `config` to `None`,
+        # so a caller using that form gets ZERO of these flags, not just no ignore-file
+        # injection. Not a regression (this is pre-existing behavior for every other flag here
+        # too, and both real call sites, `cli/main.py:7768`/`:7843`, always pass a real
+        # `config`), but worth flagging so `config=None` is never mistaken for "injection
+        # covered" -- it means "no SearchConfig-derived flags at all were forwarded".
         if config:
             if config.ignore_case:
                 cmd.append("-i")
@@ -601,6 +610,38 @@ class RipgrepBackend(ComputeBackend):
             if config.ignore_file:
                 for ignore_path in config.ignore_file:
                     cmd.extend(["--ignore-file", ignore_path])
+            # Task #269: this is the second of two Python-only real-`rg` forwarding paths
+            # (the other is `bootstrap.py::_run_rg_passthrough`), reachable via every entry
+            # point built on `_build_cmd` (`search`, `search_passthrough`, `_search_counts`,
+            # `_search_files_with_matches`) whenever no compiled native `tg` binary is
+            # discoverable. Real rg's own `.gitignore` auto-discovery requires
+            # `require_git=true` by default, so a root `.gitignore` is silently a no-op outside
+            # a git repo -- the same #264 defect already fixed for the compiled native binary's
+            # rg-passthrough (`rust_core/src/rg_passthrough.rs::root_ignore_file_args`).
+            # `file_path` here is the same root(s) real rg is about to walk (mirrors that
+            # function's own `args.paths`); a pre-enumerated FILE list (the rare
+            # `--files-without-match` branch in `cli/main.py`) safely no-ops via the helper's
+            # own `Path.is_file()` existence check rather than emitting a wrong flag.
+            # `config.unrestricted` (rg's `-u`/`-uu`/`-uuu`) is a documented ALIAS for
+            # `--no-ignore` (+`--hidden`/+`--binary`) that rg's own parser expands -- NOT
+            # observed by `config.no_ignore` -- so it must gate this injection too (independent
+            # gate finding, task #269): without it `-u` came out STRICTER than no flag at all,
+            # since the `--ignore-file` operands emitted here survive `--no-ignore` by design
+            # (see this function's own `cmd.append("-" + "u" * config.unrestricted)` further
+            # below, which forwards the raw token to rg -- referenced by SHAPE, not a line
+            # number, per the NB-2 lesson from this task's independent gate: a raw line-number
+            # citation drifted stale within the SAME commit that added it) and would otherwise
+            # silently resurrect the very rules `-u` asked to disable.
+            cmd.extend(
+                root_ignore_file_args(
+                    file_path if isinstance(file_path, list) else [file_path],
+                    no_ignore=config.no_ignore,
+                    no_ignore_files=config.no_ignore_files,
+                    no_ignore_vcs=config.no_ignore_vcs,
+                    no_ignore_dot=config.no_ignore_dot,
+                    unrestricted=config.unrestricted,
+                )
+            )
             if config.ignore_file_case_insensitive:
                 cmd.append("--ignore-file-case-insensitive")
             if config.no_ignore_file_case_insensitive:

@@ -175,6 +175,32 @@ _BROAD_GENERATED_SCAN_DIR_NAMES = {
 _SEARCH_PATTERN_FLAGS = {"-e", "--regexp"}
 _SEARCH_LITERAL_FLAGS = {"-F", "--fixed-strings"}
 _SEARCH_PCRE2_FLAGS = {"-P", "--pcre2"}
+# Task #269 independent-gate FIX-1: `-f`/`--file`/`--file=` supply pattern(s) FROM A FILE, same
+# as `-e`/`--regexp` supply the pattern text directly -- both are PATTERN-SOURCE flags whose
+# presence means the bare positional pattern slot is already filled, so `_search_path_args_raw`
+# below must treat the token immediately following either as ALREADY the pattern, not skip past
+# it into misreading the next positional (the actual PATH) as a bare pattern. Kept as its own
+# set/tuple rather than folding `-f`/`--file` into `_SEARCH_PATTERN_FLAGS` itself:
+# `_regex_patterns_from_search_args` also consumes `_SEARCH_PATTERN_FLAGS` to EXTRACT the
+# literal pattern TEXT from a flag's value for regex validation -- `-f`'s value is a FILENAME,
+# not pattern text, so folding it in there would feed a filename string into invalid-regex
+# validation. This is a narrower, `_search_path_args_raw`-only concern.
+_SEARCH_PATTERN_SOURCE_FLAGS = _SEARCH_PATTERN_FLAGS | {"-f", "--file"}
+# NOTE: the attached/bundled short forms of `-e`/`-f` (`-eVAL`, `-fVAL`, and mid-bundle forms
+# like `-ieVAL`) are handled by `_search_path_args_raw`'s own general cluster walk (below,
+# independent-gate BLOCKING-3), not by a separate constant here -- a prior round's
+# `arg.startswith((...))` check using a tuple like this one only matched `-e`/`-f` as the
+# token's FIRST character and missed the mid-bundle form real rg accepts.
+# Independent-gate final-gate finding (differential fuzz against `.claude/
+# rg_argv_differential_fuzz.py`'s rg-grammar model, task #269): `--generate` takes a value in
+# real rg but was previously listed ONLY in `_TG_ONLY_SEARCH_FLAGS` above (which gates ROUTING
+# -- forcing full-CLI dispatch), never here (which gates VALUE CONSUMPTION in the positional
+# walk below). The two sets answer different questions and one flag can need to be in both;
+# `--generate`'s absence here made `_search_path_args_raw(["--generate", "py", ...])` treat
+# "py" as a positional/pattern instead of `--generate`'s own value -- unreachable through
+# `_run_rg_passthrough` today (routing already forces full-CLI first), but this function is
+# shared by several broad-scan guards that run BEFORE that routing decision, so a real grammar
+# gap here is not automatically inert. Found by exhaustive differential fuzzing, not by hand.
 _SEARCH_FLAGS_WITH_VALUES = {
     "-A",
     "-B",
@@ -197,6 +223,7 @@ _SEARCH_FLAGS_WITH_VALUES = {
     "--field-match-separator",
     "--file",
     "-f",
+    "--generate",
     "--glob",
     "--gpu-device-ids",
     "--hostname-bin",
@@ -225,6 +252,20 @@ _SEARCH_FLAGS_WITH_VALUES = {
     "-t",
     "-T",
 }
+# Task #269 independent-gate FIX-2: `-e` (pattern, e.g. `-eunwrap` == `-e unwrap`) was missing
+# here even though it IS an attached-value short flag in real rg. The omission produced a
+# false positive in `_search_args_request_unrestricted`'s cluster walk (below): `-eunwrap`
+# would scan past the `e` (not recognized as attached-value) and hit the `u` in "unwrap",
+# reporting "unrestricted requested" for a pattern that merely happens to contain the letter
+# `u` -- forcing `guarded_broad_root` and misrouting a perfectly valid rg-passthrough search
+# into the full Python CLI, which then rejects rg-only flags like `--no-heading`. Verified
+# strictly improving at all three consumers of this tuple: `_requires_full_cli`'s bundled scan
+# (removes a SYMMETRICAL false positive -- `-eg*.py` is `-e "g*.py"`, not `-g`, and stopping
+# the scan at `-e` now correctly treats the rest of the token as that flag's value rather than
+# more flags); `_is_short_flag_with_attached_value` (a no-op there, since `_search_path_args_raw`
+# below intercepts `-e<val>`/`-f<val>` as pattern-source flags before this generic check is
+# ever reached); and `_search_args_request_unrestricted` (the actual FIX-2 regression this
+# closes).
 _SEARCH_ATTACHED_VALUE_SHORT_FLAGS = (
     "-A",
     "-B",
@@ -232,6 +273,7 @@ _SEARCH_ATTACHED_VALUE_SHORT_FLAGS = (
     "-E",
     "-M",
     "-d",
+    "-e",
     "-f",
     "-g",
     "-j",
@@ -578,16 +620,123 @@ def _search_args_include_generated_scan_bound(
     return False
 
 
+# Task #269 independent-gate finding: the naive `arg.startswith("-u")` this replaced only
+# matched `-u`/`-uu`/`-uuu` as the WHOLE token -- it missed the bundled/clustered short-flag
+# form (`-iu`, `-nu`, ...), which rg's own clap-style parser accepts identically to `-i -u` /
+# `-n -u`. Walks the cluster the same way `_requires_full_cli`'s bundled-scan does (above in
+# this same module -- referenced by NAME, not a line number, per the NB-2 lesson from this
+# task's independent gate: a raw line-number citation drifted stale within days of being
+# written, when later edits to this file shifted every line below it): the first
+# ATTACHED-VALUE short flag in a cluster swallows the remainder of
+# that token as its own value, so a `u` appearing after it is DATA, not a flag -- `-tu` means
+# `--type u`, not `-t -u`. Extracted to one named helper (rather than two separately-maintained
+# copies of the same rule) so `_search_args_request_unrestricted_generated_scan` (the broad-scan
+# guardrail) and `_run_rg_passthrough` (task #269 root-ignore-file gating) cannot silently drift
+# out of parity with each other -- the exact "one rule, two implementations" trap this whole PR
+# exists to close for `.gitignore` honoring.
+def _search_args_request_unrestricted(search_args: list[str]) -> bool:
+    for arg in search_args:
+        if arg == "--unrestricted":
+            return True
+        if not arg.startswith("-") or arg.startswith("--"):
+            continue
+        for ch in arg[1:]:
+            if ch == "u":
+                return True
+            if f"-{ch}" in _SEARCH_ATTACHED_VALUE_SHORT_FLAGS:
+                break
+    return False
+
+
 def _search_args_request_unrestricted_generated_scan(search_args: list[str]) -> bool:
     files_mode = "--files" in search_args
     if files_mode and any(arg in _SEARCH_HIDDEN_FLAGS for arg in search_args):
         return True
     if any(arg in _SEARCH_NO_IGNORE_FLAGS for arg in search_args):
         return True
-    return any(
-        arg == "--unrestricted" or (arg.startswith("-u") and not arg.startswith("--"))
-        for arg in search_args
-    )
+    return _search_args_request_unrestricted(search_args)
+
+
+def _attached_cluster_value_offset(arg: str) -> int | None:
+    """For a bundled/clustered short-flag token (`-ieneedle`, `-tpy`, a plain boolean cluster
+    like `-in`, ...), return the index INTO `arg` of the first ATTACHED-VALUE short-flag
+    character in the cluster, or `None` if the token carries no attached-value flag at all (a
+    plain boolean cluster, or not a dash-prefixed multi-char token to begin with). Shared by
+    `_search_args_contains_pattern_source_flag`'s pre-pass and `_search_path_args_raw`'s
+    extraction walk below so the two passes cannot silently diverge on which characters count
+    (task #269 independent-gate BLOCKING-1's own root cause was two separate passes computing
+    the same thing differently)."""
+    if arg.startswith("--") or len(arg) <= 2 or not arg.startswith("-"):
+        return None
+    for offset, ch in enumerate(arg[1:], start=1):
+        if f"-{ch}" in _SEARCH_ATTACHED_VALUE_SHORT_FLAGS:
+            return offset
+    return None
+
+
+def _search_args_contains_pattern_source_flag(search_args: list[str]) -> bool:
+    """Pre-pass: does ANY pattern-source flag (`-e`/`--regexp`/`-f`/`--file`, in every accepted
+    spelling -- exact, `--flag=value`, attached short (`-eVAL`), and mid-bundle attached short
+    (`-ieVAL`)) appear anywhere in `search_args` BEFORE a `--` end-of-options sentinel?
+
+    Task #269 independent-gate BLOCKING-1: rg's own grammar is ORDER-INDEPENDENT -- a pattern
+    can be supplied via a flag either before OR after the positional PATH
+    (`rg sub -eneedle` == `rg -eneedle sub`) -- but `_search_path_args_raw`'s extraction walk
+    is a single left-to-right pass whose `regexp_pattern_seen` state used to start `False` and
+    only flip `True` at the MOMENT it encountered the flag. A PATH positional occurring BEFORE
+    that flag in argv (`tg search otherdir -eneedle`) was therefore silently misread as the
+    bare pattern under the "first non-flag token is the pattern" rule, `_search_path_args_raw`
+    returned the wrong (empty) root list, and `_run_rg_passthrough` injected the WRONG root's
+    ignore file -- reproducing the #264 signature (`--json` landed on the correct engine,
+    plain text did not) A FOURTH time, inside this same PR. This pre-pass supplies the correct
+    STARTING value for `regexp_pattern_seen` instead, so a PATH appearing anywhere relative to
+    the flag is handled identically.
+
+    Deliberately mirrors ONLY the flag-classification portion of `_search_path_args_raw`'s
+    walk (not positional extraction, which this function does not need) -- and shares
+    `_attached_cluster_value_offset` with it rather than re-deriving the same cluster logic a
+    second time, so the two passes cannot drift apart on which argv shapes count.
+    """
+    skip_next = False
+    for arg in search_args:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == "--":
+            break
+        if arg in _SEARCH_PATTERN_SOURCE_FLAGS:
+            return True
+        if any(arg.startswith(f"{flag}=") for flag in _SEARCH_PATTERN_SOURCE_FLAGS):
+            return True
+        offset = _attached_cluster_value_offset(arg)
+        if offset is not None:
+            if arg[offset] in ("e", "f"):
+                return True
+            # Independent-gate re-gate BLOCKING-2: a non-pattern-source attached-value flag
+            # (e.g. `-tpy`, `-im5`) is only self-contained when its value is ATTACHED within
+            # the same token. When the value char is the token's LAST character (`-ir`, `-ig`
+            # -- a bundled `-i` plus `-r`/`-g` with the value in the NEXT argv token, `-ir
+            # needle`), that next token is the flag's VALUE, not a genuine positional -- it
+            # must be skipped here too, exactly like the extraction walk below already does,
+            # or a value that happens to look like a pattern-source flag gets misclassified.
+            # The prior version of this pre-pass shared `_attached_cluster_value_offset` (the
+            # OFFSET) with the extraction walk but let each pass decide `skip_next`
+            # independently -- the offset was unified, the CONSUMPTION was not, and that
+            # asymmetry (`-r -e needle` correctly not a pattern source; `-ir -e needle`
+            # wrongly WAS, because the un-skipped "-e" got read as its own flag) is exactly
+            # the "one rule, two implementations" trap this whole PR exists to close.
+            if offset == len(arg) - 1:
+                skip_next = True
+            continue
+        if arg in _SEARCH_FLAGS_WITH_VALUES:
+            skip_next = True
+            continue
+        if any(arg.startswith(f"{flag}=") for flag in _SEARCH_FLAGS_WITH_VALUES):
+            continue
+        # A bare boolean flag (no value) or a genuine positional needs no further handling
+        # here -- this pre-pass only answers "does a pattern-source flag appear anywhere
+        # before `--`", not where positionals fall; that is the extraction walk's job below.
+    return False
 
 
 def _search_path_args_raw(search_args: list[str]) -> list[str]:
@@ -596,10 +745,16 @@ def _search_path_args_raw(search_args: list[str]) -> list[str]:
     (``paths_defaulted``), which the fallback-collapsed public helper cannot
     distinguish from an explicit ``.`` (both become ``["."]`` there).
     ``_search_args_paths_defaulted`` below is the only reason this is split out; keep
-    both derived from one walk so they can never drift out of sync with each other."""
+    both derived from one walk so they can never drift out of sync with each other.
+
+    Task #269 independent-gate BLOCKING-1: `regexp_pattern_seen` is seeded from
+    `_search_args_contains_pattern_source_flag`'s pre-pass (a TWO-pass walk) rather than
+    starting `False` and flipping mid-walk -- see that function's docstring for why a
+    single-pass walk silently misread a PATH positional occurring BEFORE the pattern-source
+    flag in argv as the bare pattern instead."""
     paths: list[str] = []
     bare_pattern_seen = False
-    regexp_pattern_seen = False
+    regexp_pattern_seen = _search_args_contains_pattern_source_flag(search_args)
     skip_next = False
     parse_options = True
     for index, arg in enumerate(search_args):
@@ -610,12 +765,31 @@ def _search_path_args_raw(search_args: list[str]) -> list[str]:
             parse_options = False
             continue
         if parse_options:
-            if arg in _SEARCH_PATTERN_FLAGS:
+            if arg in _SEARCH_PATTERN_SOURCE_FLAGS:
                 regexp_pattern_seen = True
                 skip_next = index + 1 < len(search_args)
                 continue
-            if any(arg.startswith(f"{flag}=") for flag in _SEARCH_PATTERN_FLAGS):
+            if any(arg.startswith(f"{flag}=") for flag in _SEARCH_PATTERN_SOURCE_FLAGS):
                 regexp_pattern_seen = True
+                continue
+            # Bundled/clustered short-flag walk (mirrors `_requires_full_cli`'s bundled scan
+            # and `_search_args_request_unrestricted`'s cluster walk, both above in this same
+            # module -- cited by NAME rather than a line range on purpose, per the NB-2 lesson
+            # from this task's independent gate: a raw line-number citation drifted stale
+            # within the SAME commit that added it): scan past leading BOOLEAN short flags
+            # (e.g. `-i`, `-n`) until the first ATTACHED-VALUE short flag, which swallows the
+            # remainder of the token -- or, if it is the token's LAST character, the NEXT argv
+            # token -- as its own value. Shares `_attached_cluster_value_offset` with the
+            # pre-pass above rather than re-deriving the same cluster logic a second time.
+            offset = _attached_cluster_value_offset(arg)
+            if offset is not None:
+                ch = arg[offset]
+                if ch in ("e", "f"):
+                    regexp_pattern_seen = True
+                if offset == len(arg) - 1:
+                    # The attached-value flag is the LAST character of this token -- its
+                    # value is the NEXT argv token, not attached (`-ie needle` / `-im 5`).
+                    skip_next = index + 1 < len(search_args)
                 continue
             if arg in _SEARCH_FLAGS_WITH_VALUES:
                 skip_next = index + 1 < len(search_args)
@@ -1086,8 +1260,42 @@ def _run_native_tg_command(binary_name: str, argv: list[str]) -> int:
 
 
 def _run_rg_passthrough(binary_name: str, search_args: list[str]) -> int:
+    # Task #269: this is one of two Python-only real-`rg` forwarding paths (the other is
+    # `RipgrepBackend._build_cmd`), reachable whenever no compiled native `tg` binary is
+    # discoverable. Real rg's own `.gitignore` auto-discovery requires `require_git=true` by
+    # default, so a root `.gitignore` is silently a no-op outside a git repo -- the same #264
+    # defect already fixed for the compiled native binary's rg-passthrough
+    # (`rust_core/src/rg_passthrough.rs::root_ignore_file_args`). `_search_path_args` gives the
+    # same raw-argv positional-path extraction already used throughout this module (e.g.
+    # `_search_args_paths_defaulted`), so the roots this computes always match what real rg
+    # will actually search -- this claim held only from BLOCKING-1's fix onward
+    # (`_search_path_args_raw` is now a genuine two-pass walk via
+    # `_search_args_contains_pattern_source_flag`'s pre-pass; earlier rounds of this same PR
+    # computed the wrong roots whenever a pattern-source flag followed the PATH positional in
+    # argv, since rg's own grammar is order-independent but a single left-to-right pass is
+    # not -- independent-gate finding, task #269).
+    #
+    # The emitted `--ignore-file <path>` operands are PREPENDED (not appended) so they land
+    # before any `--` end-of-options sentinel the user's own argv might contain -- inserting
+    # after it would misparse them as positional paths. `-u`/`-uu`/`-uuu`/
+    # `--unrestricted` (rg's documented `--no-ignore` alias) is checked via
+    # `_search_args_request_unrestricted` -- the SAME helper
+    # `_search_args_request_unrestricted_generated_scan` (the broad-scan guardrail) uses --
+    # rather than a second hand-rolled predicate (independent-gate finding: without it
+    # `-u` came out STRICTER than no flag at all, since the emitted `--ignore-file` survives
+    # `--no-ignore` by design and would silently resurrect the rules `-u` asked to disable).
+    from tensor_grep.cli.rg_root_ignore import root_ignore_file_args
+
+    ignore_file_ops = root_ignore_file_args(
+        _search_path_args(search_args),
+        no_ignore="--no-ignore" in search_args,
+        no_ignore_files="--no-ignore-files" in search_args,
+        no_ignore_vcs="--no-ignore-vcs" in search_args,
+        no_ignore_dot="--no-ignore-dot" in search_args,
+        unrestricted=int(_search_args_request_unrestricted(search_args)),
+    )
     return _streaming_passthrough_returncode(
-        [binary_name, *search_args], timeout_env_var="TG_RG_TIMEOUT_SECONDS"
+        [binary_name, *ignore_file_ops, *search_args], timeout_env_var="TG_RG_TIMEOUT_SECONDS"
     )
 
 

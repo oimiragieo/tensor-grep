@@ -1,0 +1,542 @@
+"""Task #269: assert the real SEARCH OUTCOME (which files get matched) through the two
+Python-only real-`rg` forwarding paths, forcing the no-native-binary channel deterministically.
+
+`tests/e2e/test_search_root_ignore_file_outcome.py` (task #264 / PR #744) pins the identical
+outcome contract for the COMPILED native `tg` binary's rg-passthrough
+(`rust_core/src/rg_passthrough.rs`), and deliberately SKIPS whenever no native `tg` binary is
+discoverable -- because while writing that test, the author found `python -m tensor_grep search`
+falls back to TWO separate, Python-only rg-passthrough implementations
+(`tensor_grep.cli.bootstrap._run_rg_passthrough` and
+`tensor_grep.backends.ripgrep_backend.RipgrepBackend._build_cmd`, the latter reached via
+`cli/main.py`'s full-CLI search command for both plain-text and `--json`) that shared the
+identical pre-#264-fix defect and were explicitly out of scope for that PR.
+
+This file closes that gap for the Python channel: unlike the compiled-native test, the
+no-native-binary condition can be FORCED deterministically here (`TG_DISABLE_NATIVE_TG=1`)
+rather than merely hoped for, so this suite never needs to skip on that account -- it always
+exercises `bootstrap.py::_run_rg_passthrough` (plain-text; referenced by NAME, not a line
+number, per the NB-2 lesson from this task's independent gate -- an earlier version of this
+citation drifted stale when later edits to `bootstrap.py` shifted every line below it) and
+`ripgrep_backend.py`'s `_build_cmd` (via `cli/main.py`'s full CLI, `--json`) for real, over a
+real non-git fixture directory and a real `rg` binary.
+
+WHY PLAIN-TEXT AND `--json` DIVERGE AT ALL (the actual mechanism behind the whole #264/#269 bug
+family, independently confirmed here and by the sibling #744 fix on PR c597b85): bootstrap's
+own native-delegation gate, `_can_delegate_to_native_tg_search` (referenced by NAME, not a
+line number, per the NB-2 lesson from this task's independent gate -- an earlier version of
+this citation drifted stale when later edits to `bootstrap.py` shifted every line below it),
+only forwards a search to the compiled native binary when argv contains one of a fixed
+`supported_trigger` set -- `{--cpu, --force-cpu, --json, --ndjson, --gpu-device-ids}` -- or
+`TG_RUST_FIRST_SEARCH=1` is set (`_prefer_rust_first_search`, default off). A bare plain-text
+`tg search PATTERN .` has none of those triggers, so bootstrap ALWAYS
+falls through to its own `_run_rg_passthrough` REGARDLESS of whether a native binary is
+discoverable (see `tests/unit/test_cli_bootstrap.py::
+test_main_entry_bare_plain_text_search_bypasses_native_delegation_even_when_native_binary_present`
+for the routing-only proof, which pins this even with a native binary resolvable -- not merely
+absent). `--json` IS a supported trigger, so it can reach the native engine (which already
+honors root ignore files correctly per #127) whenever a native binary exists; the output-format
+flag doesn't change ignore-handling directly, it changes WHICH ENGINE runs. That is the real
+generator of "an output-format flag changes the file set" -- flagged here for visibility, not
+fixed (a delegation gate keyed on output-format flags is a broader design question, out of
+scope for this task).
+
+This file forces the no-native-binary cell specifically (the pip/uvx pure-Python channel this
+task's bug lives in) via `TG_DISABLE_NATIVE_TG=1`, so it is not sensitive to whether a native
+binary happens to be discoverable on the machine running it.
+
+Skipped only when a real `rg` binary cannot be resolved (mirrors
+`tests/e2e/test_search_root_ignore_file_outcome.py` and the `rg_path` fixture in
+`tests/conftest.py`).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+TESTS_DIR = Path(__file__).resolve().parents[1]
+if str(TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(TESTS_DIR))
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SRC_DIR = REPO_ROOT / "src"
+
+
+def _helpers():
+    from helpers import rg_parity
+
+    return rg_parity
+
+
+def _write_non_git_root_gitignore_corpus(root: Path) -> None:
+    root.mkdir(parents=True)
+    # Deliberately NOT `git init`: task #264/#269 is specifically about a NON-git directory,
+    # where real rg's own `.gitignore` auto-discovery is a no-op by default
+    # (`require_git=true`). A `.git` marker anywhere in an ancestor of `root` would mask the
+    # exact bug this file pins.
+    (root / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    (root / "a.txt").write_text("needle\n", encoding="utf-8")
+    (root / "skipme.txt").write_text("needle\n", encoding="utf-8")
+
+
+def _force_no_native_binary_env(rg_binary: Path) -> dict[str, str]:
+    """Build a subprocess env that forces the Python-only channel deterministically:
+    `TG_DISABLE_NATIVE_TG=1` short-circuits `resolve_native_tg_binary()` to `None`
+    (`runtime_paths.py:282-283`) regardless of what happens to be on this machine, so this
+    suite never needs to skip (or worse, silently exercise the wrong implementation) based on
+    native-binary discoverability."""
+    env = os.environ.copy()
+    pythonpath_entries = [str(SRC_DIR)]
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    if existing_pythonpath:
+        pythonpath_entries.extend(
+            entry
+            for entry in existing_pythonpath.split(os.pathsep)
+            if entry and entry != str(SRC_DIR)
+        )
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
+    env["TG_RG_PATH"] = str(rg_binary)
+    env["TG_DISABLE_NATIVE_TG"] = "1"
+    env.pop("TG_NATIVE_TG_BINARY", None)
+    env.pop("TG_MCP_TG_BINARY", None)
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    return env
+
+
+def _run_tg_search(
+    args: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-m", "tensor_grep", "search", *args],
+        cwd=cwd,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+
+
+def _matched_files_from_plain_text(stdout: str) -> set[str]:
+    files: set[str] = set()
+    for line in stdout.replace("\r\n", "\n").splitlines():
+        if not line:
+            continue
+        path = line.split(":", 1)[0]
+        files.add(_normalize_path_str(path))
+    return files
+
+
+def _normalize_path_str(path: str) -> str:
+    normalized = path.replace("\\", "/")
+    if normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized
+
+
+@pytest.fixture()
+def non_git_root_gitignore_corpus(tmp_path: Path) -> tuple[Path, dict[str, str]]:
+    root = tmp_path / "task-269-root-ignore"
+    _write_non_git_root_gitignore_corpus(root)
+    rg_parity = _helpers()
+    rg_binary = rg_parity.resolve_pinned_rg_binary()
+    if rg_binary is None:
+        pytest.skip("ripgrep binary not available for #269 root-ignore-file outcome coverage")
+    return root, _force_no_native_binary_env(rg_binary)
+
+
+def test_plain_text_search_excludes_gitignored_file_via_python_bootstrap_passthrough(
+    non_git_root_gitignore_corpus: tuple[Path, dict[str, str]],
+) -> None:
+    """Exercises `bootstrap.py::_run_rg_passthrough` directly: a bare
+    `tg search` with no complicating flags stays on bootstrap's own fast path and never reaches
+    `cli/main.py`'s full CLI."""
+    root, env = non_git_root_gitignore_corpus
+
+    result = _run_tg_search(["--no-heading", "needle", "."], cwd=root, env=env)
+
+    assert result.returncode == 0, f"stdout={result.stdout!r}\nstderr={result.stderr}"
+    matched_files = _matched_files_from_plain_text(result.stdout)
+    assert matched_files == {"a.txt"}, (
+        "plain-text `tg search` (bootstrap._run_rg_passthrough) must exclude the gitignored "
+        f"file in a non-git directory (task #269): got {matched_files}\n"
+        f"stdout={result.stdout!r}\nstderr={result.stderr}"
+    )
+
+
+def test_json_search_excludes_gitignored_file_via_python_ripgrep_backend(
+    non_git_root_gitignore_corpus: tuple[Path, dict[str, str]],
+) -> None:
+    """Exercises `RipgrepBackend._build_cmd` (via `cli/main.py`'s full CLI): a bare `--json`
+    is one of bootstrap's `_TG_ONLY_SEARCH_FLAGS`, so it routes to the full CLI, where
+    `RipgrepBackend.search()` (json_mode=True) is the engine actually invoked whenever no
+    native binary is discoverable."""
+    root, env = non_git_root_gitignore_corpus
+
+    result = _run_tg_search(["--json", "needle", "."], cwd=root, env=env)
+
+    assert result.returncode == 0, f"stdout={result.stdout!r}\nstderr={result.stderr}"
+    payload = json.loads(result.stdout)
+    assert payload["routing_backend"] == "RipgrepBackend", payload
+    json_files = {_normalize_path_str(str(p)) for p in payload["matched_file_paths"]}
+    json_basenames = {Path(p).name for p in json_files}
+    assert json_basenames == {"a.txt"}, (
+        "`tg search --json` (RipgrepBackend._build_cmd) must exclude the gitignored file: "
+        f"got {json_files}\nstdout={result.stdout!r}"
+    )
+
+
+def test_plain_text_and_json_agree_on_the_same_one_file_set(
+    non_git_root_gitignore_corpus: tuple[Path, dict[str, str]],
+) -> None:
+    """The core #264/#269 claim ported to the Python-only channel: an output-format flag must
+    never change WHICH FILES are searched. A test that only checks parity (not the absolute
+    correct set) would have passed BEFORE this fix too, since both Python implementations
+    shared the identical defect -- so this is deliberately a THIRD assertion alongside the two
+    single-surface tests above, never a substitute for them."""
+    root, env = non_git_root_gitignore_corpus
+
+    plain = _run_tg_search(["--no-heading", "needle", "."], cwd=root, env=env)
+    as_json = _run_tg_search(["--json", "needle", "."], cwd=root, env=env)
+
+    assert plain.returncode == 0 and as_json.returncode == 0
+    plain_files = _matched_files_from_plain_text(plain.stdout)
+    payload = json.loads(as_json.stdout)
+    json_files = {Path(_normalize_path_str(str(p))).name for p in payload["matched_file_paths"]}
+
+    assert plain_files == json_files == {"a.txt"}
+
+
+@pytest.mark.parametrize(
+    "flag",
+    ["--no-ignore", "--no-ignore-vcs", "--no-ignore-files", "-u"],
+)
+def test_ignore_disabling_flag_restores_the_gitignored_file_via_python_bootstrap_passthrough(
+    non_git_root_gitignore_corpus: tuple[Path, dict[str, str]],
+    flag: str,
+) -> None:
+    """Regression control for the fix's escape hatches, ported from PR #744's outcome test:
+    each of `--no-ignore` / `--no-ignore-vcs` / `--no-ignore-files` must still search BOTH
+    files (only `.gitignore` exists in this fixture, so `--no-ignore-vcs` and
+    `--no-ignore-files` behave identically to `--no-ignore` here). Proves the shared
+    `root_ignore_file_args` gating is load-bearing end-to-end through the real CLI, not just at
+    the unit-test level -- without it, an explicit `--ignore-file` would silently resurrect the
+    rule the user asked to disable (verified live against rg 15.1.0 in the #264 PR; reused, not
+    re-derived, per this task's brief).
+
+    `-u` (rg's documented `--no-ignore` alias) is included here as the independent-gate
+    BLOCKING finding from this task's first pass: it was not observed by either call site's
+    gating at all, so the injected `--ignore-file` (immune to `--no-ignore` by design) silently
+    resurrected the ignored file under `-u` -- making `-u` STRICTER than passing no flag at
+    all. Measured pre-fix (this exact regression, `TG_DISABLE_NATIVE_TG=1`, `tg 1.98.3`):
+    `-u needle .` returned only the non-ignored file, identical to a bare search with no flag."""
+    root, env = non_git_root_gitignore_corpus
+
+    result = _run_tg_search(["--no-heading", flag, "needle", "."], cwd=root, env=env)
+
+    assert result.returncode == 0, f"stdout={result.stdout!r}\nstderr={result.stderr}"
+    matched_files = _matched_files_from_plain_text(result.stdout)
+    assert matched_files == {"a.txt", "skipme.txt"}, (
+        f"{flag} must restore the gitignored file: got {matched_files}\n"
+        f"stdout={result.stdout!r}\nstderr={result.stderr}"
+    )
+
+
+@pytest.mark.parametrize("flag", ["--no-ignore", "-u"])
+def test_ignore_disabling_flag_restores_the_gitignored_file_via_python_ripgrep_backend_json(
+    non_git_root_gitignore_corpus: tuple[Path, dict[str, str]],
+    flag: str,
+) -> None:
+    """The `--json` counterpart of the escape-hatch control above, on the SECOND Python
+    implementation (`RipgrepBackend._build_cmd`, via `cli/main.py`'s full CLI): a bare `--json`
+    is one of bootstrap's `_TG_ONLY_SEARCH_FLAGS`, so `--json -u` and `--json --no-ignore` both
+    land on `RipgrepBackend.search()`, never on `_run_rg_passthrough`. Independent-gate
+    non-blocking finding: this file previously only asserted `--json` was CORRECT (the
+    excludes-gitignored-file tests above), never that its escape hatches worked -- an
+    argv-construction-only check (`test_ripgrep_backend.py`'s unit coverage) is not the same as
+    an OUTCOME check through the real CLI + real rg (the exact standard #744's gate held the
+    plain-text side to)."""
+    root, env = non_git_root_gitignore_corpus
+
+    result = _run_tg_search(["--json", flag, "needle", "."], cwd=root, env=env)
+
+    assert result.returncode == 0, f"stdout={result.stdout!r}\nstderr={result.stderr}"
+    payload = json.loads(result.stdout)
+    assert payload["routing_backend"] == "RipgrepBackend", payload
+    basenames = {Path(_normalize_path_str(str(p))).name for p in payload["matched_file_paths"]}
+    assert basenames == {"a.txt", "skipme.txt"}, (
+        f"{flag} must restore the gitignored file via --json too: got {basenames}\n"
+        f"stdout={result.stdout!r}"
+    )
+
+
+def test_git_repo_cell_does_not_regress_via_python_bootstrap_passthrough(tmp_path: Path) -> None:
+    """Inside a real git repo, real rg's own auto-discovery already honors the root
+    `.gitignore` (require_git defaults true and is satisfied) -- this fix must not add a
+    SECOND, redundant `--ignore-file` that changes behavior there. `--ignore-file` ranks below
+    rg's auto-discovered rules, so redundant-not-harmful is the expected shape (reused from the
+    #264 PR's live verification), but this test pins the OUTCOME regardless of mechanism."""
+    rg_parity = _helpers()
+    rg_binary = rg_parity.resolve_pinned_rg_binary()
+    if rg_binary is None:
+        pytest.skip("ripgrep binary not available for #269 root-ignore-file outcome coverage")
+
+    root = tmp_path / "task-269-git-repo"
+    _write_non_git_root_gitignore_corpus(root)
+    init = subprocess.run(
+        ["git", "init", "-q"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if init.returncode != 0:
+        pytest.skip(f"git init unavailable for the control cell: {init.stderr}")
+    env = _force_no_native_binary_env(rg_binary)
+
+    result = _run_tg_search(["--no-heading", "needle", "."], cwd=root, env=env)
+
+    assert result.returncode == 0, f"stdout={result.stdout!r}\nstderr={result.stderr}"
+    matched_files = _matched_files_from_plain_text(result.stdout)
+    assert matched_files == {"a.txt"}, (
+        f"git-repo cell must stay correct (no regression): got {matched_files}\n"
+        f"stdout={result.stdout!r}\nstderr={result.stderr}"
+    )
+
+
+# --- Task #269 independent-gate re-gate FIX-1 (BLOCKING, SILENT): a pattern-source flag
+# (`--file`/`-f`/attached `-e<val>`) made `_search_path_args_raw` misread the real search
+# target PATH as the bare pattern, so `_run_rg_passthrough` silently injected CWD's root
+# `.gitignore` instead of the actual target directory's. Reproduces the independent gate's
+# exact measured table shape: cwd holds a root ignore file that must NOT apply; the real
+# target (an explicit PATH positional elsewhere) has its own ignore file that MUST.
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    [
+        ["--file", "pats.txt"],
+        ["-f", "pats.txt"],
+        ["-fpats.txt"],
+        ["-eneedle"],
+    ],
+    ids=["--file", "-f", "-fpats.txt-attached", "-eneedle-attached"],
+)
+def test_pattern_source_flag_injects_the_targets_ignore_file_not_cwds(
+    tmp_path: Path, extra_args: list[str]
+) -> None:
+    rg_parity = _helpers()
+    rg_binary = rg_parity.resolve_pinned_rg_binary()
+    if rg_binary is None:
+        pytest.skip("ripgrep binary not available for #269 root-ignore-file outcome coverage")
+
+    cwd_root = tmp_path / "task-269-wrong-root"
+    other_dir = cwd_root / "otherdir"
+    other_dir.mkdir(parents=True)
+    # cwd's OWN root ignore file must NOT apply -- it excludes a name that isn't even present,
+    # so its presence alone (mis-applied) wouldn't be visible; what actually distinguishes a
+    # regression is that `otherdir`'s ignore file (which excludes b.log) gets bypassed instead.
+    (cwd_root / ".gitignore").write_text("should-not-apply.log\n", encoding="utf-8")
+    (other_dir / ".gitignore").write_text("b.log\n", encoding="utf-8")
+    (other_dir / "a.txt").write_text("needle\n", encoding="utf-8")
+    (other_dir / "b.log").write_text("needle\n", encoding="utf-8")
+    (cwd_root / "pats.txt").write_text("needle\n", encoding="utf-8")
+    env = _force_no_native_binary_env(rg_binary)
+
+    args = ["--no-heading", *extra_args, "otherdir"]
+    result = _run_tg_search(args, cwd=cwd_root, env=env)
+
+    assert result.returncode == 0, f"argv={args}\nstdout={result.stdout!r}\nstderr={result.stderr}"
+    matched_files = {Path(f).name for f in _matched_files_from_plain_text(result.stdout)}
+    assert matched_files == {"a.txt"}, (
+        f"{extra_args}: must honor otherdir's own .gitignore (excluding b.log), not cwd's "
+        f"(which would leave both present): got {matched_files}\n"
+        f"stdout={result.stdout!r}\nstderr={result.stderr}"
+    )
+
+
+def test_dash_e_unattached_control_still_honors_the_targets_ignore_file(tmp_path: Path) -> None:
+    """Control for the parametrized regression above: the un-attached `-e needle` form already
+    worked before this fix (it was already recognized as a pattern-source flag) -- pins that
+    this fix did not change its behavior."""
+    rg_parity = _helpers()
+    rg_binary = rg_parity.resolve_pinned_rg_binary()
+    if rg_binary is None:
+        pytest.skip("ripgrep binary not available for #269 root-ignore-file outcome coverage")
+
+    cwd_root = tmp_path / "task-269-wrong-root-control"
+    other_dir = cwd_root / "otherdir"
+    other_dir.mkdir(parents=True)
+    (cwd_root / ".gitignore").write_text("should-not-apply.log\n", encoding="utf-8")
+    (other_dir / ".gitignore").write_text("b.log\n", encoding="utf-8")
+    (other_dir / "a.txt").write_text("needle\n", encoding="utf-8")
+    (other_dir / "b.log").write_text("needle\n", encoding="utf-8")
+    env = _force_no_native_binary_env(rg_binary)
+
+    result = _run_tg_search(["--no-heading", "-e", "needle", "otherdir"], cwd=cwd_root, env=env)
+
+    assert result.returncode == 0, f"stdout={result.stdout!r}\nstderr={result.stderr}"
+    matched_files = {Path(f).name for f in _matched_files_from_plain_text(result.stdout)}
+    assert matched_files == {"a.txt"}
+
+
+# --- Task #269 independent-gate re-gate BLOCKING-3 (introduced by the FIX-1 round itself) +
+# NB-1: the FIX-1 round's `arg.startswith(("-e", "-f"))` check only matched `-e`/`-f` as
+# literally the first character of the token, missing rg's own accepted MID-BUNDLE form
+# (`-ieneedle` == `-i -e needle`). `-ie needle otherdir` / `-if pats.txt otherdir` are pinned
+# explicitly here (not just their attached siblings) because they produced the right answer BY
+# ACCIDENT under the bug -- the un-consumed value token got swept up as the bare pattern
+# instead of a path, which happened to still leave the real PATH correctly identified. Without
+# pinning them, a fix that only closed the attached form would leave this class silently open.
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    [
+        ["-ieneedle"],
+        ["-ie", "needle"],
+        ["-ifpats.txt"],
+        ["-if", "pats.txt"],
+    ],
+    ids=["-ieneedle-attached", "-ie-separate-value", "-ifpats.txt-attached", "-if-separate-value"],
+)
+def test_mid_bundle_pattern_source_flag_injects_the_targets_ignore_file_not_cwds(
+    tmp_path: Path, extra_args: list[str]
+) -> None:
+    rg_parity = _helpers()
+    rg_binary = rg_parity.resolve_pinned_rg_binary()
+    if rg_binary is None:
+        pytest.skip("ripgrep binary not available for #269 root-ignore-file outcome coverage")
+
+    cwd_root = tmp_path / "task-269-wrong-root-mid-bundle"
+    other_dir = cwd_root / "otherdir"
+    other_dir.mkdir(parents=True)
+    (cwd_root / ".gitignore").write_text("should-not-apply.log\n", encoding="utf-8")
+    (other_dir / ".gitignore").write_text("b.log\n", encoding="utf-8")
+    (other_dir / "a.txt").write_text("needle\n", encoding="utf-8")
+    (other_dir / "b.log").write_text("needle\n", encoding="utf-8")
+    (cwd_root / "pats.txt").write_text("needle\n", encoding="utf-8")
+    env = _force_no_native_binary_env(rg_binary)
+
+    args = ["--no-heading", *extra_args, "otherdir"]
+    result = _run_tg_search(args, cwd=cwd_root, env=env)
+
+    assert result.returncode == 0, f"argv={args}\nstdout={result.stdout!r}\nstderr={result.stderr}"
+    matched_files = {Path(f).name for f in _matched_files_from_plain_text(result.stdout)}
+    assert matched_files == {"a.txt"}, (
+        f"{extra_args}: must honor otherdir's own .gitignore (excluding b.log), not cwd's "
+        f"(which would leave both present): got {matched_files}\n"
+        f"stdout={result.stdout!r}\nstderr={result.stderr}"
+    )
+
+
+def test_nb1_mid_bundle_non_pattern_source_flag_does_not_misread_pattern_as_path(
+    tmp_path: Path,
+) -> None:
+    """NB-1: `-im 5 needle otherdir` (`-i -m 5`) is not a pattern-source form -- "needle" is
+    the real bare pattern, "otherdir" the real path. Outcome-level pin that the fix did not
+    just avoid a wrong file set (root_ignore_file_args already no-ops on a nonexistent
+    "needle" root either way) but that the search itself still finds the right file under the
+    real target's own ignore rules."""
+    rg_parity = _helpers()
+    rg_binary = rg_parity.resolve_pinned_rg_binary()
+    if rg_binary is None:
+        pytest.skip("ripgrep binary not available for #269 root-ignore-file outcome coverage")
+
+    cwd_root = tmp_path / "task-269-nb1"
+    other_dir = cwd_root / "otherdir"
+    other_dir.mkdir(parents=True)
+    (other_dir / ".gitignore").write_text("b.log\n", encoding="utf-8")
+    (other_dir / "a.txt").write_text("needle\n", encoding="utf-8")
+    (other_dir / "b.log").write_text("needle\n", encoding="utf-8")
+    env = _force_no_native_binary_env(rg_binary)
+
+    result = _run_tg_search(
+        ["--no-heading", "-im", "5", "needle", "otherdir"], cwd=cwd_root, env=env
+    )
+
+    assert result.returncode == 0, f"stdout={result.stdout!r}\nstderr={result.stderr}"
+    matched_files = {Path(f).name for f in _matched_files_from_plain_text(result.stdout)}
+    assert matched_files == {"a.txt"}
+
+
+# --- Task #269 independent-gate FINAL-GATE BLOCKING-1: rg's grammar is ORDER-INDEPENDENT (a
+# pattern-source flag may appear before OR after the positional PATH), but
+# `_search_path_args_raw` was a single left-to-right pass that only learned "a pattern is
+# already supplied" at the MOMENT it encountered the flag -- a PATH positional occurring
+# BEFORE the flag in argv was silently misread as the bare pattern, and the WRONG root's
+# `.gitignore` got injected. This is the independent gate's own measured repro, reproduced
+# here at the outcome level: `sub` (the real search target, appearing FIRST) has its own
+# `.gitignore`; cwd's `.gitignore` must NOT apply. Plain-text and `--json` are both asserted so
+# a regression confined to only one Python implementation cannot hide behind the other.
+
+
+def test_path_before_pattern_source_flag_honors_the_targets_own_ignore_file(
+    tmp_path: Path,
+) -> None:
+    rg_parity = _helpers()
+    rg_binary = rg_parity.resolve_pinned_rg_binary()
+    if rg_binary is None:
+        pytest.skip("ripgrep binary not available for #269 root-ignore-file outcome coverage")
+
+    cwd_root = tmp_path / "task-269-blocking1"
+    sub = cwd_root / "sub"
+    sub.mkdir(parents=True)
+    (cwd_root / ".gitignore").write_text("should-not-apply.log\n", encoding="utf-8")
+    (sub / ".gitignore").write_text("d.log\n", encoding="utf-8")
+    (sub / "c.txt").write_text("needle\n", encoding="utf-8")
+    (sub / "d.log").write_text("needle\n", encoding="utf-8")
+    env = _force_no_native_binary_env(rg_binary)
+
+    plain = _run_tg_search(["--no-heading", "sub", "-eneedle"], cwd=cwd_root, env=env)
+    as_json = _run_tg_search(["--json", "sub", "-eneedle"], cwd=cwd_root, env=env)
+
+    assert plain.returncode == 0, f"stdout={plain.stdout!r}\nstderr={plain.stderr}"
+    assert as_json.returncode == 0, f"stdout={as_json.stdout!r}\nstderr={as_json.stderr}"
+    plain_files = {Path(f).name for f in _matched_files_from_plain_text(plain.stdout)}
+    payload = json.loads(as_json.stdout)
+    json_files = {Path(_normalize_path_str(str(p))).name for p in payload["matched_file_paths"]}
+
+    assert plain_files == json_files == {"c.txt"}, (
+        f"PATH-before-flag ordering must honor sub's own .gitignore on both surfaces: "
+        f"plain={plain_files} json={json_files}\n"
+        f"plain stdout={plain.stdout!r}\njson stdout={as_json.stdout!r}"
+    )
+
+
+def test_path_before_pattern_source_flag_injects_nothing_when_target_has_no_ignore_file(
+    tmp_path: Path,
+) -> None:
+    """The independent gate's other measured row: `otherdir` has NO ignore file of its own --
+    cwd's `.gitignore` must not leak in, so nothing should be filtered at all."""
+    rg_parity = _helpers()
+    rg_binary = rg_parity.resolve_pinned_rg_binary()
+    if rg_binary is None:
+        pytest.skip("ripgrep binary not available for #269 root-ignore-file outcome coverage")
+
+    cwd_root = tmp_path / "task-269-blocking1-no-ignore"
+    other_dir = cwd_root / "otherdir"
+    other_dir.mkdir(parents=True)
+    (cwd_root / ".gitignore").write_text("*.log\n", encoding="utf-8")
+    (other_dir / "a.txt").write_text("needle\n", encoding="utf-8")
+    (other_dir / "b.log").write_text("needle\n", encoding="utf-8")
+    env = _force_no_native_binary_env(rg_binary)
+
+    result = _run_tg_search(["--no-heading", "otherdir", "-eneedle"], cwd=cwd_root, env=env)
+
+    assert result.returncode == 0, f"stdout={result.stdout!r}\nstderr={result.stderr}"
+    matched_files = {Path(f).name for f in _matched_files_from_plain_text(result.stdout)}
+    assert matched_files == {"a.txt", "b.log"}, (
+        f"cwd's *.log rule must NOT leak into a search rooted at otherdir: got {matched_files}\n"
+        f"stdout={result.stdout!r}\nstderr={result.stderr}"
+    )

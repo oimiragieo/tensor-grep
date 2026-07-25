@@ -340,6 +340,23 @@ jobs:
             echo "no .tg-registration.toml present; skipping registration check"
           fi
 
+      # rg-argv-grammar differential fuzz (task #269): five rounds of the #264-class root-
+      # `.gitignore` fix each found "an argv form nobody enumerated" in
+      # `bootstrap._search_path_args_raw` (the Python-only rg-passthrough's positional-path
+      # extraction, whenever no compiled native `tg` binary is discoverable). Hand-written
+      # enumerations kept missing a dimension (flag spelling, mid-bundle attachment, and
+      # crucially argv ORDERING — rg's own grammar is order-independent, a single left-to-right
+      # parse pass is not). This gate replaces enumeration with an independent whole-grammar
+      # model of rg 15.1.0 (built from `rg --help`'s own flag tables, kept deliberately as the
+      # ONLY such model in the repo — do not add a second one) and differential-fuzzes it
+      # against the real function over 65k+ argv cases in ~3 seconds. Self-contained (only
+      # needs `src/`, no dev deps), so it runs here rather than in `test-python` below. A future
+      # rg upgrade must refresh `SHORT_VALUE`/`LONG_VALUE` in the script from the new
+      # `rg --help` output (see the script's own docstring) — this gate is what catches a
+      # missed refresh, not a substitute for doing it.
+      - name: "rg argv grammar differential fuzz (task #269)"
+        run: python .claude/rg_argv_differential_fuzz.py --seed 20260725 --iterations 65000
+
   test-python:
     name: test-python (${{ matrix.os }}, py${{ matrix.python-version }})
     needs: smoke
