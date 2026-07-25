@@ -1,6 +1,56 @@
 from dataclasses import dataclass, field
 
 
+def strip_line_terminator(text: str) -> str:
+    r"""Strip AT MOST one trailing ``\n`` from a raw line's text -- never a trailing ``\r``.
+
+    ``MatchLine.text`` must hold a line's content with its own terminating newline removed,
+    but with everything else -- including a genuine trailing ``\r`` from a CRLF-terminated
+    source line -- left byte-for-byte intact, matching how real ``rg`` reports a CRLF line's
+    content (verified directly against ``rg.exe``: its plain-text AND ``--json`` output both
+    keep the file's own ``\r``).
+
+    Every backend used to call ``text.rstrip("\n\r")`` / ``text.rstrip("\r\n")`` here, which
+    strips ANY trailing run of ``\r``/``\n`` in ANY order -- e.g. for a CRLF line whose
+    content itself legitimately ends in ``\r`` (Rust's line-splitter, and a raw ``rg --json``
+    "lines" field, both include that ``\r``), this silently ate it too. On Windows that
+    divergence used to be masked (or, once the rg-parity test suites started comparing raw
+    bytes instead of `text=True`-decoded strings, exposed) by the SEPARATE stdout
+    universal-newlines bug this fix is paired with (task #262) -- but even with stdout fixed,
+    every one of these `rstrip` call sites would still corrupt a CRLF file's OWN `\r` on the
+    way in, independent of anything happening at the stdout layer. ``removesuffix`` only ever
+    removes the single trailing ``\n`` that every engine here is known to append; a real
+    trailing ``\r`` survives.
+    """
+    return text.removesuffix("\n")
+
+
+def split_source_lines(text: str) -> list[str]:
+    r"""Split a whole file's decoded text into per-line strings for line-oriented matching,
+    keeping any trailing ``\r`` from a CRLF line intact.
+
+    Never ``str.splitlines()`` (and, for a StringZilla ``Str``, never its own
+    ``.splitlines()`` either): both treat ``\r\n``, a bare ``\r``, and a bare ``\n`` as
+    equivalent line breaks, and BOTH strip the terminator characters entirely -- silently
+    eating a CRLF line's genuine trailing ``\r`` before a single match is even evaluated,
+    independent of anything fixed in ``strip_line_terminator`` or the stdout-writing layer
+    (task #262). Splitting on a bare ``\n`` only preserves that ``\r`` as part of the
+    line's own content, matching how ``rg`` and the Rust engine both treat a CRLF file.
+
+    Mirrors ``str.splitlines()``'s line COUNT for well-formed trailing-newline input by
+    dropping the one spurious empty element a final ``\n`` produces via a plain
+    ``str.split("\n")`` (``"a\nb\n".split("\n")`` has a trailing ``""`` that
+    ``"a\nb\n".splitlines()`` does not) -- so a caller that assumed that invariant does not
+    silently gain an extra blank line; only a genuine embedded/trailing ``\r`` now survives.
+    """
+    if text == "":
+        return []
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
 @dataclass(frozen=True)
 class MatchLine:
     line_number: int

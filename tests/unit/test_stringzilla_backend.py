@@ -46,6 +46,63 @@ def test_stringzilla_exact_match(backend, tmp_path):
     assert result.routing_worker_count == 1
 
 
+def test_stringzilla_plain_path_preserves_crlf_source_line(backend, tmp_path, monkeypatch):
+    """task #262 BLOCKING finding: `_load_searchable_text`'s non-binary-as-text branch used
+    to open the file via `open(file_path, encoding="utf-8")` (Python default universal-
+    newlines TEXT mode, translating a real `\\r\\n` to `\\n` ON READ) and then split with
+    `sz.Str.splitlines()` -- silently stripping a CRLF file's own `\\r` even when the file's
+    plain-text (non `-F`) output otherwise agreed with `rg`. Real `rg` preserves that `\\r`
+    (verified directly against `rg.exe`); this must too, on both the plain path (this test)
+    and the `-F` trigram-index path (the sibling test below).
+    """
+    monkeypatch.setenv("TENSOR_GREP_STRING_INDEX", "0")
+    crlf_log = tmp_path / "crlf.log"
+    crlf_log.write_bytes(b"alpha needle one\r\nbeta line two\r\n")
+
+    result = backend.search(str(crlf_log), "needle", config=SearchConfig(fixed_strings=False))
+    assert result.total_matches == 1
+    assert result.matches[0].text == "alpha needle one\r"
+
+    lf_log = tmp_path / "lf.log"
+    lf_log.write_text("alpha needle one\nbeta line two\n", encoding="utf-8", newline="\n")
+    lf_result = backend.search(str(lf_log), "needle", config=SearchConfig(fixed_strings=False))
+    assert lf_result.matches[0].text == "alpha needle one"
+
+
+def test_stringzilla_fixed_strings_index_path_preserves_crlf_source_line(tmp_path, monkeypatch):
+    """The `-F` / trigram-index sibling of the test above -- `_search_with_index` had the
+    identical `content.splitlines()` defect independently of `_load_searchable_text`'s own
+    read-mode bug, so both must be exercised."""
+    monkeypatch.setenv("TENSOR_GREP_STRING_INDEX", "0")
+    StringZillaBackend._clear_shared_caches()
+
+    crlf_log = tmp_path / "crlf.log"
+    crlf_log.write_bytes(b"alpha needle one\r\nbeta line two\r\n")
+
+    result = StringZillaBackend().search(
+        str(crlf_log), "needle", config=SearchConfig(fixed_strings=True)
+    )
+    assert result.total_matches == 1
+    assert result.matches[0].text == "alpha needle one\r"
+
+
+def test_stringzilla_does_not_treat_a_bare_cr_as_a_line_break(backend, tmp_path, monkeypatch):
+    """Ground truth verified directly against `rg.exe`: a file with ONLY bare `\\r` line
+    endings (no `\\n` at all) is ONE line to `rg` (it splits on `\\n` alone), matched_lines=1.
+    Before task #262, StringZilla's own `Str.splitlines()` (and Python's `str.splitlines()`
+    in the trigram-index path) treated the bare `\\r` as a line break too, silently
+    reporting a phantom second match neither `rg` nor the fixed CPU/Rust paths ever did.
+    """
+    monkeypatch.setenv("TENSOR_GREP_STRING_INDEX", "0")
+    cr_only_log = tmp_path / "cronly.log"
+    cr_only_log.write_bytes(b"line one\rline two\r")
+
+    result = backend.search(str(cr_only_log), "line", config=SearchConfig(fixed_strings=False))
+    assert result.total_matches == 1
+    assert result.matches[0].line_number == 1
+    assert result.matches[0].text == "line one\rline two\r"
+
+
 def test_stringzilla_no_matches(backend, tmp_path):
     log_file = tmp_path / "sys.log"
     log_file.write_text("INFO ok\nDEBUG trace\n", encoding="utf-8")
@@ -110,6 +167,56 @@ def test_stringzilla_reuses_persistent_trigram_index_across_instances(tmp_path, 
     assert second.total_matches == 1
     assert second.matches[0].line_number == 3
     assert second.routing_reason == "stringzilla_fixed_strings_index_cache"
+
+
+def test_stringzilla_rejects_stale_pre_fix_persistent_index(tmp_path, monkeypatch):
+    """task #262 BLOCKING finding #2: the persisted index payload used to carry only
+    `file_signature = (mtime_ns, size)`, with no format version. `(mtime, size)` proves the
+    file's BYTES are unchanged; it cannot prove the *interpretation* of those bytes is still
+    current -- a cache written by pre-fix code (CRLF `\\r` already stripped from `lines`)
+    would silently defeat this fix and be served forever (same file, unchanged mtime/size),
+    reading as WORSE than pre-fix (which was byte-identical to `rg` by cancellation with the
+    stdout bug). Simulates exactly that: a hand-written on-disk cache with no
+    `format_version` key, same file_signature as the real file, but pre-fix (CRLF-stripped)
+    `lines`. Must be rejected and transparently recomputed + rewritten, not served.
+    """
+    import json
+
+    from tensor_grep.backends.stringzilla_backend import _STRING_INDEX_CACHE_FORMAT_VERSION
+
+    cache_dir = tmp_path / "sz-cache"
+    monkeypatch.setenv("TENSOR_GREP_STRING_INDEX_DIR", str(cache_dir))
+    monkeypatch.setenv("TENSOR_GREP_STRING_INDEX", "1")
+    StringZillaBackend._clear_shared_caches()
+
+    log_file = tmp_path / "sys.log"
+    log_file.write_bytes(b"alpha needle one\r\nbeta line two\r\n")
+
+    backend = StringZillaBackend()
+    cache_path = backend._get_index_cache_path(str(log_file), False, False)
+    # The version lives in the cache PATH itself, not just the payload -- see the identical
+    # assertion + comment on CPUBackend's sibling test
+    # (test_rejects_stale_pre_fix_persistent_literal_index) for why the payload-only check
+    # below cannot catch a filename regression that silently drops the `-v{VERSION}` suffix.
+    assert cache_path.name.endswith(f"-v{_STRING_INDEX_CACHE_FORMAT_VERSION}.json")
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    stale_payload = {
+        # No "format_version" key at all -- the exact pre-#262 on-disk shape.
+        "file_signature": list(backend._build_file_signature(str(log_file))),
+        "lines": ["alpha needle one", "beta line two"],  # pre-fix: \r already stripped
+        "trigram_index": {"alp": [0], "lph": [0], "pha": [0]},
+    }
+    cache_path.write_text(json.dumps(stale_payload), encoding="utf-8")
+
+    result = backend.search(
+        str(log_file), "alpha needle one", config=SearchConfig(fixed_strings=True)
+    )
+    assert result.routing_reason == "stringzilla_fixed_strings_index"  # fresh, not "_cache"
+    assert result.matches[0].text == "alpha needle one\r"
+
+    rewritten = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert rewritten["format_version"] == _STRING_INDEX_CACHE_FORMAT_VERSION
+    assert rewritten["lines"] == ["alpha needle one\r", "beta line two\r"]
 
 
 def test_stringzilla_invalidates_persistent_trigram_index_when_file_changes(tmp_path, monkeypatch):
@@ -271,26 +378,33 @@ def test_stringzilla_honors_max_count_non_indexed_path(backend, tmp_path, monkey
 
 
 def test_stringzilla_native_fault_raises_backend_execution_error(tmp_path, monkeypatch):
-    """audit #10: search() previously had no try/except, so a native StringZilla panic
-    (e.g. from ``sz.Str()`` construction) escaped raw instead of surfacing as
-    BackendExecutionError per the Backend Fail-Closed Contract (base.py). A caller's
-    `except BackendExecutionError` handler (main.py's per-file CPU-fallback retry,
-    cli/main.py:6756-6761) must catch it instead of the search crashing outright."""
-    import stringzilla
+    """audit #10: search() previously had no try/except, so a fault raised anywhere inside
+    it (originally demonstrated via a native ``sz.Str()`` construction failure) escaped raw
+    instead of surfacing as BackendExecutionError per the Backend Fail-Closed Contract
+    (base.py). A caller's `except BackendExecutionError` handler (main.py's per-file
+    CPU-fallback retry, cli/main.py:6756-6761) must catch it instead of the search crashing
+    outright.
 
+    task #262: `search()` no longer constructs an `sz.Str()` at all (the correctness fix
+    replaced native-but-buggy line-splitting with `split_source_lines`, a plain-Python
+    helper shared with CPUBackend), so this now injects the fault at that call site instead
+    -- the *mechanism* under test is the try/except wrapping around the whole method body,
+    not specifically a StringZilla-native failure.
+    """
+    from tensor_grep.backends import stringzilla_backend as sz_backend_module
     from tensor_grep.backends.base import BackendExecutionError
 
     log_file = tmp_path / "sys.log"
     log_file.write_text("ERROR failure\n", encoding="utf-8")
 
-    def _raise_native_panic(*_args, **_kwargs):
+    def _raise_fault(*_args, **_kwargs):
         raise RuntimeError("native stringzilla panic: kaboom")
 
-    monkeypatch.setattr(stringzilla, "Str", _raise_native_panic)
+    monkeypatch.setattr(sz_backend_module, "split_source_lines", _raise_fault)
 
     backend = StringZillaBackend()
     # fixed_strings=False bypasses the pure-Python trigram-index fast path
-    # (_search_with_index) so the native sz.Str() construction is actually exercised.
+    # (_search_with_index) so the patched split_source_lines call is actually exercised.
     with pytest.raises(BackendExecutionError) as exc_info:
         backend.search(str(log_file), "ERROR", config=SearchConfig(fixed_strings=False))
     assert isinstance(exc_info.value, RuntimeError)  # broader `except RuntimeError` still works

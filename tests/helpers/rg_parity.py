@@ -12,6 +12,9 @@ from pathlib import Path
 
 from tensor_grep.cli.rg_contract import RGContractRow
 from tensor_grep.cli.runtime_paths import resolve_ripgrep_binary
+from tensor_grep.core.result import strip_line_terminator
+
+from .byte_parity import decode_for_display, run_bytes
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_DIR = REPO_ROOT / "src"
@@ -45,8 +48,8 @@ class RGParityCase:
 class CommandResult:
     argv: tuple[str, ...]
     returncode: int
-    stdout: str
-    stderr: str
+    stdout: bytes
+    stderr: bytes
 
 
 @dataclass(frozen=True)
@@ -341,7 +344,7 @@ def build_command_env(rg_binary: Path) -> dict[str, str]:
 
 
 def normalize_output(
-    output: str,
+    output: bytes,
     *,
     case: RGParityCase,
     tool: str,
@@ -355,7 +358,7 @@ def normalize_output(
     return tuple(_normalize_plain_lines(output, corpus=corpus))
 
 
-def normalize_stderr(stderr: str, *, corpus: RGParityCorpus) -> tuple[str, ...]:
+def normalize_stderr(stderr: bytes, *, corpus: RGParityCorpus) -> tuple[bytes, ...]:
     return tuple(_normalize_plain_lines(stderr, corpus=corpus))
 
 
@@ -453,17 +456,11 @@ def _run_command(
     cwd: Path,
     env: dict[str, str],
 ) -> CommandResult:
-    completed = subprocess.run(
-        list(argv),
-        cwd=cwd,
-        env=env,
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
+    # Raw bytes only. `text=True`/`encoding=`/`errors="replace"` used to translate a real
+    # `\r\n` to `\n` (universal-newlines mode) and map invalid UTF-8 bytes to U+FFFD before
+    # either arm was ever compared -- both lossy transforms applied identically to rg and tg,
+    # so a genuine divergence between them cancelled out and read as parity (task #262).
+    completed = run_bytes(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL)
     return CommandResult(
         argv=argv,
         returncode=int(completed.returncode),
@@ -478,26 +475,38 @@ def _cli_target(root: Path, path: Path) -> str:
     return path.relative_to(root).as_posix()
 
 
-def _normalize_plain_lines(text: str, *, corpus: RGParityCorpus) -> list[str]:
-    if not text:
+def _normalize_plain_lines(data: bytes, *, corpus: RGParityCorpus) -> list[bytes]:
+    r"""Split on `\n` only and normalize path prefixes/separators. Deliberately does NOT
+    blanket-replace `\r\n` -> `\n` first (the pre-#262 behavior): that collapse applied the
+    identical lossy transform to both the rg and tg arms, so a real CRLF divergence between
+    them cancelled out before comparison ever ran.
+    """
+    if not data:
         return []
-    return [
-        _normalize_line(line, corpus=corpus)
-        for line in text.replace("\r\n", "\n").split("\n")
-        if line
-    ]
+    return [_normalize_line(line, corpus=corpus) for line in data.split(b"\n") if line]
 
 
 def _normalize_machine_output(
-    text: str,
+    data: bytes,
     *,
     tool: str,
     corpus: RGParityCorpus,
 ) -> dict[str, list[tuple[str, int, str]]]:
-    if not text.strip():
+    # The JSON leg's "text" field is normalized via the shared `strip_line_terminator`
+    # (`.removesuffix("\n")`, never `.rstrip("\r\n")`), applied identically to both the
+    # "tg" and "rg" arms below. `.rstrip("\r\n")` strips ANY trailing run of `\r`/`\n`,
+    # which would erase a genuine trailing `\r` from a CRLF source line's own content on
+    # BOTH arms -- the exact both-arms-lossy shape task #262 removed from the raw-byte
+    # comparators in this module; this JSON leg had the identical defect independently.
+    if not data.strip():
         return {"matches": []}
 
-    rows = [json.loads(line) for line in text.splitlines() if line.strip()]
+    # json.loads accepts raw bytes directly (RFC 8259 auto-detects UTF-8/16/32) and decodes
+    # strictly -- no errors="replace" laundering of invalid bytes into U+FFFD before either
+    # arm is compared. ripgrep's own --json output already base64-encodes any non-UTF-8 line
+    # tail into a `bytes` field rather than emitting invalid JSON, so this stays strict
+    # without needing a fallback.
+    rows = [json.loads(line) for line in data.split(b"\n") if line.strip()]
     matches: list[tuple[str, int, str]] = []
 
     if tool == "tg":
@@ -509,7 +518,7 @@ def _normalize_machine_output(
                 matches.append((
                     _normalize_path(str(match["file"]), corpus=corpus),
                     int(match.get("line", match.get("line_number"))),
-                    str(match["text"]).rstrip("\r\n"),
+                    strip_line_terminator(str(match["text"])),
                 ))
             return {"matches": sorted(matches)}
 
@@ -517,7 +526,7 @@ def _normalize_machine_output(
             matches.append((
                 _normalize_path(str(row["file"]), corpus=corpus),
                 int(row.get("line", row.get("line_number"))),
-                str(row["text"]).rstrip("\r\n"),
+                strip_line_terminator(str(row["text"])),
             ))
         return {"matches": sorted(matches)}
 
@@ -539,16 +548,34 @@ def _normalize_rg_json_events(
         matches.append((
             _normalize_path(str(data["path"]["text"]), corpus=corpus),
             int(data["line_number"]),
-            str(data["lines"]["text"]).rstrip("\r\n"),
+            strip_line_terminator(str(data["lines"]["text"])),
         ))
     return {"matches": sorted(matches)}
 
 
-def _normalize_line(line: str, *, corpus: RGParityCorpus) -> str:
-    normalized = line.replace(str(corpus.root), ".")
-    normalized = normalized.replace(corpus.root.as_posix(), ".")
-    normalized = normalized.replace("\\", "/")
-    if normalized.startswith("./"):
+def _normalize_line(line: bytes, *, corpus: RGParityCorpus) -> bytes:
+    # NARROW, byte-level normalization: the pytest tmp-dir prefix (non-contractual on both
+    # engines) and the platform path separator. Never a newline or encoding collapse.
+    #
+    # KNOWN, ACKNOWLEDGED LIMIT (not closed by task #262, independent-gate follow-up):
+    # `.replace(b"\\", b"/")` below runs against the WHOLE line -- this helper does not
+    # parse "path:line:text" apart, so it cannot narrow the replacement to just the leading
+    # path portion without risking a wrong split on content containing its own ":" or "\\".
+    # That means it is still a both-arms-lossy transform in the same shape this PR removed
+    # elsewhere: a real backslash-vs-forward-slash divergence inside MATCHED TEXT content
+    # (not just the file-path prefix) would cancel out here identically on the tg and rg
+    # arms and read as parity. The corpus fixtures this helper compares are plain ASCII
+    # sentinel words with no backslashes in their content, so this has not been observed to
+    # mask a real failure -- but it is a structural gap, not a proven-safe one, and a future
+    # corpus/pattern that legitimately contains a backslash in matched text would not be
+    # caught here. Left as-is rather than risk destabilizing this comparator (used by every
+    # `test_rg_parity_matrix.py` row) with an unproven "path-prefix-only" parse.
+    root_bytes = str(corpus.root).encode("utf-8")
+    root_posix_bytes = corpus.root.as_posix().encode("utf-8")
+    normalized = line.replace(root_bytes, b".")
+    normalized = normalized.replace(root_posix_bytes, b".")
+    normalized = normalized.replace(b"\\", b"/")
+    if normalized.startswith(b"./"):
         normalized = normalized[2:]
     return normalized
 
@@ -562,8 +589,11 @@ def _normalize_path(path: str, *, corpus: RGParityCorpus) -> str:
     return normalized
 
 
-def _display_blob(text: str, *, corpus: RGParityCorpus) -> str:
-    normalized_lines = _normalize_plain_lines(text, corpus=corpus)
+def _display_blob(data: bytes, *, corpus: RGParityCorpus) -> str:
+    normalized_lines = _normalize_plain_lines(data, corpus=corpus)
     if not normalized_lines:
         return "<empty>"
-    return "\n".join(normalized_lines)
+    # decode_for_display uses errors="backslashreplace" -- an invalid byte shows up as a
+    # visible `\xNN` escape rather than collapsing to the same U+FFFD glyph a genuinely
+    # valid replacement character would render as.
+    return "\n".join(decode_for_display(line) for line in normalized_lines)

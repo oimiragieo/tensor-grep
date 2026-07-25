@@ -12,11 +12,27 @@ from typing import ClassVar
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.cli.subprocess_policy import configured_ripgrep_timeout_seconds
 from tensor_grep.core.config import SearchConfig
-from tensor_grep.core.result import MatchLine, SearchResult
+from tensor_grep.core.result import (
+    MatchLine,
+    SearchResult,
+    split_source_lines,
+    strip_line_terminator,
+)
 
 logger = logging.getLogger(__name__)
 _CPU_LITERAL_INDEX_CACHE_MAX_ENTRIES_ENV = "TENSOR_GREP_CPU_LITERAL_INDEX_CACHE_MAX_ENTRIES"
 _DEFAULT_CPU_LITERAL_INDEX_CACHE_MAX_ENTRIES = 512
+# Bumped 1 -> 2 by task #262: the persisted `lines` payload's CRLF semantics changed
+# (a CRLF file's trailing `\r` is now preserved per line instead of silently stripped by
+# the old `Path.read_text().splitlines()` read). `(mtime_ns, size)` alone cannot detect
+# that the *interpretation* of a file's bytes changed, only that the bytes themselves
+# changed -- an on-disk cache written before this fix has byte-identical `lines` content
+# to what a same-file post-fix read would produce MINUS the `\r`, so it would silently
+# defeat the fix (and read as WORSE than pre-fix, which was byte-identical to `rg` by
+# cancellation) until the source file's mtime/size next changed. `_load_literal_index`
+# rejects any payload whose `format_version` does not match, forcing a transparent
+# recompute (and on-disk overwrite) on first use after upgrade.
+_CPU_LITERAL_INDEX_CACHE_FORMAT_VERSION = 2
 
 
 def compute_native_walk_deadline() -> float:
@@ -131,7 +147,22 @@ class CPUBackend(ComputeBackend):
     def _get_prefilter_cache_path(cls, file_path: str, ignore_case: bool) -> Path:
         key = f"{Path(file_path).resolve()}::{int(ignore_case)}"
         digest = hashlib.sha256(key.encode()).hexdigest()
-        return cls._get_prefilter_cache_dir() / f"{digest}.json"
+        # The format version is baked into the FILENAME, not just the payload's own
+        # "format_version" field (task #262 forward-direction finding): an OLDER tg install
+        # sharing this cache dir with a NEWER one (upgrade in place, or two versions on the
+        # same machine) has no idea the payload schema field exists at all, so it would
+        # happily read a v2 payload verbatim and re-corrupt it (observed: a v2 payload's
+        # already-correct `\r` gets a SECOND `\r` appended by the old stdout-writing bug,
+        # worse than either version alone). Versioning the path makes the two physically
+        # unable to share a file -- an old reader just sees `cache miss` on the new path and
+        # a new reader never opens the old one, no cross-version read in either direction.
+        # A pre-#262 `{digest}.json` (no `-vN` suffix) is now permanently orphaned rather
+        # than overwritten -- bounded by ordinary cache size, not a leak, and reaping it
+        # would defeat the point (an old reader still using it needs it to stay put).
+        return (
+            cls._get_prefilter_cache_dir()
+            / f"{digest}-v{_CPU_LITERAL_INDEX_CACHE_FORMAT_VERSION}.json"
+        )
 
     @staticmethod
     def _build_line_trigram_index(lines: list[str]) -> dict[str, list[int]]:
@@ -198,6 +229,10 @@ class CPUBackend(ComputeBackend):
             payload = json.loads(cache_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return None
+        if payload.get("format_version") != _CPU_LITERAL_INDEX_CACHE_FORMAT_VERSION:
+            # Stale (pre-#262, or any future incompatible) cache -- treat as a miss so the
+            # caller recomputes and overwrites this file with the current format.
+            return None
         if payload.get("file_signature") != list(cache_signature):
             return None
         raw_lines = payload.get("lines")
@@ -233,6 +268,7 @@ class CPUBackend(ComputeBackend):
             return
         cache_path = self._get_prefilter_cache_path(file_path, ignore_case)
         payload = {
+            "format_version": _CPU_LITERAL_INDEX_CACHE_FORMAT_VERSION,
             "file_signature": list(cache_signature),
             "lines": lines,
             "trigram_index": trigram_index,
@@ -421,7 +457,7 @@ class CPUBackend(ComputeBackend):
                 rust_results = rust_results[: config.max_count]
 
             matches = [
-                MatchLine(line_number=r[0], text=str(r[1]).rstrip("\n\r"), file=file_path)
+                MatchLine(line_number=r[0], text=strip_line_terminator(str(r[1])), file=file_path)
                 for r in rust_results
             ]
 
@@ -550,7 +586,15 @@ class CPUBackend(ComputeBackend):
             if prefilter_literal:
                 cached_index = self._load_literal_index(file_path, ignore_case)
                 if cached_index is None:
-                    source_lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+                    # `Path.read_text(...).splitlines()` (the old code here) reads in Python's
+                    # default universal-newlines TEXT mode, which translates every `\r\n` (and a
+                    # bare `\r`) to `\n` on READ -- before `source_lines` ever exists. That
+                    # silently strips a CRLF file's own `\r` regardless of anything fixed at the
+                    # stdout-writing layer (task #262). Read raw bytes and split on a bare `\n`
+                    # only (never `str.splitlines()`, same reasoning) so a genuine trailing `\r`
+                    # survives, matching how the Rust engine and real `rg` both treat it.
+                    decoded = path.read_bytes().decode("utf-8", errors="replace")
+                    source_lines = split_source_lines(decoded)
                     normalized_lines = (
                         [line.lower() for line in source_lines] if ignore_case else source_lines
                     )
@@ -593,6 +637,11 @@ class CPUBackend(ComputeBackend):
                         pass
 
                     if not matched:
+                        # This `line_text` is a throwaway match-test-only decode -- it is
+                        # unconditionally recomputed via `strip_line_terminator` below whenever
+                        # this iteration proceeds to build output, so the `.rstrip("\n\r")` here
+                        # does not affect any MatchLine.text a caller ever sees (task #262 only
+                        # targets the CRLF-fidelity of what actually reaches output).
                         try:
                             line_text = line_bytes.decode("utf-8").rstrip("\n\r")
                             matched = bool(regex_str.search(line_text))
@@ -615,7 +664,7 @@ class CPUBackend(ComputeBackend):
                                 line = line_bytes.decode("latin-1")
                             except Exception:
                                 line = line_bytes.decode("utf-8", errors="replace")
-                        line_text = line.rstrip("\n\r")
+                        line_text = strip_line_terminator(line)
 
                         # Apply python regex search for decoded text to be safe
                         matched = bool(regex_str.search(line_text))
@@ -662,6 +711,9 @@ class CPUBackend(ComputeBackend):
                             pass
 
                         if not matched:
+                            # Throwaway match-test decode -- see the sibling comment above; this
+                            # `line_text` is unconditionally overwritten via
+                            # `strip_line_terminator` before anything is returned.
                             try:
                                 line_text = line_bytes.decode("utf-8").rstrip("\n\r")
                                 matched = bool(regex_str.search(line_text))
@@ -684,7 +736,7 @@ class CPUBackend(ComputeBackend):
                                     line = line_bytes.decode("latin-1")
                                 except Exception:
                                     line = line_bytes.decode("utf-8", errors="replace")
-                            line_text = line.rstrip("\n\r")
+                            line_text = strip_line_terminator(line)
 
                             # Apply python regex search for decoded text to be safe
                             matched = bool(regex_str.search(line_text))
@@ -731,12 +783,12 @@ class CPUBackend(ComputeBackend):
     @staticmethod
     def _decode_line(line_bytes: bytes) -> str:
         try:
-            return line_bytes.decode("utf-8").rstrip("\n\r")
+            return strip_line_terminator(line_bytes.decode("utf-8"))
         except UnicodeDecodeError:
             try:
-                return line_bytes.decode("latin-1").rstrip("\n\r")
+                return strip_line_terminator(line_bytes.decode("latin-1"))
             except Exception:
-                return line_bytes.decode("utf-8", errors="replace").rstrip("\n\r")
+                return strip_line_terminator(line_bytes.decode("utf-8", errors="replace"))
 
     @staticmethod
     def _build_rust_query(pattern: str, config: SearchConfig) -> tuple[str, bool]:
@@ -848,7 +900,7 @@ class CPUBackend(ComputeBackend):
             if config.max_count is not None:
                 rust_results = rust_results[: config.max_count]
             matches = [
-                MatchLine(line_number=r[0], text=str(r[1]).rstrip("\n\r"), file=file_path)
+                MatchLine(line_number=r[0], text=strip_line_terminator(str(r[1])), file=file_path)
                 for r in rust_results
             ]
             return SearchResult(

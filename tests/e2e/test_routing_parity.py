@@ -15,6 +15,34 @@ import pytest
 from tensor_grep.cli.rg_contract import PUBLIC_SEARCH_HELP_FLAGS
 from tensor_grep.cli.runtime_paths import resolve_native_tg_binary
 
+TESTS_DIR = Path(__file__).resolve().parents[1]
+if str(TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(TESTS_DIR))
+
+from helpers.byte_parity import split_lines_preserve_cr  # noqa: E402
+
+
+def _run_and_decode(cmd: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+    r"""Capture raw bytes -- no `text=True` -- then decode strictly, preserving any real
+    `\r` verbatim. `text=True` runs the pipe through Python's universal-newlines
+    TextIOWrapper, which translates a real `\r\n` in a launcher's stdout to `\n` on Windows
+    before this file's launcher-vs-launcher comparisons (`test_routing_parity_matrix`, the
+    help-contract tests) ever see it -- the same lossy transform applied identically to every
+    launcher, so a genuine divergence between them (e.g. the native Rust binary's `println!`
+    vs the Python launcher's own line-printing) would cancel out and read as parity (task
+    #262). `bytes.decode()` (unlike `text=True`) does not perform newline translation, only
+    character decoding, so this keeps every other call site's existing string-based logic
+    working unchanged while closing the OS-level blind spot at the subprocess boundary.
+    """
+    completed_bytes = subprocess.run(cmd, capture_output=True, **kwargs)
+    return subprocess.CompletedProcess(
+        args=completed_bytes.args,
+        returncode=completed_bytes.returncode,
+        stdout=completed_bytes.stdout.decode("utf-8"),
+        stderr=completed_bytes.stderr.decode("utf-8"),
+    )
+
+
 PUBLIC_TOP_LEVEL_COMMANDS = {
     "agent",
     "search",
@@ -106,12 +134,10 @@ def _run_native_front_door(
 ) -> subprocess.CompletedProcess[str]:
     native_binary = _get_native_binary()
     if native_binary is not None:
-        return subprocess.run(
+        return _run_and_decode(
             [native_binary, *args],
             cwd=cwd,
             env=env,
-            capture_output=True,
-            text=True,
         )
 
     cargo_exe = _resolve_cargo_exe()
@@ -119,7 +145,7 @@ def _run_native_front_door(
         pytest.skip("native front door not available in this environment")
 
     manifest_path = Path(__file__).resolve().parents[2] / "rust_core" / "Cargo.toml"
-    return subprocess.run(
+    return _run_and_decode(
         [
             str(cargo_exe),
             "run",
@@ -133,8 +159,6 @@ def _run_native_front_door(
         ],
         cwd=cwd,
         env=env,
-        capture_output=True,
-        text=True,
     )
 
 
@@ -157,7 +181,7 @@ def run_command(
     else:
         raise ValueError(f"Unknown launcher {launcher}")
 
-    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    return _run_and_decode(cmd, cwd=cwd)
 
 
 LAUNCHERS = ["python-m", "native", "bootstrap"]
@@ -427,11 +451,16 @@ def test_routing_parity_matrix(
         )
 
         # To compare stdout/stderr we ignore execution time logs, routing reason logs, or other non-deterministic stuff.
+        # NOTE: split_lines_preserve_cr, not str.splitlines() -- this feeds the direct
+        # `la_stdout == bl_stdout` launcher-vs-launcher comparison below, and
+        # str.splitlines() would silently drop a real `\r`, letting a genuine line-ending
+        # divergence between launchers (e.g. native `println!` vs the Python launcher's own
+        # printing) cancel out identically on both sides (task #262).
         def clean_output(output: str) -> str:
             output = output.replace("bootstrap.py", "python -m tensor_grep")
             lines = [
                 line
-                for line in output.splitlines()
+                for line in split_lines_preserve_cr(output)
                 if not line.startswith("[routing]") and not line.startswith("[stats]")
             ]
             return "\n".join(lines)

@@ -6,16 +6,32 @@ from pathlib import Path
 
 import pytest
 
+TESTS_DIR = Path(__file__).resolve().parents[1]
+if str(TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(TESTS_DIR))
+
+from helpers.byte_parity import decode_for_display, split_lines_preserve_cr  # noqa: E402
+
 
 @pytest.fixture(scope="module")
 def golden_fixture_dir(tmp_path_factory):
     dir_path = tmp_path_factory.mktemp("golden_fixtures")
     text_dir = dir_path / "text"
     text_dir.mkdir()
+    # `newline="\n"` is deliberate on every write below: without it, `Path.write_text()`'s
+    # default universal-newlines mode translates `\n` -> `\r\n` on Windows, so this fixture
+    # would be CRLF on disk even though every literal here is LF-only. Both real `rg` and
+    # tg's rg-routed path correctly preserve a file's own trailing `\r` in a matched line
+    # (verified directly against a real `rg.exe`), so an unpinned-newline fixture turned an
+    # innocuous test-authoring accident into a spurious CRLF "mismatch" once task #262 made
+    # this suite's comparisons byte-honest -- pinning input determinism here is the fix, not
+    # a new normalization on the comparison side.
     (text_dir / "file1.txt").write_text(
-        "hello world\nfoo bar baz\ngoodbye world\n", encoding="utf-8"
+        "hello world\nfoo bar baz\ngoodbye world\n", encoding="utf-8", newline="\n"
     )
-    (text_dir / "file2.txt").write_text("nothing here\nhello again friend\nend\n", encoding="utf-8")
+    (text_dir / "file2.txt").write_text(
+        "nothing here\nhello again friend\nend\n", encoding="utf-8", newline="\n"
+    )
     # binary file
     (dir_path / "file3.bin").write_bytes(b"some binary data\0hello\0more data")
     return dir_path
@@ -25,6 +41,18 @@ def golden_fixture_dir(tmp_path_factory):
 TEXT_DIR_TARGET = ["text"]
 TEXT_FILE1_TARGET = ["text/file1.txt"]
 
+# FIXED (task #262): de-blinding this suite (raw bytes instead of `text=True`-decoded
+# strings) first caught `cpu_multi_file`/`cpu_single_file` below -- `tg search --cpu` (the
+# Python/native, non-rg-routed backend) emitted `\r\n` for a matched line whose source file
+# was plain `\n`. Independently reproduced in `tests/e2e/test_multi_pattern_native.py`. Root
+# cause: `bootstrap.py::_force_utf8_streams` never pinned `newline="\n"` on `sys.stdout`, so
+# Python's default universal-newlines TEXT mode rewrote every `\n` a formatter emitted to
+# `os.linesep` on WRITE. Fixed there (now unconditional, even when the stream is already
+# UTF-8), plus a sibling READ-side bug in `CPUBackend`/`RustCoreBackend` (`.rstrip("\n\r")`
+# was eating a genuine trailing `\r` from a CRLF source file's own content, independent of
+# the stdout fix) -- see `strip_line_terminator` in `src/tensor_grep/core/result.py`. All the
+# OTHER cases here (including `default_*`, which route through `RipgrepBackend`) were always
+# correct: they preserve a source file's own line ending rather than injecting a new one.
 GOLDEN_CASES = [
     ("default_multi_file", ["hello"], TEXT_DIR_TARGET),
     ("default_single_file", ["hello"], TEXT_FILE1_TARGET),
@@ -120,16 +148,23 @@ def run_tg(launcher, args, cwd):
         assert native_binary is not None, "Native binary not found. Please compile it first."
         cmd = [native_binary, "search", *args]
 
-    result = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True)
+    # Raw bytes -- no text=True. `text=True` runs the pipe through Python's
+    # universal-newlines TextIOWrapper, which translates a real `\r\n` in tg's own stdout to
+    # `\n` on Windows before this function (or the golden snapshot it feeds) ever sees it.
+    # Decoding strictly afterwards preserves any embedded `\r` verbatim and fails loudly on
+    # invalid UTF-8 instead of silently laundering it (task #262).
+    result = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True)
     assert result.returncode == 0, (
-        f"Command failed: {' '.join(cmd)}\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        f"Command failed: {' '.join(cmd)}\n"
+        f"stdout: {decode_for_display(result.stdout)}\n"
+        f"stderr: {decode_for_display(result.stderr)}"
     )
-    stdout = result.stdout
+    stdout = result.stdout.decode("utf-8")
 
     # We remove routing/stats output as they are non-contractual metadata
     stdout = "\n".join(
         line
-        for line in stdout.splitlines()
+        for line in split_lines_preserve_cr(stdout)
         if not line.startswith("[routing]") and not line.startswith("[stats]")
     )
 
@@ -145,7 +180,7 @@ def run_tg(launcher, args, cwd):
     # is non-deterministic across OS/environments and is a non-contractual field.
     if "--json" in args or "--ndjson" in args:
         lines = []
-        for line in stdout.splitlines():
+        for line in split_lines_preserve_cr(stdout):
             if not line.strip():
                 continue
             try:
@@ -202,7 +237,11 @@ def run_tg(launcher, args, cwd):
         return "\n".join(lines) + "\n"
 
     if not stdout.strip().isdigit():
-        lines = [_normalize_relative_prefix(line) for line in stdout.splitlines() if line.strip()]
+        lines = [
+            _normalize_relative_prefix(line)
+            for line in split_lines_preserve_cr(stdout)
+            if line.strip()
+        ]
         lines.sort()
         stdout = "\n".join(lines) + "\n" if lines else ""
 
@@ -234,3 +273,38 @@ def test_output_golden_contract_skips_native_when_binary_is_missing(monkeypatch)
 
     with pytest.raises(pytest.skip.Exception, match="Native binary not built"):
         _skip_if_native_binary_missing("native")
+
+
+def test_cpu_backend_crlf_file_round_trips_its_own_crlf(tmp_path):
+    """The other half of the task #262 bidirectional fix, on the RAW subprocess bytes (not
+    through `run_tg`'s snapshot-oriented normalization, which sorts/rejoins lines and would
+    obscure a byte-level CRLF-vs-LF difference). A genuinely CRLF-terminated source file must
+    round-trip its own `\\r\\n` through `tg search --cpu` -- fixing the LF-corruption bug
+    (`cpu_multi_file`/`cpu_single_file` above) must NOT start stripping, or doubling, a real
+    `\\r` that was already there. Cross-checked directly against real `rg.exe` on the
+    identical file.
+    """
+    (tmp_path / "crlf.txt").write_bytes(b"hello world\r\n")
+    env = dict(os.environ)
+    env["TG_DISABLE_NATIVE_TG"] = "1"
+
+    result = subprocess.run(
+        [sys.executable, "-m", "tensor_grep", "search", "--cpu", "hello", "crlf.txt"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+    )
+    assert result.returncode == 0, decode_for_display(result.stderr)
+    assert result.stdout == b"hello world\r\n"
+
+    from tensor_grep.cli.runtime_paths import resolve_ripgrep_binary
+
+    rg_binary = resolve_ripgrep_binary()
+    if rg_binary is None:
+        pytest.skip("ripgrep binary not available for CRLF round-trip cross-check")
+    rg_result = subprocess.run(
+        [str(rg_binary), "hello", "crlf.txt"],
+        cwd=tmp_path,
+        capture_output=True,
+    )
+    assert rg_result.stdout == result.stdout

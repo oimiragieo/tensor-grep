@@ -1,8 +1,15 @@
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
+
+TESTS_DIR = Path(__file__).resolve().parents[1]
+if str(TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(TESTS_DIR))
+
+from helpers.byte_parity import run_bytes  # noqa: E402
 
 pytestmark = [pytest.mark.slow, pytest.mark.performance]
 
@@ -68,14 +75,18 @@ class TestVsRipgrep:
         # Pattern matches 'apple' only if followed by ' banana' (positive lookahead)
         pattern = r"apple(?= banana)"
 
-        res = subprocess.run(
-            [sys.executable, "-m", "tensor_grep.cli.main", "search", "-P", pattern, str(log)],
-            capture_output=True,
-            text=True,
-        )
+        res = run_bytes([
+            sys.executable,
+            "-m",
+            "tensor_grep.cli.main",
+            "search",
+            "-P",
+            pattern,
+            str(log),
+        ])
         assert res.returncode == 0
-        assert "apple banana" in res.stdout
-        assert "orange banana" not in res.stdout
+        assert b"apple banana" in res.stdout
+        assert b"orange banana" not in res.stdout
 
     def test_max_filesize_respected(self, tmp_path):
         """Verify that --max-filesize correctly skips large files."""
@@ -86,21 +97,17 @@ class TestVsRipgrep:
         large_file.write_text("match_me" + ("x" * 1024 * 1024), encoding="utf-8")  # ~1MB
 
         # Searching with 100KB limit should skip large_file
-        res = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "tensor_grep.cli.main",
-                "search",
-                "--max-filesize",
-                "100K",
-                "match_me",
-                str(tmp_path),
-            ],
-            capture_output=True,
-            text=True,
-        )
+        res = run_bytes([
+            sys.executable,
+            "-m",
+            "tensor_grep.cli.main",
+            "search",
+            "--max-filesize",
+            "100K",
+            "match_me",
+            str(tmp_path),
+        ])
 
         # Depending on how ripgrep handles stdout, it might return 0 if any matches or 1 if some skipped
-        assert "small.txt" in res.stdout
-        assert "large.txt" not in res.stdout
+        assert b"small.txt" in res.stdout
+        assert b"large.txt" not in res.stdout

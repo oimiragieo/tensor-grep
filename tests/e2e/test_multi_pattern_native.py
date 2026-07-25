@@ -47,6 +47,8 @@ TESTS_DIR = Path(__file__).resolve().parents[1]
 if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
 
+from helpers.byte_parity import decode_for_display, run_bytes  # noqa: E402
+
 pytestmark = pytest.mark.acceptance
 
 SRC_DIR = Path(__file__).resolve().parents[2] / "src"
@@ -73,41 +75,56 @@ def _env() -> dict[str, str]:
     return env
 
 
-def _run(argv: list[str], *, cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        argv,
-        cwd=cwd,
-        env=env,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
+def _run(argv: list[str], *, cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess[bytes]:
+    # Raw bytes only -- no text=/encoding=/errors="replace". See tests/helpers/byte_parity.py:
+    # those would silently translate a real `\r\n` to `\n` (Windows universal-newlines mode)
+    # and map an invalid UTF-8 byte to U+FFFD before either engine's output is ever compared,
+    # applied identically to both the rg and tg arms below (task #262).
+    return run_bytes(argv, cwd=cwd, env=env)
 
 
-def _tg(args: list[str], *, cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def _tg(args: list[str], *, cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess[bytes]:
     return _run([sys.executable, "-m", "tensor_grep", "search", *args], cwd=cwd, env=env)
 
 
-def _normalize(text: str, root: Path) -> list[str]:
-    normalized: list[str] = []
-    for line in text.replace("\r\n", "\n").splitlines():
+def _normalize(data: bytes, root: Path) -> list[bytes]:
+    r"""Normalize ONLY the pytest tmp-dir prefix and the platform path separator -- both
+    genuinely non-contractual. Splits on a bare `\n` (never `str.splitlines()`/a blanket
+    `\r\n` -> `\n` replace), so a real CRLF divergence between the two compared engines
+    stays visible as a trailing `\r` on the affected line instead of being erased before
+    comparison (task #262).
+
+    KNOWN, ACKNOWLEDGED LIMIT (not closed here, independent-gate follow-up): the trailing
+    `.replace(b"\\", b"/")` below runs against the WHOLE line, not just a parsed-out path
+    prefix, so it is still a both-arms-lossy transform in the same shape this function
+    otherwise removes -- a real backslash-vs-forward-slash divergence inside MATCHED TEXT
+    content (not the file-path prefix) would cancel out identically on both arms. This
+    module's fixtures are plain ASCII words with no backslashes in their content, so it has
+    not been observed to mask a real failure, but it is a structural gap.
+    """
+    root_bytes = str(root).encode("utf-8")
+    root_posix_bytes = root.as_posix().encode("utf-8")
+    normalized: list[bytes] = []
+    for line in data.split(b"\n"):
         if not line:
             continue
-        current = line.replace(str(root), ".").replace(root.as_posix(), ".").replace("\\", "/")
-        if current.startswith("./"):
+        current = (
+            line.replace(root_bytes, b".").replace(root_posix_bytes, b".").replace(b"\\", b"/")
+        )
+        if current.startswith(b"./"):
             current = current[2:]
         normalized.append(current)
     return normalized
 
 
-def _tg_json_matches(result: subprocess.CompletedProcess[str]) -> list[tuple[str, str]]:
+def _tg_json_matches(result: subprocess.CompletedProcess[bytes]) -> list[tuple[str, str]]:
+    # json.loads accepts raw bytes directly and decodes strictly (RFC 8259 auto-detection) --
+    # no errors="replace" laundering of invalid bytes before the JSON payload is parsed.
     payload = json.loads(result.stdout)
     return sorted((match["file"], match["text"]) for match in payload["matches"])
 
 
-def _tg_json_files(result: subprocess.CompletedProcess[str]) -> list[str]:
+def _tg_json_files(result: subprocess.CompletedProcess[bytes]) -> list[str]:
     payload = json.loads(result.stdout)
     return sorted({match["file"] for match in payload["matches"]})
 
@@ -119,14 +136,23 @@ def env() -> dict[str, str]:
 
 @pytest.fixture()
 def corpus(tmp_path: Path) -> Path:
+    # Every corpus/pattern-file write below now passes `newline="\n"` deliberately: without
+    # it, `Path.write_text()`'s default universal-newlines mode translates `\n` -> `\r\n` on
+    # Windows, so the on-disk fixture would be CRLF even though the Python string literal is
+    # LF-only. The now-byte-exact comparisons below (task #262) surfaced this -- a matched
+    # line's real bytes (rg-verified: `b"foo and bar together\r\n"`, matching real `rg`'s own
+    # output on the same CRLF file) diverged from the LF-only hard-coded golden string these
+    # tests were written against. Pinning fixture writes to LF makes the golden strings
+    # correct again without touching the comparison itself.
+    #
     # Pattern files (written by individual tests) go in `tmp_path`, one level ABOVE
     # `root`, so a `-f ../patterns.txt` never becomes a search candidate itself.
     root = tmp_path / "multi-pattern"
     root.mkdir()
-    (root / "foo.txt").write_text("foo line\n", encoding="utf-8")
-    (root / "bar.txt").write_text("bar line\n", encoding="utf-8")
-    (root / "both.txt").write_text("foo and bar together\n", encoding="utf-8")
-    (root / "none.txt").write_text("nothing relevant\n", encoding="utf-8")
+    (root / "foo.txt").write_text("foo line\n", encoding="utf-8", newline="\n")
+    (root / "bar.txt").write_text("bar line\n", encoding="utf-8", newline="\n")
+    (root / "both.txt").write_text("foo and bar together\n", encoding="utf-8", newline="\n")
+    (root / "none.txt").write_text("nothing relevant\n", encoding="utf-8", newline="\n")
     return root
 
 
@@ -137,20 +163,56 @@ def test_multi_e_native_matches_all_patterns_not_just_first(
     corpus: Path, env: dict[str, str]
 ) -> None:
     result = _tg(["--cpu", "--sort", "path", "-e", "foo", "-e", "bar", "."], cwd=corpus, env=env)
-    assert result.returncode == 0, result.stderr
-    matched_files = sorted({line.split(":", 1)[0] for line in _normalize(result.stdout, corpus)})
-    assert matched_files == ["bar.txt", "both.txt", "foo.txt"]
-    assert "none.txt" not in matched_files
+    assert result.returncode == 0, decode_for_display(result.stderr)
+    matched_files = sorted({line.split(b":", 1)[0] for line in _normalize(result.stdout, corpus)})
+    assert matched_files == [b"bar.txt", b"both.txt", b"foo.txt"]
+    assert b"none.txt" not in matched_files
 
 
 def test_multi_e_native_reports_both_match_line_once(corpus: Path, env: dict[str, str]) -> None:
     # both.txt matches "foo" AND "bar" but must be reported as ONE line, never two
     # independent passes (rg parity: OR-combine, not N separate searches).
+    #
+    # FIXED (task #262): de-blinding this comparison (raw bytes instead of a
+    # `\r\n`-collapsing `_normalize`) first caught `tg search --cpu` emitting a matched line
+    # terminated `\r\n` on Windows even though this fixture's `both.txt` is LF-only. Root
+    # cause was `bootstrap.py::_force_utf8_streams` never pinning `newline="\n"` on
+    # `sys.stdout` -- Python's default universal-newlines TEXT mode rewrites every `\n` a
+    # formatter emits to `os.linesep` on WRITE. Fixed there (now unconditional, even when the
+    # stream is already UTF-8). This is the LF-in-LF-out half of the bidirectional check; see
+    # `test_multi_e_native_crlf_file_round_trips_its_own_crlf` below for the CRLF-in-CRLF-out
+    # half real `rg` was already getting right.
     result = _tg(["--cpu", "-e", "foo", "-e", "bar", "both.txt"], cwd=corpus, env=env)
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 0, decode_for_display(result.stderr)
     matched_lines = _normalize(result.stdout, corpus)
     assert len(matched_lines) == 1
-    assert matched_lines[0] == "foo and bar together"
+    assert matched_lines[0] == b"foo and bar together"
+
+
+def test_multi_e_native_crlf_file_round_trips_its_own_crlf(
+    env: dict[str, str], tmp_path: Path
+) -> None:
+    """The OTHER half of the task #262 bidirectional fix: a genuinely CRLF-terminated source
+    file must still round-trip its own `\\r\\n` through `--cpu` -- fixing the LF-corruption
+    bug above must NOT start stripping (or doubling) a real `\\r` that was already there.
+    Verified directly against real `rg.exe` on the identical file: both must agree.
+    """
+    root = tmp_path / "crlf-multi-pattern"
+    root.mkdir()
+    (root / "both.txt").write_bytes(b"foo and bar together\r\n")
+
+    result = _tg(["--cpu", "-e", "foo", "-e", "bar", "both.txt"], cwd=root, env=env)
+    assert result.returncode == 0, decode_for_display(result.stderr)
+    assert result.stdout == b"foo and bar together\r\n"
+
+    rg_parity = _helpers()
+    rg_binary = rg_parity.resolve_pinned_rg_binary()
+    if rg_binary is None:
+        pytest.skip("ripgrep binary not available for CRLF round-trip cross-check")
+    rg_env = dict(env)
+    rg_env["TG_RG_PATH"] = str(rg_binary)
+    rg_result = _run([str(rg_binary), "-e", "foo", "-e", "bar", "both.txt"], cwd=root, env=rg_env)
+    assert rg_result.stdout == result.stdout
 
 
 # --- (b) -f patterns.txt: the file must actually be read, and only its patterns match. --
@@ -159,9 +221,9 @@ def test_multi_e_native_reports_both_match_line_once(corpus: Path, env: dict[str
 def test_pattern_file_native_reads_file_and_matches_any_pattern(
     corpus: Path, env: dict[str, str], tmp_path: Path
 ) -> None:
-    (tmp_path / "patterns.txt").write_text("foo\nbar\n", encoding="utf-8")
+    (tmp_path / "patterns.txt").write_text("foo\nbar\n", encoding="utf-8", newline="\n")
     result = _tg(["--cpu", "--json", "-f", "../patterns.txt", "."], cwd=corpus, env=env)
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 0, decode_for_display(result.stderr)
     matched_files = _tg_json_files(result)
     # Must NOT flood every file (the pre-fix bug: an unread `-f` collapsed to an empty
     # pattern string that matched every line in every file).
@@ -172,7 +234,7 @@ def test_pattern_file_native_reads_file_and_matches_any_pattern(
 def test_pattern_file_missing_exits_2(corpus: Path, env: dict[str, str]) -> None:
     result = _tg(["--cpu", "-f", "does_not_exist.txt", "."], cwd=corpus, env=env)
     assert result.returncode == 2
-    assert "does_not_exist.txt" in result.stderr
+    assert b"does_not_exist.txt" in result.stderr
 
 
 def test_pattern_file_missing_exits_2_json_envelope(corpus: Path, env: dict[str, str]) -> None:
@@ -188,9 +250,9 @@ def test_pattern_file_blank_line_matches_every_line_rg_parity(
 ) -> None:
     # Documented rg behavior, pinned deliberately (not a bug to "fix"): a genuinely blank
     # pattern-file line is an EMPTY pattern, which matches every line in every file.
-    (tmp_path / "blank.txt").write_text("\n", encoding="utf-8")
+    (tmp_path / "blank.txt").write_text("\n", encoding="utf-8", newline="\n")
     result = _tg(["--cpu", "--json", "-f", "../blank.txt", "."], cwd=corpus, env=env)
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 0, decode_for_display(result.stderr)
     matched_files = _tg_json_files(result)
     assert matched_files == ["bar.txt", "both.txt", "foo.txt", "none.txt"]
 
@@ -204,7 +266,7 @@ def test_multi_pattern_golden_parity_deterministic_cpu_backend(
     corpus: Path, env: dict[str, str]
 ) -> None:
     result = _tg(["--cpu", "--json", "-e", "foo", "-e", "bar", "."], cwd=corpus, env=env)
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 0, decode_for_display(result.stderr)
     payload = json.loads(result.stdout)
     assert payload["total_files"] == 3
     assert payload["total_matches"] == 3
@@ -218,9 +280,9 @@ def test_multi_pattern_golden_parity_deterministic_cpu_backend(
 def test_multi_pattern_golden_parity_pattern_file_deterministic_cpu_backend(
     corpus: Path, env: dict[str, str], tmp_path: Path
 ) -> None:
-    (tmp_path / "patterns.txt").write_text("foo\nbar\n", encoding="utf-8")
+    (tmp_path / "patterns.txt").write_text("foo\nbar\n", encoding="utf-8", newline="\n")
     result = _tg(["--cpu", "--json", "-f", "../patterns.txt", "."], cwd=corpus, env=env)
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 0, decode_for_display(result.stderr)
     payload = json.loads(result.stdout)
     assert payload["total_files"] == 3
     assert payload["total_matches"] == 3
@@ -277,6 +339,7 @@ def test_many_fixed_patterns_dedupe_overlapping_lines_at_scale(
         "line D has NEEDLE_03 and NEEDLE_04 and NEEDLE_05 together\n"
         "line E has no needles at all\n",
         encoding="utf-8",
+        newline="\n",
     )
 
     real_needles = [f"NEEDLE_{i:02d}" for i in range(1, 6)]  # 5 patterns that DO match
@@ -284,14 +347,16 @@ def test_many_fixed_patterns_dedupe_overlapping_lines_at_scale(
     patterns = real_needles + absent_patterns
     assert len(patterns) == 100
 
-    (tmp_path / "patterns.txt").write_text("\n".join(patterns) + "\n", encoding="utf-8")
+    (tmp_path / "patterns.txt").write_text(
+        "\n".join(patterns) + "\n", encoding="utf-8", newline="\n"
+    )
 
     result = _tg(
         ["-F", "--cpu", "--json", "-f", "../patterns.txt", "."],
         cwd=root,
         env=env,
     )
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 0, decode_for_display(result.stderr)
     payload = json.loads(result.stdout)
 
     # rg parity: 4 LINES matched (A, B, C, D) -- never one row per (line, pattern) pair.
@@ -312,14 +377,14 @@ def test_many_fixed_patterns_dedupe_overlapping_lines_at_scale(
 def test_fixed_strings_multi_e_native_literal_only(env: dict[str, str], tmp_path: Path) -> None:
     root = tmp_path / "literal"
     root.mkdir()
-    (root / "dot.txt").write_text("a.b literal\n", encoding="utf-8")
-    (root / "any.txt").write_text("axb should not match\n", encoding="utf-8")
-    (root / "zz.txt").write_text("zz here\n", encoding="utf-8")
+    (root / "dot.txt").write_text("a.b literal\n", encoding="utf-8", newline="\n")
+    (root / "any.txt").write_text("axb should not match\n", encoding="utf-8", newline="\n")
+    (root / "zz.txt").write_text("zz here\n", encoding="utf-8", newline="\n")
     result = _tg(["--cpu", "--sort", "path", "-F", "-e", "a.b", "-e", "zz", "."], cwd=root, env=env)
-    assert result.returncode == 0, result.stderr
-    matched_files = sorted({line.split(":", 1)[0] for line in _normalize(result.stdout, root)})
-    assert matched_files == ["dot.txt", "zz.txt"]
-    assert "any.txt" not in matched_files
+    assert result.returncode == 0, decode_for_display(result.stderr)
+    matched_files = sorted({line.split(b":", 1)[0] for line in _normalize(result.stdout, root)})
+    assert matched_files == [b"dot.txt", b"zz.txt"]
+    assert b"any.txt" not in matched_files
 
 
 # --- leading (?i) inline flag stays SCOPED to its own branch, never leaking case- -------
@@ -329,15 +394,15 @@ def test_fixed_strings_multi_e_native_literal_only(env: dict[str, str], tmp_path
 def test_multi_e_leading_inline_flag_is_scoped(env: dict[str, str], tmp_path: Path) -> None:
     root = tmp_path / "scoped-flag"
     root.mkdir()
-    (root / "upper.txt").write_text("FOO shout\n", encoding="utf-8")
-    (root / "lower.txt").write_text("bar quiet\n", encoding="utf-8")
-    (root / "upper_bar.txt").write_text("BAR shout\n", encoding="utf-8")
+    (root / "upper.txt").write_text("FOO shout\n", encoding="utf-8", newline="\n")
+    (root / "lower.txt").write_text("bar quiet\n", encoding="utf-8", newline="\n")
+    (root / "upper_bar.txt").write_text("BAR shout\n", encoding="utf-8", newline="\n")
     result = _tg(["--cpu", "--sort", "path", "-e", "(?i)foo", "-e", "bar", "."], cwd=root, env=env)
-    assert result.returncode == 0, result.stderr
-    matched_files = sorted({line.split(":", 1)[0] for line in _normalize(result.stdout, root)})
-    assert matched_files == ["lower.txt", "upper.txt"]
+    assert result.returncode == 0, decode_for_display(result.stderr)
+    matched_files = sorted({line.split(b":", 1)[0] for line in _normalize(result.stdout, root)})
+    assert matched_files == [b"lower.txt", b"upper.txt"]
     # BAR must NOT match: (?i) must stay scoped to the foo branch, not leak globally.
-    assert "upper_bar.txt" not in matched_files
+    assert b"upper_bar.txt" not in matched_files
 
 
 # --- single -e / single -F must stay BYTE-IDENTICAL to the plain-positional form (no ----
@@ -369,13 +434,13 @@ def test_single_fixed_strings_e_byte_identical_to_positional(
 def test_single_e_with_unused_f_still_dead_flag_on_cpu_path(
     corpus: Path, env: dict[str, str], tmp_path: Path
 ) -> None:
-    (tmp_path / "bar_only.txt").write_text("bar\n", encoding="utf-8")
+    (tmp_path / "bar_only.txt").write_text("bar\n", encoding="utf-8", newline="\n")
     result = _tg(
         ["--cpu", "--json", "-e", "foo", "-f", "../bar_only.txt", "."],
         cwd=corpus,
         env=env,
     )
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 0, decode_for_display(result.stderr)
     matched_files = _tg_json_files(result)
     # Only "foo" is searched; -f's "bar" pattern is a dead flag here (single -e wins).
     assert matched_files == ["both.txt", "foo.txt"]
@@ -407,7 +472,7 @@ def test_pattern_file_without_cpu_matches_rg_when_available(
     rg_binary = rg_parity.resolve_pinned_rg_binary()
     if rg_binary is None:
         pytest.skip("ripgrep binary not available for rg-passthrough parity coverage")
-    (tmp_path / "patterns2.txt").write_text("foo\nbar\n", encoding="utf-8")
+    (tmp_path / "patterns2.txt").write_text("foo\nbar\n", encoding="utf-8", newline="\n")
     rg_env = dict(env)
     rg_env["TG_RG_PATH"] = str(rg_binary)
     rg_result = _run(
@@ -426,13 +491,13 @@ def test_multi_e_with_only_matching_still_rejected_exit_2(
 ) -> None:
     result = _tg(["--cpu", "-o", "-e", "foo", "-e", "bar", "both.txt"], cwd=corpus, env=env)
     assert result.returncode == 2
-    assert "-o/--only-matching" in result.stderr
+    assert b"-o/--only-matching" in result.stderr
 
 
 def test_pattern_file_with_rank_still_rejected_exit_2(
     corpus: Path, env: dict[str, str], tmp_path: Path
 ) -> None:
-    (tmp_path / "patterns.txt").write_text("foo\nbar\n", encoding="utf-8")
+    (tmp_path / "patterns.txt").write_text("foo\nbar\n", encoding="utf-8", newline="\n")
     result = _tg(["--cpu", "--rank", "-f", "../patterns.txt", "."], cwd=corpus, env=env)
     assert result.returncode == 2
-    assert "--rank/--bm25" in result.stderr
+    assert b"--rank/--bm25" in result.stderr

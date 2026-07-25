@@ -37,16 +37,25 @@ def command_env(native_tg_binary: Path) -> dict[str, str]:
 
 
 def _run(command: list[str], *, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    # Raw bytes, decoded afterwards -- no `text=True`. See the identical fix (and its full
+    # rationale) in tests/integration/test_cross_backend.py::_run_command -- `text=True`
+    # would translate a real `\r\n` in the native binary's stdout to `\n` on Windows before
+    # `json.loads`/the `--- `/`+++ `/`@@` diff-header substring checks below ever see it
+    # (task #262). `errors="replace"` on the decode is intentionally kept for the same
+    # not-locally-re-runnable-without-a-compiled-binary reason as that sibling file.
+    completed_bytes = subprocess.run(
         command,
         cwd=REPO_ROOT,
         env=env,
         stdin=subprocess.DEVNULL,
         capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
         check=False,
+    )
+    return subprocess.CompletedProcess(
+        args=completed_bytes.args,
+        returncode=completed_bytes.returncode,
+        stdout=completed_bytes.stdout.decode("utf-8", errors="replace"),
+        stderr=completed_bytes.stderr.decode("utf-8", errors="replace"),
     )
 
 
@@ -67,8 +76,10 @@ def test_public_cli_harness_flow_search_rewrite_and_verify(
     project.mkdir()
     log_file = project / "app.log"
     source_file = project / "rewrite_fixture.py"
-    log_file.write_text("INFO boot\nERROR timeout while connecting\n", encoding="utf-8")
-    source_file.write_text("def add(x, y): return x + y\n", encoding="utf-8")
+    log_file.write_text(
+        "INFO boot\nERROR timeout while connecting\n", encoding="utf-8", newline="\n"
+    )
+    source_file.write_text("def add(x, y): return x + y\n", encoding="utf-8", newline="\n")
 
     search_result = _run(
         [str(native_tg_binary), "search", "--json", "ERROR", str(project)],
@@ -88,7 +99,10 @@ def test_public_cli_harness_flow_search_rewrite_and_verify(
         env=command_env,
     )
     _assert_success(ndjson_result, context="search --ndjson")
-    ndjson_rows = [json.loads(line) for line in ndjson_result.stdout.splitlines() if line.strip()]
+    # split on "\n" (not str.splitlines(), same reasoning as _run above) so a genuine \r
+    # embedded in a record stays visible to anyone inspecting a parse failure, though
+    # json.loads itself tolerates trailing \r as insignificant whitespace either way.
+    ndjson_rows = [json.loads(line) for line in ndjson_result.stdout.split("\n") if line.strip()]
     assert ndjson_rows
     assert any(row["file"].endswith("app.log") for row in ndjson_rows)
     assert all(row["version"] == 1 for row in ndjson_rows)
@@ -173,8 +187,10 @@ def test_public_mcp_tools_roundtrip_against_native_binary(
     project.mkdir()
     log_file = project / "app.log"
     source_file = project / "rewrite_fixture.py"
-    log_file.write_text("INFO boot\nERROR timeout while connecting\n", encoding="utf-8")
-    source_file.write_text("def add(x, y): return x + y\n", encoding="utf-8")
+    log_file.write_text(
+        "INFO boot\nERROR timeout while connecting\n", encoding="utf-8", newline="\n"
+    )
+    source_file.write_text("def add(x, y): return x + y\n", encoding="utf-8", newline="\n")
 
     monkeypatch.setenv("TG_MCP_TG_BINARY", command_env["TG_MCP_TG_BINARY"])
     mcp_server.resolve_native_tg_binary.cache_clear()

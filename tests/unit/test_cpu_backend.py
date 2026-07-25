@@ -114,7 +114,12 @@ class TestCPUBackend:
         from tensor_grep.core.config import SearchConfig
 
         log = tmp_path / "context.log"
-        log.write_text("line 1\nERROR MATCH\nline 3\nline 4\nline 5\n")
+        # newline="\n" pins this fixture to LF regardless of platform default: without it,
+        # Path.write_text() silently writes CRLF on Windows, and task #262's
+        # strip_line_terminator fix now correctly preserves a CRLF line's own trailing \r
+        # instead of over-stripping it, which would otherwise make every .text assertion
+        # below fail on an incidental platform-default newline, not a real bug.
+        log.write_text("line 1\nERROR MATCH\nline 3\nline 4\nline 5\n", newline="\n")
 
         backend = CPUBackend()
         config = SearchConfig(after_context=2)
@@ -133,7 +138,7 @@ class TestCPUBackend:
         from tensor_grep.core.config import SearchConfig
 
         log = tmp_path / "context_before.log"
-        log.write_text("line 1\nline 2\nERROR MATCH\nline 4\n")
+        log.write_text("line 1\nline 2\nERROR MATCH\nline 4\n", newline="\n")
 
         backend = CPUBackend()
         config = SearchConfig(before_context=2)
@@ -192,6 +197,73 @@ class TestCPUBackend:
         assert result.routing_backend == "CPUBackend"
         assert result.routing_reason == "cpu_rust_regex"
 
+    def test_rejects_stale_pre_fix_persistent_literal_index(self, tmp_path, monkeypatch):
+        """task #262 BLOCKING finding #2: the persisted literal-prefilter index payload used
+        to carry only `file_signature = (mtime_ns, size)`, with no format version.
+        `(mtime, size)` proves the file's BYTES are unchanged; it cannot prove the
+        *interpretation* of those bytes is still current -- a cache written by pre-fix code
+        (CRLF `\\r` already stripped from `lines`) would silently defeat this fix and be
+        served forever (same file, unchanged mtime/size), reading as WORSE than pre-fix
+        (which was byte-identical to `rg` by cancellation with the stdout bug). Simulates
+        exactly that: a hand-written on-disk cache with no `format_version` key, same
+        file_signature as the real file, but pre-fix (CRLF-stripped) `lines`. Must be
+        rejected and transparently recomputed + rewritten, not served.
+
+        The literal-prefilter path is only reached when `search()` cannot use the
+        Rust-delegated fast path (`cpu_rust_regex`) -- on a machine/CI leg with the compiled
+        `rust_core` extension present (every CI matrix leg; a normal shipped-wheel install),
+        a plain query like this one is answered entirely by `rust_backend.search(...)` and
+        never touches `_load_literal_index`/`_store_literal_index` at all, so asserting
+        `routing_reason == "cpu_python_regex_prefilter"` without forcing Rust absent would
+        pass only on a dev sandbox that happens to lack the built extension (as this was
+        first written and verified) and fail everywhere else -- exactly the kind of
+        environment-gated, not behavior-gated, oracle this task exists to eliminate. Forces
+        the "Rust genuinely absent" branch deterministically via the same
+        `patch.dict("sys.modules", {"tensor_grep.rust_core": None})` convention already used
+        by `test_should_fail_closed_when_context_search_cannot_use_rust` elsewhere in this
+        file, so the cache-versioning logic is exercised regardless of what's installed.
+        """
+        import json
+
+        cache_dir = tmp_path / "cpu-cache"
+        monkeypatch.setenv("TENSOR_GREP_CPU_REGEX_INDEX_DIR", str(cache_dir))
+        monkeypatch.setenv("TENSOR_GREP_CPU_REGEX_INDEX", "1")
+        backend = CPUBackend()
+        CPUBackend._clear_shared_caches()
+
+        from tensor_grep.backends.cpu_backend import _CPU_LITERAL_INDEX_CACHE_FORMAT_VERSION
+
+        log_file = tmp_path / "sys.log"
+        log_file.write_bytes(b"alpha needle one\r\nbeta line two\r\n")
+
+        cache_path = backend._get_prefilter_cache_path(str(log_file), False)
+        # The version lives in the cache PATH itself, not just the payload -- an older tg
+        # sharing this cache dir with a newer one has no idea the payload's own
+        # "format_version" field exists, so it would read (and re-corrupt) a newer payload
+        # verbatim; a filename collision is impossible only because the version is baked
+        # into the name. Assert the shape directly so a future refactor/merge that silently
+        # drops the `-v{VERSION}` suffix (reopening exactly that corruption) is caught here
+        # -- the payload-only assertion below cannot catch a filename regression, since it
+        # reads whatever `cache_path` computes to, not a fixed expected name.
+        assert cache_path.name.endswith(f"-v{_CPU_LITERAL_INDEX_CACHE_FORMAT_VERSION}.json")
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        stale_payload = {
+            # No "format_version" key at all -- the exact pre-#262 on-disk shape.
+            "file_signature": list(backend._build_file_signature(str(log_file))),
+            "lines": ["alpha needle one", "beta line two"],  # pre-fix: \r already stripped
+            "trigram_index": {"alp": [0], "lph": [0], "pha": [0]},
+        }
+        cache_path.write_text(json.dumps(stale_payload), encoding="utf-8")
+
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": None}):
+            result = backend.search(str(log_file), "alpha needle one", config=SearchConfig())
+        assert result.routing_reason == "cpu_python_regex_prefilter"  # fresh, not "_cache"
+        assert result.matches[0].text == "alpha needle one\r"
+
+        rewritten = json.loads(cache_path.read_text(encoding="utf-8"))
+        assert rewritten["format_version"] == _CPU_LITERAL_INDEX_CACHE_FORMAT_VERSION
+        assert rewritten["lines"] == ["alpha needle one\r", "beta line two\r"]
+
     def test_literal_index_cache_obeys_entry_cap(self, tmp_path, monkeypatch):
         monkeypatch.setenv("TENSOR_GREP_CPU_REGEX_INDEX", "0")
         monkeypatch.setenv("TENSOR_GREP_CPU_LITERAL_INDEX_CACHE_MAX_ENTRIES", "2")
@@ -214,8 +286,103 @@ class TestCPUBackend:
         assert (str(files[1]), False) in cache
         assert (str(files[2]), False) in cache
 
-    def test_should_strip_line_terminators_from_rust_backend_matches(self, tmp_path):
+    def test_literal_prefilter_path_preserves_crlf_source_line(self, tmp_path, monkeypatch):
+        """task #262 -- the LARGEST behavior change in this fix, previously uncovered by any
+        test: the pure-Python literal-prefilter fallback used to read the file via
+        `Path.read_text(encoding="utf-8", errors="replace").splitlines()`, which performs
+        universal-newlines translation ON READ (eating a CRLF file's own `\\r`) AND treats a
+        bare `\\r` as a line break on top of that. Both are now fixed by reading raw bytes and
+        splitting on a bare `\\n` only (`split_source_lines`). A plain 3+ char literal with no
+        other flags routes through this exact path (`_extract_required_literal`) -- but ONLY
+        when `search()` cannot reach the Rust-delegated `cpu_rust_regex` fast path first (see
+        `test_rejects_stale_pre_fix_persistent_literal_index` above for the full reasoning);
+        force that deterministically via the file's established
+        `patch.dict("sys.modules", {"tensor_grep.rust_core": None})` convention rather than
+        relying on the extension being ambiently absent.
+        """
+        monkeypatch.setenv("TENSOR_GREP_CPU_REGEX_INDEX", "0")  # force a fresh read every call
+        backend = CPUBackend()
+        CPUBackend._clear_shared_caches()
+
+        crlf_log = tmp_path / "crlf.log"
+        crlf_log.write_bytes(b"alpha needle one\r\nbeta line two\r\n")
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": None}):
+            result = backend.search(str(crlf_log), "needle", config=SearchConfig())
+        assert result.routing_reason.startswith("cpu_python_regex_prefilter")
+        assert result.total_matches == 1
+        assert result.matches[0].line_number == 1
+        assert result.matches[0].text == "alpha needle one\r"
+
+        lf_log = tmp_path / "lf.log"
+        lf_log.write_text("alpha needle one\nbeta line two\n", encoding="utf-8", newline="\n")
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": None}):
+            lf_result = backend.search(str(lf_log), "needle", config=SearchConfig())
+        assert lf_result.matches[0].text == "alpha needle one"
+
+    def test_literal_prefilter_path_does_not_treat_a_bare_cr_as_a_line_break(
+        self, tmp_path, monkeypatch
+    ):
+        """Ground truth verified directly against `rg.exe`: a file containing ONLY bare `\\r`
+        line endings (no `\\n` at all) is ONE line to `rg` (it splits on `\\n` alone, never a
+        bare `\\r`), matched_lines=1. Before task #262, `Path.read_text().splitlines()` here
+        treated the bare `\\r` as a line break too (Python's universal-newlines convention),
+        silently reporting a phantom SECOND match/line that neither `rg` nor the fixed
+        Rust-delegated path ever produced -- a line-number AND match-count divergence with no
+        prior regression coverage. Forces the pure-Python path deterministically -- see the
+        sibling test above; without this, CI (which builds `rust_core` on every matrix leg)
+        answers via `cpu_rust_regex` and never reaches the code this test exists to cover.
+        """
+        monkeypatch.setenv("TENSOR_GREP_CPU_REGEX_INDEX", "0")
+        backend = CPUBackend()
+        CPUBackend._clear_shared_caches()
+
+        cr_only_log = tmp_path / "cronly.log"
+        cr_only_log.write_bytes(b"line one\rline two\r")
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": None}):
+            result = backend.search(str(cr_only_log), "line", config=SearchConfig())
+        assert result.routing_reason.startswith("cpu_python_regex_prefilter")
+        assert result.total_matches == 1
+        assert result.matches[0].line_number == 1
+        assert result.matches[0].text == "line one\rline two\r"
+
+    def test_should_strip_only_the_trailing_newline_from_rust_backend_matches(self, tmp_path):
+        """task #262: the OLD `.rstrip("\n\r")` here stripped ANY trailing run of `\r`/`\n`,
+        which silently ate a genuine trailing `\r` from a CRLF source line too (real `rg` and
+        Rust's own line-splitter both preserve that `\r` -- verified directly against
+        `rg.exe`). `strip_line_terminator` must remove ONLY the single trailing `\n`.
+
+        This is the bidirectional pair: an LF-only match text loses just its `\n` (this test),
+        while `test_should_preserve_a_genuine_trailing_cr_from_a_crlf_rust_backend_match`
+        below proves a real `\r` immediately before it survives.
+        """
         log = tmp_path / "rust_newlines.log"
+        log.write_text("apple\nbanana\n", encoding="utf-8")
+
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+
+        class FakeRustBackend:
+            def search(self, **kwargs):
+                return [(1, "apple\n")]
+
+        rust_mod.RustBackend = FakeRustBackend
+
+        backend = CPUBackend()
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            result = backend.search(str(log), "apple")
+
+        assert result.total_matches == 1
+        assert result.matches[0].line_number == 1
+        assert result.matches[0].text == "apple"
+        assert result.routing_backend == "CPUBackend"
+
+    def test_should_preserve_a_genuine_trailing_cr_from_a_crlf_rust_backend_match(self, tmp_path):
+        """The other half of the task #262 bidirectional fix -- see the sibling test above.
+        Rust's own line-splitter keeps a CRLF line's trailing `\r` (only the `\n` record
+        separator is removed by the split itself); the fake backend below mirrors that real
+        shape. This must NOT be corrupted into "apple" (over-stripped) OR "apple\r\r"
+        (doubled).
+        """
+        log = tmp_path / "rust_newlines_crlf.log"
         log.write_text("apple\nbanana\n", encoding="utf-8")
 
         rust_mod = types.ModuleType("tensor_grep.rust_core")
@@ -232,7 +399,7 @@ class TestCPUBackend:
 
         assert result.total_matches == 1
         assert result.matches[0].line_number == 1
-        assert result.matches[0].text == "apple"
+        assert result.matches[0].text == "apple\r"
         assert result.routing_backend == "CPUBackend"
         assert result.routing_reason == "cpu_rust_regex"
 
@@ -263,7 +430,9 @@ class TestCPUBackend:
         # linear-time Rust engine (context windows are assembled in pure Python around it)
         # instead of unconditionally falling to Python's unbounded backtracking `re`.
         log = tmp_path / "rust_context.log"
-        log.write_text("before\napple\nafter\n", encoding="utf-8")
+        # newline="\n": see the comment on test_should_includeAfterContext_when_dashA_isProvided
+        # above -- this fixture feeds _assemble_context_matches, which reads the REAL file.
+        log.write_text("before\napple\nafter\n", encoding="utf-8", newline="\n")
 
         rust_mod = types.ModuleType("tensor_grep.rust_core")
         calls = []
@@ -341,7 +510,8 @@ class TestCPUBackend:
 
     def test_should_combine_word_regexp_with_context_via_rust(self, tmp_path):
         log = tmp_path / "word_context.log"
-        log.write_text("before\ncat\nconcatenate\nafter\n", encoding="utf-8")
+        # newline="\n": same reasoning as the sibling context-fixture comments above.
+        log.write_text("before\ncat\nconcatenate\nafter\n", encoding="utf-8", newline="\n")
 
         backend = CPUBackend()
         result = backend.search(

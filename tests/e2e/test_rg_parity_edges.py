@@ -10,6 +10,8 @@ TESTS_DIR = Path(__file__).resolve().parents[1]
 if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
 
+from helpers.byte_parity import assert_bytes_equal, decode_for_display, run_bytes  # noqa: E402
+
 
 def _helpers():
     from helpers import rg_parity
@@ -41,6 +43,8 @@ def _write_edge_corpus(root: Path) -> None:
     binary_path = root / "binary.bin"
     binary_path.write_bytes(b"needle\0binary tail\n")
     (root / "binary_nomatch.bin").write_bytes(b"other\0binary tail\n")
+    # Repo bootstrap only -- not part of any rg-vs-tg comparison, so text=True here cannot
+    # hide a divergence between the two engines under test.
     subprocess.run(["git", "init"], cwd=root, check=False, capture_output=True, text=True)
 
 
@@ -49,30 +53,41 @@ def _run(
     *,
     cwd: Path,
     env: dict[str, str],
-    input_text: str | None = None,
-) -> subprocess.CompletedProcess[str]:
-    stdin = subprocess.DEVNULL if input_text is None else None
-    return subprocess.run(
-        argv,
-        cwd=cwd,
-        env=env,
-        input=input_text,
-        stdin=stdin,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
+    input_bytes: bytes | None = None,
+) -> subprocess.CompletedProcess[bytes]:
+    # Raw bytes only -- no text=/encoding=/errors=. See tests/helpers/byte_parity.py for why:
+    # `text=True` would silently translate a real `\r\n` in captured stdout to `\n` on
+    # Windows before either arm below is ever compared (task #262).
+    return run_bytes(argv, cwd=cwd, env=env, input_bytes=input_bytes)
 
 
-def _normalize(text: str, root: Path) -> list[str]:
-    normalized: list[str] = []
-    for line in text.replace("\r\n", "\n").splitlines():
+def _normalize(data: bytes, root: Path) -> list[bytes]:
+    r"""Normalize ONLY the two things that are genuinely non-contractual across platforms:
+    the absolute tmp-dir prefix (a pytest-generated path, never part of either engine's real
+    output contract) and the path separator (both rg and tg accept '/' and '\\' as
+    equivalent on Windows). Everything else -- including any embedded '\r' -- is compared
+    verbatim. Deliberately NOT the old blanket `data.replace(b"\r\n", b"\n")`: that collapse
+    erased a genuine CRLF divergence between the two engines before comparison ever ran (see
+    PR #742's independent gate finding, task #262).
+
+    KNOWN, ACKNOWLEDGED LIMIT (not closed here, independent-gate follow-up): the trailing
+    `.replace(b"\\", b"/")` below runs against the WHOLE line, not just a parsed-out path
+    prefix, so it is still a both-arms-lossy transform in the same shape this function
+    otherwise removes -- a real backslash-vs-forward-slash divergence inside MATCHED TEXT
+    content (not the file-path prefix) would cancel out identically on both arms. This
+    module's fixtures are plain ASCII sentinel words with no backslashes in their content,
+    so it has not been observed to mask a real failure, but it is a structural gap.
+    """
+    root_bytes = str(root).encode("utf-8")
+    root_posix_bytes = root.as_posix().encode("utf-8")
+    normalized: list[bytes] = []
+    for line in data.split(b"\n"):
         if not line:
             continue
-        current = line.replace(str(root), ".").replace(root.as_posix(), ".").replace("\\", "/")
-        if current.startswith("./"):
+        current = (
+            line.replace(root_bytes, b".").replace(root_posix_bytes, b".").replace(b"\\", b"/")
+        )
+        if current.startswith(b"./"):
             current = current[2:]
         normalized.append(current)
     return normalized
@@ -86,22 +101,25 @@ def _assert_same_rg_behavior(
     env: dict[str, str],
     rg_binary: Path,
     compare_stdout: bool = True,
-    input_text: str | None = None,
+    input_bytes: bytes | None = None,
 ) -> None:
-    rg = _run([str(rg_binary), *rg_args], cwd=root, env=env, input_text=input_text)
+    rg = _run([str(rg_binary), *rg_args], cwd=root, env=env, input_bytes=input_bytes)
     tg = _run(
         [sys.executable, "-m", "tensor_grep", "search", *tg_args],
         cwd=root,
         env=env,
-        input_text=input_text,
+        input_bytes=input_bytes,
     )
 
     assert tg.returncode == rg.returncode, (
         f"rg exit={rg.returncode} tg exit={tg.returncode}\n"
-        f"rg stderr={rg.stderr}\ntg stderr={tg.stderr}"
+        f"rg stderr={decode_for_display(rg.stderr)}\ntg stderr={decode_for_display(tg.stderr)}"
     )
     if compare_stdout:
-        assert _normalize(tg.stdout, root) == _normalize(rg.stdout, root)
+        assert _normalize(tg.stdout, root) == _normalize(rg.stdout, root), (
+            f"rg stdout:\n{decode_for_display(rg.stdout)}\n"
+            f"tg stdout:\n{decode_for_display(tg.stdout)}"
+        )
 
 
 def _assert_same_rg_stdout_bytes(
@@ -121,9 +139,11 @@ def _assert_same_rg_stdout_bytes(
 
     assert tg.returncode == rg.returncode, (
         f"rg exit={rg.returncode} tg exit={tg.returncode}\n"
-        f"rg stderr={rg.stderr}\ntg stderr={tg.stderr}"
+        f"rg stderr={decode_for_display(rg.stderr)}\ntg stderr={decode_for_display(tg.stderr)}"
     )
-    assert tg.stdout.replace("\r\n", "\n") == rg.stdout.replace("\r\n", "\n")
+    # Byte-exact: no path-prefix or separator normalization here at all (that is the whole
+    # point of this comparator's name -- see test_rg_files_mode_preserves_rg_path_prefixes).
+    assert_bytes_equal(tg.stdout, rg.stdout, label="rg-vs-tg --files stdout")
 
 
 @pytest.fixture()
@@ -278,7 +298,7 @@ def test_rg_no_path_searches_piped_stdin(
         root=root,
         env=env,
         rg_binary=rg_binary,
-        input_text="stdin needle\nstdin other\n",
+        input_bytes=b"stdin needle\nstdin other\n",
     )
 
 
@@ -309,7 +329,7 @@ def test_rg_explicit_path_ignores_piped_stdin(
         root=root,
         env=env,
         rg_binary=rg_binary,
-        input_text="stdin needle\n",
+        input_bytes=b"stdin needle\n",
     )
 
 
@@ -349,12 +369,12 @@ def test_files_without_match_sort_excludes_binary_and_ignored_paths(
         env=env,
     )
 
-    assert tg.returncode == 0, tg.stderr
+    assert tg.returncode == 0, decode_for_display(tg.stderr)
     normalized = _normalize(tg.stdout, root)
-    assert normalized == ["c.txt"]
-    assert "binary.bin" not in normalized
-    assert "binary_nomatch.bin" not in normalized
-    assert "ignored/z.txt" not in normalized
+    assert normalized == [b"c.txt"]
+    assert b"binary.bin" not in normalized
+    assert b"binary_nomatch.bin" not in normalized
+    assert b"ignored/z.txt" not in normalized
 
 
 def test_files_without_match_text_mode_includes_binary_paths(
