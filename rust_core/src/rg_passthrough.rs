@@ -642,18 +642,18 @@ const ROOT_IGNORE_FILENAMES: [&str; 3] = [".ignore", ".gitignore", ".rgignore"];
 /// documented per-flag scope (also verified live):
 ///   - `no_ignore`       -- matches the native engine's own single-flag gate; skip all three.
 ///   - `no_ignore_vcs`   -- rg's docs restrict this to source-control ignore files ("only
-///                          respect rules in .ignore or .rgignore"); skip only `.gitignore`.
+///     respect rules in .ignore or .rgignore"); skip only `.gitignore`.
 ///   - `no_ignore_dot`   -- rg's docs restrict this to `.ignore`/`.rgignore` ("Don't respect
-///                          filter rules from .ignore or .rgignore files ... does not impact
-///                          whether filter rules from .gitignore files are respected"); skip
-///                          only those two.
+///     filter rules from .ignore or .rgignore files ... does not impact
+///     whether filter rules from .gitignore files are respected"); skip
+///     only those two.
 ///   - `no_ignore_files` -- rg cancels any `--ignore-file` regardless of argv order per its own
-///                          docs ("even ones that come after this flag, are ignored"), verified
-///                          live; short-circuited here too so nothing is emitted at all.
-/// `no_ignore_exclude`/`no_ignore_global`/`no_ignore_parent` are deliberately NOT checked: none
-/// of them govern a root `.ignore`/`.gitignore`/`.rgignore` file (they gate `.git/info/exclude`,
-/// the global git ignore config, and parent-directory ignore-file ascent respectively), so they
-/// have no bearing on what this function emits.
+///     docs ("even ones that come after this flag, are ignored"), verified
+///     live; short-circuited here too so nothing is emitted at all.
+///     `no_ignore_exclude`/`no_ignore_global`/`no_ignore_parent` are deliberately NOT checked:
+///     none of them govern a root `.ignore`/`.gitignore`/`.rgignore` file (they gate
+///     `.git/info/exclude`, the global git ignore config, and parent-directory ignore-file
+///     ascent respectively), so they have no bearing on what this function emits.
 fn root_ignore_file_args(args: &RipgrepSearchArgs) -> Vec<String> {
     if args.no_ignore || args.no_ignore_files {
         return Vec::new();
