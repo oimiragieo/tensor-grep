@@ -1946,6 +1946,17 @@ fn plain_text_native_probe_file(path: &Path) -> bool {
     let Ok(bytes) = fs::read(path) else {
         return false;
     };
+    // The bytes read MUST equal the size the OS reported. Measured on Linux (WSL):
+    // `/proc/self/status` and `/proc/version` are S_ISREG with `st_size` 0 yet return 1460 and 166
+    // bytes of clean UTF-8 -- so they passed every other clause and were ADMITTED. A file whose
+    // reported size is a lie is precisely the shape where this probe cannot describe what the
+    // SEARCH will later read: the content is generated per-open, so the memoized verdict is not
+    // stale by a microsecond, it is unrelated by construction. This also fail-closes an ordinary
+    // file that changes size between the `metadata` call and the read. Free -- both numbers are
+    // already in hand.
+    if bytes.len() as u64 != metadata.len() {
+        return false;
+    }
     if bytes.contains(&0u8) || bytes.contains(&b'\r') {
         return false;
     }
@@ -2021,6 +2032,7 @@ fn plain_text_native_request_for_search(
         path_count: request.paths.len(),
         path_was_implicit: request.path_was_implicit,
         single_path_is_regular_file: single_path.is_some_and(Path::is_file),
+        single_path_is_stdin_sentinel: request.paths.iter().any(|path| path == "-"),
         single_path_renders_identically: false,
         structured_output: args.json || args.ndjson,
         explicit_format: args.format.is_some(),
@@ -2185,6 +2197,7 @@ fn frontdoor_search_is_native_plain_text_eligible_with_terminal(
         path_count: paths.len(),
         path_was_implicit: paths.is_empty(),
         single_path_is_regular_file: single_path.is_some_and(Path::is_file),
+        single_path_is_stdin_sentinel: paths.iter().any(|path| path == "-"),
         single_path_renders_identically: false,
         structured_output: false,
         explicit_format: false,
@@ -8070,12 +8083,22 @@ fn emit_multi_pattern_native_results(
     Ok(())
 }
 
-/// Exit code for a consumer-closed pipe. This is ripgrep's MEASURED behavior, not a guess: with a
-/// 279 KB dense fixture and a `readline(); close()` consumer, rg 15.1.0 exits 1 with empty stderr
-/// (3/3 runs), while the same command fully drained exits 0 -- so 1 is specifically rg's
-/// broken-pipe code here, not its ordinary exit. `test_early_closing_consumer_matches_ripgrep`
-/// asserts PARITY WITH RG rather than this constant, so if another platform's rg disagrees CI
-/// reports it as a real finding instead of the code silently enshrining a Windows-only number.
+/// Exit code for a consumer-closed pipe, measured against rg for THE SHAPE THIS ROUTE ADMITS.
+///
+/// The mechanism matters, because an earlier revision of this comment stated it wrongly ("1 is
+/// specifically rg's broken-pipe code"). It is not. rg's actual broken-pipe path in `main()`
+/// returns **0**: it walks `err.chain()` for `BrokenPipe` and exits successfully. The 1 observed
+/// here is a different thing entirely -- for a SINGLE-FILE search rg breaks out of its loop before
+/// recording a match, so `matched` stays false and it reports its ordinary "no match" code.
+/// Receipts that separate the two: `rg -c needle dense.txt` early-close -> rc=0 (5/5), and
+/// `rg needle m1.txt m2.txt` early-close -> rc=0 (5/5).
+///
+/// So this constant is SHAPE-BOUND. It is correct for the currently-admitted subset -- exactly one
+/// explicit regular file, no `-c` -- and would be WRONG the moment that subset widened to multiple
+/// paths or `--count`. Anyone widening `native_can_serve_plain_text` must revisit it.
+/// `test_early_closing_consumer_matches_ripgrep` asserts PARITY WITH RG rather than this constant,
+/// so a widening (or a platform whose rg differs) fails loudly instead of silently inheriting the
+/// wrong code.
 const BROKEN_PIPE_EXIT_CODE: i32 = 1;
 
 /// Does any link in this error chain carry `ErrorKind::BrokenPipe`?

@@ -35,6 +35,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -152,7 +153,10 @@ def _run_with_early_close(argv: list[str], *, cwd: Path, env: dict[str, str]):
     divergence was invisible to every other case in this file. This models the real consumer
     (``| head -1``, ``| less``, an agent that reads N lines and stops).
 
-    Every wait is bounded; a hang here would otherwise block CI for the job timeout.
+    EVERY wait is bounded, including the first-line read (an earlier revision claimed this while
+    leaving `proc.stderr.read()` unbounded AHEAD of the bounded `wait()`, so a hung child would
+    have blocked forever and the `finally` kill would never have run). The read is bounded by a
+    daemon thread with a join timeout, and stderr is drained through `communicate(timeout=...)`.
     """
     proc = subprocess.Popen(
         argv,
@@ -162,17 +166,28 @@ def _run_with_early_close(argv: list[str], *, cwd: Path, env: dict[str, str]):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
+    first: list[bytes] = []
+
+    def _read_first_line() -> None:
+        first.append(proc.stdout.readline())
+
     try:
-        first_line = proc.stdout.readline()
+        reader = threading.Thread(target=_read_first_line, daemon=True)
+        reader.start()
+        reader.join(timeout=60)
+        if reader.is_alive():
+            raise AssertionError(f"{argv[0]} produced no line within 60s")
+
         proc.stdout.close()
-        stderr = proc.stderr.read()
-        returncode = proc.wait(timeout=60)
+        # `communicate()` must not touch the pipe we just closed; None makes it skip stdout.
+        proc.stdout = None
+        _, stderr = proc.communicate(timeout=60)
+        returncode = proc.returncode
     finally:
         if proc.poll() is None:
             proc.kill()
             proc.wait(timeout=10)
-        proc.stderr.close()
-    return first_line, stderr, returncode
+    return first[0], stderr, returncode
 
 
 def _require_binaries():
@@ -339,6 +354,59 @@ def test_ripgrep_config_env_edge_values(native_corpus: Path, tmp_path: Path) -> 
         assert tg.returncode == rg.returncode, f"{value!r}: rg={rg.returncode} tg={tg.returncode}"
         assert tg.stdout == rg.stdout, f"{value!r} stdout: rg={rg.stdout!r} tg={tg.stdout!r}"
         assert tg.stderr == rg.stderr, f"{value!r} stderr: rg={rg.stderr!r} tg={tg.stderr!r}"
+
+
+@pytest.mark.characterization
+@pytest.mark.parametrize(
+    ("variant", "argv_tail"),
+    [
+        ("bare-dash", ["needle", "-"]),
+        ("end-of-options-dash", ["--", "needle", "-"]),
+        ("dash-e-dash", ["-e", "needle", "-"]),
+    ],
+    ids=lambda value: value if isinstance(value, str) else "",
+)
+def test_dash_path_operand_reads_stdin_like_ripgrep(
+    tmp_path: Path,
+    variant: str,
+    argv_tail: list[str],
+) -> None:
+    """`-` is the one PATH operand ripgrep gives a special meaning: read STDIN.
+
+    The predicate modelled it as an ordinary path, and `Path::new("-").is_file()` is TRUE whenever
+    a file literally named `-` exists in cwd -- so the native route searched that FILE while rg
+    searched STDIN. rc=0, no stderr, plausible output, wrong data source. Measured before the fix::
+
+        rg 15.1.0 / shipped tg 1.98.3 -> 'needle from STDIN'
+        native emitter               -> 'needle in dashfile'
+
+    A dedicated cwd is used so the file named `-` cannot leak into the shared corpus.
+    """
+    helpers, rg_binary, tg_binary = _require_binaries()
+
+    workdir = tmp_path / f"dash-{variant}"
+    workdir.mkdir()
+    (workdir / "-").write_bytes(b"needle in dashfile\n")
+    env = helpers.build_command_env(rg_binary)
+    piped = b"needle from STDIN\n"
+
+    rg = subprocess.run(
+        [str(rg_binary), *argv_tail], cwd=workdir, env=env, input=piped, capture_output=True
+    )
+    tg = subprocess.run(
+        [str(tg_binary), "search", *argv_tail],
+        cwd=workdir,
+        env=env,
+        input=piped,
+        capture_output=True,
+    )
+
+    assert b"dashfile" not in tg.stdout, (
+        f"{variant}: `-` must read STDIN, not the file named '-': {tg.stdout!r}"
+    )
+    assert tg.stdout == rg.stdout, f"{variant} stdout: rg={rg.stdout!r} tg={tg.stdout!r}"
+    assert tg.stderr == rg.stderr, f"{variant} stderr: rg={rg.stderr!r} tg={tg.stderr!r}"
+    assert tg.returncode == rg.returncode, f"{variant}: rg={rg.returncode} tg={tg.returncode}"
 
 
 @pytest.mark.characterization

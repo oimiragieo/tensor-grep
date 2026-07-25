@@ -32,6 +32,7 @@ fn admitted_plain_text_request() -> PlainTextNativeRequest {
         path_count: 1,
         path_was_implicit: false,
         single_path_is_regular_file: true,
+        single_path_is_stdin_sentinel: false,
         single_path_renders_identically: true,
         structured_output: false,
         explicit_format: false,
@@ -457,6 +458,10 @@ fn test_cheap_checks_gate_the_expensive_tier() {
             rg_config_env_present: true,
             ..admitted_plain_text_request()
         },
+        PlainTextNativeRequest {
+            single_path_is_stdin_sentinel: true,
+            ..admitted_plain_text_request()
+        },
     ] {
         assert!(!plain_text_native_cheap_checks_pass(&disqualified));
         assert!(!native_can_serve_plain_text(&disqualified));
@@ -496,6 +501,15 @@ fn test_native_can_serve_plain_text_refuses_each_disqualifier() {
         ..admitted_plain_text_request()
     };
     assert!(!native_can_serve_plain_text(&empty_pattern));
+
+    // Refusal note 9: `-` means STDIN to rg, but `Path::new("-").is_file()` is TRUE whenever a
+    // file literally named `-` exists in cwd -- so the native route would search that file while
+    // rg searched stdin. Plausible output, rc=0, no stderr, WRONG data source.
+    let stdin_sentinel = PlainTextNativeRequest {
+        single_path_is_stdin_sentinel: true,
+        ..admitted_plain_text_request()
+    };
+    assert!(!native_can_serve_plain_text(&stdin_sentinel));
 
     // Refusal note 7: a pattern rg rejects (rc=2) that the native matcher accepts with 0 matches
     // (rc=1), or one that fails to compile and trips the extra-stderr fallback warning.

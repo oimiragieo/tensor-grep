@@ -154,6 +154,8 @@ pub struct PlainTextNativeRequest {
     pub path_was_implicit: bool,
     /// The single PATH operand resolves to an existing REGULAR FILE (not a directory).
     pub single_path_is_regular_file: bool,
+    /// The single PATH operand is the `-` stdin sentinel. See refusal note (9).
+    pub single_path_is_stdin_sentinel: bool,
     /// EXPENSIVE TIER. The single PATH operand passed the FULL-CONTENT probe: no NUL byte, no CR
     /// byte, valid UTF-8, and within the probe size cap. See refusal note (5) -- this one field
     /// carries three separate, independently-verified divergences.
@@ -298,6 +300,35 @@ pub struct PlainTextNativeRequest {
 ///    No oracle can catch this class -- CI never sets the variable and the parity helpers copy
 ///    `os.environ` -- which is exactly why it is a predicate clause and not a test.
 ///
+/// 9. `single_path_is_stdin_sentinel` -- THE AXIS THIS CLAUSE NAMES: everything `rg` resolves
+///    SPECIALLY that is neither the request, the pattern, the file's bytes, the environment, nor
+///    the consumer. `-` is the instance that bit. It is the one PATH operand ripgrep gives a
+///    special meaning (read STDIN), and this predicate modelled it as an ordinary path:
+///    `frontdoor_search_is_native_plain_text_eligible_with_terminal` deliberately excludes `-`
+///    from flag parsing, so it lands in `positionals` and becomes the single PATH -- and
+///    `Path::new("-").is_file()` is TRUE whenever a file literally named `-` exists in cwd.
+///
+///    Measured (file named `-` in cwd containing `needle in dashfile`, stdin piped
+///    `needle from STDIN`), for `needle -`, `needle -- -` and `-e needle -` alike:
+///      - rg 15.1.0        -> `needle from STDIN`
+///      - shipped tg 1.98.3 -> `needle from STDIN`
+///      - native emitter    -> `needle in dashfile`
+///    rc=0, no stderr, plausible output -- from the WRONG DATA SOURCE. Confirmed POSIX-wide:
+///    `grep needle -` with a file named `-` present also reads stdin.
+///
+///    The rest of the axis was probed on Linux (WSL) rather than reasoned about, because an
+///    earlier round cleared `-` by reasoning and was wrong. `Path::is_file()` is `S_ISREG`, so
+///    admission is exactly decidable:
+///      - `/dev/null`, `/dev/zero`, FIFOs -- NOT `S_ISREG` -> already refused by clause 3.
+///      - a symlink to a regular file -- admitted, and correctly so: both engines follow an
+///        explicit symlink operand, size matches content, no divergence.
+///      - `/proc/self/status`, `/proc/version` -- `S_ISREG` TRUE, `st_size` 0, and a read returns
+///        1460 / 166 bytes of clean UTF-8. These were ADMITTED and are now refused by the
+///        size-vs-bytes invariant in `plain_text_native_probe_file` (see there): a pseudo-file
+///        whose reported size is a lie is exactly the shape where the probe cannot describe what
+///        the search will later read, which is the memoization-staleness window becoming a
+///        certainty by construction rather than a microsecond race.
+///
 /// `structured_output` and `explicit_format` are refused because those requests already have
 /// their own routes (`--json`/`--ndjson` land on `native_cpu_json`; `--format rg` must reach real
 /// `rg`), and this predicate must never redirect them.
@@ -327,6 +358,7 @@ pub const fn plain_text_native_cheap_checks_pass(request: &PlainTextNativeReques
         && !request.pattern_is_empty
         && request.path_count == 1
         && request.single_path_is_regular_file
+        && !request.single_path_is_stdin_sentinel
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
