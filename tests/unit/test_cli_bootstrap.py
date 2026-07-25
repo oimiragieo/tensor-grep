@@ -23,6 +23,69 @@ def test_bootstrap_commands_match_source_of_truth() -> None:
     )
 
 
+# Task #272 -- the CLASS invariant, not the instance.
+#
+# Every entry in `_TG_ONLY_SEARCH_FLAG_PREFIXES` ends in "=", i.e. it is a tg-only flag that
+# TAKES A VALUE. The attached spelling (`--lang=py`) is self-delimiting and always parsed
+# correctly. The SEPARATED spelling (`--lang py`) is only handled if the flag's base name is
+# ALSO in `_SEARCH_FLAGS_WITH_VALUES` -- that set is what tells the argv walk to consume the
+# NEXT token as a value rather than treat it as a PATH positional.
+#
+# When the two registries drift, the failure is silent and nasty: the PATTERN gets read as a
+# PATH, so `_search_path_args_raw` returns a bogus path, the "no explicit PATH" signal is lost,
+# and the workspace-root broad-scan guard never fires. `--format` and `--lang` were both missing
+# (measured on `C:\dev\projects`: `--format json needle` yielded paths=['needle'] and
+# workspace_root_guard=False, while bare `needle` correctly yielded paths=['.'] + guard=True).
+#
+# This is deliberately an INVARIANT over the whole registry rather than two named regression
+# cases, because the same gap has now been introduced twice by adding a flag to one registry and
+# not the other. Enumerating today's offenders would pass again the moment someone adds a tenth
+# prefix. Note also that the rg-argv differential fuzz gate (`.claude/rg_argv_differential_fuzz.py`)
+# can NEVER cover this class by construction -- it models *ripgrep's* grammar, and ripgrep has no
+# `--format`/`--lang`. tg-only flags need a tg-side invariant, which is this test.
+def test_tg_only_value_flag_prefixes_are_registered_as_value_taking_flags() -> None:
+    missing = sorted(
+        prefix.rstrip("=")
+        for prefix in bootstrap._TG_ONLY_SEARCH_FLAG_PREFIXES
+        if prefix.rstrip("=") not in bootstrap._SEARCH_FLAGS_WITH_VALUES
+    )
+    assert not missing, (
+        "Every tg-only value-taking flag must appear in _SEARCH_FLAGS_WITH_VALUES so the "
+        "SEPARATED spelling (`--flag value`) consumes its value instead of reading it as a "
+        f"PATH positional. Missing: {missing}. Add each to _SEARCH_FLAGS_WITH_VALUES."
+    )
+
+
+# Task #272 -- the OUTCOME the invariant above protects, asserted end-to-end through the argv
+# walk. `_search_path_args_raw` returning [] means "no explicit PATH positional", which is what
+# lets the caller apply the `paths or ["."]` fallback and fire the workspace-root guard.
+# Attached spellings are pinned alongside the separated ones so a future fix that repairs the
+# separated form by breaking the attached form cannot pass.
+@pytest.mark.parametrize(
+    ("search_args", "expected_paths"),
+    [
+        (["--format", "json", "needle"], []),
+        (["--lang", "py", "needle"], []),
+        (["--format=json", "needle"], []),
+        (["--lang=py", "needle"], []),
+        (["--format", "json", "needle", "sub"], ["sub"]),
+        (["--lang", "py", "needle", "sub"], ["sub"]),
+    ],
+    ids=[
+        "--format-separated",
+        "--lang-separated",
+        "--format-attached",
+        "--lang-attached",
+        "--format-separated-with-real-path",
+        "--lang-separated-with-real-path",
+    ],
+)
+def test_search_path_args_raw_does_not_read_a_tg_only_flag_value_as_a_path(
+    search_args: list[str], expected_paths: list[str]
+) -> None:
+    assert bootstrap._search_path_args_raw(search_args) == expected_paths
+
+
 def test_codemap_argv_does_not_forward_to_search() -> None:
     """Registration site 1 (commands.py KNOWN_COMMANDS): a miss here would silently misroute
     `tg codemap` into a ripgrep search for the literal pattern "codemap" instead of the real
