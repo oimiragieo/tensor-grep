@@ -2099,8 +2099,14 @@ fn test_repair_launcher_is_accepted_on_public_native_frontdoor() {
 //      legitimate escape hatch (`--no-ignore`) that must still omit it.
 //   2. non-git dir, --json      -- was already correct pre-fix (native engine's own add_ignore
 //      trio, #127); untouched by this PR (json/ndjson never reach rg_passthrough for a bare
-//      search, so there is no `--ignore-file` argv to assert on this cell in this file -- see
-//      `tests/e2e`/#743 Python oracle layer for the actual file-count comparison).
+//      search, so there is no `--ignore-file` argv to assert on this cell in this file). The
+//      tests here (and the unit tests in `rg_passthrough.rs`) assert constructed argv only,
+//      never an actual search outcome; `tests/e2e/test_search_root_ignore_file_outcome.py`
+//      (Python, real compiled `tg` + real `rg`) is the one place that asserts the real matched
+//      file set for both cells 1 and 2 in one test. It skips when `rg` is not on PATH, AND when
+//      no compiled native `tg` binary is discoverable -- `python -m tensor_grep search` without
+//      one falls back to a separate, still-unfixed Python rg-passthrough
+//      (`bootstrap.py:1088`) that does not exercise this fix; see that test file's docstring.
 //   3. git repo, plain text     -- already agreed pre-fix (real rg auto-discovers root
 //      .gitignore inside a git repo); this PR adds a REDUNDANT `--ignore-file` there too
 //      (verified live against rg 15.1.0 to produce byte-identical results, see rg_passthrough.rs
