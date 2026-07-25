@@ -30,6 +30,7 @@ from tensor_grep.cli.repo_map import (
     _DeadlineBreakFlag,
     _iter_repo_files,
     _looks_like_binary_file,
+    _UnreadablePathFlag,
 )
 
 INVENTORY_SCHEMA_VERSION = 1
@@ -228,11 +229,13 @@ def build_inventory(
     # afterward. Asking for max_files + 1 (not max_files) lets us still tell "exactly
     # max_files files exist" apart from "more files exist" for the truncation notice,
     # without ever walking further than one file past the cap.
+    walk_unreadable_hit = _UnreadablePathFlag()
     walked = _iter_repo_files(
         root,
         max_files=max_files + 1,
         deadline_monotonic=walk_deadline,
         deadline_hit=walk_deadline_hit,
+        unreadable_hit=walk_unreadable_hit,
     )
     possibly_truncated = False
     truncation_cause: str | None = None
@@ -305,6 +308,23 @@ def build_inventory(
         possibly_truncated = True
         truncation_cause = "deadline"
 
+    if walk_unreadable_hit.hit:
+        # Task #284: an unreadable subtree left the manifest incomplete. Before this, the walk
+        # simply yielded fewer files and `possibly_truncated` stayed False -- an inventory that
+        # claimed to be complete while missing everything under a denied directory.
+        #
+        # This deliberately runs LAST and OVERWRITES either budget cause, which is the opposite of
+        # the precedence the other two use between themselves. Reason: "project-files" and
+        # "deadline" both tell the reader to turn a KNOB (raise --max-files / --deadline), and
+        # both are true remedies for their own cause. An unreadable path is the one cause NO knob
+        # can fix -- the path has to become readable, or be scoped out. Letting a budget label win
+        # here would hand the reader wrong-knob advice: they raise the budget, the hole stays, and
+        # nothing in the payload hints why. That is exactly the defect #283/#762 fixed on the MCP
+        # `scan_limit` surface, where the fix was to add `budget_remediable: false`. Inventory has
+        # a single cause field rather than that pair, so precedence carries the same information.
+        possibly_truncated = True
+        truncation_cause = "unreadable-path"
+
     return {
         "version": INVENTORY_SCHEMA_VERSION,
         "schema_version": INVENTORY_SCHEMA_VERSION,
@@ -347,7 +367,17 @@ def render_inventory_text(inventory: dict[str, Any]) -> str:
         lines.append(f"  categories: {cats}")
     scan = inventory["scan_limit"]
     if scan["possibly_truncated"]:
-        if scan["truncation_cause"] == "deadline":
+        if scan["truncation_cause"] == "unreadable-path":
+            # Task #284: this arm exists because the generic `else` below names max_files and
+            # would tell the reader to raise a cap that CANNOT close this hole -- the same
+            # wrong-knob advice the JSON precedence above is written to prevent. A renderer that
+            # contradicts its own payload is still a lie, so the text surface needs the branch too.
+            lines.append(
+                "  [!] skipped unreadable path(s) (cause=unreadable-path); counts are a floor, "
+                "not complete. Raising --max-files or --deadline will NOT help: the path(s) must "
+                "become readable, or be scoped out."
+            )
+        elif scan["truncation_cause"] == "deadline":
             lines.append(
                 "  [!] stopped after the time budget (cause=deadline); "
                 "counts are a floor, not complete."
