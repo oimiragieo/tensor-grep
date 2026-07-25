@@ -614,3 +614,75 @@ def test_incremental_map_omits_unreadable_paths_on_a_clean_walk(tmp_path: Path) 
 
     assert "unreadable_paths" not in incremental_map
     assert "unreadable_paths" not in repo_map.build_repo_map(paths["project"])
+# (#286) An UNREADABLE file must never be reported as REMOVED
+# ---------------------------------------------------------------------------
+
+
+def _deny_stat_under(monkeypatch, denied_dir: Path) -> None:
+    """Make `os.stat` raise PermissionError for anything under `denied_dir`.
+
+    Patched NARROWLY on purpose: an earlier probe patched `os.stat` globally and broke pytest's
+    OWN failure reporting -- the instrument took down the harness. Scoping the raise to one
+    subtree keeps pytest able to report a failure if this test fails.
+    """
+    import os as _os
+
+    real_stat = _os.stat
+    # Normalize with PURE STRING ops only. A first version called `Path(...).resolve()` inside the
+    # fake, and `resolve()` itself calls `os.stat` -- instant RecursionError. The instrument ate
+    # itself. `os.path.normpath`/`abspath` touch no filesystem.
+    target = _os.path.normcase(_os.path.normpath(_os.path.abspath(str(denied_dir))))
+
+    def _fake_stat(path, *args, **kwargs):
+        candidate = _os.path.normcase(_os.path.normpath(_os.path.abspath(str(path))))
+        if candidate.startswith(target):
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(_os, "stat", _fake_stat)
+
+
+def test_unreadable_file_is_not_reported_as_removed(tmp_path: Path, monkeypatch) -> None:
+    """Task #286, MEASURED defect. `_stale_changeset` wrapped `os.stat` in a bare `except OSError`
+    and appended to `removed`, so it could not tell "the file is gone" (FileNotFoundError) from
+    "I am not allowed to look at it" (PermissionError).
+
+    That matters because `removed` is consumed by `build_repo_map_incremental`
+    (repo_map.py:7422), so a TRANSIENT permission problem silently EVICTED real files from the
+    repo map -- data-loss-shaped, not merely an under-report. Reachable from MCP on every
+    `tg_session_*` call with `refresh_on_stale=True`.
+    """
+    paths = _build_project(tmp_path)
+    session_id = _open_session(paths["project"])
+    denied_dir = paths["project"] / "src"
+
+    _deny_stat_under(monkeypatch, denied_dir)
+    changeset = session_store._stale_changeset(
+        _session_payload(paths["project"], session_id), detect_added_files=False
+    )
+
+    assert changeset is not None
+    unreadable_reported_as_removed = [p for p in changeset["removed"] if "src" in p]
+    assert unreadable_reported_as_removed == [], (
+        "a permission-denied file was reported as REMOVED; that eviction propagates into "
+        f"build_repo_map_incremental: {unreadable_reported_as_removed}"
+    )
+
+
+def test_genuinely_deleted_file_is_still_reported_as_removed(tmp_path: Path) -> None:
+    """CONTROL ARM. Without this, the fix above could be "never report removals" -- which
+    satisfies the first assertion while destroying the feature entirely. A real deletion must
+    still land in `removed`.
+    """
+    paths = _build_project(tmp_path)
+    session_id = _open_session(paths["project"])
+    paths["helper"].unlink()
+
+    changeset = session_store._stale_changeset(
+        _session_payload(paths["project"], session_id), detect_added_files=False
+    )
+
+    assert changeset is not None
+    assert any("helpers.py" in p for p in changeset["removed"]), (
+        f"a genuinely deleted file vanished from `removed`: {changeset['removed']}"
+    )

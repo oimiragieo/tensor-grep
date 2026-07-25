@@ -548,8 +548,30 @@ def _stale_changeset(
     for current_path, snapshot_entry in snapshot_by_path.items():
         try:
             stat = os.stat(current_paths.get(current_path) or current_path)
-        except OSError:
+        except (FileNotFoundError, NotADirectoryError):
+            # The file is genuinely GONE (or a parent stopped being a directory). This is the
+            # only failure that means "removed".
             removed.append(current_path)
+            continue
+        except OSError:
+            # Task #286: a bare `except OSError` here previously reported ANY stat failure as a
+            # deletion -- including PermissionError. That is not an under-report, it is data loss:
+            # `removed` is consumed by `build_repo_map_incremental` (repo_map.py, see its
+            # `normalized_changeset["removed"]` comment), so a TRANSIENT permission problem
+            # silently EVICTED real files from the repo map. Measured: denying read on one
+            # subdirectory reported every file under it as removed. Reachable from MCP on every
+            # `tg_session_*` call with `refresh_on_stale=True`.
+            #
+            # Fail SAFE in the direction that cannot destroy data: an indeterminate file is left
+            # OUT of all three buckets, so it is treated as unchanged. The opposite error (a real
+            # deletion we failed to notice) merely leaves a stale entry the next successful scan
+            # corrects; reporting a false deletion is unrecoverable from here.
+            #
+            # NOT YET SURFACED as an explicit signal: the changeset vocabulary is
+            # {added, modified, removed} with no way to say "I could not tell". Adding that
+            # fourth state is a consumer-contract change (the same closed-vocabulary problem
+            # #276/#283 solved on other surfaces) and is tracked separately -- do not conflate it
+            # into `removed` to make the signal visible.
             continue
         if int(stat.st_size) != int(snapshot_entry["size"]) or int(stat.st_mtime_ns) != int(
             snapshot_entry["mtime_ns"]
