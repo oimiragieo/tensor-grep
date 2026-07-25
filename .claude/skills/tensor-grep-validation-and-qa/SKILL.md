@@ -40,6 +40,51 @@ relax any gate in `tensor-grep-change-control`.
 
 ---
 
+## Part 0 — THE ORACLE FAMILY: when your verification isn't (read this first)
+
+**The single most repeated failure mode in this repo.** Four distinct forms hit in ONE session
+(2026-07-25). Every form shares one shape: *something that looks like verification isn't.*
+
+**The one question that catches all four — before trusting any green signal, ask:
+"what would this check show if the thing it verifies were BROKEN?"
+If the answer is "the same", it is not verification.**
+
+| Form | What it looks like | Direction of harm | Receipt |
+|---|---|---|---|
+| **1. Normalize-both-sides** | A comparator applies the same lossy transform to BOTH arms | **Masks** real defects — silent | #262 (CRLF/encoding-blind rg-parity oracles); surviving accepted limit at `tests/helpers/rg_parity.py:560`, now *proven* lossy and pinned by PR #748 |
+| **2. Harness-corrupts-output** | Post-processing mangles a byte-correct result before comparison | **Manufactures** false failures | `test_output_golden_contract.py::run_tg` did `line.replace("\\","/")` on the WHOLE line, turning a binary notice's `\0` into `/0`; fixed in #746 |
+| **3. Test-never-executes** | The file exists, looks like proof, and SKIPS | **Fakes** coverage | `test_native_json_byte_fidelity.py` skipped in every CI job; fixed #746, class-fixed #749 |
+| **4. Gate-diagnosis-wrong** | A gate's *conclusion* is right, its *root cause* is false | Sends the fix at the wrong target | The gate that found form 3 claimed `TG_REQUIRE_RG_PARITY` was in "zero workflows" — it is at `ci.yml:653` |
+| **5. Repro topology deletes the mechanism** | Every fixture shares one structural property, and that property is the one that matters | Proves a **strict subset** of the real defect — defeats even an honest RED | PR #750: repro + all 4 tests used non-git `tempdir()`, the one topology where the fix's mechanism suffices; **inside a git repo the fix is a no-op** |
+
+### The rules that fall out
+
+- **SKIPPED IS NOT PASSED.** Read the skip count, every time. A green suite can report proof that
+  never ran. If a test needs an env gate or a built binary, grep whether a job actually provides
+  BOTH — `tests/unit/test_native_e2e_ci_coverage_contract.py` now asserts this as an invariant.
+- **A golden diff is evidence about the harness+product PAIR**, never the product alone, whenever the
+  harness post-processes before comparing. Reading one as a product defect sent an agent hunting an
+  emitter that did not exist.
+- **A gate's clearance is a hypothesis — and so is its ROOT-CAUSE STORY.** Verify the diagnosis, not
+  just the finding. Relaying an unverified root cause nearly produced CI plumbing that already existed.
+- **Isolation-level evidence is not outcome-level evidence, and this binds PROSE.** Measuring a helper
+  in isolation and writing it up as a user-visible failure is the both-arms trap in claim form. In #747
+  an isolated `workspace_root_guard=False` became "the guard never fires"; the control arm through real
+  `main_entry()` showed it fires IDENTICALLY in both arms — the defect was latent. **A confidently-wrong
+  comment is worse than none.**
+- **When you cannot observe RED, say so.** CPU-SAFE forbids compiling, so a Rust fix often cannot watch
+  its own test fail pre-fix. The correct move is a STRUCTURAL argument from pinned source, *stated
+  plainly as an argument* — never dressed as an observation. Gates judge whether the chain closes; the
+  disclosure is expected behaviour, not a defect.
+- **Prefer an invariant to an enumeration.** An enumeration is correct when written and silently
+  incomplete on the next addition. Three fixes this session replaced one: `_TG_ONLY_SEARCH_FLAG_PREFIXES`
+  parity (#272), the CI-coverage invariant (#749), and the rg-grammar differential model (#745).
+- **A modelled gate must be proven able to FAIL.** #745's fuzz gate was validated by reverting one line
+  (72 shapes, exit 1), mutation-killing 6/6, and checking its oracle against real `rg --debug`
+  (301/301). A green gate that cannot fail is worse than no gate.
+
+Related global skill: `measure-what-it-claims` (same family, generalised beyond this repo).
+
 ## Part 1 — What counts as evidence here (in order of trust)
 
 Ranked by how hard each is to fake, cheapest-to-check first:

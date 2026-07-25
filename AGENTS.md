@@ -599,6 +599,95 @@ zero behavioral change, and is strictly stronger than reading the diff by eye. U
 on `test_index_lock_concurrency.py`'s comment-only revisions; cheap enough to run on every claimed no-op
 commit before skipping a gate on the strength of "it's just a comment."
 
+## The Verification-Oracle Family — four forms, one session (2026-07-25)
+
+**The single most repeated failure mode this project has.** Every form shares one shape: *something that
+looks like verification isn't.* Before trusting ANY green signal, ask: **what would this check show if the
+thing it verifies were BROKEN?** If the answer is "the same", it is not verification.
+
+**Form 1 — normalize-both-sides (masks defects; the dangerous direction).** A comparator applies the same
+lossy transform to both arms, so a real divergence cancels out and reads as parity. Task #262: the
+rg-parity oracles were CRLF- and encoding-blind. A surviving instance in `tests/helpers/rg_parity.py:560`
+(`_normalize_line` folds `\\` → `/` across the WHOLE line, so a separator divergence inside MATCHED TEXT
+is invisible) is a *consciously accepted* limit — and is now PROVEN lossy rather than argued, pinned by a
+characterization test with a discriminability control (PR #748). If you close that limit, that test starts
+failing; that is the intended signal, delete it and update the comment.
+
+**Form 2 — harness-corrupts-output (manufactures false failures).** `test_output_golden_contract.py::run_tg`
+ran `line.replace("\\", "/")` on the whole output line, turning a binary notice's literal `\0` into `/0`
+*after* a byte-correct subprocess call. The product was right; the harness lied. The orchestrator then read
+the golden diff as evidence about the PRODUCT and sent an agent hunting an emitter that did not exist.
+**A golden diff is evidence about the harness+product PAIR, never the product alone, when the harness
+post-processes before comparing.** Fixed in #746 via `_normalize_output_line` (splits at the marker,
+normalizes only the path prefix).
+
+**Form 3 — test-never-executes. SKIPPED IS NOT PASSED.** `tests/e2e/test_native_json_byte_fidelity.py` was
+written specifically to prove the #266 emitter fix; its own header named CI as the oracle. It SKIPPED in
+every CI job, because `native-build-smoke`'s pytest step named ONE HARDCODED FILE. A green suite reported
+proof that never ran. **Always read the SKIP count, and grep whether the env gate your test needs
+(`TG_REQUIRE_RG_PARITY`) is actually set in a job that also builds the binary.** Fixed in #746 (glob) and
+class-fixed in #749 (an invariant asserting every marker-bearing suite is matched by the pattern CI really
+runs, parsed out of `ci.yml` rather than copied).
+
+**Form 4 — gate-diagnosis-wrong.** The gate that *found* Form 3 was right about the conclusion and wrong
+about the cause: it reported `TG_REQUIRE_RG_PARITY` set in "zero workflow files" and "no CI job both builds
+the binary and runs pytest" — both false (`ci.yml:599,653,657`). The orchestrator relayed that root cause to
+a build agent **without checking it**, which nearly produced CI plumbing that already existed.
+**"A gate's clearance is a hypothesis" applies to its ROOT-CAUSE STORY too, not just its verdicts.**
+Verify the diagnosis, not only the finding.
+
+**Corollary — isolation-level evidence is not outcome-level evidence, and the rule binds PROSE.** In #747
+the orchestrator measured a bootstrap helper IN ISOLATION (`workspace_root_guard=False`) and wrote it up as
+a user-visible guard bypass. The gate ran the control arm through real `main_entry()`: the refusal fires
+IDENTICALLY in both arms — the defect was LATENT, masked by full-CLI routing. A confidently-wrong comment is
+worse than none. Any claim of the form "X causes user-visible Y" needs the control arm, not just the
+mechanism.
+
+**Corollary — when you cannot observe RED, say so.** CPU-SAFE forbids compiling, so a Rust fix often cannot
+watch its own new test fail pre-fix. The correct move is a STRUCTURAL argument from pinned source (e.g.
+"`trim_end_matches(['\n','\r'])` is a deterministic std call that strips both, so the pre-fix 11-byte value
+cannot equal the asserted 12-byte one" / "the pre-fix struct had no `bytes` field at all") **stated plainly
+as an argument**, never dressed up as an observation. Gates are expected to judge whether the chain closes,
+not to penalise the disclosure.
+
+**Form 5 — the repro's TOPOLOGY deletes the mechanism (2026-07-25, PR #750).** The subtlest one, and it
+defeats an *honest* structural argument. #750 fixed `--no-ignore-vcs` on the native walk and proved RED on a
+live binary — but every fixture, in both the reproduction AND the four new unit tests, was a **non-git**
+directory (`tempfile::tempdir()`). Non-git is precisely the one topology where the proposed mechanism
+(`add_ignore` skipping) is sufficient, because the `ignore` crate's `require_git(true)` leaves its native git
+machinery dormant there. **Inside a git repo — tg's dominant case — `.gitignore` is applied natively and the
+fix is a no-op.** The gate reproduced the bug surviving the fix. Nothing in the PR, hand-trace included,
+*could* have caught it: the RED demonstrated was a strict subset of the real defect.
+
+The rule: **ask whether your simplified repro deletes the very thing you are testing.** When the executable
+arm is unavailable, the non-executable arm needs a SECOND, DIFFERENT fixture — vary the TOPOLOGY (git vs
+non-git, nested vs root, one file vs many), not just the flags. A fixture family that shares one structural
+property cannot discriminate on that property. Related receipt: an earlier session's repro removed the
+`asyncio.to_thread` boundary the bug actually lived across, and so could never have shown it.
+
+Corollary for reviewers: when a fix and its tests share a fixture shape, that shape is an untested
+assumption. Ask what topology the mechanism behaves differently in, and demand one case there.
+
+## Model The Class, Don't Enumerate The Cases (2026-07-25, #745/#749/#272)
+
+When round N+1 of review keeps finding *a new instance of the same class*, the fix is a **model of the
+class**, not another reviewer. Five gate rounds on #745 each surfaced one more argv form nobody had thought
+of (`-u` ungated → `-f`/`-e<attached>` → `-ieneedle` mid-bundle → PATH-before-flag ordering →
+offset-vs-consumption). Round six replaced reviewer imagination with `.claude/rg_argv_differential_fuzz.py`:
+an INDEPENDENT model of ripgrep's argv grammar, diffed against tg's parser over 70,040 cases in ~3s, wired
+into CI's release-blocking `static-analysis` step.
+
+A modelled gate must itself be proven non-decorative: reverting one line surfaced 72 distinct shapes (exit
+1), mutation-killed 6/6, `--seed` reproducible, and its oracle validated against real `rg --debug`
+path-counts 301/301. **A green gate that cannot fail is worse than no gate.**
+
+**Know the model's hard limit.** A cross-tool differential bounds itself at the INTERSECTION of the two
+tools' surfaces — an rg-grammar model can never cover tg-only flags, which is exactly how #272
+(`--format`/`--lang` missing from `_SEARCH_FLAGS_WITH_VALUES`) stayed invisible. Anything outside the
+intersection needs its own invariant: for #272 a registry-parity test asserting every `--x=` prefix has
+`--x` registered as value-taking; for #749 a CI-coverage invariant. Prefer an invariant over an enumeration
+every time — an enumeration is correct when written and silently incomplete on the next addition.
+
 ## Backend Fail-Closed Contract
 
 Every `ComputeBackend` MUST raise `BackendExecutionError` on a real failure — never return a clean empty / `0-match` `SearchResult` (see `backends/base.py`), and never silently swap to a different engine that cannot preserve the requested semantics. The search loop catches `BackendExecutionError` to fall back **visibly** (e.g. to CPU); a swallowed failure or a silent engine swap reaches the user (or a coding agent) as a trustworthy "no matches" — the one failure a context tool cannot afford.
@@ -1185,6 +1274,11 @@ Small, non-obvious traps that have each cost a real cycle on this desktop. None 
 - **Verify FFI / PyO3 bridge changes against the REAL compiled extension, not mocks.** This is the "Dogfood the Real Binary" trap one layer down: mock-based tests passed green while the *real* bridge was dead (it dropped every forwarded flag and silently fell back to the Python engine). Prove a bridge change with a live runtime call into the built extension, then confirm the flag actually reached `rg`.
 - **After a squash-merge, apply follow-up fixes by SYMBOL, not by line number.** Merges shift every line below the change; a plan that says "fix `main.py:8468`" is stale the moment anything above it lands. Re-anchor on the function/const name (grep or `tg defs`) before editing.
 - **A dependency UPPER-cap can silently downgrade the whole install on a newer Python.** If an upper bound (e.g. `typer<0.25`) has no release compatible with a new Python, `pip`/`uv` resolve the *entire package* DOWN to a stale version with NO error — `requires-python>=X` has no upper bound to catch it. When a fresh Python yields a stale `tg`, suspect a transitive cap (typer/click/pydantic), not `requires-python`.
+- **A rule listing forbidden OPERATIONS is not a ban on the whole toolchain — check whether its REASON applies (2026-07-25, cost 3 CI cycles).** CPU-SAFE forbids `cargo`/`rustc`/`clippy`/`maturin` because they are *expensive on a shared box*. **`rustfmt` is not a compiler**: no codegen, parses+formats in milliseconds, `rustfmt.exe` is on PATH, and there is no `rustfmt.toml` so local defaults == CI's. Three CI cycles were burned hand-deriving format diffs from logs before anyone asked whether the rule's reason applied. Run `rustfmt --check` locally before pushing Rust. (It enforces `chain_width`/`fn_call_width` = 60, not just `max_width` = 100 — apply its printed diff verbatim; a hand-rolled width check is a heuristic, never authoritative.)
+- **Cumulative CPU time is not current CPU rate (2026-07-25).** Two orphaned `find /` scans showed 20,548 s and 6,073 s of accumulated CPU — 7.4 CPU-hours — and killing both moved total load 74% → 73%. They had been accumulating slowly for hours, not burning now. Same shape as the cProfile trap: *cumulative ≠ blocking*. Before attributing a slow box to a process, measure its current rate, not its lifetime total. (Related: orphaned children outlive the shell that spawned them — `find /` on Windows via git-bash traverses virtual mounts and effectively never terminates.)
+- **`MSYS_NO_PATHCONV=1` is REQUIRED for `git cat-file blob origin/main:path` on this box.** Without it git-bash mangles the ref into `origin\main;path` and the command fails *misleadingly* — it reads as "that path does not exist on origin/main", which twice produced a confident wrong conclusion (once nearly reporting a committed CI gate as a phantom). Same family as the "parse `gh --json` via python, never jq" rule.
+- **`tests/conftest.py:8-15` does `sys.path.insert(0, SRC_DIR)` from `__file__`, which OVERRIDES `PYTHONPATH`.** A gate running a control arm with `PYTHONPATH=<baseline>/src` got a FALSE PASS because conftest silently re-pointed imports at the worktree. For any baseline/control arm in this repo, use a scratch mini-repo or a full second checkout as pytest's rootdir — and verify `tensor_grep.__file__` resolves where you think before trusting RED or GREEN.
+- **Enumerate mechanically, never from recollection — this recurred THREE times in one session (2026-07-25).** A commit-count stated from memory was 6; `git rev-list` said 8. A path probed from a remembered name (`.pytest_tmp_review_472dffd9`) was a truncation of the real one and `Test-Path` returned false for a path that never existed, briefly "closing" a live task. A worktree-husk count estimated at 11 was 12 when derived from `git worktree list --porcelain`. In every case the mechanical derivation was one command away. If you are about to state a count, a filename, or a site list — derive it.
 - **Windows symlink creation needs privilege.** Tests that create symlinks must `pytest.skip` on `OSError` / `NotImplementedError`, or they false-fail on an unprivileged run.
 - **A stray `nul` file in the tree is a Windows `2>nul` redirect artifact.** Use `2>$null` (PowerShell) or `2>/dev/null` (bash); clean up with `rm -f ./nul`.
 - **CRLF makes a local bare `ruff format --check` false-alarm** over LF-committed blobs. Run `ruff format --preview <files>` (which normalizes) before commit — see "Required Local Validation" for why `--preview` is mandatory and must never be passed to `ruff check`.
