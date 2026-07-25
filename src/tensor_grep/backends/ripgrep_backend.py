@@ -510,6 +510,14 @@ class RipgrepBackend(ComputeBackend):
             cmd.append("--json")
 
         # We enforce JSON output so we can seamlessly parse it back into our SearchResult dataclasses
+        # Task #269 non-blocking note (independent gate, Part B): every flag in this block --
+        # including the root-ignore-file injection below -- is gated on `config` being truthy.
+        # `search_passthrough(file_path, pattern)` (no third arg) defaults `config` to `None`,
+        # so a caller using that form gets ZERO of these flags, not just no ignore-file
+        # injection. Not a regression (this is pre-existing behavior for every other flag here
+        # too, and both real call sites, `cli/main.py:7768`/`:7843`, always pass a real
+        # `config`), but worth flagging so `config=None` is never mistaken for "injection
+        # covered" -- it means "no SearchConfig-derived flags at all were forwarded".
         if config:
             if config.ignore_case:
                 cmd.append("-i")

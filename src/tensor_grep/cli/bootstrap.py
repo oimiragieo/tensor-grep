@@ -175,6 +175,18 @@ _BROAD_GENERATED_SCAN_DIR_NAMES = {
 _SEARCH_PATTERN_FLAGS = {"-e", "--regexp"}
 _SEARCH_LITERAL_FLAGS = {"-F", "--fixed-strings"}
 _SEARCH_PCRE2_FLAGS = {"-P", "--pcre2"}
+# Task #269 independent-gate FIX-1: `-f`/`--file`/`--file=` supply pattern(s) FROM A FILE, same
+# as `-e`/`--regexp` supply the pattern text directly -- both are PATTERN-SOURCE flags whose
+# presence means the bare positional pattern slot is already filled, so `_search_path_args_raw`
+# below must treat the token immediately following either as ALREADY the pattern, not skip past
+# it into misreading the next positional (the actual PATH) as a bare pattern. Kept as its own
+# set/tuple rather than folding `-f`/`--file` into `_SEARCH_PATTERN_FLAGS` itself:
+# `_regex_patterns_from_search_args` also consumes `_SEARCH_PATTERN_FLAGS` to EXTRACT the
+# literal pattern TEXT from a flag's value for regex validation -- `-f`'s value is a FILENAME,
+# not pattern text, so folding it in there would feed a filename string into invalid-regex
+# validation. This is a narrower, `_search_path_args_raw`-only concern.
+_SEARCH_PATTERN_SOURCE_FLAGS = _SEARCH_PATTERN_FLAGS | {"-f", "--file"}
+_SEARCH_PATTERN_SOURCE_ATTACHED_SHORT_FLAGS = ("-e", "-f")
 _SEARCH_FLAGS_WITH_VALUES = {
     "-A",
     "-B",
@@ -225,6 +237,20 @@ _SEARCH_FLAGS_WITH_VALUES = {
     "-t",
     "-T",
 }
+# Task #269 independent-gate FIX-2: `-e` (pattern, e.g. `-eunwrap` == `-e unwrap`) was missing
+# here even though it IS an attached-value short flag in real rg. The omission produced a
+# false positive in `_search_args_request_unrestricted`'s cluster walk (below): `-eunwrap`
+# would scan past the `e` (not recognized as attached-value) and hit the `u` in "unwrap",
+# reporting "unrestricted requested" for a pattern that merely happens to contain the letter
+# `u` -- forcing `guarded_broad_root` and misrouting a perfectly valid rg-passthrough search
+# into the full Python CLI, which then rejects rg-only flags like `--no-heading`. Verified
+# strictly improving at all three consumers of this tuple: `_requires_full_cli`'s bundled scan
+# (removes a SYMMETRICAL false positive -- `-eg*.py` is `-e "g*.py"`, not `-g`, and stopping
+# the scan at `-e` now correctly treats the rest of the token as that flag's value rather than
+# more flags); `_is_short_flag_with_attached_value` (a no-op there, since `_search_path_args_raw`
+# below intercepts `-e<val>`/`-f<val>` as pattern-source flags before this generic check is
+# ever reached); and `_search_args_request_unrestricted` (the actual FIX-2 regression this
+# closes).
 _SEARCH_ATTACHED_VALUE_SHORT_FLAGS = (
     "-A",
     "-B",
@@ -232,6 +258,7 @@ _SEARCH_ATTACHED_VALUE_SHORT_FLAGS = (
     "-E",
     "-M",
     "-d",
+    "-e",
     "-f",
     "-g",
     "-j",
@@ -632,11 +659,25 @@ def _search_path_args_raw(search_args: list[str]) -> list[str]:
             parse_options = False
             continue
         if parse_options:
-            if arg in _SEARCH_PATTERN_FLAGS:
+            if arg in _SEARCH_PATTERN_SOURCE_FLAGS:
                 regexp_pattern_seen = True
                 skip_next = index + 1 < len(search_args)
                 continue
-            if any(arg.startswith(f"{flag}=") for flag in _SEARCH_PATTERN_FLAGS):
+            if any(arg.startswith(f"{flag}=") for flag in _SEARCH_PATTERN_SOURCE_FLAGS):
+                regexp_pattern_seen = True
+                continue
+            # Attached short-flag pattern-source form (`-eneedle` == `-e needle`,
+            # `-fpats.txt` == `-f pats.txt`). Must be checked BEFORE the generic
+            # `_is_short_flag_with_attached_value` branch below, which recognizes the same
+            # tokens as attached-value flags but does not mark a pattern as already supplied --
+            # letting them fall through there reproduces this exact bug (task #269
+            # independent-gate FIX-1: the first REAL positional, the PATH, gets silently
+            # misread as the bare pattern, and `_search_path_args` falls back to `["."]`).
+            if (
+                not arg.startswith("--")
+                and len(arg) > 2
+                and arg.startswith(_SEARCH_PATTERN_SOURCE_ATTACHED_SHORT_FLAGS)
+            ):
                 regexp_pattern_seen = True
                 continue
             if arg in _SEARCH_FLAGS_WITH_VALUES:

@@ -69,14 +69,20 @@ def root_ignore_file_args(
     gate ``.git/info/exclude``, the global git ignore config, and parent-directory ignore-file
     ascent respectively), so they have no bearing on what this function emits.
 
-    KNOWN GAP, low priority, flagged not fixed (independent-gate non-blocking note, task #269):
-    rg's `--ignore`/`--ignore-vcs`/`--ignore-dot`/`--ignore-files` RE-ENABLE flags are not
-    parameters either. rg is last-wins on repeated ignore flags, so e.g. `--no-ignore
+    KNOWN GAP, low priority, flagged not fixed (independent-gate non-blocking note, task #269;
+    correction applied on re-gate -- the original wording here overstated it): rg's
+    `--ignore`/`--ignore-vcs`/`--ignore-dot`/`--ignore-files` RE-ENABLE flags are not parameters
+    of THIS function. rg is last-wins on repeated ignore flags, so e.g. `--no-ignore
     --ignore-vcs` (disable everything, then re-enable VCS-scoped honoring) should behave like a
-    bare search for `.gitignore` -- but a caller that passes only the raw `no_ignore=True`
-    booleans this function takes cannot distinguish that from a bare `--no-ignore` with no
-    re-enable, so this function returns `[]` for both. Same raw-token-vs-parsed-bool class as
-    the `unrestricted` gap above, but the failure direction is the SAFE one: under-EMITTING
+    bare search for `.gitignore`, but since this function only receives the `no_ignore*`
+    booleans, it returns `[]` for both that case and a bare `--no-ignore` with no re-enable.
+    This is NOT because a caller cannot tell the difference -- `RipgrepBackend`'s own
+    `SearchConfig` carries `ignore`/`ignore_dot`/`ignore_files`/`ignore_vcs` and forwards them
+    to rg directly elsewhere in `_build_cmd` (`ripgrep_backend.py:562/566/574/586`), and
+    `bootstrap.py`'s raw-argv caller could detect the same long-flag tokens via the identical
+    `in search_args` style already used for `no_ignore`/`no_ignore_files`/etc. It is that
+    neither call site currently THREADS that signal into this function's gating -- a scope
+    decision, not an inherent inability. The failure direction is the SAFE one: under-EMITTING
     (falling back to whatever rg's own auto-discovery does, i.e. nothing outside a git repo) is
     a missed convenience, not a resurrected-ignore-rule regression, so it is not gated here.
 

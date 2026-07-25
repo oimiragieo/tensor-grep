@@ -308,3 +308,79 @@ def test_git_repo_cell_does_not_regress_via_python_bootstrap_passthrough(tmp_pat
         f"git-repo cell must stay correct (no regression): got {matched_files}\n"
         f"stdout={result.stdout!r}\nstderr={result.stderr}"
     )
+
+
+# --- Task #269 independent-gate re-gate FIX-1 (BLOCKING, SILENT): a pattern-source flag
+# (`--file`/`-f`/attached `-e<val>`) made `_search_path_args_raw` misread the real search
+# target PATH as the bare pattern, so `_run_rg_passthrough` silently injected CWD's root
+# `.gitignore` instead of the actual target directory's. Reproduces the independent gate's
+# exact measured table shape: cwd holds a root ignore file that must NOT apply; the real
+# target (an explicit PATH positional elsewhere) has its own ignore file that MUST.
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    [
+        ["--file", "pats.txt"],
+        ["-f", "pats.txt"],
+        ["-fpats.txt"],
+        ["-eneedle"],
+    ],
+    ids=["--file", "-f", "-fpats.txt-attached", "-eneedle-attached"],
+)
+def test_pattern_source_flag_injects_the_targets_ignore_file_not_cwds(
+    tmp_path: Path, extra_args: list[str]
+) -> None:
+    rg_parity = _helpers()
+    rg_binary = rg_parity.resolve_pinned_rg_binary()
+    if rg_binary is None:
+        pytest.skip("ripgrep binary not available for #269 root-ignore-file outcome coverage")
+
+    cwd_root = tmp_path / "task-269-wrong-root"
+    other_dir = cwd_root / "otherdir"
+    other_dir.mkdir(parents=True)
+    # cwd's OWN root ignore file must NOT apply -- it excludes a name that isn't even present,
+    # so its presence alone (mis-applied) wouldn't be visible; what actually distinguishes a
+    # regression is that `otherdir`'s ignore file (which excludes b.log) gets bypassed instead.
+    (cwd_root / ".gitignore").write_text("should-not-apply.log\n", encoding="utf-8")
+    (other_dir / ".gitignore").write_text("b.log\n", encoding="utf-8")
+    (other_dir / "a.txt").write_text("needle\n", encoding="utf-8")
+    (other_dir / "b.log").write_text("needle\n", encoding="utf-8")
+    (cwd_root / "pats.txt").write_text("needle\n", encoding="utf-8")
+    env = _force_no_native_binary_env(rg_binary)
+
+    args = ["--no-heading", *extra_args, "otherdir"]
+    result = _run_tg_search(args, cwd=cwd_root, env=env)
+
+    assert result.returncode == 0, f"argv={args}\nstdout={result.stdout!r}\nstderr={result.stderr}"
+    matched_files = {Path(f).name for f in _matched_files_from_plain_text(result.stdout)}
+    assert matched_files == {"a.txt"}, (
+        f"{extra_args}: must honor otherdir's own .gitignore (excluding b.log), not cwd's "
+        f"(which would leave both present): got {matched_files}\n"
+        f"stdout={result.stdout!r}\nstderr={result.stderr}"
+    )
+
+
+def test_dash_e_unattached_control_still_honors_the_targets_ignore_file(tmp_path: Path) -> None:
+    """Control for the parametrized regression above: the un-attached `-e needle` form already
+    worked before this fix (it was already recognized as a pattern-source flag) -- pins that
+    this fix did not change its behavior."""
+    rg_parity = _helpers()
+    rg_binary = rg_parity.resolve_pinned_rg_binary()
+    if rg_binary is None:
+        pytest.skip("ripgrep binary not available for #269 root-ignore-file outcome coverage")
+
+    cwd_root = tmp_path / "task-269-wrong-root-control"
+    other_dir = cwd_root / "otherdir"
+    other_dir.mkdir(parents=True)
+    (cwd_root / ".gitignore").write_text("should-not-apply.log\n", encoding="utf-8")
+    (other_dir / ".gitignore").write_text("b.log\n", encoding="utf-8")
+    (other_dir / "a.txt").write_text("needle\n", encoding="utf-8")
+    (other_dir / "b.log").write_text("needle\n", encoding="utf-8")
+    env = _force_no_native_binary_env(rg_binary)
+
+    result = _run_tg_search(["--no-heading", "-e", "needle", "otherdir"], cwd=cwd_root, env=env)
+
+    assert result.returncode == 0, f"stdout={result.stdout!r}\nstderr={result.stderr}"
+    matched_files = {Path(f).name for f in _matched_files_from_plain_text(result.stdout)}
+    assert matched_files == {"a.txt"}
