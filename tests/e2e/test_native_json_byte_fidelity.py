@@ -151,3 +151,96 @@ def test_native_json_preserves_invalid_utf8_losslessly(json_fidelity_corpus: Pat
     # The corrupting substitution this fix removes: U+FFFD's own UTF-8 encoding must never
     # appear anywhere in the recovered bytes.
     assert b"\xef\xbf\xbd" not in decoded
+
+
+# --- Multi-pattern coverage (`-e PAT -e PAT`) -----------------------------------------------
+#
+# `tg search -e A -e B --json PATH` is a DIFFERENT code path from the single-pattern searches
+# above: `collect_native_multi_pattern_matches` (main.rs), reached directly from a normal user
+# invocation whenever more than one `-e`/`--regexp` pattern is given -- confirmed by reading
+# `main.rs`'s `BackendSelection::NativeCpu` branch, which calls it unconditionally whenever
+# `request.patterns.len() > 1`, no experimental flag or GPU path required. It has two internal
+# branches, both of which used to build a `SearchMatchJson.text: String` directly from a lossy
+# or (post this PR's rename) mismatched-type source:
+#   * the FAST path (`--fixed-strings` + a handful of other narrow preconditions), sourced from
+#     `NativeMultiPatternMatch` -- previously fed `SearchMatchJson.text` via
+#     `String::from_utf8_lossy`, the exact same defect class as the single-pattern emitter.
+#   * the SLOW path (the default -- no `--fixed-strings`), sourced from `NativeSearchMatch` via
+#     `execute_native_search` -- this is the exact site that failed to compile once
+#     `NativeSearchMatch.text: String` became `raw: Vec<u8>` elsewhere in this fix, which is what
+#     surfaced this whole gap: `SearchMatchJson` needed the identical `text`/`bytes` treatment,
+#     not just a type-coercing wrapper.
+# Both are covered below, over the identical CRLF/invalid-UTF-8 fixture the single-pattern tests
+# use, so a regression in either branch is caught the same way.
+
+
+def _run_native_json_multi_pattern_search(
+    tg_binary: Path, corpus: Path, *, fixed_strings: bool
+) -> list[dict]:
+    argv = [str(tg_binary), "search", "--json"]
+    if fixed_strings:
+        argv.append("--fixed-strings")
+    argv.extend(["-e", "needle", "-e", "zzz_never_matches_zzz", str(corpus)])
+    proc = subprocess.run(
+        argv,
+        cwd=corpus,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        check=False,
+    )
+    assert proc.returncode == 0, (
+        f"native multi-pattern --json search failed: rc={proc.returncode} "
+        f"stderr={proc.stderr!r} stdout={proc.stdout!r}"
+    )
+    payload = json.loads(proc.stdout)
+    return payload["matches"]
+
+
+@pytest.mark.parametrize("fixed_strings", [False, True], ids=["slow-path", "fast-path"])
+def test_native_json_multi_pattern_preserves_crlf_trailing_cr(
+    json_fidelity_corpus: Path, fixed_strings: bool
+) -> None:
+    """Same assertion as `test_native_json_preserves_crlf_trailing_cr`, but through the
+    multi-pattern (`-e`/`-e`) dispatch -- `fixed_strings=False` exercises
+    `collect_native_multi_pattern_matches`'s SLOW branch (`NativeSearchMatch`, the site that
+    failed to compile), `fixed_strings=True` exercises its FAST branch (`NativeMultiPatternMatch`).
+    """
+    tg_binary = _require_native_tg_binary()
+    matches = _run_native_json_multi_pattern_search(
+        tg_binary, json_fidelity_corpus, fixed_strings=fixed_strings
+    )
+    crlf_matches = [m for m in matches if m["file"].endswith("crlf.txt")]
+    assert len(crlf_matches) == 1, f"expected exactly one crlf.txt match, got {crlf_matches}"
+    assert crlf_matches[0]["text"] == "needle crlf\r", (
+        f"expected the source line's trailing \\r preserved, got {crlf_matches[0]['text']!r}"
+    )
+
+
+@pytest.mark.parametrize("fixed_strings", [False, True], ids=["slow-path", "fast-path"])
+def test_native_json_multi_pattern_preserves_invalid_utf8_losslessly(
+    json_fidelity_corpus: Path, fixed_strings: bool
+) -> None:
+    """Same assertion as `test_native_json_preserves_invalid_utf8_losslessly`, but through the
+    multi-pattern (`-e`/`-e`) dispatch. See
+    `test_native_json_multi_pattern_preserves_crlf_trailing_cr` for which branch each
+    `fixed_strings` value exercises.
+    """
+    tg_binary = _require_native_tg_binary()
+    matches = _run_native_json_multi_pattern_search(
+        tg_binary, json_fidelity_corpus, fixed_strings=fixed_strings
+    )
+    latin1_matches = [m for m in matches if m["file"].endswith("latin1.txt")]
+    assert len(latin1_matches) == 1, f"expected exactly one latin1.txt match, got {latin1_matches}"
+    match = latin1_matches[0]
+
+    assert not match.get("text"), (
+        f"invalid-UTF-8 content must not be reported via a `text` string (that would require "
+        f"lossy re-encoding); got text={match.get('text')!r}"
+    )
+    assert match.get("bytes"), f"expected a base64 `bytes` fallback field, got {match}"
+
+    decoded = base64.b64decode(match["bytes"])
+    assert decoded == b"caf\xe9 needle", (
+        f"decoded bytes must exactly match the source line's raw content, got {decoded!r}"
+    )
+    assert b"\xef\xbf\xbd" not in decoded

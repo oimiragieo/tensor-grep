@@ -60,7 +60,13 @@ pub struct NativeSearchMatch {
 pub struct NativeMultiPatternMatch {
     pub path: PathBuf,
     pub line_number: u64,
-    pub text: String,
+    /// Same raw-bytes contract as `NativeSearchMatch.raw` (task #266/#271 gate follow-up): at
+    /// most the single trailing `\n` stripped (moot here -- the caller's `memchr`-based line
+    /// splitter already excludes it), a genuine trailing `\r` preserved, never lossily
+    /// `String::from_utf8_lossy`-converted. `main.rs`'s `collect_native_multi_pattern_matches`
+    /// derives `SearchMatchJson.text`/`bytes` from this the same way it does for the
+    /// single-pattern `NativeSearchMatch` path, via `native_json_text_fields`.
+    pub raw: Vec<u8>,
     pub pattern_id: usize,
     pub pattern_text: String,
 }
@@ -355,7 +361,12 @@ fn render_matched_line_bytes<'a>(
 /// (`grep_searcher::sinks::Lossy`'s internal `String::from_utf8_lossy` -- task #266's second
 /// defect). Exactly one of the two return values is `Some`, mirroring `rg`'s own
 /// `text`-XOR-`bytes` JSON protocol for a `lines`/match payload.
-fn native_json_text_fields(raw: &[u8]) -> (Option<&str>, Option<String>) {
+///
+/// `pub`: also called from `main.rs`'s `SearchMatchJson`/`SearchMatchNdjson` construction sites
+/// (the multi-pattern native search path) -- `main.rs` is a separate binary target that depends
+/// on this library crate, not a module of it, so this must cross the crate boundary explicitly
+/// rather than relying on `pub(crate)` visibility.
+pub fn native_json_text_fields(raw: &[u8]) -> (Option<&str>, Option<String>) {
     match std::str::from_utf8(raw) {
         Ok(text) => (Some(text), None),
         Err(_) => (None, Some(BASE64_STANDARD.encode(raw))),
@@ -911,7 +922,7 @@ pub fn run_native_fixed_multi_pattern_search(
             .cmp(&right.path)
             .then(left.line_number.cmp(&right.line_number))
             .then(left.pattern_id.cmp(&right.pattern_id))
-            .then(left.text.cmp(&right.text))
+            .then(left.raw.cmp(&right.raw))
     });
     Ok(Some(matches))
 }
@@ -994,16 +1005,17 @@ fn collect_fixed_multi_pattern_line_matches(
         return;
     }
 
-    // NOTE: still `from_utf8_lossy` (U+FFFD on invalid UTF-8) -- task #266's second defect is
-    // fixed for `NativeSearchMatch`/the single-pattern JSON emitter (`native_json_text_fields`),
-    // but this multi-pattern fast path feeds a separate JSON struct (`SearchMatchJson` in
-    // main.rs) that was not in this fix's scope. Disclosed follow-up, not silently dropped.
-    let text = String::from_utf8_lossy(line).into_owned();
+    // Raw bytes, not `String::from_utf8_lossy` -- task #266's second defect applies here exactly
+    // as much as it does to the single-pattern path (multi-pattern `--json`/`--ndjson` output is
+    // equally capable of carrying a non-UTF-8 match). `main.rs`'s `collect_native_multi_pattern_
+    // matches` derives `SearchMatchJson.text`/`bytes` from this via `native_json_text_fields`,
+    // the same helper the single-pattern emitter uses.
+    let raw = line.to_vec();
     for pattern_id in pattern_ids {
         matches.push(NativeMultiPatternMatch {
             path: path.to_path_buf(),
             line_number,
-            text: text.clone(),
+            raw: raw.clone(),
             pattern_id,
             pattern_text: patterns[pattern_id].clone(),
         });
