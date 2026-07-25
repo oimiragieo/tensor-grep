@@ -1,6 +1,580 @@
 # CHANGELOG
 
 
+## v1.98.6 (2026-07-25)
+
+### Performance Improvements
+
+- **search**: Route provably-safe plain-text searches to the in-process native backend (skip the rg
+  subprocess) ([#742](https://github.com/oimiragieo/tensor-grep/pull/742),
+  [`4c191e5`](https://github.com/oimiragieo/tensor-grep/commit/4c191e572db7b773d786bf476f6d0e8d2a4787ea))
+
+* perf(search): route provably-safe plain-text searches to the in-process native backend (skip the
+  rg subprocess)
+
+Plain-text `tg search` spawns a real `rg` subprocess; `--json` is already answered in-process by
+  NativeCpuBackend. That fixed subprocess cost is the whole measured gap vs bare ripgrep
+  (interleaved A/B/C: rg 34.8ms, tg plain 56.4ms, tg --json 40.4ms -- the native path is ~16ms
+  FASTER while emitting 3.8x more output).
+
+Introduces `native_can_serve_plain_text` in routing.rs: one fail-closed predicate, deliberately
+  narrow, that admits only requests the native engine is proven to render exactly as spawning rg
+  would. Everything else keeps today's behavior.
+
+Admitted: exactly one pattern; exactly one explicit PATH that is an existing regular file with no
+  NUL byte in its leading 64 KiB; stdout not a terminal; no --json/--ndjson/--format; and no flag
+  outside PLAIN_TEXT_NATIVE_ALLOWED_FLAGS (-i, -F, -w, -n, --verbose).
+
+Two thin adapters feed the one predicate: a raw-token allow-list at the pre-clap default search
+  front door (which now declines an admitted request so it falls through to route_search), and an
+  exhaustive `SearchArgs` destructure (compile-time ratchet) in `handle_ripgrep_search`.
+
+Also confirms and revives a dead arm: `route_search`'s final `native_cpu_auto(true, false)` was
+  logically unreachable (reaching it required rg_available && structured_output, which the branch
+  above always caught first). It is now the live plain-text native route and is pinned by a test.
+
+NOT COMPILED LOCALLY -- the CPU-safe shared-box rule forbids cargo/maturin here, so CI is the first
+  real verification of build, fmt, clippy and the rg-parity oracles.
+
+* fix(search): narrow the plain-text native predicate to close 3 emitter divergences the oracles
+  could not see
+
+Independent Opus gate returned FIX. It could not compile either, so it exercised the SAME native
+  emitter via TG_DISABLE_RG=1 and byte-diffed against real rg 15.1.0, finding three divergences
+  INSIDE the admitted subset -- and, load-bearing, that the existing rg-parity oracles normalize
+  both sides into agreement and would have stayed green.
+
+Took the CONTRACT-SAFE path: DETECT-AND-REFUSE, not an emitter change. The plain sink is shared with
+  --json/--ndjson/--cpu and its output is a governed contract; a perf PR is the wrong blast radius
+  for changing shared rendering.
+
+Now refused (each verified, none fixable by a flag because they are properties of the DATA): - CRLF:
+  the plain sink does trim_end_matches with '\n'/'\r' and no CRLF line terminator is ever installed
+  on this path, so rg emits "needle alpha\r\n" where native emits "needle alpha\n". This hit routine
+  `tg search PATTERN file.py` on any Windows/CRLF checkout. - non-UTF-8: the plain sink is
+  grep_searcher::sinks::Lossy (U+FFFD) where rg writes raw bytes. Silent corruption. A prefix probe
+  cannot bound it, so the probe is FULL-CONTENT. - empty pattern: run_native_search rejects it, and
+  the rg fallback then prints a "warning: native CPU search failed..." line that did not exist
+  before.
+
+The former 64 KiB NUL prefix probe is replaced by one bounded full-content probe (no NUL, no CR,
+  valid UTF-8, <= 8 MiB) -- which also closes the previously-disclosed >64 KiB NUL residual.
+
+Also fixed from the gate: - Adapter divergence: route_search admitted a strictly larger set than the
+  front door (-in, -w, -F, and the -e form all reach clap and route_search regardless of the token
+  list). The raw-argv adapter now mirrors clap -- combined short clusters, -e/--regexp, and the --
+  sentinel -- and a new test drives BOTH adapters with the same argv and requires identical
+  verdicts. The false "-in keeps spawning rg" assertion is corrected. - The tautological allow-list
+  test is replaced by two that bite: one drives the real token matcher, one drives the real
+  SearchArgs predicate with every constant entry (both directions), so constant-vs-predicate drift
+  now fails. - routing_reason renamed cpu-auto-size-threshold -> plain-text-native. The old label
+  described a GPU corpus-size decision and is read by benchmark/launcher attribution. The --verbose
+  rationale is corrected: its stderr DOES change, and reporting the true backend is the point.
+
+MANDATORY NEW ORACLE: tests/e2e/test_native_plain_text_parity.py compares raw stdout BYTES (no CRLF
+  normalization, no errors="replace") over CRLF / Latin-1 / NUL / empty-file / no-trailing-newline /
+  multibyte-UTF-8 / empty-pattern shapes, and its docstring names the exact normalization blindness
+  it covers. The existing oracles are untouched.
+
+It is wired into native-build-smoke in ci.yml, not test-python: test-python never builds
+  rust_core/target/release/tg (maturin builds only the extension-module cdylib), so the suite would
+  have skipped itself on every leg and been a no-op gate. native-build-smoke builds the real binary
+  on ubuntu/windows/macos x2 -- Windows being exactly where CRLF bites.
+
+Still NOT COMPILED LOCALLY (CPU-safe shared box). Verified statically instead: all 68 SearchArgs
+  fields covered by the destructure with type-correct operators, every PlainTextNativeRequest
+  literal sets all 10 fields, and zero added code lines exceed rustfmt's 100-column max_width.
+
+* fix(search): refuse pattern-level divergences, cut the probe cap to 512 KiB, and probe once + last
+
+Re-gate returned FIX on four items. All four addressed.
+
+1. BLOCKING -- a 5th divergence class the FILE probe structurally cannot see, because it is a
+  property of the PATTERN. On an otherwise fully admitted request (clean LF/ASCII file, single
+  non-empty pattern, no flags), measured against rg 15.1.0: - `needle\n`, `\n`, `[\n]`,
+  `needle\r\n`, `\x00`: rg exits 2 with a diagnostic ("the literal \n is not allowed in a regex",
+  "pattern contains \0 but it is impossible to match"); the native matcher accepts them and SUCCEEDS
+  with zero matches -> exit 1, empty stderr. That is an exit-code REGRESSION 2 -> 1: an agent
+  branching on 2-vs-1 reads "no matches" where the truth is "bad query", and the diagnostic is lost.
+  allow_rg_fallback never fires because nothing failed. Root cause: build_matcher never calls
+  RegexMatcherBuilder::line_terminator. - `[`, `(`, `\Qx\E`, `a{500}{500}{500}`: correct exit 2, but
+  stderr GAINS "warning: native CPU search failed, falling back to ripgrep: ..." -- the same
+  extra-stderr class already treated as disqualifying for the empty pattern. Fix (same contract-safe
+  path, no shared-emitter change): a new `pattern_is_native_renderable` clause that refuses any
+  pattern containing a line terminator or NUL (literal OR escaped, plus \x/\u wholesale) and any
+  pattern that fails to compile through `native_search::native_search_pattern_compiles` -- which
+  calls the very same `build_matcher` the search will use. Over-refusal is free here.
+
+2. BLOCKING -- PLAIN_TEXT_NATIVE_MAX_PROBE_BYTES 8 MiB -> 512 KiB. The measured table (now in the
+  code comment): probe eats 2% of the gain at 200 KB, 16% at 1 MB, 43% at 4 MB, 78% at 8 MB, and a
+  match-dense 8 MB file is a NET -10.9ms REGRESSION because the engine itself loses to rg there. 512
+  KiB sits conservatively inside the recommended 256 KB-1 MB band. The old comment's claim that the
+  probe "can never cost more than it saves" was FALSE at the top of the range and is replaced by the
+  measurements -- a wrong claim in a comment is durable misdirection CI can never fail on.
+
+3. Two perf defects. - Probe ONCE: the file was probed by the front door and again by
+  handle_ripgrep_search (3 reads where rg does 1). The probe is now memoized per path for the
+  process lifetime -> 2 reads. The last one would require threading pre-read bytes into the shared
+  engine; out of scope, noted. - Probe LAST: the expensive fields were plain struct fields computed
+  at construction, so requests this route never optimises paid for them anyway -- an interactive
+  terminal search burned 2 wasted full reads, --json/--ndjson and -A/-B/-C burned 1. Split the
+  predicate into `plain_text_native_cheap_checks_pass` (flags, output mode, terminal, cardinality,
+  one stat) and the expensive tier, and both adapters now fill the expensive tier only after the
+  cheap tier clears -- cheapest-first within it too (regex compile before file read).
+
+4. Oracle + accuracy. - Every oracle case used a valid pattern, which is exactly why finding 1
+  slipped through. Added 10 pattern cases (escape/literal newline, CRLF, NUL, unclosed class/group,
+  \Q..\E, repetition blowup) and the suite now asserts STDERR bytes and EXIT CODE, not just stdout.
+  - macOS silent-skip risk closed two ways: the CI job installs ripgrep when absent (the in-tree
+  fallback is Windows-only), and TG_REQUIRE_RG_PARITY=1 turns "binary missing" from a skip into a
+  FAILURE, so the oracle cannot masquerade as coverage. Verified locally: with the env var set the
+  suite fails loudly instead of skipping 32 tests. - "Adapters agree on EVERY shape" was overstated.
+  Renamed to `plain_text_native_adapters_agree_on_the_listed_shapes`, with the known asymmetric
+  spellings (-ie / -eneedle / -e=needle) documented and pinned by a new test asserting the real,
+  weaker, always-true invariant: the front door may be STRICTER than the clap gate, never looser.
+
+Still not compiled locally (CPU-safe). Static verification re-run: 68/68 SearchArgs fields, all 11
+  PlainTextNativeRequest literals complete, 0 added code lines over rustfmt's 100 columns, and every
+  added let-else is >=56 chars single-line vs the 50-char threshold so the multi-line form is
+  rustfmt's.
+
+* fix(search): refuse when $RIPGREP_CONFIG_PATH is set -- the predicate was blind to the environment
+
+Gate round 3. Every clause so far validated the REQUEST, the PATTERN or the FILE. None validated the
+  process ENVIRONMENT the rg subprocess inherits, and rg has a first-class env config surface:
+  execute_ripgrep_search never env_clear()s, and rg_passthrough.rs sends --no-config only when the
+  USER asks, so a plain-text search reaching rg today applies the user's $RIPGREP_CONFIG_PATH while
+  the in-process native engine reads no rg config at all.
+
+Receipt (shipped tg 1.98.3, rg 15.1.0, stdout piped, config containing `-i`, lf.txt = "needle
+  alpha\nNEEDLE beta\nplain\n"): tg search NEEDLE lf.txt -> NEEDLE beta RIPGREP_CONFIG_PATH=cfg tg
+  search NEEDLE lf.txt -> needle alpha + NEEDLE beta
+
+That is the canonical admitted shape -- no flags, one pattern, one clean explicit file, piped stdout
+  -- so without this clause the route returns SILENTLY WRONG RESULTS on the most common request it
+  admits. `-i` is only the cheapest demonstration: a config --vimgrep changes the whole output
+  format, --color=always injects escapes, and -w/-F/-U/-A/-B/-C/--sort/--hidden are equally
+  invisible to a predicate that inspects only argv. A dangling path is observable too (rg prints a
+  read-failure diagnostic the native route omits); an empty value is ignored by rg, so the guard is
+  "set AND non-empty".
+
+Fix: `rg_config_env_present` in the CHEAP tier (one env lookup, no I/O -- so an rg-config user never
+  pays for a file read either). Computed in exactly ONE place, inside
+  `finish_plain_text_native_request`, which both adapters already funnel through, so they cannot
+  drift. The decision half is split into `rg_config_env_is_active(Option<&OsStr>)` so its semantics
+  are unit-testable WITHOUT mutating the process environment -- env::set_var is process-global and
+  Rust tests run in parallel, so an env-mutating test would silently flip every concurrent
+  eligibility test's verdict. The end-to-end proof lives in the e2e suite, where the variable is
+  scoped to a subprocess.
+
+Also from the gate: - routing.rs:235-237 still asserted the probe "can never cost more than it
+  saves" -- the exact sentence main.rs now retracts as FALSE with measurements. Two load-bearing
+  comments in one PR claiming opposite facts about the same constant; whoever lands on routing.rs
+  first re-learns the wrong thing. Deleted, and routing.rs now points at the measured table as the
+  single owner. - Oracle fixtures: bom.txt (a UTF-8 BOM file is ADMITTED, so parity rests on both
+  engines defaulting bom_sniffing(true) -- true by reading build_searcher, asserted by nothing until
+  now), mixed_case.txt for the config receipt, plus a new argv-spelling test covering `-e PATTERN`,
+  the `--` sentinel and combined shorts at the BYTE level (the Rust units covered their routing
+  decision, not their output). - TODO on native_search_pattern_compiles: it builds and discards a
+  matcher that run_native_search immediately rebuilds identically, and a pathological pattern pays
+  the regex-size-limit walk twice. Threading the matcher through is deferred, not forgotten.
+
+Oracle grew 32 -> 45 cases. Still not compiled locally (CPU-safe): 68/68 SearchArgs fields, all 12
+  PlainTextNativeRequest literals complete, 0 added code lines over rustfmt's 100 columns.
+
+* fix(search): treat a broken pipe as normal termination -- the predicate was blind to the CONSUMER
+
+Gate round 4. The clauses validated the request, the pattern, the file and the environment. None
+  validated the stdout SINK'S BEHAVIOR. Clause 1 modelled stdout only as terminal-vs-not, i.e. as a
+  passive byte destination -- but this route moves ownership of the WRITE LOOP out of an
+  Stdio::inherit() subprocess and into tg's own process, and the two react oppositely when the
+  consumer closes the pipe early.
+
+Reproduced locally on the shipped v1.98.3 + rg 15.1.0 (Windows), 279 KB dense fixture, consumer =
+  readline() then close(), 3/3 runs stable, WITH a full-drain control proving the divergence is
+  specific to the early close:
+
+FULL DRAIN (control) rg -> rc=0 tg native -> rc=0 (parity) EARLY CLOSE rg -> rc=1, stderr '' tg
+  native -> rc=2, stderr 'native standard output search failed for <path>'
+
+Under this PR it is worse than the shipped binary shows: native_cpu_plain_text() sets
+  allow_rg_fallback=true, so the Err arm would ALSO print "warning: native CPU search failed,
+  falling back to ripgrep: ..." -- the exact line test_native_plain_text_route_emits_no_extra_stderr
+  swears never leaks -- and then RE-RUN the entire search through execute_ripgrep_search into an
+  already-closed pipe.
+
+Fix: the fallback-branch guard, not the sink change. `error_chain_has_broken_pipe` walks the whole
+
+anyhow chain (only the INNERMOST link still says BrokenPipe -- the plain sink's io::Error is
+  re-wrapped by io::Error::other with kind Other to satisfy Sink::Error, then given anyhow context)
+  and exits quietly with rg's code BEFORE the structured-error and fallback branches. Chosen over
+  halting the sink because the sink lives in native_search.rs, shared with --json/--ndjson/--cpu --
+  the same "don't change the shared emitter" discipline the rest of this PR follows. The guard does
+  fix those routes too, which is correct: a broken pipe is never a search failure on any route, and
+  the current behavior (error + exit 2 + a full re-run into a dead pipe) is wrong everywhere.
+
+The exit code is MEASURED, not guessed, and the test asserts PARITY WITH RG rather than the
+  constant, so a platform whose rg disagrees surfaces as a real finding instead of a Windows-only
+  number frozen into the code.
+
+REGRESSION TEST -- the important part, and the old harness structurally could not express it:
+  _run_bytes uses capture_output=True, which drains stdout to EOF, and a harness that always reads
+  everything can never produce a broken pipe. Added _run_with_early_close (spawn, read one line,
+  close the pipe, reap, every wait bounded) and test_early_closing_consumer_matches_ripgrep, with rg
+  as the control arm. Two anti-vacuity guards: the fixture must emit every one of its 248,000 bytes
+  and must exceed 200 KB, so shrinking it below a pipe buffer fails loudly instead of silently
+  passing. Fixture size is doubly constrained -- above ~64 KB to break the pipe, below the 512 KiB
+  probe cap to stay ADMITTED.
+
+Discrimination confirmed pre-fix with the shipped binary: rg -> (1, b''), native -> (2, error), so
+  both the stderr and exit-code assertions fail without the guard; and tg on the rg route already
+  returns (1, b''), so the control arm passes.
+
+Non-blocking, same push: - The memoization comment called a file mutated between probe and search "a
+  pre-existing race with the search itself". It is not that class: a STALE ADMISSION lets the native
+  engine render content the probe would have refused (silent \r loss, U+FFFD substitution). Reworded
+  to say so. - finish_plain_text_native_request fills rg_config_env_present ABOVE the cheap-tier
+  gate, which contradicted the function's own doc-comment. It is not an exception -- one env::var_os
+  with no I/O IS the cheap tier, and the clause must be populated before
+  plain_text_native_cheap_checks_pass reads it or the guard would be dead. Stated explicitly. -
+  routing.rs refusal note 1 now says why the sink's early-close BEHAVIOR is handled by a guard
+  rather than a refusal (it cannot be known in advance, and refusing every piped search would delete
+  the feature), and points at the guard.
+
+Oracle 45 -> 46 cases. Still not compiled locally (CPU-safe): 68/68 SearchArgs fields, both
+  PlainTextNativeRequest literals complete at 12 fields, 0 added code lines over 100 columns.
+
+* fix(search): refuse the `-` stdin sentinel and size-lying pseudo-files -- the special-resolution
+  axis
+
+Gate round 5. `-` is the one PATH operand ripgrep gives a special meaning (read STDIN), and the
+  predicate modelled it as an ordinary path. The front-door scanner deliberately excludes `-` from
+  flag parsing, so it lands in `positionals` and becomes the single PATH -- and
+  `Path::new("-").is_file()` is TRUE whenever a file literally named `-` exists in cwd, so the probe
+  reads that file and admits it.
+
+Reproduced locally on the shipped v1.98.3 (file named `-` containing "needle in dashfile", stdin
+  piped "needle from STDIN"), all three spellings, `needle -` / `-- -` / `-e needle -`:
+
+rg 15.1.0 -> needle from STDIN shipped tg 1.98.3 -> needle from STDIN native emitter -> needle in
+  dashfile *** DIVERGES ***
+
+rc=0, no stderr, plausible output, WRONG DATA SOURCE. This PR introduces it. Confirmed POSIX-wide:
+  `grep needle -` with a file named `-` present also reads stdin.
+
+Note this falsifies gate 4's clearance, which stated `-` was "refused (is_file() false)". That was
+  reasoned, not measured.
+
+CLOSING THE CLASS, not the instance. The axis is: everything rg resolves SPECIALLY that is neither
+  the request, the pattern, the file's bytes, the environment, nor the consumer. Probed on Linux
+  (WSL), measured rather than reasoned -- `Path::is_file()` is S_ISREG, so admission is exactly
+  decidable:
+
+/dev/null, /dev/zero, FIFO NOT S_ISREG -> already refused by clause 3 symlink -> regular file
+  S_ISREG, size==read -> ADMITTED, and correct (both engines follow an explicit symlink operand)
+  /proc/self/cmdline S_ISREG, st_size 0, 23 bytes -> was refused (NUL) by luck /proc/self/status
+  S_ISREG, st_size 0, 1460 bytes of clean UTF-8 -> WAS ADMITTED /proc/version S_ISREG, st_size 0,
+  166 bytes -> WAS ADMITTED
+
+So /proc-style pseudo-files passed every existing clause. Refused now by a new invariant in
+  plain_text_native_probe_file: the bytes read must equal the size the OS reported. A file whose
+  reported size is a lie is exactly the shape where the probe cannot describe what the SEARCH will
+  later read -- content is generated per-open, so the memoized verdict is not stale by a
+  microsecond, it is unrelated by construction. Also fail-closes an ordinary file that changes size
+  between the metadata call and the read. Free: both numbers were already in hand.
+
+Both fixes follow the file's own doctrine (over-refusal is free) and are cheap-tier facts computed
+  in both constructors, not local conditions, so the adapters cannot drift.
+
+Non-blocking, same push: - BROKEN_PIPE_EXIT_CODE asserted a FALSE mechanism. rg's actual broken-pipe
+  path in main() returns 0 (it walks err.chain() for BrokenPipe); the observed 1 is rg breaking out
+  of a SINGLE-FILE search before recording a match, so `matched` stays false and it reports its
+  ordinary no-match code. Receipts: `rg -c needle dense.txt` early-close -> 0 (5/5); two-file search
+  -> 0 (5/5). Restated, and the constant is now marked SHAPE-BOUND -- correct only for the admitted
+  subset, and wrong if it ever widens to multiple paths or --count. This was the 4th false-mechanism
+  comment in this PR, so I re-read all 17 explanatory comments I have added with that suspicion; the
+  other 16 are measurements or code-verified mechanisms and stand. - _run_with_early_close claimed
+  "every wait is bounded" while proc.stderr.read() was unbounded AND ran ahead of the bounded
+  wait(), so a hung child would block forever and the finally-kill would never run. Now genuinely
+  bounded: the first-line read runs on a daemon thread with a join timeout, stderr drains through
+  communicate(timeout=60). - docs/routing_policy.md documents the --ndjson/--json early-close
+  exit-code change (2 -> 1, no structured error) as a contract change on a machine-facing surface,
+  not just a Rust comment.
+
+Oracle 46 -> 49 cases. Discrimination re-verified against the shipped binary: the `-` test fails
+  pre-fix on all three spellings, and the rewritten early-close harness still shows rg (1, b''),
+  tg-rg-route (1, b'') control passing, tg-native (2, error).
+
+* fix(build): fully qualify std::fs on the plain-text native route
+
+CI smoke (ubuntu-latest) failed to compile: `use std::fs;` at main.rs:21 is behind `#[cfg(feature =
+  "cuda")]`, so `fs` is not in scope for the default `--no-default-features` build. The file's
+  convention for non-cuda code is fully-qualified `std::fs::` at the call site (as at the existing
+  `std::fs::read_to_string` sites); the only bare `fs::` on origin/main is inside the cuda-gated
+  `count_search_corpus_bytes`.
+
+Fixed all 13 sites this branch added: 2 in `plain_text_native_probe_file` (the 2 CI reported) and 11
+  `fs::write` calls in `mod tests` that the failed build never reached, so `test-rust-core` would
+  have failed next for the same reason.
+
+Six review rounds read this code closely -- one of them verified the `metadata` binding and the read
+  were the same binding with no second stat -- and none noticed the module was not in scope.
+  Reviewers read for semantics; they do not typecheck. CI is the only typechecker in this loop.
+
+* test(search): seeded differential fuzz, both argv spellings, and admission-rate telemetry
+
+Gate round 6 returned SHIP with five measurement/coverage items. Putting the remaining budget into
+  the oracle instead of another review round, per the gate's own recommendation -- round 4 cleared
+  `-` by reasoning and round 5 falsified it by measuring, so reasoning about this boundary is
+  demonstrably unreliable and measuring it is not.
+
+1. SEEDED DIFFERENTIAL FUZZ (tests/e2e). Randomized bodies (valid UTF-8, no CR, no NUL, well under
+  the 512 KiB cap) x 24 patterns x 8 flag subsets, byte-compared against rg on stdout, stderr and
+  exit code. Deterministic: TG_FUZZ_SEED (default 20260725) and TG_FUZZ_RUNS (default 50), with each
+  iteration seeded as f"{seed}-{i}" so any failure is reproducible from the seed alone, and the
+  failure message carries seed + iteration + flags + pattern + the exact body bytes. 50 runs is ~100
+  subprocess pairs, a couple of seconds per CI job. This converts "nobody found a sixth class" into
+  "a sixth class must survive N randomized runs on every CI job".
+
+2. BOTH ARGV SPELLINGS. Every case used `tg search ...`; the ROOT SHORTCUT (`tg PATTERN FILE`,
+  normalized by normalize_top_level_search_args) reaches the same route when it carries a flag in
+  SEARCH_OPTION_FIRST_FLAGS. Parametrized all 34 cases over both spellings (34 -> 68). Verified
+  BEFORE adding that all 34 already agree with rg through the shortcut on the shipped binary, so
+  this imports no pre-existing failure -- measured, not assumed.
+
+3. CONTROL-ARM NUMBER CORRECTED, re-measured myself rather than taken from the gate. The docstring
+  said the forced-native arm fails 9 byte cases; driving the real _CASES table against the shipped
+  emitter with TG_DISABLE_RG=1 gives 18 of 34: crlf x3, mixed-cr, latin1 x2, binary, empty-pattern,
+  and all 10 pattern cases -- failing by stdout, stderr and exit code respectively. The 9 was
+  measured against a smaller case list and never updated. Same defect class this suite exists to
+  catch, so the correction says so.
+
+4. TG_RG_PATH -- a sentence, not a clause. The predicate models rg's CONFIG env but not WHICH rg
+  BINARY would have run (`resolve_ripgrep_binary` honors TG_RG_PATH, legacy TG_RG_BINARY, and a
+  bundled ripgrep-14.1.0), so a user who pinned a wrapped rg silently stops getting it. Kept a
+  sentence because rg's plain-text rendering is stable across versions AND because
+  tests/helpers/rg_parity._command_env SETS TG_RG_PATH on every parity run -- refusing on it would
+  make this PR's entire byte-parity oracle test nothing. Recorded as the same axis-family as the `-`
+  finding one round later, which is itself the point: treat "no more found" as un-found.
+
+5. ADMISSION-RATE TELEMETRY, default-OFF. TG_ROUTE_TELEMETRY=1 appends one JSONL record per
+  eligibility evaluation with the stage (frontdoor|clap) and every clause; TG_ROUTE_TELEMETRY_PATH
+  overrides the location, which defaults to the OS temp dir (never the workspace). Best-effort and
+  fail-silent -- telemetry must never change what a search returns -- and gated behind a cached
+  OnceLock env read. Emitted from ONE point: finish_plain_text_native_request now wraps the
+  computation (split out as fill_plain_text_native_expensive_tier) so every early-return path is
+  covered by a single emission. scripts/summarize_route_telemetry.py aggregates it into an admit
+  rate per stage plus a histogram of which clause refused FIRST; smoke-tested against synthetic
+  records. Existing workloads need no modification: `TG_ROUTE_TELEMETRY=1 ... run_benchmarks.py`
+  then the summarizer. This exists because an independent review found 0 of 10 benchmark scenarios,
+  0 of 4 dogfood calls and the whole MCP surface ineligible, so the benchmark-regression gate can
+  observe neither this route's benefit nor a future regression in it.
+
+Not doing, recorded so nobody re-opens them: B2 (non-EPIPE stdout write failures -- a widened error
+  class, not a clause) and B4 (try_early_ripgrep_passthrough under TG_RUST_EARLY_RG bypasses the
+  route -- perf-only, safe direction).
+
+Oracle 49 -> 84 collected cases. smoke (ubuntu-latest) is green on the preceding compile fix.
+
+* fix(fmt,search): apply rustfmt's exact diff and refuse a readable stdin
+
+Two CI failures on d2845b6, both real.
+
+1. `cargo fmt -- --check` (Formatting & Linting): 9 hunks. My local width check only enforced
+  `max_width` (100); rustfmt also enforces `chain_width` and `fn_call_width` (both default 60),
+  which is what actually governed every one of them -- e.g. `cluster.chars().all(|letter|
+  CONST.contains(&letter))` is 89 columns (fits max_width) but its chain is 70 (exceeds
+  chain_width), so rustfmt splits it one call per line. Applied rustfmt's printed diff verbatim
+  rather than re-deriving it, and extended the local checker to flag chain/call-width candidates --
+  as a heuristic, not a substitute: only cargo fmt is authoritative.
+
+2. `test-rust-core` (ubuntu stable + nightly):
+  test_public_native_cli_parity::test_search_explicit_path_keeps_path_when_stdin_is_piped. A genuine
+  gap, not a stale test. The predicate modelled stdout (clause 1) and the argv paths, but never
+  modelled STDIN as an input source. tg's own resolution already branches on it
+  (resolve_search_request_with_stdin / implicit_search_paths), and clause (2) covered only the
+  IMPLICIT-path half; an EXPLICIT path with a readable stdin was admitted, bypassing the argv
+  contract that test pins via a fake rg.
+
+Measured before deciding: real rg with an explicit single path prints identical bytes whether stdin
+  is piped or /dev/null (`needle file`, no prefix), so this is NOT a user-visible rendering
+  divergence -- it is an unverified region of the tg/rg argv contract. Narrowed rather than touching
+  the test, per the standing rule that a failing pre-existing parity test means the subset is too
+  wide.
+
+The condition reuses stdin_should_search_implicit_path() (grep_cli::is_readable_stdin()), TRUE for a
+  pipe/redirect and FALSE for a TTY or /dev/null. Deliberately not `!stdin.is_terminal()`: that
+  would refuse in every non-interactive context -- CI, agents, and this PR's own oracle, which runs
+  with stdin=DEVNULL -- and would silently delete the feature it protects.
+
+That is the seventh divergence category, found by CI rather than by review. Consistent with the
+  standing read: the residual risk on this route is un-found, not absent.
+
+* fix(ci): clippy doc indents, revert the over-broad stdin clause, and preserve BrokenPipe kind
+
+Three CI failures on 8bb2753, all decoded from the logs rather than guessed. cargo fmt now passes.
+
+1. clippy (49 errors, all routing.rs doc comments): doc_overindented_list_items and
+  doc_lazy_continuation. Applied clippy's OWN per-line suggestion for each -- it prints an exact
+  target indent for the first lint and '+1 space' for the second, and the required indent is NOT
+  uniform (continuations under '3.' want 3, under '10.' want 4, because rustdoc strips one leading
+  space and the marker width differs). Parsed the 49 suggestions out of the log and applied them
+  mechanically.
+
+2. REVERTED the stdin_is_readable clause added in 8bb2753. It was wrong, and my own test caught it:
+  'frontdoor_plain_text_eligibility_admits_only_the_proven_subset' failed with '[] must stay native'
+  on all six test-rust-core legs, because grep_cli::is_readable_stdin() is TRUE under cargo test
+  everywhere. A clause that broad does not narrow the subset, it DELETES the feature in exactly the
+  contexts it targets -- CI, and any agent harness whose stdin is an inherited pipe.
+
+I reasoned DEVNULL->false and stopped there; I never measured the CI case. That is the second time
+  in this PR I shipped a conclusion from reasoning about this boundary instead of measuring it,
+  which is precisely the failure round 5 already caught once.
+
+The motivating test (test_search_explicit_path_keeps_path_when_stdin_is_piped) is NOT an rg oracle
+  -- it drives a FAKE rg and asserted '== "fixture.txt:needle file"', a canned string the fake
+  invents. Real rg prints 'needle file' with NO prefix, identically whether stdin is piped or
+  /dev/null (measured, 15.1.0). So the prefix was an artifact of the mechanism, not ripgrep
+  behavior. Updated it to assert the invariant it NAMES -- the explicit PATH wins, stdin is not
+  searched -- which holds under either routing, while leaving the fake rg's exact-argv assertion
+  live so the forwarding guarantee is not lost.
+
+3. Broken-pipe guard did not fire on Linux (native-build-smoke: 80 passed, 1 failed). Root cause:
+  the sink wrapped every error with io::Error::other(), which always yields kind Other and discards
+  BrokenPipe, so the typed chain walk could not see it. Fixed at the SOURCE with
+  native_search::sink_io_error, which preserves the original ErrorKind; the message uses
+  err.to_string() so it stays byte-identical to io::Error::other's rendering and ONLY the kind
+  changes. Kept a rendered-text fallback in the guard as belt-and-braces, now documented as such
+  rather than as the primary mechanism.
+
+Seven predicate categories now, plus two build/lint classes -- all three of these were found by CI,
+  not by six rounds of review.
+
+* style: collapse a stray double blank line left by the stdin-clause revert
+
+cargo fmt -- --check flagged one hunk in test_smart_routing.rs:511 -- rustfmt's
+  blank_lines_upper_bound is 1, and my scripted removal of the stdin refusal block left two
+  consecutive blank lines behind.
+
+Artifact of editing Rust with a Python script and not re-checking the seam. Swept all six touched
+  Rust files for the same pattern; this was the only occurrence.
+
+* fix(docs,tests): flatten the refusal-notes doc block and re-pin two routing tests
+
+Two failures on f990592.
+
+1. clippy went 49 -> 10 doc lints after applying its per-line suggestions, but did NOT converge:
+  changing a continuation's indent changes what markdown thinks the enclosing structure is, so each
+  pass produces a fresh set. Both lints (doc_lazy_continuation, doc_overindented_list_items) apply
+  ONLY to list items, so instead of a third iteration I removed the list semantics: '1.' ordered
+  markers became 'REFUSAL 1 --', nested '- ' bullets became '(a)'/'(b)', and every continuation sits
+  at 4 spaces after '///' (effective 3 after rustdoc strips one -- under 4, so it cannot become an
+  indented code block, which would be doctested and fail to compile). Content is unchanged; verified
+  no list marker survives in the block.
+
+2. test-rust-core failed on all five completed legs with the SAME two tests. Rather than fix them
+  reactively one platform at a time, I enumerated the blast radius mechanically: of the 13 routing
+  tests asserting RipgrepBackend/rg_passthrough, exactly 2 use a shape the new predicate admits (a
+  single explicit FILE with only allow-listed flags). That matched CI exactly -- no hidden third.
+
+- test_routing_default_search_prefers_ripgrep_cold_path: now asserts BOTH arms. The single-FILE
+  shape is native; a DIRECTORY still prefers ripgrep, so the guarantee the test exists for stays
+  pinned for every shape where it still holds. -
+  test_routing_warm_index_is_bypassed_by_short_pattern: the invariant it NAMES is that the warm
+  index is bypassed, not that the bypass lands on rg. route_search checks the index BEFORE the
+  plain-text clause, so reaching plain-text-native at all proves the index was not selected; the
+  assertion now says that explicitly. Its five sibling _bypassed_by_* tests target a directory or an
+  excluded flag and still assert ripgrep.
+
+That is three pre-existing tests re-pinned across this PR (plus test_public_native_cli_parity's
+  stdin case). Each was a deliberate, documented routing-policy change with the output-level
+  question left to the byte-parity oracle -- flagging them together for the gate, since 'do not
+  loosen a failing test' is exactly the rule they sit closest to.
+
+* test: tighten the parity assertion, annotate two dead arms, drop a stdin write race
+
+Three cosmetic follow-ups from the re-pinning audit, plus a correction to my own census.
+
+CENSUS CORRECTION. I reported "three re-pinned tests (plus the parity case)" from memory; the real
+  surface is 5 pre-existing TESTS plus the pre-existing base_config() helper in
+  test_smart_routing.rs. The two I missed were test_routing_directory_search_promotes_to_native_cpu
+  and test_routing_directory_count_search_uses_native_cpu_without_fallback -- both else-arm reason
+  strings carried along by the constructor rename. Same shape as the E0433 fix being 13 sites when
+  CI named 2: I enumerated the ROUTING sweep mechanically but counted MY OWN edits by recollection.
+  The census is now a script over the diff, so the number cannot drift from the tree again.
+
+1. test_public_native_cli_parity: the disjunction also accepted `fixture.txt:needle file`, which
+  would have passed a native emitter that WRONGLY prefixes the filename on a single-file search. rg
+  15.1.0 was measured on both spellings (piped stdin and /dev/null) and prints `needle file` with no
+  prefix either way, so there is exactly one correct answer -- now asserted with assert_eq!.
+  Tightening, not a hole: the same divergence is independently caught by the e2e byte oracle.
+
+2. The two dead else arms now say so. Both tests pass a DIRECTORY, which the predicate refuses, so
+  the arm cannot fire at head; it was already unreachable on origin/main for a separate reason
+  (needed rg_available == true, but reaching it required structured_output == true, caught one line
+  earlier). Only the reason STRING changed. The comment points at where real coverage of the new
+  route actually lives, so nobody mistakes those lines for it.
+
+3. Removed a timing dependency I introduced: nothing drains the child's stdin on the native path
+  now, where the fake rg used to (`sys.stdin.buffer.read()`). 13 bytes fit any pipe buffer so the
+  window is narrow, but a narrow race is still a flake in a suite this project has repeatedly had to
+  de-flake. The write result is discarded and the handle dropped -- a failed write is CONSISTENT
+  with the invariant under test (stdin must not be consumed), so this costs no assertion strength.
+  The other two tests using that pattern still route to the fake rg, which drains stdin, and are
+  left alone.
+
+* style: rustfmt the stdin write in the parity test
+
+Single hunk from cargo fmt on f87d351: with the `let _ = ` prefix the chain fits on one line, so
+  rustfmt collapses the block form I wrote.
+
+Applied by RUNNING rustfmt rather than hand-deriving the diff -- the result is byte-identical to the
+  one CI printed. rustfmt.exe is available locally and is a parser/formatter, not a compiler: it is
+  not cargo build/check/test/clippy, not rustc, not maturin, and does no codegen, so it sits outside
+  the CPU-safe prohibition that kept me from verifying formatting for three rounds.
+
+All six Rust files this branch touches now pass `rustfmt --edition 2021 --check` locally under the
+  repo's settings (no rustfmt.toml, so defaults -- the same configuration CI uses). That should end
+  the fmt round-trips; each of the three cost a full CI cycle while sitting in front of everything
+  else, including the native-build-smoke result this PR actually needs.
+
+Pushed alone so native-build-smoke starts as early as possible.
+
+* fix: correct a stale mechanism comment, close a silent-swallow window, and fix two doc slips
+
+Four non-blocking items from the delta-gate. None touches routing or the admitted set;
+  `native_can_serve_plain_text` is unchanged.
+
+1. error_chain_has_broken_pipe's doc still described the OLD mechanism -- that `io::Error::other`
+  flattened the kind to `Other` and only the innermost link said `BrokenPipe`. That became false
+  when `sink_io_error` replaced those 13 call sites, and it directly contradicted the comment nine
+  lines below it. Rewritten to say the kind is preserved at the source. This is the sixth
+  comment-asserting-a-dead-mechanism in this PR, which is the exact defect my own routing.rs note
+  calls out; the pattern is that I update code and leave the prose that motivated it.
+
+2. The rendered-string fallback was a silent-swallow surface. It lowercased the WHOLE chain and
+  matched "broken pipe", and the anyhow context embeds the searched path ("native standard output
+  search failed for <path>"), so a path merely containing that substring plus any genuine non-EPIPE
+  error would exit(1) as "no matches" -- skipping both exit_json_search_runtime_error_if_needed and
+  the rg fallback. Now the rendered form is consulted ONLY when no typed io::Error survived the
+  chain at all; if one is present and says something other than BrokenPipe, it is trusted and the
+  real failure paths run. Narrow, but silent-swallow is the class this repo fails closed on.
+
+3. routing.rs REFUSAL 9's third list item was lettered (a) after (a),(b) -- the clippy-renumbering
+  script reset its counter across the (b) item's continuation lines. Now (c). Scanned every letter
+  sequence in the flattened block mechanically rather than eyeballing; this was the only one, and I
+  noted the scan's blind spot (a restarted counter and a genuine new group both look like (a)).
+
+4. test_public_native_cli_parity's comment claimed the change "only stops the test from mandating
+  WHICH engine answers". False: the fake rg's canned stdout is "fixture.txt:needle file\n", so
+  assert_eq!(stdout, "needle file\n") fails if the request reaches rg. It DOES mandate the native
+  engine -- which is correct for a shape squarely inside the admitted subset, since a silent fall
+  back to the subprocess would be a routing regression -- but the comment said the opposite.
+
+Verified locally with rustfmt --check (main.rs, routing.rs, test_public_native_cli_parity.rs all
+  clean) rather than by another CI round-trip.
+
+
 ## v1.98.5 (2026-07-25)
 
 ### Bug Fixes
