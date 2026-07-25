@@ -93,6 +93,14 @@ def _normalize(data: bytes, root: Path) -> list[bytes]:
     `\r\n` -> `\n` replace), so a real CRLF divergence between the two compared engines
     stays visible as a trailing `\r` on the affected line instead of being erased before
     comparison (task #262).
+
+    KNOWN, ACKNOWLEDGED LIMIT (not closed here, independent-gate follow-up): the trailing
+    `.replace(b"\\", b"/")` below runs against the WHOLE line, not just a parsed-out path
+    prefix, so it is still a both-arms-lossy transform in the same shape this function
+    otherwise removes -- a real backslash-vs-forward-slash divergence inside MATCHED TEXT
+    content (not the file-path prefix) would cancel out identically on both arms. This
+    module's fixtures are plain ASCII words with no backslashes in their content, so it has
+    not been observed to mask a real failure, but it is a structural gap.
     """
     root_bytes = str(root).encode("utf-8")
     root_posix_bytes = root.as_posix().encode("utf-8")

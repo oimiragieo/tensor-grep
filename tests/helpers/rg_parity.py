@@ -554,8 +554,22 @@ def _normalize_rg_json_events(
 
 
 def _normalize_line(line: bytes, *, corpus: RGParityCorpus) -> bytes:
-    # NARROW, byte-level normalization: only the pytest tmp-dir prefix (non-contractual on
-    # both engines) and the platform path separator. Never a newline or encoding collapse.
+    # NARROW, byte-level normalization: the pytest tmp-dir prefix (non-contractual on both
+    # engines) and the platform path separator. Never a newline or encoding collapse.
+    #
+    # KNOWN, ACKNOWLEDGED LIMIT (not closed by task #262, independent-gate follow-up):
+    # `.replace(b"\\", b"/")` below runs against the WHOLE line -- this helper does not
+    # parse "path:line:text" apart, so it cannot narrow the replacement to just the leading
+    # path portion without risking a wrong split on content containing its own ":" or "\\".
+    # That means it is still a both-arms-lossy transform in the same shape this PR removed
+    # elsewhere: a real backslash-vs-forward-slash divergence inside MATCHED TEXT content
+    # (not just the file-path prefix) would cancel out here identically on the tg and rg
+    # arms and read as parity. The corpus fixtures this helper compares are plain ASCII
+    # sentinel words with no backslashes in their content, so this has not been observed to
+    # mask a real failure -- but it is a structural gap, not a proven-safe one, and a future
+    # corpus/pattern that legitimately contains a backslash in matched text would not be
+    # caught here. Left as-is rather than risk destabilizing this comparator (used by every
+    # `test_rg_parity_matrix.py` row) with an unproven "path-prefix-only" parse.
     root_bytes = str(corpus.root).encode("utf-8")
     root_posix_bytes = corpus.root.as_posix().encode("utf-8")
     normalized = line.replace(root_bytes, b".")

@@ -133,7 +133,12 @@ class StringZillaBackend(ComputeBackend):
         digest = hashlib.sha256(
             f"{Path(file_path).resolve()}::{int(ignore_case)}::{int(treat_binary_as_text)}".encode()
         ).hexdigest()
-        return self._get_index_cache_dir() / f"{digest}.json"
+        # The format version is baked into the FILENAME, not just the payload's own
+        # "format_version" field -- see the identical comment on
+        # CPUBackend._get_prefilter_cache_path for the forward-direction corruption this
+        # closes (an OLDER install sharing this cache dir with a NEWER one would otherwise
+        # read a v2 payload verbatim, having no idea the schema field exists at all).
+        return self._get_index_cache_dir() / f"{digest}-v{_STRING_INDEX_CACHE_FORMAT_VERSION}.json"
 
     def _build_line_trigram_index(self, lines: list[str]) -> dict[str, list[int]]:
         index: dict[str, set[int]] = {}

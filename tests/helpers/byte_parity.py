@@ -28,6 +28,8 @@ import subprocess
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
+from tensor_grep.core.result import split_source_lines
+
 
 def run_bytes(
     argv: Sequence[str],
@@ -106,22 +108,12 @@ def split_lines_bytes(data: bytes) -> list[bytes]:
     return data.split(b"\n")
 
 
-def split_lines_preserve_cr(text: str) -> list[str]:
-    r"""Split on a bare ``\n`` only, leaving any trailing ``\r`` attached to its line.
-
-    A ``str``-typed sibling of ``split_lines_bytes`` for call sites that must decode before
-    splitting (e.g. to run the result through ``json.loads`` or an existing string-based
-    normalizer). ``str.splitlines()`` has the exact same blindness as
-    ``bytes.splitlines()`` -- it treats ``\r\n`` as one line break, silently dropping a real
-    ``\r``. Unlike ``split_lines_bytes``, this mirrors ``str.splitlines()``'s line COUNT for
-    well-formed input by dropping one spurious trailing empty element produced by a single
-    final ``\n`` (``"a\nb\n".split("\n")`` has a trailing ``""`` that ``"a\nb\n".splitlines()``
-    does not), so a caller that previously assumed that invariant does not silently gain an
-    extra blank entry -- only a genuine embedded/trailing ``\r`` now survives.
-    """
-    if text == "":
-        return []
-    lines = text.split("\n")
-    if lines and lines[-1] == "":
-        lines.pop()
-    return lines
+# `str`-typed sibling of `split_lines_bytes`, for call sites that must decode before
+# splitting (e.g. to run the result through `json.loads` or an existing string-based
+# normalizer). This used to be a second, byte-identical implementation of the exact same
+# "split on a bare `\n`, drop one trailing empty element" logic as
+# `tensor_grep.core.result.split_source_lines` -- the identical drift shape this whole
+# module exists to eliminate elsewhere (one lossy-normalization behavior implemented twice,
+# free to silently diverge). Re-exported under this module's existing public name instead
+# (test_output_golden_contract.py and test_routing_parity.py already import it from here).
+split_lines_preserve_cr = split_source_lines

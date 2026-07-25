@@ -147,7 +147,19 @@ class CPUBackend(ComputeBackend):
     def _get_prefilter_cache_path(cls, file_path: str, ignore_case: bool) -> Path:
         key = f"{Path(file_path).resolve()}::{int(ignore_case)}"
         digest = hashlib.sha256(key.encode()).hexdigest()
-        return cls._get_prefilter_cache_dir() / f"{digest}.json"
+        # The format version is baked into the FILENAME, not just the payload's own
+        # "format_version" field (task #262 forward-direction finding): an OLDER tg install
+        # sharing this cache dir with a NEWER one (upgrade in place, or two versions on the
+        # same machine) has no idea the payload schema field exists at all, so it would
+        # happily read a v2 payload verbatim and re-corrupt it (observed: a v2 payload's
+        # already-correct `\r` gets a SECOND `\r` appended by the old stdout-writing bug,
+        # worse than either version alone). Versioning the path makes the two physically
+        # unable to share a file -- an old reader just sees `cache miss` on the new path and
+        # a new reader never opens the old one, no cross-version read in either direction.
+        return (
+            cls._get_prefilter_cache_dir()
+            / f"{digest}-v{_CPU_LITERAL_INDEX_CACHE_FORMAT_VERSION}.json"
+        )
 
     @staticmethod
     def _build_line_trigram_index(lines: list[str]) -> dict[str, list[int]]:
