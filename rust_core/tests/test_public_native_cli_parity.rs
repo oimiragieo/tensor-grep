@@ -263,12 +263,18 @@ fn test_search_explicit_path_keeps_path_when_stdin_is_piped() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child
+    // The write result is deliberately IGNORED. The fake rg used to drain stdin
+    // (`sys.stdin.buffer.read()`); on the native route nothing reads it, so if `tg` exits before
+    // this write lands the parent gets EPIPE. 13 bytes fit any pipe buffer, so the window is
+    // narrow -- but a narrow race is still a flake, and this suite has been de-flaked before. A
+    // failed write is CONSISTENT with the invariant under test (stdin must not be consumed), so
+    // discarding the error removes the timing dependency without weakening anything.
+    let _ = child
         .stdin
         .as_mut()
         .unwrap()
-        .write_all(b"stdin needle\n")
-        .unwrap();
+        .write_all(b"stdin needle\n");
+    drop(child.stdin.take());
     let output = child.wait_with_output().unwrap();
 
     assert!(
@@ -297,10 +303,13 @@ fn test_search_explicit_path_keeps_path_when_stdin_is_piped() {
         !stdout.contains("stdin needle"),
         "an explicit PATH must win over piped stdin; stdout={stdout}"
     );
-    assert!(
-        stdout == "needle file\n" || stdout == "fixture.txt:needle file\n",
-        "expected the FILE to be searched (native or via rg); stdout={stdout}"
-    );
+    // Asserted as EQUALITY, not a disjunction. An earlier revision also accepted
+    // `fixture.txt:needle file`, which would have ACCEPTED a native emitter that wrongly prefixes
+    // the filename on a single-file search. Measured on rg 15.1.0, both spellings:
+    //     printf 'stdin needle' | rg -e needle -- fixture.txt  -> "needle file"  rc=0
+    //     rg -e needle -- fixture.txt < /dev/null              -> "needle file"  rc=0
+    // so there is exactly one correct answer and the test now demands it.
+    assert_eq!(stdout, "needle file\n");
 }
 
 #[test]

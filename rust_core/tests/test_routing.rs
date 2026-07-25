@@ -529,6 +529,17 @@ fn test_routing_directory_search_promotes_to_native_cpu() {
     } else if stderr.contains("routing_reason=rg_unavailable") {
         assert_verbose_routing(&stderr, "NativeCpuBackend", "rg_unavailable", false);
     } else {
+        // UNREACHABLE ARM -- not coverage of the new route, despite naming its reason string.
+        // These tests pass a DIRECTORY, which `native_can_serve_plain_text` refuses (walking
+        // diverges from rg on binary-file notices and on emission order), so the plain-text route
+        // can never answer them. The arm was already dead on origin/main for a different reason:
+        // it needed `rg_available == true`, but reaching it required falling through a branch that
+        // with `rg_available` true demands `structured_output == true`, which the line above
+        // catches. Only the reason STRING changed here, as part of the
+        // `cpu-auto-size-threshold` -> `plain-text-native` rename; no protection was added or
+        // removed. Real coverage of the new route lives in
+        // `test_routing_default_search_prefers_ripgrep_cold_path` (file arm) and
+        // `tests/e2e/test_native_plain_text_parity.py`.
         assert_verbose_routing(&stderr, "NativeCpuBackend", "plain-text-native", false);
     }
 }
@@ -2162,6 +2173,17 @@ fn test_routing_directory_count_search_uses_native_cpu_without_fallback() {
     } else if stderr.contains("routing_reason=rg_unavailable") {
         assert_verbose_routing(&stderr, "NativeCpuBackend", "rg_unavailable", false);
     } else {
+        // UNREACHABLE ARM -- not coverage of the new route, despite naming its reason string.
+        // These tests pass a DIRECTORY, which `native_can_serve_plain_text` refuses (walking
+        // diverges from rg on binary-file notices and on emission order), so the plain-text route
+        // can never answer them. The arm was already dead on origin/main for a different reason:
+        // it needed `rg_available == true`, but reaching it required falling through a branch that
+        // with `rg_available` true demands `structured_output == true`, which the line above
+        // catches. Only the reason STRING changed here, as part of the
+        // `cpu-auto-size-threshold` -> `plain-text-native` rename; no protection was added or
+        // removed. Real coverage of the new route lives in
+        // `test_routing_default_search_prefers_ripgrep_cold_path` (file arm) and
+        // `tests/e2e/test_native_plain_text_parity.py`.
         assert_verbose_routing(&stderr, "NativeCpuBackend", "plain-text-native", false);
     }
 
