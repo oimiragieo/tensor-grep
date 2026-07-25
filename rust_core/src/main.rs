@@ -8214,25 +8214,42 @@ const BROKEN_PIPE_EXIT_CODE: i32 = 1;
 
 /// Does any link in this error chain carry `ErrorKind::BrokenPipe`?
 ///
-/// Every link must be checked, not just the outermost: the plain sink's write error starts as an
-/// `io::Error(BrokenPipe)`, becomes an `anyhow::Error` through `NativeOutputTarget::write_all`'s
-/// `?`, is re-wrapped by `io::Error::other` (kind `Other`, because `grep_searcher::Sink::Error` is
-/// `io::Error`), and finally gets anyhow context from `search_path`'s caller. Only the INNERMOST
-/// link still says `BrokenPipe`; the outermost `io::Error` says `Other`.
+/// The kind is PRESERVED at the source: `native_search::sink_io_error` copies the original
+/// `ErrorKind` when converting to the `io::Error` that `grep_searcher::Sink::Error` requires, and
+/// `grep_searcher` propagates that error unwrapped, so the typed walk below finds `BrokenPipe`
+/// intact. Every link is still checked rather than just the outermost, because the chain also
+/// carries the anyhow context `search_path`'s caller attaches.
+///
+/// (An earlier revision of this comment described the opposite mechanism -- that
+/// `io::Error::other` flattened the kind to `Other` and only the innermost link still said
+/// `BrokenPipe`. That was true of the code at the time and became false when `sink_io_error`
+/// replaced those 13 call sites; it is corrected here rather than left to contradict the code and
+/// the comment nine lines below it.)
 fn error_chain_has_broken_pipe(err: &anyhow::Error) -> bool {
-    if err
-        .chain()
-        .filter_map(|cause| cause.downcast_ref::<io::Error>())
-        .any(|cause| cause.kind() == io::ErrorKind::BrokenPipe)
-    {
-        return true;
+    let mut saw_io_error = false;
+    for cause in err.chain() {
+        if let Some(io_err) = cause.downcast_ref::<io::Error>() {
+            saw_io_error = true;
+            if io_err.kind() == io::ErrorKind::BrokenPipe {
+                return true;
+            }
+        }
     }
-    // Belt-and-braces. The typed walk above is the primary check and now works because
-    // `native_search::sink_io_error` preserves the kind instead of flattening it to `Other` -- but
-    // an earlier revision relied on the walk alone and CI proved it did NOT fire on Linux, so the
-    // rendered chain is also matched. `format!("{err:#}")` renders every source, and an
-    // `io::Error(BrokenPipe)` renders as "Broken pipe (os error 32)" on Unix / "The pipe is being
-    // closed. (os error 232)" on Windows.
+    if saw_io_error {
+        // A typed `io::Error` was present and said something OTHER than BrokenPipe. Trust it: this
+        // is a real failure and must reach the structured-error and rg-fallback paths below.
+        //
+        // Guarding the string match on this is what stops a SILENT SWALLOW: the anyhow context
+        // embeds the searched path (`native standard output search failed for <path>`), so without
+        // it a file whose path merely contains "broken pipe" would turn any genuine error into a
+        // quiet exit(1) "no matches" -- skipping the JSON error and the rg fallback both. Narrow,
+        // but silent-swallow is the class this repo fails closed on.
+        return false;
+    }
+    // Fallback for the case where no typed `io::Error` survives the chain at all. Kept because an
+    // earlier revision relied on the typed walk alone and CI proved it did not fire on Linux;
+    // `io::Error(BrokenPipe)` renders as "Broken pipe (os error 32)" on Unix and "The pipe is
+    // being closed. (os error 232)" on Windows.
     let rendered = format!("{err:#}").to_ascii_lowercase();
     rendered.contains("broken pipe") || rendered.contains("pipe is being closed")
 }

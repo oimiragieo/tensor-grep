@@ -292,8 +292,15 @@ fn test_search_explicit_path_keeps_path_when_stdin_is_piped() {
     // prefix was an artifact of the fake, not ripgrep behavior.
     //
     // The fake rg's exact-argv assertion is still live and still fires if the request DOES reach
-    // rg, so the forwarding guarantee is not lost -- this only stops the test from mandating WHICH
-    // engine answers.
+    // rg, so the forwarding guarantee is not lost.
+    //
+    // To be precise about what this now pins, because an earlier version of this comment claimed
+    // the opposite: it DOES mandate the native engine. The fake rg's canned stdout is
+    // `"fixture.txt:needle file\n"` (see the `fake_rg_exact_args_script` call above), so the
+    // `assert_eq!` below fails if the request reaches rg at all. That is intended -- this shape is
+    // squarely inside the admitted subset, so a silent fall back to the subprocess is a routing
+    // regression worth failing on -- but "only stops the test from mandating WHICH engine answers"
+    // was simply wrong.
     let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
     assert!(
         !stdout.contains("stdin needle"),

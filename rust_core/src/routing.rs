@@ -334,7 +334,7 @@ pub struct PlainTextNativeRequest {
 ///    (a) `/dev/null`, `/dev/zero`, FIFOs -- NOT `S_ISREG` -> already refused by clause 3.
 ///    (b) a symlink to a regular file -- admitted, and correctly so: both engines follow an
 ///    explicit symlink operand, size matches content, no divergence.
-///    (a) `/proc/self/status`, `/proc/version` -- `S_ISREG` TRUE, `st_size` 0, and a read returns
+///    (c) `/proc/self/status`, `/proc/version` -- `S_ISREG` TRUE, `st_size` 0, and a read returns
 ///    1460 / 166 bytes of clean UTF-8. These were ADMITTED and are now refused by the
 ///    size-vs-bytes invariant in `plain_text_native_probe_file` (see there): a pseudo-file
 ///    whose reported size is a lie is exactly the shape where the probe cannot describe what
