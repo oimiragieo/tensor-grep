@@ -181,6 +181,25 @@ const SEARCH_OPTION_FIRST_FLAGS: &[&str] = &[
     "--no-json",
     "--no-stats",
 ];
+/// Flags that route a search to the Python passthrough front door rather than being handled by
+/// the native fast path. Matched via `token_matches_any_flag`/`search_args_contain_any_flag` /
+/// `raw_args_contain_any_flag`, which is **exact-token only** (plus a `--long-flag=value` prefix
+/// for the long spellings): a token matches an entry here only if it equals that entry
+/// character-for-character, or starts with `"{long_flag}="`. It does NOT understand ripgrep's
+/// combined short-flag clusters -- `-u` and `--unrestricted` are listed below, but `-uu`,
+/// `-uuu`, `-iu`, and `-Nu` are each a DIFFERENT literal token that never equals `"-u"`, so none
+/// of them match this list (task #271; confirmed empirically: `tg search --no-heading -Q needle
+/// .` prints `rg: unrecognized flag -Q`, i.e. the raw Python forwarder ran even though `-Q`
+/// itself is not in this list either). This list is a ROUTING OPTIMIZATION, not a safety net --
+/// it lets the RECOGNIZED spellings skip a `parse_early_ripgrep_args` round trip. The actual
+/// fail-closed guarantee that an unrecognized flag (including every `-u`-prefixed cluster) never
+/// silently reaches the native fast path is `parse_early_ripgrep_args`'s own catch-all arm,
+/// `_ if token.starts_with('-') => return None` -- returning `None` there is what forces
+/// the caller back to the full Python CLI for anything this list (or the rest of that function)
+/// does not explicitly recognize. A future change that makes this list PREFIX-match instead of
+/// exact-match (e.g. to "cover" `-uu` here directly) would not be wrong, but would be redundant
+/// with that catch-all and should not be read as filling a gap that catch-all does not already
+/// close.
 const SEARCH_PYTHON_PASSTHROUGH_FLAGS: &[&str] = &[
     "-H",
     "--with-filename",
@@ -2848,6 +2867,14 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
                 args.file_types
                     .push(token.split_once('=').map(|(_, value)| value.to_string())?);
             }
+            // LOAD-BEARING (task #271): this is the actual fail-closed guarantee that an
+            // unrecognized flag never silently reaches the native fast path -- every arm above
+            // is a finite, explicit allowlist, so any `-`-prefixed token this function does not
+            // otherwise understand (including a ripgrep combined-short-flag cluster like `-uu`,
+            // `-uuu`, or `-iu` that `SEARCH_PYTHON_PASSTHROUGH_FLAGS`'s exact-token matching
+            // also does not recognize) falls through to here and returns `None`, forcing the
+            // caller back to the full Python CLI rather than being silently misparsed or
+            // dropped. Do not narrow this arm without an equally fail-closed replacement.
             _ if token.starts_with('-') => return None,
             _ => positionals.push(token.clone()),
         }
@@ -2944,6 +2971,41 @@ mod tests {
     fn parse_args(tokens: &[&str]) -> RipgrepSearchArgs {
         let raw_args = tokens.iter().map(OsString::from).collect::<Vec<_>>();
         parse_early_ripgrep_args(&raw_args).expect("expected early rg args to parse")
+    }
+
+    // Task #271: `SEARCH_PYTHON_PASSTHROUGH_FLAGS` is exact-token matching, so it recognizes the
+    // literal spellings `-u`/`--unrestricted` but NOT a ripgrep combined-short-flag cluster like
+    // `-uu`/`-iu` -- those are each a different literal token. The actual fail-closed guarantee
+    // that such a cluster never silently reaches the native fast path is
+    // `parse_early_ripgrep_args`'s own catch-all arm (`_ if token.starts_with('-') => return
+    // None`), which forces a fall-through to the full Python CLI for any unrecognized
+    // `-`-prefixed token. These tests assert that guarantee directly, at the function it actually
+    // lives in, rather than only via the flags list this comment could otherwise be mistaken for
+    // covering it.
+    #[test]
+    fn parse_early_ripgrep_args_rejects_combined_unrestricted_short_cluster() {
+        let raw_args = ["tg", "search", "-uu", "needle", "."]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        assert!(
+            parse_early_ripgrep_args(&raw_args).is_none(),
+            "-uu must fall through to the Python CLI, not be silently misparsed by the native \
+             fast-path parser"
+        );
+    }
+
+    #[test]
+    fn parse_early_ripgrep_args_rejects_combined_ignore_case_unrestricted_cluster() {
+        let raw_args = ["tg", "search", "-iu", "needle", "."]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        assert!(
+            parse_early_ripgrep_args(&raw_args).is_none(),
+            "-iu must fall through to the Python CLI, not be silently misparsed by the native \
+             fast-path parser"
+        );
     }
 
     fn parse_default_frontdoor_args(tokens: &[&str]) -> RipgrepSearchArgs {

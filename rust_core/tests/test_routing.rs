@@ -1277,7 +1277,7 @@ fn test_search_single_binary_file_emits_stderr_warning_and_exit_zero() {
     );
     assert!(
         String::from_utf8_lossy(&output.stdout).trim()
-            == "binary file matches (found \"/0\" byte around offset 0)",
+            == "binary file matches (found \"\\0\" byte around offset 0)",
         "stdout={}",
         String::from_utf8_lossy(&output.stdout)
     );

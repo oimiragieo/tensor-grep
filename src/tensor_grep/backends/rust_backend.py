@@ -96,7 +96,10 @@ class RustCoreBackend(ComputeBackend):
             offset = -1
         if offset < 0:
             offset = 0
-        return f'binary file matches (found "/0" byte around offset {offset})'
+        # ripgrep prints the NUL escape as "\0", not "/0" -- mirrors
+        # `RipgrepFormatter._binary_notice` (audit B19) and the native Rust emitter's
+        # `emit_binary_match_warning` (task #263's second defect: both used to spell it "/0").
+        return f'binary file matches (found "\\0" byte around offset {offset})'
 
     @staticmethod
     def _binary_file_matches_pattern(

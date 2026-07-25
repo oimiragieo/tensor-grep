@@ -42,6 +42,10 @@ arrow-buffer = "59.0.0"
 arrow-schema = "59.0.0"
 pyo3-arrow = "0.19.0"
 ignore = "0.4.25"
+# Already resolved transitively via arrow-cast (see Cargo.lock) at this exact version -- promoted
+# to a direct dependency for the native-search JSON emitter's rg-parity `bytes` (base64) fallback
+# (task #266), so no new crate/version enters the dependency graph.
+base64 = "0.22.1"
 grep-cli = "0.1.12"
 grep-matcher = "0.1.8"
 grep-printer = { version = "0.3.1", features = ["serde"] }
