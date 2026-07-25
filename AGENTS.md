@@ -577,6 +577,20 @@ re-MEASUREMENT (profiling the real baseline, not reading the ratio formula) caug
 baseline bug above. For any de-flake, perf claim, or otherwise QUANTITATIVE fix, the gate must
 re-measure the actual numbers, not just re-read the diff for shape.
 
+**Your verification instrument can be the thing that's wrong (2026-07-24).** Reviewing a sibling docs
+PR (#740), a spot-check for whether its "DEFERRED" honesty caveat was actually present used `grep -ciE
+"DEFERRED\|deferred"` and returned ZERO hits — which briefly read as the agent claiming a caveat it
+never wrote. The caveat was there, verbatim; the command was broken. In `grep -E` (extended regex),
+`\|` matches a **literal pipe character**, not alternation — extended-regex alternation is a bare `|`;
+the backslash-escaped `\|` form is basic-regex/`sed` syntax, not `-E`. So the search was for the
+9-character literal string `DEFERRED|deferred`, which of course matched nothing. Rule: when a
+verification check contradicts an otherwise-careful report, re-test the INSTRUMENT against
+known-present content before concluding the report is false — a false negative from a malformed
+pattern is indistinguishable from a real absence, and acting on it sends a spurious correction. Same
+family as this repo's git-bash/MSYS `gh --json`-parsing quirks (favor `python` over `jq`/raw `/`-path
+expressions there for the same reason): the tool didn't fail loudly, it silently did something other
+than what its syntax suggests. Concretely here: `grep -E` alternation is a bare `|`, not `\|`.
+
 **Prove "docs-only"/"comment-only" instead of eyeballing it (2026-07-24).** Twice in the same session a
 follow-up commit needed to be certified behavior-neutral to justify skipping a redundant re-run of the
 full gate. Method: parse both revisions of the file with `ast`, strip docstrings (plain comments never
@@ -1017,12 +1031,17 @@ self-report" rule applied to test SCOPE, not just test RESULT).
 2026-07-24).** A first-pass de-flake of `test_create_checkpoint_uncontended_hot_path_unaffected` stubbed
 the `git rev-parse` subprocess call in `_detect_checkpoint_scope` so that `elapsed < max(baseline * 6.0,
 8.0)` would "cancel load," and lowered the floor from 8.0 to 2.0. With the subprocess stubbed, the
-baseline measured EXACTLY 0.0 across 8 runs — below Windows' ~15.6ms `time.monotonic()` tick resolution —
-so the ratio silently collapsed into a pure `elapsed < 2.0` bound, 4x TIGHTER than the 8.0s that had just
+baseline measured EXACTLY 0.0 across 8 runs. The reason: Windows'
+`time.get_clock_info('monotonic').resolution` is **0.015625s** (one 64Hz tick), and the stubbed baseline
+— a `.resolve()` call, an immediate raise, and a 1-file `os.walk` — completed in under that single tick,
+so `time.monotonic()` read the identical value before and after and `elapsed` measured exactly `0.0`
+(min == max == 0.0000 across all 8 runs). With `baseline == 0.0`, `baseline * 6.0` is also `0.0`, so the
+ratio silently collapsed into a pure `elapsed < 2.0` bound, 4x TIGHTER than the 8.0s that had just
 flaked. On the exact CI failure it cited (run `30123607322`, `8.75 < 8.0`) it would still have gone red,
 by a wider margin. Rule: before trusting a `max(baseline * N, floor)` assertion as genuinely relative,
-confirm the baseline is measurably non-trivial (well above the platform's clock resolution) — otherwise
-it has silently degenerated into the floor alone.
+confirm the baseline is measurably non-trivial (well above the platform's clock resolution — check with
+`time.get_clock_info('monotonic').resolution`) — otherwise it has silently degenerated into the floor
+alone.
 
 **PROFILE before "fixing" a timing flake — a structurally-true root cause can still be magnitude-wrong
 (same #739).** The above fix's diagnosis (a real subprocess spawn adds noise) was correct in kind but

@@ -296,16 +296,20 @@ Ranked by how hard each is to fake, cheapest-to-check first:
     below clock resolution — and the fix requires profiling, not just re-attribution (#739,
     2026-07-24).** A de-flake of a checkpoint-hot-path test stubbed a `git rev-parse` subprocess call
     to make `elapsed < max(baseline * 6.0, 8.0)` "cancel load." With the subprocess stubbed, the
-    baseline measured EXACTLY 0.0 across 8 runs — below Windows' ~15.6ms `time.monotonic()` tick
-    resolution — so the assertion silently collapsed into a pure `elapsed < 2.0` bound (the floor was
-    also lowered), 4x TIGHTER than the 8.0s that had just flaked; on the exact cited CI failure
-    (`8.75 < 8.0`) it would still have gone red, by a wider margin. The root-cause attribution was
-    also magnitude-wrong: cProfile showed the git spawn was only 6-12% of elapsed, while
-    `_prime_bounded_discovery_caches_for_root`'s fsync-heavy discovery-cache I/O was ~93% — fsync on a
-    contended CI disk explains a multi-second spike; a process spawn does not. **Rule:** before
-    trusting a `max(baseline * N, floor)` assertion as genuinely relative, confirm the baseline is
-    measurably non-trivial; before "fixing" a timing flake, profile the actual cost breakdown rather
-    than fixing the first plausible-sounding noise source.
+    baseline measured EXACTLY 0.0 across 8 runs. Windows' `time.get_clock_info('monotonic').resolution`
+    is **0.015625s** (one 64Hz tick); the stubbed baseline (a `.resolve()` call, an immediate raise, and
+    a 1-file `os.walk`) completed within a single tick, so `time.monotonic()` read the same value before
+    and after and `elapsed` measured exactly `0.0` (min == max == 0.0000 across all 8 runs). With
+    `baseline == 0.0`, `baseline * 6.0` is also `0.0`, so the assertion silently collapsed into a pure
+    `elapsed < 2.0` bound (the floor was also lowered), 4x TIGHTER than the 8.0s that had just flaked;
+    on the exact cited CI failure (`8.75 < 8.0`) it would still have gone red, by a wider margin. The
+    root-cause attribution was also magnitude-wrong: cProfile showed the git spawn was only 6-12% of
+    elapsed, while `_prime_bounded_discovery_caches_for_root`'s fsync-heavy discovery-cache I/O was
+    ~93% — fsync on a contended CI disk explains a multi-second spike; a process spawn does not.
+    **Rule:** before trusting a `max(baseline * N, floor)` assertion as genuinely relative, confirm the
+    baseline is measurably non-trivial (check with `time.get_clock_info('monotonic').resolution`);
+    before "fixing" a timing flake, profile the actual cost breakdown rather than fixing the first
+    plausible-sounding noise source.
 20. **Prefer a STRUCTURAL, order-based assertion over ANY wall-clock form — even a ratio one — where
     the invariant allows (same #739, extends point 14 above).** The eventual fix for the same
     checkpoint-hot-path flake wraps `index_lock` plus the suspect expensive calls to emit ordered
@@ -733,7 +737,9 @@ main" result, caught the same day). A third same-day pass **2026-07-24, release 
 Part 1 points 18-20 (a test proving nothing until seen fail on the pre-fix baseline, #737; a ratio
 timing assertion degenerating to its floor below clock resolution plus the profile-before-fixing
 discipline, #739; preferring a structural order-based assertion over any wall-clock form, #739) and
-their checklist items. Re-verify before relying on them:
+their checklist items. A coordinator review of that same pass added the concrete clock-resolution
+number (`time.get_clock_info('monotonic').resolution` = 0.015625s on Windows) to point 19's mechanism.
+Re-verify before relying on them:
 
 | Claim | Re-verify command |
 |---|---|

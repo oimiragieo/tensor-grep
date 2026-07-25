@@ -661,6 +661,16 @@ dogfood/verdict scripts rather than a formal eval harness. 2026-07-22 closing-do
 step is what turned a suspicious-looking automated result into either a confirmed PASS or a real,
 actionable finding, rather than a guess either way.
 
+**Same family, a shell one-liner instead of a script (2026-07-24).** A `grep -ciE
+"DEFERRED\|deferred"` spot-check on a sibling PR returned zero hits for a caveat that was present
+verbatim — in `grep -E` (extended regex), `\|` matches a LITERAL pipe character, not alternation
+(extended-regex alternation is a bare `|`; the backslash form is basic-regex/`sed` syntax). The
+0-hit result briefly read as "the report is wrong" when the instrument was wrong. If a grep/check
+result contradicts what you can see by eye in the file, re-test the check against known-present
+content before trusting the negative — this generalizes point 14's raw-JSON rule to any ad hoc
+verification command, not just JSON scoring scripts. See `tensor-grep-change-control` Part 6 and
+AGENTS.md's "Verify AI-Drafted Plans" for the fuller writeup.
+
 ---
 
 ## 15. macOS rustup pinned-toolchain fetch timeout (network flake, already mitigated)
@@ -822,7 +832,9 @@ mitigated by #722); **2026-07-24 against v1.98.2** added §16 ("No commits betwe
 A24). A further same-day pass, **against v1.98.3**, added §17 (a timing-ratio test flake caused by a
 degenerate baseline below clock resolution, plus the profile-before-attributing-a-cause discipline and
 the structural ENTER/EXIT marker-order fix — receipts #737/#739, cross-referenced to
-`tensor-grep-validation-and-qa` Part 1 points 18-20 and `tensor-grep-change-control` Part 6).
+`tensor-grep-validation-and-qa` Part 1 points 18-20 and `tensor-grep-change-control` Part 6). A
+coordinator review of that same pass added the §14 addendum (a malformed `grep -E \|` alternation
+returning a false-negative spot-check on a sibling PR) and the concrete clock-resolution figure to §17.
 Re-verify anything below before trusting it on a later version — this table
 drifts whenever the cited line numbers, defaults, or contracts change.
 
