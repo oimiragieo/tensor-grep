@@ -277,6 +277,81 @@ def test_find_per_file_chunk_error_omits_incomplete_reason_class(
     assert "incomplete_reason_class" not in payload
 
 
+def _deny_scandir_for(monkeypatch, denied_dir: Path) -> None:
+    """Make `os.scandir(denied_dir)` raise PermissionError, everything else untouched.
+
+    Deliberately NOT a real `chmod`/ACL fixture. Task #281 burned a probe on exactly that: the
+    real ACL command silently failed to apply and the "hostile" arm was a perfectly readable
+    directory, so the test would have declared a real defect ABSENT. A monkeypatched raise cannot
+    silently no-op -- if the patch does not fire, no unreadable signal exists and the assertions
+    below fail loudly. (Oracle family Form 6, AGENTS.md.)
+    """
+    import os as _os
+
+    real_scandir = _os.scandir
+    target = str(denied_dir.resolve())
+
+    def _fake_scandir(path=".", *args, **kwargs):
+        if str(Path(path).resolve()) == target:
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_scandir(path, *args, **kwargs)
+
+    monkeypatch.setattr(_os, "scandir", _fake_scandir)
+
+
+def test_find_reports_unreadable_subtree_instead_of_silently_skipping_it(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """Task #284: `tg find` walked with `_iter_repo_files` but never passed `unreadable_hit=`, so
+    a permission-denied subtree vanished from the ranked corpus with NO signal -- exit 0, no
+    `result_incomplete`, no class. The surrounding code classified find's OTHER causes correctly,
+    which made the omission read as coverage that did not exist.
+
+    Asserts the OUTCOME (exit code + envelope), never that the parameter is passed: #744's argv
+    tests were all green while the fix did nothing.
+    """
+    _stub_dense_unavailable(monkeypatch)
+    (tmp_path / "visible.py").write_text("def fn():\n    return 1\n", encoding="utf-8")
+    denied = tmp_path / "denied"
+    denied.mkdir()
+    (denied / "hidden.py").write_text("def fn():\n    return 2\n", encoding="utf-8")
+
+    _deny_scandir_for(monkeypatch, denied)
+    result = CliRunner().invoke(app, ["find", "fn", str(tmp_path), "--json"])
+
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    assert payload.get("result_incomplete") is True
+    assert payload.get("incomplete_reason_class") == "unreadable_path"
+    reason = payload.get("incomplete_reason") or ""
+    assert "unreadable" in reason
+    # The remediation must NOT be budget-shaped: no amount of --max-repo-files makes an
+    # unreadable path readable, and saying so is the whole point of a distinct class.
+    assert "More budget will not fix this" in reason
+
+
+def test_find_complete_scan_is_the_control_arm_for_the_unreadable_case(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """Control arm for the test above -- the same corpus with NO denied directory must report a
+    COMPLETE scan. Without this, the unreadable assertion could pass for an unrelated reason (any
+    other incomplete cause would also set `result_incomplete`), and a check that passes in both
+    arms is not verification.
+    """
+    _stub_dense_unavailable(monkeypatch)
+    (tmp_path / "visible.py").write_text("def fn():\n    return 1\n", encoding="utf-8")
+    readable = tmp_path / "denied"
+    readable.mkdir()
+    (readable / "hidden.py").write_text("def fn():\n    return 2\n", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["find", "fn", str(tmp_path), "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload.get("result_incomplete") is not True
+    assert "incomplete_reason_class" not in payload
+
+
 def test_find_no_results_exit_1(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     _stub_dense_unavailable(monkeypatch)
     (tmp_path / "a.py").write_text("def completely_unrelated():\n    return 1\n", encoding="utf-8")

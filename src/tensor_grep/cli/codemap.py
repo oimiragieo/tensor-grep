@@ -1058,11 +1058,45 @@ def build_codemap(
     # scan_limit's file-COUNT cap (task #384-#395 deadline program parity with callers/refs/impact).
     deadline_hit = bool(rm.get("partial"))
     self_verify_ok = _self_verify_universe_coverage(universe, folders)
-    partial = possibly_truncated or deadline_hit or not self_verify_ok
+    # Task #284: `build_repo_map` has emitted `rm["unreadable_paths"]` ({"count", "sample"}) since
+    # #276 slice 1 (c0c3404), and `tg orient` already consumes it -- codemap simply ignored it, so
+    # a permission-denied subtree vanished from the map while `coverage.partial` read false and the
+    # map looked complete. No new walk plumbing is needed: read the signal that already exists.
+    unreadable_paths = rm.get("unreadable_paths")
+    unreadable_count = 0
+    unreadable_sample: list[str] = []
+    if isinstance(unreadable_paths, dict):
+        unreadable_count = int(unreadable_paths.get("count") or 0)
+        unreadable_sample = list(unreadable_paths.get("sample") or [])
+    unreadable_hit = unreadable_count > 0
+    partial = possibly_truncated or deadline_hit or unreadable_hit or not self_verify_ok
 
     partial_reason: str | None = None
     remediation: str | None = None
-    if possibly_truncated:
+    # Unreadable paths are checked FIRST, ahead of the two budget causes. Every other branch in
+    # this chain is budget-remediable ("raise --max-repo-files" / "raise --deadline"); an
+    # unreadable subtree is not, and no budget increase will ever make it readable. Ordering it
+    # last would let a co-occurring cap silently claim the reason and hand the reader the
+    # WRONG KNOB -- the exact defect #283 fixed on the MCP surface and #757 fixed on search.
+    if unreadable_hit:
+        sample = ", ".join(unreadable_sample) or "an unreadable path"
+        partial_reason = "unreadable_path"
+        remediation = (
+            f"The scan skipped {unreadable_count} unreadable path(s) (e.g. {sample}), so the map "
+            "is missing whatever they contain. More budget will NOT fix this: the path(s) need to "
+            "become readable, or scope PATH away from them."
+        )
+        if possibly_truncated or deadline_hit:
+            # Both a budget cause AND an unreadable subtree fired. `partial_reason` is a single
+            # field, so name the un-fixable cause and mention the budget one here rather than
+            # dropping either -- the reader needs to know that raising the budget still leaves a
+            # hole. Mirrors `search_command`'s entry-cap clarifier.
+            budget_cause = "--max-repo-files" if possibly_truncated else "--deadline"
+            remediation += (
+                f" The scan ALSO hit {budget_cause}; raising it will widen coverage but will not "
+                "recover the unreadable path(s)."
+            )
+    elif possibly_truncated:
         partial_reason = "scan_limit"
         remediation = (
             "The scan hit --max-repo-files before covering the whole tree. Re-run with a higher "
