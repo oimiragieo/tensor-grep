@@ -1669,12 +1669,36 @@ fn build_walk_builder(config: &NativeSearchConfig, roots: &[PathBuf]) -> Result<
         builder.git_exclude(false);
         builder.parents(false);
     } else {
+        // Task #267 BLOCKING-1 (independent gate on the first cut of this fix): the `add_ignore`
+        // trio below exists SOLELY to compensate for the `ignore` crate's own `require_git(true)`
+        // default OUTSIDE a git repository (see `index.rs`'s identical `collect_file_entries`
+        // comment) -- INSIDE a git repo, `WalkBuilder`'s own git machinery
+        // (`git_ignore`/`git_global`/`git_exclude`, all `true` by default) already applies
+        // `.gitignore` natively, so the per-filename `.gitignore` skip immediately below this
+        // comment is a NO-OP there: nothing ever called `add_ignore(".gitignore")` to skip in the
+        // first place. The first cut of this fix only touched that no-op half and left the
+        // walker's own git knobs untouched, so `--no-ignore-vcs` kept doing nothing inside a git
+        // repo (execution-verified on the byte-identical walker: a root `.gitignore` + a child
+        // dir with no ignore files of its own still excluded the git-ignored file under
+        // `--json --no-ignore-vcs`, because the native git path -- not `add_ignore` -- was the
+        // one honoring it). Flipping these three knobs is the actual fix for that path; it must
+        // NOT also flip `parents(false)` -- unlike blanket `--no-ignore`, `--no-ignore-vcs` is
+        // scoped to VCS-sourced ignore files only, and `.ignore`/`.rgignore` parent-directory
+        // ascent must keep working. `git_exclude(false)` is also required for
+        // `.git/info/exclude`, which real `rg --no-ignore-vcs` re-includes too (verified live)
+        // and which is a VCS-scoped ignore source distinct from `.gitignore` proper.
+        if config.no_ignore_vcs {
+            builder.git_ignore(false);
+            builder.git_global(false);
+            builder.git_exclude(false);
+        }
         for root in roots {
             for ignore_name in [".ignore", ".gitignore", ".rgignore"] {
-                // Task #267: mirror `rg_passthrough::root_ignore_file_args`'s per-filename
-                // `no_ignore_vcs` scope -- rg's own docs restrict `--no-ignore-vcs` to
-                // source-control ignore files, so only `.gitignore` is skipped here; `.ignore`
-                // and `.rgignore` stay honored exactly like the rg-passthrough engine.
+                // Mirrors `rg_passthrough::root_ignore_file_args`'s per-filename `no_ignore_vcs`
+                // scope for the NON-git-repo case (real rg's own `require_git(true)`-equivalent
+                // gap): `.gitignore` is the only VCS-sourced filename in this trio, so it alone
+                // is skipped here; `.ignore`/`.rgignore` stay honored exactly like the
+                // rg-passthrough engine, both inside and outside a git repo.
                 if ignore_name == ".gitignore" && config.no_ignore_vcs {
                     continue;
                 }
@@ -2632,6 +2656,78 @@ mod tests {
                 "keep.txt".to_string(),
             ],
             "--no-ignore must still disable all ignore-file honoring regardless of no_ignore_vcs"
+        );
+    }
+
+    // --- Task #267 BLOCKING-1 (independent gate on the first cut): the git-repo case --------
+    // The 4 tests above all use a bare `tempfile::tempdir()` -- never a git repository -- so
+    // `WalkBuilder`'s own `require_git(true)`-gated git machinery stays dormant for all of them
+    // and `add_ignore` is the ONLY mechanism exercised. That topology cannot distinguish "the
+    // fix works" from "the fix's filename guard happens to be a no-op here" -- inside a git
+    // repo, `WalkBuilder`'s native `git_ignore`/`git_global`/`git_exclude` knobs (all `true` by
+    // default) already apply the root `.gitignore` on their own, so skipping `add_ignore(
+    // ".gitignore")` changes nothing unless those knobs are ALSO flipped. These two tests use a
+    // git-repo topology instead: a root `.gitignore`, a `.git` marker directory (sufficient for
+    // the `ignore` crate's own repo-root detection), and the search ROOT set to a child `pkg/`
+    // directory that carries no ignore files of its own -- so `add_ignore` (which only ever
+    // joins `root.join(ignore_name)` for the exact search root it is given) can never see the
+    // parent `.gitignore` at all, and any exclusion observed here MUST come from the walker's
+    // own native git machinery. This isolates the mechanism the first cut's fix omitted.
+
+    fn write_git_marker(dir: &Path) {
+        fs::create_dir(dir.join(".git")).unwrap();
+    }
+
+    #[test]
+    fn build_walk_builder_honors_root_gitignore_inside_git_repo_via_native_git_path() {
+        // Non-regression / mechanism-isolation: proves the native git path is live for a child
+        // dir with no ignore files of its own (the exact topology the bug-fix test below
+        // reuses), independent of `add_ignore` (which can only ever see `pkg/` itself, never the
+        // parent `.gitignore`).
+        let dir = tempfile::tempdir().unwrap();
+        write_git_marker(dir.path());
+        write_fixture_file(dir.path(), ".gitignore", "*.log\n");
+        write_fixture_file(dir.path(), "pkg/keep.txt", "sentinel\n");
+        write_fixture_file(dir.path(), "pkg/ignored.log", "sentinel\n");
+        let config = config_with_paths(vec![dir.path().join("pkg")], false);
+
+        let names = walked_file_names(&dir.path().join("pkg"), &config);
+
+        assert_eq!(
+            names,
+            vec!["keep.txt".to_string()],
+            "default routing inside a git repo must exclude the git-ignored file via the \
+             walker's OWN git machinery, not add_ignore (pkg/ has no ignore files of its own)"
+        );
+    }
+
+    #[test]
+    fn build_walk_builder_no_ignore_vcs_reincludes_gitignore_matched_file_inside_git_repo() {
+        // RED-before-BLOCKING-1-fix (structural, not executed -- cargo forbidden on this box,
+        // see AGENTS.md CPU-SAFE): before `git_ignore(false)`/`git_global(false)`/
+        // `git_exclude(false)` were added to the `config.no_ignore_vcs` branch, this exact
+        // scenario returned only `["keep.txt"]` -- the `.gitignore` skip in the `add_ignore`
+        // loop is a no-op here (pkg/ has no `.gitignore` of its own to skip), so the walker's
+        // OWN git-aware gitignore machinery was the only thing excluding `ignored.log`, and
+        // nothing in the first cut of this fix touched it. Live-binary repro of the identical
+        // shape (git repo, root `.gitignore`, child dir with no ignore files) is in the task
+        // record for this fix.
+        let dir = tempfile::tempdir().unwrap();
+        write_git_marker(dir.path());
+        write_fixture_file(dir.path(), ".gitignore", "*.log\n");
+        write_fixture_file(dir.path(), "pkg/keep.txt", "sentinel\n");
+        write_fixture_file(dir.path(), "pkg/ignored.log", "sentinel\n");
+        let mut config = config_with_paths(vec![dir.path().join("pkg")], false);
+        config.no_ignore_vcs = true;
+
+        let names = walked_file_names(&dir.path().join("pkg"), &config);
+
+        assert_eq!(
+            names,
+            vec!["ignored.log".to_string(), "keep.txt".to_string()],
+            "--no-ignore-vcs must re-include the git-ignored file INSIDE a git repo too -- the \
+             native git_ignore/git_global/git_exclude knobs must be disabled, not just the \
+             add_ignore filename skip"
         );
     }
 
