@@ -13104,11 +13104,21 @@ fn gpu_native_match_json_entries(stats: &GpuNativeSearchStats) -> Vec<SearchMatc
     // sidecar). `GpuNativeSearchMatch` now carries `raw: Vec<u8>` instead, produced without any
     // lossy conversion in `gpu_native.rs`, so this mirrors the multi-pattern native path's own
     // `native_json_text_fields(&matched.raw)` call below (task #271) rather than
-    // `guaranteed_utf8_match_fields`. VERIFIED: `cuda-feature-check` (.github/workflows/ci.yml)
-    // runs only `cargo check --features cuda` -- no `--tests`/`--all-targets` -- so this file's
-    // `#[cfg(test)]` module (including the tests added for this fix) is never even type-checked
-    // in CI, let alone executed. No CI job currently exercises this file at all beyond that bare
-    // `cargo check`.
+    // `guaranteed_utf8_match_fields`.
+    //
+    // CI COVERAGE, precisely: `cuda-feature-check` (.github/workflows/ci.yml) runs
+    // `cargo check --features cuda --all-targets`. `test-rust-core` builds DEFAULT features and
+    // never compiles `gpu_native` at all (it is gated at lib.rs by `#[cfg(feature = "cuda")]`),
+    // so this job is the ONLY oracle for cuda-gated code. `--all-targets` is LOAD-BEARING, not
+    // tidiness: a bare `cargo check` compiles only normal targets, leaving `gpu_native.rs`'s
+    // `#[cfg(test)]` module and the `tests/test_gpu_native_*.rs` integration targets entirely
+    // un-type-checked -- which is exactly how eight `.text` reads survived this PR's first cut
+    // and surfaced only as `E0609` once `--all-targets` was added. Do not drop it.
+    //
+    // What that still does NOT buy: those tests are type-checked but NEVER EXECUTED anywhere in
+    // CI -- checking is not running, and no CUDA runner exists. Task #279 tracks whether
+    // `cargo test --features cuda` can link on a GPU-less runner; until it is answered, treat
+    // cuda-gated tests as compile-time protection only.
     stats
         .matches
         .iter()
