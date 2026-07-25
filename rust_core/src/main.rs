@@ -8073,6 +8073,12 @@ fn native_search_config_for_command(
         max_depth: args.max_depth,
         count: args.count,
         no_ignore: args.no_ignore,
+        // Task #267: without this, `--json`/`--ndjson` (this function's `structured_output`
+        // callers) silently dropped `--no-ignore-vcs` -- `build_walk_builder` had no field to
+        // read it from -- while the identical flag on the non-structured-output route (real
+        // `rg` via `command_ripgrep_args`/`root_ignore_file_args`) honored it correctly. An
+        // output-format flag must never change the file set.
+        no_ignore_vcs: args.no_ignore_vcs,
         json: args.json,
         ndjson: args.ndjson,
         verbose: args.verbose,
@@ -8116,6 +8122,12 @@ fn native_search_config_for_gpu_params(
         max_depth: params.max_depth,
         count: params.count,
         no_ignore: params.no_ignore,
+        // Task #267: same gap as `native_search_config_for_command` -- this is the
+        // explicit-`--gpu-device-ids`-fallback-to-CPU route, which already carries
+        // `params.no_ignore_vcs` (used by the GPU engine itself) but was never threading it
+        // into the CPU-fallback `NativeSearchConfig`, silently dropping `--no-ignore-vcs` on
+        // this route the same way.
+        no_ignore_vcs: params.no_ignore_vcs,
         json: params.json,
         ndjson: params.ndjson,
         verbose: params.verbose,

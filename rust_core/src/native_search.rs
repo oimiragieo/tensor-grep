@@ -191,6 +191,17 @@ pub struct NativeSearchConfig {
     pub count: bool,
     pub crlf: bool,
     pub no_ignore: bool,
+    /// Task #267: mirrors `RipgrepSearchArgs::no_ignore_vcs` / `rg_passthrough::
+    /// root_ignore_file_args`'s `no_ignore_vcs` gate (rg docs: "--no-ignore-vcs" restricts
+    /// disabling to source-control ignore files, i.e. skip only `.gitignore`, unlike the
+    /// blanket `no_ignore`). Before this field existed, `build_walk_builder` had no way to
+    /// honor `--no-ignore-vcs` at all -- it only ever branched on `no_ignore` -- so any
+    /// caller that routes through this engine (`--json`/`--ndjson`, the structured_output
+    /// arm of `route_search`) silently ignored `--no-ignore-vcs` and kept excluding
+    /// `.gitignore`-matched files, even though the identical flag combination on the
+    /// non-structured-output path (rg passthrough, `rg_passthrough.rs::root_ignore_file_args`)
+    /// correctly re-includes them. An output-format flag must never change the file set.
+    pub no_ignore_vcs: bool,
     pub line_number: bool,
     pub with_filename: bool,
     pub replace: Option<String>,
@@ -232,6 +243,7 @@ impl Default for NativeSearchConfig {
             count: false,
             crlf: false,
             no_ignore: false,
+            no_ignore_vcs: false,
             line_number: true,
             with_filename: false,
             replace: None,
@@ -1659,6 +1671,13 @@ fn build_walk_builder(config: &NativeSearchConfig, roots: &[PathBuf]) -> Result<
     } else {
         for root in roots {
             for ignore_name in [".ignore", ".gitignore", ".rgignore"] {
+                // Task #267: mirror `rg_passthrough::root_ignore_file_args`'s per-filename
+                // `no_ignore_vcs` scope -- rg's own docs restrict `--no-ignore-vcs` to
+                // source-control ignore files, so only `.gitignore` is skipped here; `.ignore`
+                // and `.rgignore` stay honored exactly like the rg-passthrough engine.
+                if ignore_name == ".gitignore" && config.no_ignore_vcs {
+                    continue;
+                }
                 let ignore_path = root.join(ignore_name);
                 if ignore_path.is_file() {
                     builder.add_ignore(ignore_path);
@@ -2478,6 +2497,142 @@ mod tests {
             .expect("run_native_search must return well within 20s for an explicit path");
 
         result.expect("an explicit oversized path must not be refused");
+    }
+
+    // --- Task #267: `--no-ignore-vcs` must not be dropped by the structured-output route -----
+    // Before this field existed, `NativeSearchConfig` had no `no_ignore_vcs` at all, so
+    // `build_walk_builder` unconditionally added a root `.gitignore` to the walker whenever
+    // `no_ignore` was false -- REGARDLESS of `--no-ignore-vcs`. Since this engine is exactly the
+    // one `--json`/`--ndjson` route to (`route_search`'s `structured_output` arm,
+    // `RoutingDecision::native_cpu_json`), a bare output-format flag silently changed the file
+    // set: `tg search --no-ignore-vcs PATTERN .` correctly re-included a `.gitignore`-matched
+    // file via the rg-passthrough engine, but `tg search --json --no-ignore-vcs PATTERN .`
+    // silently kept excluding it. Live-binary repro (task, not this test): the published
+    // v1.98.8 CLI (`tg-windows-amd64-cpu.exe`, which already carries the same
+    // `build_walk_builder` body -- unchanged since v1.98.3, verified via `git diff`) reproduces
+    // both directions: `--no-ignore-vcs` alone re-includes the `.gitignore`-matched file
+    // (`routing_backend=RipgrepBackend`), while `--json --no-ignore-vcs` returns the exact same
+    // 2-file set as bare `--json` (`routing_backend=NativeCpuBackend`) -- the divergence this
+    // test locks shut at the unit level. `--no-ignore` (the blanket disable) was NOT affected --
+    // `build_walk_builder` already threaded that field correctly -- only the VCS-scoped flag was
+    // dropped, so a non-regression case for `--no-ignore` is included too.
+
+    fn write_fixture_file(dir: &Path, relative: &str, contents: &str) {
+        let path = dir.join(relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, contents).unwrap();
+    }
+
+    fn walked_file_names(dir: &Path, config: &NativeSearchConfig) -> Vec<String> {
+        let roots = vec![dir.to_path_buf()];
+        let mut names: Vec<String> = collect_walked_files(config, &roots)
+            .expect("collect_walked_files must not error on a small fixture dir")
+            .iter()
+            .filter_map(|path| {
+                path.file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn build_walk_builder_honors_root_gitignore_by_default() {
+        // Non-regression: the pre-existing default behavior (no `--no-ignore-vcs`) must keep
+        // excluding a `.gitignore`-matched file, exactly like the rg-passthrough engine does.
+        let dir = tempfile::tempdir().unwrap();
+        write_fixture_file(dir.path(), ".gitignore", "*.log\n");
+        write_fixture_file(dir.path(), "keep.txt", "sentinel\n");
+        write_fixture_file(dir.path(), "ignored.log", "sentinel\n");
+        let config = config_with_paths(vec![dir.path().to_path_buf()], false);
+
+        let names = walked_file_names(dir.path(), &config);
+
+        assert_eq!(
+            names,
+            vec![".gitignore".to_string(), "keep.txt".to_string()],
+            "default routing (no_ignore_vcs=false) must still exclude the .gitignore-matched file"
+        );
+    }
+
+    #[test]
+    fn build_walk_builder_no_ignore_vcs_reincludes_gitignore_matched_file() {
+        // RED-before-fix (structural, not executed -- see the section header above for the
+        // live-binary repro that establishes the failing direction: cargo is forbidden on this
+        // box, see AGENTS.md CPU-SAFE). Before the `no_ignore_vcs` field and this
+        // `if ignore_name == ".gitignore" && config.no_ignore_vcs { continue; }` guard existed,
+        // `build_walk_builder` had no way to read this flag at all and would have kept
+        // `ignored.log` OUT of the walk -- this assertion would fail against that code.
+        let dir = tempfile::tempdir().unwrap();
+        write_fixture_file(dir.path(), ".gitignore", "*.log\n");
+        write_fixture_file(dir.path(), "keep.txt", "sentinel\n");
+        write_fixture_file(dir.path(), "ignored.log", "sentinel\n");
+        let mut config = config_with_paths(vec![dir.path().to_path_buf()], false);
+        config.no_ignore_vcs = true;
+
+        let names = walked_file_names(dir.path(), &config);
+
+        assert_eq!(
+            names,
+            vec![
+                ".gitignore".to_string(),
+                "ignored.log".to_string(),
+                "keep.txt".to_string(),
+            ],
+            "--no-ignore-vcs must re-include the .gitignore-matched file on the SAME engine \
+             --json/--ndjson route to -- an output-format flag must never change the file set"
+        );
+    }
+
+    #[test]
+    fn build_walk_builder_no_ignore_vcs_does_not_affect_dot_ignore_file() {
+        // Scope check (mirrors rg_passthrough.rs's `root_ignore_file_args_no_ignore_vcs_skips_
+        // only_gitignore`): rg's own docs restrict `--no-ignore-vcs` to source-control ignore
+        // files. A `.ignore`-matched file must stay excluded even when `no_ignore_vcs` is set --
+        // only `.gitignore` is in scope for this flag.
+        let dir = tempfile::tempdir().unwrap();
+        write_fixture_file(dir.path(), ".ignore", "*.dat\n");
+        write_fixture_file(dir.path(), "keep.txt", "sentinel\n");
+        write_fixture_file(dir.path(), "ignored.dat", "sentinel\n");
+        let mut config = config_with_paths(vec![dir.path().to_path_buf()], false);
+        config.no_ignore_vcs = true;
+
+        let names = walked_file_names(dir.path(), &config);
+
+        assert_eq!(
+            names,
+            vec![".ignore".to_string(), "keep.txt".to_string()],
+            "--no-ignore-vcs must not resurrect a .ignore-matched file -- only .gitignore is \
+             VCS-scoped"
+        );
+    }
+
+    #[test]
+    fn build_walk_builder_no_ignore_still_overrides_no_ignore_vcs() {
+        // Non-regression: the blanket `--no-ignore` disable (already correctly threaded before
+        // this fix) must keep working unchanged when combined with `no_ignore_vcs`.
+        let dir = tempfile::tempdir().unwrap();
+        write_fixture_file(dir.path(), ".gitignore", "*.log\n");
+        write_fixture_file(dir.path(), "keep.txt", "sentinel\n");
+        write_fixture_file(dir.path(), "ignored.log", "sentinel\n");
+        let mut config = config_with_paths(vec![dir.path().to_path_buf()], false);
+        config.no_ignore = true;
+        config.no_ignore_vcs = true;
+
+        let names = walked_file_names(dir.path(), &config);
+
+        assert_eq!(
+            names,
+            vec![
+                ".gitignore".to_string(),
+                "ignored.log".to_string(),
+                "keep.txt".to_string(),
+            ],
+            "--no-ignore must still disable all ignore-file honoring regardless of no_ignore_vcs"
+        );
     }
 
     // --- Chunk-parallel binary detection parity ---------------------------------------------
