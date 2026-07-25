@@ -1,6 +1,81 @@
 # CHANGELOG
 
 
+## v1.98.8 (2026-07-25)
+
+### Bug Fixes
+
+- **search**: Register --format/--lang as value-taking flags + registry-parity invariant (#272)
+  ([#747](https://github.com/oimiragieo/tensor-grep/pull/747),
+  [`57a10e7`](https://github.com/oimiragieo/tensor-grep/commit/57a10e7b768ccea091ed919037920239eb06096b))
+
+* fix(search): register --format/--lang as value-taking so their values are not read as PATHs (#272)
+
+`_TG_ONLY_SEARCH_FLAG_PREFIXES` lists nine tg-only flags that take a value, but `--format` and
+  `--lang` were missing from `_SEARCH_FLAGS_WITH_VALUES` -- the set that tells the argv walk to
+  consume the NEXT token as a value rather than treat it as a PATH positional. The attached spelling
+  (`--lang=py`) is self-delimiting and always worked; the SEPARATED spelling silently misparsed.
+
+Measured on C:\dev\projects before the fix:
+
+['needle'] paths=['.'] workspace_root_guard=True ['--format','json','needle'] paths=['needle']
+  workspace_root_guard=False ['--lang','py','needle'] paths=['needle'] workspace_root_guard=False
+  ['--format=json','needle'] paths=['.'] workspace_root_guard=True
+
+The PATTERN is read as a PATH, so the "no explicit PATH" signal is lost and the workspace-root
+  broad-scan guard never fires.
+
+Fixes the CLASS, not the instance. The same drift has now been introduced twice by adding a flag to
+  one registry and not the other, so the primary test is an INVARIANT over the whole registry --
+  every `--x=` prefix must have `--x` in `_SEARCH_FLAGS_WITH_VALUES` -- rather than two named
+  regression cases that would pass again the moment a tenth prefix is added.
+
+Note the rg-argv differential fuzz gate added in #745 can never cover this class by construction: it
+  models ripgrep's grammar, and ripgrep has no `--format` or `--lang`. tg-only flags need a tg-side
+  invariant. (That gate still passes here: 70,040 cases, 0 disagreements.)
+
+Bidirectional oracle, both arms measured: 5 of the 7 new rows FAIL on the pre-fix baseline (the
+  invariant + all four separated-form cases, e.g. `assert ['needle','sub'] == ['sub']`); the 2
+  attached-form rows pass in BOTH arms by design, pinning that the separated fix does not break the
+  working attached spelling.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* docs(test): correct the #272 rationale — latent parse defect, not a live guard bypass
+
+An independent gate falsified the central claim of the comment added in the previous commit by
+  running the control arm I did not.
+
+WHAT WAS WRONG: the comment said the mis-parse means "the workspace-root broad-scan guard never
+  fires", citing workspace_root_guard=False. That number was measured from the bootstrap HELPER IN
+  ISOLATION and then generalized into a user-visible outcome. Measured end-to-end through real
+  main_entry() at a workspace root, treatment vs origin/main, the broad-scan refusal fires
+  IDENTICALLY in both arms (exit 2 both times). This is the repo's own "a check that passes in both
+  arms proves nothing" rule -- applied to a prose claim instead of a test.
+
+WHY IT IS LATENT: all nine `_TG_ONLY_SEARCH_FLAG_PREFIXES` members are also in
+  `_TG_ONLY_SEARCH_FLAGS`, so every one unconditionally forces the full CLI, where Typer parses
+  --format/--lang as str options (main.py:7199,7210) and derives paths_defaulted from its own
+  positionals (main.py:7268-7295). --format never reaches any consumer at all:
+  `_strip_noop_rg_format` (bootstrap.py:435) removes it first.
+
+THE RATCHET ARGUMENT IS BETTER ANYWAY: the invariant guarantees a future tg-only value flag that is
+  NOT full-CLI-forced -- or any future relaxation of that routing -- cannot silently inherit the
+  mis-parse. That justification is true; the one it replaces was not.
+
+Also records why the attached-form rows pass in both arms deliberately: on origin/main the attached
+  spelling survives only BY ACCIDENT, missing the `startswith(f"{flag}=")` arm and falling through
+  to the generic `-` skip at bootstrap.py:801. They pin "don't break the other spelling" and must
+  not be cited as evidence the fix works.
+
+Comment-only. No code change; the two-line fix was verified correct and regression-free across all
+  three consumer regions.
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.98.7 (2026-07-25)
 
 ### Bug Fixes
