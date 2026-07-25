@@ -2402,7 +2402,7 @@ def test_mcp_server_initialization_version_tracks_mcp_contract() -> None:
     options = mcp_server.mcp._mcp_server.create_initialization_options()
 
     assert options.server_name == "tensor-grep"
-    assert options.server_version == "1.4.0"
+    assert options.server_version == "1.5.0"
     assert options.server_version == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
     assert mcp_server._mcp_server_version() == version("tensor-grep")
 
@@ -9635,3 +9635,91 @@ def test_meta_and_singleton_tool_names_partition_cleanly():
     assert meta.isdisjoint(legacy)
     assert singletons.isdisjoint(legacy)
     assert meta | singletons | legacy == set(mcp_server._MCP_TOOL_CAPABILITIES)
+
+
+class _StubScanner:
+    """Explicit scanner double for the #283 scan_limit tests.
+
+    Deliberately NOT a `MagicMock`: a bare MagicMock auto-vivifies a TRUTHY `.scan_truncated`
+    (and a truthy `.scan_truncation_cause`), which is precisely why the sibling OR at the AST
+    tool was tried and reverted. A stub with real values makes each arm mean what it says.
+    """
+
+    def __init__(self, *, truncated: bool, cause: str | None, unreadable_count: int = 0) -> None:
+        self.scan_truncated = truncated
+        self.scan_truncation_cause = cause
+        self.unreadable_path_count = unreadable_count
+        self.unreadable_path_sample: list[str] = []
+        self.max_scan_entries = 200_000
+
+    def walk(self, *args, **kwargs):
+        return ["a.log"]
+
+
+def _tg_search_scan_limit_payload(stub: "_StubScanner") -> dict:
+    from tensor_grep.cli import mcp_server
+
+    fake_backend = MagicMock()
+    fake_backend.search.return_value = SearchResult(
+        matches=[MatchLine(line_number=1, text="ERROR here", file="a.log")],
+        total_files=1,
+        total_matches=1,
+    )
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner", return_value=stub),
+    ):
+        pipeline = mock_pipeline.return_value
+        pipeline.get_backend.return_value = fake_backend
+        pipeline.selected_backend_name = "CPUBackend"
+        pipeline.selected_backend_reason = "cpu_default"
+        out = mcp_server.tg_search("ERROR", ".")
+    return json.loads(out)["scan_limit"]
+
+
+def test_tg_search_scan_limit_marks_unreadable_cause_as_not_budget_remediable():
+    """Task #283: #276 slice 1 widened `scan_truncated` to ALSO mean "hit an unreadable path",
+    but this payload is `max_repo_files`-shaped, so a single permission-denied directory used to
+    surface as `possibly_truncated` beside a budget number -- the WRONG-KNOB advice #276 exists
+    to eliminate on the CLI, recreated on the MCP surface. The cause must be stated, and it must
+    say that more budget cannot fix it."""
+    scan_limit = _tg_search_scan_limit_payload(
+        _StubScanner(truncated=True, cause="unreadable_path", unreadable_count=3)
+    )
+
+    assert scan_limit["possibly_truncated"] is True
+    assert scan_limit["truncation_cause"] == "unreadable_path"
+    assert scan_limit["budget_remediable"] is False
+    assert scan_limit["unreadable_path_count"] == 3
+
+
+def test_tg_search_scan_limit_marks_budget_cap_as_budget_remediable():
+    """Control arm. A REAL budget cap must still report itself as budget-remediable -- otherwise
+    the test above would pass even if the code blanket-labelled every truncation
+    non-remediable, and a check that cannot distinguish the arms is not verification."""
+    scan_limit = _tg_search_scan_limit_payload(
+        _StubScanner(truncated=True, cause="max-scan-entries")
+    )
+
+    assert scan_limit["possibly_truncated"] is True
+    assert scan_limit["truncation_cause"] == "scan_limit"
+    assert scan_limit["budget_remediable"] is True
+    assert "unreadable_path_count" not in scan_limit
+
+
+def test_tg_search_scan_limit_fails_closed_on_an_unrecognised_truncation_cause():
+    """An unknown cause must NOT default to budget-remediable. Guidance about whether a signal
+    can be trusted is an allow-list, never a deny-list: a cause this code has never heard of
+    must never be answered with "raise the limit"."""
+    scan_limit = _tg_search_scan_limit_payload(_StubScanner(truncated=True, cause="something-new"))
+
+    assert scan_limit["truncation_cause"] == "unknown"
+    assert scan_limit["budget_remediable"] is False
+
+
+def test_tg_search_scan_limit_omits_cause_fields_on_a_complete_scan():
+    """Complete scans stay byte-identical: no cause, no remediability claim."""
+    scan_limit = _tg_search_scan_limit_payload(_StubScanner(truncated=False, cause=None))
+
+    assert "truncation_cause" not in scan_limit
+    assert "budget_remediable" not in scan_limit

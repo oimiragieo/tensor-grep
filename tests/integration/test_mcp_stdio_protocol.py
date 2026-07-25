@@ -52,9 +52,10 @@ async def _stdio_protocol_roundtrip() -> None:
         async with ClientSession(read_stream, write_stream) as session:
             initialized = await session.initialize()
             assert initialized.serverInfo.name == "tensor-grep"
-            # #98 (MCP consolidation Phase-1): _TG_MCP_SERVER_CONTRACT_VERSION bumped
-            # 1.3.0 -> 1.4.0 (10 additive task-shaped meta-tools).
-            assert initialized.serverInfo.version == "1.4.0"
+            # _TG_MCP_SERVER_CONTRACT_VERSION history: 1.3.0 -> 1.4.0 (#98, 10 additive
+            # task-shaped meta-tools); 1.4.0 -> 1.5.0 (#283, additive scan_limit cause
+            # fields on tg_search). Keep this comment in step with the assert below.
+            assert initialized.serverInfo.version == "1.5.0"
 
             listed = await session.list_tools()
             tool_names = {tool.name for tool in listed.tools}
@@ -130,9 +131,10 @@ async def _stdio_content_length_initialize_roundtrip() -> None:
         server_info = result["serverInfo"]
         assert isinstance(server_info, dict)
         assert server_info["name"] == "tensor-grep"
-        # #98 (MCP consolidation Phase-1): _TG_MCP_SERVER_CONTRACT_VERSION bumped
-        # 1.3.0 -> 1.4.0 (10 additive task-shaped meta-tools).
-        assert server_info["version"] == "1.4.0"
+        # _TG_MCP_SERVER_CONTRACT_VERSION history: 1.3.0 -> 1.4.0 (#98, 10 additive
+        # task-shaped meta-tools); 1.4.0 -> 1.5.0 (#283, additive scan_limit cause
+        # fields on tg_search). Keep this comment in step with the assert below.
+        assert server_info["version"] == "1.5.0"
     finally:
         if process.stdin is not None:
             process.stdin.close()
