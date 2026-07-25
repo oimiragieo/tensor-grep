@@ -162,8 +162,10 @@ def test_build_cmd_covers_every_explicit_root(tmp_path: Path) -> None:
 
 
 # Task #269 independent-gate finding (BLOCKING on first pass): `config.unrestricted` (rg's
-# `-u`/`-uu`/`-uuu`, forwarded verbatim at line ~648 below via `cmd.append("-" + "u" *
-# config.unrestricted)`) is a documented ALIAS for `--no-ignore`, but `_build_cmd` only checked
+# `-u`/`-uu`/`-uuu`, forwarded verbatim further below in `_build_cmd` via
+# `cmd.append("-" + "u" * config.unrestricted)` -- referenced by SHAPE, not a line number, per
+# the NB-2 lesson from this task's independent gate: a raw line-number citation drifted stale
+# within days of being written) is a documented ALIAS for `--no-ignore`, but `_build_cmd` only checked
 # `config.no_ignore` when gating the new root-ignore-file injection -- so `-u` alone left the
 # injected `--ignore-file` in place, and since `--ignore-file` is NOT cancelled by `--no-ignore`
 # (see `rg_root_ignore.py`'s docstring), `-u` silently resurrected the ignored files. `-u` must

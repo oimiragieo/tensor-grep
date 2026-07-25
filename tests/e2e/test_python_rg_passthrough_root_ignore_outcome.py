@@ -468,3 +468,75 @@ def test_nb1_mid_bundle_non_pattern_source_flag_does_not_misread_pattern_as_path
     assert result.returncode == 0, f"stdout={result.stdout!r}\nstderr={result.stderr}"
     matched_files = {Path(f).name for f in _matched_files_from_plain_text(result.stdout)}
     assert matched_files == {"a.txt"}
+
+
+# --- Task #269 independent-gate FINAL-GATE BLOCKING-1: rg's grammar is ORDER-INDEPENDENT (a
+# pattern-source flag may appear before OR after the positional PATH), but
+# `_search_path_args_raw` was a single left-to-right pass that only learned "a pattern is
+# already supplied" at the MOMENT it encountered the flag -- a PATH positional occurring
+# BEFORE the flag in argv was silently misread as the bare pattern, and the WRONG root's
+# `.gitignore` got injected. This is the independent gate's own measured repro, reproduced
+# here at the outcome level: `sub` (the real search target, appearing FIRST) has its own
+# `.gitignore`; cwd's `.gitignore` must NOT apply. Plain-text and `--json` are both asserted so
+# a regression confined to only one Python implementation cannot hide behind the other.
+
+
+def test_path_before_pattern_source_flag_honors_the_targets_own_ignore_file(
+    tmp_path: Path,
+) -> None:
+    rg_parity = _helpers()
+    rg_binary = rg_parity.resolve_pinned_rg_binary()
+    if rg_binary is None:
+        pytest.skip("ripgrep binary not available for #269 root-ignore-file outcome coverage")
+
+    cwd_root = tmp_path / "task-269-blocking1"
+    sub = cwd_root / "sub"
+    sub.mkdir(parents=True)
+    (cwd_root / ".gitignore").write_text("should-not-apply.log\n", encoding="utf-8")
+    (sub / ".gitignore").write_text("d.log\n", encoding="utf-8")
+    (sub / "c.txt").write_text("needle\n", encoding="utf-8")
+    (sub / "d.log").write_text("needle\n", encoding="utf-8")
+    env = _force_no_native_binary_env(rg_binary)
+
+    plain = _run_tg_search(["--no-heading", "sub", "-eneedle"], cwd=cwd_root, env=env)
+    as_json = _run_tg_search(["--json", "sub", "-eneedle"], cwd=cwd_root, env=env)
+
+    assert plain.returncode == 0, f"stdout={plain.stdout!r}\nstderr={plain.stderr}"
+    assert as_json.returncode == 0, f"stdout={as_json.stdout!r}\nstderr={as_json.stderr}"
+    plain_files = {Path(f).name for f in _matched_files_from_plain_text(plain.stdout)}
+    payload = json.loads(as_json.stdout)
+    json_files = {Path(_normalize_path_str(str(p))).name for p in payload["matched_file_paths"]}
+
+    assert plain_files == json_files == {"c.txt"}, (
+        f"PATH-before-flag ordering must honor sub's own .gitignore on both surfaces: "
+        f"plain={plain_files} json={json_files}\n"
+        f"plain stdout={plain.stdout!r}\njson stdout={as_json.stdout!r}"
+    )
+
+
+def test_path_before_pattern_source_flag_injects_nothing_when_target_has_no_ignore_file(
+    tmp_path: Path,
+) -> None:
+    """The independent gate's other measured row: `otherdir` has NO ignore file of its own --
+    cwd's `.gitignore` must not leak in, so nothing should be filtered at all."""
+    rg_parity = _helpers()
+    rg_binary = rg_parity.resolve_pinned_rg_binary()
+    if rg_binary is None:
+        pytest.skip("ripgrep binary not available for #269 root-ignore-file outcome coverage")
+
+    cwd_root = tmp_path / "task-269-blocking1-no-ignore"
+    other_dir = cwd_root / "otherdir"
+    other_dir.mkdir(parents=True)
+    (cwd_root / ".gitignore").write_text("*.log\n", encoding="utf-8")
+    (other_dir / "a.txt").write_text("needle\n", encoding="utf-8")
+    (other_dir / "b.log").write_text("needle\n", encoding="utf-8")
+    env = _force_no_native_binary_env(rg_binary)
+
+    result = _run_tg_search(["--no-heading", "otherdir", "-eneedle"], cwd=cwd_root, env=env)
+
+    assert result.returncode == 0, f"stdout={result.stdout!r}\nstderr={result.stderr}"
+    matched_files = {Path(f).name for f in _matched_files_from_plain_text(result.stdout)}
+    assert matched_files == {"a.txt", "b.log"}, (
+        f"cwd's *.log rule must NOT leak into a search rooted at otherdir: got {matched_files}\n"
+        f"stdout={result.stdout!r}\nstderr={result.stderr}"
+    )
