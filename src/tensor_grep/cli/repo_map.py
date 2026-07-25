@@ -7443,9 +7443,20 @@ def build_repo_map_incremental(
     ])
 
     normalized_max_repo_files = max(1, int(max_repo_files)) if max_repo_files is not None else None
+    # Task #284: the INCREMENTAL builder returns a payload of the same shape as `build_repo_map`,
+    # so a consumer cannot tell which one produced it -- but it never passed `unreadable_hit=`,
+    # meaning it could never emit `unreadable_paths` AT ALL. Every consumer reached through this
+    # path (and `tg orient` already reads that key, orient_capsule.py:1159) therefore got the
+    # silent lie the full builder stopped telling in #276 slice 1. Same flag, same emission
+    # convention below -- the two builders must not disagree about whether a scan was complete.
+    repo_walk_unreadable_hit = _UnreadablePathFlag()
     all_files = [
         current
-        for current in _iter_repo_files(root, max_files=normalized_max_repo_files)
+        for current in _iter_repo_files(
+            root,
+            max_files=normalized_max_repo_files,
+            unreadable_hit=repo_walk_unreadable_hit,
+        )
         if _is_repo_context_file(current, context_root)
     ]
     capped_file_count = len(all_files)
@@ -7506,6 +7517,15 @@ def build_repo_map_incremental(
             "truncation_cause": _cause if _capped else None,
         }
         payload["scan_remediation"] = _SCAN_LIMIT_TRUNCATED_REMEDIATION if _truncated else None
+    # Task #284: emitted OUTSIDE the `scan_limit` block on purpose, exactly as `build_repo_map`
+    # does -- an unreadable path is not a budget cap, and folding it in would give the reader
+    # wrong-knob advice ("raise --max-repo-files") for a cause no budget can fix. Omitted
+    # entirely on a clean walk, so a complete incremental map stays byte-identical.
+    if repo_walk_unreadable_hit.hit:
+        payload["unreadable_paths"] = {
+            "count": repo_walk_unreadable_hit.count,
+            "sample": list(repo_walk_unreadable_hit.sample),
+        }
     return payload
 
 

@@ -539,3 +539,78 @@ def test_incremental_repo_map_is_faster_than_full_rebuild_for_small_changes(
     # ~0.13; 0.65 catches the regression class (incremental accidentally
     # reparsing every file -> ratio -> ~1.0) while tolerating CI overhead noise.
     assert incremental_duration < (full_duration * 0.65)
+
+
+# ---------------------------------------------------------------------------
+# (#284) build_repo_map_incremental must emit `unreadable_paths` like build_repo_map
+# ---------------------------------------------------------------------------
+
+
+def _deny_scandir_for(monkeypatch, denied_dir: Path) -> None:
+    """Make `os.scandir(denied_dir)` raise PermissionError; everything else untouched.
+
+    Deliberately NOT a real chmod/ACL fixture. Task #281 burned a probe on exactly that: the ACL
+    silently failed to apply, so the "hostile" arm was a readable directory and the run would have
+    declared a live defect ABSENT. A monkeypatched raise cannot silently no-op.
+    """
+    import os as _os
+
+    real_scandir = _os.scandir
+    target = str(denied_dir.resolve())
+
+    def _fake_scandir(path=".", *args, **kwargs):
+        if str(Path(path).resolve()) == target:
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_scandir(path, *args, **kwargs)
+
+    monkeypatch.setattr(_os, "scandir", _fake_scandir)
+
+
+def test_incremental_map_reports_unreadable_paths_exactly_like_the_full_builder(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Task #284. `build_repo_map_incremental` returns a payload of the SAME SHAPE as
+    `build_repo_map`, so a consumer cannot tell which produced it -- but it never passed
+    `unreadable_hit=`, so it could never emit `unreadable_paths` AT ALL. Every consumer on the
+    incremental path kept getting the silent lie the full builder stopped telling in #276 slice 1
+    (and `tg orient` already reads that key at orient_capsule.py:1159).
+
+    Asserts the OUTCOME via the strongest oracle this module already trusts -- the two builders
+    must agree -- rather than merely checking a key exists. Pre-fix this FAILS because only the
+    full map carries `unreadable_paths`.
+    """
+    paths = _build_project(tmp_path)
+    session_id = _open_session(paths["project"])
+    denied = paths["project"] / "src" / "denied_pkg"
+    denied.mkdir()
+    _write(denied / "hidden.py", "def hidden():\n    return 1\n")
+    _write(paths["project"] / "src" / "billing.py", "def bill():\n    return 2\n")
+
+    changeset = _changeset_for_session(paths["project"], session_id)
+    _deny_scandir_for(monkeypatch, denied)
+    incremental_map = repo_map.build_repo_map_incremental(
+        repo_map.build_repo_map(paths["project"]), changeset
+    )
+    full_map = repo_map.build_repo_map(paths["project"])
+
+    # Both builders saw the same denied subtree, so both must report it identically.
+    assert full_map.get("unreadable_paths", {}).get("count", 0) >= 1
+    assert incremental_map.get("unreadable_paths") == full_map.get("unreadable_paths")
+
+
+def test_incremental_map_omits_unreadable_paths_on_a_clean_walk(tmp_path: Path) -> None:
+    """Control arm: the same corpus with nothing denied must emit the key on NEITHER builder, so a
+    complete incremental map stays byte-identical to before this change. Without this the
+    assertion above could pass for a builder that emitted the key unconditionally.
+    """
+    paths = _build_project(tmp_path)
+    session_id = _open_session(paths["project"])
+    _write(paths["project"] / "src" / "billing.py", "def bill():\n    return 2\n")
+
+    changeset = _changeset_for_session(paths["project"], session_id)
+    incremental_map = repo_map.build_repo_map_incremental(
+        repo_map.build_repo_map(paths["project"]), changeset
+    )
+
+    assert "unreadable_paths" not in incremental_map
+    assert "unreadable_paths" not in repo_map.build_repo_map(paths["project"])
