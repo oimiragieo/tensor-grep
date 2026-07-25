@@ -23,6 +23,11 @@ site/
 
 # Pytest / Coverage
 .pytest_cache/
+# Review/dogfood flows drop `basetemp` dirs at the repo root (task #268). On Windows these can
+# land with an ACL that denies the current user, and an UNIGNORED unreadable directory makes git
+# emit `warning: could not open directory ...: Permission denied` on EVERY invocation -- for the
+# operator and for every agent. Ignoring the pattern stops git traversing it at all.
+.pytest_tmp_*/
 .coverage
 htmlcov/
 
