@@ -1,6 +1,279 @@
 # CHANGELOG
 
 
+## v1.98.11 (2026-07-25)
+
+### Bug Fixes
+
+- **gpu**: Preserve raw match bytes in gpu_native.rs (no lossy UTF-8 / over-trimmed CRLF)
+  ([#754](https://github.com/oimiragieo/tensor-grep/pull/754),
+  [`b004e5e`](https://github.com/oimiragieo/tensor-grep/commit/b004e5e77b4a594c8511d3b6911080f7d9043261))
+
+* fix(gpu): preserve raw match bytes in gpu_native.rs (no lossy UTF-8 / over-trimmed CRLF)
+
+Two live sites in the CUDA-gated GPU-native search engine (`line_matches_for_file`,
+  `line_matches_for_file_by_scanning`) built `GpuNativeSearchMatch.text: String` via
+  `String::from_utf8_lossy(line_bytes).trim_end_matches('\r').to_string()`. This is the identical
+  lossy-conversion + over-trim defect class task #266/#746 fixed in the CPU native-search emitter
+  (`NativeSearchMatch::raw` / `strip_native_line_terminator`): invalid UTF-8 silently became U+FFFD,
+  and a genuine trailing `\r` from a CRLF source line was stripped even though the
+  line-descriptor/scanning slicing in this file already excludes the `\n` terminator (so any
+  trailing `\r` present is real line content, never a terminator artifact).
+
+- `GpuNativeSearchMatch.text: String` -> `raw: Vec<u8>`, mirroring `NativeSearchMatch`'s shape (task
+  #746) instead of diverging from it, since a shape divergence between the two engines is exactly
+  how this defect family survived independently in two places. - Both construction sites now copy
+  the already-`\n`-excluding line slice directly (no lossy conversion, no `\r` trimming needed). -
+  `main.rs::gpu_native_match_json_entries` (the single consumer of `.text`, found by grepping the
+  whole crate rather than trusting memory) now derives `text`/`bytes` via the shared
+  `native_json_text_fields` helper instead of `guaranteed_utf8_match_fields`, mirroring the
+  multi-pattern native path's own call (task #271) -- reusing the exact rg-parity `text`-XOR-`bytes`
+  protocol instead of a second implementation. - Internal sort/dedup comparisons and existing unit
+  test assertions updated from `.text` to `.raw` accordingly. - 5 new unit tests in
+  `gpu_native.rs`'s existing `#[cfg(test)]` module: invalid-UTF-8 losslessness (+ full
+  `native_json_text_fields` round trip through base64), CRLF preservation on both producers, and a
+  valid-UTF-8 baseline. Each documents in-comment what pre-fix behavior it would have caught.
+
+Verified (cannot compile under CPU-SAFE, read-only review): `cuda-feature-check`
+  (.github/workflows/ci.yml) runs only `cargo check --features cuda` on both ubuntu-latest and
+  windows-latest -- no `--tests`/`--all-targets` -- so this file's `#[cfg(test)]` module, including
+  the tests added here, is never even type-checked in CI today, let alone executed. This is a
+  pre-existing gap in the whole file's test module, not introduced by this change. `rustfmt
+  --edition 2021 --check` is clean on both touched files.
+
+Uses `fix(gpu):` (releasing) rather than a non-releasing type, matching this repo's own precedent
+  for this file (71cd49d, "fix: bound cuda GPU engine implicit-walk...") of shipping
+  changelog-visible fixes to this cuda-gated code even though `cuda` is off by default (`default =
+  []` in rust_core/Cargo.toml) and never compiled into any released artifact today.
+
+Lineage: task #273 (this fix) / #266 & #746 (the CPU-emitter defect this mirrors) / #271 (the shared
+  JSON helper this reuses). These are internal task-tracker labels reused as commit-message
+  convention in this codebase; note GitHub issue/PR numbers 266/271/273 in this repo now point to
+  unrelated, already-merged work (numbers were recycled), so they should not be read as GitHub
+  auto-links to this defect's history.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* ci(cuda): check --all-targets so cuda-gated tests are at least type-checked
+
+This PR adds 5 tests to `gpu_native.rs`'s `#[cfg(test)]` module. Without this change they would be
+  **dead on arrival in CI**:
+
+- `gpu_native` is gated by `#[cfg(feature = "cuda")]` at `lib.rs:9-10`, so `test-rust-core` (default
+  features) never compiles the module at all. - `cuda-feature-check` is therefore the only CI job
+  that can see it -- and it ran a bare `cargo check --features cuda`, which compiles only normal
+  targets and never type-checks `#[cfg(test)]` code.
+
+So the entire gpu_native test module -- the pre-existing assertions as well as the new ones -- could
+  fail to compile and no job would report it. `--all-targets` closes that specific blind spot.
+
+Being precise about what this does NOT do: checking is not running. These tests still do not EXECUTE
+  anywhere in CI; that needs a `cargo test --features cuda`, which is a separate (heavier) decision.
+  Claiming otherwise would be the same "SKIPPED IS NOT PASSED" error this repo has already paid for.
+
+If this reddens the job, that is the finding, not a regression: it means cuda-gated test code has
+  been uncompilable and invisible. Better surfaced in a PR than on main.
+
+* fix(gpu): unbreak cuda-gated integration tests after GpuNativeSearchMatch.raw rename
+
+Independent gate on #754 caught what my earlier consumer census missed: `grep -rn
+  "GpuNativeSearchMatch" rust_core/src/*.rs` was wrong on both scope (`src/` only, no `tests/`) and
+  predicate (the type NAME, not the FIELD) -- all 8 real consumers reach `.text` through
+  `stats.matches` without ever naming `GpuNativeSearchMatch`. `cuda-feature-check` (now running
+  `--all-targets`, also added by the gate) caught the first 4 in `test_gpu_native_long_lines.rs` and
+  bailed before reaching the other 2 test crates; this commit fixes all 8, across all 3 affected
+  files, not just the ones the log named.
+
+- `rust_core/tests/test_gpu_native_long_lines.rs` (4 sites,
+  `cpu_expected_matches`/`gpu_match_tuples`): `cpu_expected_matches` used `body.lines()`, which
+  normalizes away a trailing `\r` before `\n` -- exactly the byte this whole PR stops discarding.
+  Replaced with `split_lines_keep_cr`, a byte-level splitter mirroring `gpu_native.rs`'s own
+  line-boundary math (exclude `\n`, keep everything else), so the CPU oracle and the GPU-native
+  producer agree on CRLF content instead of the oracle silently normalizing it away. Both sides now
+  compare as `Vec<u8>`. - `rust_core/tests/test_gpu_native_streams.rs` (3 sites): the overlap
+  corpus's expected tuples and the single-GPU/multi-GPU consistency check both moved to `Vec<u8>`
+  (`.raw`/`.into_bytes()`). - `rust_core/tests/test_gpu_native_integration.rs` (1 site): the
+  large-pattern-fallback test's `actual` used `String::from_utf8(matched.raw).expect(...)` rather
+  than widening `cpu_union_pattern_tuples`/`parse_match_tuple`/`parse_json_tuples` to `Vec<u8>` --
+  those helpers are shared by ~15 other call sites in this file that compare `tg`'s own JSON stdout
+  text-vs-text and never touch `GpuNativeSearchMatch` at all, so widening them would have rippled
+  far past what this fix needs to touch. `String::from_utf8` fails loudly on invalid UTF-8 (never
+  lossily), and this corpus is pure ASCII by construction, so no byte-fidelity is lost by staying at
+  the `String` level here.
+
+`rustfmt --edition 2021 --check` clean on all 3 touched files plus a re-check of the 3 gpu_native
+  test files that were NOT touched (`test_gpu_native.rs`, `test_gpu_native_error_handling.rs`,
+  `test_gpu_native_graphs.rs` -- confirmed via a field-level grep, not a type-name grep, that none
+  of them reference `.text`/`GpuNativeSearchMatch` at all).
+
+Still cannot compile under CPU-SAFE; `cuda-feature-check` on this push is the only oracle that can
+  prove these 3 files type-check.
+
+* docs(gpu): correct a VERIFIED: comment this PR itself falsified
+
+`31dcc2f` added a comment stating, as VERIFIED, that `cuda-feature-check` runs only `cargo check
+  --features cuda` with no `--all-targets`, so the cuda-gated test module is never type-checked.
+  `41a66f1` -- later in this same PR -- changed that job to `cargo check --features cuda
+  --all-targets`, and `cuda-feature-check` is now SUCCESS on both ubuntu-latest and windows-latest.
+  The comment has been false since then. Neither the author nor I re-read it.
+
+Why this is worth a commit rather than a shrug: the stale text tells a future maintainer that
+  `--all-targets` buys nothing, which invites reverting it -- silently reopening the precise blind
+  spot that let eight `.text` reads through this PR's first cut and produced the round-2 `E0609`.
+
+The replacement states what is actually true and, as importantly, what is still NOT: those tests are
+  type-checked but never EXECUTED (no CUDA runner; checking is not running), with task #279 tracking
+  whether `cargo test --features cuda` can link on a GPU-less runner. Also fixes a smaller slip --
+  the comment lives in `main.rs` but was describing `gpu_native.rs`'s test module.
+
+Found by the independent round-3 gate, which caught it precisely because it re-read a claim labelled
+  VERIFIED instead of trusting the label.
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+### Chores
+
+- **hygiene**: Ignore generated tool output at any depth (.tensor-grep/, docs/code-map/)
+  ([#753](https://github.com/oimiragieo/tensor-grep/pull/753),
+  [`42b3fab`](https://github.com/oimiragieo/tensor-grep/commit/42b3fab1341d053be7099940f635669e256d052c))
+
+* chore(hygiene): ignore .tensor-grep/ tool state at any depth, not two enumerated paths
+
+`tg` writes session/index state into a `.tensor-grep/` directory at whatever root it is scoped to,
+  which is not always the repo root. `.gitignore` carried two root-anchored entries --
+  `/.tensor-grep/` and `/src/.tensor-grep/` -- that enumerated the two places the directory had been
+  observed. Running `tg` from inside the package dir produces `src/tensor_grep/.tensor-grep/` (note:
+  `tensor_grep`, the package, not `src/`), which matched neither, so it sat
+  untracked-but-not-ignored and polluted `git status` on every checkout.
+
+Replace both with an unanchored `.tensor-grep/`, which matches the class at any depth.
+
+Verified by an out-of-process control, because the obvious in-process check is a tautology: `git
+  check-ignore` reads the in-tree `.gitignore` regardless of `core.excludesFile`, so pointing it at
+  the old file still evaluates the new one and reports "ignored" in BOTH arms. Run against the real
+  checkouts instead:
+
+control (main, old .gitignore): src/tensor_grep/.tensor-grep/... -> NOT ignored treatment (this
+  branch) : src/tensor_grep/.tensor-grep/... -> ignored
+
+`git ls-files` confirms no tracked file lives under any `.tensor-grep/` path, so broadening the
+  pattern cannot shadow committed content.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* chore(hygiene): also ignore tg codemap's generated docs/code-map/ output
+
+Second instance of the same class as the `.tensor-grep/` fix in this PR: generated tool output
+  sitting untracked-but-not-ignored, polluting `git status` on every checkout. 190 pages have been
+  accumulating since 2026-07-16.
+
+`docs/code-map/` is `tg codemap`'s DEFAULT `--out` (codemap.py:994,1214). It is generated, not
+  authored, and `_coverage.json` carries both a `generated_at` timestamp and an ABSOLUTE
+  machine-local path ("C:\dev\projects\..."), so committing it would bake one developer's filesystem
+  into the repo and churn on every regeneration. It has never been tracked on main (`git ls-files`
+  under that path: 0).
+
+Ignoring it is a SUPPORTED configuration, not a workaround, and it does not touch tg's own freshness
+  oracle: `check_codemap_freshness`'s output-dir exclusion already covers the committed,
+  never-committed, and untracked cases, and the freshness suite's own `git_fixture_repo` gitignores
+  exactly this directory (tests/unit/test_codemap_freshness.py:126,228,245).
+
+Whether to PUBLISH a code map as documentation stays a separate product decision -- that intent is
+  served by an explicit `--out` outside this path.
+
+Verified the same way as the `.tensor-grep/` change, out-of-process against the two real checkouts
+  (the in-tree `git check-ignore` self-check is a tautology):
+
+control (main, old .gitignore): docs/code-map/_coverage.json -> NOT ignored treatment (this branch)
+  : docs/code-map/_coverage.json -> ignored
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+### Testing
+
+- **e2e**: Pin files(A) == files(A + renderer-flag) as a regression guard (#270)
+  ([#752](https://github.com/oimiragieo/tensor-grep/pull/752),
+  [`edb6a7c`](https://github.com/oimiragieo/tensor-grep/commit/edb6a7cd0578f4acc9850a40cf01c0a5e20bfe67))
+
+A renderer flag selects an OUTPUT FORMAT. It must never select a FILE SET.
+
+WHY A GUARD AND NOT A FIX: the native-delegation gate keys on output-format flags -- bootstrap.py
+  admits a search to the native engine on any of --cpu/--force-cpu/--json/--ndjson/--gpu-device-ids,
+  and main.py's mirror is `config.force_cpu or config.json_mode or ndjson or
+  bool(config.gpu_device_ids)`. Two of five are renderers. So whenever the engines differ, that
+  difference is reachable ONLY by asking for a different output format, and it presents as "JSON
+  returns fewer files" -- which is what #264, #267, #269 and #272 all were.
+
+Those are fixed and the engines have converged. Measured on the PUBLISHED tensor-grep==1.98.8 wheel,
+  the invariant holds in every cell of git-repo x non-git x {plain, --json, --ndjson}, including
+  nested .gitignore. This suite pins it so the next drift fails loudly here instead of silently
+  changing an agent's answers.
+
+WHAT IT ASSERTS 1. files(plain) == files(--json) == files(--ndjson), in BOTH topologies. Non-git is
+  not redundant: require_git(true) leaves the ignore crate's native git machinery dormant there, so
+  a different path decides the set. Verifying only one topology is what cost PR #750 a review round.
+  2. Ignore semantics are actually APPLIED (root .gitignore excludes *.log, nested excludes *.dat)
+  -- otherwise assertion 1 is satisfiable by three empty sets. 3. The comparison DISCRIMINATES, on
+  synthetic inputs. Without this, (1) passing proves nothing while the engines agree -- and they
+  agree today. Includes the both-empty case explicitly, documenting why (1) asserts a non-empty
+  precondition first.
+
+It compares tg against ITSELF across renderers -- the control arm that found the real bug in #264
+  after an rg-vs-tg comparison conflated engine and format. The residual tg-vs-rg difference outside
+  a git repo is the intentional #127 behaviour and is deliberately NOT asserted.
+
+Named test_native_* so ci.yml's native-build-smoke job picks it up automatically via the #746 glob,
+  with TG_REQUIRE_RG_PARITY=1 turning a missing binary from a silent skip into a hard failure.
+  Verified: the #275 coverage invariant already recognises this file, so it cannot silently go dark.
+
+Verified locally: 4 passed / 3 skipped without a native binary; the 3 become FAILURES under
+  TG_REQUIRE_RG_PARITY=1; discrimination tests pass regardless.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+- **ledger**: Remove the 1-second-TTL race from the forced-expiry tests
+  ([#755](https://github.com/oimiragieo/tensor-grep/pull/755),
+  [`9fcf90f`](https://github.com/oimiragieo/tensor-grep/commit/9fcf90fa3d710769ebcb6775e1869f9a5def21c8))
+
+`test_list_excludes_expired_claims` reddened `test-python (windows-latest, py3.12)` on PR #753 -- a
+  `.gitignore`-only change that cannot touch the ledger. Decoding the job rather than assuming a
+  flake found a real timing dependency:
+
+submit_claim(..., ttl_seconds=1) assert list_claims(root)["count"] == 1 # <- assert 0 == 1
+
+`ttl_seconds=1` reads as "short" but means "expires one second from now, on a machine that may be
+  slow". On a loaded runner more than a second elapsed between the write and the liveness
+  precondition, so the claim self-expired before the test could observe it.
+
+The TTL was never the mechanism under test. Every one of these tests forces expiry EXPLICITLY, by
+  rewriting `expires_at` into the past via `_rewrite_expires_at` / `_rewrite_finding_expires_at`.
+  The short TTL bought nothing and risked the whole test.
+
+Fixing the CLASS rather than the one site that happened to fail: all six `ttl_seconds=1` call sites
+  now use a shared `_FORCED_EXPIRY_TTL = 3600`, which cannot elapse mid-test. A second site was
+  latently exposed the same way -- `test_finding_dedupe_after_expiry` makes two sequential
+  `record_finding` calls, and a write-time prune could evict record 0 before the rewrite targeted
+  `index=0`.
+
+Deliberately untouched: tests that assert on the TTL VALUE itself (900 / 42 / 123 / 86400) pass
+  their own explicit numbers and test real behaviour.
+
+The substitution was made with a `ttl_seconds=1(?![0-9])` guard so the neighbouring `ttl_seconds=42`
+  kwargs and the `== 123` / `== 86400` assertions could not be corrupted, and that invariant is
+  asserted before the write.
+
+HONEST LIMIT: 88/88 pass locally, but they always did -- this never reproduced on a fast machine.
+  Local green proves the change breaks nothing; it does NOT prove the flake is gone. The argument
+  for that is structural: the timing dependency is removed, not widened. No sleep, no retry, no
+  raised ceiling -- the mechanism is deleted.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.98.10 (2026-07-25)
 
 ### Bug Fixes
