@@ -411,7 +411,7 @@ def test_main_entry_bare_plain_text_search_bypasses_native_delegation_even_when_
     monkeypatch,
 ) -> None:
     """Task #269 map finding, independently confirmed (also root-caused by the sibling #744
-    fix on PR c597b85): `_can_delegate_to_native_tg_search` (`bootstrap.py:456-464`) only
+    fix on PR c597b85): `_can_delegate_to_native_tg_search` only
     forwards a search to the compiled native binary when argv contains one of
     `{--cpu, --force-cpu, --json, --ndjson, --gpu-device-ids}`, or `TG_RUST_FIRST_SEARCH=1`
     (default off). A bare `tg search PATTERN .` has none of those triggers, so bootstrap ALWAYS
@@ -702,7 +702,8 @@ def test_requires_full_cli_does_not_misread_dash_e_glob_looking_pattern_as_glob_
 # `[]`, `_search_path_args` fell back to `["."]`, and `_run_rg_passthrough` injected the ROOT
 # `.gitignore` for the WRONG directory (cwd, not the actual search target) -- a silent
 # wrong-file-set, the exact class this whole PR family exists to close. Fixed via
-# `_SEARCH_PATTERN_SOURCE_FLAGS`/`_SEARCH_PATTERN_SOURCE_ATTACHED_SHORT_FLAGS`.
+# `_SEARCH_PATTERN_SOURCE_FLAGS` plus the bundled/clustered cluster walk further below (which
+# also closes the mid-bundle attached form -- see the BLOCKING-3 test block after this one).
 
 
 def test_search_path_args_raw_treats_file_flag_as_pattern_source_not_a_path() -> None:
@@ -716,6 +717,103 @@ def test_search_path_args_raw_treats_attached_dash_e_as_pattern_source_not_a_pat
     assert bootstrap._search_path_args_raw(["-eneedle", "otherdir"]) == ["otherdir"]
     # Control: the un-attached form already worked before this fix.
     assert bootstrap._search_path_args_raw(["-e", "needle", "otherdir"]) == ["otherdir"]
+
+
+# --- Task #269 independent-gate re-gate BLOCKING-3 (introduced by the FIX-1 round itself) +
+# NB-1: `-e`/`-f` mid-BUNDLE with a leading boolean short flag (`-ieneedle` == `-i -e needle`,
+# `-ie needle` == `-i -e` <value in next arg>) was NOT caught by the FIX-1 round's
+# `arg.startswith(("-e", "-f"))` check (which only matches `-e`/`-f` as literally the first
+# character), so the token fell through as opaque, the real PATH after it was misread as the
+# bare pattern, and the WRONG root's `.gitignore` got injected -- same failure shape as FIX-1,
+# and origin/main was correct, so this was a genuine regression introduced by this PR. Fixed by
+# replacing the narrow `startswith` check with the general cluster walk `_requires_full_cli`
+# and `_search_args_request_unrestricted` already use elsewhere in this file. NB-1 (`-im 5
+# needle otherdir` misreading the PATTERN "needle" as a PATH) is the exact same underlying
+# defect for a NON-pattern-source attached flag (`-m`) and is closed by the same walk.
+#
+# `-ie needle otherdir` / `-if pats.txt otherdir` are explicitly pinned here because they
+# produced the RIGHT ANSWER BY ACCIDENT under the BLOCKING-3 bug (the un-consumed value token
+# got swept up as the bare pattern instead of a path, which happened to leave the real PATH
+# correctly identified) -- without a test pinning the CORRECT MECHANISM (regexp_pattern_seen
+# set via the flag, not via an accidental bare-pattern misread), a future change could
+# reintroduce BLOCKING-3 for the "value in a separate token" shape while this suite stayed
+# green.
+
+
+def test_search_path_args_raw_treats_mid_bundle_attached_dash_e_as_pattern_source() -> None:
+    # -ieneedle == -i -e needle (attached, mid-bundle).
+    assert bootstrap._search_path_args_raw(["-ieneedle", "otherdir"]) == ["otherdir"]
+    # -ifpats.txt == -i -f pats.txt (attached, mid-bundle).
+    assert bootstrap._search_path_args_raw(["-ifpats.txt", "otherdir"]) == ["otherdir"]
+
+
+def test_search_path_args_raw_treats_mid_bundle_dash_e_with_separate_value_as_pattern_source() -> (
+    None
+):
+    """Pins the CORRECT MECHANISM for the "value in the next token" bundled form, not just the
+    right final answer -- see the module comment above for why the by-accident form is
+    insufficient on its own."""
+    raw = bootstrap._search_path_args_raw(["-ie", "needle", "otherdir"])
+    assert raw == ["otherdir"], raw
+    raw = bootstrap._search_path_args_raw(["-if", "pats.txt", "otherdir"])
+    assert raw == ["otherdir"], raw
+
+
+def test_search_path_args_paths_defaulted_is_false_for_mid_bundle_attached_forms() -> None:
+    assert bootstrap._search_args_paths_defaulted(["-ieneedle", "otherdir"]) is False
+    assert bootstrap._search_args_paths_defaulted(["-ie", "needle", "otherdir"]) is False
+
+
+def test_search_path_args_raw_closes_nb1_non_pattern_source_mid_bundle_value() -> None:
+    """NB-1: `-im 5 needle otherdir` (`-i -m 5`, i.e. ignore-case + max-count=5) is NOT a
+    pattern-source flag -- "needle" is the real bare pattern, "otherdir" the real path. Before
+    this fix, "5" (which should be consumed as `-m`'s value) was silently misread as the bare
+    pattern instead, cascading "needle" into `paths` alongside "otherdir"."""
+    assert bootstrap._search_path_args_raw(["-im", "5", "needle", "otherdir"]) == ["otherdir"]
+
+
+def test_run_rg_passthrough_mid_bundle_attached_dash_e_injects_the_correct_roots_ignore_file(
+    monkeypatch, tmp_path: Path
+) -> None:
+    cwd_root = tmp_path / "wrongroot3"
+    other_dir = cwd_root / "otherdir"
+    other_dir.mkdir(parents=True)
+    (cwd_root / ".gitignore").write_text("should-not-apply.log\n", encoding="utf-8")
+    (other_dir / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    monkeypatch.chdir(cwd_root)
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    bootstrap._run_rg_passthrough("rg", ["-ieneedle", "otherdir"])
+
+    argv = seen["argv"]
+    flag_index = argv.index("--ignore-file")
+    injected_path = (cwd_root / argv[flag_index + 1]).resolve()
+    assert injected_path == (other_dir / ".gitignore").resolve(), (
+        f"must inject otherdir's .gitignore, not cwd's: got {injected_path}"
+    )
+
+
+def test_run_rg_passthrough_mid_bundle_dash_e_separate_value_injects_the_correct_roots_ignore_file(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Pins the `-ie needle otherdir` by-accident form's CORRECT MECHANISM through the real
+    `_run_rg_passthrough` entry point -- not just `_search_path_args_raw` in isolation."""
+    cwd_root = tmp_path / "wrongroot4"
+    other_dir = cwd_root / "otherdir"
+    other_dir.mkdir(parents=True)
+    (cwd_root / ".gitignore").write_text("should-not-apply.log\n", encoding="utf-8")
+    (other_dir / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    monkeypatch.chdir(cwd_root)
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    bootstrap._run_rg_passthrough("rg", ["-ie", "needle", "otherdir"])
+
+    argv = seen["argv"]
+    flag_index = argv.index("--ignore-file")
+    injected_path = (cwd_root / argv[flag_index + 1]).resolve()
+    assert injected_path == (other_dir / ".gitignore").resolve(), (
+        f"must inject otherdir's .gitignore, not cwd's: got {injected_path}"
+    )
 
 
 def test_search_path_args_paths_defaulted_is_false_for_file_flag_with_explicit_path() -> None:

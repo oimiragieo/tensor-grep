@@ -186,7 +186,11 @@ _SEARCH_PCRE2_FLAGS = {"-P", "--pcre2"}
 # not pattern text, so folding it in there would feed a filename string into invalid-regex
 # validation. This is a narrower, `_search_path_args_raw`-only concern.
 _SEARCH_PATTERN_SOURCE_FLAGS = _SEARCH_PATTERN_FLAGS | {"-f", "--file"}
-_SEARCH_PATTERN_SOURCE_ATTACHED_SHORT_FLAGS = ("-e", "-f")
+# NOTE: the attached/bundled short forms of `-e`/`-f` (`-eVAL`, `-fVAL`, and mid-bundle forms
+# like `-ieVAL`) are handled by `_search_path_args_raw`'s own general cluster walk (below,
+# independent-gate BLOCKING-3), not by a separate constant here -- a prior round's
+# `arg.startswith((...))` check using a tuple like this one only matched `-e`/`-f` as the
+# token's FIRST character and missed the mid-bundle form real rg accepts.
 _SEARCH_FLAGS_WITH_VALUES = {
     "-A",
     "-B",
@@ -666,20 +670,44 @@ def _search_path_args_raw(search_args: list[str]) -> list[str]:
             if any(arg.startswith(f"{flag}=") for flag in _SEARCH_PATTERN_SOURCE_FLAGS):
                 regexp_pattern_seen = True
                 continue
-            # Attached short-flag pattern-source form (`-eneedle` == `-e needle`,
-            # `-fpats.txt` == `-f pats.txt`). Must be checked BEFORE the generic
-            # `_is_short_flag_with_attached_value` branch below, which recognizes the same
-            # tokens as attached-value flags but does not mark a pattern as already supplied --
-            # letting them fall through there reproduces this exact bug (task #269
-            # independent-gate FIX-1: the first REAL positional, the PATH, gets silently
-            # misread as the bare pattern, and `_search_path_args` falls back to `["."]`).
-            if (
-                not arg.startswith("--")
-                and len(arg) > 2
-                and arg.startswith(_SEARCH_PATTERN_SOURCE_ATTACHED_SHORT_FLAGS)
-            ):
-                regexp_pattern_seen = True
-                continue
+            # Bundled/clustered short-flag walk (mirrors `_requires_full_cli`'s bundled scan
+            # and `_search_args_request_unrestricted`'s cluster walk, both above in this same
+            # module -- cited by NAME rather than a line range on purpose, per the NB-2 lesson
+            # from this task's independent gate: a raw line-number citation drifted stale
+            # within the SAME commit that added it): scan past leading BOOLEAN short flags
+            # (e.g. `-i`, `-n`) until the first ATTACHED-VALUE short flag, which swallows the
+            # remainder of the token -- or, if it is the token's LAST character, the NEXT argv
+            # token -- as its own value.
+            #
+            # Task #269 independent-gate BLOCKING-3 (re-gate on the FIX-1 round itself): the
+            # prior version of this branch only matched `-e`/`-f` as literally the FIRST
+            # character of the token (a plain `arg.startswith(("-e", "-f"))` check), so
+            # rg's own accepted MID-BUNDLE form -- `-ieneedle` == `-i -e needle`, `-ie needle`
+            # == `-i -e` <value in the next arg> -- fell through to the generic dash-skip below
+            # unrecognized: the token was dropped as opaque, the REAL PATH after it got
+            # silently misread as the bare pattern, and the wrong (cwd's) root ignore file got
+            # injected -- the exact "an argv form nobody enumerated" bug this whole PR closes,
+            # reproduced a third time by machinery that was already sitting in this same file.
+            # `-e`/`-f` specifically are PATTERN-SOURCE flags (mark `regexp_pattern_seen`);
+            # every OTHER attached-value short flag bundled the same way (`-im 5 needle
+            # otherdir` == `-i -m 5 needle otherdir`) needs the identical value-consumption
+            # handling even though it is not a pattern source -- independent-gate NB-1, closed
+            # in this same walk rather than as a second special case.
+            if not arg.startswith("--") and len(arg) > 2 and arg.startswith("-"):
+                consumed_as_attached_value = False
+                for offset, ch in enumerate(arg[1:], start=1):
+                    if f"-{ch}" not in _SEARCH_ATTACHED_VALUE_SHORT_FLAGS:
+                        continue
+                    consumed_as_attached_value = True
+                    if ch in ("e", "f"):
+                        regexp_pattern_seen = True
+                    if offset == len(arg) - 1:
+                        # The attached-value flag is the LAST character of this token -- its
+                        # value is the NEXT argv token, not attached (`-ie needle` / `-im 5`).
+                        skip_next = index + 1 < len(search_args)
+                    break
+                if consumed_as_attached_value:
+                    continue
             if arg in _SEARCH_FLAGS_WITH_VALUES:
                 skip_next = index + 1 < len(search_args)
                 continue

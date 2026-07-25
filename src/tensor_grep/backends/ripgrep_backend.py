@@ -622,8 +622,12 @@ class RipgrepBackend(ComputeBackend):
             # `--no-ignore` (+`--hidden`/+`--binary`) that rg's own parser expands -- NOT
             # observed by `config.no_ignore` -- so it must gate this injection too (independent
             # gate finding, task #269): without it `-u` came out STRICTER than no flag at all,
-            # since the emitted `--ignore-file` below (line ~648) survives `--no-ignore` by
-            # design and silently resurrected the very rules `-u` asked to disable.
+            # since the `--ignore-file` operands emitted here survive `--no-ignore` by design
+            # (see this function's own `cmd.append("-" + "u" * config.unrestricted)` further
+            # below, which forwards the raw token to rg -- referenced by SHAPE, not a line
+            # number, per the NB-2 lesson from this task's independent gate: a raw line-number
+            # citation drifted stale within the SAME commit that added it) and would otherwise
+            # silently resurrect the very rules `-u` asked to disable.
             cmd.extend(
                 root_ignore_file_args(
                     file_path if isinstance(file_path, list) else [file_path],

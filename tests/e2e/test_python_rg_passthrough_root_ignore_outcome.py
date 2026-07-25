@@ -14,17 +14,21 @@ identical pre-#264-fix defect and were explicitly out of scope for that PR.
 This file closes that gap for the Python channel: unlike the compiled-native test, the
 no-native-binary condition can be FORCED deterministically here (`TG_DISABLE_NATIVE_TG=1`)
 rather than merely hoped for, so this suite never needs to skip on that account -- it always
-exercises `bootstrap.py:1088` (plain-text) and `ripgrep_backend.py`'s `_build_cmd` (via
-`cli/main.py`'s full CLI, `--json`) for real, over a real non-git fixture directory and a real
-`rg` binary.
+exercises `bootstrap.py::_run_rg_passthrough` (plain-text; referenced by NAME, not a line
+number, per the NB-2 lesson from this task's independent gate -- an earlier version of this
+citation drifted stale when later edits to `bootstrap.py` shifted every line below it) and
+`ripgrep_backend.py`'s `_build_cmd` (via `cli/main.py`'s full CLI, `--json`) for real, over a
+real non-git fixture directory and a real `rg` binary.
 
 WHY PLAIN-TEXT AND `--json` DIVERGE AT ALL (the actual mechanism behind the whole #264/#269 bug
 family, independently confirmed here and by the sibling #744 fix on PR c597b85): bootstrap's
-own native-delegation gate, `_can_delegate_to_native_tg_search` (`bootstrap.py:456-464`), only
-forwards a search to the compiled native binary when argv contains one of a fixed
+own native-delegation gate, `_can_delegate_to_native_tg_search` (referenced by NAME, not a
+line number, per the NB-2 lesson from this task's independent gate -- an earlier version of
+this citation drifted stale when later edits to `bootstrap.py` shifted every line below it),
+only forwards a search to the compiled native binary when argv contains one of a fixed
 `supported_trigger` set -- `{--cpu, --force-cpu, --json, --ndjson, --gpu-device-ids}` -- or
-`TG_RUST_FIRST_SEARCH=1` is set (`_prefer_rust_first_search`, `bootstrap.py:292-294`, default
-off). A bare plain-text `tg search PATTERN .` has none of those triggers, so bootstrap ALWAYS
+`TG_RUST_FIRST_SEARCH=1` is set (`_prefer_rust_first_search`, default off). A bare plain-text
+`tg search PATTERN .` has none of those triggers, so bootstrap ALWAYS
 falls through to its own `_run_rg_passthrough` REGARDLESS of whether a native binary is
 discoverable (see `tests/unit/test_cli_bootstrap.py::
 test_main_entry_bare_plain_text_search_bypasses_native_delegation_even_when_native_binary_present`
@@ -154,7 +158,7 @@ def non_git_root_gitignore_corpus(tmp_path: Path) -> tuple[Path, dict[str, str]]
 def test_plain_text_search_excludes_gitignored_file_via_python_bootstrap_passthrough(
     non_git_root_gitignore_corpus: tuple[Path, dict[str, str]],
 ) -> None:
-    """Exercises `bootstrap.py::_run_rg_passthrough` (bootstrap.py:1088) directly: a bare
+    """Exercises `bootstrap.py::_run_rg_passthrough` directly: a bare
     `tg search` with no complicating flags stays on bootstrap's own fast path and never reaches
     `cli/main.py`'s full CLI."""
     root, env = non_git_root_gitignore_corpus
@@ -380,6 +384,86 @@ def test_dash_e_unattached_control_still_honors_the_targets_ignore_file(tmp_path
     env = _force_no_native_binary_env(rg_binary)
 
     result = _run_tg_search(["--no-heading", "-e", "needle", "otherdir"], cwd=cwd_root, env=env)
+
+    assert result.returncode == 0, f"stdout={result.stdout!r}\nstderr={result.stderr}"
+    matched_files = {Path(f).name for f in _matched_files_from_plain_text(result.stdout)}
+    assert matched_files == {"a.txt"}
+
+
+# --- Task #269 independent-gate re-gate BLOCKING-3 (introduced by the FIX-1 round itself) +
+# NB-1: the FIX-1 round's `arg.startswith(("-e", "-f"))` check only matched `-e`/`-f` as
+# literally the first character of the token, missing rg's own accepted MID-BUNDLE form
+# (`-ieneedle` == `-i -e needle`). `-ie needle otherdir` / `-if pats.txt otherdir` are pinned
+# explicitly here (not just their attached siblings) because they produced the right answer BY
+# ACCIDENT under the bug -- the un-consumed value token got swept up as the bare pattern
+# instead of a path, which happened to still leave the real PATH correctly identified. Without
+# pinning them, a fix that only closed the attached form would leave this class silently open.
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    [
+        ["-ieneedle"],
+        ["-ie", "needle"],
+        ["-ifpats.txt"],
+        ["-if", "pats.txt"],
+    ],
+    ids=["-ieneedle-attached", "-ie-separate-value", "-ifpats.txt-attached", "-if-separate-value"],
+)
+def test_mid_bundle_pattern_source_flag_injects_the_targets_ignore_file_not_cwds(
+    tmp_path: Path, extra_args: list[str]
+) -> None:
+    rg_parity = _helpers()
+    rg_binary = rg_parity.resolve_pinned_rg_binary()
+    if rg_binary is None:
+        pytest.skip("ripgrep binary not available for #269 root-ignore-file outcome coverage")
+
+    cwd_root = tmp_path / "task-269-wrong-root-mid-bundle"
+    other_dir = cwd_root / "otherdir"
+    other_dir.mkdir(parents=True)
+    (cwd_root / ".gitignore").write_text("should-not-apply.log\n", encoding="utf-8")
+    (other_dir / ".gitignore").write_text("b.log\n", encoding="utf-8")
+    (other_dir / "a.txt").write_text("needle\n", encoding="utf-8")
+    (other_dir / "b.log").write_text("needle\n", encoding="utf-8")
+    (cwd_root / "pats.txt").write_text("needle\n", encoding="utf-8")
+    env = _force_no_native_binary_env(rg_binary)
+
+    args = ["--no-heading", *extra_args, "otherdir"]
+    result = _run_tg_search(args, cwd=cwd_root, env=env)
+
+    assert result.returncode == 0, f"argv={args}\nstdout={result.stdout!r}\nstderr={result.stderr}"
+    matched_files = {Path(f).name for f in _matched_files_from_plain_text(result.stdout)}
+    assert matched_files == {"a.txt"}, (
+        f"{extra_args}: must honor otherdir's own .gitignore (excluding b.log), not cwd's "
+        f"(which would leave both present): got {matched_files}\n"
+        f"stdout={result.stdout!r}\nstderr={result.stderr}"
+    )
+
+
+def test_nb1_mid_bundle_non_pattern_source_flag_does_not_misread_pattern_as_path(
+    tmp_path: Path,
+) -> None:
+    """NB-1: `-im 5 needle otherdir` (`-i -m 5`) is not a pattern-source form -- "needle" is
+    the real bare pattern, "otherdir" the real path. Outcome-level pin that the fix did not
+    just avoid a wrong file set (root_ignore_file_args already no-ops on a nonexistent
+    "needle" root either way) but that the search itself still finds the right file under the
+    real target's own ignore rules."""
+    rg_parity = _helpers()
+    rg_binary = rg_parity.resolve_pinned_rg_binary()
+    if rg_binary is None:
+        pytest.skip("ripgrep binary not available for #269 root-ignore-file outcome coverage")
+
+    cwd_root = tmp_path / "task-269-nb1"
+    other_dir = cwd_root / "otherdir"
+    other_dir.mkdir(parents=True)
+    (other_dir / ".gitignore").write_text("b.log\n", encoding="utf-8")
+    (other_dir / "a.txt").write_text("needle\n", encoding="utf-8")
+    (other_dir / "b.log").write_text("needle\n", encoding="utf-8")
+    env = _force_no_native_binary_env(rg_binary)
+
+    result = _run_tg_search(
+        ["--no-heading", "-im", "5", "needle", "otherdir"], cwd=cwd_root, env=env
+    )
 
     assert result.returncode == 0, f"stdout={result.stdout!r}\nstderr={result.stderr}"
     matched_files = {Path(f).name for f in _matched_files_from_plain_text(result.stdout)}

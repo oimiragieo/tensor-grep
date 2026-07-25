@@ -78,13 +78,18 @@ def root_ignore_file_args(
     booleans, it returns `[]` for both that case and a bare `--no-ignore` with no re-enable.
     This is NOT because a caller cannot tell the difference -- `RipgrepBackend`'s own
     `SearchConfig` carries `ignore`/`ignore_dot`/`ignore_files`/`ignore_vcs` and forwards them
-    to rg directly elsewhere in `_build_cmd` (`ripgrep_backend.py:562/566/574/586`), and
-    `bootstrap.py`'s raw-argv caller could detect the same long-flag tokens via the identical
-    `in search_args` style already used for `no_ignore`/`no_ignore_files`/etc. It is that
-    neither call site currently THREADS that signal into this function's gating -- a scope
-    decision, not an inherent inability. The failure direction is the SAFE one: under-EMITTING
-    (falling back to whatever rg's own auto-discovery does, i.e. nothing outside a git repo) is
-    a missed convenience, not a resurrected-ignore-rule regression, so it is not gated here.
+    to rg directly elsewhere in `_build_cmd` (each guarded by its own `if config.ignore:` /
+    `if config.ignore_dot:` / `if config.ignore_files:` / `if config.ignore_vcs:` check in
+    `ripgrep_backend.py` -- cited by SHAPE rather than a line number on purpose, per the NB-2
+    lesson from this task's independent gate: a raw line-number citation drifted stale within
+    the SAME commit that added it, when an unrelated comment inserted earlier in the file
+    shifted every line below it), and `bootstrap.py`'s raw-argv caller could detect the same
+    long-flag tokens via the identical `in search_args` style already used for
+    `no_ignore`/`no_ignore_files`/etc. It is that neither call site currently THREADS that
+    signal into this function's gating -- a scope decision, not an inherent inability. The
+    failure direction is the SAFE one: under-EMITTING (falling back to whatever rg's own
+    auto-discovery does, i.e. nothing outside a git repo) is a missed convenience, not a
+    resurrected-ignore-rule regression, so it is not gated here.
 
     ``roots`` mirrors rg's own ``args.paths``: an empty/``None`` list defaults to a single ``.``
     root (an implicit search still has an implicit cwd root to check).
