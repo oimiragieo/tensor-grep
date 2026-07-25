@@ -459,11 +459,20 @@ fn test_repeated_calibrate_overwrites_config_and_keeps_output_contract_stable() 
 
 #[test]
 fn test_routing_default_search_prefers_ripgrep_cold_path() {
+    // POLICY CHANGE, deliberately re-pinned rather than deleted. A cold plain-text search still
+    // prefers ripgrep -- EXCEPT for the one shape `native_can_serve_plain_text` admits (a single
+    // explicit regular file, only allow-listed flags, non-terminal stdout), which is now answered
+    // in-process. Both arms are asserted here so the original guarantee is still pinned for every
+    // shape where it holds, and the new one is pinned where it does not.
+    //
+    // The output-level question -- whether the native answer is byte-identical to rg's -- is a
+    // separate oracle: tests/e2e/test_native_plain_text_parity.py.
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());
     let rg_wrapper = write_rg_wrapper(dir.path());
 
-    let output = tg()
+    // A single explicit FILE: admitted, so it now skips the rg subprocess.
+    let file_output = tg()
         .arg("search")
         .arg("--verbose")
         .arg("hello")
@@ -473,12 +482,30 @@ fn test_routing_default_search_prefers_ripgrep_cold_path() {
         .unwrap();
 
     assert!(
-        output.status.success(),
+        file_output.status.success(),
         "stderr={}",
-        String::from_utf8_lossy(&output.stderr)
+        String::from_utf8_lossy(&file_output.stderr)
     );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_verbose_routing(&stderr, "RipgrepBackend", "rg_passthrough", false);
+    let file_stderr = String::from_utf8_lossy(&file_output.stderr);
+    assert_verbose_routing(&file_stderr, "NativeCpuBackend", "plain-text-native", false);
+
+    // A DIRECTORY: refused (walking diverges from rg), so the cold path still prefers ripgrep.
+    let dir_output = tg()
+        .arg("search")
+        .arg("--verbose")
+        .arg("hello")
+        .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
+        .output()
+        .unwrap();
+
+    assert!(
+        dir_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&dir_output.stderr)
+    );
+    let dir_stderr = String::from_utf8_lossy(&dir_output.stderr);
+    assert_verbose_routing(&dir_stderr, "RipgrepBackend", "rg_passthrough", false);
 }
 
 #[test]
@@ -502,12 +529,18 @@ fn test_routing_directory_search_promotes_to_native_cpu() {
     } else if stderr.contains("routing_reason=rg_unavailable") {
         assert_verbose_routing(&stderr, "NativeCpuBackend", "rg_unavailable", false);
     } else {
-        assert_verbose_routing(
-            &stderr,
-            "NativeCpuBackend",
-            "cpu-auto-size-threshold",
-            false,
-        );
+        // UNREACHABLE ARM -- not coverage of the new route, despite naming its reason string.
+        // These tests pass a DIRECTORY, which `native_can_serve_plain_text` refuses (walking
+        // diverges from rg on binary-file notices and on emission order), so the plain-text route
+        // can never answer them. The arm was already dead on origin/main for a different reason:
+        // it needed `rg_available == true`, but reaching it required falling through a branch that
+        // with `rg_available` true demands `structured_output == true`, which the line above
+        // catches. Only the reason STRING changed here, as part of the
+        // `cpu-auto-size-threshold` -> `plain-text-native` rename; no protection was added or
+        // removed. Real coverage of the new route lives in
+        // `test_routing_default_search_prefers_ripgrep_cold_path` (file arm) and
+        // `tests/e2e/test_native_plain_text_parity.py`.
+        assert_verbose_routing(&stderr, "NativeCpuBackend", "plain-text-native", false);
     }
 }
 
@@ -1955,7 +1988,18 @@ fn test_routing_warm_index_is_bypassed_by_short_pattern() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_verbose_routing(&stderr, "RipgrepBackend", "rg_passthrough", false);
+    // THE INVARIANT THIS TEST NAMES is that a warm index is BYPASSED for a short pattern -- not
+    // that the bypass lands on ripgrep specifically. The native plain-text route bypasses the
+    // index just as completely (route_search checks the index BEFORE the plain-text clause, so
+    // reaching this reason at all proves the index was not selected). The sibling
+    // `_by_invert_match` / `_by_context_lines` / `_by_word_regexp` / `_by_glob_filter` /
+    // `_by_max_count` tests all target a DIRECTORY or an excluded flag, so they still assert
+    // ripgrep and keep that arm of the bypass guarantee pinned.
+    assert_verbose_routing(&stderr, "NativeCpuBackend", "plain-text-native", false);
+    assert!(
+        !stderr.contains("routing_backend=TrigramIndex"),
+        "the warm index must be bypassed entirely; stderr={stderr}"
+    );
 }
 
 #[test]
@@ -2129,12 +2173,18 @@ fn test_routing_directory_count_search_uses_native_cpu_without_fallback() {
     } else if stderr.contains("routing_reason=rg_unavailable") {
         assert_verbose_routing(&stderr, "NativeCpuBackend", "rg_unavailable", false);
     } else {
-        assert_verbose_routing(
-            &stderr,
-            "NativeCpuBackend",
-            "cpu-auto-size-threshold",
-            false,
-        );
+        // UNREACHABLE ARM -- not coverage of the new route, despite naming its reason string.
+        // These tests pass a DIRECTORY, which `native_can_serve_plain_text` refuses (walking
+        // diverges from rg on binary-file notices and on emission order), so the plain-text route
+        // can never answer them. The arm was already dead on origin/main for a different reason:
+        // it needed `rg_available == true`, but reaching it required falling through a branch that
+        // with `rg_available` true demands `structured_output == true`, which the line above
+        // catches. Only the reason STRING changed here, as part of the
+        // `cpu-auto-size-threshold` -> `plain-text-native` rename; no protection was added or
+        // removed. Real coverage of the new route lives in
+        // `test_routing_default_search_prefers_ripgrep_cold_path` (file arm) and
+        // `tests/e2e/test_native_plain_text_parity.py`.
+        assert_verbose_routing(&stderr, "NativeCpuBackend", "plain-text-native", false);
     }
 
     // Should NOT contain the fallback warning

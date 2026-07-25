@@ -22,7 +22,7 @@ route_search(config, calibration_data, index_state, gpu_available) -> RoutingDec
 
 | Backend | Reason string(s) | What it means in practice |
 | --- | --- | --- |
-| `NativeCpuBackend` | `force_cpu`, `json_output`, `cpu-auto-size-threshold`, `gpu-auto-fallback-cpu`, `rg_unavailable` | Native Rust text search is used for structured explicit `--cpu`, JSON/NDJSON output, GPU fallback, and when `rg` is unavailable. |
+| `NativeCpuBackend` | `force_cpu`, `json_output`, `plain-text-native`, `gpu-auto-fallback-cpu`, `rg_unavailable` | Native Rust text search is used for structured explicit `--cpu`, JSON/NDJSON output, the admitted plain-text subset (see below), GPU fallback, and when `rg` is unavailable. |
 | `NativeGpuBackend` | `gpu-device-ids-explicit-native`, `gpu-auto-size-threshold` | Native Rust CUDA search. Explicit `--gpu-device-ids` always targets this route first; calibrated auto-routing can also choose it. |
 | `TrigramIndex` | `index-accelerated` | Explicit `--index` and warm compatible `.tg_index` auto-routing both land here. Explicit `--index` is gated the same way warm auto-routing is (see the fail-closed note below) -- it is not an unconditional override. |
 | `AstBackend` | `ast-native` | Native Rust AST search/rewrite path for `tg run`. |
@@ -39,7 +39,8 @@ The router's priority order is now explicit and shared:
 4. AST command -> `AstBackend`
 5. Warm non-stale compatible `.tg_index` -> `TrigramIndex`
 6. Corpus `>` calibrated threshold **and** GPU available **and** calibration positive -> `NativeGpuBackend`
-7. Otherwise, if `rg` is available and structured output is not required -> `RipgrepBackend`
+7. Otherwise, if `rg` is available and structured output is not required **and the request is not
+   an admitted plain-text native request** -> `RipgrepBackend`
 8. Otherwise -> `NativeCpuBackend`
 9. If the selected native CPU route fails and `allow_rg_fallback` is true -> `RipgrepBackend` final fallback
 
@@ -52,7 +53,55 @@ The router's priority order is now explicit and shared:
 - Warm-index auto-routing only applies when the cache exists, is not stale, and the query is index-compatible (`pattern >= 3 bytes`, no `-v`, no `-C`, no `--max-count`, no `-w`, no `-g`).
 - JSON and NDJSON output do **not** bypass a warm compatible index anymore.
 - Auto GPU routing is conservative: no fresh positive calibration means stay on the CPU-side cold path.
-- `rg` is again the normal cold-path choice for generic text search when available. Native CPU remains the default only for structured outputs, explicit `--cpu`, warm index, AST, and GPU fallback cases.
+- `rg` is again the normal cold-path choice for generic text search when available. Native CPU remains the default only for structured outputs, explicit `--cpu`, warm index, AST, GPU fallback, and the admitted plain-text subset described below.
+
+### Admitted plain-text native subset (perf: skip the `rg` subprocess)
+
+Spawning `rg` costs a fixed process round trip on every plain-text search. `native_can_serve_plain_text` (`rust_core/src/routing.rs`) is the single, fail-closed predicate that decides when the in-process native CPU engine may answer instead. It is deliberately narrow, and every clause is a refusal:
+
+- Exactly one pattern, and that pattern is not the empty string (`run_native_search` rejects an empty pattern, and the rg fallback then emits a `warning:` line `rg` never prints).
+- That pattern is **native-renderable**: it contains no line terminator or NUL (literal or escaped) and it compiles with the native matcher. `rg` refuses a pattern that can match a line terminator (`needle\n`, `\n`, `[\n]`) or a NUL (`\x00`) with **exit 2 plus a diagnostic**, while the native matcher accepts it and succeeds with **zero matches (exit 1, silent)** -- an exit-code regression an agent branching on 2-vs-1 would misread as "no matches". A pattern that fails to compile (`[`, `(`, `\Qx\E`, `a{500}{500}{500}`) exits 2 either way, but only after the rg-fallback net prints a `warning: native CPU search failed...` line. The check is deliberately over-broad (it also refuses `\x`/`\u` escapes wholesale): over-refusal costs one `rg` spawn, under-refusal costs correctness.
+- Exactly one PATH operand that resolves to an existing **regular file** (never a directory -- walking diverges from `rg` on binary-file messages and on emission order).
+- That file passes a **full-content** probe: no `\r` byte, valid UTF-8, no NUL byte, and within a 512 KiB cap. These are DATA-level divergences in the shared native emitter, which this route refuses rather than changes:
+  - CRLF: the native plain sink strips the trailing `\r` (no CRLF line terminator is ever installed on this path) while `rg` keeps it.
+  - non-UTF-8: the native plain sink is `grep_searcher::sinks::Lossy` and substitutes U+FFFD where `rg` writes raw bytes.
+  - NUL: `rg` spells its binary-match notice `"\0"` while the native engine's governed snapshot contract spells it `"/0"`.
+- The PATH was supplied explicitly (an implicit path makes `rg` print `name` where the native engine prints `./name`).
+- The PATH is **not** `-`. That is ripgrep's stdin sentinel, but `Path::new("-").is_file()` is true whenever a file literally named `-` exists in the working directory, so the native engine would search that file while `rg` searched stdin -- exit 0, no stderr, plausible output, wrong data source. Also covers `-- -` and `-e PATTERN -`.
+- The file's reported size equals the bytes actually read. This refuses pseudo-files such as `/proc/self/status`, which is a regular file with `st_size` 0 that returns ~1.4 KB of clean UTF-8 on read: its content is generated per-open, so the probe cannot describe what the search will subsequently read. (`/dev/*` and FIFOs are already refused for not being regular files; a symlink to a regular file is admitted and correct, since both engines follow an explicit symlink operand.)
+- stdout is **not** a terminal (`rg` is spawned with inherited stdio, so on a terminal it renders its grouped/heading layout with color).
+- `$RIPGREP_CONFIG_PATH` is **not** set to a non-empty value. This is the one clause about the process ENVIRONMENT rather than the request: `execute_ripgrep_search` never clears the environment and passes `--no-config` only when the user asks for it, so a plain-text search that reaches `rg` today applies the user's rg config, while the in-process native engine reads no rg config at all. A config containing `-i` changes which lines match, `--vimgrep` changes the entire output format, and a dangling path makes `rg` print a read-failure diagnostic the native route would omit. An empty value is ignored by `rg`, so the guard is "set AND non-empty".
+- No `--json`, `--ndjson`, or `--format`.
+- Every flag on the command line is in `PLAIN_TEXT_NATIVE_ALLOWED_FLAGS`: `-i`/`--ignore-case`, `-F`/`--fixed-strings`, `-w`/`--word-regexp`, `-n`/`--line-number`, `--verbose` (combined short clusters such as `-in` are accepted, matching clap).
+
+Anything outside that subset keeps spawning `rg`, unchanged. The route reports `NativeCpuBackend` / `plain-text-native` and keeps `allow_rg_fallback = true`, so a native failure still falls back to real `rg`. `--verbose` stderr intentionally reports the new backend -- that is the flag's purpose.
+
+The 512 KiB cap is measured, not guessed: the probe costs ~2% of the win at 200 KB, 16% at 1 MB, 43% at 4 MB and 78% at 8 MB, and on a match-dense 8 MB file the native engine is itself slower than `rg`, turning the whole route into a ~11ms regression. Files above the cap keep spawning `rg`.
+
+The two expensive clauses (the pattern compile and the file probe) are evaluated **last**, only after `plain_text_native_cheap_checks_pass` has cleared every free refusal. That is a latency contract: an interactive terminal search, a `--json`/`--ndjson` run and an `-A`/`-B`/`-C` run all reach the clap-side adapter and must not pay for a file read on their way to `rg`. The probe is also memoized per path, because both adapters run on an admitted request.
+
+### Admission-rate telemetry (default-OFF)
+
+Nothing else in the repo can answer "how often is this route actually taken?" -- none of the benchmark scenarios, none of the dogfood calls, and none of the MCP surface (which always builds `--json`) are eligible for it, so the benchmark-regression gate can observe neither its benefit nor a future regression in it.
+
+Set `TG_ROUTE_TELEMETRY=1` and `tg` appends one JSON Lines record per eligibility evaluation, carrying the stage (`frontdoor` or `clap`) and every clause. The file defaults to the OS temp directory (never the workspace) and is overridable with `TG_ROUTE_TELEMETRY_PATH`. Emission is best-effort and fail-silent: telemetry must never change what a search returns.
+
+Any existing workload works unmodified:
+
+```bash
+TG_ROUTE_TELEMETRY=1 TG_ROUTE_TELEMETRY_PATH=/tmp/route.jsonl uv run python benchmarks/run_benchmarks.py
+python scripts/summarize_route_telemetry.py /tmp/route.jsonl
+```
+
+The summary reports the admit rate per stage and a histogram of which clause refused first. The `clap` stage is the real admission surface, since an admitted request always reaches it.
+
+### Broken-pipe exit-code change (all native routes)
+
+A consumer that closes the pipe early (`tg ... | head -1`, `| less`, an agent reading N lines) is normal termination, not a search failure. Previously the native engine surfaced it as an error: exit **2** plus `native standard output search failed for <path>` on stderr, and -- where an rg fallback was configured -- a `warning: native CPU search failed...` line followed by a full re-run of the search into the already-closed pipe. It now exits quietly with ripgrep's code (**1** for the single-file shape this route admits).
+
+This is a **contract change on a machine-facing surface**: `--json` and `--ndjson` consumers that closed the pipe early previously saw exit 2 and now see exit 1, with no structured error emitted (there is no longer anywhere to emit it). The change applies to every native route -- `--cpu`, `--json`/`--ndjson`, rg-unavailable, and the plain-text route -- because a broken pipe was never a search failure on any of them.
+
+The predicate has two adapters (a raw-argv one at the pre-clap front door, a parsed-`SearchArgs` one on the clap path) and they are required to return identical verdicts for every shape the agreement test lists, because the front door is not the only path into `route_search`. The general invariant is one-directional -- the front door may be stricter, never looser -- and attached-value short spellings (`-eneedle`) are a known, deliberate asymmetry in that safe direction.
 
 ### `--index` fail-closed compatibility contract (audit H1, 2026-07-10)
 

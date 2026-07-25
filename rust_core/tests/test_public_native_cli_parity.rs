@@ -315,12 +315,14 @@ fn test_search_explicit_path_keeps_path_when_stdin_is_piped() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child
-        .stdin
-        .as_mut()
-        .unwrap()
-        .write_all(b"stdin needle\n")
-        .unwrap();
+    // The write result is deliberately IGNORED. The fake rg used to drain stdin
+    // (`sys.stdin.buffer.read()`); on the native route nothing reads it, so if `tg` exits before
+    // this write lands the parent gets EPIPE. 13 bytes fit any pipe buffer, so the window is
+    // narrow -- but a narrow race is still a flake, and this suite has been de-flaked before. A
+    // failed write is CONSISTENT with the invariant under test (stdin must not be consumed), so
+    // discarding the error removes the timing dependency without weakening anything.
+    let _ = child.stdin.as_mut().unwrap().write_all(b"stdin needle\n");
+    drop(child.stdin.take());
     let output = child.wait_with_output().unwrap();
 
     assert!(
@@ -330,10 +332,39 @@ fn test_search_explicit_path_keeps_path_when_stdin_is_piped() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
-        "fixture.txt:needle file\n"
+    // THE INVARIANT THIS TEST NAMES: with stdin piped, an explicit PATH still wins -- the file is
+    // searched and the piped stdin is NOT. That is asserted directly below, so it holds under
+    // either routing.
+    //
+    // It used to be asserted only as `== "fixture.txt:needle file\n"`, i.e. by requiring that the
+    // FAKE rg above was invoked and its canned stdout passed through. That is a mechanism, not the
+    // contract: the plain-text native route answers this shape in-process, so the fake rg is never
+    // spawned and the canned prefix never appears. Real `rg` prints `needle file` here with no
+    // prefix (measured, ripgrep 15.1.0, identical whether stdin is piped or /dev/null), so the
+    // prefix was an artifact of the fake, not ripgrep behavior.
+    //
+    // The fake rg's exact-argv assertion is still live and still fires if the request DOES reach
+    // rg, so the forwarding guarantee is not lost.
+    //
+    // To be precise about what this now pins, because an earlier version of this comment claimed
+    // the opposite: it DOES mandate the native engine. The fake rg's canned stdout is
+    // `"fixture.txt:needle file\n"` (see the `fake_rg_exact_args_script` call above), so the
+    // `assert_eq!` below fails if the request reaches rg at all. That is intended -- this shape is
+    // squarely inside the admitted subset, so a silent fall back to the subprocess is a routing
+    // regression worth failing on -- but "only stops the test from mandating WHICH engine answers"
+    // was simply wrong.
+    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    assert!(
+        !stdout.contains("stdin needle"),
+        "an explicit PATH must win over piped stdin; stdout={stdout}"
     );
+    // Asserted as EQUALITY, not a disjunction. An earlier revision also accepted
+    // `fixture.txt:needle file`, which would have ACCEPTED a native emitter that wrongly prefixes
+    // the filename on a single-file search. Measured on rg 15.1.0, both spellings:
+    //     printf 'stdin needle' | rg -e needle -- fixture.txt  -> "needle file"  rc=0
+    //     rg -e needle -- fixture.txt < /dev/null              -> "needle file"  rc=0
+    // so there is exactly one correct answer and the test now demands it.
+    assert_eq!(stdout, "needle file\n");
 }
 
 #[test]

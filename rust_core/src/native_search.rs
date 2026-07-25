@@ -107,7 +107,7 @@ impl AtomicLineWriter {
     fn flush_complete_lines(&mut self) -> io::Result<()> {
         while let Some(newline_index) = memchr(b'\n', &self.pending) {
             let line = self.pending.drain(..=newline_index).collect::<Vec<_>>();
-            self.target.write_all(&line).map_err(io::Error::other)?;
+            self.target.write_all(&line).map_err(sink_io_error)?;
         }
         Ok(())
     }
@@ -117,7 +117,7 @@ impl AtomicLineWriter {
         if !self.pending.is_empty() {
             self.target
                 .write_all(&self.pending)
-                .map_err(io::Error::other)?;
+                .map_err(sink_io_error)?;
             self.pending.clear();
         }
         Ok(())
@@ -228,6 +228,30 @@ impl Default for NativeSearchConfig {
             output_target: NativeOutputTarget::Stdout,
         }
     }
+}
+
+/// Converts an `anyhow::Error` into the `io::Error` that `grep_searcher::Sink::Error` requires,
+/// PRESERVING the original `ErrorKind` when the chain contains one.
+///
+/// `io::Error::other(...)` — what every one of these call sites used before — always produces kind
+/// `Other`, which silently discards `BrokenPipe`. That mattered: a consumer closing the pipe
+/// (`tg ... | head -1`) surfaced as a generic failure, so
+/// `run_native_search_with_optional_rg_fallback`'s broken-pipe guard could not recognise it, and a
+/// normal early termination was reported as a search error (and, with a fallback configured, was
+/// followed by a `warning: ...` line and a full re-run into the already-closed pipe). CI proved the
+/// typed chain walk alone was not enough; this fixes it at the source rather than pattern-matching
+/// error text downstream.
+///
+/// Only the error's KIND is affected. No output byte, no rendering, and no success path changes.
+fn sink_io_error(err: anyhow::Error) -> io::Error {
+    for cause in err.chain() {
+        if let Some(io_err) = cause.downcast_ref::<io::Error>() {
+            // `err.to_string()`, not `{err:#}`: `io::Error::other(err)` rendered exactly this, so
+            // the message stays byte-identical and ONLY the kind changes.
+            return io::Error::new(io_err.kind(), err.to_string());
+        }
+    }
+    io::Error::other(err)
 }
 
 fn render_output_text<'a>(config: &NativeSearchConfig, text: &'a str) -> Result<Cow<'a, str>> {
@@ -444,7 +468,7 @@ impl ParallelWalkWorker {
         let mut sink = BinaryAwareSink::new(Lossy(|line_number, line| {
             let trimmed_line = line.trim_end_matches(['\n', '\r']);
             let rendered_text = render_output_text(&self.config, trimmed_line)
-                .map_err(io::Error::other)?
+                .map_err(sink_io_error)?
                 .into_owned();
             append_standard_match_bytes(
                 output_buffer,
@@ -453,7 +477,7 @@ impl ParallelWalkWorker {
                 line_number,
                 &rendered_text,
             )
-            .map_err(io::Error::other)?;
+            .map_err(sink_io_error)?;
             match_count = match_count.saturating_add(1);
             if retain_matches {
                 matches.push(NativeSearchMatch {
@@ -507,7 +531,7 @@ impl ParallelWalkWorker {
                 text: trimmed_line.to_string(),
             };
             append_ndjson_match_bytes(output_buffer, &self.config, &search_path, &matched)
-                .map_err(io::Error::other)?;
+                .map_err(sink_io_error)?;
             match_count = match_count.saturating_add(1);
             matches.push(matched);
             Ok(true)
@@ -1263,7 +1287,7 @@ fn search_file_streaming_plain_sequential(
     let mut sink = BinaryAwareSink::new(Lossy(|line_number, line| {
         let trimmed_line = line.trim_end_matches(['\n', '\r']);
         let rendered_text = render_output_text(config, trimmed_line)
-            .map_err(io::Error::other)?
+            .map_err(sink_io_error)?
             .into_owned();
         append_standard_match_bytes(
             &mut pending_output,
@@ -1272,19 +1296,19 @@ fn search_file_streaming_plain_sequential(
             line_number,
             &rendered_text,
         )
-        .map_err(io::Error::other)?;
+        .map_err(sink_io_error)?;
         if flush_first_match_immediately && !emitted_first_chunk {
             config
                 .output_target
                 .write_all(&pending_output)
-                .map_err(io::Error::other)?;
+                .map_err(sink_io_error)?;
             pending_output.clear();
             emitted_first_chunk = true;
         } else if pending_output.len() >= streaming_output_flush_bytes {
             config
                 .output_target
                 .write_all(&pending_output)
-                .map_err(io::Error::other)?;
+                .map_err(sink_io_error)?;
             pending_output.clear();
         }
         match_count = match_count.saturating_add(1);
@@ -1387,6 +1411,37 @@ fn build_matcher(config: &NativeSearchConfig) -> Result<RegexMatcher> {
             config.pattern
         )
     })
+}
+
+/// Fail-closed pre-flight for the plain-text native route: can `build_matcher` -- the EXACT
+/// matcher `run_native_search` will construct for this request -- compile this pattern under
+/// these flags?
+///
+/// This exists because a `run_native_search` failure is NOT free. `allow_rg_fallback` does catch
+/// it and hand the request to real `rg`, but only after printing
+/// `warning: native CPU search failed, falling back to ripgrep: failed to compile native search
+/// pattern '...'` to stderr -- a line `rg` never emits. So an uncompilable pattern (`[`, `(`,
+/// `\Qx\E`, `a{500}{500}{500}`, ...) must be refused BEFORE routing, not discovered mid-request.
+///
+/// Only the inputs `build_matcher` actually reads are parameters. It also reads `config.crlf`,
+/// which no caller on this path ever sets (`--crlf` is a Python-passthrough flag), so the
+/// `Default` value is the truthful one here.
+pub fn native_search_pattern_compiles(
+    pattern: &str,
+    ignore_case: bool,
+    smart_case: bool,
+    fixed_strings: bool,
+    word_boundary: bool,
+) -> bool {
+    let config = NativeSearchConfig {
+        pattern: pattern.to_string(),
+        ignore_case,
+        smart_case,
+        fixed_strings,
+        word_boundary,
+        ..NativeSearchConfig::default()
+    };
+    build_matcher(&config).is_ok()
 }
 
 pub fn effective_ignore_case(pattern: &str, ignore_case: bool, smart_case: bool) -> bool {
@@ -1765,7 +1820,7 @@ fn search_chunk(
             contents,
             Lossy(|line_number, line| {
                 let rendered_text = render_output_text(config, line.trim_end_matches(['\n', '\r']))
-                    .map_err(io::Error::other)?
+                    .map_err(sink_io_error)?
                     .into_owned();
                 matches.push(NativeSearchMatch {
                     path: path_buf.clone(),
@@ -1815,7 +1870,7 @@ fn search_file_collect_matches_with_searcher(
     let mut matches = Vec::new();
     let mut sink = BinaryAwareSink::new(Lossy(|line_number, line| {
         let rendered_text = render_output_text(config, line.trim_end_matches(['\n', '\r']))
-            .map_err(io::Error::other)?
+            .map_err(sink_io_error)?
             .into_owned();
         matches.push(NativeSearchMatch {
             path: path_buf.clone(),
@@ -1855,14 +1910,14 @@ fn search_file_ndjson_with_searcher(
     let search_path = display_search_path(&config.paths);
     let mut sink = BinaryAwareSink::new(Lossy(|line_number, line| {
         let rendered_text = render_output_text(config, line.trim_end_matches(['\n', '\r']))
-            .map_err(io::Error::other)?
+            .map_err(sink_io_error)?
             .into_owned();
         let matched = NativeSearchMatch {
             path: path_buf.clone(),
             line_number: Some(line_number),
             text: rendered_text,
         };
-        emit_ndjson_match(config, &search_path, &matched).map_err(io::Error::other)?;
+        emit_ndjson_match(config, &search_path, &matched).map_err(sink_io_error)?;
         matches.push(matched);
         Ok(true)
     }));
