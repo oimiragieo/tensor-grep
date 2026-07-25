@@ -54,6 +54,16 @@ npm/node_modules/
 # (`src/tensor_grep/.tensor-grep/`, created by running tg from inside the package dir) went
 # untracked-but-not-ignored and polluted `git status`. Match the CLASS at any depth instead.
 .tensor-grep/
+# `tg codemap`'s default output dir (main.rs/codemap.py: `--out` defaults to <root>/docs/code-map).
+# Generated, not authored: 190 pages plus a `_coverage.json` carrying a `generated_at` timestamp
+# AND an absolute machine-local path ("C:\\dev\\projects\\..."), so committing it would bake one
+# developer's filesystem into the repo and churn on every regeneration. Never tracked on main.
+# Ignoring it is a supported configuration, not a workaround: `check_codemap_freshness`'s
+# output-dir exclusion already handles the committed, never-committed, and untracked cases
+# (tests/unit/test_codemap_freshness.py), so this does not affect tg's own freshness oracle.
+# Whether to PUBLISH a code map as docs stays a separate product decision -- use an explicit
+# `--out` outside this path when that is the intent.
+docs/code-map/
 # .factory/ is Factory-AI/droid local tool state (contains machine-specific paths) -- never track any of it.
 /.factory/
 /_archive/
