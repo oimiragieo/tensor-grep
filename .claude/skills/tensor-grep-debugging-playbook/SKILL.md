@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-debugging-playbook
-description: Use when a tensor-grep (tg) run fails, hangs, returns wrong/empty/silently-degraded results, a CI check goes red, a release doesn't publish, or a worktree agent's PR reports "No commits between main and <branch>" after a reported commit. Symptom-to-triage table, each row giving a discriminating experiment and a fix pointer, for CI red, release not published (push-race), search hangs/slow, silent-empty result (fail-closed contract), argv/flag injection, mock-green-but-real-dead FFI, dependency-cap silent downgrade, ranking flip, a `CliRunner`/`capfd` test that goes green-on-PR-red-on-main after a delegation/routing change, a latency fix/regression report that needs profiling-at-scale instead of a code-reading guess, and a detached-HEAD worktree push that pushes a stale branch ref instead of the real commit. Load BEFORE theorizing from a traceback or re-running a failing gate blind.
+description: Use when a tensor-grep (tg) run fails, hangs, returns wrong/empty/silently-degraded results, a CI check goes red, a release doesn't publish, a worktree agent's PR reports "No commits between main and <branch>" after a reported commit, or a wall-clock/timing-ratio test flakes on a loaded CI runner. Symptom-to-triage table, each row giving a discriminating experiment and a fix pointer, for CI red, release not published (push-race), search hangs/slow, silent-empty result (fail-closed contract), argv/flag injection, mock-green-but-real-dead FFI, dependency-cap silent downgrade, ranking flip, a `CliRunner`/`capfd` test that goes green-on-PR-red-on-main after a delegation/routing change, a latency fix/regression report that needs profiling-at-scale instead of a code-reading guess, a detached-HEAD worktree push that pushes a stale branch ref instead of the real commit, and a timing-ratio test flake caused by a degenerate baseline below clock resolution. Load BEFORE theorizing from a traceback or re-running a failing gate blind.
 ---
 
 # tensor-grep Debugging Playbook
@@ -74,6 +74,7 @@ If your symptom isn't in the table below, it's probably not covered here — che
 | An automated dogfood/verdict script says PASS or FAIL, but the underlying behavior looks wrong when you inspect it directly | The scoring logic misread the JSON shape (a renamed field, a nested-vs-top-level key) — a shape misread can silently read as either a clean pass or a clean fail | Read the RAW `--json` output at least once by eye before trusting the automated verdict for a new/changed probe | [S14](#14-raw-json-before-scoring) |
 | A macOS-only CI job with a `Setup Rust` step (e.g. `test-rust-core`) fails with a network/timeout error during Rust toolchain setup — not a compile error, not something your diff touched | `rust_core/rust-toolchain.toml` pins an exact Rust version; the first `cargo` invocation with `rust_core/` as its working directory triggers an on-demand rustup fetch for that pin, and unlike the `rustup-init` bootstrap curl (`--retry 10`), rustup's own pinned-toolchain download had no retry | `gh run view <run-id> --log-failed` on the `Setup Rust` step specifically — a transient network/timeout message on the pinned-toolchain fetch, not a `rustc`/`cargo` compile error | [S15](#15-macos-rustup-pinned-toolchain-fetch-timeout-network-flake-already-mitigated) |
 | `gh pr create` (or the GitHub UI) rejects a branch push with **"No commits between main and `<branch>`"** even though a worktree agent reported it committed real work | The agent committed on a DETACHED `HEAD` (not the named branch), then `git push origin <branchname>` pushed the branch REF — still sitting at `main`'s tip — instead of the commit; the work is not lost, just not reachable from the ref that was pushed | `git -C <worktree> rev-parse HEAD` vs `git -C <worktree> rev-parse <branchname>` — if they differ, the commit is real but the branch ref never moved | [S16](#16-no-commits-between-main-and-branch-detached-head-push) |
+| A wall-clock/timing-ratio test flakes on a loaded Windows CI runner, and each attempt to widen its tolerance either doesn't fix it or makes it worse | A `max(baseline * N, floor)` assertion silently degenerates to the floor alone once the baseline collapses below the platform's clock resolution (or the "fix" attributed the flake to the wrong noise source without profiling) | `gh run view <run-id> --log-failed` for the exact overshoot numbers, then re-measure the baseline in isolation (does it read as a real, non-zero number across several runs?) and cProfile the real command before touching the assertion | [§17](#17-timing-testflake-de-flaking-a-ratiowall-clock-assertion) |
 
 ---
 
@@ -660,6 +661,16 @@ dogfood/verdict scripts rather than a formal eval harness. 2026-07-22 closing-do
 step is what turned a suspicious-looking automated result into either a confirmed PASS or a real,
 actionable finding, rather than a guess either way.
 
+**Same family, a shell one-liner instead of a script (2026-07-24).** A `grep -ciE
+"DEFERRED\|deferred"` spot-check on a sibling PR returned zero hits for a caveat that was present
+verbatim — in `grep -E` (extended regex), `\|` matches a LITERAL pipe character, not alternation
+(extended-regex alternation is a bare `|`; the backslash form is basic-regex/`sed` syntax). The
+0-hit result briefly read as "the report is wrong" when the instrument was wrong. If a grep/check
+result contradicts what you can see by eye in the file, re-test the check against known-present
+content before trusting the negative — this generalizes point 14's raw-JSON rule to any ad hoc
+verification command, not just JSON scoring scripts. See `tensor-grep-change-control` Part 6 and
+AGENTS.md's "Verify AI-Drafted Plans" for the fuller writeup.
+
 ---
 
 ## 15. macOS rustup pinned-toolchain fetch timeout (network flake, already mitigated)
@@ -734,6 +745,70 @@ and AGENTS.md's Campaign Orchestration Disciplines (A24) for the incident this s
 
 ---
 
+## 17. Timing-test flake — de-flaking a ratio/wall-clock assertion
+
+**Symptom:** a test asserting `elapsed < max(baseline * N, floor)` (or any bare `elapsed < floor`) flakes
+on a loaded CI runner — usually Windows — and successive attempts to widen the tolerance either don't
+converge or make the flake worse.
+
+**Root cause #1 — the ratio silently degenerates to the floor.** If whatever the test stubs to make the
+baseline measurement "cheap" (a subprocess call, an I/O op) collapses the baseline below the platform's
+`time.monotonic()` clock resolution (~15.6ms on Windows), `baseline * N` rounds to effectively zero and
+`max(ratio, floor)` always selects the floor — the assertion is no longer relative to anything, it is a
+bare absolute bound wearing a ratio's clothes. Receipt (#739, 2026-07-24): stubbing a `git rev-parse`
+subprocess call made the baseline measure exactly `0.0` across 8 runs; `elapsed < max(baseline*6, 2.0)`
+had silently become `elapsed < 2.0` — 4x TIGHTER than the 8.0s floor that had just flaked.
+
+**Root cause #2 — the attributed cause is structurally plausible but magnitude-wrong.** A code-reading
+guess at "what's slow" ("a subprocess spawn is noisy") can be true in KIND while being wrong in SIZE.
+Same receipt: cProfile showed the git spawn was only 6-12% of elapsed; the real ~93% was fsync-heavy
+discovery-cache I/O in an unrelated helper. Removing the wrong 6-12% of cost while tightening the bound
+made the next flake worse, not better.
+
+**Discriminating experiment:**
+
+```bash
+# 1. Measure the baseline in ISOLATION, several times, with nothing stubbed — is it a real,
+#    non-trivial number, or does it read as ~0.0 / suspiciously flat?
+uv run --no-sync python -c "
+import time
+for _ in range(8):
+    t0 = time.monotonic()
+    <call the function the test uses as its baseline>
+    print(time.monotonic() - t0)
+"
+
+# 2. Profile the ACTUAL flaking command, not the function you assume is slow.
+uv run --no-sync python -m cProfile -s cumulative <script invoking the real code path> \
+  | head -30
+```
+
+If the baseline reads as ~0.0 (or a fixed value at the clock-tick granularity) across all 8 runs, the
+ratio arm has degenerated to the floor — fix the STUBBING, not the multiplier. If the profile's top
+cumulative-time frame is not the function your fix already targets, you are about to fix the wrong 6-12%
+again.
+
+**Fix, in order of preference:**
+
+1. **Best — a structural, order-based assertion**, if the invariant allows one. Wrap the critical
+   section's boundary plus the suspect expensive call(s) to emit ordered ENTER/EXIT markers into a
+   shared list, and assert on marker ORDER, never on elapsed time. A slow/loaded runner delays every
+   marker uniformly without reordering them, so this cannot flake under load. Worked example:
+   `tests/unit/test_index_lock_concurrency.py::test_create_checkpoint_lock_does_not_wrap_expensive_work`
+   (#739) — proved green on windows-latest py3.11 AND py3.12 (run `30130861182`), the exact
+   platform/version pair that had flaked twice.
+2. **If a wall-clock form is unavoidable**, confirm the baseline is measurably non-trivial (well above
+   clock resolution) before trusting `max(baseline * N, floor)` as relative; otherwise treat it as the
+   absolute floor it actually is and size the floor off the PROFILED real cost, not a guess.
+
+**Rule:** never widen a timing tolerance as the first move — measure the baseline in isolation and
+profile the real cost first; only then decide whether the fix is "unstub something," "convert to a
+structural assertion," or "the floor genuinely needs to move." Full mechanism, numbers, and the
+degenerate-`max()` comment-trap that followed it: `tensor-grep-validation-and-qa` Part 1 points 18-20,
+`tensor-grep-change-control` Part 6, and AGENTS.md's CI/Release Rules.
+
+---
+
 ## Provenance and maintenance
 
 Facts here were originally verified **2026-07-02, tensor-grep v1.17.25** for §1–§8, and
@@ -754,7 +829,13 @@ low-priority, not a regression — `repo_map.py:987`/`:1009`), added §10 Incide
 discipline that catches it), and added §15 (macOS rustup pinned-toolchain fetch timeout, already
 mitigated by #722); **2026-07-24 against v1.98.2** added §16 ("No commits between main and
 `<branch>`" — a detached-HEAD worktree push, cross-referenced to AGENTS.md's Campaign Orchestration
-A24). Re-verify anything below before trusting it on a later version — this table
+A24). A further same-day pass, **against v1.98.3**, added §17 (a timing-ratio test flake caused by a
+degenerate baseline below clock resolution, plus the profile-before-attributing-a-cause discipline and
+the structural ENTER/EXIT marker-order fix — receipts #737/#739, cross-referenced to
+`tensor-grep-validation-and-qa` Part 1 points 18-20 and `tensor-grep-change-control` Part 6). A
+coordinator review of that same pass added the §14 addendum (a malformed `grep -E \|` alternation
+returning a false-negative spot-check on a sibling PR) and the concrete clock-resolution figure to §17.
+Re-verify anything below before trusting it on a later version — this table
 drifts whenever the cited line numbers, defaults, or contracts change.
 
 Re-verification commands:
@@ -809,6 +890,9 @@ grep -n "def _iter_repo_files" src/tensor_grep/cli/repo_map.py
 
 # rustup pinned-toolchain retry loop still present (§15)
 grep -n "pinned-toolchain fetch" .github/workflows/ci.yml
+
+# structural ENTER/EXIT marker-order de-flake still present (§17)
+grep -n "def test_create_checkpoint_lock_does_not_wrap_expensive_work" tests/unit/test_index_lock_concurrency.py
 ```
 
 If any of these greps come back empty or materially different, the corresponding row above is

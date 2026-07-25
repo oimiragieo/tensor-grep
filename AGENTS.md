@@ -173,6 +173,16 @@ concrete failure observed this session.
   and CONFIRM it with `CronList` rather than assuming a previously-recorded id/schedule is still armed;
   keep the durable state (queue, in-flight PRs, "resume here") in the task store + `MEMORY.md`, which
   survive a restart even when the cron itself does not.
+- **A26 — Verify a session-scoped cron/monitor in BOTH directions: it can be dead when you assume
+  it's alive, or ALIVE when you assume it's dead (extends A25, 2026-07-24).** This session lost its
+  steward cron twice (once to a CLI restart, once to a PC reboot) and re-created it each time — but
+  one presumed-dead cron from an earlier loss turned out to still be alive, running ALONGSIDE its
+  replacement and firing stale instructions (it told a later tick to gate a PR that had already
+  merged). A25 covers the "assumed alive, actually dead" direction; this is the mirror failure.
+  **Rule:** after any restart or recreate, call `CronList` and read every returned entry — don't just
+  count them or trust that the old id is gone — and explicitly delete any superseded duplicate. A
+  stale backstop that still fires is worse than none: it looks authoritative and can act on data (a
+  PR that already merged, a queue state that already moved on) that is no longer true.
 
 ## Current Handoff
 
@@ -537,6 +547,57 @@ before — trading one cosmetic bug for a narrower one. Because the PR was still
 landed in the SAME PR before un-drafting, shipping with zero new known-limitations. Treat a
 SHIP-with-disclosed-edge verdict as work still owed on the open PR, not a "ship now, file a follow-up"
 signal — the cost of fixing it right there is near zero; the cost of a new tracked gap is real.
+
+**A passing test proves nothing until you have seen it FAIL on the pre-fix baseline (#737, 2026-07-24).**
+An independent Opus gate on the C++ function-pointer-variable fix found the new shape-9 test pinned only
+the IN-CLASS member-fn-ptr shape (`class C { void (C::*mp)(int); };`) — which tree-sitter already
+excluded on pre-fix `origin/main`, through an unrelated code path (it emits `['ERROR',
+'pointer_declarator']`, caught by a `len(named_children) != 1` early return that never reaches the fix's
+new logic at all). The shape the fix actually repaired — file-scope `void (C::*mp)(int);`, which wraps a
+`qualified_identifier` — had NO test guarding it. The fix itself was correct; the first test written for
+it was a no-regression pin, not a bug guard, and would have passed unmodified even without the fix. Rule:
+**"I added a test, it's green" is not coverage** — before trusting a new test, confirm it goes RED when
+run against the pre-fix code.
+
+**A false claim inside a COMMENT is durable misdirection — gate the prose with the same rigor as code
+(#739, 2026-07-24).** A later pass of a checkpoint-hot-path deflake correctly fixed the test itself but
+added a section-header comment justifying leaving a sibling test's wall-clock ratio alone because it
+"genuinely correlates and cancels load." Measured directly: the sibling's baseline (`build_repo_map`)
+runs ~0.0031-0.0088s, so `baseline * 6.0` never exceeds ~0.05s and `max(ratio, 8.0)` selects the 8.0s
+floor UNCONDITIONALLY — the ratio arm never fires. That is the exact degenerate-`max()` reasoning an
+earlier pass of the same PR had just been rejected for, now restated as justification in a comment,
+which is a place CI can never fail on. A wrong assertion eventually reds a run; a wrong comment just
+misleads the next reader indefinitely. Review comments and docstrings adversarially — with citations or
+measurements, not a plausibility check — not just the code they describe.
+
+**Diff review is not measurement review (#739, 2026-07-24).** For the same PR, a set of diff-level
+checks — test-only diff, zero `src/` changes, the perturbation cleanly reverted, production call sites
+intact — were each individually correct and collectively insufficient: only an independent
+re-MEASUREMENT (profiling the real baseline, not reading the ratio formula) caught the degenerate-
+baseline bug above. For any de-flake, perf claim, or otherwise QUANTITATIVE fix, the gate must
+re-measure the actual numbers, not just re-read the diff for shape.
+
+**Your verification instrument can be the thing that's wrong (2026-07-24).** Reviewing a sibling docs
+PR (#740), a spot-check for whether its "DEFERRED" honesty caveat was actually present used `grep -ciE
+"DEFERRED\|deferred"` and returned ZERO hits — which briefly read as the agent claiming a caveat it
+never wrote. The caveat was there, verbatim; the command was broken. In `grep -E` (extended regex),
+`\|` matches a **literal pipe character**, not alternation — extended-regex alternation is a bare `|`;
+the backslash-escaped `\|` form is basic-regex/`sed` syntax, not `-E`. So the search was for the
+9-character literal string `DEFERRED|deferred`, which of course matched nothing. Rule: when a
+verification check contradicts an otherwise-careful report, re-test the INSTRUMENT against
+known-present content before concluding the report is false — a false negative from a malformed
+pattern is indistinguishable from a real absence, and acting on it sends a spurious correction. Same
+family as this repo's git-bash/MSYS `gh --json`-parsing quirks (favor `python` over `jq`/raw `/`-path
+expressions there for the same reason): the tool didn't fail loudly, it silently did something other
+than what its syntax suggests. Concretely here: `grep -E` alternation is a bare `|`, not `\|`.
+
+**Prove "docs-only"/"comment-only" instead of eyeballing it (2026-07-24).** Twice in the same session a
+follow-up commit needed to be certified behavior-neutral to justify skipping a redundant re-run of the
+full gate. Method: parse both revisions of the file with `ast`, strip docstrings (plain comments never
+enter the AST at all), and compare `ast.dump(tree)` between the two versions — an identical dump proves
+zero behavioral change, and is strictly stronger than reading the diff by eye. Used on `lang_cpp.py` and
+on `test_index_lock_concurrency.py`'s comment-only revisions; cheap enough to run on every claimed no-op
+commit before skipping a gate on the strength of "it's just a comment."
 
 ## Backend Fail-Closed Contract
 
@@ -965,6 +1026,41 @@ the test #734 later had to fix — so a fully deterministic failure reached `mai
 reporting what a self-gate verified, state explicitly which suites ran and which were skipped; treat
 the CI run itself, not a self-gate's suite selection, as the merge arbiter (this repo's "never trust a
 self-report" rule applied to test SCOPE, not just test RESULT).
+
+**A "relative" timing assertion is only relative while its baseline exceeds CLOCK RESOLUTION (#739,
+2026-07-24).** A first-pass de-flake of `test_create_checkpoint_uncontended_hot_path_unaffected` stubbed
+the `git rev-parse` subprocess call in `_detect_checkpoint_scope` so that `elapsed < max(baseline * 6.0,
+8.0)` would "cancel load," and lowered the floor from 8.0 to 2.0. With the subprocess stubbed, the
+baseline measured EXACTLY 0.0 across 8 runs. The reason: Windows'
+`time.get_clock_info('monotonic').resolution` is **0.015625s** (one 64Hz tick), and the stubbed baseline
+— a `.resolve()` call, an immediate raise, and a 1-file `os.walk` — completed in under that single tick,
+so `time.monotonic()` read the identical value before and after and `elapsed` measured exactly `0.0`
+(min == max == 0.0000 across all 8 runs). With `baseline == 0.0`, `baseline * 6.0` is also `0.0`, so the
+ratio silently collapsed into a pure `elapsed < 2.0` bound, 4x TIGHTER than the 8.0s that had just
+flaked. On the exact CI failure it cited (run `30123607322`, `8.75 < 8.0`) it would still have gone red,
+by a wider margin. Rule: before trusting a `max(baseline * N, floor)` assertion as genuinely relative,
+confirm the baseline is measurably non-trivial (well above the platform's clock resolution — check with
+`time.get_clock_info('monotonic').resolution`) — otherwise it has silently degenerated into the floor
+alone.
+
+**PROFILE before "fixing" a timing flake — a structurally-true root cause can still be magnitude-wrong
+(same #739).** The above fix's diagnosis (a real subprocess spawn adds noise) was correct in kind but
+wrong in size: cProfile showed the git spawn was only 6-12% of elapsed, while
+`_prime_bounded_discovery_caches_for_root`'s fsync-heavy discovery-cache I/O (685 `read_text` + 1385
+`stat` + 8 `fsync` calls per checkpoint, growing with accumulated cache state) was ~93%. fsync-heavy I/O
+on a contended CI disk explains a multi-second spike; a process spawn does not. Removing the wrong 6-12%
+of cost while tightening the bound 4x made the flake worse, not better — measure the actual cost
+breakdown before writing a fix, not just the plausible-sounding mechanism.
+
+**Prefer a STRUCTURAL assertion over a timing one wherever the invariant allows (same #739).** The
+eventual fix wraps `index_lock` plus the suspect expensive calls to emit ordered ENTER/EXIT markers into
+a shared list, and asserts no expensive-work marker falls between the lock's acquire and release
+markers. Marker ORDER is fixed by single-threaded sequential execution — a loaded runner delays every
+marker uniformly without ever reordering them — so the assertion is unflakeable BY CONSTRUCTION rather
+than by a wider tolerance. Verified green on windows-latest py3.11 AND py3.12 (run `30130861182`), the
+exact platform/version combination that had flaked twice. Cross-reference:
+`tensor-grep-validation-and-qa` Part 1 point 14 (the same structural-over-wall-clock principle, applied
+there to concurrency contracts).
 
 Do not casually edit:
 

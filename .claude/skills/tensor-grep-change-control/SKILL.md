@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-change-control
-description: Use when about to change, review, merge, or release ANY code in tensor-grep — adding a tg command or search flag, touching a backend/router/pipeline, editing CI/release/docs contracts, merging a PR, or claiming a fix or speedup is done. Encodes the non-negotiable gates (draft-PR-only autonomy, never-trust-a-self-report, no-speed-claim-without-numbers, experimental-until-proven, TDD-first, smallest-change, benchmark-hot-paths, the 4 registration sites, one-merge-per-tick / the push-race, dogfood-the-real-binary, contract-changes-need-validator-tests) and the historical incident behind each.
+description: Use when about to change, review, merge, or release ANY code in tensor-grep — adding a tg command or search flag, touching a backend/router/pipeline, editing CI/release/docs contracts, merging a PR, claiming a fix or speedup is done, or deciding whether a follow-up commit is truly "docs-only"/"comment-only". Encodes the non-negotiable gates (draft-PR-only autonomy, never-trust-a-self-report, no-speed-claim-without-numbers, experimental-until-proven, TDD-first, smallest-change, benchmark-hot-paths, the 4 registration sites, one-merge-per-tick / the push-race, dogfood-the-real-binary, contract-changes-need-validator-tests, a test proving nothing until seen fail on the pre-fix baseline, gating comments/docstrings with the same rigor as code, diff-review-is-not-measurement-review, and the `ast.dump()` behavior-neutral proof technique) and the historical incident behind each.
 ---
 
 # tensor-grep change control
@@ -278,6 +278,51 @@ Because the PR was still draft, the refinement landed in the SAME PR before un-d
 known-limitations shipped. Read a `SHIP`-with-disclosed-edge verdict as "fix this before un-drafting,"
 not "ship now, file it for later" — the marginal cost of fixing it in-PR is near zero.
 
+**A test proves nothing until it has been seen to FAIL on the pre-fix baseline (#737, 2026-07-24).** The
+C++ sibling of the #736 fix shipped a new test for shape 9 that, on independent re-derivation, turned out
+to pin the IN-CLASS member-fn-ptr shape — already excluded on pre-fix `main` through an unrelated code
+path — while the shape the fix actually repaired (file-scope) had no test at all. "I added a test, it's
+green" is not evidence the test would have caught the bug; only a RED result against the pre-fix code
+is. Full mechanism (the two AST shapes, which code path excludes which): `tensor-grep-validation-and-qa`
+Part 1 point 18.
+
+**Gate the prose with the same rigor as the code — a false claim in a comment survives forever because
+CI can never fail on it (#739, 2026-07-24).** A de-flake PR's own follow-up commit fixed the test
+correctly but justified leaving a sibling test alone with a comment claiming its timing ratio "genuinely
+correlates and cancels load" — measured, this was false (the ratio's `max()` floor always wins for that
+sibling; see `tensor-grep-validation-and-qa` Part 1 point 19 for the numbers). Review a comment or
+docstring that makes a factual/measured claim exactly as skeptically as a code change: ask "did anyone
+actually verify this," not "does this read as plausible."
+
+**Diff review is not measurement review — for a quantitative fix (perf, de-flake, any numeric claim),
+the gate must re-measure, not just re-read (#739, 2026-07-24).** A set of diff-level checks (test-only
+diff, zero `src/` changes, perturbation reverted, call sites intact) on the same PR were each correct and
+collectively insufficient — the degenerate-baseline bug above (Part 6, and `tensor-grep-validation-and-
+qa` Part 1 point 19) was only caught by independently re-running the numbers, not by reading the diff
+shape. Extend the mandatory adversarial security gate's "actually try to break it" posture to
+quantitative claims: actually re-measure them.
+
+**Your verification instrument can be the thing that's wrong (2026-07-24).** Spot-checking a sibling
+docs PR for whether its "DEFERRED" honesty caveat was present, `grep -ciE "DEFERRED\|deferred"` returned
+ZERO hits — which briefly read as the caveat missing. It was there, verbatim; the command was broken.
+In `grep -E` (extended regex), `\|` matches a **literal pipe character**, not alternation — extended-
+regex alternation is a bare `|`, and the backslash-escaped `\|` form belongs to basic-regex/`sed`
+syntax, not `-E`. The search was therefore for the literal 9-character string `DEFERRED|deferred`,
+which matched nothing. **Rule:** when a verification check contradicts an otherwise-careful report,
+re-test the INSTRUMENT against known-present content before concluding the report is false — a false
+negative from a malformed pattern is indistinguishable from a real absence, and acting on it sends a
+spurious correction. Same family as this repo's git-bash/MSYS `gh --json`-parsing quirks (favor
+`python` over `jq`/raw `/`-path expressions there for the same reason) — a tool that silently does
+something other than what its syntax suggests, rather than failing loudly. Concretely here: `grep -E`
+alternation is a bare `|`, not `\|`.
+
+**Prove "docs-only"/"comment-only" with `ast.dump()`, not eyeballing (2026-07-24).** When a follow-up
+commit needs to be certified behavior-neutral to justify skipping a redundant full gate re-run, parse
+both revisions with `ast`, strip docstrings (plain comments never enter the AST), and diff
+`ast.dump(tree)` between them — an identical dump is proof of zero behavioral change, strictly stronger
+than a `git diff` read. Used this session on `lang_cpp.py` and `test_index_lock_concurrency.py`'s
+comment-only revisions.
+
 ---
 
 ## Part 7 — Push discipline & the push-race (one-merge-per-tick)
@@ -483,7 +528,7 @@ uv export --format requirements.txt --all-extras --no-emit-project --locked
 
 ## Provenance and maintenance
 
-Volatile facts are dated **2026-07-02, release `v1.17.25`**, with a round-4 refresh dated **2026-07-03, release `v1.19.3`** (Part 7 wall-time section + this table's tag/wall-time rows), a **2026-07-08, release `v1.49.3`** touch-up (Part 1 Rule 5 / Part 10 adversarial-security-gate addition — the Part 7 wall-time numbers themselves are NOT re-measured at v1.49.3, treat them as an illustrative historical sample, not a current SLA), a **2026-07-16, release `v1.78.1`** fix (the stale `37 @app.command` count, actual 44, replaced with a re-verify command instead of a stamped number), a **2026-07-22, release `v1.93.2`** addition (Part 1 Rule 6 pin-first ranking gate / C-pin, #709; Part 7 rapid-window batch-merge / C-batch, #703-706; Part 7 second release-failure shape / C-release-flake, v1.76.9/#612-613 and v1.92.2/#701 — the Part 7 wall-time numbers again NOT re-measured in this pass), and a **2026-07-23, release `v1.95.0`** refresh (Part 3 gained a 3rd registration table — the symbol-graph language registry's 5 seams, `lang_registry.register_language` + `repo_map.py` citations; Part 4 gained a grammar-missing fail-closed worked example; Part 7 gained the sequential-drain union-rebase corollary (C4); Part 9 gained the CRLF-binary-preserve edit landmine and the `uv.lock` hand-splice discipline (C1/C2); and every pre-existing `file:line` citation into Rust/Python source, test, and workflow files in this skill was re-walked against `origin/main` and repointed where drifted — several had moved 20-300 lines since the last pass (e.g. `main.rs`'s `enum Commands` 838→889, the `Semantic Release` job's `needs:` list in `ci.yml` 862→943, `ripgrep_backend.py`'s fail-closed raise sites 88/164/199→126/297/413, which ALSO now raise `BackendExecutionError` there instead of a bare `RuntimeError`). AGENTS.md's own prose citations were re-pointed too (its "Current Handoff" section grew substantially since the last pass), but AGENTS.md is itself mid-refresh in this same campaign, so treat any `AGENTS.md:NNN` citation below as good only as of `v1.95.0` — re-grep by symbol/phrase, don't trust the number blind, before citing it in a future pass. The Part 7 wall-time numbers themselves are STILL not re-measured in this pass — they remain the v1.19.x historical sample. Re-verify anything below before relying on it:
+Volatile facts are dated **2026-07-02, release `v1.17.25`**, with a round-4 refresh dated **2026-07-03, release `v1.19.3`** (Part 7 wall-time section + this table's tag/wall-time rows), a **2026-07-08, release `v1.49.3`** touch-up (Part 1 Rule 5 / Part 10 adversarial-security-gate addition — the Part 7 wall-time numbers themselves are NOT re-measured at v1.49.3, treat them as an illustrative historical sample, not a current SLA), a **2026-07-16, release `v1.78.1`** fix (the stale `37 @app.command` count, actual 44, replaced with a re-verify command instead of a stamped number), a **2026-07-22, release `v1.93.2`** addition (Part 1 Rule 6 pin-first ranking gate / C-pin, #709; Part 7 rapid-window batch-merge / C-batch, #703-706; Part 7 second release-failure shape / C-release-flake, v1.76.9/#612-613 and v1.92.2/#701 — the Part 7 wall-time numbers again NOT re-measured in this pass), and a **2026-07-23, release `v1.95.0`** refresh (Part 3 gained a 3rd registration table — the symbol-graph language registry's 5 seams, `lang_registry.register_language` + `repo_map.py` citations; Part 4 gained a grammar-missing fail-closed worked example; Part 7 gained the sequential-drain union-rebase corollary (C4); Part 9 gained the CRLF-binary-preserve edit landmine and the `uv.lock` hand-splice discipline (C1/C2); and every pre-existing `file:line` citation into Rust/Python source, test, and workflow files in this skill was re-walked against `origin/main` and repointed where drifted — several had moved 20-300 lines since the last pass (e.g. `main.rs`'s `enum Commands` 838→889, the `Semantic Release` job's `needs:` list in `ci.yml` 862→943, `ripgrep_backend.py`'s fail-closed raise sites 88/164/199→126/297/413, which ALSO now raise `BackendExecutionError` there instead of a bare `RuntimeError`). AGENTS.md's own prose citations were re-pointed too (its "Current Handoff" section grew substantially since the last pass), but AGENTS.md is itself mid-refresh in this same campaign, so treat any `AGENTS.md:NNN` citation below as good only as of `v1.95.0` — re-grep by symbol/phrase, don't trust the number blind, before citing it in a future pass. The Part 7 wall-time numbers themselves are STILL not re-measured in this pass — they remain the v1.19.x historical sample. A **2026-07-24, release `v1.98.2`** pass added Part 6's banked-hypothesis (#736) and gate's-disclosed-edge (#736) paragraphs. A further same-day pass, **release `v1.98.3`**, added Part 6's four newest paragraphs (a test proving nothing until seen fail on the pre-fix baseline, #737; gating comments/docstrings with the same rigor as code, #739; diff-review-is-not-measurement-review, #739; the `ast.dump()` behavior-neutral proof technique). A coordinator review of that same pass added a fifth Part 6 paragraph (a verification instrument — a malformed `grep -E \|` alternation — can itself be the thing that's wrong) and the concrete clock-resolution figure into the CI/Release Rules mirror of the timing-flake lesson. Re-verify anything below before relying on it:
 
 | Claim | Re-verify command |
 |---|---|
@@ -502,5 +547,7 @@ Volatile facts are dated **2026-07-02, release `v1.17.25`**, with a round-4 refr
 | Security round-3 sweep files | `AGENTS.md` "Security Hardening Patterns"; files `src/tensor_grep/cli/{checkpoint_store,session_daemon,session_store,mcp_server}.py` |
 | Open round-4 argv item | `AGENTS.md` (native-argv `--` sentinel); `rust_core/src/rg_passthrough.rs` |
 | Dogfood harness present | `ls scripts/dogfood/` (`Dockerfile`, `dogfood_features.py`, `README.md`) |
+| #737 shape-9/9a/9b test split (pre-fix-baseline paragraph) | `grep -n "shape9a_filescope_member_fn_ptr_variable\|shape9b_inclass_member_fn_ptr_variable" tests/unit/test_lang_cpp.py` |
+| #739 structural marker-order test (ast.dump / comment-gating paragraphs) | `grep -n "def test_create_checkpoint_lock_does_not_wrap_expensive_work" tests/unit/test_index_lock_concurrency.py` |
 
 If any command above no longer matches, update this skill in the same change — a wrong runbook is worse than none.

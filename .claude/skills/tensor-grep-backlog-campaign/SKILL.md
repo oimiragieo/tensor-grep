@@ -156,6 +156,14 @@ restart or crash — not only at the start of a fresh session — re-verify with
 absent, and keep the durable state (queue, in-flight PRs, "resume here") in the task store + `MEMORY.md`,
 which survive a restart even when the cron itself does not (AGENTS.md A25).
 
+**Verify in BOTH directions — a presumed-dead cron can still be alive (AGENTS.md A26, same session).**
+The mirror failure to the one above: a cron assumed dead from an earlier loss turned out to still be
+running, ALONGSIDE its freshly re-created replacement, and fired a stale instruction (telling a later
+tick to gate a PR that had already merged). Do not just re-arm and move on after a restart — call
+`CronList`, read every entry it returns (not just the count), and explicitly delete any superseded
+duplicate. A stale backstop that still fires looks authoritative and can act on data that is no longer
+true; it is strictly worse than having no backstop at all.
+
 ---
 
 ## Risk-calibrated ceremony
@@ -489,3 +497,9 @@ insertions elsewhere in that file (930 lines at v1.95.0) — content at each anc
 the line number moved: the callers-blind-spot cite `:165`→`:412`, the IDF-blast-radius cite
 `:168`→`:379`, and the high-memory/full-suite cite `:174`→`:385`. Re-grep the phrase (not the number)
 before trusting any line cite into a fast-moving doc like `AGENTS.md` on a future pass.
+
+**Re-verified 2026-07-24 against v1.98.3** — added the "verify in BOTH directions" addendum to the
+Steward-cron section (AGENTS.md A26): the 2026-07-24 session found a presumed-dead cron was actually
+still alive alongside its replacement, firing a stale instruction. This is the mirror case to the
+already-documented "assumed alive, actually dead" direction (A25) — `CronList` and inspect every
+returned entry after a restart, don't just re-arm and assume the old one is gone.
