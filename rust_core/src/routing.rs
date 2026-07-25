@@ -300,6 +300,16 @@ pub struct PlainTextNativeRequest {
 ///    No oracle can catch this class -- CI never sets the variable and the parity helpers copy
 ///    `os.environ` -- which is exactly why it is a predicate clause and not a test.
 ///
+///    KNOWN GAP, deliberately a sentence rather than a clause: this models rg's CONFIG env but not
+///    WHICH rg BINARY would have run. `resolve_ripgrep_binary` honors `TG_RG_PATH` (a documented
+///    product env var), legacy `TG_RG_BINARY`, and a bundled `ripgrep-14.1.0`, so a user who
+///    pinned a wrapped or patched rg silently stops getting it on this route. Not made a clause
+///    for two reasons: rg's plain-text rendering is stable across versions, so the blast radius is
+///    low; and `tests/helpers/rg_parity._command_env` SETS `TG_RG_PATH` on every parity run, so
+///    refusing on it would make this PR's entire byte-parity oracle test nothing. Same axis-family
+///    as note (9), one round later -- which is itself the point worth recording: this axis keeps
+///    producing instances, so treat "no more found" as un-found rather than absent.
+///
 /// 9. `single_path_is_stdin_sentinel` -- THE AXIS THIS CLAUSE NAMES: everything `rg` resolves
 ///    SPECIALLY that is neither the request, the pattern, the file's bytes, the environment, nor
 ///    the consumer. `-` is the instance that bit. It is the one PATH operand ripgrep gives a

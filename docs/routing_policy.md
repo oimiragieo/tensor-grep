@@ -80,6 +80,21 @@ The 512 KiB cap is measured, not guessed: the probe costs ~2% of the win at 200 
 
 The two expensive clauses (the pattern compile and the file probe) are evaluated **last**, only after `plain_text_native_cheap_checks_pass` has cleared every free refusal. That is a latency contract: an interactive terminal search, a `--json`/`--ndjson` run and an `-A`/`-B`/`-C` run all reach the clap-side adapter and must not pay for a file read on their way to `rg`. The probe is also memoized per path, because both adapters run on an admitted request.
 
+### Admission-rate telemetry (default-OFF)
+
+Nothing else in the repo can answer "how often is this route actually taken?" -- none of the benchmark scenarios, none of the dogfood calls, and none of the MCP surface (which always builds `--json`) are eligible for it, so the benchmark-regression gate can observe neither its benefit nor a future regression in it.
+
+Set `TG_ROUTE_TELEMETRY=1` and `tg` appends one JSON Lines record per eligibility evaluation, carrying the stage (`frontdoor` or `clap`) and every clause. The file defaults to the OS temp directory (never the workspace) and is overridable with `TG_ROUTE_TELEMETRY_PATH`. Emission is best-effort and fail-silent: telemetry must never change what a search returns.
+
+Any existing workload works unmodified:
+
+```bash
+TG_ROUTE_TELEMETRY=1 TG_ROUTE_TELEMETRY_PATH=/tmp/route.jsonl uv run python benchmarks/run_benchmarks.py
+python scripts/summarize_route_telemetry.py /tmp/route.jsonl
+```
+
+The summary reports the admit rate per stage and a histogram of which clause refused first. The `clap` stage is the real admission surface, since an admitted request always reaches it.
+
 ### Broken-pipe exit-code change (all native routes)
 
 A consumer that closes the pipe early (`tg ... | head -1`, `| less`, an agent reading N lines) is normal termination, not a search failure. Previously the native engine surfaced it as an error: exit **2** plus `native standard output search failed for <path>` on stderr, and -- where an rg fallback was configured -- a `warning: native CPU search failed...` line followed by a full re-run of the search into the already-closed pipe. It now exits quietly with ripgrep's code (**1** for the single-file shape this route admits).

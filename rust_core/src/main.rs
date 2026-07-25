@@ -2043,6 +2043,7 @@ fn plain_text_native_request_for_search(
     };
     finish_plain_text_native_request(
         facts,
+        "clap",
         request.patterns.first().map(String::as_str),
         args.ignore_case,
         args.fixed_strings,
@@ -2065,6 +2066,29 @@ fn plain_text_native_request_for_search(
 /// the clause would read `false` and be a dead guard. It lives here rather than in the two
 /// constructors purely so there is exactly one call path and the adapters cannot drift on it.
 fn finish_plain_text_native_request(
+    request: PlainTextNativeRequest,
+    stage: &'static str,
+    pattern: Option<&str>,
+    ignore_case: bool,
+    fixed_strings: bool,
+    word_boundary: bool,
+    path: Option<&Path>,
+) -> PlainTextNativeRequest {
+    let finished = fill_plain_text_native_expensive_tier(
+        request,
+        pattern,
+        ignore_case,
+        fixed_strings,
+        word_boundary,
+        path,
+    );
+    record_plain_text_route_telemetry(stage, &finished);
+    finished
+}
+
+/// The computation itself, split from `finish_plain_text_native_request` only so telemetry has a
+/// single emission point covering every early-return path.
+fn fill_plain_text_native_expensive_tier(
     mut request: PlainTextNativeRequest,
     pattern: Option<&str>,
     ignore_case: bool,
@@ -2090,6 +2114,62 @@ fn finish_plain_text_native_request(
         request.single_path_renders_identically = plain_text_native_file_renders_identically(path);
     }
     request
+}
+
+/// Admission-rate telemetry, default-OFF. Answers "how often is this route ACTUALLY taken?", which
+/// nothing else in the repo can: an independent review found 0 of 10 benchmark scenarios, 0 of 4
+/// dogfood calls, and the entire MCP surface (which always builds `--json`) ineligible, so the
+/// benchmark-regression gate can observe neither this route's benefit nor a future regression in it.
+///
+/// One JSON Lines record per eligibility evaluation, appended, carrying the stage and every clause,
+/// so a consumer can report both the admit rate and a histogram of WHICH clause refused. Enable with
+/// `TG_ROUTE_TELEMETRY=1`; the file defaults to the OS temp dir (never the workspace -- see the
+/// file-placement rules) and is overridable with `TG_ROUTE_TELEMETRY_PATH`.
+/// `scripts/summarize_route_telemetry.py` aggregates it.
+const TG_ROUTE_TELEMETRY_ENV: &str = "TG_ROUTE_TELEMETRY";
+const TG_ROUTE_TELEMETRY_PATH_ENV: &str = "TG_ROUTE_TELEMETRY_PATH";
+
+fn route_telemetry_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| env_flag_enabled(TG_ROUTE_TELEMETRY_ENV))
+}
+
+fn route_telemetry_path() -> PathBuf {
+    env::var_os(TG_ROUTE_TELEMETRY_PATH_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| env::temp_dir().join("tg-route-telemetry.jsonl"))
+}
+
+/// BEST-EFFORT and fail-silent by design: telemetry must never change what a search returns, so
+/// every I/O error here is discarded rather than propagated. Gated behind a cached env read so a
+/// disabled run pays one `OnceLock` load.
+fn record_plain_text_route_telemetry(stage: &str, request: &PlainTextNativeRequest) {
+    if !route_telemetry_enabled() {
+        return;
+    }
+    let record = serde_json::json!({
+        "stage": stage,
+        "admitted": native_can_serve_plain_text(request),
+        "cheap_checks_pass": plain_text_native_cheap_checks_pass(request),
+        "only_allowed_flags": request.only_allowed_flags,
+        "structured_output": request.structured_output,
+        "explicit_format": request.explicit_format,
+        "stdout_is_terminal": request.stdout_is_terminal,
+        "rg_config_env_present": request.rg_config_env_present,
+        "path_was_implicit": request.path_was_implicit,
+        "pattern_count": request.pattern_count,
+        "pattern_is_empty": request.pattern_is_empty,
+        "path_count": request.path_count,
+        "single_path_is_regular_file": request.single_path_is_regular_file,
+        "single_path_is_stdin_sentinel": request.single_path_is_stdin_sentinel,
+        "pattern_is_native_renderable": request.pattern_is_native_renderable,
+        "single_path_renders_identically": request.single_path_renders_identically,
+    });
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(route_telemetry_path())
+        .and_then(|mut file| writeln!(file, "{record}"));
 }
 
 /// Raw-argv adapter for `native_can_serve_plain_text`, used by the pre-clap default search front
@@ -2208,6 +2288,7 @@ fn frontdoor_search_is_native_plain_text_eligible_with_terminal(
     };
     let facts = finish_plain_text_native_request(
         facts,
+        "frontdoor",
         patterns.first().map(String::as_str),
         ignore_case,
         fixed_strings,

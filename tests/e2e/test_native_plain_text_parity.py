@@ -26,13 +26,19 @@ CONTROL ARM (the discrimination proof this suite is not vacuous): on ``origin/ma
 plain-text search is routed natively, ``test_verbose_reports_the_backend_that_actually_ran`` FAILS
 its ``routing_reason=plain-text-native`` assertion -- the route it checks for does not exist there.
 Under a forced-native falsification (``TG_DISABLE_RG=1``, which drives the same emitter through
-``native_cpu_rg_unavailable``), 9 of the byte-comparison cases fail. Both arms discriminate, so a
-green run here is evidence rather than an absence of evidence.
+``native_cpu_rg_unavailable``), **18 of the 34 byte cases fail**: crlf x3, mixed-cr, latin1 x2,
+binary, empty-pattern, and all 10 pattern cases -- by stdout, by stderr, and by exit code
+respectively. (An earlier revision of this docstring said 9. That was measured against a smaller
+case list and never updated; re-measured 2026-07-25 by driving the real ``_CASES`` table against
+the shipped emitter. In a file whose entire value is comment accuracy, a stale load-bearing number
+is the same defect class this suite exists to catch.) Both arms discriminate, so a green run here
+is evidence rather than an absence of evidence.
 """
 
 from __future__ import annotations
 
 import os
+import random
 import subprocess
 import sys
 import threading
@@ -219,6 +225,7 @@ def _require_binaries():
 
 
 @pytest.mark.characterization
+@pytest.mark.parametrize("spelling", ["search-subcommand", "root-shortcut"])
 @pytest.mark.parametrize(
     ("flags", "fixture", "pattern"),
     [case[1:] for case in _CASES],
@@ -229,20 +236,30 @@ def test_native_plain_text_stdout_is_byte_identical_to_ripgrep(
     flags: tuple[str, ...],
     fixture: str,
     pattern: str,
+    spelling: str,
 ) -> None:
+    """Both spellings, because the oracle previously knew only one.
+
+    `tg search PATTERN FILE` and the ROOT SHORTCUT `tg PATTERN FILE` are different front doors:
+    the shortcut goes through `normalize_top_level_search_args`, and reaches this same route when
+    it carries a flag in `SEARCH_OPTION_FIRST_FLAGS` (e.g. `-n`). Every case in this file used the
+    subcommand spelling, so the shortcut was untested even though the `-` divergence reproduced
+    through it. Verified before adding: all 34 cases already agree with rg through the shortcut on
+    the shipped binary, so this parametrization imports no pre-existing failure.
+    """
     helpers, rg_binary, tg_binary = _require_binaries()
 
     env = helpers.build_command_env(rg_binary)
     target = str(native_corpus / fixture)
+    tg_argv = [str(tg_binary)]
+    if spelling == "search-subcommand":
+        tg_argv.append("search")
+    tg_argv.extend([*flags, pattern, target])
 
     rg = _run_bytes([str(rg_binary), *flags, pattern, target], cwd=native_corpus, env=env)
-    tg = _run_bytes(
-        [str(tg_binary), "search", *flags, pattern, target],
-        cwd=native_corpus,
-        env=env,
-    )
+    tg = _run_bytes(tg_argv, cwd=native_corpus, env=env)
 
-    context = f"{flags} {pattern!r} {fixture}"
+    context = f"[{spelling}] {flags} {pattern!r} {fixture}"
     assert tg.returncode == rg.returncode, (
         f"exit-code mismatch for {context}\n"
         f"rg={rg.returncode} tg={tg.returncode}\n"
@@ -453,6 +470,125 @@ def test_early_closing_consumer_matches_ripgrep(native_corpus: Path) -> None:
     )
     assert tg_stderr == rg_stderr, f"stderr differs: rg={rg_stderr!r} tg={tg_stderr!r}"
     assert tg_rc == rg_rc, f"exit code differs: rg={rg_rc} tg={tg_rc}"
+
+
+# Seeded differential fuzz. Deterministic by default so a failure is reproducible from the seed
+# alone; both knobs are env-overridable for a wider local sweep without touching the file.
+_FUZZ_SEED = int(os.environ.get("TG_FUZZ_SEED", "20260725"))
+_FUZZ_RUNS = int(os.environ.get("TG_FUZZ_RUNS", "50"))
+
+_FUZZ_WORDS = (
+    "needle",
+    "NEEDLE",
+    "Needle",
+    "alpha",
+    "beta",
+    "gamma",
+    "haystack",
+    "needles",
+    "pin",
+    "cafe",
+    "café",
+    "日本語",
+    "tab\tsep",
+    "x",
+    "",
+)
+_FUZZ_PATTERNS = (
+    "needle",
+    "NEEDLE",
+    "needles?",
+    "need(le|ful)",
+    "^needle",
+    "needle$",
+    "^$",
+    "[a-z]+",
+    "[A-Z]{2,}",
+    "n.edle",
+    r"\bneedle\b",
+    r"\w+",
+    r"\d+",
+    "alpha|beta",
+    "(?i)needle",
+    "(?:needle)+",
+    "café",
+    "日本語",
+    "a*",
+    "x",
+    ".",
+    ".*",
+    "needle.*alpha",
+    "[^n]eedle",
+)
+_FUZZ_FLAG_SUBSETS = (
+    (),
+    ("-i",),
+    ("-n",),
+    ("-w",),
+    ("-F",),
+    ("-i", "-n"),
+    ("-w", "-n"),
+    ("-F", "-i"),
+)
+
+
+@pytest.mark.characterization
+def test_seeded_differential_fuzz_matches_ripgrep(tmp_path: Path) -> None:
+    """Randomized differential fuzz over the ADMITTED shape, byte-compared against rg.
+
+    Five review rounds each found a new *category* of divergence, which means the residual risk was
+    always "un-found" rather than "absent". A one-off sweep by a reviewer proves nothing after that
+    reviewer leaves; this makes it permanent, converting "nobody found a sixth class" into "a sixth
+    class must survive N randomized runs on every CI job".
+
+    Bodies are constrained to the admitted space (valid UTF-8, no CR, no NUL, well under the
+    512 KiB cap) so the fuzz exercises the NATIVE route rather than repeatedly re-testing rg
+    passthrough. Patterns and flag subsets are drawn from the admitted vocabulary.
+
+    Reproduce any failure with just the seed::
+
+        TG_FUZZ_SEED=<seed> TG_FUZZ_RUNS=<n> pytest tests/e2e/test_native_plain_text_parity.py -k fuzz
+    """
+    helpers, rg_binary, tg_binary = _require_binaries()
+    env = helpers.build_command_env(rg_binary)
+    corpus = tmp_path / "fuzz"
+    corpus.mkdir()
+
+    for iteration in range(_FUZZ_RUNS):
+        rng = random.Random(f"{_FUZZ_SEED}-{iteration}")
+        line_count = rng.randint(0, 40)
+        body = "".join(
+            " ".join(rng.choice(_FUZZ_WORDS) for _ in range(rng.randint(0, 6))) + "\n"
+            for _ in range(line_count)
+        )
+        if line_count and rng.random() < 0.25:
+            body = body.rstrip("\n")  # exercise the no-trailing-newline shape
+        payload = body.encode("utf-8")
+        assert b"\r" not in payload and b"\x00" not in payload, "fuzz body left the admitted space"
+
+        target = corpus / f"fuzz_{iteration}.txt"
+        target.write_bytes(payload)
+        pattern = rng.choice(_FUZZ_PATTERNS)
+        flags = list(rng.choice(_FUZZ_FLAG_SUBSETS))
+
+        rg = _run_bytes([str(rg_binary), *flags, pattern, str(target)], cwd=corpus, env=env)
+        tg = _run_bytes(
+            [str(tg_binary), "search", *flags, pattern, str(target)], cwd=corpus, env=env
+        )
+
+        context = (
+            f"seed={_FUZZ_SEED} iteration={iteration} flags={flags} pattern={pattern!r} "
+            f"body={payload!r}"
+        )
+        assert tg.returncode == rg.returncode, (
+            f"exit code differs\n{context}\nrg={rg.returncode} tg={tg.returncode}"
+        )
+        assert tg.stdout == rg.stdout, (
+            f"stdout BYTES differ\n{context}\nrg={rg.stdout!r}\ntg={tg.stdout!r}"
+        )
+        assert tg.stderr == rg.stderr, (
+            f"stderr BYTES differ\n{context}\nrg={rg.stderr!r}\ntg={tg.stderr!r}"
+        )
 
 
 @pytest.mark.characterization
