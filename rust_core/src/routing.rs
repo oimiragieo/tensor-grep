@@ -134,7 +134,9 @@ pub fn plain_text_native_flag_token_is_allowed(token: &str) -> bool {
     if cluster.is_empty() || cluster.starts_with('-') {
         return false;
     }
-    cluster.chars().all(|letter| PLAIN_TEXT_NATIVE_ALLOWED_SHORT_FLAGS.contains(&letter))
+    cluster
+        .chars()
+        .all(|letter| PLAIN_TEXT_NATIVE_ALLOWED_SHORT_FLAGS.contains(&letter))
 }
 
 /// The facts `native_can_serve_plain_text` needs. Built by a thin adapter at each front door so
@@ -175,6 +177,8 @@ pub struct PlainTextNativeRequest {
     pub stdout_is_terminal: bool,
     /// `$RIPGREP_CONFIG_PATH` is set to a non-empty value. See refusal note (8).
     pub rg_config_env_present: bool,
+    /// stdin is a readable source (a pipe/file redirect, not a TTY or /dev/null). Refusal note (10).
+    pub stdin_is_readable: bool,
     /// Every flag on the command line is in `PLAIN_TEXT_NATIVE_ALLOWED_FLAGS`.
     pub only_allowed_flags: bool,
 }
@@ -339,6 +343,25 @@ pub struct PlainTextNativeRequest {
 ///        the search will later read, which is the memoization-staleness window becoming a
 ///        certainty by construction rather than a microsecond race.
 ///
+/// 10. `stdin_is_readable` -- the predicate modelled stdout (clause 1) and the paths on argv, but
+///    never modelled STDIN as an input source. With a readable stdin there are two candidate
+///    sources, and tg's own request resolution already branches on it
+///    (`resolve_search_request_with_stdin` takes `stdin_should_search_implicit_path()`, and
+///    `implicit_search_paths` drops the `"."` default when stdin is readable). Clause (2) covers
+///    only the IMPLICIT-path half of that; an EXPLICIT path with a readable stdin was admitted
+///    while the argv tg forwards to `rg` in that state is pinned by
+///    `test_public_native_cli_parity::test_search_explicit_path_keeps_path_when_stdin_is_piped`,
+///    which the native route bypasses entirely.
+///
+///    Measured: real rg with an explicit single path prints the SAME bytes whether stdin is piped
+///    or /dev/null (`needle file`, no filename prefix), so this is not a user-visible rendering
+///    divergence -- it is an unverified region of the tg/rg argv contract, and over-refusal is
+///    free. The condition reuses `stdin_should_search_implicit_path()` (i.e.
+///    `grep_cli::is_readable_stdin()`) rather than a fresh `is_terminal()` check, deliberately: it
+///    is TRUE for a pipe or file redirect and FALSE for a TTY or `/dev/null`. A naive
+///    `!stdin.is_terminal()` would refuse in every non-interactive context -- including CI, agents
+///    and this PR's own oracle -- and would silently delete the feature it is meant to protect.
+///
 /// `structured_output` and `explicit_format` are refused because those requests already have
 /// their own routes (`--json`/`--ndjson` land on `native_cpu_json`; `--format rg` must reach real
 /// `rg`), and this predicate must never redirect them.
@@ -363,6 +386,7 @@ pub const fn plain_text_native_cheap_checks_pass(request: &PlainTextNativeReques
         && !request.explicit_format
         && !request.stdout_is_terminal
         && !request.rg_config_env_present
+        && !request.stdin_is_readable
         && !request.path_was_implicit
         && request.pattern_count == 1
         && !request.pattern_is_empty

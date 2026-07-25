@@ -1985,7 +1985,10 @@ fn plain_text_native_pattern_is_renderable(
     word_boundary: bool,
 ) -> bool {
     let bytes = pattern.as_bytes();
-    if bytes.iter().any(|&byte| matches!(byte, b'\n' | b'\r' | b'\0')) {
+    if bytes
+        .iter()
+        .any(|&byte| matches!(byte, b'\n' | b'\r' | b'\0'))
+    {
         return false;
     }
 
@@ -2037,8 +2040,9 @@ fn plain_text_native_request_for_search(
         structured_output: args.json || args.ndjson,
         explicit_format: args.format.is_some(),
         stdout_is_terminal,
-        // Overwritten by `finish_plain_text_native_request`, the single owner of this clause.
+        // Overwritten by `finish_plain_text_native_request`, the single owner of these clauses.
         rg_config_env_present: false,
+        stdin_is_readable: false,
         only_allowed_flags: search_args_allow_plain_text_native(args),
     };
     finish_plain_text_native_request(
@@ -2096,9 +2100,12 @@ fn fill_plain_text_native_expensive_tier(
     word_boundary: bool,
     path: Option<&Path>,
 ) -> PlainTextNativeRequest {
-    // The environment clause is filled HERE rather than by either constructor, so there is exactly
-    // one call path to `rg_config_env_present()` and the two adapters cannot disagree about it.
+    // The environment and stdin clauses are filled HERE rather than by either constructor, so
+    // there is exactly one call path to each and the two adapters cannot disagree about them.
+    // Both are cheap-tier facts (one env lookup, one stat) and must be populated before
+    // `plain_text_native_cheap_checks_pass` reads them, or they would be dead guards.
     request.rg_config_env_present = rg_config_env_present();
+    request.stdin_is_readable = stdin_should_search_implicit_path();
     if !plain_text_native_cheap_checks_pass(&request) {
         return request;
     }
@@ -2282,8 +2289,9 @@ fn frontdoor_search_is_native_plain_text_eligible_with_terminal(
         structured_output: false,
         explicit_format: false,
         stdout_is_terminal,
-        // Overwritten by `finish_plain_text_native_request`, the single owner of this clause.
+        // Overwritten by `finish_plain_text_native_request`, the single owner of these clauses.
         rg_config_env_present: false,
+        stdin_is_readable: false,
         only_allowed_flags: true,
     };
     let facts = finish_plain_text_native_request(
@@ -5505,7 +5513,10 @@ mod tests {
         // ... while an ordinary regex with escapes the native matcher handles stays admitted.
         for pattern in ["needle", "need(le|ful)", "\\bneedle\\b", "\\d+", "needle$"] {
             let argv = os_argv(&["tg", "search", pattern, file_arg.as_str()]);
-            assert!(frontdoor_admits(&argv, false), "{pattern:?} must stay native");
+            assert!(
+                frontdoor_admits(&argv, false),
+                "{pattern:?} must stay native"
+            );
         }
 
         // An IMPLICIT path keeps rg: `rg needle` prints `a.txt:...` while the native engine is
@@ -5514,7 +5525,13 @@ mod tests {
         assert!(!frontdoor_admits(&implicit, false));
 
         // TWO paths keep rg (the predicate admits exactly one).
-        let two_paths = os_argv(&["tg", "search", "needle", file_arg.as_str(), file_arg.as_str()]);
+        let two_paths = os_argv(&[
+            "tg",
+            "search",
+            "needle",
+            file_arg.as_str(),
+            file_arg.as_str(),
+        ]);
         assert!(!frontdoor_admits(&two_paths, false));
 
         // `-e PATTERN FILE` is the same admitted shape by another spelling and must agree.
@@ -5551,7 +5568,14 @@ mod tests {
         std::fs::write(&file, "needle alpha\n").unwrap();
 
         let file_arg = file.display().to_string();
-        let raw_args = os_argv(&["tg", "search", "--format", "rg", "needle", file_arg.as_str()]);
+        let raw_args = os_argv(&[
+            "tg",
+            "search",
+            "--format",
+            "rg",
+            "needle",
+            file_arg.as_str(),
+        ]);
 
         let parsed = parse_default_search_frontdoor_args(&raw_args)
             .expect("--format rg must stay on the ripgrep passthrough");
@@ -5698,7 +5722,10 @@ mod tests {
                 .expect("expected the shape to resolve into a search request");
             let facts = plain_text_native_request_for_search(&args, &request, false);
             let clap_side = native_can_serve_plain_text(&facts);
-            assert!(!frontdoor || clap_side, "front door looser than clap on {shape:?}");
+            assert!(
+                !frontdoor || clap_side,
+                "front door looser than clap on {shape:?}"
+            );
         }
     }
 
@@ -5714,7 +5741,9 @@ mod tests {
         assert!(!rg_config_env_is_active(Some(OsStr::new(""))));
         assert!(rg_config_env_is_active(Some(OsStr::new("/etc/rgrc"))));
         // A DANGLING path still counts: rg emits a read-failure diagnostic the native route omits.
-        assert!(rg_config_env_is_active(Some(OsStr::new("/nonexistent/rgrc"))));
+        assert!(rg_config_env_is_active(Some(OsStr::new(
+            "/nonexistent/rgrc"
+        ))));
         assert_eq!(RIPGREP_CONFIG_PATH_ENV, "RIPGREP_CONFIG_PATH");
     }
 
@@ -5733,7 +5762,10 @@ mod tests {
             let admitted = search_args_allow_plain_text_native(&args);
             assert!(admitted, "{flag} is allow-listed but SearchArgs rejects it");
             let token_ok = plain_text_native_flag_token_is_allowed(flag);
-            assert!(token_ok, "{flag} is allow-listed but the token matcher rejects it");
+            assert!(
+                token_ok,
+                "{flag} is allow-listed but the token matcher rejects it"
+            );
         }
 
         // And the reverse direction: a flag NOT in the constant must be rejected by both.
@@ -5743,7 +5775,10 @@ mod tests {
             assert!(!token_ok, "{flag} must be rejected by the token matcher");
             let args = parse_search_args(&["tg", "search", flag, "PATTERN", "file.txt"]);
             let admitted = search_args_allow_plain_text_native(&args);
-            assert!(!admitted, "{flag} must be rejected by the SearchArgs predicate");
+            assert!(
+                !admitted,
+                "{flag} must be rejected by the SearchArgs predicate"
+            );
         }
     }
 

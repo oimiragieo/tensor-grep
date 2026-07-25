@@ -38,6 +38,7 @@ fn admitted_plain_text_request() -> PlainTextNativeRequest {
         explicit_format: false,
         stdout_is_terminal: false,
         rg_config_env_present: false,
+        stdin_is_readable: false,
         only_allowed_flags: true,
     }
 }
@@ -462,6 +463,10 @@ fn test_cheap_checks_gate_the_expensive_tier() {
             single_path_is_stdin_sentinel: true,
             ..admitted_plain_text_request()
         },
+        PlainTextNativeRequest {
+            stdin_is_readable: true,
+            ..admitted_plain_text_request()
+        },
     ] {
         assert!(!plain_text_native_cheap_checks_pass(&disqualified));
         assert!(!native_can_serve_plain_text(&disqualified));
@@ -510,6 +515,15 @@ fn test_native_can_serve_plain_text_refuses_each_disqualifier() {
         ..admitted_plain_text_request()
     };
     assert!(!native_can_serve_plain_text(&stdin_sentinel));
+
+    // Refusal note 10: a readable stdin (pipe/redirect, not a TTY or /dev/null) means two
+    // candidate input sources, and the argv tg forwards to rg in that state is pinned by
+    // test_public_native_cli_parity, which the native route would bypass.
+    let readable_stdin = PlainTextNativeRequest {
+        stdin_is_readable: true,
+        ..admitted_plain_text_request()
+    };
+    assert!(!native_can_serve_plain_text(&readable_stdin));
 
     // Refusal note 7: a pattern rg rejects (rc=2) that the native matcher accepts with 0 matches
     // (rc=1), or one that fails to compile and trips the extra-stderr fallback warning.
