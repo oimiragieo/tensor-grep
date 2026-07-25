@@ -559,9 +559,27 @@ jobs:
       # instead of type-checks. If it fails to LINK on a runner with no CUDA toolkit, that is the
       # answer too -- revert this step and replace it with a comment recording the run id, so the
       # limitation is documented where the next person will look instead of rediscovered.
-      - name: cargo test --features cuda
+      # SCOPED TO `--lib` DELIBERATELY. The experiment (first run on this branch) proved the
+      # important part: cuda-gated tests LINK and RUN on a GPU-less runner -- cudarc dlopens the
+      # driver, it does not link against it. The lib unit-test target passed 156 tests, including
+      # `gpu_native.rs`'s `#[cfg(test)]` module and the lossless-emitter regression tests from
+      # #273/#754, which had only ever been type-checked before.
+      #
+      # The `tests/test_gpu_native*.rs` INTEGRATION targets are a different story: they exist to
+      # exercise the real GPU engine end-to-end, so they call `enumerate_cuda_devices` /
+      # `gpu_native_search` and panic on a runner with no driver:
+      #   Unable to dynamically load the "cuda" shared library
+      # Five of the six files are device-dependent (34 tests total). Running them here would mean
+      # tagging and re-tagging every device-touching test forever, and getting that census wrong
+      # is exactly how the first attempt failed -- `cargo test` BAILS at the first failing target,
+      # so one run's log shows one file and hides the rest. `--lib` is the invariant, not a census.
+      #
+      # Full suite on a machine with a GPU:
+      #     cargo test --features cuda                  # everything, incl. integration targets
+      #     cargo test --features cuda -- --ignored     # the explicitly device-gated ones
+      - name: cargo test --features cuda --lib
         working-directory: rust_core
-        run: cargo test --features cuda
+        run: cargo test --features cuda --lib
 
   search-golden-parity:
     name: search-golden-parity (windows-latest)
