@@ -1695,9 +1695,13 @@ fn build_walk_builder(config: &NativeSearchConfig, roots: &[PathBuf]) -> Result<
         for root in roots {
             for ignore_name in [".ignore", ".gitignore", ".rgignore"] {
                 // Mirrors `rg_passthrough::root_ignore_file_args`'s per-filename `no_ignore_vcs`
-                // scope for the NON-git-repo case (real rg's own `require_git(true)`-equivalent
-                // gap): `.gitignore` is the only VCS-sourced filename in this trio, so it alone
-                // is skipped here; `.ignore`/`.rgignore` stay honored exactly like the
+                // scope for the NON-git-repo case. NOT rg-parity: real rg deliberately never
+                // honors a root `.gitignore` outside a git repo at all (that's `--no-require-git`
+                // territory, rejected on purpose -- see `rg_passthrough.rs::root_ignore_file_args`'s
+                // own doc comment); this `add_ignore` trio is tg's own deliberate DIVERGENCE from
+                // that rg behavior (#127), not compensation for a gap in rg itself. `.gitignore`
+                // is the only VCS-sourced filename in this trio, so it alone is skipped here when
+                // `no_ignore_vcs` is set; `.ignore`/`.rgignore` stay honored exactly like the
                 // rg-passthrough engine, both inside and outside a git repo.
                 if ignore_name == ".gitignore" && config.no_ignore_vcs {
                     continue;
@@ -2577,7 +2581,7 @@ mod tests {
 
         assert_eq!(
             names,
-            vec![".gitignore".to_string(), "keep.txt".to_string()],
+            vec!["keep.txt".to_string()],
             "default routing (no_ignore_vcs=false) must still exclude the .gitignore-matched file"
         );
     }
@@ -2601,11 +2605,7 @@ mod tests {
 
         assert_eq!(
             names,
-            vec![
-                ".gitignore".to_string(),
-                "ignored.log".to_string(),
-                "keep.txt".to_string(),
-            ],
+            vec!["ignored.log".to_string(), "keep.txt".to_string()],
             "--no-ignore-vcs must re-include the .gitignore-matched file on the SAME engine \
              --json/--ndjson route to -- an output-format flag must never change the file set"
         );
@@ -2628,7 +2628,7 @@ mod tests {
 
         assert_eq!(
             names,
-            vec![".ignore".to_string(), "keep.txt".to_string()],
+            vec!["keep.txt".to_string()],
             "--no-ignore-vcs must not resurrect a .ignore-matched file -- only .gitignore is \
              VCS-scoped"
         );
@@ -2650,11 +2650,7 @@ mod tests {
 
         assert_eq!(
             names,
-            vec![
-                ".gitignore".to_string(),
-                "ignored.log".to_string(),
-                "keep.txt".to_string(),
-            ],
+            vec!["ignored.log".to_string(), "keep.txt".to_string()],
             "--no-ignore must still disable all ignore-file honoring regardless of no_ignore_vcs"
         );
     }
