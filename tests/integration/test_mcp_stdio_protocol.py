@@ -54,7 +54,7 @@ async def _stdio_protocol_roundtrip() -> None:
             assert initialized.serverInfo.name == "tensor-grep"
             # #98 (MCP consolidation Phase-1): _TG_MCP_SERVER_CONTRACT_VERSION bumped
             # 1.3.0 -> 1.4.0 (10 additive task-shaped meta-tools).
-            assert initialized.serverInfo.version == "1.4.0"
+            assert initialized.serverInfo.version == "1.5.0"
 
             listed = await session.list_tools()
             tool_names = {tool.name for tool in listed.tools}
@@ -132,7 +132,7 @@ async def _stdio_content_length_initialize_roundtrip() -> None:
         assert server_info["name"] == "tensor-grep"
         # #98 (MCP consolidation Phase-1): _TG_MCP_SERVER_CONTRACT_VERSION bumped
         # 1.3.0 -> 1.4.0 (10 additive task-shaped meta-tools).
-        assert server_info["version"] == "1.4.0"
+        assert server_info["version"] == "1.5.0"
     finally:
         if process.stdin is not None:
             process.stdin.close()

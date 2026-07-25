@@ -109,7 +109,15 @@ def _mcp_server_version() -> str:
 # 10, which a version-pinning client may want to detect. Flipping `TG_MCP_LEGACY_TOOLS` OFF
 # (de-advertising the 46 legacy names, keeping the 10 meta + 2 singletons) is a SEPARATE,
 # deliberate, documented operator/CEO decision -- never bundled into this default-ON PR.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.4.0"
+# 1.4.0 -> 1.5.0 (task #283): additive FIELDS on `tg_search`'s `scan_limit` payload --
+# `truncation_cause` ("scan_limit" | "unreadable_path" | "unknown"), `budget_remediable` (bool)
+# and, when non-zero, `unreadable_path_count`. Needed because #276 slice 1 widened
+# `DirectoryScanner.scan_truncated` to ALSO mean "the walk hit an unreadable path", a cause no
+# budget increase can fix, while this payload is `max_repo_files`-shaped -- so a client had no
+# way to tell "raise the limit" from "the limit is irrelevant". Every field is additive and
+# emitted ONLY when the scan was actually truncated, so a complete scan stays byte-identical
+# and no existing caller breaks; bumped so a version-pinning client can discover them.
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.5.0"
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -4791,12 +4799,44 @@ def tg_search(
             # truncate the walk below max_repo_files without ever hitting the
             # per-file counter above, so OR it into possibly_truncated too. Coerce to a
             # real bool: a mocked scanner in a test can auto-vivify a truthy non-bool.
-            scan_capped = scan_capped or bool(getattr(scanner, "scan_truncated", False))
+            scanner_truncated = bool(getattr(scanner, "scan_truncated", False))
+            scan_capped = scan_capped or scanner_truncated
             scan_limit_payload = {
                 "max_repo_files": normalized_max_repo_files,
                 "scanned_files": files_scanned,
                 "possibly_truncated": scan_capped,
             }
+            if scanner_truncated:
+                # Task #283. The comment above was written when `scan_truncated` could ONLY mean
+                # a BUDGET cap, which is what made folding it into a `max_repo_files`-shaped
+                # payload correct. #276 slice 1 (c0c3404) widened it to ALSO mean "the walk hit
+                # an unreadable path" -- a cause no budget increase can fix. Without the fields
+                # below, a single permission-denied directory surfaces to an MCP client as
+                # `scan_limit.possibly_truncated` next to a `max_repo_files` number, i.e. exactly
+                # the WRONG-KNOB advice that #276 exists to eliminate on the CLI surface,
+                # recreated one surface over.
+                #
+                # `possibly_truncated` stays honest either way (the scan really was truncated);
+                # these say WHY, and whether spending more budget can help.
+                cause = getattr(scanner, "scan_truncation_cause", None)
+                # Fail CLOSED on an unrecognised cause: report it as unknown and do NOT claim it
+                # is budget-remediable. A new cause the client cannot interpret must never
+                # default to "raise the limit" -- that is the allow-list rule (AGENTS.md).
+                if cause == "max-scan-entries":
+                    scan_limit_payload["truncation_cause"] = "scan_limit"
+                    scan_limit_payload["budget_remediable"] = True
+                elif cause == "unreadable_path":
+                    scan_limit_payload["truncation_cause"] = "unreadable_path"
+                    scan_limit_payload["budget_remediable"] = False
+                else:
+                    scan_limit_payload["truncation_cause"] = "unknown"
+                    scan_limit_payload["budget_remediable"] = False
+                unreadable_count = int(getattr(scanner, "unreadable_path_count", 0) or 0)
+                if unreadable_count:
+                    # Reported even when the cause is the budget cap: the cap can fire AFTER a
+                    # separate unreadable-path truncation, and the count must not go unmentioned
+                    # just because the cap also tripped. Mirrors `search_command`'s CLI clarifier.
+                    scan_limit_payload["unreadable_path_count"] = unreadable_count
 
         _apply_selected_gpu_defaults(
             all_results=all_results,
