@@ -896,3 +896,66 @@ def test_file_path_raises_not_a_directory(tmp_path: Path) -> None:
 def test_missing_path_raises_file_not_found(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         build_codemap(tmp_path / "does-not-exist")
+
+
+# ---------------------------------------------------------------------------
+# (#284) An unreadable subtree must mark the map partial with a NON-budget cause.
+# ---------------------------------------------------------------------------
+
+
+def _deny_scandir_for(monkeypatch, denied_dir: Path) -> None:
+    """Make `os.scandir(denied_dir)` raise PermissionError; everything else untouched.
+
+    Deliberately NOT a real chmod/ACL fixture. Task #281 burned a probe on exactly that: the ACL
+    command silently failed to apply, so the "hostile" arm was a perfectly readable directory and
+    the run would have declared a live defect ABSENT. A monkeypatched raise cannot silently no-op.
+    """
+    import os as _os
+
+    real_scandir = _os.scandir
+    target = str(denied_dir.resolve())
+
+    def _fake_scandir(path=".", *args, **kwargs):
+        if str(Path(path).resolve()) == target:
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_scandir(path, *args, **kwargs)
+
+    monkeypatch.setattr(_os, "scandir", _fake_scandir)
+
+
+def test_unreadable_subtree_marks_partial_with_non_budget_reason(tmp_path: Path, monkeypatch):
+    """`build_repo_map` has emitted `rm["unreadable_paths"]` since #276 slice 1 and `tg orient`
+    consumes it -- codemap ignored it, so a permission-denied subtree vanished from the map while
+    `partial` read False and the map looked complete.
+
+    Asserts the OUTCOME (the coverage payload), not that a parameter is threaded: #744's argv
+    tests were green while the fix did nothing.
+    """
+    repo = _copy_fixture(tmp_path)
+    denied = repo / "denied_pkg"
+    denied.mkdir()
+    (denied / "hidden.py").write_text("def hidden():\n    return 1\n", encoding="utf-8")
+
+    _deny_scandir_for(monkeypatch, denied)
+    payload = _build(repo)
+
+    assert payload["partial"] is True
+    assert payload["partial_reason"] == "unreadable_path"
+    # The remediation must NOT be budget-shaped -- no --max-repo-files value makes a path readable.
+    assert "More budget will NOT fix this" in payload["remediation"]
+
+
+def test_readable_tree_is_the_control_arm_for_the_unreadable_case(tmp_path: Path):
+    """Control arm: the SAME fixture with nothing denied must report a complete map. Without it
+    the assertion above could pass for any other partial cause, and a check that cannot
+    distinguish its arms is not verification.
+    """
+    repo = _copy_fixture(tmp_path)
+    denied = repo / "denied_pkg"
+    denied.mkdir()
+    (denied / "hidden.py").write_text("def hidden():\n    return 1\n", encoding="utf-8")
+
+    payload = _build(repo)
+
+    assert payload["partial"] is False
+    assert payload["partial_reason"] is None
