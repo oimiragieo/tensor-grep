@@ -1,6 +1,6 @@
 use tensor_grep_rs::routing::{
-    route_search, BackendSelection, IndexRoutingState, SearchRoutingCalibration,
-    SearchRoutingConfig,
+    native_can_serve_plain_text, route_search, BackendSelection, IndexRoutingState,
+    PlainTextNativeRequest, SearchRoutingCalibration, SearchRoutingConfig,
 };
 
 fn base_config() -> SearchRoutingConfig {
@@ -17,6 +17,23 @@ fn base_config() -> SearchRoutingConfig {
         gpu_auto_supported: true,
         prefer_rg_passthrough: false,
         pcre2: false,
+        native_plain_text: false,
+    }
+}
+
+/// The canonical ADMITTED request: single pattern, single explicit regular-file path, plain text,
+/// piped stdout, no flag outside `PLAIN_TEXT_NATIVE_ALLOWED_FLAGS`.
+fn admitted_plain_text_request() -> PlainTextNativeRequest {
+    PlainTextNativeRequest {
+        pattern_count: 1,
+        path_count: 1,
+        path_was_implicit: false,
+        single_path_is_regular_file: true,
+        single_path_has_no_binary_prefix: true,
+        structured_output: false,
+        explicit_format: false,
+        stdout_is_terminal: false,
+        only_allowed_flags: true,
     }
 }
 
@@ -277,4 +294,245 @@ fn test_route_search_defaults_to_ripgrep_for_cold_text_search() {
     assert_eq!(decision.selection, BackendSelection::Ripgrep);
     assert_eq!(decision.reason, "rg_passthrough");
     assert!(!decision.allow_rg_fallback);
+}
+
+// ---------------------------------------------------------------------------
+// Plain-text native routing (perf: skip the `rg` subprocess for the provably
+// rg-identical subset). See `native_can_serve_plain_text` in routing.rs.
+// ---------------------------------------------------------------------------
+
+/// THE reachability pin. Before the `native_plain_text` guard, `route_search`'s final
+/// `native_cpu_auto(true, false)` arm was logically unreachable: reaching it needed
+/// `rg_available == true`, but the rg-passthrough branch above it then required
+/// `structured_output == true` to fall through, which the `structured_output` branch caught
+/// first. This test fails the moment that arm goes dead again.
+#[test]
+fn test_route_search_routes_admitted_plain_text_to_native_cpu() {
+    let mut config = base_config();
+    config.native_plain_text = true;
+
+    let decision = route_search(&config, None, IndexRoutingState::default(), false);
+
+    assert_eq!(decision.selection, BackendSelection::NativeCpu);
+    assert_eq!(decision.reason, "cpu-auto-size-threshold");
+    // rg is still the safety net if the native engine errors mid-request.
+    assert!(decision.allow_rg_fallback);
+}
+
+/// The same config with the predicate refused must be byte-for-byte today's behavior.
+#[test]
+fn test_route_search_keeps_ripgrep_when_plain_text_predicate_refuses() {
+    let mut config = base_config();
+    config.native_plain_text = false;
+
+    let decision = route_search(&config, None, IndexRoutingState::default(), false);
+
+    assert_eq!(decision.selection, BackendSelection::Ripgrep);
+    assert_eq!(decision.reason, "rg_passthrough");
+}
+
+/// A context search (`-A`/`-B`/`-C`) is what `prefer_rg_passthrough` encodes, and it must keep
+/// reaching real `rg` even if some future adapter bug set `native_plain_text`.
+#[test]
+fn test_route_search_context_search_still_prefers_ripgrep() {
+    let mut config = base_config();
+    config.prefer_rg_passthrough = true;
+    config.native_plain_text = false;
+
+    let decision = route_search(&config, None, IndexRoutingState::default(), false);
+
+    assert_eq!(decision.selection, BackendSelection::Ripgrep);
+    assert_eq!(decision.reason, "rg_passthrough");
+}
+
+/// `--json` / `--ndjson` routing is UNCHANGED by this feature: they were already native, they
+/// must stay native, with the same reason string and no rg fallback.
+#[test]
+fn test_route_search_structured_output_routing_is_unchanged_by_plain_text_flag() {
+    for native_plain_text in [false, true] {
+        let mut json_config = base_config();
+        json_config.json = true;
+        json_config.native_plain_text = native_plain_text;
+        let json_decision = route_search(&json_config, None, IndexRoutingState::default(), false);
+        assert_eq!(json_decision.selection, BackendSelection::NativeCpu);
+        assert_eq!(json_decision.reason, "json_output");
+        assert!(!json_decision.allow_rg_fallback);
+
+        let mut ndjson_config = base_config();
+        ndjson_config.ndjson = true;
+        ndjson_config.native_plain_text = native_plain_text;
+        let ndjson_decision =
+            route_search(&ndjson_config, None, IndexRoutingState::default(), false);
+        assert_eq!(ndjson_decision.selection, BackendSelection::NativeCpu);
+        assert_eq!(ndjson_decision.reason, "json_output");
+        assert!(!ndjson_decision.allow_rg_fallback);
+    }
+}
+
+/// Higher-precedence routes are unaffected: an explicit `--index`, an explicit
+/// `--gpu-device-ids`, `--pcre2`, and a warm compatible index all still win over the new arm.
+#[test]
+fn test_route_search_plain_text_flag_never_overrides_higher_precedence_routes() {
+    let mut index_config = base_config();
+    index_config.native_plain_text = true;
+    index_config.explicit_index = true;
+    assert_eq!(
+        route_search(&index_config, None, IndexRoutingState::default(), false).selection,
+        BackendSelection::TrigramIndex
+    );
+
+    let mut gpu_config = base_config();
+    gpu_config.native_plain_text = true;
+    gpu_config.explicit_gpu_device_ids = true;
+    assert_eq!(
+        route_search(&gpu_config, None, IndexRoutingState::default(), false).selection,
+        BackendSelection::NativeGpu
+    );
+
+    let mut pcre2_config = base_config();
+    pcre2_config.native_plain_text = true;
+    pcre2_config.pcre2 = true;
+    let pcre2_decision = route_search(&pcre2_config, None, IndexRoutingState::default(), false);
+    assert_eq!(pcre2_decision.selection, BackendSelection::Ripgrep);
+    assert_eq!(pcre2_decision.reason, "pcre2-required");
+
+    let mut warm_config = base_config();
+    warm_config.native_plain_text = true;
+    assert_eq!(
+        route_search(&warm_config, None, warm_index_state(), false).selection,
+        BackendSelection::TrigramIndex
+    );
+}
+
+#[test]
+fn test_native_can_serve_plain_text_admits_the_canonical_request() {
+    assert!(native_can_serve_plain_text(&admitted_plain_text_request()));
+}
+
+/// Every structural refusal, one at a time, from the otherwise-admitted request.
+#[test]
+fn test_native_can_serve_plain_text_refuses_each_disqualifier() {
+    let terminal = PlainTextNativeRequest {
+        stdout_is_terminal: true,
+        ..admitted_plain_text_request()
+    };
+    assert!(!native_can_serve_plain_text(&terminal));
+
+    let implicit_path = PlainTextNativeRequest {
+        path_was_implicit: true,
+        ..admitted_plain_text_request()
+    };
+    assert!(!native_can_serve_plain_text(&implicit_path));
+
+    let directory_path = PlainTextNativeRequest {
+        single_path_is_regular_file: false,
+        ..admitted_plain_text_request()
+    };
+    assert!(!native_can_serve_plain_text(&directory_path));
+
+    let binary_file = PlainTextNativeRequest {
+        single_path_has_no_binary_prefix: false,
+        ..admitted_plain_text_request()
+    };
+    assert!(!native_can_serve_plain_text(&binary_file));
+
+    let multiple_paths = PlainTextNativeRequest {
+        path_count: 2,
+        ..admitted_plain_text_request()
+    };
+    assert!(!native_can_serve_plain_text(&multiple_paths));
+
+    let no_path = PlainTextNativeRequest {
+        path_count: 0,
+        ..admitted_plain_text_request()
+    };
+    assert!(!native_can_serve_plain_text(&no_path));
+
+    let multiple_patterns = PlainTextNativeRequest {
+        pattern_count: 2,
+        ..admitted_plain_text_request()
+    };
+    assert!(!native_can_serve_plain_text(&multiple_patterns));
+
+    let structured = PlainTextNativeRequest {
+        structured_output: true,
+        ..admitted_plain_text_request()
+    };
+    assert!(!native_can_serve_plain_text(&structured));
+
+    let explicit_format = PlainTextNativeRequest {
+        explicit_format: true,
+        ..admitted_plain_text_request()
+    };
+    assert!(!native_can_serve_plain_text(&explicit_format));
+
+    let disallowed_flag = PlainTextNativeRequest {
+        only_allowed_flags: false,
+        ..admitted_plain_text_request()
+    };
+    assert!(!native_can_serve_plain_text(&disallowed_flag));
+}
+
+/// The allow-list is a CONTRACT, not an implementation detail: widening it is a deliberate act
+/// that must come with parity evidence, so pin its exact contents.
+#[test]
+fn test_plain_text_native_allowed_flags_are_exactly_the_proven_set() {
+    let allowed = tensor_grep_rs::routing::PLAIN_TEXT_NATIVE_ALLOWED_FLAGS;
+
+    assert_eq!(
+        allowed,
+        [
+            "-i",
+            "--ignore-case",
+            "-F",
+            "--fixed-strings",
+            "-w",
+            "--word-regexp",
+            "-n",
+            "--line-number",
+            "--verbose",
+        ]
+        .as_slice()
+    );
+
+    for excluded in [
+        "-c",
+        "--count",
+        "-v",
+        "--invert-match",
+        "-C",
+        "--context",
+        "-A",
+        "-B",
+        "-o",
+        "--only-matching",
+        "-r",
+        "--replace",
+        "-P",
+        "--pcre2",
+        "-N",
+        "--no-line-number",
+        "-S",
+        "--smart-case",
+        "-g",
+        "--glob",
+        "-t",
+        "--type",
+        "--hidden",
+        "--max-depth",
+        "--text",
+        "--count-matches",
+        "--sort",
+        "--format",
+        "--color",
+        "--json",
+        "--ndjson",
+        "--cpu",
+        "--index",
+    ] {
+        assert!(
+            !allowed.contains(&excluded),
+            "{excluded} must keep spawning rg"
+        );
+    }
 }

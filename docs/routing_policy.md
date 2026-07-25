@@ -39,7 +39,8 @@ The router's priority order is now explicit and shared:
 4. AST command -> `AstBackend`
 5. Warm non-stale compatible `.tg_index` -> `TrigramIndex`
 6. Corpus `>` calibrated threshold **and** GPU available **and** calibration positive -> `NativeGpuBackend`
-7. Otherwise, if `rg` is available and structured output is not required -> `RipgrepBackend`
+7. Otherwise, if `rg` is available and structured output is not required **and the request is not
+   an admitted plain-text native request** -> `RipgrepBackend`
 8. Otherwise -> `NativeCpuBackend`
 9. If the selected native CPU route fails and `allow_rg_fallback` is true -> `RipgrepBackend` final fallback
 
@@ -52,7 +53,20 @@ The router's priority order is now explicit and shared:
 - Warm-index auto-routing only applies when the cache exists, is not stale, and the query is index-compatible (`pattern >= 3 bytes`, no `-v`, no `-C`, no `--max-count`, no `-w`, no `-g`).
 - JSON and NDJSON output do **not** bypass a warm compatible index anymore.
 - Auto GPU routing is conservative: no fresh positive calibration means stay on the CPU-side cold path.
-- `rg` is again the normal cold-path choice for generic text search when available. Native CPU remains the default only for structured outputs, explicit `--cpu`, warm index, AST, and GPU fallback cases.
+- `rg` is again the normal cold-path choice for generic text search when available. Native CPU remains the default only for structured outputs, explicit `--cpu`, warm index, AST, GPU fallback, and the admitted plain-text subset described below.
+
+### Admitted plain-text native subset (perf: skip the `rg` subprocess)
+
+Spawning `rg` costs a fixed process round trip on every plain-text search. `native_can_serve_plain_text` (`rust_core/src/routing.rs`) is the single, fail-closed predicate that decides when the in-process native CPU engine may answer instead. It is deliberately narrow, and every clause is a refusal:
+
+- Exactly one pattern, and exactly one PATH operand that resolves to an existing **regular file** (never a directory -- walking diverges from `rg` on binary-file messages and on emission order).
+- That file has no NUL byte in its leading 64 KiB: `rg` spells its binary-match notice `"\0"` while the native engine's governed snapshot contract spells it `"/0"`.
+- The PATH was supplied explicitly (an implicit path makes `rg` print `name` where the native engine prints `./name`).
+- stdout is **not** a terminal (`rg` is spawned with inherited stdio, so on a terminal it renders its grouped/heading layout with color).
+- No `--json`, `--ndjson`, or `--format`.
+- Every flag on the command line is in `PLAIN_TEXT_NATIVE_ALLOWED_FLAGS`: `-i`/`--ignore-case`, `-F`/`--fixed-strings`, `-w`/`--word-regexp`, `-n`/`--line-number`, `--verbose`.
+
+Anything outside that subset keeps spawning `rg`, unchanged. The route reports `NativeCpuBackend` / `cpu-auto-size-threshold` and keeps `allow_rg_fallback = true`, so a native failure still falls back to real `rg`.
 
 ### `--index` fail-closed compatibility contract (audit H1, 2026-07-10)
 
