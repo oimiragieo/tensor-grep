@@ -13005,10 +13005,11 @@ fn unique_line_matches(matches: &[SearchMatchJson]) -> Vec<SearchMatchJson> {
 }
 
 /// Writes each matched line's raw bytes directly to stdout (never through `println!`/`Display`
-/// on `matched.text`), so a genuinely non-UTF-8 match -- currently only reachable via the
-/// multi-pattern native path -- prints byte-for-byte instead of via a lossy `Option<String>`
-/// unwrap (task #266: the same byte-fidelity guarantee `append_standard_match_bytes` gives the
-/// single-pattern native emitter, extended to this shared plain-text writer).
+/// on `matched.text`), so a genuinely non-UTF-8 match -- reachable via the multi-pattern native
+/// path and, since task #273, the CUDA-gated GPU-native path -- prints byte-for-byte instead of
+/// via a lossy `Option<String>` unwrap (task #266: the same byte-fidelity guarantee
+/// `append_standard_match_bytes` gives the single-pattern native emitter, extended to this shared
+/// plain-text writer).
 ///
 /// A closed output pipe (`tg ... | head -1`) is a normal, expected termination and returns
 /// `Ok(())` quietly; any OTHER write failure (disk full, I/O error) is a real error and is
@@ -13094,29 +13095,32 @@ fn emit_count_search_matches(path: &str, matches: &[SearchMatchJson]) -> anyhow:
 
 #[cfg(feature = "cuda")]
 fn gpu_native_match_json_entries(stats: &GpuNativeSearchStats) -> Vec<SearchMatchJson> {
-    // NOT exempt the way TrigramIndex/AST/the GPU sidecar are (those three have a real, cited
-    // guarantee their source text is always valid UTF-8). `GpuNativeSearchMatch.text` is built
-    // in `gpu_native.rs` via `String::from_utf8_lossy(line_bytes).trim_end_matches('\r')` -- the
-    // IDENTICAL lossy-conversion + over-trim defect class task #266 fixes in the CPU emitter.
-    // Left unfixed here deliberately: this is the CUDA-gated, experimental GPU-native search
-    // path (not the "shared native emitter" #266/#263 name), off by default
-    // (`cuda-feature-check` CI only `cargo check`s it, never runs it), and per this repo's own
-    // GPU program notes, not a currently-viable production path. `guaranteed_utf8_match_fields`
-    // here is a straight type-compatibility wrap of whatever `matched.text` already is -- it
-    // does NOT certify losslessness for this producer the way it does for the other three.
-    // Fixing gpu_native.rs's own conversion is a disclosed, separate follow-up, not silently
-    // dropped.
+    // task #273: this used to be the one remaining NOT-exempt-but-treated-as-exempt producer --
+    // `GpuNativeSearchMatch.text` was built in `gpu_native.rs` via
+    // `String::from_utf8_lossy(line_bytes).trim_end_matches('\r')`, the identical
+    // lossy-conversion + over-trim defect class task #266/#746 fixed in the CPU native-search
+    // emitter, then routed through `guaranteed_utf8_match_fields` (a straight type-compatibility
+    // wrap that does NOT certify losslessness the way it does for TrigramIndex/AST/the GPU
+    // sidecar). `GpuNativeSearchMatch` now carries `raw: Vec<u8>` instead, produced without any
+    // lossy conversion in `gpu_native.rs`, so this mirrors the multi-pattern native path's own
+    // `native_json_text_fields(&matched.raw)` call below (task #271) rather than
+    // `guaranteed_utf8_match_fields`. VERIFIED: `cuda-feature-check` (.github/workflows/ci.yml)
+    // runs only `cargo check --features cuda` -- no `--tests`/`--all-targets` -- so this file's
+    // `#[cfg(test)]` module (including the tests added for this fix) is never even type-checked
+    // in CI, let alone executed. No CI job currently exercises this file at all beyond that bare
+    // `cargo check`.
     stats
         .matches
         .iter()
         .map(|matched| {
-            let (text, bytes, raw) = guaranteed_utf8_match_fields(matched.text.clone());
+            let (text, bytes) = native_json_text_fields(&matched.raw);
+            let text = text.map(str::to_string);
             SearchMatchJson {
                 file: matched.path.to_string_lossy().into_owned(),
                 line: matched.line_number,
                 text,
                 bytes,
-                raw,
+                raw: matched.raw.clone(),
                 range: None,
                 meta_variables: None,
                 pattern_id: (stats.pattern_count > 1).then_some(matched.pattern_id),

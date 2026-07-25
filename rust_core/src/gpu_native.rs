@@ -377,7 +377,21 @@ pub struct GpuNativeSearchConfig {
 pub struct GpuNativeSearchMatch {
     pub path: PathBuf,
     pub line_number: usize,
-    pub text: String,
+    /// Exact matched-line bytes. Never passed through `String::from_utf8_lossy`: genuinely
+    /// invalid-UTF-8 source content (e.g. Latin-1) must survive to JSON/NDJSON output losslessly
+    /// rather than being silently replaced with U+FFFD -- the identical lossy-conversion defect
+    /// class task #266/#746 fixed in the CPU native-search emitter (`NativeSearchMatch::raw`),
+    /// applied here to close the same gap in the CUDA-gated GPU-native path (task #273). Both
+    /// producers (`line_matches_for_file`, `line_matches_for_file_by_scanning`) slice line bytes
+    /// using a boundary that already excludes the line's trailing `\n` (`classify_file_lines`'s
+    /// `LineDescriptor::len` is computed as `newline_index - line_start`; the scanning path's
+    /// `line_end` is the `\n`'s own byte index), so unlike `strip_native_line_terminator`'s "at
+    /// most one trailing `\n`" contract for the CPU emitter, no terminator stripping is needed
+    /// here at all -- a genuine trailing `\r` from a CRLF source line is real line content and
+    /// must never be trimmed. JSON/NDJSON emission derives `text`/`bytes` from this field via
+    /// `native_json_text_fields` (`main.rs::gpu_native_match_json_entries`), mirroring the CPU
+    /// emitter's own `text`-XOR-`bytes` protocol.
+    pub raw: Vec<u8>,
     pub pattern_id: usize,
     pub pattern_text: String,
 }
@@ -1408,14 +1422,14 @@ fn run_cuda_graph_benchmark_search_paths(
             .cmp(&right_index)
             .then(left.line_number.cmp(&right.line_number))
             .then(left.pattern_id.cmp(&right.pattern_id))
-            .then(left.text.cmp(&right.text))
+            .then(left.raw.cmp(&right.raw))
     });
     let mut seen = BTreeSet::new();
     matches.retain(|matched| {
         seen.insert((
             matched.path.clone(),
             matched.line_number,
-            matched.text.clone(),
+            matched.raw.clone(),
             matched.pattern_id,
         ))
     });
@@ -1982,7 +1996,7 @@ fn merge_device_matches(
             .cmp(&right_index)
             .then(left.line_number.cmp(&right.line_number))
             .then(left.pattern_id.cmp(&right.pattern_id))
-            .then(left.text.cmp(&right.text))
+            .then(left.raw.cmp(&right.raw))
     });
 
     let mut seen = BTreeSet::new();
@@ -1992,7 +2006,7 @@ fn merge_device_matches(
             seen.insert((
                 matched.path.clone(),
                 matched.line_number,
-                matched.text.clone(),
+                matched.raw.clone(),
                 matched.pattern_id,
             ))
         })
@@ -4019,13 +4033,10 @@ fn line_matches_for_file(
             .saturating_add(line_len)
             .min(file_bytes.len());
         let line_bytes = &file_bytes[relative_start..relative_end];
-        let text = String::from_utf8_lossy(line_bytes)
-            .trim_end_matches('\r')
-            .to_string();
         matches.push(GpuNativeSearchMatch {
             path: file.path.clone(),
             line_number: line.line_number,
-            text,
+            raw: line_bytes.to_vec(),
             pattern_id: offset.pattern_id,
             pattern_text: all_patterns[offset.pattern_id].clone(),
         });
@@ -4060,13 +4071,10 @@ fn line_matches_for_file_by_scanning(
             .copied()
             .unwrap_or(file_bytes.len());
         let line_bytes = &file_bytes[line_start..line_end];
-        let text = String::from_utf8_lossy(line_bytes)
-            .trim_end_matches('\r')
-            .to_string();
         matches.push(GpuNativeSearchMatch {
             path: path.to_path_buf(),
             line_number: newline_index + 1,
-            text,
+            raw: line_bytes.to_vec(),
             pattern_id: offset.pattern_id,
             pattern_text: all_patterns[offset.pattern_id].clone(),
         });
@@ -4344,10 +4352,13 @@ mod tests {
     use super::{
         cached_search_kernel_ptx_path, check_gpu_native_implicit_walk_ceiling,
         collect_search_files, kernel_compile_options_for_compute_capability, line_matches_for_file,
-        load_file_batch_into_pinned_slice, resolve_adaptive_match_capacity,
-        resolve_max_match_capacity, validate_requested_cuda_device_ids, BatchedFile, FileBatchPlan,
-        GpuNativeSearchConfig, LineDescriptor, PatternMatchPosition,
+        line_matches_for_file_by_scanning, load_file_batch_into_pinned_slice,
+        resolve_adaptive_match_capacity, resolve_max_match_capacity,
+        validate_requested_cuda_device_ids, BatchedFile, FileBatchPlan, GpuNativeSearchConfig,
+        LineDescriptor, PatternMatchPosition,
     };
+    use base64::engine::general_purpose::STANDARD as TEST_BASE64_STANDARD;
+    use base64::Engine as _;
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -4599,7 +4610,7 @@ mod tests {
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].path, path);
         assert_eq!(matches[0].line_number, 2);
-        assert_eq!(matches[0].text, "ERROR target");
+        assert_eq!(matches[0].raw, b"ERROR target");
     }
 
     #[test]
@@ -4634,7 +4645,175 @@ mod tests {
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].path, path);
         assert_eq!(matches[0].line_number, 3);
-        assert_eq!(matches[0].text, "ERROR target");
+        assert_eq!(matches[0].raw, b"ERROR target");
+    }
+
+    // --- Task #273: GpuNativeSearchMatch.raw byte-fidelity (mirrors task #266/#746's fix in
+    // native_search.rs's NativeSearchMatch::raw / strip_native_line_terminator) ----------------
+    //
+    // Before this fix, both `line_matches_for_file` and `line_matches_for_file_by_scanning` built
+    // `GpuNativeSearchMatch.text: String` via
+    // `String::from_utf8_lossy(line_bytes).trim_end_matches('\r').to_string()`, which (a) silently
+    // replaced any genuinely invalid-UTF-8 byte with U+FFFD, and (b) unconditionally stripped a
+    // trailing `\r` even though `line_bytes` never includes the line's `\n` terminator (both
+    // producers slice up to but excluding the `\n`), so a trailing `\r` is always genuine CRLF
+    // content, never a terminator artifact to strip. Each test below asserts the specific byte
+    // sequence that only the buggy `from_utf8_lossy`/`trim_end_matches('\r')` pipeline would
+    // corrupt -- reintroducing that pipeline on `raw` (e.g.
+    // `raw: String::from_utf8_lossy(line_bytes).trim_end_matches('\r').to_string().into_bytes()`)
+    // fails every test in this group.
+
+    #[test]
+    fn line_match_materialization_preserves_invalid_utf8_bytes_losslessly() {
+        // 'E', 0xFF (not a valid UTF-8 lead/continuation byte on its own), 'R', 'O', 'R'.
+        let mut bytes = b"INFO start\n".to_vec();
+        let invalid_line: &[u8] = &[b'E', 0xFF, b'R', b'O', b'R'];
+        bytes.extend_from_slice(invalid_line);
+        bytes.push(b'\n');
+
+        let path = PathBuf::from("invalid-utf8.log");
+        let file = BatchedFile {
+            path: path.clone(),
+            start: 100,
+            end: 100 + bytes.len(),
+            line_descriptors: vec![
+                LineDescriptor {
+                    start: 100,
+                    len: 10,
+                    line_number: 1,
+                },
+                LineDescriptor {
+                    start: 111,
+                    len: invalid_line.len() as u32,
+                    line_number: 2,
+                },
+            ],
+        };
+        let offsets = vec![PatternMatchPosition {
+            byte_offset: 11,
+            pattern_id: 0,
+        }];
+        let patterns = vec!["ERROR".to_string()];
+
+        let matches = line_matches_for_file(&file, &bytes, &offsets, &patterns);
+
+        assert_eq!(matches.len(), 1);
+        // The old `String::from_utf8_lossy` path would have replaced the 0xFF byte with the
+        // 3-byte UTF-8 encoding of U+FFFD, changing both the content AND the length. Assert the
+        // exact original bytes survive, unchanged.
+        assert_eq!(matches[0].raw, invalid_line);
+        assert_ne!(
+            matches[0].raw,
+            String::from_utf8_lossy(invalid_line).as_bytes(),
+            "raw must not have been run through a lossy UTF-8 conversion"
+        );
+
+        // Full pipeline: `native_json_text_fields` (the shared JSON/NDJSON emitter helper this
+        // producer now feeds, task #271) must route genuinely invalid UTF-8 through the
+        // `bytes`/base64 side of its `text`-XOR-`bytes` contract, never `text`.
+        let (text, encoded_bytes) = crate::native_search::native_json_text_fields(&matches[0].raw);
+        assert_eq!(text, None);
+        let encoded_bytes =
+            encoded_bytes.expect("invalid UTF-8 must produce a base64 `bytes` field");
+        assert_eq!(
+            TEST_BASE64_STANDARD
+                .decode(encoded_bytes)
+                .expect("base64 payload must decode"),
+            invalid_line
+        );
+    }
+
+    #[test]
+    fn line_match_materialization_preserves_trailing_carriage_return() {
+        // A genuine CRLF source line: "ERROR target\r" followed by the `\n` terminator that the
+        // line-descriptor slicing already excludes. The pre-fix `.trim_end_matches('\r')` would
+        // wrongly eat the trailing `\r`, producing "ERROR target" (12 bytes) instead of the
+        // correct 13-byte "ERROR target\r".
+        let bytes = b"INFO start\r\nERROR target\r\n";
+        let path = PathBuf::from("crlf.log");
+        let file = BatchedFile {
+            path: path.clone(),
+            start: 100,
+            end: 100 + bytes.len(),
+            line_descriptors: vec![
+                LineDescriptor {
+                    start: 100,
+                    len: 11, // "INFO start\r"
+                    line_number: 1,
+                },
+                LineDescriptor {
+                    start: 112,
+                    len: 13, // "ERROR target\r"
+                    line_number: 2,
+                },
+            ],
+        };
+        let offsets = vec![PatternMatchPosition {
+            byte_offset: 12,
+            pattern_id: 0,
+        }];
+        let patterns = vec!["ERROR".to_string()];
+
+        let matches = line_matches_for_file(&file, bytes, &offsets, &patterns);
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].raw, b"ERROR target\r");
+    }
+
+    #[test]
+    fn line_match_materialization_by_scanning_preserves_trailing_carriage_return() {
+        // Same CRLF regression as above, but through the fallback `line_matches_for_file_by_scanning`
+        // path (taken whenever `line_descriptors` is empty) -- the two producers had the identical
+        // `.trim_end_matches('\r')` bug independently and both must be fixed.
+        let bytes: &[u8] = b"INFO start\r\nERROR target\r\n";
+        let path = PathBuf::from("crlf-scanned.log");
+        let offsets = vec![PatternMatchPosition {
+            byte_offset: 12,
+            pattern_id: 0,
+        }];
+        let patterns = vec!["ERROR".to_string()];
+
+        let matches = line_matches_for_file_by_scanning(&path, bytes, &offsets, &patterns);
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].line_number, 2);
+        assert_eq!(matches[0].raw, b"ERROR target\r");
+    }
+
+    #[test]
+    fn line_match_materialization_valid_utf8_round_trips_through_text() {
+        // The `text` side of the `native_json_text_fields` contract for a plain valid-UTF-8 line.
+        let path = PathBuf::from("sample.log");
+        let bytes = b"INFO start\nERROR target\n";
+        let file = BatchedFile {
+            path: path.clone(),
+            start: 100,
+            end: 100 + bytes.len(),
+            line_descriptors: vec![
+                LineDescriptor {
+                    start: 100,
+                    len: 10,
+                    line_number: 1,
+                },
+                LineDescriptor {
+                    start: 111,
+                    len: 12,
+                    line_number: 2,
+                },
+            ],
+        };
+        let offsets = vec![PatternMatchPosition {
+            byte_offset: 11,
+            pattern_id: 0,
+        }];
+        let patterns = vec!["ERROR".to_string()];
+
+        let matches = line_matches_for_file(&file, bytes, &offsets, &patterns);
+
+        assert_eq!(matches.len(), 1);
+        let (text, encoded_bytes) = crate::native_search::native_json_text_fields(&matches[0].raw);
+        assert_eq!(text, Some("ERROR target"));
+        assert_eq!(encoded_bytes, None);
     }
 }
 
