@@ -3,7 +3,17 @@
 > **Canonical prioritized work list.** Kept in sync with the CLI task store (`TaskUpdate`) and
 > GitHub (`gh pr list` is the source of truth for PRs). **CEO status** = summarize SHIPPING + P0/P1.
 > Update whenever a PR opens/merges or the queue changes. Task-store IDs (`#NNN`) cross-referenced.
-> Last refreshed 2026-07-24 (post-v1.98.3 — reconciling #735's v1.98.1 baseline forward four items:
+> Last refreshed 2026-07-25 (post-**v1.98.11** — reconciling the v1.98.3 baseline forward across 8
+> releases and 16 merged PRs. Headline: **the `--json` bug family is CLOSED** (#264/#266/#267/#269/
+> #272/#273 were ONE defect — a renderer flag silently choosing the ENGINE and thus the FILE SET),
+> with three ratchets so it stays closed: #752 the renderer/file-set invariant in both git and
+> non-git topologies, #749 CI-actually-runs-the-native-e2e-suites, #745 an rg-grammar differential
+> fuzzer. #279/#756 got cuda-gated tests EXECUTING (156/job) for the first time. The CEO `/goal`
+> "beat rg cold-start" is closed as an honest NEGATIVE — tg's native walk IS rg's walk, same `ignore`
+> crate, so widening relocates rather than accelerates; the value was BUGS, not milliseconds. Two
+> non-defects retired on their merits: #270 downgraded to a guard, #277 closed outright. Full
+> receipts in CURRENT STATE below. PR queue at reconcile time: #757 (draft, gated).
+> Prior refresh 2026-07-24 (post-v1.98.3 — reconciling #735's v1.98.1 baseline forward four items:
 > **#736** (C file-scope function-pointer VARIABLE, e.g. `void (*handler)(int);`, was mis-kinded
 > `"function"`, now excluded — v1.98.2, two independent Opus gates; the banked one-line fix hypothesis
 > "require `function_declarator` outermost" was WRONG, since a fn-ptr variable has it outermost too —
@@ -265,7 +275,44 @@ wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while 
 
 ---
 
-## ⭐ CURRENT STATE (2026-07-24) — authoritative; every section BELOW is HISTORICAL until the next full refresh
+## ⭐ CURRENT STATE (2026-07-25) — authoritative; every section BELOW is HISTORICAL until the next full refresh
+
+- **Live PyPI: v1.98.11 (2026-07-25). THE `--json` BUG FAMILY IS CLOSED — v1.98.4→v1.98.11, 16 PRs
+  drained one-per-publish, zero rollbacks.** The campaign began as the CEO `/goal` "beat rg
+  cold-start" and ended somewhere better: **the value was BUGS, not milliseconds.** A 3-seat council
+  closed the speed lever for good — tg's native walk *is* ripgrep's walk (the same `ignore` crate,
+  `Cargo.toml:44`), so widening it RELOCATES work and never accelerates it. Chasing it, however,
+  surfaced one real defect wearing six faces.
+  **THE ROOT GENERATOR:** the native-delegation gate keys on OUTPUT-FORMAT flags (`--json`/`--ndjson`
+  sit beside `--cpu` in `bootstrap.py`), so a RENDERER silently picks the ENGINE and therefore the
+  FILE SET. Every engine difference thus presents as an output-format bug. **#264** (JSON searched
+  fewer files than plain), **#266** (`sinks::Lossy` corrupted CRLF/non-UTF-8 match bytes into U+FFFD),
+  **#267** (`--no-ignore-vcs` dropped by the native walker), **#269** (the Python rg-passthrough
+  sibling), **#272** (`--format`/`--lang` mis-parsed as valueless, so a filename could be eaten as a
+  flag value), **#273** (the identical lossy emitter in `gpu_native.rs`) — one defect, all shipped.
+  For an agent reading tg's JSON this was the difference between a complete answer and a quietly
+  incomplete one: no error, no warning, just fewer results.
+  **THE GUARDS that keep it closed** (a fix without a ratchet is a fix that comes back):
+  **#752** pins `files(A) == files(A + renderer-flag)` across BOTH git and non-git topologies — the
+  non-git arm is not redundant, `require_git(true)` means a different code path picks the file set,
+  and testing one topology only is exactly what cost #750 a review round. **#749** asserts every
+  native-binary-dependent e2e suite is actually RUN by CI (it was matching ONE hardcoded filename).
+  **#745** replaced five rounds of "one more argv form nobody thought of" with a differential fuzzer
+  against an independently-derived rg grammar model (70,040 cases, ~3s, release-blocking).
+  **#279/#756** got cuda-gated tests EXECUTING for the first time — 156 lib tests now run per CI job
+  where previously zero did, and before #754's `--all-targets` they were not even type-checked.
+  **HONEST NEGATIVES, recorded so nobody re-spends the week:** #270 was downgraded from "root
+  generator bug" to a regression *guard* after a published-wheel matrix showed the invariant already
+  holding — the original "divergence" had been measured on a dev build on PATH that reports a real
+  version string but accepts flags the published wheel rejects. **#277 closed as NOT A DEFECT**: the
+  index engine never joined this family; it took the stricter total-refusal route in PR #541, two
+  weeks before the field it was accused of dropping even existed. Use
+  `uvx --from "tensor-grep==<v>" tg ...` for any claim about released behaviour.
+  **Also in the span:** **#755** removed a 1-second-TTL race from the ledger forced-expiry tests
+  (found by decoding a CI failure on a `.gitignore`-only PR rather than re-running it — the TTL was
+  never the mechanism under test, so the timing dependency was deleted, not widened); **#753** fixed
+  `.gitignore` entries that enumerated two observed paths instead of modelling the class, so tg's own
+  state dir and `tg codemap` output had been polluting `git status`.
 
 - **Non-releasing (2026-07-24). Test de-flake.** **#739** replaced a twice-failed wall-clock-timed
   assertion in `tests/unit/test_index_lock_concurrency.py` with a STRUCTURAL marker-order check
