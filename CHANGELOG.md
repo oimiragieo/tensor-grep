@@ -1,6 +1,338 @@
 # CHANGELOG
 
 
+## v1.98.4 (2026-07-25)
+
+### Bug Fixes
+
+- **search**: Honor root .gitignore in rg-passthrough plain-text search outside git repos
+  ([#744](https://github.com/oimiragieo/tensor-grep/pull/744),
+  [`e1aeae5`](https://github.com/oimiragieo/tensor-grep/commit/e1aeae565e8de282a402192fb77df56a63133c39))
+
+* fix(search): honor root .gitignore in rg-passthrough plain-text search outside git repos (#264)
+
+`tg search` in a non-git directory with a root `.gitignore` silently searched files it should have
+  excluded, while `tg search --json` (routed to the native engine) correctly excluded them -- an
+  output-format flag alone changed which files were searched, at exit 0, no warning. Root cause:
+  `route_search` sends plain-text searches to real `rg` via `rg_passthrough.rs` whenever rg is
+  available; real rg's own `.gitignore` auto-discovery requires a detected git repository by
+  default, so it is a no-op outside one. The native engine already closed this exact gap for itself
+  via an unconditional root-only `add_ignore` trio (#127, `native_search.rs`/`index.rs`) -- this
+  mirrors that fix onto the rg-passthrough path instead of touching `native_search.rs` (that trio is
+  deliberate and locked by its own tests).
+
+`root_ignore_file_args` (`rg_passthrough.rs`) surfaces a present root
+  `.ignore`/`.gitignore`/`.rgignore` to real rg via `--ignore-file`, root-only (no parent-directory
+  ascent), for every explicit search root. Verified live against rg 15.1.0 that an explicit
+  `--ignore-file` is NOT cancelled by `--no-ignore` or `--no-ignore-vcs` (rg's own docs: "This does
+  not imply --no-ignore-files, since --ignore-file is specified explicitly") -- so this function
+  checks `no_ignore`/`no_ignore_files` (skip all three files), `no_ignore_vcs` (skip only
+  `.gitignore`), and `no_ignore_dot` (skip only `.ignore`/`.rgignore`) itself before emitting
+  anything, rather than relying on rg to honor a disable flag it does not apply to an explicit
+  `--ignore-file`. Confirmed harmless inside a git repo (byte-identical rg output with/without the
+  added flag, since real rg's own auto-discovered rules take precedence per its documented
+  `--ignore-file` precedence order) -- rejected `--no-require-git` (rg's simpler one-flag
+  alternative) on purpose, since it would additionally pull in nested/global gitignores, diverging
+  from tg's root-only scope.
+
+Bidirectional coverage: 7 unit tests directly on `root_ignore_file_args` (gitignore-present emits,
+  absent stays empty, each no-ignore-family flag's scoped suppression, multi-root coverage,
+  implicit-path "." fallback) plus 5 CLI-level integration tests spawning the real compiled `tg`
+  binary against a fake-rg stub asserting the actual `--ignore-file` argv (following this file's
+  existing `fake_rg_asserting_args_script` convention so CI does not need a real system `rg`),
+  covering all 4 matrix cells: non-git+plain-text was the broken cell pre-fix (the flag never
+  existed) and passes now; non-git+json was already correct (native engine, untouched);
+  git-repo+plain-text already agreed pre-fix and is asserted not to regress; git-repo+json is
+  untouched.
+
+Blast radius: every default plain-text search now honors a root .gitignore outside a git repo --
+  files that were previously searched under `tg search` in that scenario will stop being searched,
+  bringing it in line with `--json`/`--ndjson`/MCP/the trigram index, which already excluded them.
+
+Confined to rg_passthrough.rs + tests/test_public_native_cli_parity.rs only
+  (native_search.rs/main.rs and the Python test/oracle layer are out of scope for #742/#743 in
+  flight).
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* fix(lint): correct doc-list-item indentation in rg_passthrough.rs (CI red on #744)
+
+`cargo clippy -- -D warnings` failed with 10 errors in the `root_ignore_file_args` doc comment: 6x
+  `doc_overindented_list_items` (continuation lines indented far past the list marker) and 4x
+  `doc_lazy_continuation` (trailing paragraph lines read as an ambiguous continuation of the last
+  bullet with no indentation at all). Mirrors the identical lint class #742 hit in routing.rs the
+  same hour: the correct indent is not a uniform guess, so every line was fixed to clippy's own
+  printed per-site suggestion (5 spaces after `///`, matching rustdoc's one-space-stripped `- `
+  bullet convention) rather than hand-derived. One resulting line (654, pre-fix) exceeded 100
+  columns after reindenting; rebalanced across 4 lines instead of 3, still functionally identical
+  text.
+
+No behavior change -- doc comment only, verified via `python3` character-offset checks against
+  clippy's exact log output (job 89643238621, run 30144231440) since cargo/clippy cannot be run
+  locally under this task's CPU-safe constraint.
+
+* fix(docs+tests): close the 3 independent-gate items on #744 (false coverage claim, real-outcome
+  test, CONTRACTS.md divergence)
+
+1. `rust_core/tests/test_public_native_cli_parity.rs`: the cell-2 comment claimed "tests/e2e/#743
+  Python oracle layer" covers the actual file-count outcome. False -- #743 is the CRLF/LF
+  de-blinded-parity PR and has zero gitignore/#264 coverage. Replaced with an accurate pointer to
+  the new test added below.
+
+2. `tests/e2e/test_search_root_ignore_file_outcome.py` (new): asserts the real search OUTCOME (which
+  files match), not just constructed argv -- the gap both the independent gate and this PR's own
+  Rust-level tests left open. Non-git tmpdir, `a.txt`/`skipme.txt` both containing `needle`, root
+  `.gitignore` listing `skipme.txt`: plain-text `tg search` and `tg search --json` must return the
+  same 1-file set; `--no-ignore` must restore both files. Skips when `rg` is unavailable (mirrors
+  `tests/e2e/test_rg_parity_edges.py` / the `rg_path` fixture in `tests/conftest.py`), AND when no
+  compiled native `tg` binary is discoverable: `python -m tensor_grep search` without one falls back
+  to a SEPARATE, still-unfixed Python-only rg-passthrough (`bootstrap.py:1088`, reached via the
+  naive forward-to-real-rg branch at `bootstrap.py:1256-1260`) that shares this fix's root cause but
+  is not touched by it -- confirmed live while writing this test (same repro, same missing
+  `--ignore-file`). Running the outcome assertion through that path would attribute a different,
+  still-open bug to this PR; skipping there keeps this file's PASS/FAIL meaningful instead of
+  testing the wrong mechanism. That Python-side gap is out of scope for this PR (confined to
+  rg_passthrough.rs per the task) and is a real follow-up, not silently absorbed here.
+
+3. `docs/CONTRACTS.md`: records the permanent, deliberate divergence from raw `rg` this PR
+  introduces -- `tg search` honors a root `.ignore`/`.gitignore`/`.rgignore` uniformly, including in
+  a non-git directory, where raw `rg`'s own `require_git` default makes an un-flagged `.gitignore`
+  inert. Without this line, the next rg-parity investigation re-derives it from scratch.
+
+Verified: `docs/CONTRACTS.md`'s substring-presence governance tests
+  (`tests/unit/test_public_docs_governance.py`, `tests/unit/test_enterprise_docs_governance.py`, 58
+  tests) still pass against the new bullet; the new e2e test collects cleanly and `ruff format
+  --preview` / `ruff check` pass on it. `pytest`-only local verification (no `pip install -e .`) per
+  this task's CPU-safe constraint -- the new e2e test correctly SKIPS in that minimal environment
+  rather than false-failing, confirming the native-binary gate works as designed.
+
+* fix(test): call the native tg binary directly in the #264 outcome test (Windows red)
+
+`test-python (windows-latest, py3.11 and py3.12)` on 032d557 failed the new outcome test: plain-text
+  search still returned both files, the exact pre-fix bug, in the exact cell this PR claims to fix.
+  The Rust-level mechanism was never wrong (unit tests + fake-rg CLI argv tests were already green
+  on windows-latest); the test itself was exercising the wrong component.
+
+Root cause, measured not reasoned: the test called `python -m tensor_grep search`, which routes
+  through `tensor_grep.cli.bootstrap.main_entry`. That module's OWN native-delegation gate,
+  `_can_delegate_to_native_tg_search` (`bootstrap.py:456-528`), only forwards a search to the
+  compiled native binary when the argv contains one of a fixed trigger set -- `{--cpu, --force-cpu,
+  --json, --ndjson, --gpu-device-ids}` (`bootstrap.py:460-464`) -- or `TG_RUST_FIRST_SEARCH=1` is
+  set (default off, `bootstrap.py:292-294`). A bare `tg search needle .` has none of those, so
+  bootstrap.py ALWAYS falls through to its own separate, naive `_run_rg_passthrough`
+  (`bootstrap.py:1088`, reached via `bootstrap.py:1256-1260`), which forwards argv to real `rg`
+  verbatim with zero `--ignore-file` injection -- regardless of whether a native `tg` binary is
+  discoverable. This PR's fix was simply never reached by the plain-text leg of the previous test.
+
+Verified live (not just read) using the installed pre-fix `tg 1.98.3` binary, invoked DIRECTLY (`tg
+  search needle .`, no bootstrap layer in between) against the exact test fixture: plain-text search
+  returns both `a.txt` and `skipme.txt` (the bug), `--json` already
+
+returns only `a.txt` (`matched_file_paths: [".\\a.txt"]`, confirming the JSON schema field name and
+  the pre-existing-correct side of the divergence), and `--no-ignore` also returns both files -- an
+  exact, direct reproduction of the #264 bug report using this test's own fixture and this test's
+  own (corrected) invocation shape, without the bootstrap confound.
+
+Fix: call the resolved native `tg` binary's `search` subcommand directly
+  (`resolve_native_tg_binary()` + `subprocess.run([str(native_binary), "search", *args], ...)`)
+  instead of `python -m tensor_grep search`. This is also the exact shape of the original bug report
+  (a user running the installed `tg` command). Dropped `--no-heading` -- it is not a registered flag
+  on the native `search` subcommand (confirmed against the installed binary: an unrecognized flag
+  there errors), and piped/non-tty stdout already defaults to the same one-path-per-line shape
+  (verified against the bundled Windows rg 14.1.0 binary too). Also confirmed live: `--no-ignore` is
+  a valid flag when calling the native binary directly.
+
+The skip condition was already checking `resolve_native_tg_binary() is not None` (added in the prior
+  commit specifically because of the earlier-discovered bootstrap gap) -- that guarded against the
+  WRONG failure mode (binary absent) while the actual failure mode was routing (binary present, but
+  never invoked for a bare search). Binary presence is necessary but was not sufficient; calling it
+  directly removes the ambiguity entirely.
+
+---------
+
+### Documentation
+
+- **agents**: Capture 8 more session lessons (degenerate-baseline timing, structural assertions,
+  comment-as-misdirection, cron duplication)
+  ([#741](https://github.com/oimiragieo/tensor-grep/pull/741),
+  [`5bf8881`](https://github.com/oimiragieo/tensor-grep/commit/5bf888161299e7e1da7dd6380c6ba2fcc927c1eb))
+
+* docs(agents): capture 8 more session lessons (degenerate-baseline timing, structural assertions,
+  comment-as-misdirection, cron duplication)
+
+Captures 8 additional hard-won lessons from work done AFTER #738 merged, shipping PR #737 (C++
+  function-pointer-variable fix) and PR #739 (checkpoint-hot-path timing deflake, 3 gated passes),
+  plus a session-continuity finding on cron duplication.
+
+N1 (a test proves nothing until seen fail on the pre-fix baseline, #737) -> AGENTS.md "Verify
+  AI-Drafted Plans", tensor-grep-change-control Part 6 (cross-ref), tensor-grep-validation-and-qa
+  Part 1 point 18 + checklist.
+
+N2 (a ratio timing assertion degenerates to its floor below clock resolution) + N3 (profile before
+  attributing a timing flake's cause) -> AGENTS.md CI/Release Rules, tensor-grep-validation-and-qa
+  Part 1 point 19 + checklist, tensor-grep-debugging-playbook new symptom-table row + Section 17.
+
+N4 (a false claim in a comment is durable misdirection -- gate the prose too) + N7 (diff review is
+  not measurement review) + N8 (prove docs-only/comment-only via ast.dump(), not eyeballing) ->
+  AGENTS.md "Verify AI-Drafted Plans", tensor-grep-change-control Part 6.
+
+N5 (prefer a structural assertion over a timing one where the invariant allows) -> AGENTS.md
+  CI/Release Rules, tensor-grep-validation-and-qa Part 1 point 20 (extends point 14) + checklist,
+  tensor-grep-debugging-playbook Section 17.
+
+N6 (verify a session-scoped cron in BOTH directions -- it can be alive when assumed dead, same as
+  dead when assumed alive) -> AGENTS.md Campaign Orchestration A26 (extends A25),
+  tensor-grep-backlog-campaign Steward-cron section.
+
+No code changes; no new skill directory (all 8 folded into existing skills per the task's
+  prefer-folding guidance), so AGENTS.md/CLAUDE.md's skill bucket list is untouched and stays in
+  sync. Verified: tests/unit/test_skill_index_sync.py (4/4), test_harness_api_docs.py +
+  test_public_docs_governance.py + test_enterprise_docs_governance.py (66/66) -- all green with
+  PYTHONPATH pinned to this worktree's src and tensor_grep.__file__ confirmed resolving into it.
+  ruff format --check --preview on the whole repo shows exactly the 4 pre-existing failures
+  (docs/architecture.md, docs/planning/PROJECT_PLAN.md, 2 docs/plans/*.md files) untouched by this
+  PR; the 5 touched files are individually clean.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+* docs(agents): add clock-resolution figure + N9 (verification instrument can be wrong)
+
+Coordinator review of PR #741 requested two additions before merge:
+
+1. N2's degenerate-max() lesson was missing the concrete WHY behind "baseline measured exactly 0.0"
+  -- Windows' time.get_clock_info('monotonic').resolution is 0.015625s (one 64Hz tick), and the
+  stubbed baseline (.resolve() + immediate raise + 1-file os.walk) completed within a single tick.
+  Added to AGENTS.md CI/Release Rules and tensor-grep-validation-and-qa Part 1 point 19.
+
+2. New lesson N9: a verification COMMAND can itself be wrong and produce a false negative that makes
+  an honest report look false. Reviewing sibling PR #740, `grep -ciE "DEFERRED\|deferred"` returned
+  zero hits for a caveat that was present verbatim -- in `grep -E`, `\|` matches a LITERAL pipe, not
+  alternation (bare `|` is extended-regex alternation; `\|` is basic-regex/sed syntax). Rule: when a
+  check contradicts an otherwise-careful report, re-test the instrument against known-present
+  content before concluding the report is false. Landed next to N7 (same family -- the reviewer's
+  own method failing): AGENTS.md "Verify AI-Drafted Plans", tensor-grep-change-control Part 6, and a
+  cross-referenced addendum in tensor-grep-debugging-playbook Section 14 (raw-JSON-before-scoring
+  family).
+
+Re-verified: tests/unit/test_skill_index_sync.py + test_harness_api_docs.py +
+  test_public_docs_governance.py + test_enterprise_docs_governance.py (70/70 passed, PYTHONPATH
+  pinned to this worktree's src, tensor_grep.__file__ confirmed resolving into it). ruff format
+  --check --preview on the 4 touched files clean; whole-repo run still shows exactly the same 4
+  pre-existing failures as before this change. LF preserved.
+
+---------
+
+- **backlog**: Reconcile to v1.98.3 (C/C++ fn-ptr bug class closed + lessons/de-flake PRs)
+  ([#740](https://github.com/oimiragieo/tensor-grep/pull/740),
+  [`ca3a754`](https://github.com/oimiragieo/tensor-grep/commit/ca3a754ec84ecf32cd64125a687b6bee07cdff2e))
+
+Reconciles docs/BACKLOG.md forward from #735's v1.98.1 baseline through four shipped items: #736 (C
+  file-scope function-pointer variable mis-kinding fix, v1.98.2) and #737 (the C++ sibling fix,
+  v1.98.3, closing the C/C++ declarator bug class on both sides), plus two non-releasing PRs #738
+  (session-lessons docs capture) and #739 (checkpoint hot-path test de-flake). Closes out the banked
+  C known-limitation from the v1.97.0 entry, disclosing that its own banked one-line fix hypothesis
+  was wrong (verified against the real #736 mechanism). Updates the live-version pointer, PR-queue
+  line, and SHIPPED header to v1.98.3.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+### Testing
+
+- **flake**: Assert the checkpoint hot-path invariant structurally instead of on a wall clock
+  ([#739](https://github.com/oimiragieo/tensor-grep/pull/739),
+  [`c5599ef`](https://github.com/oimiragieo/tensor-grep/commit/c5599ef98e103d29201ba904954cbb4125ad87d4))
+
+* test(flake): assert the checkpoint hot-path invariant relatively instead of on an absolute wall
+  clock
+
+test_create_checkpoint_uncontended_hot_path_unaffected has now flaked on loaded Windows CI twice
+  with two different absolute floors (4.0s -> 4.97s overshoot; 8.0s -> 8.75s overshoot on a
+  docs-only commit run 30123607322). Raising the ceiling a third time would just relocate the
+  threshold again.
+
+Root cause: _detect_checkpoint_scope shells out to a real `git rev-parse --show-toplevel` subprocess
+  (fails fast on the non-git fixture, but the OS-level process-spawn latency is the noise on a
+  loaded Windows runner). That spawn happens twice per test run -- once in the same-run baseline
+  measurement, once independently again inside create_checkpoint's own call -- two uncorrelated
+  noisy draws that no fixed multiplier over an absolute floor can bound.
+
+Fix: stub the git subprocess call (monkeypatch run_subprocess, the same pattern already used
+  throughout this suite) out of both the baseline and the real measurement, exercising
+  _detect_checkpoint_scope's existing FileNotFoundError/CalledProcessError fallback path rather than
+  a test-only shortcut. With the dominant uncorrelated noise source removed, both measurements are
+  left with small, correlated, in-process filesystem work, so the ratio (elapsed < max(baseline *
+  6.0, 2.0)) now genuinely cancels runner load instead of merely outrunning it. The floor drops from
+  the noise-driven 8.0s to a 2.0s safety net for a near-zero baseline.
+
+Proof: with a temporary 3.0s sleep injected into create_checkpoint's locked section, the test went
+  RED (`assert 3.266 < 2.0`); reverting the perturbation restored GREEN. Real measured elapsed
+  across 5 trials post-fix: ~0.19-0.20s, comfortably under the 2.0s floor.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* fixup: replace the checkpoint hot-path ratio with a structural, non-timing invariant
+
+Independent Opus gate on the prior commit found the wall-clock fix was aimed at the wrong noise
+  source and made the flake WORSE:
+
+- With `run_subprocess` stubbed, `baseline_elapsed` measured 0.0 across 8 runs (below Windows'
+  ~15.6ms monotonic-clock tick), collapsing `elapsed < max(baseline*6, 2.0)` into a pure `elapsed <
+  2.0` bound -- 4x TIGHTER than the 8.0s that had just flaked. - cProfile showed the real dominant
+  cost is `_prime_bounded_discovery_caches_for_root` (fsync-heavy discovery-cache I/O, ~93% of
+  elapsed), not the git subprocess spawn (~6-12%). On the cited failure (8.75s vs 8.0s), removing at
+  most ~1.46s of spawn time still leaves >=7.3s against the new 2.0s ceiling -- still red, by a
+  wider margin.
+
+Per the gate's required direction: replaced the wall-clock ratio entirely with a structural,
+  event-order assertion. `index_lock`, `_snapshot_entries`, `shutil.copy2`, and
+  `_prime_bounded_discovery_caches_for_root` are each monkeypatched to append an ENTER/EXIT marker
+  to a shared ordered list; because `create_checkpoint` runs single-threaded and sequentially,
+  marker ORDER (not any timestamp) fully proves whether the expensive work ran inside or outside the
+  lock's held window. This cannot flake under CI load: a slow runner delays every marker equally
+  without reordering them.
+
+Proof: moved `_prime_bounded_discovery_caches_for_root` inside the `with index_lock(...)` block (the
+  exact regression class this guards against) -> RED (`'prime_caches_start' ran INSIDE the held
+  index_lock window`). Reverted (`git diff -- src/` empty) -> GREEN, 5+ repeat runs stable
+  (~0.69-0.78s each; no timing assertion, so variance is irrelevant to pass/fail).
+
+Sibling decision: left `test_open_session_uncontended_hot_path_unaffected` on its wall-clock ratio
+  form -- its baseline (`build_repo_map`) is real, load-correlated I/O work, unlike the checkpoint
+  sibling's near-zero baseline, so the ratio genuinely cancels load there and it has not shown this
+  class of flake. Documented explicitly in the section header comment.
+
+* docs: correct the sibling-rationale comment with measured numbers, not assumed cancellation
+
+Re-gate (v2) on this PR confirmed the structural test change is validated (faithful wrappers,
+  non-vacuous assertion proven via a nullcontext() probe, deterministic RED->GREEN, 13x7 stable
+  runs, 271 passed/1 skipped, ruff clean) but flagged the sibling-rationale comment (test file ~line
+  262) as factually wrong: it claimed the open_session sibling's `elapsed < max(baseline * 6.0,
+  8.0)` ratio "genuinely correlates and cancels load" for its baseline.
+
+Measured directly against this module's real `_make_project` fixture (8 trials, no stubbing):
+  `build_repo_map`'s baseline is ~0.000-0.016s, so `baseline * 6.0` never exceeds ~0.10s -- the
+  ratio arm can never beat the 8.0s floor. The floor is the sole operative bound, unconditionally.
+  That is the same degenerate-`max()` reasoning v1 of this PR was rejected for, now written into a
+  comment as false justification.
+
+Corrected the comment to state the real reason the sibling is left alone: measured `open_session`
+  elapsed (~0.015-0.016s) has ~500x headroom against the 8.0s floor, vs. `create_checkpoint`'s
+  measured ~26-30x headroom before its structural rewrite (which still flaked at 8.75s) -- because
+  `create_checkpoint`, unlike `open_session`, pays `_prime_bounded_discovery_caches_for_root`'s
+  fsync-heavy discovery-cache I/O (~93% of its own elapsed). Sibling is safe on absolute margin, not
+  ratio cancellation.
+
+Also added the requested (non-blocking, but useful) one-line note documenting that
+  `_write_checkpoint_metadata` is deliberately untraced by the structural assertion -- cheap, not
+  one of the three profiled dominant costs.
+
+No behavior change: comment-only, same 13 tests, same assertions.
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.98.3 (2026-07-24)
 
 ### Bug Fixes
