@@ -3,7 +3,29 @@
 > **Canonical prioritized work list.** Kept in sync with the CLI task store (`TaskUpdate`) and
 > GitHub (`gh pr list` is the source of truth for PRs). **CEO status** = summarize SHIPPING + P0/P1.
 > Update whenever a PR opens/merges or the queue changes. Task-store IDs (`#NNN`) cross-referenced.
-> Last refreshed 2026-07-25 (post-**v1.98.11** — reconciling the v1.98.3 baseline forward across 8
+> Last refreshed 2026-07-25b (post-**v1.98.13**, with v1.98.14 releasing) — the **unreadable-path
+> honesty** wave. One question drove it: when tg cannot READ part of a tree, does it say so, or does
+> it report success over a silently smaller result set? Answers shipped: **#757/#761** thread the
+> existing `unreadable_paths` signal into `tg find`/`codemap`/incremental refresh and pin
+> `incomplete_reason_class` in `CONTRACTS.md`; **#762** (v1.98.14) makes MCP `tg_search`'s
+> `scan_limit` say WHY a scan truncated and whether raising the budget would even help —
+> `budget_remediable: false` on an unreadable dir, contract 1.4.0→1.5.0, because the old payload gave
+> WRONG-KNOB advice; **#763** stops an ACL-locked pytest basetemp from spamming every `git status`.
+> Two defects found by tracing CONSUMERS rather than fixing the named site: **#286** (`session_store`
+> reported a permission-denied file as DELETED — PR #764) and **#288** (`_capture_snapshot` drops
+> unreadable files from the snapshot entirely, so they stop being tracked at all). **#765** ratchets
+> the Rust-side `.filter_map(|e| e.ok())` walk-error-discard class (10 sites, mechanically censused —
+> a prose note had said 6) so it cannot grow while #276's slices land.
+>
+> **Process receipts from this wave, both costly:** (1) PR #764 was NO-SHIPed TWICE by independent
+> gates, both times for a false MECHANISM attached to a correct one-line fix — draft 1 claimed repo-map
+> eviction (`build_repo_map_incremental` ignores `removed`; the cited line says so verbatim), draft 2
+> claimed a persisted list was re-served (it has no reader; health RECOMPUTES). **A disproved claim's
+> replacement needs the same verification the original failed.** (2) `tag == PyPI` is NOT a sufficient
+> drain gate — a `fix:` commit sitting on main with CI still queued is a release IN FLIGHT even though
+> the tag has not moved yet. Check for an unreleased release-triggering commit, not just tag equality.
+>
+> Prior refresh 2026-07-25 (post-**v1.98.11** — reconciling the v1.98.3 baseline forward across 8
 > releases and 16 merged PRs. Headline: **the `--json` bug family is CLOSED** (#264/#266/#267/#269/
 > #272/#273 were ONE defect — a renderer flag silently choosing the ENGINE and thus the FILE SET),
 > with three ratchets so it stays closed: #752 the renderer/file-set invariant in both git and
