@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-validation-and-qa
-description: Use when deciding what counts as proof that a tensor-grep (tg) change works — before trusting a subagent's "tests pass", writing a new test, claiming a routing/docs/release fix is done, shipping a doc-drift/ranking/classification heuristic off green fixture tests, proving a red-green baseline on a reverted/pre-fix commit, reviewing a payload-byte/ratio governance test, or running the pre-push gate. Covers TDD-first discipline, the CliRunner-vs-real-binary trap, the fixture-green-vs-real-corpus-dogfood trap for precision/heuristic features, the `capfd`-vs-`result.stdout` capture-surface trap on routing/delegation changes (needs `tests/integration/` run with the native `tg` binary rebuilt, not just `tests/unit/`), the `tests/conftest.py` `sys.path.insert`-outranks-`PYTHONPATH` trap that can falsify a red-green baseline even with `tensor_grep.__file__` verified, a shared-envelope field growth breaking a payload-ratio governance test plus its tmp-path-length platform sensitivity, the self-gate-suite-subset-is-not-full-CI-matrix trap, the certified/golden inventory (routing parity, docs governance, release-asset validation), agent-readiness/`tg dogfood`, benchmark-gated speed claims, acceptance thresholds, and which suite/marker/fixture to use for a new test, plus the `--preview` / `--no-sync` / `-x` gotchas.
+description: Use when deciding what counts as proof that a tensor-grep (tg) change works — before trusting a subagent's "tests pass", writing a new test, claiming a routing/docs/release fix is done, shipping a doc-drift/ranking/classification heuristic off green fixture tests, proving a red-green baseline on a reverted/pre-fix commit, reviewing a payload-byte/ratio governance test, de-flaking a timing-sensitive test, or running the pre-push gate. Covers TDD-first discipline, the CliRunner-vs-real-binary trap, the fixture-green-vs-real-corpus-dogfood trap for precision/heuristic features, the `capfd`-vs-`result.stdout` capture-surface trap on routing/delegation changes (needs `tests/integration/` run with the native `tg` binary rebuilt, not just `tests/unit/`), the `tests/conftest.py` `sys.path.insert`-outranks-`PYTHONPATH` trap that can falsify a red-green baseline even with `tensor_grep.__file__` verified, a shared-envelope field growth breaking a payload-ratio governance test plus its tmp-path-length platform sensitivity, the self-gate-suite-subset-is-not-full-CI-matrix trap, a new test that proves nothing until seen fail on the pre-fix baseline, a `max(baseline*N, floor)` timing ratio degenerating to its floor below clock resolution plus the profile-before-attributing-a-flake discipline, preferring a structural order-based assertion over any wall-clock form, the certified/golden inventory (routing parity, docs governance, release-asset validation), agent-readiness/`tg dogfood`, benchmark-gated speed claims, acceptance thresholds, and which suite/marker/fixture to use for a new test, plus the `--preview` / `--no-sync` / `-x` gotchas.
 ---
 
 # tensor-grep validation and QA
@@ -280,6 +280,43 @@ Ranked by how hard each is to fake, cheapest-to-check first:
     number it reports is true. When reviewing or writing a self-gate report, require an explicit
     ran/skipped suite list, and treat the CI run itself — not the self-gate's own suite selection —
     as the actual merge arbiter.
+18. **A test proves nothing until you have SEEN it fail on the pre-fix baseline — "I added a test,
+    it's green" is not coverage (#737, 2026-07-24).** An independent Opus gate on the C++
+    function-pointer-variable fix found the new shape-9 test pinned only the IN-CLASS member-fn-ptr
+    shape (`class C { void (C::*mp)(int); };`) — which tree-sitter already excluded on pre-fix
+    `origin/main`, through an unrelated code path (`['ERROR', 'pointer_declarator']` triggers a
+    `len(named_children) != 1` early return that never reaches the fix's new logic). The shape the
+    fix actually repaired — file-scope `void (C::*mp)(int);`, wrapping a `qualified_identifier` — had
+    NO test guarding it. The fix itself was correct; the first test written for it was a
+    no-regression pin, not a bug guard, and would have passed unmodified even without the fix.
+    Before trusting any new test as coverage, confirm it goes RED against the pre-fix code (the same
+    discipline as Part 1 point 1, restated for the specific failure mode of a test that happens to
+    exercise an already-excluded shape).
+19. **A ratio/relative timing assertion degenerates to its floor the moment the baseline collapses
+    below clock resolution — and the fix requires profiling, not just re-attribution (#739,
+    2026-07-24).** A de-flake of a checkpoint-hot-path test stubbed a `git rev-parse` subprocess call
+    to make `elapsed < max(baseline * 6.0, 8.0)` "cancel load." With the subprocess stubbed, the
+    baseline measured EXACTLY 0.0 across 8 runs — below Windows' ~15.6ms `time.monotonic()` tick
+    resolution — so the assertion silently collapsed into a pure `elapsed < 2.0` bound (the floor was
+    also lowered), 4x TIGHTER than the 8.0s that had just flaked; on the exact cited CI failure
+    (`8.75 < 8.0`) it would still have gone red, by a wider margin. The root-cause attribution was
+    also magnitude-wrong: cProfile showed the git spawn was only 6-12% of elapsed, while
+    `_prime_bounded_discovery_caches_for_root`'s fsync-heavy discovery-cache I/O was ~93% — fsync on a
+    contended CI disk explains a multi-second spike; a process spawn does not. **Rule:** before
+    trusting a `max(baseline * N, floor)` assertion as genuinely relative, confirm the baseline is
+    measurably non-trivial; before "fixing" a timing flake, profile the actual cost breakdown rather
+    than fixing the first plausible-sounding noise source.
+20. **Prefer a STRUCTURAL, order-based assertion over ANY wall-clock form — even a ratio one — where
+    the invariant allows (same #739, extends point 14 above).** The eventual fix for the same
+    checkpoint-hot-path flake wraps `index_lock` plus the suspect expensive calls to emit ordered
+    ENTER/EXIT markers into a shared list, and asserts no expensive-work marker falls between the
+    lock's acquire and release markers. Marker ORDER is fixed by single-threaded sequential execution
+    — a loaded runner delays every marker uniformly without ever reordering them — so the assertion is
+    unflakeable BY CONSTRUCTION rather than by a wider tolerance. Verified green on windows-latest
+    py3.11 AND py3.12 (run `30130861182`), the exact platform/version combination that had flaked
+    twice. Point 14's Event-handshake concurrency pattern and this ENTER/EXIT marker-order pattern are
+    the same underlying principle (assert the CONTRACT, never wall-clock timing) applied to two
+    different invariant shapes — independence/mutual-exclusion there, ordering here.
 
 ---
 
@@ -659,6 +696,16 @@ was never observed to fail cannot be trusted to catch a regression.
       isolated tree copy, not a `PYTHONPATH` swap — `tests/conftest.py`'s `sys.path.insert` outranks
       `PYTHONPATH` and can silently re-point imports at the current worktree regardless (Part 1 point 9
       amendment).
+- [ ] A NEW test was observed to go RED against the pre-fix code — a green test alone does not prove
+      it guards the shape the fix actually repairs, not an already-excluded shape (Part 1 point 18).
+- [ ] Any `max(baseline * N, floor)` timing assertion has a baseline confirmed measurably non-trivial
+      (not silently collapsed below clock resolution into the floor alone), and any timing-flake fix
+      was profiled before being attributed to a specific cause (Part 1 point 19).
+- [ ] Where the invariant allows, a timing-sensitive test uses a STRUCTURAL/order-based assertion
+      rather than any wall-clock form, including a ratio (Part 1 point 20).
+- [ ] A claimed "docs-only"/"comment-only" follow-up commit was PROVEN behavior-neutral (e.g. an
+      `ast.dump()` comparison of both revisions), not just eyeballed from the diff — see
+      `tensor-grep-change-control` Part 6 for the technique.
 
 ---
 
@@ -682,7 +729,11 @@ the new-language/grammar test shape to Part 6 (tracking the Java/C#/PHP symbol-g
 (the shared-envelope payload-ratio governance-test trap plus its tmp-path-length platform sensitivity,
 and the self-gate-suite-subset-is-not-full-CI-matrix trap, both from #733/#734) and the PYTHONPATH/
 `conftest.py` red-green-baseline amendment to Part 1 point 9 (an independent gate's false "passed on
-main" result, caught the same day). Re-verify before relying on them:
+main" result, caught the same day). A third same-day pass **2026-07-24, release `v1.98.3`** added
+Part 1 points 18-20 (a test proving nothing until seen fail on the pre-fix baseline, #737; a ratio
+timing assertion degenerating to its floor below clock resolution plus the profile-before-fixing
+discipline, #739; preferring a structural order-based assertion over any wall-clock form, #739) and
+their checklist items. Re-verify before relying on them:
 
 | Claim | Re-verify command |
 |---|---|
@@ -710,6 +761,9 @@ main" result, caught the same day). Re-verify before relying on them:
 | Language-registry 5-seam checklist + `test_lang_registry.py` parity assertion (2026-07-24) | `grep -n "_imports_and_symbols_for_path\|_imports_with_lines_for_path\|_target_language_for_path\|_SUPPORTED_FILE_DEPENDENCY_LANGUAGES" src/tensor_grep/cli/repo_map.py`; `grep -n "test_spec_for_path_resolves_every_registered_suffix" tests/unit/test_lang_registry.py` |
 | Cold-path dogfood receipt (`_python_imports_and_symbols` walk-merge, 2026-07-24) | `grep -n "^def _python_imports_and_symbols" src/tensor_grep/cli/repo_map.py` |
 | `uv.lock` hand-splice check / `Dependency & License Audit` gate (2026-07-24) | `grep -n "Dependency & License Audit\|uv export" .github/workflows/audit.yml` |
+| Shape-9/9a/9b member-fn-ptr test split (Part 1 point 18, #737) | `grep -n "shape9a_filescope_member_fn_ptr_variable\|shape9b_inclass_member_fn_ptr_variable" tests/unit/test_lang_cpp.py` |
+| Structural ENTER/EXIT marker-order assertion (Part 1 point 20, #739) | `grep -n "def test_create_checkpoint_lock_does_not_wrap_expensive_work" tests/unit/test_index_lock_concurrency.py` |
+| Windows clock-resolution / degenerate-ratio incident (Part 1 point 19, #739) | `gh pr view 739 --json body -q .body` (search for "baseline_elapsed measured" and "cProfile") |
 
 If any command above no longer matches, update this skill in the same change — a wrong runbook is
 worse than none.
