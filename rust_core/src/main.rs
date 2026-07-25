@@ -1937,13 +1937,13 @@ fn plain_text_native_file_renders_identically(path: &Path) -> bool {
 static PLAIN_TEXT_NATIVE_PROBE_CACHE: OnceLock<Mutex<BTreeMap<PathBuf, bool>>> = OnceLock::new();
 
 fn plain_text_native_probe_file(path: &Path) -> bool {
-    let Ok(metadata) = fs::metadata(path) else {
+    let Ok(metadata) = std::fs::metadata(path) else {
         return false;
     };
     if !metadata.is_file() || metadata.len() > PLAIN_TEXT_NATIVE_MAX_PROBE_BYTES {
         return false;
     }
-    let Ok(bytes) = fs::read(path) else {
+    let Ok(bytes) = std::fs::read(path) else {
         return false;
     };
     // The bytes read MUST equal the size the OS reported. Measured on Linux (WSL):
@@ -5290,7 +5290,7 @@ mod tests {
     fn frontdoor_plain_text_eligibility_admits_only_the_proven_subset() {
         let corpus = tempfile::tempdir().unwrap();
         let file = corpus.path().join("a.txt");
-        fs::write(&file, "needle alpha\n").unwrap();
+        std::fs::write(&file, "needle alpha\n").unwrap();
         let file_arg = file.display().to_string();
         let dir_arg = corpus.path().display().to_string();
 
@@ -5371,21 +5371,21 @@ mod tests {
         // A BINARY file keeps rg: `rg` spells the notice `"\0"` while the native engine's
         // GOVERNED output contract spells it `"/0"` (see `native_can_serve_plain_text` note 5c).
         let binary = corpus.path().join("binary.bin");
-        fs::write(&binary, b"needle\0binary tail\n").unwrap();
+        std::fs::write(&binary, b"needle\0binary tail\n").unwrap();
         let binary_argv = with_flags(&[], &binary.display().to_string());
         assert!(!frontdoor_admits(&binary_argv, false));
 
         // A CRLF file keeps rg: the native plain sink strips the trailing `\r` while rg keeps it
         // (note 5a). This is the divergence that would have hit routine Windows searches.
         let crlf = corpus.path().join("crlf.txt");
-        fs::write(&crlf, b"needle alpha\r\nplain\r\n").unwrap();
+        std::fs::write(&crlf, b"needle alpha\r\nplain\r\n").unwrap();
         let crlf_argv = with_flags(&[], &crlf.display().to_string());
         assert!(!frontdoor_admits(&crlf_argv, false));
 
         // A NON-UTF-8 file keeps rg: the native plain sink is `Lossy` and substitutes U+FFFD
         // where rg writes the raw byte (note 5b) -- silent corruption.
         let latin1 = corpus.path().join("latin1.txt");
-        fs::write(&latin1, b"caf\xe9 needle here\n").unwrap();
+        std::fs::write(&latin1, b"caf\xe9 needle here\n").unwrap();
         let latin1_argv = with_flags(&[], &latin1.display().to_string());
         assert!(!frontdoor_admits(&latin1_argv, false));
 
@@ -5451,7 +5451,7 @@ mod tests {
     fn default_search_frontdoor_declines_admitted_plain_text_file_search() {
         let corpus = tempfile::tempdir().unwrap();
         let file = corpus.path().join("a.txt");
-        fs::write(&file, "needle alpha\n").unwrap();
+        std::fs::write(&file, "needle alpha\n").unwrap();
 
         let file_arg = file.display().to_string();
         let raw_args = os_argv(&["tg", "search", "needle", file_arg.as_str()]);
@@ -5467,7 +5467,7 @@ mod tests {
     fn default_search_frontdoor_still_passes_explicit_rg_format_through() {
         let corpus = tempfile::tempdir().unwrap();
         let file = corpus.path().join("a.txt");
-        fs::write(&file, "needle alpha\n").unwrap();
+        std::fs::write(&file, "needle alpha\n").unwrap();
 
         let file_arg = file.display().to_string();
         let raw_args = os_argv(&["tg", "search", "--format", "rg", "needle", file_arg.as_str()]);
@@ -5498,13 +5498,13 @@ mod tests {
     fn plain_text_native_adapters_agree_on_the_listed_shapes() {
         let corpus = tempfile::tempdir().unwrap();
         let file = corpus.path().join("a.txt");
-        fs::write(&file, "needle alpha\n").unwrap();
+        std::fs::write(&file, "needle alpha\n").unwrap();
         let crlf = corpus.path().join("crlf.txt");
-        fs::write(&crlf, b"needle alpha\r\n").unwrap();
+        std::fs::write(&crlf, b"needle alpha\r\n").unwrap();
         let latin1 = corpus.path().join("latin1.txt");
-        fs::write(&latin1, b"caf\xe9 needle here\n").unwrap();
+        std::fs::write(&latin1, b"caf\xe9 needle here\n").unwrap();
         let binary = corpus.path().join("binary.bin");
-        fs::write(&binary, b"needle\0tail\n").unwrap();
+        std::fs::write(&binary, b"needle\0tail\n").unwrap();
 
         let file_arg = file.display().to_string();
         let dir_arg = corpus.path().display().to_string();
@@ -5595,7 +5595,7 @@ mod tests {
     fn plain_text_native_frontdoor_is_never_looser_than_the_clap_gate() {
         let corpus = tempfile::tempdir().unwrap();
         let file = corpus.path().join("a.txt");
-        fs::write(&file, "needle alpha\n").unwrap();
+        std::fs::write(&file, "needle alpha\n").unwrap();
         let file_arg = file.display().to_string();
 
         let asymmetric: Vec<Vec<&str>> = vec![
