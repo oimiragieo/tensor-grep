@@ -513,6 +513,9 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     if args.no_config {
         command.arg("--no-config");
     }
+    for operand in root_ignore_file_args(args) {
+        command.arg(operand);
+    }
     if args.hidden {
         command.arg("--hidden");
     } else if args.no_hidden {
@@ -594,6 +597,90 @@ fn ripgrep_operand_args(args: &RipgrepSearchArgs) -> Vec<String> {
         operands.push("--".to_string());
         for path in &args.paths {
             operands.push(path.clone());
+        }
+    }
+    operands
+}
+
+/// Root-only ignore filenames tg treats as ignore sources, in ASCENDING precedence order
+/// (rg docs: "When specifying multiple ignore files, earlier files have lower precedence than
+/// later files") -- exactly mirroring the native engine's unconditional `add_ignore` trio
+/// (`native_search.rs::build_walk_builder` / `index.rs::collect_file_entries`, both root-only,
+/// not nested/parent-ascending).
+const ROOT_IGNORE_FILENAMES: [&str; 3] = [".ignore", ".gitignore", ".rgignore"];
+
+/// Task #264: real `rg`'s own automatic `.gitignore` discovery requires `require_git=true` by
+/// default, so a root `.gitignore` is silently a no-op OUTSIDE a git repository -- honored
+/// inside a git repo, invisible outside one. The native engine already closed this exact gap
+/// via an explicit `add_ignore` trio (#127, `native_search.rs:1480`, `index.rs:968-975`,
+/// deliberately NOT `require_git(false)` per `docs/BACKLOG.md:154` -- that would additionally
+/// pull in nested/global gitignores, diverging from tg's root-only scope). This mirrors that
+/// fix onto the real-`rg` passthrough path, which plain-text `tg search` uses whenever rg is
+/// available (`route_search`, `routing.rs:272-273`) -- without it, an output-format flag alone
+/// (`--json`/`--ndjson`, which route to the native engine) changed WHICH FILES WERE SEARCHED,
+/// silently, at exit 0. Root-only, exactly matching the native engine's scope: no parent-
+/// directory ascent. A live repro confirms this is a genuine no-op INSIDE a git repo (real rg
+/// already auto-discovers the same root `.gitignore` there, and an explicit `--ignore-file`
+/// pointed at the identical file produces byte-identical output) -- so this only changes
+/// behavior in the one cell that was actually broken.
+///
+/// NOT `--no-require-git`: real rg also ships a `--no-require-git` flag that would relax its
+/// OWN auto-discovery to respect `.gitignore` outside a git repo too -- a simpler one-flag fix.
+/// Rejected on purpose (same rationale as `index.rs`'s `#127` comment / `docs/BACKLOG.md:154`):
+/// it additionally pulls in NESTED and global gitignores via rg's normal parent-ascending
+/// discovery, diverging from tg's deliberately root-only scope that the native engine already
+/// committed to. `--ignore-file` pointed at exactly the root file is the root-only-equivalent.
+///
+/// SECURITY / correctness (verified live against the shipped rg 15.1.0, not assumed from docs
+/// alone): an explicit `--ignore-file <path>` is NOT cancelled by `--no-ignore` or
+/// `--no-ignore-vcs` -- rg's own `--no-ignore` help text says so verbatim ("This does not imply
+/// --no-ignore-files, since --ignore-file is specified explicitly as a command line argument"),
+/// and a live repro confirms `rg --ignore-file .gitignore --no-ignore-vcs` still excludes the
+/// ignored file. Blindly emitting `--ignore-file` here would therefore silently RESURRECT
+/// ignore rules the user explicitly asked to disable. Every flag that can disable root-ignore
+/// honoring is checked BEFORE emitting the matching `--ignore-file`, matching rg's own
+/// documented per-flag scope (also verified live):
+///   - `no_ignore`       -- matches the native engine's own single-flag gate; skip all three.
+///   - `no_ignore_vcs`   -- rg's docs restrict this to source-control ignore files ("only
+///     respect rules in .ignore or .rgignore"); skip only `.gitignore`.
+///   - `no_ignore_dot`   -- rg's docs restrict this to `.ignore`/`.rgignore` ("Don't respect
+///     filter rules from .ignore or .rgignore files ... does not impact
+///     whether filter rules from .gitignore files are respected"); skip
+///     only those two.
+///   - `no_ignore_files` -- rg cancels any `--ignore-file` regardless of argv order per its own
+///     docs ("even ones that come after this flag, are ignored"), verified
+///     live; short-circuited here too so nothing is emitted at all.
+///     `no_ignore_exclude`/`no_ignore_global`/`no_ignore_parent` are deliberately NOT checked:
+///     none of them govern a root `.ignore`/`.gitignore`/`.rgignore` file (they gate
+///     `.git/info/exclude`, the global git ignore config, and parent-directory ignore-file
+///     ascent respectively), so they have no bearing on what this function emits.
+fn root_ignore_file_args(args: &RipgrepSearchArgs) -> Vec<String> {
+    if args.no_ignore || args.no_ignore_files {
+        return Vec::new();
+    }
+
+    let dot_root = [".".to_string()];
+    let roots: &[String] = if args.paths.is_empty() {
+        &dot_root
+    } else {
+        &args.paths
+    };
+
+    let mut operands = Vec::new();
+    for root in roots {
+        let root_path = Path::new(root);
+        for ignore_name in ROOT_IGNORE_FILENAMES {
+            if ignore_name == ".gitignore" && args.no_ignore_vcs {
+                continue;
+            }
+            if ignore_name != ".gitignore" && args.no_ignore_dot {
+                continue;
+            }
+            let ignore_path = root_path.join(ignore_name);
+            if ignore_path.is_file() {
+                operands.push("--ignore-file".to_string());
+                operands.push(ignore_path.to_string_lossy().into_owned());
+            }
         }
     }
     operands
@@ -782,6 +869,165 @@ mod tests {
         args.paths = paths.into_iter().map(String::from).collect();
         args.files = files;
         args
+    }
+
+    // --- Task #264: root-ignore-file passthrough parity ------------------------------------
+
+    fn write_fixture(dir: &std::path::Path, name: &str, contents: &str) {
+        std::fs::write(dir.join(name), contents).unwrap();
+    }
+
+    #[test]
+    fn root_ignore_file_args_emits_ignore_file_for_root_gitignore() {
+        // The core #264 fix: a root .gitignore must be surfaced as `--ignore-file` so real rg
+        // honors it even outside a git repo (rg's own auto-discovery requires require_git).
+        let dir = tempfile::tempdir().unwrap();
+        write_fixture(dir.path(), ".gitignore", "skipme.txt\n");
+        let dir_path = dir.path().to_string_lossy().to_string();
+        let args = args_with(vec!["needle"], vec![&dir_path], false);
+
+        let operands = root_ignore_file_args(&args);
+
+        let flag_positions: Vec<usize> = operands
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| *a == "--ignore-file")
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(flag_positions.len(), 1, "exactly one ignore file present");
+        let value = &operands[flag_positions[0] + 1];
+        assert!(
+            value.ends_with(".gitignore") || value.contains(".gitignore"),
+            "value must point at the discovered .gitignore, got {value}"
+        );
+    }
+
+    #[test]
+    fn root_ignore_file_args_empty_when_no_ignore_files_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path().to_string_lossy().to_string();
+        let args = args_with(vec!["needle"], vec![&dir_path], false);
+
+        assert!(root_ignore_file_args(&args).is_empty());
+    }
+
+    #[test]
+    fn root_ignore_file_args_defaults_root_to_dot_when_paths_empty() {
+        // `command_ripgrep_args` leaves `paths` empty for an implicit search (rg then defaults
+        // to cwd) -- the probe must still look for a root ignore file relative to `.`, not
+        // silently skip because there is no explicit path.
+        let args = args_with(vec!["needle"], vec![], false);
+        // Must not panic on a missing/absent "." .gitignore; exact result depends on the test
+        // runner's cwd, so only hermetic safety is asserted here.
+        let _ = root_ignore_file_args(&args);
+    }
+
+    #[test]
+    fn root_ignore_file_args_no_ignore_suppresses_all_three() {
+        // Matches the native engine's own single-flag gate (`native_search.rs`'s `config.
+        // no_ignore` check): `--no-ignore` must fully disable root-ignore-file honoring, not
+        // just partially -- a footgun the task flagged explicitly (real rg's own --no-ignore
+        // does NOT cancel an explicit --ignore-file, verified live against rg 15.1.0, so this
+        // function must refuse to emit one at all rather than rely on rg to cancel it).
+        let dir = tempfile::tempdir().unwrap();
+        write_fixture(dir.path(), ".gitignore", "skipme.txt\n");
+        write_fixture(dir.path(), ".ignore", "skipme.txt\n");
+        write_fixture(dir.path(), ".rgignore", "skipme.txt\n");
+        let dir_path = dir.path().to_string_lossy().to_string();
+        let mut args = args_with(vec!["needle"], vec![&dir_path], false);
+        args.no_ignore = true;
+
+        assert!(root_ignore_file_args(&args).is_empty());
+    }
+
+    #[test]
+    fn root_ignore_file_args_no_ignore_files_suppresses_all_three() {
+        let dir = tempfile::tempdir().unwrap();
+        write_fixture(dir.path(), ".gitignore", "skipme.txt\n");
+        let dir_path = dir.path().to_string_lossy().to_string();
+        let mut args = args_with(vec!["needle"], vec![&dir_path], false);
+        args.no_ignore_files = true;
+
+        assert!(root_ignore_file_args(&args).is_empty());
+    }
+
+    #[test]
+    fn root_ignore_file_args_no_ignore_vcs_skips_only_gitignore() {
+        // Real rg's own docs restrict --no-ignore-vcs to source-control ignore files ("only
+        // respect rules in .ignore or .rgignore") -- .ignore/.rgignore must still be emitted.
+        let dir = tempfile::tempdir().unwrap();
+        write_fixture(dir.path(), ".gitignore", "skipme.txt\n");
+        write_fixture(dir.path(), ".ignore", "skipme.txt\n");
+        let dir_path = dir.path().to_string_lossy().to_string();
+        let mut args = args_with(vec!["needle"], vec![&dir_path], false);
+        args.no_ignore_vcs = true;
+
+        let operands = root_ignore_file_args(&args);
+        let values: Vec<&String> = operands
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| i % 2 == 1)
+            .map(|(_, v)| v)
+            .collect();
+        assert!(
+            !values.iter().any(|v| v.contains(".gitignore")),
+            "--no-ignore-vcs must suppress .gitignore: {values:?}"
+        );
+        assert!(
+            values.iter().any(|v| v.contains(".ignore")),
+            ".ignore must survive --no-ignore-vcs: {values:?}"
+        );
+    }
+
+    #[test]
+    fn root_ignore_file_args_no_ignore_dot_skips_ignore_and_rgignore_not_gitignore() {
+        // Real rg's own docs restrict --no-ignore-dot to .ignore/.rgignore ("does not impact
+        // whether filter rules from .gitignore files are respected") -- .gitignore must survive.
+        let dir = tempfile::tempdir().unwrap();
+        write_fixture(dir.path(), ".gitignore", "skipme.txt\n");
+        write_fixture(dir.path(), ".ignore", "skipme.txt\n");
+        write_fixture(dir.path(), ".rgignore", "skipme.txt\n");
+        let dir_path = dir.path().to_string_lossy().to_string();
+        let mut args = args_with(vec!["needle"], vec![&dir_path], false);
+        args.no_ignore_dot = true;
+
+        let operands = root_ignore_file_args(&args);
+        let values: Vec<&String> = operands
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| i % 2 == 1)
+            .map(|(_, v)| v)
+            .collect();
+        assert!(
+            values.iter().any(|v| v.contains(".gitignore")),
+            ".gitignore must survive --no-ignore-dot: {values:?}"
+        );
+        assert!(
+            !values.iter().any(|v| v.ends_with(".ignore")),
+            "--no-ignore-dot must suppress .ignore: {values:?}"
+        );
+        assert!(
+            !values.iter().any(|v| v.contains(".rgignore")),
+            "--no-ignore-dot must suppress .rgignore: {values:?}"
+        );
+    }
+
+    #[test]
+    fn root_ignore_file_args_covers_every_explicit_root() {
+        // Mirrors the native engine's own multi-root loop (`for root in roots` in
+        // `native_search.rs::build_walk_builder`): a multi-path search must check EVERY root,
+        // not just the first.
+        let dir_a = tempfile::tempdir().unwrap();
+        let dir_b = tempfile::tempdir().unwrap();
+        write_fixture(dir_a.path(), ".gitignore", "skipme.txt\n");
+        write_fixture(dir_b.path(), ".gitignore", "skipme.txt\n");
+        let path_a = dir_a.path().to_string_lossy().to_string();
+        let path_b = dir_b.path().to_string_lossy().to_string();
+        let args = args_with(vec!["needle"], vec![&path_a, &path_b], false);
+
+        let operands = root_ignore_file_args(&args);
+        let flag_count = operands.iter().filter(|a| *a == "--ignore-file").count();
+        assert_eq!(flag_count, 2, "both roots' .gitignore must be surfaced");
     }
 
     #[test]

@@ -79,6 +79,58 @@ fn fake_rg_script(dir: &Path, stdout_body: &str) -> PathBuf {
     output_script(dir, "fake-rg", stdout_body.as_bytes())
 }
 
+/// Task #264: a fake `rg` that inspects ONLY the values passed to `--ignore-file` flags (by
+/// filename suffix, so it is platform-separator-agnostic) rather than the whole argv -- built
+/// for testing `root_ignore_file_args` (`rg_passthrough.rs`) end-to-end through the real
+/// compiled `tg` binary without depending on a real system `rg` being on PATH in CI (mirrors
+/// this file's existing `fake_rg_asserting_args_script` pattern).
+fn fake_rg_asserting_ignore_file_values_script(
+    dir: &Path,
+    must_include_suffixes: &[&str],
+    must_exclude_suffixes: &[&str],
+    stdout_text: &str,
+) -> PathBuf {
+    let script = dir.join("fake-rg-ignorefile-assert.py");
+    let must_include_json = serde_json::to_string(must_include_suffixes).unwrap();
+    let must_exclude_json = serde_json::to_string(must_exclude_suffixes).unwrap();
+    let stdout_text_json = serde_json::to_string(stdout_text).unwrap();
+    fs::write(
+        &script,
+        format!(
+            r#"import json, sys
+argv = sys.argv[1:]
+ignore_file_values = [argv[i + 1] for i, a in enumerate(argv) if a == "--ignore-file" and i + 1 < len(argv)]
+must_include = json.loads({must_include_json:?})
+must_exclude = json.loads({must_exclude_json:?})
+missing = [s for s in must_include if not any(v.endswith(s) for v in ignore_file_values)]
+forbidden_present = [s for s in must_exclude if any(v.endswith(s) for v in ignore_file_values)]
+if missing or forbidden_present:
+    sys.stderr.write(
+        "ignore-file mismatch: values=" + repr(ignore_file_values)
+        + " missing=" + repr(missing) + " forbidden_present=" + repr(forbidden_present) + "\n"
+    )
+    raise SystemExit(2)
+sys.stdout.write(json.loads({stdout_text_json:?}))
+"#,
+        ),
+    )
+    .unwrap();
+
+    if cfg!(windows) {
+        write_executable_script(
+            dir,
+            "fake-rg-ignorefile-assert.cmd",
+            &format!("@echo off\r\npython \"{}\" %*\r\n", script.display()),
+        )
+    } else {
+        write_executable_script(
+            dir,
+            "fake-rg-ignorefile-assert",
+            &format!("#!/bin/sh\npython \"{}\" \"$@\"\n", script.display()),
+        )
+    }
+}
+
 fn fake_python_passthrough_script(dir: &Path, stdout_text: &str) -> PathBuf {
     output_script(
         dir,
@@ -2025,4 +2077,211 @@ fn test_repair_launcher_is_accepted_on_public_native_frontdoor() {
     );
     let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(payload["status"], "blocked_requires_allow_foreign_rename");
+}
+
+// --- Task #264: rg-passthrough root-ignore-file self-inconsistency ---------------------------
+//
+// Bug: `tg search NEEDLE .` in a NON-git directory containing a root `.gitignore` disagreed
+// with `tg search --json NEEDLE .` on which files were searched -- real `rg`'s own `.gitignore`
+// auto-discovery requires `require_git=true` by default, so it is silently a no-op outside a
+// git repo, while the native engine (which `--json` routes to) already closed that exact gap
+// for itself via an explicit `add_ignore` trio (#127). `--json`'s narrower, CORRECT file set is
+// the oracle here (per the recorded decision in `docs/BACKLOG.md:154` / `index.rs:968-975`): an
+// output-format flag must never change which files are searched.
+//
+// Four-cell test matrix (2026-07 task #264), each cell asserting on the real compiled `tg`
+// binary's ACTUAL constructed rg argv via `fake_rg_asserting_ignore_file_values_script`:
+//   1. non-git dir, plain text  -- PRE-FIX: FAILS -- `root_ignore_file_args` did not exist, so
+//      no `--ignore-file` was ever emitted here (the exact #264 bug repro). POST-FIX (this PR):
+//      `test_search_plain_text_adds_root_ignore_file_outside_git_repo` below passes --
+//      `--ignore-file <root>/.gitignore` is present. The sibling
+//      `test_search_plain_text_root_ignore_file_omitted_with_no_ignore_flag` pins the one
+//      legitimate escape hatch (`--no-ignore`) that must still omit it.
+//   2. non-git dir, --json      -- was already correct pre-fix (native engine's own add_ignore
+//      trio, #127); untouched by this PR (json/ndjson never reach rg_passthrough for a bare
+//      search, so there is no `--ignore-file` argv to assert on this cell in this file). The
+//      tests here (and the unit tests in `rg_passthrough.rs`) assert constructed argv only,
+//      never an actual search outcome; `tests/e2e/test_search_root_ignore_file_outcome.py`
+//      (Python, real compiled `tg` + real `rg`) is the one place that asserts the real matched
+//      file set for both cells 1 and 2 in one test. It skips when `rg` is not on PATH, AND when
+//      no compiled native `tg` binary is discoverable -- `python -m tensor_grep search` without
+//      one falls back to a separate, still-unfixed Python rg-passthrough
+//      (`bootstrap.py:1088`) that does not exercise this fix; see that test file's docstring.
+//   3. git repo, plain text     -- already agreed pre-fix (real rg auto-discovers root
+//      .gitignore inside a git repo); this PR adds a REDUNDANT `--ignore-file` there too
+//      (verified live against rg 15.1.0 to produce byte-identical results, see rg_passthrough.rs
+//      doc comment on `root_ignore_file_args`) -- asserted not to regress by
+//      `test_search_root_ignore_file_added_inside_git_repo_is_still_redundant_safe` below.
+//   4. git repo, --json         -- untouched (native engine, unaffected by this PR).
+
+#[test]
+fn test_search_plain_text_adds_root_ignore_file_outside_git_repo() {
+    // THE FIX: a non-git directory with a root `.gitignore` must surface it to real `rg` via
+    // `--ignore-file`, since rg's own auto-discovery of `.gitignore` requires a detected git
+    // repo. Pre-fix, `root_ignore_file_args` did not exist and this flag was never emitted --
+    // this is the exact repro from task #264's bug report.
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("a.txt"), "needle\n").unwrap();
+    fs::write(dir.path().join("skipme.txt"), "needle\n").unwrap();
+    fs::write(dir.path().join(".gitignore"), "skipme.txt\n").unwrap();
+    let fake_rg = fake_rg_asserting_ignore_file_values_script(
+        dir.path(),
+        &[".gitignore"],
+        &[],
+        "a.txt:needle\n",
+    );
+
+    let output = tg()
+        .current_dir(dir.path())
+        .args(["search", "needle", "."])
+        .env("TG_RG_PATH", &fake_rg)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn test_search_plain_text_root_ignore_file_omitted_with_no_ignore_flag() {
+    // Regression control: `--no-ignore` must fully suppress the new `--ignore-file` emission,
+    // not just leave it to real rg to cancel (rg's OWN `--no-ignore` does NOT cancel an explicit
+    // `--ignore-file` -- verified live against rg 15.1.0; if this test were removed/inverted, a
+    // user's explicit `--no-ignore` would be silently overridden by our own injected flag).
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("a.txt"), "needle\n").unwrap();
+    fs::write(dir.path().join("skipme.txt"), "needle\n").unwrap();
+    fs::write(dir.path().join(".gitignore"), "skipme.txt\n").unwrap();
+    let fake_rg = fake_rg_asserting_ignore_file_values_script(
+        dir.path(),
+        &[],
+        &[".gitignore"],
+        "a.txt:needle\nskipme.txt:needle\n",
+    );
+
+    let output = tg()
+        .current_dir(dir.path())
+        .args(["search", "--no-ignore", "needle", "."])
+        .env("TG_RG_PATH", &fake_rg)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn test_search_plain_text_no_ignore_vcs_skips_gitignore_but_keeps_dot_ignore() {
+    // Real rg's own docs restrict `--no-ignore-vcs` to source-control ignore files ("only
+    // respect rules in .ignore or .rgignore") -- an explicit `--ignore-file` for `.gitignore`
+    // must be withheld, but `.ignore` (non-VCS) must still be surfaced.
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join(".gitignore"), "skipme.txt\n").unwrap();
+    fs::write(dir.path().join(".ignore"), "skipme.txt\n").unwrap();
+    let fake_rg = fake_rg_asserting_ignore_file_values_script(
+        dir.path(),
+        &[".ignore"],
+        &[".gitignore"],
+        "a.txt:needle\n",
+    );
+
+    let output = tg()
+        .current_dir(dir.path())
+        .args(["search", "--no-ignore-vcs", "needle", "."])
+        .env("TG_RG_PATH", &fake_rg)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn test_search_plain_text_no_ignore_dot_skips_dot_ignore_but_keeps_gitignore() {
+    // Mirror of the above: real rg's own docs say `--no-ignore-dot` "does not impact whether
+    // filter rules from .gitignore files are respected" -- `.gitignore` must still be surfaced.
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join(".gitignore"), "skipme.txt\n").unwrap();
+    fs::write(dir.path().join(".ignore"), "skipme.txt\n").unwrap();
+    let fake_rg = fake_rg_asserting_ignore_file_values_script(
+        dir.path(),
+        &[".gitignore"],
+        &[".ignore"],
+        "a.txt:needle\n",
+    );
+
+    let output = tg()
+        .current_dir(dir.path())
+        .args(["search", "--no-ignore-dot", "needle", "."])
+        .env("TG_RG_PATH", &fake_rg)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn test_search_root_ignore_file_added_inside_git_repo_is_still_redundant_safe() {
+    // Cell 3 of the matrix: inside a real git repo, real rg ALREADY auto-discovers the root
+    // `.gitignore` on its own (git repo detected -> `require_git` satisfied), so this cell
+    // agreed with `--json` even pre-fix. Post-fix, `root_ignore_file_args` does not special-case
+    // git-repo-ness (verified live: an explicit `--ignore-file` pointed at the SAME already-
+    // auto-discovered `.gitignore` produces byte-identical rg output), so it still emits
+    // `--ignore-file` here too -- this test pins that the emission happens (no git-repo branch
+    // was silently added) and that the command still succeeds end-to-end.
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("a.txt"), "needle\n").unwrap();
+    fs::write(dir.path().join("skipme.txt"), "needle\n").unwrap();
+    fs::write(dir.path().join(".gitignore"), "skipme.txt\n").unwrap();
+    let init = Command::new("git")
+        .arg("init")
+        .arg("-q")
+        .current_dir(dir.path())
+        .output();
+    if init.is_err() {
+        eprintln!("skipping: git not available in this environment");
+        return;
+    }
+    let fake_rg = fake_rg_asserting_ignore_file_values_script(
+        dir.path(),
+        &[".gitignore"],
+        &[],
+        "a.txt:needle\n",
+    );
+
+    let output = tg()
+        .current_dir(dir.path())
+        .args(["search", "needle", "."])
+        .env("TG_RG_PATH", &fake_rg)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
