@@ -1,6 +1,162 @@
 # CHANGELOG
 
 
+## v1.98.15 (2026-07-25)
+
+### Bug Fixes
+
+- **find,codemap**: Report unreadable subtrees instead of silently dropping them (#284)
+  ([#761](https://github.com/oimiragieo/tensor-grep/pull/761),
+  [`d019f5c`](https://github.com/oimiragieo/tensor-grep/commit/d019f5ca0e2591476d737a80dc96101d80018780))
+
+* fix(find): report an unreadable subtree instead of silently dropping it
+
+`tg find` walked with `_iter_repo_files` but never passed `unreadable_hit=`, even though #276 slice
+  1 (c0c3404) added that parameter and wired it for the repo-map path. A permission-denied subtree
+  therefore vanished from the ranked corpus with no signal at all: exit 0, no `result_incomplete`,
+  no class.
+
+The inference hazard is the reason this is more than a missing kwarg. The same block classifies
+  find's OTHER causes correctly -- walk deadline, the --max-repo-files cap, the chunking deadline,
+  the chunk-count cap -- and its comment enumerated them as though the list were exhaustive. A
+  reader who saw four causes handled would reasonably infer coverage that did not exist. That is the
+  same fail-open-by-inference defect as the CONTRACTS.md deny-list fixed in d35d243, wearing
+  different clothes, so the comment is corrected too: the list now says explicitly that it is "the
+  causes wired so far", never "the causes that exist".
+
+The new branch is a separate `if`, never an `elif`: an unreadable subtree is an INDEPENDENT cause
+  that can co-occur with a budget cause. It is also the only cause here that is NOT
+  budget-remediable, which is exactly why it must be reported even when a budget cause already
+  claimed the single `incomplete_reason_class` field -- otherwise the reader gets WRONG-KNOB advice
+  ("raise --max-repo-files") with no hint that a bigger budget cannot make those paths readable.
+  Same shape as the entry-cap clarifier in `search_command`. `incomplete_reason_class` stays
+  first-cause-wins per this function's documented convention; the `incomplete_reasons` list carries
+  the full picture either way.
+
+TESTS assert the OUTCOME (exit code + envelope), never that the parameter is passed -- #744's argv
+  tests were all green while the fix did nothing: - the unreadable case -> exit 2,
+  `incomplete_reason_class == "unreadable_path"`, and the reason explicitly disclaims the budget
+  knob. - a CONTROL ARM on the same corpus with no denied directory -> exit 0, complete, field
+  absent. Without it the first assertion could pass for an unrelated reason, and a check that passes
+  in both arms is not verification.
+
+The fixture monkeypatches `os.scandir` to raise rather than using a real chmod/ACL. Task #281 burned
+  a probe on exactly that: the real ACL command silently failed to apply, leaving a readable
+  directory in the "hostile" arm -- which would have declared a live defect ABSENT. A patched raise
+  cannot silently no-op.
+
+Verified against the WORKTREE, not the stale venv: this repo's `.venv/site-packages` holds a
+  non-editable v1.76.11 copy that shadows `src/`, and a bare `python -c` resolves to it. Confirmed
+  in-session that pytest loads `src/tensor_grep/cli/main.py` (conftest's sys.path.insert outranks
+  it) and that the loaded file contains this change. RED is structurally certain: pre-fix `find`
+  contains zero occurrences of "unreadable" on `origin/main`.
+
+SCOPE: this is `tg find` only. `codemap.py:655,677`, `docs_coverage.py:202,416`
+
+and `inventory.py:231` have the same unwired parameter and are NOT fixed here -- tracked in #284,
+  which stays open. codemap already has a `partial`/ `partial_reason` channel with the same closed
+  vocabulary, so it is the natural next slice.
+
+Refs #284, #276.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* fix(codemap): honor the unreadable-path signal it was already being handed
+
+`build_repo_map` has emitted `rm["unreadable_paths"]` ({"count", "sample"}) since #276 slice 1
+  (c0c3404), and `tg orient` consumes it at orient_capsule.py:1159. `codemap` never read it -- so a
+  permission-denied subtree vanished from the map while `coverage.partial` reported False and the
+  map looked complete to both a human and an agent.
+
+No new walk plumbing: the signal already existed and was being dropped on the floor one consumer
+  over. That is the cheaper and more honest fix than threading `unreadable_hit=` through codemap's
+  two SEPARATE re-walks (`_universe_paths`, `_all_folder_paths`), which remain unwired and are noted
+  in #284.
+
+ORDERING IS LOAD-BEARING: the unreadable branch goes FIRST, ahead of both budget causes. Every other
+  branch in this chain is budget-remediable ("raise --max-repo-files" / "raise --deadline"); an
+  unreadable subtree is not, and no budget increase will ever make it readable. Ordering it last
+  would let a co-occurring cap claim the single `partial_reason` field and hand the reader the WRONG
+  KNOB -- the same defect #283 fixed on the MCP surface and #757 fixed on search. When BOTH fire,
+  the remediation names the un-fixable cause and still mentions the budget one, so the reader learns
+  that raising the budget widens coverage but leaves a hole.
+
+TESTS assert the OUTCOME (the coverage payload), never that a parameter is threaded -- #744's argv
+  tests were green while the fix did nothing: - unreadable subtree -> partial True, reason
+  "unreadable_path", and the remediation explicitly disclaims the budget knob. - CONTROL ARM: the
+  same fixture with nothing denied -> partial False, reason None. Without it the first assertion
+  could pass for any other partial cause.
+
+The fixture monkeypatches `os.scandir` rather than using a real chmod/ACL. Task #281 burned a probe
+  on exactly that: the ACL silently failed to apply, so the "hostile" arm was a readable directory
+  and the run would have declared a live defect ABSENT.
+
+Local: 87 passed (test_codemap.py + test_codemap_freshness.py + test_find_command.py), ruff check +
+  format --preview clean.
+
+* docs(contracts): record codemap's new unreadable_path partial_reason + exit-2 trigger
+
+The independent gate on #761 blocked on this, correctly. `docs/CONTRACTS.md` enumerated `tg
+  codemap`'s `partial_reason` vocabulary as `"deadline"` / `"scan_limit"` / `"self_verify"`. This PR
+  adds a FOURTH user-visible value and a new exit-2 trigger for `tg codemap`, so an agent branching
+  off the doc of record would not know `unreadable_path` exists.
+
+That is precisely the fail-open-by-inference defect this PR's own commit message argues against --
+  an enumeration that reads as exhaustive but is not -- sitting in the contract file. Repo rule is
+  that contract changes land in the same PR.
+
+Adds the value AND the property that actually matters to a caller: it is the ONE member of that set
+  which is NOT budget-remediable. `"scan_limit"` and `"deadline"` are both answered by raising a
+  limit; no `--max-repo-files` or `--deadline` value makes a permission-denied subtree readable.
+  Also records that when a budget cause fires alongside it, the remediation names the budget knob
+  while stating that raising it still leaves the hole, and cross-references the identical closed
+  vocabulary `incomplete_reason_class` uses on the search routes.
+
+Closes with the same anti-inference clause used elsewhere in this PR: do NOT read the list as closed
+  against future causes -- it is the set wired so far.
+
+* fix(repo-map): emit unreadable_paths from the INCREMENTAL builder too
+
+`build_repo_map_incremental` returns a payload of the SAME SHAPE as `build_repo_map`, so a consumer
+  cannot tell which one produced it -- but it never passed `unreadable_hit=`, which means it could
+  never emit `unreadable_paths` AT ALL. Every consumer reached through the incremental path kept
+  getting exactly the silent lie the full builder stopped telling in #276 slice 1 (c0c3404), and `tg
+  orient` already reads that key at orient_capsule.py:1159.
+
+The independent gate on #761 flagged this as the highest-value remaining site in #284, and it was
+  right: the other unwired callers degrade a single command, this one silently forks the contract
+  between two builders that are supposed to be interchangeable.
+
+Same flag, same emission convention, same placement OUTSIDE the `scan_limit` block as the full
+  builder uses -- an unreadable path is not a budget cap, and folding it in would hand the reader
+  wrong-knob advice ("raise --max-repo-files") for a cause no budget can fix. Omitted entirely on a
+  clean walk, so a complete incremental map stays byte-identical.
+
+TESTS use the strongest oracle this module already trusts -- the two builders must AGREE -- rather
+  than merely asserting a key exists: - denied subtree -> `incremental["unreadable_paths"] ==
+  full["unreadable_paths"]`, with a precondition that the full map really did record >=1 unreadable
+  path (so the assertion cannot pass vacuously against two empty values). - CONTROL ARM: a clean
+  walk emits the key on NEITHER builder. Without it the first test would still pass for a builder
+  that emitted the key unconditionally.
+
+The fixture monkeypatches `os.scandir` rather than using a real chmod/ACL -- #281 proved an ACL
+  fixture can silently fail to apply, leaving a readable directory in the "hostile" arm and
+  declaring a live defect ABSENT.
+
+RED is structurally certain: `origin/main`'s `build_repo_map_incremental` body contains zero
+  occurrences of "unreadable", so the equivalence assertion cannot have held before this change.
+
+Local: 36 passed (test_incremental_refresh.py + test_orient_unreadable_path.py +
+  test_repo_map_cache.py), ruff check + `ruff format --check --preview` clean.
+
+STILL OPEN on #284: session_store.py:540 (MCP-reachable), codemap.py:655/677,
+  docs_coverage.py:202/416, inventory.py:231, repo_map.py:1584/4276/10546/11140/11379.
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.98.14 (2026-07-25)
 
 ### Bug Fixes
