@@ -538,11 +538,30 @@ jobs:
       # (default features) never compiles that module at all. The result was a blind spot where
       # the entire gpu_native test module could fail to compile and no CI job would notice.
       # This job is the ONLY oracle for cuda-gated code; `--all-targets` makes it cover the tests
-      # it is the only possible oracle for. It still does not RUN them (checking is not running) --
-      # executing cuda-gated tests needs a cargo test with the feature enabled, tracked separately.
+      # it is the only possible oracle for.
       - name: cargo check --features cuda
         working-directory: rust_core
         run: cargo check --features cuda --all-targets
+
+      # Task #279 -- checking is not RUNNING. The step above proves the cuda-gated tests COMPILE;
+      # it never executes a single assertion, so `gpu_native.rs`'s test module has always been
+      # compile-time protection only.
+      #
+      # Whether these can run at all on a GPU-less runner was genuinely unknown and NOT answerable
+      # locally (CPU-SAFE forbids cargo here, so only CI can say). The evidence said "probably":
+      # `cuda = ["dep:cudarc"]`, `cudarc 0.19.3` with feature `cuda-13010`, and there is NO
+      # `build.rs`, so no custom link directives -- cudarc dynamically loads the driver rather than
+      # linking against it. The gpu_native test module also imports only CPU-side helpers
+      # (`line_matches_for_file`, walk-ceiling checks, capacity/PTX-path math), no device init.
+      #
+      # This step is the experiment. If it links and passes, cuda-gated tests are executed for the
+      # first time and the 4 lossless-emitter regression tests from #273/#754 become real gates
+      # instead of type-checks. If it fails to LINK on a runner with no CUDA toolkit, that is the
+      # answer too -- revert this step and replace it with a comment recording the run id, so the
+      # limitation is documented where the next person will look instead of rediscovered.
+      - name: cargo test --features cuda
+        working-directory: rust_core
+        run: cargo test --features cuda
 
   search-golden-parity:
     name: search-golden-parity (windows-latest)
