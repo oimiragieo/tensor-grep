@@ -8257,9 +8257,9 @@ fn emit_multi_pattern_native_results(
             matches,
         )?;
     } else if options.count {
-        emit_count_search_matches(options.path, &matches);
+        emit_count_search_matches(options.path, &matches)?;
     } else {
-        emit_plain_search_matches_with_line_number(options.path, &matches, options.line_number);
+        emit_plain_search_matches_with_line_number(options.path, &matches, options.line_number)?;
     }
 
     if !has_matches {
@@ -8946,7 +8946,7 @@ fn run_index_query(
         // prevent. emit_count_search_matches omits zero-count files, byte-matching `rg -c` (the
         // rg-compat target); the native CPU engine's separate grep-style zero-count emission is its
         // own pre-existing divergence, deliberately not replicated on the index fast path.
-        emit_count_search_matches(request.primary_path(), &matches);
+        emit_count_search_matches(request.primary_path(), &matches)?;
         // fold-in (a): rg exit-parity. `rg -c` (and the native CPU / multi-pattern engines) exit 1
         // on zero matches; run_index_query never did, so `--index --count` on a no-match query
         // exited 0 -- indistinguishable from a successful search. `matches.is_empty()` is
@@ -8967,7 +8967,7 @@ fn run_index_query(
         request.primary_path(),
         &matches,
         args.line_number && !args.no_line_number,
-    );
+    )?;
 
     // fold-in (a): see the --count arm above for why this matches native/GPU exit-parity.
     if matches.is_empty() {
@@ -12432,9 +12432,9 @@ fn execute_gpu_native_route(
             gpu_native_match_json_entries(&stats),
         )?;
     } else if params.count {
-        emit_gpu_native_count_results(params, &stats);
+        emit_gpu_native_count_results(params, &stats)?;
     } else {
-        emit_gpu_native_plain_results(params, &stats);
+        emit_gpu_native_plain_results(params, &stats)?;
     }
 
     if stats.total_matches == 0 {
@@ -12997,11 +12997,16 @@ fn unique_line_matches(matches: &[SearchMatchJson]) -> Vec<SearchMatchJson> {
 /// multi-pattern native path -- prints byte-for-byte instead of via a lossy `Option<String>`
 /// unwrap (task #266: the same byte-fidelity guarantee `append_standard_match_bytes` gives the
 /// single-pattern native emitter, extended to this shared plain-text writer).
+///
+/// A closed output pipe (`tg ... | head -1`) is a normal, expected termination and returns
+/// `Ok(())` quietly; any OTHER write failure (disk full, I/O error) is a real error and is
+/// propagated rather than silently swallowed. `emit_count_search_matches` below applies the
+/// identical rule, so the two plain-text emitters no longer disagree on write-failure behavior.
 fn emit_plain_search_matches_with_line_number(
     path: &str,
     matches: &[SearchMatchJson],
     line_number: bool,
-) {
+) -> anyhow::Result<()> {
     let unique = unique_line_matches(matches);
     let with_filename = unique
         .iter()
@@ -13016,23 +13021,34 @@ fn emit_plain_search_matches_with_line_number(
         let mut line = Vec::with_capacity(matched.raw.len() + matched.file.len() + 32);
         match (with_filename, line_number) {
             (true, true) => {
-                let _ = write!(line, "{}:{}:", matched.file, matched.line);
+                write!(line, "{}:{}:", matched.file, matched.line)?;
             }
             (true, false) => {
-                let _ = write!(line, "{}:", matched.file);
+                write!(line, "{}:", matched.file)?;
             }
             (false, true) => {
-                let _ = write!(line, "{}:", matched.line);
+                write!(line, "{}:", matched.line)?;
             }
             (false, false) => {}
         }
         line.extend_from_slice(&matched.raw);
         line.push(b'\n');
-        let _ = stdout.write_all(&line);
+        if let Err(err) = stdout.write_all(&line) {
+            if err.kind() == io::ErrorKind::BrokenPipe {
+                return Ok(());
+            }
+            return Err(err.into());
+        }
     }
+    Ok(())
 }
 
-fn emit_count_search_matches(path: &str, matches: &[SearchMatchJson]) {
+/// Same closed-pipe-is-quiet / other-errors-propagate rule as
+/// `emit_plain_search_matches_with_line_number` above (task #266 cleanup): this used to be bare
+/// `println!`, which PANICS on any write failure (the stdlib `print!`/`println!` macros
+/// `.expect(...)` internally) -- including the routine closed-pipe case every other emitter in
+/// this file already handles quietly.
+fn emit_count_search_matches(path: &str, matches: &[SearchMatchJson]) -> anyhow::Result<()> {
     let unique = unique_line_matches(matches);
     let with_filename = unique
         .iter()
@@ -13046,13 +13062,22 @@ fn emit_count_search_matches(path: &str, matches: &[SearchMatchJson]) {
         *counts.entry(matched.file).or_default() += 1;
     }
 
-    if with_filename {
-        for (file, count) in counts {
-            println!("{file}:{count}");
-        }
+    let stdout = io::stdout();
+    let mut stdout = stdout.lock();
+    let write_result = if with_filename {
+        counts
+            .into_iter()
+            .try_for_each(|(file, count)| writeln!(stdout, "{file}:{count}"))
     } else {
-        println!("{}", counts.values().copied().next().unwrap_or(0));
+        writeln!(stdout, "{}", counts.values().copied().next().unwrap_or(0))
+    };
+    if let Err(err) = write_result {
+        if err.kind() == io::ErrorKind::BrokenPipe {
+            return Ok(());
+        }
+        return Err(err.into());
     }
+    Ok(())
 }
 
 #[cfg(feature = "cuda")]
@@ -13128,19 +13153,25 @@ fn emit_gpu_native_json_results(
 }
 
 #[cfg(feature = "cuda")]
-fn emit_gpu_native_plain_results(params: &GpuSearchParams<'_>, stats: &GpuNativeSearchStats) {
+fn emit_gpu_native_plain_results(
+    params: &GpuSearchParams<'_>,
+    stats: &GpuNativeSearchStats,
+) -> anyhow::Result<()> {
     // Task #131 F3: this used to call the now-removed `emit_plain_search_matches`, which
     // hardcoded `line_number: true` regardless of `-N`/`--no-line-number` -- the double bug
     // (`GpuSearchParams::line_number` was ALSO hardcoded at every construction site until this
     // same fix). Thread the real, derived value through instead.
     let matches = gpu_native_match_json_entries(stats);
-    emit_plain_search_matches_with_line_number(params.path, &matches, params.line_number);
+    emit_plain_search_matches_with_line_number(params.path, &matches, params.line_number)
 }
 
 #[cfg(feature = "cuda")]
-fn emit_gpu_native_count_results(params: &GpuSearchParams<'_>, stats: &GpuNativeSearchStats) {
+fn emit_gpu_native_count_results(
+    params: &GpuSearchParams<'_>,
+    stats: &GpuNativeSearchStats,
+) -> anyhow::Result<()> {
     let matches = gpu_native_match_json_entries(stats);
-    emit_count_search_matches(params.path, &matches);
+    emit_count_search_matches(params.path, &matches)
 }
 
 #[cfg(feature = "cuda")]

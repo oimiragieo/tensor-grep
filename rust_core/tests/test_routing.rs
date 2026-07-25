@@ -1287,6 +1287,65 @@ fn test_search_single_binary_file_emits_stderr_warning_and_exit_zero() {
 }
 
 #[test]
+fn test_search_multiple_binary_files_emit_distinguishable_per_file_stderr_warnings() {
+    // task #263's first defect: `emit_binary_match_warning` used to accept `path` and never use
+    // it, so multiple binary files hit during one walk produced IDENTICAL, unattributed notices
+    // -- there was no way to tell which file each line was about. Verified against `rg.exe`
+    // 15.1.0: `rg needle bin.dat bin2.dat` prefixes each notice with `"<path>: "` (with_filename
+    // is implied whenever more than one file is in play, or -- as here -- a directory is
+    // walked). Deliberately does not assert an exact absolute-path string (that varies by
+    // platform/temp-dir layout); it asserts the actual claim task #263 fixes: the two files'
+    // notices are no longer identical, and each is attributable to its own filename.
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("a.bin"), b"\0ERROR hidden a\0").unwrap();
+    fs::write(dir.path().join("b.bin"), b"\0ERROR hidden b\0").unwrap();
+
+    let output = tg()
+        .arg("search")
+        .arg("--cpu")
+        .arg("--fixed-strings")
+        .arg("ERROR")
+        .arg(dir.path())
+        .env("TG_DISABLE_RG", "1")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let lines = stdout.lines().collect::<Vec<_>>();
+    assert_eq!(
+        lines.len(),
+        2,
+        "expected one notice per binary file, got stdout={stdout}"
+    );
+    for line in &lines {
+        assert!(
+            line.contains("binary file matches (found \"\\0\" byte around offset 0)"),
+            "line={line}"
+        );
+    }
+    assert_ne!(
+        lines[0], lines[1],
+        "the two notices must be distinguishable (task #263), got stdout={stdout}"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("a.bin: ")),
+        "expected a notice attributed to a.bin, got stdout={stdout}"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("b.bin: ")),
+        "expected a notice attributed to b.bin, got stdout={stdout}"
+    );
+}
+
+#[test]
 fn test_routing_force_cpu_routes_to_native_search_even_when_rg_is_available() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());

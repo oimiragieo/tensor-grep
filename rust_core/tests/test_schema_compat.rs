@@ -403,7 +403,15 @@ struct SymbolBlastRadiusExample {
 struct SearchMatch {
     file: String,
     line: usize,
-    text: String,
+    // task #266: `text` is present for valid-UTF-8 content, `bytes` (base64) otherwise -- never
+    // both, never neither. `#[serde(default)]` on both keeps every existing (valid-UTF-8-only)
+    // example fixture deserializing unchanged (`bytes` simply absent), while `deny_unknown_
+    // fields` above would otherwise reject a future fixture that legitimately uses `bytes`
+    // instead of `text`.
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    bytes: Option<String>,
     #[serde(default)]
     range: Option<SearchRangeExample>,
     #[serde(default, rename = "metaVariables")]
@@ -696,7 +704,15 @@ struct SearchNdjsonExample {
     path: String,
     file: String,
     line: usize,
-    text: String,
+    // task #266: `text` is present for valid-UTF-8 content, `bytes` (base64) otherwise -- never
+    // both, never neither. `#[serde(default)]` on both keeps every existing (valid-UTF-8-only)
+    // example fixture deserializing unchanged (`bytes` simply absent), while `deny_unknown_
+    // fields` above would otherwise reject a future fixture that legitimately uses `bytes`
+    // instead of `text`.
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    bytes: Option<String>,
     pattern_id: Option<usize>,
     pattern_text: Option<String>,
 }
@@ -1204,7 +1220,13 @@ fn test_docs_examples_include_parseable_ndjson_stream() {
         assert!(!row.path.is_empty(), "{} row missing path", path.display());
         assert!(!row.file.is_empty(), "{} row missing file", path.display());
         assert!(row.line > 0, "{} row line must be 1-based", path.display());
-        assert!(!row.text.is_empty(), "{} row missing text", path.display());
+        // task #266: exactly one of `text` (valid UTF-8) / `bytes` (base64 fallback) is present.
+        assert!(
+            row.text.as_deref().is_some_and(|text| !text.is_empty())
+                != row.bytes.as_deref().is_some_and(|bytes| !bytes.is_empty()),
+            "{} row must have exactly one of `text`/`bytes` populated",
+            path.display()
+        );
         if let Some(pattern_text) = row.pattern_text {
             assert!(
                 !pattern_text.is_empty(),
@@ -1265,9 +1287,14 @@ fn assert_search_example(path: &Path) {
             "{} match line must be 1-based",
             path.display()
         );
+        // task #266: exactly one of `text` (valid UTF-8) / `bytes` (base64 fallback) is present.
         assert!(
-            !matched.text.is_empty(),
-            "{} match missing text",
+            matched.text.as_deref().is_some_and(|text| !text.is_empty())
+                != matched
+                    .bytes
+                    .as_deref()
+                    .is_some_and(|bytes| !bytes.is_empty()),
+            "{} match must have exactly one of `text`/`bytes` populated",
             path.display()
         );
         if let Some(range) = &matched.range {
