@@ -1,6 +1,197 @@
 # CHANGELOG
 
 
+## v1.98.5 (2026-07-25)
+
+### Bug Fixes
+
+- **search**: Crlf/lf de-blinded parity oracles + fix the real corruption bug they found
+  ([#743](https://github.com/oimiragieo/tensor-grep/pull/743),
+  [`ba4eb39`](https://github.com/oimiragieo/tensor-grep/commit/ba4eb39de48c7c4bd2a82f25449c836cf9c68906))
+
+* fix(tests): compare raw bytes in rg/tg parity oracles, not text=True-lossy strings (#262)
+
+The parity/launcher-comparison suites compared engine output after applying the SAME lossy
+  transformation to both arms: subprocess `text=True` (Windows universal-newlines silently rewrites
+  \r\n -> \n on capture) plus, in some suites, an explicit blanket `text.replace("\r\n", "\n")` and
+  `errors="replace"` (invalid UTF-8 -> U+FFFD on both sides). A genuine divergence between rg and tg
+  -- or between launchers -- cancelled out under an identical lossy transform and read as parity
+  even though it wasn't.
+
+Adds tests/helpers/byte_parity.py: a shared, unit-testable raw-bytes comparison helper (run_bytes,
+  assert_bytes_equal, decode_for_display, split_lines_bytes/ split_lines_preserve_cr) with no tg/rg
+  dependency, plus tests/unit/test_byte_parity_helper.py proving the bidirectional gate -- the new
+  comparison REJECTS a CRLF-vs-LF pair and a raw-invalid-UTF8-vs-U+FFFD pair that the OLD (kept,
+  explicitly-named) lossy logic ACCEPTED, and still ACCEPTS genuinely identical bytes.
+
+Converts the subprocess captures and comparisons in the parity/oracle suites to raw bytes (or a
+  narrow strict-decode where full call sites reuse existing string logic): test_rg_parity_edges.py,
+  tests/helpers/rg_parity.py (feeds test_rg_parity_matrix.py and test_multi_pattern_native.py),
+  test_ripgrep_parity.py, test_vs_ripgrep.py, test_multi_pattern_native.py,
+  test_output_golden_contract.py, test_routing_parity.py (edited only -- never executed, per the
+  CPU-safe no-Rust-compile constraint), and test_cli_search.py.
+
+De-blinding surfaced a REAL pre-existing divergence, left intentionally red (not xfailed, not
+  re-normalized) and documented in both test files: on Windows, `tg search --cpu` (the
+  Python/native, non-rg-routed backend) emits `\r\n` for a matched line whose source file and every
+  other engine (real `rg`, tg's own rg-routed path) emit plain `\n`. Reproduced independently in
+  test_multi_pattern_native.py::test_multi_e_native_reports_both_match_line_once and
+  test_output_golden_contract.py's cpu_multi_file/cpu_single_file cases. Fixing the backend itself
+  is out of this PR's scope (src/tensor_grep/ is off-limits; PR #742 owns it).
+
+Also pins several corpus fixtures to `newline="\n"` where `Path.write_text()`'s platform default
+  (CRLF on Windows) was silently baked into a hard-coded LF-only golden literal -- a test-fixture
+  determinism fix, not a new normalization on the comparison side.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* fix(search): stop corrupting CRLF/LF line endings in tg's own search output (#262)
+
+Root cause #1 (write side): bootstrap.py::_force_utf8_streams reconfigured sys.stdout/sys.stderr for
+  encoding only, never newline. A plain TextIOWrapper opened with newline=None (the default)
+  silently rewrites every '\n' a formatter writes to os.linesep on Windows -- corrupting an LF-only
+  matched line into CRLF. rg's own subprocess output and native-binary delegation bypass this (their
+  bytes are inherited/ streamed raw, never routed through a Python text stream), which is why only
+  the CPU/ native-Python search path showed it. Now pins newline="\n" unconditionally, even when the
+  stream is already UTF-8 (the old early-continue skipped both fixes together).
+
+Root cause #2 (read/processing side, independent of #1): every backend's own trailing-terminator
+  strip was `.rstrip("\n\r")` / `.rstrip("\r\n")`, which removes ANY trailing run of \r/\n in any
+  order -- eating a genuine trailing \r from a CRLF source line's own content (Rust's line-splitter
+  and rg's own --json "lines" field both include that \r; verified directly against rg.exe). Fixing
+  #1 alone would have left a CRLF file's own \r silently stripped by CPUBackend/RustCoreBackend, and
+  rg's --json "text" field losing its \r relative to rg's own raw --json output. Added
+  core/result.py::strip_line_terminator (removesuffix("\n") only) as the single shared fix, wired
+  into cpu_backend.py (6 call sites feeding output; the fallback literal-prefilter path also needed
+  a read-side fix -- Path.read_text().splitlines() silently ate a CRLF file's \r before matching
+  even began), rust_backend.py, and ripgrep_backend.py's --json/context parsing.
+
+Both directions are now asserted: LF file -> LF out, CRLF file -> CRLF out (round-tripped against
+  real rg.exe). New/updated tests: core/result.py::strip_line_terminator unit tests
+  (tests/unit/test_result.py), CPUBackend rust-match-set bidirectional tests
+  (tests/unit/test_cpu_backend.py), e2e CRLF round-trip tests in test_multi_pattern_native.py and
+  test_output_golden_contract.py, and several test fixtures across
+  cpu_backend/multi_pattern_native/output_golden_contract/cross_backend/ harness_adoption pinned to
+  newline="\n" where Path.write_text()'s Windows CRLF default had baked a \r into a hard-coded
+  LF-only golden literal.
+
+Also converts tests/integration/test_cross_backend.py and test_harness_adoption.py off `text=True`
+  (same oracle-blindness class as #262's original scope): text=True would have made all four
+  backends being cross-compared (native CPU/GPU/TrigramIndex/rg-passthrough) come out uniformly
+  \r-less even if only some of them actually preserved a CRLF file's own \r, masking exactly this
+  class of divergence in that suite too.
+
+* fix(search): close StringZilla CRLF gap + version the persisted line-index caches (#262)
+
+Independent-gate follow-up on the CRLF/LF fix: 2 blocking findings, both confirmed real and now
+  fixed + verified.
+
+BLOCKING 1 -- StringZillaBackend was never swept for the CRLF-corruption bug. The earlier sweep
+  grepped for the symptom (`.rstrip("\n\r")`) and fixed every hit; StringZilla has the same defect
+  through a DIFFERENT mechanism the grep couldn't see: `open(file_path, encoding="utf-8")` (a
+  universal-newlines READ) in `_load_searchable_text`, plus `content.splitlines()` in
+  `_search_with_index` and `sz.Str.splitlines()` in `search()`. Reachable whenever
+  `-F`/`--fixed-strings` routes to StringZilla (the `dev`/`bench` extras -- CI and every dev
+  install). Fixed by mirroring cpu_backend.py's raw-bytes-read + bare-`\n`-split pattern via a new
+  shared `core/result.py::split_source_lines` helper (also used to de-duplicate cpu_backend.py's own
+  inline version of the same logic). `search()` no longer needs `sz.Str()` for line-splitting;
+  `import stringzilla as sz` is kept only for its availability-gate side effect.
+
+BLOCKING 2 -- both persisted line-index caches (`cpu_backend.py`'s literal-prefilter index and
+  `stringzilla_backend.py`'s trigram index) keyed staleness ONLY on `(mtime_ns, size)`, which proves
+  a file's bytes are unchanged but cannot prove the *interpretation* of those bytes is still
+  current. A cache written by pre-fix code silently defeats this fix and gets served forever (same
+  file, unchanged mtime/size) -- strictly worse than pre-fix, which was byte-identical to `rg` by
+  cancellation with the (now-fixed) stdout bug. Fixed by adding a `format_version` field to both
+  payloads and rejecting (forcing a transparent recompute + on-disk overwrite) on any mismatch or
+  absence.
+
+Non-blocking items also closed: - tests/helpers/rg_parity.py's JSON leg
+  (`_normalize_machine_output`/ `_normalize_rg_json_events`) still did `.rstrip("\r\n")` on the
+  "text" field for BOTH the tg and rg arms -- the exact both-arms-lossy shape removed from the
+  raw-byte comparators. Now uses the shared `strip_line_terminator`. - New regression coverage for
+  the previously-uncovered pure-Python literal-prefilter read-side fix (the largest behavior change
+  in the original PR): CRLF round-trip +ground -truth-verified-against-rg.exe
+  bare-CR-is-not-a-line-break cases, for both CPUBackend and StringZillaBackend. -
+  `bootstrap.py::_force_utf8_streams` now calls `reconfigure()` on streams previously skipped
+  entirely (already-UTF-8 streams); a stream whose `reconfigure()` implements only the narrower
+  pre-#262 `encoding=`/`errors=` signature raises TypeError on the new `newline=` kwarg. Widened the
+  except clause with a narrower retry (encoding fix still lands even where the newline fix cannot)
+  instead of letting it crash startup.
+
+All fixes verified empirically against real `rg.exe` and the exact repro shapes from the independent
+  gate (CRLF round-trip, bare-CR ground truth, stale-cache simulation, TypeError injection) -- not
+  just "tests pass": each new/changed test was confirmed to fail on the pre-fix code path first.
+
+* fix(test): de-flake the cache-versioning tests + version cache PATHS, not just payloads (#262)
+
+Second independent-gate follow-up. CI (all 6 matrix legs, including test-gpu-nvidia) was red on
+  exactly 3 tests, all in test_cpu_backend.py: test_rejects_stale_pre_fix_persistent_ literal_index,
+  test_literal_prefilter_path_preserves_crlf_source_line, and test_literal_
+  prefilter_path_does_not_treat_a_bare_cr_as_a_line_break.
+
+Root cause: `CPUBackend.search()` tries the Rust-delegated fast path first and only falls through to
+  the pure-Python literal-prefilter path (where the cache-versioning fix lives) on genuine Rust
+  absence/failure. All three tests asserted `routing_reason` starts with
+  `cpu_python_regex_prefilter` without forcing that fallback -- they passed only because the dev
+  sandbox they were authored and verified in happens to lack a compiled `rust_core` extension. Every
+  CI leg builds it, so the same input answers via `cpu_rust_regex` instead and never touches the
+  code under test: the cache-versioning fix for the CPU backend shipped with zero effective CI
+  coverage. Fixed by wrapping each `backend.search(...)` call in `patch.dict("sys.modules",
+  {"tensor_grep.rust_core": None})`, the exact convention this file already uses elsewhere
+  (`test_should_fail_closed_when_context_search_cannot_use_rust` and 4 other sites) to force the
+  fallback deterministically regardless of what's installed. Verified failing before this fix and
+  passing after, in BOTH conditions locally (rust_core genuinely absent, and with a copied-in .pyd
+  making it importable -- no compilation involved, just confirming the patch.dict forces the branch
+  either way).
+
+Also closes the FORWARD-direction cache corruption an adversarial hunt found: with only a
+  payload-level "format_version" field, an OLDER tg install sharing a cache dir with a NEWER one has
+  no idea that field exists and reads a v2 payload verbatim -- observed end-to-end (shared cache
+  dir, CRLF file, rg off PATH) to double a CRLF line's `\r` under the pre-fix `newline=None` stdout
+  bug, worse than either version alone. Fixed by baking the format version into the cache PATH
+  itself (`{digest}-v{VERSION}.json`) in both CPUBackend._get_prefilter_cache_path and
+  StringZillaBackend._get_index_cache_path, so the two versions are physically unable to share a
+  file in either read direction.
+
+Non-blocking cleanup: tests/helpers/byte_parity.py::split_lines_preserve_cr was a byte-identical
+  second implementation of core/result.py::split_source_lines -- re-exported under its existing
+  public name instead of reimplemented. Documented (not fixed, to avoid destabilizing a comparator
+  used by every test_rg_parity_matrix.py row) a pre-existing, narrower both-arms-lossy gap:
+  `_normalize_line`'s trailing backslash-to-forward-slash replacement runs against a whole line, not
+  a parsed-out path prefix, so a real backslash divergence inside matched TEXT content (not the
+  file-path prefix) would still cancel out on both arms -- present in tests/helpers/rg_parity.py,
+  test_rg_parity_edges.py, and test_multi_pattern_native.py alike; not observed to mask a real
+  failure (all three corpora use plain ASCII content with no backslashes), but flagged honestly as a
+  structural gap rather than silently left unexplained.
+
+* test(cache): assert the versioned cache-PATH shape, not just the payload field (#262)
+
+Third independent-gate follow-up (0 blocking on 0cbf53e; this closes the one non-blocking item). The
+  new cache-PATH versioning had zero test coverage: reverting both filename builders to the pre-#262
+  `{digest}.json` shape in a scratch copy left the full suite green (85 passed, 0 failed) -- nothing
+  asserted the filename shape itself, only the payload's own "format_version" field, which a future
+  refactor or merge conflict could drop the `-v{VERSION}` suffix around without any gate catching
+  it, silently reopening the forward-direction corruption this fix exists to close (an older tg
+  install reading a newer payload verbatim).
+
+Added one assertion each to test_rejects_stale_pre_fix_persistent_literal_index (cpu_backend.py) and
+  test_stringzilla_rejects_stale_pre_fix_persistent_index (stringzilla_backend.py):
+  `cache_path.name.endswith(f"-v{VERSION}.json")`. Verified bidirectionally before accepting --
+  temporarily reverted both `_get_prefilter_cache_path`/ `_get_index_cache_path` to the unversioned
+  shape and confirmed both new assertions fail with the exact AssertionError expected (digest-only
+  filename), then restored.
+
+Also documented (one line each, informational per the gate, no behavior change) that a pre-#262
+  `{digest}.json` cache file is now permanently orphaned rather than reaped or overwritten --
+  bounded by ordinary cache size, not a leak, and correct: an older install still using that
+  unversioned path needs it to stay put.
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.98.4 (2026-07-25)
 
 ### Bug Fixes
