@@ -156,6 +156,9 @@ class CPUBackend(ComputeBackend):
         # worse than either version alone). Versioning the path makes the two physically
         # unable to share a file -- an old reader just sees `cache miss` on the new path and
         # a new reader never opens the old one, no cross-version read in either direction.
+        # A pre-#262 `{digest}.json` (no `-vN` suffix) is now permanently orphaned rather
+        # than overwritten -- bounded by ordinary cache size, not a leak, and reaping it
+        # would defeat the point (an old reader still using it needs it to stay put).
         return (
             cls._get_prefilter_cache_dir()
             / f"{digest}-v{_CPU_LITERAL_INDEX_CACHE_FORMAT_VERSION}.json"

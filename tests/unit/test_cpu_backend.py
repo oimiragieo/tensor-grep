@@ -231,10 +231,21 @@ class TestCPUBackend:
         backend = CPUBackend()
         CPUBackend._clear_shared_caches()
 
+        from tensor_grep.backends.cpu_backend import _CPU_LITERAL_INDEX_CACHE_FORMAT_VERSION
+
         log_file = tmp_path / "sys.log"
         log_file.write_bytes(b"alpha needle one\r\nbeta line two\r\n")
 
         cache_path = backend._get_prefilter_cache_path(str(log_file), False)
+        # The version lives in the cache PATH itself, not just the payload -- an older tg
+        # sharing this cache dir with a newer one has no idea the payload's own
+        # "format_version" field exists, so it would read (and re-corrupt) a newer payload
+        # verbatim; a filename collision is impossible only because the version is baked
+        # into the name. Assert the shape directly so a future refactor/merge that silently
+        # drops the `-v{VERSION}` suffix (reopening exactly that corruption) is caught here
+        # -- the payload-only assertion below cannot catch a filename regression, since it
+        # reads whatever `cache_path` computes to, not a fixed expected name.
+        assert cache_path.name.endswith(f"-v{_CPU_LITERAL_INDEX_CACHE_FORMAT_VERSION}.json")
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         stale_payload = {
             # No "format_version" key at all -- the exact pre-#262 on-disk shape.
@@ -248,8 +259,6 @@ class TestCPUBackend:
             result = backend.search(str(log_file), "alpha needle one", config=SearchConfig())
         assert result.routing_reason == "cpu_python_regex_prefilter"  # fresh, not "_cache"
         assert result.matches[0].text == "alpha needle one\r"
-
-        from tensor_grep.backends.cpu_backend import _CPU_LITERAL_INDEX_CACHE_FORMAT_VERSION
 
         rewritten = json.loads(cache_path.read_text(encoding="utf-8"))
         assert rewritten["format_version"] == _CPU_LITERAL_INDEX_CACHE_FORMAT_VERSION

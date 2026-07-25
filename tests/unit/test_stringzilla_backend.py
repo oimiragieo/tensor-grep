@@ -182,6 +182,8 @@ def test_stringzilla_rejects_stale_pre_fix_persistent_index(tmp_path, monkeypatc
     """
     import json
 
+    from tensor_grep.backends.stringzilla_backend import _STRING_INDEX_CACHE_FORMAT_VERSION
+
     cache_dir = tmp_path / "sz-cache"
     monkeypatch.setenv("TENSOR_GREP_STRING_INDEX_DIR", str(cache_dir))
     monkeypatch.setenv("TENSOR_GREP_STRING_INDEX", "1")
@@ -192,6 +194,11 @@ def test_stringzilla_rejects_stale_pre_fix_persistent_index(tmp_path, monkeypatc
 
     backend = StringZillaBackend()
     cache_path = backend._get_index_cache_path(str(log_file), False, False)
+    # The version lives in the cache PATH itself, not just the payload -- see the identical
+    # assertion + comment on CPUBackend's sibling test
+    # (test_rejects_stale_pre_fix_persistent_literal_index) for why the payload-only check
+    # below cannot catch a filename regression that silently drops the `-v{VERSION}` suffix.
+    assert cache_path.name.endswith(f"-v{_STRING_INDEX_CACHE_FORMAT_VERSION}.json")
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     stale_payload = {
         # No "format_version" key at all -- the exact pre-#262 on-disk shape.
@@ -206,8 +213,6 @@ def test_stringzilla_rejects_stale_pre_fix_persistent_index(tmp_path, monkeypatc
     )
     assert result.routing_reason == "stringzilla_fixed_strings_index"  # fresh, not "_cache"
     assert result.matches[0].text == "alpha needle one\r"
-
-    from tensor_grep.backends.stringzilla_backend import _STRING_INDEX_CACHE_FORMAT_VERSION
 
     rewritten = json.loads(cache_path.read_text(encoding="utf-8"))
     assert rewritten["format_version"] == _STRING_INDEX_CACHE_FORMAT_VERSION

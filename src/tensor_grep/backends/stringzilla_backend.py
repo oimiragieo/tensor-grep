@@ -137,7 +137,10 @@ class StringZillaBackend(ComputeBackend):
         # "format_version" field -- see the identical comment on
         # CPUBackend._get_prefilter_cache_path for the forward-direction corruption this
         # closes (an OLDER install sharing this cache dir with a NEWER one would otherwise
-        # read a v2 payload verbatim, having no idea the schema field exists at all).
+        # read a v2 payload verbatim, having no idea the schema field exists at all). A
+        # pre-#262 `{digest}.json` (no `-vN` suffix) is now permanently orphaned rather than
+        # overwritten -- bounded by ordinary cache size, not a leak; reaping it would defeat
+        # the point (an old reader still using it needs it to stay put).
         return self._get_index_cache_dir() / f"{digest}-v{_STRING_INDEX_CACHE_FORMAT_VERSION}.json"
 
     def _build_line_trigram_index(self, lines: list[str]) -> dict[str, list[int]]:
