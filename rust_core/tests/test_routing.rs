@@ -502,12 +502,7 @@ fn test_routing_directory_search_promotes_to_native_cpu() {
     } else if stderr.contains("routing_reason=rg_unavailable") {
         assert_verbose_routing(&stderr, "NativeCpuBackend", "rg_unavailable", false);
     } else {
-        assert_verbose_routing(
-            &stderr,
-            "NativeCpuBackend",
-            "cpu-auto-size-threshold",
-            false,
-        );
+        assert_verbose_routing(&stderr, "NativeCpuBackend", "plain-text-native", false);
     }
 }
 
@@ -2129,12 +2124,7 @@ fn test_routing_directory_count_search_uses_native_cpu_without_fallback() {
     } else if stderr.contains("routing_reason=rg_unavailable") {
         assert_verbose_routing(&stderr, "NativeCpuBackend", "rg_unavailable", false);
     } else {
-        assert_verbose_routing(
-            &stderr,
-            "NativeCpuBackend",
-            "cpu-auto-size-threshold",
-            false,
-        );
+        assert_verbose_routing(&stderr, "NativeCpuBackend", "plain-text-native", false);
     }
 
     // Should NOT contain the fallback warning

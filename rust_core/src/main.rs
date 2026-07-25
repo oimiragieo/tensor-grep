@@ -51,9 +51,9 @@ use tensor_grep_rs::rg_passthrough::{
     is_unbounded_implicit_search_walk_refusal, ripgrep_is_available, RipgrepSearchArgs,
 };
 use tensor_grep_rs::routing::{
-    gpu_proof_fields, native_can_serve_plain_text, route_search, BackendSelection,
-    IndexRoutingState, PlainTextNativeRequest, RoutingDecision, SearchRoutingCalibration,
-    SearchRoutingConfig,
+    gpu_proof_fields, native_can_serve_plain_text, plain_text_native_flag_token_is_allowed,
+    route_search, BackendSelection, IndexRoutingState, PlainTextNativeRequest, RoutingDecision,
+    SearchRoutingCalibration, SearchRoutingConfig,
 };
 
 // audit #97 item 1: shown by print_native_top_level_help() (the clap fallback rendered when the
@@ -1840,37 +1840,82 @@ fn stdout_is_terminal() -> bool {
     std::io::stdout().is_terminal()
 }
 
-/// Mirrors `native_search::BINARY_DETECTION_PREFIX_BYTES`: the leading window `grep-searcher`'s
-/// `BinaryDetection::quit` guarantees to inspect for a NUL byte on the mmap-backed path.
-const PLAIN_TEXT_NATIVE_BINARY_PROBE_BYTES: usize = 64 * 1024;
+/// Size cap for `plain_text_native_file_renders_identically`. A file above this is REFUSED rather
+/// than probed, so the probe's cost is bounded and can never exceed the subprocess round trip it
+/// saves. 8 MiB covers essentially every source file while excluding large logs/blobs.
+const PLAIN_TEXT_NATIVE_MAX_PROBE_BYTES: u64 = 8 * 1024 * 1024;
 
-/// Bounded binary probe for `PlainTextNativeRequest::single_path_has_no_binary_prefix`. Reads at
-/// most `PLAIN_TEXT_NATIVE_BINARY_PROBE_BYTES` from `path` and answers whether that prefix is free
-/// of NUL bytes. Fails CLOSED (returns false, i.e. keep spawning `rg`) on any I/O error, so an
-/// unreadable or racing file can never be diverted onto the native route by accident.
-fn plain_text_native_path_has_no_binary_prefix(path: &Path) -> bool {
-    let Ok(mut file) = fs::File::open(path) else {
+/// FULL-CONTENT probe for `PlainTextNativeRequest::single_path_renders_identically`.
+///
+/// Three independently-verified emitter divergences make a file unsafe for the native plain-text
+/// route, and none of them can be decided from the request alone -- they are properties of the
+/// DATA (see `native_can_serve_plain_text` refusal note 5 for the measured byte diffs):
+///   - any `\r` byte: the native plain sink strips a trailing `\r` (`trim_end_matches(['\n','\r'])`)
+///     because nothing on this path sets a CRLF line terminator, so a CRLF file loses it while
+///     `rg` keeps it;
+///   - invalid UTF-8: the native plain sink is `grep_searcher::sinks::Lossy`, which substitutes
+///     U+FFFD where `rg` writes raw bytes -- silent corruption;
+///   - any NUL byte: the native binary-match notice spells `"/0"` where `rg` spells `"\0"`, and
+///     that native spelling is a governed snapshot contract.
+///
+/// The check is deliberately WHOLE-FILE, not a prefix probe: an invalid byte at 1 MB diverges
+/// exactly as hard as one at byte 0, so a prefix window cannot bound the risk. Fails CLOSED
+/// (returns false = keep spawning `rg`) on any I/O error, oversize file, or non-file path.
+fn plain_text_native_file_renders_identically(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
         return false;
     };
-    let mut buffer = vec![0u8; PLAIN_TEXT_NATIVE_BINARY_PROBE_BYTES];
-    let mut filled = 0usize;
-    while filled < buffer.len() {
-        match file.read(&mut buffer[filled..]) {
-            Ok(0) => break,
-            Ok(read) => filled += read,
-            Err(_) => return false,
-        }
+    if !metadata.is_file() || metadata.len() > PLAIN_TEXT_NATIVE_MAX_PROBE_BYTES {
+        return false;
     }
-    !buffer[..filled].contains(&0u8)
+    let Ok(bytes) = fs::read(path) else {
+        return false;
+    };
+    if bytes.contains(&0u8) || bytes.contains(&b'\r') {
+        return false;
+    }
+    std::str::from_utf8(&bytes).is_ok()
+}
+
+/// Builds the `PlainTextNativeRequest` for a resolved `tg search` invocation. THE production
+/// computation -- `handle_ripgrep_search` calls it, and the adapter-agreement test drives it
+/// rather than re-deriving anything, so a test can never pass against a mirror of the logic.
+fn plain_text_native_request_for_search(
+    args: &SearchArgs,
+    request: &ResolvedSearchRequest,
+    stdout_is_terminal: bool,
+) -> PlainTextNativeRequest {
+    let single_path = (request.paths.len() == 1).then(|| Path::new(&request.paths[0]));
+    let single_path_is_regular_file = single_path.is_some_and(Path::is_file);
+    PlainTextNativeRequest {
+        pattern_count: request.patterns.len(),
+        pattern_is_empty: request.patterns.iter().any(String::is_empty),
+        path_count: request.paths.len(),
+        path_was_implicit: request.path_was_implicit,
+        single_path_is_regular_file,
+        single_path_renders_identically: single_path_is_regular_file
+            && single_path.is_some_and(plain_text_native_file_renders_identically),
+        structured_output: args.json || args.ndjson,
+        explicit_format: args.format.is_some(),
+        stdout_is_terminal,
+        only_allowed_flags: search_args_allow_plain_text_native(args),
+    }
 }
 
 /// Raw-argv adapter for `native_can_serve_plain_text`, used by the pre-clap default search front
 /// door (`parse_default_search_frontdoor_args`). Works on tokens rather than a parsed struct
-/// because that front door runs BEFORE clap; it is fail-closed by construction -- any token that
-/// starts with `-` and is not in `PLAIN_TEXT_NATIVE_ALLOWED_FLAGS` (including combined shorts like
-/// `-in` and `--flag=value` spellings) refuses immediately, leaving today's `rg` passthrough
-/// untouched. `search_args` is the normalized `["tg", "search", ...]` form, so operand scanning
-/// starts at index 2.
+/// because that front door runs BEFORE clap.
+///
+/// AGREEMENT CONTRACT: this adapter and `plain_text_native_request_for_search` (the clap-side
+/// computation) must return the SAME verdict for the same argv, and
+/// `plain_text_native_adapters_agree_on_every_shape` drives both to prove it. That is not
+/// cosmetic: the front door is only ONE of the paths into `route_search` -- anything
+/// `parse_early_ripgrep_args` rejects (a combined short like `-in`, a `-w`/`-F` request, an
+/// unknown token) reaches clap and `route_search` anyway, so the raw-argv list is NOT the
+/// admission gate. `search_args_allow_plain_text_native` is. Mirroring clap's argv handling here
+/// (combined short clusters, `-e`/`--regexp` patterns) is what keeps the two in step.
+///
+/// `search_args` is the normalized `["tg", "search", ...]` form, so operand scanning starts at 2.
 fn frontdoor_search_is_native_plain_text_eligible(search_args: &[OsString]) -> bool {
     frontdoor_search_is_native_plain_text_eligible_with_terminal(search_args, stdout_is_terminal())
 }
@@ -1882,34 +1927,62 @@ fn frontdoor_search_is_native_plain_text_eligible_with_terminal(
     search_args: &[OsString],
     stdout_is_terminal: bool,
 ) -> bool {
-    let allowed_flags = tensor_grep_rs::routing::PLAIN_TEXT_NATIVE_ALLOWED_FLAGS;
+    let tokens = search_args
+        .iter()
+        .skip(2)
+        .map(|token| token.to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+
+    let mut explicit_patterns: Vec<String> = Vec::new();
     let mut positionals: Vec<String> = Vec::new();
-    for raw_token in search_args.iter().skip(2) {
-        let token = raw_token.to_string_lossy().to_string();
-        if token.starts_with('-') && token != "-" {
-            if !allowed_flags.contains(&token.as_str()) {
+    let mut end_of_flags = false;
+    let mut index = 0usize;
+    while index < tokens.len() {
+        let token = &tokens[index];
+        if end_of_flags {
+            positionals.push(token.clone());
+        } else if token == "--" {
+            // clap's end-of-options sentinel: everything after it is a positional.
+            end_of_flags = true;
+        } else if token == "-e" || token == "--regexp" {
+            index += 1;
+            match tokens.get(index) {
+                Some(value) => explicit_patterns.push(value.clone()),
+                None => return false,
+            }
+        } else if let Some(value) = token.strip_prefix("--regexp=") {
+            explicit_patterns.push(value.to_string());
+        } else if token.starts_with('-') && token != "-" {
+            if !plain_text_native_flag_token_is_allowed(token) {
                 return false;
             }
-            continue;
+        } else {
+            positionals.push(token.clone());
         }
-        positionals.push(token);
+        index += 1;
     }
 
-    // Exactly PATTERN + PATH. Zero or one positional means the path is implicit (refused by the
-    // predicate anyway); three or more means multiple paths, which the predicate also refuses.
-    if positionals.len() != 2 {
-        return false;
-    }
+    // Mirrors `resolve_search_request_with_stdin`: with no `-e`, the FIRST positional is the
+    // pattern and the rest are paths; with `-e`, every positional is a path.
+    let (patterns, paths) = if explicit_patterns.is_empty() {
+        match positionals.split_first() {
+            Some((pattern, paths)) => (vec![pattern.clone()], paths.to_vec()),
+            None => (Vec::new(), Vec::new()),
+        }
+    } else {
+        (explicit_patterns, positionals)
+    };
 
-    let path = Path::new(&positionals[1]);
-    let is_regular_file = path.is_file();
+    let single_path = (paths.len() == 1).then(|| Path::new(&paths[0]));
+    let single_path_is_regular_file = single_path.is_some_and(Path::is_file);
     native_can_serve_plain_text(&PlainTextNativeRequest {
-        pattern_count: 1,
-        path_count: 1,
-        path_was_implicit: false,
-        single_path_is_regular_file: is_regular_file,
-        single_path_has_no_binary_prefix: is_regular_file
-            && plain_text_native_path_has_no_binary_prefix(path),
+        pattern_count: patterns.len(),
+        pattern_is_empty: patterns.iter().any(String::is_empty),
+        path_count: paths.len(),
+        path_was_implicit: paths.is_empty(),
+        single_path_is_regular_file,
+        single_path_renders_identically: single_path_is_regular_file
+            && single_path.is_some_and(plain_text_native_file_renders_identically),
         structured_output: false,
         explicit_format: false,
         stdout_is_terminal,
@@ -4974,6 +5047,15 @@ mod tests {
         assert!(!parsed.line_number);
     }
 
+    /// Thin wrapper so every assertion below stays a short, unambiguous line.
+    fn frontdoor_admits(argv: &[OsString], stdout_is_terminal: bool) -> bool {
+        frontdoor_search_is_native_plain_text_eligible_with_terminal(argv, stdout_is_terminal)
+    }
+
+    fn os_argv(tokens: &[&str]) -> Vec<OsString> {
+        tokens.iter().map(OsString::from).collect()
+    }
+
     /// Perf lever: an admitted plain-text search (single pattern, single explicit REGULAR FILE,
     /// only allow-listed flags, piped stdout) must be declined by the rg front door so it can be
     /// answered in-process by the native CPU engine instead of paying for an `rg` subprocess.
@@ -4985,117 +5067,127 @@ mod tests {
         let file_arg = file.display().to_string();
         let dir_arg = corpus.path().display().to_string();
 
-        let tokens = |extra: &[&str], path: &str| -> Vec<OsString> {
-            let mut raw = vec![
-                OsString::from("tg"),
-                OsString::from("search"),
-                OsString::from("needle"),
-            ];
-            for flag in extra {
-                raw.insert(2, OsString::from(*flag));
-            }
-            raw.push(OsString::from(path));
-            raw
+        let with_flags = |extra: &[&str], path: &str| -> Vec<OsString> {
+            let mut raw = vec!["tg".to_string(), "search".to_string()];
+            raw.extend(extra.iter().map(|flag| (*flag).to_string()));
+            raw.push("needle".to_string());
+            raw.push(path.to_string());
+            raw.iter().map(OsString::from).collect()
         };
 
-        // ADMITTED: bare, and each allow-listed flag on its own.
-        for extra in [
-            vec![],
-            vec!["-i"],
-            vec!["--ignore-case"],
-            vec!["-F"],
-            vec!["--fixed-strings"],
-            vec!["-w"],
-            vec!["--word-regexp"],
-            vec!["-n"],
-            vec!["--line-number"],
-            vec!["--verbose"],
-        ] {
-            assert!(
-                frontdoor_search_is_native_plain_text_eligible_with_terminal(
-                    &tokens(&extra, &file_arg),
-                    false,
-                ),
-                "expected {extra:?} to stay eligible for the native plain-text route"
-            );
+        // ADMITTED: bare, each allow-listed flag on its own, and clap's COMBINED short clusters.
+        // `-in` is admitted deliberately: clap expands it to `-i -n`, both admitted, so
+        // `search_args_allow_plain_text_native` admits it and this adapter MUST agree. An earlier
+        // revision of this test asserted `-in` kept spawning rg, which was FALSE at system level:
+        // `parse_early_ripgrep_args` rejects `-in`, so it falls through to clap and reaches
+        // `route_search` regardless of what this front door decides.
+        let admitted: &[&[&str]] = &[
+            &[],
+            &["-i"],
+            &["--ignore-case"],
+            &["-F"],
+            &["--fixed-strings"],
+            &["-w"],
+            &["--word-regexp"],
+            &["-n"],
+            &["--line-number"],
+            &["--verbose"],
+            &["-in"],
+            &["-iw"],
+            &["-Fn"],
+            &["-i", "-n"],
+        ];
+        for extra in admitted {
+            let argv = with_flags(extra, &file_arg);
+            assert!(frontdoor_admits(&argv, false), "{extra:?} must stay native");
         }
 
-        // EXCLUDED flags: each must keep today's rg passthrough.
-        for extra in [
-            vec!["-c"],
-            vec!["--count"],
-            vec!["-v"],
-            vec!["-o"],
-            vec!["-N"],
-            vec!["-S"],
-            vec!["--smart-case"],
-            vec!["-a"],
-            vec!["--hidden"],
-            vec!["-L"],
-            vec!["-l"],
-            vec!["--count-matches"],
-            vec!["--column"],
-            vec!["--vimgrep"],
-            vec!["--passthru"],
-            vec!["-P"],
-            vec!["--json"],
-            vec!["--ndjson"],
-            vec!["--cpu"],
-            vec!["--index"],
-            vec!["-in"],
-            vec!["--ignore-case=true"],
-        ] {
-            assert!(
-                !frontdoor_search_is_native_plain_text_eligible_with_terminal(
-                    &tokens(&extra, &file_arg),
-                    false,
-                ),
-                "expected {extra:?} to keep spawning rg"
-            );
+        // EXCLUDED flags: each must keep today's rg passthrough. A cluster containing ONE
+        // non-admitted letter refuses as a whole.
+        let excluded: &[&[&str]] = &[
+            &["-c"],
+            &["--count"],
+            &["-v"],
+            &["-o"],
+            &["-N"],
+            &["-S"],
+            &["--smart-case"],
+            &["-a"],
+            &["--hidden"],
+            &["-L"],
+            &["-l"],
+            &["--count-matches"],
+            &["--column"],
+            &["--vimgrep"],
+            &["--passthru"],
+            &["-P"],
+            &["--json"],
+            &["--ndjson"],
+            &["--cpu"],
+            &["--index"],
+            &["-ic"],
+            &["-vn"],
+        ];
+        for extra in excluded {
+            let argv = with_flags(extra, &file_arg);
+            assert!(!frontdoor_admits(&argv, false), "{extra:?} must use rg");
         }
 
         // A terminal keeps rg (heading + color layout the native engine does not reproduce).
-        assert!(
-            !frontdoor_search_is_native_plain_text_eligible_with_terminal(
-                &tokens(&[], &file_arg),
-                true,
-            )
-        );
+        let on_terminal = with_flags(&[], &file_arg);
+        assert!(!frontdoor_admits(&on_terminal, true));
 
         // A DIRECTORY path keeps rg: walking diverges on binary-file messages and file order.
-        assert!(!frontdoor_search_is_native_plain_text_eligible_with_terminal(
-            &tokens(&[], &dir_arg),
-            false,
-        ));
+        let directory = with_flags(&[], &dir_arg);
+        assert!(!frontdoor_admits(&directory, false));
 
         // A BINARY file keeps rg: `rg` spells the notice `"\0"` while the native engine's
-        // GOVERNED output contract spells it `"/0"` (see `native_can_serve_plain_text` note 5).
+        // GOVERNED output contract spells it `"/0"` (see `native_can_serve_plain_text` note 5c).
         let binary = corpus.path().join("binary.bin");
         fs::write(&binary, b"needle\0binary tail\n").unwrap();
-        assert!(!frontdoor_search_is_native_plain_text_eligible_with_terminal(
-            &tokens(&[], &binary.display().to_string()),
-            false,
-        ));
+        let binary_argv = with_flags(&[], &binary.display().to_string());
+        assert!(!frontdoor_admits(&binary_argv, false));
+
+        // A CRLF file keeps rg: the native plain sink strips the trailing `\r` while rg keeps it
+        // (note 5a). This is the divergence that would have hit routine Windows searches.
+        let crlf = corpus.path().join("crlf.txt");
+        fs::write(&crlf, b"needle alpha\r\nplain\r\n").unwrap();
+        let crlf_argv = with_flags(&[], &crlf.display().to_string());
+        assert!(!frontdoor_admits(&crlf_argv, false));
+
+        // A NON-UTF-8 file keeps rg: the native plain sink is `Lossy` and substitutes U+FFFD
+        // where rg writes the raw byte (note 5b) -- silent corruption.
+        let latin1 = corpus.path().join("latin1.txt");
+        fs::write(&latin1, b"caf\xe9 needle here\n").unwrap();
+        let latin1_argv = with_flags(&[], &latin1.display().to_string());
+        assert!(!frontdoor_admits(&latin1_argv, false));
 
         // A missing path keeps rg (rg owns the error message).
-        assert!(!frontdoor_search_is_native_plain_text_eligible_with_terminal(
-            &tokens(&[], &corpus.path().join("absent.txt").display().to_string()),
-            false,
-        ));
+        let absent = corpus.path().join("absent.txt").display().to_string();
+        let absent_argv = with_flags(&[], &absent);
+        assert!(!frontdoor_admits(&absent_argv, false));
+
+        // An EMPTY PATTERN keeps rg: `run_native_search` rejects it and the rg fallback net then
+        // prints a `warning: native CPU search failed...` line rg never emits (note 6).
+        let empty_pattern = os_argv(&["tg", "search", "", file_arg.as_str()]);
+        assert!(!frontdoor_admits(&empty_pattern, false));
 
         // An IMPLICIT path keeps rg: `rg needle` prints `a.txt:...` while the native engine is
         // handed the literal "." default and would print `./a.txt:...`.
-        let implicit = vec![
-            OsString::from("tg"),
-            OsString::from("search"),
-            OsString::from("needle"),
-        ];
-        assert!(!frontdoor_search_is_native_plain_text_eligible_with_terminal(&implicit, false));
+        let implicit = os_argv(&["tg", "search", "needle"]);
+        assert!(!frontdoor_admits(&implicit, false));
 
         // TWO paths keep rg (the predicate admits exactly one).
-        let mut two_paths = tokens(&[], &file_arg);
-        two_paths.push(OsString::from(file_arg.clone()));
-        assert!(!frontdoor_search_is_native_plain_text_eligible_with_terminal(&two_paths, false));
+        let two_paths = os_argv(&["tg", "search", "needle", file_arg.as_str(), file_arg.as_str()]);
+        assert!(!frontdoor_admits(&two_paths, false));
+
+        // `-e PATTERN FILE` is the same admitted shape by another spelling and must agree.
+        let dash_e = os_argv(&["tg", "search", "-e", "needle", file_arg.as_str()]);
+        assert!(frontdoor_admits(&dash_e, false));
+
+        // Two `-e` patterns refuse (the predicate admits exactly one).
+        let two_e = os_argv(&["tg", "search", "-e", "a", "-e", "b", file_arg.as_str()]);
+        assert!(!frontdoor_admits(&two_e, false));
     }
 
     /// The front door itself must decline the admitted shape (returning `None` hands the request
@@ -5106,24 +5198,11 @@ mod tests {
         let file = corpus.path().join("a.txt");
         fs::write(&file, "needle alpha\n").unwrap();
 
-        let eligible = frontdoor_search_is_native_plain_text_eligible_with_terminal(
-            &[
-                OsString::from("tg"),
-                OsString::from("search"),
-                OsString::from("needle"),
-                OsString::from(file.display().to_string()),
-            ],
-            false,
-        );
+        let file_arg = file.display().to_string();
+        let raw_args = os_argv(&["tg", "search", "needle", file_arg.as_str()]);
 
-        // Guard the assertion below against a terminal-attached local run.
-        if eligible && !stdout_is_terminal() {
-            let raw_args = [
-                OsString::from("tg"),
-                OsString::from("search"),
-                OsString::from("needle"),
-                OsString::from(file.display().to_string()),
-            ];
+        // Guard against a terminal-attached local run, where the predicate correctly refuses.
+        if frontdoor_admits(&raw_args, false) && !stdout_is_terminal() {
             assert!(parse_default_search_frontdoor_args(&raw_args).is_none());
         }
     }
@@ -5135,34 +5214,137 @@ mod tests {
         let file = corpus.path().join("a.txt");
         fs::write(&file, "needle alpha\n").unwrap();
 
-        let raw_args = [
-            OsString::from("tg"),
-            OsString::from("search"),
-            OsString::from("--format"),
-            OsString::from("rg"),
-            OsString::from("needle"),
-            OsString::from(file.display().to_string()),
-        ];
+        let file_arg = file.display().to_string();
+        let raw_args = os_argv(&["tg", "search", "--format", "rg", "needle", file_arg.as_str()]);
 
         let parsed = parse_default_search_frontdoor_args(&raw_args)
             .expect("--format rg must stay on the ripgrep passthrough");
         assert_eq!(parsed.patterns, vec!["needle".to_string()]);
     }
 
-    /// Parsed-`SearchArgs` adapter: the allow-list must agree with the raw-token adapter.
+    /// THE adapter-agreement gate. The raw-argv front-door adapter and the clap-side computation
+    /// (`plain_text_native_request_for_search`, the SAME function `handle_ripgrep_search` calls)
+    /// must return an identical verdict for identical argv.
+    ///
+    /// Why this is load-bearing rather than tidiness: the front door is only ONE path into
+    /// `route_search`. Anything `parse_early_ripgrep_args` rejects -- a combined short (`-in`), a
+    /// `-w`/`-F` request (excluded by `should_use_early_ripgrep_fast_path`), an unknown token --
+    /// falls through to clap and reaches `route_search` regardless of what the front door thinks.
+    /// So the real admission surface is the clap side, and any shape the front door judges
+    /// differently is a shape whose routing nobody actually reasoned about.
+    #[test]
+    fn plain_text_native_adapters_agree_on_every_shape() {
+        let corpus = tempfile::tempdir().unwrap();
+        let file = corpus.path().join("a.txt");
+        fs::write(&file, "needle alpha\n").unwrap();
+        let crlf = corpus.path().join("crlf.txt");
+        fs::write(&crlf, b"needle alpha\r\n").unwrap();
+        let latin1 = corpus.path().join("latin1.txt");
+        fs::write(&latin1, b"caf\xe9 needle here\n").unwrap();
+        let binary = corpus.path().join("binary.bin");
+        fs::write(&binary, b"needle\0tail\n").unwrap();
+
+        let file_arg = file.display().to_string();
+        let dir_arg = corpus.path().display().to_string();
+        let crlf_arg = crlf.display().to_string();
+        let latin1_arg = latin1.display().to_string();
+        let binary_arg = binary.display().to_string();
+        let absent_arg = corpus.path().join("absent.txt").display().to_string();
+
+        let shapes: Vec<Vec<&str>> = vec![
+            vec!["needle", file_arg.as_str()],
+            vec!["-i", "needle", file_arg.as_str()],
+            vec!["-n", "needle", file_arg.as_str()],
+            vec!["-F", "needle", file_arg.as_str()],
+            vec!["-w", "needle", file_arg.as_str()],
+            vec!["--verbose", "needle", file_arg.as_str()],
+            vec!["-in", "needle", file_arg.as_str()],
+            vec!["-iw", "needle", file_arg.as_str()],
+            vec!["-i", "-n", "needle", file_arg.as_str()],
+            vec!["-ic", "needle", file_arg.as_str()],
+            vec!["-e", "needle", file_arg.as_str()],
+            vec!["-e", "needle", "-w", file_arg.as_str()],
+            vec!["-e", "needle", "-e", "alpha", file_arg.as_str()],
+            vec!["", file_arg.as_str()],
+            vec!["needle", dir_arg.as_str()],
+            vec!["needle", crlf_arg.as_str()],
+            vec!["needle", latin1_arg.as_str()],
+            vec!["needle", binary_arg.as_str()],
+            vec!["needle", absent_arg.as_str()],
+            vec!["needle", file_arg.as_str(), file_arg.as_str()],
+            vec!["--", "needle", file_arg.as_str()],
+            vec!["-i", "--", "needle", file_arg.as_str()],
+            vec!["needle"],
+            vec!["-c", "needle", file_arg.as_str()],
+            vec!["-v", "needle", file_arg.as_str()],
+            vec!["-N", "needle", file_arg.as_str()],
+            vec!["-S", "needle", file_arg.as_str()],
+            vec!["--json", "needle", file_arg.as_str()],
+            vec!["--ndjson", "needle", file_arg.as_str()],
+            vec!["--cpu", "needle", file_arg.as_str()],
+        ];
+
+        for shape in shapes {
+            let mut argv = vec!["tg", "search"];
+            argv.extend(shape.iter().copied());
+
+            let raw_args = os_argv(&argv);
+            let frontdoor = frontdoor_admits(&raw_args, false);
+
+            let args = parse_search_args(&argv);
+            let request = resolve_search_request_with_stdin(&args, false)
+                .expect("expected the shape to resolve into a search request");
+            let facts = plain_text_native_request_for_search(&args, &request, false);
+            let clap_side = native_can_serve_plain_text(&facts);
+
+            assert_eq!(
+                frontdoor, clap_side,
+                "adapters disagree on {shape:?}: frontdoor={frontdoor} clap={clap_side}"
+            );
+        }
+    }
+
+    /// Constant <-> predicate drift guard. `PLAIN_TEXT_NATIVE_ALLOWED_FLAGS` does not DRIVE
+    /// `search_args_allow_plain_text_native` (that one destructures `SearchArgs`), so listing a
+    /// flag in the constant while the destructure still rejects it -- or vice versa -- would be
+    /// silent policy drift. This drives the real predicate with every constant entry and requires
+    /// agreement, replacing an earlier test that merely restated the constant's contents.
+    #[test]
+    fn every_allow_listed_flag_is_actually_admitted_by_the_search_args_predicate() {
+        let allowed = tensor_grep_rs::routing::PLAIN_TEXT_NATIVE_ALLOWED_FLAGS;
+        assert!(!allowed.is_empty());
+
+        for &flag in allowed {
+            let args = parse_search_args(&["tg", "search", flag, "PATTERN", "file.txt"]);
+            let admitted = search_args_allow_plain_text_native(&args);
+            assert!(admitted, "{flag} is allow-listed but SearchArgs rejects it");
+            let token_ok = plain_text_native_flag_token_is_allowed(flag);
+            assert!(token_ok, "{flag} is allow-listed but the token matcher rejects it");
+        }
+
+        // And the reverse direction: a flag NOT in the constant must be rejected by both.
+        for flag in ["-c", "-v", "-N", "-S", "-o", "--hidden", "--json"] {
+            assert!(!allowed.contains(&flag), "{flag} must not be allow-listed");
+            let token_ok = plain_text_native_flag_token_is_allowed(flag);
+            assert!(!token_ok, "{flag} must be rejected by the token matcher");
+            let args = parse_search_args(&["tg", "search", flag, "PATTERN", "file.txt"]);
+            let admitted = search_args_allow_plain_text_native(&args);
+            assert!(!admitted, "{flag} must be rejected by the SearchArgs predicate");
+        }
+    }
+
+    /// Breadth check on the parsed-`SearchArgs` adapter: setting ANY excluded flag must refuse.
+    /// (Cross-adapter equality is `plain_text_native_adapters_agree_on_every_shape`; constant
+    /// drift is `every_allow_listed_flag_is_actually_admitted_by_the_search_args_predicate`.)
     #[test]
     fn search_args_plain_text_native_adapter_matches_the_allow_list() {
-        assert!(search_args_allow_plain_text_native(&parse_search_args(&[
-            "tg", "search", "PATTERN", "file.txt",
-        ])));
+        let bare = parse_search_args(&["tg", "search", "PATTERN", "file.txt"]);
+        assert!(search_args_allow_plain_text_native(&bare));
 
         for flag in ["-i", "-F", "-w", "-n", "--verbose"] {
-            assert!(
-                search_args_allow_plain_text_native(&parse_search_args(&[
-                    "tg", "search", flag, "PATTERN", "file.txt",
-                ])),
-                "{flag} is allow-listed and must stay eligible"
-            );
+            let args = parse_search_args(&["tg", "search", flag, "PATTERN", "file.txt"]);
+            let admitted = search_args_allow_plain_text_native(&args);
+            assert!(admitted, "{flag} is allow-listed and must stay eligible");
         }
 
         for flag in [
@@ -5194,12 +5376,9 @@ mod tests {
             "--require-git",
             "--no-config",
         ] {
-            assert!(
-                !search_args_allow_plain_text_native(&parse_search_args(&[
-                    "tg", "search", flag, "PATTERN", "file.txt",
-                ])),
-                "{flag} must keep spawning rg"
-            );
+            let args = parse_search_args(&["tg", "search", flag, "PATTERN", "file.txt"]);
+            let admitted = search_args_allow_plain_text_native(&args);
+            assert!(!admitted, "{flag} must keep spawning rg");
         }
 
         for (flag, value) in [
@@ -5217,12 +5396,9 @@ mod tests {
             ("--max-filesize", "10M"),
             ("--path-separator", "/"),
         ] {
-            assert!(
-                !search_args_allow_plain_text_native(&parse_search_args(&[
-                    "tg", "search", flag, value, "PATTERN", "file.txt",
-                ])),
-                "{flag} must keep spawning rg"
-            );
+            let tokens = ["tg", "search", flag, value, "PATTERN", "file.txt"];
+            let admitted = search_args_allow_plain_text_native(&parse_search_args(&tokens));
+            assert!(!admitted, "{flag} must keep spawning rg");
         }
     }
 
@@ -7712,20 +7888,8 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
     // can skip the `rg` subprocess. Computed after the passthrough/guard gates above so an
     // rg-required request has already left; a warm compatible `.tg_index` still wins inside
     // `route_search`, which checks the index before this flag is consulted.
-    let single_path_is_regular_file =
-        request.paths.len() == 1 && Path::new(&request.paths[0]).is_file();
-    let native_plain_text = native_can_serve_plain_text(&PlainTextNativeRequest {
-        pattern_count: request.patterns.len(),
-        path_count: request.paths.len(),
-        path_was_implicit: request.path_was_implicit,
-        single_path_is_regular_file,
-        single_path_has_no_binary_prefix: single_path_is_regular_file
-            && plain_text_native_path_has_no_binary_prefix(Path::new(&request.paths[0])),
-        structured_output: args.json || args.ndjson,
-        explicit_format: args.format.is_some(),
-        stdout_is_terminal: stdout_is_terminal(),
-        only_allowed_flags: search_args_allow_plain_text_native(&args),
-    });
+    let plain_text = plain_text_native_request_for_search(&args, &request, stdout_is_terminal());
+    let native_plain_text = native_can_serve_plain_text(&plain_text);
 
     #[cfg(feature = "cuda")]
     let gpu_auto_supported = request.paths.len() == 1

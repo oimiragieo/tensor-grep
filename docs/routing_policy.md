@@ -22,7 +22,7 @@ route_search(config, calibration_data, index_state, gpu_available) -> RoutingDec
 
 | Backend | Reason string(s) | What it means in practice |
 | --- | --- | --- |
-| `NativeCpuBackend` | `force_cpu`, `json_output`, `cpu-auto-size-threshold`, `gpu-auto-fallback-cpu`, `rg_unavailable` | Native Rust text search is used for structured explicit `--cpu`, JSON/NDJSON output, GPU fallback, and when `rg` is unavailable. |
+| `NativeCpuBackend` | `force_cpu`, `json_output`, `plain-text-native`, `gpu-auto-fallback-cpu`, `rg_unavailable` | Native Rust text search is used for structured explicit `--cpu`, JSON/NDJSON output, the admitted plain-text subset (see below), GPU fallback, and when `rg` is unavailable. |
 | `NativeGpuBackend` | `gpu-device-ids-explicit-native`, `gpu-auto-size-threshold` | Native Rust CUDA search. Explicit `--gpu-device-ids` always targets this route first; calibrated auto-routing can also choose it. |
 | `TrigramIndex` | `index-accelerated` | Explicit `--index` and warm compatible `.tg_index` auto-routing both land here. Explicit `--index` is gated the same way warm auto-routing is (see the fail-closed note below) -- it is not an unconditional override. |
 | `AstBackend` | `ast-native` | Native Rust AST search/rewrite path for `tg run`. |
@@ -59,14 +59,20 @@ The router's priority order is now explicit and shared:
 
 Spawning `rg` costs a fixed process round trip on every plain-text search. `native_can_serve_plain_text` (`rust_core/src/routing.rs`) is the single, fail-closed predicate that decides when the in-process native CPU engine may answer instead. It is deliberately narrow, and every clause is a refusal:
 
-- Exactly one pattern, and exactly one PATH operand that resolves to an existing **regular file** (never a directory -- walking diverges from `rg` on binary-file messages and on emission order).
-- That file has no NUL byte in its leading 64 KiB: `rg` spells its binary-match notice `"\0"` while the native engine's governed snapshot contract spells it `"/0"`.
+- Exactly one pattern, and that pattern is not the empty string (`run_native_search` rejects an empty pattern, and the rg fallback then emits a `warning:` line `rg` never prints).
+- Exactly one PATH operand that resolves to an existing **regular file** (never a directory -- walking diverges from `rg` on binary-file messages and on emission order).
+- That file passes a **full-content** probe: no `\r` byte, valid UTF-8, no NUL byte, and within an 8 MiB cap. These are DATA-level divergences in the shared native emitter, which this route refuses rather than changes:
+  - CRLF: the native plain sink strips the trailing `\r` (no CRLF line terminator is ever installed on this path) while `rg` keeps it.
+  - non-UTF-8: the native plain sink is `grep_searcher::sinks::Lossy` and substitutes U+FFFD where `rg` writes raw bytes.
+  - NUL: `rg` spells its binary-match notice `"\0"` while the native engine's governed snapshot contract spells it `"/0"`.
 - The PATH was supplied explicitly (an implicit path makes `rg` print `name` where the native engine prints `./name`).
 - stdout is **not** a terminal (`rg` is spawned with inherited stdio, so on a terminal it renders its grouped/heading layout with color).
 - No `--json`, `--ndjson`, or `--format`.
-- Every flag on the command line is in `PLAIN_TEXT_NATIVE_ALLOWED_FLAGS`: `-i`/`--ignore-case`, `-F`/`--fixed-strings`, `-w`/`--word-regexp`, `-n`/`--line-number`, `--verbose`.
+- Every flag on the command line is in `PLAIN_TEXT_NATIVE_ALLOWED_FLAGS`: `-i`/`--ignore-case`, `-F`/`--fixed-strings`, `-w`/`--word-regexp`, `-n`/`--line-number`, `--verbose` (combined short clusters such as `-in` are accepted, matching clap).
 
-Anything outside that subset keeps spawning `rg`, unchanged. The route reports `NativeCpuBackend` / `cpu-auto-size-threshold` and keeps `allow_rg_fallback = true`, so a native failure still falls back to real `rg`.
+Anything outside that subset keeps spawning `rg`, unchanged. The route reports `NativeCpuBackend` / `plain-text-native` and keeps `allow_rg_fallback = true`, so a native failure still falls back to real `rg`. `--verbose` stderr intentionally reports the new backend -- that is the flag's purpose.
+
+The predicate has two adapters (a raw-argv one at the pre-clap front door, a parsed-`SearchArgs` one on the clap path) and they are required to return identical verdicts, because the front door is not the only path into `route_search`.
 
 ### `--index` fail-closed compatibility contract (audit H1, 2026-07-10)
 

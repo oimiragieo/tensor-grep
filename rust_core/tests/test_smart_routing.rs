@@ -1,6 +1,7 @@
 use tensor_grep_rs::routing::{
-    native_can_serve_plain_text, route_search, BackendSelection, IndexRoutingState,
-    PlainTextNativeRequest, SearchRoutingCalibration, SearchRoutingConfig,
+    native_can_serve_plain_text, plain_text_native_flag_token_is_allowed, route_search,
+    BackendSelection, IndexRoutingState, PlainTextNativeRequest, SearchRoutingCalibration,
+    SearchRoutingConfig,
 };
 
 fn base_config() -> SearchRoutingConfig {
@@ -26,10 +27,11 @@ fn base_config() -> SearchRoutingConfig {
 fn admitted_plain_text_request() -> PlainTextNativeRequest {
     PlainTextNativeRequest {
         pattern_count: 1,
+        pattern_is_empty: false,
         path_count: 1,
         path_was_implicit: false,
         single_path_is_regular_file: true,
-        single_path_has_no_binary_prefix: true,
+        single_path_renders_identically: true,
         structured_output: false,
         explicit_format: false,
         stdout_is_terminal: false,
@@ -314,7 +316,7 @@ fn test_route_search_routes_admitted_plain_text_to_native_cpu() {
     let decision = route_search(&config, None, IndexRoutingState::default(), false);
 
     assert_eq!(decision.selection, BackendSelection::NativeCpu);
-    assert_eq!(decision.reason, "cpu-auto-size-threshold");
+    assert_eq!(decision.reason, "plain-text-native");
     // rg is still the safety net if the native engine errors mid-request.
     assert!(decision.allow_rg_fallback);
 }
@@ -430,11 +432,18 @@ fn test_native_can_serve_plain_text_refuses_each_disqualifier() {
     };
     assert!(!native_can_serve_plain_text(&directory_path));
 
-    let binary_file = PlainTextNativeRequest {
-        single_path_has_no_binary_prefix: false,
+    // One field carries three data-level divergences: CRLF, non-UTF-8, and NUL/binary.
+    let unrenderable_file = PlainTextNativeRequest {
+        single_path_renders_identically: false,
         ..admitted_plain_text_request()
     };
-    assert!(!native_can_serve_plain_text(&binary_file));
+    assert!(!native_can_serve_plain_text(&unrenderable_file));
+
+    let empty_pattern = PlainTextNativeRequest {
+        pattern_is_empty: true,
+        ..admitted_plain_text_request()
+    };
+    assert!(!native_can_serve_plain_text(&empty_pattern));
 
     let multiple_paths = PlainTextNativeRequest {
         path_count: 2,
@@ -473,27 +482,31 @@ fn test_native_can_serve_plain_text_refuses_each_disqualifier() {
     assert!(!native_can_serve_plain_text(&disallowed_flag));
 }
 
-/// The allow-list is a CONTRACT, not an implementation detail: widening it is a deliberate act
-/// that must come with parity evidence, so pin its exact contents.
+/// The allow-list is a CONTRACT, and this test makes it BITE rather than restate it: every
+/// entry must be accepted by `plain_text_native_flag_token_is_allowed` (the token matcher the
+/// raw-argv adapter actually calls), every combined short cluster built from admitted letters
+/// must be accepted, and a cluster containing one non-admitted letter must be refused. The
+/// constant-vs-`SearchArgs`-destructure direction is covered in `main.rs` by
+/// `every_allow_listed_flag_is_actually_admitted_by_the_search_args_predicate`, which drives the
+/// real predicate -- neither test can pass by merely echoing the constant.
 #[test]
-fn test_plain_text_native_allowed_flags_are_exactly_the_proven_set() {
+fn test_plain_text_native_allow_list_drives_the_token_matcher() {
     let allowed = tensor_grep_rs::routing::PLAIN_TEXT_NATIVE_ALLOWED_FLAGS;
+    assert!(!allowed.is_empty());
 
-    assert_eq!(
-        allowed,
-        [
-            "-i",
-            "--ignore-case",
-            "-F",
-            "--fixed-strings",
-            "-w",
-            "--word-regexp",
-            "-n",
-            "--line-number",
-            "--verbose",
-        ]
-        .as_slice()
-    );
+    for flag in allowed {
+        assert!(
+            plain_text_native_flag_token_is_allowed(flag),
+            "{flag} is allow-listed but the token matcher refuses it"
+        );
+    }
+
+    for cluster in ["-in", "-iw", "-Fn", "-inFw", "-i"] {
+        assert!(
+            plain_text_native_flag_token_is_allowed(cluster),
+            "{cluster} is built only from admitted short flags and must be accepted"
+        );
+    }
 
     for excluded in [
         "-c",
@@ -529,9 +542,15 @@ fn test_plain_text_native_allowed_flags_are_exactly_the_proven_set() {
         "--ndjson",
         "--cpu",
         "--index",
+        // Clusters containing one non-admitted letter must refuse as a whole.
+        "-ic",
+        "-vn",
+        "-inS",
+        // `--flag=value` spellings are never admitted (no admitted flag takes a value).
+        "--ignore-case=true",
     ] {
         assert!(
-            !allowed.contains(&excluded),
+            !plain_text_native_flag_token_is_allowed(excluded),
             "{excluded} must keep spawning rg"
         );
     }

@@ -75,8 +75,12 @@ pub struct SearchRoutingConfig {
 /// - `-w`/`--word-regexp`: same builder, `.word(...)`.
 /// - `-n`/`--line-number`: pure render toggle; `append_standard_match_bytes` emits
 ///   `{line}:{text}` vs `{text}`, matching `rg -n` / `rg` on a single explicit file.
-/// - `--verbose`: tg-only routing metadata on stderr; never forwarded to `rg` and never part of
-///   stdout, so it cannot change the compared output.
+/// - `--verbose`: tg-only routing metadata on **stderr**, never forwarded to `rg` and never part
+///   of stdout. Its content DOES change on an admitted request
+///   (`RipgrepBackend`/`rg_passthrough` -> `NativeCpuBackend`/`plain-text-native`) -- that is the
+///   flag's entire purpose: it reports which backend ran. Reporting the true backend is correct
+///   behavior, not a parity break, and keeping `--verbose` admitted is what makes the new route
+///   observable to tests and to benchmark/launcher attribution.
 ///
 /// Deliberately EXCLUDED, with the reason (each keeps spawning `rg`, i.e. zero behavior change):
 /// - `-N`/`--no-line-number`: listed in `SEARCH_PYTHON_PASSTHROUGH_FLAGS`, so it is claimed by the
@@ -109,21 +113,48 @@ pub const PLAIN_TEXT_NATIVE_ALLOWED_FLAGS: &[&str] = &[
     "--verbose",
 ];
 
+/// The short-flag letters of `PLAIN_TEXT_NATIVE_ALLOWED_FLAGS`, used to accept clap's COMBINED
+/// short clusters (`-in` == `-i -n`). Without this the raw-argv adapter and the parsed-`SearchArgs`
+/// adapter disagree: clap expands `-in` into two admitted flags, so the parsed adapter admits it
+/// while a naive exact-token match would not.
+pub const PLAIN_TEXT_NATIVE_ALLOWED_SHORT_FLAGS: &[char] = &['i', 'n', 'F', 'w'];
+
+/// Is a raw argv flag token inside the admitted policy? Accepts an exact spelling from
+/// `PLAIN_TEXT_NATIVE_ALLOWED_FLAGS` or a combined short cluster whose every letter is in
+/// `PLAIN_TEXT_NATIVE_ALLOWED_SHORT_FLAGS`. Fail-closed on everything else, including
+/// `--flag=value` spellings (none of the admitted flags take a value, so such a token is a
+/// different flag or a clap error either way).
+pub fn plain_text_native_flag_token_is_allowed(token: &str) -> bool {
+    if PLAIN_TEXT_NATIVE_ALLOWED_FLAGS.contains(&token) {
+        return true;
+    }
+    let Some(cluster) = token.strip_prefix('-') else {
+        return false;
+    };
+    if cluster.is_empty() || cluster.starts_with('-') {
+        return false;
+    }
+    cluster.chars().all(|letter| PLAIN_TEXT_NATIVE_ALLOWED_SHORT_FLAGS.contains(&letter))
+}
+
 /// The facts `native_can_serve_plain_text` needs. Built by a thin adapter at each front door so
 /// the POLICY lives in exactly one place (the predicate below) rather than being re-derived.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlainTextNativeRequest {
     /// Number of search patterns after `-e`/positional resolution.
     pub pattern_count: usize,
+    /// The single resolved pattern is the empty string. See refusal note (6).
+    pub pattern_is_empty: bool,
     /// Number of PATH operands after resolution.
     pub path_count: usize,
     /// The caller supplied no PATH and one was defaulted in.
     pub path_was_implicit: bool,
     /// The single PATH operand resolves to an existing REGULAR FILE (not a directory).
     pub single_path_is_regular_file: bool,
-    /// The single PATH operand carries no NUL byte in the leading window the native engine
-    /// guarantees to scan for binary content. See the refusal note (5) below.
-    pub single_path_has_no_binary_prefix: bool,
+    /// The single PATH operand passed the FULL-CONTENT probe: no NUL byte, no CR byte, valid
+    /// UTF-8, and within the probe size cap. See refusal note (5) -- this one field carries three
+    /// separate, independently-verified divergences.
+    pub single_path_renders_identically: bool,
     /// `--json` or `--ndjson`.
     pub structured_output: bool,
     /// `--format` was supplied with any value.
@@ -170,17 +201,36 @@ pub struct PlainTextNativeRequest {
 ///    `collect_native_multi_pattern_matches`/`emit_multi_pattern_native_results`, a different
 ///    emitter whose plain-text agreement with `rg -e A -e B` is not established.
 ///
-/// 5. `single_path_has_no_binary_prefix` -- for a BINARY file given explicitly, ripgrep 15.1.0
-///    prints `binary file matches (found "\0" byte around offset 6)` while
-///    `emit_binary_match_warning` prints the same sentence with `"/0"`. That native spelling is a
-///    GOVERNED output contract (pinned by `tests/e2e/snapshots/.../native_binary_single_file.txt`,
-///    `src/tensor_grep/backends/rust_backend.py`, `tests/unit/test_rust_core.py` and a
-///    `rust_core/tests/test_routing.rs` assertion), so this PR refuses the shape rather than
-///    changing the contract. The probe checks the same leading window the native engine
-///    guarantees to inspect on the mmap path (`BINARY_DETECTION_PREFIX_BYTES`, 64 KiB).
-///    KNOWN RESIDUAL: a file whose first NUL byte lies BEYOND that window and which is not
-///    mmap-backed can still reach the native route; the consequence is the one-character
-///    `"/0"`-vs-`"\0"` spelling in that notice, never a wrong or missing match.
+/// 5. `single_path_renders_identically` -- a FULL-CONTENT probe of the single file, refusing on
+///    any of three divergences the emitter has and that this PR deliberately does NOT try to fix
+///    (the emitter is shared with `--json`/`--ndjson`/`--cpu` and its behavior is a governed
+///    contract; changing shared rendering inside a perf PR is the wrong blast radius):
+///    (a) CRLF -- `search_file_streaming_plain_sequential` does
+///        `line.trim_end_matches(['\n', '\r'])` (`native_search.rs`), and `build_searcher` only
+///        installs a CRLF line terminator when `config.crlf`, which nothing on this path ever
+///        sets (`--crlf` is a Python-passthrough flag). Measured: `rg` emits
+///        `b"needle alpha\r\n"` where the native engine emits `b"needle alpha\n"`. On a Windows
+///        or CRLF-normalized checkout this hits routine `tg search PATTERN file.py`, so ANY `\r`
+///        byte refuses.
+///    (b) Non-UTF-8 -- the plain sink is `grep_searcher::sinks::Lossy`, which substitutes U+FFFD;
+///        `rg` writes the raw bytes. Measured: `rg` emits `b"cafe\xe9 needle here"` where the
+///        native engine emits `b"cafe\xef\xbf\xbd needle here"` -- silent corruption. A PREFIX
+///        probe cannot bound this (an invalid byte at 1 MB diverges just as hard), so the probe
+///        validates the WHOLE file and refuses anything that is not valid UTF-8.
+///    (c) NUL/binary -- `rg` prints `binary file matches (found "\0" byte around offset 6)` while
+///        `emit_binary_match_warning` prints the same sentence with `"/0"`, a spelling pinned by
+///        `tests/e2e/snapshots/.../native_binary_single_file.txt`,
+///        `src/tensor_grep/backends/rust_backend.py`, `tests/unit/test_rust_core.py` and a
+///        `rust_core/tests/test_routing.rs` assertion.
+///    The probe is bounded by `PLAIN_TEXT_NATIVE_MAX_PROBE_BYTES` in `main.rs`: a file larger
+///    than the cap is refused rather than read twice, so the probe can never cost more than it
+///    saves. Reading the file is affordable precisely because the admitted subset is ONE file --
+///    the engine is about to read it anyway.
+///
+/// 6. `pattern_is_empty` -- `tg search "" file.txt` is a legal rg invocation (every line matches),
+///    but `run_native_search` rejects an empty pattern outright, and the `allow_rg_fallback` net
+///    then prints `warning: native CPU search failed, falling back to ripgrep: ...` to stderr
+///    before the correct stdout. Correct results, but a stderr line that did not exist before.
 ///
 /// `structured_output` and `explicit_format` are refused because those requests already have
 /// their own routes (`--json`/`--ndjson` land on `native_cpu_json`; `--format rg` must reach real
@@ -192,9 +242,10 @@ pub const fn native_can_serve_plain_text(request: &PlainTextNativeRequest) -> bo
         && !request.stdout_is_terminal
         && !request.path_was_implicit
         && request.pattern_count == 1
+        && !request.pattern_is_empty
         && request.path_count == 1
         && request.single_path_is_regular_file
-        && request.single_path_has_no_binary_prefix
+        && request.single_path_renders_identically
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -293,12 +344,17 @@ impl RoutingDecision {
         Self::new(BackendSelection::NativeCpu, "json_output", false)
     }
 
-    pub const fn native_cpu_auto(rg_available: bool, structured_output: bool) -> Self {
-        Self::new(
-            BackendSelection::NativeCpu,
-            "cpu-auto-size-threshold",
-            rg_available && !structured_output,
-        )
+    /// The admitted plain-text native route (see `native_can_serve_plain_text`). Replaces the
+    /// former `native_cpu_auto` / `"cpu-auto-size-threshold"` constructor, whose name and reason
+    /// string described a GPU corpus-size decision that has nothing to do with this route --
+    /// misleading in `--verbose` output and to benchmark/launcher attribution, which read
+    /// `routing_reason`. That constructor was also the arm this route revived, and it was
+    /// logically unreachable before, so nothing else produced the old string.
+    ///
+    /// `allow_rg_fallback` is true: `run_native_search_with_optional_rg_fallback` still hands the
+    /// request to the real `rg` subprocess if the native engine errors.
+    pub const fn native_cpu_plain_text() -> Self {
+        Self::new(BackendSelection::NativeCpu, "plain-text-native", true)
     }
 
     pub const fn native_cpu_gpu_fallback(rg_available: bool, structured_output: bool) -> Self {
@@ -437,10 +493,6 @@ pub const fn route_search(
         // `structured_output` branch immediately above would have caught. So the only way in was
         // a contradiction. It is now the live plain-text native route, and
         // `test_route_search_routes_admitted_plain_text_to_native_cpu` pins that.
-        //
-        // `allow_rg_fallback` is `rg_available && !structured_output` == true here, so
-        // `run_native_search_with_optional_rg_fallback` still falls back to the real `rg`
-        // subprocess if the native engine errors -- the fail-closed direction is preserved.
-        RoutingDecision::native_cpu_auto(true, false)
+        RoutingDecision::native_cpu_plain_text()
     }
 }

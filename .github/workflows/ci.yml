@@ -604,6 +604,20 @@ jobs:
           Set-Content -Path (Join-Path $workdir.FullName "sample.log") -Value "ERROR one`nINFO two"
           & $bin search ERROR (Join-Path $workdir.FullName "sample.log")
 
+      # The byte-exact rg-parity oracle for the plain-text native route MUST run against the real
+      # native binary: `test-python` never builds `rust_core/target/release/tg` (maturin builds
+      # only the `pyo3/extension-module` cdylib), so the suite would skip itself there and be a
+      # no-op gate. This job is the one place the release binary exists on all four OSes.
+      # `tests/helpers/rg_parity` only needs `src/` on PYTHONPATH -- no package build required.
+      - name: Run native plain-text byte-parity oracle
+        shell: bash
+        env:
+          PYTHONPATH: src
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check pytest==8.4.2
+          python -m pytest tests/e2e/test_native_plain_text_parity.py -v --tb=short -p no:cacheprovider
+
   test-gpu-linux:
     name: test-gpu-nvidia (ubuntu-latest, cuDF)
     needs: smoke

@@ -32,7 +32,11 @@ def test_routing_policy_doc_covers_current_routing_tree() -> None:
     assert "index-accelerated" in doc
     assert "gpu-device-ids-explicit-native" in doc
     assert "gpu-auto-size-threshold" in doc
-    assert "cpu-auto-size-threshold" in doc
+    # Renamed from `cpu-auto-size-threshold`: that reason string described a GPU corpus-size
+    # decision and was produced only by an arm that was logically unreachable. It is now the
+    # admitted plain-text native route, and `routing_reason` is read by benchmark/launcher
+    # attribution, so the label has to be accurate.
+    assert "plain-text-native" in doc
     assert "`routing_gpu_device_ids = []`" in doc
     assert "normal output and docs must call it CPU fallback" in doc
     assert "gpu-device-ids-explicit" in doc
