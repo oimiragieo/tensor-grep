@@ -135,6 +135,39 @@ def _normalize_relative_prefix(value: str) -> str:
     return value.replace("\\", "/").removeprefix("./")
 
 
+# The literal marker rg/tg's binary-match notice always contains (verified against `rg.exe`
+# 15.1.0 and this repo's own formatters, task #263). Used by `_normalize_output_line` below to
+# scope backslash normalization to a line's PATH PREFIX only, never its content.
+_BINARY_NOTICE_MARKER = "binary file matches"
+
+
+def _normalize_output_line(line: str) -> str:
+    r"""Same as `_normalize_relative_prefix`, except a binary-match notice's own literal `\0`
+    NUL-escape is never touched.
+
+    `_normalize_relative_prefix(line)` applied to a WHOLE plain-text output line -- as the
+    caller below used to do unconditionally -- replaces EVERY backslash in the line, not just
+    ones in a genuine Windows path prefix. A binary-match notice's text contains a literal
+    `\0` (backslash, zero) as its own content, not a path separator; blanket-replacing it turns
+    `\0` into `/0` -- the exact task #263 defect, reintroduced here at the TEST-HARNESS level
+    even though the production formatter (`RipgrepFormatter`/`rust_backend.py`) is correct. This
+    is the same shape of gap `tests/helpers/rg_parity.py`'s `_normalize_line` already documents
+    for the byte-parity oracles; this is a separate occurrence in this file, not covered by that
+    fix.
+
+    Splits at the marker and only normalizes the PREFIX (a real path when `--with-filename` is
+    in effect, e.g. `some\path\file.bin: binary file matches ...` -> `some/path/file.bin: ...`)
+    -- the notice text itself, including its `\0`, passes through unmodified. Every other line
+    (no marker) is normalized exactly as before; behavior for every other golden case in this
+    suite is unchanged.
+    """
+    marker_index = line.find(_BINARY_NOTICE_MARKER)
+    if marker_index == -1:
+        return _normalize_relative_prefix(line)
+    prefix, notice = line[:marker_index], line[marker_index:]
+    return _normalize_relative_prefix(prefix) + notice
+
+
 def run_tg(launcher, args, cwd):
     env = None
     if launcher == "python-m":
@@ -238,9 +271,7 @@ def run_tg(launcher, args, cwd):
 
     if not stdout.strip().isdigit():
         lines = [
-            _normalize_relative_prefix(line)
-            for line in split_lines_preserve_cr(stdout)
-            if line.strip()
+            _normalize_output_line(line) for line in split_lines_preserve_cr(stdout) if line.strip()
         ]
         lines.sort()
         stdout = "\n".join(lines) + "\n" if lines else ""

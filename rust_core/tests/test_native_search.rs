@@ -236,9 +236,9 @@ fn test_native_search_literal_search_on_tempfile() {
     assert_eq!(stats.searched_files, 1);
     assert_eq!(stats.matches.len(), 2);
     assert_eq!(stats.matches[0].line_number, Some(2));
-    assert_eq!(stats.matches[0].text, "ERROR failed");
+    assert_eq!(stats.matches[0].raw, b"ERROR failed".to_vec());
     assert_eq!(stats.matches[1].line_number, Some(4));
-    assert_eq!(stats.matches[1].text, "ERROR timeout");
+    assert_eq!(stats.matches[1].raw, b"ERROR timeout".to_vec());
 }
 
 #[test]
@@ -261,7 +261,7 @@ fn test_native_search_regex_search() {
         stats
             .matches
             .iter()
-            .map(|entry| entry.text.as_str())
+            .map(|entry| std::str::from_utf8(&entry.raw).expect("test fixture is valid UTF-8"))
             .collect::<Vec<_>>(),
         vec!["ERROR network timeout", "WARN 503 retrying"]
     );
@@ -301,7 +301,7 @@ fn test_native_search_smart_case_lowercase_searches_insensitively() {
         stats
             .matches
             .iter()
-            .map(|entry| entry.text.as_str())
+            .map(|entry| std::str::from_utf8(&entry.raw).expect("test fixture is valid UTF-8"))
             .collect::<Vec<_>>(),
         vec!["warning lower", "WARNING upper"]
     );
@@ -321,7 +321,7 @@ fn test_native_search_smart_case_uppercase_stays_sensitive() {
     let stats = run_native_search(config).unwrap();
 
     assert_eq!(stats.total_matches, 1);
-    assert_eq!(stats.matches[0].text, "WARNING upper");
+    assert_eq!(stats.matches[0].raw, b"WARNING upper".to_vec());
 }
 
 #[test]
@@ -341,7 +341,7 @@ fn test_native_search_fixed_string_treats_meta_characters_literally() {
     let stats = run_native_search(config).unwrap();
 
     assert_eq!(stats.total_matches, 1);
-    assert_eq!(stats.matches[0].text, "ERROR.*timeout literal");
+    assert_eq!(stats.matches[0].raw, b"ERROR.*timeout literal".to_vec());
 }
 
 #[test]
@@ -720,10 +720,11 @@ fn test_native_search_large_file_chunk_parallelism_preserves_boundaries_and_glob
         expected_lines.len(),
         "duplicate boundary matches found"
     );
-    assert!(stats
-        .matches
-        .iter()
-        .all(|entry| entry.text.contains(LARGE_FILE_PATTERN)));
+    assert!(stats.matches.iter().all(|entry| {
+        std::str::from_utf8(&entry.raw)
+            .expect("large-file fixture is valid UTF-8")
+            .contains(LARGE_FILE_PATTERN)
+    }));
 }
 
 #[test]
