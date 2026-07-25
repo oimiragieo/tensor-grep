@@ -732,6 +732,41 @@ class _DeadlineBreakFlag:
         self.hit = False
 
 
+# Bounded sample cap for unreadable-path diagnostics -- mirrors
+# `directory_scanner._MAX_UNREADABLE_PATH_SAMPLE` (task #276 slice 1): a tree with thousands of
+# denied dirs must not accumulate an unbounded sample list, even though the true count is tracked
+# in full.
+_MAX_REPO_WALK_UNREADABLE_PATH_SAMPLE = 5
+
+
+class _UnreadablePathFlag:
+    """Task #276 slice 1: mutable out-signal for `_iter_repo_files`/`_iter_repo_bucket_files`.
+
+    Both walkers wrap their `os.scandir()` calls in a bare ``except OSError: return`` /
+    ``continue`` -- the default-safe choice for a walk that must not crash on one bad
+    directory, but it ALSO means a permission-denied (or since-deleted) subtree simply
+    disappears from the file list with no signal at all: `tg orient`'s central-file/entry-point
+    ranking (and every other `build_repo_map` consumer) could silently miss a whole subtree.
+    Mirrors `_DeadlineBreakFlag`'s mutable-out-param pattern so existing callers that don't pass
+    one (the majority of `_iter_repo_files`'s ~12 call sites) are unaffected -- `None` is a
+    complete no-op, byte-identical to the walk's pre-fix behavior.
+    """
+
+    __slots__ = ("count", "hit", "sample")
+
+    def __init__(self) -> None:
+        self.hit = False
+        self.count = 0
+        self.sample: list[str] = []
+
+    def record(self, exc: OSError) -> None:
+        self.hit = True
+        self.count += 1
+        if len(self.sample) < _MAX_REPO_WALK_UNREADABLE_PATH_SAMPLE:
+            offending_path = getattr(exc, "filename", None) or str(exc)
+            self.sample.append(str(offending_path))
+
+
 def _is_test_file(path: Path) -> bool:
     name = path.name
     return (
@@ -1009,6 +1044,8 @@ def _stack_ignored(path: Path, *, is_dir: bool, stack: tuple[_GitignoreMatcher, 
 def _iter_repo_bucket_files(
     root: Path,
     ancestor_stack: tuple[_GitignoreMatcher, ...] = (),
+    *,
+    unreadable_hit: _UnreadablePathFlag | None = None,
 ) -> Iterator[Path]:
     # Nested-.gitignore support (MED-5 part B): load THIS directory's own matcher and push it onto
     # the ancestor stack, so a nested subdir/.gitignore is honored -- not just the repo root's.
@@ -1017,7 +1054,12 @@ def _iter_repo_bucket_files(
     stack = (*ancestor_stack, own) if own.has_rules else ancestor_stack
     try:
         entries = list(os.scandir(root))
-    except OSError:
+    except OSError as exc:
+        # Task #276 slice 1: record before returning -- still stops descending into this
+        # subtree (unchanged behavior), but the caller can now learn it happened instead of
+        # a silently-narrower file list.
+        if unreadable_hit is not None:
+            unreadable_hit.record(exc)
         return
 
     dir_paths: list[Path] = []
@@ -1036,7 +1078,9 @@ def _iter_repo_bucket_files(
                 if _stack_ignored(file_path, is_dir=False, stack=stack):
                     continue
                 file_paths.append(file_path)
-        except OSError:
+        except OSError as exc:
+            if unreadable_hit is not None:
+                unreadable_hit.record(exc)
             continue
 
     dir_paths.sort(key=lambda path: _repo_walk_dir_sort_key(path.name))
@@ -1045,10 +1089,10 @@ def _iter_repo_bucket_files(
     other_dirs = [path for path in dir_paths if _repo_walk_dir_sort_key(path.name)[0] > 1]
 
     for directory in source_dirs:
-        yield from _iter_repo_bucket_files(directory, stack)
+        yield from _iter_repo_bucket_files(directory, stack, unreadable_hit=unreadable_hit)
     yield from file_paths
     for directory in other_dirs:
-        yield from _iter_repo_bucket_files(directory, stack)
+        yield from _iter_repo_bucket_files(directory, stack, unreadable_hit=unreadable_hit)
 
 
 def _iter_repo_files(
@@ -1058,13 +1102,18 @@ def _iter_repo_files(
     deadline_monotonic: float | None = None,
     deadline_hit: _DeadlineBreakFlag | None = None,
     _profiling_collector: _ProfileCollector | None = None,
+    unreadable_hit: _UnreadablePathFlag | None = None,
 ) -> list[Path]:
     """Walk *root* for repo files, optionally bounded by a file-count cap AND/OR a wall-clock
     ``deadline_monotonic`` (task #52, loop A). ``deadline_hit`` is the mutable out-signal (mirrors
     ``_DeadlineBreakFlag`` sibling seams in this module) so a caller whose own local is declared
     AFTER this call can still learn "did the walk itself break early on --deadline" and fold that
     into its partial/deadline_limit stamp. Both new params default to None -> byte-identical to the
-    pre-fix walk for every one of the ~12 existing call sites that do not pass them."""
+    pre-fix walk for every one of the ~12 existing call sites that do not pass them.
+
+    ``unreadable_hit`` (task #276 slice 1): same mutable-out-param pattern as ``deadline_hit``,
+    for an `os.scandir()` failure (permission denied, since-deleted) instead of a wall-clock
+    bound. Defaults to None -> a complete no-op for every existing call site."""
     with _profiling_phase(_profiling_collector, "file_walk"):
         if root.is_file():
             return [root.resolve()]
@@ -1075,7 +1124,9 @@ def _iter_repo_files(
         if max_files is not None:
             try:
                 entries = list(os.scandir(normalized_root))
-            except OSError:
+            except OSError as exc:
+                if unreadable_hit is not None:
+                    unreadable_hit.record(exc)
                 return []
 
             buckets: list[tuple[tuple[int, str], Iterator[Path]]] = []
@@ -1089,7 +1140,9 @@ def _iter_repo_files(
                             continue
                         buckets.append((
                             _repo_walk_bucket_sort_key(path, normalized_root),
-                            _iter_repo_bucket_files(path, (gitignore,)),
+                            _iter_repo_bucket_files(
+                                path, (gitignore,), unreadable_hit=unreadable_hit
+                            ),
                         ))
                     elif entry.is_file(follow_symlinks=False):
                         path = Path(entry.path)
@@ -1099,7 +1152,9 @@ def _iter_repo_files(
                             _repo_walk_bucket_sort_key(path, normalized_root),
                             iter([path]),
                         ))
-                except OSError:
+                except OSError as exc:
+                    if unreadable_hit is not None:
+                        unreadable_hit.record(exc)
                     continue
 
             selected: list[Path] = []
@@ -1139,7 +1194,7 @@ def _iter_repo_files(
             return selected
 
         walk_deadline_exceeded = False
-        for current in _iter_repo_bucket_files(normalized_root, ()):
+        for current in _iter_repo_bucket_files(normalized_root, (), unreadable_hit=unreadable_hit):
             if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
                 walk_deadline_exceeded = True
                 break
@@ -7225,12 +7280,19 @@ def build_repo_map(
         # ever got a chance to run. Share the same absolute deadline + fold the walk's own
         # early-break signal into the parse loop's `deadline_hit` local just below.
         repo_walk_deadline_hit = _DeadlineBreakFlag()
+        # Task #276 slice 1: the same silent-swallow defect `directory_scanner.py` had for
+        # `tg search --cpu` -- `_iter_repo_files`/`_iter_repo_bucket_files` wrap `os.scandir()`
+        # in a bare `except OSError` -- exists here too, on the SEPARATE walker `tg orient`/
+        # `tg map`/`tg agent`/etc. actually use. Thread the same mutable-out-signal pattern as
+        # `deadline_hit` above to make an unreadable subtree visible instead of invisible.
+        repo_walk_unreadable_hit = _UnreadablePathFlag()
         if _profiling_collector is None:
             all_files = _iter_repo_files(
                 root,
                 max_files=normalized_max_repo_files,
                 deadline_monotonic=deadline_monotonic,
                 deadline_hit=repo_walk_deadline_hit,
+                unreadable_hit=repo_walk_unreadable_hit,
             )
         else:
             all_files = _iter_repo_files(
@@ -7239,6 +7301,7 @@ def build_repo_map(
                 deadline_monotonic=deadline_monotonic,
                 deadline_hit=repo_walk_deadline_hit,
                 _profiling_collector=_profiling_collector,
+                unreadable_hit=repo_walk_unreadable_hit,
             )
         capped_file_count = len(all_files)
         if extra_files:
@@ -7326,6 +7389,18 @@ def build_repo_map(
                 "deadline_exceeded": True,
                 "files_scanned": files_scanned,
                 "files_total": len(context_files),
+            }
+        # Task #276 slice 1: purely additive -- a NEW key, never previously present, so this is
+        # a no-op for every existing `build_repo_map` consumer that doesn't look for it (and
+        # OMITTED entirely on a complete scan, matching the omit-when-complete convention the
+        # `tg search --json` envelope already follows for `result_incomplete`). Kept separate
+        # from `scan_limit`/`partial`/`deadline_limit` on purpose (same reasoning as the
+        # deadline-vs-scan_limit split above): "more budget" is the correct remedy for those
+        # two, but NOT for an unreadable path, so conflating them would give wrong-knob advice.
+        if repo_walk_unreadable_hit.hit:
+            payload["unreadable_paths"] = {
+                "count": repo_walk_unreadable_hit.count,
+                "sample": list(repo_walk_unreadable_hit.sample),
             }
     return _attach_profiling(payload, _profiling_collector)
 

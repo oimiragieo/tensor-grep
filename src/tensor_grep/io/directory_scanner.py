@@ -66,6 +66,14 @@ DEFAULT_MAX_SCAN_ENTRIES = 200_000
 _GITIGNORE_MAX_BYTES_ENV = "TG_GITIGNORE_MAX_BYTES"
 DEFAULT_GITIGNORE_MAX_BYTES = 1024 * 1024  # 1 MiB is generous for a real .gitignore
 
+# Task #276 slice 1: `os.walk()`'s DEFAULT `onerror=None` silently swallows an `os.scandir()`
+# failure (e.g. a permission-denied or since-deleted subdirectory) -- the offending subtree is
+# simply omitted from the walk with no exception, no truncation flag, nothing. A caller reading
+# `scan_truncated` had no way to learn results are missing; `tg search --cpu`/`--force-cpu`
+# exited 0 with a silently partial result. Cap the sample of offending paths recorded (a tree
+# with thousands of denied dirs must not accumulate unboundedly) while still counting every hit.
+_MAX_UNREADABLE_PATH_SAMPLE = 5
+
 
 def _configured_positive_int(env_var: str, default: int) -> int:
     raw_value = os.environ.get(env_var)
@@ -102,6 +110,11 @@ class DirectoryScanner:
         self.scan_truncated = False
         self.scan_truncation_cause: str | None = None
         self.gitignore_truncated = False
+        # Unreadable-path diagnostics (task #276 slice 1) -- also sticky, same rationale as
+        # above. `unreadable_path_count` is the TRUE total (never capped); `unreadable_path_sample`
+        # is a bounded preview for a human-readable message.
+        self.unreadable_path_count = 0
+        self.unreadable_path_sample: list[str] = []
 
     def _load_ignore_spec(self, base_path: Path) -> "GitIgnoreSpec | None":
         if self.config.no_ignore or self.config.no_ignore_vcs or self.config.no_ignore_files:
@@ -190,6 +203,32 @@ class DirectoryScanner:
             and base_prefixed not in _GENERATED_RELATIVE_DIRS
         )
 
+    def _on_walk_error(self, exc: OSError) -> None:
+        """``os.walk()`` ``onerror`` callback (task #276 slice 1).
+
+        The default (``onerror=None``) makes `os.walk` silently skip a directory it cannot
+        `os.scandir()` (permission denied, or removed mid-walk) -- no exception, no signal,
+        the subtree just never appears. That is indistinguishable from "this subtree has no
+        files", so a caller (e.g. `tg search --cpu`) reported a confidently-empty-looking but
+        actually-partial result at exit 0. Recording the failure here and flagging
+        `scan_truncated` turns that into an explicit, machine-visible partial-coverage signal.
+
+        Never raises: matches `os.walk`'s "keep walking the rest of the tree" contract -- an
+        unreadable directory is a partial-coverage fact, not a fatal error for the whole scan.
+        """
+        self.scan_truncated = True
+        if self.scan_truncation_cause is None:
+            # First-truncation-cause-wins (mirrors `SearchResult.incomplete_reason`'s
+            # first-wins merge convention): if the entry-count cap (below) is hit later in the
+            # same walk, its unconditional assignment takes over as the more severe stop
+            # reason, but this one is never silently lost either -- `unreadable_path_count`/
+            # `unreadable_path_sample` stay populated regardless of which cause "wins" here.
+            self.scan_truncation_cause = "unreadable_path"
+        self.unreadable_path_count += 1
+        if len(self.unreadable_path_sample) < _MAX_UNREADABLE_PATH_SAMPLE:
+            offending_path = getattr(exc, "filename", None) or str(exc)
+            self.unreadable_path_sample.append(str(offending_path))
+
     def walk(self, path_str: str) -> Iterator[str]:
         base_path = Path(path_str)
 
@@ -215,7 +254,7 @@ class DirectoryScanner:
 
         entries_visited = 0
 
-        for root, dirs, files in os.walk(base_path):
+        for root, dirs, files in os.walk(base_path, onerror=self._on_walk_error):
             # Traversal budget (Q14): count this root plus every dir/file entry it exposes
             # BEFORE any filtering, since those are the entries the walk had to stat via
             # readdir. Once the budget is exceeded, stop descending and surface truncation

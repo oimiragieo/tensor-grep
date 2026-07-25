@@ -143,6 +143,11 @@ class RipgrepBackend(ComputeBackend):
                 sys.stderr.write(f"tg: rg exited 2, keeping partial results: {reason}\n")
                 search_result.result_incomplete = True
                 search_result.incomplete_reason = reason
+                # Task #276 slice 1: rg's own exit-2-with-partial-output soft error is always a
+                # per-path access problem (missing/permission-denied/etc among the searched
+                # paths) -- rg has no notion of "scan_limit"/"deadline" in its own exit code, so
+                # "unreadable_path" is the correct class for every occurrence of this branch.
+                search_result.incomplete_reason_class = "unreadable_path"
             return search_result
 
         except subprocess.TimeoutExpired as e:
@@ -193,6 +198,7 @@ class RipgrepBackend(ComputeBackend):
                 routing_worker_count=1,
                 result_incomplete=True,
                 incomplete_reason=reason,
+                incomplete_reason_class="timeout",
             )
         except Exception as e:
             raise BackendExecutionError(f"Ripgrep backend failed: {e}") from e
@@ -318,6 +324,7 @@ class RipgrepBackend(ComputeBackend):
                 sys.stderr.write(f"tg: rg exited 2, keeping partial results: {reason}\n")
                 search_result.result_incomplete = True
                 search_result.incomplete_reason = reason
+                search_result.incomplete_reason_class = "unreadable_path"
             return search_result
         except subprocess.TimeoutExpired as e:
             # L7: rg timed out mid-scan -> recover the file list it already flushed instead of
@@ -344,6 +351,7 @@ class RipgrepBackend(ComputeBackend):
                 routing_worker_count=1,
                 result_incomplete=True,
                 incomplete_reason=reason,
+                incomplete_reason_class="timeout",
             )
         except Exception as e:
             raise BackendExecutionError(f"Ripgrep backend failed: {e}") from e
@@ -435,6 +443,7 @@ class RipgrepBackend(ComputeBackend):
                 sys.stderr.write(f"tg: rg exited 2, keeping partial results: {reason}\n")
                 search_result.result_incomplete = True
                 search_result.incomplete_reason = reason
+                search_result.incomplete_reason_class = "unreadable_path"
             return search_result
         except subprocess.TimeoutExpired as e:
             # L7: recover the partial tally rg had flushed before the timeout instead of
@@ -461,6 +470,7 @@ class RipgrepBackend(ComputeBackend):
                 routing_worker_count=1,
                 result_incomplete=True,
                 incomplete_reason=reason,
+                incomplete_reason_class="timeout",
             )
         except Exception as e:
             raise BackendExecutionError(f"Ripgrep backend failed: {e}") from e

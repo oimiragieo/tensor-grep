@@ -126,6 +126,10 @@ def _routing_envelope(result: SearchResult) -> dict[str, object]:
     if result.result_incomplete:
         envelope["result_incomplete"] = True
         envelope["incomplete_reason"] = result.incomplete_reason
+        # Task #276 slice 1: a closed-vocabulary class ("unreadable_path"/"scan_limit"/
+        # "deadline"/"timeout") alongside the free-text reason, so an agent can branch on
+        # whether retrying with a bigger budget could plausibly help without string-sniffing.
+        envelope["incomplete_reason_class"] = result.incomplete_reason_class
     return envelope
 
 
@@ -188,6 +192,7 @@ class JsonFormatter(OutputFormatter):
             "rank_fallback_reason",
             "result_incomplete",
             "incomplete_reason",
+            "incomplete_reason_class",
         ):
             if key in envelope:
                 data[key] = envelope[key]

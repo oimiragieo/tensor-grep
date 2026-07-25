@@ -103,6 +103,14 @@ class SearchResult:
     # machine-visible "suppression != absence" marker on the JSON/MCP envelopes.
     result_incomplete: bool = False
     incomplete_reason: str | None = None
+    # Task #276 slice 1: a machine-branchable CLASS for `incomplete_reason`, so an agent doesn't
+    # have to string-sniff a human-readable message to decide whether retrying with a bigger
+    # budget could help. One of "unreadable_path" / "scan_limit" / "deadline" / "timeout" --
+    # closed vocabulary, shared by every route that sets `result_incomplete` (rg-backend exit 2,
+    # rg-backend timeout, and the CPU/native walk's own directory-scan truncation). None when
+    # `result_incomplete` is False (never emitted -- see json_fmt's omit-when-complete rule) OR
+    # when a route sets `result_incomplete` without yet classifying its cause.
+    incomplete_reason_class: str | None = None
     # Set ONLY when `--semantic` was requested but the dense leg could not run (extra absent,
     # model not fetched, or a shape/dim-mismatch degrade) -- distinct from `fallback_reason`
     # (reserved for a full engine swap) and from `incomplete_reason` (partial results). Emitted
@@ -147,3 +155,5 @@ def merge_runtime_routing(aggregate: SearchResult, result: SearchResult) -> None
     aggregate.result_incomplete = aggregate.result_incomplete or result.result_incomplete
     if result.incomplete_reason and not aggregate.incomplete_reason:
         aggregate.incomplete_reason = result.incomplete_reason
+    if result.incomplete_reason_class and not aggregate.incomplete_reason_class:
+        aggregate.incomplete_reason_class = result.incomplete_reason_class

@@ -7987,6 +7987,7 @@ def search_command(
                     "stopped; returning partial results. Scope the search to a smaller "
                     "path, or raise TG_RG_TIMEOUT_SECONDS."
                 )
+                all_results.incomplete_reason_class = "timeout"
                 sys.stderr.write(
                     "tg: native search exceeded the "
                     f"{timeout_seconds:g}s timeout, keeping partial results: "
@@ -8024,6 +8025,42 @@ def search_command(
             for match in result.matches:
                 _record_matched_file(match.file)
             _merge_runtime_routing(result)
+
+        # Task #276 slice 1: the CPU/native route's candidate-file list came from `scanner`
+        # (via `_collect_candidate_files` above), NOT from rg's own walk -- so a directory
+        # `scanner.walk()` could not read (permission denied) or an entry-count cap it hit
+        # (`DirectoryScanner`'s own defensive budget) silently narrowed
+        # `candidate_files_ordered` before this loop ever started, with NOTHING to surface it.
+        # The rg-backend branch above doesn't need this: rg re-walks the tree itself and
+        # already reports its own exit-2 soft error (see `RipgrepBackend.search`). Only set
+        # this when nothing already flagged incompleteness (the deadline check above takes
+        # precedence if it already fired -- first-cause-wins, matches `incomplete_reason`'s
+        # merge convention elsewhere). `getattr(..., False)` (mirrors `mcp_server.py`'s own
+        # `scan_truncated` read): several tests substitute a duck-typed `_FakeScanner` for
+        # `DirectoryScanner` that predates these attributes -- a bare `scanner.scan_truncated`
+        # would raise `AttributeError` on every one of those, not just skip this new check.
+        if getattr(scanner, "scan_truncated", False) and not all_results.result_incomplete:
+            if getattr(scanner, "scan_truncation_cause", None) == "max-scan-entries":
+                all_results.incomplete_reason_class = "scan_limit"
+                all_results.incomplete_reason = (
+                    "directory scan exceeded its entry budget "
+                    f"({getattr(scanner, 'max_scan_entries', '?')} entries) and was stopped; "
+                    "returning partial results. Scope the search to a smaller path, or raise "
+                    "TG_DIR_SCAN_MAX_ENTRIES."
+                )
+            else:
+                sample = ", ".join(getattr(scanner, "unreadable_path_sample", ())) or (
+                    "an unreadable path"
+                )
+                all_results.incomplete_reason_class = "unreadable_path"
+                all_results.incomplete_reason = (
+                    f"directory scan skipped {getattr(scanner, 'unreadable_path_count', '?')} "
+                    f"unreadable path(s) (e.g. {sample}) and returned partial results. More "
+                    "budget will not fix this: the path(s) need to become readable, or scope "
+                    "the search away from them."
+                )
+            all_results.result_incomplete = True
+            sys.stderr.write(f"tg: {all_results.incomplete_reason}\n")
 
     if config.replace_str is not None:
         all_results.matches = _replace_lines(all_results.matches, pattern, config)

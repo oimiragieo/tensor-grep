@@ -41,6 +41,9 @@ def test_search_exit2_with_matches_keeps_partial_and_flags_incomplete(monkeypatc
     assert result.total_matches == 1  # partial results KEPT (was: discarded via raise)
     assert result.result_incomplete is True
     assert "No such file" in (result.incomplete_reason or "")
+    # Task #276 slice 1: rg's own soft exit-2 error is always a per-path access problem -- a
+    # machine-branchable class alongside the free-text reason.
+    assert result.incomplete_reason_class == "unreadable_path"
 
 
 def test_search_exit2_zero_parsed_still_fails_closed(monkeypatch) -> None:
@@ -61,6 +64,7 @@ def test_search_exit01_unchanged(monkeypatch) -> None:
     result = RipgrepBackend().search("a.log", "ERROR", SearchConfig())
     assert result.total_matches == 1
     assert result.result_incomplete is False
+    assert result.incomplete_reason_class is None
 
 
 def test_search_timeout_returns_incomplete_envelope_not_crash(monkeypatch) -> None:
@@ -85,6 +89,7 @@ def test_search_timeout_returns_incomplete_envelope_not_crash(monkeypatch) -> No
     assert "timeout" in (result.incomplete_reason or "").lower()
     assert result.total_matches == 0
     assert result.matches == []
+    assert result.incomplete_reason_class == "timeout"
 
 
 def test_search_timeout_recovers_partial_matches_from_flushed_stdout(monkeypatch) -> None:
@@ -114,6 +119,7 @@ def test_files_with_matches_exit2_keeps_partial(monkeypatch) -> None:
     )
     assert result.matched_file_paths == ["a.log", "c.log"]
     assert result.result_incomplete is True
+    assert result.incomplete_reason_class == "unreadable_path"
 
 
 def test_counts_exit2_keeps_partial(monkeypatch) -> None:
@@ -121,14 +127,37 @@ def test_counts_exit2_keeps_partial(monkeypatch) -> None:
     result = RipgrepBackend()._search_counts("a.log", "ERROR", SearchConfig(count=True))
     assert result.total_matches == 3
     assert result.result_incomplete is True
+    assert result.incomplete_reason_class == "unreadable_path"
 
 
 def test_merge_runtime_routing_or_merges_incompleteness() -> None:
     agg = SearchResult()
-    sub = SearchResult(result_incomplete=True, incomplete_reason="rg exit 2")
+    sub = SearchResult(
+        result_incomplete=True,
+        incomplete_reason="rg exit 2",
+        incomplete_reason_class="unreadable_path",
+    )
     merge_runtime_routing(agg, sub)
     assert agg.result_incomplete is True
     assert agg.incomplete_reason == "rg exit 2"
+    assert agg.incomplete_reason_class == "unreadable_path"
+
+
+def test_merge_runtime_routing_keeps_first_incomplete_reason_class() -> None:
+    # First-cause-wins (mirrors incomplete_reason's own first-wins merge): once an aggregate
+    # already has a class from an earlier sub-result, a later sub-result's class must not
+    # silently overwrite it.
+    agg = SearchResult(
+        result_incomplete=True, incomplete_reason="first", incomplete_reason_class="timeout"
+    )
+    sub = SearchResult(
+        result_incomplete=True,
+        incomplete_reason="second",
+        incomplete_reason_class="unreadable_path",
+    )
+    merge_runtime_routing(agg, sub)
+    assert agg.incomplete_reason == "first"
+    assert agg.incomplete_reason_class == "timeout"
 
 
 def test_json_formatter_emits_incompleteness_only_when_partial() -> None:
@@ -141,14 +170,20 @@ def test_json_formatter_emits_incompleteness_only_when_partial() -> None:
         total_files=1,
         result_incomplete=True,
         incomplete_reason="rg exit 2 (partial results)",
+        incomplete_reason_class="unreadable_path",
     )
     out = _json.loads(JsonFormatter().format(incomplete))
     assert out["result_incomplete"] is True
     assert out["incomplete_reason"] == "rg exit 2 (partial results)"
+    # Task #276 slice 1: a closed-vocabulary class alongside the free-text reason.
+    assert out["incomplete_reason_class"] == "unreadable_path"
     # NDJSON spreads the full envelope, so it carries it per row.
     nd_row = _json.loads(NdjsonFormatter().format(incomplete).splitlines()[0])
     assert nd_row["result_incomplete"] is True
-    # Complete result: byte-identical shape, no incompleteness keys.
+    assert nd_row["incomplete_reason_class"] == "unreadable_path"
+    # Complete result: byte-identical shape, no incompleteness keys -- the OMIT-WHEN-COMPLETE
+    # control arm. `incomplete_reason_class` must be omitted exactly like its two siblings, not
+    # merely null, so a complete `tg search --json` payload stays byte-identical.
     complete = SearchResult(
         matches=[MatchLine(line_number=1, text="ERROR", file="a.log")],
         total_matches=1,
@@ -157,3 +192,4 @@ def test_json_formatter_emits_incompleteness_only_when_partial() -> None:
     out2 = _json.loads(JsonFormatter().format(complete))
     assert "result_incomplete" not in out2
     assert "incomplete_reason" not in out2
+    assert "incomplete_reason_class" not in out2
