@@ -1191,6 +1191,25 @@ def build_orient_capsule_from_map(
             if isinstance(existing_deadline_limit, dict)
             else {"deadline_exceeded": True}
         )
+        # Task #276 slice 1 (gate fold-in): keep `incomplete_reason_class` consistent with
+        # `partial_reason` above -- an earlier unreadable-path truncation (the block just
+        # above) may already have set both `incomplete_reason_class="unreadable_path"` and
+        # `incomplete_reason`, and this catch-all's own UNCONDITIONAL `partial_reason`
+        # overwrite would otherwise leave the two vocabularies disagreeing on the same
+        # payload (one agent branching on `partial_reason` sees `"deadline"`, another
+        # branching on `incomplete_reason_class` sees `"unreadable_path"`). Mirror the
+        # unconditional overwrite here too -- APPEND to `incomplete_reason` (never silently
+        # drop the earlier fact) but let the class agree with `partial_reason`.
+        _deadline_note = (
+            "the shared --deadline budget was also exceeded before this capsule returned"
+        )
+        _existing_incomplete_reason = result.get("incomplete_reason")
+        result["incomplete_reason"] = (
+            f"{_existing_incomplete_reason}; {_deadline_note}"
+            if _existing_incomplete_reason
+            else _deadline_note
+        )
+        result["incomplete_reason_class"] = "deadline"
     return result
 
 

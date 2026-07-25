@@ -148,3 +148,59 @@ class TestOrientCapsuleUnreadablePath:
                 _icacls(str(denied_dir), "/grant", f"{user}:(OI)(CI)F")
             else:
                 _icacls(str(denied_dir), "/reset")
+
+
+class TestOrientDeadlineAndUnreadablePathConsistency:
+    """Independent-gate non-blocking fold-in (item 7): `build_orient_capsule_from_map`'s #200
+    post-map deadline catch-all runs AFTER the unreadable-path block and unconditionally
+    overwrites `partial_reason`. Before this fix, that left `partial_reason == "deadline"`
+    while `incomplete_reason_class` was frozen at `"unreadable_path"` from the earlier block --
+    two agents branching on the two different fields of the SAME payload got different answers.
+    The fix makes both agree (`"deadline"` wins, since it fired last/most-recently) while
+    APPENDING the unreadable-path fact into `incomplete_reason` instead of silently dropping
+    it."""
+
+    def test_deadline_catchall_overwrites_class_to_agree_with_partial_reason(
+        self, tmp_path: Path
+    ) -> None:
+        from tensor_grep.cli.orient_capsule import build_orient_capsule_from_map
+        from tensor_grep.cli.repo_map import build_repo_map
+
+        (tmp_path / "keep.py").write_text("def keep():\n    pass\n", encoding="utf-8")
+
+        # Build a real `rm` that already carries `unreadable_paths` (no deadline applied to
+        # the WALK itself, so the denied subdir is genuinely reached and recorded).
+        denied_dir = tmp_path / "denied"
+        denied_dir.mkdir()
+        (denied_dir / "secret.py").write_text("def secret():\n    pass\n", encoding="utf-8")
+        real_scandir = os.scandir
+
+        def _fake_scandir(path="."):
+            if os.fspath(path) == os.fspath(denied_dir):
+                raise PermissionError(13, "Permission denied", str(denied_dir))
+            return real_scandir(path)
+
+        import tensor_grep.cli.repo_map as repo_map_mod
+
+        original_scandir = repo_map_mod.os.scandir
+        repo_map_mod.os.scandir = _fake_scandir
+        try:
+            rm = build_repo_map(tmp_path, max_repo_files=1000)
+        finally:
+            repo_map_mod.os.scandir = original_scandir
+        assert "unreadable_paths" in rm, "test setup: rm must carry unreadable_paths"
+
+        # Now build the capsule from that already-truncated `rm` with an ALREADY-EXPIRED
+        # `deadline_monotonic` (0.0 <= any real time.monotonic() call) so the #200 post-map
+        # catch-all fires deterministically without racing the real wall clock
+        # (anti-hang-test-protocol: dependency injection over real-time racing).
+        payload = build_orient_capsule_from_map(rm, max_tokens=500, deadline_monotonic=0.0)
+
+        assert payload["partial"] is True
+        assert payload["partial_reason"] == "deadline"
+        # The fix: incomplete_reason_class agrees with partial_reason instead of staying
+        # frozen at the earlier "unreadable_path" value.
+        assert payload["incomplete_reason_class"] == "deadline"
+        # The earlier unreadable-path fact must survive in the text, not be silently dropped.
+        assert "unreadable" in payload["incomplete_reason"].lower()
+        assert "deadline" in payload["incomplete_reason"].lower()

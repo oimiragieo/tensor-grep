@@ -149,3 +149,70 @@ class TestCpuRouteUnreadablePath:
         assert "result_incomplete" not in payload
         assert "incomplete_reason" not in payload
         assert "incomplete_reason_class" not in payload
+
+    def test_bare_scanner_attribute_reads_never_silently_swallow_a_missing_attribute(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Independent-gate BLOCKING 1: `cli/main.py`'s CPU-route consumption reads
+        `scanner.scan_truncated`/etc. as BARE attribute reads (not `getattr(..., False)`) --
+        deliberately, because this is the ONLY signal on this branch and a silent `False`
+        default would resurrect the exact fail-open silence this fix exists to close. Prove it:
+        a scanner-like object missing the attribute must raise `AttributeError` (surfacing as a
+        genuine, loud test/production failure) instead of being swallowed into a false "nothing
+        truncated" reading."""
+        (tmp_path / "hit.py").write_text("needle\n", encoding="utf-8")
+
+        import tensor_grep.cli.main as cli_main
+
+        class _AttributelessScanner:
+            def __init__(self, config=None):
+                pass
+
+            def walk(self, path):
+                yield str(tmp_path / "hit.py")
+
+        monkeypatch.setattr(cli_main, "resolve_native_tg_binary", lambda: None)
+        monkeypatch.setattr(
+            "tensor_grep.io.directory_scanner.DirectoryScanner", _AttributelessScanner
+        )
+
+        with pytest.raises(AttributeError, match="scan_truncated"):
+            CliRunner().invoke(
+                app,
+                ["search", "needle", str(tmp_path), "--cpu", "--json"],
+                catch_exceptions=False,
+            )
+
+    def test_unrecognized_scan_truncation_cause_raises_loudly_not_silently_mislabeled(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Independent-gate non-blocking fold-in (item 5): `scan_truncation_cause` is currently
+        only ever `"max-scan-entries"` or `"unreadable_path"` by construction
+        (`directory_scanner.py`), but the CPU-route classifier's `else` branch must fail LOUDLY
+        on an unrecognized third cause rather than silently mislabeling it `"unreadable_path"` --
+        `incomplete_reason_class` is a documented closed vocabulary; guessing a wrong member is
+        worse than crashing."""
+        (tmp_path / "hit.py").write_text("needle\n", encoding="utf-8")
+
+        import tensor_grep.cli.main as cli_main
+
+        class _WeirdCauseScanner:
+            def __init__(self, config=None):
+                self.scan_truncated = True
+                self.scan_truncation_cause = "some_future_cause_nobody_classified_yet"
+                self.unreadable_path_count = 0
+                self.unreadable_path_sample: list[str] = []
+                self.max_scan_entries = 200_000
+
+            def walk(self, path):
+                yield str(tmp_path / "hit.py")
+
+        monkeypatch.setattr(cli_main, "resolve_native_tg_binary", lambda: None)
+        monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _WeirdCauseScanner)
+
+        with pytest.raises(AssertionError, match="some_future_cause_nobody_classified_yet"):
+            CliRunner().invoke(
+                app,
+                ["search", "needle", str(tmp_path), "--cpu", "--json"],
+                catch_exceptions=False,
+            )

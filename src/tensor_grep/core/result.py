@@ -106,10 +106,20 @@ class SearchResult:
     # Task #276 slice 1: a machine-branchable CLASS for `incomplete_reason`, so an agent doesn't
     # have to string-sniff a human-readable message to decide whether retrying with a bigger
     # budget could help. One of "unreadable_path" / "scan_limit" / "deadline" / "timeout" --
-    # closed vocabulary, shared by every route that sets `result_incomplete` (rg-backend exit 2,
-    # rg-backend timeout, and the CPU/native walk's own directory-scan truncation). None when
-    # `result_incomplete` is False (never emitted -- see json_fmt's omit-when-complete rule) OR
-    # when a route sets `result_incomplete` without yet classifying its cause.
+    # closed vocabulary. NOT universally set on every `result_incomplete=True` producer in this
+    # codebase: it currently covers `RipgrepBackend`'s exit-2/timeout branches, the CPU/native
+    # search route's own directory-scan-truncation consumption (both in `cli/main.py`'s
+    # `search_command`), and `tg find`'s deadline/`--max-repo-files`/chunk-cap causes (also
+    # `cli/main.py`) -- see each call site for the exact mapping. It is deliberately left unset
+    # (never `False`-defaulted to a guessed value) when a cause doesn't cleanly map onto the
+    # closed vocabulary (e.g. `tg find`'s per-file chunk/parse error) or hasn't been classified
+    # yet for a given route -- `repo_map.py`'s SEPARATE `_mark_result_incomplete` mechanism
+    # (the symbol commands: `defs`/`refs`/`callers`/`blast-radius`/`map`/`context`/`agent`/
+    # `edit-plan`) and the MCP tool envelopes (`mcp_server.py`'s own `result_incomplete` sites)
+    # do NOT set this field at all. None when `result_incomplete` is False (never emitted -- see
+    # json_fmt's omit-when-complete rule) OR when a route sets `result_incomplete` without
+    # classifying its cause (also never emitted -- `json_fmt._routing_envelope` only adds the
+    # key when this is non-None).
     incomplete_reason_class: str | None = None
     # Set ONLY when `--semantic` was requested but the dense leg could not run (extra absent,
     # model not fetched, or a shape/dim-mismatch degrade) -- distinct from `fallback_reason`

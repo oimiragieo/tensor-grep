@@ -193,3 +193,29 @@ def test_json_formatter_emits_incompleteness_only_when_partial() -> None:
     assert "result_incomplete" not in out2
     assert "incomplete_reason" not in out2
     assert "incomplete_reason_class" not in out2
+
+
+def test_json_formatter_omits_unclassified_incomplete_reason_class() -> None:
+    """Independent-gate BLOCKING 3: a `result_incomplete=True` producer that has NOT classified
+    its cause (`incomplete_reason_class` stays `None`, e.g. `tg find`'s per-file chunk-parse
+    error) must OMIT the key entirely -- never emit a literal JSON `null`. A `null` value on a
+    documented closed-vocabulary field is worse than an absent key: it reads as a 5th,
+    undocumented vocabulary member instead of "not classified"."""
+    from tensor_grep.cli.formatters.json_fmt import JsonFormatter, NdjsonFormatter
+    from tensor_grep.core.result import MatchLine
+
+    unclassified = SearchResult(
+        matches=[MatchLine(line_number=1, text="ERROR", file="a.log")],
+        total_matches=1,
+        total_files=1,
+        result_incomplete=True,
+        incomplete_reason="skipped a.log: some per-file error",
+        incomplete_reason_class=None,
+    )
+    out = _json.loads(JsonFormatter().format(unclassified))
+    assert out["result_incomplete"] is True
+    assert out["incomplete_reason"] == "skipped a.log: some per-file error"
+    assert "incomplete_reason_class" not in out
+    nd_row = _json.loads(NdjsonFormatter().format(unclassified).splitlines()[0])
+    assert nd_row["result_incomplete"] is True
+    assert "incomplete_reason_class" not in nd_row

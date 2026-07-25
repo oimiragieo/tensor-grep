@@ -194,6 +194,9 @@ def test_find_deadline_truncation_sets_result_incomplete_and_exit_2(
     payload = json.loads(result.stdout)
     assert payload.get("result_incomplete") is True
     assert "deadline" in (payload.get("incomplete_reason") or "").lower()
+    # Independent-gate fold-in (#276 slice 1 review): a walk-deadline cause classifies as
+    # "deadline" -- fixable by raising --deadline, unlike an unreadable-path cause.
+    assert payload.get("incomplete_reason_class") == "deadline"
 
 
 def test_find_max_repo_files_cap_partial_exit_2(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -209,6 +212,9 @@ def test_find_max_repo_files_cap_partial_exit_2(tmp_path: Path, monkeypatch) -> 
     payload = json.loads(result.stdout)
     assert payload.get("result_incomplete") is True
     assert "max-repo-files" in (payload.get("incomplete_reason") or "")
+    # Independent-gate fold-in (#276 slice 1 review): a --max-repo-files cap classifies as
+    # "scan_limit" -- fixable by raising the cap, unlike an unreadable-path cause.
+    assert payload.get("incomplete_reason_class") == "scan_limit"
 
 
 def test_find_chunk_cap_partial_exit_2(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -227,6 +233,48 @@ def test_find_chunk_cap_partial_exit_2(tmp_path: Path, monkeypatch) -> None:  # 
     payload = json.loads(result.stdout)
     assert payload.get("result_incomplete") is True
     assert "chunk cap" in (payload.get("incomplete_reason") or "")
+    # Independent-gate fold-in (#276 slice 1 review): the corpus-wide chunk cap is a bounded-
+    # size cap in the same spirit as --max-repo-files -- classifies "scan_limit" too.
+    assert payload.get("incomplete_reason_class") == "scan_limit"
+
+
+def test_find_per_file_chunk_error_omits_incomplete_reason_class(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """Independent-gate BLOCKING 3 fold-in: a per-file `chunk_file` RuntimeError (unrelated to
+    scan-limit/deadline) does NOT cleanly map onto the closed vocabulary. When it's the ONLY
+    incomplete cause, `incomplete_reason_class` must be OMITTED entirely (never `null`) rather
+    than guessed -- json_fmt only adds the key when `SearchResult.incomplete_reason_class` is
+    not None."""
+    _stub_dense_unavailable(monkeypatch)
+    (tmp_path / "a.py").write_text("def fn():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("def fn2():\n    return 1\n", encoding="utf-8")
+
+    import tensor_grep.core.retrieval_chunker as retrieval_chunker_mod
+
+    real_chunk_file = retrieval_chunker_mod.chunk_file
+    call_count = 0
+
+    def _flaky_chunk_file(path):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("simulated per-file chunk failure")
+        return real_chunk_file(path)
+
+    # `find`'s builder does `from tensor_grep.core.retrieval_chunker import chunk_file` as a
+    # FUNCTION-LOCAL import, re-binding fresh on every call -- patch the source module's
+    # attribute (not a `cli.main` module-level name, which doesn't exist for this symbol) so
+    # the local import picks up the fake.
+    monkeypatch.setattr(retrieval_chunker_mod, "chunk_file", _flaky_chunk_file)
+
+    result = CliRunner().invoke(app, ["find", "fn", str(tmp_path), "--json"])
+
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    assert payload.get("result_incomplete") is True
+    assert "skipped" in (payload.get("incomplete_reason") or "")
+    assert "incomplete_reason_class" not in payload
 
 
 def test_find_no_results_exit_1(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]

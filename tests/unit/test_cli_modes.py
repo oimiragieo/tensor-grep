@@ -310,7 +310,16 @@ def _assert_navigation_pack(
 
 class _FakeScanner:
     def __init__(self, config=None):
-        pass
+        # Task #276 slice 1: `cli/main.py`'s CPU/native search branch reads these attributes
+        # directly (a bare read, deliberately not `getattr(..., default)` -- see that call
+        # site's comment) as the ONLY signal for whether the directory walk was truncated, so
+        # this fake must carry the same shape a real `DirectoryScanner` does, defaulted to
+        # "nothing was truncated" for every existing test that doesn't care about this.
+        self.scan_truncated = False
+        self.scan_truncation_cause = None
+        self.unreadable_path_count = 0
+        self.unreadable_path_sample: list[str] = []
+        self.max_scan_entries = 200_000
 
     def walk(self, path):
         yield from _FAKE_WALK.get(path, [])
