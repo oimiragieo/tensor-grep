@@ -578,16 +578,38 @@ def _search_args_include_generated_scan_bound(
     return False
 
 
+# Task #269 independent-gate finding: the naive `arg.startswith("-u")` this replaced only
+# matched `-u`/`-uu`/`-uuu` as the WHOLE token -- it missed the bundled/clustered short-flag
+# form (`-iu`, `-nu`, ...), which rg's own clap-style parser accepts identically to `-i -u` /
+# `-n -u`. Walks the cluster the same way `_requires_full_cli`'s bundled-scan does (lines
+# ~369-374 above): the first ATTACHED-VALUE short flag in a cluster swallows the remainder of
+# that token as its own value, so a `u` appearing after it is DATA, not a flag -- `-tu` means
+# `--type u`, not `-t -u`. Extracted to one named helper (rather than two separately-maintained
+# copies of the same rule) so `_search_args_request_unrestricted_generated_scan` (the broad-scan
+# guardrail) and `_run_rg_passthrough` (task #269 root-ignore-file gating) cannot silently drift
+# out of parity with each other -- the exact "one rule, two implementations" trap this whole PR
+# exists to close for `.gitignore` honoring.
+def _search_args_request_unrestricted(search_args: list[str]) -> bool:
+    for arg in search_args:
+        if arg == "--unrestricted":
+            return True
+        if not arg.startswith("-") or arg.startswith("--"):
+            continue
+        for ch in arg[1:]:
+            if ch == "u":
+                return True
+            if f"-{ch}" in _SEARCH_ATTACHED_VALUE_SHORT_FLAGS:
+                break
+    return False
+
+
 def _search_args_request_unrestricted_generated_scan(search_args: list[str]) -> bool:
     files_mode = "--files" in search_args
     if files_mode and any(arg in _SEARCH_HIDDEN_FLAGS for arg in search_args):
         return True
     if any(arg in _SEARCH_NO_IGNORE_FLAGS for arg in search_args):
         return True
-    return any(
-        arg == "--unrestricted" or (arg.startswith("-u") and not arg.startswith("--"))
-        for arg in search_args
-    )
+    return _search_args_request_unrestricted(search_args)
 
 
 def _search_path_args_raw(search_args: list[str]) -> list[str]:
@@ -1096,7 +1118,13 @@ def _run_rg_passthrough(binary_name: str, search_args: list[str]) -> int:
     # `_search_args_paths_defaulted`), so the roots this computes always match what real rg
     # will actually search. The emitted `--ignore-file <path>` operands are PREPENDED (not
     # appended) so they land before any `--` end-of-options sentinel the user's own argv might
-    # contain -- inserting after it would misparse them as positional paths.
+    # contain -- inserting after it would misparse them as positional paths. `-u`/`-uu`/`-uuu`/
+    # `--unrestricted` (rg's documented `--no-ignore` alias) is checked via
+    # `_search_args_request_unrestricted` -- the SAME helper
+    # `_search_args_request_unrestricted_generated_scan` (the broad-scan guardrail) uses --
+    # rather than a second hand-rolled predicate (independent-gate finding: without it
+    # `-u` came out STRICTER than no flag at all, since the emitted `--ignore-file` survives
+    # `--no-ignore` by design and would silently resurrect the rules `-u` asked to disable).
     from tensor_grep.cli.rg_root_ignore import root_ignore_file_args
 
     ignore_file_ops = root_ignore_file_args(
@@ -1105,6 +1133,7 @@ def _run_rg_passthrough(binary_name: str, search_args: list[str]) -> int:
         no_ignore_files="--no-ignore-files" in search_args,
         no_ignore_vcs="--no-ignore-vcs" in search_args,
         no_ignore_dot="--no-ignore-dot" in search_args,
+        unrestricted=int(_search_args_request_unrestricted(search_args)),
     )
     return _streaming_passthrough_returncode(
         [binary_name, *ignore_file_ops, *search_args], timeout_env_var="TG_RG_TIMEOUT_SECONDS"

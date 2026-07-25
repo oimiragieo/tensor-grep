@@ -177,3 +177,59 @@ def test_no_ignore_files_wins_over_explicit_root_even_with_files_present(tmp_pat
     )
 
     assert operands == []
+
+
+# --- Task #269 independent-gate finding: rg's `-u`/`-uu`/`-uuu` alias for `--no-ignore` -------
+# Confirmed BLOCKING on the first pass of this task: `-u` is rg's documented alias for
+# `--no-ignore` (`-uu` additionally implies `--hidden`, `-uuu` additionally implies `--binary`),
+# but neither call site observed it, so the emitted `--ignore-file` (which survives
+# `--no-ignore` by design -- see the module docstring) silently resurrected the ignored files
+# under `-u`, making `-u` STRICTER than passing no flag at all.
+
+
+def test_unrestricted_suppresses_injection_even_when_no_ignore_flags_are_false(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+
+    operands = root_ignore_file_args(
+        [str(tmp_path)],
+        no_ignore=False,
+        no_ignore_files=False,
+        no_ignore_vcs=False,
+        no_ignore_dot=False,
+        unrestricted=1,
+    )
+
+    assert operands == []
+
+
+def test_unrestricted_zero_is_a_no_op(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+
+    operands = root_ignore_file_args(
+        [str(tmp_path)],
+        no_ignore=False,
+        no_ignore_files=False,
+        no_ignore_vcs=False,
+        no_ignore_dot=False,
+        unrestricted=0,
+    )
+
+    assert operands == ["--ignore-file", str(tmp_path / ".gitignore")]
+
+
+def test_unrestricted_default_parameter_does_not_change_existing_callers(tmp_path: Path) -> None:
+    """Callers written before `unrestricted` existed (i.e. every pre-existing call in this
+    file) must keep working unchanged -- the parameter must default to the no-op value."""
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+
+    operands = root_ignore_file_args(
+        [str(tmp_path)],
+        no_ignore=False,
+        no_ignore_files=False,
+        no_ignore_vcs=False,
+        no_ignore_dot=False,
+    )
+
+    assert operands == ["--ignore-file", str(tmp_path / ".gitignore")]

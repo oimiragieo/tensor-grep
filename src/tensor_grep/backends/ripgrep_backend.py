@@ -610,6 +610,12 @@ class RipgrepBackend(ComputeBackend):
             # function's own `args.paths`); a pre-enumerated FILE list (the rare
             # `--files-without-match` branch in `cli/main.py`) safely no-ops via the helper's
             # own `Path.is_file()` existence check rather than emitting a wrong flag.
+            # `config.unrestricted` (rg's `-u`/`-uu`/`-uuu`) is a documented ALIAS for
+            # `--no-ignore` (+`--hidden`/+`--binary`) that rg's own parser expands -- NOT
+            # observed by `config.no_ignore` -- so it must gate this injection too (independent
+            # gate finding, task #269): without it `-u` came out STRICTER than no flag at all,
+            # since the emitted `--ignore-file` below (line ~648) survives `--no-ignore` by
+            # design and silently resurrected the very rules `-u` asked to disable.
             cmd.extend(
                 root_ignore_file_args(
                     file_path if isinstance(file_path, list) else [file_path],
@@ -617,6 +623,7 @@ class RipgrepBackend(ComputeBackend):
                     no_ignore_files=config.no_ignore_files,
                     no_ignore_vcs=config.no_ignore_vcs,
                     no_ignore_dot=config.no_ignore_dot,
+                    unrestricted=config.unrestricted,
                 )
             )
             if config.ignore_file_case_insensitive:

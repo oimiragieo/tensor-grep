@@ -215,7 +215,7 @@ def test_plain_text_and_json_agree_on_the_same_one_file_set(
 
 @pytest.mark.parametrize(
     "flag",
-    ["--no-ignore", "--no-ignore-vcs", "--no-ignore-files"],
+    ["--no-ignore", "--no-ignore-vcs", "--no-ignore-files", "-u"],
 )
 def test_ignore_disabling_flag_restores_the_gitignored_file_via_python_bootstrap_passthrough(
     non_git_root_gitignore_corpus: tuple[Path, dict[str, str]],
@@ -228,7 +228,14 @@ def test_ignore_disabling_flag_restores_the_gitignored_file_via_python_bootstrap
     `root_ignore_file_args` gating is load-bearing end-to-end through the real CLI, not just at
     the unit-test level -- without it, an explicit `--ignore-file` would silently resurrect the
     rule the user asked to disable (verified live against rg 15.1.0 in the #264 PR; reused, not
-    re-derived, per this task's brief)."""
+    re-derived, per this task's brief).
+
+    `-u` (rg's documented `--no-ignore` alias) is included here as the independent-gate
+    BLOCKING finding from this task's first pass: it was not observed by either call site's
+    gating at all, so the injected `--ignore-file` (immune to `--no-ignore` by design) silently
+    resurrected the ignored file under `-u` -- making `-u` STRICTER than passing no flag at
+    all. Measured pre-fix (this exact regression, `TG_DISABLE_NATIVE_TG=1`, `tg 1.98.3`):
+    `-u needle .` returned only the non-ignored file, identical to a bare search with no flag."""
     root, env = non_git_root_gitignore_corpus
 
     result = _run_tg_search(["--no-heading", flag, "needle", "."], cwd=root, env=env)
@@ -238,6 +245,34 @@ def test_ignore_disabling_flag_restores_the_gitignored_file_via_python_bootstrap
     assert matched_files == {"a.txt", "skipme.txt"}, (
         f"{flag} must restore the gitignored file: got {matched_files}\n"
         f"stdout={result.stdout!r}\nstderr={result.stderr}"
+    )
+
+
+@pytest.mark.parametrize("flag", ["--no-ignore", "-u"])
+def test_ignore_disabling_flag_restores_the_gitignored_file_via_python_ripgrep_backend_json(
+    non_git_root_gitignore_corpus: tuple[Path, dict[str, str]],
+    flag: str,
+) -> None:
+    """The `--json` counterpart of the escape-hatch control above, on the SECOND Python
+    implementation (`RipgrepBackend._build_cmd`, via `cli/main.py`'s full CLI): a bare `--json`
+    is one of bootstrap's `_TG_ONLY_SEARCH_FLAGS`, so `--json -u` and `--json --no-ignore` both
+    land on `RipgrepBackend.search()`, never on `_run_rg_passthrough`. Independent-gate
+    non-blocking finding: this file previously only asserted `--json` was CORRECT (the
+    excludes-gitignored-file tests above), never that its escape hatches worked -- an
+    argv-construction-only check (`test_ripgrep_backend.py`'s unit coverage) is not the same as
+    an OUTCOME check through the real CLI + real rg (the exact standard #744's gate held the
+    plain-text side to)."""
+    root, env = non_git_root_gitignore_corpus
+
+    result = _run_tg_search(["--json", flag, "needle", "."], cwd=root, env=env)
+
+    assert result.returncode == 0, f"stdout={result.stdout!r}\nstderr={result.stderr}"
+    payload = json.loads(result.stdout)
+    assert payload["routing_backend"] == "RipgrepBackend", payload
+    basenames = {Path(_normalize_path_str(str(p))).name for p in payload["matched_file_paths"]}
+    assert basenames == {"a.txt", "skipme.txt"}, (
+        f"{flag} must restore the gitignored file via --json too: got {basenames}\n"
+        f"stdout={result.stdout!r}"
     )
 
 

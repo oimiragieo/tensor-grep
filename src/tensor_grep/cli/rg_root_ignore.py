@@ -35,6 +35,7 @@ def root_ignore_file_args(
     no_ignore_files: bool,
     no_ignore_vcs: bool,
     no_ignore_dot: bool,
+    unrestricted: int = 0,
 ) -> list[str]:
     """Return `["--ignore-file", path, ...]` operands for every discovered root ignore file.
 
@@ -55,15 +56,34 @@ def root_ignore_file_args(
       - ``no_ignore_dot``   -- rg's docs restrict this to ``.ignore``/``.rgignore`` ("Don't
         respect filter rules from .ignore or .rgignore files ... does not impact whether filter
         rules from .gitignore files are respected"); skip only those two.
+      - ``unrestricted``    -- rg's `-u`/`-uu`/`-uuu` is a documented ALIAS: `-u` expands to
+        `--no-ignore` (`-uu` additionally implies `--hidden`, `-uuu` additionally implies
+        `--binary`), so any count > 0 already implies `--no-ignore` and must gate exactly like
+        it (independent-gate finding on task #269: this was originally missed because
+        ``ripgrep_backend.py``'s ``config.no_ignore`` and clap's own `-u` expansion are two
+        separate code paths -- neither call site alone observes both. Without this, `-u` would
+        become STRICTER than no flag at all: the emitted `--ignore-file` survives `-u`, per the
+        `no_ignore` bullet above, and silently re-applies rules `-u` asked to disable).
     ``no_ignore_exclude``/``no_ignore_global``/``no_ignore_parent`` are deliberately NOT
     parameters: none of them govern a root ``.ignore``/``.gitignore``/``.rgignore`` file (they
     gate ``.git/info/exclude``, the global git ignore config, and parent-directory ignore-file
     ascent respectively), so they have no bearing on what this function emits.
 
+    KNOWN GAP, low priority, flagged not fixed (independent-gate non-blocking note, task #269):
+    rg's `--ignore`/`--ignore-vcs`/`--ignore-dot`/`--ignore-files` RE-ENABLE flags are not
+    parameters either. rg is last-wins on repeated ignore flags, so e.g. `--no-ignore
+    --ignore-vcs` (disable everything, then re-enable VCS-scoped honoring) should behave like a
+    bare search for `.gitignore` -- but a caller that passes only the raw `no_ignore=True`
+    booleans this function takes cannot distinguish that from a bare `--no-ignore` with no
+    re-enable, so this function returns `[]` for both. Same raw-token-vs-parsed-bool class as
+    the `unrestricted` gap above, but the failure direction is the SAFE one: under-EMITTING
+    (falling back to whatever rg's own auto-discovery does, i.e. nothing outside a git repo) is
+    a missed convenience, not a resurrected-ignore-rule regression, so it is not gated here.
+
     ``roots`` mirrors rg's own ``args.paths``: an empty/``None`` list defaults to a single ``.``
     root (an implicit search still has an implicit cwd root to check).
     """
-    if no_ignore or no_ignore_files:
+    if no_ignore or no_ignore_files or unrestricted > 0:
         return []
 
     effective_roots = roots or ["."]

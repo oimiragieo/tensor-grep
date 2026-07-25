@@ -161,6 +161,43 @@ def test_build_cmd_covers_every_explicit_root(tmp_path: Path) -> None:
     assert sum(1 for tok in cmd if tok == "--ignore-file") == 2
 
 
+# Task #269 independent-gate finding (BLOCKING on first pass): `config.unrestricted` (rg's
+# `-u`/`-uu`/`-uuu`, forwarded verbatim at line ~648 below via `cmd.append("-" + "u" *
+# config.unrestricted)`) is a documented ALIAS for `--no-ignore`, but `_build_cmd` only checked
+# `config.no_ignore` when gating the new root-ignore-file injection -- so `-u` alone left the
+# injected `--ignore-file` in place, and since `--ignore-file` is NOT cancelled by `--no-ignore`
+# (see `rg_root_ignore.py`'s docstring), `-u` silently resurrected the ignored files. `-u` must
+# return the SAME cmd shape as `--no-ignore` with respect to this injection.
+def test_build_cmd_unrestricted_suppresses_root_ignore_injection(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    backend = RipgrepBackend()
+    config = SearchConfig(unrestricted=1)
+
+    with patch.object(backend, "_get_binary_name", return_value="rg"):
+        cmd = backend._build_cmd(
+            file_path=[str(tmp_path)], pattern="needle", config=config, json_mode=True
+        )
+
+    assert "--ignore-file" not in cmd
+    assert "-u" in cmd
+
+
+def test_build_cmd_unrestricted_double_and_triple_suppress_root_ignore_injection(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    backend = RipgrepBackend()
+
+    for level, flag in ((2, "-uu"), (3, "-uuu")):
+        config = SearchConfig(unrestricted=level)
+        with patch.object(backend, "_get_binary_name", return_value="rg"):
+            cmd = backend._build_cmd(
+                file_path=[str(tmp_path)], pattern="needle", config=config, json_mode=True
+            )
+        assert "--ignore-file" not in cmd, (level, cmd)
+        assert flag in cmd, (level, cmd)
+
+
 def test_json_context_events_do_not_inflate_match_totals():
     backend = RipgrepBackend()
     config = SearchConfig(context=1)

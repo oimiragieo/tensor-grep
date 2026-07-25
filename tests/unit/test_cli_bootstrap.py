@@ -564,6 +564,95 @@ def test_run_rg_passthrough_no_ignore_dot_skips_ignore_and_rgignore_not_gitignor
     assert not any(v.endswith(".rgignore") for v in values), values
 
 
+# --- Task #269 independent-gate finding (BLOCKING on first pass): `-u`/`-uu`/`-uuu`/
+# `--unrestricted` is rg's documented alias for `--no-ignore` (`-uu` additionally implies
+# `--hidden`, `-uuu` additionally implies `--binary`), forwarded raw to real rg
+# (`_streaming_passthrough_returncode` just hands argv straight through). Neither the original
+# fix nor its tests observed it: only the four literal `--no-ignore*` long tokens were checked,
+# so `-u` left the injected `--ignore-file` in place -- and since `--ignore-file` survives
+# `--no-ignore` by design, `-u` came out STRICTER than passing no flag at all. Fixed via
+# `_search_args_request_unrestricted`, shared with the pre-existing
+# `_search_args_request_unrestricted_generated_scan` broad-scan guardrail so the two cannot
+# silently drift out of parity with each other.
+
+
+def test_run_rg_passthrough_unrestricted_suppresses_injection(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    bootstrap._run_rg_passthrough("rg", ["-u", "needle", str(tmp_path)])
+
+    assert "--ignore-file" not in seen["argv"]
+
+
+def test_run_rg_passthrough_unrestricted_double_and_triple_suppress_injection(
+    monkeypatch, tmp_path: Path
+) -> None:
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+
+    for flag in ("-uu", "-uuu"):
+        seen = _capture_streaming_passthrough_argv(monkeypatch)
+        bootstrap._run_rg_passthrough("rg", [flag, "needle", str(tmp_path)])
+        assert "--ignore-file" not in seen["argv"], (flag, seen["argv"])
+
+
+def test_run_rg_passthrough_unrestricted_long_form_suppresses_injection(
+    monkeypatch, tmp_path: Path
+) -> None:
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    bootstrap._run_rg_passthrough("rg", ["--unrestricted", "needle", str(tmp_path)])
+
+    assert "--ignore-file" not in seen["argv"]
+
+
+def test_run_rg_passthrough_clustered_unrestricted_short_flag_suppresses_injection(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """`-iu` (ignore-case + unrestricted bundled into one token) is what the naive
+    `arg.startswith("-u")` predicate this replaced would have missed entirely -- `"-iu"` does
+    not start with `"-u"`. rg's own clap-style parser accepts this cluster identically to
+    `-i -u`."""
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    bootstrap._run_rg_passthrough("rg", ["-iu", "needle", str(tmp_path)])
+
+    assert "--ignore-file" not in seen["argv"]
+
+
+def test_search_args_request_unrestricted_matches_bare_short_flags() -> None:
+    assert bootstrap._search_args_request_unrestricted(["-u"]) is True
+    assert bootstrap._search_args_request_unrestricted(["-uu"]) is True
+    assert bootstrap._search_args_request_unrestricted(["-uuu"]) is True
+    assert bootstrap._search_args_request_unrestricted(["--unrestricted"]) is True
+
+
+def test_search_args_request_unrestricted_matches_clustered_short_flags() -> None:
+    # -iu == -i -u; -nu == -n -u (n is not an attached-value flag, so u is still reachable).
+    assert bootstrap._search_args_request_unrestricted(["-iu"]) is True
+    assert bootstrap._search_args_request_unrestricted(["-nu"]) is True
+
+
+def test_search_args_request_unrestricted_does_not_false_positive_on_attached_value_flags() -> None:
+    # -t is an ATTACHED-VALUE short flag (file type): "-tu" means `--type u`, i.e. a file type
+    # literally named "u" -- not `-t -u`. The `u` here is DATA, not a flag, and must not trip
+    # the unrestricted gate (a false positive here would UNDER-emit --ignore-file, not
+    # over-emit -- still a correctness bug, just the safer direction than the BLOCKING one).
+    assert bootstrap._search_args_request_unrestricted(["-tu"]) is False
+    # A bare, unrelated flag/pattern must not match.
+    assert bootstrap._search_args_request_unrestricted(["-i", "needle", "."]) is False
+    assert bootstrap._search_args_request_unrestricted(["needle", "."]) is False
+
+
+def test_search_args_request_unrestricted_generated_scan_shares_the_same_helper() -> None:
+    """The pre-existing broad-scan guardrail must widen identically to the new gate -- both
+    call `_search_args_request_unrestricted` rather than maintaining separate predicates."""
+    assert bootstrap._search_args_request_unrestricted_generated_scan(["-iu", "needle"]) is True
+    assert bootstrap._search_args_request_unrestricted_generated_scan(["needle", "."]) is False
+
+
 def test_main_entry_should_not_passthrough_unbounded_generated_root_search(
     monkeypatch, tmp_path: Path
 ) -> None:
