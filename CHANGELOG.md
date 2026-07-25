@@ -1,6 +1,269 @@
 # CHANGELOG
 
 
+## v1.98.7 (2026-07-25)
+
+### Bug Fixes
+
+- **search**: Honor root .gitignore in both Python rg-passthrough paths outside git repos (#269)
+  ([#745](https://github.com/oimiragieo/tensor-grep/pull/745),
+  [`5167376`](https://github.com/oimiragieo/tensor-grep/commit/5167376c82b484c4da08b7c31b19d6c676ded84a))
+
+* fix(search): honor root .gitignore in both Python rg-passthrough paths outside git repos (#264
+  class, #269)
+
+Real rg's own .gitignore auto-discovery requires require_git=true by default, so a root .gitignore
+  is silently a no-op outside a git repository. PR #744 fixed this for the compiled native tg
+  binary's rg-passthrough (rust_core/src/rg_passthrough.rs), but left two Python-only rg-passthrough
+  implementations unfixed by design: bootstrap.py::_run_rg_passthrough (handles bare plain-text
+  search, reached whenever no native tg binary is discoverable -- the pip/uvx install channel) and
+  ripgrep_backend.py::RipgrepBackend._build_cmd (handles --json and every other RipgrepBackend entry
+  point via cli/main.py's full CLI). Both shared the identical pre-#264-fix defect, confirmed by
+  direct tracing.
+
+Adds a shared tensor_grep.cli.rg_root_ignore.root_ignore_file_args() helper, ported in shape from
+  the Rust reference implementation, and wires it into both call sites with the same per-flag gating
+  (no_ignore/no_ignore_files suppress all three files; no_ignore_vcs skips only .gitignore;
+  no_ignore_dot skips only .ignore/.rgignore), root-only scope, and argv-safety convention already
+  used elsewhere in this codebase.
+
+Also independently confirms (matching the sibling #744 finding on PR c597b85) that bootstrap's
+  native-delegation gate (_can_delegate_to_native_tg_search) never delegates a bare plain-text
+  search regardless of native-binary presence -- the real mechanism behind the whole #264/#269 "an
+  output-format flag changes the file set" bug family: the flag changes which ENGINE runs, not
+  ignore-handling directly.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* fix(search): gate root-ignore-file injection on -u/-uu/-uuu/--unrestricted (independent-gate
+  finding)
+
+Independent gate on PR #745 found one BLOCKING regression: rg's -u/-uu/-uuu (documented aliases for
+  --no-ignore, with -uu/-uuu additionally implying --hidden/--binary) was not observed by either
+  call site's gating, so the injected --ignore-file (which deliberately survives --no-ignore by
+  design, per rg_root_ignore.py's docstring) silently resurrected the ignored files under -u --
+  making -u STRICTER than passing no flag at all. Measured live: `-u needle .` regressed from
+  returning all files (pre-#269-fix, correct for -u) to returning only the non-ignored file
+  (post-#269-fix, wrong).
+
+Fix, matching the gate's four-part prescription: 1. rg_root_ignore.py: add `unrestricted: int = 0`,
+  gate on `unrestricted > 0` alongside no_ignore/no_ignore_files. 2. ripgrep_backend.py: forward
+  `config.unrestricted` (already parsed, already forwarded to rg verbatim as -u/-uu/-uuu elsewhere
+  in the same function) into the new parameter. 3. bootstrap.py: extract the existing raw-argv `-u`
+  detection (previously inlined in `_search_args_request_unrestricted_generated_scan`, which missed
+  the bundled/clustered short-flag form like `-iu`/`-nu`) into a named
+  `_search_args_request_unrestricted` helper, reusing the `_SEARCH_ATTACHED_VALUE_SHORT_FLAGS`
+  cluster-walk machinery `_requires_full_cli` already uses elsewhere in this file. Both the
+  pre-existing broad-scan guardrail and the new `_run_rg_passthrough` gating now call the one
+  helper, closing the "one rule, two implementations" trap this whole PR exists to fix for
+  `.gitignore` honoring. 4. Widened the e2e parametrize to include `-u`, on both the plain-text
+  (bootstrap) and --json (RipgrepBackend) surfaces; added a `--no-ignore`/`-u` outcome control for
+  the --json surface (previously argv-level unit coverage only).
+
+Bidirectionally verified: stashed only this follow-up's source changes (kept the new tests),
+  confirmed 12 unit assertions and 2 real-subprocess e2e assertions fail against the prior
+  (already-committed) state, all showing the exact regression (`-u` returning only the non-ignored
+  file). Restored the fix; all 181 tests in the affected files pass.
+
+Also confirms (read-only, no build needed): rust_core/src/main.rs's SEARCH_PYTHON_PASSTHROUGH_FLAGS
+  lists both `-u` and `--unrestricted`, so the compiled native binary unconditionally forwards any
+  `-u` search to this Python sidecar rather than handling it in Rust's own rg-passthrough
+  (`RipgrepSearchArgs` has no `unrestricted` field at all) -- meaning this fix also covers the
+  native-binary-present channel, and PR #744's Rust side structurally never needs `-u` handling.
+
+* fix(search): pattern-source flags (-f/--file/-e<attached>) no longer misroute root-ignore
+  injection
+
+Re-gate on 68ed1e8 found 2 BLOCKING regressions, both addressed here, plus 2 non-blocking doc
+  corrections.
+
+FIX-1 (BLOCKING, silent): `_search_path_args_raw` only recognized bare `-e`/`--regexp` as "a pattern
+  is already supplied". `-f`/`--file`/`--file=` (and the attached short forms `-fVAL`/`-eVAL`) fell
+  into the generic value-flag bucket instead, so the REAL search-target PATH immediately after got
+  silently misread as the bare pattern, `_search_path_args` fell back to `["."]`, and
+  `_run_rg_passthrough` injected the ignore file from CWD instead of the actual target directory --
+  a silent wrong-file-set, the exact class this PR family exists to close. Measured: `--file
+  pats.txt otherdir` / `-f pats.txt otherdir` / `-fpats.txt otherdir` / `-eneedle otherdir` all
+  dropped a file that should have matched, while the control `-e needle otherdir` was unaffected.
+  Fixed by adding a dedicated
+  `_SEARCH_PATTERN_SOURCE_FLAGS`/`_SEARCH_PATTERN_SOURCE_ATTACHED_SHORT_FLAGS` pair (kept separate
+  from the shared `_SEARCH_PATTERN_FLAGS`, which `_regex_patterns_from_search_args` also uses to
+  extract literal pattern TEXT -- folding `-f`/`--file` in there would have fed a filename into
+  regex validation) and checking it before `_search_path_args_raw` falls through to the generic
+  flag-with-value / attached-value-short-flag branches.
+
+FIX-2 (BLOCKING, introduced by the FIX-1-round extraction itself): `-e` was missing from
+  `_SEARCH_ATTACHED_VALUE_SHORT_FLAGS`, so `_search_args_request_unrestricted`'s cluster walk
+  treated `-eunwrap` (a pattern that merely contains the letter "u") as requesting `-u`
+  (unrestricted), forcing `guarded_broad_root` and misrouting a valid rg-passthrough search into the
+  full Python CLI, which then rejected the rg-only `--no-heading` flag. Measured: `tg search
+  --no-heading -eunicorn .` went from rc=0 to rc=2 ("No such option '--no-heading'"). Fixed by
+  adding `-e` to `_SEARCH_ATTACHED_VALUE_SHORT_FLAGS`, verified strictly improving at all three
+  consumers (also removes a symmetrical false positive in `_requires_full_cli`'s bundled scan:
+  `-eg*.py` no longer misreads as `-g`).
+
+Non-blocking corrections: `rg_root_ignore.py`'s docstring claimed a caller "cannot distinguish" the
+  `--ignore*` re-enable flags -- factually wrong for the `RipgrepBackend` path, since `SearchConfig`
+  already carries and forwards `ignore`/`ignore_dot`/`ignore_files`/`ignore_vcs` elsewhere in the
+  same function; corrected to say the signal exists but isn't threaded into this particular gate (a
+  scope decision, not an inherent inability). Added a comment noting
+  `search_passthrough(config=None)` forwards zero SearchConfig-derived flags (not unique to the
+  ignore-file injection, and never hit by either real call site, but worth flagging so it isn't
+  mistaken for missing coverage).
+
+Bidirectionally verified: stashed only this round's source changes, confirmed 7 unit + 4
+  real-subprocess e2e assertions fail against the prior committed state, all reproducing the exact
+  measured regressions above. Restored; 194 tests across the 4 affected files pass. ruff format
+  --preview + ruff check clean.
+
+* fix(search): mid-bundle attached pattern-source flags (-ieVAL) no longer eat the PATH
+
+Delta-gate on 61b93fc confirmed FIX-1 and FIX-2 both closed and measured, and found one new BLOCKING
+  regression introduced by the FIX-1 round itself, plus one pre-existing NB closed in the same pass.
+
+BLOCKING-3: the FIX-1 round's attached-pattern-source check only matched `-e`/`-f` as literally the
+  FIRST character of a token (`arg.startswith(("-e", "-f"))`), so rg's own accepted MID-BUNDLE form
+  -- `-ieneedle` == `-i -e needle`, `-ie needle` == `-i -e` <value in the next arg> -- fell through
+  unrecognized: the token was dropped as opaque, the real PATH after it was silently misread as the
+  bare pattern, and the WRONG (cwd's) root ignore file got injected -- the same failure shape as
+  FIX-1, and origin/main was correct, so this was a genuine regression introduced by this PR.
+  Measured: `-ieneedle otherdir` / `-ifpats.txt otherdir` both leaked a file that should have been
+  excluded by otherdir's own .gitignore.
+
+Fixed by replacing the narrow startswith check with the general bundled/clustered cluster walk
+  `_requires_full_cli` and `_search_args_request_unrestricted` already use elsewhere in this same
+  file: scan past leading boolean short flags until the first attached-value short flag, which
+  consumes the remainder of the token (or the next argv token, if it is the token's last character)
+  as its own value; `-e`/`-f` mark a pattern as already supplied, every other attached-value flag
+  bundled the same way (`-m`, `-t`, ...) gets the identical value-consumption handling. This closes
+  NB-1 in the same pass: `-im 5 needle otherdir` (`-i -m 5`) previously misread the real pattern
+  "needle" as a path.
+
+Pinned both the attached (`-ieneedle`) and separate-value (`-ie needle`) forms explicitly: the
+  separate-value form produced the right answer BY ACCIDENT under the bug (the un-consumed value
+  token got swept up as the bare pattern instead of a path, which happened to still leave the real
+  PATH correctly identified) -- a test asserting only the final answer, not the mechanism, would not
+  have caught a regression confined to that shape.
+
+The now-fully-redundant `_SEARCH_PATTERN_SOURCE_ATTACHED_SHORT_FLAGS` tuple is removed (its one call
+  site is replaced by the cluster walk); the shared `_SEARCH_PATTERN_SOURCE_FLAGS` set is unchanged
+  and still exact-match-checked first.
+
+Also corrects the drift the gate's NB-2 caught: several `file.py:NNN` line-number citations in
+  comments/docstrings added across this task's earlier rounds had already gone stale from this
+  task's OWN later edits shifting the lines below them (the citation drifted within days, in some
+  cases within the same round). Replaced with name-only references (function/field names, no line
+  numbers) at every site this task touched, rather than just re-numbering them -- the re-numbered
+  form would just drift again on the next edit.
+
+Bidirectionally verified: stashed only bootstrap.py's changes, confirmed 4 unit + 2 real-subprocess
+  e2e assertions fail against the prior committed state (the attached mid-bundle forms), while the
+  by-accident separate-value forms and the NB-1 outcome test correctly pass in BOTH arms (pinning
+  pre-existing/by-accident behavior, not this fix's discriminating claim, as documented). Restored;
+  205 tests across the 4 affected files pass. ruff format --preview + ruff check clean.
+
+* fix(search): make _search_path_args_raw a genuine two-pass walk (PATH-before-flag ordering)
+
+Final gate on b913f4e confirmed rounds 1-3 closed across a 63,780-case differential fuzz of
+  _search_path_args_raw against an independent parser built from rg --help's own flag tables --
+  exactly one disagreement class remained: a FOURTH dimension none of the first three rounds
+  addressed, all of which enumerated HOW a pattern-source flag is spelled, never WHERE it sits
+  relative to the positionals.
+
+rg's own grammar is order-independent: `rg sub -eneedle` and `rg -eneedle sub` produce identical
+  output. `_search_path_args_raw` was a single left-to-right pass whose `regexp_pattern_seen` state
+  only flipped True at the moment it encountered the flag, so `tg search otherdir -eneedle` (PATH
+  first) silently misread "otherdir" as the bare pattern, returned an empty root list, and
+  `_run_rg_passthrough` injected the WRONG root's .gitignore -- reproducing the #264 signature
+  (plain-text and --json disagreeing on the file set) a fourth time, inside this same PR, with zero
+  prior test coverage across 205 passing tests (none put a positional before the pattern-source
+  flag).
+
+Fixed by making the walk genuinely two-pass: a new pre-pass,
+  `_search_args_contains_pattern_source_flag`, determines whether ANY pattern-source flag
+  (-e/--regexp/-f/--file, in every accepted spelling -- exact, --flag=value, attached -eVAL, and
+  mid-bundle attached -ieVAL) appears anywhere in argv before a `--` end-of-options sentinel,
+  consuming other flags' values correctly so an -e-shaped token that is actually another flag's
+  VALUE (e.g. --replace -eattached) is never miscounted. That result seeds regexp_pattern_seen's
+  STARTING value in the extraction walk, instead of letting the walk discover it mid-stream.
+
+Both passes share a new `_attached_cluster_value_offset` helper for cluster-scanning rather than
+  each re-deriving the same logic -- the exact "two passes computing the same thing differently"
+  shape that caused this bug in the first place, generalized to prevent recurrence at the seam that
+  would most likely reintroduce it.
+
+Added the six-spelling parametrized regression the gate specified
+  (_search_path_args_raw(["otherdir", "-eneedle"]) == ["otherdir"], and its -e/-f/--regexp=/ --file=
+  siblings), a mid-bundle-plus-ordering composition test, a --end-of-options-sentinel control (-e
+  needle -- sub, unaffected by this fix and must stay that way), a consumed-flag-value negative
+  control, and two e2e outcome rows (target with its own ignore file; target with none, so nothing
+  must leak from cwd) asserting plain-text and --json agree.
+
+Bidirectionally verified: stashed only bootstrap.py, confirmed 11 unit + 2 real-subprocess e2e
+  assertions fail against the prior committed state (several via AttributeError, since the pre-pass
+  function did not exist yet; the rest showing the exact wrong-file-set and #264-signature
+  regressions). Restored; 219 tests pass. ruff format --preview + ruff check clean.
+
+Also finishes NON-BLOCKING-2's citation sweep: 3 more stale line-number references the prior round's
+  sweep missed (a different phrasing -- "lines ~NNN-NNN" without a filename prefix -- that the prior
+  grep pattern did not match) are now name-only, matching every other citation this task's commits
+  touch.
+
+* fix(search): unify offset AND consumption in the pattern-source pre-pass; add the rg-grammar fuzz
+  gate
+
+Independent-gate re-gate on 2be893f ran a whole-grammar differential fuzz (an independent parser of
+  rg 15.1.0 built from `rg --help`'s own flag tables) over 63,780 argv cases and found one new
+  disagreement class: 342 cases, all one shape.
+
+BLOCKING-2: `_search_args_contains_pattern_source_flag`'s pre-pass shared
+  `_attached_cluster_value_offset` with the extraction walk to unify WHICH character in a
+  bundled/clustered short-flag token counts as an attached-value flag, but each pass then decided
+  `skip_next` independently -- the extraction walk sets it when the attached-value char is the
+  token's last character, the pre-pass did not. A mid-bundle value flag ending a token (`-ir`, `-ig`
+  -- `-i` plus `-r`/`-g`, whose value is the NEXT argv token) therefore failed to consume its own
+  value in the pre-pass: `-ir -e needle` wrongly reported `-e` as a genuine pattern-source flag (it
+  is actually `-r`'s replacement-string VALUE, an arbitrary string that happens to look like a
+  flag). The serious direction is a silent empty result: `tg search -ir -e sub .` returned nothing
+  at exit 1 while real rg matched two files. Only `-r`/`-g` (of the value-taking short flags)
+  actually accept a `-e`-shaped value in real rg (measured live: `-t`/`-T` reject it as an
+  unrecognized file type, the rest as parse errors), so the trigger surface is narrow -- but the
+  failure mode is silent, which is the exact contract this PR family exists to protect.
+
+Two-line fix: the pre-pass now also sets `skip_next = True` when the attached-value offset is the
+  token's last character, exactly mirroring the extraction walk. Added the negative-control rows the
+  gate specified (`-ir -e needle`, `-ig -fpats.txt sub`) to the existing consumed-flag-value test,
+  converting it to a parametrized test alongside the pre-existing long-separated-form control --
+  documented why that control alone proved nothing about the broken mid-bundle arm.
+
+The same fuzz run also found one additional, pre-existing gap once BLOCKING-2 was fixed:
+  `--generate` takes a value in real rg but was listed only in `_TG_ONLY_SEARCH_FLAGS` (which gates
+  ROUTING to the full CLI), never in `_SEARCH_FLAGS_WITH_VALUES` (which gates VALUE CONSUMPTION in
+  the positional walk) -- `_search_path_args_raw(["--generate", "py", ...])` misread "py" as a
+  positional. Unreachable through `_run_rg_passthrough` today (routing already forces full-CLI first
+  for `--generate`), but this function is shared by several broad-scan guards that run before that
+  routing decision, so fixed rather than left as a latent gap. Added `--generate` to
+  `_SEARCH_FLAGS_WITH_VALUES`.
+
+The fuzz harness itself (`.claude/rg_argv_differential_fuzz.py`) is now committed and wired into CI
+  as a new step in the `static-analysis` job (already a `release` gate dependency): a self-contained
+  ~3-second differential fuzz over 65k+ argv cases against an independent rg-15.1.0 grammar model
+  built from `rg --help`'s own flag tables. Five rounds of this PR were each "an argv form nobody
+  enumerated by hand"; this gate covers the whole grammar rather than depending on anyone thinking
+  of the right form, and durably protects `_search_path_args_raw` from regressing after this PR
+  merges.
+
+Verified: fuzz harness reports 0/70040 disagreements across three different seeds (20260725, 1, 42)
+  post-fix. Bidirectionally confirmed the new negative-control rows fail against the prior committed
+  state (both mid-bundle rows), and the fuzz harness itself shows dozens of disagreements against
+  that same prior state. 221 tests pass post-fix, ruff format --preview + ruff check clean on every
+  touched file including the new harness.
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.98.6 (2026-07-25)
 
 ### Performance Improvements
