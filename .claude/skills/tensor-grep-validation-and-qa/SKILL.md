@@ -42,12 +42,15 @@ relax any gate in `tensor-grep-change-control`.
 
 ## Part 0 — THE ORACLE FAMILY: when your verification isn't (read this first)
 
-**The single most repeated failure mode in this repo.** Four distinct forms hit in ONE session
+**The single most repeated failure mode in this repo.** Six distinct forms, most in ONE session
 (2026-07-25). Every form shares one shape: *something that looks like verification isn't.*
 
-**The one question that catches all four — before trusting any green signal, ask:
+**The one question that catches all six — before trusting any green signal, ask:
 "what would this check show if the thing it verifies were BROKEN?"
 If the answer is "the same", it is not verification.**
+
+**Forms 1-5 assume the setup worked and the comparison was wrong. Form 6 inverts it: the assertion is
+fine and the SETUP silently no-opped, so the hostile arm was never hostile.** Ask both questions.
 
 | Form | What it looks like | Direction of harm | Receipt |
 |---|---|---|---|
@@ -56,6 +59,37 @@ If the answer is "the same", it is not verification.**
 | **3. Test-never-executes** | The file exists, looks like proof, and SKIPS | **Fakes** coverage | `test_native_json_byte_fidelity.py` skipped in every CI job; fixed #746, class-fixed #749 |
 | **4. Gate-diagnosis-wrong** | A gate's *conclusion* is right, its *root cause* is false | Sends the fix at the wrong target | The gate that found form 3 claimed `TG_REQUIRE_RG_PARITY` was in "zero workflows" — it is at `ci.yml:653` |
 | **5. Repro topology deletes the mechanism** | Every fixture shares one structural property, and that property is the one that matters | Proves a **strict subset** of the real defect — defeats even an honest RED | PR #750: repro + all 4 tests used non-git `tempdir()`, the one topology where the fix's mechanism suffices; **inside a git repo the fix is a no-op** |
+| **6. The FIXTURE never applied** | The hostile condition silently failed to take effect, so the "bad" arm is really the good arm | Declares a real defect **ABSENT** — the most flattering direction | #281: `icacls` failed to apply a deny ACE twice (`"No mapping between account names and security IDs was done"`), which would have made an unreadable-directory probe run against a perfectly readable directory and conclude "no defect" |
+
+### Writing a hostile fixture (Form 6 defence)
+
+Any fixture that simulates something BAD — permission denied, network partition, disk full, killed
+process, corrupted file, missing binary — is **a claim about the world, and claims get verified.**
+Assert the fixture BITES before the probe runs, and abort loudly if it doesn't:
+
+```python
+try:
+    os.listdir(denied_dir)
+    print("entries listed -> STILL VACUOUS")  # abort: the fixture did nothing
+    raise SystemExit(1)
+except PermissionError:
+    pass  # good, the fixture is real
+```
+
+Windows ACL specifics learned the hard way (#281):
+
+- **To APPLY a deny ACE, use PowerShell with the SID**, not an `icacls` account string.
+  `[System.Security.Principal.WindowsIdentity]::GetCurrent().User` → `FileSystemAccessRule` with
+  `Deny`, plus `SetAccessRuleProtection($true, $false)`. `icacls` account-name forms
+  (`%USERNAME%`, `MACHINE\user`) failed to map and processed **0 files** while looking almost like
+  success.
+- **To REMOVE it, `icacls <dir> /reset` — it takes no account name** and works unelevated on a
+  directory your own user locked. `Get-Acl`/`Set-Acl` can fail with `SeSecurityPrivilege` because
+  `Get-Acl` pulls a section you cannot write back.
+- **A mapping failure is not a privilege failure.** If `/reset` ALSO fails, the DACL belongs to a
+  different SID and genuinely needs elevation — that distinction is what proved #268 operator-gated
+  rather than a tooling quirk.
+- **Always restore the ACL and delete the fixture** when the probe finishes.
 
 ### The rules that fall out
 
