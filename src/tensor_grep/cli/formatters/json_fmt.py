@@ -126,6 +126,18 @@ def _routing_envelope(result: SearchResult) -> dict[str, object]:
     if result.result_incomplete:
         envelope["result_incomplete"] = True
         envelope["incomplete_reason"] = result.incomplete_reason
+        # Task #276 slice 1: a closed-vocabulary class ("unreadable_path"/"scan_limit"/
+        # "deadline"/"timeout") alongside the free-text reason, so an agent can branch on
+        # whether retrying with a bigger budget could plausibly help without string-sniffing.
+        # `is not None` (not unconditional): some `result_incomplete=True` producers -- e.g.
+        # `tg find`'s multi-cause `incomplete_reasons` concatenation (main.py), which can
+        # include a per-file parse/read error that doesn't cleanly map onto the closed
+        # vocabulary -- do not always classify their cause. Emitting a `null` value here would
+        # be a NEW key with an out-of-vocabulary value on an existing partial payload;
+        # omitting the key entirely when unclassified keeps the field meaning "the cause IS
+        # one of these four" rather than "the cause is one of these four, or unknown".
+        if result.incomplete_reason_class is not None:
+            envelope["incomplete_reason_class"] = result.incomplete_reason_class
     return envelope
 
 
@@ -188,6 +200,7 @@ class JsonFormatter(OutputFormatter):
             "rank_fallback_reason",
             "result_incomplete",
             "incomplete_reason",
+            "incomplete_reason_class",
         ):
             if key in envelope:
                 data[key] = envelope[key]

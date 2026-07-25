@@ -103,6 +103,24 @@ class SearchResult:
     # machine-visible "suppression != absence" marker on the JSON/MCP envelopes.
     result_incomplete: bool = False
     incomplete_reason: str | None = None
+    # Task #276 slice 1: a machine-branchable CLASS for `incomplete_reason`, so an agent doesn't
+    # have to string-sniff a human-readable message to decide whether retrying with a bigger
+    # budget could help. One of "unreadable_path" / "scan_limit" / "deadline" / "timeout" --
+    # closed vocabulary. NOT universally set on every `result_incomplete=True` producer in this
+    # codebase: it currently covers `RipgrepBackend`'s exit-2/timeout branches, the CPU/native
+    # search route's own directory-scan-truncation consumption (both in `cli/main.py`'s
+    # `search_command`), and `tg find`'s deadline/`--max-repo-files`/chunk-cap causes (also
+    # `cli/main.py`) -- see each call site for the exact mapping. It is deliberately left unset
+    # (never `False`-defaulted to a guessed value) when a cause doesn't cleanly map onto the
+    # closed vocabulary (e.g. `tg find`'s per-file chunk/parse error) or hasn't been classified
+    # yet for a given route -- `repo_map.py`'s SEPARATE `_mark_result_incomplete` mechanism
+    # (the symbol commands: `defs`/`refs`/`callers`/`blast-radius`/`map`/`context`/`agent`/
+    # `edit-plan`) and the MCP tool envelopes (`mcp_server.py`'s own `result_incomplete` sites)
+    # do NOT set this field at all. None when `result_incomplete` is False (never emitted -- see
+    # json_fmt's omit-when-complete rule) OR when a route sets `result_incomplete` without
+    # classifying its cause (also never emitted -- `json_fmt._routing_envelope` only adds the
+    # key when this is non-None).
+    incomplete_reason_class: str | None = None
     # Set ONLY when `--semantic` was requested but the dense leg could not run (extra absent,
     # model not fetched, or a shape/dim-mismatch degrade) -- distinct from `fallback_reason`
     # (reserved for a full engine swap) and from `incomplete_reason` (partial results). Emitted
@@ -147,3 +165,5 @@ def merge_runtime_routing(aggregate: SearchResult, result: SearchResult) -> None
     aggregate.result_incomplete = aggregate.result_incomplete or result.result_incomplete
     if result.incomplete_reason and not aggregate.incomplete_reason:
         aggregate.incomplete_reason = result.incomplete_reason
+    if result.incomplete_reason_class and not aggregate.incomplete_reason_class:
+        aggregate.incomplete_reason_class = result.incomplete_reason_class

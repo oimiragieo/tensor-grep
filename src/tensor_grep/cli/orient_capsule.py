@@ -1148,6 +1148,28 @@ def build_orient_capsule_from_map(
     # this does not change orient's documented always-exit-0 behavior; it only makes a truncated
     # scan visible in the payload, the same way `scan_limit`/`truncated` already are.
     _repo_map._copy_partial_signal(result, rm)
+    # Task #276 slice 1: carry `rm`'s `unreadable_paths` (build_repo_map's own signal that the
+    # underlying `_iter_repo_files` walk hit a permission-denied/since-deleted subdirectory)
+    # forward as the same INFORMATIONAL-only fields the CPU/rg `tg search` routes now use, so an
+    # agent has ONE vocabulary to branch on across tg's surface. `tg orient` still has NO exit-2
+    # contract (docs/CONTRACTS.md) -- this never changes the command's exit code, only makes a
+    # truncated scan visible. Also sets `partial`/`partial_reason` (orient's own pre-existing
+    # informational convention, mirroring the `--deadline` block below) so a caller reading
+    # either vocabulary sees the signal.
+    unreadable_paths = rm.get("unreadable_paths")
+    if isinstance(unreadable_paths, dict) and unreadable_paths.get("count"):
+        unreadable_count = unreadable_paths["count"]
+        unreadable_sample = unreadable_paths.get("sample") or []
+        sample_text = ", ".join(str(s) for s in unreadable_sample[:3]) or "an unreadable path"
+        result["partial"] = True
+        result["partial_reason"] = "unreadable_path"
+        result["incomplete_reason_class"] = "unreadable_path"
+        result["incomplete_reason"] = (
+            f"repo scan skipped {unreadable_count} unreadable path(s) (e.g. {sample_text}); the "
+            "central-file/entry-point ranking may be missing symbols from that subtree. More "
+            "budget will not fix this -- the path(s) need to become readable, or pass --ignore "
+            "to exclude them."
+        )
     # #200: final wall-clock catch-all, mirrors build_agent_capsule_from_map's own
     # deadline_exceeded_at_return check (agent_capsule.py). `_copy_partial_signal` above only
     # forwards a SCAN-level partial signal already present on `rm` (build_repo_map's own
@@ -1169,6 +1191,25 @@ def build_orient_capsule_from_map(
             if isinstance(existing_deadline_limit, dict)
             else {"deadline_exceeded": True}
         )
+        # Task #276 slice 1 (gate fold-in): keep `incomplete_reason_class` consistent with
+        # `partial_reason` above -- an earlier unreadable-path truncation (the block just
+        # above) may already have set both `incomplete_reason_class="unreadable_path"` and
+        # `incomplete_reason`, and this catch-all's own UNCONDITIONAL `partial_reason`
+        # overwrite would otherwise leave the two vocabularies disagreeing on the same
+        # payload (one agent branching on `partial_reason` sees `"deadline"`, another
+        # branching on `incomplete_reason_class` sees `"unreadable_path"`). Mirror the
+        # unconditional overwrite here too -- APPEND to `incomplete_reason` (never silently
+        # drop the earlier fact) but let the class agree with `partial_reason`.
+        _deadline_note = (
+            "the shared --deadline budget was also exceeded before this capsule returned"
+        )
+        _existing_incomplete_reason = result.get("incomplete_reason")
+        result["incomplete_reason"] = (
+            f"{_existing_incomplete_reason}; {_deadline_note}"
+            if _existing_incomplete_reason
+            else _deadline_note
+        )
+        result["incomplete_reason_class"] = "deadline"
     return result
 
 

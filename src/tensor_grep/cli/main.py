@@ -4391,6 +4391,14 @@ def _execute_find(
 
     result = SearchResult()
     incomplete_reasons: list[str] = []
+    # Task #276 slice 1: `tg find` can accumulate MULTIPLE heterogeneous incomplete causes
+    # (walk deadline, --max-repo-files cap, chunking deadline, chunk-count cap, and a per-file
+    # parse/read error that doesn't map onto the closed vocabulary at all) into one
+    # `incomplete_reasons` list. `incomplete_reason_class` is a single field, so first-cause-
+    # wins (mirrors `SearchResult`'s own merge convention): classify whichever of the causes
+    # below actually fits the closed vocabulary, and leave it `None` (never emitted -- see
+    # `json_fmt._routing_envelope`) if only an unclassifiable per-file error occurred.
+    incomplete_reason_class: str | None = None
 
     deadline_monotonic = _deadline_monotonic_from_seconds(deadline)
     walk_deadline_hit = _DeadlineBreakFlag()
@@ -4407,6 +4415,7 @@ def _execute_find(
             "ranking covers a partial corpus"
         )
         incomplete_reasons.append(reason)
+        incomplete_reason_class = "deadline"
         sys.stderr.write(f"tg: {reason}\n")
     elif len(all_files) >= max_repo_files:
         reason = (
@@ -4414,6 +4423,7 @@ def _execute_find(
             "files -- raise --max-repo-files to widen coverage"
         )
         incomplete_reasons.append(reason)
+        incomplete_reason_class = "scan_limit"
         sys.stderr.write(f"tg: {reason}\n")
 
     # C2: chunk with a per-file RuntimeError guard + a corpus-wide cap, mirroring
@@ -4430,11 +4440,17 @@ def _execute_find(
                 f"{len(all_files)} files -- ranking covers a partial corpus"
             )
             incomplete_reasons.append(reason)
+            if incomplete_reason_class is None:
+                incomplete_reason_class = "deadline"
             sys.stderr.write(f"tg: {reason}\n")
             break
         try:
             file_chunks = chunk_file(str(file_path))
         except RuntimeError as exc:
+            # A per-file chunk/parse failure doesn't cleanly map onto the closed vocabulary
+            # (it could be a read error, a decode error, or a genuine parser bug) -- leave
+            # `incomplete_reason_class` unset (not overwritten) if this is the only cause, so
+            # the field stays absent rather than guessed.
             reason = f"skipped {file_path}: {exc}"
             incomplete_reasons.append(reason)
             sys.stderr.write(f"tg: {reason}\n")
@@ -4447,12 +4463,15 @@ def _execute_find(
                 f"{chunked_file_count} of {len(all_files)} files -- ranking covers a partial corpus"
             )
             incomplete_reasons.append(reason)
+            if incomplete_reason_class is None:
+                incomplete_reason_class = "scan_limit"
             sys.stderr.write(f"tg: {reason}\n")
             break
 
     if incomplete_reasons:
         result.result_incomplete = True
         result.incomplete_reason = "; ".join(incomplete_reasons)
+        result.incomplete_reason_class = incomplete_reason_class
 
     if not chunks:
         return result
@@ -7987,6 +8006,7 @@ def search_command(
                     "stopped; returning partial results. Scope the search to a smaller "
                     "path, or raise TG_RG_TIMEOUT_SECONDS."
                 )
+                all_results.incomplete_reason_class = "timeout"
                 sys.stderr.write(
                     "tg: native search exceeded the "
                     f"{timeout_seconds:g}s timeout, keeping partial results: "
@@ -8024,6 +8044,75 @@ def search_command(
             for match in result.matches:
                 _record_matched_file(match.file)
             _merge_runtime_routing(result)
+
+        # Task #276 slice 1: the CPU/native route's candidate-file list came from `scanner`
+        # (via `_collect_candidate_files` above), NOT from rg's own walk -- so a directory
+        # `scanner.walk()` could not read (permission denied) or an entry-count cap it hit
+        # (`DirectoryScanner`'s own defensive budget) silently narrowed
+        # `candidate_files_ordered` before this loop ever started, with NOTHING to surface it.
+        # The rg-backend branch above doesn't need this: rg re-walks the tree itself and
+        # already reports its own exit-2 soft error (see `RipgrepBackend.search`). Only set
+        # this when nothing already flagged incompleteness (the deadline check above takes
+        # precedence if it already fired -- first-cause-wins, matches `incomplete_reason`'s
+        # merge convention elsewhere).
+        #
+        # Deliberately a BARE attribute read, not `getattr(..., False)`: this is the ONLY
+        # signal on this branch (unlike `mcp_server.py`'s `scan_truncated` read, which ORs
+        # into an independently-computed `scan_capped` and exists to bool-coerce a MagicMock
+        # test double, not to survive a missing attribute) -- a silent `False` fallback here
+        # would resurrect exactly the fail-open silence this fix exists to close, just one
+        # layer up. `scanner` is always a real `DirectoryScanner` in production; a test double
+        # that doesn't carry these fields is a stale double that no longer matches the
+        # contract (fixed at its own definition, `test_cli_modes.py`'s `_FakeScanner`), not a
+        # reason to make the production code degrade silently.
+        if scanner.scan_truncated and not all_results.result_incomplete:
+            unreadable_count = scanner.unreadable_path_count
+            if scanner.scan_truncation_cause == "max-scan-entries":
+                all_results.incomplete_reason_class = "scan_limit"
+                all_results.incomplete_reason = (
+                    "directory scan exceeded its entry budget "
+                    f"({scanner.max_scan_entries} entries) and was stopped; returning partial "
+                    "results. Scope the search to a smaller path, or raise "
+                    "TG_DIR_SCAN_MAX_ENTRIES."
+                )
+                if unreadable_count:
+                    # The entry-cap cause unconditionally overwrote an earlier unreadable-path
+                    # cause (directory_scanner.py's own first-wins tracking only covers WHICH
+                    # cause is reported first, not this second, independent truncation
+                    # reaching the cap afterward) -- do not let the unreadable-path count go
+                    # unmentioned just because the cap also fired, or the reader gets the
+                    # WRONG-KNOB advice ("raise TG_DIR_SCAN_MAX_ENTRIES") with no hint that a
+                    # bigger budget won't fix the unreadable-path portion of the shortfall.
+                    all_results.incomplete_reason += (
+                        f" (the scan also skipped {unreadable_count} unreadable path(s) before "
+                        "hitting the cap; raising the entry budget will not make those "
+                        "readable)."
+                    )
+            elif scanner.scan_truncation_cause == "unreadable_path":
+                sample = ", ".join(scanner.unreadable_path_sample) or "an unreadable path"
+                all_results.incomplete_reason_class = "unreadable_path"
+                all_results.incomplete_reason = (
+                    f"directory scan skipped {unreadable_count} unreadable path(s) "
+                    f"(e.g. {sample}) and returned partial results. More budget will not fix "
+                    "this: the path(s) need to become readable, or scope the search away from "
+                    "them."
+                )
+            else:
+                # `scanner.scan_truncated=True` and `scan_truncation_cause` is neither
+                # `"max-scan-entries"` nor `"unreadable_path"` -- unreachable by construction
+                # today (`directory_scanner.py` only ever sets those two together with the
+                # flag), but fail LOUDLY here rather than silently mislabeling a future third
+                # cause (or a `None` cause) as `"unreadable_path"`. `incomplete_reason_class`
+                # is a documented closed vocabulary (docs/CONTRACTS.md); inventing an
+                # undocumented 5th value would be worse than crashing, since a crash at least
+                # forces the new cause to be classified deliberately instead of guessed.
+                raise AssertionError(
+                    "DirectoryScanner reported scan_truncated=True with an unrecognized "
+                    f"scan_truncation_cause={scanner.scan_truncation_cause!r}; add an explicit "
+                    "incomplete_reason_class mapping for this cause before shipping it."
+                )
+            all_results.result_incomplete = True
+            sys.stderr.write(f"tg: {all_results.incomplete_reason}\n")
 
     if config.replace_str is not None:
         all_results.matches = _replace_lines(all_results.matches, pattern, config)
