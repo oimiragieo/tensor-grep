@@ -1159,6 +1159,21 @@ def _force_utf8_streams() -> None:
             kwargs["errors"] = "replace"
         try:
             reconfigure(**kwargs)
+        except TypeError:
+            # This stream's `reconfigure()` doesn't accept every kwarg we asked for (e.g. a
+            # wrapper exposing only the narrower `encoding=`/`errors=` signature the pre-#262
+            # code called with, with no `newline=` parameter at all) -- calling reconfigure()
+            # on THIS stream at all is new behavior from task #262 (previously skipped
+            # entirely whenever the stream was already UTF-8), so a stream shape that never
+            # hit this line before now can. Retry with just the encoding kwargs so that fix
+            # still lands even where the newline fix cannot; give up silently if even that
+            # narrower call fails (do not crash startup either way).
+            kwargs.pop("newline", None)
+            if kwargs:
+                try:
+                    reconfigure(**kwargs)
+                except (ValueError, OSError, TypeError):
+                    pass
         except (ValueError, OSError):
             # Stream already has buffered output or is detached -- degrade to the per-line
             # _safe_stdout_line fallback still in place at the call sites; do not crash startup.

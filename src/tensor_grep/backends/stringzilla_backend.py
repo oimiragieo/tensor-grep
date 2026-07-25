@@ -7,10 +7,17 @@ from typing import ClassVar
 
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.core.config import SearchConfig
-from tensor_grep.core.result import MatchLine, SearchResult
+from tensor_grep.core.result import MatchLine, SearchResult, split_source_lines
 
 _STRING_INDEX_CACHE_MAX_ENTRIES_ENV = "TENSOR_GREP_STRING_INDEX_CACHE_MAX_ENTRIES"
 _DEFAULT_STRING_INDEX_CACHE_MAX_ENTRIES = 512
+# Bumped 1 -> 2 by task #262 -- same reasoning as CPUBackend's
+# _CPU_LITERAL_INDEX_CACHE_FORMAT_VERSION: the persisted `lines` payload's CRLF semantics
+# changed (a CRLF file's trailing `\r` is now preserved instead of silently stripped by the
+# old `open(file_path, encoding="utf-8")` read + `str.splitlines()`). `(mtime_ns, size)`
+# cannot detect that change, so `_load_cached_index` rejects any payload whose
+# `format_version` does not match, forcing a transparent recompute on first use.
+_STRING_INDEX_CACHE_FORMAT_VERSION = 2
 
 
 class StringZillaBackend(ComputeBackend):
@@ -107,9 +114,16 @@ class StringZillaBackend(ComputeBackend):
             if b"\x00" in binary_handle.read(4096):
                 return None
 
+        # Raw bytes, decoded strictly -- never `open(file_path, encoding="utf-8")` (the old
+        # code here). Opening in Python's default TEXT mode performs universal-newlines
+        # translation ON READ, silently rewriting a genuine `\r\n` (or a bare `\r`) to `\n`
+        # before a single line is ever split out, independent of anything fixed in
+        # `strip_line_terminator` or the stdout-writing layer (task #262). `bytes.decode()`
+        # performs no such translation, so this preserves a CRLF file's own `\r` while
+        # keeping the exact same UnicodeDecodeError -> None fallback contract.
         try:
-            with open(file_path, encoding="utf-8") as text_handle:
-                return text_handle.read()
+            raw = Path(file_path).read_bytes()
+            return raw.decode("utf-8")
         except UnicodeDecodeError:
             return None
 
@@ -208,6 +222,11 @@ class StringZillaBackend(ComputeBackend):
         except (OSError, json.JSONDecodeError):
             return None
 
+        if payload.get("format_version") != _STRING_INDEX_CACHE_FORMAT_VERSION:
+            # Stale (pre-#262, or any future incompatible) cache -- treat as a miss so the
+            # caller recomputes and overwrites this file with the current format.
+            return None
+
         if payload.get("file_signature") != list(cache_signature):
             return None
 
@@ -248,6 +267,7 @@ class StringZillaBackend(ComputeBackend):
 
         cache_path = self._get_index_cache_path(file_path, ignore_case, treat_binary_as_text)
         payload = {
+            "format_version": _STRING_INDEX_CACHE_FORMAT_VERSION,
             "file_signature": list(cache_signature),
             "lines": lines,
             "trigram_index": trigram_index,
@@ -289,7 +309,9 @@ class StringZillaBackend(ComputeBackend):
                     routing_distributed=False,
                     routing_worker_count=1,
                 )
-            source_lines = content.splitlines()
+            # split_source_lines, never `str.splitlines()`: it treats `\r\n` as one break and
+            # strips it entirely, eating a CRLF line's genuine trailing `\r` (task #262).
+            source_lines = split_source_lines(content)
             normalized_lines = (
                 [line.lower() for line in source_lines] if ignore_case else source_lines
             )
@@ -356,7 +378,10 @@ class StringZillaBackend(ComputeBackend):
         # BackendExecutionError`); an unwrapped native error falls into its broad `except
         # Exception` and re-raises uncaught instead of degrading to CPU.
         try:
-            import stringzilla as sz
+            # Import kept for its availability-gate side effect (raises ImportError when
+            # stringzilla is genuinely absent, caught below) even though `sz.Str` is no
+            # longer used for line-splitting -- see the split_source_lines comment below.
+            import stringzilla as sz  # noqa: F401
 
             ignore_case = bool(config and config.ignore_case)
             if config and config.fixed_strings:
@@ -379,32 +404,26 @@ class StringZillaBackend(ComputeBackend):
                     routing_worker_count=1,
                 )
 
-            sz_str = sz.Str(content)
-
-            # Since StringZilla 4.x, we can split by lines extremely fast
-            lines = sz_str.splitlines()
-            # Unlike Python's str.splitlines(), StringZilla's Str.splitlines() emits an
-            # extra trailing empty entry when the source text ends with a line
-            # terminator (e.g. "a\n" -> ["a", ""] instead of ["a"]). Uncorrected, that
-            # phantom empty "line" spuriously matches under invert_match (it never
-            # contains the pattern) and shifts every subsequent line number. Trim it so
-            # line numbering and invert_match semantics match cpu_backend/rg.
-            if lines and str(lines[-1]) == "" and content.endswith(("\n", "\r")):
-                lines = lines[:-1]
+            # split_source_lines, never `str.splitlines()` or StringZilla's own
+            # `Str.splitlines()`: both treat `\r\n` as a single line break and strip it
+            # entirely, eating a CRLF line's genuine trailing `\r` before a single match is
+            # evaluated (task #262) -- independent of the old trailing-empty-entry
+            # compensation below, which `split_source_lines`'s own pop-if-trailing-empty
+            # already folds in.
+            lines = split_source_lines(content)
             matches = []
             invert_match = bool(config and config.invert_match)
             max_count = config.max_count if config else None
 
-            # Evaluate using stringzilla's native find
             for i, line in enumerate(lines):
-                haystack = str(line).lower() if ignore_case else line
+                haystack = line.lower() if ignore_case else line
                 needle = pattern.lower() if ignore_case else pattern
                 found = haystack.find(needle) != -1
                 # H5: honor invert_match -- a matching line under invert_match is one
                 # where the pattern is ABSENT, the complement of the normal result.
                 matched = (not found) if invert_match else found
                 if matched:
-                    matches.append(MatchLine(line_number=i + 1, text=str(line), file=file_path))
+                    matches.append(MatchLine(line_number=i + 1, text=line, file=file_path))
                     # H6: cap to config.max_count, matching cpu_backend's per-file cap
                     # semantics -- never return every match once the cap is reached.
                     if max_count and len(matches) >= max_count:

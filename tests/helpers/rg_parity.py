@@ -12,6 +12,7 @@ from pathlib import Path
 
 from tensor_grep.cli.rg_contract import RGContractRow
 from tensor_grep.cli.runtime_paths import resolve_ripgrep_binary
+from tensor_grep.core.result import strip_line_terminator
 
 from .byte_parity import decode_for_display, run_bytes
 
@@ -491,6 +492,12 @@ def _normalize_machine_output(
     tool: str,
     corpus: RGParityCorpus,
 ) -> dict[str, list[tuple[str, int, str]]]:
+    # The JSON leg's "text" field is normalized via the shared `strip_line_terminator`
+    # (`.removesuffix("\n")`, never `.rstrip("\r\n")`), applied identically to both the
+    # "tg" and "rg" arms below. `.rstrip("\r\n")` strips ANY trailing run of `\r`/`\n`,
+    # which would erase a genuine trailing `\r` from a CRLF source line's own content on
+    # BOTH arms -- the exact both-arms-lossy shape task #262 removed from the raw-byte
+    # comparators in this module; this JSON leg had the identical defect independently.
     if not data.strip():
         return {"matches": []}
 
@@ -511,7 +518,7 @@ def _normalize_machine_output(
                 matches.append((
                     _normalize_path(str(match["file"]), corpus=corpus),
                     int(match.get("line", match.get("line_number"))),
-                    str(match["text"]).rstrip("\r\n"),
+                    strip_line_terminator(str(match["text"])),
                 ))
             return {"matches": sorted(matches)}
 
@@ -519,7 +526,7 @@ def _normalize_machine_output(
             matches.append((
                 _normalize_path(str(row["file"]), corpus=corpus),
                 int(row.get("line", row.get("line_number"))),
-                str(row["text"]).rstrip("\r\n"),
+                strip_line_terminator(str(row["text"])),
             ))
         return {"matches": sorted(matches)}
 
@@ -541,7 +548,7 @@ def _normalize_rg_json_events(
         matches.append((
             _normalize_path(str(data["path"]["text"]), corpus=corpus),
             int(data["line_number"]),
-            str(data["lines"]["text"]).rstrip("\r\n"),
+            strip_line_terminator(str(data["lines"]["text"])),
         ))
     return {"matches": sorted(matches)}
 

@@ -25,6 +25,32 @@ def strip_line_terminator(text: str) -> str:
     return text.removesuffix("\n")
 
 
+def split_source_lines(text: str) -> list[str]:
+    r"""Split a whole file's decoded text into per-line strings for line-oriented matching,
+    keeping any trailing ``\r`` from a CRLF line intact.
+
+    Never ``str.splitlines()`` (and, for a StringZilla ``Str``, never its own
+    ``.splitlines()`` either): both treat ``\r\n``, a bare ``\r``, and a bare ``\n`` as
+    equivalent line breaks, and BOTH strip the terminator characters entirely -- silently
+    eating a CRLF line's genuine trailing ``\r`` before a single match is even evaluated,
+    independent of anything fixed in ``strip_line_terminator`` or the stdout-writing layer
+    (task #262). Splitting on a bare ``\n`` only preserves that ``\r`` as part of the
+    line's own content, matching how ``rg`` and the Rust engine both treat a CRLF file.
+
+    Mirrors ``str.splitlines()``'s line COUNT for well-formed trailing-newline input by
+    dropping the one spurious empty element a final ``\n`` produces via a plain
+    ``str.split("\n")`` (``"a\nb\n".split("\n")`` has a trailing ``""`` that
+    ``"a\nb\n".splitlines()`` does not) -- so a caller that assumed that invariant does not
+    silently gain an extra blank line; only a genuine embedded/trailing ``\r`` now survives.
+    """
+    if text == "":
+        return []
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
 @dataclass(frozen=True)
 class MatchLine:
     line_number: int

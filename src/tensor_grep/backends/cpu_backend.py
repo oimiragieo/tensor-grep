@@ -12,11 +12,27 @@ from typing import ClassVar
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.cli.subprocess_policy import configured_ripgrep_timeout_seconds
 from tensor_grep.core.config import SearchConfig
-from tensor_grep.core.result import MatchLine, SearchResult, strip_line_terminator
+from tensor_grep.core.result import (
+    MatchLine,
+    SearchResult,
+    split_source_lines,
+    strip_line_terminator,
+)
 
 logger = logging.getLogger(__name__)
 _CPU_LITERAL_INDEX_CACHE_MAX_ENTRIES_ENV = "TENSOR_GREP_CPU_LITERAL_INDEX_CACHE_MAX_ENTRIES"
 _DEFAULT_CPU_LITERAL_INDEX_CACHE_MAX_ENTRIES = 512
+# Bumped 1 -> 2 by task #262: the persisted `lines` payload's CRLF semantics changed
+# (a CRLF file's trailing `\r` is now preserved per line instead of silently stripped by
+# the old `Path.read_text().splitlines()` read). `(mtime_ns, size)` alone cannot detect
+# that the *interpretation* of a file's bytes changed, only that the bytes themselves
+# changed -- an on-disk cache written before this fix has byte-identical `lines` content
+# to what a same-file post-fix read would produce MINUS the `\r`, so it would silently
+# defeat the fix (and read as WORSE than pre-fix, which was byte-identical to `rg` by
+# cancellation) until the source file's mtime/size next changed. `_load_literal_index`
+# rejects any payload whose `format_version` does not match, forcing a transparent
+# recompute (and on-disk overwrite) on first use after upgrade.
+_CPU_LITERAL_INDEX_CACHE_FORMAT_VERSION = 2
 
 
 def compute_native_walk_deadline() -> float:
@@ -198,6 +214,10 @@ class CPUBackend(ComputeBackend):
             payload = json.loads(cache_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return None
+        if payload.get("format_version") != _CPU_LITERAL_INDEX_CACHE_FORMAT_VERSION:
+            # Stale (pre-#262, or any future incompatible) cache -- treat as a miss so the
+            # caller recomputes and overwrites this file with the current format.
+            return None
         if payload.get("file_signature") != list(cache_signature):
             return None
         raw_lines = payload.get("lines")
@@ -233,6 +253,7 @@ class CPUBackend(ComputeBackend):
             return
         cache_path = self._get_prefilter_cache_path(file_path, ignore_case)
         payload = {
+            "format_version": _CPU_LITERAL_INDEX_CACHE_FORMAT_VERSION,
             "file_signature": list(cache_signature),
             "lines": lines,
             "trigram_index": trigram_index,
@@ -558,11 +579,7 @@ class CPUBackend(ComputeBackend):
                     # only (never `str.splitlines()`, same reasoning) so a genuine trailing `\r`
                     # survives, matching how the Rust engine and real `rg` both treat it.
                     decoded = path.read_bytes().decode("utf-8", errors="replace")
-                    source_lines = decoded.split("\n")
-                    if source_lines and source_lines[-1] == "":
-                        # A trailing `\n` at EOF must not manufacture a phantom empty final
-                        # line -- matches `str.splitlines()`'s behavior for that one case.
-                        source_lines.pop()
+                    source_lines = split_source_lines(decoded)
                     normalized_lines = (
                         [line.lower() for line in source_lines] if ignore_case else source_lines
                     )

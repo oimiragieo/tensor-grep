@@ -197,6 +197,49 @@ class TestCPUBackend:
         assert result.routing_backend == "CPUBackend"
         assert result.routing_reason == "cpu_rust_regex"
 
+    def test_rejects_stale_pre_fix_persistent_literal_index(self, tmp_path, monkeypatch):
+        """task #262 BLOCKING finding #2: the persisted literal-prefilter index payload used
+        to carry only `file_signature = (mtime_ns, size)`, with no format version.
+        `(mtime, size)` proves the file's BYTES are unchanged; it cannot prove the
+        *interpretation* of those bytes is still current -- a cache written by pre-fix code
+        (CRLF `\\r` already stripped from `lines`) would silently defeat this fix and be
+        served forever (same file, unchanged mtime/size), reading as WORSE than pre-fix
+        (which was byte-identical to `rg` by cancellation with the stdout bug). Simulates
+        exactly that: a hand-written on-disk cache with no `format_version` key, same
+        file_signature as the real file, but pre-fix (CRLF-stripped) `lines`. Must be
+        rejected and transparently recomputed + rewritten, not served.
+        """
+        import json
+
+        cache_dir = tmp_path / "cpu-cache"
+        monkeypatch.setenv("TENSOR_GREP_CPU_REGEX_INDEX_DIR", str(cache_dir))
+        monkeypatch.setenv("TENSOR_GREP_CPU_REGEX_INDEX", "1")
+        backend = CPUBackend()
+        CPUBackend._clear_shared_caches()
+
+        log_file = tmp_path / "sys.log"
+        log_file.write_bytes(b"alpha needle one\r\nbeta line two\r\n")
+
+        cache_path = backend._get_prefilter_cache_path(str(log_file), False)
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        stale_payload = {
+            # No "format_version" key at all -- the exact pre-#262 on-disk shape.
+            "file_signature": list(backend._build_file_signature(str(log_file))),
+            "lines": ["alpha needle one", "beta line two"],  # pre-fix: \r already stripped
+            "trigram_index": {"alp": [0], "lph": [0], "pha": [0]},
+        }
+        cache_path.write_text(json.dumps(stale_payload), encoding="utf-8")
+
+        result = backend.search(str(log_file), "alpha needle one", config=SearchConfig())
+        assert result.routing_reason == "cpu_python_regex_prefilter"  # fresh, not "_cache"
+        assert result.matches[0].text == "alpha needle one\r"
+
+        from tensor_grep.backends.cpu_backend import _CPU_LITERAL_INDEX_CACHE_FORMAT_VERSION
+
+        rewritten = json.loads(cache_path.read_text(encoding="utf-8"))
+        assert rewritten["format_version"] == _CPU_LITERAL_INDEX_CACHE_FORMAT_VERSION
+        assert rewritten["lines"] == ["alpha needle one\r", "beta line two\r"]
+
     def test_literal_index_cache_obeys_entry_cap(self, tmp_path, monkeypatch):
         monkeypatch.setenv("TENSOR_GREP_CPU_REGEX_INDEX", "0")
         monkeypatch.setenv("TENSOR_GREP_CPU_LITERAL_INDEX_CACHE_MAX_ENTRIES", "2")
@@ -218,6 +261,55 @@ class TestCPUBackend:
         assert (str(files[0]), False) not in cache
         assert (str(files[1]), False) in cache
         assert (str(files[2]), False) in cache
+
+    def test_literal_prefilter_path_preserves_crlf_source_line(self, tmp_path, monkeypatch):
+        """task #262 -- the LARGEST behavior change in this fix, previously uncovered by any
+        test: the pure-Python literal-prefilter fallback used to read the file via
+        `Path.read_text(encoding="utf-8", errors="replace").splitlines()`, which performs
+        universal-newlines translation ON READ (eating a CRLF file's own `\\r`) AND treats a
+        bare `\\r` as a line break on top of that. Both are now fixed by reading raw bytes and
+        splitting on a bare `\\n` only (`split_source_lines`). A plain 3+ char literal with no
+        other flags routes through this exact path (`_extract_required_literal`).
+        """
+        monkeypatch.setenv("TENSOR_GREP_CPU_REGEX_INDEX", "0")  # force a fresh read every call
+        backend = CPUBackend()
+        CPUBackend._clear_shared_caches()
+
+        crlf_log = tmp_path / "crlf.log"
+        crlf_log.write_bytes(b"alpha needle one\r\nbeta line two\r\n")
+        result = backend.search(str(crlf_log), "needle", config=SearchConfig())
+        assert result.routing_reason.startswith("cpu_python_regex_prefilter")
+        assert result.total_matches == 1
+        assert result.matches[0].line_number == 1
+        assert result.matches[0].text == "alpha needle one\r"
+
+        lf_log = tmp_path / "lf.log"
+        lf_log.write_text("alpha needle one\nbeta line two\n", encoding="utf-8", newline="\n")
+        lf_result = backend.search(str(lf_log), "needle", config=SearchConfig())
+        assert lf_result.matches[0].text == "alpha needle one"
+
+    def test_literal_prefilter_path_does_not_treat_a_bare_cr_as_a_line_break(
+        self, tmp_path, monkeypatch
+    ):
+        """Ground truth verified directly against `rg.exe`: a file containing ONLY bare `\\r`
+        line endings (no `\\n` at all) is ONE line to `rg` (it splits on `\\n` alone, never a
+        bare `\\r`), matched_lines=1. Before task #262, `Path.read_text().splitlines()` here
+        treated the bare `\\r` as a line break too (Python's universal-newlines convention),
+        silently reporting a phantom SECOND match/line that neither `rg` nor the fixed
+        Rust-delegated path ever produced -- a line-number AND match-count divergence with no
+        prior regression coverage.
+        """
+        monkeypatch.setenv("TENSOR_GREP_CPU_REGEX_INDEX", "0")
+        backend = CPUBackend()
+        CPUBackend._clear_shared_caches()
+
+        cr_only_log = tmp_path / "cronly.log"
+        cr_only_log.write_bytes(b"line one\rline two\r")
+        result = backend.search(str(cr_only_log), "line", config=SearchConfig())
+        assert result.routing_reason.startswith("cpu_python_regex_prefilter")
+        assert result.total_matches == 1
+        assert result.matches[0].line_number == 1
+        assert result.matches[0].text == "line one\rline two\r"
 
     def test_should_strip_only_the_trailing_newline_from_rust_backend_matches(self, tmp_path):
         """task #262: the OLD `.rstrip("\n\r")` here stripped ANY trailing run of `\r`/`\n`,
