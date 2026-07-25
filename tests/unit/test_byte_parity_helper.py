@@ -29,6 +29,7 @@ from helpers.byte_parity import (  # noqa: E402
     split_lines_bytes,
     split_lines_preserve_cr,
 )
+from helpers.rg_parity import RGParityCorpus, _normalize_line  # noqa: E402
 
 
 def _legacy_lossy_normalize(text: str) -> str:
@@ -162,3 +163,94 @@ def test_assert_bytes_equal_failure_message_distinguishes_the_two_divergent_arms
     message = str(excinfo.value)
     assert "demo:" in message
     assert "\\xff" in message
+
+
+# --- RESIDUAL, PROVEN: rg_parity._normalize_line is STILL whole-line lossy. ----------------
+#
+# `tests/helpers/rg_parity.py::_normalize_line` carries a 13-line comment (rg_parity.py:560)
+# declaring itself a "KNOWN, ACKNOWLEDGED LIMIT (not closed by task #262)": its
+# `.replace(b"\\", b"/")` runs against the WHOLE line, not just the leading path prefix,
+# because the helper does not parse "path:line:text" apart and cannot do so safely when the
+# CONTENT may itself contain ":" or "\\".
+#
+# That comment states the risk but calls it "a structural gap, not a proven-safe one" and
+# notes it "has not been observed to mask a real failure". The tests below convert that from
+# an argued claim into a MEASURED one. Nothing here changes production behaviour; the limit
+# is deliberately retained (the comparator backs every `test_rg_parity_matrix.py` row, and an
+# unproven path-prefix parse is the riskier change). This is the characterization test that
+# was missing.
+#
+# If someone later narrows the replacement to the path prefix, the FIRST test below will
+# start failing. That is the intended signal, not a regression: delete it, and update
+# rg_parity.py:560's comment to say the limit is closed.
+
+
+def _sentinel_parity_corpus() -> RGParityCorpus:
+    # A root that cannot appear in any line below, so the root-substitution arms are inert
+    # and the ONLY transform under test is the whole-line `\` -> `/` replacement.
+    return RGParityCorpus(
+        root=Path("Z:/tg-parity-sentinel-root-that-does-not-exist"),
+        locations={},
+        follow_supported=False,
+    )
+
+
+def test_normalize_line_masks_a_backslash_divergence_inside_matched_content() -> None:
+    # Two engines emitting GENUINELY different match CONTENT -- one a Windows-style path
+    # literal inside the matched text, one a POSIX-style literal. Same file, same line
+    # number; the divergence is entirely in the payload, which is contractual output.
+    tg_arm = rb'src/cfg.py:12:default = "C:\Users\app\data"'
+    rg_arm = rb'src/cfg.py:12:default = "C:/Users/app/data"'
+
+    assert tg_arm != rg_arm, "precondition: the two arms must genuinely differ"
+
+    corpus = _sentinel_parity_corpus()
+    assert _normalize_line(tg_arm, corpus=corpus) == _normalize_line(rg_arm, corpus=corpus), (
+        "PROVEN LOSSY: _normalize_line collapses a real backslash-vs-forward-slash "
+        "divergence inside matched CONTENT into parity. See rg_parity.py:560. If this "
+        "assertion starts failing, the limit has been closed -- delete this test and "
+        "update that comment."
+    )
+
+
+def test_normalize_line_still_does_its_intended_job_on_the_path_prefix() -> None:
+    # The other direction, so the test above cannot be satisfied by a normalizer that has
+    # simply stopped working: the separator fold MUST still apply to the path prefix, which
+    # is the whole reason the replacement exists.
+    corpus = _sentinel_parity_corpus()
+
+    assert _normalize_line(rb"src\pkg\mod.py:3:hit", corpus=corpus) == rb"src/pkg/mod.py:3:hit"
+
+
+def test_normalize_line_is_byte_exact_on_content_without_separators() -> None:
+    # Guards the inert case: a line whose content contains no separator characters must
+    # survive completely untouched, so the two tests above are isolating the separator fold
+    # and not some broader mangling.
+    corpus = _sentinel_parity_corpus()
+    line = rb"src/pkg/mod.py:7:alpha beta gamma"
+
+    assert _normalize_line(line, corpus=corpus) == line
+
+
+def test_a_path_prefix_only_normalizer_would_distinguish_the_same_pair() -> None:
+    # THE CONTROL that makes the pin above non-tautological. Asserting "these two become
+    # equal" proves nothing on its own -- a normalizer that mangled everything, or one that
+    # did nothing to two already-equal inputs, would also satisfy it. This shows the pair is
+    # discriminable in principle: a hypothetical normalizer that folds separators ONLY in the
+    # path prefix keeps them distinct. So the collapse above is genuinely caused by the
+    # whole-line scope, not by the inputs being equivalent.
+    #
+    # This local function is NOT a proposed fix -- rg_parity.py:560 explains why a naive
+    # partition on b":" is unsafe for real output (content may contain its own ":"). It
+    # exists only to demonstrate discriminability.
+    def _path_prefix_only(line: bytes) -> bytes:
+        head, sep, tail = line.partition(b":")
+        return head.replace(b"\\", b"/") + sep + tail
+
+    tg_arm = rb'src/cfg.py:12:default = "C:\Users\app\data"'
+    rg_arm = rb'src/cfg.py:12:default = "C:/Users/app/data"'
+
+    assert _path_prefix_only(tg_arm) != _path_prefix_only(rg_arm), (
+        "the divergent pair must remain distinguishable under a prefix-scoped transform, "
+        "otherwise the whole-line test above proves nothing about scope"
+    )
