@@ -3887,15 +3887,26 @@ fn collect_walked_files(config: &GpuNativeSearchConfig, roots: &[PathBuf]) -> Re
     builder.build_parallel().run(|| {
         let shared_files = Arc::clone(&shared_files);
         Box::new(move |entry| {
-            if let Ok(entry) = entry {
-                if entry
-                    .file_type()
-                    .map(|kind| kind.is_file())
-                    .unwrap_or(false)
-                {
-                    if let Ok(mut guard) = shared_files.lock() {
-                        guard.push(entry.path().to_path_buf());
-                    }
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(err) => {
+                    // Byte-identical defect to the CPU collector in `native_search.rs`, and
+                    // fixed the same way (task #280): the Err arm used to be dropped with no
+                    // output, so a permission-denied subtree vanished from the file list
+                    // completely silently. Real `rg` prints one stderr line per unreadable
+                    // path and keeps walking. Exit code + JSON envelope marker are still
+                    // unwired here, same as the CPU side -- see the note at that site.
+                    eprintln!("tg: {err}");
+                    return WalkState::Continue;
+                }
+            };
+            if entry
+                .file_type()
+                .map(|kind| kind.is_file())
+                .unwrap_or(false)
+            {
+                if let Ok(mut guard) = shared_files.lock() {
+                    guard.push(entry.path().to_path_buf());
                 }
             }
             WalkState::Continue

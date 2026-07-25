@@ -1628,15 +1628,36 @@ fn collect_walked_files(config: &NativeSearchConfig, roots: &[PathBuf]) -> Resul
     builder.build_parallel().run(|| {
         let shared_files = Arc::clone(&shared_files);
         Box::new(move |entry| {
-            if let Ok(entry) = entry {
-                if entry
-                    .file_type()
-                    .map(|kind| kind.is_file())
-                    .unwrap_or(false)
-                {
-                    if let Ok(mut guard) = shared_files.lock() {
-                        guard.push(entry.path().to_path_buf());
-                    }
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(err) => {
+                    // Report the per-entry walk error, exactly as the streaming walker in
+                    // `search_walk_roots_parallel` already does (task #263). This collector
+                    // used to drop the Err arm on the floor with NO output at all, so a
+                    // permission-denied subtree vanished from the file list COMPLETELY
+                    // silently -- strictly worse than the streaming path, which at least
+                    // prints one line. Real `rg` prints one stderr line per unreadable path
+                    // and keeps walking every readable file; both tg walkers now match that.
+                    //
+                    // NOTE (task #280): printing is only half the contract. `rg` also exits 2
+                    // on an unreadable path while still emitting its matches, and the JSON
+                    // envelope should carry `result_incomplete` + `incomplete_reason_class`
+                    // the way the Python routes do since #276 slice 1 (c0c3404). Neither is
+                    // wired here yet -- that needs an error count threaded through
+                    // `SearchStats` into `emit_json_matches` and the exit code, and is the
+                    // next slice. Until then this path is honest on stderr but still reports
+                    // success.
+                    eprintln!("tg: {err}");
+                    return WalkState::Continue;
+                }
+            };
+            if entry
+                .file_type()
+                .map(|kind| kind.is_file())
+                .unwrap_or(false)
+            {
+                if let Ok(mut guard) = shared_files.lock() {
+                    guard.push(entry.path().to_path_buf());
                 }
             }
             WalkState::Continue
