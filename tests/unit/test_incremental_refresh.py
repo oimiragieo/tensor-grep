@@ -251,6 +251,13 @@ def test_build_repo_map_incremental_only_reparses_changed_files(
 
 
 def test_build_repo_map_incremental_removes_deleted_entries_from_payload(tmp_path: Path) -> None:
+    """NOTE for future readers: the pruning asserted here does NOT come from `changeset["removed"]`
+    being consumed. The files are unlinked from disk BEFORE the call, so they disappear simply
+    because `_iter_repo_files` only yields files that still exist. `build_repo_map_incremental`
+    ignores `removed` entirely (its D2 comment says so, and a probe passing a false `removed` for
+    files still on disk evicts nothing). Without this note the test reads like a contradiction of
+    that fact -- which is exactly the wrong inference task #286 was fixed on.
+    """
     paths = _build_project(tmp_path)
     previous_map = repo_map.build_repo_map(paths["project"])
     paths["helper"].unlink()
@@ -648,11 +655,15 @@ def test_unreadable_file_is_not_reported_as_removed(tmp_path: Path, monkeypatch)
     "I am not allowed to look at it" (PermissionError).
 
     What that breaks: a false `removed` entry reaches `_changeset_has_entries` ->
-    `_ensure_session_not_stale`, which raises SessionStaleError naming files nobody touched; the
-    false list is then PERSISTED into the session payload and re-served by
-    `_session_health_payload`; and on MCP `refresh_on_stale=True` it forces a needless rebuild.
-    NOTE: it does NOT evict anything from the repo map -- `build_repo_map_incremental` ignores
-    `removed` entirely (see its D2 comment), which an earlier version of this docstring got wrong.
+    `_ensure_session_not_stale`, which raises SessionStaleError naming files nobody touched;
+    `_session_health_payload` RECOMPUTES the same changeset and serves it with `stale: true`, so
+    `tg session health` reports those files as deleted; and on MCP `refresh_on_stale=True` it
+    forces a needless rebuild.
+
+    TWO THINGS EARLIER DRAFTS OF THIS DOCSTRING GOT WRONG, both by naming a consumer without
+    checking it: (1) it does NOT evict anything from the repo map -- `build_repo_map_incremental`
+    ignores `removed` entirely (see its D2 comment); (2) health does NOT re-serve the `changeset`
+    key persisted in the session payload -- that copy has no reader in `src/` at all.
     """
     paths = _build_project(tmp_path)
     session_id = _open_session(paths["project"])

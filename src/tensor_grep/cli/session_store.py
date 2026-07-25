@@ -545,6 +545,13 @@ def _stale_changeset(
 
     removed: list[str] = []
     modified: list[str] = []
+    # Accumulate indeterminate paths and emit ONE warning after the loop. Logging per file would
+    # be unbounded-ish spam: `_stale_changeset` runs on EVERY session-serving request (both
+    # `_load_session_payload` and `_session_health_payload`), the snapshot is capped only by
+    # DEFAULT_AGENT_REPO_MAP_LIMIT (2000), and no handler is configured in this package -- so
+    # Python's lastResort would put up to ~2000 lines on stderr per request.
+    indeterminate: list[str] = []
+    indeterminate_kinds: set[str] = set()
     for current_path, snapshot_entry in snapshot_by_path.items():
         try:
             stat = os.stat(current_paths.get(current_path) or current_path)
@@ -563,11 +570,15 @@ def _stale_changeset(
             # ignores `removed` entirely today, see repo_map.py's `normalized_changeset["removed"]`
             # D2 comment, and a probe passing a false `removed` evicted nothing):
             #   1. `_changeset_has_entries` -> `_ensure_session_not_stale` raises SessionStaleError
-            #      naming files nobody touched.
-            #   2. The false list is PERSISTED into the session payload (`"changeset"` below) and
-            #      re-served by `_session_health_payload` -- an agent reads "deleted" for files
-            #      that exist.
-            #   3. On MCP `refresh_on_stale=True` that false-stale forces a needless rebuild.
+            #      whose message names files nobody touched.
+            #   2. `_session_health_payload` RECOMPUTES this same changeset and serves it with
+            #      `stale: true` -- so `tg session health` tells an agent those files were deleted.
+            #      (It does NOT re-serve the copy persisted under the payload's `"changeset"` key;
+            #      that copy currently has no reader in `src/` at all. A second draft of this
+            #      comment claimed it did -- asserting a consumer without checking it, which is
+            #      the very mistake the first draft made about `build_repo_map_incremental`.)
+            #   3. On MCP `refresh_on_stale=True` that false-stale forces a needless rebuild,
+            #      which also flushes the process-global source caches via `_clear_all_source_caches`.
             # So: false reporting + wasted work, not data loss.
             #
             # Fail SAFE anyway: an indeterminate file is left OUT of all three buckets and treated
@@ -581,17 +592,22 @@ def _stale_changeset(
             # make it visible; that is exactly the bug above.
             # Also unhandled: a disconnected Windows UNC share raises FileNotFoundError for every
             # file, so a dropped network mount still reports the whole tree as removed.
-            logger.warning(
-                "session staleness check could not stat %s (%s); treating it as unchanged rather "
-                "than removed -- the changeset for this session is incomplete",
-                current_path,
-                type(exc).__name__,
-            )
+            indeterminate.append(current_path)
+            indeterminate_kinds.add(type(exc).__name__)
             continue
         if int(stat.st_size) != int(snapshot_entry["size"]) or int(stat.st_mtime_ns) != int(
             snapshot_entry["mtime_ns"]
         ):
             modified.append(current_path)
+
+    if indeterminate:
+        logger.warning(
+            "session staleness check could not stat %d file(s) (%s); they are treated as "
+            "unchanged rather than removed, so this changeset may be incomplete. Sample: %s",
+            len(indeterminate),
+            ", ".join(sorted(indeterminate_kinds)),
+            ", ".join(indeterminate[:3]),
+        )
 
     return {
         "added": added,
