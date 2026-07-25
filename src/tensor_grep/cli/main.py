@@ -4370,6 +4370,7 @@ def _execute_find(
         _deadline_monotonic_from_seconds,
         _DeadlineBreakFlag,
         _iter_repo_files,
+        _UnreadablePathFlag,
     )
     from tensor_grep.cli.repo_map import _estimate_tokens as _repo_map_estimate_tokens
     from tensor_grep.core.reranker import rank_chunks
@@ -4391,22 +4392,31 @@ def _execute_find(
 
     result = SearchResult()
     incomplete_reasons: list[str] = []
-    # Task #276 slice 1: `tg find` can accumulate MULTIPLE heterogeneous incomplete causes
-    # (walk deadline, --max-repo-files cap, chunking deadline, chunk-count cap, and a per-file
-    # parse/read error that doesn't map onto the closed vocabulary at all) into one
-    # `incomplete_reasons` list. `incomplete_reason_class` is a single field, so first-cause-
-    # wins (mirrors `SearchResult`'s own merge convention): classify whichever of the causes
-    # below actually fits the closed vocabulary, and leave it `None` (never emitted -- see
-    # `json_fmt._routing_envelope`) if only an unclassifiable per-file error occurred.
+    # Task #276 slice 1 (+ #284): `tg find` can accumulate MULTIPLE heterogeneous incomplete
+    # causes -- walk deadline, --max-repo-files cap, an UNREADABLE subtree, chunking deadline,
+    # chunk-count cap, and a per-file parse/read error that doesn't map onto the closed
+    # vocabulary at all -- into one `incomplete_reasons` list. `incomplete_reason_class` is a
+    # single field, so first-cause-wins (mirrors `SearchResult`'s own merge convention):
+    # classify whichever of the causes below actually fits the closed vocabulary, and leave it
+    # `None` (never emitted -- see `json_fmt._routing_envelope`) if only an unclassifiable
+    # per-file error occurred.
+    #
+    # This list is NOT a completeness guarantee. Read it as "the causes wired so far", never as
+    # "the causes that exist" -- #284 was exactly this defect: the unreadable-path cause was
+    # missing from BOTH the code and this comment, so a reader who saw the other causes handled
+    # correctly would reasonably infer coverage that did not exist. If you add a cause, add it
+    # here too; if you find one that is NOT here, it is unwired, not impossible.
     incomplete_reason_class: str | None = None
 
     deadline_monotonic = _deadline_monotonic_from_seconds(deadline)
     walk_deadline_hit = _DeadlineBreakFlag()
+    walk_unreadable_hit = _UnreadablePathFlag()
     all_files = _iter_repo_files(
         root,
         max_files=max_repo_files,
         deadline_monotonic=deadline_monotonic,
         deadline_hit=walk_deadline_hit,
+        unreadable_hit=walk_unreadable_hit,
     )
 
     if walk_deadline_hit.hit:
@@ -4424,6 +4434,28 @@ def _execute_find(
         )
         incomplete_reasons.append(reason)
         incomplete_reason_class = "scan_limit"
+        sys.stderr.write(f"tg: {reason}\n")
+
+    if walk_unreadable_hit.hit:
+        # Task #284: an unreadable subtree is an INDEPENDENT cause, not an alternative to the two
+        # above -- it can co-occur with either, so this is a separate `if`, never an `elif`. It is
+        # also the one cause in this block that is NOT budget-remediable, which is exactly why it
+        # must be reported even when a budget cause already claimed
+        # `incomplete_reason_class`: otherwise the reader gets WRONG-KNOB advice ("raise
+        # --max-repo-files") with no hint that a bigger budget cannot make those paths readable.
+        # Same reasoning, and the same shape, as the entry-cap clarifier in `search_command`.
+        sample = ", ".join(walk_unreadable_hit.sample) or "an unreadable path"
+        reason = (
+            f"repo walk skipped {walk_unreadable_hit.count} unreadable path(s) (e.g. {sample}) -- "
+            "ranking covers a partial corpus. More budget will not fix this: the path(s) need to "
+            "become readable, or scope the search away from them"
+        )
+        incomplete_reasons.append(reason)
+        # First-cause-wins, matching this function's documented convention above: only claim the
+        # single `incomplete_reason_class` field if a budget cause has not already taken it. The
+        # human-readable `incomplete_reasons` list carries the full picture either way.
+        if incomplete_reason_class is None:
+            incomplete_reason_class = "unreadable_path"
         sys.stderr.write(f"tg: {reason}\n")
 
     # C2: chunk with a per-file RuntimeError guard + a corpus-wide cap, mirroring
