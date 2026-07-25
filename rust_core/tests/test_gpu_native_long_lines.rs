@@ -60,17 +60,44 @@ fn write_short_vs_long_perf_corpora(dir: &Path, pattern: &str) -> (PathBuf, Path
     (short, long)
 }
 
-fn cpu_expected_matches(corpus: &Path, pattern: &str) -> Vec<(String, usize, String)> {
+/// Splits `body` into lines the same way the GPU-native producers do (`classify_file_lines`,
+/// `line_matches_for_file_by_scanning`): boundaries are `\n` bytes, exactly one trailing `\n` is
+/// excluded, and everything else -- including a genuine trailing `\r` from a CRLF source line --
+/// is kept as real line content. Unlike `str::lines()` (which additionally normalizes away a
+/// trailing `\r` immediately before `\n`), this must NOT special-case `\r\n`: task #273 fixed the
+/// GPU-native emitter to retain that `\r`, so the CPU oracle here has to retain it too, or a
+/// future CRLF corpus would compare a `\r`-stripped oracle against a `\r`-preserving producer and
+/// the two would spuriously diverge on the CRLF case this whole fix is about.
+fn split_lines_keep_cr(body: &[u8]) -> Vec<&[u8]> {
+    let mut lines = Vec::new();
+    let mut start = 0usize;
+    for (index, &byte) in body.iter().enumerate() {
+        if byte == b'\n' {
+            lines.push(&body[start..index]);
+            start = index + 1;
+        }
+    }
+    if start < body.len() {
+        lines.push(&body[start..]);
+    }
+    lines
+}
+
+fn cpu_expected_matches(corpus: &Path, pattern: &str) -> Vec<(String, usize, Vec<u8>)> {
     let path = corpus.join("corpus.log");
-    let body = fs::read_to_string(path).unwrap();
-    body.lines()
+    let body = fs::read(path).unwrap();
+    split_lines_keep_cr(&body)
+        .into_iter()
         .enumerate()
         .filter_map(|(index, line)| {
-            line.contains(pattern).then(|| {
+            // These corpora are built from Rust `String`s (`build_line_with_pattern` etc.), so
+            // every line is valid UTF-8 by construction; only the pattern *search* needs `&str`.
+            let line_text = std::str::from_utf8(line).expect("test corpus lines are valid UTF-8");
+            line_text.contains(pattern).then(|| {
                 (
                     corpus.join("corpus.log").to_string_lossy().into_owned(),
                     index + 1,
-                    line.to_string(),
+                    line.to_vec(),
                 )
             })
         })
@@ -80,7 +107,7 @@ fn cpu_expected_matches(corpus: &Path, pattern: &str) -> Vec<(String, usize, Str
 fn gpu_match_tuples(
     config: &GpuNativeSearchConfig,
     device_id: i32,
-) -> Vec<(String, usize, String)> {
+) -> Vec<(String, usize, Vec<u8>)> {
     let mut tuples = gpu_native_search_paths(config, device_id)
         .unwrap()
         .matches
@@ -89,7 +116,7 @@ fn gpu_match_tuples(
             (
                 matched.path.to_string_lossy().into_owned(),
                 matched.line_number,
-                matched.text,
+                matched.raw,
             )
         })
         .collect::<Vec<_>>();
@@ -130,7 +157,7 @@ fn test_gpu_native_adaptive_dispatch_matches_cpu_for_ten_kib_lines() {
             (
                 matched.path.to_string_lossy().into_owned(),
                 matched.line_number,
-                matched.text.clone(),
+                matched.raw.clone(),
             )
         })
         .collect::<Vec<_>>();
@@ -173,7 +200,7 @@ fn test_gpu_native_adaptive_dispatch_matches_cpu_for_hundred_kib_lines() {
             (
                 matched.path.to_string_lossy().into_owned(),
                 matched.line_number,
-                matched.text.clone(),
+                matched.raw.clone(),
             )
         })
         .collect::<Vec<_>>();
@@ -221,28 +248,32 @@ fn test_gpu_native_adaptive_dispatch_classifies_mixed_short_medium_and_long_line
             (
                 matched.path.to_string_lossy().into_owned(),
                 matched.line_number,
-                matched.text,
+                matched.raw,
             )
         })
         .collect::<Vec<_>>();
     actual.sort();
     let expected_path = corpus.join("mixed.log").to_string_lossy().into_owned();
     let expected = vec![
-        (expected_path.clone(), 1, format!("short {pattern}")),
+        (
+            expected_path.clone(),
+            1,
+            format!("short {pattern}").into_bytes(),
+        ),
         (
             expected_path.clone(),
             2,
-            build_line_with_pattern(512, pattern, 1),
+            build_line_with_pattern(512, pattern, 1).into_bytes(),
         ),
         (
             expected_path.clone(),
             3,
-            build_line_with_pattern(10 * 1024, pattern, 2),
+            build_line_with_pattern(10 * 1024, pattern, 2).into_bytes(),
         ),
         (
             expected_path,
             4,
-            build_line_with_pattern(100 * 1024, pattern, 3),
+            build_line_with_pattern(100 * 1024, pattern, 3).into_bytes(),
         ),
     ];
     assert_eq!(actual, expected);

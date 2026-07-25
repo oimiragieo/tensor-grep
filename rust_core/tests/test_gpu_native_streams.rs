@@ -16,7 +16,7 @@ fn first_device_id() -> Option<i32> {
         .and_then(|devices| devices.first().map(|device| device.device_id))
 }
 
-fn write_overlap_corpus(dir: &Path) -> (PathBuf, Vec<(PathBuf, usize, String)>) {
+fn write_overlap_corpus(dir: &Path) -> (PathBuf, Vec<(PathBuf, usize, Vec<u8>)>) {
     let corpus = dir.join("overlap-corpus");
     fs::create_dir(&corpus).unwrap();
 
@@ -29,7 +29,11 @@ fn write_overlap_corpus(dir: &Path) -> (PathBuf, Vec<(PathBuf, usize, String)>) 
             "ERROR overlap sentinel".repeat(128)
         );
         fs::write(&path, &body).unwrap();
-        expected.push((path.clone(), 4, "ERROR overlap sentinel".repeat(128)));
+        expected.push((
+            path.clone(),
+            4,
+            "ERROR overlap sentinel".repeat(128).into_bytes(),
+        ));
     }
 
     (corpus, expected)
@@ -115,7 +119,7 @@ fn test_gpu_native_overlap_matches_expected_results_without_races() {
         .unwrap()
         .matches
         .into_iter()
-        .map(|matched| (matched.path, matched.line_number, matched.text))
+        .map(|matched| (matched.path, matched.line_number, matched.raw))
         .collect::<Vec<_>>();
     actual.sort();
 
@@ -226,7 +230,7 @@ fn test_gpu_native_multi_gpu_balances_distribution_and_matches_single_gpu_result
             (
                 matched.path.clone(),
                 matched.line_number,
-                matched.text.clone(),
+                matched.raw.clone(),
             )
         })
         .collect::<Vec<_>>();
@@ -237,7 +241,7 @@ fn test_gpu_native_multi_gpu_balances_distribution_and_matches_single_gpu_result
             (
                 matched.path.clone(),
                 matched.line_number,
-                matched.text.clone(),
+                matched.raw.clone(),
             )
         })
         .collect::<Vec<_>>();
