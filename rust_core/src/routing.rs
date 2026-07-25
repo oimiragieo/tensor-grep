@@ -145,15 +145,25 @@ pub struct PlainTextNativeRequest {
     pub pattern_count: usize,
     /// The single resolved pattern is the empty string. See refusal note (6).
     pub pattern_is_empty: bool,
+    /// EXPENSIVE TIER (see the note on `single_path_renders_identically`). The pattern compiles
+    /// with the native matcher AND cannot match a line terminator or NUL. See refusal note (7).
+    pub pattern_is_native_renderable: bool,
     /// Number of PATH operands after resolution.
     pub path_count: usize,
     /// The caller supplied no PATH and one was defaulted in.
     pub path_was_implicit: bool,
     /// The single PATH operand resolves to an existing REGULAR FILE (not a directory).
     pub single_path_is_regular_file: bool,
-    /// The single PATH operand passed the FULL-CONTENT probe: no NUL byte, no CR byte, valid
-    /// UTF-8, and within the probe size cap. See refusal note (5) -- this one field carries three
-    /// separate, independently-verified divergences.
+    /// EXPENSIVE TIER. The single PATH operand passed the FULL-CONTENT probe: no NUL byte, no CR
+    /// byte, valid UTF-8, and within the probe size cap. See refusal note (5) -- this one field
+    /// carries three separate, independently-verified divergences.
+    ///
+    /// EXPENSIVE-TIER CONTRACT: this field and `pattern_is_native_renderable` are the only two
+    /// that cost real work (a regex compile and a file read). Adapters MUST leave them `false`
+    /// unless `plain_text_native_cheap_checks_pass` already returned true, so a request that a
+    /// cheap clause would refuse anyway never pays for them. `false` therefore means EITHER
+    /// "probed and refused" OR "not probed because a cheaper clause already refused" -- the
+    /// predicate treats both identically, so the distinction is not observable.
     pub single_path_renders_identically: bool,
     /// `--json` or `--ndjson`.
     pub structured_output: bool,
@@ -232,10 +242,46 @@ pub struct PlainTextNativeRequest {
 ///    then prints `warning: native CPU search failed, falling back to ripgrep: ...` to stderr
 ///    before the correct stdout. Correct results, but a stderr line that did not exist before.
 ///
+/// 7. `pattern_is_native_renderable` -- the file probe validates the FILE; this clause covers the
+///    divergences that are properties of the PATTERN, on an otherwise fully admitted request.
+///    Two distinct failure shapes, both measured against ripgrep 15.1.0:
+///    (a) EXIT-CODE REGRESSION 2 -> 1. `rg` refuses a pattern that can match a line terminator
+///        (`needle\n`, `\n`, `[\n]`, `needle\r\n`) with rc=2 and "the literal `\n` is not allowed
+///        in a regex ... consider --multiline", and a `\x00` pattern with rc=2 and "pattern
+///        contains `\0` but it is impossible to match". The native matcher accepts both and
+///        SUCCEEDS with zero matches -> rc=1 and empty stderr. `allow_rg_fallback` never fires
+///        because nothing failed. An agent branching on 2-vs-1 would read "no matches" where the
+///        truth is "bad query", and lose the diagnostic. Root cause: `build_matcher` never calls
+///        `RegexMatcherBuilder::line_terminator`, which is what makes `rg` reject these -- fixing
+///        that would change the matcher shared with `--json`/`--ndjson`/`--cpu`, so this route
+///        refuses instead.
+///    (b) EXTRA STDERR. A pattern that fails to COMPILE (`[`, `(`, `\Qx\E`,
+///        `a{500}{500}{500}`) still exits 2, but only after `allow_rg_fallback` prints
+///        `warning: native CPU search failed, falling back to ripgrep: ...` -- the same
+///        extra-stderr class already treated as disqualifying for the empty pattern (note 6).
+///    The adapter therefore refuses any pattern containing a line terminator or NUL (literal OR
+///    escaped) and any pattern the native matcher cannot compile. Over-refusal is free here: a
+///    refused pattern simply keeps today's `rg` behavior.
+///
 /// `structured_output` and `explicit_format` are refused because those requests already have
 /// their own routes (`--json`/`--ndjson` land on `native_cpu_json`; `--format rg` must reach real
 /// `rg`), and this predicate must never redirect them.
 pub const fn native_can_serve_plain_text(request: &PlainTextNativeRequest) -> bool {
+    plain_text_native_cheap_checks_pass(request)
+        && request.pattern_is_native_renderable
+        && request.single_path_renders_identically
+}
+
+/// Every refusal that costs nothing to evaluate: flag policy, output mode, terminal state, and
+/// operand cardinality/kind (one `stat`). Split out so an adapter can gate the EXPENSIVE tier --
+/// a regex compile and a full file read -- behind it.
+///
+/// This is a real latency contract, not tidiness. The expensive fields are plain struct fields, so
+/// a naive adapter computes them at construction time and every request pays, including the ones
+/// this route never optimises: an interactive (terminal) single-file search, `--json`/`--ndjson`,
+/// and `-A`/`-B`/`-C` all reach the clap-side adapter and would each burn a full file read on the
+/// way to `rg` anyway. Callers MUST call this first and only then fill the expensive tier.
+pub const fn plain_text_native_cheap_checks_pass(request: &PlainTextNativeRequest) -> bool {
     request.only_allowed_flags
         && !request.structured_output
         && !request.explicit_format
@@ -245,7 +291,6 @@ pub const fn native_can_serve_plain_text(request: &PlainTextNativeRequest) -> bo
         && !request.pattern_is_empty
         && request.path_count == 1
         && request.single_path_is_regular_file
-        && request.single_path_renders_identically
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

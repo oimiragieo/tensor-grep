@@ -22,7 +22,7 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tensor_grep_rs::backend_ast::{
@@ -39,7 +39,7 @@ use tensor_grep_rs::gpu_native::{
 };
 use tensor_grep_rs::index::TrigramIndex;
 use tensor_grep_rs::native_search::{
-    run_native_fixed_multi_pattern_search, run_native_search,
+    native_search_pattern_compiles, run_native_fixed_multi_pattern_search, run_native_search,
     smart_case_pattern_is_case_insensitive, NativeOutputTarget, NativeSearchConfig, SearchStats,
 };
 use tensor_grep_rs::python_sidecar::{
@@ -51,9 +51,9 @@ use tensor_grep_rs::rg_passthrough::{
     is_unbounded_implicit_search_walk_refusal, ripgrep_is_available, RipgrepSearchArgs,
 };
 use tensor_grep_rs::routing::{
-    gpu_proof_fields, native_can_serve_plain_text, plain_text_native_flag_token_is_allowed,
-    route_search, BackendSelection, IndexRoutingState, PlainTextNativeRequest, RoutingDecision,
-    SearchRoutingCalibration, SearchRoutingConfig,
+    gpu_proof_fields, native_can_serve_plain_text, plain_text_native_cheap_checks_pass,
+    plain_text_native_flag_token_is_allowed, route_search, BackendSelection, IndexRoutingState,
+    PlainTextNativeRequest, RoutingDecision, SearchRoutingCalibration, SearchRoutingConfig,
 };
 
 // audit #97 item 1: shown by print_native_top_level_help() (the clap fallback rendered when the
@@ -1840,10 +1840,33 @@ fn stdout_is_terminal() -> bool {
     std::io::stdout().is_terminal()
 }
 
-/// Size cap for `plain_text_native_file_renders_identically`. A file above this is REFUSED rather
-/// than probed, so the probe's cost is bounded and can never exceed the subprocess round trip it
-/// saves. 8 MiB covers essentially every source file while excluding large logs/blobs.
-const PLAIN_TEXT_NATIVE_MAX_PROBE_BYTES: u64 = 8 * 1024 * 1024;
+/// Size cap for `plain_text_native_file_renders_identically`: a file above this is REFUSED rather
+/// than probed.
+///
+/// MEASURED, not assumed (median of 21-25 runs; "gain" is the subprocess round trip saved, "probe"
+/// is the full-content read this route adds):
+///
+/// | file size | gain | probe | net | probe as % of gain |
+/// |---|---|---|---|---|
+/// | 4 KB | +10.6ms | 0.18ms | +10.4ms | 2% |
+/// | 200 KB | +13.6ms | 0.25ms | +13.4ms | 2% |
+/// | 1 MB | +9.7ms | 1.57ms | +8.1ms | 16% |
+/// | 4 MB | +10.1ms | 4.35ms | +5.7ms | 43% |
+/// | 8 MB | +11.1ms | 8.68ms | +2.5ms | 78% |
+/// | 8 MB, match-dense | **-2.2ms** | 8.68ms | **-10.9ms** | REGRESSION |
+///
+/// An earlier revision of this comment claimed the probe "can never cost more than it saves". That
+/// was FALSE at the top of the range: at 8 MB the probe ate 78% of the win, and on a match-dense
+/// 8 MB file the native engine is itself SLOWER than `rg` (gain goes negative), so the probe turned
+/// a small loss into a 10.9ms regression. The cap is the only thing standing between this route and
+/// that tail.
+///
+/// 512 KiB is chosen deliberately conservatively inside the 256 KB-1 MB band the measurements
+/// support: the probe costs ~2% of the gain there, essentially every source file fits, and it keeps
+/// a wide margin from the size at which the ENGINE (not the probe) starts losing to `rg` on
+/// match-dense input. Files above the cap keep spawning `rg` -- no regression tail, at the price of
+/// giving up a win on large files that was already mostly eaten by the probe.
+const PLAIN_TEXT_NATIVE_MAX_PROBE_BYTES: u64 = 512 * 1024;
 
 /// FULL-CONTENT probe for `PlainTextNativeRequest::single_path_renders_identically`.
 ///
@@ -1861,7 +1884,33 @@ const PLAIN_TEXT_NATIVE_MAX_PROBE_BYTES: u64 = 8 * 1024 * 1024;
 /// The check is deliberately WHOLE-FILE, not a prefix probe: an invalid byte at 1 MB diverges
 /// exactly as hard as one at byte 0, so a prefix window cannot bound the risk. Fails CLOSED
 /// (returns false = keep spawning `rg`) on any I/O error, oversize file, or non-file path.
+///
+/// MEMOIZED for the process lifetime. Both eligibility adapters run on an admitted request -- the
+/// pre-clap front door decides whether to decline, then `handle_ripgrep_search` re-derives the same
+/// verdict -- so without this cache an admitted request would read the file 3x (two probes plus the
+/// search) where `rg` reads it once. With it: 2x. Removing the last extra read would mean threading
+/// pre-read bytes into `run_native_search`, i.e. changing the engine shared with
+/// `--json`/`--ndjson`/`--cpu` -- the wrong blast radius for this PR, and worth ~0.25ms at 200 KB
+/// (about 2% of the win). The cache is keyed by path; a file mutated between the two probes is a
+/// pre-existing race with the search itself, not a new class.
 fn plain_text_native_file_renders_identically(path: &Path) -> bool {
+    let cache = PLAIN_TEXT_NATIVE_PROBE_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
+    if let Ok(probed) = cache.lock() {
+        if let Some(verdict) = probed.get(path) {
+            return *verdict;
+        }
+    }
+
+    let verdict = plain_text_native_probe_file(path);
+    if let Ok(mut probed) = cache.lock() {
+        probed.insert(path.to_path_buf(), verdict);
+    }
+    verdict
+}
+
+static PLAIN_TEXT_NATIVE_PROBE_CACHE: OnceLock<Mutex<BTreeMap<PathBuf, bool>>> = OnceLock::new();
+
+fn plain_text_native_probe_file(path: &Path) -> bool {
     let Ok(metadata) = fs::metadata(path) else {
         return false;
     };
@@ -1877,6 +1926,52 @@ fn plain_text_native_file_renders_identically(path: &Path) -> bool {
     std::str::from_utf8(&bytes).is_ok()
 }
 
+/// Refusal note (7): is this PATTERN safe for the native route?
+///
+/// Two independent gates, both fail-closed:
+///
+/// 1. TEXT SCAN for a line terminator or NUL, literal OR escaped. `rg` rejects these outright
+///    (rc=2 plus a diagnostic); the native matcher accepts them and succeeds with zero matches
+///    (rc=1, empty stderr), which is an exit-code REGRESSION an agent branching on 2-vs-1 would
+///    misread as "no matches". The scan is deliberately over-broad -- it also refuses `\x..` and
+///    `\u..` escapes wholesale rather than decoding them, and refuses `\n`-looking text even under
+///    `-F` where it is a harmless literal -- because over-refusal costs only a `rg` spawn while
+///    under-refusal costs correctness.
+/// 2. COMPILE CHECK through `native_search::native_search_pattern_compiles`, which builds the
+///    matcher with the very same `build_matcher` the search will use. A pattern that fails to
+///    compile still exits 2, but only after the rg-fallback net prints a `warning: native CPU
+///    search failed...` line `rg` never emits.
+fn plain_text_native_pattern_is_renderable(
+    pattern: &str,
+    ignore_case: bool,
+    fixed_strings: bool,
+    word_boundary: bool,
+) -> bool {
+    let bytes = pattern.as_bytes();
+    if bytes.iter().any(|&byte| matches!(byte, b'\n' | b'\r' | b'\0')) {
+        return false;
+    }
+
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index] != b'\\' {
+            index += 1;
+            continue;
+        }
+        if let Some(&escaped) = bytes.get(index + 1) {
+            if matches!(escaped, b'n' | b'r' | b'0' | b'x' | b'u') {
+                return false;
+            }
+        }
+        // Skip the escaped byte too, so `\\n` (an escaped backslash followed by a plain `n`) is
+        // not misread as the `\n` escape.
+        index += 2;
+    }
+
+    // `smart_case` is never admitted, so it is always false on this route.
+    native_search_pattern_compiles(pattern, ignore_case, false, fixed_strings, word_boundary)
+}
+
 /// Builds the `PlainTextNativeRequest` for a resolved `tg search` invocation. THE production
 /// computation -- `handle_ripgrep_search` calls it, and the adapter-agreement test drives it
 /// rather than re-deriving anything, so a test can never pass against a mirror of the logic.
@@ -1886,20 +1981,58 @@ fn plain_text_native_request_for_search(
     stdout_is_terminal: bool,
 ) -> PlainTextNativeRequest {
     let single_path = (request.paths.len() == 1).then(|| Path::new(&request.paths[0]));
-    let single_path_is_regular_file = single_path.is_some_and(Path::is_file);
-    PlainTextNativeRequest {
+    let facts = PlainTextNativeRequest {
         pattern_count: request.patterns.len(),
         pattern_is_empty: request.patterns.iter().any(String::is_empty),
+        pattern_is_native_renderable: false,
         path_count: request.paths.len(),
         path_was_implicit: request.path_was_implicit,
-        single_path_is_regular_file,
-        single_path_renders_identically: single_path_is_regular_file
-            && single_path.is_some_and(plain_text_native_file_renders_identically),
+        single_path_is_regular_file: single_path.is_some_and(Path::is_file),
+        single_path_renders_identically: false,
         structured_output: args.json || args.ndjson,
         explicit_format: args.format.is_some(),
         stdout_is_terminal,
         only_allowed_flags: search_args_allow_plain_text_native(args),
+    };
+    finish_plain_text_native_request(
+        facts,
+        request.patterns.first().map(String::as_str),
+        args.ignore_case,
+        args.fixed_strings,
+        args.word_regexp,
+        single_path,
+    )
+}
+
+/// Fills the EXPENSIVE tier of a `PlainTextNativeRequest` -- and ONLY if the cheap tier already
+/// passed. See `plain_text_native_cheap_checks_pass` for why this ordering is a latency contract:
+/// an interactive single-file search, a `--json` run, and an `-A`/`-B`/`-C` run all reach the
+/// clap-side adapter and would otherwise each burn a full file read on their way to `rg` anyway.
+/// The two gates are themselves ordered cheapest-first: a regex compile costs microseconds, the
+/// file probe costs a read.
+fn finish_plain_text_native_request(
+    mut request: PlainTextNativeRequest,
+    pattern: Option<&str>,
+    ignore_case: bool,
+    fixed_strings: bool,
+    word_boundary: bool,
+    path: Option<&Path>,
+) -> PlainTextNativeRequest {
+    if !plain_text_native_cheap_checks_pass(&request) {
+        return request;
     }
+    let Some(pattern) = pattern else {
+        return request;
+    };
+    request.pattern_is_native_renderable =
+        plain_text_native_pattern_is_renderable(pattern, ignore_case, fixed_strings, word_boundary);
+    if !request.pattern_is_native_renderable {
+        return request;
+    }
+    if let Some(path) = path {
+        request.single_path_renders_identically = plain_text_native_file_renders_identically(path);
+    }
+    request
 }
 
 /// Raw-argv adapter for `native_can_serve_plain_text`, used by the pre-clap default search front
@@ -1935,6 +2068,9 @@ fn frontdoor_search_is_native_plain_text_eligible_with_terminal(
 
     let mut explicit_patterns: Vec<String> = Vec::new();
     let mut positionals: Vec<String> = Vec::new();
+    let mut ignore_case = false;
+    let mut fixed_strings = false;
+    let mut word_boundary = false;
     let mut end_of_flags = false;
     let mut index = 0usize;
     while index < tokens.len() {
@@ -1956,6 +2092,29 @@ fn frontdoor_search_is_native_plain_text_eligible_with_terminal(
             if !plain_text_native_flag_token_is_allowed(token) {
                 return false;
             }
+            if let Some(long) = token.strip_prefix("--") {
+                // A long form must be understood HERE, not merely allow-listed, because its value
+                // feeds the matcher. Refuse an unrecognized one so a future addition to
+                // `PLAIN_TEXT_NATIVE_ALLOWED_FLAGS` cannot silently reach `build_matcher` with the
+                // wrong flags -- the fail-closed direction.
+                match long {
+                    "ignore-case" => ignore_case = true,
+                    "fixed-strings" => fixed_strings = true,
+                    "word-regexp" => word_boundary = true,
+                    "line-number" | "verbose" => {}
+                    _ => return false,
+                }
+            } else {
+                // A combined short cluster; the guard above already proved every letter admitted.
+                for letter in token.chars().skip(1) {
+                    match letter {
+                        'i' => ignore_case = true,
+                        'F' => fixed_strings = true,
+                        'w' => word_boundary = true,
+                        _ => {}
+                    }
+                }
+            }
         } else {
             positionals.push(token.clone());
         }
@@ -1974,20 +2133,28 @@ fn frontdoor_search_is_native_plain_text_eligible_with_terminal(
     };
 
     let single_path = (paths.len() == 1).then(|| Path::new(&paths[0]));
-    let single_path_is_regular_file = single_path.is_some_and(Path::is_file);
-    native_can_serve_plain_text(&PlainTextNativeRequest {
+    let facts = PlainTextNativeRequest {
         pattern_count: patterns.len(),
         pattern_is_empty: patterns.iter().any(String::is_empty),
+        pattern_is_native_renderable: false,
         path_count: paths.len(),
         path_was_implicit: paths.is_empty(),
-        single_path_is_regular_file,
-        single_path_renders_identically: single_path_is_regular_file
-            && single_path.is_some_and(plain_text_native_file_renders_identically),
+        single_path_is_regular_file: single_path.is_some_and(Path::is_file),
+        single_path_renders_identically: false,
         structured_output: false,
         explicit_format: false,
         stdout_is_terminal,
         only_allowed_flags: true,
-    })
+    };
+    let facts = finish_plain_text_native_request(
+        facts,
+        patterns.first().map(String::as_str),
+        ignore_case,
+        fixed_strings,
+        word_boundary,
+        single_path,
+    );
+    native_can_serve_plain_text(&facts)
 }
 
 /// Parsed-`SearchArgs` adapter for `native_can_serve_plain_text`, used by `handle_ripgrep_search`.
@@ -5172,6 +5339,34 @@ mod tests {
         let empty_pattern = os_argv(&["tg", "search", "", file_arg.as_str()]);
         assert!(!frontdoor_admits(&empty_pattern, false));
 
+        // PATTERN-level refusals (note 7). The file probe cannot see these -- they are properties
+        // of the pattern on an otherwise fully admitted request. Rows 1-2 are an exit-code
+        // regression (rg rc=2 -> native rc=1); row 3 fails to compile and trips the extra-stderr
+        // fallback warning.
+        for pattern in [
+            "needle\\n",
+            "\\n",
+            "[\\n]",
+            "needle\\r\\n",
+            "\\x00",
+            "\\0",
+            "\\u{a}",
+            "needle\n",
+            "[",
+            "(",
+            "\\Qx\\E",
+            "a{500}{500}{500}",
+        ] {
+            let argv = os_argv(&["tg", "search", pattern, file_arg.as_str()]);
+            assert!(!frontdoor_admits(&argv, false), "{pattern:?} must use rg");
+        }
+
+        // ... while an ordinary regex with escapes the native matcher handles stays admitted.
+        for pattern in ["needle", "need(le|ful)", "\\bneedle\\b", "\\d+", "needle$"] {
+            let argv = os_argv(&["tg", "search", pattern, file_arg.as_str()]);
+            assert!(frontdoor_admits(&argv, false), "{pattern:?} must stay native");
+        }
+
         // An IMPLICIT path keeps rg: `rg needle` prints `a.txt:...` while the native engine is
         // handed the literal "." default and would print `./a.txt:...`.
         let implicit = os_argv(&["tg", "search", "needle"]);
@@ -5224,7 +5419,7 @@ mod tests {
 
     /// THE adapter-agreement gate. The raw-argv front-door adapter and the clap-side computation
     /// (`plain_text_native_request_for_search`, the SAME function `handle_ripgrep_search` calls)
-    /// must return an identical verdict for identical argv.
+    /// must return an identical verdict for every shape listed here.
     ///
     /// Why this is load-bearing rather than tidiness: the front door is only ONE path into
     /// `route_search`. Anything `parse_early_ripgrep_args` rejects -- a combined short (`-in`), a
@@ -5232,8 +5427,15 @@ mod tests {
     /// falls through to clap and reaches `route_search` regardless of what the front door thinks.
     /// So the real admission surface is the clap side, and any shape the front door judges
     /// differently is a shape whose routing nobody actually reasoned about.
+    ///
+    /// SCOPE, stated precisely so this is not read as a stronger guarantee than it is: equality
+    /// holds for the shapes below, NOT for every conceivable argv. Attached-value short spellings
+    /// (`-ie needle f`, `-eneedle f`, `-e=needle f`) are known to disagree -- the front door
+    /// refuses on the cluster letter `e` while clap admits. Those are all in the SAFE direction and
+    /// are pinned separately by
+    /// `plain_text_native_frontdoor_is_never_looser_than_the_clap_gate`.
     #[test]
-    fn plain_text_native_adapters_agree_on_every_shape() {
+    fn plain_text_native_adapters_agree_on_the_listed_shapes() {
         let corpus = tempfile::tempdir().unwrap();
         let file = corpus.path().join("a.txt");
         fs::write(&file, "needle alpha\n").unwrap();
@@ -5275,6 +5477,19 @@ mod tests {
             vec!["--", "needle", file_arg.as_str()],
             vec!["-i", "--", "needle", file_arg.as_str()],
             vec!["needle"],
+            // Refusal note 7: patterns rg rejects outright, and patterns that do not compile.
+            vec!["needle\\n", file_arg.as_str()],
+            vec!["\\n", file_arg.as_str()],
+            vec!["[\\n]", file_arg.as_str()],
+            vec!["needle\\r\\n", file_arg.as_str()],
+            vec!["\\x00", file_arg.as_str()],
+            vec!["[", file_arg.as_str()],
+            vec!["(", file_arg.as_str()],
+            vec!["\\Qx\\E", file_arg.as_str()],
+            vec!["a{500}{500}{500}", file_arg.as_str()],
+            vec!["-F", "needle\\n", file_arg.as_str()],
+            // A REAL newline byte in the pattern, not the two-character escape.
+            vec!["needle\n", file_arg.as_str()],
             vec!["-c", "needle", file_arg.as_str()],
             vec!["-v", "needle", file_arg.as_str()],
             vec!["-N", "needle", file_arg.as_str()],
@@ -5301,6 +5516,48 @@ mod tests {
                 frontdoor, clap_side,
                 "adapters disagree on {shape:?}: frontdoor={frontdoor} clap={clap_side}"
             );
+        }
+    }
+
+    /// The general invariant, weaker than equality but true for ALL argv: the front door may be
+    /// STRICTER than the clap gate, never looser. A front-door refusal on an admitted shape costs
+    /// at most one `rg` spawn (and for these shapes not even that -- `parse_early_ripgrep_args`
+    /// rejects them first, so the request reaches clap and routes native anyway). A front-door
+    /// ADMISSION on a shape the clap gate would refuse would be a correctness bug, because the
+    /// front door's only action is to decline and hand off, and the clap gate then decides.
+    ///
+    /// These three shapes are the known, deliberate asymmetry: attached-value short spellings,
+    /// where the front door refuses on the cluster letter `e` rather than reimplementing clap's
+    /// attached-value argv parsing. The test asserts only what matters -- the front door refuses,
+    /// and the invariant holds -- and deliberately does NOT assert the clap gate's verdict, which
+    /// is not load-bearing here and would be an unverified claim dressed up as a test.
+    #[test]
+    fn plain_text_native_frontdoor_is_never_looser_than_the_clap_gate() {
+        let corpus = tempfile::tempdir().unwrap();
+        let file = corpus.path().join("a.txt");
+        fs::write(&file, "needle alpha\n").unwrap();
+        let file_arg = file.display().to_string();
+
+        let asymmetric: Vec<Vec<&str>> = vec![
+            vec!["-ie", "needle", file_arg.as_str()],
+            vec!["-eneedle", file_arg.as_str()],
+            vec!["-e=needle", file_arg.as_str()],
+        ];
+
+        for shape in asymmetric {
+            let mut argv = vec!["tg", "search"];
+            argv.extend(shape.iter().copied());
+
+            let frontdoor = frontdoor_admits(&os_argv(&argv), false);
+            assert!(!frontdoor, "front door is expected to refuse {shape:?}");
+
+            // The safe direction: refusing here is allowed. Admitting where clap refuses is not.
+            let args = parse_search_args(&argv);
+            let request = resolve_search_request_with_stdin(&args, false)
+                .expect("expected the shape to resolve into a search request");
+            let facts = plain_text_native_request_for_search(&args, &request, false);
+            let clap_side = native_can_serve_plain_text(&facts);
+            assert!(!frontdoor || clap_side, "front door looser than clap on {shape:?}");
         }
     }
 

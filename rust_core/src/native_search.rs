@@ -1389,6 +1389,37 @@ fn build_matcher(config: &NativeSearchConfig) -> Result<RegexMatcher> {
     })
 }
 
+/// Fail-closed pre-flight for the plain-text native route: can `build_matcher` -- the EXACT
+/// matcher `run_native_search` will construct for this request -- compile this pattern under
+/// these flags?
+///
+/// This exists because a `run_native_search` failure is NOT free. `allow_rg_fallback` does catch
+/// it and hand the request to real `rg`, but only after printing
+/// `warning: native CPU search failed, falling back to ripgrep: failed to compile native search
+/// pattern '...'` to stderr -- a line `rg` never emits. So an uncompilable pattern (`[`, `(`,
+/// `\Qx\E`, `a{500}{500}{500}`, ...) must be refused BEFORE routing, not discovered mid-request.
+///
+/// Only the inputs `build_matcher` actually reads are parameters. It also reads `config.crlf`,
+/// which no caller on this path ever sets (`--crlf` is a Python-passthrough flag), so the
+/// `Default` value is the truthful one here.
+pub fn native_search_pattern_compiles(
+    pattern: &str,
+    ignore_case: bool,
+    smart_case: bool,
+    fixed_strings: bool,
+    word_boundary: bool,
+) -> bool {
+    let config = NativeSearchConfig {
+        pattern: pattern.to_string(),
+        ignore_case,
+        smart_case,
+        fixed_strings,
+        word_boundary,
+        ..NativeSearchConfig::default()
+    };
+    build_matcher(&config).is_ok()
+}
+
 pub fn effective_ignore_case(pattern: &str, ignore_case: bool, smart_case: bool) -> bool {
     ignore_case || (smart_case && smart_case_pattern_is_case_insensitive(pattern))
 }

@@ -604,15 +604,36 @@ jobs:
           Set-Content -Path (Join-Path $workdir.FullName "sample.log") -Value "ERROR one`nINFO two"
           & $bin search ERROR (Join-Path $workdir.FullName "sample.log")
 
+      # ripgrep must exist for the byte-parity oracle below. The in-tree fallback
+      # (`benchmarks/rg.zip`) is Windows-only -- there is no darwin or linux binary committed --
+      # so without this step both macOS legs would resolve no `rg` and SILENTLY skip, which is
+      # exactly how a gate stops gating.
+      - name: Ensure ripgrep is available
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v rg >/dev/null 2>&1; then
+            rg --version | head -1
+            exit 0
+          fi
+          case "$RUNNER_OS" in
+            macOS) brew install ripgrep ;;
+            Linux) sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep ;;
+            Windows) echo "Windows resolves the committed benchmarks/rg.zip fallback" ;;
+          esac
+
       # The byte-exact rg-parity oracle for the plain-text native route MUST run against the real
       # native binary: `test-python` never builds `rust_core/target/release/tg` (maturin builds
       # only the `pyo3/extension-module` cdylib), so the suite would skip itself there and be a
       # no-op gate. This job is the one place the release binary exists on all four OSes.
       # `tests/helpers/rg_parity` only needs `src/` on PYTHONPATH -- no package build required.
+      # TG_REQUIRE_RG_PARITY=1 turns a missing binary from a skip into a FAILURE, so this can
+      # never masquerade as coverage.
       - name: Run native plain-text byte-parity oracle
         shell: bash
         env:
           PYTHONPATH: src
+          TG_REQUIRE_RG_PARITY: "1"
         run: |
           set -euo pipefail
           python -m pip install --disable-pip-version-check pytest==8.4.2

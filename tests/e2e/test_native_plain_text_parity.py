@@ -25,6 +25,7 @@ It does NOT replace or weaken the existing oracles -- it runs alongside them.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -77,6 +78,22 @@ _CASES: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
     ("no-match", (), "no_match.txt", "needle"),
     ("empty-pattern", (), "lf.txt", ""),
     ("regex-pattern", (), "lf.txt", "needle (alpha|omega)"),
+    # PATTERN-level cases. Every case above uses a valid pattern, which is exactly why a whole
+    # divergence class (rg rc=2 + diagnostic vs native rc=1 + silence) survived the first review
+    # of this file. rg refuses a pattern that can match a line terminator or NUL; the native
+    # matcher accepts it and succeeds with zero matches.
+    ("pattern-newline-escape", (), "lf.txt", "needle\\n"),
+    ("pattern-bare-newline-escape", (), "lf.txt", "\\n"),
+    ("pattern-newline-class", (), "lf.txt", "[\\n]"),
+    ("pattern-crlf-escape", (), "lf.txt", "needle\\r\\n"),
+    ("pattern-literal-newline", (), "lf.txt", "needle\n"),
+    ("pattern-nul-escape", (), "lf.txt", "\\x00"),
+    # ... and patterns that do not COMPILE: correct exit code, but the native route would emit an
+    # extra `warning: native CPU search failed, falling back to ripgrep: ...` stderr line.
+    ("pattern-unclosed-class", (), "lf.txt", "["),
+    ("pattern-unclosed-group", (), "lf.txt", "("),
+    ("pattern-qe-escape", (), "lf.txt", "\\Qx\\E"),
+    ("pattern-repetition-blowup", (), "lf.txt", "a{500}{500}{500}"),
 )
 
 
@@ -100,6 +117,34 @@ def _run_bytes(argv: list[str], *, cwd: Path, env: dict[str, str]):
     )
 
 
+def _require_binaries():
+    """Resolve `rg` and the native `tg`, or SKIP -- LOUDLY when the caller demanded coverage.
+
+    A silent skip is how a gate stops gating. CI sets ``TG_REQUIRE_RG_PARITY=1`` on the job that
+    builds the native binary, which turns "not available" from a skip into a failure, so a runner
+    without ripgrep (the macOS legs have no bundled darwin binary in-tree -- only
+    ``benchmarks/rg.zip``, which is Windows-only) can never masquerade as passing coverage.
+    """
+    helpers = _helpers()
+    required = os.environ.get("TG_REQUIRE_RG_PARITY", "").strip().lower() in {"1", "true", "yes"}
+
+    rg_binary = helpers.resolve_pinned_rg_binary()
+    tg_binary = helpers.resolve_native_tg_binary()
+    missing = []
+    if rg_binary is None:
+        missing.append("ripgrep (install it, or set TG_RG_PATH)")
+    if tg_binary is None:
+        missing.append("native tg binary (cargo build --release in rust_core/)")
+
+    if missing:
+        message = f"byte-parity oracle cannot run; missing: {', '.join(missing)}"
+        if required:
+            pytest.fail(f"TG_REQUIRE_RG_PARITY=1 but {message}")
+        pytest.skip(message)
+
+    return helpers, rg_binary, tg_binary
+
+
 @pytest.mark.characterization
 @pytest.mark.parametrize(
     ("flags", "fixture", "pattern"),
@@ -112,13 +157,7 @@ def test_native_plain_text_stdout_is_byte_identical_to_ripgrep(
     fixture: str,
     pattern: str,
 ) -> None:
-    helpers = _helpers()
-    rg_binary = helpers.resolve_pinned_rg_binary()
-    if rg_binary is None:
-        pytest.skip("ripgrep binary not available for byte-parity coverage")
-    tg_binary = helpers.resolve_native_tg_binary()
-    if tg_binary is None:
-        pytest.skip("native tg binary not built; this suite must exercise the real front door")
+    helpers, rg_binary, tg_binary = _require_binaries()
 
     env = helpers.build_command_env(rg_binary)
     target = str(native_corpus / fixture)
@@ -130,13 +169,20 @@ def test_native_plain_text_stdout_is_byte_identical_to_ripgrep(
         env=env,
     )
 
+    context = f"{flags} {pattern!r} {fixture}"
     assert tg.returncode == rg.returncode, (
-        f"exit-code mismatch for {flags} {pattern!r} {fixture}\n"
+        f"exit-code mismatch for {context}\n"
         f"rg={rg.returncode} tg={tg.returncode}\n"
         f"rg stderr={rg.stderr!r}\ntg stderr={tg.stderr!r}"
     )
     assert tg.stdout == rg.stdout, (
-        f"stdout BYTES differ for {flags} {pattern!r} {fixture}\nrg={rg.stdout!r}\ntg={tg.stdout!r}"
+        f"stdout BYTES differ for {context}\nrg={rg.stdout!r}\ntg={tg.stdout!r}"
+    )
+    # STDERR is asserted too, not just stdout: a refused request reaches `rg` through
+    # `Stdio::inherit()` so its diagnostics must pass through byte-identically, and an admitted
+    # request must not GAIN a line (the `warning: native CPU search failed...` class).
+    assert tg.stderr == rg.stderr, (
+        f"stderr BYTES differ for {context}\nrg={rg.stderr!r}\ntg={tg.stderr!r}"
     )
 
 
@@ -145,16 +191,19 @@ def test_native_plain_text_route_emits_no_extra_stderr(native_corpus: Path) -> N
     """The rg fallback net prints a `warning: native CPU search failed...` line on a native
     error. An admitted request must never trip it, and a REFUSED request must not either --
     the empty-pattern case is exactly the shape that did before it was excluded."""
-    helpers = _helpers()
-    rg_binary = helpers.resolve_pinned_rg_binary()
-    if rg_binary is None:
-        pytest.skip("ripgrep binary not available for byte-parity coverage")
-    tg_binary = helpers.resolve_native_tg_binary()
-    if tg_binary is None:
-        pytest.skip("native tg binary not built; this suite must exercise the real front door")
+    helpers, rg_binary, tg_binary = _require_binaries()
 
     env = helpers.build_command_env(rg_binary)
-    for fixture, pattern in (("lf.txt", "needle"), ("lf.txt", ""), ("crlf.txt", "needle")):
+    probes = (
+        ("lf.txt", "needle"),
+        ("lf.txt", ""),
+        ("crlf.txt", "needle"),
+        ("latin1.txt", "needle"),
+        ("lf.txt", "["),
+        ("lf.txt", "needle\n"),
+        ("lf.txt", "a{500}{500}{500}"),
+    )
+    for fixture, pattern in probes:
         tg = _run_bytes(
             [str(tg_binary), "search", pattern, str(native_corpus / fixture)],
             cwd=native_corpus,
@@ -169,13 +218,7 @@ def test_native_plain_text_route_emits_no_extra_stderr(native_corpus: Path) -> N
 def test_verbose_reports_the_backend_that_actually_ran(native_corpus: Path) -> None:
     """`--verbose` is allow-listed precisely because it reports the routing decision. An
     admitted request must report the native route; a refused one must still report rg."""
-    helpers = _helpers()
-    rg_binary = helpers.resolve_pinned_rg_binary()
-    if rg_binary is None:
-        pytest.skip("ripgrep binary not available for byte-parity coverage")
-    tg_binary = helpers.resolve_native_tg_binary()
-    if tg_binary is None:
-        pytest.skip("native tg binary not built; this suite must exercise the real front door")
+    helpers, rg_binary, tg_binary = _require_binaries()
 
     env = helpers.build_command_env(rg_binary)
 

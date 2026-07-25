@@ -1,7 +1,7 @@
 use tensor_grep_rs::routing::{
-    native_can_serve_plain_text, plain_text_native_flag_token_is_allowed, route_search,
-    BackendSelection, IndexRoutingState, PlainTextNativeRequest, SearchRoutingCalibration,
-    SearchRoutingConfig,
+    native_can_serve_plain_text, plain_text_native_cheap_checks_pass,
+    plain_text_native_flag_token_is_allowed, route_search, BackendSelection, IndexRoutingState,
+    PlainTextNativeRequest, SearchRoutingCalibration, SearchRoutingConfig,
 };
 
 fn base_config() -> SearchRoutingConfig {
@@ -28,6 +28,7 @@ fn admitted_plain_text_request() -> PlainTextNativeRequest {
     PlainTextNativeRequest {
         pattern_count: 1,
         pattern_is_empty: false,
+        pattern_is_native_renderable: true,
         path_count: 1,
         path_was_implicit: false,
         single_path_is_regular_file: true,
@@ -411,6 +412,50 @@ fn test_native_can_serve_plain_text_admits_the_canonical_request() {
     assert!(native_can_serve_plain_text(&admitted_plain_text_request()));
 }
 
+/// The cheap/expensive split is a LATENCY contract, not a refactor: an adapter is required to run
+/// `plain_text_native_cheap_checks_pass` first and only then pay for a regex compile and a full
+/// file read. This pins the two properties that make the contract safe to rely on.
+#[test]
+fn test_cheap_checks_gate_the_expensive_tier() {
+    // 1. The cheap tier alone never admits -- the expensive fields still have to be true.
+    let unprobed = PlainTextNativeRequest {
+        pattern_is_native_renderable: false,
+        single_path_renders_identically: false,
+        ..admitted_plain_text_request()
+    };
+    assert!(plain_text_native_cheap_checks_pass(&unprobed));
+    assert!(!native_can_serve_plain_text(&unprobed));
+
+    // 2. Every cheap disqualifier is visible to the cheap tier, so an adapter that consults it
+    //    first can skip the expensive work on ALL of them -- including the requests this route
+    //    never optimises (terminal, --json/--ndjson, context searches).
+    for disqualified in [
+        PlainTextNativeRequest {
+            stdout_is_terminal: true,
+            ..admitted_plain_text_request()
+        },
+        PlainTextNativeRequest {
+            structured_output: true,
+            ..admitted_plain_text_request()
+        },
+        PlainTextNativeRequest {
+            only_allowed_flags: false,
+            ..admitted_plain_text_request()
+        },
+        PlainTextNativeRequest {
+            single_path_is_regular_file: false,
+            ..admitted_plain_text_request()
+        },
+        PlainTextNativeRequest {
+            pattern_is_empty: true,
+            ..admitted_plain_text_request()
+        },
+    ] {
+        assert!(!plain_text_native_cheap_checks_pass(&disqualified));
+        assert!(!native_can_serve_plain_text(&disqualified));
+    }
+}
+
 /// Every structural refusal, one at a time, from the otherwise-admitted request.
 #[test]
 fn test_native_can_serve_plain_text_refuses_each_disqualifier() {
@@ -444,6 +489,14 @@ fn test_native_can_serve_plain_text_refuses_each_disqualifier() {
         ..admitted_plain_text_request()
     };
     assert!(!native_can_serve_plain_text(&empty_pattern));
+
+    // Refusal note 7: a pattern rg rejects (rc=2) that the native matcher accepts with 0 matches
+    // (rc=1), or one that fails to compile and trips the extra-stderr fallback warning.
+    let unrenderable_pattern = PlainTextNativeRequest {
+        pattern_is_native_renderable: false,
+        ..admitted_plain_text_request()
+    };
+    assert!(!native_can_serve_plain_text(&unrenderable_pattern));
 
     let multiple_paths = PlainTextNativeRequest {
         path_count: 2,

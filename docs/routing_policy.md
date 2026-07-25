@@ -60,8 +60,9 @@ The router's priority order is now explicit and shared:
 Spawning `rg` costs a fixed process round trip on every plain-text search. `native_can_serve_plain_text` (`rust_core/src/routing.rs`) is the single, fail-closed predicate that decides when the in-process native CPU engine may answer instead. It is deliberately narrow, and every clause is a refusal:
 
 - Exactly one pattern, and that pattern is not the empty string (`run_native_search` rejects an empty pattern, and the rg fallback then emits a `warning:` line `rg` never prints).
+- That pattern is **native-renderable**: it contains no line terminator or NUL (literal or escaped) and it compiles with the native matcher. `rg` refuses a pattern that can match a line terminator (`needle\n`, `\n`, `[\n]`) or a NUL (`\x00`) with **exit 2 plus a diagnostic**, while the native matcher accepts it and succeeds with **zero matches (exit 1, silent)** -- an exit-code regression an agent branching on 2-vs-1 would misread as "no matches". A pattern that fails to compile (`[`, `(`, `\Qx\E`, `a{500}{500}{500}`) exits 2 either way, but only after the rg-fallback net prints a `warning: native CPU search failed...` line. The check is deliberately over-broad (it also refuses `\x`/`\u` escapes wholesale): over-refusal costs one `rg` spawn, under-refusal costs correctness.
 - Exactly one PATH operand that resolves to an existing **regular file** (never a directory -- walking diverges from `rg` on binary-file messages and on emission order).
-- That file passes a **full-content** probe: no `\r` byte, valid UTF-8, no NUL byte, and within an 8 MiB cap. These are DATA-level divergences in the shared native emitter, which this route refuses rather than changes:
+- That file passes a **full-content** probe: no `\r` byte, valid UTF-8, no NUL byte, and within a 512 KiB cap. These are DATA-level divergences in the shared native emitter, which this route refuses rather than changes:
   - CRLF: the native plain sink strips the trailing `\r` (no CRLF line terminator is ever installed on this path) while `rg` keeps it.
   - non-UTF-8: the native plain sink is `grep_searcher::sinks::Lossy` and substitutes U+FFFD where `rg` writes raw bytes.
   - NUL: `rg` spells its binary-match notice `"\0"` while the native engine's governed snapshot contract spells it `"/0"`.
@@ -72,7 +73,11 @@ Spawning `rg` costs a fixed process round trip on every plain-text search. `nati
 
 Anything outside that subset keeps spawning `rg`, unchanged. The route reports `NativeCpuBackend` / `plain-text-native` and keeps `allow_rg_fallback = true`, so a native failure still falls back to real `rg`. `--verbose` stderr intentionally reports the new backend -- that is the flag's purpose.
 
-The predicate has two adapters (a raw-argv one at the pre-clap front door, a parsed-`SearchArgs` one on the clap path) and they are required to return identical verdicts, because the front door is not the only path into `route_search`.
+The 512 KiB cap is measured, not guessed: the probe costs ~2% of the win at 200 KB, 16% at 1 MB, 43% at 4 MB and 78% at 8 MB, and on a match-dense 8 MB file the native engine is itself slower than `rg`, turning the whole route into a ~11ms regression. Files above the cap keep spawning `rg`.
+
+The two expensive clauses (the pattern compile and the file probe) are evaluated **last**, only after `plain_text_native_cheap_checks_pass` has cleared every free refusal. That is a latency contract: an interactive terminal search, a `--json`/`--ndjson` run and an `-A`/`-B`/`-C` run all reach the clap-side adapter and must not pay for a file read on their way to `rg`. The probe is also memoized per path, because both adapters run on an admitted request.
+
+The predicate has two adapters (a raw-argv one at the pre-clap front door, a parsed-`SearchArgs` one on the clap path) and they are required to return identical verdicts for every shape the agreement test lists, because the front door is not the only path into `route_search`. The general invariant is one-directional -- the front door may be stricter, never looser -- and attached-value short spellings (`-eneedle`) are a known, deliberate asymmetry in that safe direction.
 
 ### `--index` fail-closed compatibility contract (audit H1, 2026-07-10)
 
