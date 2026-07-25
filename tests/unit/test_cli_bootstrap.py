@@ -31,18 +31,33 @@ def test_bootstrap_commands_match_source_of_truth() -> None:
 # ALSO in `_SEARCH_FLAGS_WITH_VALUES` -- that set is what tells the argv walk to consume the
 # NEXT token as a value rather than treat it as a PATH positional.
 #
-# When the two registries drift, the failure is silent and nasty: the PATTERN gets read as a
-# PATH, so `_search_path_args_raw` returns a bogus path, the "no explicit PATH" signal is lost,
-# and the workspace-root broad-scan guard never fires. `--format` and `--lang` were both missing
-# (measured on `C:\dev\projects`: `--format json needle` yielded paths=['needle'] and
-# workspace_root_guard=False, while bare `needle` correctly yielded paths=['.'] + guard=True).
+# When the two registries drift, the argv walk mis-reads the flag's VALUE as a PATH positional,
+# corrupting `_search_path_args_raw`, `_search_args_paths_defaulted` and
+# `_regex_patterns_from_search_args`. `--format` and `--lang` were both missing.
 #
-# This is deliberately an INVARIANT over the whole registry rather than two named regression
-# cases, because the same gap has now been introduced twice by adding a flag to one registry and
-# not the other. Enumerating today's offenders would pass again the moment someone adds a tenth
-# prefix. Note also that the rg-argv differential fuzz gate (`.claude/rg_argv_differential_fuzz.py`)
-# can NEVER cover this class by construction -- it models *ripgrep's* grammar, and ripgrep has no
-# `--format`/`--lang`. tg-only flags need a tg-side invariant, which is this test.
+# THIS IS A LATENT PARSE DEFECT, NOT A LIVE GUARD BYPASS -- state it precisely, because the
+# imprecise version was written here first and an independent gate falsified it by running the
+# control arm. Today the mis-parse reaches no user-visible outcome: every member of
+# `_TG_ONLY_SEARCH_FLAG_PREFIXES` is ALSO in `_TG_ONLY_SEARCH_FLAGS`, so all nine unconditionally
+# force the full CLI, where Typer parses `--format`/`--lang` as `str` options (main.py:7199,7210)
+# and derives `paths_defaulted` from its OWN positionals (main.py:7268-7295). `--format` is
+# additionally stripped before any consumer by `_strip_noop_rg_format` (bootstrap.py:435).
+# Measured end-to-end at a workspace root, treatment vs `origin/main`: the broad-scan refusal
+# fires IDENTICALLY in both arms. A helper measured in isolation showing `workspace_root_guard=False`
+# is NOT evidence of a user-visible failure -- that is the repo's own "a check that passes in both
+# arms proves nothing" rule, applied to a prose claim.
+#
+# The invariant is therefore a RATCHET, and that is a better justification than the false one:
+# it ensures a future tg-only value flag that is NOT full-CLI-forced -- or any future relaxation
+# of that routing -- cannot silently inherit the mis-parse. It is an INVARIANT over the whole
+# registry rather than two named regression cases because this gap has now been introduced
+# repeatedly by adding a flag to one registry and not the other (`--generate` was the previous
+# instance, fixed in #745; `--format`/`--lang` predate v1.95.0). Enumerating today's offenders
+# would pass again the moment someone adds a tenth prefix.
+#
+# The rg-argv differential fuzz gate (`.claude/rg_argv_differential_fuzz.py`) can NEVER cover this
+# class by construction -- it models *ripgrep's* grammar, and ripgrep has no `--format`/`--lang`.
+# tg-only flags need a tg-side invariant, which is this test.
 def test_tg_only_value_flag_prefixes_are_registered_as_value_taking_flags() -> None:
     missing = sorted(
         prefix.rstrip("=")
@@ -56,11 +71,18 @@ def test_tg_only_value_flag_prefixes_are_registered_as_value_taking_flags() -> N
     )
 
 
-# Task #272 -- the OUTCOME the invariant above protects, asserted end-to-end through the argv
-# walk. `_search_path_args_raw` returning [] means "no explicit PATH positional", which is what
-# lets the caller apply the `paths or ["."]` fallback and fire the workspace-root guard.
-# Attached spellings are pinned alongside the separated ones so a future fix that repairs the
-# separated form by breaking the attached form cannot pass.
+# Task #272 -- the parse-level behaviour the invariant above protects. `_search_path_args_raw`
+# returning [] means "no explicit PATH positional", the signal the caller's `paths or ["."]`
+# fallback keys on. Scope note, per the comment above: this asserts the WALK, not a user-visible
+# outcome -- the full-CLI routing currently masks the defect end-to-end.
+#
+# The ATTACHED rows are pinned deliberately and pass in BOTH arms. That is the correct signature
+# for a "don't break the other spelling" pin, not inert filler: on `origin/main` the attached
+# form survives only BY ACCIDENT -- it misses the `startswith(f"{flag}=")` arm and falls through
+# to the generic `arg.startswith("-")` skip (bootstrap.py:801). After the fix it is handled by the
+# value-set arm instead. Adding a flag to `_SEARCH_FLAGS_WITH_VALUES` is exactly the change that
+# could break the attached spelling by consuming a following token, so it needs pinning -- but do
+# NOT cite these two rows as evidence the fix works; only the separated rows discriminate.
 @pytest.mark.parametrize(
     ("search_args", "expected_paths"),
     [
