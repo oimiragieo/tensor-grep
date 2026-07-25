@@ -657,13 +657,15 @@ def test_unreadable_file_is_not_reported_as_removed(tmp_path: Path, monkeypatch)
     What that breaks: a false `removed` entry reaches `_changeset_has_entries` ->
     `_ensure_session_not_stale`, which raises SessionStaleError naming files nobody touched;
     `_session_health_payload` RECOMPUTES the same changeset and serves it with `stale: true`, so
-    `tg session health` reports those files as deleted; and on MCP `refresh_on_stale=True` it
-    forces a needless rebuild.
+    the `health` request on the session serve/daemon protocol reports live files as deleted; and
+    on MCP `refresh_on_stale=True` it forces a needless rebuild.
 
-    TWO THINGS EARLIER DRAFTS OF THIS DOCSTRING GOT WRONG, both by naming a consumer without
-    checking it: (1) it does NOT evict anything from the repo map -- `build_repo_map_incremental`
-    ignores `removed` entirely (see its D2 comment); (2) health does NOT re-serve the `changeset`
-    key persisted in the session payload -- that copy has no reader in `src/` at all.
+    THREE THINGS EARLIER DRAFTS OF THIS DOCSTRING GOT WRONG, every one by naming a consumer
+    without checking it: (1) it does NOT evict anything from the repo map --
+    `build_repo_map_incremental` ignores `removed` entirely (see its D2 comment); (2) health does
+    NOT re-serve the `changeset` key persisted in the session payload -- that copy has no reader
+    in `src/`; (3) there is no `tg session health` CLI command and no `tg_session_health` MCP tool
+    -- `health` is only a request kind on the serve/daemon protocol. GREP THE NAME FIRST.
     """
     paths = _build_project(tmp_path)
     session_id = _open_session(paths["project"])
@@ -686,7 +688,7 @@ def test_unreadable_file_is_not_reported_as_removed(tmp_path: Path, monkeypatch)
     unreadable_reported_as_removed = [p for p in changeset["removed"] if "src" in p]
     assert unreadable_reported_as_removed == [], (
         "a permission-denied file was reported as REMOVED; that false report raises "
-        f"SessionStaleError and is persisted into the session payload: {unreadable_reported_as_removed}"
+        f"SessionStaleError and is re-served by the health request: {unreadable_reported_as_removed}"
     )
 
 

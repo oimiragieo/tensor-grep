@@ -572,11 +572,15 @@ def _stale_changeset(
             #   1. `_changeset_has_entries` -> `_ensure_session_not_stale` raises SessionStaleError
             #      whose message names files nobody touched.
             #   2. `_session_health_payload` RECOMPUTES this same changeset and serves it with
-            #      `stale: true` -- so `tg session health` tells an agent those files were deleted.
-            #      (It does NOT re-serve the copy persisted under the payload's `"changeset"` key;
-            #      that copy currently has no reader in `src/` at all. A second draft of this
-            #      comment claimed it did -- asserting a consumer without checking it, which is
-            #      the very mistake the first draft made about `build_repo_map_incremental`.)
+            #      `stale: true`, so the `health` request on the session serve/daemon protocol
+            #      (the `command == "health"` arms in this module and in `session_daemon.py`)
+            #      reports live files as deleted. NOTE there is no `tg session health` CLI command
+            #      and no `tg_session_health` MCP tool -- two earlier drafts of this comment named
+            #      one. It also does NOT re-serve the copy persisted under the payload's
+            #      `"changeset"` key; that copy has no reader in `src/` at all.
+            #      Three drafts of this comment each named a consumer without checking it
+            #      (`build_repo_map_incremental`, then the persisted key, then a CLI command that
+            #      does not exist). If you edit this comment, GREP FOR THE NAME FIRST.
             #   3. On MCP `refresh_on_stale=True` that false-stale forces a needless rebuild,
             #      which also flushes the process-global source caches via `_clear_all_source_caches`.
             # So: false reporting + wasted work, not data loss.
