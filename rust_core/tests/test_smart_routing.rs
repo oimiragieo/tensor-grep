@@ -511,7 +511,6 @@ fn test_native_can_serve_plain_text_refuses_each_disqualifier() {
     };
     assert!(!native_can_serve_plain_text(&stdin_sentinel));
 
-
     // Refusal note 7: a pattern rg rejects (rc=2) that the native matcher accepts with 0 matches
     // (rc=1), or one that fails to compile and trips the extra-stderr fallback warning.
     let unrenderable_pattern = PlainTextNativeRequest {
