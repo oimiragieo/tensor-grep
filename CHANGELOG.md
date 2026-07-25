@@ -1,6 +1,184 @@
 # CHANGELOG
 
 
+## v1.98.10 (2026-07-25)
+
+### Bug Fixes
+
+- **search**: Thread --no-ignore-vcs into the native --json/--ndjson walker (#267)
+  ([#750](https://github.com/oimiragieo/tensor-grep/pull/750),
+  [`045e5d0`](https://github.com/oimiragieo/tensor-grep/commit/045e5d07fe6bbf11ce8eb4a5ab8865a28e70e0c3))
+
+* fix(search): thread --no-ignore-vcs into the native --json/--ndjson walker (#267)
+
+`NativeSearchConfig` (rust_core/src/native_search.rs) had no `no_ignore_vcs` field at all, so
+  `build_walk_builder` unconditionally added a root `.gitignore` to the walk whenever `no_ignore`
+  was false -- regardless of `--no-ignore-vcs`. That engine is exactly what `route_search` sends
+  `--json`/`--ndjson` searches to (`structured_output` arm, `RoutingDecision::native_cpu_json`), so
+  a bare output-format flag silently changed the file set: `tg search --no-ignore-vcs PATTERN .`
+  correctly re-included a `.gitignore`-matched file via the rg-passthrough engine
+  (`rg_passthrough.rs::root_ignore_file_args`, #264/#744), but `tg search --json --no-ignore-vcs
+  PATTERN .` silently kept excluding it.
+
+Fix: add `no_ignore_vcs: bool` to `NativeSearchConfig`, thread it from
+  `SearchArgs`/`GpuSearchParams` at both CPU construction sites (`native_search_config_for_command`,
+  `native_search_config_for_gpu_params`), and skip only `.gitignore` (not `.ignore`/`.rgignore`) in
+  `build_walk_builder` when it's set -- mirroring rg_passthrough.rs's own per-filename
+  `no_ignore_vcs` scope. `--no-ignore` (the blanket disable) was already threaded correctly and is
+  unaffected.
+
+Locked by 4 new unit tests in native_search.rs asserting the OUTCOME (the file set returned by
+  `collect_walked_files`), not the mechanism: default behavior unchanged, `--no-ignore-vcs`
+  re-includes the `.gitignore`-matched file, `.ignore`-scoped files stay untouched by
+  `--no-ignore-vcs` (rg's own documented scope), and `--no-ignore` still overrides everything.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* fix(search): flip the walker's own git-ignore knobs for --no-ignore-vcs (#267 BLOCKING-1/2)
+
+Independent gate on eaf61a2 found the first cut of this fix is a no-op INSIDE a git repository.
+  `build_walk_builder`'s `add_ignore` trio only compensates for the `ignore` crate's
+  `require_git(true)` default OUTSIDE a git repo -- inside one, `WalkBuilder`'s own git machinery
+  (`git_ignore`/ `git_global`/`git_exclude`, all `true` by default) already applies `.gitignore`
+  natively, so skipping `add_ignore(".gitignore")` changed nothing there. Live-binary repro
+  (v1.98.8, same walker body as this PR's base) confirmed it: root `.gitignore` in a git repo,
+  search a child `pkg/` dir with no ignore files of its own -- `--json --no-ignore-vcs` still
+  excluded the git-ignored file, identical to bare `--json`.
+
+Fix: when `config.no_ignore_vcs` is set, also disable the walker's own
+  `git_ignore`/`git_global`/`git_exclude` knobs (NOT `parents`, which must stay live for
+  `.ignore`/`.rgignore` -- `--no-ignore-vcs` is VCS-scoped only). `git_exclude(false)` additionally
+  covers `.git/info/exclude`, which real `rg --no-ignore-vcs` re-includes too (verified live).
+
+BLOCKING-2: the first cut's 4 tests all used a bare `tempfile::tempdir()` (never a git repo), so
+  `require_git(true)` left the native git path dormant and could never have caught BLOCKING-1 -- the
+  RED was a strict subset of the real bug. Added 2 more tests using a git-repo topology (`.git`
+  marker + root `.gitignore` + search a child dir with no ignore files of its own, isolating the
+  native git path from `add_ignore`): default behavior unchanged, and `--no-ignore-vcs` re-includes
+  the git-ignored file inside a repo too.
+
+* fix(test): drop hidden-file entries from #267's expected file-set vectors
+
+Round-3 gate on 240be11 found `test-rust-core` RED on ubuntu stable+nightly (the round-2 gate's
+  "would fail on revert" read never actually executed -- CI on the prior commit was cancelled by the
+  next push, so a never-run test was blessed by inspection alone).
+
+Root cause: `build_walk_builder` sets `builder.hidden(!config.hidden)`, and
+  `NativeSearchConfig::default()` has `hidden: false`, so every one of the 4 fixture tests'
+  `.gitignore`/`.ignore` files was already filtered out by the `ignore` crate's own hidden-file skip
+  -- before ignore-file logic ever runs. The tests' *substance* (which non-dotfile is
+  present/absent) was already correct; only the dotfile entries in the expected vectors were wrong.
+
+Fix: delete the `.gitignore`/`.ignore` entries from all 4 expected vectors, per the gate's exact
+  remedy. Did not set `config.hidden = true` to paper over it -- that would change what the tests
+  exercise.
+
+Also reworded the `build_walk_builder` comment at the `add_ignore` loop (non-blocking finding): it
+  previously implied real rg has a `require_git(true)`-equivalent gap outside a git repo. Measured:
+  rg has no such gap -- it deliberately never honors a root `.gitignore` outside a repo. tg's
+  `add_ignore` trio is a deliberate DIVERGENCE from that rg behavior (#127), not compensation for
+  one. Reworded so it can't be read as an rg-parity claim.
+
+The 2 git-repo tests added for BLOCKING-1 already ok (verified: they never put a dotfile inside the
+  searched `pkg/` child dir, so this bug never touched them) -- no change needed there; CI already
+  reported both `... ok`.
+
+Recorded, not fixed here per the gate's instruction: a pre-existing, byte-identical-in-this-delta
+  #270-class divergence survives in the *default* (no --no-ignore-vcs) non-git case -- `tg search
+  --json` still excludes a root .gitignore match that plain `tg search` and real rg both include,
+  because `add_ignore(".gitignore")` runs unconditionally there. Out of scope for #267.
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+### Documentation
+
+- Capture the verification-oracle family (5 forms) + model-the-class discipline
+  ([#751](https://github.com/oimiragieo/tensor-grep/pull/751),
+  [`86e459f`](https://github.com/oimiragieo/tensor-grep/commit/86e459fe6eb4595f1d37f0edabae294187a48e51))
+
+Session capture, 2026-07-25. Five distinct forms of ONE failure mode hit in a single session:
+  something that LOOKS like verification isn't. All five now have a named form, a receipt, and a
+  rule.
+
+AGENTS.md gains two sections:
+
+**The Verification-Oracle Family.** Forms 1-5 with receipts — 1 normalize-both-sides (#262, MASKS
+  defects; surviving accepted limit at rg_parity.py:560, proven lossy and pinned by #748) 2
+  harness-corrupts-output (run_tg mangled a byte-correct result; fixed #746) 3 test-never-executes —
+  SKIPPED IS NOT PASSED (#746 instance, #749 class-fix) 4 gate-diagnosis-wrong (a gate's ROOT-CAUSE
+  STORY is also a hypothesis) 5 repro TOPOLOGY deletes the mechanism (#750 — fix and all four tests
+  used non-git tempdir(), the ONE topology where the mechanism suffices; inside a git repo the fix
+  is a no-op. Defeats even an honest structural RED.)
+
+The unifying question: **what would this check show if the thing it verifies were BROKEN? If "the
+  same", it is not verification.**
+
+Plus two corollaries that cost real cycles: isolation-level evidence is not outcome-level evidence
+  and the rule binds PROSE (#747 — an isolated `workspace_root_guard=False` became a false
+  user-visible claim); and when you cannot observe RED, state the structural argument AS an
+  argument, never dressed as an observation.
+
+**Model The Class, Don't Enumerate The Cases.** When round N+1 keeps finding a new instance of the
+  same class, build a model of the class (#745's rg-grammar differential fuzz, 70,040 cases,
+  release-blocking). A modelled gate must be proven able to FAIL. And know its hard limit: a
+  cross-tool differential bounds itself at the INTERSECTION of both surfaces — which is exactly how
+  #272's tg-only flags stayed invisible to it.
+
+Local Dev Gotchas gains five hard-won entries: a rule listing forbidden OPERATIONS is not a ban on
+  the toolchain (rustfmt is not a compiler — cost 3 CI cycles); cumulative CPU time is not current
+  CPU rate (7.4 CPU-hours of orphaned `find` moved load 74%->73%); MSYS_NO_PATHCONV=1 required for
+  `git cat-file blob origin/main:path` or it fails misleadingly; conftest's sys.path.insert
+  OVERRIDES PYTHONPATH and has produced a false-pass control arm; and enumerate mechanically — that
+  one recurred THREE times in one session (6-vs-8 commits, a truncated path name that "closed" a
+  live task, 11-vs-12 husks).
+
+The skill `tensor-grep-validation-and-qa` gains a Part 0 carrying the same family as a triage table,
+  so it loads before Part 1's evidence ranking.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+### Testing
+
+- **ci**: Assert every native-binary-dependent e2e suite is actually RUN by CI (#275)
+  ([#749](https://github.com/oimiragieo/tensor-grep/pull/749),
+  [`330e7ed`](https://github.com/oimiragieo/tensor-grep/commit/330e7edf7b80e4b48fcd4b1a5fc1400f6e0c097a))
+
+#746 fixed the INSTANCE: `native-build-smoke`'s pytest step named one hardcoded filename, so
+  `test_native_json_byte_fidelity.py` -- written specifically to prove the #266 emitter fix, with a
+  header naming CI as its oracle -- SKIPPED in every job. A green suite reported proof that never
+  executed. That step is now a glob.
+
+This fixes the CLASS. The glob keys on a NAMING CONVENTION (`test_native_*.py`), not on the semantic
+  property it stands for ("needs the real compiled binary"). It is exact today and silently re-opens
+  the identical hole the moment someone adds a binary-dependent suite named anything else. Same
+  enumeration-rots shape as the hardcoded filename it replaced, one level up.
+
+So assert the PROPERTY instead: every file referencing `TG_REQUIRE_RG_PARITY` -- the env var
+  `native-build-smoke` sets to turn a missing binary from a silent skip into a hard failure -- must
+  be matched by whatever pattern CI actually runs. The pattern is PARSED from ci.yml, never copied
+  here; a copy would rot exactly the way this test exists to prevent.
+
+Three assertions: 1. CI runs a PATTERN, not literal filenames (guards the #746 fix itself). 2. THE
+  INVARIANT: no binary-dependent suite is left unmatched. 3. The set-difference DISCRIMINATES, on
+  synthetic inputs -- without this, (2) passing proves nothing, since a comparison that always
+  yields the empty set would pass identically.
+
+Bidirectional, both arms measured: - current main .................................. 5 passed -
+  scratch `tests/e2e/test_zzz_emitter_bytes.py` (names the marker, does NOT match the glob) ....
+  FAILS, naming the file
+
+It also caught ITSELF on its first run -- this file names the marker as data, so the scan flagged it
+  as an uncovered suite. Excluded by `__file__` rather than a name pattern, so the exemption cannot
+  drift on a rename, and it is the only one.
+
+`pyyaml>=6.0` is already a declared dep (pyproject.toml:573, in uv.lock) and three existing tests
+  import yaml, so no new dependency.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.98.9 (2026-07-25)
 
 ### Bug Fixes
