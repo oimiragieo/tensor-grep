@@ -407,6 +407,163 @@ def test_main_entry_should_passthrough_search_subcommand_to_rg(monkeypatch):
     assert seen == {"binary_name": "rg", "search_args": ["-i", "ERROR", "."]}
 
 
+def test_main_entry_bare_plain_text_search_bypasses_native_delegation_even_when_native_binary_present(
+    monkeypatch,
+) -> None:
+    """Task #269 map finding, independently confirmed (also root-caused by the sibling #744
+    fix on PR c597b85): `_can_delegate_to_native_tg_search` (`bootstrap.py:456-464`) only
+    forwards a search to the compiled native binary when argv contains one of
+    `{--cpu, --force-cpu, --json, --ndjson, --gpu-device-ids}`, or `TG_RUST_FIRST_SEARCH=1`
+    (default off). A bare `tg search PATTERN .` has none of those triggers, so bootstrap ALWAYS
+    falls through to its own `_run_rg_passthrough` -- REGARDLESS of whether a native `tg`
+    binary is discoverable. This is the actual mechanism behind the #264/#269 "an output-format
+    flag changes the file set" bug family: the flag doesn't touch ignore-handling directly, it
+    changes WHICH ENGINE runs (native, which already honored root ignore files correctly via
+    #127, vs. Python's own naive passthrough). Unlike the sibling test above (which patches
+    `resolve_native_tg_binary` to `None`), this test proves the SAME routing decision holds when
+    a native binary IS resolvable -- the trigger-set gate is what refuses delegation, not binary
+    absence."""
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "needle", "."])
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: "tg.exe")
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: "rg")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_native_tg_search",
+        lambda *_args, **_kwargs: pytest.fail(
+            "a bare plain-text search must never delegate to the native binary"
+        ),
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_rg_passthrough",
+        lambda binary_name, search_args: (
+            seen.update({"binary_name": binary_name, "search_args": list(search_args)}) or 0
+        ),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: pytest.fail("full cli should not run"))
+
+    with pytest.raises(SystemExit) as excinfo:
+        bootstrap.main_entry()
+
+    assert excinfo.value.code == 0
+    assert seen == {"binary_name": "rg", "search_args": ["needle", "."]}
+
+
+# --- Task #269: bootstrap._run_rg_passthrough root-ignore-file injection ----------------------
+# Mirrors rust_core/src/rg_passthrough.rs's own `root_ignore_file_args` unit tests (task #264 /
+# PR #744): this is the Python-only rg-passthrough path reached whenever no compiled native `tg`
+# binary is discoverable, which shares the identical pre-#264-fix defect the Rust side already
+# closed. See `tensor_grep.cli.rg_root_ignore.root_ignore_file_args` for the shared helper both
+# this module and `RipgrepBackend._build_cmd` call.
+
+
+def _capture_streaming_passthrough_argv(monkeypatch) -> dict[str, object]:
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(
+        bootstrap,
+        "_streaming_passthrough_returncode",
+        lambda argv, timeout_env_var=None: (
+            seen.update({"argv": list(argv), "timeout_env_var": timeout_env_var}) or 0
+        ),
+    )
+    return seen
+
+
+def test_run_rg_passthrough_injects_root_gitignore_outside_git_repo(
+    monkeypatch, tmp_path: Path
+) -> None:
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    rc = bootstrap._run_rg_passthrough("rg", ["needle", str(tmp_path)])
+
+    assert rc == 0
+    argv = seen["argv"]
+    assert argv[0] == "rg"
+    flag_index = argv.index("--ignore-file")
+    assert argv[flag_index + 1] == str(tmp_path / ".gitignore")
+    # The injected operands must precede the user's own search_args so a `--` sentinel the user
+    # supplied (if any) still applies only to their own positionals.
+    assert argv.index("needle") > flag_index + 1
+
+
+def test_run_rg_passthrough_defaults_root_to_dot_when_path_omitted(
+    monkeypatch, tmp_path: Path
+) -> None:
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    bootstrap._run_rg_passthrough("rg", ["needle"])
+
+    argv = seen["argv"]
+    assert "--ignore-file" in argv
+    value = argv[argv.index("--ignore-file") + 1]
+    assert Path(value).resolve() == (tmp_path / ".gitignore").resolve()
+
+
+def test_run_rg_passthrough_empty_when_no_ignore_files_present(monkeypatch, tmp_path: Path) -> None:
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    bootstrap._run_rg_passthrough("rg", ["needle", str(tmp_path)])
+
+    assert seen["argv"] == ["rg", "needle", str(tmp_path)]
+
+
+def test_run_rg_passthrough_no_ignore_suppresses_injection(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    (tmp_path / ".ignore").write_text("skipme.txt\n", encoding="utf-8")
+    (tmp_path / ".rgignore").write_text("skipme.txt\n", encoding="utf-8")
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    bootstrap._run_rg_passthrough("rg", ["--no-ignore", "needle", str(tmp_path)])
+
+    assert "--ignore-file" not in seen["argv"]
+
+
+def test_run_rg_passthrough_no_ignore_files_suppresses_injection(
+    monkeypatch, tmp_path: Path
+) -> None:
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    bootstrap._run_rg_passthrough("rg", ["--no-ignore-files", "needle", str(tmp_path)])
+
+    assert "--ignore-file" not in seen["argv"]
+
+
+def test_run_rg_passthrough_no_ignore_vcs_skips_only_gitignore(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    (tmp_path / ".ignore").write_text("skipme.txt\n", encoding="utf-8")
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    bootstrap._run_rg_passthrough("rg", ["--no-ignore-vcs", "needle", str(tmp_path)])
+
+    argv = seen["argv"]
+    values = [argv[i + 1] for i, tok in enumerate(argv) if tok == "--ignore-file"]
+    assert not any(v.endswith(".gitignore") for v in values), values
+    assert any(v.endswith(".ignore") for v in values), values
+
+
+def test_run_rg_passthrough_no_ignore_dot_skips_ignore_and_rgignore_not_gitignore(
+    monkeypatch, tmp_path: Path
+) -> None:
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    (tmp_path / ".ignore").write_text("skipme.txt\n", encoding="utf-8")
+    (tmp_path / ".rgignore").write_text("skipme.txt\n", encoding="utf-8")
+    seen = _capture_streaming_passthrough_argv(monkeypatch)
+
+    bootstrap._run_rg_passthrough("rg", ["--no-ignore-dot", "needle", str(tmp_path)])
+
+    argv = seen["argv"]
+    values = [argv[i + 1] for i, tok in enumerate(argv) if tok == "--ignore-file"]
+    assert any(v.endswith(".gitignore") for v in values), values
+    assert not any(v.endswith(".ignore") and not v.endswith(".rgignore") for v in values), values
+    assert not any(v.endswith(".rgignore") for v in values), values
+
+
 def test_main_entry_should_not_passthrough_unbounded_generated_root_search(
     monkeypatch, tmp_path: Path
 ) -> None:

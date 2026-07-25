@@ -1086,8 +1086,28 @@ def _run_native_tg_command(binary_name: str, argv: list[str]) -> int:
 
 
 def _run_rg_passthrough(binary_name: str, search_args: list[str]) -> int:
+    # Task #269: this is one of two Python-only real-`rg` forwarding paths (the other is
+    # `RipgrepBackend._build_cmd`), reachable whenever no compiled native `tg` binary is
+    # discoverable. Real rg's own `.gitignore` auto-discovery requires `require_git=true` by
+    # default, so a root `.gitignore` is silently a no-op outside a git repo -- the same #264
+    # defect already fixed for the compiled native binary's rg-passthrough
+    # (`rust_core/src/rg_passthrough.rs::root_ignore_file_args`). `_search_path_args` gives the
+    # same raw-argv positional-path extraction already used throughout this module (e.g.
+    # `_search_args_paths_defaulted`), so the roots this computes always match what real rg
+    # will actually search. The emitted `--ignore-file <path>` operands are PREPENDED (not
+    # appended) so they land before any `--` end-of-options sentinel the user's own argv might
+    # contain -- inserting after it would misparse them as positional paths.
+    from tensor_grep.cli.rg_root_ignore import root_ignore_file_args
+
+    ignore_file_ops = root_ignore_file_args(
+        _search_path_args(search_args),
+        no_ignore="--no-ignore" in search_args,
+        no_ignore_files="--no-ignore-files" in search_args,
+        no_ignore_vcs="--no-ignore-vcs" in search_args,
+        no_ignore_dot="--no-ignore-dot" in search_args,
+    )
     return _streaming_passthrough_returncode(
-        [binary_name, *search_args], timeout_env_var="TG_RG_TIMEOUT_SECONDS"
+        [binary_name, *ignore_file_ops, *search_args], timeout_env_var="TG_RG_TIMEOUT_SECONDS"
     )
 
 

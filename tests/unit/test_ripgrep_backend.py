@@ -1,3 +1,4 @@
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -47,6 +48,117 @@ def test_should_forward_no_ignore_flag():
 
     cmd = run.call_args[0][0]
     assert "--no-ignore" in cmd
+
+
+# --- Task #269: RipgrepBackend._build_cmd root-ignore-file injection --------------------------
+# Mirrors rust_core/src/rg_passthrough.rs's own `root_ignore_file_args` unit tests (task #264 /
+# PR #744): `_build_cmd` is the second of two Python-only rg-passthrough implementations
+# reachable whenever no compiled native `tg` binary is discoverable, and shares the same
+# `.gitignore`-outside-git-repo defect the compiled binary's rg-passthrough already closed.
+
+
+def test_build_cmd_injects_root_gitignore_outside_git_repo(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    backend = RipgrepBackend()
+    config = SearchConfig()
+
+    with patch.object(backend, "_get_binary_name", return_value="rg"):
+        cmd = backend._build_cmd(
+            file_path=[str(tmp_path)], pattern="needle", config=config, json_mode=True
+        )
+
+    flag_index = cmd.index("--ignore-file")
+    assert cmd[flag_index + 1] == str(tmp_path / ".gitignore")
+
+
+def test_build_cmd_empty_when_no_ignore_files_present(tmp_path: Path) -> None:
+    backend = RipgrepBackend()
+    config = SearchConfig()
+
+    with patch.object(backend, "_get_binary_name", return_value="rg"):
+        cmd = backend._build_cmd(
+            file_path=[str(tmp_path)], pattern="needle", config=config, json_mode=True
+        )
+
+    assert "--ignore-file" not in cmd
+
+
+def test_build_cmd_no_ignore_suppresses_root_ignore_injection(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    backend = RipgrepBackend()
+    config = SearchConfig(no_ignore=True)
+
+    with patch.object(backend, "_get_binary_name", return_value="rg"):
+        cmd = backend._build_cmd(
+            file_path=[str(tmp_path)], pattern="needle", config=config, json_mode=True
+        )
+
+    assert "--ignore-file" not in cmd
+
+
+def test_build_cmd_no_ignore_files_suppresses_root_ignore_injection(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    backend = RipgrepBackend()
+    config = SearchConfig(no_ignore_files=True)
+
+    with patch.object(backend, "_get_binary_name", return_value="rg"):
+        cmd = backend._build_cmd(
+            file_path=[str(tmp_path)], pattern="needle", config=config, json_mode=True
+        )
+
+    assert "--ignore-file" not in cmd
+
+
+def test_build_cmd_no_ignore_vcs_skips_only_gitignore(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    (tmp_path / ".ignore").write_text("skipme.txt\n", encoding="utf-8")
+    backend = RipgrepBackend()
+    config = SearchConfig(no_ignore_vcs=True)
+
+    with patch.object(backend, "_get_binary_name", return_value="rg"):
+        cmd = backend._build_cmd(
+            file_path=[str(tmp_path)], pattern="needle", config=config, json_mode=True
+        )
+
+    values = [cmd[i + 1] for i, tok in enumerate(cmd) if tok == "--ignore-file"]
+    assert not any(v.endswith(".gitignore") for v in values), values
+    assert any(v.endswith(".ignore") for v in values), values
+
+
+def test_build_cmd_no_ignore_dot_skips_ignore_and_rgignore_not_gitignore(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    (tmp_path / ".ignore").write_text("skipme.txt\n", encoding="utf-8")
+    (tmp_path / ".rgignore").write_text("skipme.txt\n", encoding="utf-8")
+    backend = RipgrepBackend()
+    config = SearchConfig(no_ignore_dot=True)
+
+    with patch.object(backend, "_get_binary_name", return_value="rg"):
+        cmd = backend._build_cmd(
+            file_path=[str(tmp_path)], pattern="needle", config=config, json_mode=True
+        )
+
+    values = [cmd[i + 1] for i, tok in enumerate(cmd) if tok == "--ignore-file"]
+    assert any(v.endswith(".gitignore") for v in values), values
+    assert not any(v.endswith(".ignore") and not v.endswith(".rgignore") for v in values), values
+    assert not any(v.endswith(".rgignore") for v in values), values
+
+
+def test_build_cmd_covers_every_explicit_root(tmp_path: Path) -> None:
+    root_a = tmp_path / "a"
+    root_b = tmp_path / "b"
+    root_a.mkdir()
+    root_b.mkdir()
+    (root_a / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    (root_b / ".gitignore").write_text("skipme.txt\n", encoding="utf-8")
+    backend = RipgrepBackend()
+    config = SearchConfig()
+
+    with patch.object(backend, "_get_binary_name", return_value="rg"):
+        cmd = backend._build_cmd(
+            file_path=[str(root_a), str(root_b)], pattern="needle", config=config, json_mode=True
+        )
+
+    assert sum(1 for tok in cmd if tok == "--ignore-file") == 2
 
 
 def test_json_context_events_do_not_inflate_match_totals():
