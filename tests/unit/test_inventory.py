@@ -1,6 +1,7 @@
 """TDD suite for ``tg inventory`` (round-4 [e], design-council test list)."""
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -489,3 +490,90 @@ class TestDeadlineCliWiring:
         result = CliRunner().invoke(tg_main.app, ["inventory", str(tmp_path), "--deadline", "5"])
         assert result.exit_code == 2
         assert "inventory:" in result.output  # render_inventory_text output still printed
+
+
+def _deny_scandir_for(monkeypatch, denied_dir: Path) -> None:
+    """Make `os.scandir(denied_dir)` raise PermissionError; everything else untouched.
+
+    Deliberately NOT a real chmod/ACL fixture. Task #281 burned a probe on exactly that: the real
+    ACL command silently failed to apply, so the "hostile" arm was a perfectly readable directory
+    and the test would have declared a real defect ABSENT. A monkeypatched raise cannot silently
+    no-op -- if it does not fire, no unreadable signal exists and the assertion below fails loudly.
+    (Verification-oracle family Form 6, AGENTS.md.) Mirrors the same helper in test_find_command.py.
+    """
+    import os as _os
+
+    real_scandir = _os.scandir
+    target = str(denied_dir.resolve())
+
+    def _fake_scandir(path=".", *args, **kwargs):
+        if str(Path(path).resolve()) == target:
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_scandir(path, *args, **kwargs)
+
+    monkeypatch.setattr(_os, "scandir", _fake_scandir)
+
+
+def test_inventory_reports_an_unreadable_subtree_as_a_truncation_cause(tmp_path, monkeypatch):
+    """Task #284: `build_inventory` walked with `_iter_repo_files` but never passed
+    `unreadable_hit=`, so a permission-denied subtree produced a SMALLER manifest that still
+    reported `possibly_truncated: False` -- an inventory claiming to be complete while missing
+    files. Same fail-open-by-omission shape #761 fixed for `tg find`.
+
+    NOTE the cause is NOT budget-remediable, unlike the two that already existed
+    ("project-files" -> raise --max-files, "deadline" -> raise --deadline). Raising either budget
+    cannot make a denied directory readable, which is why it needs its own cause value rather than
+    being folded into the existing ones (the wrong-knob-advice defect of #283/#762).
+    """
+    (tmp_path / "readable").mkdir()
+    (tmp_path / "readable" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    denied = tmp_path / "denied"
+    denied.mkdir()
+    (denied / "hidden.py").write_text("y = 2\n", encoding="utf-8")
+
+    _deny_scandir_for(monkeypatch, denied)
+    inv = build_inventory(tmp_path)
+
+    scan = inv["scan_limit"]
+    assert scan["possibly_truncated"] is True, (
+        "an unreadable subtree left the manifest incomplete but inventory reported it as complete"
+    )
+    assert scan["truncation_cause"] == "unreadable-path", (
+        f"expected the non-budget-remediable cause, got {scan['truncation_cause']!r}"
+    )
+
+
+def test_inventory_clean_tree_is_the_control_arm_for_the_unreadable_case(tmp_path):
+    """CONTROL. Without this the assertion above could pass for an unrelated reason -- e.g. if
+    inventory marked EVERY scan truncated. A complete scan must report no truncation at all.
+    """
+    (tmp_path / "readable").mkdir()
+    (tmp_path / "readable" / "a.py").write_text("x = 1\n", encoding="utf-8")
+
+    scan = build_inventory(tmp_path)["scan_limit"]
+    assert scan["possibly_truncated"] is False
+    assert scan["truncation_cause"] is None
+
+
+def test_inventory_text_render_does_not_give_wrong_knob_advice_for_unreadable(
+    tmp_path, monkeypatch
+):
+    """Task #284, CONSUMER arm. The JSON cause is only half the surface: `render_inventory_text`
+    had a single generic `else` printing "truncated at max_files=N (cause=...)". With the new
+    cause that reads as "raise --max-files", which cannot close an unreadable hole -- a renderer
+    contradicting its own payload. Assert the text names the real remedy and NOT the cap.
+    """
+    (tmp_path / "readable").mkdir()
+    (tmp_path / "readable" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    denied = tmp_path / "denied"
+    denied.mkdir()
+    (denied / "hidden.py").write_text("y = 2\n", encoding="utf-8")
+
+    _deny_scandir_for(monkeypatch, denied)
+    text = inventory_module.render_inventory_text(build_inventory(tmp_path))
+
+    assert "cause=unreadable-path" in text
+    assert "must" in text and "readable" in text, "the text must name the real remedy"
+    assert "truncated at max_files" not in text, (
+        "the renderer told the reader to raise a cap that cannot fix an unreadable path"
+    )
