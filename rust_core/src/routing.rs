@@ -191,6 +191,15 @@ pub struct PlainTextNativeRequest {
 ///    output would visibly change, so terminals keep the subprocess. (The measured ~16ms win is a
 ///    piped/agent-pipeline win anyway, which is exactly the non-terminal case.)
 ///
+///    NOTE, because this clause reads narrower than it is: it models stdout only as
+///    terminal-vs-not, i.e. as a passive byte destination. The sink's BEHAVIOR -- specifically a
+///    consumer that closes the pipe early (`| head -1`, `| less`, an agent reading N lines) -- is
+///    NOT a refusal here, because it cannot be known in advance and refusing every piped search
+///    would delete the feature. It is handled instead where it actually lands, in
+///    `run_native_search_with_optional_rg_fallback`'s `error_chain_has_broken_pipe` guard: this
+///    route moves ownership of the write loop out of the `Stdio::inherit()` subprocess and into
+///    tg's own process, and the two react oppositely to EPIPE. See that guard for the measurement.
+///
 /// 2. `path_was_implicit` -- with no PATH operand `rg` walks `./` but prints paths WITHOUT the
 ///    `./` prefix, while the native engine is handed the literal `"."` default and prints
 ///    `./name`. Verified with ripgrep 15.1.0: `rg needle` prints `a.txt:...` and `rg needle .`

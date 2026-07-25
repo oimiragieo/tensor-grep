@@ -1910,8 +1910,15 @@ const PLAIN_TEXT_NATIVE_MAX_PROBE_BYTES: u64 = 512 * 1024;
 /// search) where `rg` reads it once. With it: 2x. Removing the last extra read would mean threading
 /// pre-read bytes into `run_native_search`, i.e. changing the engine shared with
 /// `--json`/`--ndjson`/`--cpu` -- the wrong blast radius for this PR, and worth ~0.25ms at 200 KB
-/// (about 2% of the win). The cache is keyed by path; a file mutated between the two probes is a
-/// pre-existing race with the search itself, not a new class.
+/// (about 2% of the win).
+///
+/// The cache is keyed by path. If the file is mutated between the probe and the search, a STALE
+/// ADMISSION lets the native engine render content the probe would have refused -- CRLF whose
+/// trailing `\r` is silently dropped, or invalid UTF-8 turned into U+FFFD. That is NOT the same
+/// class as the ordinary read race `rg` already has (rg reads once and renders what it read); it
+/// is a correctness window this route introduces. Severity is genuinely low -- single-shot
+/// process, microseconds wide -- but it is a different failure than "you saw slightly older
+/// bytes", and calling it a pre-existing race would understate it.
 fn plain_text_native_file_renders_identically(path: &Path) -> bool {
     let cache = PLAIN_TEXT_NATIVE_PROBE_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
     if let Ok(probed) = cache.lock() {
@@ -2038,6 +2045,13 @@ fn plain_text_native_request_for_search(
 /// clap-side adapter and would otherwise each burn a full file read on their way to `rg` anyway.
 /// The two gates are themselves ordered cheapest-first: a regex compile costs microseconds, the
 /// file probe costs a read.
+///
+/// ONE thing is filled ABOVE the cheap-tier gate, and deliberately so: `rg_config_env_present`.
+/// It is not an exception to the contract, it IS part of the cheap tier -- a single `env::var_os`
+/// with no I/O, no allocation beyond the value, and no filesystem access -- and
+/// `plain_text_native_cheap_checks_pass` consults it, so it must be populated before that call or
+/// the clause would read `false` and be a dead guard. It lives here rather than in the two
+/// constructors purely so there is exactly one call path and the adapters cannot drift on it.
 fn finish_plain_text_native_request(
     mut request: PlainTextNativeRequest,
     pattern: Option<&str>,
@@ -8056,6 +8070,27 @@ fn emit_multi_pattern_native_results(
     Ok(())
 }
 
+/// Exit code for a consumer-closed pipe. This is ripgrep's MEASURED behavior, not a guess: with a
+/// 279 KB dense fixture and a `readline(); close()` consumer, rg 15.1.0 exits 1 with empty stderr
+/// (3/3 runs), while the same command fully drained exits 0 -- so 1 is specifically rg's
+/// broken-pipe code here, not its ordinary exit. `test_early_closing_consumer_matches_ripgrep`
+/// asserts PARITY WITH RG rather than this constant, so if another platform's rg disagrees CI
+/// reports it as a real finding instead of the code silently enshrining a Windows-only number.
+const BROKEN_PIPE_EXIT_CODE: i32 = 1;
+
+/// Does any link in this error chain carry `ErrorKind::BrokenPipe`?
+///
+/// Every link must be checked, not just the outermost: the plain sink's write error starts as an
+/// `io::Error(BrokenPipe)`, becomes an `anyhow::Error` through `NativeOutputTarget::write_all`'s
+/// `?`, is re-wrapped by `io::Error::other` (kind `Other`, because `grep_searcher::Sink::Error` is
+/// `io::Error`), and finally gets anyhow context from `search_path`'s caller. Only the INNERMOST
+/// link still says `BrokenPipe`; the outermost `io::Error` says `Other`.
+fn error_chain_has_broken_pipe(err: &anyhow::Error) -> bool {
+    err.chain()
+        .filter_map(|cause| cause.downcast_ref::<io::Error>())
+        .any(|cause| cause.kind() == io::ErrorKind::BrokenPipe)
+}
+
 fn run_native_search_with_optional_rg_fallback(
     config: NativeSearchConfig,
     rg_fallback: Option<RipgrepSearchArgs>,
@@ -8071,6 +8106,26 @@ fn run_native_search_with_optional_rg_fallback(
             Ok(())
         }
         Err(err) => {
+            // A BROKEN PIPE is the consumer terminating normally (`tg ... | head -1`, `| less`, an
+            // agent that reads N lines and stops), NOT a search failure. It only became reachable
+            // for plain text because this route moves ownership of the write loop out of an
+            // `Stdio::inherit()` subprocess and into this process: rg absorbs EPIPE itself, while
+            // the native sink surfaces it as an error. Without this guard the fallback branch
+            // below would print the `warning: native CPU search failed...` line that
+            // `test_native_plain_text_route_emits_no_extra_stderr` swears never leaks, and then
+            // RE-RUN the entire search into an already-closed pipe.
+            //
+            // Measured on the shipped v1.98.3 + rg 15.1.0 (Windows), 279 KB dense fixture,
+            // consumer `readline(); close()`, 3/3 runs stable, with a full-drain control showing
+            // rg 0 / native 0 (i.e. no divergence when nothing closes early):
+            //     rg           -> rc=1, stderr ''
+            //     tg (native)  -> rc=2, stderr 'native standard output search failed for <path>'
+            // Checked BEFORE the structured-error and fallback branches: once the consumer is
+            // gone, emitting a JSON error or re-running the search is pointless on every route,
+            // not just this one.
+            if error_chain_has_broken_pipe(&err) {
+                std::process::exit(BROKEN_PIPE_EXIT_CODE);
+            }
             exit_json_search_runtime_error_if_needed(json, ndjson, &err);
             if let Some(rg_args) = rg_fallback {
                 eprintln!("warning: native CPU search failed, falling back to ripgrep: {err}");

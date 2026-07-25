@@ -68,7 +68,16 @@ _CORPUS: tuple[tuple[str, bytes], ...] = (
     # Case-mixed, for the $RIPGREP_CONFIG_PATH receipt: a config containing `-i` changes WHICH
     # lines match here, so the fixture can discriminate config-applied from config-ignored.
     ("mixed_case.txt", b"needle alpha\nNEEDLE beta\nplain line\n"),
+    # ~248 KB where EVERY line matches, for the early-closing-consumer test. Two constraints make
+    # this size load-bearing: it must exceed any OS pipe buffer (~64 KB) so closing the read end
+    # actually breaks the pipe, and it must stay under PLAIN_TEXT_NATIVE_MAX_PROBE_BYTES (512 KiB)
+    # so the request is still ADMITTED to the native route. Shrink it and the test goes vacuous;
+    # `test_early_closing_consumer_matches_ripgrep` asserts the size to stop that happening
+    # silently.
+    ("dense.txt", b"needle alpha line of text here\n" * 8000),
 )
+
+DENSE_FIXTURE_BYTES = 8000 * len(b"needle alpha line of text here\n")
 
 # (id, extra flags, fixture, pattern)
 _CASES: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
@@ -133,6 +142,37 @@ def _run_bytes(argv: list[str], *, cwd: Path, env: dict[str, str]):
         capture_output=True,
         check=False,
     )
+
+
+def _run_with_early_close(argv: list[str], *, cwd: Path, env: dict[str, str]):
+    """Run ``argv``, read ONE line, close the pipe, then reap.
+
+    ``_run_bytes`` uses ``capture_output=True``, which drains stdout to EOF -- a harness that
+    always reads everything can never produce a broken pipe, which is exactly why this class of
+    divergence was invisible to every other case in this file. This models the real consumer
+    (``| head -1``, ``| less``, an agent that reads N lines and stops).
+
+    Every wait is bounded; a hang here would otherwise block CI for the job timeout.
+    """
+    proc = subprocess.Popen(
+        argv,
+        cwd=cwd,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        first_line = proc.stdout.readline()
+        proc.stdout.close()
+        stderr = proc.stderr.read()
+        returncode = proc.wait(timeout=60)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)
+        proc.stderr.close()
+    return first_line, stderr, returncode
 
 
 def _require_binaries():
@@ -299,6 +339,52 @@ def test_ripgrep_config_env_edge_values(native_corpus: Path, tmp_path: Path) -> 
         assert tg.returncode == rg.returncode, f"{value!r}: rg={rg.returncode} tg={tg.returncode}"
         assert tg.stdout == rg.stdout, f"{value!r} stdout: rg={rg.stdout!r} tg={tg.stdout!r}"
         assert tg.stderr == rg.stderr, f"{value!r} stderr: rg={rg.stderr!r} tg={tg.stderr!r}"
+
+
+@pytest.mark.characterization
+def test_early_closing_consumer_matches_ripgrep(native_corpus: Path) -> None:
+    """A consumer that closes the pipe early must terminate tg exactly the way it terminates rg.
+
+    This route moves ownership of the WRITE LOOP out of an ``Stdio::inherit()`` subprocess and
+    into tg's own process, and the two react oppositely to EPIPE: rg absorbs it, while the native
+    sink surfaces it as an error that would print a `warning: native CPU search failed...` line
+    and then RE-RUN the whole search into the already-closed pipe.
+
+    Measured on the shipped v1.98.3 before the fix (Windows, rg 15.1.0, 3/3 runs)::
+
+        rg        needle dense.txt | head -1  -> rc=1, stderr ''
+        tg-native needle dense.txt | head -1  -> rc=2, stderr 'native standard output search ...'
+
+    rg is the CONTROL ARM: the assertions compare tg against whatever rg does on this platform
+    rather than against a hard-coded exit code, so a platform whose rg disagrees surfaces as a real
+    finding instead of a Windows-only number frozen into the test.
+    """
+    helpers, rg_binary, tg_binary = _require_binaries()
+
+    env = helpers.build_command_env(rg_binary)
+    target = str(native_corpus / "dense.txt")
+
+    # Guard against the test going vacuous: the output must dwarf any OS pipe buffer (~64 KB), or
+    # a single buffer absorbs everything and the pipe never breaks.
+    drained = _run_bytes([str(rg_binary), "needle", target], cwd=native_corpus, env=env)
+    assert len(drained.stdout) == DENSE_FIXTURE_BYTES, (
+        f"dense fixture must emit every line; got {len(drained.stdout)} bytes"
+    )
+    assert len(drained.stdout) > 200_000, "fixture too small to break a pipe reliably"
+
+    rg_line, rg_stderr, rg_rc = _run_with_early_close(
+        [str(rg_binary), "needle", target], cwd=native_corpus, env=env
+    )
+    tg_line, tg_stderr, tg_rc = _run_with_early_close(
+        [str(tg_binary), "search", "needle", target], cwd=native_corpus, env=env
+    )
+
+    assert tg_line == rg_line, f"first line differs: rg={rg_line!r} tg={tg_line!r}"
+    assert b"falling back to ripgrep" not in tg_stderr, (
+        f"a closed consumer must not trip the native fallback warning: {tg_stderr!r}"
+    )
+    assert tg_stderr == rg_stderr, f"stderr differs: rg={rg_stderr!r} tg={tg_stderr!r}"
+    assert tg_rc == rg_rc, f"exit code differs: rg={rg_rc} tg={tg_rc}"
 
 
 @pytest.mark.characterization
