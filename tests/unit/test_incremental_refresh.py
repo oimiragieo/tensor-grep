@@ -621,6 +621,8 @@ def test_incremental_map_omits_unreadable_paths_on_a_clean_walk(tmp_path: Path) 
 
     assert "unreadable_paths" not in incremental_map
     assert "unreadable_paths" not in repo_map.build_repo_map(paths["project"])
+
+
 # (#286) An UNREADABLE file must never be reported as REMOVED
 # ---------------------------------------------------------------------------
 
