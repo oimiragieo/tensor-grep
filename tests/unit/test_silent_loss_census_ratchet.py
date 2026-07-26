@@ -128,7 +128,7 @@ KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
     # excuse every handler that appends to a list nobody ever reads, which is precisely the shape
     # it exists to catch. Filed as a task to model the return-and-disclose shape properly rather
     # than by loosening the predicate.
-    "checkpoint_store.py": 7,
+    "checkpoint_store.py": 6,
     # AUDITED #292, all 8 accepted. The LSP legs (`_external_definitions` :15585,
     # `_external_references` :15693) skip a symbol whose LSP request failed, which lowers
     # `lsp_count` -- and `_provider_agreement` (:15258-15281) turns `native_count > lsp_count`
@@ -161,7 +161,6 @@ KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
     "session_store.py": 2,
     "ledger_store.py": 1,
     "runtime_paths.py": 1,
-    "semantic_index.py": 1,
     "session_daemon.py": 1,
 }
 
@@ -234,18 +233,49 @@ def _is_silent(handler: ast.ExceptHandler, raised_names: set[str]) -> bool:
     return not (accumulated_into & raised_names)
 
 
+def _returned_names(func: ast.AST) -> set[str]:
+    """Names mentioned inside any ``return`` in ``func`` (task #807).
+
+    The accumulate-then-RETURN sibling of ``_raised_names``. A handler that appends the failure
+    to a list the function RETURNS has disclosed it just as surely as one that raises on it --
+    the caller receives the record either way. `_paths_modified_since_checkpoint` is the live
+    case: its ``except OSError`` appends to ``unchecked`` and the function returns
+    ``(sorted(diverged), sorted(unchecked))``, so undo can report which paths it could not check.
+
+    Without this the census counted that DISCLOSURE as loss, which was not merely a false
+    positive -- it made the ratchet unable to DISCRIMINATE at that site. The count was identical
+    with the disclosure and with a bare ``continue``, so re-introducing the silent drop kept the
+    gate green. Proven by mutation before this was written: the ceiling of 7 protected nothing
+    there.
+
+    Deliberately narrow. It is NOT "appends to any list": the accumulator must reach a value the
+    function actually hands back. Widening it to any append would excuse every handler stuffing a
+    list nobody reads, which is exactly the loss this census exists to find -- and is why the
+    ceiling was raised to 7 rather than the detector loosened at the time.
+    """
+    names: set[str] = set()
+    for node in ast.walk(func):
+        if isinstance(node, ast.Return) and node.value is not None:
+            names |= {n.id for n in ast.walk(node.value) if isinstance(n, ast.Name)}
+    return names
+
+
 def _enclosing_raised_names(tree: ast.AST) -> dict[int, set[str]]:
-    """Map each loop node's id() to the raise-names of the function that contains it."""
+    """Map each loop node's id() to the DISCLOSED names of the function that contains it.
+
+    "Disclosed" = raised on OR returned. Both hand the record to the caller; a handler feeding
+    either one is reporting the failure, not swallowing it.
+    """
     mapping: dict[int, set[str]] = {}
     for func in ast.walk(tree):
         if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        raised = _raised_names(func)
-        if not raised:
+        disclosed = _raised_names(func) | _returned_names(func)
+        if not disclosed:
             continue
         for node in ast.walk(func):
             if isinstance(node, (ast.For, ast.While, ast.AsyncFor)):
-                mapping[id(node)] = mapping.get(id(node), set()) | raised
+                mapping[id(node)] = mapping.get(id(node), set()) | disclosed
     return mapping
 
 
