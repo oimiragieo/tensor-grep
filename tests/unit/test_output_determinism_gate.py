@@ -61,6 +61,30 @@ genuinely varies, before concluding anything from a green.** For (3) the premise
 directly -- printing `backends` under each seed showed 0 and 1 agreeing while 2 differed, which is
 also why three seeds are used rather than two.
 
+## The gate's first RED was its own bug (2026-07-26) -- and it blamed the product
+
+On windows-latest (py3.11 and py3.12) this file failed with *"codemap-json is NOT deterministic
+-- 19 field(s) moved"*. The product was fine. Every one of those 19 fields was the per-run scratch
+directory: `str(sandbox)` never appeared in the emitted text, so all three replaces missed, the
+path survived into the comparison, and two runs with different temp directories duly "differed".
+Linux and macOS passed, so it read like a genuine platform-specific defect.
+
+Two fixes, and the second matters more than the first:
+
+1.  Normalise the RESOLVED spelling as well as the handed one. The tool resolves the path it is
+    given, and where the two differ -- 8.3-shortened or junctioned TEMP, casing, UNC prefix --
+    replacing only the handed form matches nothing at all.
+2.  **Assert that normalisation actually fired.** A gate that misreports its own gap as a product
+    finding is worse than no gate: it is confidently wrong in the product's voice, and it costs a
+    full CI cycle plus a wrong root-cause before anyone doubts the instrument. The check is the
+    scratch prefix, which can reach stdout only via an unreplaced sandbox path.
+
+Fix 1 is a hypothesis about which spelling CI emits -- it could not be reproduced on the author's
+Windows box, where the two spellings are identical. Fix 2 is what makes that acceptable: if the
+hypothesis is wrong, the next run says NORMALISATION GAP and prints the excerpt containing the
+third spelling, instead of accusing the product again. Verified bidirectionally by making both
+spellings non-matching (the CI condition): red with NORMALISATION GAP, not with "fields moved".
+
 ## Measured state at the time of writing (v1.98.25)
 
 4 of the 7 surfaces are byte-identical with NO normalisation at all: `inventory`,
@@ -94,6 +118,12 @@ class _Outcome(NamedTuple):
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _FIXTURE = "tests/fixtures/codemap_repo"
+
+# ONE constant for the scratch prefix, used both to CREATE the sandbox and to detect a sandbox
+# path that survived normalisation. They must not be able to drift: if the prefix is changed in
+# one place only, the survival check silently stops matching and goes back to reporting a harness
+# gap as a product defect. See `_run`.
+_SCRATCH_PREFIX = "tg-determinism-"
 
 # Fixed so any failure is reproducible. 0 disables hash randomisation; the others are arbitrary
 # but different, which is all that is needed to shake out iteration-order leaks.
@@ -161,7 +191,7 @@ def _run(argv: list[str], hash_seed: str) -> _Outcome:
     # `src` first so the worktree under test wins over any installed distribution: a stale
     # site-packages copy shadowing `src` has produced false results in this repo before.
     env["PYTHONPATH"] = str(_REPO_ROOT / "src") + os.pathsep + env.get("PYTHONPATH", "")
-    with tempfile.TemporaryDirectory(prefix="tg-determinism-") as scratch:
+    with tempfile.TemporaryDirectory(prefix=_SCRATCH_PREFIX) as scratch:
         sandbox = Path(scratch) / "repo"
         shutil.copytree(_REPO_ROOT / _FIXTURE, sandbox)
         # Rewrite the fixture path in argv to point at this run's private copy.
@@ -179,16 +209,52 @@ def _run(argv: list[str], hash_seed: str) -> _Outcome:
         # The sandbox path differs per run by construction, so it can never be compared. Map it
         # back to a stable token -- this normalises the PATH, never a RESULT.
         #
-        # THREE forms, because all three really occur in the output. The JSON-ESCAPED one is the
-        # trap: inside a JSON document a Windows path's separators are doubled, so a
-        # single-backslash replace silently misses every absolute path. It then surfaces not as a
-        # path mismatch but as absent-vs-present dict KEYS (`per_page_token_estimates.<abs path>`),
-        # which reads like a product nondeterminism bug rather than a normalisation gap.
-        # Longest-first, so the escaped form is consumed before the plain one can partially match.
+        # THREE forms per SPELLING, because all three really occur in the output. The
+        # JSON-ESCAPED one is the trap: inside a JSON document a Windows path's separators are
+        # doubled, so a single-backslash replace silently misses every absolute path. It then
+        # surfaces not as a path mismatch but as absent-vs-present dict KEYS
+        # (`per_page_token_estimates.<abs path>`), which reads like a product nondeterminism bug
+        # rather than a normalisation gap. Longest-first, so the escaped form is consumed before
+        # the plain one can partially match.
+        #
+        # TWO SPELLINGS, because the tool does not necessarily echo back the path it was handed:
+        # it resolves it. Where the two differ -- an 8.3-shortened or junctioned TEMP, a casing
+        # difference, a UNC prefix -- replacing only the handed form matches NOTHING, and the
+        # whole normalisation silently no-ops. Resolved first: it is the longer/more-specific
+        # spelling wherever they differ. `sandbox` still exists here, so `.resolve()` is real.
         native = str(sandbox)
+        resolved = str(sandbox.resolve())
         text = completed.stdout
-        for form in (native.replace("\\", "\\\\"), native, native.replace("\\", "/")):
-            text = text.replace(form, "<fixture>")
+        for spelling in dict.fromkeys((resolved, native)):  # ordered, de-duplicated
+            for form in (
+                spelling.replace("\\", "\\\\"),
+                spelling,
+                spelling.replace("\\", "/"),
+            ):
+                text = text.replace(form, "<fixture>")
+
+        # PREMISE: normalisation must actually have FIRED. This is the check whose absence cost a
+        # full CI cycle and a wrong diagnosis on 2026-07-26 (windows-latest, py3.11 + py3.12):
+        # every replace above missed, each seed's private scratch directory therefore survived
+        # into the comparison, and the gate announced "codemap-json is NOT deterministic -- 19
+        # field(s) moved". Nineteen. Every one of them the temp path. The product was fine; the
+        # instrument was broken, and it accused the product in a voice indistinguishable from a
+        # real finding.
+        #
+        # The marker is the scratch prefix, which reaches stdout by exactly one route: a sandbox
+        # path that was not replaced. So this cannot fire on a genuine product defect, and it
+        # cannot stay silent on a normalisation gap -- which is the whole point of putting it
+        # here rather than trusting the replaces to have worked.
+        assert _SCRATCH_PREFIX not in text, (
+            f"NORMALISATION GAP (harness bug, NOT a product finding): the sandbox path survived "
+            f"into {argv[0]}'s output, so the seed comparison would report every path-bearing "
+            f"field as 'moved'.\n"
+            f"  handed to the tool: {native}\n"
+            f"  resolved form:      {resolved}\n"
+            f"  Neither spelling matched the emitted text, so the tool is echoing a THIRD form. "
+            f"Find it in the excerpt below and add its spelling above.\n"
+            f"  excerpt: {text[:400]}"
+        )
         # Carry the exit code and stderr, not just stdout. When the premise below fires, the ONLY
         # question is *why* the surface went quiet -- and stdout is empty by definition at that
         # point, so the answer lives entirely in the two channels this used to discard. Dropping
