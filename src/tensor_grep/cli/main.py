@@ -13745,8 +13745,9 @@ def checkpoint_undo(
         # reasoning that keeps `unreadable_paths`/`deadline_limit` absent when they have nothing
         # to say. Present means "these paths had post-checkpoint edits that undo discarded".
         undo_payload = dict(payload.__dict__)
-        if not undo_payload.get("diverged_paths"):
-            undo_payload.pop("diverged_paths", None)
+        for _conditional in ("diverged_paths", "divergence_unchecked_paths"):
+            if not undo_payload.get(_conditional):
+                undo_payload.pop(_conditional, None)
         typer.echo(json.dumps(_with_schema_version(undo_payload, version=1), indent=2))
         return
 
@@ -13754,6 +13755,14 @@ def checkpoint_undo(
         f"Restored checkpoint {payload.checkpoint_id} "
         f"({payload.mode}, restored_files={payload.restored_files}, removed_paths={payload.removed_paths})"
     )
+    if payload.divergence_unchecked_paths:
+        # Distinct line from the one below on purpose: "could not decide" is not "decided it was
+        # unchanged", and collapsing them would recreate the ambiguity this field exists to remove.
+        typer.echo(
+            f"Could not check {len(payload.divergence_unchecked_paths)} path(s) for "
+            "post-checkpoint edits (unreadable); their status is unknown, not clean.",
+            err=True,
+        )
     if payload.diverged_paths:
         shown = ", ".join(payload.diverged_paths[:5])
         more = (

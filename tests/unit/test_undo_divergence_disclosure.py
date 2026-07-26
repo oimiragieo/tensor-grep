@@ -114,11 +114,41 @@ def test_an_unparseable_created_at_yields_no_claim_rather_than_a_false_one(
     targets = {"x.py": tmp_path / "x.py"}
     (tmp_path / "x.py").write_text("hi\n", encoding="utf-8")
 
-    assert checkpoint_store._paths_modified_since_checkpoint("", targets) == []
-    assert checkpoint_store._paths_modified_since_checkpoint("not-a-timestamp", targets) == []
+    # Returns (diverged, unchecked). An unusable timestamp yields NEITHER a divergence claim nor
+    # an "unchecked" claim -- the function did not fail to stat anything, it simply has no
+    # reference point, and inventing either would be a fabricated finding.
+    assert checkpoint_store._paths_modified_since_checkpoint("", targets) == ([], [])
+    assert checkpoint_store._paths_modified_since_checkpoint("not-a-timestamp", targets) == (
+        [],
+        [],
+    )
 
     # CONTROL: the same helper with a REAL, old timestamp must still report the file, or the two
     # assertions above would pass simply because the helper never returns anything.
-    assert checkpoint_store._paths_modified_since_checkpoint(
+    diverged, unchecked = checkpoint_store._paths_modified_since_checkpoint(
         "2000-01-01T00:00:00+00:00", targets
-    ) == ["x.py"]
+    )
+    assert diverged == ["x.py"]
+    assert unchecked == []
+
+
+def test_a_path_that_cannot_be_statted_is_disclosed_not_dropped(tmp_path: Path) -> None:
+    """#308 + census: an unreadable path must be REPORTED as unchecked, never silently skipped.
+
+    "Could not decide" and "checked, unchanged" must not produce the same output -- that identity
+    is the whole defect class this campaign exists to remove. The first cut of the helper used a
+    bare `continue` here and the silent-loss census ratchet caught it.
+    """
+
+    class _Unstattable:
+        def is_file(self) -> bool:
+            return True
+
+        def stat(self):  # noqa: ANN202 - test double
+            raise OSError(13, "Permission denied")
+
+    diverged, unchecked = checkpoint_store._paths_modified_since_checkpoint(
+        "2000-01-01T00:00:00+00:00", {"locked.py": _Unstattable()}
+    )
+    assert diverged == [], "an undecidable path must not be claimed as diverged"
+    assert unchecked == ["locked.py"], "an undecidable path must be disclosed, not dropped"

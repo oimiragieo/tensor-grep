@@ -220,6 +220,9 @@ class CheckpointUndoResult:
     # concurrent-agent hazard, because a second agent's edits are reverted with the same silent
     # success as your own.
     diverged_paths: list[str] = field(default_factory=list)
+    # Paths whose mtime could not be read, so divergence is UNKNOWN for them -- distinct from
+    # "checked and unchanged". Empty by default; the CLI emits it only when non-empty.
+    divergence_unchecked_paths: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -1239,7 +1242,7 @@ def load_checkpoint_metadata(checkpoint_id: str, path: str = ".") -> dict[str, A
 
 def _paths_modified_since_checkpoint(
     created_at: str, resolved_targets: dict[str, Path]
-) -> list[str]:
+) -> tuple[list[str], list[str]]:
     """Which targets were modified AFTER the checkpoint was taken (task #308).
 
     `created_at` is written at create time as `datetime.now(UTC).isoformat()`
@@ -1259,19 +1262,26 @@ def _paths_modified_since_checkpoint(
     try:
         checkpoint_time = datetime.fromisoformat(created_at)
     except (TypeError, ValueError):
-        return []
+        return [], []
     if checkpoint_time.tzinfo is None:
         checkpoint_time = checkpoint_time.replace(tzinfo=UTC)
     threshold = checkpoint_time.timestamp()
 
     diverged: list[str] = []
+    unchecked: list[str] = []
     for rel_path, target in resolved_targets.items():
         try:
             if target.is_file() and target.stat().st_mtime > threshold:
                 diverged.append(rel_path)
         except OSError:
-            continue
-    return sorted(diverged)
+            # RECORDED, not skipped. The first cut of this used a bare `continue`, and the
+            # silent-loss census ratchet caught it (checkpoint_store.py 6 -> 7): a file whose
+            # mtime could not be read is a file this function CANNOT say anything about, and
+            # dropping it produces the same output as "checked it, it was fine". That is the
+            # exact confusion #292 exists to remove, so the unreadable ones are carried out
+            # separately and disclosed rather than folded into silence.
+            unchecked.append(rel_path)
+    return sorted(diverged), sorted(unchecked)
 
 
 def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult:
@@ -1309,7 +1319,7 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
     # Task #308: sample divergence NOW, while this is still read-only. Computing it after the
     # commit phase would read the mtimes undo itself just wrote and report nothing every time --
     # a field that cannot fire.
-    diverged_paths = _paths_modified_since_checkpoint(
+    diverged_paths, divergence_unchecked_paths = _paths_modified_since_checkpoint(
         str(metadata.get("created_at") or ""), resolved_targets
     )
 
@@ -1486,4 +1496,5 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
         restored_files=restored_files,
         removed_paths=removed_paths,
         diverged_paths=diverged_paths,
+        divergence_unchecked_paths=divergence_unchecked_paths,
     )

@@ -115,7 +115,20 @@ KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
     # had failed to capture, so the revert could not restore it) plus one FALSE POSITIVE that the
     # detector no longer reports -- the undo pre-flight accumulates into `missing` and then raises
     # on it, which is disclosure, not loss.
-    "checkpoint_store.py": 6,
+    #
+    # 6 -> 7 by #308, and this one is a DETECTOR LIMITATION, not a new loss. The new site is
+    # `_paths_modified_since_checkpoint`'s OSError arm, which appends the unstattable path to
+    # `unchecked` and RETURNS it; undo then surfaces it as `divergence_unchecked_paths`, so the
+    # caller is told exactly which files divergence could not be decided for. `_is_silent`
+    # recognises accumulate-then-RAISE as disclosure (that is the #297 false positive above) but
+    # has no notion of accumulate-then-RETURN-and-emit, so it still counts this handler.
+    #
+    # Raising the ceiling is the deliberate choice over widening `_is_silent`: teaching the
+    # detector to treat "appends to something the function returns" as disclosure would also
+    # excuse every handler that appends to a list nobody ever reads, which is precisely the shape
+    # it exists to catch. Filed as a task to model the return-and-disclose shape properly rather
+    # than by loosening the predicate.
+    "checkpoint_store.py": 7,
     # AUDITED #292, all 8 accepted. The LSP legs (`_external_definitions` :15585,
     # `_external_references` :15693) skip a symbol whose LSP request failed, which lowers
     # `lsp_count` -- and `_provider_agreement` (:15258-15281) turns `native_count > lsp_count`
