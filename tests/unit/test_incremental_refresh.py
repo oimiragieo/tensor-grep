@@ -712,3 +712,109 @@ def test_genuinely_deleted_file_is_still_reported_as_removed(tmp_path: Path) -> 
     assert any("helpers.py" in p for p in changeset["removed"]), (
         f"a genuinely deleted file vanished from `removed`: {changeset['removed']}"
     )
+
+
+# ---------------------------------------------------------------------------
+# (#288) An UNREADABLE file must not vanish from the snapshot without a signal
+# ---------------------------------------------------------------------------
+
+
+def test_capture_snapshot_reports_files_it_could_not_stat(tmp_path: Path, monkeypatch) -> None:
+    """Task #288, the SNAPSHOT-side sibling of #286.
+
+    #286 fixed the COMPARISON side: an unreadable file is no longer misreported as removed. But
+    `_capture_snapshot` wrapped `path.stat()` in a bare `except OSError: continue`, so a file that
+    was unreadable at CAPTURE time never entered the snapshot at all -- and a path absent from the
+    snapshot is not compared against anything, ever. It stops being staleness-tracked entirely
+    until some later full rebuild happens to re-see it. So a transient permission blip at
+    open/refresh time degrades staleness detection DURABLY, which blunts #286's fix.
+
+    Fail-safe direction is unchanged (one unreadable file must never fail session-open) -- what
+    was missing is the SIGNAL, so the caller can tell a complete snapshot from a partial one.
+    Mirrors the `unreadable_paths = {count, sample}` shape `build_repo_map` already ships.
+    """
+    paths = _build_project(tmp_path)
+    targets = [str(paths["core"]), str(paths["service"]), str(paths["helper"])]
+    denied = str(paths["helper"])
+
+    real_stat = Path.stat
+
+    def fake_stat(self: Path, *args: object, **kwargs: object):
+        if str(self) == denied:
+            raise PermissionError(13, "Permission denied", denied)
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", fake_stat)
+    flag = session_store._UnreadablePathFlag()
+    snapshot = session_store._capture_snapshot(targets, unreadable_hit=flag)
+
+    captured = [str(entry["path"]) for entry in snapshot]
+    assert denied not in captured, "precondition: the denied file cannot be stat'd, so it is absent"
+    assert flag.hit is True, (
+        "the file silently vanished from the snapshot with no signal -- it is now untracked for "
+        "staleness and nothing says so"
+    )
+    assert flag.count == 1
+    assert any(denied in s for s in flag.sample)
+
+
+def test_capture_snapshot_on_a_fully_readable_set_is_the_control_arm(tmp_path: Path) -> None:
+    """CONTROL. Without this, the assertion above could pass by flagging EVERY capture."""
+    paths = _build_project(tmp_path)
+    targets = [str(paths["core"]), str(paths["service"]), str(paths["helper"])]
+
+    flag = session_store._UnreadablePathFlag()
+    snapshot = session_store._capture_snapshot(targets, unreadable_hit=flag)
+
+    assert len(snapshot) == 3
+    assert flag.hit is False
+    assert flag.count == 0
+
+
+def test_capture_snapshot_without_a_flag_is_byte_identical(tmp_path: Path) -> None:
+    """The out-param must stay OPTIONAL: `None` is a complete no-op, so the two existing call
+    sites (and any future one) are unaffected until they opt in. Same contract
+    `_UnreadablePathFlag` already carries for `_iter_repo_files`.
+    """
+    paths = _build_project(tmp_path)
+    targets = [str(paths["core"]), str(paths["service"])]
+
+    assert session_store._capture_snapshot(targets) == session_store._capture_snapshot(
+        targets, unreadable_hit=None
+    )
+
+
+def test_open_session_payload_discloses_an_unstattable_file(tmp_path: Path, monkeypatch) -> None:
+    """Task #288, the WIRING arm. The flag is only worth adding if a caller reads it -- a signal
+    with no consumer is the proven-but-not-wired trap. Asserts the OUTCOME (the persisted session
+    payload) rather than the mechanism (the flag object), which is the only thing that proves
+    `open_session` actually threads it.
+    """
+    paths = _build_project(tmp_path)
+    denied = str(paths["helper"])
+    real_stat = Path.stat
+
+    def fake_stat(self: Path, *args: object, **kwargs: object):
+        if str(self) == denied:
+            raise PermissionError(13, "Permission denied", denied)
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", fake_stat)
+    session_id = _open_session(paths["project"])
+    payload = _session_payload(paths["project"], session_id)
+
+    disclosure = payload.get("snapshot_unreadable_paths")
+    assert disclosure, "the session persisted a partial snapshot with no disclosure"
+    assert disclosure["count"] >= 1
+    assert any(denied in s for s in disclosure["sample"])
+
+
+def test_open_session_payload_omits_the_key_on_a_clean_capture(tmp_path: Path) -> None:
+    """CONTROL. The key's ABSENCE must be trustworthy -- if it were always present, a reader could
+    not use absence to mean "the snapshot covered everything", and the arm above would pass for a
+    reason unrelated to the defect.
+    """
+    paths = _build_project(tmp_path)
+    session_id = _open_session(paths["project"])
+
+    assert "snapshot_unreadable_paths" not in _session_payload(paths["project"], session_id)

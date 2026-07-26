@@ -22,6 +22,7 @@ from tensor_grep.cli.repo_map import (
     _clear_all_source_caches,
     _is_repo_context_file,
     _iter_repo_files,
+    _UnreadablePathFlag,
     apply_repo_map_output_limits,
     build_context_edit_plan_from_map,
     build_context_pack_from_map,
@@ -472,13 +473,29 @@ def _prune_session_records(
     return retained
 
 
-def _capture_snapshot(file_paths: list[str]) -> list[dict[str, Any]]:
+def _capture_snapshot(
+    file_paths: list[str], *, unreadable_hit: _UnreadablePathFlag | None = None
+) -> list[dict[str, Any]]:
+    """Stat each path into a {path, size, mtime_ns} snapshot, skipping what cannot be stat'd.
+
+    Task #288 -- the SNAPSHOT-side sibling of #286. Skipping is still correct: one unreadable file
+    must never fail session-open. But the skip used to be TOTALLY silent, and a path absent from
+    the snapshot is never compared against anything afterwards, so it stops being staleness-tracked
+    until some later full rebuild happens to re-see it. A transient permission blip at capture time
+    therefore degraded staleness detection DURABLY, blunting the #286 fix on the comparison side.
+
+    `unreadable_hit` is an OPTIONAL mutable out-signal, the same `_UnreadablePathFlag` idiom
+    `_iter_repo_files` uses: passing `None` is a complete no-op, byte-identical to the previous
+    behaviour, so neither existing call site changes until it opts in.
+    """
     snapshot: list[dict[str, Any]] = []
     for current in file_paths:
         path = Path(current)
         try:
             stat = path.stat()
-        except OSError:
+        except OSError as exc:
+            if unreadable_hit is not None:
+                unreadable_hit.record(exc)
             continue
         snapshot.append({
             "path": str(path),
@@ -677,18 +694,31 @@ def open_session(
     session_id = _new_session_id(root)
     changeset = _empty_changeset()
     scan_limit = cast(dict[str, Any] | None, repo_map.get("scan_limit"))
+    # Task #288: capture the snapshot through a flag so files we could not stat are COUNTED
+    # rather than silently absent. Emitted below only when it actually fired.
+    snapshot_unreadable = _UnreadablePathFlag()
     payload = {
         "version": _SESSION_VERSION,
         "session_id": session_id,
         "root": str(root),
         "created_at": created_at,
         "repo_map": repo_map,
-        "snapshot": _capture_snapshot(repo_map["related_paths"]),
+        "snapshot": _capture_snapshot(
+            repo_map["related_paths"], unreadable_hit=snapshot_unreadable
+        ),
         "refresh_type": "full",
         "changeset": changeset,
         "scan_limit": scan_limit,
         "build_seconds": max(0.0, built_at - started_at),
     }
+    if snapshot_unreadable.hit:
+        # Task #288: mirrors `build_repo_map`'s `unreadable_paths = {count, sample}` shape (#276).
+        # Emitted ONLY when it fired, so a clean capture is byte-identical to the old payload and
+        # a reader can trust the key's ABSENCE to mean "the snapshot covered everything".
+        payload["snapshot_unreadable_paths"] = {
+            "count": snapshot_unreadable.count,
+            "sample": list(snapshot_unreadable.sample),
+        }
     # Create the sessions dir up front so _session_payload_path's sessions_dir.resolve() is stable:
     # under concurrent first-time opens, resolving while another writer is still mkdir-ing the dir
     # can transiently mis-resolve and trip the containment guard on a VALID session id (Windows).
@@ -772,6 +802,7 @@ def refresh_session(
         changeset = _empty_changeset()
     refreshed_at = datetime.now(UTC).isoformat()
     created_at = str(existing.get("created_at", refreshed_at))
+    snapshot_unreadable = _UnreadablePathFlag()  # task #288, see open_session
     payload = {
         "version": _SESSION_VERSION,
         "session_id": session_id,
@@ -779,11 +810,21 @@ def refresh_session(
         "created_at": created_at,
         "refreshed_at": refreshed_at,
         "repo_map": repo_map,
-        "snapshot": _capture_snapshot(repo_map["related_paths"]),
+        "snapshot": _capture_snapshot(
+            repo_map["related_paths"], unreadable_hit=snapshot_unreadable
+        ),
         "refresh_type": refresh_type,
         "changeset": changeset,
         "scan_limit": cast(dict[str, Any] | None, repo_map.get("scan_limit")),
     }
+    if snapshot_unreadable.hit:
+        # Task #288: mirrors `build_repo_map`'s `unreadable_paths = {count, sample}` shape (#276).
+        # Emitted ONLY when it fired, so a clean capture is byte-identical to the old payload and
+        # a reader can trust the key's ABSENCE to mean "the snapshot covered everything".
+        payload["snapshot_unreadable_paths"] = {
+            "count": snapshot_unreadable.count,
+            "sample": list(snapshot_unreadable.sample),
+        }
     if refresh_fallback_reason is not None:
         payload["refresh_fallback_reason"] = refresh_fallback_reason
     session_path = _session_payload_path(root, session_id)
