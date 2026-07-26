@@ -4,6 +4,47 @@ This document defines the backward-compatibility guarantees for data structures 
 
 release_docs_current_tag: v1.98.20
 
+## 0. The completeness contract (governs every section below)
+
+> **Every `tg` answer is either complete, or it names exactly how it is incomplete and whether
+> the caller can do anything about it.**
+
+This is the one promise the rest of this document implements. It exists because `tg`'s primary
+caller is an AI agent, and an agent cannot tell a genuinely empty result from a silently truncated
+one. "No callers found" acted on in good faith deletes working code. A result that is smaller than
+the question it claims to answer, with no marker saying so, is a **wrong answer** -- not a smaller
+one.
+
+Three obligations follow, in priority order:
+
+- **P1 -- no silent loss.** A command that drops an entry it could not read must say so. Never
+  return a shortened collection with a success marker. Where dropping the entry would corrupt the
+  answer rather than shrink it, fail closed instead: refuse, and leave the caller's state untouched.
+- **P2 -- actionable disclosure.** Naming the incompleteness is not enough; the caller needs to know
+  whether it is theirs to fix. A budget cause (`scan_limit`, `deadline`) is remediable -- raise the
+  knob. An unreadable path is not: no budget increase makes it readable. Handing over the wrong knob
+  is its own defect class, and the reason `unreadable_path` OUTRANKS every budget cause when both
+  fire.
+- **P3 -- surface agreement.** The CLI, the `--json` envelope, the exit code and the MCP tools must
+  tell the same story about the same run. A renderer must never change the answer.
+
+### How this is enforced, not merely asserted
+
+- `tests/unit/test_silent_loss_census_ratchet.py` -- a machine census of the P1 class over the
+  Python sources. It pins a per-file count that may FALL but never RISE, so a new silent drop turns
+  CI red. It carries its own oracle arm: if the detector ever stops discriminating, the ratchet
+  fails rather than quietly certifying a codebase it never inspected.
+- `tests/unit/test_native_walk_error_ratchet.py` -- the same invariant for the Rust walk sites.
+- The three-state exit contract in section 4 (`0` complete / `1` not-found / `2` incomplete).
+
+### Reading the census honestly
+
+A site in the census is a **candidate**, not a defect. Plenty of loops are correct to skip an
+unreadable entry -- a heuristic seed list, an optional cache probe, a guardrail that only decides
+whether to refuse a scan. Auditing a site and concluding "not a defect" is a valid outcome; record
+the reason at the ratchet so it is not re-litigated. What is NOT valid is leaving a real drop
+undisclosed because the surrounding code looked busy.
+
 ## 1. Configuration (`sgconfig.yml`)
 The root-level keys and structure of `sgconfig.yml` are guaranteed to be stable within a major version. Unrecognized keys will be ignored rather than causing fatal errors to allow progressive rollout of new configurations.
 
