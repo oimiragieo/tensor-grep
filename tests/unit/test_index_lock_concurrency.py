@@ -18,6 +18,7 @@ import os
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -471,31 +472,85 @@ def _plant_stale_lock(index_path: Path) -> Path:
     return lock_path
 
 
-def test_open_session_reclaims_stale_lock(tmp_path: Path) -> None:
+def _count_lock_sleeps(monkeypatch: Any) -> list[float]:
+    """Record every ``time.sleep`` the lock module performs.
+
+    This is the timing-free replacement for a wall-clock bound. `_index_lock.acquire`'s
+    stale-reclaim branch ends in `continue` (`_index_lock.py:239`), so it never reaches the
+    `time.sleep(poll_interval_s)` at `:254`. "Did it WAIT?" is therefore answerable exactly,
+    without asking how many seconds anything took.
+    """
+    sleeps: list[float] = []
+    real_sleep = time.sleep
+
+    def recording_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        real_sleep(seconds)
+
+    monkeypatch.setattr(_index_lock.time, "sleep", recording_sleep)
+    return sleeps
+
+
+def test_open_session_reclaims_stale_lock(tmp_path: Path, monkeypatch: Any) -> None:
+    """A dead lock must be RECLAIMED, not waited out.
+
+    Was `assert elapsed < 4.0`. That is the exact form #244 already killed once -- a loaded
+    Windows runner measured 4.968s against a 4.0s ceiling on a sibling test -- and it is a poor
+    proxy besides: 4.0s is neither the acquire timeout (5s) nor anything the code promises, so a
+    pass meant "fast enough today" rather than "took the reclaim path".
+
+    The real invariant is that the wait loop is never entered at all, which is exact, instant,
+    and immune to runner load. Paired with `test_a_live_lock_does_make_the_waiter_sleep` below --
+    without that control, zero sleeps could equally mean the probe was attached to the wrong
+    module and nothing was ever recorded.
+    """
     root = _make_project(tmp_path)
     _plant_stale_lock(session_store._index_path(root))
 
-    start = time.monotonic()
+    sleeps = _count_lock_sleeps(monkeypatch)
     result = session_store.open_session(str(root))
-    elapsed = time.monotonic() - start
 
-    # Must reclaim promptly (well under the 5s acquire timeout), not hang and not raise.
-    assert elapsed < 4.0
+    assert sleeps == [], f"stale lock was waited on, not reclaimed: slept {sleeps}"
     indexed = {rec.session_id for rec in session_store._load_index(root)}
     assert result.session_id in indexed
 
 
-def test_create_checkpoint_reclaims_stale_lock(tmp_path: Path) -> None:
+def test_create_checkpoint_reclaims_stale_lock(tmp_path: Path, monkeypatch: Any) -> None:
+    """Checkpoint-store twin of the above; same reasoning, same retired wall-clock bound."""
     root = _make_project(tmp_path)
     _plant_stale_lock(checkpoint_store._index_path(root))
 
-    start = time.monotonic()
+    sleeps = _count_lock_sleeps(monkeypatch)
     result = checkpoint_store.create_checkpoint(str(root))
-    elapsed = time.monotonic() - start
 
-    assert elapsed < 4.0
+    assert sleeps == [], f"stale lock was waited on, not reclaimed: slept {sleeps}"
     indexed = {rec.checkpoint_id for rec in checkpoint_store._load_index(root)}
     assert result.checkpoint_id in indexed
+
+
+def test_a_live_lock_does_make_the_waiter_sleep(tmp_path: Path, monkeypatch: Any) -> None:
+    """THE CONTROL, and the reason the two tests above mean anything.
+
+    `assert sleeps == []` is satisfied just as well by a probe patched onto the wrong module, a
+    renamed wait primitive, or a lock that was never contended -- every one of which would leave
+    the reclaim tests permanently, silently green. This arm holds a FRESH (live, non-stale) lock
+    and asserts the waiter really does sleep, so the counter is proven able to register before
+    its emptiness is treated as evidence.
+
+    A short timeout keeps it fast; the expected outcome is the timeout, not acquisition.
+    """
+    root = _make_project(tmp_path)
+    index_path = session_store._index_path(root)
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = _index_lock._lock_path_for(index_path)
+    lock_path.write_text(f"{os.getpid()}\n", encoding="utf-8")  # fresh mtime => NOT stale
+
+    sleeps = _count_lock_sleeps(monkeypatch)
+    with pytest.raises(_index_lock.IndexLockTimeoutError):
+        with _index_lock.index_lock(index_path, timeout_s=0.3, poll_interval_s=0.05):
+            pass
+
+    assert sleeps, "premise failed: a live lock must make the waiter sleep, or the probe is dead"
 
 
 def test_open_session_reclaims_stale_lock_two_racing_threads(tmp_path: Path) -> None:
