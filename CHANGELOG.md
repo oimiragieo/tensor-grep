@@ -1,6 +1,82 @@
 # CHANGELOG
 
 
+## v1.98.20 (2026-07-26)
+
+### Bug Fixes
+
+- **docs-coverage**: Exit 2 when a path could not be read (#294)
+  ([#773](https://github.com/oimiragieo/tensor-grep/pull/773),
+  [`b006c58`](https://github.com/oimiragieo/tensor-grep/commit/b006c580f5f81fe9928306c4055a838940c87e47))
+
+Found by MEASURING, not reading. Against a real ACL-denied subtree, on the PUBLISHED 1.98.17 wheel
+  via uvx:
+
+tg inventory . --json -> exit 2, truncation_cause "unreadable-path" tg docs-coverage . --json ->
+  exit 0, truncation_cause "unreadable-path" tg docs-coverage ./clean -> exit 0 <- CONTROL,
+  identical to the incomplete arm
+
+docs-coverage's exit code carried NO completeness information -- 0 in both arms -- while its sibling
+  returned 2 for the same condition.
+
+This was NOT a contract violation. docs/CONTRACTS.md granted the exit 0 explicitly. But it granted
+  it when `scan_limit.possibly_truncated` could ONLY mean the --max-repo-files count cap, whose
+  remedy is "raise the cap": exiting 0 was defensible precisely BECAUSE the caller could always fix
+  it. #276/#767/#768 widened the same field to also mean "hit a path it could not read", which no
+  budget value fixes, and the exit-code consumer was never revisited. The repo's own rule --
+  widening what a field MEANS means grepping its CONSUMERS, and a statement of the old assumption is
+  the tell -- applies; here the tell was in the CONTRACT DOC, which is why a code-only sweep missed
+  it.
+
+Deliberately NARROW: only the non-budget-remediable cause flips the exit code. A pure count-cap
+  truncation still exits 0, so the documented budget contract is unchanged and no existing caller of
+  that path breaks. Follows `tg codemap`, which already made `unreadable_path` a new exit-2 trigger,
+  rather than inventing a rule.
+
+CONTRACTS.md updated in the same commit -- the doc stated the old assumption, so leaving it would
+  have left the next reader with the reasoning that produced the gap.
+
+VERIFICATION (bidirectional): - the exit-2 test FAILS with the fix reverted and PASSES with it. - a
+  THIRD arm pins the budget cap at exit 0, so this cannot silently become "exit 2 on any
+  truncation", which would break every existing budget-path caller. - both arms carry precondition
+  assertions on the payload, because Click's own unknown-option error ALSO exits 2 -- a code-only
+  assertion could pass for the wrong reason (it did, on a first draft that used the wrong flag
+  name).
+
+32 tests in test_docs_coverage.py pass; test_cli_bootstrap.py 145 passed. A failure seen under an
+  ad-hoc `-k "contract or governance"` selection was verified PRE-EXISTING (reproduces on pristine
+  main, passes in isolation and in file order) and is filed as its own task with the exact repro.
+
+### Testing
+
+- **cli**: Earn the exit-0 in the gpu-device-id warning test (#289)
+  ([#772](https://github.com/oimiragieo/tensor-grep/pull/772),
+  [`ae007b8`](https://github.com/oimiragieo/tensor-grep/commit/ae007b842041a831d50d52e051a4b67463f54601))
+
+The test asserted `exit_code == 0` while its own fixture supplied `results_by_file={}` -- zero
+  matches. Exit 1 is the CORRECT three-state code for "not found" (docs/CONTRACTS.md: 0 complete / 1
+  not-found / 2 incomplete), so the assertion was wrong and tg was right; the test failed locally on
+  a contract tg was honouring.
+
+Measured, not guessed: an instrumented invoke showed the warning contract already PASSES -- both "5"
+  and "0, 1" are in the output -- and the exit code is the only thing that differs. So the defect is
+  the fixture, not the product.
+
+Flipping the assertion to 1 would have been the wrong fix. The warning this test exists to cover
+  promises "the search will still run", so the test must supply a match and EARN the 0. Fixture now
+  mirrors the sibling test_cli_should_parse_gpu_device_ids_into_search_config.
+
+Also adds the premise assertion (a match exists, so 0 means "searched and found", not "vacuously
+  fine") and `result.output` on the assert so a future failure shows why.
+
+I twice reported this as "pre-existing, green in CI" without verifying the CI half. I cannot confirm
+  it: the plausible explanation is pytest's `-x` aborting the file at an earlier failure so this
+  test never executed -- the SKIPPED-is-not-PASSED oracle form, which bit twice already today.
+  Either way the fix stands in both environments.
+
+527 tests in the file pass; ruff clean.
+
+
 ## v1.98.19 (2026-07-26)
 
 ### Bug Fixes
