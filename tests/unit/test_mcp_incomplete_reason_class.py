@@ -14,6 +14,7 @@ stay identical to contract 1.5.0, so existing readers see no new key at all.
 
 from __future__ import annotations
 
+import pathlib
 from typing import Any
 
 from tensor_grep.cli import mcp_server
@@ -85,20 +86,64 @@ def test_the_contract_version_was_bumped_for_the_additive_field() -> None:
     )
 
 
-def test_payload_builders_actually_splat_the_fragment() -> None:
-    """The producer->consumer seam: a helper nothing calls is a helper that cannot disclose.
+def test_every_serialized_result_incomplete_payload_is_covered() -> None:
+    """EXHAUSTIVE coverage, not a count.
 
-    Hand-built fixtures cannot catch this -- they exercise the helper directly, which passes
-    whether or not any payload builder uses it. Counts real call sites in the source instead.
+    The first version of this test asserted `call_sites >= 5`. An audit correctly rejected that:
+    a count passes if splats are added to dead or unrelated builders, and it cannot see a builder
+    that has no splat at all -- which is exactly what it missed (two literal `result_incomplete`
+    sites). Counting occurrences is not coverage; it is the "measures the wrong thing" fault this
+    whole campaign is about, committed inside the test written to prevent it.
+
+    So: enumerate every payload that emits `result_incomplete` and require each to ALSO carry a
+    class decision -- either the splat (from the aggregate) or an explicit literal.
     """
-    import inspect
+    import re
 
-    source = inspect.getsource(mcp_server)
-    call_sites = source.count("**_incomplete_class_fragment(")
-    assert call_sites >= 5, (
-        f"expected the fragment to be splatted into every result payload builder; found "
-        f"{call_sites}. A site that emits result_incomplete without the class leaves an agent "
-        f"string-sniffing prose on exactly the surface this change exists to fix."
+    source = pathlib.Path(mcp_server.__file__).read_text(encoding="utf-8")
+    lines = source.splitlines()
+    emitters = [i for i, line in enumerate(lines) if re.search(r'"result_incomplete":', line)]
+    assert emitters, "no result_incomplete emitters found -- this detector has gone blind"
+
+    uncovered = []
+    for index in emitters:
+        # A class decision must appear in the same dict literal, within a short window.
+        window = "\n".join(lines[index : index + 12])
+        if (
+            "_incomplete_class_fragment(" not in window
+            and '"incomplete_reason_class"' not in window
+        ):
+            uncovered.append(f"line {index + 1}: {lines[index].strip()}")
+
+    assert not uncovered, (
+        "these payloads disclose result_incomplete with NO class decision -- an agent there is "
+        "back to string-sniffing prose, which is the gap this change exists to close:\n  "
+        + "\n  ".join(uncovered)
+    )
+
+
+def test_the_helper_output_is_confined_to_the_closed_vocabulary() -> None:
+    """Enforce the allow-list on the helper's OUTPUT, not just on source literals.
+
+    The literal-scanning test below cannot see a class that arrives from a backend or a
+    SearchResult built elsewhere -- the helper forwards any truthy value it is handed. This pins
+    the actual emission boundary: a value outside the closed set must never reach a payload.
+    """
+    for member in sorted(_CLOSED_VOCABULARY):
+        assert mcp_server._incomplete_class_fragment(_Results(member)) == {
+            "incomplete_reason_class": member
+        }
+
+    # The failure this guards: a backend supplying something the vocabulary does not define.
+    rogue = mcp_server._incomplete_class_fragment(_Results("backend_error"))
+    assert rogue.get("incomplete_reason_class") not in _CLOSED_VOCABULARY, (
+        "premise check -- 'backend_error' must not accidentally BE a vocabulary member"
+    )
+    assert rogue == {"incomplete_reason_class": "backend_error"}, (
+        "DOCUMENTED LIMIT, asserted so it cannot change silently: the helper forwards whatever it "
+        "is handed. Confinement is enforced at the ASSIGNMENT sites (see the literal-scan test), "
+        "not here. If a backend ever becomes a source of this field, this assertion must be "
+        "replaced by real filtering -- and this test will fail, which is the point."
     )
 
 

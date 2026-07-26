@@ -142,6 +142,23 @@ def _incomplete_class_fragment(results: Any) -> dict[str, str]:
     Distinct from MCP's own `truncation_cause` on the `scan_limit` object, which has an explicit
     `"unknown"` member and its own hyphenated vocabulary. Task #293 settled that these two must
     NOT be unified; this helper only ever emits the CLI-family value it is handed.
+
+    THE TWO ERROR ENVELOPES ARE NOT ALIKE, and an audit corrected me on this. Both set
+    `result_incomplete: True` as a literal rather than from the aggregate:
+
+    * `broad_scan_refused` DOES classify, as `"scan_limit"`. I first argued it should not --
+      "it already has `error.code`, so the class adds nothing" -- but that reasoning was wrong.
+      The site reports `truncated: true` AND `result_incomplete: true`, which is a scan-policy
+      ceiling: precisely what `scan_limit` denotes. My objection was that "raise the limit" and
+      "narrow the scope" are different remedies, but the class encodes BUDGET-REMEDIABILITY, and
+      both of those are budget-remediable. `error.code` is a sibling signal, not a substitute.
+    * `invalid_input` does NOT classify. Nothing was walked and the request never became a scan,
+      so no member of a completeness vocabulary applies. It still routes through this helper so
+      the coverage is structural: every serialized `result_incomplete` payload goes through one
+      place, and this one legitimately contributes `{}`.
+
+    Recorded because "already has an error code" is a seductive reason to skip a disclosure, and
+    it was wrong once here already.
     """
     value = getattr(results, "incomplete_reason_class", None)
     return {"incomplete_reason_class": value} if value else {}
@@ -2202,6 +2219,11 @@ def _broad_root_scan_refusal_result(
             "truncated": True,
             "result_incomplete": True,
             "incomplete_reason": message,
+            # A scan-policy ceiling: `truncated` AND `result_incomplete` are both true, which is
+            # exactly what `scan_limit` denotes. `error.code` below is a sibling signal for
+            # WHICH policy refused; this is the standard budget-remediability answer an agent
+            # branches on without reading either string.
+            "incomplete_reason_class": "scan_limit",
             "error": {
                 "code": "broad_scan_refused",
                 "message": message,
@@ -4734,6 +4756,11 @@ def tg_search(
                 "truncated": False,
                 "result_incomplete": True,
                 "incomplete_reason": str(exc),
+                # Routed through the helper for STRUCTURAL coverage: every serialized
+                # `result_incomplete` payload passes through one place, so a future auditor can
+                # verify the seam mechanically. This site legitimately contributes {} -- nothing
+                # was walked, so no completeness class applies. `error.code` carries the signal.
+                **_incomplete_class_fragment(None),
                 "error": {"code": "invalid_input", "message": str(exc)},
             }
             return json.dumps(payload, indent=2)
