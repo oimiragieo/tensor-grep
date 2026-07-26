@@ -79,6 +79,16 @@ pub struct SearchStats {
     pub skipped_binary_files: usize,
     pub binary_match_files: usize,
     pub matches: Vec<NativeSearchMatch>,
+    /// Per-entry walk errors (a permission-denied subdirectory, a vanished path) that were
+    /// reported on stderr and stepped over. Task #276 slice A: this is the PLUMBING only. The
+    /// count is carried so a later slice can put `result_incomplete` into the `--json` envelope
+    /// and exit 2 -- today nothing reads it, so behaviour is byte-identical.
+    ///
+    /// It is deliberately a COUNT, not a path list: the walk runs in `build_parallel()` across
+    /// threads, and an unbounded per-path Vec behind a mutex would be both a contention point on
+    /// the hot walker and a DoS surface (a tree with 50k unreadable entries would produce a 50k
+    /// -entry payload). A consumer only needs to know THAT the answer is incomplete.
+    pub walk_errors: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -685,10 +695,24 @@ impl ParallelWalkWorker {
 
 impl Drop for ParallelWalkWorker {
     fn drop(&mut self) {
+        // Task #276 slice B1-fix: `walk_errors` MUST be part of this guard.
+        //
+        // This is a "nothing to contribute, skip the lock" fast path. Before walk_errors existed
+        // the five counters below were the whole of a worker's contribution, so the short-circuit
+        // was total. It is not any more -- and the omission is not cosmetic: under
+        // `build_parallel()` a worker can legitimately be handed ONLY unreadable entries. It
+        // searches no files, matches nothing, and returns here with a non-zero walk_errors that
+        // is then dropped on the floor by `std::mem::take` never running.
+        //
+        // The result would be an envelope reporting a COMPLETE scan of an INCOMPLETE walk --
+        // exactly the defect #276 exists to fix, reintroduced by the fix. Caught by auditing my
+        // own diff against the question "can the count be WRONG rather than absent?", which is
+        // the more dangerous failure: absent is visible, wrong is not.
         if self.local_stats.searched_files == 0
             && self.local_stats.matched_files == 0
             && self.local_stats.total_matches == 0
             && self.local_stats.skipped_binary_files == 0
+            && self.local_stats.walk_errors == 0
             && self.local_stats.matches.is_empty()
         {
             return;
@@ -803,6 +827,23 @@ struct NativeJsonOutput<'a> {
     matched_file_paths: Vec<String>,
     match_counts_by_file: BTreeMap<String, usize>,
     matches: Vec<NativeJsonMatch>,
+    // Task #276 slice B2 -- the whole point of the issue. Until now this envelope reported
+    // success on a walk that skipped unreadable paths, so an agent parsing --json could not tell
+    // "no matches exist" from "I could not finish looking".
+    //
+    // NAMES ARE NOT NEW. `result_incomplete` and `incomplete_reason_class` are the vocabulary the
+    // PYTHON routes have emitted since slice 1 (formatters/json_fmt.py:127, :140), with a closed
+    // class set (unreadable_path | timeout | deadline | scan_limit) that #293 documented and
+    // ratcheted. The native path adopting them verbatim is the point: one contract, two engines.
+    //
+    // `skip_serializing_if` on ALL THREE keeps a COMPLETE envelope byte-identical to before this
+    // change, which is what makes the fix additive for every existing consumer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result_incomplete: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    incomplete_reason_class: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    incomplete_paths_count: Option<usize>,
 }
 
 /// Mirrors real `rg --json`'s own `lines` protocol (verified via hexdump against `rg.exe`
@@ -1250,6 +1291,45 @@ fn search_walk_roots_parallel(
                     // for the exact same tree depending on walk order). Logging and continuing
                     // matches `rg`'s own `ignore`-crate-backed walker -- the same crate this
                     // engine uses -- so this is real parity, not a new guess at rg's behavior.
+                    // Task #276 slice B: count it as well as printing it. The stderr line is
+                    // rg-parity (#263) and stays; the COUNT is what lets the --json envelope stop
+                    // claiming a complete result on an incomplete walk. Flows to the aggregate
+                    // via the existing local->shared merge, so no new lock on the hot path.
+                    // `worker` is still the `Result<ParallelWalkWorker>` from
+                    // `ParallelWalkWorker::new` here -- the shadowing `let worker = match
+                    // worker.as_mut()` happens BELOW this arm, so a bare `worker.local_stats`
+                    // is field access on a Result and does not compile. (It did not compile;
+                    // an audit caught it because every Rust CI leg on the commit that
+                    // introduced it was CANCELLED, never green.)
+                    //
+                    // The `Err` arm is deliberately silent: a thread whose matcher failed to
+                    // build owns no worker and therefore no stats channel. It quits on its
+                    // first real entry and the whole search returns Err, so there is no
+                    // "complete" envelope for a lost count to corrupt.
+                    // ALLOW-LIST the count (#282: fail-closed guidance enumerates the SAFE
+                    // cases, never the unsafe ones). `ignore::Error` is NOT only "path was
+                    // unreadable" -- the parallel walker also reports a failure to PARSE an
+                    // ancestor/global gitignore (`Error::Glob` / `WithLineNumber`, surfaced via
+                    // `add_parents`) and `UnrecognizedFileType` / `InvalidDefinition`. Counting
+                    // those would label a COMPLETE walk `result_incomplete` with a
+                    // budget-non-remediable cause: one malformed glob in a user's
+                    // ~/.config/git/ignore would make EVERY `tg search --json` on that machine
+                    // claim it could not finish. A false "incomplete" is worse than the silence
+                    // #276 set out to fix, because it teaches an agent to distrust a true answer.
+                    //
+                    // `is_io()` is the crate's own predicate for "exclusively an I/O error": it
+                    // recurses through WithPath/WithDepth/WithLineNumber, treats a single-element
+                    // Partial as its inner error, and returns FALSE for Glob, UnrecognizedFileType,
+                    // InvalidDefinition and Loop. Loop cannot fire here anyway -- `build_walk_builder`
+                    // never calls `follow_links`.
+                    //
+                    // Non-I/O errors still PRINT (rg-parity, #263); they just do not claim the
+                    // answer is incomplete.
+                    if err.is_io() {
+                        if let Ok(worker) = worker.as_mut() {
+                            worker.local_stats.walk_errors += 1;
+                        }
+                    }
                     eprintln!("tg: {err}");
                     return WalkState::Continue;
                 }
@@ -1292,6 +1372,10 @@ fn search_walk_roots_parallel(
                     }
                     return WalkState::Quit;
                 }
+                // Task #276 slice B: same reasoning as the entry-error arm above -- a file we
+                // could not read is a hole in the answer, and the envelope has to be able to say
+                // so. Counted here, emitted by slice B2.
+                worker.local_stats.walk_errors += 1;
                 eprintln!("tg: {err}");
                 return WalkState::Continue;
             }
@@ -1323,6 +1407,10 @@ fn merge_search_stats(target: &mut SearchStats, source: SearchStats) {
     target.total_matches += source.total_matches;
     target.skipped_binary_files += source.skipped_binary_files;
     target.binary_match_files += source.binary_match_files;
+    // Task #276 slice A. Missing this line is the whole failure mode: every worker would count
+    // its own walk errors and the aggregate would report zero, so the envelope would claim a
+    // complete result on an incomplete walk -- the exact defect #276 exists to fix.
+    target.walk_errors += source.walk_errors;
     target.matches.extend(source.matches);
 }
 
@@ -2336,6 +2424,18 @@ fn emit_json_matches(config: &NativeSearchConfig, stats: &SearchStats) -> Result
             .iter()
             .map(native_match_to_json)
             .collect::<Result<Vec<_>>>()?,
+        // Task #276 slice B2. Emitted ONLY when the walk actually skipped something, so a
+        // complete envelope stays byte-identical to every prior release.
+        //
+        // The class is `unreadable_path` and not one of the budget causes on purpose: a walk
+        // error is the ONE value in the closed set that is NOT budget-remediable. No
+        // `--max-repo-files` or `--deadline` value makes a permission-denied subtree readable,
+        // and `docs/CONTRACTS.md` says so explicitly. Labelling it `scan_limit` or `deadline`
+        // would hand the reader a knob that cannot help -- the wrong-knob defect #283 already
+        // cost us once.
+        result_incomplete: (stats.walk_errors > 0).then_some(true),
+        incomplete_reason_class: (stats.walk_errors > 0).then_some("unreadable_path"),
+        incomplete_paths_count: (stats.walk_errors > 0).then_some(stats.walk_errors),
     };
 
     let mut bytes = serde_json::to_vec(&payload)?;
@@ -2420,6 +2520,108 @@ fn display_search_path(paths: &[PathBuf]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- Task #276: the --json envelope must ADMIT an incomplete walk -----------------------
+    //
+    // The plan's SS6 demands a bidirectional oracle, and this branch is the argument for it: an
+    // earlier commit here shipped a `Drop` fast path that silently dropped `walk_errors`, which
+    // no amount of diff-reading caught. The CONTROL arm below is the load-bearing half -- it
+    // fails on the pre-B2 tree, where the keys could not be emitted at all.
+
+    fn envelope_for(stats: SearchStats) -> serde_json::Value {
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let config = NativeSearchConfig {
+            output_target: NativeOutputTarget::Buffer(Arc::clone(&buffer)),
+            ..NativeSearchConfig::default()
+        };
+        emit_json_matches(&config, &stats).expect("emit_json_matches must succeed");
+        let bytes = buffer.lock().expect("buffer lock").clone();
+        serde_json::from_slice(&bytes).expect("envelope must be valid JSON")
+    }
+
+    #[test]
+    fn json_envelope_admits_an_incomplete_walk() {
+        // TREATMENT: the walk skipped something, so the envelope must say so -- and say it in
+        // the vocabulary the Python routes already emit (json_fmt.py:127/:140), not a synonym.
+        let envelope = envelope_for(SearchStats {
+            walk_errors: 2,
+            ..SearchStats::default()
+        });
+        assert_eq!(envelope["result_incomplete"], serde_json::json!(true));
+        assert_eq!(
+            envelope["incomplete_reason_class"],
+            serde_json::json!("unreadable_path")
+        );
+        assert_eq!(envelope["incomplete_paths_count"], serde_json::json!(2));
+    }
+
+    #[test]
+    fn json_envelope_is_byte_identical_when_the_walk_was_complete() {
+        // CONTROL -- the arm that makes the pair mean anything. All three keys must be ABSENT,
+        // not present-and-false: `skip_serializing_if` is what keeps a complete envelope
+        // byte-identical to every prior release, and a `false`/`null` would be a new key on the
+        // happy path, breaking the additive-by-construction promise B2 makes.
+        //
+        // If this ever passes with the keys present, the fix has become a shape change and the
+        // rg byte-fidelity gate (TG_REQUIRE_RG_PARITY) is the next thing to go red.
+        let envelope = envelope_for(SearchStats::default());
+        assert!(
+            envelope.get("result_incomplete").is_none(),
+            "a COMPLETE walk must not carry result_incomplete: {envelope}"
+        );
+        assert!(
+            envelope.get("incomplete_reason_class").is_none(),
+            "a COMPLETE walk must not carry incomplete_reason_class: {envelope}"
+        );
+        assert!(
+            envelope.get("incomplete_paths_count").is_none(),
+            "a COMPLETE walk must not carry incomplete_paths_count: {envelope}"
+        );
+    }
+
+    fn worker_for(shared: &Arc<Mutex<SearchStats>>) -> ParallelWalkWorker {
+        let config = Arc::new(NativeSearchConfig {
+            pattern: "needle".to_string(),
+            ..NativeSearchConfig::default()
+        });
+        ParallelWalkWorker::new(config, Arc::clone(shared)).expect("worker must build")
+    }
+
+    #[test]
+    fn drop_merges_a_worker_whose_only_contribution_is_walk_errors() {
+        // Regression guard for the defect this branch itself introduced. `Drop` carries a
+        // "nothing to contribute, skip the lock" fast path that predates `walk_errors`. Under
+        // build_parallel() a worker can legitimately be handed ONLY unreadable entries: it
+        // searches no files and matches nothing, so every counter in the old guard is zero and
+        // `std::mem::take` never ran -- the count vanished and the envelope reported a COMPLETE
+        // scan of an INCOMPLETE walk, which is the exact defect #276 exists to fix.
+        //
+        // Driven through a REAL drop rather than by asserting the guard's boolean, so it stays
+        // honest if the short-circuit is ever restructured.
+        let shared = Arc::new(Mutex::new(SearchStats::default()));
+        {
+            let mut worker = worker_for(&shared);
+            worker.local_stats.walk_errors = 3;
+        }
+        assert_eq!(
+            shared.lock().expect("shared lock").walk_errors,
+            3,
+            "a walk-error-only worker must still merge on drop"
+        );
+    }
+
+    #[test]
+    fn drop_still_skips_the_lock_for_a_genuinely_empty_worker() {
+        // The guard's other side. Without this, "delete the fast path entirely" would pass the
+        // test above -- so the pair, not either test alone, pins where the boundary sits.
+        let shared = Arc::new(Mutex::new(SearchStats::default()));
+        drop(worker_for(&shared));
+        assert_eq!(
+            *shared.lock().expect("shared lock"),
+            SearchStats::default(),
+            "an empty worker must contribute nothing"
+        );
+    }
 
     // --- Audit #105: native-CPU implicit-walk-ceiling gate ----------------------------------
     // Mirrors rg_passthrough.rs's audit #100 test suite for `check_implicit_walk_ceiling`. #100

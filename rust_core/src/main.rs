@@ -3840,7 +3840,20 @@ mod tests {
         // process_control's drain-while-timing-out wait), the child would block writing to a
         // full, undrained pipe and this call would hit the timeout and report failure instead of
         // completing quickly -- this is a regression guard, not just a happy-path check.
-        let timeout_ms = 15_000;
+        //
+        // #303: the wall-clock bound below is DERIVED from this timeout rather than being an
+        // independent constant. The two were previously 15s and 10s, which left a 5s window where
+        // a merely-slow runner produced a fully correct result (success + >1MB captured, i.e. the
+        // pipes demonstrably drained) that still failed the clock -- a false red, twice observed
+        // on windows CI. A deadlock cannot land in that window: it exhausts the time limit and
+        // `terminate_for_timeout` kills the child, so `result.success` is false and the FIRST
+        // assertion fires. The clock is therefore not what catches a deadlock; it catches the
+        // weaker "drains, but pathologically slowly" regression (e.g. a hand-rolled poll loop
+        // reading a tiny buffer at a low duty cycle), which is why it is kept rather than deleted.
+        let timeout_ms = 60_000;
+        // Half the timeout: comfortably above any legitimate spawn-plus-2.6MB cost on a loaded
+        // runner, and comfortably below the limit, so the two bounds can never contradict.
+        let slow_drain_bound = Duration::from_millis(timeout_ms / 2);
 
         let started = Instant::now();
         let result = run_validation_command(
@@ -3863,8 +3876,10 @@ mod tests {
             result.stdout.len()
         );
         assert!(
-            elapsed < Duration::from_secs(10),
-            "expected the large-output command to finish well under the timeout (no deadlock), took {elapsed:?}"
+            elapsed < slow_drain_bound,
+            "expected the large-output command to finish well under the {timeout_ms}ms timeout \
+             (drain is pathologically slow, though not deadlocked -- a deadlock would have failed \
+             the success assertion above); took {elapsed:?}, bound {slow_drain_bound:?}"
         );
     }
 
@@ -8350,6 +8365,29 @@ fn run_native_search_with_optional_rg_fallback(
     let verbose = config.verbose;
     match execute_native_search(config) {
         Ok(stats) => {
+            // Task #276 slice C. An incomplete walk exits 2 -- and it is checked BEFORE the
+            // no-match branch on purpose, because the two answer different questions and rg
+            // resolves them in this order too. `rg needle .` over a tree with one access-denied
+            // subdirectory exits 2 whether or not it matched anything elsewhere: "I could not
+            // finish looking" outranks "I found nothing", since the second is only trustworthy
+            // if the first is false. Reversing these would let a zero-match incomplete scan exit
+            // 1, which reads as an authoritative "no matches exist" -- the exact lie #276 exists
+            // to stop.
+            //
+            // 🔴 MERGE PRECONDITION -- NOT satisfied history. PRs #792 and #793 make the six
+            // exit-code consumers three-state aware (agent_readiness x3, both benchmark
+            // harnesses, the byte-fidelity e2e, mcp_server; crossover.rs verified unreachable).
+            // AS OF THIS COMMIT BOTH ARE STILL OPEN, and `origin/main` still has
+            // `agent_readiness.py` rejecting any exit not in {0,1}. THIS BRANCH MUST NOT MERGE
+            // BEFORE THEM: doing so breaks `tg calibrate` (tg spawns itself and bails on
+            // non-zero) and `tg dogfood` (a shipped command), and reds windows-agent-readiness.
+            //
+            // An earlier revision of this comment stated C0 "landed first" as completed fact.
+            // It had not. A comment asserting a merge that never happened is worse than no
+            // comment -- it is what the next reader trusts instead of re-checking.
+            if stats.walk_errors > 0 {
+                std::process::exit(2);
+            }
             if stats.total_matches == 0 && stats.binary_match_files == 0 {
                 std::process::exit(1);
             }

@@ -33,5 +33,18 @@ This document distinguishes CI-tested environments from best-effort compatibilit
 `tensor-grep` follows Semantic Versioning (SemVer) 2.0.0.
 - **Major versions** may introduce breaking changes to CLI flags, `sgconfig.yml` schemas, or machine-readable outputs.
 - **Minor versions** add features in a backward-compatible manner.
-- **Deprecation Policy:** stable features, flags, or fields scheduled for removal will be marked as `DEPRECATED` for at least 2 minor versions before removal.
+- **Deprecation Policy:** stable features, flags, or fields scheduled for removal are marked
+  `DEPRECATED` for at least **90 days AND 2 minor versions** -- whichever is longer.
+
+  The time floor is the load-bearing half. This project releases on merge via semantic-release,
+  and the measured cadence is **a median of 0 days between minor bumps** (v1.95, v1.96, v1.97 and
+  v1.98 all shipped on 2026-07-24). A version-only window is therefore not a window: read
+  literally, "2 minor versions" can elapse in an afternoon, while a reader reasonably infers
+  months. If you are pinning `tensor-grep` in a managed environment, 90 days is the number to
+  plan against.
+- **Supported versions / security patches:** the **latest released version only**. There are no
+  maintenance branches -- every fix ships forward from `main` -- so a security fix arrives as a new
+  release, never as a backport to an older line. Upgrade is the patch path. Air-gapped or
+  version-pinned deployments should budget for this explicitly rather than assume an LTS line
+  exists; there isn't one.
 - **Experimental Surface:** items documented in [docs/EXPERIMENTAL.md](EXPERIMENTAL.md) are outside the stable compatibility guarantees and may change in minor releases.

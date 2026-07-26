@@ -369,3 +369,50 @@ def test_undo_rolls_back_an_already_applied_removal_when_a_later_file_is_unreada
     )
     assert z_path.read_text(encoding="utf-8") == "z-content\n", "recreated with its real content"
     assert (root / "src" / "extra_a.py").exists()
+
+
+# (#298) A corrupt checkpoint must not be reported as a missing one
+# ---------------------------------------------------------------------------
+
+
+def test_corrupt_checkpoint_reports_its_own_error_code_not_not_found(tmp_path: Path) -> None:
+    """The record was FOUND; its snapshot is unusable. Those are different problems.
+
+    Reported as `checkpoint_not_found`, the reader goes looking for a checkpoint that is sitting
+    right there and never learns the only fact that matters -- the snapshot cannot restore the
+    tree. This file's own docstring at the H2 regression describes that mislabel as the symptom
+    of the OLD buggy shape.
+    """
+    import json
+
+    from typer.testing import CliRunner
+
+    from tensor_grep.cli.main import app
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    _make_project(root, {"src/alpha.py": "alpha\n"})
+    created = checkpoint_store.create_checkpoint(str(root))
+
+    # CONTROL: a genuinely absent checkpoint must STILL report checkpoint_not_found. Without this
+    # arm the fix could rename every failure and the treatment below would still pass.
+    missing = CliRunner().invoke(
+        app, ["checkpoint", "undo", "ckpt-does-not-exist", str(root), "--json"]
+    )
+    assert missing.exit_code == 1
+    assert json.loads(missing.stdout)["error"] == "checkpoint_not_found"
+
+    # TREATMENT: delete a snapshot blob so the pre-flight raises CheckpointCorruptError.
+    snapshot_files = sorted((root / ".tensor-grep").rglob("alpha.py"))
+    assert snapshot_files, "premise: the snapshot blob must exist before we delete it"
+    snapshot_files[0].unlink()
+
+    result = CliRunner().invoke(
+        app, ["checkpoint", "undo", created.checkpoint_id, str(root), "--json"]
+    )
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["error"] == "checkpoint_corrupt", (
+        "a corrupt snapshot must not masquerade as a missing checkpoint"
+    )
+    assert payload["ok"] is False
