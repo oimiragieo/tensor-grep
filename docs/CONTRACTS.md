@@ -133,6 +133,16 @@ The JSON schemas emitted by `tensor-grep search --json`, `tensor-grep search --n
 - `incomplete_reason_class` matters because the four causes are NOT equally remediable: `"scan_limit"`/`"deadline"`/`"timeout"` are genuinely fixable by raising a budget (`--max-repo-files`, `--deadline`, `TG_RG_TIMEOUT_SECONDS`/`TG_DIR_SCAN_MAX_ENTRIES`) or narrowing scope, but `"unreadable_path"` is NOT -- the path needs to become readable, or the search needs to be scoped away from it; a bigger budget changes nothing. See the exit-code bullet below for the same distinction applied to `tg search`'s exit-`2` retry guidance.
 - The MCP `tg_search` tool exposes the SAME remediability distinction on its own `scan_limit` object, from contract version `1.5.0` (task #283). When -- and only when -- the scan was actually truncated it additively carries `truncation_cause` (`"scan_limit"` / `"unreadable_path"` / `"unknown"`), `budget_remediable` (bool), and, when non-zero, `unreadable_path_count`. A complete scan emits none of them and stays byte-identical to contract `1.4.0`. `budget_remediable` is the field a caller should branch on before advising a retry: it is `false` for `"unreadable_path"` (no `max_repo_files` value makes a denied directory readable) and ALSO `false` for `"unknown"`, because an unrecognised cause must never be answered with "raise the limit" -- guidance about whether a signal can be trusted is an allow-list, never a deny-list. TWO known asymmetries, deliberately recorded rather than papered over: (1) `possibly_truncated: true` can still appear with NO `truncation_cause`, because the per-file `max_repo_files` cap and the native-walk deadline set it independently of the `DirectoryScanner`, so "truncated implies a cause is present" is NOT an invariant a client may rely on; (2) this vocabulary is NOT identical to the CLI's `incomplete_reason_class` above -- MCP has `"unknown"` where the CLI raises loudly, and the CLI has `"deadline"`/`"timeout"` where MCP currently has nothing. Converging the two is tracked in #283.
 
+- `tg checkpoint undo --json` distinguishes a MISSING checkpoint from a CORRUPT one (task #298).
+  `error: "checkpoint_not_found"` means the record could not be resolved. `error:
+  "checkpoint_corrupt"` (added in this change) means the record WAS found and its snapshot blobs
+  are missing or unreadable, so undo refused before touching a single working-tree file. Both
+  exit `1`. Before this, every undo failure reported `checkpoint_not_found`, which sent the reader
+  hunting a checkpoint that was sitting right there and hid the only fact that mattered -- the
+  snapshot cannot restore the tree. Treat this as ADDITIVE: a consumer that only knows
+  `checkpoint_not_found` still sees `ok: false` and a human-readable `detail`, and the new value
+  appears exactly where the old one was wrong.
+
 ## 5. Operational diagnostics (`tg doctor --json`)
 `tg doctor --json` is intended for operational automation and support workflows.
 - The doctor payload includes top-level `schema_version` and `doctor_schema_version`. Additive minor-version schema changes must bump these fields when consumer-visible shapes change.

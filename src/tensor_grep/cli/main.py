@@ -13613,7 +13613,11 @@ def checkpoint_undo(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Restore a checkpoint."""
-    from tensor_grep.cli.checkpoint_store import resolve_latest_checkpoint, undo_checkpoint
+    from tensor_grep.cli.checkpoint_store import (
+        CheckpointCorruptError,
+        resolve_latest_checkpoint,
+        undo_checkpoint,
+    )
 
     if path == "--json":
         json_output = True
@@ -13640,6 +13644,17 @@ def checkpoint_undo(
             payload = undo_checkpoint(checkpoint_id, path)
     except Exception as exc:
         message = str(exc)
+        # Task #298. Every undo failure used to report `checkpoint_not_found`, including a
+        # CORRUPT one -- where the checkpoint record was found perfectly well and its snapshot
+        # blobs are missing or unreadable. That sends the reader hunting a checkpoint that is
+        # right there, and hides the only fact that matters: the snapshot cannot restore your
+        # tree. `tests/unit/test_checkpoint_atomic_undo.py` even describes the mislabel as the
+        # symptom of the OLD buggy shape, so the code was contradicting its own test's prose.
+        error_code = (
+            "checkpoint_corrupt"
+            if isinstance(exc, CheckpointCorruptError)
+            else "checkpoint_not_found"
+        )
         if not last and checkpoint_id is not None:
             candidate = Path(checkpoint_id).expanduser()
             if candidate.exists():
@@ -13654,7 +13669,7 @@ def checkpoint_undo(
                     _with_schema_version(
                         {
                             "ok": False,
-                            "error": "checkpoint_not_found",
+                            "error": error_code,
                             "detail": message,
                             "checkpoint_id": checkpoint_id,
                             "path": path,
