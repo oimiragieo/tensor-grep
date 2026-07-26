@@ -269,6 +269,34 @@ def _search_flag_tokens_for_sweep(command: list[str]) -> set[str]:
     return tokens
 
 
+# Task #276 slice C0 -- make exit-code consumers three-state aware BEFORE the native
+# search path starts exiting 2 on an incomplete walk.
+#
+# The contract the producer will emit: 0/1 = parse output; 2 = parse output AND read the
+# incompleteness marker; >2 = error.
+#
+# This is deliberately an ALLOW-LIST, not "tolerate exit 2". Exit 2 is ALSO the code for a
+# catastrophic failure -- a regex syntax error, an unresolvable engine -- exactly as it is in
+# ripgrep, whose own docs call 2 "true for both catastrophic errors ... and soft errors". A
+# blanket `returncode == 2 -> continue` would swallow every one of those and turn this sweep
+# into a check that cannot fail, which is the failure mode this repo names Form 1.
+#
+# So: tolerate 2 ONLY when the run explained itself. The marker must be PRESENT. No marker,
+# no tolerance. That mirrors the existing #121 carve-out below, which is likewise scoped to
+# one label + one precondition + one stderr substring rather than to the bare exit code.
+_INCOMPLETENESS_MARKERS = ("result_incomplete", "incomplete_reason_class")
+
+
+def _disclosed_incomplete(stdout: str, stderr: str) -> bool:
+    """True when an exit-2 run disclosed that its scan was incomplete.
+
+    Reads both streams because the marker's home differs by route: the `--json` envelope
+    carries it in stdout, while the plain-text route names the unreadable path on stderr.
+    """
+    haystack = f"{stdout} {stderr}"
+    return any(marker in haystack for marker in _INCOMPLETENESS_MARKERS)
+
+
 def _ripgrep_available() -> bool:
     """Whether tg can resolve a ripgrep binary (TG_RG_PATH / PATH / bundled). Gates the
     #121 tolerance in the flag sweep below: `--count-matches` needs rg for its per-occurrence
@@ -344,6 +372,11 @@ def validate_public_search_advertised_flag_sweep(
             and completed.returncode == 2
             and "count-matches" in stderr.lower()
         ):
+            continue
+        # Task #276 slice C0: an incomplete-but-honest scan exits 2 and says so. Accept that
+        # ONLY with the marker present -- see `_disclosed_incomplete` for why this is an
+        # allow-list rather than a bare `== 2` tolerance.
+        if completed.returncode == 2 and _disclosed_incomplete(stdout, stderr):
             continue
         if completed.returncode not in {0, 1}:
             failures.append(

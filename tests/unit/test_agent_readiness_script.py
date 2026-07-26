@@ -1538,3 +1538,32 @@ def test_progress_reporter_auto_emits_in_ci_without_json(monkeypatch) -> None:
         "[progress] readiness start",
         "[progress] readiness done 0s",
     ]
+
+
+def test_disclosed_incomplete_tolerates_only_a_disclosed_exit_two() -> None:
+    """Task #276 slice C0: the exit-2 tolerance must be an ALLOW-LIST, not a blanket accept.
+
+    Exit 2 is overloaded. It is what an honest incomplete scan will return once #276 lands, but
+    it is ALSO what a catastrophic failure returns -- a regex syntax error, an unresolvable
+    engine -- exactly as in ripgrep, whose docs call 2 "true for both catastrophic errors ...
+    and soft errors". A tolerance keyed on the bare exit code would swallow every one of those
+    and turn the readiness sweep into a check that cannot fail.
+
+    So this test is deliberately bidirectional. The CONTROL arm is the point: an exit-2 run that
+    did NOT explain itself must still be rejected. If `_disclosed_incomplete` is ever weakened to
+    `return True`, the control assertions below fail.
+    """
+    module = _load_script_module()
+    disclosed = module._disclosed_incomplete
+
+    # TREATMENT -- the run disclosed why it was incomplete, on either stream.
+    assert disclosed('{"matches": [], "result_incomplete": true}', "")
+    assert disclosed("", 'tg: incomplete_reason_class="unreadable_path"')
+    assert disclosed('{"incomplete_reason_class": "deadline"}', "")
+
+    # CONTROL -- exit 2 with no disclosure is a REAL error and must not be tolerated.
+    assert not disclosed("", "regex parse error: unclosed group")
+    assert not disclosed("", "tg: ripgrep is not resolvable on PATH")
+    assert not disclosed("", "")
+    # Near-miss: names a path but never claims incompleteness. Still not a disclosure.
+    assert not disclosed("", "tg: /srv/locked: Permission denied")
