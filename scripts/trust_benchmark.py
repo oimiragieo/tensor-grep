@@ -265,20 +265,32 @@ def _cond_unreadable_file(root: Path):
     return (target.name, lambda: _undeny_read(target))
 
 
-def _cond_vanishing_file(root: Path):
-    """TOCTOU: a file present at walk time and gone at read time. Approximated by deleting it
-    after the tree is built -- the tools re-walk, so this mainly proves they do not report a
-    phantom. Kept because a tool that CRASHES here is worse than one that skips."""
-    target = root / "pkg" / "ghost.py"
-    target.write_text(f"{SENTINEL} = 4\n", encoding="utf-8")
-    target.unlink()
-    return (target.name, lambda: None)
-
+# REMOVED 2026-07-26 (#302): the `vanished-file` condition. Kept as a comment so nobody re-adds it
+# without reading this.
+#
+# It created `pkg/ghost.py` and `unlink()`ed it BEFORE any tool ran. Every tool then walked a tree
+# where the file simply did not exist, correctly reported nothing about it -- and was scored 0
+# ("SILENT: exit 0, nothing on stderr, smaller result set"). So a tool doing exactly the right
+# thing earned the worst score, and all six tied at the floor on both platforms.
+#
+# That is two defects, not one. It DISCRIMINATED NOTHING (a column where every arm ties separates
+# no tools -- yet six zeros read to a human as "they are all bad at this", which the data does not
+# support), and it MISLABELLED correct behaviour as dishonesty. A tied-at-floor column is worse
+# than no column, because it looks like a finding. This is verification-oracle Form 7 (AGENTS.md)
+# turned on our own scorecard: *what would this column show if a tool were GOOD at it?* -- still 0.
+#
+# Could it be fixed instead of dropped? Only by making the file vanish DURING each tool's walk,
+# between the directory listing and the open. Every tool here is a separate subprocess with its own
+# walk order and timing, so that window cannot be opened deterministically for six of them at once
+# -- the same reason AGENTS.md A27 forbids wall-clock-overlap assertions in the concurrency tests.
+# A flaky column is not an improvement on a meaningless one.
+#
+# If someone genuinely needs TOCTOU coverage, it belongs in a single-tool test with an injected
+# filesystem hook, not in a cross-tool scorecard.
 
 CONDITIONS = [
     ("unreadable-dir", _cond_unreadable_dir),
     ("unreadable-file", _cond_unreadable_file),
-    ("vanished-file", _cond_vanishing_file),
 ]
 
 
