@@ -117,7 +117,15 @@ def _run(argv: list[str], cwd: Path) -> tuple[int, str, str]:
 # tensor_grep.cli.incompleteness.INCOMPLETENESS_MARKERS; duplicated on purpose because this
 # harness must score COMPETING tools by the same rule, and importing the tool under test would
 # make tg's row depend on tg's own module.
-_PAYLOAD_MARKERS = ("result_incomplete", "incomplete_reason_class", '"errors"', "paths")
+# EXACTLY the closed incompleteness vocabulary, and nothing looser. The first cut also listed
+# `"errors"` and `paths`, and both were FALSE POSITIVES that flattered the tools:
+#   - `paths` matched `matched_file_paths`, a key present in every COMPLETE `tg --json` directory
+#     envelope, so tg scored ADMITS on a channel where it is in fact silent.
+#   - `"errors"` is always present in semgrep's JSON, so semgrep scored ADMITS unconditionally.
+# A marker that matches complete output cannot distinguish complete from incomplete, which is the
+# only thing this column exists to do. The control arm below now makes that failure self-evident
+# instead of leaving it to be noticed by someone who happens to distrust a good-looking number.
+_PAYLOAD_MARKERS = ("result_incomplete", "incomplete_reason_class")
 
 
 def _score(rc: int, out: str, err: str, unreadable_name: str) -> tuple[int, str]:
@@ -279,6 +287,21 @@ def run_condition(
                         "ok" if (found and rc == 0) else "control-failed",
                         "found sentinel, exit 0" if found and rc == 0 else f"rc={rc} found={found}",
                     )
+                    # THE PAYLOAD CONTROL. Score the payload scorer against a COMPLETE search too.
+                    # A complete result must look complete: anything but SILENT here means a marker
+                    # matches ordinary output, so the incomplete column is measuring nothing. This
+                    # arm is what turns "I noticed a suspicious 2" into an automatic failure --
+                    # the first version of this file had no control and shipped two false-positive
+                    # markers because of it.
+                    pay_score, pay_detail = _score_payload(rc, out, err, "")
+                    control_cell = result.cells.setdefault(f"{tool.name}  [stdout-only]", {})
+                    control_cell[name] = Cell(
+                        pay_score,
+                        "ok" if pay_score == SILENT else "control-failed",
+                        pay_detail
+                        if pay_score == SILENT
+                        else f"BROKEN MARKER: complete output scored {pay_score} -- {pay_detail}",
+                    )
                     continue
                 # TWO channels, deliberately. `_score` is what a shell/CI consumer sees (exit
                 # code + stderr); `_score_payload` is what an agent piping stdout into `jq` sees.
@@ -374,13 +397,23 @@ def main() -> int:
         return 0
 
     cond_names = ["control"] + [n for n, _ in CONDITIONS]
-    width = max(len(t.name) for t in tools) + 2
+    # Render EVERY row that was scored, not just the ToolSpec names. The `[stdout-only]` payload
+    # rows are keyed `f"{tool.name}  [stdout-only]"`, which is not a ToolSpec name -- iterating
+    # `tools` alone computed them, stored them, and printed none of them. A score nobody can see
+    # cannot fail, which is precisely the defect class this benchmark exists to measure (#276).
+    # The JSON output already carried them; only the human-readable table, the thing anyone
+    # actually reads, was blind.
+    row_names = [name for tool in tools for name in (tool.name, f"{tool.name}  [stdout-only]")]
+    row_names = [n for n in row_names if n in result.cells]
+    width = max(len(n) for n in row_names) + 2
     print(f"\nTrust benchmark -- {result.platform}")
-    print("2=ADMITS 1=PARTIAL 0=SILENT -=N/A  (honest == 2)\n")
+    print("2=ADMITS 1=PARTIAL 0=SILENT -=N/A  (honest == 2)")
+    print("`[stdout-only]` rows score STDOUT ALONE -- the agent's-eye view, no exit code,")
+    print("no stderr. That is the channel #276 is about.\n")
     print("tool".ljust(width) + "".join(c.ljust(18) for c in cond_names))
-    for tool in tools:
-        row = result.cells.get(tool.name, {})
-        line = tool.name.ljust(width)
+    for row_name in row_names:
+        row = result.cells.get(row_name, {})
+        line = row_name.ljust(width)
         for c in cond_names:
             cell = row.get(c)
             if cell is None:
@@ -400,10 +433,10 @@ def main() -> int:
         for b in result.broken_fixtures:
             print(f"  - {b}")
     print("\nDetail:")
-    for tool in tools:
-        for c, cell in result.cells.get(tool.name, {}).items():
+    for row_name in row_names:
+        for c, cell in result.cells.get(row_name, {}).items():
             if c != "control" and cell.detail:
-                print(f"  {tool.name:>10} / {c:<16} {cell.detail}")
+                print(f"  {row_name:>26} / {c:<16} {cell.detail}")
     return 0
 
 
