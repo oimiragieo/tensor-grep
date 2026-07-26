@@ -728,6 +728,18 @@ impl Drop for ParallelWalkWorker {
         // producing an envelope that reports a COMPLETE scan of an INCOMPLETE walk, exactly the
         // defect task 276 exists to fix, reintroduced by the fix. `is_empty()` therefore covers
         // walk_errors, and the invariant test below fails if any countable field is left out.
+        //
+        // HONESTY NOTE, because the tempting version of this commit message is wrong: the
+        // omission is NOT currently reachable. Every PRODUCTION writer of `binary_match_files`
+        // is preceded by `searched_files += 1` -- the worker path (:544/:556), the serial path
+        // (:1121/:1133), and `merge_search_stats`, which merges `searched_files` first
+        // (:1348/:1352). So `binary_match_files > 0` implies `searched_files > 0` and the guard
+        // could never have returned early on it. This is defense-in-depth against a FUTURE field
+        // that is not so protected -- not a fix for a live silent loss.
+        //
+        // "PRODUCTION" is load-bearing: the invariant test below deliberately violates that
+        // implication by setting the field alone, which is exactly why it can test the guard's
+        // contract without staging a state production can reach.
         if self.local_stats.is_empty() {
             return;
         }
@@ -2645,10 +2657,14 @@ mod tests {
     /// `is_empty` fails here.
     ///
     /// Deliberately NOT written as "a binary-match-only worker is dropped": that state is
-    /// unreachable, because every writer of `binary_match_files` is preceded by
-    /// `searched_files += 1` in the same block. A test that reaches it only by assigning the
-    /// field directly would go red-then-green while proving nothing about production -- the
-    /// discrimination failure this codebase keeps re-learning.
+    /// unreachable in production, because every production writer of `binary_match_files` is
+    /// preceded by `searched_files += 1` (:544/:556, :1121/:1133, and `merge_search_stats` at
+    /// :1348/:1352). A test that reaches it only by assigning the field directly would go
+    /// red-then-green while proving nothing about production -- the discrimination failure this
+    /// codebase keeps re-learning.
+    ///
+    /// This test DOES assign fields directly, and that is legitimate precisely because it claims
+    /// to test `is_empty`'s contract, not to reproduce a production state.
     #[test]
     fn search_stats_is_empty_covers_every_countable_field() {
         assert!(
