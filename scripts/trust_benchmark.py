@@ -149,7 +149,12 @@ def _deny_read(path: Path) -> bool:
         user = os.environ.get("USERNAME", "")
         if not user:
             return False
-        rc, _, _ = _run(["icacls", str(path), "/deny", f"{user}:(OI)(CI)(R)"], path.parent)
+        # `(OI)(CI)` are OBJECT/CONTAINER INHERIT flags -- they describe what a DIRECTORY hands
+        # down to its children and are meaningless on a file. Applying them to a file left it
+        # fully readable, so the unreadable-file condition reported BROKEN FIXTURE for every
+        # tool and measured nothing. Plain `(R)` is what denies a single file.
+        spec = f"{user}:(OI)(CI)(R)" if path.is_dir() else f"{user}:(R)"
+        rc, _, _ = _run(["icacls", str(path), "/deny", spec], path.parent)
         return rc == 0
     try:
         path.chmod(0o000)
