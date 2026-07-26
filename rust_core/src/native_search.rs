@@ -91,6 +91,26 @@ pub struct SearchStats {
     pub walk_errors: usize,
 }
 
+impl SearchStats {
+    /// True when this worker observed nothing worth merging.
+    ///
+    /// One place that knows every countable field, so "did you cover the new field?" is a
+    /// single-site question. `ParallelWalkWorker::drop` previously enumerated the fields inline
+    /// and covered five of six.
+    ///
+    /// Any field added to this struct MUST be added here. `search_stats_is_empty_covers_every_
+    /// countable_field` fails if one is missed.
+    pub fn is_empty(&self) -> bool {
+        self.searched_files == 0
+            && self.matched_files == 0
+            && self.total_matches == 0
+            && self.skipped_binary_files == 0
+            && self.binary_match_files == 0
+            && self.walk_errors == 0
+            && self.matches.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub enum NativeOutputTarget {
     #[default]
@@ -695,26 +715,20 @@ impl ParallelWalkWorker {
 
 impl Drop for ParallelWalkWorker {
     fn drop(&mut self) {
-        // Task #276 slice B1-fix: `walk_errors` MUST be part of this guard.
+        // Skip the lock when this worker has nothing to contribute. The emptiness test lives on
+        // `SearchStats` rather than being enumerated here on purpose: an enumeration kept in sync
+        // by hand at every call site drifts. It already had, twice, in opposite directions --
+        // this guard once omitted `binary_match_files`, and the task 276 slice-A version of it
+        // enumerated `walk_errors` but still omitted `binary_match_files`.
         //
-        // This is a "nothing to contribute, skip the lock" fast path. Before walk_errors existed
-        // the five counters below were the whole of a worker's contribution, so the short-circuit
-        // was total. It is not any more -- and the omission is not cosmetic: under
+        // `walk_errors` is the load-bearing member and the reason this must not regress: under
         // `build_parallel()` a worker can legitimately be handed ONLY unreadable entries. It
-        // searches no files, matches nothing, and returns here with a non-zero walk_errors that
-        // is then dropped on the floor by `std::mem::take` never running.
-        //
-        // The result would be an envelope reporting a COMPLETE scan of an INCOMPLETE walk --
-        // exactly the defect #276 exists to fix, reintroduced by the fix. Caught by auditing my
-        // own diff against the question "can the count be WRONG rather than absent?", which is
-        // the more dangerous failure: absent is visible, wrong is not.
-        if self.local_stats.searched_files == 0
-            && self.local_stats.matched_files == 0
-            && self.local_stats.total_matches == 0
-            && self.local_stats.skipped_binary_files == 0
-            && self.local_stats.walk_errors == 0
-            && self.local_stats.matches.is_empty()
-        {
+        // searches no files, matches nothing, and returns here with a non-zero `walk_errors`. If
+        // the guard short-circuits on it, `std::mem::take` never runs and the count is dropped --
+        // producing an envelope that reports a COMPLETE scan of an INCOMPLETE walk, exactly the
+        // defect task 276 exists to fix, reintroduced by the fix. `is_empty()` therefore covers
+        // walk_errors, and the invariant test below fails if any countable field is left out.
+        if self.local_stats.is_empty() {
             return;
         }
 
@@ -2621,6 +2635,61 @@ mod tests {
             SearchStats::default(),
             "an empty worker must contribute nothing"
         );
+    }
+
+    /// Task 319: every countable field must make `is_empty()` false on its own.
+    ///
+    /// This asserts the INVARIANT that keeps `ParallelWalkWorker::drop`'s fast path honest,
+    /// rather than staging a worker in a state production cannot reach. The guard used to
+    /// enumerate five of six fields inline; a sixth field added to the struct and not to
+    /// `is_empty` fails here.
+    ///
+    /// Deliberately NOT written as "a binary-match-only worker is dropped": that state is
+    /// unreachable, because every writer of `binary_match_files` is preceded by
+    /// `searched_files += 1` in the same block. A test that reaches it only by assigning the
+    /// field directly would go red-then-green while proving nothing about production -- the
+    /// discrimination failure this codebase keeps re-learning.
+    #[test]
+    fn search_stats_is_empty_covers_every_countable_field() {
+        assert!(
+            SearchStats::default().is_empty(),
+            "a fresh SearchStats must be empty"
+        );
+
+        let mutators: [(&str, fn(&mut SearchStats)); 7] = [
+            ("searched_files", |s| s.searched_files = 1),
+            ("matched_files", |s| s.matched_files = 1),
+            ("total_matches", |s| s.total_matches = 1),
+            ("skipped_binary_files", |s| s.skipped_binary_files = 1),
+            ("binary_match_files", |s| s.binary_match_files = 1),
+            // Added when this branch rebased onto task 276 slice A (#795), which introduced
+            // `walk_errors` as the 7th countable field. Without this row the table would still
+            // pass -- it would simply never check the one field whose loss is a SILENT
+            // INCOMPLETE SCAN rather than a miscount, which is the whole point of task 276.
+            // An enumeration that grows only when someone remembers is the drift this test
+            // exists to stop, so the arity is pinned at 7 and the compiler enforces it.
+            ("walk_errors", |s| s.walk_errors = 1),
+            // Constructed explicitly: NativeSearchMatch does NOT derive Default (:43), so
+            // `::default()` would not compile. Verified by reading the derive list rather than
+            // assumed -- Rust here is CI-only, so a wrong constructor costs a whole cycle.
+            ("matches", |s| {
+                s.matches.push(NativeSearchMatch {
+                    path: PathBuf::from("a.rs"),
+                    line_number: Some(1),
+                    raw: b"hit".to_vec(),
+                })
+            }),
+        ];
+
+        for (field, mutate) in mutators {
+            let mut stats = SearchStats::default();
+            mutate(&mut stats);
+            assert!(
+                !stats.is_empty(),
+                "SearchStats::is_empty() ignores `{field}` -- a worker whose only contribution \
+                 is that field would be dropped without merging. Add the field to is_empty()."
+            );
+        }
     }
 
     // --- Audit #105: native-CPU implicit-walk-ceiling gate ----------------------------------
