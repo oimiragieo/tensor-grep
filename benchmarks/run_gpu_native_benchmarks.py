@@ -35,6 +35,7 @@ from run_gpu_benchmarks import (  # noqa: E402
     summarize_gpu_pipeline_bottlenecks,
 )
 
+from tensor_grep.cli.incompleteness import disclosed_incomplete  # noqa: E402
 from tensor_grep.cli.runtime_paths import inspect_native_tg_binary  # noqa: E402
 
 DEFAULT_CORPUS_SIZES = (10 * MB, 100 * MB, 500 * MB, 1 * GB, 5 * GB)
@@ -370,6 +371,11 @@ def benchmark_search_command(
             }
         if result.returncode == 1 and allow_no_match and not (result.stderr or "").strip():
             no_match_exit_accepted = True
+        # Task #276 slice C0. This file ALREADY special-cases exit 2 for classified causes (see
+        # the invalid-device probe at :1209) -- the pattern simply never reached the search
+        # timing path. Same allow-list rule: disclosed incompleteness is not a benchmark FAIL.
+        elif result.returncode == 2 and disclosed_incomplete(result.stdout, result.stderr):
+            pass
         elif result.returncode != 0:
             return {
                 "status": "FAIL",

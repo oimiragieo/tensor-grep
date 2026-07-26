@@ -10726,6 +10726,47 @@ def _build_prepare_payload(
         "submitted": False,
         "advisory": True,
     }
+
+    # Task #306 W2: surface a LIVE FOREIGN CLAIM on the DEFAULT path.
+    #
+    # Before this, `prepare` learned about overlaps only when `--claim` was passed -- i.e. you
+    # discovered another agent had claimed your target only by claiming it yourself. An agent
+    # doing the ordinary read-only `tg prepare` to get edit-ready got no signal at all, which is
+    # the coordination gap in miniature: the ledger held the answer and nothing asked it.
+    #
+    # REPORTS, NEVER REFUSES. The #306 verdict is STAY ADVISORY, and `docs/CONTRACTS.md:225` says
+    # the ledger has "no enforcement mechanism of any kind". Turning this into an `ask_user` gate
+    # would be enforcement without any of the safety machinery real locking needs (fencing tokens,
+    # lease expiry handling) -- the plan's §5 "what NOT to build" names exactly that.
+    #
+    # `list_claims` is a pure read: no write lock, no writes, expired entries pruned for display
+    # only (ledger_store.py:782). Failure is swallowed for the same reason the `--claim` path
+    # swallows its own: an advisory hook must never fail prepare's primary read.
+    try:
+        from tensor_grep.cli import ledger_store as _ledger_store
+
+        _self_agent = _ledger_store.resolve_agent_id(None)
+        _live = _ledger_store.list_claims(resolved_path)
+        _foreign = [
+            {
+                "agent_id": entry.get("agent_id"),
+                "scope": entry.get("scope"),
+                "symbols": entry.get("symbols") or [],
+                "intent": entry.get("intent"),
+                "expires_at": entry.get("expires_at"),
+            }
+            for entry in (_live.get("claims") or [])
+            if entry.get("agent_id") and entry.get("agent_id") != _self_agent
+        ]
+    except Exception:
+        # Additive-conditional: on failure the key is simply absent, exactly as it is when no
+        # foreign claim exists. A reader must not be able to distinguish "nothing claimed" from
+        # "the probe broke" by the presence of an empty list -- so neither emits one.
+        _foreign = []
+    if _foreign:
+        claim_hook["foreign_claims"] = _foreign
+        claim_hook["foreign_claim_count"] = len(_foreign)
+
     if claim:
         if not symbol:
             claim_hook["error"] = "no primary symbol resolved; nothing to claim"
@@ -13672,6 +13713,7 @@ def checkpoint_undo(
 ) -> None:
     """Restore a checkpoint."""
     from tensor_grep.cli.checkpoint_store import (
+        CheckpointCorruptError,
         CheckpointUndoUnsafeError,
         resolve_latest_checkpoint,
         undo_checkpoint,
@@ -13702,15 +13744,25 @@ def checkpoint_undo(
             payload = undo_checkpoint(checkpoint_id, path)
     except Exception as exc:
         message = str(exc)
-        # Task #297: this handler labelled EVERY undo failure `checkpoint_not_found`. For an
-        # aborted-because-unrevertable undo that is a lie -- the checkpoint was found and is
-        # perfectly good; the working tree is what blocked it -- and it would send the reader
-        # looking for a missing checkpoint instead of at the unreadable file named in `detail`.
-        # (The same mislabel still applies to CheckpointCorruptError; correcting that one is a
-        # JSON-contract change and is filed separately rather than smuggled into a data-loss fix.)
-        error_code = (
-            "undo_unsafe" if isinstance(exc, CheckpointUndoUnsafeError) else "checkpoint_not_found"
-        )
+        # This handler once labelled EVERY undo failure `checkpoint_not_found`. Two independent
+        # fixes corrected that, and both are folded in here:
+        #   #297 -- an undo ABORTED because it could not be reverted safely. The checkpoint was
+        #     found and is perfectly good; the working tree is what blocked it. Reporting
+        #     not-found sent the reader hunting a missing checkpoint instead of at the unreadable
+        #     file named in `detail`.
+        #   #298 -- a CORRUPT checkpoint, where the record was found perfectly well but its
+        #     snapshot blobs are missing or unreadable. Reporting not-found hid the only fact
+        #     that matters: the snapshot cannot restore your tree.
+        # #297 deliberately left the corrupt case alone ("a JSON-contract change, filed
+        # separately rather than smuggled into a data-loss fix") -- that separate filing is #298,
+        # and this is where the two meet. `tests/unit/test_checkpoint_atomic_undo.py` describes
+        # the mislabel as the symptom of the OLD buggy shape, so until now the code contradicted
+        # its own test's prose.
+        error_code = "checkpoint_not_found"
+        if isinstance(exc, CheckpointCorruptError):
+            error_code = "checkpoint_corrupt"
+        elif isinstance(exc, CheckpointUndoUnsafeError):
+            error_code = "undo_unsafe"
         if not last and checkpoint_id is not None:
             candidate = Path(checkpoint_id).expanduser()
             if candidate.exists():
