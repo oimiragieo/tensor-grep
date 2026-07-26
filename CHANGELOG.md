@@ -1,6 +1,114 @@
 # CHANGELOG
 
 
+## v1.98.26 (2026-07-26)
+
+### Bug Fixes
+
+- **scan**: Say which files the rules could not read (#299)
+  ([#783](https://github.com/oimiragieo/tensor-grep/pull/783),
+  [`5fe41e8`](https://github.com/oimiragieo/tensor-grep/commit/5fe41e87affd2821333354e0136fd742a230dc20))
+
+* fix(scan): say which files the rules could not read (#299)
+
+`tg scan --ruleset` skipped an unreadable file in the regex-rule loop and reported its findings with
+  no marker. A security ruleset then reads as "no violations" for a file nobody opened, and a CI
+  gate keyed on the exit code passes. `_run_ast_scan_payload` had NO unreadable/partial/scan_limit
+  field at all, so there was nothing for a caller to check.
+
+Skipping is still correct -- an unreadable file cannot be scanned. What changed is that the payload
+  now says so, via the same `unreadable_paths {count, sample}` shape
+  build_repo_map/codemap/inventory already emit (#276), plus `partial`, `partial_reason` and a
+  remediation that does NOT point at a budget knob.
+
+Emitted only when something was actually skipped: a field that is always present teaches readers to
+  ignore it.
+
+SCOPE, stated plainly: this covers the REGEX leg. The AST leg reaches files through the backends and
+  is not audited here.
+
+Two fixture bugs found on the way, both caught by assertions rather than by luck, and both left in
+  as premise checks: 1. The first draft used the `auth-safe` pack. Its rules are all AST metavar
+  patterns, so they never reach the regex loop at all -- the test exercised NOTHING while looking
+  like it passed. `engine: "regex"` (main.py:6459) is the discriminator; the rule is now hand-built.
+  2. A silent no-op in my own edit left the fixture files as `x = 1`, so the sentinel matched zero
+  times. The test still "passed" -- because "the locked file contributed nothing" is trivially true
+  when NOTHING contributes. The `total_matches >= 2` premise assertion is what surfaced it, and it
+  stays.
+
+Verified bidirectionally AFTER those fixes (the earlier RED proof was run against the broken fixture
+  and did not count): with the record neutered, the test fails on KeyError 'unreadable_paths'.
+  Control arm asserts a fully readable scan carries NO marker, so the field cannot be decoration.
+
+Import is function-local, matching this module's existing repo_map pattern -- main.py has no
+  module-level repo_map import and adding one would undo the #48 cold-start work. A module-level
+  name would also have been a NameError that `ast.parse` happily accepts.
+
+Ratchet: main.py 18 -> 16. One fix moves it by two because the handler sits inside nested
+  accumulating loops and is visited once per enclosing loop.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* docs(census): record main.py's audit verdicts -- the file is now fully triaged (#292)
+
+Count unchanged. All 16 remaining main.py sites were audited this session and fall into three
+  families; this writes down which, so the next reader inherits the verdicts instead of re-deriving
+  them.
+
+FALLBACK-ASSIGN (:1080 launcher scan, :2415/:2624/:2657 doctor PATH scans) OUTPUT-BUCKET (:1163,
+  :1183 -- `failed.append(...)`, rendered into the command's own output; same shape as
+  session_store:589) BROAD-SCAN GUARD (:4945, :4955, :5027, :5031, :5089 -- main.py's own copies of
+  the scan_guardrails refusal heuristic, #154/#158)
+
+Recorded as FAMILIES, not a line-numbered list: an enumeration rots on the next edit, and this file
+  has already been burned once by a hand count (the header's "detector found 8 where a hand count
+  said 4").
+
+Carries a CAUTION forward: FALLBACK-ASSIGN is safe at these sites but is NOT safe as a general rule
+  -- it also matched checkpoint_store's #297 data-loss. Anyone draining further should read the
+  header note on where "model the class" stops before generalising from this entry.
+
+With this, every file in the census has either been drained to zero or has its accepted sites
+  explained: main.py (16), repo_map (8), scan_guardrails (5), session_store (2) all carry verdicts;
+  codemap is at 0.
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+### Documentation
+
+- **agents,skills**: Capture the 2026-07-26 drain-campaign lessons
+  ([#788](https://github.com/oimiragieo/tensor-grep/pull/788),
+  [`5cc9e14`](https://github.com/oimiragieo/tensor-grep/commit/5cc9e14fb77978a2368e4fd7961581ea4cc90c79))
+
+Six new campaign disciplines (A27-A32) + a 7th verification-oracle form, each from a concrete
+  failure or receipt this session.
+
+A27 class-fix-must-cross-to-the-twin. The session_store per-root lock test went ratio -> overlap ->
+  Event-gated and its docstring records why each form was retired; the ledger twin kept the retired
+  OVERLAP form and red-ed main in exactly the predicted way. A docstring explaining why an approach
+  was abandoned is worthless in the file still using it.
+
+A28 relay the gate verdict to the PR, not just the transcript (#786 arrived from a concurrent
+  worktree agent). A29 verify the fix on the MERGED artifact -- pre-merge proves the bug, not the
+  fix. A30 make pruning decidable: `git merge-base --is-ancestor` + `git branch -d` as an
+  independent second check (61 deleted / 0 refused / 2 kept). A CLOSED PR is not a merged PR. A31
+  order the drain by release impact -- non-releasing commit types create no publish to race (queue
+  12 -> 7 in an hour). A32 the gate is "newest main run COMPLETED", not "green" -- otherwise the fix
+  for a red main can never land.
+
+Oracle Form 7: the MEASUREMENT that cannot discriminate. The trust benchmark's `vanished-file`
+  column scores 0 for every tool on both platforms; a tied-at-floor column is worse than no column
+  because it looks like a finding (#302). Plus the LOCATION trap when running a probe: removing ONE
+  occurrence of a string proves nothing if it survives elsewhere -- count first.
+
+Same lessons mirrored into tensor-grep-validation-and-qa (oracle family) and
+  tensor-grep-backlog-campaign (hard rules 12-16).
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.98.25 (2026-07-26)
 
 ### Bug Fixes
