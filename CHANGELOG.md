@@ -1,6 +1,221 @@
 # CHANGELOG
 
 
+## v1.98.27 (2026-07-26)
+
+### Bug Fixes
+
+- **readiness**: Make the exit-code gate three-state aware (#276 slice C0)
+  ([#792](https://github.com/oimiragieo/tensor-grep/pull/792),
+  [`d4c9852`](https://github.com/oimiragieo/tensor-grep/commit/d4c9852af063d466cf1b183528d311c0cffb1ddf))
+
+* fix(readiness): make the exit-code gate three-state aware (#276 slice C0)
+
+Slice C0 of #276, and it GATES slice C. An adversarial review of the #276 plan returned HOLD on
+  exactly the open question the plan flagged -- "is exit 2 safe?" -- and the answer is no. The blast
+  radius is six consumers, not one:
+
+crossover.rs:354 tg spawns ITSELF via env::current_exe() and bail!s on !status.success() -> an
+  exit-2 child kills the whole `tg calibrate` with a MISATTRIBUTED cause agent_readiness.py:348 ~30
+  `tg search` invocations; `tg dogfood` is a SHIPPED command that runs these by default
+  (dogfood.py:429), and it is a CI gate test_native_json_byte_fidelity.py:100 asserts returncode ==
+  0, CI-gated run_gpu_native_benchmarks.py:371 reports FAIL, not partial
+  run_rg_parity_benchmarks.py:62 bare-raises mcp_server.py:1922 total loss of results
+
+Shipping the producer first would convert an honest partial into a broken `tg calibrate`, a failing
+  `tg dogfood`, and a red matrix. So the consumers move first. This commit does the highest-traffic
+  one.
+
+THE DESIGN POINT -- it is an ALLOW-LIST, not `returncode == 2 -> continue`. Exit 2 is overloaded: it
+  is what an honest incomplete scan will return, but also what a regex syntax error returns
+  (ripgrep's own docs: "true for both catastrophic errors ... and soft errors"). A tolerance keyed
+  on the bare code would swallow every real error and make the sweep a check that cannot fail. So
+  exit 2 is accepted ONLY when the run DISCLOSED why -- the marker must be present. This mirrors the
+  existing #121 carve-out immediately below, which is likewise scoped to one label + one
+  precondition + one stderr substring.
+
+The test is bidirectional and I PROVED the red arm: weakening the helper to `return True` fails the
+  control assertion on 'regex parse error: unclosed group'; restoring it passes. 42/42 green.
+
+* docs(readiness): record WHY the substring check is safe at this call site
+
+Self-audit of the C0 helper before the independent gate reported. The substring test could in
+  principle false-positive -- tolerate a genuinely-failed exit-2 run whose output merely CONTAINS
+  "result_incomplete". I checked whether that is reachable here, and it is not, for two independent
+  reasons:
+
+1. The sweep authors its own corpus and passes it by explicit path (_public_search_flag_sweep_cases
+  builds probe_dir/app.log, searches "ERROR"), so no matched line can carry the tokens. 2.
+  json_fmt.py:126 and :139 emit both keys ONLY when the result is actually incomplete, so even a
+  --json probe's complete envelope never contains them.
+
+But both are properties of the CALLER, not of the function -- and that is exactly the kind of
+  assumption that rots silently. A future sweep case that searched the repository itself would break
+  reason 1 on contact, since json_fmt.py contains the literal string. So the docstring now states
+  the assumption and names the fix (parse stdout as JSON, test for the KEY) rather than leaving the
+  next editor to rediscover it after it breaks.
+
+No behaviour change; 42/42 still green.
+
+* fix(readiness): close both blocking findings from the independent audit
+
+An independent Opus audit returned SHIP_WITH_CHANGES on the first cut of this PR. Both blocking
+  findings were real; I verified each against the tree before accepting it.
+
+BLOCKING 1 -- the treatment arm was UNREACHABLE. All 28 sweep cases are plain-text (`--no-json` is
+  even in the inverse-flag set at :189), and NO tg route writes either JSON key to stderr. So a
+  JSON-key-only check could never fire on the routes this consumer actually runs: once slice C
+  lands, an honest incomplete sweep run would exit 2 with a stderr line carrying no marker, and the
+  sweep would STILL fail. My own test encoded the bug -- `assert not disclosed("", "tg: /srv/locked:
+  Permission denied")` is exactly the shape the plain-text route emits.
+
+Fix: add the sentinel the plain-text route really emits -- `keeping partial
+
+results` (ripgrep_backend.py:143, :324, :443, timeout variant :187). It stays an allow-list: a regex
+  syntax error never emits that phrase.
+
+BLOCKING 2 -- the test did not constrain the change. Deleting the 5-line call-site guard left the
+  suite 42/42 GREEN; the test exercised the helper in isolation and nothing pinned that the sweep
+  consults it.
+
+Fix: added the integration pair on the existing `_make_flag_sweep_fake_run` pattern, driving the
+  REAL validate_public_search_advertised_flag_sweep, with `_ripgrep_available` forced True so the
+  #121 carve-out cannot make it pass for the wrong reason. Re-ran the audit's own mutation: deleting
+  the guard now FAILS test_flag_sweep_tolerates_a_disclosed_incomplete_exit_two.
+
+Also corrected two comments the audit flagged as overstating: the docstring claimed naming a path on
+  stderr was a disclosure (it is not), and the code claimed to "mirror #121" when #121 has a label +
+  precondition + substring and this guard has only the substring. That asymmetry is now stated
+  plainly, since the marker set is the only thing keeping the wider allow-list honest.
+
+44/44 green; ruff format --preview + ruff check clean.
+
+### Documentation
+
+- **plans**: The 2026-07-26 enterprise-readiness campaign, plans + review verdicts
+  ([#794](https://github.com/oimiragieo/tensor-grep/pull/794),
+  [`da3c5bd`](https://github.com/oimiragieo/tensor-grep/commit/da3c5bda1208b6b693a9962a50911ebd1fc05e7b))
+
+Five documents from the CEO enterprise-readiness campaign. Each carries the adversarial-review
+  verdict that changed it, because the corrections are the most valuable part -- all three reviewed
+  plans had a FALSE PREMISE the review caught:
+
+276-native-json-incompleteness Verified seam map for the native --json envelope. Review returned
+  HOLD on the plan's own open question ("is exit 2 safe?") -- it is not: SIX consumers break,
+  including tg spawning ITSELF via crossover.rs:354 and the shipped `tg dogfood` command. Gained
+  slice C0.
+
+304-305-whole-repo-under-deadline Review returned HOLD: the headline lever ALREADY EXISTS.
+  repo_map.py:7400 -- "Break + keep what we have, never raise, never zero the results" -- and 7/45
+  files at a 0.05s deadline still yields the correct primary_target. Re-scoped onto the real gap:
+  the unbounded session refresh at session_store.py:842/:846.
+
+306-ledger-advisory-verdict Counter-intuitive verdict that SURVIVED review: stay advisory. POSIX and
+  Chubby both rejected mandatory locks; Linux removed its implementation in 5.15+; a controlled
+  ablation measured soft coordination BELOW the single-agent baseline. Two of my three proposals
+  were wrong -- TTL already ships (ledger_store.py:106), and the hook gate contradicted a shipped
+  contract (CONTRACTS.md:225) AND the plan's own next section.
+
+enterprise-readiness-scorecard Turns "is tg enterprise ready?" into ~25 PASS/GAP/UNVERIFIED rows
+  measured against the tree. Supply chain is stronger than assumed (CycloneDX SBOMs both toolchains,
+  Sigstore, SLSA provenance); SARIF is absent entirely.
+
+307-where-tg-can-actually-lead ripgrep has tg's --json defect and has PUBLICLY DECLINED to fix it,
+  so #307 is the downstream effect of #276, not a separate project. Contains a finding that changes
+  #276's verification: the current benchmark keys on exit code + stderr, and both tools already do
+  both -- so it CANNOT see the difference #276 creates. Our own instrument is blind to the thing we
+  are building.
+
+docs/plans/**/*.md is excluded from ruff format (#149), so these are prose-only and non-releasing.
+
+- **skills**: Refresh the enterprise gap table against v1.98.25 (stale 8/10 language row)
+  ([#790](https://github.com/oimiragieo/tensor-grep/pull/790),
+  [`898c27a`](https://github.com/oimiragieo/tensor-grep/commit/898c27a24bf56f3ac73a2dbf82768b19376da4cb))
+
+* docs(skills): refresh the enterprise gap table against v1.98.25 (stale 8/10 language row)
+
+The enterprise-readiness skill was last verified at v1.95.0 and had drifted:
+
+- "Symbol-graph language coverage: Partial (8/10 ... C/C++ deferred)" was stale by three releases.
+  Re-verified by reading the live LANGUAGE_REGISTRY: c, cpp, csharp, go, java, javascript, php,
+  python, rust, typescript = 10/10. C/C++ shipped via lang_c.py / lang_cpp.py (#257/#258). -
+  "Beat-rg cold search + LSP proof: Open" conflated two gaps. The rg leg is CLOSED as an honest
+  negative (#261) with measured physics; only the LSP leg is still open. Split into two rows so
+  nobody re-measures a settled result. - Added the two #292 trust rows, including the load-bearing
+  one: the native --json envelope still carries no incompleteness marker (#276), so a machine
+  consumer cannot distinguish truncated from absent on the fastest path. - Stamped the
+  carried-forward WSL rows with their observation date (2026-07-21 @ v1.91.0) and renamed the status
+  column, so an inherited row is no longer indistinguishable from a re-verified one.
+
+Docs-only; no release impact.
+
+* docs(skills): the two WSL rows were DEBUNCED, not stale -- correct them
+
+Adversarial review of the WSL/deadline plan caught this in my own PR. I stamped the `tg agent REPO`
+  and `tg codemap` WSL rows as "last observed 2026-07-21, not re-run since", which preserved them as
+  merely stale. They are not stale -- `docs/BACKLOG.md:603` records #578 correcting BOTH as false
+  WSL-/mnt/c "regression" claims, with native repros: agent ~26s, codemap 41s whole-repo
+  `partial=false` complete (and `:606`: codemap "60-180s/no JSON" = WSL 9p, native 33s complete).
+
+Marking a debunked claim "unverified" is worse than deleting it: it launders a settled negative back
+  into an open gap, which is how the same battle gets re-fought. This doc is the artifact someone
+  reads to answer "is tg enterprise ready", so a false open gap there is a real defect.
+
+Also records the mechanism that actually produces the reported symptom, since the row was wrong
+  about that too: the scan is ALREADY interruptible and keeps a usable partial (repo_map.py:7400 --
+  "Break + keep what we have -- never raise, never zero the results"). What blows the budget is the
+  deliberate post-deadline overshoot (CONTRACTS.md:144 -- --deadline is a stop-starting-new-work
+  bound, not a wall-clock guarantee), after which the CALLER's timeout kills the process. That is
+  the harness returning nothing, not tg returning empty.
+
+Re-scopes the deadline-reliability row onto the one genuine routing gap the review found:
+  session_store.py:842/:846 call build_repo_map with NO deadline_monotonic, via
+  session_daemon.py:1936, behind a staleness check that runs before any deadline is anchored -- and
+  on the 60s client timeout main.py:9261-9262 swallows it while the cold path anchors a FRESH 60s.
+
+* docs(skills): the trust-benchmark "tie" is not a tg result -- correct it
+
+Third correction to this claim, and the most serious. Adversarial review of the #307 plan found that
+  the benchmark's `tg` row EXECUTES RIPGREP.
+
+`trust_benchmark.py:79` is `["tg","search",SENTINEL,"."]` -- plain text, no --json.
+  `bootstrap.py:1497` forwards that through `_run_rg_passthrough`, documented at `:1264-1272` as
+  reachable "whenever no compiled native `tg` binary is discoverable". Confirmed structurally: the
+  literal prefix `rg: ` appears NOWHERE in rust_core/src/ or src/tensor_grep/, while tg's own
+  walk-error is `eprintln!("tg: {err}")` (native_search.rs:1253/:1295/:1650).
+
+So "tg ties rg 2/2/0" is ripgrep measured twice. It is definitional, not a result -- and I reported
+  it to the CEO as a CORRECTION to an earlier false "tg leads 5/5" headline. It was a second wrong
+  statement, not a fix for the first.
+
+Worse, on the surface that actually matters tg is BEHIND, not tied: `rg --json` exits 2 on an
+  unreadable path; `tg --json` exits 0 with an envelope reporting success. That is #276, and it
+  means the honest headline is a deficit, not parity.
+
+Sequence for the record: "leads 5/5" (false) -> "ties" (not a measurement of tg) -> "behind on
+  --json" (measured). The lesson is not about this benchmark; it is that a comparison is only a
+  comparison if the two arms run different code.
+
+- **support**: Denominate the deprecation window in time, not just minor versions
+  ([#791](https://github.com/oimiragieo/tensor-grep/pull/791),
+  [`864eaee`](https://github.com/oimiragieo/tensor-grep/commit/864eaee0728c3cb9878e199560dcb7fa26c43f27))
+
+The policy said stable surfaces stay `DEPRECATED` "for at least 2 minor versions before removal".
+  That is not a missing policy -- it is a misleading one, and the measurement is the point:
+
+median days between MINOR bumps: 0 v1.95, v1.96, v1.97 and v1.98 all shipped on 2026-07-24
+
+semantic-release publishes on merge, so "2 minor versions" can elapse in an afternoon while an
+  enterprise reader reasonably infers months. Changed to 90 days AND 2 minor versions, whichever is
+  longer, with the cadence figure stated inline so the reason survives the next edit.
+
+Also adds the support/EOL statement, which was absent entirely: the latest released version only, no
+  maintenance branches, no backports -- upgrade is the patch path. Air-gapped or version-pinned
+  deployments need to budget for that rather than assume an LTS line exists.
+
+Enterprise-readiness scorecard items C2 + C3 (task #312). Docs-only.
+
+
 ## v1.98.26 (2026-07-26)
 
 ### Bug Fixes
