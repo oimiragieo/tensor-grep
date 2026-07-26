@@ -3406,7 +3406,31 @@ def _rust_resolve_use_binding(
     binding: dict[str, Any],
     symbol: str,
     repo_root: Path | str | None = None,
+    _seen: frozenset[tuple[str, str]] | None = None,
 ) -> dict[str, Any] | None:
+    # Cycle guard. This function follows `use` re-export chains by recursing on
+    # the nested binding, and Rust re-exports are a GRAPH, not a tree: a crate
+    # root that does `pub use rules::x::{...}` while a submodule re-exports back
+    # toward the root closes a loop, and the recursion never terminates.
+    #
+    # Receipt: `tg refs . <symbol> --json` on a 594-file Rust workspace
+    # (claude-code-hydron) died with `RecursionError: maximum recursion depth
+    # exceeded`, ~1000 frames of this function, rc=1 and no stdout -- so it took
+    # out EVERY refs query on that repo, not just the cyclic symbol.
+    #
+    # It DOES reproduce on a two-module fixture, but only when the searched
+    # symbol differs from the re-exported name: a matching name hits the early
+    # return above the recursive call. See
+    # test_cyclic_rust_pub_use_reexport_terminates.
+    #
+    # The key is (resolved importer path, imported name): the same file reached
+    # again for the same name is a cycle, while the same file for a DIFFERENT
+    # name is legitimate work and must not be pruned.
+    key = (str(importer_path).casefold(), str(binding.get("imported", "")).casefold())
+    seen = _seen or frozenset()
+    if key in seen:
+        return None
+    seen = seen | {key}
     imported_name = str(binding.get("imported", ""))
     local_name = str(binding.get("local", ""))
     wildcard = bool(binding.get("wildcard"))
@@ -3440,7 +3464,7 @@ def _rust_resolve_use_binding(
                 if imported_name.lower() not in {nested_imported.lower(), nested_local.lower()}:
                     continue
                 nested_resolved = _rust_resolve_use_binding(
-                    candidate_path, nested_binding, symbol, repo_root
+                    candidate_path, nested_binding, symbol, repo_root, seen
                 )
                 if nested_resolved is None:
                     continue
