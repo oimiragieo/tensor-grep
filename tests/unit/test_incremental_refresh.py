@@ -818,3 +818,134 @@ def test_open_session_payload_omits_the_key_on_a_clean_capture(tmp_path: Path) -
     session_id = _open_session(paths["project"])
 
     assert "snapshot_unreadable_paths" not in _session_payload(paths["project"], session_id)
+
+
+def _stat_raises(
+    monkeypatch,
+    *,
+    files_winerror: int,
+    root_ok: bool,
+    root: Path,
+    probes: list,
+    real_stat=None,
+):
+    """Make os.stat raise a chosen winerror for tracked files; the ROOT succeeds or fails to order.
+
+    Windows-shaped by construction: real `FileNotFoundError`s carry a `winerror`, and #287's
+    discriminator reads exactly that attribute (never `sys.platform`), so this fixture exercises
+    the same branch on any host. `probes` records every root stat so a control arm can assert the
+    common path pays NOTHING.
+    """
+    import os as _os
+
+    # `real_stat` MUST be passed by any test that patches twice. Otherwise the second call
+    # captures the FIRST fake as its "real" stat, so the first probe list keeps growing during the
+    # second run and both counters are contaminated -- measured as costly=3 < cheap=5, inverted.
+    real_stat = real_stat or _os.stat
+    root_str = str(root)
+
+    def _fake_stat(path, *args, **kwargs):
+        if str(path) == root_str:
+            probes.append(path)
+            if root_ok:
+                return real_stat(path, *args, **kwargs)
+            raise FileNotFoundError(2, "root gone", root_str, files_winerror, None)
+        exc = FileNotFoundError(2, "no", str(path), files_winerror, None)
+        raise exc
+
+    monkeypatch.setattr(_os, "stat", _fake_stat)
+
+
+def test_unreachable_root_reports_indeterminate_not_a_whole_tree_deletion(tmp_path, monkeypatch):
+    """Task #287 TREATMENT. A dropped mount must not read as a mass delete.
+
+    Every tracked file fails with ERROR_PATH_NOT_FOUND (3) AND the session root is unreachable ->
+    the only consistent reading is that the mount went away, so nothing is reported removed.
+    """
+    paths = _build_project(tmp_path)
+    session_id = _open_session(paths["project"])
+    payload = _session_payload(paths["project"], session_id)
+    probes: list = []
+
+    _stat_raises(
+        monkeypatch,
+        files_winerror=3,
+        root_ok=False,
+        root=session_store._resolve_root(Path(str(payload["root"]))),
+        probes=probes,
+    )
+    changeset = session_store._stale_changeset(payload, detect_added_files=False)
+
+    assert changeset is not None
+    assert changeset["removed"] == [], (
+        "a disconnected mount was reported as a whole-tree deletion -- the #286 false-deletion "
+        "class arriving through the one arm that is supposed to mean 'really gone'"
+    )
+    assert probes, "precondition: the root discriminator must actually have been consulted"
+
+
+def test_reachable_root_still_reports_a_deleted_parent_as_removed(tmp_path, monkeypatch):
+    """Task #287 CONTROL 1 -- the arm that stops the fix over-reaching.
+
+    Same ERROR_PATH_NOT_FOUND on every file, but the root STATS FINE: a parent directory really was
+    deleted, and those files really are gone. Without this arm the fix would silently reclassify
+    genuine deletions as indeterminate -- the same dishonesty, pointed the other way.
+    """
+    paths = _build_project(tmp_path)
+    session_id = _open_session(paths["project"])
+    payload = _session_payload(paths["project"], session_id)
+    probes: list = []
+
+    _stat_raises(
+        monkeypatch,
+        files_winerror=3,
+        root_ok=True,
+        root=session_store._resolve_root(Path(str(payload["root"]))),
+        probes=probes,
+    )
+    changeset = session_store._stale_changeset(payload, detect_added_files=False)
+
+    assert changeset is not None
+    assert changeset["removed"], "a real deletion under a live root was swallowed as indeterminate"
+    assert probes, "precondition: the root discriminator must have run for this arm too"
+
+
+def test_plain_file_not_found_is_removed_and_costs_no_extra_root_probe(tmp_path, monkeypatch):
+    """Task #287 CONTROL 2 -- the common path must pay nothing EXTRA.
+
+    ERROR_FILE_NOT_FOUND (2) means the parent resolved and only the file is absent: an unambiguous
+    deletion, classified immediately with no discriminator needed.
+
+    MEASURED AS A DIFFERENTIAL, not an absolute count. A first draft asserted `probes == []` and
+    failed -- `_stale_changeset` already stats the root via `_resolve_root` before the loop, so an
+    absolute counter measures that pre-existing call rather than anything this fix added. Right
+    variable, wrong baseline. Comparing the two winerrors isolates exactly the ONE probe #287
+    introduces.
+    """
+    paths = _build_project(tmp_path)
+    session_id = _open_session(paths["project"])
+    payload = _session_payload(paths["project"], session_id)
+    root = session_store._resolve_root(Path(str(payload["root"])))
+
+    import os as _os
+
+    pristine = _os.stat  # captured BEFORE any patch -- see the note in _stat_raises
+
+    cheap: list = []
+    _stat_raises(
+        monkeypatch, files_winerror=2, root_ok=True, root=root, probes=cheap, real_stat=pristine
+    )
+    changeset = session_store._stale_changeset(payload, detect_added_files=False)
+    assert changeset is not None
+    assert changeset["removed"], "an ordinary deletion stopped being reported"
+
+    costly: list = []
+    _stat_raises(
+        monkeypatch, files_winerror=3, root_ok=True, root=root, probes=costly, real_stat=pristine
+    )
+    session_store._stale_changeset(payload, detect_added_files=False)
+
+    assert len(costly) == len(cheap) + 1, (
+        "the ambiguous (winerror 3) path must cost EXACTLY one extra root probe, and the "
+        f"unambiguous (winerror 2) path none: cheap={len(cheap)} costly={len(costly)}"
+    )

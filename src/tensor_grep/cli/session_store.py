@@ -41,6 +41,13 @@ from tensor_grep.cli.repo_map import (
 
 logger = logging.getLogger(__name__)
 
+# Task #287. Windows ERROR_PATH_NOT_FOUND: a path COMPONENT did not resolve, as opposed to
+# ERROR_FILE_NOT_FOUND (2), where the parent resolved and only the file is absent. Both surface as
+# `FileNotFoundError`; only the winerror separates them. `getattr(exc, "winerror", None)` is None
+# on POSIX, so every non-Windows platform keeps the pre-#287 behaviour unchanged -- branch on the
+# ATTRIBUTE being present, never on `sys.platform`.
+_WINERROR_PATH_NOT_FOUND = 3
+
 _SESSION_VERSION = 1
 _TG_DIRNAME = ".tensor-grep"
 _SESSIONS_SUBDIR = "sessions"
@@ -569,22 +576,32 @@ def _stale_changeset(
     # Python's lastResort would put up to ~2000 lines on stderr per request.
     indeterminate: list[str] = []
     indeterminate_kinds: set[str] = set()
+    # Task #287. Entries whose stat failed with ERROR_PATH_NOT_FOUND: a path COMPONENT did not
+    # resolve. Held back from `removed` until the loop ends, because one root probe decides the
+    # whole batch (see the classification block after the loop).
+    path_unresolved: list[str] = []
     for current_path, snapshot_entry in snapshot_by_path.items():
         try:
             stat = os.stat(current_paths.get(current_path) or current_path)
-        except (FileNotFoundError, NotADirectoryError):
-            # The file is genuinely GONE (or a parent stopped being a directory). This is the
-            # only failure that means "removed".
+        except (FileNotFoundError, NotADirectoryError) as exc:
+            # The file is genuinely GONE (or a parent stopped being a directory) -- USUALLY. A
+            # disconnected Windows UNC share raises FileNotFoundError for EVERY file under it, so
+            # a dropped mount would otherwise land here and report the whole tree as removed: the
+            # same false-deletion class #286 fixed, arriving through the one arm that is supposed
+            # to mean "really gone".
             #
-            # KNOWN GAP, and it lives HERE rather than in the OSError arm below: a disconnected
-            # Windows UNC share raises FileNotFoundError (winerror 53) for EVERY file under it, so
-            # a dropped network mount lands in this arm and reports the whole tree as removed --
-            # the same false-deletion class task #286 fixed, arriving through the one arm that is
-            # supposed to mean "really gone". Not fixable by widening the OSError split: at the
-            # single-file level winerror 53 is indistinguishable from a real deletion. The
-            # discriminator has to be at the TREE level (e.g. every entry under a root resolving
-            # to removed is likelier a mount drop than a mass delete). Tracked as task #287.
-            removed.append(current_path)
+            # MEASURED (task #287; an earlier version of this comment said "winerror 53", a value
+            # that NEVER OCCURS here -- do not go hunting for it):
+            #     missing local file                -> winerror 2  (ERROR_FILE_NOT_FOUND)
+            #     unreachable UNC host              -> winerror 3  (ERROR_PATH_NOT_FOUND)
+            #     missing file on a REACHABLE share -> winerror 3
+            # winerror 2 is therefore a clean deletion signal. winerror 3 is AMBIGUOUS per file --
+            # it is shared by "the share is gone" and "a parent directory was removed from a live
+            # share" -- so it is deferred and decided at the TREE level after the loop.
+            if getattr(exc, "winerror", None) == _WINERROR_PATH_NOT_FOUND:
+                path_unresolved.append(current_path)
+            else:
+                removed.append(current_path)
             continue
         except OSError as exc:
             # Task #286: a bare `except OSError` here previously reported ANY stat failure as a
@@ -627,6 +644,29 @@ def _stale_changeset(
             snapshot_entry["mtime_ns"]
         ):
             modified.append(current_path)
+
+    if path_unresolved:
+        # Task #287, the TREE-LEVEL discriminator. Each of these failed with ERROR_PATH_NOT_FOUND,
+        # which per file cannot tell "the share dropped" from "a parent directory was deleted".
+        # ONE probe of the session root decides the whole batch, because the two cases differ
+        # there and only there: a mass delete leaves the root reachable, a dropped mount does not.
+        #
+        # Cost is one stat per changeset, and only when a path-level failure actually occurred --
+        # the common path pays nothing.
+        try:
+            os.stat(root)
+            root_reachable = True
+        except OSError:
+            root_reachable = False
+        if root_reachable:
+            # The mount is alive, so a missing path component is a REAL removal (a deleted parent
+            # directory is a genuine deletion of everything under it). Original behaviour.
+            removed.extend(path_unresolved)
+        else:
+            # The root itself is gone. Reporting these as deleted would be the #286 false-deletion
+            # class arriving through the "really gone" arm. Fail SAFE: indeterminate, not removed.
+            indeterminate.extend(path_unresolved)
+            indeterminate_kinds.add("UnreachableRoot")
 
     if indeterminate:
         logger.warning(
