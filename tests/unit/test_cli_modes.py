@@ -3930,7 +3930,23 @@ def test_warn_unavailable_gpu_device_ids_never_hard_fails_on_detector_error(monk
 def test_cli_search_warns_when_gpu_device_id_out_of_local_inventory(monkeypatch) -> None:
     global _FAKE_WALK, _FAKE_BACKEND
     _FAKE_WALK = {".": ["a.log"]}
-    _FAKE_BACKEND = _FakeBackend(results_by_file={})
+    # Task #289. This fixture used to be `results_by_file={}` -- zero matches -- while the test
+    # asserted `exit_code == 0`. Exit 1 is the CORRECT three-state code for "not found"
+    # (docs/CONTRACTS.md: 0 complete / 1 not-found / 2 incomplete), so the assertion was simply
+    # wrong and the test failed locally on a contract tg was honouring.
+    #
+    # Flipping the assertion to 1 would have been the wrong fix: the warning this test exists to
+    # cover promises "the search will still run", so the test has to supply a match and earn the
+    # 0. Mirrors the sibling fixture in test_cli_should_parse_gpu_device_ids_into_search_config.
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            "a.log": SearchResult(
+                matches=[MatchLine(line_number=1, text="ERROR", file="a.log")],
+                total_files=1,
+                total_matches=1,
+            )
+        }
+    )
     _patch_cli_dependencies(monkeypatch)
 
     import tensor_grep.core.hardware.device_detect as device_detect_mod
@@ -3942,7 +3958,9 @@ def test_cli_search_warns_when_gpu_device_id_out_of_local_inventory(monkeypatch)
     runner = CliRunner()
     result = runner.invoke(app, ["search", "ERROR", ".", "--gpu-device-ids", "5"])
 
-    assert result.exit_code == 0
+    # PREMISE: a match exists, so 0 means "searched and found", not "vacuously fine". Without the
+    # fixture above this asserts a value the command is contractually right to refuse.
+    assert result.exit_code == 0, result.output
     assert "5" in result.output
     assert "0, 1" in result.output
 
