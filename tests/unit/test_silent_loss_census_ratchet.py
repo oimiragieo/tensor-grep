@@ -86,10 +86,31 @@ _BROAD_EXCEPTIONS = frozenset({"BARE", "OSError", "Exception", "EnvironmentError
 # fixed in this same PR -- both were real gaps left by #767/#768, which wired the WALK but not the
 # per-file read/stat loops -- so they are absent below rather than listed at zero.
 KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
-    # 18 -> 17: `-f`/`--file` pattern-file reads already fail loud with exit 2 (the Backend
-    # Fail-Closed Contract), but the handler calls `_exit_search_error` rather than raising
-    # inline, so the detector read a terminating branch as silence.
-    "main.py": 17,
+    # 18 -> 15 by TWO INDEPENDENT fixes that landed in parallel; this file has been burned once
+    # already by a hand count, so the arithmetic is spelled out:
+    #   -2 by #299 -- the regex-ruleset read loop now records into the scan payload. It counts for
+    #     TWO because the handler sits inside nested accumulating loops (`for rule` -> `for
+    #     current_file`) and the detector visits it once per enclosing loop, so a single fix can
+    #     move this number by more than one. Not a miscount: the invariant is "never rises".
+    #   -1 by the `-f`/`--file` pattern-file read -- it already failed loud with exit 2 (the
+    #     Backend Fail-Closed Contract), but the handler calls `_exit_search_error` rather than
+    #     raising inline, so the detector read a terminating branch as silence.
+    #
+    # AUDITED #292: the remaining sites fall into three families, all accepted. Recording the
+    # FAMILIES rather than a per-site list, because a line-numbered enumeration rots on the next
+    # edit.
+    #   FALLBACK-ASSIGN (launcher scan, doctor PATH scans) -- the handler assigns an unresolved-
+    #     path fallback and the loop CONTINUES with it. Nothing is skipped.
+    #   OUTPUT-BUCKET (launcher cleanup) -- `failed.append(...)`, rendered into the command's own
+    #     output. That IS the disclosure; the detector cannot see it because it is resolved
+    #     outside the handler (same shape as session_store:589).
+    #   BROAD-SCAN GUARDRAIL -- main.py's own copies of the `scan_guardrails` refusal heuristic
+    #     (#154/#158 siblings). An OSError only means a huge scan is not refused; the scan that
+    #     follows discloses its own incompleteness.
+    # CAUTION for whoever drains this next: FALLBACK-ASSIGN is NOT safe as a general rule -- it
+    # also matched checkpoint_store's #297 data-loss. See the header note on where the
+    # "model the class" rule stops.
+    "main.py": 15,
     # 10 -> 6 by #297: three real fixes (the undo commit phase destroying a file whose bytes it
     # had failed to capture, so the revert could not restore it) plus one FALSE POSITIVE that the
     # detector no longer reports -- the undo pre-flight accumulates into `missing` and then raises
