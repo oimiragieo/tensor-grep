@@ -1295,7 +1295,20 @@ fn search_walk_roots_parallel(
                     // rg-parity (#263) and stays; the COUNT is what lets the --json envelope stop
                     // claiming a complete result on an incomplete walk. Flows to the aggregate
                     // via the existing local->shared merge, so no new lock on the hot path.
-                    worker.local_stats.walk_errors += 1;
+                    // `worker` is still the `Result<ParallelWalkWorker>` from
+                    // `ParallelWalkWorker::new` here -- the shadowing `let worker = match
+                    // worker.as_mut()` happens BELOW this arm, so a bare `worker.local_stats`
+                    // is field access on a Result and does not compile. (It did not compile;
+                    // an audit caught it because every Rust CI leg on the commit that
+                    // introduced it was CANCELLED, never green.)
+                    //
+                    // The `Err` arm is deliberately silent: a thread whose matcher failed to
+                    // build owns no worker and therefore no stats channel. It quits on its
+                    // first real entry and the whole search returns Err, so there is no
+                    // "complete" envelope for a lost count to corrupt.
+                    if let Ok(worker) = worker.as_mut() {
+                        worker.local_stats.walk_errors += 1;
+                    }
                     eprintln!("tg: {err}");
                     return WalkState::Continue;
                 }

@@ -8359,10 +8359,17 @@ fn run_native_search_with_optional_rg_fallback(
             // 1, which reads as an authoritative "no matches exist" -- the exact lie #276 exists
             // to stop.
             //
-            // Safe to emit only because slice C0 landed first: all six exit-code consumers are
-            // three-state aware as of #792/#793 (agent_readiness x3, both benchmark harnesses,
-            // the byte-fidelity e2e, mcp_server), and crossover.rs was verified unreachable.
-            // Shipping this before them would have broken `tg calibrate` and `tg dogfood`.
+            // 🔴 MERGE PRECONDITION -- NOT satisfied history. PRs #792 and #793 make the six
+            // exit-code consumers three-state aware (agent_readiness x3, both benchmark
+            // harnesses, the byte-fidelity e2e, mcp_server; crossover.rs verified unreachable).
+            // AS OF THIS COMMIT BOTH ARE STILL OPEN, and `origin/main` still has
+            // `agent_readiness.py` rejecting any exit not in {0,1}. THIS BRANCH MUST NOT MERGE
+            // BEFORE THEM: doing so breaks `tg calibrate` (tg spawns itself and bails on
+            // non-zero) and `tg dogfood` (a shipped command), and reds windows-agent-readiness.
+            //
+            // An earlier revision of this comment stated C0 "landed first" as completed fact.
+            // It had not. A comment asserting a merge that never happened is worse than no
+            // comment -- it is what the next reader trusts instead of re-checking.
             if stats.walk_errors > 0 {
                 std::process::exit(2);
             }
