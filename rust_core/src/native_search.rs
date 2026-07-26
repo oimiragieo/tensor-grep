@@ -1260,6 +1260,11 @@ fn search_walk_roots_parallel(
                     // for the exact same tree depending on walk order). Logging and continuing
                     // matches `rg`'s own `ignore`-crate-backed walker -- the same crate this
                     // engine uses -- so this is real parity, not a new guess at rg's behavior.
+                    // Task #276 slice B: count it as well as printing it. The stderr line is
+                    // rg-parity (#263) and stays; the COUNT is what lets the --json envelope stop
+                    // claiming a complete result on an incomplete walk. Flows to the aggregate
+                    // via the existing local->shared merge, so no new lock on the hot path.
+                    worker.local_stats.walk_errors += 1;
                     eprintln!("tg: {err}");
                     return WalkState::Continue;
                 }
@@ -1302,6 +1307,10 @@ fn search_walk_roots_parallel(
                     }
                     return WalkState::Quit;
                 }
+                // Task #276 slice B: same reasoning as the entry-error arm above -- a file we
+                // could not read is a hole in the answer, and the envelope has to be able to say
+                // so. Counted here, emitted by slice B2.
+                worker.local_stats.walk_errors += 1;
                 eprintln!("tg: {err}");
                 return WalkState::Continue;
             }
