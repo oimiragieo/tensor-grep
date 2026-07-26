@@ -234,6 +234,28 @@ def test_machine_facing_output_is_stable_across_processes_and_hash_seeds(
     outcomes = [_run(argv, seed) for seed in _HASH_SEEDS]
     raw = [outcome.text for outcome in outcomes]
 
+    # OPTIONAL-DEPENDENCY SKIP, keyed to an OBSERVABLE predicate rather than a platform guess.
+    #
+    # `scan --ruleset secrets-basic` uses metavar patterns (`$SECRET`), which fail CLOSED to the
+    # ast-grep wrapper by design -- the native tree-sitter fallback deliberately refuses them
+    # (`backends/ast_backend.py:691`, and see its comment at :683 naming "CI without the ast-grep
+    # binary" as a known condition). Ubuntu CI has no ast-grep, so the surface cannot produce
+    # output there and the premise below fired on a real, expected environment fact.
+    #
+    # Skipped on the tool's OWN error string, not on `sys.platform` or a `which` probe: I already
+    # got this wrong once by checking `command -v ast-grep` (the CLI) when the wrapper is resolved
+    # differently, so a local control passed while CI failed. The command's own refusal is the
+    # only predicate that cannot drift away from the behaviour it guards.
+    #
+    # NOT a silent skip: it is loud, names the surface, and the suite still covers the other six
+    # surfaces on every platform -- so this cannot quietly hollow the gate out. On any machine
+    # WITH ast-grep (developer boxes, the windows leg) the surface runs normally.
+    if outcomes[0].returncode != 0 and "ast-grep wrapper" in outcomes[0].stderr:
+        pytest.skip(
+            f"{surface_id} needs the ast-grep wrapper, absent in this environment "
+            f"(exit {outcomes[0].returncode}): {outcomes[0].stderr.strip()[:200]}"
+        )
+
     # PREMISE: identical-but-empty is trivially true. If a surface legitimately goes quiet that is
     # a product change to acknowledge here, not something to wave through by lowering the floor.
     #
