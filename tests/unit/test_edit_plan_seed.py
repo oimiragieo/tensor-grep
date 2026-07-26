@@ -978,6 +978,91 @@ def test_validation_test_discovery_reports_an_unreadable_subtree(tmp_path: Path,
     assert flag.count >= 1
 
 
+def _deny_resolve_for(monkeypatch, denied: Path) -> None:
+    """Make `Path.resolve()` raise for one exact path; everything else untouched.
+
+    `abspath` not `resolve()` for the comparison -- resolve would re-enter this patch and recurse.
+    """
+    import os as _os
+
+    real_resolve = Path.resolve
+    target = _os.path.abspath(_os.fspath(denied))
+
+    def _fake_resolve(self, *args, **kwargs):
+        if _os.path.abspath(_os.fspath(self)) == target:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", _fake_resolve)
+
+
+def test_precomputed_validation_files_records_a_resolve_failure_that_costs_a_file(
+    tmp_path: Path, monkeypatch
+):
+    """Task #291. A resolve failure only costs a file when containment then drops it.
+
+    The validation-file list feeds the agent's "run these to validate your edit" plan. An entry
+    dropped here means the agent runs a SHORTER suite and believes it validated.
+    """
+    project = tmp_path / "proj"
+    project.mkdir()
+    outside = tmp_path / "outside" / "stray.py"
+    outside.parent.mkdir()
+    outside.write_text("x = 1\n", encoding="utf-8")
+
+    _deny_resolve_for(monkeypatch, outside)
+    flag = repo_map._UnreadablePathFlag()
+    selected = repo_map._precomputed_validation_files_for_root(
+        project, [outside], unreadable_hit=flag
+    )
+
+    assert selected == [], "precondition: the entry must actually have been dropped"
+    assert flag.hit is True, (
+        "a resolve failure caused an entry to fall out of the validation-file list with no signal"
+    )
+
+
+def test_precomputed_validation_files_clean_tree_is_the_control_arm(tmp_path: Path):
+    """CONTROL. Without it, the assertion above could pass by flagging EVERY call.
+
+    Note what this arm is NOT. A first draft asserted that a resolve failure on a path UNDER the
+    root was harmless -- that `absolute()` saved it. Running it falsified that immediately: the
+    entry was dropped anyway, because `_path_is_relative_to` re-resolves and now fails closed. So
+    a resolve failure in this loop ALWAYS costs the file, and the honest control is simply "no
+    resolve failure at all".
+    """
+    project = tmp_path / "proj"
+    project.mkdir()
+    inside = project / "kept.py"
+    inside.write_text("x = 1\n", encoding="utf-8")
+
+    flag = repo_map._UnreadablePathFlag()
+    selected = repo_map._precomputed_validation_files_for_root(
+        project, [inside], unreadable_hit=flag
+    )
+
+    assert selected and selected[0].name == "kept.py"
+    assert flag.hit is False, "a clean run reported data loss"
+    assert flag.count == 0
+
+
+def test_path_is_relative_to_answers_false_instead_of_crashing_on_oserror(
+    tmp_path: Path, monkeypatch
+):
+    """Task #291, the higher-severity find: this used to raise through all 9 call sites.
+
+    It caught `ValueError` only, so an `OSError` from either `resolve()` escaped and killed the
+    command with an unhandled traceback -- strictly worse than the silent-loss class, since the
+    caller gets no answer at all rather than a partial one.
+    """
+    target = tmp_path / "thing.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    _deny_resolve_for(monkeypatch, target)
+
+    # Must not raise. Fails CLOSED: an unverifiable path is treated as outside the root.
+    assert repo_map._path_is_relative_to(target, tmp_path) is False
+
+
 def test_validation_test_discovery_clean_tree_is_the_control_arm(tmp_path: Path):
     """CONTROL. Without this the assertion above could pass by flagging EVERY discovery run."""
     project = tmp_path / "proj"

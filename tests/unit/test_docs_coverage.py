@@ -489,3 +489,58 @@ def test_docs_stale_references_discloses_a_doc_it_could_not_read(tmp_path, monke
         "earn -- it must disclose the unreadable path instead"
     )
     assert payload["scan_limit"]["possibly_truncated"] is True
+
+
+def test_docs_coverage_exits_2_on_an_unreadable_path_but_0_on_a_budget_cap(tmp_path, monkeypatch):
+    """Task #294. The exit code must distinguish "I could not read part of this tree".
+
+    MEASURED on the published 1.98.17 against a real ACL-denied subtree: `tg docs-coverage --json`
+    exited 0 on the truncated tree AND 0 on a clean one -- the exit code carried no information,
+    while sibling `tg inventory` exited 2 for the same condition.
+
+    That exit-0 was not a bug against the contract; docs/CONTRACTS.md granted it. But it was
+    granted when `scan_limit.possibly_truncated` could ONLY mean the count cap, whose remedy is
+    "raise it". #276/#767/#768 widened the same field to also mean unreadable-path, which no
+    budget fixes, and the exit-code consumer was never revisited.
+
+    THE THIRD ARM IS THE POINT: the budget cap must STILL exit 0. Without it this test would pass
+    just as well for a change that made docs-coverage exit 2 on any truncation whatsoever, which
+    would break the documented contract for every existing caller of the budget path.
+    """
+    denied = _seed_repo(tmp_path)
+
+    # ARM 1 -- clean tree. CONTROL: if this ever stops differing from arm 2, the fixture has gone
+    # inert and neither assertion means anything.
+    clean = CliRunner().invoke(app, ["docs-coverage", str(tmp_path), "--json"])
+    assert clean.exit_code == 0, clean.output
+
+    # ARM 2 -- unreadable subtree.
+    _deny_scandir_for(monkeypatch, denied)
+    result = CliRunner().invoke(app, ["docs-coverage", str(tmp_path), "--json"])
+    assert result.exit_code == 2, (
+        "an unreadable path left the coverage report incomplete, but the exit code still said "
+        f"'complete'. output={result.output}"
+    )
+    assert '"truncation_cause": "unreadable-path"' in result.output, (
+        "precondition: the run must actually have hit the unreadable path, else arm 2 proves "
+        "nothing about the new exit code"
+    )
+
+
+def test_docs_coverage_budget_cap_truncation_still_exits_0(tmp_path):
+    """Task #294 guard-rail: the DOCUMENTED budget-cap contract is unchanged.
+
+    docs/CONTRACTS.md states the `--max-repo-files` count-cap truncation "still exits 0". #294 narrows
+    the new exit-2 to the non-budget-remediable cause only, so this must keep passing.
+    """
+    for i in range(6):
+        (tmp_path / f"f{i}.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("# docs\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app, ["docs-coverage", str(tmp_path), "--json", "--max-repo-files", "2"]
+    )
+    assert result.exit_code == 0, result.output
+    assert '"truncation_cause": "project-files"' in result.output, (
+        "precondition: the cap must actually have fired, otherwise this arm is vacuous"
+    )
