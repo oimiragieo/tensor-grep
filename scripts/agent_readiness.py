@@ -292,6 +292,19 @@ def _disclosed_incomplete(stdout: str, stderr: str) -> bool:
 
     Reads both streams because the marker's home differs by route: the `--json` envelope
     carries it in stdout, while the plain-text route names the unreadable path on stderr.
+
+    CALL-SITE ASSUMPTION -- read this before reusing the helper elsewhere. The substring test is
+    safe HERE because the sweep searches a corpus this script authors itself and passes by
+    explicit path (`_public_search_flag_sweep_cases` builds `probe_dir/app.log` and searches it
+    for "ERROR"), so no matched line can contain these tokens. It is safe on the `--json` route
+    for a second, independent reason: `json_fmt.py:126` and `:139` emit both keys ONLY when the
+    result is actually incomplete, so a complete envelope never carries the strings either.
+
+    Both of those are properties of the CALLER, not of this function. A sweep case that searched
+    the repository itself would break the first one immediately -- `json_fmt.py` contains the
+    literal "result_incomplete" -- and a failed run whose output happened to include such a line
+    would then read as disclosed. If you add a case that searches real source, switch this to a
+    structured check (parse stdout as JSON, test for the KEY) instead of widening the corpus.
     """
     haystack = f"{stdout} {stderr}"
     return any(marker in haystack for marker in _INCOMPLETENESS_MARKERS)
