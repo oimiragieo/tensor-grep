@@ -42,10 +42,11 @@ relax any gate in `tensor-grep-change-control`.
 
 ## Part 0 — THE ORACLE FAMILY: when your verification isn't (read this first)
 
-**The single most repeated failure mode in this repo.** Six distinct forms, most in ONE session
-(2026-07-25). Every form shares one shape: *something that looks like verification isn't.*
+**The single most repeated failure mode in this repo.** Seven distinct forms, most in ONE session
+(2026-07-25; form 7 added 2026-07-26). Every form shares one shape: *something that looks like
+verification isn't.*
 
-**The one question that catches all six — before trusting any green signal, ask:
+**The one question that catches all seven — before trusting any green signal, ask:
 "what would this check show if the thing it verifies were BROKEN?"
 If the answer is "the same", it is not verification.**
 
@@ -60,6 +61,24 @@ fine and the SETUP silently no-opped, so the hostile arm was never hostile.** As
 | **4. Gate-diagnosis-wrong** | A gate's *conclusion* is right, its *root cause* is false | Sends the fix at the wrong target | The gate that found form 3 claimed `TG_REQUIRE_RG_PARITY` was in "zero workflows" — it is at `ci.yml:653` |
 | **5. Repro topology deletes the mechanism** | Every fixture shares one structural property, and that property is the one that matters | Proves a **strict subset** of the real defect — defeats even an honest RED | PR #750: repro + all 4 tests used non-git `tempdir()`, the one topology where the fix's mechanism suffices; **inside a git repo the fix is a no-op** |
 | **6. The FIXTURE never applied** | The hostile condition silently failed to take effect, so the "bad" arm is really the good arm | Declares a real defect **ABSENT** — the most flattering direction | #281: `icacls` failed to apply a deny ACE twice (`"No mapping between account names and security IDs was done"`), which would have made an unreadable-directory probe run against a perfectly readable directory and conclude "no defect" |
+| **7. The MEASUREMENT cannot discriminate** | A scored column where every arm ties — usually at the floor | Reads as a **finding** when it measured nothing | #302: the trust benchmark's `vanished-file` column scores 0 for all six tools on both platforms. Six zeros read as "they're all bad at this"; in fact the fixture almost certainly deletes the file *before* the search starts, so the race it claims to measure never opens |
+
+**Form 7 applies to benchmarks and scorecards, not just tests.** Same question, unchanged: *what
+would this column show if a tool were GOOD at it?* A tied-at-floor column is worse than no column,
+because it looks like data. Every scored dimension needs at least one run where arms differ, or it
+gets deleted with the reason written down.
+
+### Running the probe: the LOCATION trap (2026-07-26)
+
+A perturbation proves nothing if the thing you perturbed survives elsewhere. Verifying the
+`truncation_cause` doc ratchet, the first probe removed ONE occurrence of `unreadable-path` from
+`docs/CONTRACTS.md` and the test still passed — which reads as "the ratchet is toothless". It was
+not: the string appears **twice**, and the check is a substring scan over the whole file. Removing
+EVERY occurrence failed the test correctly.
+
+**Before concluding a guard is broken, confirm your perturbation actually removed the property it
+guards** — `grep -c` the string first. This is the setup-not-assertion failure wearing a third face:
+what looked like "passes in both arms" was really a probe that never created a second arm.
 
 ### Writing a hostile fixture (Form 6 defence)
 

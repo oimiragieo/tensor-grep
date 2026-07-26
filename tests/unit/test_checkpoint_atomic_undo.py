@@ -289,6 +289,88 @@ def test_checkpoint_corrupt_error_missing_files_attribute_populated(tmp_path: Pa
 
 
 # ---------------------------------------------------------------------------
+# (#297) Undo must never destroy a file it cannot revert
+#
+# The commit phase is only crash-safe because every destructive step first records the bytes it
+# is about to destroy; the revert path restores from that record and nothing else. A file whose
+# read fails has no record, so unlinking it is irreversible -- the one outcome undo exists to
+# prevent. Before #297 the read failure set `removed_bytes = None` and the unlink proceeded.
+# ---------------------------------------------------------------------------
+
+
+def _read_bytes_raiser(canary_name: str, pristine):
+    """A `Path.read_bytes` that fails for ONE filename, delegating the rest to the real one.
+
+    Scoped deliberately: a blanket raiser would also break the snapshot machinery and the undo
+    would abort for an unrelated reason, so the test would pass without proving anything.
+    """
+
+    def fake(self, *args, **kwargs):
+        if self.name == canary_name:
+            raise PermissionError(13, "Permission denied", str(self))
+        return pristine(self, *args, **kwargs)
+
+    return fake
+
+
+def test_undo_refuses_to_delete_an_unreadable_extra_file(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    _make_project(root, {"src/alpha.py": "alpha-original\n"})
+    created = checkpoint_store.create_checkpoint(str(root))
+
+    # `extra.py` postdates the checkpoint, so undo's job is to delete it.
+    extra = root / "src" / "extra.py"
+    extra.write_text("extra-content\n", encoding="utf-8")
+
+    # CONTROL: unpatched, undo really does remove it and succeeds. Without this arm, an undo
+    # that failed for any unrelated reason would satisfy the treatment assertions below.
+    checkpoint_store.undo_checkpoint(created.checkpoint_id, str(root))
+    assert not extra.exists(), "premise: undo must genuinely delete this file when it can read it"
+
+    extra.write_text("extra-content\n", encoding="utf-8")
+    monkeypatch.setattr(Path, "read_bytes", _read_bytes_raiser("extra.py", Path.read_bytes))
+
+    with pytest.raises(checkpoint_store.CheckpointUndoUnsafeError) as caught:
+        checkpoint_store.undo_checkpoint(created.checkpoint_id, str(root))
+
+    assert caught.value.path.endswith("extra.py")
+    monkeypatch.undo()
+    assert extra.exists(), "the file undo could not revert must still be on disk"
+    assert extra.read_text(encoding="utf-8") == "extra-content\n", "and unmodified"
+
+
+def test_undo_rolls_back_an_already_applied_removal_when_a_later_file_is_unreadable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The abort message promises "changes already applied have been rolled back". Test it.
+
+    Removals iterate `reverse=True`, so `extra_z.py` is unlinked (and recorded) BEFORE
+    `extra_a.py` is reached and fails. That ordering is what makes this exercise the revert
+    path rather than just the abort.
+    """
+    root = tmp_path / "repo"
+    root.mkdir()
+    _make_project(root, {"src/alpha.py": "alpha-original\n"})
+    created = checkpoint_store.create_checkpoint(str(root))
+
+    (root / "src" / "extra_a.py").write_text("a-content\n", encoding="utf-8")
+    (root / "src" / "extra_z.py").write_text("z-content\n", encoding="utf-8")
+
+    monkeypatch.setattr(Path, "read_bytes", _read_bytes_raiser("extra_a.py", Path.read_bytes))
+    with pytest.raises(checkpoint_store.CheckpointUndoUnsafeError):
+        checkpoint_store.undo_checkpoint(created.checkpoint_id, str(root))
+    monkeypatch.undo()
+
+    z_path = root / "src" / "extra_z.py"
+    assert z_path.exists(), (
+        "extra_z.py was unlinked before the abort; the revert must have recreated it, or undo "
+        "destroyed a file while failing"
+    )
+    assert z_path.read_text(encoding="utf-8") == "z-content\n", "recreated with its real content"
+    assert (root / "src" / "extra_a.py").exists()
+
+
 # (#298) A corrupt checkpoint must not be reported as a missing one
 # ---------------------------------------------------------------------------
 

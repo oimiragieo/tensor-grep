@@ -1,6 +1,633 @@
 # CHANGELOG
 
 
+## v1.98.25 (2026-07-26)
+
+### Bug Fixes
+
+- **checkpoint**: Never destroy a file undo cannot revert (#297)
+  ([#780](https://github.com/oimiragieo/tensor-grep/pull/780),
+  [`29ca1fb`](https://github.com/oimiragieo/tensor-grep/commit/29ca1fb57515ddd0ee4c43b00d0af91967648a0a))
+
+* fix(checkpoint): never destroy a file undo cannot revert (#297)
+
+The undo commit phase is only crash-safe because every destructive step first records the bytes it
+  is about to destroy; the `except Exception` revert restores from that record and nothing else.
+
+At three sites a failed read set the record to None and the destruction went ahead anyway:
+
+- current-tree file not in the snapshot -> read fails -> unlink() still runs, and nothing is
+  appended to `committed_removes` - snapshot-recorded-deleted file -> same shape - restore target ->
+  read fails -> copy2 overwrites it, and nothing is appended to `committed_overwrites`
+
+In each case the file is gone and the revert provably cannot bring it back -- exactly the permanent
+  loss the round-7 rank-6 comment above this code says was fixed ("previously the revert had only
+  the path and permanently lost the content"). The H2 pre-flight probes SNAPSHOT files only, so
+  working-tree targets are unprobed and this is reachable.
+
+Now fails closed via `_bytes_or_abort_undo`: no capture, no destruction. The existing handler rolls
+  back what was already applied and re-raises, so the tree stays consistent and the user is told
+  which file to fix.
+
+Also corrects the CLI error code. The handler labelled EVERY undo failure `checkpoint_not_found`,
+  which for this case is a lie -- the checkpoint was found and is good; the working tree blocked it
+  -- and would send the reader hunting a missing checkpoint instead of the file named in `detail`.
+  New code: `undo_unsafe`. The same mislabel still covers CheckpointCorruptError; that is a
+  JSON-contract change and is filed separately rather than bundled into a data-loss fix.
+
+Verified bidirectionally: with `_bytes_or_abort_undo` returning b"" instead of raising, both new
+  tests fail with DID NOT RAISE. Arms: - control proves an unpatched undo really does delete the
+  file, so the treatment is not passing because undo failed for some unrelated reason - the
+  read_bytes fake is scoped to ONE filename; a blanket raiser would break the snapshot machinery and
+  abort for the wrong reason - the second test exercises the REVERT, not just the abort: removals
+  iterate reverse-sorted, so extra_z.py is unlinked and recorded before extra_a.py fails, and the
+  test asserts extra_z.py came back with its real content. The error message claims rollback
+  happened; this is what makes that claim testable.
+
+86 pass across the four checkpoint suites + the census. Ratchet 10 -> 7; the remaining 7 include one
+  documented FALSE POSITIVE (the pre-flight probe accumulates into `missing` and then raises --
+  disclosure, not loss).
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* test(census): stop counting two disclosure shapes as silent loss
+
+Auditing main.py turned up the THIRD false positive of the same kind, so per "model the class, don't
+  enumerate the cases" the answer is the detector, not another hand-written exemption. A census that
+  cries wolf gets its real findings waved through.
+
+Two shapes the handler-local check could not see:
+
+1. TERMINATES. `-f`/`--file` pattern-file reads already fail loud with exit 2 per the Backend
+  Fail-Closed Contract, but via `_exit_search_error(...)` rather than an inline `raise`. The AST
+  shows a call; the detector read it as silence. Nothing downstream can receive a truncated result
+  from a branch that exits.
+
+2. ACCUMULATE-THEN-RAISE. checkpoint_store's undo pre-flight appends each unreadable snapshot blob
+  to `missing`, then raises CheckpointCorruptError on it once the loop ends. That is disclosure
+  built out of an accumulator, and handler-local inspection cannot tell it from loss.
+
+Both arms are tested, and so is the near miss: a function that raises on a DIFFERENT collection
+  while `missing` is silently discarded must still count. Without that arm the raise-name check
+  could widen into "any raise anywhere excuses the function" and the detector would quietly stop
+  reporting.
+
+Ratchet: main.py 18 -> 17, checkpoint_store 7 -> 6. Both moves were PREDICTED from reading the two
+  sites and then confirmed by re-running the census -- the counts shifted by exactly those two and
+  nothing else, which is the evidence the change removed false positives rather than blinding the
+  detector.
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
+## v1.98.24 (2026-07-26)
+
+### Bug Fixes
+
+- **codemap**: Disclose the files it drops after the walk (#296)
+  ([#779](https://github.com/oimiragieo/tensor-grep/pull/779),
+  [`d6705e6`](https://github.com/oimiragieo/tensor-grep/commit/d6705e6be824409b97b35e6ae999470e5c03a5df))
+
+`coverage` reads `rm["unreadable_paths"]`, which carries only the WALK's failures. Three helpers
+  BELOW the walk drop entries on OSError and were invisible to it, so a map could lose real
+  committed files while reporting itself complete:
+
+- `_tracked_file_set` / `_is_tracked` -- an OSError was treated as proof the file is UNTRACKED, so a
+  genuinely committed file was deleted from files/tests/symbols/imports. A wrong answer, not a
+  smaller one. - `_all_folder_paths` -- folder dropped from the zero-mapped-file census. -
+  `_tree_manifest_sha256` -- a file unreadable at BOTH stamp and --check time is consistently absent
+  from the digest, so the hashes match and the map reports FRESH while carrying a stale entry.
+
+One accumulator collects all three. It is folded in at the tail seam, NOT at the scan-level
+  disclosure: two of the three sites run after that block, so reading the flag there would measure
+  it before it could be set.
+
+Precedence is the inverse of `tail_deadline_hit`'s -- this one MUST override a budget reason,
+  because no --max-repo-files / --deadline increase makes an unreadable path readable (the
+  wrong-knob class of #283 / #757).
+
+The `_is_tracked` drop is deliberately left in place; flipping it to keep the file would let
+  untracked scratch leak into the persisted inventory, which is what the filter exists to prevent.
+  The fix is to stop the drop being SILENT.
+
+No new contract vocabulary: reuses the documented `unreadable_path`.
+
+Verified bidirectionally -- with the recording restored to `pass` and the re-fold disabled, all
+  three new tests fail on their own assertion. Each has a control arm (clean flag stays clear; the
+  unpatched fixture builds a COMPLETE map) so "partial is True" cannot pass on a map that was never
+  whole.
+
+Census ratchet: codemap.py 3 -> 0. scan_guardrails' 5 audited and pinned with a reason -- they gate
+  the broad-scan REFUSAL, not an answer.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
+## v1.98.23 (2026-07-26)
+
+### Bug Fixes
+
+- **session-store**: Tell a dropped mount from a mass delete (#287)
+  ([#778](https://github.com/oimiragieo/tensor-grep/pull/778),
+  [`9dca940`](https://github.com/oimiragieo/tensor-grep/commit/9dca94048dc15c64e10ba028d9a76836179bfd51))
+
+* fix(session-store): tell a dropped mount from a mass delete (#287)
+
+A disconnected UNC share raised FileNotFoundError for EVERY tracked file, so the whole tree read as
+  deleted -- the #286 false-deletion class arriving through the one arm that is supposed to mean
+  "really gone".
+
+MEASURED first (the old comment cited winerror 53, a value that never occurs here): missing local
+  file -> winerror 2 ERROR_FILE_NOT_FOUND unreachable UNC host -> winerror 3 ERROR_PATH_NOT_FOUND
+  missing file on a REACHABLE share -> winerror 3 So winerror 2 is a clean deletion signal, and
+  winerror 3 is ambiguous PER FILE: it is shared by "the share is gone" and "a parent dir was
+  removed from a live share".
+
+THE DISCRIMINATOR IS AT THE TREE LEVEL, because that is the only place the two differ: a mass delete
+  leaves the session root reachable, a dropped mount does not. winerror-3 entries are held back,
+  then ONE root probe after the loop decides the whole batch -- root alive => real removals
+  (unchanged behaviour); root gone => indeterminate, never removed. Fails SAFE: a missed deletion
+  self-corrects on the next scan, a false deletion does not.
+
+Gated on `getattr(exc, "winerror", None)`, which is None on POSIX -- every non-Windows platform
+  keeps today's behaviour byte-for-byte. Deliberately NOT branched on sys.platform.
+
+THREE ARMS, and the two controls are the point: TREATMENT files winerror-3 + root unreachable ->
+  removed == [] (mount drop) CONTROL 1 files winerror-3 + root STATS FINE -> still removed (a real
+  deleted parent). Without this the fix would silently reclassify genuine deletions as indeterminate
+  -- the same dishonesty pointed the other way. CONTROL 2 winerror-2 costs no EXTRA root probe,
+  measured as a differential.
+
+TWO FIXTURE BUGS I HAD TO FIX, both recorded at the code site: - an absolute probe counter measured
+  `_resolve_root`'s pre-existing root stat, not the one this fix adds. Right variable, wrong
+  baseline -> made it a differential. - patching os.stat twice in one test made the second fake
+  capture the FIRST fake as its "real" stat, so both counters were contaminated (costly=3 < cheap=5,
+  inverted). `real_stat` is now captured once before any patch.
+
+29 tests in test_incremental_refresh.py pass; ruff clean.
+
+* test(session-store): skip the #287 treatment arm off Windows -- it failed ubuntu+macos
+
+PR #778 has been RED on 5 checks (ubuntu/macos x py3.11/3.12 + gpu) since it was opened, and I
+  reported the queue as green. Caught by the hourly self-audit, not by me watching.
+
+Root cause is the documented cross-platform trap, and it is my test not the fix: #287's
+  discriminator is `getattr(exc, "winerror", None) == 3` (ERROR_PATH_NOT_ FOUND), which exists only
+  on Windows. On POSIX a dropped mount surfaces as ESTALE/ENOENT, the fix deliberately does NOT
+  engage, files are correctly reported as removed -- and my treatment arm asserted `removed == []`
+  on every platform. It was asserting Windows behaviour everywhere.
+
+The CONTROL arms stay UNSKIPPED on purpose: "an ordinary deletion is still reported as removed" must
+  hold on every platform, and that is exactly the arm that would catch this fix over-reaching.
+  Skipping the whole cluster would have removed the guard along with the false failure.
+
+Windows: 29 pass, ruff clean. The POSIX arms are what CI verifies.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* test(session-store): make the #287 probe differential platform-conditional
+
+The winerror-2-vs-3 cost differential is Windows-only by construction: `winerror` is a Windows-only
+  OSError attribute, so on POSIX neither arm can reach the discriminator and both cost the same (CI
+  measured cheap=2 costly=2 on ubuntu and macos). The test asserted the Windows differential
+  everywhere and failed on four jobs.
+
+Asserting equality on POSIX rather than skipping the test keeps a real invariant there -- POSIX must
+  not start paying a root probe the platform can never act on -- instead of dropping the coverage.
+
+Also corrects two assertion messages that claimed more than they proved. `assert probes` passes on
+  the pre-loop `_resolve_root` stat alone, so it is a fixture-applied premise, not evidence the
+  discriminator ran; the differential is what shows that. Relabelled, not deleted -- a fixture that
+  silently fails to apply is its own defect class.
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
+## v1.98.22 (2026-07-26)
+
+### Bug Fixes
+
+- **repo-map**: Stop _path_is_relative_to crashing on OSError; disclose dropped validation files
+  (#291) ([#775](https://github.com/oimiragieo/tensor-grep/pull/775),
+  [`5dc0517`](https://github.com/oimiragieo/tensor-grep/commit/5dc05173658641b0808500501648ea430beb29f3))
+
+Two findings, the second more severe than the task that led to it.
+
+1. HIGHER SEVERITY -- _path_is_relative_to caught ValueError only. Both of its resolve() calls can
+  also raise OSError (permission denied, vanished component, disconnected share), which then escaped
+  through all 9 call sites and killed the command with an unhandled traceback. That is worse than
+  the silent-loss class this module has been hardening: the caller gets NO answer, not a partial
+  one. Now fails CLOSED (False = outside the root), matching the existing ValueError arm -- an
+  unverifiable path is excluded from a scope-limited set, never silently admitted.
+
+Found only because the #291 fix made it reachable in an ordinary way: that fix hands this function a
+  path whose resolve() already failed, so the retry inside was guaranteed to raise on exactly the
+  input the fix exists to handle.
+
+2. _precomputed_validation_files_for_root now records a dropped entry into an optional
+  _UnreadablePathFlag. This helper feeds the agent's "run these to validate your edit" plan across
+  FOUR call sites (:4262, :10565, :11161, :11398) -- an entry lost here means the agent runs a
+  SHORTER suite and believes it validated.
+
+CORRECTION I HAD TO MAKE MID-FIX: an earlier draft asserted the absolute() fallback was usually
+  harmless and only a boundary-crossing symlink lost anything, and the code comment said so. The
+  control-arm test falsified it in one run: _path_is_relative_to re-resolves and now fails closed,
+  so a resolve failure here ALWAYS costs the file. Both the comment and the test were rewritten; the
+  wrong reasoning is recorded at the code site so it is not restored.
+
+CENSUS NOTE (honest, since the number did NOT move): repo_map.py stays at 8. Two detector
+  limitations, neither a correctness problem for the ratchet: - it counts a handler once per
+  ENCLOSING accumulating loop, so 6 distinct handlers score 8; - it cannot see disclosure performed
+  OUTSIDE the handler, which is exactly where this fix records (at the containment drop,
+  deliberately -- recording in the except arm would flag failures before knowing whether they cost
+  anything). Both are precision issues; the ratchet still does its one job (the count cannot grow).
+
+45 tests in test_edit_plan_seed.py pass; census ratchet green; ruff clean.
+
+
+## v1.98.21 (2026-07-26)
+
+### Bug Fixes
+
+- **rust**: Cycle guard for `pub use` re-export chains in _rust_resolve_use_binding
+  ([#786](https://github.com/oimiragieo/tensor-grep/pull/786),
+  [`e5a4f69`](https://github.com/oimiragieo/tensor-grep/commit/e5a4f69da04f6c0a4827589e7636eb8c15541472))
+
+`_rust_resolve_use_binding` follows `use` re-export chains by recursing on the nested binding, with
+  no visited-set and no depth cap. Rust re-exports are a GRAPH, not a tree: two modules that
+  re-export the same name through each other close a loop and the recursion runs until the
+  interpreter's stack dies.
+
+Receipt: `tg refs . <symbol> --json` on a 594-file Rust workspace exited 1 with
+
+`RecursionError: maximum recursion depth exceeded` and produced no stdout at all — so this took out
+  EVERY refs query on that repo, not just the cyclic symbol. Measured before/after on the same repo,
+  same command:
+
+unpatched: exit 1, 0 bytes stdout, RecursionError
+
+patched: exit 0, 7209 bytes of valid JSON
+
+The guard keys on (resolved importer path, imported name). The same file reached again for the SAME
+  name is a cycle; the same file for a DIFFERENT name is legitimate work and must not be pruned.
+
+Behaviour-preserving where no cycle exists — byte-identical output on three scopes that already
+  worked (hydron-paths::display_path, hydron-tools-agentic::uri_to_path, hydron-cli::main), compared
+  with the session daemon off so both arms took the same code path.
+
+Two tests, both bidirectionally verified against the same file with the guard stashed:
+
+* test_cyclic_rust_pub_use_reexport_terminates — fails with RecursionError when the guard is
+  removed. Reproducing it needs the searched symbol to DIFFER from the re-exported name; a matching
+  name hits the early return above the recursive call, which is why the first fixture I wrote passed
+  in both arms and proved nothing. * test_cycle_guard_does_not_prune_a_legitimate_reexport_chain —
+  the control. A guard that returned early for everything would also "terminate", so this pins the
+  other direction.
+
+tests/unit: 348 passed. The one pre-existing error (test_ast_backend.py, `fixture 'mocker' not
+  found` — no pytest-mock in the venv) reproduces identically on pristine origin/main.
+
+### Documentation
+
+- **census**: Record the audit verdicts for repo_map and session_store (#292)
+  ([#782](https://github.com/oimiragieo/tensor-grep/pull/782),
+  [`6086359`](https://github.com/oimiragieo/tensor-grep/commit/6086359d89c74cc3ac2abad5da6886f48f2c8679))
+
+* docs(census): record the audit verdicts for repo_map and session_store (#292)
+
+Counts unchanged -- this writes down WHY 10 of the flagged sites are accepted, so the next reader
+  does not re-derive it. CONTRACTS.md section 0 asks for exactly this: a site is a CANDIDATE, and
+  "audited, not a defect" is valid provided the reason is recorded.
+
+repo_map (8): the LSP legs skip a symbol whose request failed, which lowers `lsp_count`, and
+  `_provider_agreement` turns `native_count > lsp_count` into `diverged` instead of a clean
+  `lsp-only` proof -- the loss reaches the caller through that stamp. `:15713` is a different shape
+  entirely: a failed `read_text` degrades the snippet but still appends the reference, so nothing is
+  lost.
+
+session_store (2): two DIFFERENT non-defects. `:406` is a fallback assignment, not a skip -- the
+  candidate stays in the loop. `:589` is the #286 fix itself, routing to a dedicated `indeterminate`
+  bucket, which IS the disclosure.
+
+That second one is a shape the detector structurally cannot see: disclosure by routing to a separate
+  OUTPUT BUCKET, resolved outside the handler. I did NOT widen the rule for it -- "appends to a
+  collection that is also returned" would match nearly every real accumulator and blind the
+  detector, which is the opposite of what the census is for. The two shapes fixed earlier
+  (terminating helper, accumulate-then-raise) were safe to encode because each has a crisp AST
+  signature; this one does not.
+
+The repo_map verdict is labelled as a CODE-READING conclusion, not a measured one -- observing the
+  stamp actually flip needs a live LSP server or heavy mocking. Better to state the confidence than
+  imply a test that was never run.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* docs(census): record where "model the class" stops -- a near miss (#292)
+
+Auditing main.py's doctor PATH scans found a fourth "benign fallback" handler (`resolved =
+  candidate`, loop continues, nothing skipped). Four instances of one shape is normally the signal
+  to encode it and drop ~20 sites of noise in one edit.
+
+Measured the shape's distribution across the census BEFORE encoding it, and the result inverted the
+  intuition: `checkpoint_store`'s undo commit phase matches the same shape -- `removed_bytes = None`
+  followed by an `unlink()` that destroys a file the revert can no longer restore. That is #297, the
+  most severe defect this campaign found. A "handler only assigns a fallback" rule would have
+  excused it permanently, in the file where it mattered most.
+
+So the rule stays unencoded, and the reasoning goes in the docstring where the next person tempted
+  by the same shortcut will read it.
+
+The generalisable line, now written down: encode a shape only when it is STRUCTURALLY incapable of
+  hiding a loss -- a handler that exits the process, or one whose accumulator feeds a later raise.
+  "The handler looks harmless" is not that. Whether a fallback is safe depends on what the loop does
+  with the fallback value afterwards, which is a semantic question this detector deliberately does
+  not answer.
+
+Counts unchanged; docstring only. 3 pass, ruff clean.
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+- **contracts**: Pin scan_limit.truncation_cause as a documented closed vocabulary (#293)
+  ([#776](https://github.com/oimiragieo/tensor-grep/pull/776),
+  [`ad2c816`](https://github.com/oimiragieo/tensor-grep/commit/ad2c8167bdd77717f9d60a34a08c29e07192dd2a))
+
+#293 AS FILED WAS WRONG, and reading all the call sites is what caught it. The task said CLI and MCP
+  name one condition two ways and recommended renaming to converge. They are TWO DIFFERENT FIELDS:
+  truncation_cause (inventory, docs-coverage) -> project-files | deadline | unreadable-path
+  incomplete_reason_class (search, codemap, backends) -> scan_limit | deadline | timeout |
+  unreadable_path Each is internally consistent -- truncation_cause's siblings are hyphenated, the
+  other's are not. MEASURED: docs/CONTRACTS.md mentions `unreadable_path` 5x and `unreadable-path`
+  0x. Renaming either would break a documented contract for zero correctness gain. The
+  recommendation came from seeing 2 call sites; there are 10.
+
+THE REAL GAP: truncation_cause was never written down at all. An agent branches on that string to
+  decide whether retrying with a bigger budget is worthwhile, and the fail-closed rule says an
+  uninterpretable cause must never default to "raise the limit" -- so an undocumented value silently
+  degrades every consumer.
+
+THE TEST FOUND IT, not me: `test_every_known_cause_appears_in_the_contract` FAILED on first run
+  naming exactly `project-files` and `unreadable-path` as emitted-but-absent from CONTRACTS.md.
+  Writing the check is what proved the gap was real.
+
+SHIPPED: - CONTRACTS.md now documents all three values, which are budget-remediable and which is
+  NOT, and states explicitly that the two vocabularies are deliberate and must not be unified -- so
+  the rename this task originally proposed is not re-proposed. - A ratchet that fails if a new cause
+  value is emitted OR if any documented value stops appearing in the contract. Both directions,
+  because a contract that drifts from the code is as bad as code that drifts from the contract. -
+  ORACLE arm proving the AST extractor works (an empty extraction would make the main arm pass while
+  inspecting nothing) plus a negative case: `other.truncation_cause` on an unrelated object must NOT
+  match.
+
+4 ratchet tests pass; inventory + docs-coverage suites 67 passed; ruff clean.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+- **contracts**: State the completeness contract the rest of the doc implements (#292)
+  ([#781](https://github.com/oimiragieo/tensor-grep/pull/781),
+  [`cbbd4b5`](https://github.com/oimiragieo/tensor-grep/commit/cbbd4b5a5dc0f0f051fec5fc4f29bed9730aa599))
+
+The operational definition of "trustworthy" that has driven the last several PRs (#276, #283, #284,
+  #286, #288, #291, #294, #296, #297) lived only in a task and in reviewers' heads. A definition
+  nobody can read governs nothing, and it cannot be checked by anyone who was not in the room.
+
+Section 0 states it:
+
+Every tg answer is either complete, or it names exactly how it is incomplete and whether the caller
+  can do anything about it.
+
+plus the three obligations it decomposes into -- P1 no silent loss (fail closed where a drop would
+  corrupt rather than shrink the answer), P2 actionable disclosure (budget-remediable vs not; the
+  wrong-knob defect class and why unreadable_path outranks every budget cause), P3 surface agreement
+  (a renderer must never change the answer).
+
+It also names how the contract is ENFORCED rather than merely asserted -- the two ratchets and the
+  three-state exit contract -- and, importantly, how to read the census honestly: a site in it is a
+  CANDIDATE, not a defect, and "audited, not a defect" is a valid outcome as long as the reason is
+  recorded.
+
+Cites only ratchets that exist on main today. The truncation_cause vocabulary ratchet is
+  deliberately NOT cited: it lands with #776, and a contract that points at an unmerged test is a
+  dangling reference if that PR never lands.
+
+Docs-only. Verified `ruff format --preview --check` clean. The one failure in `-k contract` is #295
+  (pre-existing test isolation, fixed in #774): it passes in isolation, and a markdown file cannot
+  affect CLI help text.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+- **session-store**: Correct a winerror this comment cited that never occurs (#287)
+  ([#777](https://github.com/oimiragieo/tensor-grep/pull/777),
+  [`bcc3565`](https://github.com/oimiragieo/tensor-grep/commit/bcc3565bf4cde38e2001686f023bc244dfa07e45))
+
+Comment-only. The FileNotFoundError arm claimed a disconnected UNC share raises "winerror 53"
+  (ERROR_BAD_NETPATH). MEASURED on Windows with plain os.stat:
+
+missing local file -> FileNotFoundError winerror 2 (ERROR_FILE_NOT_FOUND) unreachable UNC host ->
+  FileNotFoundError winerror 3 (ERROR_PATH_NOT_FOUND) missing file on a REACHABLE share ->
+  FileNotFoundError winerror 3 unreachable UNC, deeper path -> FileNotFoundError winerror 3
+
+53 never appears. Anyone acting on the old comment would search for a value the platform does not
+  produce here and conclude the analysis was unreproducible.
+
+The comment's CONCLUSION survives -- still not decidable per file -- but for a DIFFERENT reason than
+  stated: it is not that the network error is indistinguishable from a deletion, it is that winerror
+  3 is SHARED by "the share is gone" and "a parent directory was removed from a live share".
+  winerror 2, by contrast, IS a clean genuine-deletion signal, which the old text gave no way to
+  know.
+
+Also records the discriminator that falls out of the measurement, so the next reader inherits the
+  design rather than the dead end: a mass delete leaves the session root reachable and a dropped
+  mount does not, so a winerror-3 removal triggers ONE root probe after the loop. Full design + the
+  two required control arms are on task #287.
+
+Shipping this separately from the #287 fix because a wrong constant in shipped code misleads on its
+  own schedule; the fix will edit this same block and can absorb it.
+
+26 tests in test_incremental_refresh.py pass; ruff clean. No behaviour change.
+
+### Testing
+
+- **cli**: Assert root-help contracts against their source, not the rendering (#295)
+  ([#774](https://github.com/oimiragieo/tensor-grep/pull/774),
+  [`3350838`](https://github.com/oimiragieo/tensor-grep/commit/33508382ba7d299b48e5710c4240beb80270adbb))
+
+* test(cli): make the root-help assertion width-invariant (#295)
+
+Rich wraps the root help at the detected terminal width, so a multi-word expected phrase can be
+  split across a line break and vanish from a raw substring check.
+
+MEASURED, not assumed: COLUMNS=200 -> "sidecar-routed GPU results" PRESENT COLUMNS=100 -> ABSENT
+  (the wrap point lands mid-phrase) COLUMNS=80 -> PRESENT Six of the eighteen expected strings are
+  multi-word and all carried this fragility.
+
+Collapsing whitespace runs before matching is NOT relaxing the assertion -- every phrase must still
+  appear. It removes only sensitivity to WHERE the renderer broke lines, which was never part of the
+  contract. Same lesson as the clap help-parse test that failed on a byte-identical binary: assert
+  the invariant, not the rendering.
+
+VERIFIED bidirectionally: passes at COLUMNS 60/80/90/100/120/200 with the fix; FAILS at COLUMNS=100
+  with it reverted. Full file: 145 passed, 1 skipped.
+
+SCOPE, stated plainly: this fixes the WIDTH fragility, which is a real defect on its own (any
+  developer in a 100-column terminal hits it). It does NOT fully fix the cross-file `-k` symptom in
+  #295, which still reproduces. Bisect evidence recorded there: the first 14 files (73 tests) pass
+  with this test appended, the last 15 files (195 tests) also pass, yet all 29 together fail -- so
+  it is NOT a single-file polluter and the remaining cause is cumulative. #295 stays open with that
+  measurement.
+
+* test(cli): assert root-help contracts against their source, not the rendering (#295)
+
+CLOSES the -k symptom. Original repro now passes: 267 passed, 0 failed.
+
+ROOT CAUSE, measured end to end -- and the product behavior is DELIBERATE, so this was always the
+  TEST's bug: main.py:21-23 sets TYPER_USE_RICH=0 at IMPORT time when the platform is Windows and
+  stdout is not a TTY (Rich's legacy Windows renderer can raise EINVAL on long help piped through
+  PowerShell). typer/core.py:29 reads that env var ONCE, at ITS import, and caches HAS_RICH. Under
+  pytest stdout is captured, so whether Rich is on reduces to whether `tensor_grep.cli.main` was
+  imported before `typer.core` -- pure module IMPORT ORDER. Any test module importing `main` at
+  module scope flips it, which is why exactly 3 of 276 files "polluted" the run. They were doing
+  nothing wrong.
+
+The two renderings differ in CONTENT, not just wrapping: 18161 chars / 228 padded Rich rows vs 10128
+  / 152 plain Click lines, and "sidecar-routed GPU results" is absent from the plain form EVEN AFTER
+  whitespace normalization. So the earlier normalization fix in this same PR could not have closed
+  it -- keep it anyway, it fixes a real and separate width defect (COLUMNS=100 splits phrases even
+  in Rich mode).
+
+THE FIX, split so each half asserts something true: - CONTRACT arm: the 18 phrases are checked
+  against `app.info.help`, their source of truth, which is renderer-independent. Guarded by a
+  non-empty assertion so it cannot pass vacuously. - RENDERING arm: single tokens only (Usage:,
+  tensor-grep, search, agent, doctor) against the rendered output, proving a user gets a working
+  help screen under EITHER renderer. Multi-word phrases are exactly what differs, so they do not
+  belong here.
+
+VERIFIED: - the ORIGINAL repro `-k "contract or governance or docs_sync"`: 267 passed (was 1 failed)
+  - paired with each of the 3 former polluters individually: all pass - isolated: passes; full
+  test_cli_bootstrap.py: 145 passed, 1 skipped - oracle: app.info.help is 6272 chars, contains the
+  real phrase, does NOT contain a bogus control phrase -- so the assertion can still fail. - ruff
+  clean.
+
+TWO OF MY OWN PROBES WERE WRONG during this investigation and are recorded in task #295 so they are
+  not trusted: one read sys.modules for 'rich' WITHOUT invoking --help (Rich loads lazily DURING
+  render, so both arms read False and it could not discriminate); another used `getattr(x, 'rich',
+  'MISSING') is not None`, whose sentinel is a non-None string, so it reported True even when the
+  attribute was ABSENT.
+
+- **ledger**: Prove per-root claim locks by blocking, not by wall-clock overlap
+  ([#787](https://github.com/oimiragieo/tensor-grep/pull/787),
+  [`1554f3d`](https://github.com/oimiragieo/tensor-grep/commit/1554f3dbc8b5be17276cf1a1469e2be625a7e19c))
+
+main went red on windows-latest py3.12 (CI run 30194572764):
+
+per-root ledger locks serialized (write-hold intervals did not overlap): project_a=[1396.734,
+  1397.125] project_b=[1397.281, 1397.687]
+
+Nothing was serialized. Thread B was simply not scheduled into the instrumented write section until
+  0.156s after thread A left it, so the two 0.4s hold windows never coincided even though the locks
+  never contended.
+
+This is not a new flake -- it is the SAME one the session-store twin already retired.
+  `test_index_lock_concurrency.py::test_index_lock_is_per_root_not_global` went ratio -> overlap ->
+  Event-gated, because the overlap form red-ed there too (v1.92.2, run 29873888662). The class fix
+  landed in one file and not in its twin; this brings the ledger side across.
+
+Overlap is a wall-clock claim, and two independent locks are only guaranteed not to BLOCK each other
+  -- never to be simultaneously HELD under an adversarial scheduler. So a longer sleep or a looser
+  window cannot fix it; the test now asserts the blocking contract directly, Event-gated:
+
+1. hold root_a's claims lock on a background thread 2. INDEPENDENCE: root_b's lock must be
+  acquirable meanwhile 3. CONVERSE CONTROL: re-acquiring root_a's own lock must time out, so arm 2
+  cannot pass vacuously against a no-op lock
+
+Verified both directions. Green locally (4 passed, 1.70s -- down from ~0.8s of pure sleeping). And
+  with both roots collapsed onto ONE lock file to simulate the global-lock defect, arm 2 raises
+  IndexLockTimeoutError -- so the test fails when the property it guards is broken.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
+## v1.98.20 (2026-07-26)
+
+### Bug Fixes
+
+- **docs-coverage**: Exit 2 when a path could not be read (#294)
+  ([#773](https://github.com/oimiragieo/tensor-grep/pull/773),
+  [`b006c58`](https://github.com/oimiragieo/tensor-grep/commit/b006c580f5f81fe9928306c4055a838940c87e47))
+
+Found by MEASURING, not reading. Against a real ACL-denied subtree, on the PUBLISHED 1.98.17 wheel
+  via uvx:
+
+tg inventory . --json -> exit 2, truncation_cause "unreadable-path" tg docs-coverage . --json ->
+  exit 0, truncation_cause "unreadable-path" tg docs-coverage ./clean -> exit 0 <- CONTROL,
+  identical to the incomplete arm
+
+docs-coverage's exit code carried NO completeness information -- 0 in both arms -- while its sibling
+  returned 2 for the same condition.
+
+This was NOT a contract violation. docs/CONTRACTS.md granted the exit 0 explicitly. But it granted
+  it when `scan_limit.possibly_truncated` could ONLY mean the --max-repo-files count cap, whose
+  remedy is "raise the cap": exiting 0 was defensible precisely BECAUSE the caller could always fix
+  it. #276/#767/#768 widened the same field to also mean "hit a path it could not read", which no
+  budget value fixes, and the exit-code consumer was never revisited. The repo's own rule --
+  widening what a field MEANS means grepping its CONSUMERS, and a statement of the old assumption is
+  the tell -- applies; here the tell was in the CONTRACT DOC, which is why a code-only sweep missed
+  it.
+
+Deliberately NARROW: only the non-budget-remediable cause flips the exit code. A pure count-cap
+  truncation still exits 0, so the documented budget contract is unchanged and no existing caller of
+  that path breaks. Follows `tg codemap`, which already made `unreadable_path` a new exit-2 trigger,
+  rather than inventing a rule.
+
+CONTRACTS.md updated in the same commit -- the doc stated the old assumption, so leaving it would
+  have left the next reader with the reasoning that produced the gap.
+
+VERIFICATION (bidirectional): - the exit-2 test FAILS with the fix reverted and PASSES with it. - a
+  THIRD arm pins the budget cap at exit 0, so this cannot silently become "exit 2 on any
+  truncation", which would break every existing budget-path caller. - both arms carry precondition
+  assertions on the payload, because Click's own unknown-option error ALSO exits 2 -- a code-only
+  assertion could pass for the wrong reason (it did, on a first draft that used the wrong flag
+  name).
+
+32 tests in test_docs_coverage.py pass; test_cli_bootstrap.py 145 passed. A failure seen under an
+  ad-hoc `-k "contract or governance"` selection was verified PRE-EXISTING (reproduces on pristine
+  main, passes in isolation and in file order) and is filed as its own task with the exact repro.
+
+### Testing
+
+- **cli**: Earn the exit-0 in the gpu-device-id warning test (#289)
+  ([#772](https://github.com/oimiragieo/tensor-grep/pull/772),
+  [`ae007b8`](https://github.com/oimiragieo/tensor-grep/commit/ae007b842041a831d50d52e051a4b67463f54601))
+
+The test asserted `exit_code == 0` while its own fixture supplied `results_by_file={}` -- zero
+  matches. Exit 1 is the CORRECT three-state code for "not found" (docs/CONTRACTS.md: 0 complete / 1
+  not-found / 2 incomplete), so the assertion was wrong and tg was right; the test failed locally on
+  a contract tg was honouring.
+
+Measured, not guessed: an instrumented invoke showed the warning contract already PASSES -- both "5"
+  and "0, 1" are in the output -- and the exit code is the only thing that differs. So the defect is
+  the fixture, not the product.
+
+Flipping the assertion to 1 would have been the wrong fix. The warning this test exists to cover
+  promises "the search will still run", so the test must supply a match and EARN the 0. Fixture now
+  mirrors the sibling test_cli_should_parse_gpu_device_ids_into_search_config.
+
+Also adds the premise assertion (a match exists, so 0 means "searched and found", not "vacuously
+  fine") and `result.output` on the assert so a future failure shows why.
+
+I twice reported this as "pre-existing, green in CI" without verifying the CI half. I cannot confirm
+  it: the plausible explanation is pytest's `-x` aborting the file at an earlier failure so this
+  test never executed -- the SKIPPED-is-not-PASSED oracle form, which bit twice already today.
+  Either way the fix stands in both environments.
+
+527 tests in the file pass; ruff clean.
+
+
 ## v1.98.19 (2026-07-26)
 
 ### Bug Fixes

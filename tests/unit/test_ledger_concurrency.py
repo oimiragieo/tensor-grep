@@ -16,6 +16,8 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
+
 from tensor_grep.cli import _index_lock, ledger_store
 
 
@@ -104,50 +106,75 @@ def test_concurrent_claim_and_release_no_lost_state(tmp_path: Path, monkeypatch)
     assert victim_id not in live_ids  # and the removal was not clobbered by the claim
 
 
-def test_claim_index_lock_is_per_root_not_global(tmp_path: Path, monkeypatch) -> None:
-    """Two DIFFERENT roots must not serialize against each other's claims lock -- mirrors
-    session_store's own per-root isolation guard, causally proven via overlapping
-    write-hold intervals rather than a flaky wall-clock ratio."""
+def test_claim_index_lock_is_per_root_not_global(tmp_path: Path) -> None:
+    """Per-root isolation for the CLAIMS lock, proven as a scheduler-independent contract.
+
+    This is the ledger twin of ``test_index_lock_concurrency.py``'s
+    ``test_index_lock_is_per_root_not_global``, and it inherits that test's history rather
+    than repeating it. The session-store side went ratio -> overlap -> Event-gated; the
+    overlap form was retired there because it red-ed on a loaded runner. This file kept the
+    retired form and duly red-ed the same way on main (windows-latest py3.12, CI run
+    30194572764)::
+
+        project_a=[1396.734, 1397.125] project_b=[1397.281, 1397.687]
+
+    Thread B simply had not been scheduled into the instrumented write section until 0.156s
+    after thread A left it. Nothing was serialized -- the two locks never contended at all.
+    Overlap is a wall-clock claim, and two independent locks are only guaranteed not to
+    BLOCK each other; they are never guaranteed to be *simultaneously held* under an
+    adversarial scheduler. That is why the fix is not a bigger sleep or a looser window:
+    racing the scheduler to observe "simultaneous" cannot be made both sharp and non-flaky.
+
+    So test the BLOCKING behaviour directly, Event-gated (never sleep-gated, so there is no
+    timing window to race):
+      1. Hold root_a's claims lock on a background thread until told to let go.
+      2. INDEPENDENCE: acquiring root_b's claims lock meanwhile must succeed promptly. A
+         shared/global lockfile would block root_b until root_a releases -- which never
+         happens inside this check -- so the bug surfaces as a fast, deterministic
+         ``IndexLockTimeoutError`` instead of a scheduler-dependent timing artifact.
+      3. CONVERSE CONTROL: re-acquiring root_a's OWN lock while it is genuinely held must
+         itself time out. Without this arm, check 2 would pass vacuously if the lock were a
+         no-op, and the test could not tell a working per-root lock from no lock at all.
+    """
     root_a = _make_project(tmp_path, name="project_a")
     root_b = _make_project(tmp_path, name="project_b")
+    index_a = ledger_store._index_path(root_a)
+    index_b = ledger_store._index_path(root_b)
+    assert index_a != index_b  # sanity: the two roots really do map to different lock targets
 
-    orig_write_index = ledger_store._write_index
-    HOLD_SECONDS = 0.4
-    intervals: dict[str, tuple[float, float]] = {}
-    intervals_lock = threading.Lock()
+    holder_ready = threading.Event()
+    release_holder = threading.Event()
+    holder_errors: list[BaseException] = []
 
-    def slow_write_index(r: Path, recs: list) -> None:
-        enter = time.monotonic()
-        time.sleep(HOLD_SECONDS)
-        leave = time.monotonic()
-        with intervals_lock:
-            intervals[r.name] = (enter, leave)
-        return orig_write_index(r, recs)
+    def hold_root_a() -> None:
+        try:
+            with _index_lock.index_lock(index_a):
+                holder_ready.set()
+                # Bounded: never hang the suite if the main thread's asserts raise before
+                # reaching the `finally: release_holder.set()` below.
+                release_holder.wait(timeout=10.0)
+        except BaseException as exc:  # surface into the main thread, not a silent thread death
+            holder_errors.append(exc)
 
-    monkeypatch.setattr(ledger_store, "_write_index", slow_write_index)
+    holder = threading.Thread(target=hold_root_a)
+    holder.start()
+    try:
+        assert holder_ready.wait(timeout=5.0), "root_a holder thread never acquired its lock"
 
-    ready = threading.Barrier(2)
+        # (2) Independence.
+        with _index_lock.index_lock(index_b, timeout_s=2.0):
+            pass  # success == root_b was NOT blocked by root_a's held lock
 
-    def worker(root: Path) -> None:
-        ready.wait(timeout=10)
-        ledger_store.submit_claim(str(root), symbols=["value"], agent_id="agent-a")
+        # (3) Converse control -- proves the lock is real, not a no-op.
+        with pytest.raises(_index_lock.IndexLockTimeoutError):
+            with _index_lock.index_lock(index_a, timeout_s=0.3, stale_after_s=60.0):
+                pass
+    finally:
+        release_holder.set()
+        holder.join(timeout=15.0)
 
-    threads = [
-        threading.Thread(target=worker, args=(root_a,)),
-        threading.Thread(target=worker, args=(root_b,)),
-    ]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-
-    assert "project_a" in intervals and "project_b" in intervals
-    a_enter, a_leave = intervals["project_a"]
-    b_enter, b_leave = intervals["project_b"]
-    assert a_enter < b_leave and b_enter < a_leave, (
-        "per-root ledger locks serialized (write-hold intervals did not overlap): "
-        f"project_a=[{a_enter:.3f}, {a_leave:.3f}] project_b=[{b_enter:.3f}, {b_leave:.3f}]"
-    )
+    assert not holder.is_alive(), "root_a holder thread did not exit after release"
+    assert not holder_errors, f"root_a holder thread raised: {holder_errors!r}"
 
 
 def test_claim_reclaims_stale_lock(tmp_path: Path) -> None:

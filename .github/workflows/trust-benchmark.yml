@@ -1,0 +1,62 @@
+name: Trust Benchmark (Linux arm)
+
+# The Linux arm of scripts/trust_benchmark.py (#300). It lives in its OWN workflow, not in
+# ci.yml, for two reasons:
+#   1. ci.yml carries the release gate. A comparative benchmark against six third-party tools has
+#      more ways to go wrong than the thing it measures, and it must never be able to red a
+#      release.
+#   2. It is not a per-PR signal. Tool honesty under an unreadable path does not change commit to
+#      commit; it changes when a dependency ships a new version. Manual + weekly is the right
+#      cadence, and it keeps the CI-minute cost near zero.
+#
+# WHY CI RATHER THAN A LOCAL LINUX RUN: the local WSL interpreter on the dev box cannot
+# `import shutil` (a stdlib module), so the harness will not start there. Rather than repair
+# somebody's WSL -- which fixes the measurement for exactly one machine -- the second-OS arm runs
+# on a clean ubuntu runner where anyone can reproduce it from the log.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly, Monday 06:00 UTC. Late enough after the usual release cadence to avoid contending
+    # for runners with a publish.
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  trust-benchmark-linux:
+    name: trust benchmark (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Install the comparison tools that are cheap to get
+        # Deliberately NOT installing all six. The harness reports an absent tool as `-` (n/a)
+        # rather than scoring it, so a partial roster produces an honest partial table instead of
+        # a wrong one. ripgrep + grep + git cover the three engines that matter most here; the
+        # AST tools are heavier and their absence is reported, not hidden.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ripgrep
+          echo "--- roster ---"
+          for t in rg grep git ast-grep semgrep; do
+            printf '%s: ' "$t"; command -v "$t" || echo ABSENT
+          done
+
+      - name: Install tg from the checkout
+        run: python -m pip install --quiet -e .
+
+      - name: Run the benchmark
+        # The harness exits 0 whatever the scores: it MEASURES honesty, it does not gate on it.
+        # Making a comparative result a build gate would create pressure to tune the fixtures
+        # until the table flatters us, which is the exact failure this whole campaign is about.
+        run: python scripts/trust_benchmark.py
+
+      - name: Run again as JSON (attach to the log for reproduction)
+        run: python scripts/trust_benchmark.py --json

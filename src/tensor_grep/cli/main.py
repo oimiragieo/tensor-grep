@@ -8568,6 +8568,32 @@ def inventory(
         raise typer.Exit(2)
 
 
+def _docs_scan_is_unreadable_truncated(payload: dict[str, Any]) -> bool:
+    """True when a docs-coverage scan was cut short by a path it could not read.
+
+    Task #294. `docs-coverage` deliberately exits 0 on `scan_limit.possibly_truncated`, and
+    docs/CONTRACTS.md says so explicitly -- but that decision was made when the field could ONLY
+    mean the `--max-repo-files` count cap, whose remedy is "raise the cap". Exiting 0 was
+    defensible because the caller could always fix it by spending more budget.
+
+    #276/#767/#768 then WIDENED the same field to also mean "the walk hit an unreadable path", a
+    cause NO budget increase fixes. The exit-code decision is a consumer of that field's meaning
+    and was never revisited, so the command kept returning 0 -- indistinguishable from a complete
+    scan -- for a condition the caller genuinely needs to know about. Measured on the published
+    1.98.17 against a real ACL-denied subtree: exit 0 on the truncated tree AND on a clean one,
+    i.e. the exit code carried no information at all, while sibling `tg inventory` exited 2.
+
+    Deliberately NARROW: only the non-budget-remediable cause flips the exit code. A pure
+    count-cap truncation still exits 0, so the documented budget contract is unchanged and no
+    existing caller of that path breaks. Follows `tg codemap`, which already made
+    `unreadable_path` a new exit-2 trigger (docs/CONTRACTS.md), rather than inventing a rule.
+    """
+    scan_limit = payload.get("scan_limit")
+    if not isinstance(scan_limit, dict):
+        return False
+    return scan_limit.get("truncation_cause") == "unreadable-path"
+
+
 @app.command(name="docs-coverage")
 def docs_coverage(
     path: str = typer.Argument(".", help="File or directory to check for governing-doc coverage"),
@@ -8648,7 +8674,7 @@ def docs_coverage(
             # scoped to the NEW `partial` (time-budget) signal only -- the pre-existing
             # `scan_limit.possibly_truncated` (--max-repo-files count-cap) contract is UNCHANGED and
             # still exits 0, so this is additive-only unless --deadline is explicitly passed.
-            if stale_payload.get("partial"):
+            if stale_payload.get("partial") or _docs_scan_is_unreadable_truncated(stale_payload):
                 raise typer.Exit(2)
             # --check exits AFTER emitting the report, so CI shows what failed AND fails the job.
             if check and stale_payload["totals"]["stale"] > 0:
@@ -8673,9 +8699,10 @@ def docs_coverage(
         _safe_stdout_line(render_docs_coverage_fix_markdown(payload))
     else:
         _safe_stdout_line(render_docs_coverage_text(payload))
-    # See the --stale branch above: truncation trumps --check, and this is scoped to the NEW
-    # --deadline `partial` signal only -- --max-repo-files' possibly_truncated stays exit 0.
-    if payload.get("partial"):
+    # See the --stale branch above: truncation trumps --check. Two exit-2 triggers now: the
+    # --deadline `partial` time-budget signal, and an unreadable path (task #294).
+    # --max-repo-files' possibly_truncated still stays exit 0.
+    if payload.get("partial") or _docs_scan_is_unreadable_truncated(payload):
         raise typer.Exit(2)
     if check and payload["totals"]["uncovered"] > 0:
         raise typer.Exit(1)
@@ -13615,6 +13642,7 @@ def checkpoint_undo(
     """Restore a checkpoint."""
     from tensor_grep.cli.checkpoint_store import (
         CheckpointCorruptError,
+        CheckpointUndoUnsafeError,
         resolve_latest_checkpoint,
         undo_checkpoint,
     )
@@ -13644,17 +13672,25 @@ def checkpoint_undo(
             payload = undo_checkpoint(checkpoint_id, path)
     except Exception as exc:
         message = str(exc)
-        # Task #298. Every undo failure used to report `checkpoint_not_found`, including a
-        # CORRUPT one -- where the checkpoint record was found perfectly well and its snapshot
-        # blobs are missing or unreadable. That sends the reader hunting a checkpoint that is
-        # right there, and hides the only fact that matters: the snapshot cannot restore your
-        # tree. `tests/unit/test_checkpoint_atomic_undo.py` even describes the mislabel as the
-        # symptom of the OLD buggy shape, so the code was contradicting its own test's prose.
-        error_code = (
-            "checkpoint_corrupt"
-            if isinstance(exc, CheckpointCorruptError)
-            else "checkpoint_not_found"
-        )
+        # This handler once labelled EVERY undo failure `checkpoint_not_found`. Two independent
+        # fixes corrected that, and both are folded in here:
+        #   #297 -- an undo ABORTED because it could not be reverted safely. The checkpoint was
+        #     found and is perfectly good; the working tree is what blocked it. Reporting
+        #     not-found sent the reader hunting a missing checkpoint instead of at the unreadable
+        #     file named in `detail`.
+        #   #298 -- a CORRUPT checkpoint, where the record was found perfectly well but its
+        #     snapshot blobs are missing or unreadable. Reporting not-found hid the only fact
+        #     that matters: the snapshot cannot restore your tree.
+        # #297 deliberately left the corrupt case alone ("a JSON-contract change, filed
+        # separately rather than smuggled into a data-loss fix") -- that separate filing is #298,
+        # and this is where the two meet. `tests/unit/test_checkpoint_atomic_undo.py` describes
+        # the mislabel as the symptom of the OLD buggy shape, so until now the code contradicted
+        # its own test's prose.
+        error_code = "checkpoint_not_found"
+        if isinstance(exc, CheckpointCorruptError):
+            error_code = "checkpoint_corrupt"
+        elif isinstance(exc, CheckpointUndoUnsafeError):
+            error_code = "undo_unsafe"
         if not last and checkpoint_id is not None:
             candidate = Path(checkpoint_id).expanduser()
             if candidate.exists():

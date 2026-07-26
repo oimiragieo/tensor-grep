@@ -541,7 +541,12 @@ def _exclude_output_paths(rm: dict[str, Any], *, out_dir: Path, index_path: Path
     return filtered
 
 
-def _tracked_file_set(root: Path, *, deadline_monotonic: float | None = None) -> set[str] | None:
+def _tracked_file_set(
+    root: Path,
+    *,
+    deadline_monotonic: float | None = None,
+    unreadable_hit: _repo_map._UnreadablePathFlag | None = None,
+) -> set[str] | None:
     """Resolved absolute paths of every git-tracked file under `root` (`git ls-files -z`), or
     `None` when git is unavailable/errors (not a repo, git missing, timeout, or -- tg-codemap
     90s-timeout root cause -- an already-exhausted `deadline_monotonic` budget). `None` is a
@@ -578,13 +583,24 @@ def _tracked_file_set(root: Path, *, deadline_monotonic: float | None = None) ->
             continue
         try:
             tracked.add(str((root / rel_posix).resolve()))
-        except OSError:
+        except OSError as exc:
+            # Task #296. `git ls-files` named this path, so it IS committed -- only resolving it
+            # failed. Dropping it here makes `_is_tracked` below answer False for a genuinely
+            # tracked file, which deletes it from `files`/`tests`/`symbols`/`imports`. That is a
+            # silent WRONG answer, not a smaller one: the map claims to be the project's committed
+            # surface while omitting part of it. Record so `coverage.partial` can say so.
+            if unreadable_hit is not None:
+                unreadable_hit.record(exc)
             continue
     return tracked
 
 
 def _exclude_untracked_paths(
-    rm: dict[str, Any], *, root: Path, deadline_monotonic: float | None = None
+    rm: dict[str, Any],
+    *,
+    root: Path,
+    deadline_monotonic: float | None = None,
+    unreadable_hit: _repo_map._UnreadablePathFlag | None = None,
 ) -> dict[str, Any]:
     """Post-filter the repo_map payload to drop every file `git ls-files` does not track --
     mirrors `_exclude_output_paths`'s exact shape. An untracked/gitignored file (scratch script,
@@ -593,7 +609,9 @@ def _exclude_untracked_paths(
     inventory. Degrades to a no-op (returns `rm` unchanged) when the tracked-file set is
     unavailable (non-git dir, git missing, timeout, or an already-exhausted `deadline_monotonic`
     budget -- forwarded to `_tracked_file_set`) -- never crashes, never guesses."""
-    tracked = _tracked_file_set(root, deadline_monotonic=deadline_monotonic)
+    tracked = _tracked_file_set(
+        root, deadline_monotonic=deadline_monotonic, unreadable_hit=unreadable_hit
+    )
     if tracked is None:
         return rm
 
@@ -602,7 +620,14 @@ def _exclude_untracked_paths(
             return False
         try:
             return str(Path(file_str).resolve()) in tracked
-        except OSError:
+        except OSError as exc:
+            # Task #296. An OSError here means tracking status is UNKNOWN, but returning False
+            # asserts "untracked" and drops the file from the map. The drop is left in place
+            # deliberately -- flipping it to True would let a genuinely untracked scratch file
+            # leak into the persisted inventory, the exact leak this filter exists to prevent --
+            # so the fix is to stop the drop being SILENT, not to reverse it.
+            if unreadable_hit is not None:
+                unreadable_hit.record(exc)
             return False
 
     filtered = dict(rm)
@@ -664,6 +689,7 @@ def _all_folder_paths(
     max_repo_files: int,
     deadline_monotonic: float | None = None,
     deadline_hit: _repo_map._DeadlineBreakFlag | None = None,
+    unreadable_hit: _repo_map._UnreadablePathFlag | None = None,
 ) -> set[str]:
     """Every folder (repo-relative POSIX, "" for repo root) containing >=1 file the walk reaches,
     regardless of mapped-suffix status -- used only to report how many folders were excluded from
@@ -686,14 +712,24 @@ def _all_folder_paths(
     for f in all_files:
         try:
             rel = f.resolve().relative_to(root)
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
+            # Task #296. Only the OSError arm is a readability failure worth disclosing; a
+            # ValueError just means the file sits outside `root`, which is a correct exclusion
+            # and not an incompleteness at all. Recording both would cry wolf on every run.
+            if unreadable_hit is not None and isinstance(exc, OSError):
+                unreadable_hit.record(exc)
             continue
         parent = rel.parent
         folders.add("" if str(parent) == "." else parent.as_posix())
     return folders
 
 
-def _tree_manifest_sha256(files: list[str], root: Path) -> str:
+def _tree_manifest_sha256(
+    files: list[str],
+    root: Path,
+    *,
+    unreadable_hit: _repo_map._UnreadablePathFlag | None = None,
+) -> str:
     """sha256 over sorted (relpath, size, mtime_ns) of `files` -- the git-independent freshness
     oracle. `files` must already exclude --out/--index (else self-invalidation: writing the map
     changes the map's own freshness stamp)."""
@@ -702,7 +738,13 @@ def _tree_manifest_sha256(files: list[str], root: Path) -> str:
         file_path = Path(file_str)
         try:
             stat_result = file_path.stat()
-        except OSError:
+        except OSError as exc:
+            # Task #296. A file that is unreadable at BOTH stamp time and --check time is
+            # consistently absent from the digest, so the hashes MATCH and the map reports FRESH
+            # while silently carrying a stale entry for a file it can no longer read. Recording
+            # keeps that from being invisible.
+            if unreadable_hit is not None:
+                unreadable_hit.record(exc)
             continue
         entries.append((
             _repo_relative_posix(file_str, root),
@@ -1023,7 +1065,17 @@ def build_codemap(
     )
     rm = _orient_capsule._apply_ignore_globs(rm, ignore)
     rm = _exclude_output_paths(rm, out_dir=out_dir, index_path=index_path)
-    rm = _exclude_untracked_paths(rm, root=root, deadline_monotonic=deadline_monotonic)
+    # Task #296. `rm["unreadable_paths"]` (read below) carries only the WALK's failures. Every
+    # helper BELOW the walk that drops an entry on OSError -- the tracked-file filter, the folder
+    # census, the freshness digest -- was invisible to it, so a map could lose real committed
+    # files while `coverage.partial` read false. One accumulator collects all of them.
+    post_walk_unreadable = _repo_map._UnreadablePathFlag()
+    rm = _exclude_untracked_paths(
+        rm,
+        root=root,
+        deadline_monotonic=deadline_monotonic,
+        unreadable_hit=post_walk_unreadable,
+    )
 
     universe = sorted(set(rm.get("files", [])) | set(rm.get("tests", [])))
 
@@ -1123,7 +1175,9 @@ def build_codemap(
         "out": str(out_dir),
         "index": str(index_path),
         "revision": revision,
-        "tree_manifest_sha256": _tree_manifest_sha256(universe, root),
+        "tree_manifest_sha256": _tree_manifest_sha256(
+            universe, root, unreadable_hit=post_walk_unreadable
+        ),
         "files_total": len(universe),
         "folders_total": len(folders),
         "symbols_total": sum(len(v) for v in symbols_by_file.values()),
@@ -1146,6 +1200,7 @@ def build_codemap(
             max_repo_files=max_repo_files,
             deadline_monotonic=deadline_monotonic,
             deadline_hit=all_folders_deadline_hit,
+            unreadable_hit=post_walk_unreadable,
         )
         all_folders = {
             f
@@ -1180,6 +1235,33 @@ def build_codemap(
         written_files.append(page_path)
         per_page_tokens[str(page_path)] = _repo_map._estimate_tokens(page_text)
         rendered_folders[folder] = files
+
+    # Task #296: fold the post-walk unreadable drops in HERE, not at the scan-level disclosure
+    # above -- two of the three recording sites (`_tree_manifest_sha256`, `_all_folder_paths`) run
+    # AFTER that block, so reading the flag there would measure it before it could possibly be
+    # set. A signal read at the wrong instant is worth exactly as much as no signal at all.
+    #
+    # Precedence is the INVERSE of `tail_deadline_hit`'s below. That one must never clobber a more
+    # specific reason; this one MUST override a budget reason, because `scan_limit`/`deadline` both
+    # tell the reader to raise a knob and no knob makes an unreadable path readable. Handing over
+    # the wrong knob is the defect #283 fixed on MCP and #757 fixed on search.
+    if post_walk_unreadable.hit:
+        prior_reason = coverage["partial_reason"]
+        sample = ", ".join(post_walk_unreadable.sample) or "an unreadable path"
+        coverage["partial"] = True
+        coverage["partial_reason"] = "unreadable_path"
+        coverage["remediation"] = (
+            f"{post_walk_unreadable.count} path(s) the walk reached could not be re-read while "
+            f"building the map (e.g. {sample}), so files they cover may be missing from the "
+            "inventory. More budget will NOT fix this: the path(s) need to become readable, or "
+            "scope PATH away from them."
+        )
+        if prior_reason in {"scan_limit", "deadline"}:
+            budget_cause = "--max-repo-files" if prior_reason == "scan_limit" else "--deadline"
+            coverage["remediation"] += (
+                f" The scan ALSO hit {budget_cause}; raising it will widen coverage but will not "
+                "recover the unreadable path(s)."
+            )
 
     # council must-fix #4: OR the tail break into the SAME partial boolean + partial_reason
     # ladder the scan-level cutoff above uses -- never clobber a MORE SPECIFIC existing reason
