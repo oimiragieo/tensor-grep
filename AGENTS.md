@@ -184,6 +184,51 @@ concrete failure observed this session.
   stale backstop that still fires is worse than none: it looks authoritative and can act on data (a
   PR that already merged, a queue state that already moved on) that is no longer true.
 
+- **A27 — A class fix must cross to its TWIN, or the twin re-fires the same defect (2026-07-26).**
+  `test_index_lock_concurrency.py::test_index_lock_is_per_root_not_global` evolved ratio → overlap →
+  Event-gated, and its docstring records WHY each form was retired. The ledger twin,
+  `test_ledger_concurrency.py::test_claim_index_lock_is_per_root_not_global`, kept the retired
+  *overlap* form and duly red-ed `main` in exactly the way the sibling's docstring predicts
+  (`project_a=[1396.734, 1397.125] project_b=[1397.281, 1397.687]` — thread B was simply not
+  scheduled into the instrumented section until after A left it). The class fix had been generalised
+  correctly and then applied in ONE of two files. **Rule:** when you retire an approach in a test or
+  helper, `grep` for its shape across siblings the same turn and port it — a docstring explaining why
+  a form was abandoned is worthless in the file that still uses that form. Corollary for concurrency
+  specifically: two independent locks are only guaranteed not to BLOCK each other, never to be
+  *simultaneously held*; assert the blocking contract (Event-gated), never wall-clock overlap.
+- **A28 — Relay a gate verdict to the ARTIFACT, not just your own transcript (2026-07-26).** PR #786
+  arrived from a concurrent worktree agent; it got a full independent gate (design / bidirectional
+  oracle / not-stacked) that then lived only in the steward session. A verdict nobody else can see is
+  lost work: the next session either re-runs the gate or, worse, reaches a different conclusion.
+  **Rule:** post the verdict as a PR comment with its evidence (what was probed, what the control arm
+  showed) before moving on. Cost: one `gh pr comment`. It is also what lets the author un-draft
+  without waiting on you.
+- **A29 — Verify the fix on the MERGED artifact, not only pre-merge (2026-07-26).** Pre-merge proves
+  the BUG is real (control arm on the unpatched tree). It does not prove the FIX behaves on `main` —
+  a squash can drop a hunk, a conflict resolution can mangle it, and a green merge is not evidence
+  about the code. For #786 the post-merge arm was one command: confirm the guard is present
+  (`"_seen" in fn.__code__.co_varnames` — structurally, not by re-reading the diff) and re-run the
+  cycle fixture against `main`. Both directions closed on the artifact that ships.
+- **A30 — Make pruning DECIDABLE instead of banned (2026-07-26).** "Don't bulk-nuke agent branches,
+  they may hold WIP" left ~70 husks accumulating indefinitely. `git merge-base --is-ancestor <branch>
+  main` converts it to a per-branch proof: an ancestor of `main` has its commits already in `main`, so
+  deleting it provably loses nothing. 61 deleted (with `git branch -d`, never `-D`, so git
+  independently refuses anything unmerged — the two checks agreed 61/0), 2 kept. **`git branch
+  --merged` under-reports after squash-merges, and a CLOSED PR is NOT a merged PR** — one of the two
+  survivors had exactly that shape and a naive sweep would have destroyed it.
+- **A31 — Order the drain by RELEASE impact, not by PR number (2026-07-26).** Only `fix:`/`feat:`
+  trigger semantic-release; `docs:`/`test:`/`bench:`/`chore:` complete without publishing. A
+  non-releasing merge therefore creates no publish to race — its gate is just "the main run
+  completed", ~6 min, versus ~30–60 min for a release cycle. Landing the non-releasing PRs first took
+  the queue 12 → 7 in about an hour that would otherwise have bought two merges. The one-per-publish
+  rule protects an in-flight PUBLISH; it is not a per-PR serialisation.
+- **A32 — The drain gate is "newest main run COMPLETED", not "completed GREEN" (2026-07-26).** When
+  `main` is red, the fix for that red must still be mergeable — requiring green before merging the
+  thing that makes it green is a deadlock. Merge the hotfix, then confirm `main` actually recovered
+  (a subsequent green run), which is the real evidence the fix worked. Everything ELSE stays parked
+  while red, because merging onto a broken `main` compounds it and obscures which commit owns the
+  failure.
+
 ## Current Handoff
 
 release_docs_current_tag: v1.98.20
@@ -599,7 +644,7 @@ zero behavioral change, and is strictly stronger than reading the diff by eye. U
 on `test_index_lock_concurrency.py`'s comment-only revisions; cheap enough to run on every claimed no-op
 commit before skipping a gate on the strength of "it's just a comment."
 
-## The Verification-Oracle Family — six forms (2026-07-25)
+## The Verification-Oracle Family — seven forms (2026-07-25, 7th added 2026-07-26)
 
 **The single most repeated failure mode this project has.** Every form shares one shape: *something that
 looks like verification isn't.* Before trusting ANY green signal, ask: **what would this check show if the
@@ -688,6 +733,26 @@ Two diagnostics worth keeping: an account-name **mapping** failure is not a **pr
 so if `/reset` ALSO fails the DACL belongs to a different SID (that is how #268 was proven genuinely
 operator-gated rather than a tooling quirk). And to APPLY a deny ACE reliably on Windows, go through
 PowerShell with the SID from `WindowsIdentity::GetCurrent().User`, not an `icacls` account string.
+
+**Form 7 — the MEASUREMENT that cannot discriminate (2026-07-26, #302).** Forms 1-6 are about tests.
+This one is about benchmarks and scorecards, where the same question applies unchanged: *what would
+this column show if a tool were GOOD at it?* The trust benchmark's `vanished-file` column scores **0
+for every tool on both platforms**. A column where every arm ties at the floor separates nothing — it
+cannot distinguish a tool that handles the case well from one that ignores it entirely — yet a reader
+scanning six zeros concludes "they are all bad at this", which the data does not support. A
+tied-at-floor column is worse than no column, because it looks like a finding. **Rule:** every
+scored dimension needs at least one run where arms differ, or it gets deleted with the reason
+written down. Tracked as #302; the fixture almost certainly deletes the file *before* the search
+starts, so every tool correctly reports nothing — the race the column claims to measure never opens.
+
+**Running the probe: the LOCATION trap.** A perturbation proves nothing if the thing you perturbed
+survives elsewhere. Verifying the `truncation_cause` doc ratchet, the first probe removed ONE
+occurrence of `unreadable-path` from `docs/CONTRACTS.md` and the test still passed — which reads as
+"toothless ratchet". It was not: the string appears twice, and the check is a substring scan over the
+whole file. Removing EVERY occurrence failed the test correctly. **Before concluding a guard is
+broken, confirm your perturbation actually removed the property it guards** — count the occurrences
+first. This is the setup-not-assertion failure again (a check that "passes in both arms" was really a
+probe that never created a second arm).
 
 ## Fail-Closed Guidance Must Be An Allow-List, Not A Deny-List (2026-07-25, #282)
 
