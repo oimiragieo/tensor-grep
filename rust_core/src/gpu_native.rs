@@ -3891,11 +3891,37 @@ fn collect_walked_files(config: &GpuNativeSearchConfig, roots: &[PathBuf]) -> Re
                 Ok(entry) => entry,
                 Err(err) => {
                     // Byte-identical defect to the CPU collector in `native_search.rs`, and
-                    // fixed the same way (task #280): the Err arm used to be dropped with no
+                    // fixed the same way (task 280): the Err arm used to be dropped with no
                     // output, so a permission-denied subtree vanished from the file list
                     // completely silently. Real `rg` prints one stderr line per unreadable
-                    // path and keeps walking. Exit code + JSON envelope marker are still
-                    // unwired here, same as the CPU side -- see the note at that site.
+                    // path and keeps walking.
+                    //
+                    // THE CPU SIDE IS NOW WIRED; THIS ONE IS NOT. That asymmetry is the whole
+                    // of task 316 and is stated here because the previous version of this
+                    // comment said the exit code and envelope marker were "still unwired here,
+                    // same as the CPU side" -- which stopped being true when task 276 slice A
+                    // landed. A comment asserting a false fact about its twin is worse than no
+                    // comment: it tells the next reader the parity gap does not exist.
+                    //
+                    // What the CPU side has that this does not (all on `main` today):
+                    //   native_search.rs:91        `walk_errors: usize` on SearchStats
+                    //   native_search.rs:1330/1378 the two increment sites
+                    //   native_search.rs:2436-2438 envelope emits result_incomplete /
+                    //                              incomplete_reason_class="unreadable_path" /
+                    //                              incomplete_paths_count
+                    //   main.rs:8388               `exit(2)` when walk_errors > 0
+                    //
+                    // Closing the gap here is NOT a mechanical port, and the difference is why
+                    // it is a separate slice rather than a line in slice A:
+                    //   1. `GpuNativeSearchStats` (:484) has no `walk_errors` field, and it
+                    //      derives `Serialize` -- adding a field changes emitted JSON shape, so
+                    //      it needs the same omit-when-zero treatment the CPU envelope uses or
+                    //      it breaks byte-identity for complete GPU scans.
+                    //   2. This module emits NO JSON envelope of its own (grep: zero hits for
+                    //      `result_incomplete` in this file). There is no seam here to add the
+                    //      marker to; the count has to reach whichever envelope the GPU route
+                    //      actually renders through, and that route must be identified first.
+                    // Both are CUDA-gated, so CI is the only place either can be exercised.
                     eprintln!("tg: {err}");
                     return WalkState::Continue;
                 }
