@@ -4237,6 +4237,7 @@ def _discover_validation_tests_for_primary_file(
     precomputed_file_paths: list[str | Path] | None = None,
     deadline_monotonic: float | None = None,
     deadline_hit: _DeadlineBreakFlag | None = None,
+    unreadable_hit: _UnreadablePathFlag | None = None,
 ) -> list[str]:
     if not primary_file:
         return []
@@ -4278,6 +4279,14 @@ def _discover_validation_tests_for_primary_file(
             max_files=_VALIDATION_RUNNER_SCAN_LIMIT,
             deadline_monotonic=deadline_monotonic,
             deadline_hit=deadline_hit,
+            # Task #291: this walk feeds the VALIDATION PLAN -- the answer to "what should I run
+            # to validate this edit?". Unwired, a permission-denied subtree simply yielded fewer
+            # discovered tests and the plan was emitted with no hint it was built over a partial
+            # scan, so an agent runs a shorter suite and believes it validated. Strictly worse
+            # than the search surfaces (#761/#767/#768): there the user sees fewer results and
+            # can notice; here they get a confident INSTRUCTION. Not budget-remediable -- raising
+            # _VALIDATION_RUNNER_SCAN_LIMIT cannot make a denied directory readable.
+            unreadable_hit=unreadable_hit,
         )
     for current in candidate_files:
         # #639 Opus-gate nit 1: the resolve loop above can be bounded and still hand back a

@@ -915,3 +915,84 @@ def test_symbol_callers_provider_results_respect_capped_repo_map_file_universe(
     assert str(outside_cap.resolve()) not in {
         str(current["file"]) for current in refs_payload["references"]
     }
+
+
+# ---------------------------------------------------------------------------
+# (#291) The validation plan must not be built silently over a partial scan
+# ---------------------------------------------------------------------------
+
+
+def _deny_scandir_for(monkeypatch, denied_dir: Path) -> None:
+    """Make `os.scandir(denied_dir)` raise PermissionError; everything else untouched.
+
+    Never a real chmod/ACL (#281: an ACL that silently failed to apply left a "hostile" arm that
+    was a perfectly readable directory, nearly declaring a live defect ABSENT).
+    """
+    import os as _os
+
+    real_scandir = _os.scandir
+    target = str(denied_dir.resolve())
+
+    def _fake_scandir(path=".", *args, **kwargs):
+        if str(Path(path).resolve()) == target:
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_scandir(path, *args, **kwargs)
+
+    monkeypatch.setattr(_os, "scandir", _fake_scandir)
+
+
+def test_validation_test_discovery_reports_an_unreadable_subtree(tmp_path: Path, monkeypatch):
+    """Task #291. `_discover_validation_tests_for_primary_file` walks with `_iter_repo_files` but
+    never passed `unreadable_hit=`, so a permission-denied subtree simply yielded FEWER discovered
+    tests and the plan was emitted with no hint it was built over a partial scan.
+
+    This is worse than the search surfaces #761/#767/#768 fixed. There a user gets fewer results
+    and can notice. Here the user gets a CONFIDENT INSTRUCTION -- "run these to validate your
+    edit" -- computed from a scan that silently skipped part of the tree. The agent runs a shorter
+    suite and believes it validated the change.
+
+    The cause is NOT budget-remediable: raising `_VALIDATION_RUNNER_SCAN_LIMIT` cannot make a
+    denied directory readable.
+    """
+    project = tmp_path / "proj"
+    _write(project / "src" / "core.py", "def create_invoice(total):\n    return total + 1\n")
+    denied = project / "src" / "hidden_tests"
+    denied.mkdir(parents=True, exist_ok=True)
+    _write(denied / "test_core.py", "def test_create_invoice():\n    assert True\n")
+
+    _deny_scandir_for(monkeypatch, denied)
+    flag = repo_map._UnreadablePathFlag()
+    repo_map._discover_validation_tests_for_primary_file(
+        str(project),
+        str(project / "src" / "core.py"),
+        primary_symbol_name="create_invoice",
+        query="create invoice",
+        limit=3,
+        unreadable_hit=flag,
+    )
+
+    assert flag.hit is True, (
+        "validation-test discovery skipped an unreadable subtree with no signal -- the plan it "
+        "feeds would claim to be the validation set while part of the tree was never scanned"
+    )
+    assert flag.count >= 1
+
+
+def test_validation_test_discovery_clean_tree_is_the_control_arm(tmp_path: Path):
+    """CONTROL. Without this the assertion above could pass by flagging EVERY discovery run."""
+    project = tmp_path / "proj"
+    _write(project / "src" / "core.py", "def create_invoice(total):\n    return total + 1\n")
+    _write(project / "tests" / "test_core.py", "def test_create_invoice():\n    assert True\n")
+
+    flag = repo_map._UnreadablePathFlag()
+    repo_map._discover_validation_tests_for_primary_file(
+        str(project),
+        str(project / "src" / "core.py"),
+        primary_symbol_name="create_invoice",
+        query="create invoice",
+        limit=3,
+        unreadable_hit=flag,
+    )
+
+    assert flag.hit is False
+    assert flag.count == 0
