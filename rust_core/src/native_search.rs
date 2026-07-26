@@ -1306,8 +1306,29 @@ fn search_walk_roots_parallel(
                     // build owns no worker and therefore no stats channel. It quits on its
                     // first real entry and the whole search returns Err, so there is no
                     // "complete" envelope for a lost count to corrupt.
-                    if let Ok(worker) = worker.as_mut() {
-                        worker.local_stats.walk_errors += 1;
+                    // ALLOW-LIST the count (#282: fail-closed guidance enumerates the SAFE
+                    // cases, never the unsafe ones). `ignore::Error` is NOT only "path was
+                    // unreadable" -- the parallel walker also reports a failure to PARSE an
+                    // ancestor/global gitignore (`Error::Glob` / `WithLineNumber`, surfaced via
+                    // `add_parents`) and `UnrecognizedFileType` / `InvalidDefinition`. Counting
+                    // those would label a COMPLETE walk `result_incomplete` with a
+                    // budget-non-remediable cause: one malformed glob in a user's
+                    // ~/.config/git/ignore would make EVERY `tg search --json` on that machine
+                    // claim it could not finish. A false "incomplete" is worse than the silence
+                    // #276 set out to fix, because it teaches an agent to distrust a true answer.
+                    //
+                    // `is_io()` is the crate's own predicate for "exclusively an I/O error": it
+                    // recurses through WithPath/WithDepth/WithLineNumber, treats a single-element
+                    // Partial as its inner error, and returns FALSE for Glob, UnrecognizedFileType,
+                    // InvalidDefinition and Loop. Loop cannot fire here anyway -- `build_walk_builder`
+                    // never calls `follow_links`.
+                    //
+                    // Non-I/O errors still PRINT (rg-parity, #263); they just do not claim the
+                    // answer is incomplete.
+                    if err.is_io() {
+                        if let Ok(worker) = worker.as_mut() {
+                            worker.local_stats.walk_errors += 1;
+                        }
                     }
                     eprintln!("tg: {err}");
                     return WalkState::Continue;
