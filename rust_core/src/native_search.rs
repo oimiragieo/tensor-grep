@@ -1727,14 +1727,31 @@ fn collect_walked_files(config: &NativeSearchConfig, roots: &[PathBuf]) -> Resul
                     // prints one line. Real `rg` prints one stderr line per unreadable path
                     // and keeps walking every readable file; both tg walkers now match that.
                     //
-                    // NOTE (task #280): printing is only half the contract. `rg` also exits 2
-                    // on an unreadable path while still emitting its matches, and the JSON
-                    // envelope should carry `result_incomplete` + `incomplete_reason_class`
-                    // the way the Python routes do since #276 slice 1 (c0c3404). Neither is
-                    // wired here yet -- that needs an error count threaded through
-                    // `SearchStats` into `emit_json_matches` and the exit code, and is the
-                    // next slice. Until then this path is honest on stderr but still reports
-                    // success.
+                    // NOTE (task 280, REVISED after task 276 slice A landed): printing is only
+                    // half the contract. `rg` also exits 2 on an unreadable path while still
+                    // emitting its matches, and the JSON envelope should carry
+                    // `result_incomplete` + `incomplete_reason_class` the way the Python routes
+                    // do since task 276 slice 1 (c0c3404).
+                    //
+                    // THE PREVIOUS VERSION OF THIS COMMENT SAID "Neither is wired here yet --
+                    // that needs an error count threaded through `SearchStats` into
+                    // `emit_json_matches` and the exit code, and is the next slice." All three
+                    // of those prerequisites now EXIST on main:
+                    //     :91                     `walk_errors: usize` on SearchStats
+                    //     :2436-2438              the envelope emits result_incomplete /
+                    //                             incomplete_reason_class / incomplete_paths_count
+                    //     main.rs:8388            exit(2) when walk_errors > 0
+                    // Leaving that sentence would tell the next reader the whole chain is absent
+                    // and send them to build it again.
+                    //
+                    // WHAT IS ACTUALLY MISSING is narrower and is task 315: `collect_walked_files`
+                    // has no SearchStats to increment. It returns a Vec<PathBuf>, so it has no
+                    // channel into the chain above -- unlike `search_walk_roots_parallel`, whose
+                    // worker owns `local_stats`. Closing it means giving this collector a way to
+                    // report a count to its caller, NOT rebuilding the envelope or the exit code.
+                    //
+                    // Until then THIS path is honest on stderr and still reports success -- the
+                    // streaming search path is not, and has not been since slice A.
                     eprintln!("tg: {err}");
                     return WalkState::Continue;
                 }
