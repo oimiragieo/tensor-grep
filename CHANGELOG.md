@@ -1,6 +1,45 @@
 # CHANGELOG
 
 
+## v1.98.18 (2026-07-26)
+
+### Bug Fixes
+
+- **session**: Disclose files the snapshot could not stat instead of dropping them silently
+  ([#769](https://github.com/oimiragieo/tensor-grep/pull/769),
+  [`0f8be08`](https://github.com/oimiragieo/tensor-grep/commit/0f8be08d941cda8ae5855e6b7ba1c8e5559988a4))
+
+Task #288 -- the SNAPSHOT-side sibling of #286, and the reason #286 alone was not enough.
+
+#286 fixed the COMPARISON side: an unreadable file is no longer misreported as removed. But
+  `_capture_snapshot` wrapped `path.stat()` in a bare `except OSError: continue`, so a file
+  unreadable at CAPTURE time never entered the snapshot at all. A path absent from the snapshot is
+  never compared against anything afterwards -- it stops being staleness-tracked entirely until some
+  later full rebuild happens to re-see it. So a TRANSIENT permission blip at open/refresh time
+  degraded staleness detection DURABLY, blunting the fix that had just shipped one layer over.
+
+Skipping is still correct -- one unreadable file must never fail session-open. What was missing is
+  the SIGNAL. `_capture_snapshot` now takes an OPTIONAL `unreadable_hit` out-param using the
+  existing `_UnreadablePathFlag` idiom that `_iter_repo_files` already uses, so `None` is a complete
+  no-op and nothing changes for a caller until it opts in.
+
+WIRED THE SAME TURN, both call sites -- a signal with no consumer is the proven-but-not-wired trap.
+  `open_session` and `refresh_session` now pass a flag and, ONLY when it fires, emit
+  `snapshot_unreadable_paths = {count, sample}`, mirroring `build_repo_map`'s existing shape from
+  #276. Emitting it conditionally is deliberate: a clean capture stays byte-identical to the old
+  payload, so a reader can trust the key's ABSENCE to mean "the snapshot covered everything".
+
+Five tests. Three on the helper: the defect, a clean-set control, and a byte-identical no-flag arm
+  proving the out-param is genuinely optional. Two on the OUTCOME -- the persisted payload carries
+  the disclosure, and a control that the key is ABSENT on a clean capture, because an always-present
+  key would make absence meaningless and let the first arm pass for an unrelated reason.
+
+104 passed across test_incremental_refresh + test_session_cli + test_session_containment; ruff check
+  + format --check --preview clean.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.98.17 (2026-07-26)
 
 ### Bug Fixes
