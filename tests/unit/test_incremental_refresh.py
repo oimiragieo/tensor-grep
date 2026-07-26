@@ -894,7 +894,9 @@ def test_unreachable_root_reports_indeterminate_not_a_whole_tree_deletion(tmp_pa
         "a disconnected mount was reported as a whole-tree deletion -- the #286 false-deletion "
         "class arriving through the one arm that is supposed to mean 'really gone'"
     )
-    assert probes, "precondition: the root discriminator must actually have been consulted"
+    # PREMISE only -- see the note on CONTROL 1: the pre-loop `_resolve_root` stat lands in this
+    # counter too, so it proves the fixture applied, not that the discriminator fired.
+    assert probes, "premise: the patched stat was never reached, so this arm tested nothing"
 
 
 def test_reachable_root_still_reports_a_deleted_parent_as_removed(tmp_path, monkeypatch):
@@ -920,7 +922,13 @@ def test_reachable_root_still_reports_a_deleted_parent_as_removed(tmp_path, monk
 
     assert changeset is not None
     assert changeset["removed"], "a real deletion under a live root was swallowed as indeterminate"
-    assert probes, "precondition: the root discriminator must have run for this arm too"
+    # PREMISE, not proof-of-discriminator. A non-empty `probes` only shows the patched stat was
+    # actually installed and reached -- `_stale_changeset` stats the root via `_resolve_root` before
+    # the loop, so this counter is non-empty even where the discriminator never fires (it is, on
+    # POSIX). What proves the discriminator itself ran is the winerror-2-vs-3 DIFFERENTIAL in
+    # test_plain_file_not_found_is_removed_and_costs_no_extra_root_probe. Labelled honestly here
+    # rather than deleted: a fixture that silently fails to apply is its own defect class.
+    assert probes, "premise: the patched stat was never reached, so this arm tested nothing"
 
 
 def test_plain_file_not_found_is_removed_and_costs_no_extra_root_probe(tmp_path, monkeypatch):
@@ -958,7 +966,18 @@ def test_plain_file_not_found_is_removed_and_costs_no_extra_root_probe(tmp_path,
     )
     session_store._stale_changeset(payload, detect_added_files=False)
 
-    assert len(costly) == len(cheap) + 1, (
-        "the ambiguous (winerror 3) path must cost EXACTLY one extra root probe, and the "
-        f"unambiguous (winerror 2) path none: cheap={len(cheap)} costly={len(costly)}"
-    )
+    # The differential is PLATFORM-CONDITIONAL, and saying so is the honest form. `winerror` is a
+    # Windows-only OSError attribute, so on POSIX the discriminator at session_store.py cannot fire
+    # for either arm and both classify as an ordinary deletion -- the documented limit of #287, not
+    # a regression. Skipping the whole test off Windows would drop POSIX coverage entirely; asserting
+    # equality there keeps a real invariant (POSIX must not START paying a probe it can never use).
+    if sys.platform == "win32":
+        assert len(costly) == len(cheap) + 1, (
+            "the ambiguous (winerror 3) path must cost EXACTLY one extra root probe, and the "
+            f"unambiguous (winerror 2) path none: cheap={len(cheap)} costly={len(costly)}"
+        )
+    else:
+        assert len(costly) == len(cheap), (
+            "off Windows there is no `winerror` to discriminate on, so neither arm may pay a root "
+            f"probe the platform cannot act on: cheap={len(cheap)} costly={len(costly)}"
+        )
