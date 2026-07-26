@@ -6,6 +6,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 
 def _load_script_module():
     root = Path(__file__).resolve().parents[2]
@@ -1538,3 +1540,93 @@ def test_progress_reporter_auto_emits_in_ci_without_json(monkeypatch) -> None:
         "[progress] readiness start",
         "[progress] readiness done 0s",
     ]
+
+
+def test_disclosed_incomplete_tolerates_only_a_disclosed_exit_two() -> None:
+    """Task #276 slice C0: the exit-2 tolerance must be an ALLOW-LIST, not a blanket accept.
+
+    Exit 2 is overloaded. It is what an honest incomplete scan will return once #276 lands, but
+    it is ALSO what a catastrophic failure returns -- a regex syntax error, an unresolvable
+    engine -- exactly as in ripgrep, whose docs call 2 "true for both catastrophic errors ...
+    and soft errors". A tolerance keyed on the bare exit code would swallow every one of those
+    and turn the readiness sweep into a check that cannot fail.
+
+    So this test is deliberately bidirectional. The CONTROL arm is the point: an exit-2 run that
+    did NOT explain itself must still be rejected. If `_disclosed_incomplete` is ever weakened to
+    `return True`, the control assertions below fail.
+    """
+    module = _load_script_module()
+    disclosed = module._disclosed_incomplete
+
+    # TREATMENT -- the run disclosed why it was incomplete, on either stream.
+    assert disclosed('{"matches": [], "result_incomplete": true}', "")
+    assert disclosed("", 'tg: incomplete_reason_class="unreadable_path"')
+    assert disclosed('{"incomplete_reason_class": "deadline"}', "")
+
+    # CONTROL -- exit 2 with no disclosure is a REAL error and must not be tolerated.
+    assert not disclosed("", "regex parse error: unclosed group")
+    assert not disclosed("", "tg: ripgrep is not resolvable on PATH")
+    assert not disclosed("", "")
+    # Near-miss: names a path but never claims incompleteness. Still not a disclosure.
+    assert not disclosed("", "tg: /srv/locked: Permission denied")
+
+
+def _make_incomplete_scan_fake_run(stderr_text: str):
+    """Fake `subprocess.run` where every probe reports exit 2 with `stderr_text`.
+
+    Drives the REAL `validate_public_search_advertised_flag_sweep`, unlike the helper-only test
+    above -- an independent audit showed that deleting the call-site guard entirely still left
+    the suite green, because nothing pinned that the sweep actually consults the helper.
+    """
+
+    def fake_run(command, **_kwargs):
+        if command == ["tg", "search", "--help"]:
+            return subprocess.CompletedProcess(
+                args=command, returncode=0, stdout=_flag_sweep_help_stdout(), stderr=""
+            )
+        return subprocess.CompletedProcess(
+            args=command, returncode=2, stdout="", stderr=stderr_text
+        )
+
+    return fake_run
+
+
+def test_flag_sweep_tolerates_a_disclosed_incomplete_exit_two(monkeypatch, tmp_path) -> None:
+    """Task #276 slice C0, TREATMENT arm at the call site (not just the helper).
+
+    `_ripgrep_available` is forced True so the #121 carve-out cannot fire -- otherwise this would
+    pass for the wrong reason and prove nothing about the new guard.
+    """
+    module = _load_script_module()
+    monkeypatch.setattr(
+        module.shutil, "which", lambda command: command if command == "tg" else None
+    )
+    monkeypatch.setattr(module, "_ripgrep_available", lambda: True)
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        # the sentinel the plain-text route really emits (ripgrep_backend.py:143)
+        _make_incomplete_scan_fake_run("tg: rg exited 2, keeping partial results: unreadable path"),
+    )
+    module.validate_public_search_advertised_flag_sweep("", tmp_path, "1.12.28")
+
+
+def test_flag_sweep_still_fails_an_undisclosed_exit_two(monkeypatch, tmp_path) -> None:
+    """CONTROL arm -- the one that makes the pair mean something.
+
+    Exit 2 with no disclosure is a REAL error (regex syntax, unresolvable engine). If this ever
+    passes, the guard has become a blanket `== 2` tolerance and the sweep can no longer fail.
+    """
+    module = _load_script_module()
+    monkeypatch.setattr(
+        module.shutil, "which", lambda command: command if command == "tg" else None
+    )
+    monkeypatch.setattr(module, "_ripgrep_available", lambda: True)
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        _make_incomplete_scan_fake_run("regex parse error: unclosed group"),
+    )
+    with pytest.raises(module.ReadinessError) as excinfo:
+        module.validate_public_search_advertised_flag_sweep("", tmp_path, "1.12.28")
+    assert "exit=2" in str(excinfo.value)
