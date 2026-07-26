@@ -68,6 +68,21 @@ CRLF_LINE = b"needle crlf\r\n"
 LATIN1_LINE = b"caf\xe9 needle\n"
 
 
+# Mirrors tensor_grep.cli.incompleteness.INCOMPLETENESS_MARKERS. Duplicated DELIBERATELY: this is a
+# byte-fidelity e2e that exercises the SHIPPED binary, so importing the package under test would let
+# a bug in that module mask itself here. Keep the two in sync -- see #313.
+_E2E_INCOMPLETENESS_MARKERS = (
+    "result_incomplete",
+    "incomplete_reason_class",
+    "keeping partial results",
+)
+
+
+def _disclosed_incomplete(stdout: object, stderr: object) -> bool:
+    haystack = f"{stdout or ''} {stderr or ''}"
+    return any(marker in haystack for marker in _E2E_INCOMPLETENESS_MARKERS)
+
+
 def _require_native_tg_binary() -> Path:
     """Resolve the compiled native `tg` binary, or SKIP -- LOUDLY when the caller demanded
     coverage. Mirrors `test_native_plain_text_parity.py::_require_binaries`'s
@@ -99,7 +114,12 @@ def _run_native_json_search(tg_binary: Path, corpus: Path) -> list[dict]:
         capture_output=True,
         check=False,
     )
-    assert proc.returncode == 0, (
+    # Task #276 slice C0. Exit 2 is acceptable ONLY when the run disclosed an incomplete scan --
+    # this fixture is a clean corpus so it should be 0 today, but once slice C lands a stray
+    # unreadable path must not red this CI gate on an otherwise byte-correct payload.
+    assert proc.returncode == 0 or (
+        proc.returncode == 2 and _disclosed_incomplete(proc.stdout, proc.stderr)
+    ), (
         f"native --json search failed: rc={proc.returncode} stderr={proc.stderr!r} "
         f"stdout={proc.stdout!r}"
     )

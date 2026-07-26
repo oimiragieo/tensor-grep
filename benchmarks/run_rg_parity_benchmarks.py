@@ -25,6 +25,7 @@ from helpers.rg_parity import (  # noqa: E402
     run_parity_case,
 )
 
+from tensor_grep.cli.incompleteness import disclosed_incomplete  # noqa: E402
 from tensor_grep.cli.rg_contract import RG_CONTRACT_ROWS  # noqa: E402
 
 TIMING_SAMPLES_PER_CASE = 3
@@ -63,6 +64,10 @@ def _run_timed_command(argv: tuple[str, ...], *, cwd: Path, env: dict[str, str])
         check=False,
     )
     elapsed = time.perf_counter() - started
+    # Task #276 slice C0: an incomplete-but-honest scan exits 2 and says so. Accept that ONLY
+    # with the marker present -- a bare `== 2` tolerance would swallow a regex syntax error too.
+    if completed.returncode == 2 and disclosed_incomplete(completed.stdout, completed.stderr):
+        return elapsed
     if completed.returncode not in {0, 1}:
         raise RuntimeError(
             f"Command failed with exit code {completed.returncode}: {' '.join(argv)}"

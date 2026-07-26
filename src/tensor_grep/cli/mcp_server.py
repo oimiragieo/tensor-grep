@@ -28,6 +28,7 @@ from tensor_grep.backends.cpu_backend import (
     native_walk_deadline_exceeded,
 )
 from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+from tensor_grep.cli.incompleteness import disclosed_incomplete
 from tensor_grep.cli.main import (
     _LARGE_ROOT_SCAN_FILE_CEILING,
     _apply_semantic_rerank,
@@ -1919,7 +1920,14 @@ def _execute_index_search_command(command: list[str], *, pattern: str, path: str
             path=path,
         )
 
-    if completed.returncode != 0:
+    # Task #276 slice C0: an incomplete-but-honest scan exits 2 and says so. Treating that as
+    # `invalid_input` would be the worst outcome on this surface -- a TOTAL loss of results for an
+    # MCP client, on a run that actually found matches. Allow-list only: a bare `== 2` tolerance
+    # would swallow a genuine regex/engine failure too.
+    disclosed_partial = completed.returncode == 2 and disclosed_incomplete(
+        completed.stdout, completed.stderr
+    )
+    if completed.returncode != 0 and not disclosed_partial:
         return _index_search_error(
             _extract_rewrite_error_message(
                 completed.stderr or "",
