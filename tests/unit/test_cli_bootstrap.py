@@ -2431,7 +2431,19 @@ def test_root_help_should_surface_current_agent_gpu_launcher_and_validation_cont
     result = CliRunner().invoke(app, ["--help"], prog_name="tg")
 
     assert result.exit_code == 0
-    help_text = result.stdout
+    # Task #295. Collapse every whitespace run to a single space before matching.
+    #
+    # Rich wraps this help text at the detected terminal width, so a multi-word phrase can be
+    # split across a line break and vanish from a raw substring check. MEASURED: with
+    # COLUMNS=200 and COLUMNS=80 "sidecar-routed GPU results" is present; at COLUMNS=100 it is
+    # ABSENT purely because the wrap point lands mid-phrase. Six of the expectations below are
+    # multi-word and were all carrying that latent fragility.
+    #
+    # This is NOT relaxing the assertion -- every phrase must still appear, in order, in the
+    # help text. It removes only sensitivity to WHERE the renderer happened to break lines,
+    # which is not part of the contract being asserted. Same lesson as the clap help-parse
+    # test that failed on a byte-identical binary: assert the invariant, not the rendering.
+    help_text = " ".join(result.stdout.split())
     for expected in [
         'tg agent PATH "change invoice tax"',
         "alternative targets",
