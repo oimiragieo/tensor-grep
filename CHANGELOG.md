@@ -1,6 +1,88 @@
 # CHANGELOG
 
 
+## v1.98.23 (2026-07-26)
+
+### Bug Fixes
+
+- **session-store**: Tell a dropped mount from a mass delete (#287)
+  ([#778](https://github.com/oimiragieo/tensor-grep/pull/778),
+  [`9dca940`](https://github.com/oimiragieo/tensor-grep/commit/9dca94048dc15c64e10ba028d9a76836179bfd51))
+
+* fix(session-store): tell a dropped mount from a mass delete (#287)
+
+A disconnected UNC share raised FileNotFoundError for EVERY tracked file, so the whole tree read as
+  deleted -- the #286 false-deletion class arriving through the one arm that is supposed to mean
+  "really gone".
+
+MEASURED first (the old comment cited winerror 53, a value that never occurs here): missing local
+  file -> winerror 2 ERROR_FILE_NOT_FOUND unreachable UNC host -> winerror 3 ERROR_PATH_NOT_FOUND
+  missing file on a REACHABLE share -> winerror 3 So winerror 2 is a clean deletion signal, and
+  winerror 3 is ambiguous PER FILE: it is shared by "the share is gone" and "a parent dir was
+  removed from a live share".
+
+THE DISCRIMINATOR IS AT THE TREE LEVEL, because that is the only place the two differ: a mass delete
+  leaves the session root reachable, a dropped mount does not. winerror-3 entries are held back,
+  then ONE root probe after the loop decides the whole batch -- root alive => real removals
+  (unchanged behaviour); root gone => indeterminate, never removed. Fails SAFE: a missed deletion
+  self-corrects on the next scan, a false deletion does not.
+
+Gated on `getattr(exc, "winerror", None)`, which is None on POSIX -- every non-Windows platform
+  keeps today's behaviour byte-for-byte. Deliberately NOT branched on sys.platform.
+
+THREE ARMS, and the two controls are the point: TREATMENT files winerror-3 + root unreachable ->
+  removed == [] (mount drop) CONTROL 1 files winerror-3 + root STATS FINE -> still removed (a real
+  deleted parent). Without this the fix would silently reclassify genuine deletions as indeterminate
+  -- the same dishonesty pointed the other way. CONTROL 2 winerror-2 costs no EXTRA root probe,
+  measured as a differential.
+
+TWO FIXTURE BUGS I HAD TO FIX, both recorded at the code site: - an absolute probe counter measured
+  `_resolve_root`'s pre-existing root stat, not the one this fix adds. Right variable, wrong
+  baseline -> made it a differential. - patching os.stat twice in one test made the second fake
+  capture the FIRST fake as its "real" stat, so both counters were contaminated (costly=3 < cheap=5,
+  inverted). `real_stat` is now captured once before any patch.
+
+29 tests in test_incremental_refresh.py pass; ruff clean.
+
+* test(session-store): skip the #287 treatment arm off Windows -- it failed ubuntu+macos
+
+PR #778 has been RED on 5 checks (ubuntu/macos x py3.11/3.12 + gpu) since it was opened, and I
+  reported the queue as green. Caught by the hourly self-audit, not by me watching.
+
+Root cause is the documented cross-platform trap, and it is my test not the fix: #287's
+  discriminator is `getattr(exc, "winerror", None) == 3` (ERROR_PATH_NOT_ FOUND), which exists only
+  on Windows. On POSIX a dropped mount surfaces as ESTALE/ENOENT, the fix deliberately does NOT
+  engage, files are correctly reported as removed -- and my treatment arm asserted `removed == []`
+  on every platform. It was asserting Windows behaviour everywhere.
+
+The CONTROL arms stay UNSKIPPED on purpose: "an ordinary deletion is still reported as removed" must
+  hold on every platform, and that is exactly the arm that would catch this fix over-reaching.
+  Skipping the whole cluster would have removed the guard along with the false failure.
+
+Windows: 29 pass, ruff clean. The POSIX arms are what CI verifies.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* test(session-store): make the #287 probe differential platform-conditional
+
+The winerror-2-vs-3 cost differential is Windows-only by construction: `winerror` is a Windows-only
+  OSError attribute, so on POSIX neither arm can reach the discriminator and both cost the same (CI
+  measured cheap=2 costly=2 on ubuntu and macos). The test asserted the Windows differential
+  everywhere and failed on four jobs.
+
+Asserting equality on POSIX rather than skipping the test keeps a real invariant there -- POSIX must
+  not start paying a root probe the platform can never act on -- instead of dropping the coverage.
+
+Also corrects two assertion messages that claimed more than they proved. `assert probes` passes on
+  the pre-loop `_resolve_root` stat alone, so it is a fixture-applied premise, not evidence the
+  discriminator ran; the differential is what shows that. Relabelled, not deleted -- a fixture that
+  silently fails to apply is its own defect class.
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.98.22 (2026-07-26)
 
 ### Bug Fixes
