@@ -6599,6 +6599,13 @@ def _run_ast_scan_payload(
             rule_occurrences=resolved_rule_occurrences,
         )
 
+    # Task #299: collect files the regex rules could not read, so the payload below can say the
+    # scan did not cover them instead of reporting its findings as the whole answer. Imported
+    # lazily here to match this module's existing repo_map pattern (main.py has no module-level
+    # repo_map import -- pulling one in would undo the #48 cold-start work).
+    from tensor_grep.cli.repo_map import _UnreadablePathFlag as _ScanUnreadableFlag
+
+    scan_unreadable = _ScanUnreadableFlag()
     for rule in regex_rules:
         backend_names_used.add("RegexRulesetBackend")
         if scanner is None:
@@ -6622,7 +6629,14 @@ def _run_ast_scan_payload(
                 lines = (
                     Path(current_file).read_text(encoding="utf-8", errors="replace").splitlines()
                 )
-            except OSError:
+            except OSError as exc:
+                # Task #299. Skipping here is correct -- an unreadable file cannot be scanned --
+                # but doing it SILENTLY made the payload claim a completeness it never had: the
+                # rule contributes no findings for this file, and `tg scan --ruleset` reports the
+                # result with no marker. A security ruleset then reads as "no violations" for a
+                # file nobody opened, and a CI gate keyed on the exit code passes. Record so the
+                # payload can say which files were never examined.
+                scan_unreadable.record(exc)
                 continue
             for line_number, line_text in enumerate(lines, start=1):
                 line_matches = list(pattern.finditer(line_text))
@@ -6676,6 +6690,23 @@ def _run_ast_scan_payload(
     }
     if include_scan_paths_in_payload:
         payload["scan_paths"] = resolved_scan_paths
+    if scan_unreadable.hit:
+        # Task #299. Same `{count, sample}` shape build_repo_map/codemap/inventory already emit
+        # (#276), so a consumer that understands one understands all of them. Emitted ONLY when
+        # something was actually skipped: a field that is always present teaches readers to
+        # ignore it, and `partial` must mean something when it appears.
+        payload["unreadable_paths"] = {
+            "count": scan_unreadable.count,
+            "sample": list(scan_unreadable.sample),
+        }
+        payload["partial"] = True
+        payload["partial_reason"] = "unreadable_path"
+        payload["remediation"] = (
+            f"{scan_unreadable.count} file(s) in scope could not be read (e.g. "
+            f"{', '.join(scan_unreadable.sample) or 'an unreadable path'}), so no rule ran "
+            "against them and this result does NOT prove they are clean. Make them readable, or "
+            "scope the scan away from them."
+        )
     _apply_ruleset_baseline(
         payload,
         baseline_path=baseline_path,

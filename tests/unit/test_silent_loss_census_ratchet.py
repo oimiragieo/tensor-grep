@@ -69,7 +69,11 @@ _BROAD_EXCEPTIONS = frozenset({"BARE", "OSError", "Exception", "EnvironmentError
 # fixed in this same PR -- both were real gaps left by #767/#768, which wired the WALK but not the
 # per-file read/stat loops -- so they are absent below rather than listed at zero.
 KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
-    "main.py": 18,
+    # 18 -> 16 by #299: the regex-ruleset read loop now records into the scan payload. It counts
+    # for TWO because the handler sits inside nested accumulating loops (`for rule` -> `for
+    # current_file`) and the detector visits it once per enclosing loop -- so a single fix can
+    # move this number by more than one. Not a miscount: the invariant is "never rises".
+    "main.py": 16,
     "checkpoint_store.py": 10,
     "repo_map.py": 8,
     "scan_guardrails.py": 5,
