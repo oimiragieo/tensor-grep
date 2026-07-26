@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 import time
 from pathlib import Path
 
@@ -856,6 +857,18 @@ def _stat_raises(
     monkeypatch.setattr(_os, "stat", _fake_stat)
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason=(
+        "Task #287's discriminator is `getattr(exc, 'winerror', None) == 3` "
+        "(ERROR_PATH_NOT_FOUND), which only exists on Windows. On POSIX a dropped mount surfaces "
+        "as ESTALE/ENOENT and the fix deliberately does NOT engage, so this treatment arm has "
+        "nothing to assert there -- it failed on ubuntu+macos asserting Windows behaviour "
+        "everywhere. The CONTROL arms below stay unskipped: 'an ordinary deletion is still "
+        "reported as removed' must hold on every platform, and that is what would catch this fix "
+        "over-reaching."
+    ),
+)
 def test_unreachable_root_reports_indeterminate_not_a_whole_tree_deletion(tmp_path, monkeypatch):
     """Task #287 TREATMENT. A dropped mount must not read as a mass delete.
 
