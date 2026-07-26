@@ -813,6 +813,23 @@ struct NativeJsonOutput<'a> {
     matched_file_paths: Vec<String>,
     match_counts_by_file: BTreeMap<String, usize>,
     matches: Vec<NativeJsonMatch>,
+    // Task #276 slice B2 -- the whole point of the issue. Until now this envelope reported
+    // success on a walk that skipped unreadable paths, so an agent parsing --json could not tell
+    // "no matches exist" from "I could not finish looking".
+    //
+    // NAMES ARE NOT NEW. `result_incomplete` and `incomplete_reason_class` are the vocabulary the
+    // PYTHON routes have emitted since slice 1 (formatters/json_fmt.py:127, :140), with a closed
+    // class set (unreadable_path | timeout | deadline | scan_limit) that #293 documented and
+    // ratcheted. The native path adopting them verbatim is the point: one contract, two engines.
+    //
+    // `skip_serializing_if` on ALL THREE keeps a COMPLETE envelope byte-identical to before this
+    // change, which is what makes the fix additive for every existing consumer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result_incomplete: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    incomplete_reason_class: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    incomplete_paths_count: Option<usize>,
 }
 
 /// Mirrors real `rg --json`'s own `lines` protocol (verified via hexdump against `rg.exe`
@@ -2359,6 +2376,18 @@ fn emit_json_matches(config: &NativeSearchConfig, stats: &SearchStats) -> Result
             .iter()
             .map(native_match_to_json)
             .collect::<Result<Vec<_>>>()?,
+        // Task #276 slice B2. Emitted ONLY when the walk actually skipped something, so a
+        // complete envelope stays byte-identical to every prior release.
+        //
+        // The class is `unreadable_path` and not one of the budget causes on purpose: a walk
+        // error is the ONE value in the closed set that is NOT budget-remediable. No
+        // `--max-repo-files` or `--deadline` value makes a permission-denied subtree readable,
+        // and `docs/CONTRACTS.md` says so explicitly. Labelling it `scan_limit` or `deadline`
+        // would hand the reader a knob that cannot help -- the wrong-knob defect #283 already
+        // cost us once.
+        result_incomplete: (stats.walk_errors > 0).then_some(true),
+        incomplete_reason_class: (stats.walk_errors > 0).then_some("unreadable_path"),
+        incomplete_paths_count: (stats.walk_errors > 0).then_some(stats.walk_errors),
     };
 
     let mut bytes = serde_json::to_vec(&payload)?;
