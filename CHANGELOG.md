@@ -1,6 +1,48 @@
 # CHANGELOG
 
 
+## v1.98.22 (2026-07-26)
+
+### Bug Fixes
+
+- **repo-map**: Stop _path_is_relative_to crashing on OSError; disclose dropped validation files
+  (#291) ([#775](https://github.com/oimiragieo/tensor-grep/pull/775),
+  [`5dc0517`](https://github.com/oimiragieo/tensor-grep/commit/5dc05173658641b0808500501648ea430beb29f3))
+
+Two findings, the second more severe than the task that led to it.
+
+1. HIGHER SEVERITY -- _path_is_relative_to caught ValueError only. Both of its resolve() calls can
+  also raise OSError (permission denied, vanished component, disconnected share), which then escaped
+  through all 9 call sites and killed the command with an unhandled traceback. That is worse than
+  the silent-loss class this module has been hardening: the caller gets NO answer, not a partial
+  one. Now fails CLOSED (False = outside the root), matching the existing ValueError arm -- an
+  unverifiable path is excluded from a scope-limited set, never silently admitted.
+
+Found only because the #291 fix made it reachable in an ordinary way: that fix hands this function a
+  path whose resolve() already failed, so the retry inside was guaranteed to raise on exactly the
+  input the fix exists to handle.
+
+2. _precomputed_validation_files_for_root now records a dropped entry into an optional
+  _UnreadablePathFlag. This helper feeds the agent's "run these to validate your edit" plan across
+  FOUR call sites (:4262, :10565, :11161, :11398) -- an entry lost here means the agent runs a
+  SHORTER suite and believes it validated.
+
+CORRECTION I HAD TO MAKE MID-FIX: an earlier draft asserted the absolute() fallback was usually
+  harmless and only a boundary-crossing symlink lost anything, and the code comment said so. The
+  control-arm test falsified it in one run: _path_is_relative_to re-resolves and now fails closed,
+  so a resolve failure here ALWAYS costs the file. Both the comment and the test were rewritten; the
+  wrong reasoning is recorded at the code site so it is not restored.
+
+CENSUS NOTE (honest, since the number did NOT move): repo_map.py stays at 8. Two detector
+  limitations, neither a correctness problem for the ratchet: - it counts a handler once per
+  ENCLOSING accumulating loop, so 6 distinct handlers score 8; - it cannot see disclosure performed
+  OUTSIDE the handler, which is exactly where this fix records (at the containment drop,
+  deliberately -- recording in the except arm would flag failures before knowing whether they cost
+  anything). Both are precision issues; the ratchet still does its one job (the count cannot grow).
+
+45 tests in test_edit_plan_seed.py pass; census ratchet green; ruff clean.
+
+
 ## v1.98.21 (2026-07-26)
 
 ### Bug Fixes
