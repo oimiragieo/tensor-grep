@@ -1,6 +1,46 @@
 # CHANGELOG
 
 
+## v1.98.17 (2026-07-26)
+
+### Bug Fixes
+
+- **docs-coverage**: Report an unreadable subtree instead of claiming full coverage
+  ([#768](https://github.com/oimiragieo/tensor-grep/pull/768),
+  [`7e380c0`](https://github.com/oimiragieo/tensor-grep/commit/7e380c0cc7fb0e7c138000f6e08fe128ef532ee2))
+
+Task #284, the next slice after #767 did the same for inventory. Both builders in this module walked
+  with `_iter_repo_files` and never passed `unreadable_hit=`, so a permission-denied subtree
+  produced a SMALLER report that still said `possibly_truncated: False` -- "every source file is
+  documented" while whole directories were invisible to the scan.
+
+RED confirmed on BOTH builders before the fix; the clean-tree control already passed, so the
+  assertions discriminate.
+
+New cause `"unreadable-path"`, and it overwrites the budget cause on purpose. "project-files" tells
+  the reader to raise --max-files, which is a real remedy for ITS cause; an unreadable path is the
+  one cause no knob fixes. Ranking the non-remediable cause last-wins is how a single cause field
+  carries the same information the MCP surface got as `budget_remediable: false` in #283/#762.
+  `build_docs_stale_references` additionally HARDCODED its cause inline in the payload
+  (`"project-files" if possibly_truncated else None`), so it could not express any other cause at
+  all -- now hoisted to a real variable.
+
+THE CONSUMER WAS THE WORSE HALF. `render_docs_coverage_text` hardcoded the literal string
+  "(project-files)" and named max_files, so even with the payload fixed the human-readable line
+  would still have told the reader to raise a cap that cannot make a denied directory readable.
+  Fixing only the JSON would have left the surface a human actually reads still lying. Same shape as
+  #767, found the same way: trace the consumer instead of stopping at the payload.
+
+Four tests: the defect on each builder, a clean-tree control covering both, and a renderer arm
+  asserting the text does NOT say "truncated at max_files". The deny fixture monkeypatches
+  os.scandir rather than applying a real ACL -- #281 burned a probe on an ACL that silently failed
+  to apply, leaving a "hostile" arm that was a perfectly readable directory.
+
+30 passed in the docs-coverage suite; ruff check + format --check --preview clean.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.98.16 (2026-07-26)
 
 ### Bug Fixes
