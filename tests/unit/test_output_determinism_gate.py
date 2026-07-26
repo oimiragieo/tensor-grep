@@ -74,8 +74,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -132,20 +134,53 @@ _SURFACES: tuple[tuple[str, list[str], int], ...] = (
 
 
 def _run(argv: list[str], hash_seed: str) -> str:
+    """One invocation, in a PRISTINE COPY of the fixture.
+
+    The copy is not hygiene -- it is what makes the comparison valid. `tg codemap` WRITES its
+    output (`docs/code-map/`) into the tree it scans, so without isolation run 1 mutates the input
+    for runs 2 and 3: CI caught `.revision.dirty` flipping False->True and `scan_limit
+    .scanned_files` going 7->13 between seeds. That is accumulated state, not a hash-seed effect,
+    and it would have been reported as a product nondeterminism bug that does not exist.
+
+    It also explains why this passed locally and failed on CI: my working copy already had the
+    generated files from an earlier run, so every run saw the same steady state. CI starts clean,
+    so run 1 was the only one that saw a pristine tree. A check whose result depends on whether
+    you have run it before is not measuring the software.
+    """
     env = dict(os.environ)
     env["PYTHONHASHSEED"] = hash_seed
     # `src` first so the worktree under test wins over any installed distribution: a stale
     # site-packages copy shadowing `src` has produced false results in this repo before.
     env["PYTHONPATH"] = str(_REPO_ROOT / "src") + os.pathsep + env.get("PYTHONPATH", "")
-    completed = subprocess.run(
-        [sys.executable, "-m", "tensor_grep", *argv],
-        cwd=_REPO_ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=180,
-    )
-    return completed.stdout
+    with tempfile.TemporaryDirectory(prefix="tg-determinism-") as scratch:
+        sandbox = Path(scratch) / "repo"
+        shutil.copytree(_REPO_ROOT / _FIXTURE, sandbox)
+        # Rewrite the fixture path in argv to point at this run's private copy.
+        localized = [
+            str(sandbox) if arg == _FIXTURE else arg.replace(_FIXTURE, str(sandbox)) for arg in argv
+        ]
+        completed = subprocess.run(
+            [sys.executable, "-m", "tensor_grep", *localized],
+            cwd=scratch,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        # The sandbox path differs per run by construction, so it can never be compared. Map it
+        # back to a stable token -- this normalises the PATH, never a RESULT.
+        #
+        # THREE forms, because all three really occur in the output. The JSON-ESCAPED one is the
+        # trap: inside a JSON document a Windows path's separators are doubled, so a
+        # single-backslash replace silently misses every absolute path. It then surfaces not as a
+        # path mismatch but as absent-vs-present dict KEYS (`per_page_token_estimates.<abs path>`),
+        # which reads like a product nondeterminism bug rather than a normalisation gap.
+        # Longest-first, so the escaped form is consumed before the plain one can partially match.
+        native = str(sandbox)
+        text = completed.stdout
+        for form in (native.replace("\\", "\\\\"), native, native.replace("\\", "/")):
+            text = text.replace(form, "<fixture>")
+        return text
 
 
 def _redact_volatile(value: Any) -> Any:
