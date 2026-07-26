@@ -31,6 +31,7 @@ from tensor_grep.cli.session_store import (
     _DEFAULT_SESSION_SYMBOL_REPO_MAP_LIMIT,
     _SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES_ENV,
     _SESSION_VERSION,
+    WARM_DAEMON_DEFAULT_DEADLINE_SECONDS,
     _configured_positive_int,
     _ensure_session_not_stale,
     _index_path,
@@ -1933,10 +1934,22 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                     if not refresh_on_stale:
                         raise
                     load_started_at = monotonic()
+                    # Task #304: bound the staleness-triggered rebuild with the SAME budget the
+                    # warm daemon already applies to `agent`/`orient`/context-render
+                    # (session_store.py:1327, :1349). This was the last unbounded
+                    # `build_repo_map` reachable from a client request: the rebuild ran with no
+                    # time limit, the client gave up at its own 60s, and the cold path then
+                    # anchored a FRESH 60s -- so one stated deadline could be exceeded roughly
+                    # twofold, with the truncation disclosed nowhere.
+                    #
+                    # Reusing the existing constant rather than inventing a second one is the
+                    # point: two independently-chosen daemon budgets would drift, and a reader
+                    # could not tell which one applied to a given request.
                     refresh_session(
                         request_session_id,
                         request_path,
                         payload_cache=server.payload_cache,
+                        deadline_monotonic=(monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS),
                     )
                     server.payload_cache.record_refresh()
                     payload, cache_status = _load_payload_with_status_retry(

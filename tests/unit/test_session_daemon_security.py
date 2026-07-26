@@ -472,7 +472,17 @@ def test_write_json_atomic_default_mode_unchanged(tmp_path: Path) -> None:
 
 
 def _stub_repo_map(monkeypatch) -> None:
-    def _fake_build_repo_map(root: Path, *, max_repo_files: int | None = None) -> dict[str, Any]:
+    def _fake_build_repo_map(
+        root: Path,
+        *,
+        max_repo_files: int | None = None,
+        deadline_monotonic: float | None = None,
+    ) -> dict[str, Any]:
+        # `deadline_monotonic` is accepted and ignored on purpose (task #304). This double exists
+        # to make payload PRUNING testable without a real repo scan, so it must tolerate the real
+        # `build_repo_map` signature rather than pin a subset of it -- a stub narrower than the
+        # function it replaces turns any new keyword into a spurious TypeError in a test that has
+        # nothing to do with the change.
         return {
             "related_paths": [],
             "files": [],

@@ -330,18 +330,31 @@ def test_refresh_session_uses_incremental_builder_when_changeset_available(
         changeset: dict[str, list[str]],
         *,
         max_repo_files: int | None = None,
+        deadline_monotonic: float | None = None,
     ) -> dict[str, object]:
+        # Task #304: accepted and forwarded. A test double NARROWER than the function it
+        # replaces turns any new keyword into a spurious TypeError -- and here that error
+        # is swallowed by session_store's incremental-failure fallback (session_store.py:852),
+        # so the test would have reported a WRONG refresh_type rather than an obvious crash.
         incremental_calls["count"] += 1
         assert max_repo_files == session_store.DEFAULT_AGENT_REPO_MAP_LIMIT
-        return original_incremental(previous_map, changeset, max_repo_files=max_repo_files)
+        return original_incremental(
+            previous_map,
+            changeset,
+            max_repo_files=max_repo_files,
+            deadline_monotonic=deadline_monotonic,
+        )
 
     def unexpected_full_build(
         path: str | Path = ".",
         *,
         max_repo_files: int | None = None,
+        deadline_monotonic: float | None = None,
     ) -> dict[str, object]:
         full_calls["count"] += 1
-        return repo_map.build_repo_map(path, max_repo_files=max_repo_files)
+        return repo_map.build_repo_map(
+            path, max_repo_files=max_repo_files, deadline_monotonic=deadline_monotonic
+        )
 
     monkeypatch.setattr(session_store, "build_repo_map_incremental", tracking_incremental)
     monkeypatch.setattr(session_store, "build_repo_map", unexpected_full_build)
@@ -370,6 +383,7 @@ def test_refresh_session_falls_back_to_full_rebuild_when_incremental_fails(
         changeset: dict[str, list[str]],
         *,
         max_repo_files: int | None = None,
+        deadline_monotonic: float | None = None,
     ) -> dict[str, object]:
         assert max_repo_files == session_store.DEFAULT_AGENT_REPO_MAP_LIMIT
         raise RuntimeError("boom")
@@ -378,10 +392,13 @@ def test_refresh_session_falls_back_to_full_rebuild_when_incremental_fails(
         path: str | Path = ".",
         *,
         max_repo_files: int | None = None,
+        deadline_monotonic: float | None = None,
     ) -> dict[str, object]:
         full_calls["count"] += 1
         assert max_repo_files == session_store.DEFAULT_AGENT_REPO_MAP_LIMIT
-        return repo_map.build_repo_map(path, max_repo_files=max_repo_files)
+        return repo_map.build_repo_map(
+            path, max_repo_files=max_repo_files, deadline_monotonic=deadline_monotonic
+        )
 
     monkeypatch.setattr(session_store, "build_repo_map_incremental", failing_incremental)
     monkeypatch.setattr(session_store, "build_repo_map", tracking_full_build)

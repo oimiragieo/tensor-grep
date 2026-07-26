@@ -7481,6 +7481,7 @@ def build_repo_map_incremental(
     changeset: dict[str, Any],
     *,
     max_repo_files: int | None = None,
+    deadline_monotonic: float | None = None,
 ) -> dict[str, Any]:
     root = Path(str(previous_map.get("path", "."))).expanduser().resolve()
     if not root.exists():
@@ -7535,13 +7536,33 @@ def build_repo_map_incremental(
     parsed_imports_by_file: dict[str, list[str]] = {}
     parsed_symbols_by_file: dict[str, list[dict[str, Any]]] = {}
 
-    for current_path in sorted(changed_files | (set(current_files_by_path) - previous_paths)):
+    # Task #304: PARSING is bounded here, exactly as `build_repo_map` bounds its own loop -- break
+    # and keep what we have, never raise, never zero the results.
+    #
+    # This builder previously had no `deadline_monotonic` parameter AT ALL while `build_repo_map`
+    # did, so threading a deadline through the session layer would have bounded only the
+    # full-rebuild branch and left THIS one -- the common case for a warm session, and the branch
+    # a refresh takes whenever a changeset exists -- unbounded, while the change looked complete
+    # and the tests looked green. The #284 comment above says the two builders "must not disagree
+    # about whether a scan was complete"; this is that same rule applied to the deadline.
+    #
+    # Unparsed files are NOT dropped from the payload: the assembly loop below falls back to the
+    # PREVIOUS map's imports/symbols for any file this loop did not reach, so a deadline yields a
+    # staler-but-complete map rather than a map with holes in it.
+    deadline_hit = False
+    files_parsed = 0
+    changed_to_parse = sorted(changed_files | (set(current_files_by_path) - previous_paths))
+    for current_path in changed_to_parse:
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            deadline_hit = True
+            break
         path_obj = current_files_by_path.get(current_path)
         if path_obj is None:
             continue
         current_imports, current_symbols = _imports_and_symbols_for_path(path_obj)
         parsed_imports_by_file[current_path] = current_imports
         parsed_symbols_by_file[current_path] = current_symbols
+        files_parsed += 1
 
     payload = _envelope(root)
     tests = [str(current) for current in all_files if _is_test_file(current)]
@@ -7588,6 +7609,17 @@ def build_repo_map_incremental(
             "truncation_cause": _cause if _capped else None,
         }
         payload["scan_remediation"] = _SCAN_LIMIT_TRUNCATED_REMEDIATION if _truncated else None
+    # Task #304: same `partial` + `deadline_limit` pair `build_repo_map` emits, and deliberately
+    # the SAME field names -- a consumer cannot tell which builder produced a payload, so a
+    # deadline must look identical from either. Omitted entirely when the parse completed, so a
+    # non-truncated incremental map stays byte-identical to before this parameter existed.
+    if deadline_hit:
+        payload["partial"] = True
+        payload["deadline_limit"] = {
+            "deadline_exceeded": True,
+            "files_scanned": files_parsed,
+            "files_total": len(changed_to_parse),
+        }
     # Task #284: emitted OUTSIDE the `scan_limit` block on purpose, exactly as `build_repo_map`
     # does -- an unreadable path is not a budget cap, and folding it in would give the reader
     # wrong-knob advice ("raise --max-repo-files") for a cause no budget can fix. Omitted

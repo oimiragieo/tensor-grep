@@ -729,11 +729,24 @@ def open_session(
     path: str = ".",
     *,
     max_repo_files: int | None = DEFAULT_AGENT_REPO_MAP_LIMIT,
+    deadline_monotonic: float | None = None,
 ) -> SessionOpenResult:
+    """Task #304: `deadline_monotonic` defaults to None, which is exactly today's behaviour.
+
+    It exists because this call and the two in `refresh_session` were the only `build_repo_map`
+    sites in the codebase with no time bound at all, while every symbol command already had one.
+    A daemon serving a stale session therefore rebuilt the whole map unbounded, the client hit its
+    own 60s timeout, and the cold path then anchored a FRESH budget -- so the caller's single
+    stated deadline could be exceeded roughly twofold with no disclosure anywhere.
+    """
     root = _resolve_root(Path(path))
     started_at = monotonic()
     effective_max_repo_files = _effective_session_max_repo_files(max_repo_files)
-    repo_map = build_repo_map(root, max_repo_files=effective_max_repo_files)
+    repo_map = build_repo_map(
+        root,
+        max_repo_files=effective_max_repo_files,
+        deadline_monotonic=deadline_monotonic,
+    )
     built_at = monotonic()
     created_at = datetime.now(UTC).isoformat()
     session_id = _new_session_id(root)
@@ -809,6 +822,7 @@ def refresh_session(
     *,
     max_repo_files: int | None = None,
     payload_cache: _SessionServeCache | None = None,
+    deadline_monotonic: float | None = None,
 ) -> SessionRefreshResult:
     # Fix A / Guard 3: this is the single choke point every refresh path funnels through -- the
     # explicit `tg session refresh` CLI/MCP command, and the daemon's refresh_on_stale recovery
@@ -831,6 +845,7 @@ def refresh_session(
                 cast(dict[str, Any], existing["repo_map"]),
                 changeset,
                 max_repo_files=effective_max_repo_files,
+                deadline_monotonic=deadline_monotonic,
             )
             refresh_type = "incremental"
         except Exception as exc:
@@ -839,11 +854,19 @@ def refresh_session(
                 session_id,
                 exc,
             )
-            repo_map = build_repo_map(root, max_repo_files=effective_max_repo_files)
+            repo_map = build_repo_map(
+                root,
+                max_repo_files=effective_max_repo_files,
+                deadline_monotonic=deadline_monotonic,
+            )
             refresh_type = "full"
             refresh_fallback_reason = "incremental_failed"
     else:
-        repo_map = build_repo_map(root, max_repo_files=effective_max_repo_files)
+        repo_map = build_repo_map(
+            root,
+            max_repo_files=effective_max_repo_files,
+            deadline_monotonic=deadline_monotonic,
+        )
         changeset = _empty_changeset()
     refreshed_at = datetime.now(UTC).isoformat()
     created_at = str(existing.get("created_at", refreshed_at))
