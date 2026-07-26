@@ -20,11 +20,27 @@ stamp it.
 
 - **Default edit gate:** `tg prepare REPO/src "task" --json` (replaces orient→agent→route-test→callers→evidence argv guessing). Use `--claim` when multi-agent coordination is needed; use `--out FILE` to persist the capsule for `tg evidence emit --capsule FILE` with no manual save.
 - Prefer `REPO/src`. Whole-repo: `tg prepare|agent REPO --deadline N` → expect partial / ask_user.
-- Do not trust bare cold-path default alone on WSL (`tg agent REPO` still empty TIMEOUT @75s). *Last observed 2026-07-21 @ v1.91.0; not re-run since.*
+- **The WSL `tg agent REPO` "empty TIMEOUT @75s" claim is DEBUNKED -- do not re-chase it.**
+  `docs/BACKLOG.md:603` records #578 correcting this as one of TWO false WSL-`/mnt/c` "regression"
+  claims; the native repro is **~26s**. The scan is already interruptible and already keeps a usable
+  partial (`repo_map.py:7400`: *"Break + keep what we have -- never raise, never zero the results"*;
+  measured 7/45 files at a 0.05s deadline still yields the correct `primary_target`).
+  What actually produces an apparently-empty result is the **post-deadline overshoot**, which is
+  deliberate: per `docs/CONTRACTS.md:144`, `--deadline` is a *stop-starting-new-work* bound, not a
+  wall-clock guarantee -- each builder rechecks the deadline at its own return point and would
+  rather report a late-but-complete answer as `partial`. A 60s default plus an FS-latency-
+  proportional tail lands near 75s, at which point the CALLER's own timeout kills the process. That
+  is the harness returning nothing, not tg returning an empty payload -- a different bug with a
+  different fix.
 - At real workspace scale — native Windows, 300k+ files, a separate data point from the WSL caveat above: `tg orient`/`tg search`/`tg inventory --deadline` all bound gracefully (`orient` ~4.9s via scan_limit+centrality; `search` returns partial plus an honest "exceeded timeout" message, exit 124; `inventory --deadline` bounds per-project). Known low-priority edge: a single non-lazy `os.scandir` call in the shared `_iter_repo_files` can still blow `inventory --deadline` on a pathological workspace-union tree (rare; not worth a load-bearing fix).
 - Dense find: run `tg install-dense` once per machine (never auto); then `tg find`. Every dense-absent hint across the CLI now leads with `tg install-dense`.
 - Ledger remains advisory — see `tensor-grep-ledger`. Claim/release/list now canonicalize to the nearest `.git` ancestor (worktree-aware); the PATH-mismatch footgun from 1.92.1-era dogfood is fixed.
-- Skip `tg codemap` on WSL (*last observed 2026-07-21 @ v1.91.0; not re-run since*). GPU inventory ≠ acceleration; the WSL bare-shim cross-domain misclassification that produced a bogus `path_not_found` is fixed (v1.93.0).
+- **The `tg codemap` WSL timeout is likewise DEBUNKED** (`docs/BACKLOG.md:603`, #578: native repro
+  **41s whole-repo, `partial=false`, complete**; and `:606` *"codemap '60-180s/no JSON' = WSL 9p
+  (native 33s complete)"*). Its slow path is also a DIFFERENT mechanism from `tg agent`'s: codemap
+  makes three git subprocess calls (`codemap.py:612`, `:1054`, `:1353`) where `tg agent` makes zero,
+  and that exact cost was already root-caused and fixed in `e95abfa` (v1.82.1). Treating the two as
+  "one root cause" under-serves codemap and over-serves agent. GPU inventory ≠ acceleration; the WSL bare-shim cross-domain misclassification that produced a bogus `path_not_found` is fixed (v1.93.0).
 
 ## Hard stops
 
@@ -40,9 +56,9 @@ stamp it.
 
 | Gap | Status (version + date where re-verified) |
 | --- | --- |
-| Whole-repo agent/prepare default deadline reliability | Open (explicit deadline partial OK; bare agent TIMEOUT) |
+| Whole-repo agent/prepare default deadline reliability | **Re-scoped 2026-07-26.** The "bare agent TIMEOUT" framing was a debunked WSL-9p artifact (`BACKLOG.md:603`, native ~26s). The scan is already interruptible. The real open item is the **unbounded session refresh**: `session_store.py:842`/`:846` call `build_repo_map` with no `deadline_monotonic`, reached via `session_daemon.py:1936` behind a staleness check that runs *before* any deadline is anchored (`session_store.py:1286`); on the 60s client timeout `main.py:9261-9262` swallows it and the cold path anchors a **fresh** 60s (`main.py:9794`) -- worst case ~120s plus tail |
 | CUDA-native GPU promotion | Open (adjudicated HOLD, #169 CEO-gated; kernel is brute-force byte-compare, not PFAC) |
-| `codemap` on WSL | Open (TIMEOUT) |
+| `codemap` on WSL | **Debunked, not open** (`BACKLOG.md:603`/`:606`; native 41s whole-repo complete, 33s in the earlier repro). Root cause was three git subprocess calls, fixed in `e95abfa` @ v1.82.1 |
 | Mega-repo auto-narrow + accurate deadline primaries | Partial (`suggested_scope`/`workspace_root_detected` shipped, #684; deadline-primary accuracy still open) |
 | Unscoped-search fast-refuse on the default flag-less path | **Shipped** (A9; generic 1500-file ceiling, ~1.7s, all 3 doors) |
 | Dynamic-import / blast-radius decoy honesty | **Shipped** (A10/A15; `dynamic_unresolved` excluded from forward/reverse resolution and the blast-radius scoring prefilter) |
