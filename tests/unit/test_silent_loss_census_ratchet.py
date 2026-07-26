@@ -73,6 +73,21 @@ KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
     # for TWO because the handler sits inside nested accumulating loops (`for rule` -> `for
     # current_file`) and the detector visits it once per enclosing loop -- so a single fix can
     # move this number by more than one. Not a miscount: the invariant is "never rises".
+    #
+    # AUDITED #292: the remaining 16 fall into three families, all accepted. Recording the
+    # FAMILIES rather than a per-site list, because a line-numbered enumeration rots on the next
+    # edit and this file has already been burned once by a hand count (see the header).
+    #   FALLBACK-ASSIGN (:1080 launcher scan, :2415/:2624/:2657 doctor PATH scans) -- the handler
+    #     assigns an unresolved-path fallback and the loop CONTINUES with it. Nothing is skipped.
+    #   OUTPUT-BUCKET (:1163, :1183 launcher cleanup) -- `failed.append(...)`, rendered into the
+    #     command's own output. That IS the disclosure; the detector cannot see it because it is
+    #     resolved outside the handler (same shape as session_store:589).
+    #   BROAD-SCAN GUARDRAIL (:4945, :4955, :5027, :5031, :5089) -- main.py's own copies of the
+    #     `scan_guardrails` refusal heuristic (#154/#158 siblings). An OSError only means a huge
+    #     scan is not refused; the scan that follows discloses its own incompleteness.
+    # CAUTION for whoever drains this next: FALLBACK-ASSIGN is NOT safe as a general rule -- it
+    # also matched checkpoint_store's #297 data-loss. See the header note on where the
+    # "model the class" rule stops.
     "main.py": 16,
     "checkpoint_store.py": 10,
     "repo_map.py": 8,
