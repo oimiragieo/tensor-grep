@@ -104,7 +104,14 @@ def _rg() -> str:
 
 
 def test_rg_json_stream_carries_no_incompleteness_signal(tmp_path: pathlib.Path) -> None:
-    """ARM 1: rg's JSON stream stays silent about the directory it could not read."""
+    """ARM 1: rg's JSON stream stays silent about the directory it could not read.
+
+    Self-contained by design. The first draft asserted only "a match was found" and "no marker
+    keys", and an external audit caught that it could PASS on a COMPLETE scan -- exit 0, nothing
+    incomplete, correctly no marker -- proving nothing. The incompleteness evidence now comes
+    from THIS run's own exit code (PREMISE 1), not from the sibling test. A control that lives
+    in a different subprocess is not this test's control.
+    """
     root = _make_unreadable_tree(tmp_path)
     try:
         proc = subprocess.run(
@@ -119,7 +126,19 @@ def test_rg_json_stream_carries_no_incompleteness_signal(tmp_path: pathlib.Path)
     messages = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
     assert messages, f"rg emitted no JSON at all (exit {proc.returncode}): {proc.stderr[:400]}"
 
-    # PREMISE: the scan must have actually found the readable hit, or we are asserting the
+    # PREMISE 1 -- THIS run must have been incomplete. Without it the test is a SPLIT ORACLE:
+    # it would conclude "rg's JSON hides incompleteness" from a run that was never incomplete,
+    # because a fully readable tree exits 0, emits no marker (correctly), and passes. The
+    # exit-code evidence must come from the SAME subprocess whose JSON is being judged, not
+    # from the sibling test below -- a control in another process controls nothing here.
+    assert proc.returncode == 2, (
+        "this run was NOT incomplete (exit "
+        f"{proc.returncode}, expected 2), so the absence of an incompleteness marker in its "
+        "JSON proves nothing -- rg is correctly silent about a scan that finished. Something "
+        f"made the locked directory readable to rg. stderr: {proc.stderr[:400]}"
+    )
+
+    # PREMISE 2: the scan must have actually found the readable hit, or we are asserting the
     # absence of a signal in a stream that never searched anything.
     assert any(m.get("type") == "match" for m in messages), (
         "rg found no matches -- the readable half of the tree was not searched, so this run "
