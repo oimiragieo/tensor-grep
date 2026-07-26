@@ -13672,6 +13672,7 @@ def checkpoint_undo(
 ) -> None:
     """Restore a checkpoint."""
     from tensor_grep.cli.checkpoint_store import (
+        CheckpointCorruptError,
         CheckpointUndoUnsafeError,
         resolve_latest_checkpoint,
         undo_checkpoint,
@@ -13702,15 +13703,25 @@ def checkpoint_undo(
             payload = undo_checkpoint(checkpoint_id, path)
     except Exception as exc:
         message = str(exc)
-        # Task #297: this handler labelled EVERY undo failure `checkpoint_not_found`. For an
-        # aborted-because-unrevertable undo that is a lie -- the checkpoint was found and is
-        # perfectly good; the working tree is what blocked it -- and it would send the reader
-        # looking for a missing checkpoint instead of at the unreadable file named in `detail`.
-        # (The same mislabel still applies to CheckpointCorruptError; correcting that one is a
-        # JSON-contract change and is filed separately rather than smuggled into a data-loss fix.)
-        error_code = (
-            "undo_unsafe" if isinstance(exc, CheckpointUndoUnsafeError) else "checkpoint_not_found"
-        )
+        # This handler once labelled EVERY undo failure `checkpoint_not_found`. Two independent
+        # fixes corrected that, and both are folded in here:
+        #   #297 -- an undo ABORTED because it could not be reverted safely. The checkpoint was
+        #     found and is perfectly good; the working tree is what blocked it. Reporting
+        #     not-found sent the reader hunting a missing checkpoint instead of at the unreadable
+        #     file named in `detail`.
+        #   #298 -- a CORRUPT checkpoint, where the record was found perfectly well but its
+        #     snapshot blobs are missing or unreadable. Reporting not-found hid the only fact
+        #     that matters: the snapshot cannot restore your tree.
+        # #297 deliberately left the corrupt case alone ("a JSON-contract change, filed
+        # separately rather than smuggled into a data-loss fix") -- that separate filing is #298,
+        # and this is where the two meet. `tests/unit/test_checkpoint_atomic_undo.py` describes
+        # the mislabel as the symptom of the OLD buggy shape, so until now the code contradicted
+        # its own test's prose.
+        error_code = "checkpoint_not_found"
+        if isinstance(exc, CheckpointCorruptError):
+            error_code = "checkpoint_corrupt"
+        elif isinstance(exc, CheckpointUndoUnsafeError):
+            error_code = "undo_unsafe"
         if not last and checkpoint_id is not None:
             candidate = Path(checkpoint_id).expanduser()
             if candidate.exists():
