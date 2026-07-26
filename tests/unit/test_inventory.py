@@ -577,3 +577,68 @@ def test_inventory_text_render_does_not_give_wrong_knob_advice_for_unreadable(
     assert "truncated at max_files" not in text, (
         "the renderer told the reader to raise a cap that cannot fix an unreadable path"
     )
+
+
+def _deny_stat_from_inventory_only(monkeypatch, denied_file: Path) -> None:
+    """Deny `stat(denied_file)` ONLY when called from inventory.py -- the walk still succeeds.
+
+    THE FIXTURE HAD TO BE SCOPED THIS WAY, and the reason is the whole point of the test. An
+    instrumented probe showed `build_inventory` stats this file three times: twice from the walk
+    (`repo_map._repo_walk_path_sort_key` -> `Path.is_dir`) and once from inventory's own size
+    loop. A blanket denial trips the WALK's failure path first, so `unreadable_hit` gets recorded
+    by machinery that already existed and the test passes with or without the fix under test --
+    a check that passes in both arms, which is not a check at all.
+
+    Scoping to the caller frame reproduces the real defect instead: the walk sees the file (so it
+    is inside the universe the manifest claims to cover) and the later stat fails -- the ordinary
+    TOCTOU window where a file is deleted or its permissions change mid-command.
+
+    `abspath` not `resolve()`: resolve calls stat internally and would recurse into this patch.
+    """
+    import os as _os
+    import sys as _sys
+
+    real_stat = Path.stat
+    target = _os.path.abspath(_os.fspath(denied_file))
+
+    def _fake_stat(self, *args, **kwargs):
+        caller = _sys._getframe(1).f_code.co_filename
+        if _os.path.abspath(_os.fspath(self)) == target and caller.endswith("inventory.py"):
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", _fake_stat)
+
+
+def test_inventory_discloses_a_file_it_walked_but_could_not_stat(tmp_path, monkeypatch):
+    """#292 census. #767 wired the WALK but not the per-file `stat` loop.
+
+    The walk reported this file, so it is inside the universe `tg inventory` claims to describe.
+    Dropping it at the stat shrinks total_files/total_bytes and every per-language and
+    per-directory rollup built from them, while the payload still reads complete. The realistic
+    trigger is the TOCTOU window: the file is walked, then deleted or its permissions change
+    before the size lookup.
+
+    See `_deny_stat_from_inventory_only` for why the denial is scoped to the calling frame -- the
+    obvious blanket fixture passes with AND without the fix.
+    """
+    _write(tmp_path, "readable.py", "x = 1\n")
+    denied = _write(tmp_path, "denied.py", "y = 2\n")
+
+    # CONTROL ARM -- both files counted, nothing truncated. If this stops differing from the
+    # treatment arm the fixture has stopped discriminating and neither assertion means anything.
+    clean = build_inventory(str(tmp_path))
+    assert clean["totals"]["files"] == 2
+    assert clean["scan_limit"]["truncation_cause"] is None
+
+    _deny_stat_from_inventory_only(monkeypatch, denied)
+    payload = build_inventory(str(tmp_path))
+
+    assert payload["totals"]["files"] < clean["totals"]["files"], (
+        "precondition: the denied file must actually drop out, otherwise the disclosure below is "
+        "untested"
+    )
+    assert payload["scan_limit"]["truncation_cause"] == "unreadable-path", (
+        "inventory counted fewer files than it walked and still reported a complete manifest"
+    )
+    assert payload["scan_limit"]["possibly_truncated"] is True
