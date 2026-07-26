@@ -577,13 +577,25 @@ def _stale_changeset(
             # only failure that means "removed".
             #
             # KNOWN GAP, and it lives HERE rather than in the OSError arm below: a disconnected
-            # Windows UNC share raises FileNotFoundError (winerror 53) for EVERY file under it, so
-            # a dropped network mount lands in this arm and reports the whole tree as removed --
-            # the same false-deletion class task #286 fixed, arriving through the one arm that is
-            # supposed to mean "really gone". Not fixable by widening the OSError split: at the
-            # single-file level winerror 53 is indistinguishable from a real deletion. The
-            # discriminator has to be at the TREE level (e.g. every entry under a root resolving
-            # to removed is likelier a mount drop than a mass delete). Tracked as task #287.
+            # Windows UNC share raises FileNotFoundError for EVERY file under it, so a dropped
+            # network mount lands in this arm and reports the whole tree as removed -- the same
+            # false-deletion class task #286 fixed, arriving through the one arm that is supposed
+            # to mean "really gone".
+            #
+            # MEASURED (task #287; an earlier version of this comment said "winerror 53", a value
+            # that NEVER OCCURS here -- do not go hunting for it):
+            #     missing local file                -> winerror 2  (ERROR_FILE_NOT_FOUND)
+            #     unreachable UNC host              -> winerror 3  (ERROR_PATH_NOT_FOUND)
+            #     missing file on a REACHABLE share -> winerror 3
+            # So winerror 2 means a genuine deletion, but winerror 3 is shared by "the share is
+            # gone" and "a parent directory was removed from a live share" -- which is why this is
+            # still not decidable per file, though for a different reason than first written.
+            #
+            # The discriminator is at the TREE level and keys on that asymmetry: a mass delete
+            # leaves the session root reachable, a dropped mount does not. On any winerror-3
+            # removal, probe the root ONCE after the loop; if the root is also unreachable, those
+            # entries are indeterminate rather than removed. Full design + both required control
+            # arms are on task #287.
             removed.append(current_path)
             continue
         except OSError as exc:
