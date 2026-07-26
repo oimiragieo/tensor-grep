@@ -331,6 +331,14 @@ def test_agent_second_scan_deadline_clamps_to_floor(tmp_path: Path, monkeypatch)
     # `assert 'collected_no_call_sites' == 'collected'`) on a branch whose entire diff contains
     # ZERO occurrences of `call_site_evidence` -- a false red charged to an unrelated PR.
     #
+    # WHAT THIS WIDENING COSTS, stated because an external audit caught me omitting it: the
+    # fixture is `_write_helper_and_caller`, so a caller DOES exist here. The old assertion was
+    # therefore also an INCIDENTAL caller-discovery guard -- a deterministic regression that broke
+    # caller discovery would surface as `collected_no_call_sites`, and this widened form no longer
+    # catches that. That guard is given up deliberately: it cannot be told apart from the timing
+    # race in THIS scenario, whose whole design is an exhausted deadline. Caller discovery
+    # deserves its own test with a normal budget, where the signal is unambiguous.
+    #
     # This still FAILS if the clamp regresses: "skipped"/"unavailable"/a missing key all trip it,
     # and the deadline assertions below (recorded floor + partial + partial_reason) are what
     # actually pin the behaviour this test is named for.
@@ -342,7 +350,11 @@ def test_agent_second_scan_deadline_clamps_to_floor(tmp_path: Path, monkeypatch)
     assert payload.get("partial_reason") == "deadline", result.output
     # The item-3 assertion (unchanged): the shared deadline had already elapsed (0.5s sleep > 0.3s
     # budget), so the rescue scan must receive the FLOORED 0.1s budget, never a negative or zero
-    # value -- proven by the substantive "collected" result above despite the overall lateness.
+    # value. THIS assertion is what proves the floor -- it reads the value the collector was
+    # actually handed. The previous version of this comment said the floor was "proven by the
+    # substantive 'collected' result above", which is no longer true now that
+    # collected_no_call_sites also passes; leaving that sentence would have told the next reader
+    # a status check was carrying weight it does not carry.
     assert recorded.get("deadline_seconds") == 0.1
 
 
