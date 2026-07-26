@@ -598,6 +598,11 @@ def _stale_changeset(
             # winerror 2 is therefore a clean deletion signal. winerror 3 is AMBIGUOUS per file --
             # it is shared by "the share is gone" and "a parent directory was removed from a live
             # share" -- so it is deferred and decided at the TREE level after the loop.
+            #
+            # The discriminator keys on this asymmetry: a mass delete leaves the session root
+            # reachable, a dropped mount does not. On any winerror-3 entry, probe the root ONCE
+            # after the loop; if the root is also unreachable, those entries are indeterminate
+            # rather than removed. Design + both required control arms are on task #287.
             if getattr(exc, "winerror", None) == _WINERROR_PATH_NOT_FOUND:
                 path_unresolved.append(current_path)
             else:

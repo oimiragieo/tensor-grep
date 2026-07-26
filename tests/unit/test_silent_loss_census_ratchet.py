@@ -28,6 +28,23 @@ here in the same PR.
 
 House rule this implements: "model the class, don't enumerate the cases". Round N+1 finding
 another instance of a defect family means the answer is an invariant, not another reviewer.
+
+WHERE THAT RULE STOPS -- a near miss worth keeping (#292, 2026-07-26). Several audited-benign
+sites share a shape: the handler only ASSIGNS a fallback and lets the loop continue, so nothing
+is skipped (``resolved = candidate`` in the doctor PATH scans, ``_nearby_session_roots``). It is
+tempting to teach the detector that shape and drop ~20 sites of noise in one edit.
+
+Measuring the shape's distribution before encoding it showed why that would be a disaster:
+``checkpoint_store``'s undo commit phase matched it too -- ``removed_bytes = None`` followed by an
+``unlink()`` that destroys a file the revert can no longer restore. That was task #297, the most
+severe defect this campaign found. A "benign fallback" rule would have excused it FOREVER, in the
+exact file where it mattered most.
+
+The lesson generalises: encode a shape only when it is *structurally* incapable of hiding a loss
+(a handler that exits the process; one whose accumulator feeds a later ``raise``). "The handler
+looks harmless" is not that. Whether a fallback is safe depends on what the loop DOES with the
+fallback value afterwards, which is a semantic question this detector deliberately does not try
+to answer. Audit those sites and record the verdict instead -- see CONTRACTS.md section 0.
 """
 
 from __future__ import annotations
@@ -71,9 +88,31 @@ _BROAD_EXCEPTIONS = frozenset({"BARE", "OSError", "Exception", "EnvironmentError
 KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
     "main.py": 18,
     "checkpoint_store.py": 10,
+    # AUDITED #292, all 8 accepted. The LSP legs (`_external_definitions` :15585,
+    # `_external_references` :15693) skip a symbol whose LSP request failed, which lowers
+    # `lsp_count` -- and `_provider_agreement` (:15258-15281) turns `native_count > lsp_count`
+    # into `diverged` rather than a clean `lsp-only` proof. The loss reaches the caller through
+    # that stamp; the comment at :15268 traces it to the v1.20.0 dogfood where `tg refs
+    # --provider lsp` returned 2 of 14 marked authoritative. `:15713` is a different shape: a
+    # failed `read_text` degrades the SNIPPET to the symbol name but still appends the reference,
+    # so nothing is lost. CAVEAT: this verdict is from reading the code, not from a test that
+    # observes the stamp flip -- proving it needs a live LSP server or heavy mocking.
     "repo_map.py": 8,
+    # AUDITED #292, all 5 accepted. These gate the broad-scan REFUSAL heuristic, not an answer:
+    # an OSError only means a huge scan is not refused, and the scan that follows discloses its
+    # own incompleteness. main.py carries its own copies of the same family (#154/#158 siblings).
     "scan_guardrails.py": 5,
     "codemap.py": 3,
+    # AUDITED #292, both accepted, and they are two DIFFERENT non-defects:
+    #   `_nearby_session_roots` :406 -- `resolved = candidate` is a FALLBACK, not a skip. The
+    #     candidate stays in the loop; nothing is dropped at the handler.
+    #   `_stale_changeset` :589 -- the #286 fix itself. It routes to a dedicated `indeterminate`
+    #     bucket (plus `indeterminate_kinds`), which IS the disclosure: an unreadable file is
+    #     deliberately left out of removed/changed/added rather than being called a deletion.
+    # The second is a shape the detector structurally cannot see -- disclosure by routing to a
+    # separate OUTPUT BUCKET, resolved outside the handler. Not worth widening the rule for:
+    # "appends to a collection that is also returned" would match almost every real accumulator
+    # and blind the detector. Recorded here instead, per CONTRACTS.md section 0.
     "session_store.py": 2,
     "ledger_store.py": 1,
     "runtime_paths.py": 1,
