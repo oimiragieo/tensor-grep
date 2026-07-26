@@ -24,6 +24,7 @@ from tensor_grep.cli.repo_map import (
     _DeadlineBreakFlag,
     _iter_repo_files,
     _looks_like_binary_file,
+    _UnreadablePathFlag,
 )
 
 # Path components that are NEVER product source a governing doc documents: tool state (.claude
@@ -199,11 +200,13 @@ def build_docs_coverage(
     walk_deadline_hit = _DeadlineBreakFlag()
     # Thread the cap into the walk (bucketed early-stop); ask for +1 to distinguish exactly-max from
     # more-exist for the truncation notice, matching inventory.
+    walk_unreadable_hit = _UnreadablePathFlag()
     walked = _iter_repo_files(
         root,
         max_files=max_files + 1,
         deadline_monotonic=deadline_monotonic,
         deadline_hit=walk_deadline_hit,
+        unreadable_hit=walk_unreadable_hit,
     )
     possibly_truncated = False
     truncation_cause: str | None = None
@@ -211,6 +214,15 @@ def build_docs_coverage(
         walked = walked[:max_files]
         possibly_truncated = True
         truncation_cause = "project-files"
+    if walk_unreadable_hit.hit:
+        # Task #284. An unreadable subtree made this report SMALLER while still claiming
+        # completeness -- "every source file is documented" when whole directories were invisible.
+        # Overwrites the budget cause deliberately: "project-files" tells the reader to raise
+        # --max-files, which is a real remedy for ITS cause but cannot make a denied path readable.
+        # Ranking the non-remediable cause last-wins is how the single cause field carries the
+        # `budget_remediable: false` information the MCP surface got in #283/#762.
+        possibly_truncated = True
+        truncation_cause = "unreadable-path"
 
     resolved_root = root.resolve()
     doc_paths: list[Path] = []
@@ -331,9 +343,20 @@ def render_docs_coverage_text(payload: dict[str, Any]) -> str:
         f"docs={totals['doc_files']}",
     ]
     if payload["scan_limit"]["possibly_truncated"]:
-        lines.append(
-            f"[!] truncated at max_files={payload['scan_limit']['max_files']} (project-files)"
-        )
+        # Task #284: this line HARDCODED "(project-files)" and named max_files, so an
+        # unreadable-path truncation would have rendered as budget advice that cannot help --
+        # the renderer contradicting its own payload. Read the real cause and, for the one cause
+        # no knob fixes, say so instead of naming a cap.
+        if payload["scan_limit"].get("truncation_cause") == "unreadable-path":
+            lines.append(
+                "[!] skipped unreadable path(s) (unreadable-path); counts are a floor. Raising "
+                "--max-files will NOT help: the path(s) must become readable, or be scoped out."
+            )
+        else:
+            lines.append(
+                f"[!] truncated at max_files={payload['scan_limit']['max_files']} "
+                f"({payload['scan_limit'].get('truncation_cause') or 'project-files'})"
+            )
     uncovered = payload["uncovered_files"]
     if uncovered:
         lines.append(f"\nUndocumented source files ({len(uncovered)}):")
@@ -413,15 +436,23 @@ def build_docs_stale_references(
 
     deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
     walk_deadline_hit = _DeadlineBreakFlag()
+    walk_unreadable_hit = _UnreadablePathFlag()
     walked = _iter_repo_files(
         root,
         max_files=max_files + 1,
         deadline_monotonic=deadline_monotonic,
         deadline_hit=walk_deadline_hit,
+        unreadable_hit=walk_unreadable_hit,
     )
     possibly_truncated = len(walked) > max_files
     if possibly_truncated:
         walked = walked[:max_files]
+    # Task #284, same as build_docs_coverage above. This builder previously hardcoded its cause
+    # inline in the payload, so it could not express any cause but the file cap.
+    truncation_cause = "project-files" if possibly_truncated else None
+    if walk_unreadable_hit.hit:
+        possibly_truncated = True
+        truncation_cause = "unreadable-path"
     resolved_root = root.resolve()
 
     doc_paths = [
@@ -462,7 +493,7 @@ def build_docs_stale_references(
         "scan_limit": {
             "max_files": max_files,
             "possibly_truncated": possibly_truncated,
-            "truncation_cause": "project-files" if possibly_truncated else None,
+            "truncation_cause": truncation_cause,
         },
     }
     if walk_deadline_hit.hit:
