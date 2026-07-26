@@ -306,3 +306,95 @@ def test_cli_accepts_deadline_flag(tmp_path):
     (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
     result = CliRunner().invoke(app, ["docs-coverage", str(tmp_path), "--deadline", "5", "--json"])
     assert result.exit_code == 0, result.output
+
+
+def _deny_scandir_for(monkeypatch, denied_dir):
+    """Make `os.scandir(denied_dir)` raise PermissionError; everything else untouched.
+
+    Deliberately NOT a real chmod/ACL fixture. Task #281 burned a probe on exactly that: the ACL
+    silently failed to apply, so the "hostile" arm was a readable directory and the run would have
+    declared a live defect ABSENT. A monkeypatched raise cannot silently no-op.
+    """
+    import os as _os
+    from pathlib import Path as _Path
+
+    real_scandir = _os.scandir
+    target = str(_Path(denied_dir).resolve())
+
+    def _fake_scandir(path=".", *args, **kwargs):
+        if str(_Path(path).resolve()) == target:
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_scandir(path, *args, **kwargs)
+
+    monkeypatch.setattr(_os, "scandir", _fake_scandir)
+
+
+def _seed_repo(tmp_path):
+    (tmp_path / "README.md").write_text("# docs\n", encoding="utf-8")
+    (tmp_path / "readable").mkdir()
+    (tmp_path / "readable" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    denied = tmp_path / "denied"
+    denied.mkdir()
+    (denied / "hidden.py").write_text("y = 2\n", encoding="utf-8")
+    return denied
+
+
+def test_docs_coverage_reports_an_unreadable_subtree_as_a_truncation_cause(tmp_path, monkeypatch):
+    """Task #284, same fail-open-by-omission #767 fixed for inventory. `build_docs_coverage`
+    walked with `_iter_repo_files` but never passed `unreadable_hit=`, so a permission-denied
+    subtree produced a SMALLER coverage report that still said `possibly_truncated: False` --
+    "every source file is documented" while whole directories were invisible.
+
+    The cause is NOT budget-remediable, unlike the existing "project-files" (-> raise --max-files).
+    """
+    denied = _seed_repo(tmp_path)
+    _deny_scandir_for(monkeypatch, denied)
+
+    scan = build_docs_coverage(str(tmp_path))["scan_limit"]
+    assert scan["possibly_truncated"] is True, (
+        "an unreadable subtree left the report incomplete but docs-coverage claimed completeness"
+    )
+    assert scan["truncation_cause"] == "unreadable-path"
+
+
+def test_docs_stale_references_reports_an_unreadable_subtree_too(tmp_path, monkeypatch):
+    """Sibling builder in the same module, same omission -- it hardcoded
+    `"project-files" if possibly_truncated else None`, so it could not express any other cause.
+    """
+    denied = _seed_repo(tmp_path)
+    _deny_scandir_for(monkeypatch, denied)
+
+    scan = build_docs_stale_references(str(tmp_path))["scan_limit"]
+    assert scan["possibly_truncated"] is True
+    assert scan["truncation_cause"] == "unreadable-path"
+
+
+def test_docs_coverage_clean_tree_is_the_control_arm(tmp_path):
+    """CONTROL. Without this, both assertions above could pass by marking EVERY scan truncated."""
+    _seed_repo(tmp_path)
+
+    for payload in (build_docs_coverage(str(tmp_path)), build_docs_stale_references(str(tmp_path))):
+        scan = payload["scan_limit"]
+        assert scan["possibly_truncated"] is False
+        assert scan["truncation_cause"] is None
+
+
+def test_docs_coverage_text_render_does_not_give_wrong_knob_advice(tmp_path, monkeypatch):
+    """Task #284, CONSUMER arm -- the worse half of this defect. `render_docs_coverage_text`
+    HARDCODED the string "(project-files)" and named max_files, so even after the payload learned
+    a second cause the human-readable line would still have told the reader to raise a cap that
+    cannot make a denied directory readable. A renderer that contradicts its own payload is still
+    a lie; fixing only the JSON would have left this half broken.
+    """
+    from tensor_grep.cli.docs_coverage import render_docs_coverage_text
+
+    denied = _seed_repo(tmp_path)
+    _deny_scandir_for(monkeypatch, denied)
+
+    text = render_docs_coverage_text(build_docs_coverage(str(tmp_path)))
+
+    assert "unreadable-path" in text
+    assert "must become readable" in text, "the text must name the real remedy"
+    assert "truncated at max_files" not in text, (
+        "the renderer told the reader to raise a cap that cannot fix an unreadable path"
+    )
