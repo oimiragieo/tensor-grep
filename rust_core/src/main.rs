@@ -8350,6 +8350,22 @@ fn run_native_search_with_optional_rg_fallback(
     let verbose = config.verbose;
     match execute_native_search(config) {
         Ok(stats) => {
+            // Task #276 slice C. An incomplete walk exits 2 -- and it is checked BEFORE the
+            // no-match branch on purpose, because the two answer different questions and rg
+            // resolves them in this order too. `rg needle .` over a tree with one access-denied
+            // subdirectory exits 2 whether or not it matched anything elsewhere: "I could not
+            // finish looking" outranks "I found nothing", since the second is only trustworthy
+            // if the first is false. Reversing these would let a zero-match incomplete scan exit
+            // 1, which reads as an authoritative "no matches exist" -- the exact lie #276 exists
+            // to stop.
+            //
+            // Safe to emit only because slice C0 landed first: all six exit-code consumers are
+            // three-state aware as of #792/#793 (agent_readiness x3, both benchmark harnesses,
+            // the byte-fidelity e2e, mcp_server), and crossover.rs was verified unreachable.
+            // Shipping this before them would have broken `tg calibrate` and `tg dogfood`.
+            if stats.walk_errors > 0 {
+                std::process::exit(2);
+            }
             if stats.total_matches == 0 && stats.binary_match_files == 0 {
                 std::process::exit(1);
             }
