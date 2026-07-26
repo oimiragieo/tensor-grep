@@ -72,8 +72,13 @@ KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
     "main.py": 18,
     "checkpoint_store.py": 10,
     "repo_map.py": 8,
+    # scan_guardrails' 5 are the broad-scan REFUSAL heuristic, not an answer: an OSError there
+    # only means a huge scan is not refused, and the scan that follows discloses its own
+    # incompleteness. Audited under #292 and deliberately left -- they are candidates the census
+    # surfaces, not defects. They stay pinned so a NEW one still trips the ratchet.
     "scan_guardrails.py": 5,
-    "codemap.py": 3,
+    # codemap.py drained to 0 by #296 (was 3): the tracked-file filter, the folder census and the
+    # freshness digest now record into a post-walk accumulator that reaches `coverage.partial`.
     "session_store.py": 2,
     "ledger_store.py": 1,
     "runtime_paths.py": 1,
