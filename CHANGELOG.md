@@ -1,6 +1,49 @@
 # CHANGELOG
 
 
+## v1.98.24 (2026-07-26)
+
+### Bug Fixes
+
+- **codemap**: Disclose the files it drops after the walk (#296)
+  ([#779](https://github.com/oimiragieo/tensor-grep/pull/779),
+  [`d6705e6`](https://github.com/oimiragieo/tensor-grep/commit/d6705e6be824409b97b35e6ae999470e5c03a5df))
+
+`coverage` reads `rm["unreadable_paths"]`, which carries only the WALK's failures. Three helpers
+  BELOW the walk drop entries on OSError and were invisible to it, so a map could lose real
+  committed files while reporting itself complete:
+
+- `_tracked_file_set` / `_is_tracked` -- an OSError was treated as proof the file is UNTRACKED, so a
+  genuinely committed file was deleted from files/tests/symbols/imports. A wrong answer, not a
+  smaller one. - `_all_folder_paths` -- folder dropped from the zero-mapped-file census. -
+  `_tree_manifest_sha256` -- a file unreadable at BOTH stamp and --check time is consistently absent
+  from the digest, so the hashes match and the map reports FRESH while carrying a stale entry.
+
+One accumulator collects all three. It is folded in at the tail seam, NOT at the scan-level
+  disclosure: two of the three sites run after that block, so reading the flag there would measure
+  it before it could be set.
+
+Precedence is the inverse of `tail_deadline_hit`'s -- this one MUST override a budget reason,
+  because no --max-repo-files / --deadline increase makes an unreadable path readable (the
+  wrong-knob class of #283 / #757).
+
+The `_is_tracked` drop is deliberately left in place; flipping it to keep the file would let
+  untracked scratch leak into the persisted inventory, which is what the filter exists to prevent.
+  The fix is to stop the drop being SILENT.
+
+No new contract vocabulary: reuses the documented `unreadable_path`.
+
+Verified bidirectionally -- with the recording restored to `pass` and the re-fold disabled, all
+  three new tests fail on their own assertion. Each has a control arm (clean flag stays clear; the
+  unpatched fixture builds a COMPLETE map) so "partial is True" cannot pass on a map that was never
+  whole.
+
+Census ratchet: codemap.py 3 -> 0. scan_guardrails' 5 audited and pinned with a reason -- they gate
+  the broad-scan REFUSAL, not an answer.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.98.23 (2026-07-26)
 
 ### Bug Fixes
