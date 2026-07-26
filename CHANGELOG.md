@@ -1,6 +1,314 @@
 # CHANGELOG
 
 
+## v1.98.16 (2026-07-26)
+
+### Bug Fixes
+
+- **inventory**: Report an unreadable subtree instead of claiming a complete manifest
+  ([#767](https://github.com/oimiragieo/tensor-grep/pull/767),
+  [`e971eab`](https://github.com/oimiragieo/tensor-grep/commit/e971eab26b3a4d16ea18796d45178be5624e06c2))
+
+Task #284, continuing the slice #761 shipped for `tg find`.
+
+`build_inventory` walked with `_iter_repo_files` but never passed `unreadable_hit=`, so a
+  permission-denied subtree simply yielded fewer files and `scan_limit.possibly_truncated` stayed
+  False -- an inventory asserting it was COMPLETE while missing everything under the denied
+  directory. RED run confirmed the defect before the fix; the control arm (clean tree) already
+  passed, so the assertion discriminates.
+
+New cause value `"unreadable-path"`, and it deliberately OVERWRITES either budget cause -- the
+  opposite of the precedence the existing two use between themselves. "project-files" and "deadline"
+  both tell the reader to turn a KNOB and both are real remedies for their own cause. An unreadable
+  path is the one cause no knob can fix. Letting a budget label win would hand out wrong-knob
+  advice: raise the budget, the hole stays, nothing hints why. Same defect class as #283/#762 on the
+  MCP scan_limit surface, where the fix was `budget_remediable: false`; inventory has one cause
+  field, so precedence carries that information instead.
+
+ALSO FIXES THE CONSUMER, which is where this would have been half-done: `render_inventory_text` had
+  a single generic `else` printing "truncated at max_files=N (cause=...)". With the new value the
+  human-readable line would have told the reader to raise a cap that cannot close the hole -- a
+  renderer contradicting its own payload. It now has its own arm naming the real remedy. Found by
+  tracing the consumer rather than stopping at the payload, the same move that surfaced #286.
+
+Three tests: the defect, the clean-tree control, and a consumer arm asserting the rendered text does
+  NOT say "truncated at max_files". The deny fixture monkeypatches os.scandir rather than using a
+  real ACL -- task #281 burned a probe on an ACL that silently failed to apply, making a hostile arm
+  perfectly readable and nearly declaring a real defect absent.
+
+36 passed in the inventory suites; ruff check + format --check --preview clean.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+- **session**: Never report an UNREADABLE file as removed (it caused false-stale errors and needless
+  rebuilds) ([#764](https://github.com/oimiragieo/tensor-grep/pull/764),
+  [`37325da`](https://github.com/oimiragieo/tensor-grep/commit/37325da1a7e720e780e9f71082b85c196a714965))
+
+* fix(session): never report an UNREADABLE file as removed (it evicted real files)
+
+`_stale_changeset` wrapped `os.stat` in a bare `except OSError` and appended to `removed`. That
+  cannot distinguish "the file is gone" (FileNotFoundError) from "I am not allowed to look at it"
+  (PermissionError), so a permission-denied subtree reported every file under it as DELETED.
+
+This is not an under-report, it is data loss. `removed` is consumed by `build_repo_map_incremental`
+  (repo_map.py, its `normalized_changeset["removed"]` comment), so a TRANSIENT permission problem
+  silently EVICTED real files from the repo map. It is reachable from MCP on every `tg_session_*`
+  call with `refresh_on_stale=True`, and it also feeds `_ensure_session_not_stale`, so it could
+  raise SessionStaleError naming files nobody touched.
+
+MEASURED before the fix (standalone probe, real session, one denied subdir): removed: ['hidden.py']
+  added: [] modified: [] and the new test's RED run reported THREE real source files as removed.
+
+FIX: split the handler. FileNotFoundError / NotADirectoryError -> a genuine removal. Any other
+  OSError -> the file is INDETERMINATE and is left out of all three buckets, i.e. treated as
+  unchanged.
+
+That direction is deliberate and is the whole point: the opposite error (missing a real deletion)
+  leaves a stale entry that the next successful scan corrects, while reporting a false deletion is
+  unrecoverable from here. Fail safe toward the recoverable mistake.
+
+DELIBERATELY NOT DONE: the indeterminate state is not yet SURFACED. The changeset vocabulary is
+  {added, modified, removed} with no way to say "I could not tell", and adding a fourth state
+  changes the consumer contract -- the same closed-vocabulary problem #276/#283 solved on other
+  surfaces. Folding it into `removed` to make it visible would reintroduce the exact bug this commit
+  fixes. Tracked on #286; a comment at the site says so.
+
+TESTS, both arms -- the control is what makes this verification rather than assertion: - an
+  unreadable file must NOT appear in `removed` (RED pre-fix: 3 files did). - CONTROL: a genuinely
+  deleted file MUST still appear in `removed`. Without it, "never report removals" would satisfy the
+  first assertion while destroying the feature.
+
+The fixture patches `os.stat` NARROWLY, under one subtree. Two instrument failures got us here and
+  both are recorded in the helper: patching `os.stat` globally under pytest breaks pytest's OWN
+  failure reporting, and calling `Path.resolve()` inside a fake `os.stat` recurses infinitely
+  because `resolve()` calls `os.stat`. The helper now normalizes with pure string ops only.
+
+Local: 102 passed (test_incremental_refresh.py + test_session_cli.py + test_repo_map_cache.py), ruff
+  check + `ruff format --check --preview` clean.
+
+Closes #286.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* fix(session): correct the false eviction claim + log the indeterminate stat
+
+The one-line code fix from 76439fe stands. The MECHANISM stated alongside it did not: the comment,
+  the test docstring and the PR body all claimed `removed` is consumed by
+  `build_repo_map_incremental` and evicts real files. It is not.
+
+repo_map.py:7421 builds `changed_files` from `added | modified` only, and the D2 comment on the very
+  next line says `removed` is "currently unused" -- the exact line the old comment cited as its
+  evidence. A probe passing a false `removed` evicted nothing.
+
+The real chain: false `removed` -> `_changeset_has_entries` -> `_ensure_session_not_stale` raises
+  SessionStaleError naming untouched files; the list is persisted into the session payload and
+  re-served by `_session_health_payload`; and on MCP `refresh_on_stale=True` it forces a needless
+  rebuild. False reporting and wasted work, not data loss.
+
+Also in this commit: - log the indeterminate stat instead of degrading in total silence. The prior
+  justification ("the vocabulary has no fourth state") was wrong -- build_repo_map already ships
+  `unreadable_paths = {count, sample}`. A structured signal there is still the better fix and stays
+  tracked separately. - note the uncovered case: a disconnected Windows UNC share raises
+  FileNotFoundError for every file, so a dropped mount still reports the whole tree as removed. -
+  add a precondition assert to the positive test. It filtered on `"src" in p` with nothing asserting
+  those entries exist, so a fixture-layout change would have made it pass vacuously -- declaring the
+  defect absent instead of testing for it.
+
+19 passed in the touched file; ruff check + format --check --preview clean.
+
+* fix(session): correct hop 2, bound the log, and drop the false title claim
+
+Second correction round on task #286. The one-line code fix and both test arms were signed off by
+  two independent gates; this commit is the TEXT plus a logging bound.
+
+HOP 2 WAS FALSE -- and false the same way the first draft was. The corrected comment claimed the
+  false `removed` list is "PERSISTED into the session payload and re-served by
+  `_session_health_payload`". Verified: the persisted `payload["changeset"]` key has ZERO readers in
+  src/, and `_session_health_payload` (:879) RECOMPUTES the changeset itself at :881 and serves
+  that. So I fixed a wrong-consumer claim by asserting a different consumer without checking it
+  either. The harm survives via the recompute -- `tg session health` reports live files as deleted
+  -- but the route stated was wrong. Corrected in the comment, the test docstring, and the PR body.
+
+LINE CITATIONS were stale in the PR body: 590 -> 603 (_ensure_session_not_stale), 742 -> 757
+  (persist site), 858 -> 860/864/872 (_load_session_payload). They were read BEFORE the previous
+  commit added ~14 lines to this file and never re-derived. On a PR whose whole point is citation
+  accuracy, that matters.
+
+LOG SPAM BOUND. The per-file `logger.warning` added last commit could emit up to ~2000 stderr lines
+  PER REQUEST: `_stale_changeset` runs on every session-serving call (both `_load_session_payload`
+  and `_session_health_payload`), the snapshot is capped only by DEFAULT_AGENT_REPO_MAP_LIMIT, and
+  this package configures no handler, so Python's lastResort prints every line. Now accumulates and
+  emits ONE aggregated warning (count + error kinds + 3-path sample) after the loop. Wording
+  softened to "may be incomplete" -- an indeterminate file may genuinely be unchanged.
+
+Also added a note to test_build_repo_map_incremental_removes_deleted_entries_ from_payload
+  explaining WHY it passes (the files are unlinked before the call, so `_iter_repo_files` skips
+  them) -- without it the test reads as a contradiction of "removed is unread", which is the wrong
+  inference this whole task exists to correct.
+
+91 passed across test_incremental_refresh + test_session_cli (-o addopts=""); ruff check + format
+  --check --preview clean.
+
+* fix(session): name the real health surface + cite symbols, not line numbers
+
+Third correction round on task #286, and the third gate found the SAME class of error a third time.
+
+BLOCKER 1 -- `tg session health` DOES NOT EXIST. The corrected text named it as the harmed surface,
+  in the PR body, the shipped code comment, and the test docstring. There is no
+  `@session_app.command("health")` and no `tg_session_health` MCP tool: `health` is only a request
+  kind on the session serve/daemon JSON-lines protocol (the `command == "health"` arms in
+  session_store and session_daemon). The HARM is real -- that response really does serve the false
+  changeset with `stale: true` -- but I invented the front door. This is the identical "named a
+  consumer without checking it" mistake that killed draft 1 (build_repo_map_incremental) and draft 2
+  (the persisted `changeset` key). All three now listed at the code site with the instruction: GREP
+  THE NAME FIRST.
+
+BLOCKER 2 -- stale line citations, AGAIN, re-introduced by the commit that fixed them. That commit
+  added 16 lines inside `_stale_changeset`, shifting 10 of 12 downstream citations. Fixing the
+  instance a third time would guarantee a fourth, so this fixes the CLASS: the PR body now cites
+  SYMBOLS, which do not drift. Line numbers survive only for repo_map.py, which this PR does not
+  touch. Verified mechanically: zero `session_store.py:NNN` citations remain.
+
+Also drops the assertion message's "is persisted into the session payload" clause -- literally true
+  but it echoed the dead draft-2 harm claim ~25 lines below a docstring saying that copy has no
+  reader.
+
+* fix(session): move the UNC note to the arm it describes + drop a re-served echo
+
+Gate 4 returned SHIP with no blockers. These are its two non-blocking follow-ups, both fixed in
+  place rather than filed.
+
+1. The disconnected-UNC-share note sat inside the `except OSError` arm, but the case it describes
+  (winerror 53 for every file on a dropped mount) is caught one arm ABOVE, in `except
+  (FileNotFoundError, NotADirectoryError)`. The text said so, so no reader was misled about behavior
+  -- but a gap note belongs at the code that has the gap. Moved, and expanded with why widening the
+  OSError split cannot fix it (at the single-file level winerror 53 is indistinguishable from a real
+  deletion; the discriminator has to be tree-level) plus the tracking task #287.
+
+2. The positive test's FAILURE message said the false report "is re-served by the health request".
+  Not false -- health does surface the same false removal a second time -- but "re-served" is the
+  exact verb of dead-claim #2, and a failure message is read detached from the docstring 25 lines
+  above that explicitly denies health re-serves the persisted key. Now "is recomputed and served
+  again by the health request", which is what actually happens.
+
+* style(tests): blank-line seam left by the #761 rebase resolution
+
+The rebase onto main put #761's `_deny_scandir_for` + incremental-map tests directly above #764's
+  `_deny_stat_under` + removal tests. The two sides are DISJOINT (different helpers, different tests
+  -- git only flagged them because both append at the same point), so the resolution kept both, but
+  the section seam ended up one blank line short of PEP8/ruff.
+
+Caught by `ruff format --check --preview` locally rather than by CI.
+
+* test(cli): isolate the implicit-root test from ambient filesystem state
+
+FOUND while re-verifying #268's claims: this test false-failed locally with `assert 2 == 0`, and the
+  product was RIGHT.
+
+It ran from whatever directory pytest was launched in -- the real repo root -- so the implicit-root
+  walk read ambient filesystem state. A permission-denied directory sitting at the repo root (#268)
+  makes that walk INCOMPLETE, so tg correctly exits 2 per the three-state contract (0 complete / 1
+  not-found / 2 incomplete). The assertion `exit_code == 0` then failed on honest behavior.
+
+Nothing in this test is about the repository's contents -- it asserts that a no-path search forwards
+  an EMPTY `paths` list -- so it must not read them. Now runs under `monkeypatch.chdir(tmp_path)`,
+  which makes it deterministic and immune to whatever happens to be lying around the developer's
+  working tree.
+
+Verified: fails before (assert 2 == 0), passes after.
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Reconcile to v1.98.13 — the unreadable-path honesty wave
+  ([#766](https://github.com/oimiragieo/tensor-grep/pull/766),
+  [`dd2615c`](https://github.com/oimiragieo/tensor-grep/commit/dd2615cdf649384eff08c3bafa7caae376400849))
+
+* docs(backlog): reconcile to v1.98.13 -- the unreadable-path honesty wave
+
+Anchors BACKLOG.md forward from v1.98.11. The wave is organised around one question: when tg cannot
+  READ part of a tree, does it say so, or does it report success over a silently smaller result set?
+
+Shipped: #757/#761 thread the existing unreadable_paths signal into tg find / codemap / incremental
+  refresh and pin incomplete_reason_class in CONTRACTS.md; #762 (v1.98.14) makes MCP tg_search's
+  scan_limit state WHY a scan truncated and whether raising the budget would help at all
+  (budget_remediable: false on an unreadable dir, contract 1.4.0->1.5.0) because the old payload
+  gave WRONG-KNOB advice; #763 stops an ACL-locked pytest basetemp from spamming git status. #765
+  ratchets the Rust walk-error-discard class so it cannot grow.
+
+Two defects found by tracing CONSUMERS rather than fixing the named site: #286 (a permission-denied
+  file reported as DELETED) and #288 (_capture_snapshot drops unreadable files from the snapshot
+  entirely).
+
+Also records two process receipts, both of which cost real cycles this session: - PR #764 was
+  NO-SHIPed twice for a false MECHANISM attached to a correct one-line fix. A disproved claim's
+  replacement needs the same verification the original failed. - `tag == PyPI` is not a sufficient
+  drain gate: a `fix:` commit on main with CI still queued is a release IN FLIGHT even though the
+  tag has not moved.
+
+ruff format --check --preview clean; test_public_docs_governance 43 passed.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* docs(backlog): fold in the third #764 gate + two more process receipts
+
+Amends this PR's receipts block rather than opening a fifth queued PR.
+
+- #764 was NO-SHIPed THREE times, not twice. The third blocker: the text named `tg session health`
+  as the harmed surface and that command does not exist -- no `@session_app.command("health")`, no
+  `tg_session_health` MCP tool; `health` is only a request kind on the serve/daemon protocol. Same
+  "named a consumer without checking it" class as the first two. Hence: GREP THE NAME FIRST. - New
+  receipt: line numbers in prose about a file the PR EDITS rot by construction. #764's citations
+  went stale twice; the second time the commit that FIXED them shifted 10 of 12 by 16 lines. The fix
+  is to cite symbols. - Sharpened the drain-gate receipt: once the tag HAS moved, the publish may
+  still be running, and merging can cancel it via the branch concurrency group -- stranding a tagged
+  version with no PyPI artifact. Check the release run's jobs, not just tag-vs-PyPI. - New receipt
+  from #285 (closed unrecoverable): a subagent gate's result is ephemeral. Acting on blockers feels
+  like discharging it but drops every non-blocking item, which lives only in the returned text --
+  `gh pr view --json reviews` on #757 shows only Codex boilerplate. Transcribe non-blockers on
+  receipt.
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+### Testing
+
+- **native**: Ratchet the walk-error-discard class so it cannot grow
+  ([#765](https://github.com/oimiragieo/tensor-grep/pull/765),
+  [`78abd95`](https://github.com/oimiragieo/tensor-grep/commit/78abd95a94747f5e59b06d94494f8e75899aadf4))
+
+Task #276 slice 2c. A directory walk written as `.filter_map(|e| e.ok())` silently DISCARDS every
+  per-entry error, so a permission-denied subtree or an I/O fault yields fewer files and the command
+  still exits 0 with no marker in the envelope. That is the #276 defect.
+
+The fix is Rust and this box cannot compile (CPU-SAFE: no cargo build/check/ clippy), so CI is the
+  only oracle for the fix itself. Rather than ship 10 unverifiable edits at once, this lands the
+  part that IS locally verifiable and permanently enforced: pin the census so the class cannot GROW
+  while the sites are fixed one CI-verified slice at a time. "Model the class, don't enumerate the
+  cases" -- the invariant is that the count never increases.
+
+CENSUS IS MECHANICAL, NOT REMEMBERED. The tracker note said "6 more sites"; grepping found 10
+  (backend_ast_workflow.rs 3, backend_cpu.rs 6, index.rs 1). That gap is the reason the census is
+  machine-checked rather than prose. The two sites #280 already fixed are correctly absent -- they
+  now report.
+
+Three arms, because a ratchet that cannot fail is not a ratchet: - a file OUTSIDE the census
+  introducing the idiom fails (the arm that bites on new code) - a counted file's count RISING
+  fails; FALLING also fails, with an instruction to lower the number, so a fix cannot silently leave
+  the ratchet slack - an oracle check proves the detector regex actually matches the idiom and that
+  the census is non-empty -- otherwise a typo'd pattern would find zero hits, both arms would pass
+  vacuously, and this would certify a codebase it never inspected
+
+MUTATION-VERIFIED: appending a fake `.filter_map(|e| e.ok())` to lib.rs fails the first arm with
+  `assert not ['lib.rs']`; removing it passes. 3 passed.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.98.15 (2026-07-25)
 
 ### Bug Fixes
