@@ -17,6 +17,7 @@ import pytest
 from typer.testing import CliRunner
 
 from tensor_grep.cli import codemap as _codemap
+from tensor_grep.cli import repo_map as _repo_map
 from tensor_grep.cli.codemap import build_codemap, build_codemap_json
 from tensor_grep.cli.main import app
 
@@ -789,8 +790,9 @@ def test_exclude_untracked_paths_forwards_deadline_monotonic_to_tracked_file_set
 ) -> None:
     captured: dict = {}
 
-    def _spy_tracked_file_set(root, *, deadline_monotonic=None):
+    def _spy_tracked_file_set(root, *, deadline_monotonic=None, unreadable_hit=None):
         captured["deadline_monotonic"] = deadline_monotonic
+        captured["unreadable_hit"] = unreadable_hit
         return None  # degrade to no-op -- the pre-existing contract for ANY git-unavailable case
 
     monkeypatch.setattr(_codemap, "_tracked_file_set", _spy_tracked_file_set)
@@ -800,6 +802,9 @@ def test_exclude_untracked_paths_forwards_deadline_monotonic_to_tracked_file_set
 
     assert captured["deadline_monotonic"] == 42.0
     assert result == rm
+    # #296: the accumulator must reach the helper too -- a forwarding test that only checks one
+    # of the two out-params would keep passing if a refactor dropped the other.
+    assert captured["unreadable_hit"] is None, "no flag was passed by this caller"
 
 
 def test_build_codemap_degrades_honestly_when_revision_identity_git_call_would_be_slow(
@@ -959,3 +964,107 @@ def test_readable_tree_is_the_control_arm_for_the_unreadable_case(tmp_path: Path
 
     assert payload["partial"] is False
     assert payload["partial_reason"] is None
+
+
+# ---------------------------------------------------------------------------
+# (#296) Post-walk unreadable drops must reach `coverage.partial`
+#
+# `rm["unreadable_paths"]` carries ONLY the walk's failures. Three helpers below the walk drop
+# entries on OSError; before #296 none of them could reach the disclosure, so a map could lose
+# real committed files while reporting itself complete. Every arm here has a control, because a
+# "the map is partial" assertion that would also hold on an unmodified fixture proves nothing.
+# ---------------------------------------------------------------------------
+
+
+def _resolve_raiser(canary_name: str, pristine):
+    """A `Path.resolve` that fails for ONE filename and delegates everything else to the real
+    implementation. A blanket raiser would trip the walk's own pre-existing disclosure and make
+    the treatment arm pass for the wrong reason."""
+
+    def fake(self, *args, **kwargs):
+        if self.name == canary_name:
+            raise PermissionError(13, "Permission denied", str(self))
+        return pristine(self, *args, **kwargs)
+
+    return fake
+
+
+def test_tree_manifest_records_a_file_it_cannot_stat(tmp_path: Path) -> None:
+    repo = _copy_fixture(tmp_path)
+    real_file = next(repo.rglob("*.py"))
+    missing = repo / "does_not_exist.py"
+    assert not missing.exists(), "premise: the canary must be unstattable for this to test anything"
+
+    hit = _repo_map._UnreadablePathFlag()
+    digest = _codemap._tree_manifest_sha256(
+        [str(real_file), str(missing)], repo, unreadable_hit=hit
+    )
+    assert hit.hit is True
+    assert hit.count == 1
+    assert digest, "the digest must still be produced -- disclosure, not a crash"
+
+    # CONTROL: the same call over only-readable files must NOT report a hit. Without this arm a
+    # flag that were simply always-on would pass the assertions above.
+    clean = _repo_map._UnreadablePathFlag()
+    _codemap._tree_manifest_sha256([str(real_file)], repo, unreadable_hit=clean)
+    assert clean.hit is False
+    assert clean.count == 0
+
+
+def test_untracked_filter_records_the_file_it_drops_on_oserror(tmp_path: Path, monkeypatch) -> None:
+    repo = _copy_fixture(tmp_path)
+    _init_git_repo(repo)
+    canary = next(repo.rglob("*.py"))
+    rm = {"files": [str(p) for p in repo.rglob("*.py")], "tests": [], "symbols": [], "imports": []}
+
+    # CONTROL FIRST: unpatched, the canary survives the filter and nothing is recorded. This is
+    # what makes the treatment arm below meaningful -- it proves the drop is caused by the
+    # injected OSError and not by the file being untracked, ignored, or absent all along.
+    clean = _repo_map._UnreadablePathFlag()
+    kept = _codemap._exclude_untracked_paths(rm, root=repo, unreadable_hit=clean)
+    assert str(canary) in kept["files"], "premise: the canary must survive an unpatched run"
+    assert clean.hit is False
+
+    pristine = Path.resolve
+    monkeypatch.setattr(Path, "resolve", _resolve_raiser(canary.name, pristine))
+    hit = _repo_map._UnreadablePathFlag()
+    filtered = _codemap._exclude_untracked_paths(rm, root=repo, unreadable_hit=hit)
+
+    assert str(canary) not in filtered["files"], (
+        "premise: the injected OSError must actually drop the canary -- if it survives, the "
+        "fixture never bit and the recording assertion below would be vacuous"
+    )
+    assert hit.hit is True, "the drop happened; it must not be silent"
+
+
+def test_codemap_reports_partial_when_a_post_walk_path_becomes_unreadable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = _copy_fixture(tmp_path)
+    _init_git_repo(repo)
+    canary = next(repo.rglob("*.py"))
+
+    # CONTROL: the untouched fixture builds a COMPLETE map. If this were already partial the
+    # treatment assertion would pass on a map that was never whole.
+    control = _build(repo)
+    control_coverage = json.loads(
+        (Path(control["out"]) / _codemap._COVERAGE_FILENAME).read_text(encoding="utf-8")
+    )
+    assert control_coverage["partial"] is False, (
+        "premise: the unmodified fixture must map completely, else 'partial is True' below "
+        "would hold with or without the fix"
+    )
+
+    shutil.rmtree(Path(control["out"]))
+    pristine = Path.resolve
+    monkeypatch.setattr(Path, "resolve", _resolve_raiser(canary.name, pristine))
+    payload = _build(repo)
+    coverage = json.loads(
+        (Path(payload["out"]) / _codemap._COVERAGE_FILENAME).read_text(encoding="utf-8")
+    )
+
+    assert coverage["partial"] is True
+    assert coverage["partial_reason"] == "unreadable_path"
+    # The remediation must NOT send the reader to a budget knob: no --max-repo-files or
+    # --deadline increase makes an unreadable path readable (#283 / #757 wrong-knob class).
+    assert "will NOT fix this" in coverage["remediation"]

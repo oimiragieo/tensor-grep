@@ -101,9 +101,13 @@ KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
     # AUDITED #292, all 5 accepted. These gate the broad-scan REFUSAL heuristic, not an answer:
     # an OSError only means a huge scan is not refused, and the scan that follows discloses its
     # own incompleteness. main.py carries its own copies of the same family (#154/#158 siblings).
+    # They stay pinned so a NEW one still trips the ratchet.
     "scan_guardrails.py": 5,
-    "codemap.py": 3,
-    # AUDITED #292, both accepted, and they are two DIFFERENT non-defects:
+    # codemap.py drained to 0 by #296 (was 3): the tracked-file filter, the folder census and the
+    # freshness digest now record into a post-walk accumulator that reaches `coverage.partial`.
+    # Absent rather than pinned at 0 -- an entry at 0 and no entry are equivalent to both ratchet
+    # arms, and the absence is what makes a re-introduction show up as a NEW file.
+    # AUDITED #292, both session_store entries accepted, and they are two DIFFERENT non-defects:
     #   `_nearby_session_roots` :406 -- `resolved = candidate` is a FALLBACK, not a skip. The
     #     candidate stays in the loop; nothing is dropped at the handler.
     #   `_stale_changeset` :589 -- the #286 fix itself. It routes to a dedicated `indeterminate`
