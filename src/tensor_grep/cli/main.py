@@ -8568,6 +8568,32 @@ def inventory(
         raise typer.Exit(2)
 
 
+def _docs_scan_is_unreadable_truncated(payload: dict[str, Any]) -> bool:
+    """True when a docs-coverage scan was cut short by a path it could not read.
+
+    Task #294. `docs-coverage` deliberately exits 0 on `scan_limit.possibly_truncated`, and
+    docs/CONTRACTS.md says so explicitly -- but that decision was made when the field could ONLY
+    mean the `--max-repo-files` count cap, whose remedy is "raise the cap". Exiting 0 was
+    defensible because the caller could always fix it by spending more budget.
+
+    #276/#767/#768 then WIDENED the same field to also mean "the walk hit an unreadable path", a
+    cause NO budget increase fixes. The exit-code decision is a consumer of that field's meaning
+    and was never revisited, so the command kept returning 0 -- indistinguishable from a complete
+    scan -- for a condition the caller genuinely needs to know about. Measured on the published
+    1.98.17 against a real ACL-denied subtree: exit 0 on the truncated tree AND on a clean one,
+    i.e. the exit code carried no information at all, while sibling `tg inventory` exited 2.
+
+    Deliberately NARROW: only the non-budget-remediable cause flips the exit code. A pure
+    count-cap truncation still exits 0, so the documented budget contract is unchanged and no
+    existing caller of that path breaks. Follows `tg codemap`, which already made
+    `unreadable_path` a new exit-2 trigger (docs/CONTRACTS.md), rather than inventing a rule.
+    """
+    scan_limit = payload.get("scan_limit")
+    if not isinstance(scan_limit, dict):
+        return False
+    return scan_limit.get("truncation_cause") == "unreadable-path"
+
+
 @app.command(name="docs-coverage")
 def docs_coverage(
     path: str = typer.Argument(".", help="File or directory to check for governing-doc coverage"),
@@ -8648,7 +8674,7 @@ def docs_coverage(
             # scoped to the NEW `partial` (time-budget) signal only -- the pre-existing
             # `scan_limit.possibly_truncated` (--max-repo-files count-cap) contract is UNCHANGED and
             # still exits 0, so this is additive-only unless --deadline is explicitly passed.
-            if stale_payload.get("partial"):
+            if stale_payload.get("partial") or _docs_scan_is_unreadable_truncated(stale_payload):
                 raise typer.Exit(2)
             # --check exits AFTER emitting the report, so CI shows what failed AND fails the job.
             if check and stale_payload["totals"]["stale"] > 0:
@@ -8673,9 +8699,10 @@ def docs_coverage(
         _safe_stdout_line(render_docs_coverage_fix_markdown(payload))
     else:
         _safe_stdout_line(render_docs_coverage_text(payload))
-    # See the --stale branch above: truncation trumps --check, and this is scoped to the NEW
-    # --deadline `partial` signal only -- --max-repo-files' possibly_truncated stays exit 0.
-    if payload.get("partial"):
+    # See the --stale branch above: truncation trumps --check. Two exit-2 triggers now: the
+    # --deadline `partial` time-budget signal, and an unreadable path (task #294).
+    # --max-repo-files' possibly_truncated still stays exit 0.
+    if payload.get("partial") or _docs_scan_is_unreadable_truncated(payload):
         raise typer.Exit(2)
     if check and payload["totals"]["uncovered"] > 0:
         raise typer.Exit(1)

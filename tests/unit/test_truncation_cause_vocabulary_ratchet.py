@@ -11,7 +11,9 @@ WHAT THIS IS *NOT*. `truncation_cause` is a DIFFERENT FIELD from `incomplete_rea
 `partial_reason`, which the search and codemap routes carry. Those use an underscored vocabulary
 ("scan_limit", "deadline", "timeout", "unreadable_path") and docs/CONTRACTS.md documents it in
 five places. `truncation_cause` uses a hyphenated one ("project-files", "deadline",
-"unreadable-path"). MEASURED: CONTRACTS.md mentions `unreadable_path` 5x and `unreadable-path` 0x.
+"unreadable-path"). MEASURED when #293 landed: CONTRACTS.md mentioned `unreadable_path` 5x and
+`unreadable-path` 0x -- that asymmetry was the gap. It is now documented, so the count has moved;
+the POINT that survives is the two spellings belong to two different fields, not the tally.
 
 The two spellings are NOT a bug to be unified. Each is internally consistent within its own field,
 and renaming either would break a documented contract for zero correctness gain. An earlier draft

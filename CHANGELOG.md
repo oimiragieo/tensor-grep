@@ -1,6 +1,47 @@
 # CHANGELOG
 
 
+## v1.98.19 (2026-07-26)
+
+### Bug Fixes
+
+- **edit-plan**: Report an unreadable subtree during validation-test discovery
+  ([#770](https://github.com/oimiragieo/tensor-grep/pull/770),
+  [`6ba465e`](https://github.com/oimiragieo/tensor-grep/commit/6ba465e9ea94c6d72a016c6e0fed8aa2e45f90bb))
+
+Task #291, first slice. `_discover_validation_tests_for_primary_file` walks with `_iter_repo_files`
+  and never passed `unreadable_hit=`, so a permission-denied subtree simply yielded FEWER discovered
+  tests and the validation plan was emitted with no hint it had been built over a partial scan.
+
+This is worse than the search surfaces #761/#767/#768 fixed. There the user gets fewer results and
+  can notice. Here the user gets a CONFIDENT INSTRUCTION -- "run these to validate your edit" --
+  computed from a scan that silently skipped part of the tree, so an agent runs a shorter suite and
+  believes it validated. The cause is not budget-remediable: raising _VALIDATION_RUNNER_SCAN_LIMIT
+  cannot make a denied directory readable.
+
+The param is OPTIONAL and defaults to None (a complete no-op), exactly like the `deadline_hit` this
+  function already accepts and threads into the same walk -- so no caller changes until it opts in.
+
+MEASURED, after three wrong guesses at the fixture topology, which is worth recording because the
+  shape is not the obvious one: - `_validation_repo_root(source.parent)` returns the file's OWN
+  parent (proj/src), NOT the project root -- so the fallback walk scans proj/src. - A denied dir
+  placed as a SIBLING of src/ is therefore never visited and the flag can never fire: a repro whose
+  topology deletes the mechanism it tests. - The function also early-returns [] when
+  `validation_root == scoped_path`, so scoped_root must stay the project root to clear that guard.
+  An instrumented probe (count scandir calls, print the dirs visited) settled it in one run after
+  three hypotheses had failed. Measure the harness before theorising about the code.
+
+MUTATION-VERIFIED: dropping `unreadable_hit=` from the walk fails the defect arm and leaves the
+  control passing; restoring it passes both. 42 passed in the edit-plan suite; ruff check + format
+  --check --preview clean.
+
+Remaining #291 sites (3) are multi-hop from the payload and are NOT in this slice:
+  _detect_validation_runners_from_root, _has_python_validation_fallback_ evidence,
+  _raw_validation_plan_for_tests.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.98.18 (2026-07-26)
 
 ### Bug Fixes
