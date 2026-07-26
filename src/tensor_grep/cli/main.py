@@ -13613,7 +13613,11 @@ def checkpoint_undo(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Restore a checkpoint."""
-    from tensor_grep.cli.checkpoint_store import resolve_latest_checkpoint, undo_checkpoint
+    from tensor_grep.cli.checkpoint_store import (
+        CheckpointUndoUnsafeError,
+        resolve_latest_checkpoint,
+        undo_checkpoint,
+    )
 
     if path == "--json":
         json_output = True
@@ -13640,6 +13644,15 @@ def checkpoint_undo(
             payload = undo_checkpoint(checkpoint_id, path)
     except Exception as exc:
         message = str(exc)
+        # Task #297: this handler labelled EVERY undo failure `checkpoint_not_found`. For an
+        # aborted-because-unrevertable undo that is a lie -- the checkpoint was found and is
+        # perfectly good; the working tree is what blocked it -- and it would send the reader
+        # looking for a missing checkpoint instead of at the unreadable file named in `detail`.
+        # (The same mislabel still applies to CheckpointCorruptError; correcting that one is a
+        # JSON-contract change and is filed separately rather than smuggled into a data-loss fix.)
+        error_code = (
+            "undo_unsafe" if isinstance(exc, CheckpointUndoUnsafeError) else "checkpoint_not_found"
+        )
         if not last and checkpoint_id is not None:
             candidate = Path(checkpoint_id).expanduser()
             if candidate.exists():
@@ -13654,7 +13667,7 @@ def checkpoint_undo(
                     _with_schema_version(
                         {
                             "ok": False,
-                            "error": "checkpoint_not_found",
+                            "error": error_code,
                             "detail": message,
                             "checkpoint_id": checkpoint_id,
                             "path": path,

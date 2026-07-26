@@ -80,6 +80,44 @@ class CheckpointCorruptError(RuntimeError):
         self.missing_files: list[str] = missing_files or []
 
 
+class CheckpointUndoUnsafeError(RuntimeError):
+    """Raised when undo would have to destroy a working-tree file it cannot revert (task #297).
+
+    Distinct from ``CheckpointCorruptError``: there the SNAPSHOT is unusable, here the snapshot
+    is fine and the WORKING TREE holds a file that cannot be read. The commit phase must capture
+    a file's bytes before unlinking or overwriting it, because that copy is the only thing the
+    revert path can restore from. If the read fails, proceeding would delete content that nothing
+    can bring back -- so undo aborts instead, and the revert rolls back whatever it had already
+    applied.
+
+    ``path`` is the offending working-tree file.
+    """
+
+    def __init__(self, message: str, path: str) -> None:
+        super().__init__(message)
+        self.path: str = path
+
+
+def _bytes_or_abort_undo(path: Path, checkpoint_id: str) -> bytes:
+    """Read ``path`` for the revert log, or abort the undo.
+
+    The commit phase is only crash-safe because every destructive step records the bytes it is
+    about to destroy. A file we cannot read has no such record, so destroying it is irreversible
+    -- the one outcome undo exists to prevent.
+    """
+    try:
+        return path.read_bytes()
+    except OSError as exc:
+        raise CheckpointUndoUnsafeError(
+            f"Undo of checkpoint {checkpoint_id!r} was aborted: the working-tree file "
+            f"{str(path)!r} could not be read, so its current content could not be saved for "
+            "rollback and removing it would lose that content permanently. Changes already "
+            "applied by this undo have been rolled back. Make the file readable (or move it "
+            "aside) and re-run.",
+            path=str(path),
+        ) from exc
+
+
 class CheckpointBudgetExceededError(RuntimeError):
     """Raised when create_checkpoint() would exceed a configured disk-usage budget (audit H4).
 
@@ -1307,13 +1345,15 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
             for rel_path in sorted(set(current_entries) - expected_paths, reverse=True):
                 current_path = root / Path(rel_path)
                 if current_path.exists():
-                    try:
-                        removed_bytes: bytes | None = current_path.read_bytes()
-                    except OSError:
-                        removed_bytes = None
+                    # Task #297: fail CLOSED. Setting `removed_bytes = None` and unlinking anyway
+                    # destroys a file whose content was never captured, so `committed_removes`
+                    # cannot recreate it and the revert below provably cannot restore it -- the
+                    # exact permanent loss the round-7 rank-6 note above says was fixed. Aborting
+                    # here is strictly better: the `except Exception` handler rolls back every
+                    # mutation already applied and re-raises, so the tree stays consistent.
+                    removed_bytes = _bytes_or_abort_undo(current_path, checkpoint_id)
                     current_path.unlink()
-                    if removed_bytes is not None:
-                        committed_removes.append((current_path, removed_bytes))
+                    committed_removes.append((current_path, removed_bytes))
                     removed_paths += 1
 
             # Remove files that the snapshot records as deleted.
@@ -1321,13 +1361,10 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
                 if not exists:
                     target = resolved_targets[rel_path]
                     if target.exists():
-                        try:
-                            removed_bytes = target.read_bytes()
-                        except OSError:
-                            removed_bytes = None
+                        # Task #297, same reasoning as the branch above.
+                        removed_bytes = _bytes_or_abort_undo(target, checkpoint_id)
                         target.unlink()
-                        if removed_bytes is not None:
-                            committed_removes.append((target, removed_bytes))
+                        committed_removes.append((target, removed_bytes))
                         removed_paths += 1
 
             # Swap staged copies into the working tree.
@@ -1335,10 +1372,10 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
                 # Record pre-existing content for revert.
                 prior_bytes: bytes | None = None
                 if target.exists():
-                    try:
-                        prior_bytes = target.read_bytes()
-                    except OSError:
-                        prior_bytes = None
+                    # Task #297: an unreadable target used to be OVERWRITTEN with
+                    # `prior_bytes = None`, so its original content never reached
+                    # `committed_overwrites` and the revert left it clobbered for good.
+                    prior_bytes = _bytes_or_abort_undo(target, checkpoint_id)
 
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(staged, target, follow_symlinks=False)

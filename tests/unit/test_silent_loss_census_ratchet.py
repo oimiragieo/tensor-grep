@@ -70,7 +70,12 @@ _BROAD_EXCEPTIONS = frozenset({"BARE", "OSError", "Exception", "EnvironmentError
 # per-file read/stat loops -- so they are absent below rather than listed at zero.
 KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
     "main.py": 18,
-    "checkpoint_store.py": 10,
+    # 10 -> 7 by #297. The three fixed sites were the undo commit phase destroying a file whose
+    # bytes it had failed to capture, so the revert could not restore it. One of the remaining 7
+    # (the pre-flight readability probe) is a known FALSE POSITIVE: it accumulates into `missing`
+    # and then raises CheckpointCorruptError, which is disclosure, not loss -- the detector counts
+    # `append` as an accumulator and cannot see that the collection feeds a raise.
+    "checkpoint_store.py": 7,
     "repo_map.py": 8,
     "scan_guardrails.py": 5,
     "codemap.py": 3,
