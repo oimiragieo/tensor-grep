@@ -79,6 +79,16 @@ pub struct SearchStats {
     pub skipped_binary_files: usize,
     pub binary_match_files: usize,
     pub matches: Vec<NativeSearchMatch>,
+    /// Per-entry walk errors (a permission-denied subdirectory, a vanished path) that were
+    /// reported on stderr and stepped over. Task #276 slice A: this is the PLUMBING only. The
+    /// count is carried so a later slice can put `result_incomplete` into the `--json` envelope
+    /// and exit 2 -- today nothing reads it, so behaviour is byte-identical.
+    ///
+    /// It is deliberately a COUNT, not a path list: the walk runs in `build_parallel()` across
+    /// threads, and an unbounded per-path Vec behind a mutex would be both a contention point on
+    /// the hot walker and a DoS surface (a tree with 50k unreadable entries would produce a 50k
+    /// -entry payload). A consumer only needs to know THAT the answer is incomplete.
+    pub walk_errors: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1323,6 +1333,10 @@ fn merge_search_stats(target: &mut SearchStats, source: SearchStats) {
     target.total_matches += source.total_matches;
     target.skipped_binary_files += source.skipped_binary_files;
     target.binary_match_files += source.binary_match_files;
+    // Task #276 slice A. Missing this line is the whole failure mode: every worker would count
+    // its own walk errors and the aggregate would report zero, so the envelope would claim a
+    // complete result on an incomplete walk -- the exact defect #276 exists to fix.
+    target.walk_errors += source.walk_errors;
     target.matches.extend(source.matches);
 }
 
