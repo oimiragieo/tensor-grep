@@ -266,8 +266,17 @@ def build_inventory(
             break
         try:
             size = file_path.stat().st_size
-        except OSError:
+        except OSError as exc:
             # Unreadable/vanished mid-walk: skip rather than count a phantom.
+            #
+            # #292 census: skipping is right, but skipping SILENTLY was not. The walk itself
+            # reported this file, so it is inside the universe this command claims to describe;
+            # dropping it here shrinks total_files/total_bytes and every per-language and
+            # per-directory rollup built from them, while the payload still reads complete.
+            # Recording into the same flag the walk uses makes the existing unreadable-path
+            # cause block below fire, so the disclosure and the "no knob fixes this" advice
+            # already wired for walk failures now cover stat failures too.
+            walk_unreadable_hit.record(exc)
             continue
         total_files += 1
         total_bytes += size

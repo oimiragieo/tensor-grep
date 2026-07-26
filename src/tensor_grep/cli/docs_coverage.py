@@ -214,15 +214,10 @@ def build_docs_coverage(
         walked = walked[:max_files]
         possibly_truncated = True
         truncation_cause = "project-files"
-    if walk_unreadable_hit.hit:
-        # Task #284. An unreadable subtree made this report SMALLER while still claiming
-        # completeness -- "every source file is documented" when whole directories were invisible.
-        # Overwrites the budget cause deliberately: "project-files" tells the reader to raise
-        # --max-files, which is a real remedy for ITS cause but cannot make a denied path readable.
-        # Ranking the non-remediable cause last-wins is how the single cause field carries the
-        # `budget_remediable: false` information the MCP surface got in #283/#762.
-        possibly_truncated = True
-        truncation_cause = "unreadable-path"
+    # NOTE: the unreadable-path cause is evaluated AFTER the doc-read loop below, not here --
+    # `walk_unreadable_hit` collects failures from the walk AND from reading the governing docs,
+    # and the read loop has not run yet at this point. Checking it here would have silently
+    # ignored every doc-read failure (#292 census).
 
     resolved_root = root.resolve()
     doc_paths: list[Path] = []
@@ -262,9 +257,26 @@ def build_docs_coverage(
             doc_texts.append(
                 doc_path.read_text(encoding="utf-8", errors="replace")[:_MAX_DOC_BYTES]
             )
-        except OSError:
+        except OSError as exc:
+            # #292 census. Dropping an unreadable governing doc does not merely shrink the
+            # denominator -- it makes this command report the WRONG answer. Every source file
+            # documented ONLY in that doc falls out of `haystack` and is then listed as
+            # `uncovered_files`, i.e. a false "undocumented" finding the caller acts on. Record
+            # it so the payload discloses the cause instead of presenting the gap as fact.
+            walk_unreadable_hit.record(exc)
             continue
     haystack = "\n".join(doc_texts)
+
+    if walk_unreadable_hit.hit:
+        # Task #284, extended by #292 to cover doc reads as well as the walk. An unreadable path
+        # made this report SMALLER while still claiming completeness -- "every source file is
+        # documented" when whole directories were invisible. Overwrites the budget cause
+        # deliberately: "project-files" tells the reader to raise --max-files, which is a real
+        # remedy for ITS cause but cannot make a denied path readable. Ranking the non-remediable
+        # cause last-wins is how the single cause field carries the `budget_remediable: false`
+        # information the MCP surface got in #283/#762.
+        possibly_truncated = True
+        truncation_cause = "unreadable-path"
 
     uncovered_pairs: list[tuple[str, Path]] = []
     covered = 0
@@ -450,9 +462,9 @@ def build_docs_stale_references(
     # Task #284, same as build_docs_coverage above. This builder previously hardcoded its cause
     # inline in the payload, so it could not express any cause but the file cap.
     truncation_cause = "project-files" if possibly_truncated else None
-    if walk_unreadable_hit.hit:
-        possibly_truncated = True
-        truncation_cause = "unreadable-path"
+    # NOTE: the unreadable-path cause is evaluated AFTER the doc-read loop below, not here --
+    # `walk_unreadable_hit` collects failures from the walk AND from reading each governing doc,
+    # and the read loop has not run yet at this point (#292 census).
     resolved_root = root.resolve()
 
     doc_paths = [
@@ -467,7 +479,12 @@ def build_docs_stale_references(
     for doc_path in doc_paths:
         try:
             text = doc_path.read_text(encoding="utf-8", errors="replace")[:_MAX_DOC_BYTES]
-        except OSError:
+        except OSError as exc:
+            # #292 census. An unreadable doc has NONE of its references checked, so `stale` is
+            # under-reported and `references_checked` understates the work done -- "no stale
+            # references" over a doc set that was never fully read. Record it so the payload
+            # discloses the cause rather than presenting a clean bill of health.
+            walk_unreadable_hit.record(exc)
             continue
         doc_rel = _relative_posix(doc_path, resolved_root)
         for reference in sorted(_extract_doc_path_references(text)):
@@ -480,6 +497,14 @@ def build_docs_stale_references(
             if any(candidate.parent.exists() for candidate in candidates):
                 stale.append({"doc": doc_rel, "reference": reference})
     stale.sort(key=lambda item: (item["doc"], item["reference"]))
+
+    if walk_unreadable_hit.hit:
+        # Task #284, extended by #292 to cover doc reads as well as the walk. Overwrites the
+        # budget cause deliberately: "project-files" tells the reader to raise --max-files, a
+        # real remedy for ITS cause but useless against a denied path. Last-wins is how the
+        # single cause field carries `budget_remediable: false` (#283/#762).
+        possibly_truncated = True
+        truncation_cause = "unreadable-path"
 
     result: dict[str, Any] = {
         "path": str(resolved_root),

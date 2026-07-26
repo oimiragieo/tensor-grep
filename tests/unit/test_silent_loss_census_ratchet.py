@@ -64,15 +64,17 @@ _BROAD_EXCEPTIONS = frozenset({"BARE", "OSError", "Exception", "EnvironmentError
 # machine-checked instead of prose.)
 #
 # file name -> number of silent-loss-in-an-accumulating-loop sites currently present.
+#
+# Started at 53 across 12 files. `docs_coverage.py` (2) and `inventory.py` (1) were audited and
+# fixed in this same PR -- both were real gaps left by #767/#768, which wired the WALK but not the
+# per-file read/stat loops -- so they are absent below rather than listed at zero.
 KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
     "main.py": 18,
     "checkpoint_store.py": 10,
     "repo_map.py": 8,
     "scan_guardrails.py": 5,
     "codemap.py": 3,
-    "docs_coverage.py": 2,
     "session_store.py": 2,
-    "inventory.py": 1,
     "ledger_store.py": 1,
     "runtime_paths.py": 1,
     "semantic_index.py": 1,

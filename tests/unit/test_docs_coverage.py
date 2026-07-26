@@ -398,3 +398,94 @@ def test_docs_coverage_text_render_does_not_give_wrong_knob_advice(tmp_path, mon
     assert "truncated at max_files" not in text, (
         "the renderer told the reader to raise a cap that cannot fix an unreadable path"
     )
+
+
+def _deny_read_text_for(monkeypatch, denied_file):
+    """Make `Path.read_text(denied_file)` raise PermissionError; everything else untouched.
+
+    Same reasoning as `_deny_scandir_for` above: a monkeypatched raise cannot silently no-op the
+    way a real chmod/ACL fixture can (#281). If it fails to fire, the assertions below fail loudly
+    rather than declaring a live defect absent.
+    """
+    from pathlib import Path as _Path
+
+    real_read_text = _Path.read_text
+    target = str(_Path(denied_file).resolve())
+
+    def _fake_read_text(self, *args, **kwargs):
+        if str(self.resolve()) == target:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(_Path, "read_text", _fake_read_text)
+
+
+def _seed_two_docs(tmp_path):
+    """A source file documented ONLY by the doc we are about to make unreadable."""
+    (tmp_path / "README.md").write_text("# top\n", encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "only_here.py").write_text("x = 1\n", encoding="utf-8")
+    secret = tmp_path / "src" / "CLAUDE.md"
+    secret.write_text("Documents `src/only_here.py`.\n", encoding="utf-8")
+    return secret
+
+
+def test_docs_coverage_discloses_a_doc_it_could_not_read(tmp_path, monkeypatch):
+    """#292 census. #768 wired the WALK but not the doc-READ loop.
+
+    This is worse than a smaller denominator. An unreadable governing doc drops out of the
+    concatenated haystack, so every source file documented ONLY in that doc is then listed in
+    `uncovered_files` -- a false "undocumented" finding the caller acts on, emitted with
+    `possibly_truncated: False`.
+    """
+    secret = _seed_two_docs(tmp_path)
+
+    # CONTROL ARM -- with the doc readable, the file is covered and nothing is truncated. If this
+    # arm ever starts matching the treatment arm, the fixture stopped discriminating.
+    clean = build_docs_coverage(str(tmp_path))
+    assert "src/only_here.py" not in clean["uncovered_files"]
+    assert clean["scan_limit"]["truncation_cause"] is None
+
+    _deny_read_text_for(monkeypatch, secret)
+    payload = build_docs_coverage(str(tmp_path))
+
+    assert payload["scan_limit"]["truncation_cause"] == "unreadable-path", (
+        "an unreadable governing doc silently shrank the haystack; the payload still claimed a "
+        "complete coverage report"
+    )
+    assert payload["scan_limit"]["possibly_truncated"] is True
+    # The false finding itself is the damage the disclosure is warning about.
+    assert "src/only_here.py" in payload["uncovered_files"], (
+        "precondition for this test: the unreadable doc must actually have been the only thing "
+        "covering this file, otherwise the disclosure is untested"
+    )
+
+
+def test_docs_stale_references_discloses_a_doc_it_could_not_read(tmp_path, monkeypatch):
+    """#292 census, sibling of the above in `build_docs_stale_references`.
+
+    An unreadable doc has NONE of its references checked, so `stale` is under-reported -- a clean
+    bill of health over a doc set that was never fully read.
+    """
+    secret = tmp_path / "src" / "CLAUDE.md"
+    secret.parent.mkdir()
+    secret.write_text("See `src/gone.py`.\n", encoding="utf-8")
+    (tmp_path / "src" / "real.py").write_text("x = 1\n", encoding="utf-8")
+
+    clean = build_docs_stale_references(str(tmp_path))
+    assert clean["stale_references"], (
+        "control arm: the dangling reference must be found when readable"
+    )
+    assert clean["scan_limit"]["truncation_cause"] is None
+
+    _deny_read_text_for(monkeypatch, secret)
+    payload = build_docs_stale_references(str(tmp_path))
+
+    assert not payload["stale_references"], (
+        "precondition: the only stale reference lived in the denied doc"
+    )
+    assert payload["scan_limit"]["truncation_cause"] == "unreadable-path", (
+        "an empty `stale_references` list over an unread doc is a clean bill of health the command did not "
+        "earn -- it must disclose the unreadable path instead"
+    )
+    assert payload["scan_limit"]["possibly_truncated"] is True
