@@ -10726,6 +10726,47 @@ def _build_prepare_payload(
         "submitted": False,
         "advisory": True,
     }
+
+    # Task #306 W2: surface a LIVE FOREIGN CLAIM on the DEFAULT path.
+    #
+    # Before this, `prepare` learned about overlaps only when `--claim` was passed -- i.e. you
+    # discovered another agent had claimed your target only by claiming it yourself. An agent
+    # doing the ordinary read-only `tg prepare` to get edit-ready got no signal at all, which is
+    # the coordination gap in miniature: the ledger held the answer and nothing asked it.
+    #
+    # REPORTS, NEVER REFUSES. The #306 verdict is STAY ADVISORY, and `docs/CONTRACTS.md:225` says
+    # the ledger has "no enforcement mechanism of any kind". Turning this into an `ask_user` gate
+    # would be enforcement without any of the safety machinery real locking needs (fencing tokens,
+    # lease expiry handling) -- the plan's §5 "what NOT to build" names exactly that.
+    #
+    # `list_claims` is a pure read: no write lock, no writes, expired entries pruned for display
+    # only (ledger_store.py:782). Failure is swallowed for the same reason the `--claim` path
+    # swallows its own: an advisory hook must never fail prepare's primary read.
+    try:
+        from tensor_grep.cli import ledger_store as _ledger_store
+
+        _self_agent = _ledger_store.resolve_agent_id(None)
+        _live = _ledger_store.list_claims(resolved_path)
+        _foreign = [
+            {
+                "agent_id": entry.get("agent_id"),
+                "scope": entry.get("scope"),
+                "symbols": entry.get("symbols") or [],
+                "intent": entry.get("intent"),
+                "expires_at": entry.get("expires_at"),
+            }
+            for entry in (_live.get("claims") or [])
+            if entry.get("agent_id") and entry.get("agent_id") != _self_agent
+        ]
+    except Exception:
+        # Additive-conditional: on failure the key is simply absent, exactly as it is when no
+        # foreign claim exists. A reader must not be able to distinguish "nothing claimed" from
+        # "the probe broke" by the presence of an empty list -- so neither emits one.
+        _foreign = []
+    if _foreign:
+        claim_hook["foreign_claims"] = _foreign
+        claim_hook["foreign_claim_count"] = len(_foreign)
+
     if claim:
         if not symbol:
             claim_hook["error"] = "no primary symbol resolved; nothing to claim"
