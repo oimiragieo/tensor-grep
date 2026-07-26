@@ -695,10 +695,24 @@ impl ParallelWalkWorker {
 
 impl Drop for ParallelWalkWorker {
     fn drop(&mut self) {
+        // Task #276 slice B1-fix: `walk_errors` MUST be part of this guard.
+        //
+        // This is a "nothing to contribute, skip the lock" fast path. Before walk_errors existed
+        // the five counters below were the whole of a worker's contribution, so the short-circuit
+        // was total. It is not any more -- and the omission is not cosmetic: under
+        // `build_parallel()` a worker can legitimately be handed ONLY unreadable entries. It
+        // searches no files, matches nothing, and returns here with a non-zero walk_errors that
+        // is then dropped on the floor by `std::mem::take` never running.
+        //
+        // The result would be an envelope reporting a COMPLETE scan of an INCOMPLETE walk --
+        // exactly the defect #276 exists to fix, reintroduced by the fix. Caught by auditing my
+        // own diff against the question "can the count be WRONG rather than absent?", which is
+        // the more dangerous failure: absent is visible, wrong is not.
         if self.local_stats.searched_files == 0
             && self.local_stats.matched_files == 0
             && self.local_stats.total_matches == 0
             && self.local_stats.skipped_binary_files == 0
+            && self.local_stats.walk_errors == 0
             && self.local_stats.matches.is_empty()
         {
             return;
