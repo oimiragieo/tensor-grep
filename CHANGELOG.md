@@ -1,6 +1,87 @@
 # CHANGELOG
 
 
+## v1.98.25 (2026-07-26)
+
+### Bug Fixes
+
+- **checkpoint**: Never destroy a file undo cannot revert (#297)
+  ([#780](https://github.com/oimiragieo/tensor-grep/pull/780),
+  [`29ca1fb`](https://github.com/oimiragieo/tensor-grep/commit/29ca1fb57515ddd0ee4c43b00d0af91967648a0a))
+
+* fix(checkpoint): never destroy a file undo cannot revert (#297)
+
+The undo commit phase is only crash-safe because every destructive step first records the bytes it
+  is about to destroy; the `except Exception` revert restores from that record and nothing else.
+
+At three sites a failed read set the record to None and the destruction went ahead anyway:
+
+- current-tree file not in the snapshot -> read fails -> unlink() still runs, and nothing is
+  appended to `committed_removes` - snapshot-recorded-deleted file -> same shape - restore target ->
+  read fails -> copy2 overwrites it, and nothing is appended to `committed_overwrites`
+
+In each case the file is gone and the revert provably cannot bring it back -- exactly the permanent
+  loss the round-7 rank-6 comment above this code says was fixed ("previously the revert had only
+  the path and permanently lost the content"). The H2 pre-flight probes SNAPSHOT files only, so
+  working-tree targets are unprobed and this is reachable.
+
+Now fails closed via `_bytes_or_abort_undo`: no capture, no destruction. The existing handler rolls
+  back what was already applied and re-raises, so the tree stays consistent and the user is told
+  which file to fix.
+
+Also corrects the CLI error code. The handler labelled EVERY undo failure `checkpoint_not_found`,
+  which for this case is a lie -- the checkpoint was found and is good; the working tree blocked it
+  -- and would send the reader hunting a missing checkpoint instead of the file named in `detail`.
+  New code: `undo_unsafe`. The same mislabel still covers CheckpointCorruptError; that is a
+  JSON-contract change and is filed separately rather than bundled into a data-loss fix.
+
+Verified bidirectionally: with `_bytes_or_abort_undo` returning b"" instead of raising, both new
+  tests fail with DID NOT RAISE. Arms: - control proves an unpatched undo really does delete the
+  file, so the treatment is not passing because undo failed for some unrelated reason - the
+  read_bytes fake is scoped to ONE filename; a blanket raiser would break the snapshot machinery and
+  abort for the wrong reason - the second test exercises the REVERT, not just the abort: removals
+  iterate reverse-sorted, so extra_z.py is unlinked and recorded before extra_a.py fails, and the
+  test asserts extra_z.py came back with its real content. The error message claims rollback
+  happened; this is what makes that claim testable.
+
+86 pass across the four checkpoint suites + the census. Ratchet 10 -> 7; the remaining 7 include one
+  documented FALSE POSITIVE (the pre-flight probe accumulates into `missing` and then raises --
+  disclosure, not loss).
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* test(census): stop counting two disclosure shapes as silent loss
+
+Auditing main.py turned up the THIRD false positive of the same kind, so per "model the class, don't
+  enumerate the cases" the answer is the detector, not another hand-written exemption. A census that
+  cries wolf gets its real findings waved through.
+
+Two shapes the handler-local check could not see:
+
+1. TERMINATES. `-f`/`--file` pattern-file reads already fail loud with exit 2 per the Backend
+  Fail-Closed Contract, but via `_exit_search_error(...)` rather than an inline `raise`. The AST
+  shows a call; the detector read it as silence. Nothing downstream can receive a truncated result
+  from a branch that exits.
+
+2. ACCUMULATE-THEN-RAISE. checkpoint_store's undo pre-flight appends each unreadable snapshot blob
+  to `missing`, then raises CheckpointCorruptError on it once the loop ends. That is disclosure
+  built out of an accumulator, and handler-local inspection cannot tell it from loss.
+
+Both arms are tested, and so is the near miss: a function that raises on a DIFFERENT collection
+  while `missing` is silently discarded must still count. Without that arm the raise-name check
+  could widen into "any raise anywhere excuses the function" and the detector would quietly stop
+  reporting.
+
+Ratchet: main.py 18 -> 17, checkpoint_store 7 -> 6. Both moves were PREDICTED from reading the two
+  sites and then confirmed by re-running the census -- the counts shifted by exactly those two and
+  nothing else, which is the evidence the change removed false positives rather than blinding the
+  detector.
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.98.24 (2026-07-26)
 
 ### Bug Fixes
