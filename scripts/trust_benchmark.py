@@ -116,9 +116,17 @@ def _score(rc: int, _out: str, err: str, unreadable_name: str) -> tuple[int, str
 
 
 def _make_tree(root: Path) -> None:
+    """The sentinel is written as an IDENTIFIER, never inside a string literal.
+
+    The first version wrote ``x = 'SENTINEL'``. The text tools found it; ast-grep and semgrep did
+    not, and both FAILED THE CONTROL -- an AST pattern matches an identifier NODE, not the bytes
+    inside a string. That was a defect in the FIXTURE presenting as a defect in two tools, which
+    is the most misleading thing a comparative benchmark can do. As a bare identifier all six can
+    find it: the text tools match the characters, the AST tools match the node.
+    """
     (root / "pkg").mkdir(parents=True, exist_ok=True)
-    (root / "pkg" / "visible.py").write_text(f"x = '{SENTINEL}'\n", encoding="utf-8")
-    (root / "pkg" / "other.py").write_text("y = 1\n", encoding="utf-8")
+    (root / "pkg" / "visible.py").write_text(f"{SENTINEL} = 1\n", encoding="utf-8")
+    (root / "pkg" / "other.py").write_text("unrelated = 2\n", encoding="utf-8")
 
 
 def _init_git(root: Path) -> bool:
@@ -236,7 +244,7 @@ def run_condition(
 def _cond_unreadable_dir(root: Path):
     secret = root / "pkg" / "locked_dir"
     secret.mkdir()
-    (secret / "hidden.py").write_text(f"z = '{SENTINEL}'\n", encoding="utf-8")
+    (secret / "hidden.py").write_text(f"{SENTINEL} = 3\n", encoding="utf-8")
     if not _deny_read(secret) or not _premise_unreadable(secret):
         _undeny_read(secret)
         return (None, lambda: None)
@@ -245,7 +253,7 @@ def _cond_unreadable_dir(root: Path):
 
 def _cond_unreadable_file(root: Path):
     target = root / "pkg" / "locked_file.py"
-    target.write_text(f"z = '{SENTINEL}'\n", encoding="utf-8")
+    target.write_text(f"{SENTINEL} = 4\n", encoding="utf-8")
     if not _deny_read(target) or not _premise_unreadable(target):
         _undeny_read(target)
         return (None, lambda: None)
@@ -257,7 +265,7 @@ def _cond_vanishing_file(root: Path):
     after the tree is built -- the tools re-walk, so this mainly proves they do not report a
     phantom. Kept because a tool that CRASHES here is worse than one that skips."""
     target = root / "pkg" / "ghost.py"
-    target.write_text(f"z = '{SENTINEL}'\n", encoding="utf-8")
+    target.write_text(f"{SENTINEL} = 4\n", encoding="utf-8")
     target.unlink()
     return (target.name, lambda: None)
 
