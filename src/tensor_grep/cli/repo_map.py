@@ -1256,9 +1256,26 @@ def _is_repo_context_file(path: Path, root: Path) -> bool:
 
 
 def _path_is_relative_to(path: Path, parent: Path) -> bool:
+    """Is ``path`` inside ``parent``? Answers False rather than raising when it cannot tell.
+
+    Task #291. This caught ``ValueError`` only -- the "different drive / not a subpath" answer --
+    while both ``resolve()`` calls can also raise ``OSError`` (permission denied, a vanished
+    component, a disconnected share). That escaped through all 9 call sites and CRASHED the
+    command with an unhandled traceback, which is strictly worse than the silent-loss class this
+    module has been hardening against: the caller gets no answer at all, not a partial one.
+
+    Found while testing the #291 fix, which made it reachable in an ordinary way -- that fix hands
+    this function a path whose ``resolve()`` ALREADY failed once, so the retry here was guaranteed
+    to raise on exactly the input the fix exists to handle.
+
+    Fails CLOSED (False = treat as outside the root). That matches the existing ValueError arm and
+    is the safe direction: an unverifiable path is excluded from a scope-limited set rather than
+    silently admitted into one. Callers that need to know a file was DROPPED for this reason
+    record it separately -- see ``_precomputed_validation_files_for_root``.
+    """
     try:
         path.resolve().relative_to(parent.resolve())
-    except ValueError:
+    except (ValueError, OSError):
         return False
     return True
 
@@ -1269,6 +1286,7 @@ def _precomputed_validation_files_for_root(
     *,
     deadline_monotonic: float | None = None,
     deadline_hit: _DeadlineBreakFlag | None = None,
+    unreadable_hit: _UnreadablePathFlag | None = None,
 ) -> list[Path] | None:
     """#639 Opus-gate nit 1 (dogfood #1 RESIDUAL): this loop does one filesystem ``Path.resolve()``
     syscall per entry in ``file_paths`` -- on a large repo map's ``related_paths``/``files``+
@@ -1295,11 +1313,31 @@ def _precomputed_validation_files_for_root(
         current = Path(str(raw_path)).expanduser()
         if not current.is_absolute():
             current = normalized_root / current
+        resolve_error: OSError | None = None
         try:
             resolved = current.resolve()
-        except OSError:
+        except OSError as exc:
+            # The `absolute()` fallback keeps this loop from crashing, but MEASURED: it does not
+            # save the entry. `_path_is_relative_to` below re-resolves the path, hits the same
+            # OSError, and fails closed -- so a resolve failure here ALWAYS costs the file.
+            #
+            # An earlier draft of this comment claimed the fallback was usually harmless and that
+            # only a boundary-crossing symlink lost anything. The control-arm test falsified that
+            # in one run. Do not restore that reasoning without re-running it.
             resolved = current.absolute()
+            resolve_error = exc
         if not _path_is_relative_to(resolved, normalized_root):
+            if resolve_error is not None and unreadable_hit is not None:
+                # Task #291. THIS is the only branch where the resolve failure actually costs a
+                # file. `absolute()` skipped symlink resolution, so a link crossing the root
+                # boundary is judged on its unresolved form and dropped here -- silently, from a
+                # list that feeds the agent's "run these to validate your edit" plan. An agent
+                # then runs a SHORTER suite and believes it validated.
+                #
+                # Recorded HERE rather than in the except arm on purpose: recording at the except
+                # would flag every benign resolve failure as data loss and drown the real signal.
+                # The distinction is what the control arm in the test pins.
+                unreadable_hit.record(resolve_error)
             continue
         key = str(resolved)
         if key in seen:
@@ -3406,7 +3444,31 @@ def _rust_resolve_use_binding(
     binding: dict[str, Any],
     symbol: str,
     repo_root: Path | str | None = None,
+    _seen: frozenset[tuple[str, str]] | None = None,
 ) -> dict[str, Any] | None:
+    # Cycle guard. This function follows `use` re-export chains by recursing on
+    # the nested binding, and Rust re-exports are a GRAPH, not a tree: a crate
+    # root that does `pub use rules::x::{...}` while a submodule re-exports back
+    # toward the root closes a loop, and the recursion never terminates.
+    #
+    # Receipt: `tg refs . <symbol> --json` on a 594-file Rust workspace
+    # (claude-code-hydron) died with `RecursionError: maximum recursion depth
+    # exceeded`, ~1000 frames of this function, rc=1 and no stdout -- so it took
+    # out EVERY refs query on that repo, not just the cyclic symbol.
+    #
+    # It DOES reproduce on a two-module fixture, but only when the searched
+    # symbol differs from the re-exported name: a matching name hits the early
+    # return above the recursive call. See
+    # test_cyclic_rust_pub_use_reexport_terminates.
+    #
+    # The key is (resolved importer path, imported name): the same file reached
+    # again for the same name is a cycle, while the same file for a DIFFERENT
+    # name is legitimate work and must not be pruned.
+    key = (str(importer_path).casefold(), str(binding.get("imported", "")).casefold())
+    seen = _seen or frozenset()
+    if key in seen:
+        return None
+    seen = seen | {key}
     imported_name = str(binding.get("imported", ""))
     local_name = str(binding.get("local", ""))
     wildcard = bool(binding.get("wildcard"))
@@ -3440,7 +3502,7 @@ def _rust_resolve_use_binding(
                 if imported_name.lower() not in {nested_imported.lower(), nested_local.lower()}:
                     continue
                 nested_resolved = _rust_resolve_use_binding(
-                    candidate_path, nested_binding, symbol, repo_root
+                    candidate_path, nested_binding, symbol, repo_root, seen
                 )
                 if nested_resolved is None:
                     continue

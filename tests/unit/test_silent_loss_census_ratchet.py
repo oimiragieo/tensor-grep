@@ -28,6 +28,23 @@ here in the same PR.
 
 House rule this implements: "model the class, don't enumerate the cases". Round N+1 finding
 another instance of a defect family means the answer is an invariant, not another reviewer.
+
+WHERE THAT RULE STOPS -- a near miss worth keeping (#292, 2026-07-26). Several audited-benign
+sites share a shape: the handler only ASSIGNS a fallback and lets the loop continue, so nothing
+is skipped (``resolved = candidate`` in the doctor PATH scans, ``_nearby_session_roots``). It is
+tempting to teach the detector that shape and drop ~20 sites of noise in one edit.
+
+Measuring the shape's distribution before encoding it showed why that would be a disaster:
+``checkpoint_store``'s undo commit phase matched it too -- ``removed_bytes = None`` followed by an
+``unlink()`` that destroys a file the revert can no longer restore. That was task #297, the most
+severe defect this campaign found. A "benign fallback" rule would have excused it FOREVER, in the
+exact file where it mattered most.
+
+The lesson generalises: encode a shape only when it is *structurally* incapable of hiding a loss
+(a handler that exits the process; one whose accumulator feeds a later ``raise``). "The handler
+looks harmless" is not that. Whether a fallback is safe depends on what the loop DOES with the
+fallback value afterwards, which is a semantic question this detector deliberately does not try
+to answer. Audit those sites and record the verdict instead -- see CONTRACTS.md section 0.
 """
 
 from __future__ import annotations
@@ -69,30 +86,65 @@ _BROAD_EXCEPTIONS = frozenset({"BARE", "OSError", "Exception", "EnvironmentError
 # fixed in this same PR -- both were real gaps left by #767/#768, which wired the WALK but not the
 # per-file read/stat loops -- so they are absent below rather than listed at zero.
 KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
-    # 18 -> 16 by #299: the regex-ruleset read loop now records into the scan payload. It counts
-    # for TWO because the handler sits inside nested accumulating loops (`for rule` -> `for
-    # current_file`) and the detector visits it once per enclosing loop -- so a single fix can
-    # move this number by more than one. Not a miscount: the invariant is "never rises".
+    # 18 -> 15 by TWO INDEPENDENT fixes that landed in parallel; this file has been burned once
+    # already by a hand count, so the arithmetic is spelled out:
+    #   -2 by #299 -- the regex-ruleset read loop now records into the scan payload. It counts for
+    #     TWO because the handler sits inside nested accumulating loops (`for rule` -> `for
+    #     current_file`) and the detector visits it once per enclosing loop, so a single fix can
+    #     move this number by more than one. Not a miscount: the invariant is "never rises".
+    #   -1 by the `-f`/`--file` pattern-file read -- it already failed loud with exit 2 (the
+    #     Backend Fail-Closed Contract), but the handler calls `_exit_search_error` rather than
+    #     raising inline, so the detector read a terminating branch as silence.
     #
-    # AUDITED #292: the remaining 16 fall into three families, all accepted. Recording the
+    # AUDITED #292: the remaining sites fall into three families, all accepted. Recording the
     # FAMILIES rather than a per-site list, because a line-numbered enumeration rots on the next
-    # edit and this file has already been burned once by a hand count (see the header).
-    #   FALLBACK-ASSIGN (:1080 launcher scan, :2415/:2624/:2657 doctor PATH scans) -- the handler
-    #     assigns an unresolved-path fallback and the loop CONTINUES with it. Nothing is skipped.
-    #   OUTPUT-BUCKET (:1163, :1183 launcher cleanup) -- `failed.append(...)`, rendered into the
-    #     command's own output. That IS the disclosure; the detector cannot see it because it is
-    #     resolved outside the handler (same shape as session_store:589).
-    #   BROAD-SCAN GUARDRAIL (:4945, :4955, :5027, :5031, :5089) -- main.py's own copies of the
-    #     `scan_guardrails` refusal heuristic (#154/#158 siblings). An OSError only means a huge
-    #     scan is not refused; the scan that follows discloses its own incompleteness.
+    # edit.
+    #   FALLBACK-ASSIGN (launcher scan, doctor PATH scans) -- the handler assigns an unresolved-
+    #     path fallback and the loop CONTINUES with it. Nothing is skipped.
+    #   OUTPUT-BUCKET (launcher cleanup) -- `failed.append(...)`, rendered into the command's own
+    #     output. That IS the disclosure; the detector cannot see it because it is resolved
+    #     outside the handler (same shape as session_store:589).
+    #   BROAD-SCAN GUARDRAIL -- main.py's own copies of the `scan_guardrails` refusal heuristic
+    #     (#154/#158 siblings). An OSError only means a huge scan is not refused; the scan that
+    #     follows discloses its own incompleteness.
     # CAUTION for whoever drains this next: FALLBACK-ASSIGN is NOT safe as a general rule -- it
     # also matched checkpoint_store's #297 data-loss. See the header note on where the
     # "model the class" rule stops.
-    "main.py": 16,
-    "checkpoint_store.py": 10,
+    "main.py": 15,
+    # 10 -> 6 by #297: three real fixes (the undo commit phase destroying a file whose bytes it
+    # had failed to capture, so the revert could not restore it) plus one FALSE POSITIVE that the
+    # detector no longer reports -- the undo pre-flight accumulates into `missing` and then raises
+    # on it, which is disclosure, not loss.
+    "checkpoint_store.py": 6,
+    # AUDITED #292, all 8 accepted. The LSP legs (`_external_definitions` :15585,
+    # `_external_references` :15693) skip a symbol whose LSP request failed, which lowers
+    # `lsp_count` -- and `_provider_agreement` (:15258-15281) turns `native_count > lsp_count`
+    # into `diverged` rather than a clean `lsp-only` proof. The loss reaches the caller through
+    # that stamp; the comment at :15268 traces it to the v1.20.0 dogfood where `tg refs
+    # --provider lsp` returned 2 of 14 marked authoritative. `:15713` is a different shape: a
+    # failed `read_text` degrades the SNIPPET to the symbol name but still appends the reference,
+    # so nothing is lost. CAVEAT: this verdict is from reading the code, not from a test that
+    # observes the stamp flip -- proving it needs a live LSP server or heavy mocking.
     "repo_map.py": 8,
+    # AUDITED #292, all 5 accepted. These gate the broad-scan REFUSAL heuristic, not an answer:
+    # an OSError only means a huge scan is not refused, and the scan that follows discloses its
+    # own incompleteness. main.py carries its own copies of the same family (#154/#158 siblings).
+    # They stay pinned so a NEW one still trips the ratchet.
     "scan_guardrails.py": 5,
-    "codemap.py": 3,
+    # codemap.py drained to 0 by #296 (was 3): the tracked-file filter, the folder census and the
+    # freshness digest now record into a post-walk accumulator that reaches `coverage.partial`.
+    # Absent rather than pinned at 0 -- an entry at 0 and no entry are equivalent to both ratchet
+    # arms, and the absence is what makes a re-introduction show up as a NEW file.
+    # AUDITED #292, both session_store entries accepted, and they are two DIFFERENT non-defects:
+    #   `_nearby_session_roots` :406 -- `resolved = candidate` is a FALLBACK, not a skip. The
+    #     candidate stays in the loop; nothing is dropped at the handler.
+    #   `_stale_changeset` :589 -- the #286 fix itself. It routes to a dedicated `indeterminate`
+    #     bucket (plus `indeterminate_kinds`), which IS the disclosure: an unreadable file is
+    #     deliberately left out of removed/changed/added rather than being called a deletion.
+    # The second is a shape the detector structurally cannot see -- disclosure by routing to a
+    # separate OUTPUT BUCKET, resolved outside the handler. Not worth widening the rule for:
+    # "appends to a collection that is also returned" would match almost every real accumulator
+    # and blind the detector. Recorded here instead, per CONTRACTS.md section 0.
     "session_store.py": 2,
     "ledger_store.py": 1,
     "runtime_paths.py": 1,
@@ -119,20 +171,80 @@ def _caught_names(handler: ast.ExceptHandler) -> set[str]:
     return {getattr(p, "attr", None) or getattr(p, "id", None) or "?" for p in parts}
 
 
-def _is_silent(handler: ast.ExceptHandler) -> bool:
-    """True when the handler neither re-raises nor records the failure anywhere."""
+def _terminates(handler: ast.ExceptHandler) -> bool:
+    """True when the handler hands control to something that ends the command.
+
+    ``sys.exit`` and this codebase's ``_exit_*`` helpers (e.g. ``_exit_search_error``) raise
+    ``SystemExit`` internally, so nothing downstream ever sees a truncated result. The AST shows
+    only a call, which read as silence and produced FALSE POSITIVES -- `-f` pattern-file reads
+    (main.py) are the clearest case: they already fail loud with exit 2 per the Backend
+    Fail-Closed Contract, and the census still counted them.
+    """
+    return any(
+        name == "exit" or name.startswith("_exit_") or name.startswith("exit_")
+        for name in _called_names(handler)
+    )
+
+
+def _raised_names(func: ast.AST) -> set[str]:
+    """Names mentioned inside any ``raise`` in ``func``.
+
+    Catches the accumulate-then-raise shape: the handler appends the failure to a list and the
+    function raises on that list once the loop finishes (``checkpoint_store``'s undo pre-flight
+    builds ``missing`` and then raises ``CheckpointCorruptError(..., missing_files=missing)``).
+    Handler-local inspection cannot see that, so it counted a DISCLOSURE accumulator as loss.
+    """
+    names: set[str] = set()
+    for node in ast.walk(func):
+        if isinstance(node, ast.Raise):
+            names |= {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+    return names
+
+
+def _is_silent(handler: ast.ExceptHandler, raised_names: set[str]) -> bool:
+    """True when the handler neither re-raises, records, terminates, nor feeds a later raise."""
     if any(isinstance(n, ast.Raise) for n in ast.walk(handler)):
         return False
-    return not (_called_names(handler) & _DISCLOSING_CALLS)
+    if _terminates(handler):
+        return False
+    if _called_names(handler) & _DISCLOSING_CALLS:
+        return False
+    # `missing.append(rel)` where the enclosing function later raises using `missing`.
+    accumulated_into = {
+        node.func.value.id
+        for node in ast.walk(handler)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in _ACCUMULATORS
+        and isinstance(node.func.value, ast.Name)
+    }
+    return not (accumulated_into & raised_names)
+
+
+def _enclosing_raised_names(tree: ast.AST) -> dict[int, set[str]]:
+    """Map each loop node's id() to the raise-names of the function that contains it."""
+    mapping: dict[int, set[str]] = {}
+    for func in ast.walk(tree):
+        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        raised = _raised_names(func)
+        if not raised:
+            continue
+        for node in ast.walk(func):
+            if isinstance(node, (ast.For, ast.While, ast.AsyncFor)):
+                mapping[id(node)] = mapping.get(id(node), set()) | raised
+    return mapping
 
 
 def _silent_loss_lines(source: str) -> list[int]:
     """Line numbers of silent-loss sites in ``source``.
 
-    A site is: a broad ``except`` with no disclosure, guarding a ``try`` body that touches the
-    filesystem, nested inside a loop whose body accumulates into a collection or yields.
+    A site is: a broad ``except`` that discloses nothing -- no re-raise, no log/record, no exit,
+    and no accumulator the enclosing function later raises on -- guarding a ``try`` body that
+    touches the filesystem, nested inside a loop whose body accumulates or yields.
     """
     tree = ast.parse(source)
+    raised_by_loop = _enclosing_raised_names(tree)
     found: list[int] = []
     for loop in ast.walk(tree):
         if not isinstance(loop, (ast.For, ast.While, ast.AsyncFor)):
@@ -149,10 +261,11 @@ def _silent_loss_lines(source: str) -> list[int]:
             # probe) does not mean the guarded operation was a filesystem read.
             if not any(_called_names(stmt) & _FS_CALLS for stmt in try_node.body):
                 continue
+            raised = raised_by_loop.get(id(loop), set())
             found.extend(
                 h.lineno
                 for h in try_node.handlers
-                if (_caught_names(h) & _BROAD_EXCEPTIONS) and _is_silent(h)
+                if (_caught_names(h) & _BROAD_EXCEPTIONS) and _is_silent(h, raised)
             )
     return found
 
@@ -273,6 +386,54 @@ for path in paths:
 """
     assert not _silent_loss_lines(no_claim), (
         "a loop that accumulates NOTHING makes no completeness claim and must not count"
+    )
+
+    # The two shapes the detector learned to forgive. Each needs BOTH arms: teaching it that
+    # `_exit_*` and accumulate-then-raise are disclosure is exactly how a detector starts
+    # under-reporting, so the near-miss must still count.
+    terminates = """
+for path in paths:
+    try:
+        out.append(path.stat().st_size)
+    except OSError as exc:
+        _exit_search_error("read_error", str(exc), json_mode=False, exit_code=2)
+"""
+    assert not _silent_loss_lines(terminates), (
+        "a handler that EXITS the command cannot hand anyone a truncated result"
+    )
+
+    accumulate_then_raise = """
+def check(paths):
+    missing = []
+    for path in paths:
+        try:
+            path.stat()
+        except OSError:
+            missing.append(path)
+    if missing:
+        raise CheckpointCorruptError("corrupt", missing_files=missing)
+"""
+    assert not _silent_loss_lines(accumulate_then_raise), (
+        "appending to a list the function then RAISES on is disclosure, not loss"
+    )
+
+    accumulate_never_raised = """
+def check(paths):
+    missing = []
+    kept = []
+    for path in paths:
+        try:
+            kept.append(path.stat().st_size)
+        except OSError:
+            missing.append(path)
+    if not kept:
+        raise ValueError("empty")
+    return kept
+"""
+    assert _silent_loss_lines(accumulate_never_raised), (
+        "NEAR MISS: the function raises, but on `kept` -- `missing` is collected and thrown "
+        "away, so the loss IS silent. If this stops counting, the raise-name check has "
+        "widened into 'any raise anywhere excuses the whole function'."
     )
 
     # And the census must be non-empty: if it were, the two ratchet arms would pass
