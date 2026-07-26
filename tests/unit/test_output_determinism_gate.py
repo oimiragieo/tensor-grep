@@ -79,9 +79,18 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import pytest
+
+
+class _Outcome(NamedTuple):
+    """One subprocess run: the normalised stdout plus the channels needed to explain a failure."""
+
+    text: str
+    returncode: int
+    stderr: str
+
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _FIXTURE = "tests/fixtures/codemap_repo"
@@ -133,7 +142,7 @@ _SURFACES: tuple[tuple[str, list[str], int], ...] = (
 )
 
 
-def _run(argv: list[str], hash_seed: str) -> str:
+def _run(argv: list[str], hash_seed: str) -> _Outcome:
     """One invocation, in a PRISTINE COPY of the fixture.
 
     The copy is not hygiene -- it is what makes the comparison valid. `tg codemap` WRITES its
@@ -180,7 +189,13 @@ def _run(argv: list[str], hash_seed: str) -> str:
         text = completed.stdout
         for form in (native.replace("\\", "\\\\"), native, native.replace("\\", "/")):
             text = text.replace(form, "<fixture>")
-        return text
+        # Carry the exit code and stderr, not just stdout. When the premise below fires, the ONLY
+        # question is *why* the surface went quiet -- and stdout is empty by definition at that
+        # point, so the answer lives entirely in the two channels this used to discard. Dropping
+        # them turned a one-cycle diagnosis into guesswork on a platform I cannot reproduce
+        # locally: this gate is the instrument, and an instrument that cannot say why it failed
+        # is only half built.
+        return _Outcome(text=text, returncode=completed.returncode, stderr=completed.stderr)
 
 
 def _redact_volatile(value: Any) -> Any:
@@ -216,13 +231,22 @@ def _flatten(value: Any, prefix: str = "") -> dict[str, Any]:
 def test_machine_facing_output_is_stable_across_processes_and_hash_seeds(
     surface_id: str, argv: list[str], min_bytes: int
 ) -> None:
-    raw = [_run(argv, seed) for seed in _HASH_SEEDS]
+    outcomes = [_run(argv, seed) for seed in _HASH_SEEDS]
+    raw = [outcome.text for outcome in outcomes]
 
     # PREMISE: identical-but-empty is trivially true. If a surface legitimately goes quiet that is
     # a product change to acknowledge here, not something to wave through by lowering the floor.
+    #
+    # The exit code and stderr are in the message because a quiet surface says nothing about WHY
+    # it went quiet, and this gate runs on platforms the author cannot reproduce locally. Without
+    # them the next reader gets "0 bytes" and a guess; with them they get the reason on the first
+    # read of the log.
     assert len(raw[0]) >= min_bytes, (
         f"premise failed: {surface_id} produced {len(raw[0])} bytes (< {min_bytes}). Either the "
-        "command broke or its output moved; comparing empty strings proves nothing."
+        "command broke or its output moved; comparing empty strings proves nothing.\n"
+        f"  exit code: {outcomes[0].returncode}\n"
+        f"  stderr:    {outcomes[0].stderr.strip()[:2000] or '<empty>'}\n"
+        f"  argv:      {argv}"
     )
 
     parsed = []
@@ -274,7 +298,7 @@ def test_every_always_present_volatile_key_is_live() -> None:
     seen: set[str] = set()
     for _surface_id, argv, _min_bytes in _SURFACES:
         try:
-            payload = json.loads(_run(argv, _HASH_SEEDS[0]))
+            payload = json.loads(_run(argv, _HASH_SEEDS[0]).text)
         except json.JSONDecodeError:
             continue
         seen |= _collect_keys(payload)
