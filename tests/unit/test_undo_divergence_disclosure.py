@@ -144,7 +144,7 @@ def test_a_path_that_cannot_be_statted_is_disclosed_not_dropped(tmp_path: Path) 
         def is_file(self) -> bool:
             return True
 
-        def stat(self):  # noqa: ANN202 - test double
+        def stat(self):
             raise OSError(13, "Permission denied")
 
     diverged, unchecked = checkpoint_store._paths_modified_since_checkpoint(
