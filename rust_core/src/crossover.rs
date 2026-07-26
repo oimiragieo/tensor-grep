@@ -351,6 +351,27 @@ fn benchmark_mode(executable: &Path, corpus_dir: &Path, mode: SearchMode) -> Res
                 corpus_dir.display()
             )
         })?;
+        // Task #276 slice C0 -- this site is DELIBERATELY left strict, and the reason matters.
+        //
+        // An adversarial audit flagged it as the first blocking finding: `tg` spawns ITSELF here
+        // (`executable` is `env::current_exe()`), so once the native search path starts exiting 2
+        // on an incomplete walk, a self-spawned child could kill the whole `tg calibrate` with a
+        // MISATTRIBUTED cause. That reasoning is sound in general and wrong for this call site.
+        //
+        // `corpus_dir` is never a user tree. It comes from `ensure_cached_corpus`, which
+        // `create_dir_all`s a cache directory and writes its own `chunk-{index}.log` files (see
+        // `:368-406`). tg owns every byte it searches here, so a permission-denied subtree is not
+        // reachable without something external breaking tg's own cache -- in which case a hard
+        // failure is the CORRECT outcome, not a partial to be tolerated.
+        //
+        // Making it three-state aware would also cost something real: both streams are
+        // `Stdio::null()`, so reading a marker would require `.status()` -> `.output()`, adding
+        // pipe-drain work inside the very loop whose elapsed time IS the measurement. Paying that
+        // to handle an unreachable case would be a worse trade than the strictness it buys.
+        //
+        // IF THAT PREMISE CHANGES -- if calibration ever searches a caller-supplied path -- this
+        // becomes a genuine C0 site and must be revisited. That is the condition to watch, not the
+        // exit code itself.
         if !status.success() {
             bail!(
                 "crossover calibration command failed for {} with exit code {:?}",
