@@ -10060,7 +10060,17 @@ def test_cli_does_not_treat_default_json_as_rg_json_passthrough() -> None:
     )
 
 
-def test_cli_uses_implicit_rg_root_for_no_path_files_with_matches(monkeypatch):
+def test_cli_uses_implicit_rg_root_for_no_path_files_with_matches(monkeypatch, tmp_path):
+    """Asserts a no-path search forwards an EMPTY `paths` list (the implicit-root contract).
+
+    Runs from an ISOLATED cwd. It used to run from whatever directory pytest was launched in --
+    i.e. the real repo root -- which made the assertion depend on ambient filesystem state. A
+    permission-denied directory at the repo root (task #268) makes the implicit-root walk report
+    INCOMPLETE, so `tg` correctly exits 2 per the three-state contract (0 complete / 1 not-found /
+    2 incomplete) and this test false-failed on `assert 2 == 0`. The product was right and the test
+    was wrong: nothing here is about the repo's contents, so it must not read them.
+    """
+    monkeypatch.chdir(tmp_path)
     calls: dict[str, object] = {}
 
     def _fake_passthrough(self, paths, pattern, config=None):

@@ -251,6 +251,13 @@ def test_build_repo_map_incremental_only_reparses_changed_files(
 
 
 def test_build_repo_map_incremental_removes_deleted_entries_from_payload(tmp_path: Path) -> None:
+    """NOTE for future readers: the pruning asserted here does NOT come from `changeset["removed"]`
+    being consumed. The files are unlinked from disk BEFORE the call, so they disappear simply
+    because `_iter_repo_files` only yields files that still exist. `build_repo_map_incremental`
+    ignores `removed` entirely (its D2 comment says so, and a probe passing a false `removed` for
+    files still on disk evicts nothing). Without this note the test reads like a contradiction of
+    that fact -- which is exactly the wrong inference task #286 was fixed on.
+    """
     paths = _build_project(tmp_path)
     previous_map = repo_map.build_repo_map(paths["project"])
     paths["helper"].unlink()
@@ -614,3 +621,94 @@ def test_incremental_map_omits_unreadable_paths_on_a_clean_walk(tmp_path: Path) 
 
     assert "unreadable_paths" not in incremental_map
     assert "unreadable_paths" not in repo_map.build_repo_map(paths["project"])
+
+
+# (#286) An UNREADABLE file must never be reported as REMOVED
+# ---------------------------------------------------------------------------
+
+
+def _deny_stat_under(monkeypatch, denied_dir: Path) -> None:
+    """Make `os.stat` raise PermissionError for anything under `denied_dir`.
+
+    Patched NARROWLY on purpose: an earlier probe patched `os.stat` globally and broke pytest's
+    OWN failure reporting -- the instrument took down the harness. Scoping the raise to one
+    subtree keeps pytest able to report a failure if this test fails.
+    """
+    import os as _os
+
+    real_stat = _os.stat
+    # Normalize with PURE STRING ops only. A first version called `Path(...).resolve()` inside the
+    # fake, and `resolve()` itself calls `os.stat` -- instant RecursionError. The instrument ate
+    # itself. `os.path.normpath`/`abspath` touch no filesystem.
+    target = _os.path.normcase(_os.path.normpath(_os.path.abspath(str(denied_dir))))
+
+    def _fake_stat(path, *args, **kwargs):
+        candidate = _os.path.normcase(_os.path.normpath(_os.path.abspath(str(path))))
+        if candidate.startswith(target):
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(_os, "stat", _fake_stat)
+
+
+def test_unreadable_file_is_not_reported_as_removed(tmp_path: Path, monkeypatch) -> None:
+    """Task #286, MEASURED defect. `_stale_changeset` wrapped `os.stat` in a bare `except OSError`
+    and appended to `removed`, so it could not tell "the file is gone" (FileNotFoundError) from
+    "I am not allowed to look at it" (PermissionError).
+
+    What that breaks: a false `removed` entry reaches `_changeset_has_entries` ->
+    `_ensure_session_not_stale`, which raises SessionStaleError naming files nobody touched;
+    `_session_health_payload` RECOMPUTES the same changeset and serves it with `stale: true`, so
+    the `health` request on the session serve/daemon protocol reports live files as deleted; and
+    on MCP `refresh_on_stale=True` it forces a needless rebuild.
+
+    THREE THINGS EARLIER DRAFTS OF THIS DOCSTRING GOT WRONG, every one by naming a consumer
+    without checking it: (1) it does NOT evict anything from the repo map --
+    `build_repo_map_incremental` ignores `removed` entirely (see its D2 comment); (2) health does
+    NOT re-serve the `changeset` key persisted in the session payload -- that copy has no reader
+    in `src/`; (3) there is no `tg session health` CLI command and no `tg_session_health` MCP tool
+    -- `health` is only a request kind on the serve/daemon protocol. GREP THE NAME FIRST.
+    """
+    paths = _build_project(tmp_path)
+    session_id = _open_session(paths["project"])
+    denied_dir = paths["project"] / "src"
+
+    # PRECONDITION: without this the test can go inert. If `_build_project`'s layout ever stops
+    # putting files under src/, the "in p" filter below matches nothing and the assertion passes
+    # vacuously -- declaring the defect absent instead of testing for it.
+    payload = _session_payload(paths["project"], session_id)
+    snapshot_src_entries = [e for e in payload["snapshot"] if "src" in str(e["path"])]
+    assert len(snapshot_src_entries) == 3, (
+        "fixture drift: expected 3 snapshot entries under src/ for the deny-stat arm to bite, "
+        f"got {len(snapshot_src_entries)}"
+    )
+
+    _deny_stat_under(monkeypatch, denied_dir)
+    changeset = session_store._stale_changeset(payload, detect_added_files=False)
+
+    assert changeset is not None
+    unreadable_reported_as_removed = [p for p in changeset["removed"] if "src" in p]
+    assert unreadable_reported_as_removed == [], (
+        "a permission-denied file was reported as REMOVED; that false report raises "
+        "SessionStaleError and is recomputed and served again by the health request: "
+        f"{unreadable_reported_as_removed}"
+    )
+
+
+def test_genuinely_deleted_file_is_still_reported_as_removed(tmp_path: Path) -> None:
+    """CONTROL ARM. Without this, the fix above could be "never report removals" -- which
+    satisfies the first assertion while destroying the feature entirely. A real deletion must
+    still land in `removed`.
+    """
+    paths = _build_project(tmp_path)
+    session_id = _open_session(paths["project"])
+    paths["helper"].unlink()
+
+    changeset = session_store._stale_changeset(
+        _session_payload(paths["project"], session_id), detect_added_files=False
+    )
+
+    assert changeset is not None
+    assert any("helpers.py" in p for p in changeset["removed"]), (
+        f"a genuinely deleted file vanished from `removed`: {changeset['removed']}"
+    )

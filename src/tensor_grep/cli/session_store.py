@@ -545,16 +545,80 @@ def _stale_changeset(
 
     removed: list[str] = []
     modified: list[str] = []
+    # Accumulate indeterminate paths and emit ONE warning after the loop. Logging per file would
+    # be unbounded-ish spam: `_stale_changeset` runs on EVERY session-serving request (both
+    # `_load_session_payload` and `_session_health_payload`), the snapshot is capped only by
+    # DEFAULT_AGENT_REPO_MAP_LIMIT (2000), and no handler is configured in this package -- so
+    # Python's lastResort would put up to ~2000 lines on stderr per request.
+    indeterminate: list[str] = []
+    indeterminate_kinds: set[str] = set()
     for current_path, snapshot_entry in snapshot_by_path.items():
         try:
             stat = os.stat(current_paths.get(current_path) or current_path)
-        except OSError:
+        except (FileNotFoundError, NotADirectoryError):
+            # The file is genuinely GONE (or a parent stopped being a directory). This is the
+            # only failure that means "removed".
+            #
+            # KNOWN GAP, and it lives HERE rather than in the OSError arm below: a disconnected
+            # Windows UNC share raises FileNotFoundError (winerror 53) for EVERY file under it, so
+            # a dropped network mount lands in this arm and reports the whole tree as removed --
+            # the same false-deletion class task #286 fixed, arriving through the one arm that is
+            # supposed to mean "really gone". Not fixable by widening the OSError split: at the
+            # single-file level winerror 53 is indistinguishable from a real deletion. The
+            # discriminator has to be at the TREE level (e.g. every entry under a root resolving
+            # to removed is likelier a mount drop than a mass delete). Tracked as task #287.
             removed.append(current_path)
+            continue
+        except OSError as exc:
+            # Task #286: a bare `except OSError` here previously reported ANY stat failure as a
+            # deletion -- including PermissionError. Measured: denying read on one subdirectory
+            # reported every file under it as removed.
+            #
+            # What that actually breaks (verified by execution -- an earlier version of this
+            # comment claimed repo-map EVICTION and was WRONG; `build_repo_map_incremental`
+            # ignores `removed` entirely today, see repo_map.py's `normalized_changeset["removed"]`
+            # D2 comment, and a probe passing a false `removed` evicted nothing):
+            #   1. `_changeset_has_entries` -> `_ensure_session_not_stale` raises SessionStaleError
+            #      whose message names files nobody touched.
+            #   2. `_session_health_payload` RECOMPUTES this same changeset and serves it with
+            #      `stale: true`, so the `health` request on the session serve/daemon protocol
+            #      (the `command == "health"` arms in this module and in `session_daemon.py`)
+            #      reports live files as deleted. NOTE there is no `tg session health` CLI command
+            #      and no `tg_session_health` MCP tool -- two earlier drafts of this comment named
+            #      one. It also does NOT re-serve the copy persisted under the payload's
+            #      `"changeset"` key; that copy has no reader in `src/` at all.
+            #      Three drafts of this comment each named a consumer without checking it
+            #      (`build_repo_map_incremental`, then the persisted key, then a CLI command that
+            #      does not exist). If you edit this comment, GREP FOR THE NAME FIRST.
+            #   3. On MCP `refresh_on_stale=True` that false-stale forces a needless rebuild,
+            #      which also flushes the process-global source caches via `_clear_all_source_caches`.
+            # So: false reporting + wasted work, not data loss.
+            #
+            # Fail SAFE anyway: an indeterminate file is left OUT of all three buckets and treated
+            # as unchanged. A real deletion we failed to notice leaves a stale entry that the next
+            # successful scan corrects; a false deletion is unrecoverable from here.
+            #
+            # Log it rather than degrade in total silence. A structured signal in the changeset
+            # itself would be better -- `build_repo_map` already ships the right shape
+            # (`payload["unreadable_paths"] = {count, sample}`, the #276 pattern) -- but that is a
+            # consumer-contract change, tracked separately. Do NOT conflate it into `removed` to
+            # make it visible; that is exactly the bug above.
+            indeterminate.append(current_path)
+            indeterminate_kinds.add(type(exc).__name__)
             continue
         if int(stat.st_size) != int(snapshot_entry["size"]) or int(stat.st_mtime_ns) != int(
             snapshot_entry["mtime_ns"]
         ):
             modified.append(current_path)
+
+    if indeterminate:
+        logger.warning(
+            "session staleness check could not stat %d file(s) (%s); they are treated as "
+            "unchanged rather than removed, so this changeset may be incomplete. Sample: %s",
+            len(indeterminate),
+            ", ".join(sorted(indeterminate_kinds)),
+            ", ".join(indeterminate[:3]),
+        )
 
     return {
         "added": added,
