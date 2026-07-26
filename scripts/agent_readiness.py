@@ -282,16 +282,33 @@ def _search_flag_tokens_for_sweep(command: list[str]) -> set[str]:
 # into a check that cannot fail, which is the failure mode this repo names Form 1.
 #
 # So: tolerate 2 ONLY when the run explained itself. The marker must be PRESENT. No marker,
-# no tolerance. That mirrors the existing #121 carve-out below, which is likewise scoped to
-# one label + one precondition + one stderr substring rather than to the bare exit code.
-_INCOMPLETENESS_MARKERS = ("result_incomplete", "incomplete_reason_class")
+# no tolerance.
+#
+# HONEST DIFFERENCE from the #121 carve-out below: that one is scoped to a single label AND
+# a precondition (rg absent) AND a stderr substring. This guard has only the substring --
+# it applies to all 28 labels with no precondition. That is a deliberately wider allow-list,
+# so the marker set is the ONLY thing keeping it honest; widen that set with care.
+# The JSON envelope's keys (json_fmt.py:127, :140) AND the plain-text route's stderr sentinel.
+# BOTH are required, and an independent audit caught why: every one of the 28 sweep cases is
+# plain-text (`--no-json` is even in the inverse-flag set), and NO tg route writes either JSON key
+# to stderr -- so a JSON-key-only check has a treatment arm that can never fire on the routes this
+# consumer actually runs. The plain-text disclosure is `tg: rg exited 2, keeping partial results:
+# {reason}` (ripgrep_backend.py:143, :324, :443, and the timeout variant at :187), so the sentinel
+# below is the phrase that route really emits.
+_INCOMPLETENESS_MARKERS = (
+    "result_incomplete",
+    "incomplete_reason_class",
+    "keeping partial results",
+)
 
 
 def _disclosed_incomplete(stdout: str, stderr: str) -> bool:
     """True when an exit-2 run disclosed that its scan was incomplete.
 
     Reads both streams because the marker's home differs by route: the `--json` envelope
-    carries it in stdout, while the plain-text route names the unreadable path on stderr.
+    carries the KEYS in stdout, while the plain-text route emits its own stderr sentinel
+    (`keeping partial results`). Merely naming a path on stderr is NOT a disclosure -- a
+    permission-denied line with no sentinel is indistinguishable from a hard failure.
 
     CALL-SITE ASSUMPTION -- read this before reusing the helper elsewhere. The substring test is
     safe HERE because the sweep searches a corpus this script authors itself and passes by
