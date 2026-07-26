@@ -28,6 +28,23 @@ here in the same PR.
 
 House rule this implements: "model the class, don't enumerate the cases". Round N+1 finding
 another instance of a defect family means the answer is an invariant, not another reviewer.
+
+WHERE THAT RULE STOPS -- a near miss worth keeping (#292, 2026-07-26). Several audited-benign
+sites share a shape: the handler only ASSIGNS a fallback and lets the loop continue, so nothing
+is skipped (``resolved = candidate`` in the doctor PATH scans, ``_nearby_session_roots``). It is
+tempting to teach the detector that shape and drop ~20 sites of noise in one edit.
+
+Measuring the shape's distribution before encoding it showed why that would be a disaster:
+``checkpoint_store``'s undo commit phase matched it too -- ``removed_bytes = None`` followed by an
+``unlink()`` that destroys a file the revert can no longer restore. That was task #297, the most
+severe defect this campaign found. A "benign fallback" rule would have excused it FOREVER, in the
+exact file where it mattered most.
+
+The lesson generalises: encode a shape only when it is *structurally* incapable of hiding a loss
+(a handler that exits the process; one whose accumulator feeds a later ``raise``). "The handler
+looks harmless" is not that. Whether a fallback is safe depends on what the loop DOES with the
+fallback value afterwards, which is a semantic question this detector deliberately does not try
+to answer. Audit those sites and record the verdict instead -- see CONTRACTS.md section 0.
 """
 
 from __future__ import annotations
