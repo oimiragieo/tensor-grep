@@ -251,3 +251,65 @@ def test_existing_same_crate_rust_use_alias_resolution_still_works(tmp_path: Pat
     payload = repo_map.build_symbol_callers("issue_invoice", project)
 
     assert any(caller["file"] == str(consumer_path.resolve()) for caller in payload["callers"])
+
+
+def test_cyclic_rust_pub_use_reexport_terminates(tmp_path: Path) -> None:
+    """A `pub use` cycle must not recurse until the stack dies.
+
+    Rust re-exports form a GRAPH, not a tree: two modules that re-export the
+    same name through each other close a loop, and following that chain with no
+    visited-set walks it until the interpreter runs out of stack.
+
+    Two details decide whether this fixture can reproduce the bug at all:
+
+    * The searched symbol must NOT be the re-exported name. A matching name hits
+      the early return before the recursive call is ever reached, so a fixture
+      that searches for `Shared` passes with the guard removed and proves
+      nothing. Every binding in a file is resolved against the searched symbol
+      (see the `_rust_resolve_use_binding` call in the references walk), so an
+      unrelated symbol is the realistic case, not a contrived one.
+    * The cycle needs two hops -- a module re-exporting from itself resolves
+      earlier and never reaches the recursive call.
+
+    Receipt: `tg refs . <symbol> --json` on a 594-file Rust workspace exited 1
+    with `RecursionError: maximum recursion depth exceeded` and no stdout at
+    all, so the crash took out EVERY refs query on that repo.
+    """
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    _write(src_dir / "lib.rs", "pub mod a;\npub mod b;\n")
+    # a re-exports from b, b re-exports from a. Cycle closed.
+    _write(src_dir / "a.rs", "pub use crate::b::Shared;\n")
+    _write(src_dir / "b.rs", "pub use crate::a::Shared;\n")
+
+    binding = repo_map._rust_use_bindings((src_dir / "a.rs").read_text(encoding="utf-8"))[0]
+
+    # Deliberately unrelated to `Shared` -- see the docstring. Reaching the next
+    # line at all is the regression: unpatched this raises RecursionError.
+    resolved = repo_map._rust_resolve_use_binding(
+        src_dir / "a.rs", binding, "totally_unrelated_symbol", project
+    )
+
+    # A cycle resolves to nothing, and saying so is the correct answer.
+    assert resolved is None
+
+
+def test_cycle_guard_does_not_prune_a_legitimate_reexport_chain(tmp_path: Path) -> None:
+    """The control for the guard above: a NON-cyclic chain must still resolve.
+
+    A guard that returned early for everything would also "terminate" and make
+    the cycle test pass while silently breaking real re-export resolution. This
+    pins the other direction.
+    """
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    _write(src_dir / "lib.rs", "pub mod facade;\npub mod inner;\n")
+    _write(src_dir / "facade.rs", "pub use crate::inner::Shared;\n")
+    _write(src_dir / "inner.rs", "pub struct Shared;\n")
+
+    binding = repo_map._rust_use_bindings((src_dir / "facade.rs").read_text(encoding="utf-8"))[0]
+
+    resolved = repo_map._rust_resolve_use_binding(src_dir / "facade.rs", binding, "Shared", project)
+
+    assert resolved is not None
+    assert resolved["definition_file"] == str((src_dir / "inner.rs").resolve())
