@@ -76,8 +76,18 @@ class Result:
 
 def _tools() -> list[ToolSpec]:
     return [
-        ToolSpec("tg", ["tg", "search", SENTINEL, "."]),
+        # NOTE (2026-07-26, #307): plain `tg search` is NOT tg's own engine. bootstrap.py:1497
+        # forwards it to real rg via `_run_rg_passthrough` whenever no compiled native binary
+        # resolves (bootstrap.py:1264-1272) -- the literal `rg: ` prefix in this row's stderr
+        # appears nowhere in our source, while tg's own walk error is `eprintln!("tg: {err}")`
+        # (native_search.rs:1253). This row is kept because it is what a plain user runs, but a
+        # tie between it and the `rg` row below is DEFINITIONAL, not a result. The `tg --json`
+        # rows are the ones that measure tg.
+        ToolSpec("tg (text; forwards to rg)", ["tg", "search", SENTINEL, "."]),
+        ToolSpec("tg --json", ["tg", "search", "--json", SENTINEL, "."]),
+        ToolSpec("tg --ndjson", ["tg", "search", "--ndjson", SENTINEL, "."]),
         ToolSpec("rg", ["rg", SENTINEL, "."]),
+        ToolSpec("rg --json", ["rg", "--json", SENTINEL, "."]),
         ToolSpec("GNU grep", ["grep", "-r", SENTINEL, "."]),
         ToolSpec("git grep", ["git", "grep", SENTINEL], needs_git=True),
         ToolSpec("ast-grep", ["ast-grep", "run", "-p", SENTINEL, "-l", "python", "."]),
@@ -103,8 +113,21 @@ def _run(argv: list[str], cwd: Path) -> tuple[int, str, str]:
     return (proc.returncode, proc.stdout, proc.stderr)
 
 
-def _score(rc: int, _out: str, err: str, unreadable_name: str) -> tuple[int, str]:
-    """Score one run. A non-zero exit OR a message naming the path is an admission."""
+# The machine-readable incompleteness vocabulary a PAYLOAD consumer can branch on. Mirrors
+# tensor_grep.cli.incompleteness.INCOMPLETENESS_MARKERS; duplicated on purpose because this
+# harness must score COMPETING tools by the same rule, and importing the tool under test would
+# make tg's row depend on tg's own module.
+_PAYLOAD_MARKERS = ("result_incomplete", "incomplete_reason_class", '"errors"', "paths")
+
+
+def _score(rc: int, out: str, err: str, unreadable_name: str) -> tuple[int, str]:
+    """Score one run from the PROCESS channel: exit code + stderr.
+
+    This is what a shell or CI consumer sees. It is deliberately NOT the whole story -- see
+    `_score_payload`, which scores what an agent piping stdout into `jq` sees. Keeping them
+    separate is the point: this scorer alone cannot distinguish "told me on stderr" from "told
+    me in the payload", and that distinction is the entire enterprise thesis (#276).
+    """
     named = unreadable_name and unreadable_name in err
     if rc not in (0, 1):
         return (ADMITS, f"exit {rc}" + (" + names path" if named else ""))
@@ -113,6 +136,25 @@ def _score(rc: int, _out: str, err: str, unreadable_name: str) -> tuple[int, str
     if err.strip():
         return (PARTIAL, f"exit {rc}, unattributed stderr: {err.strip()[:60]!r}")
     return (SILENT, f"exit {rc}, no stderr")
+
+
+def _score_payload(_rc: int, out: str, _err: str, unreadable_name: str) -> tuple[int, str]:
+    """Score STDOUT ALONE -- no exit code, no stderr. The agent's-eye view.
+
+    An agent piping `--json` into `jq` never sees an exit code and never sees stderr. If the
+    payload cannot say "this answer is incomplete", that consumer cannot distinguish "no matches"
+    from "I could not finish looking".
+
+    This column DISCRIMINATES ON DAY ONE and it currently scores AGAINST us: `rg --json` admits
+    via exit 2 on the process channel but is SILENT here, and `tg --json` is SILENT on BOTH --
+    i.e. tg is behind, not tied. That is the honest baseline #276 has to move, and recording the
+    deficit before the fix is what will make the eventual win credible rather than post-hoc.
+    """
+    if any(marker in out for marker in _PAYLOAD_MARKERS):
+        return (ADMITS, "stdout carries a machine-readable incompleteness marker")
+    if unreadable_name and unreadable_name in out:
+        return (PARTIAL, "stdout names the path but carries no structured field")
+    return (SILENT, "stdout indistinguishable from a complete result")
 
 
 def _make_tree(root: Path) -> None:
@@ -238,8 +280,16 @@ def run_condition(
                         "found sentinel, exit 0" if found and rc == 0 else f"rc={rc} found={found}",
                     )
                     continue
+                # TWO channels, deliberately. `_score` is what a shell/CI consumer sees (exit
+                # code + stderr); `_score_payload` is what an agent piping stdout into `jq` sees.
+                # Reporting only the first is what let "tg ties rg" stand for a whole session --
+                # both tools exit 2 and both write stderr, so that channel alone cannot see the
+                # difference #276 is being built to create.
                 score, detail = _score(rc, out, err, hidden_name or "")
                 cell[name] = Cell(score, "ok", detail)
+                pay_score, pay_detail = _score_payload(rc, out, err, hidden_name or "")
+                payload_cell = result.cells.setdefault(f"{tool.name}  [stdout-only]", {})
+                payload_cell[name] = Cell(pay_score, "ok", pay_detail)
         finally:
             cleanup()
     finally:
