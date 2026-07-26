@@ -210,6 +210,16 @@ class CheckpointUndoResult:
     root: str
     restored_files: int
     removed_paths: int
+    # Task #308. Paths whose working-tree copy was MODIFIED AFTER this checkpoint was taken and
+    # whose post-checkpoint content undo then discarded. Defaults to an empty list so an ordinary
+    # undo payload is unchanged; the CLI/JSON surface emits it only when non-empty.
+    #
+    # Undo ALWAYS discards post-checkpoint work -- that is what it is for -- so this is not a
+    # warning that something went wrong. It is the answer to "what did I just lose?", which the
+    # result previously could not express at all: it carried counts and no paths. That gap is the
+    # concurrent-agent hazard, because a second agent's edits are reverted with the same silent
+    # success as your own.
+    diverged_paths: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -1227,6 +1237,43 @@ def load_checkpoint_metadata(checkpoint_id: str, path: str = ".") -> dict[str, A
     return payload
 
 
+def _paths_modified_since_checkpoint(
+    created_at: str, resolved_targets: dict[str, Path]
+) -> list[str]:
+    """Which targets were modified AFTER the checkpoint was taken (task #308).
+
+    `created_at` is written at create time as `datetime.now(UTC).isoformat()`
+    (checkpoint_store.py:855, stored in the metadata file at :690), so no format change or
+    migration is needed -- this reads what already ships.
+
+    mtime, not content hashing, is the discriminator on purpose. "Differs from the snapshot" is
+    the NORMAL case for undo and would flag every file every time, which is noise rather than
+    signal. "Changed since the checkpoint was taken" is the thing a caller cannot otherwise see.
+
+    Fails OPEN, deliberately and narrowly: an unparseable timestamp or an unstattable file yields
+    NO claim rather than a false one. This function only ever adds disclosure -- it gates no
+    behaviour, so a missing entry costs a caller information, while a fabricated entry would tell
+    them a file was clobbered when it was not. Under-claiming is the safer error here, and it is
+    the opposite of the fail-closed rule that applies to completeness fields.
+    """
+    try:
+        checkpoint_time = datetime.fromisoformat(created_at)
+    except (TypeError, ValueError):
+        return []
+    if checkpoint_time.tzinfo is None:
+        checkpoint_time = checkpoint_time.replace(tzinfo=UTC)
+    threshold = checkpoint_time.timestamp()
+
+    diverged: list[str] = []
+    for rel_path, target in resolved_targets.items():
+        try:
+            if target.is_file() and target.stat().st_mtime > threshold:
+                diverged.append(rel_path)
+        except OSError:
+            continue
+    return sorted(diverged)
+
+
 def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult:
     root, mode = _detect_checkpoint_root(Path(path))
     metadata_path = _metadata_path(root, checkpoint_id)
@@ -1258,6 +1305,13 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
         rel_path: _resolve_within_root(snapshot_dir, snapshot_dir_resolved, rel_path)
         for rel_path in entries
     }
+
+    # Task #308: sample divergence NOW, while this is still read-only. Computing it after the
+    # commit phase would read the mtimes undo itself just wrote and report nothing every time --
+    # a field that cannot fire.
+    diverged_paths = _paths_modified_since_checkpoint(
+        str(metadata.get("created_at") or ""), resolved_targets
+    )
 
     # 2. Verify every snapshot source that should exist is present and readable BEFORE
     #    mutating any file.  A missing or unreadable blob means the checkpoint is corrupt;
@@ -1431,4 +1485,5 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
         root=str(root),
         restored_files=restored_files,
         removed_paths=removed_paths,
+        diverged_paths=diverged_paths,
     )

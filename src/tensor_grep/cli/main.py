@@ -13740,13 +13740,30 @@ def checkpoint_undo(
         raise typer.Exit(1) from exc
 
     if json_output:
-        typer.echo(json.dumps(_with_schema_version(payload.__dict__, version=1), indent=2))
+        # Task #308: `diverged_paths` is ADDITIVE-CONDITIONAL. Emitting `[]` on every undo would
+        # change the payload for the ordinary case and teach readers to skip the key -- the same
+        # reasoning that keeps `unreadable_paths`/`deadline_limit` absent when they have nothing
+        # to say. Present means "these paths had post-checkpoint edits that undo discarded".
+        undo_payload = dict(payload.__dict__)
+        if not undo_payload.get("diverged_paths"):
+            undo_payload.pop("diverged_paths", None)
+        typer.echo(json.dumps(_with_schema_version(undo_payload, version=1), indent=2))
         return
 
     typer.echo(
         f"Restored checkpoint {payload.checkpoint_id} "
         f"({payload.mode}, restored_files={payload.restored_files}, removed_paths={payload.removed_paths})"
     )
+    if payload.diverged_paths:
+        shown = ", ".join(payload.diverged_paths[:5])
+        more = (
+            f" (+{len(payload.diverged_paths) - 5} more)" if len(payload.diverged_paths) > 5 else ""
+        )
+        typer.echo(
+            f"Discarded post-checkpoint edits to {len(payload.diverged_paths)} file(s): "
+            f"{shown}{more}",
+            err=True,
+        )
 
 
 @app.command()
