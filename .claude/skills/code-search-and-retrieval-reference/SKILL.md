@@ -135,7 +135,7 @@ picks between them per query:
 `def $FUNC($$$ARGS):` matches any Python function definition, binding `$FUNC` and `$$$ARGS`).
 
 **Corrected — the routing default is the OPPOSITE of what this section previously said.** The real
-routing decision lives in `_select_ast_backend_for_pattern` (`main.py:6655`), and its own comment is
+routing decision lives in `_select_ast_backend_for_pattern` (`main.py:6737` as of 2026-07-27 -- grep the symbol), and its own comment is
 unambiguous: *"Prefer the ast-grep wrapper whenever it is available: it is the stable,
 results-defining backend for BOTH pattern kinds. The native tree-sitter AstBackend uses a DIFFERENT
 DSL and returns DIFFERENT results, so it must not be silently preferred ... Native-as-CPU-default is
@@ -260,9 +260,9 @@ tg has **two independent ranking surfaces**, and only one of them actually imple
 2. **The `tg orient` / capsule symbol-ranking family** (`src/tensor_grep/cli/repo_map.py`) — **a flat
    presence-count stack, no IDF anywhere in it.** Three layered pieces, not one function — do not
    conflate them:
-   - `_score_text_terms` (`repo_map.py:7433`) — the primitive: counts term hits in a haystack, no
+   - `_score_text_terms` (`repo_map.py:7912` as of 2026-07-27 -- grep the symbol) — the primitive: counts term hits in a haystack, no
      rarity weighting.
-   - `_score_symbol` (`repo_map.py:7698`) — the actual per-symbol composite scorer, and the thing
+   - `_score_symbol` (`repo_map.py:8177` as of 2026-07-27 -- grep the symbol) — the actual per-symbol composite scorer, and the thing
      that produces `symbol["score"]`: name-match (`_score_text_terms` on the symbol name, `x3`
      weight) + kind-match + file-path score (`_score_file_path`, `repo_map.py:7621`), plus two
      additive heuristics shipped for task #254 (the CEO deep-research #251 steal / A7): a **+1
