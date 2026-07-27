@@ -34,9 +34,10 @@
 > assertion, and two latency assertions masquerading as hang guards. **#810** stopped the public
 > docs citing local task IDs as though they were GitHub links; **#813** folded in the 8th oracle
 > form and the drain-gate correction.
-> IN FLIGHT (not yet merged, see `gh pr list`): the session-laws capture (**#824**), the
-> `budget_remediable` extension to `repo_map`'s `scan_limit`/`output_limit` (**#826**), and three
-> TorchBackend tests rewritten against a matcher that actually exists (**#827**).
+> LANDING WITH THIS RECONCILE (so this line does not go stale the moment it merges -- `gh pr list`
+> stays the source of truth): the session-laws capture (**#824**), the `budget_remediable`
+> extension to `repo_map`'s `scan_limit`/`output_limit` (**#826**, the only releasing one of the
+> four), and three TorchBackend tests rewritten against a matcher that actually exists (**#827**).
 >
 > Prior refresh 2026-07-26 (post-**v1.98.27**) -- the **trustworthy-tg** wave (#292), continuing
 > the unreadable-path honesty thread below across 14 releases. The through-line: a surface that
