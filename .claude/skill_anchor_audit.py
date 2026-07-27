@@ -118,10 +118,17 @@ def _definition_lines(lines: list[str], symbol: str) -> list[int]:
     # The trailing `(?!.*,\s*$)` rejects lines that end in a comma, which is what separates a real
     # binding from a PARAMETER in a wrapped signature or a KEYWORD ARGUMENT in a wrapped call --
     # both of which look identical to `NAME: ...` / `NAME=...` at the start of a line. Without it
-    # the tool reported three permanent false positives on CORRECT citations (`incomplete_reason`,
-    # `deadline_monotonic`, `file`), and three findings that can never be resolved are how a tool
-    # teaches its readers to ignore it. Module-level constants and ci.yml env keys -- the bindings
-    # this tier exists to catch -- do not end in a comma, so they still match.
+    # the tool reported three false positives on CORRECT citations (`incomplete_reason` via a kwarg
+    # line, `file` via a wrapped parameter, `deadline_monotonic`), and findings that can never be
+    # resolved are how a tool teaches its readers to ignore it. Module-level constants and ci.yml
+    # env keys -- the bindings this tier exists to catch -- do not end in a comma, so they survive.
+    #
+    # BE PRECISE ABOUT WHAT THIS FIXED: it cleared the kwarg and parameter cases (2 of the 3), and a
+    # THIRD surfaced in their place, because narrowing what counts as a definition also moves the
+    # definition SET a citation is compared against. Net 3 -> 2, not 3 -> 0. Both survivors are the
+    # same common LOCAL VARIABLE name assigned in many functions, which no definition heuristic can
+    # disambiguate -- that is the irreducible floor of this tier, and it is recorded rather than
+    # suppressed so nobody "fixes" it by loosening the rule that made the tier trustworthy.
     binding = re.compile(rf"^\s*{escaped}\s*[:=](?!.*,\s*$)")
     return [i + 1 for i, line in enumerate(lines) if keyword.search(line) or binding.match(line)]
 

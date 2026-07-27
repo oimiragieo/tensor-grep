@@ -42,11 +42,11 @@ relax any gate in `tensor-grep-change-control`.
 
 ## Part 0 — THE ORACLE FAMILY: when your verification isn't (read this first)
 
-**The single most repeated failure mode in this repo.** Seven distinct forms, most in ONE session
+**The single most repeated failure mode in this repo.** NINE distinct forms, most in ONE session
 (2026-07-25; form 7 added 2026-07-26). Every form shares one shape: *something that looks like
 verification isn't.*
 
-**The one question that catches all seven — before trusting any green signal, ask:
+**The one question that catches all nine — before trusting any green signal, ask:
 "what would this check show if the thing it verifies were BROKEN?"
 If the answer is "the same", it is not verification.**
 

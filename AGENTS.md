@@ -702,6 +702,12 @@ Verify the diagnosis, not only the finding.
 the orchestrator measured a bootstrap helper IN ISOLATION (`workspace_root_guard=False`) and wrote it up as
 a user-visible guard bypass. The gate ran the control arm through real `main_entry()`: the refusal fires
 IDENTICALLY in both arms — the defect was LATENT, masked by full-CLI routing. A confidently-wrong comment is
+**And never PUBLISH an untested cause.** A PR body told other contributors "a `pip install -e .[dev]`
+here left 5 of 11 declared grammars absent", framed as a warning -- the command was never run. The real
+cause was a stale interpreter carrying tensor-grep 1.83.0, ~18 releases behind, predating those
+grammars' entry into the extras. An explanation that merely FITS the evidence is a hypothesis;
+shipping it as a finding, especially one addressed to other people, is fabrication.
+
 worse than none. Any claim of the form "X causes user-visible Y" needs the control arm, not just the
 mechanism.
 
@@ -759,7 +765,16 @@ cannot distinguish a tool that handles the case well from one that ignores it en
 scanning six zeros concludes "they are all bad at this", which the data does not support. A
 tied-at-floor column is worse than no column, because it looks like a finding. **Rule:** every
 scored dimension needs at least one run where arms differ, or it gets deleted with the reason
-written down. Tracked as #302; the fixture almost certainly deletes the file *before* the search
+written down.
+
+**Generalised beyond scored columns: EVERY PROBE CARRIES A POSITIVE CONTROL (2026-07-27).** A zero
+means "measured nothing" or "never actually checked", and the two are indistinguishable in the
+number. Before trusting a zero, show the SAME probe returns non-zero somewhere it should. Two
+receipts in one session: a language-registry probe read "5 registered, 0 foundational" and looked
+like a clean answer -- it was run against a 2-commit-stale checkout and the truth was 10/5, exposed
+only by asserting the registry was non-empty AND printing the loaded module's `__file__`; and a grep
+for an unsourced benchmark figure returned 0 files, which proved nothing until the identical grep
+form returned 162 hits for `ripgrep`. Tracked as #302; the fixture almost certainly deletes the file *before* the search
 starts, so every tool correctly reports nothing — the race the column claims to measure never opens.
 
 **Form 8 — the SPLIT ORACLE (2026-07-26).** *A precondition proved in a DIFFERENT run is not
@@ -805,6 +820,14 @@ real drift, but every corrected line number in it was itself wrong — computed 
 commits behind `origin/main`. Right finding, wrong expected value. **Re-derive before you act on
 someone else's number**, and where the class recurs, replace the number with a command that
 regenerates it (`.claude/skill_anchor_audit.py` — see "Model The Class").
+
+**MAINTENANCE: this family is MIRRORED, so adding a form is a TWO-FILE EDIT, always.** This section
+is canonical; `tensor-grep-validation-and-qa`'s Part 0 carries the same family for cheap-session
+readers. Grep BOTH files for the next number before assigning it, and update the mirror in the same
+commit. Miss it and you get two different lessons sharing one number — this file's Form 8 (the SPLIT
+ORACLE) briefly collided with a different Form 8 added to the skill, and the skill was simultaneously
+missing the real Form 8 entirely, so its readers had 7 of 8 and no way to know. Two defects from one
+one-file edit. The rule generalises past this family to any numbered list split across two docs.
 
 **Running the probe: the LOCATION trap.** A perturbation proves nothing if the thing you perturbed
 survives elsewhere. Verifying the `truncation_cause` doc ratchet, the first probe removed ONE
@@ -1521,6 +1544,12 @@ Use this schema:
 
 Release-bearing PRs must use `Squash and merge` so the validated PR title becomes the commit subject on `main`.
 
+- **Scope a PR's DIFF to what its TITLE promises.** The title becomes the changelog headline and a
+  reviewer reads it as the contract for what is inside. When correct, reversible, unrelated work
+  surfaces mid-PR, SPLIT it: a repo_map contract extension found while fixing a CLI cause-flag was
+  pulled out of that PR and shipped as its own (#336/#826), and a docs/BACKLOG reconcile was kept off
+  the session-laws capture PR (#337 vs #824). Being correct, reversible and yours does not earn a spot
+  in the diff — only matching the title does.
 Do not manually create release tags when semantic-release is active.
 
 ## Local Dev Gotchas (Windows, hard-won)
@@ -1533,6 +1562,16 @@ Small, non-obvious traps that have each cost a real cycle on this desktop. None 
 - **After a squash-merge, apply follow-up fixes by SYMBOL, not by line number.** Merges shift every line below the change; a plan that says "fix `main.py:8468`" is stale the moment anything above it lands. Re-anchor on the function/const name (grep or `tg defs`) before editing.
 - **A dependency UPPER-cap can silently downgrade the whole install on a newer Python.** If an upper bound (e.g. `typer<0.25`) has no release compatible with a new Python, `pip`/`uv` resolve the *entire package* DOWN to a stale version with NO error — `requires-python>=X` has no upper bound to catch it. When a fresh Python yields a stale `tg`, suspect a transitive cap (typer/click/pydantic), not `requires-python`.
 - **A rule listing forbidden OPERATIONS is not a ban on the whole toolchain — check whether its REASON applies (2026-07-25, cost 3 CI cycles).** CPU-SAFE forbids `cargo`/`rustc`/`clippy`/`maturin` because they are *expensive on a shared box*. **`rustfmt` is not a compiler**: no codegen, parses+formats in milliseconds, `rustfmt.exe` is on PATH, and there is no `rustfmt.toml` so local defaults == CI's. Three CI cycles were burned hand-deriving format diffs from logs before anyone asked whether the rule's reason applied. Run `rustfmt --check` locally before pushing Rust. (It enforces `chain_width`/`fn_call_width` = 60, not just `max_width` = 100 — apply its printed diff verbatim; a hand-rolled width check is a heuristic, never authoritative.)
+- **A local test-failure SPIKE is usually a missing optional dep — repair the instrument before
+  theorising (2026-07-27).** A local run showed 90 failed / 80 passed across the `lang_*` suite and I
+  spent two ticks building a correlation argument that the failures were unrelated (4 missing
+  tree-sitter grammars ↔ 4 failures; csharp present ↔ csharp passing) before checking the interpreter.
+  `python -m pip install --only-binary=:all: tree-sitter-{c,cpp,java,php,go}` (wheels only, so nothing
+  compiles on a shared box) turned the inference into an observation: **170 passed, 0 failed**. Cause
+  was a STALE interpreter carrying tensor-grep 1.83.0, ~18 releases behind — those grammars entered
+  the extras after it; `pyproject.toml` declares all 11 unconditionally and is not at fault. When a
+  measuring device gives false readings, repairing it is cheaper and far stronger than reasoning
+  about the noise.
 - **Cumulative CPU time is not current CPU rate (2026-07-25).** Two orphaned `find /` scans showed 20,548 s and 6,073 s of accumulated CPU — 7.4 CPU-hours — and killing both moved total load 74% → 73%. They had been accumulating slowly for hours, not burning now. Same shape as the cProfile trap: *cumulative ≠ blocking*. Before attributing a slow box to a process, measure its current rate, not its lifetime total. (Related: orphaned children outlive the shell that spawned them — `find /` on Windows via git-bash traverses virtual mounts and effectively never terminates.)
 - **`MSYS_NO_PATHCONV=1` is REQUIRED for `git cat-file blob origin/main:path` on this box.** Without it git-bash mangles the ref into `origin\main;path` and the command fails *misleadingly* — it reads as "that path does not exist on origin/main", which twice produced a confident wrong conclusion (once nearly reporting a committed CI gate as a phantom). Same family as the "parse `gh --json` via python, never jq" rule.
 - **`tests/conftest.py:8-15` does `sys.path.insert(0, SRC_DIR)` from `__file__`, which OVERRIDES `PYTHONPATH`.** A gate running a control arm with `PYTHONPATH=<baseline>/src` got a FALSE PASS because conftest silently re-pointed imports at the worktree. For any baseline/control arm in this repo, use a scratch mini-repo or a full second checkout as pytest's rootdir — and verify `tensor_grep.__file__` resolves where you think before trusting RED or GREEN.
