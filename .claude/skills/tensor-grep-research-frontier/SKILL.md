@@ -252,21 +252,46 @@ build_doc_drift("docs", code_path="src")  ->  20,072 findings / 2,727 "high conf
 
 ---
 
-## Problem 6 — Close the symbol-graph tier to 10/10 (C/C++, added 2026-07-24)
+## Problem 6 — Symbol-graph tier: registry 10/10 SHIPPED; cross-file C/C++ graph still open (added 2026-07-24, STATUS-UPDATED 2026-07-27)
 
-**Why current coverage falls short.** `tg`'s deep symbol-graph tier (`defs`/`refs`/`callers`/blast-radius/`tg source`/`tg imports`) now covers 8 of the top-10 languages by TIOBE Jul-2026 + Stack Overflow 2025 + GitHub Octoverse 2025 consensus — Python, JavaScript, TypeScript, and Rust (the original four, inline in `repo_map.py`, pre-dating the registry pattern), plus Go, PHP, Java, and C# (each registered via `lang_registry.register_language(LanguageSpec(...))`; Go/PHP/C# as standalone `lang_<x>.py` modules mirroring `lang_go.py`, Java inline mirroring Rust's shape — PHP/Java/C# landed via `#724`/`#725`/`#726` respectively). **C and C++ are the only gap left**, and per the repo's own scoping they are harder than anything shipped so far, for reasons that are genuine open design questions, not a mechanical registration exercise like Java/C#/PHP were: no compiler-enforced module system (Go has `go.mod`; C/C++ has none, so a first landing's honest floor is per-file extraction, not a `compile_commands.json`/include-graph); `#include` is textual, not semantic (tree-sitter has no preprocessor, so export/visibility macros common in real headers can hide or reshape the node an extractor expects); a function typically appears twice (header prototype + body definition) with no obvious "canonical" one the way every shipped language's single-declaration model has; and C vs. C++ are two separate grammar packages (`tree-sitter-c` / `tree-sitter-cpp`), needing an explicit one-`LanguageSpec`-or-two decision before any code is written.
+**STATUS: the build described here SHIPPED. Do not re-do it.** `lang_c.py` and `lang_cpp.py` both
+exist (`ls src/tensor_grep/cli/lang_*.py`), and `grep -c "lang_registry.register_language(" src/tensor_grep/cli/repo_map.py`
+returns **10**, not the 8 this section used to predict. An earlier revision framed C/C++ as "the only
+gap left" and gave first-three-steps for writing those modules; a reader following it would have
+rebuilt shipped code — the most expensive class of skill error, which is why this section now leads
+with its status. (Caught 2026-07-27 by a skills-accuracy audit.)
 
-**The tg asset.** The registry pattern itself (`src/tensor_grep/cli/lang_registry.py`) plus three already-shipped module-shaped languages to clone from — `lang_go.py` (the reference template), `lang_php.py`, `lang_csharp.py` — and the five seams every language must hit, live-verified this pass: `_imports_and_symbols_for_path` (`repo_map.py:6244`), `_imports_with_lines_for_path` (`repo_map.py:6440`), `build_symbol_source_from_map` (`repo_map.py:15815`), `_target_language_for_path` (`repo_map.py:7383` — most-forgotten; feeds the `tg agent` capsule confidence gate), and `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` (`repo_map.py:16633`). The full registration checklist, plus a live-verified C/C++ scoping menu (the four open design decisions above, expanded), lives in `.claude/skills/tensor-grep-add-language/SKILL.md`'s E1 section — this Problem is the frontier-research framing of the same gap (why it matters, what's still open), not a duplicate of the checklist.
+**What actually shipped:** per-file symbol extraction for C and C++ behind the same
+`lang_registry.register_language(LanguageSpec(...))` pattern the other module-shaped languages use,
+self-labelled FOUNDATIONAL-TIER in `repo_map.py` — `defs` and `imports` are real; the deeper
+call-graph seams are deliberately unwired.
 
-**First three steps in THIS repo:**
-1. Read the add-language skill's E1 section end-to-end and settle the four open design questions BEFORE writing a `lang_c.py`/`lang_cpp.py` module: one `LanguageSpec` or two; which of {prototype, definition} is canonical for `tg source`; how visibility/export macros are handled when they reshape the node tree-sitter sees; and whether Stage 1 scopes to per-file extraction only (no `#include`-graph resolution) — the honest floor the skill recommends.
-2. Live-verify both grammars' real node shapes (`tree-sitter-c` and `tree-sitter-cpp` are separate packages) against representative real-world headers/sources before writing any extractor — do not guess node shapes from another language's grammar, per the C# `using Alias = Target` lesson (the alias identifier precedes the target in that AST, the opposite of the naive assumption) that the same live-verify discipline already caught once.
-3. Land Stage 1 (per-file symbol extraction, declaration/definition dedup by name, fail-closed `resolution_gaps` for anything cross-file) behind the same registration checklist Java/C#/PHP used, and extend `tests/unit/test_lang_registry.py`'s union set-pin plus `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` in the same PR — per Ground rule 5's receipt above, verify the checklist against current code before dispatch, not against a Java/C#/PHP-era mental model.
+**What is GENUINELY still open** (scope any new work here, not at the registration layer):
 
-**You have a result when (falsifiable):** a `lang_c.py` and/or `lang_cpp.py` module registers via `lang_registry.register_language`, all five seams are wired (verified by `grep -n "register_language(" src/tensor_grep/cli/repo_map.py` showing 9-10 call sites, up from 8 today), `defs`/`refs`/`callers`/`tg source`/`tg imports` return real, fail-closed results on a representative C/C++ fixture (never a silent regex fallback on grammar-missing), and the `tg agent` capsule's `_target_language_for_path` gate correctly downgrades a mismatched validation suggestion for a C/C++ target the same way it already does for Java. A first landing that only does per-file extraction (no `#include`-graph resolution) still counts, provided the gap is labeled honestly (`resolution_gaps`), never silently reported as zero dependencies.
+1. **Cross-file caller graph for c/cpp.** `references_and_calls`, `provider_alias_calls`,
+   `file_imports_symbol_from_definition`, `import_update_target`, `prime_repo_context` and
+   `classify_ref_kind` are all `None` on both specs, so `tg refs`/`callers`/`blast-radius` fall
+   through to the regex heuristic path for C/C++ rather than the AST path. Verify before starting:
+   read the two `LanguageSpec` literals and confirm which hooks are still `None`.
+2. **`#include`-graph resolution.** Still unbuilt, and still hard for the reasons the original
+   scoping gave: `#include` is textual not semantic, tree-sitter has no preprocessor, and there is
+   no compiler-enforced module system to lean on (no `go.mod` analogue). A `compile_commands.json`
+   ingest is the obvious lever and has not been attempted.
+3. **Header/definition duality.** A C/C++ function appears twice (prototype + body). Per-file
+   extraction handles this by name-dedup; a cross-file graph has to pick a canonical site, and that
+   decision is still unmade.
+
+**Honest framing of the coverage number.** "10/10 languages" is REGISTRY membership, not caller-graph
+parity. Full AST-backed caller support is python/javascript/typescript/rust (4), go is partial
+(`references_and_calls` only), and java/php/csharp/c/cpp are foundational-tier. Quote the tier split,
+never the bare 10/10, in anything user-facing — see `tensor-grep-enterprise-agent` for the same split.
+
+**You have a result when (falsifiable):** for a representative multi-file C/C++ fixture, `tg callers`
+returns AST-derived call sites (not regex-heuristic ones) and `tg imports` resolves at least
+same-directory `#include`s, with every unresolved edge reported in `resolution_gaps` rather than
+silently counted as zero.
 
 ---
-
 ## Beyond-SOTA: the fused thesis (candidate, not proven)
 
 No single wedge above is the beyond-SOTA claim. The claim is the **fusion of three moats into one model-agnostic harness**:
@@ -289,7 +314,7 @@ Re-verify anything below before you cite it; line numbers drift.
 
 - **Version / date stamp** (`v1.96.0`, 2026-07-24): `grep -n '^version' pyproject.toml` and `grep -n 'release_docs_current_tag' AGENTS.md`.
 - **GPU pause + the 3 gating CPU wins:** `grep -n "Roadmap Sequencing" -A 15 AGENTS.md`; `#319` in `CHANGELOG.md`. Promotion rule: `docs/gpu_crossover.md` "Required Promotion Rule" + "Supported semantics" (PFAC). **B-GPU publish=HOLD (2026-07-21):** `tensor-grep-failure-archaeology` Battle 20. **Semantic-search-shipped / GPU-operator-skill reconciliation (2026-07-24):** `grep -n '"--semantic"' src/tensor_grep/cli/main.py` and `ls src/tensor_grep/core/retrieval_dense.py src/tensor_grep/core/retrieval_fusion.py`; day-to-day GPU commands: `tensor-grep-gpu` skill.
-- **Problem 6 (C/C++ symbol-graph gap):** confirm current coverage with `grep -n "register_language(" src/tensor_grep/cli/repo_map.py` (expect 8 call sites; confirm no `lang_c.py`/`lang_cpp.py` via `ls src/tensor_grep/cli/lang_*.py`). The five seams' current definitions: `grep -n "^def _imports_and_symbols_for_path\|^def _imports_with_lines_for_path\|^def build_symbol_source_from_map\|^def _target_language_for_path" src/tensor_grep/cli/repo_map.py` and `grep -n "_SUPPORTED_FILE_DEPENDENCY_LANGUAGES = frozenset" src/tensor_grep/cli/repo_map.py`. Full scoping menu: `.claude/skills/tensor-grep-add-language/SKILL.md` section E1.
+- **Problem 6 (C/C++ cross-file graph):** confirm the SHIPPED baseline with `grep -c "lang_registry.register_language(" src/tensor_grep/cli/repo_map.py` (expect **10**) and `ls src/tensor_grep/cli/lang_*.py` (expect lang_c.py AND lang_cpp.py to EXIST -- an earlier revision told you to confirm they do not, which was wrong by 2026-07-27). Then read the c/cpp `LanguageSpec` literals and list which call-graph hooks are still `None` -- that set, not the registration, is the open work. The five seams' current definitions: `grep -n "^def _imports_and_symbols_for_path\|^def _imports_with_lines_for_path\|^def build_symbol_source_from_map\|^def _target_language_for_path" src/tensor_grep/cli/repo_map.py` and `grep -n "_SUPPORTED_FILE_DEPENDENCY_LANGUAGES = frozenset" src/tensor_grep/cli/repo_map.py`. Full scoping menu: `.claude/skills/tensor-grep-add-language/SKILL.md` section E1.
 - **Flat no-IDF scorer + fragility:** `grep -n "_score_text_terms\|_symbol_rank_key\|_score_file_path" src/tensor_grep/cli/repo_map.py`; safety floor `grep -n "_primary_target_is_unrequested_marker_helper\|_prefer_implementation_over_marker_helper\|_alternative_targets" src/tensor_grep/cli/agent_capsule.py`; AGENTS.md "BM25/IDF-ranked surfaces … sensitive to corpus changes". Disproof-of-IDF-as-fix: `tensor-grep-failure-archaeology`. **`_score_symbol` hardening (A7/#699):** `grep -n "def _score_symbol" src/tensor_grep/cli/repo_map.py` (expect `~7698`); H1 dead-end: `grep -n '"symbols"' src/tensor_grep/cli/repo_map.py`.
 - **Raw-grep parity / native control-plane closed outcomes:** `docs/world_class_plan.md` Roadmap C + "Roadmap 1: Native Control Plane". Round-4 argv-injection item is **RESOLVED** (`#326`/`#370`) — verify with `grep -n "fn ripgrep_operand_args" -A 20 rust_core/src/rg_passthrough.rs`, expect an unconditional `operands.push("--".to_string())` before the path loop. **B-warm-session retirement (2026-07-21):** `tensor-grep-failure-archaeology` Battle 19.
 - **Moat-deepener references (arXiv ids + which competitor gap):** the `tensor-grep-market-research-2026-06-25` memory. MCP surface + capability tiers: `grep -n "tg_mcp_capabilities" src/tensor_grep/**/mcp_server.py`.
