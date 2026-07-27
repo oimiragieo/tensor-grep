@@ -1,6 +1,551 @@
 # CHANGELOG
 
 
+## v1.101.4 (2026-07-27)
+
+### Bug Fixes
+
+- **cli**: Extend budget_remediable to repo_map's three cause emitters (task 336)
+  ([#826](https://github.com/oimiragieo/tensor-grep/pull/826),
+  [`9e0df69`](https://github.com/oimiragieo/tensor-grep/commit/9e0df69142e196de4937fee707f941477666d8ba))
+
+* fix(cli): extend budget_remediable to repo_map's three cause emitters (task 336)
+
+#825 gave `tg inventory` and `tg docs-coverage` a machine-branchable "is a retry worth it?" flag.
+  repo_map was the LAST surface still stamping a cause without one, so `tg map` and `tg session
+  open/show/refresh` left a consumer to re-derive remediability from the cause string -- the
+  half-fixed class.
+
+SCOPE, enumerated mechanically rather than from recollection: `git grep '"truncation_cause":' --
+  src/**/*.py` returns exactly three emitters outside #825's two files, all in repo_map.py (2x
+  scan_limit, 1x output_limit). A campaign note had claimed SEVEN residual surfaces;
+  agent_capsule/codemap/orient_capsule/sarif emit no cause at all, so four of those "fixes" would
+  have been dead code.
+
+THE LOAD-BEARING CHOICE IS THE GATE, NOT THE KEY. These emit on `_capped`, NOT on
+  `possibly_truncated`. `_truncated = _capped and _cause == "project-files"` is deliberately narrow
+  (its own comment says so), so gating there emits NOTHING for an `unreadable-path` cap --
+  withholding `budget_remediable: false` in precisely the case a caller must not retry. That is the
+  wrong-knob advice task 283 exists to prevent, and switching to `_truncated` would read as a
+  harmless consistency edit. A COMPLETE scan still emits neither field and stays byte-identical.
+
+`output_limit` is the one site where truncated and capped are the same condition, so its gate is not
+  the narrow one; its value is still DERIVED from the cause rather than hardcoded True, so a future
+  cause cannot silently inherit "just raise the limit".
+
+TESTS. Two added: one pins the three sites BY COUNT (a fix landing on one arm and not its twin is
+  this campaign's recurring defect), one pins the GATE CHOICE with a premise assertion that fails
+  loudly if `_truncated` is ever widened. Validated bidirectionally -- mutating
+  `_capped`->`_truncated` fails ONLY the gate test while the presence test stays green, which is
+  exactly why the second test earns its place rather than being redundant.
+
+The two `test_session_cli.py` exact-dict assertions were UPDATED, not loosened: the whole value of
+  an exact-dict assertion is that a new field has to be declared deliberately, so each now names
+  `budget_remediable: True` with why True is right there (`project-files` is the budget cap).
+
+CONTRACT. docs/CONTRACTS.md gains the additive-field paragraph -- which surfaces carry it, that it
+  is additive and omitted on a complete scan, that the value comes from the ONE shared allow-list in
+  cli/incompleteness.py (two copies is how CLI and MCP drift into opposite advice), and the gate
+  rationale above.
+
+GATES: ruff format + check clean; 66 docs-governance tests green; broad regression slice 503 passed
+  / 4 failed. All 4 failures are the tree-sitter grammar class, proven not mine by a controlled
+  check: tree_sitter and tree_sitter_c_sharp import fine while c/cpp/java/php/go are absent, and the
+  failures are exactly {php, c, java, cpp} while the one build_repo_map_surfaces test that PASSES is
+  csharp -- whose grammar is present. 4 missing grammars, 4 failures; 1 present, 1 pass. CI installs
+  the [ast] extra and is the oracle there.
+
+* test: declare budget_remediable at the 4 capped exact-dict sites in test_cli_modes
+
+The #336 change adds `budget_remediable` to repo_map's scan_limit/output_limit whenever the payload
+  is CAPPED. Six tests in test_cli_modes.py assert those dicts exactly; four of them build a capped
+  payload, so the new key must be declared there.
+
+Updated, not loosened: the whole value of an exact-dict assertion is that a new field has to be
+  declared deliberately. Relaxing them to `>=` or popping the key would have removed the very check
+  that caught this.
+
+The other two sites (:6127, :8976) assert the render-cap `output_limit`
+  (max_callers/callers_truncated) built by a different emitter, which this change does not touch --
+  left byte-identical.
+
+How this was missed the first time: local verification used `-k "repo_map or scan_limit or ..."`,
+  and no keyword in that filter matches `cli_modes`. A keyword filter is a guess at the consumer
+  set; the fix was to enumerate the consumers mechanically (grep every exact-dict assertion on both
+  field names -> 8 sites, 6 here + 2 in test_session_cli.py) and then run the WHOLE affected files
+  rather than a selection. CI reported only one failure because `-x` stops at the first.
+
+Verified: 599 passed across test_cli_modes.py + test_session_cli.py.
+
+### Documentation
+
+- **agents**: Capture the 2026-07-27 session laws (already-shipped, pin-to-source, mechanical-check,
+  merge-type) ([#824](https://github.com/oimiragieo/tensor-grep/pull/824),
+  [`a1bbdac`](https://github.com/oimiragieo/tensor-grep/commit/a1bbdac3cb8c63c603edd57d0c12a37ad2e3bce9))
+
+* docs(agents): capture the 2026-07-27 session laws (already-shipped, pin-to-source,
+  mechanical-check, merge-type)
+
+Three durable laws from a session that shipped #817/#820 and built #316/#329/#333.
+
+1. CHECK WHETHER IT ALREADY SHIPPED, AND PIN WHAT YOU DOCUMENT. Task 328's fix was already live in
+  4195cbf (PR #815), an ancestor of v1.100.2 -- in the PUBLISHED wheel -- while the task still read
+  `pending`. A filed description is a snapshot of a belief; origin/main is what is true. And #815
+  was docs-only (1 file, 10 insertions, 0 tests), so nothing failed when the paragraph drifted --
+  the #318 mode again. Contract statements need a governance test PINNED TO THE SOURCE, not to the
+  doc: a test that greps the doc for its own words is circular and passes forever after the code
+  stops matching. Assert a PREMISE about the code alongside the CLAIM about the prose so both arms
+  can fail.
+
+2. YOUR READING IS A HYPOTHESIS; THE MECHANICAL CHECK IS THE ORACLE. Three receipts in one session:
+  a semantic read of two tests missed that `Result::expect_err` needs `T: Debug` (cuda-feature-check
+  caught it); `grep -c budget_remediable` counted COMMENTS as emitters and nearly killed a real
+  finding as already-shipped (same trap as gpu_native's result_incomplete, where both hits were the
+  comment's own prose); and twice a census mismatch turned out to be MY expected number, not the
+  code. Match the structural form and read each hit.
+
+3. READ THE MERGE TYPE, DO NOT ASSUME IT. Folded into Push Discipline rather than stated as a new
+  rule, because it SHARPENS the existing one: the push-race bites a merge landing while a RELEASE
+  job is pushing, so check whether one is in flight instead of sitting out the window.
+  `release-intent: skipped` means no release for that commit. On that evidence test:-titled #817 and
+  docs:-titled #820 merged back-to-back; fix:-titled #821 was held for a full publish cycle.
+
+Docs-only. ruff format --check --preview clean; skill-index-sync + enterprise-docs + public-docs
+  governance gates all green (66 passed).
+
+* docs(skills): Problem 6 said C/C++ was unbuilt; both modules shipped (audit rank 2)
+
+A 13-agent skills-accuracy audit over all 27 in-repo skills flagged this as the highest-value single
+  fix, and it verifies on the current tree: `ls src/tensor_grep/cli/lang_*.py` shows lang_c.py AND
+  lang_cpp.py, and `grep -c "lang_registry.register_language(" src/tensor_grep/cli/repo_map.py`
+  returns 10, not the 8 the skill predicted.
+
+The skill said "C and C++ are the only gap left", gave first-three-steps for writing those modules,
+  and its provenance line instructed the reader to "confirm no lang_c.py/lang_cpp.py via ls". A
+  reader following it rebuilds shipped code -- the most expensive class of skill error, so the
+  section now leads with STATUS: SHIPPED rather than burying it.
+
+Rewritten to scope what is GENUINELY still open, which is a different layer than the one the old
+  text pointed at: the cross-file caller graph (references_and_calls, provider_alias_calls,
+  file_imports_symbol_from_definition, import_update_target, prime_repo_context, classify_ref_kind
+  are all None on both specs, so refs/callers/blast-radius fall through to the regex heuristic
+  path), #include-graph resolution, and the header/definition canonical-site decision.
+
+Also fixes the coverage framing, which was the load-bearing half: "10/10" is REGISTRY membership,
+  not caller-graph parity. Full AST-backed caller support is 4/10
+  (python/javascript/typescript/rust), go is partial, and java/php/csharp/c/cpp are
+  foundational-tier. Quote the tier split, never the bare 10/10.
+
+NOTE ON THE AUDIT ITSELF: its chairman caught that the 9 audit agents had read a shared checkout 28
+  commits behind origin/main, so every "actual line is N" correction it produced is a stale-tree
+  number. Those are NOT applied here. This fix uses claims re-derived against the current tree after
+  the checkout was fast-forwarded -- the audit's assertion ("this section is wrong") was right, its
+  setup was not, which is the SETUP-LIES law firing on our own tooling.
+
+skill-index sync gate green; ruff format --check --preview clean.
+
+* docs(skills): enterprise-agent claimed a closed gap and oversold coverage (audit rank 3)
+
+Two enterprise-facing statements wrong in OPPOSITE directions -- one understating what shipped, one
+  overstating it. Both verified against the current tree before editing.
+
+(a) The "Whole-repo agent/prepare default deadline reliability" gap row named an unbounded
+  staleness-triggered session refresh as the real open item. Task #304 bounded it: session_daemon.py
+  carries the "Task #304: bound the staleness-triggered rebuild with the SAME budget" comment and
+  passes deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS. Marked CLOSED. The
+  old citations are DROPPED rather than re-stamped -- they described a code shape that no longer
+  exists, so re-pointing them would have preserved a dead paragraph with fresh-looking line numbers.
+
+(b) "Symbol-graph language coverage | Shipped 10/10" reads as full caller-graph parity across ten
+  languages, in a skill whose own hard-stops key on blast_radius_floor/callers_count. It is registry
+  membership. Verified: `references_and_calls=None` on 5 of 8 registry specs. Now states the split
+  -- FULL for python/javascript/typescript/rust, PARTIAL for go, FOUNDATIONAL-TIER for
+  java/php/csharp/c/cpp where refs/callers/blast-radius fall through to the regex heuristic -- and
+  tells the reader how to re-derive the number instead of trusting the prose. Same correction
+  already applied to research-frontier in dc0eb4c.
+
+ALSO: the audit's chairman flagged that my own contract block was wrong. I told 9 agents the
+  disclosure-position law was "added to AGENTS.md"; it is on the UNMERGED branch of PR #822, and
+  `git cat-file blob origin/main:AGENTS.md` returns zero hits for it. The chairman's conclusion was
+  right and I have not cited L1 as landed anywhere. Its supporting claim that "PR #822 does not
+  exist in this repo" is overstated -- #822 is OPEN with the law on its branch; `git log --grep`
+  simply cannot see an unmerged PR. Recording both halves so the next reader does not inherit either
+  error.
+
+* docs(skills): audit ranks 4-6 — the language-registry count was wrong in three skills
+
+All three verified against the current tree before editing; none of the audit's own line numbers
+  were applied (its agents read a 28-commit-stale checkout).
+
+RANK 4 change-control — the skill that GATES every new-language change said "8 languages are
+  registered ... C/C++ are not yet registered" and "currently 8 calls". Real count: 10 (`grep -c
+  "lang_registry.register_language("` on repo_map.py). Fixed to 10, deleted the false clause, and
+  replaced the stamped count with the re-verify command — the same treatment Part 10 already applied
+  to the stale `@app.command` number, because a hardcoded count went stale the moment C/C++ landed.
+
+RANK 5 workspace-dogfood — grouped Java with Go/PHP under the "lang_registry + lang_<x>.py module"
+  pattern. There is no lang_java.py: Java is registered INLINE in repo_map.py, which is precisely
+  the pattern CLAUDE.md's Adding-a-Language rule tells new work to AVOID. A reader onboarding a
+  language would have mirrored a template that does not exist. Both occurrences now say so
+  explicitly. Also de-pinned the `_iter_repo_files` scandir citation, which had drifted onto a
+  different helper's scandir — cite by enclosing function, not bare line.
+
+RANK 6 add-language — three content errors beyond drift. The B2 worked example quoted `elif
+  language_id in ("go", "php", "csharp")` when c/cpp were folded into that same branch (verified:
+  repo_map.py:17229 reads `("go", "php", "csharp", "c", "cpp")`). The row-counting fix was cited by
+  F-tag, but F-numbers are REUSED across at least 5 sites in lang_go.py, so the tag lands on a
+  different fix — now cited by line with an explicit warning. And the hardcoded "17 tests" is 21
+  (`grep -c "def test_" tests/unit/test_lang_registry.py`), replaced with the re-run instruction.
+
+The through-line: three separate skills carried the same stale language count in three different
+  shapes. Each fix prefers a re-verify COMMAND over a stamped number, so the next language to land
+  cannot silently falsify them again.
+
+skill-index sync gate green after each edit; ruff format --check --preview clean.
+
+* docs(skills): audit ranks 7-8 — a self-count the CI gate cannot see, and a cite pointing at a
+  re-export
+
+RANK 7 backlog-campaign. The taxonomy table listed 26 rows, the heading said 26 skills, and the
+  re-verify instruction said to expect 25 -- while `ls .claude/skills | grep -c '^tensor-grep-'`
+  returns 26 and the library is 27. tensor-grep-add-language was missing entirely, and a paragraph
+  below still said it "does **not** exist in the repo", which would stop a reader loading a skill
+  that ships. Added it as row 27 under EXTEND (matching CLAUDE.md's existing bucket), corrected the
+  heading and the arithmetic, and rewrote the does-not-exist paragraph to say it now does.
+
+The important part is WHY this was allowed to rot: the count has now gone stale twice (20->26, then
+  26->27), and test_skill_index_sync.py does NOT catch it -- that gate compares the NAME SET against
+  AGENTS.md/CLAUDE.md and never reads this number, so a wrong figure passes CI green. Said so in the
+  skill, next to the number, so the next reader re-runs the grep instead of trusting the stamp. This
+  is a Form-7 oracle hole: a check that cannot discriminate on the thing it looks like it is
+  checking.
+
+RANK 8 config-and-flags. Cited IMPLICIT_SEARCH_WALK_FILE_CEILING as defined at
+  io/directory_scanner.py:92. That is the WRONG FILE, not a drifted line: the definition is
+  io/scan_limits.py:106 (`= 1500`) and directory_scanner.py:34 only re-exports it. Someone changing
+  the ceiling would have edited a re-export and wondered why nothing moved. Fixed at both citations
+  and swept the rest of the skill library for the same wrong path (none elsewhere) -- fix the class,
+  not the instance.
+
+Both verified against the current tree before editing; neither used the audit's own line numbers.
+  skill-index sync gate green; ruff format --check --preview clean.
+
+* docs(skills): audit rank 9 — a cite that now points at unrelated code, fixed in both skills at
+  once
+
+architecture-contract and code-search-and-retrieval-reference cite the SAME repo_map scorer symbols
+  and the SAME AST-routing function. Fixing them in separate passes is how they drifted apart
+  before, so both are corrected here.
+
+I re-derived every anchor independently rather than trusting the audit, because its agents read a
+  checkout 28 commits behind origin/main. All of the chairman's re-derived numbers MATCHED my fresh
+  derivation -- _score_text_terms:7912, _symbol_rank_key:8044, _score_file_path:8100,
+  _TEST_SHADOW_PENALTY:8140, _score_symbol:8177, main_entry at bootstrap.py:1398, pub enum Commands
+  at main.rs:910, SEARCH_PYTHON_PASSTHROUGH_FLAGS at main.rs:204, PUBLIC_TOP_LEVEL_COMMANDS at
+  test_routing_parity.py:46 -- which is good evidence that its ~45-anchor re-derivation is
+  trustworthy where it claims to be.
+
+THE ONE IT FLAGGED AS UNVERIFIED WAS GENUINELY WRONG. architecture-contract described "the
+  backend-selection block (cli/main.py:6690-6707)" as the wrapper-preference logic. On the current
+  tree that range is the #299 `unreadable_paths` block -- entirely unrelated code. A reader
+  following the cite to understand AST routing would have landed in truncation-disclosure plumbing.
+  The real function is `_select_ast_backend_for_pattern` at main.py:6737. Fixed in both skills, and
+  both now cite BY SYMBOL with the line as a dated hint, because this specific cite has already
+  moved twice.
+
+Same treatment for the scorer trio (7433,7621,7698 -> 7912/8100/8177) and main_entry (1154 -> 1398):
+  symbol first, line as a perishable annotation.
+
+* docs(skills): audit ranks 10-11 — de-stamp the counts that have now been wrong three passes
+  running
+
+RANK 11 build-and-env + validation-and-qa. Both printed stale test-corpus sizes (266/16/16 and
+  267/16/16/2). The audit's proposed replacement -- 282 unit -- is ALSO wrong: that is the
+  stale-worktree number. Real counts on the current tree: unit 291, e2e 21, integration 16.
+
+I did not stamp 291. The number has now been wrong in three consecutive passes (266 -> a mid-flight
+  282 -> the real 291) for a structural reason: it changes with every PR that adds a test file, and
+  nothing fails when the doc lags. Both skills already shipped the re-check command, so the stamp
+  was pure liability. Replaced with COMMAND-ONLY guidance, keeping today's value only as a
+  date-stamp so a reader can tell whether the line is stale -- explicitly labelled not-to-be-quoted.
+
+RANK 10 was deliberately NOT applied as a re-stamp. Both target skills cite AGENTS.md by line, and
+  this very branch ADDS ~56 lines to AGENTS.md -- so any number I stamped here would be falsified by
+  its own PR. The chairman's durable recommendation (cite by phrase, not line) is the right fix and
+  belongs with the remaining AGENTS.md-citation work rather than in a half-pass that re-breaks on
+  merge. Recorded on #334.
+
+INSTRUMENT NOTE, worth more than either fix. While gating this I found my local format check was not
+  CI-faithful in TWO ways: (1) I invoked `ruff format --check` on explicit paths under
+  `.claude/skills`, which BYPASSES `extend-exclude` -- pyproject.toml excludes that directory
+  precisely because `--preview` reformats python fences inside skill markdown; (2) I used `python -m
+  ruff` (0.15.17) while CI uses `uv run ruff` pinned to 0.15.20.
+
+Running CI's exact command with CI's exact ruff then reported "4 files would be reformatted" on
+  clean origin/main -- while main's CI is green. That contradiction resolved to a pure Windows CRLF
+  artifact: the working tree has CRLF, ruff's config pins line-ending=lf, and Linux CI checks out
+  LF. Proved it by feeding LF-normalized content through --stdin-filename: CLEAN. No main defect,
+  nothing to fix -- but the local whole-tree format check is not a valid oracle on Windows, and that
+  is now known rather than a future false alarm.
+
+skill-index sync gate green.
+
+* docs(skills): audit rank 12 — refresh diagnostics anchors and record WHICH ones drift
+
+The audit called this a doctor/dogfood citation SWAP. It is not: the file said doctor registers at
+  main.py:14437, and the real doctor is :14763 while dogfood is :14493 -- the stale number merely
+  landed nearer dogfood than doctor. Uniform drift, not a swap.
+
+Re-derived EVERY anchor in the file against origin/main rather than taking the audit's list, and the
+  distribution is the actually useful result. Six anchors had not moved at all --
+  _doctor_rust_binary_remediation :2432, the GPU probes :2905/:2921, the flavor-mismatch helper
+  :3121, _build_doctor_payload :3142, agent_capsule.py:1522 and dogfood.py:207 -- while every
+  command registration had: doctor :14437->:14763, dogfood :14167->:14493, find :4574->:4625,
+  route_test :10123->:10302, plus both scripts/agent_readiness.py helpers (:560->:623, :698->:761).
+
+That split is a rule, now written into Provenance: private helpers in main.py's ~2400-3500 band are
+  stable anchors; @app.command() registrations in the tail are not, because every new tg command is
+  appended and shifts all of them. So the live sections now cite commands with their `grep -n "^def
+  <name>("` re-verify form, and the numbers inside the 2026-07-22 paragraph are explicitly marked
+  superseded rather than rewritten -- that paragraph is a record of a past pass, not a claim about
+  today.
+
+Also recorded a near-miss as method: `git cat-file blob origin/main:scripts/run_benchmarks.py`
+  returned "does not exist" and I nearly filed a dead reference. The skill never said scripts/ -- it
+  correctly says benchmarks/run_benchmarks.py, and its :194-225 cite is still exact. The bad path
+  was invented by the checker, not the doc. Read what the doc actually claims before filing drift
+  against it.
+
+* docs(skills): audit ranks 13-14 — stop hand-stamping anchors, model the class instead
+
+Ranks 13/14 asked for another hand re-stamp of file:line citations. That is the FIFTH such pass
+  (2026-07-02, -07-14, -07-16, -07-22, -07-27), every one of which shipped anchors that were already
+  wrong -- and this audit's own corrections were computed against a worktree 28 commits behind
+  origin/main, so they were stale on arrival. Round N+1 finding new members of the same class is the
+  documented trigger for building a MODEL, not writing another careful reviewer (AGENTS.md, "Model
+  The Class"; sibling precedent .claude/rg_argv_differential_fuzz.py).
+
+NEW: .claude/skill_anchor_audit.py. Resolves every cited path (by any path suffix, reporting
+  ambiguity rather than guessing), flags any line past EOF, and for a citation naming a backticked
+  symbol reports where that symbol is actually DEFINED. It found 92 stale anchors; the human audit
+  had found ~15. 88 were unambiguous and are fixed here mechanically, ranges shifted coherently; the
+  4 that resolve to multiple definitions (parameter names, a generic `file`) are deliberately left
+  for a human read rather than guessed at.
+
+The tool is a maintenance COMMAND, not a pytest, and the docstring says why: pinning these numbers
+  in CI would red every PR that adds a line to main.py, the gate would be switched off within a
+  week, and a disabled gate is worse than none.
+
+TWO BUGS THE CONTROL ARM CAUGHT THAT REVIEW DID NOT -- the reason this is trustworthy:
+
+1. The symbol tier was STRUCTURALLY INCAPABLE OF FIRING on the real corpus. A citation sits inside
+  its own code span, so the text preceding it ends with a backtick, which the pattern rejected. It
+  reported zero and looked healthy. Caught only by asserting the tier could fail on a known-bad
+  fixture. A tier that cannot fire is a decoration. 2. Matching a symbol ANYWHERE in the file made
+  `tg`, `find`, `list`, `None` "move" constantly -- 114 findings, mostly noise. Anchoring to
+  definition sites cut it to 92 real ones.
+
+All four tiers are now proven bidirectionally: each fires on a known-bad fixture, stays silent on a
+  correct citation, and skips prose (which makes no positional claim).
+
+ALSO, a semantic error no mechanical check could catch: large-repo-scale-campaign cited
+  docs/CONTRACTS.md:114 as the three-state exit-code contract at SEVEN sites. :114 is about quoted
+  multi-word no-match patterns; the contract is at :156. The line existed and carried no symbol, so
+  it looked fine to the tool and to four previous readers -- found by reading what the target line
+  actually says. Mechanical checks bound the drift; they do not replace reading.
+
+AGENTS.md records this as the second instance of Model-The-Class, with both build lessons, so the
+  next person reaches for the tool instead of a sixth manual pass.
+
+Gates: 66 governance tests green (skill-index sync + public/enterprise docs), ruff format + check
+  clean on the new module.
+
+* docs(skills): audit ranks 15-17 — pin behaviour to source, add oracle Form 8 + the
+  byte-measurement trap
+
+RANK 15 (docs-and-writing + enterprise-review-bundle). Both verdicts were ACCURATE, and both gaps
+  are real -- I confirmed each against the files rather than taking the audit's word, since it
+  flagged its own reads here as UNVERIFIED.
+
+docs-and-writing Layer B is entirely `assert "phrase" in doc`. That pins consistency ACROSS the doc
+  set, which is worth keeping, but both arms are prose -- so a doc set that agrees with itself and
+  disagrees with the shipped binary stays green forever. That is not hypothetical: #318 and #333 are
+  both exactly this, in the same file (docs/CONTRACTS.md), which is why the class recurs -- Layer B
+  looks like coverage. Added the rule that a CONTRACT claim (exit code, field name, disclosure,
+  default) must be pinned to the SOURCE with a premise assertion so both arms can fail, citing
+  test_enterprise_docs_governance.py as the working shape. Doc-to-doc pinning stays correct for
+  wording; source-pinning is required for behaviour.
+
+enterprise-review-bundle had ZERO source citations (`grep -c '\.py:[0-9]'` = 0) -- every flag claim
+  rested on docs/enterprise_review_bundle_ci.md prose, the exact failure mode above. Added the real
+  anchors: create :15896/:15897, verify :16040, min_receipts :16071, expect_key :16080, with the
+  re-derive grep and a pointer to the new repo-wide checker.
+
+RANK 16 (validation-and-qa). Verified the premise first: Part 0 really does stop at Form 7, so
+  neither addition is a duplicate.
+
+Form 8 -- THE REVIEWER'S EXPECTED NUMBER IS THE BROKEN HALF. Forms 1-7 all assume the checker is
+  wrong about the CODE; this one inverts the subject. A census mismatch is a two-sided hypothesis,
+  and this session it fired in BOTH directions: an envelope seam expected at 2 sites was really 3,
+  and four comments suspected of overclaiming were each correct. Both would have been filed as
+  product defects on a number that merely felt wrong. Same law killed this audit's own line numbers
+  -- real finding, wrong expected value, because they were computed against a stale worktree.
+
+Point 16(c) -- measure bytes with a BINARY read, never Path.read_text(). read_text() applies
+  universal newlines, so every CRLF collapses to one LF and the count comes back SHORT on Windows; a
+  budget check written that way silently passes a file that is already over. Caught live on a 17.1
+  KB doc budget that read_text() called comfortably under while wc -c showed it over.
+
+RANK 17 filed as product task #335, NOT applied here -- the chairman was explicit that it is a
+  feature idea (a full-surface `tg schema`/`introspect` manifest), not a skill or doc law. The task
+  carries the instrumented-build-gate caveat: research surfaced it, no dogfood round has asked for
+  it, and it must be GENERATED from the Typer app if built, since a hand-maintained manifest that
+  drifts is worse than none.
+
+This closes ranks 4-17 of the skill audit (#334).
+
+Gates: 66 governance tests green; anchor audit clean in both zero-false-positive tiers, including
+  the citations added here.
+
+* docs: fix an oracle-form NUMBER COLLISION I introduced one commit ago
+
+Caught on my own work, by the rule the previous commit added. AGENTS.md is the canonical
+  Verification-Oracle Family and its Form 8 is THE SPLIT ORACLE (#813). The validation-and-qa skill
+  only carried Forms 1-7, so when I appended the new reviewer's-expected-number lesson there as
+  "Form 8" it collided: two different Form 8s in two documents that are supposed to describe one
+  family.
+
+Two real problems, not one. The collision, and the fact the skill was MISSING the split oracle
+  entirely -- readers of the skill had 7 of 8 forms and no way to know.
+
+Fixed both directions so the family is one family again: - skill gains Form 8 (the split oracle),
+  summarised from AGENTS.md with a pointer to the canonical text, so its numbering no longer skips;
+  - my new form becomes Form 9 in the skill, and is added to AGENTS.md as Form 9 too -- the
+  canonical list must not be the one that lags; - the skill's internal "Forms 1-7 all assume..."
+  range updated to 1-8; - AGENTS.md heading "eight forms" -> "nine forms"; swept AGENTS.md,
+  CLAUDE.md and every skill for other stale form counts -- none.
+
+This is the exact defect class the same session documented twice: a doc set that agrees with itself
+  while drifting from its canonical source, and a number that goes stale because nothing fails when
+  it does. Adding a numbered item to a family maintained in two places is a two-file edit, always.
+
+Gates: 66 governance tests green.
+
+* docs(skills): caller-graph split was 4/10, the product says 5/10 — go is parser-backed
+
+The workflow's coverage_note named this as unverified (item 5: "corroborated only by the
+  FOUNDATIONAL-TIER comments; I did not read the per-language registration blocks"). It was the one
+  gap the new anchor checker structurally CANNOT see -- it is a semantic claim about which callables
+  are None, not a file:line citation. So I asked the product.
+
+WRONG, two ways: - "CALLER-GRAPH 4/10" with go labelled PARTIAL. The live
+  `repo_map._symbol_navigation_descriptor()` returns
+  `parser-backed-refs-callers:go-javascript-python-rust-typescript` -- five, go included. That
+  function's OWN docstring warns about this exact error: "this tier currently also includes go,
+  which several PR-comment summaries lump in with the 'foundational-only' languages below -- this
+  undercounts it", because lang_go.go_references_and_calls is a full tree-sitter extractor, not a
+  regex fallback. The skill had reproduced the very undercount the source documents. - "5 of 8
+  registry specs". The registry holds 10; 5 have references_and_calls is None. The 5 was right, the
+  denominator was not.
+
+Replaced the hand-count with the command that asks the product, since it derives both tiers live
+  from LANGUAGE_REGISTRY -- a newly onboarded language lands in the right bucket automatically,
+  which a stamped number never will.
+
+METHOD NOTE, recorded in the skill because it nearly fooled me. My first probe ran against the MAIN
+  checkout while I had read the code in the WORKTREE; the main checkout is 2 commits behind and
+  reported 5 registered languages and ZERO foundational -- a plausible, clean-looking, wrong answer.
+  Only a positive control (assert the registry is non-empty) plus printing the loaded module's
+  __file__ exposed it. Same stale-tree defect the chairman caught in the audit itself; I repeated it
+  one commit after documenting it. The skill now says to run the probe from a current checkout and
+  what a stale one prints.
+
+Gates: skill-index sync green.
+
+* docs(skills): resolve the 4 anchors I left ambiguous, and stop the checker crying wolf
+
+Two halves, both closing work I deliberately left partial rather than pretending it was done.
+
+THE 4 ANCHORS. The mechanical sweep fixed 88 citations and left 4 whose symbol resolved to multiple
+  definition sites -- I refused to guess then, and read them individually now:
+  architecture-contract:118 ripgrep_backend.py:123-128,297,413 -> :145-150,326,445 (the three "exit
+  2 with a non-empty parse KEEPS the results" sites; the 200/353/472 the tool offered are the
+  TIMEOUT constructor sites, a different claim, so the tool's suggestion would have been wrong here)
+  large-repo-scale:130 build_repo_map's deadline_monotonic param :7010 -> :7426 large-repo-scale:188
+  the _iter_repo_files deadline check :1052-1057 -> :1220-1221 research-frontier:241
+  _symbol_record's "file" field :2166 -> :2371 (helper at :2359)
+
+THE CHECKER WAS THEN WRONG ABOUT ITS OWN OUTPUT. With all four corrected, three still reported as
+  moved -- on citations that are now RIGHT. Cause: the binding regex `^\s*NAME\s*[:=]` cannot
+  distinguish a real binding from a PARAMETER in a wrapped signature or a KEYWORD ARGUMENT in a
+  wrapped call, both of which start a line with `NAME:` / `NAME=`. Three findings that can never be
+  resolved is exactly how a tool teaches its readers to ignore it -- the failure this file's own
+  docstring warns about, arriving one commit after I wrote it.
+
+Fixed with a trailing `(?!.*,\s*$)`: params and kwargs end in a comma, module constants and ci.yml
+  env keys do not. Validated BOTH directions against `_definition_lines` directly, because a
+  tightening that silently drops real findings is worse than the noise it removes: KEPT
+  TG_REQUIRE_RG_PARITY: "1" | _CAUSES: frozenset[...] = ... | def build_repo_map( | MAX = 512
+  REJECTED deadline_monotonic: float | None = None, | incomplete_reason=reason, | file: Path,
+
+Library-wide: 114 findings (first run) -> 92 (definition-anchored) -> 4 (after the 88 fixes) -> 2.
+  The last two are one common LOCAL VARIABLE name assigned in many functions, which no definition
+  heuristic can disambiguate; both citations are correct. That is the irreducible floor, on a tier
+  documented as a warning rather than a gate, and it is recorded here rather than suppressed.
+
+Gates: ruff format + check clean, skill-index sync green.
+
+* docs(agents): 5 more session laws + fix the form-count contradiction the laws predicted
+
+CEO asked for the session's lessons to be made permanent. Rather than append 8 candidate laws, a
+  workflow put one agent per law against the whole corpus to check duplication, contradiction and
+  placement. That was the right call twice over.
+
+THREE CANDIDATES WERE DROPPED as already covered -- model-the-class (AGENTS.md:878),
+  prove-a-new-tier-can-fire (:888), and crying-wolf-is-a-defect (:891). All three were written
+  EARLIER IN THIS SAME SESSION by me. Without the dedup pass I would have shipped three duplicate
+  laws into the file whose newest law says duplication across documents is the defect.
+
+FIVE APPLIED (AGENTS.md): - Form 7 extended: EVERY PROBE CARRIES A POSITIVE CONTROL. A zero means
+  "measured nothing" or "never measured" and the number cannot tell you which. Receipts: a registry
+  probe read "5 registered, 0 foundational" as clean against a 2-commit-stale checkout (truth 10/5);
+  a grep returned 0 files and proved nothing until the same form returned 162 for `ripgrep`. -
+  Control-arm paragraph extended: NEVER PUBLISH AN UNTESTED CAUSE. A PR body warned contributors
+  that `pip install -e .[dev]` left 5 of 11 grammars absent -- the command was never run, and the
+  real cause was a stale interpreter on tensor-grep 1.83.0. - Oracle family: adding a numbered item
+  to a family MIRRORED in two docs is a two-file edit, always. - Local Dev Gotchas: a `lang_*`
+  failure spike is usually an incomplete venv -- repair the instrument before theorising (90
+  failed/80 passed -> 170 passed, one command). - Push Discipline: scope a PR's DIFF to what its
+  TITLE promises.
+
+THE CONTRADICTION THE LAWS CAUGHT, IN THIS FILE'S OWN MIRROR. The chairman found
+  `tensor-grep-validation-and-qa/SKILL.md:45` still reading "Seven distinct forms" and :47 "catches
+  all seven", while the body carries Forms 8 and 9 and AGENTS.md:664 says nine. My earlier collision
+  fix (58f294b) corrected the NUMBER and left the COUNT -- the sync discipline lapsed inside the
+  commit performing the sync, which is precisely the law being added. Both fixed; a broadened sweep
+  finds no other stale count.
+
+My own grep had missed it: I searched `seven forms` and the text reads `Seven distinct forms`. Third
+  time this session a too-narrow probe produced a confident wrong answer, which is why the
+  positive-control law is the one being written down.
+
+ALSO CORRECTED, same class: `.claude/skill_anchor_audit.py`'s comment implied the comma-rule
+  tightening cleared all three false positives. It cleared TWO (kwarg, parameter) and a THIRD
+  surfaced, because narrowing what counts as a definition also moves the definition set a citation
+  is compared against. Net 3 -> 2. The comment now says so, and names the irreducible floor so
+  nobody "fixes" it by loosening the rule.
+
+TWO AGENT CLAIMS REJECTED before writing, by the same laws: an inferred install command I never ran,
+  and a "skill header undercounts by two" claim (the header states no count at all). Verified both
+  against the tree first.
+
+No MEMORY.md change: all 8 verdicts returned memory_line empty, and the general form of the
+  positive-control law is already canon one level up in the workspace CLAUDE.md.
+
+Gates: ruff format + check clean; 66 governance/sync tests green; anchor auditor unchanged at 2
+  residual findings.
+
+
 ## v1.101.3 (2026-07-27)
 
 ### Bug Fixes
