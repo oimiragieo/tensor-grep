@@ -675,7 +675,7 @@ future agent (human or model) retries the losing idea — see `tensor-grep-resea
 
 | Directory | What lives there | Run cost |
 |---|---|---|
-| `tests/unit/` (267 files as of 2026-07-24) | Fast, isolated; heavy `CliRunner` usage (400+ call sites) — good for flag-parsing/formatter/validator logic, **not sufficient alone for routing changes** (Part 1 point 3) | seconds each |
+| `tests/unit/` (**re-run `ls tests/unit/*.py | wc -l`** -- 291 on 2026-07-27; do not cite the stamp) | Fast, isolated; heavy `CliRunner` usage (400+ call sites) — good for flag-parsing/formatter/validator logic, **not sufficient alone for routing changes** (Part 1 point 3) | seconds each |
 | `tests/e2e/` (16 files) | Cross-launcher parity (`python-m`/`native`/`bootstrap`), golden/snapshot output, backend/IO contracts, rg characterization, hypothesis property tests, throughput floors | seconds-minutes; some spawn real subprocesses |
 | `tests/integration/` (16 files as of 2026-07-22, up from 11) | Needs real external state — GPU/cuDF, MCP stdio protocol, cross-backend runs, the harness-adoption smoke, `tg orient`/pipeline end-to-end, the `tg prepare` one-shot CUJ (`test_prepare_oneshot_cuj.py`) | slow, sometimes GPU-gated |
 | `tests/eval/` (2 files as of 2026-07-24 — `test_agent_accuracy.py`, `test_retrieval_quality_regression.py`) | The per-task-pinned capability-regression gate (Part 1 point 13) — a distinct evidence tier from a contract test, opt-in via its own marker (`-m eval`), not run by a bare `pytest tests` collection the same way as `unit`/`e2e`/`integration` | seconds-minutes; requires a built repo-map over real fixtures |
@@ -822,7 +822,7 @@ scheduler-independent concurrency tests, published-wheel verdict-table dogfood).
 **2026-07-24, release `v1.96.0`** re-verified and corrected every `file:line` citation in this skill
 against `origin/main` (CONTRIBUTING.md/AGENTS.md/`.github/workflows/ci.yml`/`test_routing_parity.py`/
 `scripts/agent_readiness.py`/`scripts/validate_release_assets.py`/`pyproject.toml` had all drifted
-since the prior pass), refreshed the test-file counts (unit 267 / e2e 16 / integration 16 / eval 2 —
+since the prior pass), refreshed the test-file counts, then DE-STAMPED them on 2026-07-27 after the number was wrong in three consecutive passes (267 -> a mid-flight 282 -> the real 291) — the row now carries only the command (historical values unit 267 / e2e 16 / integration 16 / eval 2 —
 the new `test_retrieval_quality_regression.py` and the registered `eval` pytest marker), added the
 cold-path dogfood caveat to Part 1 point 3 and the byte-identical-optimization-proof technique plus the
 clean-rebase corollary to Part 1 point 9, added the `uv.lock` hand-splice gotcha to Part 2, and added
@@ -842,7 +842,7 @@ Re-verify before relying on them:
 | Claim | Re-verify command |
 |---|---|
 | Total collected tests | `uv run pytest tests --collect-only -q` (tail line; re-run to check — grows every release, do not trust a stale snapshot number here) |
-| Test file counts (267 unit / 16 e2e / 16 integration / 2 eval as of 2026-07-24) | `Get-ChildItem tests/unit,tests/e2e,tests/integration,tests/eval -Filter test_*.py -Recurse \| Measure-Object` (PowerShell) or `find tests/unit tests/e2e tests/integration tests/eval -name 'test_*.py' \| wc -l` |
+| Test file counts — **COMMAND ONLY, never a stamped number** (291/21/16 on 2026-07-27, shown so a reader can date this line, not to be quoted) | `Get-ChildItem tests/unit,tests/e2e,tests/integration,tests/eval -Filter test_*.py -Recurse \| Measure-Object` (PowerShell) or `find tests/unit tests/e2e tests/integration tests/eval -name 'test_*.py' \| wc -l` |
 | `tg find` classifier receipt + vacuous-truth oracle guard | `grep -n "test_empty_gold_label_is_loud" tests/unit/test_eval_late_rerank_quality.py`; `grep -n "GoldenSetError\|vacuous" benchmarks/eval_late_rerank_quality.py` |
 | `dogfood()` CLI entry point (symbol anchor, not a line number) | `grep -n "^def dogfood" src/tensor_grep/cli/main.py` |
 | `CliRunner` usage count in unit tests | `grep -rc CliRunner tests/unit/*.py \| awk -F: '{s+=$2} END{print s}'` |
