@@ -118,7 +118,24 @@ def _mcp_server_version() -> str:
 # way to tell "raise the limit" from "the limit is irrelevant". Every field is additive and
 # emitted ONLY when the scan was actually truncated, so a complete scan stays byte-identical
 # and no existing caller breaks; bumped so a version-pinning client can discover them.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.6.0"
+# 1.6.0 -> 1.7.0 (task 336, retroactive): `budget_remediable` reached the wire on a SECOND family
+# of tools without a bump. #826 added it to `build_repo_map`, `build_repo_map_incremental` and
+# `apply_repo_map_output_limits` in `repo_map.py` -- a CLI-shaped change -- but `tg_repo_map`
+# returns `json.dumps(build_repo_map(...))` VERBATIM, so every `scan_limit` field the CLI gains,
+# MCP gains in the same commit. Measured on `origin/main` before this bump:
+# `build_repo_map(<dir>, max_repo_files=3)` -> `scan_limit` carrying
+# `{..., "truncation_cause": "project-files", "budget_remediable": True}`, served at contract
+# 1.6.0, which promised only `tg_search`'s copy of that field (see the 1.5.0 note above).
+#
+# The lesson is the reason this note is long: the repo treats "a new MCP tool" as a registration
+# site needing a bump, and #826 added no tool -- it edited a CLI helper. But a pass-through
+# handler makes any producer it wraps an MCP wire surface, so the site that owed the bump was in
+# a file that never mentions MCP. When editing a payload builder, grep for a handler that returns
+# it verbatim before concluding the change is CLI-only.
+#
+# Additive and emitted only on a CAPPED scan, so a complete scan stays byte-identical and no
+# existing caller breaks; bumped so a version-pinning client can discover the field.
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.7.0"
 
 
 def _incomplete_class_fragment(results: Any) -> dict[str, str]:
