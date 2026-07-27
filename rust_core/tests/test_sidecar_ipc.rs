@@ -123,11 +123,30 @@ fn configure_classify_env(command: &mut Command) {
     configure_repo_python_env(command);
 }
 
+/// HANG GUARD, not a latency assertion (task 331).
+///
+/// `run_with_timeout` PANICS when this expires, and a panic is a test failure — so this value was
+/// silently acting as "the sidecar must answer within 15s on Windows" for tests whose actual
+/// invariant is the CONTENT of an error message. On a loaded windows-nightly runner the sidecar
+/// spawn plus a Python interpreter start exceeded it, and two GPU-error-message tests failed with
+/// nothing wrong in the product. That is the wall-clock-assertion form task 309 retired elsewhere
+/// in this suite, and it has now cost two separate red CI runs (task 167 was the first).
+///
+/// This is deliberately NOT the ceiling-raising that failed twice on task 259. There the ceiling
+/// WAS the assertion — a perf test asserting a duration, where a bigger number erases the signal.
+/// Here the timeout asserts nothing anyone cares about; its only job is to stop a wedged
+/// subprocess from hanging CI forever (the anti-hang-test-protocol requirement). A hang guard and
+/// a latency bound are different instruments, and 15s is far too tight to serve as the former on a
+/// contended runner. The number below is chosen to be unreachable by a merely SLOW start while
+/// still bounding a genuine wedge well inside the job timeout.
+///
+/// If these tests fail again after this change, the cause is NOT scheduling latency and must be
+/// diagnosed as a real defect rather than re-tuned.
 fn sidecar_test_timeout() -> Duration {
     if cfg!(windows) {
-        Duration::from_secs(15)
+        Duration::from_secs(120)
     } else {
-        Duration::from_secs(5)
+        Duration::from_secs(60)
     }
 }
 

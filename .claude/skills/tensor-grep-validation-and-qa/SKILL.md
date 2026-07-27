@@ -42,11 +42,11 @@ relax any gate in `tensor-grep-change-control`.
 
 ## Part 0 — THE ORACLE FAMILY: when your verification isn't (read this first)
 
-**The single most repeated failure mode in this repo.** Seven distinct forms, most in ONE session
+**The single most repeated failure mode in this repo.** NINE distinct forms, most in ONE session
 (2026-07-25; form 7 added 2026-07-26). Every form shares one shape: *something that looks like
 verification isn't.*
 
-**The one question that catches all seven — before trusting any green signal, ask:
+**The one question that catches all nine — before trusting any green signal, ask:
 "what would this check show if the thing it verifies were BROKEN?"
 If the answer is "the same", it is not verification.**
 
@@ -58,7 +58,7 @@ fine and the SETUP silently no-opped, so the hostile arm was never hostile.** As
 | **1. Normalize-both-sides** | A comparator applies the same lossy transform to BOTH arms | **Masks** real defects — silent | #262 (CRLF/encoding-blind rg-parity oracles); surviving accepted limit at `tests/helpers/rg_parity.py:560`, now *proven* lossy and pinned by PR #748 |
 | **2. Harness-corrupts-output** | Post-processing mangles a byte-correct result before comparison | **Manufactures** false failures | `test_output_golden_contract.py::run_tg` did `line.replace("\\","/")` on the WHOLE line, turning a binary notice's `\0` into `/0`; fixed in #746 |
 | **3. Test-never-executes** | The file exists, looks like proof, and SKIPS | **Fakes** coverage | `test_native_json_byte_fidelity.py` skipped in every CI job; fixed #746, class-fixed #749 |
-| **4. Gate-diagnosis-wrong** | A gate's *conclusion* is right, its *root cause* is false | Sends the fix at the wrong target | The gate that found form 3 claimed `TG_REQUIRE_RG_PARITY` was in "zero workflows" — it is at `ci.yml:653` |
+| **4. Gate-diagnosis-wrong** | A gate's *conclusion* is right, its *root cause* is false | Sends the fix at the wrong target | The gate that found form 3 claimed `TG_REQUIRE_RG_PARITY` was in "zero workflows" — it is at `ci.yml:706` |
 | **5. Repro topology deletes the mechanism** | Every fixture shares one structural property, and that property is the one that matters | Proves a **strict subset** of the real defect — defeats even an honest RED | PR #750: repro + all 4 tests used non-git `tempdir()`, the one topology where the fix's mechanism suffices; **inside a git repo the fix is a no-op** |
 | **6. The FIXTURE never applied** | The hostile condition silently failed to take effect, so the "bad" arm is really the good arm | Declares a real defect **ABSENT** — the most flattering direction | #281: `icacls` failed to apply a deny ACE twice (`"No mapping between account names and security IDs was done"`), which would have made an unreadable-directory probe run against a perfectly readable directory and conclude "no defect" |
 | **7. The MEASUREMENT cannot discriminate** | A scored column where every arm ties — usually at the floor | Reads as a **finding** when it measured nothing | #302: the trust benchmark's `vanished-file` column scores 0 for all six tools on both platforms. Six zeros read as "they're all bad at this"; in fact the fixture almost certainly deletes the file *before* the search starts, so the race it claims to measure never opens |
@@ -67,6 +67,29 @@ fine and the SETUP silently no-opped, so the hostile arm was never hostile.** As
 would this column show if a tool were GOOD at it?* A tied-at-floor column is worse than no column,
 because it looks like data. Every scored dimension needs at least one run where arms differ, or it
 gets deleted with the reason written down.
+
+**Form 8 — the SPLIT ORACLE (2026-07-26).** *A precondition proved in a DIFFERENT run is not THIS
+run's precondition.* `tests/unit/test_trust_benchmark_premise.py` pins "rg cannot signal an
+incomplete scan inside its JSON stream" with two arms: ARM 1 runs `rg --json` over a tree with an
+unreadable directory and asserts no incompleteness marker; ARM 2 asserts rg exits 2. **ARM 1 never
+asserted its OWN run exited 2** — so on a tree where the directory is actually readable, rg exits 0,
+completes, correctly emits no marker, and ARM 1 passes, reporting "rg hides incompleteness" on the
+evidence of a scan that was never incomplete. What made it feel safe is the shape to learn: a helper
+DID verify the directory was unreadable *to the test process*, and ARM 2 DID assert exit 2 — both
+true, neither load-bearing for ARM 1. Move the premise assertion INTO the run that draws the
+conclusion. (Canonical text: `AGENTS.md` "The Verification-Oracle Family", Form 8.)
+
+**Form 9 — the REVIEWER'S expected number is the broken half (2026-07-27).** Forms 1-8 all assume
+the checker is wrong about the CODE. This one inverts the subject: a census mismatch is a
+**two-sided hypothesis**, and the side that is wrong is often the expectation you brought to it. In
+one session this fired twice in opposite directions — an envelope seam expected at 2 sites was
+really 3, and four comments suspected of claiming "observed no walk" turned out to be individually
+correct. Both would have been filed as product defects on the strength of a number that felt wrong.
+So: **read the breakdown before filing the finding.** A count that disagrees with your expectation
+is a prompt to enumerate the members and look at each, not evidence of a bug. The same applies to
+an audit handed to you by another agent: the 2026-07-27 skill audit's own corrected line numbers
+were stale, because they were computed against a worktree 28 commits behind `origin/main` — the
+finding was real, the expected value was not. Re-derive before you act on someone else's number.
 
 ### Running the probe: the LOCATION trap (2026-07-26)
 
@@ -168,7 +191,7 @@ Ranked by how hard each is to fake, cheapest-to-check first:
    load-bearing gap in this discipline).** A dogfood/`tg orient` run mostly exercises a WARM, cached
    path — repo-map/AST-parse state already populated from a prior call — so it can misjudge a change
    whose effect is COLD-path-only. Receipt: a warm end-to-end `tg orient` dogfood read the
-   `_python_imports_and_symbols` walk-merge (`src/tensor_grep/cli/repo_map.py:1921`) as **−36% slower**;
+   `_python_imports_and_symbols` walk-merge (`src/tensor_grep/cli/repo_map.py:2126`) as **−36% slower**;
    an isolated cold microbench of the same function (fresh process, single pass over distinct inputs)
    showed it is actually **~54% faster** (961ms→446ms) — the warm run never exercised the changed code
    path. To validate a cold-path optimization, microbench the target function directly or clear the
@@ -367,6 +390,12 @@ Ranked by how hard each is to fake, cheapest-to-check first:
     payload-ratio assertion: (a) check whether either side's payload includes a shared, non-data
     envelope/header the assertion doesn't intend to measure, and (b) reproduce with a SHORT
     `pytest --basetemp` locally before trusting a Windows-local pass as proof of a Linux-CI pass.
+    (c) **Measure bytes with a BINARY read, never `Path.read_text()`.** `read_text()` applies
+    universal newlines, so every CRLF in the file collapses to one LF and the count comes back
+    SHORT on Windows — a budget check written that way silently passes a file that is already over.
+    Caught on a 17.1 KB doc budget that `read_text()` reported as comfortably under while `wc -c`
+    showed it over. Use `len(path.read_bytes())` (or `wc -c`) for any size/ratio assertion; keep
+    `read_text()` for content matching, where the normalisation is what you want.
 17. **A self-gate's declared test SUBSET is not the full CI matrix — state what ran, not just that
     "tests passed" (#733/#734, 2026-07-24).** The build agent's own pre-merge gate on #733 ran a
     real, substantial suite (`test_harness_api_docs.py`, `test_session_cli.py`,
@@ -675,7 +704,7 @@ future agent (human or model) retries the losing idea — see `tensor-grep-resea
 
 | Directory | What lives there | Run cost |
 |---|---|---|
-| `tests/unit/` (267 files as of 2026-07-24) | Fast, isolated; heavy `CliRunner` usage (400+ call sites) — good for flag-parsing/formatter/validator logic, **not sufficient alone for routing changes** (Part 1 point 3) | seconds each |
+| `tests/unit/` (**re-run `ls tests/unit/*.py | wc -l`** -- 291 on 2026-07-27; do not cite the stamp) | Fast, isolated; heavy `CliRunner` usage (400+ call sites) — good for flag-parsing/formatter/validator logic, **not sufficient alone for routing changes** (Part 1 point 3) | seconds each |
 | `tests/e2e/` (16 files) | Cross-launcher parity (`python-m`/`native`/`bootstrap`), golden/snapshot output, backend/IO contracts, rg characterization, hypothesis property tests, throughput floors | seconds-minutes; some spawn real subprocesses |
 | `tests/integration/` (16 files as of 2026-07-22, up from 11) | Needs real external state — GPU/cuDF, MCP stdio protocol, cross-backend runs, the harness-adoption smoke, `tg orient`/pipeline end-to-end, the `tg prepare` one-shot CUJ (`test_prepare_oneshot_cuj.py`) | slow, sometimes GPU-gated |
 | `tests/eval/` (2 files as of 2026-07-24 — `test_agent_accuracy.py`, `test_retrieval_quality_regression.py`) | The per-task-pinned capability-regression gate (Part 1 point 13) — a distinct evidence tier from a contract test, opt-in via its own marker (`-m eval`), not run by a bare `pytest tests` collection the same way as `unit`/`e2e`/`integration` | seconds-minutes; requires a built repo-map over real fixtures |
@@ -822,7 +851,7 @@ scheduler-independent concurrency tests, published-wheel verdict-table dogfood).
 **2026-07-24, release `v1.96.0`** re-verified and corrected every `file:line` citation in this skill
 against `origin/main` (CONTRIBUTING.md/AGENTS.md/`.github/workflows/ci.yml`/`test_routing_parity.py`/
 `scripts/agent_readiness.py`/`scripts/validate_release_assets.py`/`pyproject.toml` had all drifted
-since the prior pass), refreshed the test-file counts (unit 267 / e2e 16 / integration 16 / eval 2 —
+since the prior pass), refreshed the test-file counts, then DE-STAMPED them on 2026-07-27 after the number was wrong in three consecutive passes (267 -> a mid-flight 282 -> the real 291) — the row now carries only the command (historical values unit 267 / e2e 16 / integration 16 / eval 2 —
 the new `test_retrieval_quality_regression.py` and the registered `eval` pytest marker), added the
 cold-path dogfood caveat to Part 1 point 3 and the byte-identical-optimization-proof technique plus the
 clean-rebase corollary to Part 1 point 9, added the `uv.lock` hand-splice gotcha to Part 2, and added
@@ -842,7 +871,7 @@ Re-verify before relying on them:
 | Claim | Re-verify command |
 |---|---|
 | Total collected tests | `uv run pytest tests --collect-only -q` (tail line; re-run to check — grows every release, do not trust a stale snapshot number here) |
-| Test file counts (267 unit / 16 e2e / 16 integration / 2 eval as of 2026-07-24) | `Get-ChildItem tests/unit,tests/e2e,tests/integration,tests/eval -Filter test_*.py -Recurse \| Measure-Object` (PowerShell) or `find tests/unit tests/e2e tests/integration tests/eval -name 'test_*.py' \| wc -l` |
+| Test file counts — **COMMAND ONLY, never a stamped number** (291/21/16 on 2026-07-27, shown so a reader can date this line, not to be quoted) | `Get-ChildItem tests/unit,tests/e2e,tests/integration,tests/eval -Filter test_*.py -Recurse \| Measure-Object` (PowerShell) or `find tests/unit tests/e2e tests/integration tests/eval -name 'test_*.py' \| wc -l` |
 | `tg find` classifier receipt + vacuous-truth oracle guard | `grep -n "test_empty_gold_label_is_loud" tests/unit/test_eval_late_rerank_quality.py`; `grep -n "GoldenSetError\|vacuous" benchmarks/eval_late_rerank_quality.py` |
 | `dogfood()` CLI entry point (symbol anchor, not a line number) | `grep -n "^def dogfood" src/tensor_grep/cli/main.py` |
 | `CliRunner` usage count in unit tests | `grep -rc CliRunner tests/unit/*.py \| awk -F: '{s+=$2} END{print s}'` |

@@ -98,7 +98,7 @@ Executive summary · evidence · skills used · tools (gaps only) · plan pointe
 
 ---
 
-## Skill library — retiring-fellow taxonomy (26 skills, `.claude/skills/`)
+## Skill library — retiring-fellow taxonomy (27 skills, `.claude/skills/`)
 
 **Ground-truth rule:** verify commands/paths against repo + `tg --help`; re-read each skill's "Provenance and maintenance" when drift suspected. **No skill routes around `tensor-grep-change-control`.**
 
@@ -132,6 +132,7 @@ Executive summary · evidence · skills used · tools (gaps only) · plan pointe
 | 24 | `tensor-grep-enterprise-review-bundle` | `review-bundle create/verify` + CI-gate chain |
 | 25 | `tensor-grep-gpu` | Experimental GPU probes (devices/doctor, `--gpu-device-ids`) |
 | 26 | `tensor-grep-backlog-campaign` | This skill — the meta-orchestrator itself |
+| 27 | `tensor-grep-add-language` | **EXTEND** — the symbol-graph language-onboarding checklist (matches CLAUDE.md's `Extend:` bucket). Shipped since this table was last counted |
 | — | `tensor-grep` + `REFERENCE.md` | **Using** `tg` to navigate any repo |
 
 **This skill** = meta-orchestrator for generic backlog drain (skill #26 of the library it indexes, up
@@ -475,12 +476,15 @@ recorded id is a landmine, not a fact to stamp; the **skill-count table was re-v
 `tensor-grep-gpu`) and adding the C-batch batch-merge exception + the `/loop`-vs-`CronCreate`
 reconciliation. This skill has no pinned `file:line` code
 citations of its own to drift — it indexes the library, which DOES carry code citations;
-re-verify the count with `ls .claude/skills | grep -c '^tensor-grep-'` (expect **25** -- 25 of the
-table's 26 numbered rows are `tensor-grep-*`-named; `code-search-and-retrieval-reference` (row 5) is
-the one row that doesn't match that grep pattern, so 25 + 1 = the 26 numbered library rows; the bare
-`tensor-grep` dash-row is a 27th folder on disk, intentionally not counted in the "26 skills" figure
-since it's usage-docs for the tool itself, not a library entry) before trusting the "26 skills" stamp
-on a later session. Process
+re-verify the count with `ls .claude/skills | grep -c '^tensor-grep-'` (expect **26** -- 26 of the
+table's 27 numbered rows are `tensor-grep-*`-named; `code-search-and-retrieval-reference` (row 5) is
+the one row that doesn't match that grep pattern, so 26 + 1 = the 27 numbered library rows; the bare
+`tensor-grep` dash-row is a 28th folder on disk, intentionally not counted in the "27 skills" figure
+since it's usage-docs for the tool itself, not a library entry) before trusting the "27 skills" stamp
+on a later session. This arithmetic has now gone stale twice (20->26, then 26->27); the count is
+ALSO pinned by `tests/unit/test_skill_index_sync.py`, but that gate compares the NAME SET against
+AGENTS.md/CLAUDE.md and does NOT read this number -- so a stale figure here passes CI. Re-run the
+grep, do not trust the stamp. Process
 receipts dated 2026-07-08 (WIP CAP, adversarial security gate, resume-from-transcript, don't-kill-
 on-staleness, harvest pattern, self-firing drain-cron) come from the same session's `session_learnings`
 ledger — treat them as durable orchestration discipline, not code facts that can be grep-verified.
@@ -493,9 +497,10 @@ pass; fixed the heading to **26**. (2) The skill-count table itself is unchanged
 `git ls-tree -r --name-only origin/main -- .claude/skills/` returns the same 27 folders (25
 `tensor-grep-*` + the bare `tensor-grep` usage row + `code-search-and-retrieval-reference`) as the
 2026-07-22/v1.93.2 count; the Java/PHP language-registry work (`#725`/`#724`, merged into v1.94.0 and
-v1.95.0) added no new skill directory. A candidate `tensor-grep-add-language` skill does **not** exist
-in the repo as of v1.95.0 — do not cite it as loadable until it actually ships as a real
-`.claude/skills/` directory. (3) Added a `.claude/skill_rules.json` pointer to the "Also load" line —
+v1.95.0) added no new skill directory. A candidate `tensor-grep-add-language` skill did **not** exist
+as of v1.95.0 — **it does now** (verified 2026-07-27, `ls .claude/skills/tensor-grep-add-language`),
+and it is row 27 above. Cite it freely; the v1.95.0 caveat is retained only to explain why an older
+reader was told otherwise. (3) Added a `.claude/skill_rules.json` pointer to the "Also load" line —
 the file exists on disk (confirmed via `git cat-file blob`) but wasn't referenced anywhere in this
 skill; it's a harness auto-trigger config, distinct from both this table and the (still-absent)
 `docs/skill_index.md`. (4) Fixed 3 stale `AGENTS.md:NNN` line citations that had drifted from unrelated

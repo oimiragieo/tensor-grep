@@ -248,9 +248,9 @@ concrete failure observed this session.
 
 ## Current Handoff
 
-release_docs_current_tag: v1.100.2
+release_docs_current_tag: v1.101.3
 
-As of 2026-06-26, the current tagged release state is `v1.100.2`, and the latest complete public PyPI/release-asset distribution is also `v1.100.2`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.100.2` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
+As of 2026-06-26, the current tagged release state is `v1.101.3`, and the latest complete public PyPI/release-asset distribution is also `v1.101.3`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.101.3` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
 
 **2026-07-14 Current-Handoff addendum -- GPU Phase-0 hardening wave (v1.75.1-v1.75.4, audit #171).** Four
 PRs closed audit #171's P0-1 through P0-5 GPU findings, each behind the mandatory Opus adversarial gate
@@ -418,8 +418,8 @@ stays HOLD, #169). Meta-lesson: verify every "cheap win" against the live code b
 - Previous `v1.13.15` proof runs `26386327552`, `26386327168`, `26386976717`, and `26386978124` remain retained as historical release proof
 - Main CI run `25951521056`: passed the pre-release matrix, semantic-release, PyPI wheel/sdist validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
 - Main CodeQL run `25951813292`: passed on the `v1.12.14` release line
-- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.100.2 tg --version` reports `tensor-grep 1.100.2`
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.100.2>
+- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.101.3 tg --version` reports `tensor-grep 1.101.3`
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.101.3>
 - Main CI run `25866871838`: passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
 - GitHub release assets: `tg-windows-amd64-cpu.exe`, `tg-linux-amd64-cpu`, `tg-macos-amd64-cpu`, checksums, winget manifest, Homebrew formula, and publish instructions are uploaded and verified on `v1.12.14`
 - Public `v1.12.14` dogfood: release CI, assets, PyPI, and `uvx --refresh-package tensor-grep --from tensor-grep==1.12.14 tg --version` verified `tensor-grep 1.12.14`; the release includes `21e5437 fix: collect capsule call-site evidence` while preserving `8a73f8d fix: harden agent bridge ranking`, `b601366 fix: harden agent output budget hygiene`, `2aebac6 fix: harden ast cli contract hygiene (#140)`, `bbc08e4 fix: harden rg flag contract aliases (#139)`, and the accepted v1.12.8-v1.12.13 dogfood contract fixes. Public managed GPU is not promotion-ready.
@@ -661,7 +661,7 @@ zero behavioral change, and is strictly stronger than reading the diff by eye. U
 on `test_index_lock_concurrency.py`'s comment-only revisions; cheap enough to run on every claimed no-op
 commit before skipping a gate on the strength of "it's just a comment."
 
-## The Verification-Oracle Family — eight forms (2026-07-25, 7th + 8th added 2026-07-26)
+## The Verification-Oracle Family — nine forms (2026-07-25; 7th + 8th 2026-07-26, 9th 2026-07-27)
 
 **The single most repeated failure mode this project has.** Every form shares one shape: *something that
 looks like verification isn't.* Before trusting ANY green signal, ask: **what would this check show if the
@@ -702,6 +702,12 @@ Verify the diagnosis, not only the finding.
 the orchestrator measured a bootstrap helper IN ISOLATION (`workspace_root_guard=False`) and wrote it up as
 a user-visible guard bypass. The gate ran the control arm through real `main_entry()`: the refusal fires
 IDENTICALLY in both arms — the defect was LATENT, masked by full-CLI routing. A confidently-wrong comment is
+**And never PUBLISH an untested cause.** A PR body told other contributors "a `pip install -e .[dev]`
+here left 5 of 11 declared grammars absent", framed as a warning -- the command was never run. The real
+cause was a stale interpreter carrying tensor-grep 1.83.0, ~18 releases behind, predating those
+grammars' entry into the extras. An explanation that merely FITS the evidence is a hypothesis;
+shipping it as a finding, especially one addressed to other people, is fabrication.
+
 worse than none. Any claim of the form "X causes user-visible Y" needs the control arm, not just the
 mechanism.
 
@@ -759,7 +765,16 @@ cannot distinguish a tool that handles the case well from one that ignores it en
 scanning six zeros concludes "they are all bad at this", which the data does not support. A
 tied-at-floor column is worse than no column, because it looks like a finding. **Rule:** every
 scored dimension needs at least one run where arms differ, or it gets deleted with the reason
-written down. Tracked as #302; the fixture almost certainly deletes the file *before* the search
+written down.
+
+**Generalised beyond scored columns: EVERY PROBE CARRIES A POSITIVE CONTROL (2026-07-27).** A zero
+means "measured nothing" or "never actually checked", and the two are indistinguishable in the
+number. Before trusting a zero, show the SAME probe returns non-zero somewhere it should. Two
+receipts in one session: a language-registry probe read "5 registered, 0 foundational" and looked
+like a clean answer -- it was run against a 2-commit-stale checkout and the truth was 10/5, exposed
+only by asserting the registry was non-empty AND printing the loaded module's `__file__`; and a grep
+for an unsourced benchmark figure returned 0 files, which proved nothing until the identical grep
+form returned 162 hits for `ripgrep`. Tracked as #302; the fixture almost certainly deletes the file *before* the search
 starts, so every tool correctly reports nothing — the race the column claims to measure never opens.
 
 **Form 8 — the SPLIT ORACLE (2026-07-26).** *A precondition proved in a DIFFERENT run is not
@@ -790,6 +805,29 @@ conclusion needs?*
 Second-order, and the reason the independent audit step keeps paying for itself: an external
 reviewer found this in work that had already been self-reviewed AND given a careful docstring
 asserting its rigour. **Prose describing a test as bidirectional is not evidence that it is.**
+
+**Form 9 — the REVIEWER'S EXPECTED NUMBER is the broken half (2026-07-27, #334).** Forms 1-8 all
+assume the checker is wrong about the CODE. This one inverts the subject: a census mismatch is a
+**two-sided hypothesis**, and the wrong side is often the expectation you brought to it. It fired in
+both directions in one session — an envelope seam expected at 2 sites was really 3, and four comments
+suspected of claiming "observed no walk" were each individually correct. Both were a keystroke from
+being filed as product defects on the strength of a number that merely felt wrong. **Read the
+breakdown before filing the finding**: a count that disagrees with your expectation is a prompt to
+enumerate the members and look at each, not evidence of a bug.
+
+The same law governs a finding handed to you by another agent. The 2026-07-27 skill audit reported
+real drift, but every corrected line number in it was itself wrong — computed against a worktree 28
+commits behind `origin/main`. Right finding, wrong expected value. **Re-derive before you act on
+someone else's number**, and where the class recurs, replace the number with a command that
+regenerates it (`.claude/skill_anchor_audit.py` — see "Model The Class").
+
+**MAINTENANCE: this family is MIRRORED, so adding a form is a TWO-FILE EDIT, always.** This section
+is canonical; `tensor-grep-validation-and-qa`'s Part 0 carries the same family for cheap-session
+readers. Grep BOTH files for the next number before assigning it, and update the mirror in the same
+commit. Miss it and you get two different lessons sharing one number — this file's Form 8 (the SPLIT
+ORACLE) briefly collided with a different Form 8 added to the skill, and the skill was simultaneously
+missing the real Form 8 entirely, so its readers had 7 of 8 and no way to know. Two defects from one
+one-file edit. The rule generalises past this family to any numbered list split across two docs.
 
 **Running the probe: the LOCATION trap.** A perturbation proves nothing if the thing you perturbed
 survives elsewhere. Verifying the `truncation_cause` doc ratchet, the first probe removed ONE
@@ -859,6 +897,24 @@ tools' surfaces — an rg-grammar model can never cover tg-only flags, which is 
 intersection needs its own invariant: for #272 a registry-parity test asserting every `--x=` prefix has
 `--x` registered as value-taking; for #749 a CI-coverage invariant. Prefer an invariant over an enumeration
 every time — an enumeration is correct when written and silently incomplete on the next addition.
+
+**Second instance of the same law: skill-library `file:line` anchors (2026-07-27, #334).** The skills cite
+source anchors so a claim can be jumped to. `repo_map.py` is past 19,000 lines and `main.py` past 17,000, so
+those anchors rot continuously, and **five** consecutive maintenance passes re-stamped them by hand — each
+shipping numbers that were already wrong, including the 2026-07-27 audit whose own "corrections" had been
+computed against a worktree 28 commits behind `origin/main`. Same tell, same fix: `.claude/skill_anchor_audit.py`
+resolves every cited path, flags any line past EOF, and — for a citation naming a backticked symbol — reports
+where that symbol is actually **defined**. It found **92** stale anchors against the ~15 the human audit had;
+88 were unambiguous enough to fix mechanically.
+
+Two lessons from building it, both from the control arm rather than from review:
+- Its symbol tier was **structurally incapable of firing** on the real corpus at first, because a citation
+  sits inside its own code span so the preceding text ends with a backtick that the pattern rejected. It
+  looked healthy and reported nothing. **Prove a new tier can fire before believing a clean run.**
+- Matching a symbol *anywhere* in the file made `tg`, `find`, `list` and `None` "move" constantly — 114
+  findings, mostly noise. Anchoring to **definition sites** cut it to 92 real ones. A checker that cries wolf
+  gets switched off, and a switched-off gate is worse than none, which is also why this is a maintenance
+  command rather than a pytest: pinning these numbers in CI would red every PR that adds a line to `main.py`.
 
 ## A Disclosure Must Precede The Data It Qualifies (2026-07-27, #329)
 
@@ -1390,6 +1446,50 @@ The repo has proven:
 
 If the goal is to close the remaining gap to raw `rg`, the likely next step is a more native launcher/control-plane path, not more Python micro-tuning.
 
+## Check Whether It Already Shipped, And Pin What You Document (2026-07-27, #328/#333)
+
+Two failure modes at opposite ends of the same lifecycle, both cheap to prevent.
+
+**A queued task may already be DONE.** Task #328's fix was already live — merged as `4195cbf`
+(PR #815) and an ancestor of `v1.100.2`, i.e. in the *published wheel*, while the task still read
+`pending`. The task text is a snapshot of what someone believed when they filed it; `origin/main`
+is what is true. Before building anything from a filed description, read the current source
+(`git cat-file blob origin/main:<path>` — not the local checkout, which drifts and goes dirty) and
+confirm the defect still exists. `git log -S"<the exact claim>"` finds the commit that closed it.
+
+**A docs-only fix ships UNPINNED, so it drifts.** #815 was one file, ten insertions, zero tests —
+nothing failed if either paragraph was deleted or reworded, which is the #318 failure mode exactly.
+Every contract statement needs a governance test, and that test must be **pinned to the SOURCE, not
+to the doc**: a test that only greps the doc for its own words is circular and passes forever after
+the code stops behaving that way. Assert a PREMISE about the code (the producer still emits the
+field, the two counts still come from separate blocks) alongside the CLAIM about the prose, so both
+arms can fail — reword the paragraph and the claim fires; rename the producer and the premise fires.
+
+## Your Reading Is A Hypothesis; The Mechanical Check Is The Oracle (2026-07-27, #316/#307)
+
+Three times in one session a confident reading was wrong and a mechanical check was right. The
+pattern is the same each time: prose *looks* like code, and a human-shaped read of it agrees with
+whatever you already believed.
+
+- **A semantic read is not a typecheck.** Before pushing #316 I read the two walk-ceiling tests and
+  concluded a return-type change was safe because they "only use `result` as `Result<_, String>`
+  with `.expect_err`". `Result::expect_err` requires `T: Debug` to print the unexpected `Ok`; the
+  old `T` was a bare `Vec<PathBuf>` (Debug for free), a struct is not. `cuda-feature-check` caught
+  it in one cycle. This is why *CI red is sufficient and CI green is not* — reviewers read for
+  semantics, they do not typecheck.
+- **A coarse grep counts PROSE as code.** `grep -c budget_remediable` reported hits in two CLI
+  files and nearly killed a real finding as "already shipped"; every hit was inside a *comment*
+  referencing the MCP fix. Functional emitters: one. The same trap fired on `gpu_native.rs`, where
+  `grep -c result_incomplete` returned 2 and both were inside the comment's own prose. Match the
+  structural form (`"field"`, `def name(`, `fn name(`) and **read each hit** before concluding.
+- **A census expectation can be wrong in BOTH directions.** Twice the mismatch was *my* expected
+  number, not the code — an under-counted set of existing envelopes, and four sibling comments that
+  were all correct on inspection. When a census disagrees with you, check the breakdown before
+  filing; the finding is as often in the expectation as in the tree.
+
+The general rule: write the check so its result does not depend on your prior. Then when it
+disagrees with you, that disagreement is information rather than noise.
+
 ## Push Discipline
 
 Do not push from a dirty worktree if `origin/main` moved and the local tree has unrelated changes.
@@ -1397,6 +1497,15 @@ Do not push from a dirty worktree if `origin/main` moved and the local tree has 
 A branch push or open PR starts PR CI only. It is not a release, not a released version, and not complete release state. Release versioning starts only after a release-bearing PR is squash-merged to `main`, because semantic-release reads the final `main` commit subject.
 
 Merge one release-bearing PR at a time and wait for main CI + semantic-release to finish before merging the next. Concurrent squash-merges to `main` can race at the semantic-release step and produce a skipped release or a wrong version bump. `chore:` / `docs:` / `test:` titles do not bump the version — but that is NOT a licence to merge them while a prior release is in flight (see the push-race note directly below). "Safe to interleave" means *after the prior release has fully published* (its `chore(release): vX` commit is on `main` and PyPI shows the new version), not merely after its PR CI is green.
+
+**READ the type, do not assume it (2026-07-27).** The push-race bites a merge that lands *while a
+RELEASE job is pushing* — so the discriminator is whether one is in flight, and that is a fact you
+can check rather than a risk you have to sit out. Open the newest main run and look at
+`release-intent`: **`skipped` means no release will be cut for that commit**, so there is no push
+to reject. On that evidence `test:`-titled #817 and `docs:`-titled #820 were merged back-to-back
+(the earlier run's cancellation by the later push is benign — see the `cancelled != failure` note),
+while `fix:`-titled #821 was held for the full one-per-publish cycle. Batch the non-releasing,
+serialize the releasing; `gh run view <id> --json jobs` is the whole test.
 
 ### Release publish is not instant — the push-race (hard-won, re-confirmed 2026-07-02)
 
@@ -1455,6 +1564,12 @@ Use this schema:
 
 Release-bearing PRs must use `Squash and merge` so the validated PR title becomes the commit subject on `main`.
 
+- **Scope a PR's DIFF to what its TITLE promises.** The title becomes the changelog headline and a
+  reviewer reads it as the contract for what is inside. When correct, reversible, unrelated work
+  surfaces mid-PR, SPLIT it: a repo_map contract extension found while fixing a CLI cause-flag was
+  pulled out of that PR and shipped as its own (#336/#826), and a docs/BACKLOG reconcile was kept off
+  the session-laws capture PR (#337 vs #824). Being correct, reversible and yours does not earn a spot
+  in the diff — only matching the title does.
 Do not manually create release tags when semantic-release is active.
 
 ## Local Dev Gotchas (Windows, hard-won)
@@ -1467,6 +1582,16 @@ Small, non-obvious traps that have each cost a real cycle on this desktop. None 
 - **After a squash-merge, apply follow-up fixes by SYMBOL, not by line number.** Merges shift every line below the change; a plan that says "fix `main.py:8468`" is stale the moment anything above it lands. Re-anchor on the function/const name (grep or `tg defs`) before editing.
 - **A dependency UPPER-cap can silently downgrade the whole install on a newer Python.** If an upper bound (e.g. `typer<0.25`) has no release compatible with a new Python, `pip`/`uv` resolve the *entire package* DOWN to a stale version with NO error — `requires-python>=X` has no upper bound to catch it. When a fresh Python yields a stale `tg`, suspect a transitive cap (typer/click/pydantic), not `requires-python`.
 - **A rule listing forbidden OPERATIONS is not a ban on the whole toolchain — check whether its REASON applies (2026-07-25, cost 3 CI cycles).** CPU-SAFE forbids `cargo`/`rustc`/`clippy`/`maturin` because they are *expensive on a shared box*. **`rustfmt` is not a compiler**: no codegen, parses+formats in milliseconds, `rustfmt.exe` is on PATH, and there is no `rustfmt.toml` so local defaults == CI's. Three CI cycles were burned hand-deriving format diffs from logs before anyone asked whether the rule's reason applied. Run `rustfmt --check` locally before pushing Rust. (It enforces `chain_width`/`fn_call_width` = 60, not just `max_width` = 100 — apply its printed diff verbatim; a hand-rolled width check is a heuristic, never authoritative.)
+- **A local test-failure SPIKE is usually a missing optional dep — repair the instrument before
+  theorising (2026-07-27).** A local run showed 90 failed / 80 passed across the `lang_*` suite and I
+  spent two ticks building a correlation argument that the failures were unrelated (4 missing
+  tree-sitter grammars ↔ 4 failures; csharp present ↔ csharp passing) before checking the interpreter.
+  `python -m pip install --only-binary=:all: tree-sitter-{c,cpp,java,php,go}` (wheels only, so nothing
+  compiles on a shared box) turned the inference into an observation: **170 passed, 0 failed**. Cause
+  was a STALE interpreter carrying tensor-grep 1.83.0, ~18 releases behind — those grammars entered
+  the extras after it; `pyproject.toml` declares all 11 unconditionally and is not at fault. When a
+  measuring device gives false readings, repairing it is cheaper and far stronger than reasoning
+  about the noise.
 - **Cumulative CPU time is not current CPU rate (2026-07-25).** Two orphaned `find /` scans showed 20,548 s and 6,073 s of accumulated CPU — 7.4 CPU-hours — and killing both moved total load 74% → 73%. They had been accumulating slowly for hours, not burning now. Same shape as the cProfile trap: *cumulative ≠ blocking*. Before attributing a slow box to a process, measure its current rate, not its lifetime total. (Related: orphaned children outlive the shell that spawned them — `find /` on Windows via git-bash traverses virtual mounts and effectively never terminates.)
 - **`MSYS_NO_PATHCONV=1` is REQUIRED for `git cat-file blob origin/main:path` on this box.** Without it git-bash mangles the ref into `origin\main;path` and the command fails *misleadingly* — it reads as "that path does not exist on origin/main", which twice produced a confident wrong conclusion (once nearly reporting a committed CI gate as a phantom). Same family as the "parse `gh --json` via python, never jq" rule.
 - **`tests/conftest.py:8-15` does `sys.path.insert(0, SRC_DIR)` from `__file__`, which OVERRIDES `PYTHONPATH`.** A gate running a control arm with `PYTHONPATH=<baseline>/src` got a FALSE PASS because conftest silently re-pointed imports at the worktree. For any baseline/control arm in this repo, use a scratch mini-repo or a full second checkout as pytest's rootdir — and verify `tensor_grep.__file__` resolves where you think before trusting RED or GREEN.

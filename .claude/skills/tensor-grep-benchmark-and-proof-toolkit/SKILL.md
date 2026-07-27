@@ -206,7 +206,7 @@ Two concrete, code-verified mechanisms exist for this:
 
 1. **`min-baseline-time-s` floor in `check_regression.py`** (default `0.1`s,
    `benchmarks/check_regression.py:69-74`; enforced in `perf_guard.check_regressions` and
-   `detect_comparator_drift`, `src/tensor_grep/perf_guard.py:76,109`): any row whose **baseline**
+   `detect_comparator_drift`, `src/tensor_grep/perf_guard.py:87,109`): any row whose **baseline**
    time is below this threshold is skipped entirely for regression comparison — "tiny baseline
    durations are noisy on shared CI runners and can trigger false positives from scheduler jitter."
 2. **Absolute jitter tolerance in `run_hot_query_benchmarks.py`**
@@ -228,7 +228,7 @@ this is systematic, not jitter.** Jitter (above) is random noise around the true
 regime mismatch is a **wrong measurement of the wrong code path** and can point the wrong direction
 entirely. A warm dogfood run measures the CACHED path, where the function you actually changed may not
 even execute on that request. Receipt: a `tg orient` warm end-to-end dogfood read showed **-36%** on a
-symbol-merge change (`_python_imports_and_symbols`, `src/tensor_grep/cli/repo_map.py:1921`) that
+symbol-merge change (`_python_imports_and_symbols`, `src/tensor_grep/cli/repo_map.py:2126`) that
 directly microbenchmarking the function then showed was actually **~54% faster** (961ms→446ms), because
 the warm run never re-parsed the file the change touched. This deepens corollary 3 above ("cold-start
 and repeated-query are different regimes") into a concrete verification recipe: to prove a cold-path
@@ -237,7 +237,7 @@ process per rep (cold cache by construction), a single pass over distinct inputs
 output-identity (`total == total` both sides) — or (b) explicitly clear the relevant cache between reps
 of an end-to-end run. Never trust a warm end-to-end number as evidence for or against a cold-path
 change. Second receipt, same shipped-wheel-microbench discipline applied to a different lever: a
-validation-scan pre-check (`_framework_test_pattern_bonus`, `src/tensor_grep/cli/repo_map.py:10616`)
+validation-scan pre-check (`_framework_test_pattern_bonus`, `src/tensor_grep/cli/repo_map.py:11095`)
 measured **~68% faster** (3657ms→1172ms) this way, output byte-identical. The general profiling/proof
 pipeline this recipe belongs to (profile the shipped wheel → prove byte-identical output → warm/cold
 microbench) lives in the global skill `profile-guided-byte-identical-optimization`; this is the

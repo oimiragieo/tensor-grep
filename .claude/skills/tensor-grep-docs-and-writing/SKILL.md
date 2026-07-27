@@ -65,7 +65,7 @@ Full current list of governed prose files: `AGENTS.md`, `README.md`, `SKILL.md`,
 
 ### Layer A — Version stamping (automatic; do not hand-edit the stamped bits)
 
-Two mechanisms fire together inside the `Semantic Release` job's `build_command` (`pyproject.toml:132`, `[tool.semantic_release]`):
+Two mechanisms fire together inside the `Semantic Release` job's `build_command` (`pyproject.toml:138`, `[tool.semantic_release]`):
 
 1. **`version_variables`** (python-semantic-release's built-in regex substitution of `name = "X"` / `name: X` style single-line patterns). Current entries (`pyproject.toml:142-154`):
    - `src/tensor_grep/cli/main.py:pkg_version`
@@ -100,12 +100,27 @@ release-line bullets are prepended above it, e.g. still `:42` as of `v1.95.0` �
 
 ### Layer C — The fast agent-readiness gate (not pytest, runs in seconds)
 
-`scripts/agent_readiness.py` has a `docs-claim-check` probe (`validate_docs_claims`, `scripts/agent_readiness.py:560`) that re-checks a **smaller** fragment set (`f"v{expected_version}"`, `"python scripts/agent_readiness.py"`, `"context_consistency"`, `"tg agent"`, `"agent-capsule-hardcases"`, `"validated compatibility set"`, `"broad generated-root scan"`, `` "rg` remains" ``, `"ast-grep"`) across the same six `RELEASE_DOC_PATHS`-shaped docs, plus a version-drift check using the same "current `vX` (shell/version resolution|positioning|release line)" pattern the stamping script writes. Run it locally as a fast pre-push smoke test:
+`scripts/agent_readiness.py` has a `docs-claim-check` probe (`validate_docs_claims`, `scripts/agent_readiness.py:623`) that re-checks a **smaller** fragment set (`f"v{expected_version}"`, `"python scripts/agent_readiness.py"`, `"context_consistency"`, `"tg agent"`, `"agent-capsule-hardcases"`, `"validated compatibility set"`, `"broad generated-root scan"`, `` "rg` remains" ``, `"ast-grep"`) across the same six `RELEASE_DOC_PATHS`-shaped docs, plus a version-drift check using the same "current `vX` (shell/version resolution|positioning|release line)" pattern the stamping script writes. Run it locally as a fast pre-push smoke test:
 
 ```powershell
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 tg dogfood --output artifacts/dogfood_readiness.json
 ```
+
+**Layer B's structural blind spot: it compares a doc to a doc, never to the CODE (2026-07-27).**
+Every assertion above is `assert "phrase" in doc`. That pins *consistency across the doc set* — real
+value, keep it — but it cannot detect the failure that actually hurts: a doc set that agrees with
+itself and disagrees with the shipped binary. Both arms are prose, so both stay green while the
+behaviour underneath changes. Receipts in this repo's own task log: #318 (`docs/CONTRACTS.md`
+contradicted shipped behaviour, unpinned by any test) and #333 (two more completeness statements in
+the same file, same gap) — the class recurs precisely because Layer B looks like coverage.
+
+**The rule for a CONTRACT claim** (an exit code, a field name, a disclosure, a default): pin it to
+the SOURCE, not to another doc's text. The shape that works, from `test_enterprise_docs_governance.py`:
+read the implementing module's text and assert the literal expression it must contain, plus a
+**premise assertion** that fails loudly if the emitter is restructured — so both arms can fail. A
+plain `assert "phrase" in doc` has only one arm and passes for a claim that stopped being true a
+release ago. Doc-to-doc pinning is correct for *wording*; source-pinning is required for *behaviour*.
 
 This is what caught (and was itself the root cause of 4 wasted CI cycles in) the June-2026 README-rewrite incident — see `tensor-grep-failure-archaeology` for the full story; the operational lesson for docs work specifically is: **decode the structured failing check first**. `docs-claim-check` failing tells you a *version or fragment* problem; it does not by itself tell you *which* pytest in Layer B also broke — run Layer B directly (Part 4) rather than theorizing from the readiness JSON alone.
 
