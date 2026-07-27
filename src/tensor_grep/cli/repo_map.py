@@ -5067,6 +5067,24 @@ def _python_provider_alias_calls(path: Path, symbol: str) -> list[dict[str, Any]
     return deduped
 
 
+# Task 326: `fn NAME(` / `function NAME(` is a DECLARATION, not a call site. The tree-sitter arm
+# of this same feature already refuses to count it -- `_is_definition_identifier` below excludes
+# `function_item`/`struct_item`/`enum_item`/`trait_item` -- but this regex fallback did not, so a
+# published wheel (which ships no tree-sitter Rust grammar, making THIS the arm real users reach)
+# reported every declaration as a call at `resolution_confidence: 1.0`. Found by an external
+# dogfood of v1.98.27; the guard existing on one arm and not the other is what made it survive.
+#
+# Deliberately a NARROW deny-list of unambiguous declaration keywords, NOT an allow-list of call
+# shapes. The usual fail-closed rule (enumerate the safe cases, reject the rest) inverts here
+# because the two error directions are not symmetric: over-suppressing DROPS real call sites, and
+# a missing caller silently understates impact, which is worse than a rare surplus row a reader
+# can see and dismiss. Anything this pattern does not recognise therefore stays a call.
+#
+# `\b` anchors `fn` as a whole token so an identifier merely ENDING in those letters
+# (`spawn_fn collect(...)`) is not mistaken for a declaration; `\*?` admits `function* name(`.
+_DEFINITION_KEYWORD_BEFORE_SYMBOL = re.compile(r"\b(?:fn|function)\s*\*?\s*$")
+
+
 def _regex_references_and_calls(
     path: Path, symbol: str
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -5150,7 +5168,13 @@ def _regex_references_and_calls(
         sanitized_line = _strip_line_string_and_comment_noise(
             line, supports_template_strings=supports_template_strings
         )
-        if call_pattern.search(sanitized_line):
+        # Task 326: keep the historical "at most one call row per line" shape (downstream dedupe
+        # keys on file+line), but require at least one occurrence on the line that is NOT a
+        # declaration before emitting it.
+        if any(
+            _DEFINITION_KEYWORD_BEFORE_SYMBOL.search(sanitized_line[: call_match.start()]) is None
+            for call_match in call_pattern.finditer(sanitized_line)
+        ):
             calls.append({
                 "name": symbol,
                 "kind": "call",
