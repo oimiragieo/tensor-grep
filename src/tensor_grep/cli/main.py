@@ -12272,7 +12272,29 @@ def _render_blast_radius_mermaid(payload: dict[str, Any]) -> str:
         line_no = caller.get("line")
         if isinstance(line_no, int):
             entry.append(line_no)
-    lines = ["graph TD", f'  target["{_mermaid_label(symbol)}"]']
+    lines = ["graph TD"]
+    # Task #329's law, crossed to this twin: a truncation disclosure must be read BEFORE the data
+    # it qualifies. A `%%` note after the nodes is a footnote -- a reader who has already traced
+    # the graph formed the answer several lines ago. `graph TD` is the diagram-type DECLARATION,
+    # not payload, so it stays line 1 and the banner becomes the first CONTENT line. (The leading
+    # space before `%%` also keeps it from ever reading as mermaid's `%%{...}%%` directive form.)
+    #
+    # The text comes from the shared _scan_truncation_warning/_completeness_caveat_lines pair
+    # rather than a hardcoded literal, which fixes two further defects the old line carried: it
+    # said `note:` for a TRUNCATION (inverting the warning-vs-advisory split this command defines
+    # one function above), and it advised "raise --max-callers/--max-files" for EVERY cause --
+    # naming the only two knobs that cannot lift a --max-repo-files scan cap or a caller-scan
+    # ceiling. Wrong-knob remediation advice is the failure #762 fixed on the MCP surface.
+    truncation = _scan_truncation_warning(payload)
+    if truncation is None and payload.get("result_incomplete"):
+        # An incompleteness stamped upstream that carries no scan_limit/output_limit of its own
+        # still owes the reader a disclosure; falling through silently would trade a MISPOSITIONED
+        # warning for an ABSENT one, which is the worse half of this same class.
+        truncation = _truncation_message("the result was truncated")
+    leading, _ = _completeness_caveat_lines(truncation, is_truncation=truncation is not None)
+    if leading is not None:
+        lines.append(f"  %% {leading}")
+    lines.append(f'  target["{_mermaid_label(symbol)}"]')
     for idx, rel in enumerate(sorted(grouped)):
         node = f"n{idx}"
         lines.append(f'  {node}["{_mermaid_label(rel)}"]')
@@ -12284,11 +12306,10 @@ def _render_blast_radius_mermaid(payload: dict[str, Any]) -> str:
         else:
             lines.append(f"  {node} --> target")
     if not grouped:
+        # Deliberately still TRAILING, and not swept into the leading banner above: this is the
+        # advisory half of the split. The scan COMPLETED and genuinely found nothing, so the line
+        # is commentary on a trustworthy result rather than a qualifier on an untrustworthy one.
         lines.append(f"  %% no callers found for {symbol}")
-    if payload.get("result_incomplete"):
-        lines.append(
-            "  %% note: result truncated -- raise --max-callers/--max-files for the full graph"
-        )
     return "\n".join(lines)
 
 

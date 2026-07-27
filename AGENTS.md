@@ -925,16 +925,27 @@ so a caller-set truncated at a file cap still gets trusted as exhaustive. `tg`'s
 put a truncation warning **above** the payload and keep advisory commentary (the zero-callers "not dead
 code" caveat, whose result is COMPLETE) **below** it. The asymmetry is the rule, not an inconsistency.
 
-Two consequences when you touch any disclosure surface:
+Three consequences when you touch any disclosure surface:
 
 - **Position is part of the contract; test it, don't test presence.** `assert "warning:" in out` passes
   identically before and after the fix — oracle Form 7. Pin `out.index(marker) < out.index(first_payload_line)`
   with a premise assertion that the payload line was actually emitted, so an inert renderer cannot make the
   ordering comparison vacuously true.
 - **Define the ordering once and share it.** `_completeness_caveat_lines` (`cli/main.py`) returns
-  `(leading_banner, trailing_note)` for **both** text emitters — the symbol commands and `blast-radius` —
-  so the two cannot drift into different orderings. JSON output is deliberately unaffected: `caveat` is a
-  field there, and field order carries no reading bias.
+  `(leading_banner, trailing_note)` for every text emitter — the symbol commands, `blast-radius`, and the
+  `--mermaid` renderer — so they cannot drift into different orderings. JSON output is deliberately
+  unaffected: `caveat` is a field there, and field order carries no reading bias.
+- **Enumerate the command's emitters, not the ones you were shown.** *This section's own first cut
+  missed one.* `blast-radius` has THREE emitters, and `_render_blast_radius_mermaid` — the
+  **agent-facing** one — kept appending its disclosure after every graph node. A comment three lines
+  from the edited site even named it (*"the mermaid renderer also reads payload.result\_incomplete"*),
+  which is the tell: knowing a twin exists is not crossing to it. The miss also carried two defects that
+  a shared helper makes structurally impossible, and a hand-written literal invites: it said `note:` for a
+  **truncation** (inverting the very warning-vs-advisory split defined one function above), and it hardcoded
+  *"raise `--max-callers`/`--max-files`"* for **every** cause — naming the only two knobs that cannot lift a
+  `--max-repo-files` scan cap. Wrong-knob remediation advice is the failure #762 fixed on the MCP surface;
+  sourcing the text from `_scan_truncation_warning` retires all three at once. Before calling a disclosure
+  fix done, grep the command for every `typer.echo` / renderer that can reach stdout and classify each.
 
 ## Backend Fail-Closed Contract
 

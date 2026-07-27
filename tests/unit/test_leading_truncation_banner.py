@@ -25,7 +25,11 @@ import pytest
 import typer
 
 from tensor_grep.cli import main as main_mod
-from tensor_grep.cli.main import _completeness_caveat_lines, _emit_symbol_command_result
+from tensor_grep.cli.main import (
+    _completeness_caveat_lines,
+    _emit_symbol_command_result,
+    _render_blast_radius_mermaid,
+)
 
 _PAYLOAD_SENTINEL = "callers=0 files=0"
 
@@ -223,3 +227,93 @@ def test_complete_blast_radius_emits_no_banner(
     assert _BLAST_HEADER in out
     assert "warning:" not in out
     assert "note:" not in out
+
+
+# --------------------------------------------------------------- blast-radius --mermaid (twin 2)
+#
+# The class fix has to cross to EVERY emitter of the same command or it recurs through the one
+# nobody listed. `--mermaid` is the agent-facing renderer, so a trailing disclosure there is the
+# more damaging half: an agent that has already walked the graph edges has formed its answer.
+
+
+def _mermaid_payload(**extra: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "symbol": "Target",
+        "path": "/repo",
+        "callers": [{"file": "/repo/pkg/caller.py", "line": 12}],
+    }
+    payload.update(extra)
+    return payload
+
+
+def _truncated_mermaid_payload() -> dict[str, Any]:
+    """A payload shaped the way the COMMAND hands one to the renderer.
+
+    Faithfulness matters here. ``blast_radius`` calls ``_annotate_result_completeness`` before
+    either ``--mermaid`` exit, and that stamps ``result_incomplete=True`` whenever a truncation
+    exists -- so a production payload always carries BOTH the ``scan_limit`` and the flag. A
+    fixture with only ``scan_limit`` would make the pre-fix arm emit no disclosure at all, and
+    these tests would then be discriminating against a state the CLI cannot reach: a control that
+    never crosses the real boundary is the same arm in a bigger coat.
+    """
+    return _mermaid_payload(scan_limit=_truncated_scan_limit(), result_incomplete=True)
+
+
+def test_truncation_warning_leads_the_mermaid_graph() -> None:
+    out = _render_blast_radius_mermaid(_truncated_mermaid_payload())
+    lines = out.splitlines()
+    # Premise: a real node was rendered, so the ordering comparison is not vacuous.
+    assert "pkg/caller.py" in out
+    # `graph TD` is the diagram-type declaration, not payload -- it stays line 1.
+    assert lines[0] == "graph TD"
+    assert lines[1].startswith("  %% warning: INCOMPLETE RESULT:")
+    assert out.index("warning:") < out.index("pkg/caller.py")
+    assert out.index("warning:") < out.index("-->")
+
+
+def test_mermaid_truncation_uses_the_warning_prefix_not_the_advisory_note() -> None:
+    # The old literal read `%% note: result truncated ...`. `note:` is this command's ADVISORY
+    # prefix (a complete result you should not over-read); a truncation is a `warning:`. Emitting
+    # the advisory prefix for an incompleteness inverts the very split the fix defines.
+    out = _render_blast_radius_mermaid(_truncated_mermaid_payload())
+    assert "%% warning:" in out
+    assert "%% note:" not in out
+
+
+def test_mermaid_truncation_names_the_knob_that_actually_lifts_the_cap() -> None:
+    # WRONG-KNOB arm. The old literal advised "raise --max-callers/--max-files" for every cause.
+    # Neither lifts a --max-repo-files scan cap, so the graph told the reader to turn a dial that
+    # cannot change the answer -- the same defect #762 fixed on the MCP surface. Sharing
+    # _scan_truncation_warning makes the advice cause-specific instead.
+    out = _render_blast_radius_mermaid(_truncated_mermaid_payload())
+    assert "--max-repo-files" in out
+    assert "512-file cap" in out  # the cause is named, not just the fact of truncation
+
+
+def test_complete_mermaid_graph_emits_no_banner() -> None:
+    # CONTROL ARM: without it, "a warning appeared somewhere" would be true in every arm.
+    out = _render_blast_radius_mermaid(_mermaid_payload())
+    assert "-->" in out  # premise: the graph really rendered
+    assert "warning:" not in out
+    assert "INCOMPLETE" not in out
+
+
+def test_mermaid_zero_callers_advisory_still_trails_the_graph() -> None:
+    # The deliberate NON-sweep: this line is commentary on a COMPLETE scan that genuinely found
+    # nothing, not a qualifier on an untrustworthy one, so trailing is correct and it must not be
+    # dragged into the leading banner along with the truncation case.
+    out = _render_blast_radius_mermaid(_mermaid_payload(callers=[]))
+    lines = out.splitlines()
+    assert "no callers found" in out
+    assert lines[-1].strip().startswith("%% no callers found")
+    assert "warning:" not in out
+
+
+def test_mermaid_upstream_result_incomplete_still_gets_a_leading_disclosure() -> None:
+    # An incompleteness stamped upstream carries no scan_limit/output_limit to describe. Sourcing
+    # the text from _scan_truncation_warning must not silently DROP the disclosure in that case --
+    # trading a mispositioned warning for an absent one is the worse half of the same class.
+    out = _render_blast_radius_mermaid(_mermaid_payload(result_incomplete=True))
+    lines = out.splitlines()
+    assert lines[1].startswith("  %% warning: INCOMPLETE RESULT:")
+    assert out.index("warning:") < out.index("pkg/caller.py")
