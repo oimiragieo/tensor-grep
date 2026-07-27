@@ -119,6 +119,10 @@ def test_session_open_can_cap_initial_repo_map(tmp_path: Path) -> None:
         "scanned_files": 2,
         "possibly_truncated": True,
         "truncation_cause": "project-files",
+        # ADDED #336: the whole point of an exact-dict assertion is that a new key has to be
+        # declared here deliberately. `project-files` is the budget cap, so True is correct --
+        # an `unreadable-path` cap would emit False, which is the distinction that matters.
+        "budget_remediable": True,
     }
     assert opened["build_seconds"] >= 0
 
@@ -164,6 +168,10 @@ def test_session_open_defaults_to_agent_safe_repo_map_cap(tmp_path: Path) -> Non
         "scanned_files": 512,
         "possibly_truncated": True,
         "truncation_cause": "project-files",
+        # ADDED #336: the whole point of an exact-dict assertion is that a new key has to be
+        # declared here deliberately. `project-files` is the budget cap, so True is correct --
+        # an `unreadable-path` cap would emit False, which is the distinction that matters.
+        "budget_remediable": True,
     }
 
     show_result = runner.invoke(
