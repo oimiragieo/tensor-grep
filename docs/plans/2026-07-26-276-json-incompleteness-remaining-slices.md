@@ -12,24 +12,67 @@
 
 **Goal:** Close the remaining seams of task 276 so every machine-facing `tg` output path can say "I could not finish looking" — and say it *truthfully*.
 
-**Status: REVISED 2026-07-26 after adversarial review falsified two of my own tasks.** The revision notes are kept inline rather than cleaned up, because the errors are instructive and a reader who does not know what was wrong will reintroduce it.
+**Status: CLOSED 2026-07-27. All ten tasks shipped** (see EXECUTION STATE below). Originally
+**REVISED 2026-07-26 after adversarial review falsified two of my own tasks**, then reversed a third
+on 2026-07-27 when its precondition expired. The revision notes are kept inline rather than cleaned
+up, because the errors are instructive and a reader who does not know what was wrong will
+reintroduce it. Three ideas are RETIRED here and must not be re-chased: the `HashSet<PathBuf>`
+distinct-path counter (documented as rejected at `native_search.rs:82-90` before this plan proposed
+it), the `incomplete_paths_count` rename (its zero-cost precondition expired when the field
+shipped), and the `SearchStats::is_empty()` "live bug" (the guarded state is unreachable).
 
-## EXECUTION STATE — reconciled 2026-07-27
+## EXECUTION STATE — CLOSED, reconciled 2026-07-27 (second pass)
+
+> **This is a CLOSED campaign record, not an open plan.** Every task below has landed. It is kept
+> because its *reversals* are the expensive part: three premises this plan asserted turned out to be
+> false, and a reader who does not know which will reintroduce them. The unchecked `- [ ]` boxes
+> below are historical — they record what the step *was*, not work outstanding. Read the
+> post-mortems, not the checkboxes.
 
 A plan that still lists shipped work as open is the same failure this campaign exists to fix: a
-document asserting something it has not checked. Four of the seven tasks landed while this PR sat
-in the queue, so the unchecked boxes below are stale for those. Reconciled against the task ledger
-and the live PR list, not from recollection:
+document asserting something it has not checked. This table has now been wrong twice for that
+reason, so each row is re-derived from the merged commit and, where the change is in code, from a
+grep against `origin/main` — never from the previous version of this table:
 
-| Plan task | Ledger | State |
-|---|---|---|
-| Task 1 — `SearchStats::is_empty()` | task 319 | **SHIPPED** |
-| Task 2 — output-write vs input-read failure | task 321 | **OPEN** — still the live defect described below |
-| Task 3 — rename `incomplete_paths_count` | task 320 | **OPEN** — and Step 4's premise check is still unperformed |
-| Task 4 — `collect_walked_files` count channel | task 315 | **SHIPPED** |
-| Task 5 — the second envelope in `main.rs` | task 317 | **SHIPPED** |
-| Task 6 — exit-code parity | task 325 | **IN FLIGHT — PR #818** (green; see the re-scope note under Task 6) |
-| Task 7 — `--ndjson` terminal summary record | task 314 | **SHIPPED** |
+| Plan task | Ledger | State | Evidence on `origin/main` |
+|---|---|---|---|
+| Task 1 — `SearchStats::is_empty()` | task 319 | **SHIPPED** | `fn is_empty` at `native_search.rs:103` |
+| Task 2 — output-write vs input-read failure | task 321 | **SHIPPED** | PR #821 `fix(native): an OUTPUT-write failure is not an unreadable path` |
+| Task 3 — document `incomplete_paths_count` | task 320 | **SHIPPED** | PR #820 `docs(contracts): incomplete_paths_count counts EVENTS, not distinct paths` — the DOCUMENT resolution, not the struck rename |
+| Task 4 — `collect_walked_files` count channel | task 315 | **SHIPPED** | `collect_walked_files` at `native_search.rs:1799` + its unreadable-dir count test at `:2985` |
+| Task 5 — the second envelope in `main.rs` | task 317 | **SHIPPED** | `result_incomplete: Option<bool>` on BOTH `main.rs:9132` and `:9152` |
+| Task 6 — exit-code parity | task 325 | **SHIPPED** | PR #818 `fix(native): exit 2 when the multi-pattern route discloses an incomplete walk` |
+| Task 7 — `--ndjson` terminal summary record | task 314 | **SHIPPED** | envelope at `native_search.rs:898`, stamped at `:2554`, pinned at `:2668` |
+| Task 8 — `gpu_native.rs` twin | task 316 | **SHIPPED** | PR #823 `fix(gpu): cross the walk-error count to the gpu_native twin` |
+| Task 9 — MCP contract | (was unowned) | **SHIPPED, with a live follow-on** | PR #806 exposed `incomplete_reason_class` over MCP. A 2026-07-27 census then found `_TG_MCP_SERVER_CONTRACT_VERSION` still at `1.6.0` after #826 put `budget_remediable` on the wire for the `build_repo_map`-backed tools — a wire change with no bump. Tracked separately. |
+| Task 10 — `docs/CONTRACTS.md` | task 318 | **SHIPPED, then repaired twice** | PR #815 named the fields. The same bullet then failed the way this task predicted — see below. |
+
+**Task 10 is the one to read before writing any contract prose.** It was closed by #815 and was
+still wrong twice over when a census re-derived it on 2026-07-27 (both fixed in PR #830):
+
+1. It went on excluding the multi-pattern (task 317) and `gpu_native` (task 316) routes from the
+   `incomplete_reason_class` allow-list months after both landed — telling agents to distrust two
+   surfaces that had been fixed. And the exclusion had **never been actionable**: both envelopes
+   stamp `routing_backend` from the same `decision.routing_backend()`, so the excluded route
+   reports the identical `"NativeCpuBackend"` string as the included one. *An exclusion has to be
+   expressible in a field the consumer actually receives.*
+2. Two of its three anchors had rotted onto unrelated code (`native_search.rs:2489-2491` onto a
+   `path:line:` formatter, `main.rs:8388` into a `BrokenPipe` doc comment). Only
+   `native_search.rs:91` still landed. **The pinning test passed the whole time**, because it
+   asserted the doc *contained* those strings and never that they pointed anywhere.
+
+Both are the SAME failure this task was filed for — "the pinning test covered only the backend set,
+leaving the other three to rot" — reproducing *inside the bullet the task was written about*.
+Pinning some claims of a multi-claim paragraph leaves the rest free to drift, and the unpinned ones
+are exactly where drift lands. Anchors are now SYMBOLS and the test RESOLVES each one in the Rust.
+
+**The three defects an EXTERNAL dogfood caught that this plan's own gates did not** — recorded here
+because they are the campaign's sharpest lesson, and none of them is visible from the table above:
+PR #814 and #816 killed two false claims (`not_found` asserted over a scan that read ZERO files; a
+guard applied to a SHADOWED function while the real producer went untouched), and #819 found the
+same shape a third time in the truncation gates, which were blind to the `--deadline` arm. A gate
+written when one truncation cause existed and never widened when a second arrived is this
+campaign's recurring generator — see the task 332 note below, which is the same shape again.
 
 **Task 6 was materially re-scoped when it was built, and the plan text below is wrong about it.**
 The plan assumed the `--json`/`--ndjson` routes broadly failed to exit 2. They do not: the
