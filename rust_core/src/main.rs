@@ -6526,6 +6526,48 @@ mod tests {
             "the symlink's target outside the rollback root must be left untouched"
         );
     }
+
+    /// Task 276 task 6: the DISCLOSURE and the EXIT CODE must read one predicate.
+    ///
+    /// `emit_multi_pattern_native_results` exits 2 on `walk_was_incomplete`; the `--json` and
+    /// `--ndjson` envelopes stamp `result_incomplete` from `incomplete_envelope_fields`. Before
+    /// task 6 the exit code was not derived from the count at all, which is how that route came
+    /// to print `result_incomplete: true` and then exit 0 -- or, on a zero-match incomplete
+    /// scan, exit 1, which reads as an authoritative "no matches exist".
+    ///
+    /// This asserts the two cannot disagree for ANY input. It fails if a later change
+    /// re-derives either side independently, which is the specific way this family recurs.
+    #[test]
+    fn walk_incompleteness_predicate_agrees_with_the_envelope_it_stamps() {
+        for incomplete_paths in [None, Some(0), Some(1), Some(2), Some(usize::MAX)] {
+            let (result_incomplete, reason_class, count) =
+                incomplete_envelope_fields(incomplete_paths);
+            let exits_two = walk_was_incomplete(incomplete_paths);
+
+            assert_eq!(
+                result_incomplete == Some(true),
+                exits_two,
+                "envelope and exit code disagree for {incomplete_paths:?}: \
+                 result_incomplete={result_incomplete:?}, walk_was_incomplete={exits_two}"
+            );
+            if exits_two {
+                assert_eq!(reason_class, Some("unreadable_path"));
+                assert_eq!(count, incomplete_paths);
+            } else {
+                assert_eq!(reason_class, None);
+                assert_eq!(count, None);
+            }
+        }
+
+        // CONTROL ARM. Both not-incomplete inputs are in the table above, so the loop cannot
+        // pass by only ever exercising the positive case -- and a guard that answered `true`
+        // unconditionally would satisfy the agreement assertion while exiting 2 on every clean
+        // search. `None` means "this route observed no walk of its own"; `Some(0)` means "a walk
+        // ran and hit no errors". Neither is an incompleteness claim.
+        assert!(!walk_was_incomplete(None));
+        assert!(!walk_was_incomplete(Some(0)));
+        assert!(walk_was_incomplete(Some(1)));
+    }
 }
 
 fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
@@ -8301,6 +8343,20 @@ fn emit_multi_pattern_native_results(
         emit_plain_search_matches_with_line_number(options.path, &matches, options.line_number)?;
     }
 
+    // Task 276 task 6 (exit-code parity). Checked BEFORE the no-match branch, in the SAME order
+    // the single-pattern native route already resolves these two questions in
+    // `run_native_search_with_optional_rg_fallback`. "I could not finish looking" outranks "I
+    // found nothing", because the second is only trustworthy if the first is false.
+    //
+    // Until this guard, every one of this function's four callers passed a REAL walk-error count
+    // (each one reads it straight out of `collect_native_multi_pattern_matches`), so the envelope
+    // said `result_incomplete: true` and the process then exited 0 -- or, on a zero-match
+    // incomplete scan, fell into the branch below and exited 1, which reads as an authoritative
+    // "no matches exist". That is the exact lie #276 exists to stop, in the twin of the route
+    // whose comment says the ordering exists to prevent it.
+    if walk_was_incomplete(incomplete_paths) {
+        std::process::exit(2);
+    }
     if !has_matches {
         std::process::exit(1);
     }
@@ -13041,6 +13097,19 @@ fn exit_with_sidecar_error(err: SidecarError) -> anyhow::Result<()> {
     std::process::exit(err.exit_code.max(1));
 }
 
+/// Task 276 task 6: the ONE predicate for "this walk did not finish".
+///
+/// `None` means "this route observed no walk of its own, so it cannot report a count" -- NEVER
+/// "complete". Only a `Some(count)` above zero is an affirmative incompleteness claim.
+///
+/// Both the envelope fields below AND the exit code read this, so a route cannot say
+/// `result_incomplete: true` in its payload and then exit 0. That divergence was the shape of
+/// task 6: the disclosure and the exit code were derived independently, so one twin could ship
+/// without the other.
+fn walk_was_incomplete(incomplete_paths: Option<usize>) -> bool {
+    matches!(incomplete_paths, Some(count) if count > 0)
+}
+
 /// Task 276: turn a walk-error count into the three envelope fields.
 ///
 /// ONE place, so the `--json` envelope and the `--ndjson` summary cannot drift -- the #276
@@ -13048,10 +13117,10 @@ fn exit_with_sidecar_error(err: SidecarError) -> anyhow::Result<()> {
 fn incomplete_envelope_fields(
     incomplete_paths: Option<usize>,
 ) -> (Option<bool>, Option<&'static str>, Option<usize>) {
-    match incomplete_paths {
-        Some(count) if count > 0 => (Some(true), Some("unreadable_path"), Some(count)),
-        _ => (None, None, None),
+    if walk_was_incomplete(incomplete_paths) {
+        return (Some(true), Some("unreadable_path"), incomplete_paths);
     }
+    (None, None, None)
 }
 
 fn emit_json_search_results(
