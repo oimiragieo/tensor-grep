@@ -1,6 +1,79 @@
 # CHANGELOG
 
 
+## v1.101.2 (2026-07-27)
+
+### Bug Fixes
+
+- **gpu**: Cross the walk-error count to the gpu_native twin (task 316)
+  ([#823](https://github.com/oimiragieo/tensor-grep/pull/823),
+  [`d9c4c91`](https://github.com/oimiragieo/tensor-grep/commit/d9c4c91f5a6239dfd58e232efca6234f6eea9a85))
+
+* fix(gpu): cross the walk-error count to the gpu_native twin (task 316)
+
+#276 slice D, the last unbuilt slice. The CPU walkers have carried `walk_errors` ->
+  `result_incomplete` / `incomplete_reason_class` / `incomplete_paths_count` -> exit 2 since slice
+  A; the CUDA twin printed the error to stderr and dropped the count, so a GPU `--json` search over
+  a partly-unreadable tree reported a short answer as complete and exited 0.
+
+The in-code note named two obstacles and refused a mechanical port. Both are answered rather than
+  waved past:
+
+1. "adding a field to a Serialize struct changes JSON shape" -- the envelope already uses
+  `skip_serializing_if = "Option::is_none"` on four fields; the new triple uses the same idiom, so a
+  complete GPU scan stays byte-identical. 2. "this module emits no envelope of its own" -- the route
+  is `GpuNativeSearchResultJson` / `emit_gpu_native_json_results`.
+
+Chain (gpu_native.rs): `GpuWalkedFiles` mirrors `native_search::WalkedFiles` so
+  `collect_walked_files` owns a channel back to its caller; the increment sits behind the SAME
+  `is_io()` allow-list as both CPU walkers, so a malformed global gitignore cannot make a complete
+  walk claim incompleteness; `AtomicUsize` + Relaxed for the same reason the CPU twin gives.
+
+Chain (main.rs): the envelope calls the SHARED `incomplete_envelope_fields` and the exit arm the
+  SHARED `walk_was_incomplete`, both reading the same `Some(stats.walk_errors)` -- so the payload
+  and the exit code cannot be derived independently, which is the defect class task 332 found three
+  times. The exit-2 guard runs BEFORE the no-match branch, mirroring #818: a scan that could not
+  read part of the tree must never report a confident "0 matches".
+
+ALSO FIXES A FALSE COMMENT ON THIS ROUTE. The ndjson arm passed `None` under "this route observed no
+  walk of its own" -- untrue, since `gpu_native_search_paths_multi` walks via
+  `collect_search_files`. It now passes the real count.
+
+Mechanical census of all 13 expected sites; two of MY expectations were wrong and the code was
+  right, which is the census earning its keep: - the envelope triple now appears 3x, not 2x (I
+  under-counted the existing envelopes). - 4 other "observed no walk of its own" comments survive.
+  Checked each against its enclosing route rather than sweeping: `run_index_query` x2 reads
+  `.tg_index`, `handle_ast_run` delegates to the ast wrapper, and `handle_gpu_sidecar_search` shells
+  to the Python sidecar via `execute_sidecar_command` and parses its stdout. None of the four walks
+  in-process, so `None` = "cannot report" is CORRECT there. Only this route's claim was false.
+
+CPU-SAFE: all CUDA-gated (`#[cfg(feature = "cuda")] pub mod gpu_native`), so `cuda-feature-check` in
+  CI is the only oracle. `rustfmt --check` clean locally.
+
+* fix(gpu): derive Debug on GpuWalkedFiles + ungate a dead Linux import
+
+CI caught what my reading did not, which is the whole reason cuda-feature-check exists for this
+  module.
+
+`error[E0277]: GpuWalkedFiles doesn't implement Debug` at gpu_native.rs:4553. I had explicitly
+  checked the two walk-ceiling tests and concluded the return-type change was safe because they
+  "only use `result` as `Result<_, String>` with `.expect_err`/`.expect` -- they don't index into
+  the Vec". That reasoning was semantic and wrong: `Result::expect_err` requires `T: Debug` so it
+  can print the unexpected Ok. The old `T` was a bare `Vec<PathBuf>`, which gets Debug for free; a
+  struct does not. Reviewers read for semantics, they do not typecheck.
+
+The derive carries a comment saying WHY it is load-bearing, so a future cleanup pass does not read
+  it as decoration and remove it.
+
+Also fixes the one warning in the same log (found it -> fix it, even though the file is not
+  otherwise mine): python_sidecar.rs's test module imported `OsStr` unconditionally while its only
+  use sits inside a `#[cfg(windows)]` test, so the import is dead on Linux. `OsString` stays ungated
+  -- the compiler named only `OsStr`, which is the evidence that the other symbol is used on both
+  platforms. Verified by enumerating both symbols' uses in the module rather than eyeballing.
+
+rustfmt --check clean. cuda-feature-check remains the only oracle.
+
+
 ## v1.101.1 (2026-07-27)
 
 ### Bug Fixes
