@@ -36,9 +36,9 @@ Current native evidence:
 
 The latest user dogfood also reported the native harness as `passed = false` because the speed target and error-test expectations did not pass. That is the intended decision: correctness evidence is necessary, but it is not enough to enable or market GPU auto-routing.
 
-## 2026-07-14 GPU Phase-0 Hardening Wave (Audit #171, v1.75.1-v1.75.4)
+## 2026-07-14 GPU Phase-0 Hardening Wave (Audit task 171, v1.75.1-v1.75.4)
 
-Four PRs closed audit #171's P0-1 through P0-5 findings against the GPU doctor/agent probe surface and
+Four PRs closed audit task 171's P0-1 through P0-5 findings against the GPU doctor/agent probe surface and
 the installer/calibrate remediation paths, each gated by the mandatory Opus adversarial review (SHIP /
 SHIP-WITH-NIT verdicts, 8/8 probes clean). This wave hardens *evidence quality and operator messaging*
 around the existing GPU surface; it does not change the promotion decision above -- native CUDA

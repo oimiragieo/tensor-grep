@@ -280,7 +280,7 @@ this document it does **not** carry the common envelope fields (`version`/`routi
 | `token_budget_label` | `string` | Human-readable summary of `token_estimate` and the snippet token budget. |
 | `truncated` | `boolean` | `true` when the snippet token budget clipped or dropped a snippet. |
 | `scan_limit` | `integer` | The effective `max_repo_files` used to build the underlying repo map. |
-| `suggested_scope` | `object \| null` | Additive (audit #93 SUB-2). Present only when the underlying repo scan itself was truncated (distinct from `truncated` above, which is snippet/token-budget only) AND a centrality-weighted directory rollup found a clear winner: `{dirs: [absolute_path], confidence: "heuristic"}`. `null` on a complete scan, or when the top two directories are tied/near-tied (degrade rather than guess). |
+| `suggested_scope` | `object \| null` | Additive (audit task 93 SUB-2). Present only when the underlying repo scan itself was truncated (distinct from `truncated` above, which is snippet/token-budget only) AND a centrality-weighted directory rollup found a clear winner: `{dirs: [absolute_path], confidence: "heuristic"}`. `null` on a complete scan, or when the top two directories are tied/near-tied (degrade rather than guess). |
 
 `ignore` (repeatable glob, matches basename or repo-relative path) excludes a subtree from the
 **centrality ranking** only -- the files are still walked, just kept out of the central-files/
@@ -1472,7 +1472,7 @@ PyPI wheel installs can serve simple `tg_rewrite_plan(...)` and `tg_rewrite_appl
 
 Call `tg_mcp_capabilities()` first when a client might be running in a PyPI wheel, sandbox, or other runtime where the standalone native binary is uncertain.
 
-Current tool set (58 tools by default -- 48 legacy + 10 additive task-shaped meta-tools, Phase-1 MCP consolidation #98; re-derive with `grep -n "^def tg_\|^async def tg_" src/tensor_grep/cli/mcp_server.py | wc -l` and cross-check names against `test_harness_api_doc_lists_every_registered_tool_name`, which enumerates the live registry so this list can't silently drift again). Setting `TG_MCP_LEGACY_TOOLS` to `0`/`false`/`no`/`off` de-advertises the 46 legacy tools below that are NOT `tg_mcp_capabilities`/`tg_classify_logs` (those 2 are always-on singletons), leaving the 10 meta-tools + the 2 singletons (12 tools) -- see "Meta-Tools (Phase-1 consolidation)" below):
+Current tool set (58 tools by default -- 48 legacy + 10 additive task-shaped meta-tools, Phase-1 MCP consolidation task 98; re-derive with `grep -n "^def tg_\|^async def tg_" src/tensor_grep/cli/mcp_server.py | wc -l` and cross-check names against `test_harness_api_doc_lists_every_registered_tool_name`, which enumerates the live registry so this list can't silently drift again). Setting `TG_MCP_LEGACY_TOOLS` to `0`/`false`/`no`/`off` de-advertises the 46 legacy tools below that are NOT `tg_mcp_capabilities`/`tg_classify_logs` (those 2 are always-on singletons), leaving the 10 meta-tools + the 2 singletons (12 tools) -- see "Meta-Tools (Phase-1 consolidation)" below):
 
 - `tg_mcp_capabilities()`
 - `tg_rulesets()`
@@ -1483,7 +1483,7 @@ Current tool set (58 tools by default -- 48 legacy + 10 additive task-shaped met
 - `tg_context_pack(query, path=".")`
 - `tg_edit_plan(query, path=".", max_files=3, max_sources=5, max_tokens=None, max_symbols=5)`
 - `tg_context_render(query, path=".", max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full")`
-- `tg_agent_capsule(query, path=".", max_files=3, max_sources=5, max_tokens=1200, max_repo_files=2000, model=None, gpu_device_ids=None, gpu_timeout_s=5.0, deadline=None)` -- `deadline` (#98/W1b parity) mirrors `tg agent --deadline` / `tg codemap --deadline`.
+- `tg_agent_capsule(query, path=".", max_files=3, max_sources=5, max_tokens=1200, max_repo_files=2000, model=None, gpu_device_ids=None, gpu_timeout_s=5.0, deadline=None)` -- `deadline` (task 98/W1b parity) mirrors `tg agent --deadline` / `tg codemap --deadline`.
 - `tg_symbol_defs(symbol, path=".")`
 - `tg_symbol_source(symbol, path=".")`
 - `tg_symbol_impact(symbol, path=".", deadline=None)`
@@ -1523,7 +1523,7 @@ Current tool set (58 tools by default -- 48 legacy + 10 additive task-shaped met
 - `tg_review_bundle_verify(bundle_path)`
 - `tg_rewrite_diff(pattern, replacement, lang, path=".")`
 
-Meta-Tools (Phase-1 consolidation, #98) -- ALWAYS registered regardless of `TG_MCP_LEGACY_TOOLS`; each composes several of the 46 legacy tools above by an `action` string selector and dispatches to the matching legacy tool FUNCTION directly, so every legacy fail-closed-class behavior (native-unavailable, validation-command gating, plan-drift, ...) is preserved unchanged:
+Meta-Tools (Phase-1 consolidation, task 98) -- ALWAYS registered regardless of `TG_MCP_LEGACY_TOOLS`; each composes several of the 46 legacy tools above by an `action` string selector and dispatches to the matching legacy tool FUNCTION directly, so every legacy fail-closed-class behavior (native-unavailable, validation-command gating, plan-drift, ...) is preserved unchanged:
 
 - `tg_navigate(action, symbol=None, file=None, path=".", provider="native", max_repo_files=2000, deadline=None)` -- actions: `defs`/`source`/`refs`/`callers` (= tg_symbol_defs/tg_symbol_source/tg_symbol_refs/tg_symbol_callers), `imports`/`importers` (= tg_file_imports/tg_file_importers).
 - `tg_impact(action, symbol=None, path=".", max_depth=3, max_files=3, max_symbols=5, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full", profile=False, provider="native", max_repo_files=2000, deadline=None)` -- actions: `impact`/`blast_radius`/`blast_radius_plan`/`blast_radius_render` (= tg_symbol_impact/tg_symbol_blast_radius/tg_symbol_blast_radius_plan/tg_symbol_blast_radius_render).
@@ -1545,7 +1545,7 @@ Capability modes:
 | `python-local` | Runs without a standalone native `tg` binary. | `tg_mcp_capabilities`, `tg_repo_map`, `tg_context_pack`, `tg_agent_capsule`, `tg_search`, `tg_ast_search`, `tg_devices`, `tg_checkpoint_create`, `tg_session_context` |
 | `embedded-safe` | Simple requests can use packaged PyO3 rewrite fallback when standalone native `tg` is unavailable. | `tg_rewrite_plan`, `tg_rewrite_apply` |
 | `native-required` | Requires a standalone native `tg` binary via PATH, `TG_NATIVE_TG_BINARY`, in-tree build, or release asset. | `tg_index_search`, `tg_rewrite_diff` |
-| `meta` | Task-shaped meta-tool (#98) composing several legacy tools by an `action` selector; the per-action `native_required`/`mutation`/`embedded_fallback` flags live under `tools[].actions` in the `tg_mcp_capabilities()` response, not the top-level `tools[].mode`/`native_required` fields those describe for the other 3 modes. | `tg_navigate`, `tg_impact`, `tg_query`, `tg_context`, `tg_explore`, `tg_session`, `tg_scan`, `tg_audit`, `tg_checkpoint`, `tg_rewrite` |
+| `meta` | Task-shaped meta-tool (task 98) composing several legacy tools by an `action` selector; the per-action `native_required`/`mutation`/`embedded_fallback` flags live under `tools[].actions` in the `tg_mcp_capabilities()` response, not the top-level `tools[].mode`/`native_required` fields those describe for the other 3 modes. | `tg_navigate`, `tg_impact`, `tg_query`, `tg_context`, `tg_explore`, `tg_session`, `tg_scan`, `tg_audit`, `tg_checkpoint`, `tg_rewrite` |
 
 `tg_mcp_capabilities()` response fields:
 
