@@ -13,7 +13,7 @@ of **2026-07-08, v1.49.3** (toolchain pins + test counts re-verified **2026-07-1
 counts moved to 263/16/16 — and again **2026-07-24, v1.95.0** — every `pyproject.toml`/`AGENTS.md`/
 `ci.yml` line citation below had drifted from the language-expansion campaign's growth
 (`pyproject.toml` +~230 lines of new dev-dependency/tree-sitter-grammar entries, `AGENTS.md` +~300
-lines), all re-pointed below; test counts moved to 266/16/16; a new Trap 11 added for an un-retried
+lines), all re-pointed below; test counts de-stamped in favour of the `ls tests/<dir>/*.py | wc -l` commands; a new Trap 11 added for an un-retried
 rustup toolchain fetch; all other version pins verified still current). Re-verify anything
 version-shaped before trusting it long-term — see "Provenance and maintenance" at the bottom.
 
@@ -197,11 +197,12 @@ python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 tg dogfood --output artifacts/dogfood_readiness.json
 ```
 
-**Test corpus size** (2026-07-24, v1.95.0): `tests/` has 266 unit test files + 16 e2e test files +
-16 integration test files (`pyproject.toml` sets `testpaths = ["tests"]`, so a bare `uv run pytest -q`
-covers all three). `uv run pytest -q` "can take substantially longer than 70-90 seconds on
-[a Windows] machine when the full JS/TS and e2e surface is hot" — use a timeout of at least 120s for
-narrow suites and considerably more for the full run when automating this (`AGENTS.md:606`).
+**Test corpus size** -- **do NOT stamp a number here.** This figure has been wrong in three
+consecutive passes (266 -> a mid-flight 282 -> the real 291), because it changes with every PR that
+adds a test file while nothing fails when the doc lags. Run it:
+`ls tests/unit/*.py | wc -l` / `ls tests/e2e/*.py | wc -l` / `ls tests/integration/*.py | wc -l`
+(291 / 21 / 16 as of 2026-07-27, recorded only so a reader can tell whether this line is stale --
+not as a value to cite).
 
 ## Known traps (each one has cost a real cycle — read before debugging blind)
 
@@ -375,7 +376,7 @@ Volatile facts stated above and how to re-check them if this skill feels stale:
 - **Version pins** (Python floor, uv, maturin, Rust toolchain, ruff, mypy, pyo3):
   `grep -nE "requires-python|version|channel" pyproject.toml rust_core/Cargo.toml rust_core/rust-toolchain.toml`
 - **uv version CI pins**: `grep -n "uv==" .github/workflows/ci.yml`
-- **Test file counts** (266 unit / 16 e2e / 16 integration as of 2026-07-24 (v1.95.0), up from
+- **Test file counts** (RE-RUN the `ls | wc -l` commands -- 291/21/16 on 2026-07-27, up from
   263/16/16 — `tests/eval/` now has 2 files, `test_agent_accuracy.py` +
   `test_retrieval_quality_regression.py` (up from 1), still not part of this count):
   `find tests/unit tests/e2e tests/integration tests/eval -name "test_*.py" | wc -l` run per

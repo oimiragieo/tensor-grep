@@ -61,7 +61,9 @@ dogfood only after a version actually publishes.
 ## Tool 1: `tg doctor --json` — field-by-field interpretation
 
 Source: `_build_doctor_payload` / `_render_doctor_payload` in `src/tensor_grep/cli/main.py`
-(command registration at `main.py:14437`, payload builder at `main.py:3142`, `_build_doctor_payload`).
+(payload builder at `main.py:3142`, `_build_doctor_payload`; command registration at
+`main.py:14763` — re-verify with `grep -n "^def doctor(" src/tensor_grep/cli/main.py`, and see
+"which anchors drift" under Provenance before trusting any registration line number here).
 
 ```powershell
 tg doctor --json --no-lsp        # fast (~2-5s); always prefer this while iterating
@@ -182,7 +184,7 @@ alongside `tg dogfood` (`AGENTS.md:316-323`).
 | `agent-capsule-hardcases` | polyglot monorepo, generated-noise, Rust/Python/JS/TS hardcases | — |
 | `docs-claim-check` | **no subprocess** — reads `AGENTS.md`/`README.md`/`SKILL.md`/`docs/*.md` directly and checks required fragments + version-staleness prose patterns + a banned-phrase list on GPU docs | — |
 
-`docs-claim-check` (`validate_docs_claims` in `agent_readiness.py:560`) is the mechanism that
+`docs-claim-check` (`validate_docs_claims` in `agent_readiness.py:623`) is the mechanism that
 enforces the **no-oversell rule** described in `AGENTS.md`: it bans phrases like `"mathematically
 guaranteeing"`, `"0ms interpreter lag"`, `"peak theoretical throughput"`, `"GPU-ready"` from
 `docs/benchmarks.md`, `docs/gpu_crossover.md`, and `docs/PAPER.md`, and requires phrases like `"not
@@ -216,7 +218,7 @@ useful when the shell-probe phase is slow.
 ## Tool 3: `tg dogfood` — verdict + JSON envelope around `agent_readiness.py`
 
 Source: `src/tensor_grep/cli/dogfood.py` (`run_dogfood_readiness`), CLI command at
-`main.py:14167`.
+`main.py:14493` (re-verify with `grep -n "^def dogfood(" src/tensor_grep/cli/main.py`).
 
 ```powershell
 tg dogfood --output artifacts/dogfood_readiness.json
@@ -313,7 +315,7 @@ Two newer JSON surfaces belong in this skill's "what does the field actually pro
 neither is a health-check tool like Tools 1-4 above, but both need the same field-by-field
 interpretation discipline before you trust them.
 
-**`tg find` (`main.py:4574` onward — re-verify with `grep -n "^def find(" src/tensor_grep/cli/main.py`):**
+**`tg find` (`main.py:4625` onward — re-verify with `grep -n "^def find(" src/tensor_grep/cli/main.py`):**
 
 | Field | Healthy value | What a bad/absent value means |
 |---|---|---|
@@ -321,7 +323,7 @@ interpretation discipline before you trust them.
 | `result_incomplete` | `false`/absent on a complete scan | `true` means `--deadline`/`--max-repo-files`/the internal corpus-wide chunk cap truncated the walk — the ranked results are a FLOOR, not the full answer. Exit code confirms this independent of the JSON: any truncation exits **2**, whether or not matches were found (`tensor-grep-run-and-operate` §11c, `tensor-grep-large-repo-scale-campaign` §1/§5). |
 | exit code | `0` = complete + found; `1` = complete + empty; `2` = `BackendExecutionError` OR any truncation | do not read exit `2` here as a plain usage error the way `tg search`'s exit-2 convention works (§11b) — `tg find` follows the symbol-command-style "truncation trumps found" shape, a DIFFERENT convention than `tg search`. |
 
-**`tg route-test` (`main.py:10123` onward — re-verify with `grep -n "^def route_test(" src/tensor_grep/cli/main.py`) — diagnoses routing agreement between `context-render` and `edit-plan`:**
+**`tg route-test` (`main.py:10302` onward — re-verify with `grep -n "^def route_test(" src/tensor_grep/cli/main.py`) — diagnoses routing agreement between `context-render` and `edit-plan`:**
 
 | Field | Healthy value | What a bad value means |
 |---|---|---|
@@ -351,7 +353,7 @@ reach for" lookup (source: `AGENTS.md` "Benchmark Rules", verified against each 
 
 `benchmarks/run_benchmarks.py` refuses **claim-quality** output (not the run itself) when the timed
 `tg` entrypoint is a stale in-tree native binary (`benchmark_binary_warnings` /
-`benchmark_claim_blockers` in `run_benchmarks.py:194-225`) — it prints a blocker to stderr and
+`benchmark_claim_blockers` in `run_benchmarks.py:212-243`) — it prints a blocker to stderr and
 requires `--allow-claim-unsafe-launcher` to proceed anyway for exploratory-only timing. It also
 tags every artifact with `tg_launcher_mode` and `tg_launcher_command_kind`
 (`classify_tg_launcher_command`, e.g. `native_exe`, `uv`, `python_module`, `cmd_shim`,
@@ -426,13 +428,37 @@ numbers had drifted again (`main.py` grew from 16897 to 17032 lines; `dogfood.py
 `_doctor_rust_binary_remediation` `:2432`, the GPU-probe functions `:2905`/`:2921`, the
 flavor-mismatch function `:3121`, `_agent_gpu_tg_command` (`agent_capsule.py:1522`), `dogfood`
 command `:14167`, `_build_world_class_readiness` (`dogfood.py:207`), `find` `:4574`, `route_test`
-`:10123`, `validate_docs_claims` (`agent_readiness.py:560`), `build_check_plan`
+`:10123`, `validate_docs_claims` (`agent_readiness.py:623`), `build_check_plan`
 (`agent_readiness.py:698`). `run_benchmarks.py`'s `benchmark_binary_warnings`/
 `benchmark_claim_blockers` block (`:194-225`) had NOT drifted and needed no change. Field
 SEMANTICS remain UNCHANGED by this pass too — only line-number citations moved. This pass also
 added the Tool 3/Tool 4 warm-dogfood-hides-a-cold-path-win caveat above (the `tg orient`
 -36%-vs-+54% receipt) — see the global skill `profile-guided-byte-identical-optimization` for the
-full methodology. Re-verify if this skill feels stale:
+full methodology.
+
+**2026-07-27 re-derivation — WHICH ANCHORS DRIFT (read this before trusting any number above).**
+A fourth pass re-derived every anchor in this file against `origin/main` and found the drift is
+not uniform, which is the useful part: **six anchors had not moved at all** —
+`_doctor_rust_binary_remediation` `:2432`, the GPU probes `:2905`/`:2921`, the flavor-mismatch
+helper `:3121`, `_build_doctor_payload` `:3142`, `agent_capsule.py:1522`, and
+`dogfood.py:207` — while **every command registration had**: doctor `:14437`->`:14763`, dogfood
+`:14167`->`:14493`, `find` `:4574`->`:4625`, `route_test` `:10123`->`:10302`, plus the two
+`scripts/agent_readiness.py` helpers (`validate_docs_claims` `:560`->`:623`, `build_check_plan`
+`:698`->`:761`). The rule: **private helpers in `main.py`'s ~2400-3500 band are stable anchors;
+`@app.command()` registrations in the file's tail are not**, because every new `tg` command is
+appended and shifts all of them. So cite a helper by line if you must, but cite a command by its
+`grep -n "^def <name>(" ` re-verify form — which is why the live sections above now carry one.
+The numbers inside the 2026-07-22 paragraph immediately above are **superseded** by this list;
+they are left in place as a record of that pass, not as current truth.
+
+One methodological note worth keeping, because it cost a false finding this pass: a
+`git cat-file blob origin/main:scripts/run_benchmarks.py` returned "does not exist" and was
+nearly filed as a dead reference. The skill never said `scripts/` — it correctly says
+`benchmarks/run_benchmarks.py` (:345, :352), and its `:194-225` cite is still exact. The bad path
+was invented by the checker, not the doc. Re-read what the doc actually claims before filing
+drift against it.
+
+Re-verify if this skill feels stale:
 
 ```powershell
 # current version

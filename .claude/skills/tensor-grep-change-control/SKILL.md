@@ -169,14 +169,19 @@ Rule 6 is easy to underrate: if you touch `.github/workflows/ci.yml`, `.github/w
 
 **Jargon:** the *symbol-graph tier* is the deep per-language layer behind `tg defs`/`tg source`/
 `tg imports`/`tg callers`/`tg agent` — distinct from plain text search (any language, via `rg`
-passthrough). As of this pass 8 languages are registered: python, javascript, typescript, rust, go,
-java, php, csharp (`lang_registry.LANGUAGE_REGISTRY`, pinned by
-`tests/unit/test_lang_registry.py:84-94`'s `test_language_registry_has_exactly_the_stage2_languages`);
-C/C++ are not yet registered.
+passthrough). As of this pass **10** languages are registered: python, javascript, typescript, rust, go,
+java, php, csharp, **c, cpp** (`lang_registry.LANGUAGE_REGISTRY`, pinned by
+`test_language_registry_has_exactly_the_stage2_languages` in `tests/unit/test_lang_registry.py` --
+grep the test NAME, not a line number). C/C++ ARE registered, via `lang_c.py`/`lang_cpp.py`; an
+earlier revision of this section said they were not, which mattered because this is the skill that
+gates every new-language change.
 
 The registry entry point is `lang_registry.register_language(lang_registry.LanguageSpec(...))`
 (`src/tensor_grep/cli/lang_registry.py:118`), called once per language inside
-`src/tensor_grep/cli/repo_map.py` (currently 8 calls — `grep -n "lang_registry.register_language(" src/tensor_grep/cli/repo_map.py`, re-run before citing a count, it will grow). A language's extraction
+`src/tensor_grep/cli/repo_map.py`. **Do not cite a stamped count here** -- run
+`grep -c "lang_registry.register_language(" src/tensor_grep/cli/repo_map.py` (10 as of 2026-07-27).
+This line previously carried a hardcoded 8 and went stale the moment C/C++ landed, which is exactly
+the failure the `@app.command` row in Part 10 already fixed by replacing a number with a command. A language's extraction
 callables can live either inline in `repo_map.py` (python/rust/java) or in a dedicated `lang_<x>.py`
 module mirroring `lang_go.py` (go/php/csharp — a separate module avoids an import cycle back into
 `repo_map.py`); both are contract-consistent.
@@ -197,7 +202,7 @@ language works for some commands and quietly does nothing for others):
 (go/java/php/csharp) sets `provenance_when_missing="grammar-missing"` in its `register_language(...)`
 call (e.g. `repo_map.py:6090` for go) — never `"regex-heuristic"` — so a file whose tree-sitter grammar
 package isn't installed surfaces as an honest `resolution_gaps` entry via
-`_language_coverage_gaps_for_universe` (`repo_map.py:7982`, the fail-closed branch at `:8019`) instead
+`_language_coverage_gaps_for_universe` (`repo_map.py:8461`, the fail-closed branch at `:8019`) instead
 of a silent empty result. This is Part 4's Backend Fail-Closed Contract, applied inside the language
 registry (see Part 4's own worked example below).
 
@@ -225,7 +230,7 @@ moment a rebase silently drops a language (see Part 7's sequential-drain corolla
 symbol registry (Part 3) applies this identically. `LanguageSpec.provenance_when_missing` must be
 `"grammar-missing"` (never `"regex-heuristic"`) for any language with no text-heuristic fallback —
 go/java/php/csharp all set it this way in their `register_language(...)` call (e.g. `repo_map.py:6090`)
-— so `_language_coverage_gaps_for_universe` (`repo_map.py:7982`) can tell "grammar not installed, fail
+— so `_language_coverage_gaps_for_universe` (`repo_map.py:8461`) can tell "grammar not installed, fail
 closed" apart from "language has a regex fallback, degrade quietly" at its branch on line `:8019`. Get
 this backwards (label a no-fallback language `"regex-heuristic"`) and a grammar-missing file would read
 as a clean, silent "zero symbols found" instead of an honest gap — precisely the failure class this Part
