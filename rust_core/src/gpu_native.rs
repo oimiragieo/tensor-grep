@@ -3870,6 +3870,11 @@ fn check_gpu_native_implicit_walk_ceiling(
 /// same reason: `collect_walked_files` returned a bare `Vec<PathBuf>`, so it owned NO channel back
 /// to its caller and the walk-error count died at the `eprintln!`. Without this the GPU envelope
 /// could only ever say "complete", which is the silence #276 exists to end.
+/// `Debug` is REQUIRED, not decorative: `collect_search_files`'s walk-ceiling tests call
+/// `Result::expect_err`, which needs `T: Debug` to print the unexpected Ok. Before task 316 that
+/// `T` was a bare `Vec<PathBuf>` (Debug for free), so swapping in a struct broke the tests --
+/// caught by `cuda-feature-check`, the only oracle for this cuda-gated module.
+#[derive(Debug)]
 struct GpuWalkedFiles {
     files: Vec<PathBuf>,
     /// Same `is_io()` filter as both CPU walkers (`native_search.rs:1328`/`:1806`) -- a malformed
