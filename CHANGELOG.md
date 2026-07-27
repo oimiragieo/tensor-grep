@@ -1,6 +1,236 @@
 # CHANGELOG
 
 
+## v1.99.5 (2026-07-27)
+
+### Bug Fixes
+
+- **bench**: Make the trust benchmark actually measure tg (#307)
+  ([#804](https://github.com/oimiragieo/tensor-grep/pull/804),
+  [`f4fe4af`](https://github.com/oimiragieo/tensor-grep/commit/f4fe4afe3de1c2c8b9e36b6d901253373afdfc54))
+
+* fix(bench): make the trust benchmark actually measure tg (#307)
+
+The harness has been reporting a number that is not about tg.
+
+`_tools():79` was `["tg","search",SENTINEL,"."]` -- plain text, no --json. That is forwarded to real
+  rg by `bootstrap.py:1497` via `_run_rg_passthrough`, documented at `:1264-1272` as reachable
+  "whenever no compiled native `tg` binary is discoverable". Confirmed structurally: the literal
+  prefix `rg: ` appears NOWHERE in rust_core/src/ or src/tensor_grep/, while tg's own walk error is
+  `eprintln!("tg: {err}")` (native_search.rs:1253/:1295/:1650).
+
+So the reported "tg ties rg 2/2/0" was ripgrep measured twice -- definitional, not a result. I
+  relayed that tie to the CEO as a CORRECTION to an earlier false "tg leads 5/5". It was a second
+  wrong statement, not a fix for the first.
+
+TWO CHANGES:
+
+1. ROWS THAT MEASURE TG. Added `tg --json`, `tg --ndjson` and `rg --json`. The old text row is KEPT
+  (it is what a plain user runs) but relabelled "tg (text; forwards to rg)" with the citation
+  inline, so nobody reads that tie as a tg result again.
+
+2. A SECOND SCORING CHANNEL. `_score` reads exit code + stderr -- what a shell or CI consumer sees.
+  It structurally cannot distinguish "told me on stderr" from "told me in the payload", which is the
+  entire enterprise thesis. Note its stdout parameter was literally named `_out` and never read.
+  Added `_score_payload`, which reads STDOUT ONLY: no exit code, no stderr -- the view of an agent
+  piping --json into `jq`.
+
+MEASURED, and it goes against us: rg --json exit 2 + names path (process: ADMITS) tg --json exit 0,
+  stderr only (process: SILENT) tg --ndjson exit 0, stderr only (process: SILENT)
+
+tg is BEHIND rg on the surface that matters, not tied. That is the honest #276 baseline, and
+  recording the deficit BEFORE the fix is what will make the eventual win credible instead of
+  post-hoc.
+
+WIRED, not just written: `_score_payload` is called in the run loop and the output above is a real
+  harness run. An added-but-uncalled scorer would have been precisely the shipped-but-never-invoked
+  defect this campaign keeps finding.
+
+Found by adversarial review of the #307 plan; verified against the tree before acting on it.
+
+* fix(bench): render the payload column, and stop it scoring false admissions
+
+Three defects in my own first cut, found by running it and distrusting a good-looking number:
+
+1. The payload rows were computed and never printed. They are keyed `f"{tool.name} [stdout-only]"`,
+  but both the table and the detail loop iterated `tools` and looked up `tool.name`, so the scores
+  went into the JSON and nowhere a human looks. A score nobody can see cannot fail -- the exact
+  defect class this benchmark measures.
+
+2. Two markers were false positives that FLATTERED the tools. `paths` matched `matched_file_paths`,
+  present in every COMPLETE `tg --json` directory envelope, so tg scored ADMITS on a channel where
+  it is silent. `"errors"` is always in semgrep's JSON, same effect. Narrowed to the closed
+  vocabulary: result_incomplete, incomplete_reason_class.
+
+3. There was no control arm. Added one: the payload scorer now also runs on the COMPLETE control
+  condition and must score SILENT. Anything else is reported as BROKEN MARKER. That turns "I
+  happened to notice a suspicious 2" into an automatic failure.
+
+Corrected result, measured: EVERY tool scores 0 on the payload channel -- tg --json, tg --ndjson, rg
+  --json, GNU grep, git grep, ast-grep, semgrep. Not one carries a machine-readable incompleteness
+  marker in stdout. So the earlier claim that "tg is behind rg here" was also wrong: on this channel
+  the whole field is silent, and #276 would make tg the first to break the tie.
+
+Refs #307
+
+* docs+test(bench): reframe task 307, and pin the premise the reframe rests on
+
+RESEARCH (Exa), then verified against the real code rather than assumed:
+
+1. rg structurally cannot signal incompleteness in its JSON stream. `rg --json` emits
+  begin/end/match/context/summary; the terminal `summary` carries timing and stats and NO
+  incompleteness field (ripgrep crates/printer/src/json.rs). Soft errors -- "unable to read a file"
+  -- reach the caller only via stderr and exit 2 (rg(1) EXIT STATUS). That is rg's design, not an
+  oversight.
+
+2. A standard already models this: SARIF v2.1.0 defines invocations[].executionSuccessful (3.20.14)
+  and toolExecutionNotifications (3.20.21), and carries "Appendix I. Detecting incomplete result
+  sets".
+
+3. tg ALREADY conforms, on a branch that has not merged. Verified on origin/feat-310-sarif (PR
+  #796): sarif.py:208 sets {"executionSuccessful": not is_partial}; :243 sets
+  toolExecutionNotifications; test_sarif_output.py:119-136 asserts both arms.
+
+CONSEQUENCE: task 307 was filed as "find the disclosure behaviors that would make tg lead". The
+  research says tg already has one rg lacks -- so the 2/2/0 tie is not a statement about tg's
+  behaviour, it is a statement about what the benchmark looks at. That is oracle Form 7 (a column
+  tied at the FLOOR for every tool measures nothing), which this same campaign already hit once on
+  the payload channel, where every tool including tg scored 0.
+
+The plan therefore proposes a SARIF-conformance column -- and GATES it on external review, because a
+  benchmark I control that concludes I win is worth nothing. The integrity constraint is written
+  into the plan: name the column for the capability, not the winner; keep the existing
+  shared-channel column and its tie reported unchanged; never merge the two into one "tg leads"
+  headline. That would repeat the exact error this task exists to correct.
+
+REVIEW STATUS: NOT REVIEWED. A 2-seat council was dispatched and BOTH seats failed to return a
+  verdict (agy 0 bytes; codex read all files then terminated with no verdict line). Task 2 stays
+  gated. Only Task 1 -- ungated -- ships here.
+
+The premise test asserts BOTH arms: rg's JSON summary has no incompleteness marker, AND rg does
+  report the unreadable directory on stderr + exit 2. The second arm is what makes this a design
+  claim rather than a smear on rg.
+
+HONEST LIMIT: this test has NOT yet been observed to discriminate. os.chmod is a no-op on Windows,
+  so both tests SKIP on this box (verified: chmod 0o000 then listdir succeeded). The skip carries
+  the observed mode rather than passing vacuously. Linux CI is the first environment that will
+  actually execute it. A WSL attempt to prove it locally was itself inert -- the probe ran under
+  /root, which is 0700, so it reported DENIED for everything and proved nothing.
+
+* test(bench): close the split-oracle hole the codex audit found in the premise test
+
+AUDIT FINDING (codex, gpt-5.6-sol, against the task 307 plan): PASS_WITH_FIXES. Task 2 correctly
+  stayed gated -- the commit touches only the plan and the Task 1 test, not
+  scripts/trust_benchmark.py -- but Task 1's test had a real hole:
+
+"the JSON-stream test never asserts that its own rg run exited 2, only that it found a readable
+  match and lacked marker-like keys. Because the exit-code control is a separate invocation, ARM 1
+  can pass with return code 0 and therefore prove nothing about JSON output during an incomplete
+  scan."
+
+Correct, and it is the split-oracle form of the same fault this whole campaign is about. ARM 1
+  concluded "rg's JSON hides incompleteness" from a run it never established WAS incomplete. On a
+  fully readable tree rg exits 0, finishes the scan, emits no incompleteness marker -- correctly,
+  because nothing was incomplete -- and the assertion passes. Green would have meant nothing.
+
+The `_make_unreadable_tree` helper checks the directory is unreadable to the TEST PROCESS, which is
+  not the same claim as "rg's scan was incomplete". A control living in a different subprocess is
+  not this test's control.
+
+FIX: ARM 1 now asserts `proc.returncode == 2` on its OWN subprocess before reading the summary, with
+  a failure message that names the real cause (something made the locked directory readable to rg)
+  rather than blaming the assertion. The sibling exit-code test stays -- it is a separate claim
+  about rg's stderr channel.
+
+ruff clean; still skips on Windows for the documented chmod reason.
+
+### Documentation
+
+- **contracts**: Name the incompleteness fields the contract never named (task 328)
+  ([#815](https://github.com/oimiragieo/tensor-grep/pull/815),
+  [`4195cbf`](https://github.com/oimiragieo/tensor-grep/commit/4195cbf48ff88947669b6489cb3f3b36771707d7))
+
+* docs(contracts): name the incompleteness fields the contract never named (task 328)
+
+An external codex dogfood ranked `tg callers --json` returning 1 of 4 callers -- with
+  `result_incomplete: false`, `not_found: false`, exit 0 -- as the single worst defect it found. It
+  is not a defect: CONTRACTS.md:156 already says an OUTPUT-only cap is a complete analysis capped
+  for display and stays exit 0, and the omission IS machine-readable.
+
+But the reviewer had full repo access and the JSON in hand and still concluded the tool claimed
+  completeness. That is not a reader failure. It is a contract that is defensible but not
+  discoverable, and the mechanism is the same fail-open shape this repo already legislates against
+  elsewhere: a consumer who does not know a field exists cannot branch on it, and silence reads as
+  success.
+
+Measured, not assumed -- three public `--json` fields a caller must read to detect incompleteness
+  appear ZERO times in this document:
+
+token_budget / primary_truncated / primary_omitted repo_map.py:9380,9446,9518 + main.py:11245
+  incomplete_paths_count native_search.rs:872,2464 (shipped in v1.99.0) not_found's own truncation
+  precondition main.py, task 327
+
+So this is one class, not three nits: a disclosure channel exists in the payload and is absent from
+  the contract that is supposed to define how to read the payload. Documented as such, with the rule
+  stated explicitly so the next channel gets added here in the same change that adds the field.
+
+Also disambiguates the two similarly-named counters the reviewer flagged. `scan_limit.scanned_files`
+  (collection stage) and `deadline_limit.files_scanned` (the deadline-bounded stage) can
+  legitimately read 247 and 0 in ONE payload and be internally consistent -- the map was already
+  built, the reference-scan never started. Neither is a repo-wide total, and comparing them is not a
+  completeness test.
+
+One correction made during drafting, worth recording because it is the failure this change exists to
+  prevent: the first draft said all three fields are "omitted when there is nothing to report". That
+  is false for `token_budget`, which is emitted with `truncated: false` whenever `--max-tokens` is
+  in effect. A contract that states a field's presence rule wrongly is worse than one that omits the
+  field, so the presence rules are now per-field and explicit.
+
+Every field name verified against source before writing. No behaviour change; docs only. 99
+  governance/ratchet tests green, ruff format clean, added lines pure ASCII.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* docs(contracts): name the third backend a wheel install actually reports
+
+Codex dogfood round 3 (v1.99.1, published wheel) could not reconcile the contract with what it
+  measured:
+
+tg search ... --cpu --json -> routing_backend = "RustCoreBackend" CONTRACTS.md:174 says ->
+  routing_backend = "NativeCpuBackend"
+
+I reproduced it independently, then nearly shipped a WRONG correction -- rewriting the passage to
+  say "NativeCpuBackend, which no shipped invocation emits". Checking the source before committing
+  showed that claim is false and would have introduced the exact defect class this file is being
+  fixed for.
+
+Both names are real and describe DIFFERENT backends: NativeCpuBackend emitted by the compiled Rust
+  binary (rust_core/src/routing.rs, native_search.rs:233) RustCoreBackend emitted by the PYTHON
+  backend class over the tensor_grep.rust_core extension
+  (src/tensor_grep/backends/rust_backend.py:169)
+
+So the existing paragraph is not wrong, it is INCOMPLETE: it describes a machine that has the
+  compiled native binary. A plain pip/uvx wheel has none, so the same command falls to the Python
+  path and reports the other name. The surrounding text already warns about "no compiled native tg
+  binary on the machine" -- it just never said which name that case produces.
+
+Left the original sentence untouched and added the missing case, because the original is accurate
+  for the install it describes.
+
+Why this is not cosmetic: the allow-list rule in that same paragraph is keyed on these exact
+  strings. A consumer allow-listing only "CPUBackend" and the rg route will REJECT "RustCoreBackend"
+  -- fail-closed, the safe direction, but it rejects a scan that was actually complete. The failure
+  mode is a false INCOMPLETENESS, not a false completeness. Recorded that explicitly so a reader
+  knows which way the omission bites.
+
+Measured on the published v1.99.1 wheel, 2026-07-27. Docs only. 58 governance tests green, ruff
+  format clean, added lines pure ASCII.
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.99.4 (2026-07-27)
 
 ### Bug Fixes
