@@ -11227,6 +11227,30 @@ def _annotate_result_completeness(
     return caveat, truncation is not None
 
 
+def _completeness_caveat_lines(
+    caveat: str | None, *, is_truncation: bool
+) -> tuple[str | None, str | None]:
+    """Split a completeness caveat into ``(leading_banner, trailing_note)`` for text output.
+
+    An INCOMPLETENESS warning must be read BEFORE the data it qualifies; an advisory note is
+    commentary and reads correctly after. A trailing ``[PARTIAL]``-style marker is the easiest
+    thing to emit and the most ignored -- a model consuming the text output treats the prefix
+    as the document and a trailing line as a footnote, so a truncated caller-set gets trusted
+    as exhaustive anyway (the exact wrong-refactor risk the exit-2 gate exists to prevent).
+    The zero-callers caveat (P7) is the opposite shape: the result IS complete, the note only
+    warns against over-reading it, so it stays trailing. That asymmetry is the point.
+
+    Defined once, here, so the two text emitters (``_emit_symbol_command_result`` and the
+    ``blast-radius`` command) cannot drift into different orderings. JSON output is unaffected:
+    ``caveat`` is a field there, and field order carries no such reading bias.
+    """
+    if caveat is None:
+        return None, None
+    if is_truncation:
+        return f"warning: {caveat}", None
+    return None, f"note: {caveat}"
+
+
 def _attach_symbol_omissions(
     payload: dict[str, Any],
     *,
@@ -11316,7 +11340,8 @@ def _emit_symbol_command_result(
     * for ``callers``, the "zero callers != dead code" caveat (P7) when a symbol resolved but
       has no callers on a complete scan — dynamic dispatch / tests / re-exports stay invisible.
 
-    The truncation warning supersedes the generic caveat (incompleteness is the real story).
+    The truncation warning supersedes the generic caveat (incompleteness is the real story), and
+    leads the text output rather than trailing it (see ``_completeness_caveat_lines``).
     """
     not_found = _symbol_not_found_claim(payload, result_key)
     payload["not_found"] = not_found
@@ -11324,9 +11349,12 @@ def _emit_symbol_command_result(
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
     else:
+        leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)
+        if leading is not None:
+            typer.echo(leading)
         emit_text(payload)
-        if caveat is not None:
-            typer.echo(f"{'warning' if is_truncation else 'note'}: {caveat}")
+        if trailing is not None:
+            typer.echo(trailing)
     # Exit-code contract (council-verified B, 2026-07-05): a deadline/scan-truncated result is INCOMPLETE
     # and must NOT read as complete (0) nor as a genuine not-found (1). Exit 2 -- REGARDLESS of whether
     # results were found -- mirrors `tg search`'s result_incomplete convention (see the search command) so
@@ -12439,14 +12467,20 @@ def blast_radius(
     elif json_output:
         typer.echo(json.dumps(payload, indent=2))
     else:
+        # Same leading-banner-vs-trailing-note split as _emit_symbol_command_result: a truncation
+        # warning has to be read BEFORE the counts it qualifies (an agent reading
+        # `callers=3` first has already formed the answer by the time a trailing line lands).
+        leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)
+        if leading is not None:
+            typer.echo(leading)
         typer.echo(f"Blast radius for {payload['symbol']} in {payload['path']}")
         typer.echo(
             f"definitions={len(payload['definitions'])} callers={len(payload['callers'])} "
             f"files={len(payload['files'])} tests={len(payload['tests'])} "
             f"import_consumers={len(payload.get('import_graph_consumers', []))}"
         )
-        if caveat is not None:
-            typer.echo(f"{'warning' if is_truncation else 'note'}: {caveat}")
+        if trailing is not None:
+            typer.echo(trailing)
 
     # Exit-order: a SCAN truncation (2) always wins over a genuine no-match (1) -- a truncated scan
     # never had the chance to find the symbol, so "not found" is not yet a trustworthy answer.

@@ -860,6 +860,26 @@ intersection needs its own invariant: for #272 a registry-parity test asserting 
 `--x` registered as value-taking; for #749 a CI-coverage invariant. Prefer an invariant over an enumeration
 every time — an enumeration is correct when written and silently incomplete on the next addition.
 
+## A Disclosure Must Precede The Data It Qualifies (2026-07-27, #329)
+
+Emitting the incompleteness signal is only half the contract — **where** it lands decides whether it is
+read. A trailing `warning: INCOMPLETE RESULT: ...` line is the easiest thing to append and the most
+ignored: the consumer (human or model) treats the prefix as the document and a final line as a footnote,
+so a caller-set truncated at a file cap still gets trusted as exhaustive. `tg`'s text emitters therefore
+put a truncation warning **above** the payload and keep advisory commentary (the zero-callers "not dead
+code" caveat, whose result is COMPLETE) **below** it. The asymmetry is the rule, not an inconsistency.
+
+Two consequences when you touch any disclosure surface:
+
+- **Position is part of the contract; test it, don't test presence.** `assert "warning:" in out` passes
+  identically before and after the fix — oracle Form 7. Pin `out.index(marker) < out.index(first_payload_line)`
+  with a premise assertion that the payload line was actually emitted, so an inert renderer cannot make the
+  ordering comparison vacuously true.
+- **Define the ordering once and share it.** `_completeness_caveat_lines` (`cli/main.py`) returns
+  `(leading_banner, trailing_note)` for **both** text emitters — the symbol commands and `blast-radius` —
+  so the two cannot drift into different orderings. JSON output is deliberately unaffected: `caveat` is a
+  field there, and field order carries no reading bias.
+
 ## Backend Fail-Closed Contract
 
 Every `ComputeBackend` MUST raise `BackendExecutionError` on a real failure — never return a clean empty / `0-match` `SearchResult` (see `backends/base.py`), and never silently swap to a different engine that cannot preserve the requested semantics. The search loop catches `BackendExecutionError` to fall back **visibly** (e.g. to CPU); a swallowed failure or a silent engine swap reaches the user (or a coding agent) as a trustworthy "no matches" — the one failure a context tool cannot afford.
