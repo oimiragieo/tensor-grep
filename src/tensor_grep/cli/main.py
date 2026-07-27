@@ -11227,6 +11227,38 @@ def _annotate_result_completeness(
     return caveat, truncation is not None
 
 
+def _completeness_caveat_lines(
+    caveat: str | None, *, is_truncation: bool
+) -> tuple[str | None, str | None]:
+    """Split a completeness caveat into ``(leading_banner, trailing_note)`` for text output.
+
+    An INCOMPLETENESS warning must be read BEFORE the data it qualifies; an advisory note is
+    commentary and reads correctly after. A trailing ``[PARTIAL]``-style marker is the easiest
+    thing to emit and the most ignored -- a model consuming the text output treats the prefix
+    as the document and a trailing line as a footnote, so a truncated caller-set gets trusted
+    as exhaustive anyway (the exact wrong-refactor risk the exit-2 gate exists to prevent).
+    The zero-callers caveat (P7) is the opposite shape: the result IS complete, the note only
+    warns against over-reading it, so it stays trailing. That asymmetry is the point.
+
+    Defined once, here, so the THREE emitters wired to it cannot drift into different orderings:
+    ``_emit_symbol_command_result``, the ``blast-radius`` counts block, and
+    ``_render_blast_radius_mermaid``. JSON output is unaffected: ``caveat`` is a field there, and
+    field order carries no such reading bias.
+
+    Three is the count of emitters CONVERTED, not of emitters that should be. Much of the CLI is
+    still unwired -- ``code-map``, ``route-test``, ``session open`` and ``agent`` trail their
+    disclosure, and ``map``/``context``/``context-render``/``edit-plan``/``blast-radius-render``/
+    ``blast-radius-plan`` exit 2 while saying nothing in text at all. Stated explicitly because
+    the previous version of this docstring said "the two text emitters" and went stale the moment
+    a third was wired -- an unqualified count here reads as a completeness claim about the CLI.
+    """
+    if caveat is None:
+        return None, None
+    if is_truncation:
+        return f"warning: {caveat}", None
+    return None, f"note: {caveat}"
+
+
 def _attach_symbol_omissions(
     payload: dict[str, Any],
     *,
@@ -11316,7 +11348,8 @@ def _emit_symbol_command_result(
     * for ``callers``, the "zero callers != dead code" caveat (P7) when a symbol resolved but
       has no callers on a complete scan — dynamic dispatch / tests / re-exports stay invisible.
 
-    The truncation warning supersedes the generic caveat (incompleteness is the real story).
+    The truncation warning supersedes the generic caveat (incompleteness is the real story), and
+    leads the text output rather than trailing it (see ``_completeness_caveat_lines``).
     """
     not_found = _symbol_not_found_claim(payload, result_key)
     payload["not_found"] = not_found
@@ -11324,9 +11357,12 @@ def _emit_symbol_command_result(
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
     else:
+        leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)
+        if leading is not None:
+            typer.echo(leading)
         emit_text(payload)
-        if caveat is not None:
-            typer.echo(f"{'warning' if is_truncation else 'note'}: {caveat}")
+        if trailing is not None:
+            typer.echo(trailing)
     # Exit-code contract (council-verified B, 2026-07-05): a deadline/scan-truncated result is INCOMPLETE
     # and must NOT read as complete (0) nor as a genuine not-found (1). Exit 2 -- REGARDLESS of whether
     # results were found -- mirrors `tg search`'s result_incomplete convention (see the search command) so
@@ -12244,7 +12280,40 @@ def _render_blast_radius_mermaid(payload: dict[str, Any]) -> str:
         line_no = caller.get("line")
         if isinstance(line_no, int):
             entry.append(line_no)
-    lines = ["graph TD", f'  target["{_mermaid_label(symbol)}"]']
+    lines = ["graph TD"]
+    # Task #329's law, crossed to this twin: a truncation disclosure must be read BEFORE the data
+    # it qualifies. A `%%` note after the nodes is a footnote -- a reader who has already traced
+    # the graph formed the answer several lines ago. `graph TD` is the diagram-type DECLARATION,
+    # not payload, so it stays line 1 and the banner becomes the first CONTENT line. (An existing
+    # contract test already pins `payload["mermaid"].startswith("graph TD")`, so this is also the
+    # only option that does not break a shipped promise.) What keeps the line from reading as
+    # mermaid's `%%{...}%%` DIRECTIVE form is the space AFTER `%%`, guaranteed by the `warning: `
+    # prefix `_completeness_caveat_lines` always emits -- not the indentation, which is cosmetic.
+    #
+    # The text comes from the shared _scan_truncation_warning/_completeness_caveat_lines pair
+    # rather than a hardcoded literal, which fixes two further defects the old line carried: it
+    # said `note:` for a TRUNCATION (inverting the warning-vs-advisory split this command defines
+    # one function above), and it advised "raise --max-callers/--max-files" for EVERY cause --
+    # naming the only two knobs that cannot lift a --max-repo-files scan cap or a caller-scan
+    # ceiling. Wrong-knob remediation advice is the failure #762 fixed on the MCP surface.
+    truncation = _scan_truncation_warning(payload)
+    if truncation is None and payload.get("result_incomplete"):
+        # An incompleteness stamped upstream that carries no scan_limit/output_limit of its own
+        # still owes the reader a disclosure; falling through silently would trade a MISPOSITIONED
+        # warning for an ABSENT one, which is the worse half of this same class.
+        truncation = _truncation_message("the result was truncated")
+    leading, _ = _completeness_caveat_lines(truncation, is_truncation=truncation is not None)
+    if leading is not None:
+        # Flattened because a `%%` comment ends at the newline: an embedded one would close the
+        # comment and turn the remainder into live graph statements. The deleted literal was a
+        # fixed string and could not carry one; this line interpolates payload-derived values
+        # (`scan_limit.max_repo_files`, `caller_scan_limit.ceiling`, the `output_limit` counts).
+        # Every COLD path types those as int, so no reachable injection was found -- but the
+        # warm/daemon payload (`_maybe_symbol_command_via_running_daemon`) is parsed JSON with no
+        # field typing, so this is cheap fail-closed hardening rather than a proven vector, and
+        # `_mermaid_label` already sanitizes node text on exactly this reasoning.
+        lines.append(f"  %% {' '.join(leading.split())}")
+    lines.append(f'  target["{_mermaid_label(symbol)}"]')
     for idx, rel in enumerate(sorted(grouped)):
         node = f"n{idx}"
         lines.append(f'  {node}["{_mermaid_label(rel)}"]')
@@ -12256,11 +12325,10 @@ def _render_blast_radius_mermaid(payload: dict[str, Any]) -> str:
         else:
             lines.append(f"  {node} --> target")
     if not grouped:
+        # Deliberately still TRAILING, and not swept into the leading banner above: this is the
+        # advisory half of the split. The scan COMPLETED and genuinely found nothing, so the line
+        # is commentary on a trustworthy result rather than a qualifier on an untrustworthy one.
         lines.append(f"  %% no callers found for {symbol}")
-    if payload.get("result_incomplete"):
-        lines.append(
-            "  %% note: result truncated -- raise --max-callers/--max-files for the full graph"
-        )
     return "\n".join(lines)
 
 
@@ -12439,14 +12507,20 @@ def blast_radius(
     elif json_output:
         typer.echo(json.dumps(payload, indent=2))
     else:
+        # Same leading-banner-vs-trailing-note split as _emit_symbol_command_result: a truncation
+        # warning has to be read BEFORE the counts it qualifies (an agent reading
+        # `callers=3` first has already formed the answer by the time a trailing line lands).
+        leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)
+        if leading is not None:
+            typer.echo(leading)
         typer.echo(f"Blast radius for {payload['symbol']} in {payload['path']}")
         typer.echo(
             f"definitions={len(payload['definitions'])} callers={len(payload['callers'])} "
             f"files={len(payload['files'])} tests={len(payload['tests'])} "
             f"import_consumers={len(payload.get('import_graph_consumers', []))}"
         )
-        if caveat is not None:
-            typer.echo(f"{'warning' if is_truncation else 'note'}: {caveat}")
+        if trailing is not None:
+            typer.echo(trailing)
 
     # Exit-order: a SCAN truncation (2) always wins over a genuine no-match (1) -- a truncated scan
     # never had the chance to find the symbol, so "not found" is not yet a trustworthy answer.

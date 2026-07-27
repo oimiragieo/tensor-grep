@@ -916,6 +916,47 @@ Two lessons from building it, both from the control arm rather than from review:
   gets switched off, and a switched-off gate is worse than none, which is also why this is a maintenance
   command rather than a pytest: pinning these numbers in CI would red every PR that adds a line to `main.py`.
 
+## A Disclosure Must Precede The Data It Qualifies (2026-07-27, #329)
+
+Emitting the incompleteness signal is only half the contract — **where** it lands decides whether it is
+read. A trailing `warning: INCOMPLETE RESULT: ...` line is the easiest thing to append and the most
+ignored: the consumer (human or model) treats the prefix as the document and a final line as a footnote,
+so a caller-set truncated at a file cap still gets trusted as exhaustive. The rule is therefore that a
+truncation warning goes **above** the payload and advisory commentary (the zero-callers "not dead code"
+caveat, whose result is COMPLETE) goes **below** it. The asymmetry is the rule, not an inconsistency.
+
+**That is the rule, not yet the state of the CLI.** Three emitters are wired to it today
+(`_emit_symbol_command_result`, the `blast-radius` counts block, `_render_blast_radius_mermaid`).
+Measured against the rest: `code-map`, `route-test`, `session open` and `agent` still TRAIL their
+disclosure, and `map`, `context`, `context-render`, `edit-plan`, `blast-radius-render` and
+`blast-radius-plan` exit `2` while saying **nothing** in text at all — the ABSENT case, which is worse
+than a mispositioned one. Worst of the set: `scan`, a SECURITY ruleset, printed `Scan completed.
+total_matches=N` and exit `0` over files it could not open. Write the scope down when you state this
+rule; the first version of this section said `tg`'s text emitters "therefore" do it, which reads as a
+completeness claim about a CLI where most of them do not.
+
+Three consequences when you touch any disclosure surface:
+
+- **Position is part of the contract; test it, don't test presence.** `assert "warning:" in out` passes
+  identically before and after the fix — oracle Form 7. Pin `out.index(marker) < out.index(first_payload_line)`
+  with a premise assertion that the payload line was actually emitted, so an inert renderer cannot make the
+  ordering comparison vacuously true.
+- **Define the ordering once and share it.** `_completeness_caveat_lines` (`cli/main.py`) returns
+  `(leading_banner, trailing_note)` for every text emitter — the symbol commands, `blast-radius`, and the
+  `--mermaid` renderer — so they cannot drift into different orderings. JSON output is deliberately
+  unaffected: `caveat` is a field there, and field order carries no reading bias.
+- **Enumerate the command's emitters, not the ones you were shown.** *This section's own first cut
+  missed one.* `blast-radius` has THREE emitters, and `_render_blast_radius_mermaid` — the
+  **agent-facing** one — kept appending its disclosure after every graph node. A comment three lines
+  from the edited site even named it (*"the mermaid renderer also reads payload.result\_incomplete"*),
+  which is the tell: knowing a twin exists is not crossing to it. The miss also carried two defects that
+  a shared helper makes structurally impossible, and a hand-written literal invites: it said `note:` for a
+  **truncation** (inverting the very warning-vs-advisory split defined one function above), and it hardcoded
+  *"raise `--max-callers`/`--max-files`"* for **every** cause — naming the only two knobs that cannot lift a
+  `--max-repo-files` scan cap. Wrong-knob remediation advice is the failure #762 fixed on the MCP surface;
+  sourcing the text from `_scan_truncation_warning` retires all three at once. Before calling a disclosure
+  fix done, grep the command for every `typer.echo` / renderer that can reach stdout and classify each.
+
 ## Backend Fail-Closed Contract
 
 Every `ComputeBackend` MUST raise `BackendExecutionError` on a real failure — never return a clean empty / `0-match` `SearchResult` (see `backends/base.py`), and never silently swap to a different engine that cannot preserve the requested semantics. The search loop catches `BackendExecutionError` to fall back **visibly** (e.g. to CPU); a swallowed failure or a silent engine swap reaches the user (or a coding agent) as a trustworthy "no matches" — the one failure a context tool cannot afford.

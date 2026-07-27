@@ -73,10 +73,19 @@ def test_mermaid_handles_no_callers_without_fabricating_edges() -> None:
 
 
 def test_mermaid_notes_truncation_when_result_incomplete() -> None:
+    # Task #329: this used to assert only `"truncated" in out.lower()`, which passes identically
+    # whether the disclosure leads or trails -- a check that cannot fail in the broken arm proves
+    # nothing (oracle Form 7). It now pins POSITION as well as presence.
     out = _render_blast_radius_mermaid(
         _payload("Big", [{"file": "/repo/a.py", "line": 1}], result_incomplete=True)
     )
+    lines = out.splitlines()
+    assert lines[0] == "graph TD"  # the diagram-type declaration still opens the block
     assert "truncated" in out.lower()
+    assert lines[1].startswith("  %% warning: INCOMPLETE RESULT:")
+    # Premise: a node really was rendered, so the ordering comparison below is not vacuous.
+    assert "a.py" in out
+    assert out.index("warning:") < out.index("a.py")
 
 
 def test_blast_radius_command_supports_mermaid_flag(
