@@ -353,7 +353,7 @@ reach for" lookup (source: `AGENTS.md` "Benchmark Rules", verified against each 
 
 `benchmarks/run_benchmarks.py` refuses **claim-quality** output (not the run itself) when the timed
 `tg` entrypoint is a stale in-tree native binary (`benchmark_binary_warnings` /
-`benchmark_claim_blockers` in `run_benchmarks.py:194-225`) — it prints a blocker to stderr and
+`benchmark_claim_blockers` in `run_benchmarks.py:212-243`) — it prints a blocker to stderr and
 requires `--allow-claim-unsafe-launcher` to proceed anyway for exploratory-only timing. It also
 tags every artifact with `tg_launcher_mode` and `tg_launcher_command_kind`
 (`classify_tg_launcher_command`, e.g. `native_exe`, `uv`, `python_module`, `cmd_shim`,
@@ -428,7 +428,7 @@ numbers had drifted again (`main.py` grew from 16897 to 17032 lines; `dogfood.py
 `_doctor_rust_binary_remediation` `:2432`, the GPU-probe functions `:2905`/`:2921`, the
 flavor-mismatch function `:3121`, `_agent_gpu_tg_command` (`agent_capsule.py:1522`), `dogfood`
 command `:14167`, `_build_world_class_readiness` (`dogfood.py:207`), `find` `:4574`, `route_test`
-`:10123`, `validate_docs_claims` (`agent_readiness.py:560`), `build_check_plan`
+`:10123`, `validate_docs_claims` (`agent_readiness.py:623`), `build_check_plan`
 (`agent_readiness.py:698`). `run_benchmarks.py`'s `benchmark_binary_warnings`/
 `benchmark_claim_blockers` block (`:194-225`) had NOT drifted and needed no change. Field
 SEMANTICS remain UNCHANGED by this pass too — only line-number citations moved. This pass also

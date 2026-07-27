@@ -98,7 +98,7 @@ open crossover *research* question, the same split Problem 4d uses to hand its o
 **The tg asset.** `_score_text_terms` / `_symbol_rank_key` / `_score_file_path` in `repo_map.py`; the deterministic controlled-corpus fixture; the degrade-to-ask safety-floor pattern in `agent_capsule.py`.
 
 **Progress since (v1.92.2/#699/A7) — a SIBLING scorer hardened, the primary flat scorer unchanged.**
-`_score_symbol` (`repo_map.py:7698`) — a THIRD scorer, distinct from both `_score_text_terms` above and
+`_score_symbol` (`repo_map.py:8177`) — a THIRD scorer, distinct from both `_score_text_terms` above and
 the real IDF-weighted BM25 in `retrieval_bm25.py`, used only by the deadline-truncated best-effort-
 primary fallback path — gained an exact word-boundary bonus (+1, capped, subordinate to match-tier
 rank) and a test-file demotion (best-effort path only; the main path already drops test files

@@ -58,7 +58,7 @@ fine and the SETUP silently no-opped, so the hostile arm was never hostile.** As
 | **1. Normalize-both-sides** | A comparator applies the same lossy transform to BOTH arms | **Masks** real defects — silent | #262 (CRLF/encoding-blind rg-parity oracles); surviving accepted limit at `tests/helpers/rg_parity.py:560`, now *proven* lossy and pinned by PR #748 |
 | **2. Harness-corrupts-output** | Post-processing mangles a byte-correct result before comparison | **Manufactures** false failures | `test_output_golden_contract.py::run_tg` did `line.replace("\\","/")` on the WHOLE line, turning a binary notice's `\0` into `/0`; fixed in #746 |
 | **3. Test-never-executes** | The file exists, looks like proof, and SKIPS | **Fakes** coverage | `test_native_json_byte_fidelity.py` skipped in every CI job; fixed #746, class-fixed #749 |
-| **4. Gate-diagnosis-wrong** | A gate's *conclusion* is right, its *root cause* is false | Sends the fix at the wrong target | The gate that found form 3 claimed `TG_REQUIRE_RG_PARITY` was in "zero workflows" — it is at `ci.yml:653` |
+| **4. Gate-diagnosis-wrong** | A gate's *conclusion* is right, its *root cause* is false | Sends the fix at the wrong target | The gate that found form 3 claimed `TG_REQUIRE_RG_PARITY` was in "zero workflows" — it is at `ci.yml:706` |
 | **5. Repro topology deletes the mechanism** | Every fixture shares one structural property, and that property is the one that matters | Proves a **strict subset** of the real defect — defeats even an honest RED | PR #750: repro + all 4 tests used non-git `tempdir()`, the one topology where the fix's mechanism suffices; **inside a git repo the fix is a no-op** |
 | **6. The FIXTURE never applied** | The hostile condition silently failed to take effect, so the "bad" arm is really the good arm | Declares a real defect **ABSENT** — the most flattering direction | #281: `icacls` failed to apply a deny ACE twice (`"No mapping between account names and security IDs was done"`), which would have made an unreadable-directory probe run against a perfectly readable directory and conclude "no defect" |
 | **7. The MEASUREMENT cannot discriminate** | A scored column where every arm ties — usually at the floor | Reads as a **finding** when it measured nothing | #302: the trust benchmark's `vanished-file` column scores 0 for all six tools on both platforms. Six zeros read as "they're all bad at this"; in fact the fixture almost certainly deletes the file *before* the search starts, so the race it claims to measure never opens |
@@ -168,7 +168,7 @@ Ranked by how hard each is to fake, cheapest-to-check first:
    load-bearing gap in this discipline).** A dogfood/`tg orient` run mostly exercises a WARM, cached
    path — repo-map/AST-parse state already populated from a prior call — so it can misjudge a change
    whose effect is COLD-path-only. Receipt: a warm end-to-end `tg orient` dogfood read the
-   `_python_imports_and_symbols` walk-merge (`src/tensor_grep/cli/repo_map.py:1921`) as **−36% slower**;
+   `_python_imports_and_symbols` walk-merge (`src/tensor_grep/cli/repo_map.py:2126`) as **−36% slower**;
    an isolated cold microbench of the same function (fresh process, single pass over distinct inputs)
    showed it is actually **~54% faster** (961ms→446ms) — the warm run never exercised the changed code
    path. To validate a cold-path optimization, microbench the target function directly or clear the

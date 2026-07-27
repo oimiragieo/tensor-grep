@@ -65,7 +65,7 @@ Full current list of governed prose files: `AGENTS.md`, `README.md`, `SKILL.md`,
 
 ### Layer A — Version stamping (automatic; do not hand-edit the stamped bits)
 
-Two mechanisms fire together inside the `Semantic Release` job's `build_command` (`pyproject.toml:132`, `[tool.semantic_release]`):
+Two mechanisms fire together inside the `Semantic Release` job's `build_command` (`pyproject.toml:138`, `[tool.semantic_release]`):
 
 1. **`version_variables`** (python-semantic-release's built-in regex substitution of `name = "X"` / `name: X` style single-line patterns). Current entries (`pyproject.toml:142-154`):
    - `src/tensor_grep/cli/main.py:pkg_version`
@@ -100,7 +100,7 @@ release-line bullets are prepended above it, e.g. still `:42` as of `v1.95.0` �
 
 ### Layer C — The fast agent-readiness gate (not pytest, runs in seconds)
 
-`scripts/agent_readiness.py` has a `docs-claim-check` probe (`validate_docs_claims`, `scripts/agent_readiness.py:560`) that re-checks a **smaller** fragment set (`f"v{expected_version}"`, `"python scripts/agent_readiness.py"`, `"context_consistency"`, `"tg agent"`, `"agent-capsule-hardcases"`, `"validated compatibility set"`, `"broad generated-root scan"`, `` "rg` remains" ``, `"ast-grep"`) across the same six `RELEASE_DOC_PATHS`-shaped docs, plus a version-drift check using the same "current `vX` (shell/version resolution|positioning|release line)" pattern the stamping script writes. Run it locally as a fast pre-push smoke test:
+`scripts/agent_readiness.py` has a `docs-claim-check` probe (`validate_docs_claims`, `scripts/agent_readiness.py:623`) that re-checks a **smaller** fragment set (`f"v{expected_version}"`, `"python scripts/agent_readiness.py"`, `"context_consistency"`, `"tg agent"`, `"agent-capsule-hardcases"`, `"validated compatibility set"`, `"broad generated-root scan"`, `` "rg` remains" ``, `"ast-grep"`) across the same six `RELEASE_DOC_PATHS`-shaped docs, plus a version-drift check using the same "current `vX` (shell/version resolution|positioning|release line)" pattern the stamping script writes. Run it locally as a fast pre-push smoke test:
 
 ```powershell
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json

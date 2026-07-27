@@ -212,8 +212,8 @@ meaning they degrade to a regex-based heuristic scan — honest, but imprecise. 
 since (go/java/php/csharp) instead sets `provenance_when_missing="grammar-missing"` explicitly
 (`repo_map.py:6090`, `:6126`, `:6163`, `:6202` respectively) and ships **no regex fallback at
 all**: a grammar-absent file for one of these four returns `([], [])` from
-`_imports_and_symbols_for_path` (`repo_map.py:6244`) rather than silently degrading. That flag is
-consumed by `_language_coverage_gaps_for_universe` (`repo_map.py:7982`, the check at `:8019`:
+`_imports_and_symbols_for_path` (`repo_map.py:6626`) rather than silently degrading. That flag is
+consumed by `_language_coverage_gaps_for_universe` (`repo_map.py:8461`, the check at `:8019`:
 `if spec.provenance_when_missing not in {"regex-heuristic", "heuristic"}:`), which turns it into an
 honest, labeled `resolution_gaps` entry instead of a silent empty result — the Backend Fail-Closed
 Contract's "treat a zero as UNKNOWN, never as a silently proven zero" rule, applied at the
@@ -222,7 +222,7 @@ precision/recall tradeoff, not an oversight; see `tensor-grep-change-control` if
 9th language and need the full seam checklist rather than the theory.
 
 **A concrete consequence of this design worth knowing (ties back to §3/§4's ranking theme below):**
-`_target_language_for_path` (`repo_map.py:7383`) feeds the `tg agent` capsule's
+`_target_language_for_path` (`repo_map.py:7850`) feeds the `tg agent` capsule's
 query-language-vs-target-language confidence cap (`agent_capsule.py`). Its own in-repo comment
 calls each new-language branch the "MOST-FORGOTTEN seam" — miss it, and the capsule never learns
 the new language exists as a candidate target, so it can silently misfire (e.g. reporting "no
@@ -264,15 +264,15 @@ tg has **two independent ranking surfaces**, and only one of them actually imple
      rarity weighting.
    - `_score_symbol` (`repo_map.py:8177` as of 2026-07-27 -- grep the symbol) — the actual per-symbol composite scorer, and the thing
      that produces `symbol["score"]`: name-match (`_score_text_terms` on the symbol name, `x3`
-     weight) + kind-match + file-path score (`_score_file_path`, `repo_map.py:7621`), plus two
+     weight) + kind-match + file-path score (`_score_file_path`, `repo_map.py:8100`), plus two
      additive heuristics shipped for task #254 (the CEO deep-research #251 steal / A7): a **+1
-     word-boundary bonus** (`_symbol_name_exact_boundary_bonus`, `repo_map.py:7680`; fires when a
+     word-boundary bonus** (`_symbol_name_exact_boundary_bonus`, `repo_map.py:8159`; fires when a
      query term longer than 3 chars matches a clean token in `split_terms(symbol_name)` rather than
      only a raw substring) and a **`_TEST_SHADOW_PENALTY = 2`** demotion (`repo_map.py:7661`, floored
      at 0 in `_score_symbol`) that sinks a test-file hit below a same-named non-test definition
      instead of letting it compete on equal footing. Both are additive refinements to *order among
      already-matching candidates* — neither changes *which* symbols match, and neither adds IDF.
-   - `_symbol_rank_key` (`repo_map.py:7565`) — the final sort key, called as
+   - `_symbol_rank_key` (`repo_map.py:8044`) — the final sort key, called as
      `scored_symbols.sort(key=_symbol_rank_key)` (`repo_map.py:8685`). Its 7-tuple is
      `(query_match_rank, -score, kind-is-function?, -span_length, file, line, name)`. The **first**
      field, `query_match_rank`, is a query-relevance bucket (0 = `exact_query_match`, 1 =
@@ -315,7 +315,7 @@ in project memory for the full incident writeup, and `tensor-grep-change-control
 ## 4. PageRank / centrality — and why `tg orient` deliberately does NOT use it
 
 tg has a real, hand-rolled **personalized PageRank** implementation over the reverse-import graph:
-`_personalized_reverse_import_pagerank` (`src/tensor_grep/cli/repo_map.py:8418`) — damping
+`_personalized_reverse_import_pagerank` (`src/tensor_grep/cli/repo_map.py:8897`) — damping
 factor `alpha=0.85` (the standard Google PageRank default), `12` power-iteration steps, a
 personalization vector seeded uniformly over up to `_GRAPH_PAGERANK_SEED_FILE_LIMIT = 64` query-
 relevant files (`repo_map.py:319`), teleporting back to those seeds rather than to a uniform distribution.
@@ -414,7 +414,7 @@ injection), the same class as the MCP-276 CVE. **List-argv subprocess calls (no 
 block shell injection; they do NOT block flag injection** — that needs an explicit `--` sentinel
 before user-controlled positionals. tg's rewrite/index-search command builders do this:
 `command.extend(["--", pattern, path])` (`mcp_server.py:1306`) and the parallel index-search builder,
-`_build_index_search_command` (`mcp_server.py:1310-1320`). If you add a new MCP tool that shells out
+`_build_index_search_command` (`mcp_server.py:1362-1372`). If you add a new MCP tool that shells out
 with user-controlled string values, this is the pattern to copy — and the gap to check for if you
 don't see it.
 
@@ -669,7 +669,7 @@ by 40-50 lines (the multi-language symbol-graph work — Go, Java, PHP, then C# 
 `repo_map.py` in that window, each insertion pushing everything below it down), one file by
 hundreds (`mcp_server.py` grew from ~4500 to ~7700 lines on unrelated feature work), one by over
 200 (`AGENTS.md`'s cited "Fail closed" bullet moved from line 220 to line 444). §3's own quick-
-reference-table citation for `_score_text_terms` (`repo_map.py:5819`) had silently disagreed with
+reference-table citation for `_score_text_terms` (`repo_map.py:7912`) had silently disagreed with
 its own body-text citation for the same symbol (`repo_map.py:7001`) since at least the prior pass —
 both are now the same, correct, current line. One correction was substantive, not just a line
 number: §2's AST-routing description was **backwards**. `AstBackend.is_available()` no longer gates

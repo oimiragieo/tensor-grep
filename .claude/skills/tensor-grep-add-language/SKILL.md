@@ -65,7 +65,7 @@ JavaScript, TypeScript, Java, C#, C++, C, Go, Rust, PHP.
 **not** the inline `_rust_*` / `_parser_for_source_suffix` machinery still visible in
 `repo_map.py` for Rust and Python — that style predates the registry (Stage 0's pure-parity
 refactor wrapped it, it did not replace it). Java is the one exception that used
-inline-in-`repo_map.py` (`_java_imports_and_symbols` etc., `repo_map.py:4544`+) and still
+inline-in-`repo_map.py` (`_java_imports_and_symbols` etc., `repo_map.py:4782`+) and still
 registers through `lang_registry` — both shapes are contract-consistent, but **the module
 shape is what Go, PHP, and C# (the three most recent additions) all converged on**, and is
 what `lang_go.py`'s own docstring recommends: it keeps `repo_map.py` from growing further.
@@ -107,12 +107,12 @@ version (`main.py`/`repo_map.py` churn every release):
 | # | Seam | Location | Feeds | Miss-it symptom |
 |---|---|---|---|---|
 | 1 | `lang_registry.register_language(LanguageSpec(...))` | `repo_map.py` (8 call sites, "near the bottom") | wiring the suffix at all | new suffix never resolves; silently excluded everywhere |
-| 2 | `_imports_and_symbols_for_path` | `repo_map.py:6244` | symbol/def extraction dispatch | new language absent from defs/symbols |
-| 3 | `_imports_with_lines_for_path` | `repo_map.py:6440` | `tg imports` (line-numbered import entries) | `tg imports` silently empty even though defs exist |
-| 4 | `build_symbol_source_from_map` | `repo_map.py:15815` | `tg source` | `tg source` returns nothing for a real symbol |
-| 5a | **`_target_language_for_path` — MOST-FORGOTTEN** | `repo_map.py:7383` | `tg agent` capsule's `primary_target_language` / confidence gate | a target file in the new language does not filter a mismatched-language validation suggestion |
-| 5b | **`_provider_language_for_path` — a SIBLING seam, easy to miss because 5a's own comments never mention it** | `repo_map.py:14711` | the LSP-provider language dispatch (sits just above `_path_from_lsp_file_uri`/`_lsp_symbol_kind_name` — a DIFFERENT purpose than 5a's symbol-graph capsule gate, but it must resolve the SAME `language_id` for any suffix a `LanguageSpec` registers) | `test_target_and_provider_language_agree_with_registry` (below) fails loudly for the new suffix; less obviously, an LSP-provider code path silently disagrees with the symbol graph about what language a file is |
-| 6 | `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` | `repo_map.py:16633` | gates whether `tg imports`/`tg importers` even attempts dependency resolution | file-dependency graph silently (but honestly, see B3) excludes the language |
+| 2 | `_imports_and_symbols_for_path` | `repo_map.py:6626` | symbol/def extraction dispatch | new language absent from defs/symbols |
+| 3 | `_imports_with_lines_for_path` | `repo_map.py:6831` | `tg imports` (line-numbered import entries) | `tg imports` silently empty even though defs exist |
+| 4 | `build_symbol_source_from_map` | `repo_map.py:16309` | `tg source` | `tg source` returns nothing for a real symbol |
+| 5a | **`_target_language_for_path` — MOST-FORGOTTEN** | `repo_map.py:7850` | `tg agent` capsule's `primary_target_language` / confidence gate | a target file in the new language does not filter a mismatched-language validation suggestion |
+| 5b | **`_provider_language_for_path` — a SIBLING seam, easy to miss because 5a's own comments never mention it** | `repo_map.py:15192` | the LSP-provider language dispatch (sits just above `_path_from_lsp_file_uri`/`_lsp_symbol_kind_name` — a DIFFERENT purpose than 5a's symbol-graph capsule gate, but it must resolve the SAME `language_id` for any suffix a `LanguageSpec` registers) | `test_target_and_provider_language_agree_with_registry` (below) fails loudly for the new suffix; less obviously, an LSP-provider code path silently disagrees with the symbol graph about what language a file is |
+| 6 | `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` | `repo_map.py:17131` | gates whether `tg imports`/`tg importers` even attempts dependency resolution | file-dependency graph silently (but honestly, see B3) excludes the language |
 
 **Seam 5b is easy to miss precisely because seam 5a's own code comments never mention it** —
 unlike every other seam in this table, nothing in `_target_language_for_path` points you at
@@ -154,13 +154,13 @@ pass: nothing in the code nudges you toward it the way seam 5a's comments do.
 
 **Worked example, UPDATED after PR #728 — seam 6 was closed for go/php/csharp, but only at
 the FOUNDATIONAL tier, not full resolution; re-read this before assuming "in the frozenset"
-means "fully working."** `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` (`repo_map.py:16633`) on
+means "fully working."** `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` (`repo_map.py:17131`) on
 `main` today is `frozenset({"python", "javascript", "typescript", "rust", "java", "go",
 "php", "csharp"})` — **all 8 registered languages are now members**, closing the exact gap
 this worked example used to describe (go/php/csharp were absent; as of #728, none are). PR
 #728 shipped three new per-language extractors — `lang_go.go_imports_with_lines`,
 `lang_php.php_imports_with_lines`, `lang_csharp.csharp_imports_with_lines` — dispatched from
-`_imports_with_lines_for_path` (`repo_map.py:6440`); each walks the same node kind its
+`_imports_with_lines_for_path` (`repo_map.py:6831`); each walks the same node kind its
 `*_imports_and_symbols` sibling already walks (`import_spec` / `namespace_use_clause` /
 `using_directive` respectively) and emits one `{"module": ..., "line": ...}` row per
 statement. `tg imports` on a `.go`/`.php`/`.cs` file no longer reports `result_incomplete`
@@ -168,7 +168,7 @@ with an empty list the way it did before this PR — it returns real, line-numbe
 
 **But resolution — WHICH file/module each row's `module` string actually points to — is
 still deferred for all three, and it is honestly deferred, never silently faked.**
-`_resolve_raw_import_entry` (`repo_map.py:16654`) gained an
+`_resolve_raw_import_entry` (`repo_map.py:17160`) gained an
 `elif language_id in ("go", "php", "csharp", "c", "cpp")` branch (re-grep `elif language_id in (`
 in `repo_map.py` -- it sits just below `_resolve_raw_import_entry`; the old `:16723-16735` pin
 drifted AND predated c/cpp being folded into the same branch, mirroring
@@ -183,14 +183,14 @@ existing code; PHP has no PSR-4/`composer.json` autoload-map reader; C# has no `
 assembly-reference map. None of that resolver machinery is built by #728 — see
 `docs/BACKLOG.md`'s `#728` entry for the exact per-language scope still open. The fail-closed
 contract (B3) still fires exactly as before for any language genuinely outside the 8-member
-set: `build_file_imports` (`repo_map.py:16760`) sets `result_incomplete=True` with
+set: `build_file_imports` (`repo_map.py:17271`) sets `result_incomplete=True` with
 `incomplete_reason=f"'{language_id}' has no import-resolution support in \`tg imports\` yet"`
 for any registered-but-unsupported language, and `_imports_with_lines_for_path`'s own
 docstring (`repo_map.py:6440`) names Kotlin as its worked example of one — go/php/csharp just
 are not examples of it anymore.
 
 **A second, separate gate stays narrower still, and closing seam 6 does not close it too.**
-`_confirm_import_edges` (`repo_map.py:16839`, the `tg importers` reverse-confirm step that
+`_confirm_import_edges` (`repo_map.py:17350`, the `tg importers` reverse-confirm step that
 turns a prefiltered "maybe imports it" into a confirmed edge) has its own independent
 language allow-list — `if language_id not in ("javascript", "typescript", "rust", "python"):
 return []` — which still excludes java, go, php, AND csharp alike. Membership in

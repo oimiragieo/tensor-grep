@@ -183,7 +183,7 @@ class as the hang above (an unbounded directory read), and normally bounds clean
 (truncates at N files, stamps `truncation_cause="deadline"`,
 `src/tensor_grep/cli/main.py:8404`/`:8420`). On a PATHOLOGICAL **workspace-union** tree — many
 unrelated repos flattened under one huge root, not a single normal project — it can still blow its
-deadline: the shared walker `_iter_repo_files` (`src/tensor_grep/cli/repo_map.py:987`) reads an
+deadline: the shared walker `_iter_repo_files` (`src/tensor_grep/cli/repo_map.py:1143`) reads an
 entire huge directory's entries in one non-lazy `list(os.scandir(normalized_root))` call
 (`src/tensor_grep/cli/repo_map.py:1009`) before its own per-file deadline check gets a chance to
 run, so one abnormally large subdirectory can exceed the deadline before the mid-walk check fires
@@ -283,7 +283,7 @@ missing-flag bug compounded, because the bridge call itself never got exercised
 (`AGENTS.md`, "Local Dev Gotchas").
 
 **Discriminating experiment:** does the test import/patch `tensor_grep.rust_core` (or its Python
-wrapper `RustCoreBackend`, `src/tensor_grep/backends/rust_backend.py:9-14`,
+wrapper `RustCoreBackend`, `src/tensor_grep/backends/rust_backend.py:28-33`,
 `try: from tensor_grep.rust_core import RustBackend as NativeRustBackend`), or does it patch
 something *around* that boundary? If a test replaces `bootstrap.run_subprocess` or stubs
 `RustCoreBackend.inner`, it is validating call shape, not that the real extension does the right
@@ -335,7 +335,7 @@ If a fresh install on a new Python resolves to an old `tg --version`, do not ass
 
 The agent capsule's **primary-target candidate selection** (`score_term_overlap`,
 `src/tensor_grep/core/retrieval_lexical.py:15`, called from `repo_map.py:7737` inside
-`_score_file_source_terms`, one of the family of scoring helpers around `repo_map.py:7698`
+`_score_file_source_terms`, one of the family of scoring helpers around `repo_map.py:8211`
 (`_score_symbol`) / `:7725` (`_score_import_entry`) / `:7732` (`_score_file_source_terms`) that feed
 the capsule's `primary_target` selection) is a **flat, no-IDF** set-membership scorer plus a hard top-N candidate
 cap — an acknowledged, not-yet-fixed weak point. A small, unrelated corpus change can flip which
@@ -460,7 +460,7 @@ the two versions being compared (`v1.17.31`→`HEAD`), and a live `cProfile` cap
 regression. Don't design a fix for a slowdown you have not reproduced under a profiler.
 
 **Incident 3 — a warm end-to-end dogfood run hid a real ~54% win (commit `9a2a01c`, PR #719,
-v1.93.9):** `_python_imports_and_symbols` (`src/tensor_grep/cli/repo_map.py:1921`) was merged from
+v1.93.9):** `_python_imports_and_symbols` (`src/tensor_grep/cli/repo_map.py:2126`) was merged from
 three separate `ast.walk(tree)` passes (imports, symbols, dynamic-imports) into one
 dispatch-by-node-type pass — the same general family of redundant-work-elimination fix as the
 "Technique" below (there it's redundant *calls*; here it's redundant *tree walks* over the same

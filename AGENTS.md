@@ -860,6 +860,24 @@ intersection needs its own invariant: for #272 a registry-parity test asserting 
 `--x` registered as value-taking; for #749 a CI-coverage invariant. Prefer an invariant over an enumeration
 every time — an enumeration is correct when written and silently incomplete on the next addition.
 
+**Second instance of the same law: skill-library `file:line` anchors (2026-07-27, #334).** The skills cite
+source anchors so a claim can be jumped to. `repo_map.py` is past 19,000 lines and `main.py` past 17,000, so
+those anchors rot continuously, and **five** consecutive maintenance passes re-stamped them by hand — each
+shipping numbers that were already wrong, including the 2026-07-27 audit whose own "corrections" had been
+computed against a worktree 28 commits behind `origin/main`. Same tell, same fix: `.claude/skill_anchor_audit.py`
+resolves every cited path, flags any line past EOF, and — for a citation naming a backticked symbol — reports
+where that symbol is actually **defined**. It found **92** stale anchors against the ~15 the human audit had;
+88 were unambiguous enough to fix mechanically.
+
+Two lessons from building it, both from the control arm rather than from review:
+- Its symbol tier was **structurally incapable of firing** on the real corpus at first, because a citation
+  sits inside its own code span so the preceding text ends with a backtick that the pattern rejected. It
+  looked healthy and reported nothing. **Prove a new tier can fire before believing a clean run.**
+- Matching a symbol *anywhere* in the file made `tg`, `find`, `list` and `None` "move" constantly — 114
+  findings, mostly noise. Anchoring to **definition sites** cut it to 92 real ones. A checker that cries wolf
+  gets switched off, and a switched-off gate is worse than none, which is also why this is a maintenance
+  command rather than a pytest: pinning these numbers in CI would red every PR that adds a line to `main.py`.
+
 ## Backend Fail-Closed Contract
 
 Every `ComputeBackend` MUST raise `BackendExecutionError` on a real failure — never return a clean empty / `0-match` `SearchResult` (see `backends/base.py`), and never silently swap to a different engine that cannot preserve the requested semantics. The search loop catches `BackendExecutionError` to fall back **visibly** (e.g. to CPU); a swallowed failure or a silent engine swap reaches the user (or a coding agent) as a trustworthy "no matches" — the one failure a context tool cannot afford.

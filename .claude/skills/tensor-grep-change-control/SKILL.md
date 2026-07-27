@@ -202,7 +202,7 @@ language works for some commands and quietly does nothing for others):
 (go/java/php/csharp) sets `provenance_when_missing="grammar-missing"` in its `register_language(...)`
 call (e.g. `repo_map.py:6090` for go) — never `"regex-heuristic"` — so a file whose tree-sitter grammar
 package isn't installed surfaces as an honest `resolution_gaps` entry via
-`_language_coverage_gaps_for_universe` (`repo_map.py:7982`, the fail-closed branch at `:8019`) instead
+`_language_coverage_gaps_for_universe` (`repo_map.py:8461`, the fail-closed branch at `:8019`) instead
 of a silent empty result. This is Part 4's Backend Fail-Closed Contract, applied inside the language
 registry (see Part 4's own worked example below).
 
@@ -230,7 +230,7 @@ moment a rebase silently drops a language (see Part 7's sequential-drain corolla
 symbol registry (Part 3) applies this identically. `LanguageSpec.provenance_when_missing` must be
 `"grammar-missing"` (never `"regex-heuristic"`) for any language with no text-heuristic fallback —
 go/java/php/csharp all set it this way in their `register_language(...)` call (e.g. `repo_map.py:6090`)
-— so `_language_coverage_gaps_for_universe` (`repo_map.py:7982`) can tell "grammar not installed, fail
+— so `_language_coverage_gaps_for_universe` (`repo_map.py:8461`) can tell "grammar not installed, fail
 closed" apart from "language has a regex fallback, degrade quietly" at its branch on line `:8019`. Get
 this backwards (label a no-fallback language `"regex-heuristic"`) and a grammar-missing file would read
 as a clean, silent "zero symbols found" instead of an honest gap — precisely the failure class this Part
