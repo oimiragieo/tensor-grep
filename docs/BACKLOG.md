@@ -3,7 +3,51 @@
 > **Canonical prioritized work list.** Kept in sync with the CLI task store (`TaskUpdate`) and
 > GitHub (`gh pr list` is the source of truth for PRs). **CEO status** = summarize SHIPPING + P0/P1.
 > Update whenever a PR opens/merges or the queue changes. Task-store IDs (`#NNN`) cross-referenced.
-> Last refreshed 2026-07-27 (post-**v1.101.3**) — the **incompleteness-envelope** wave, closing
+> Last refreshed 2026-07-27b (post-**v1.101.4**) — **#276 IS CLOSED, AND THE CLASS BEHIND IT IS NOW
+> THE CAMPAIGN.** The envelope wave below finished; an adversarially-verified census (4 read-only
+> lenses, 22 agents, 14 findings confirmed / 3 refuted) then re-derived the whole surface and found
+> the envelope was the *narrow* half of the problem.
+> **What closed.** All ten tasks of the remaining-slices plan shipped (**#832** closes that plan as
+> a campaign record, keeping its three RETIRED ideas — the `HashSet<PathBuf>` counter, the
+> `incomplete_paths_count` rename, and the `SearchStats::is_empty()` "live bug" — with the evidence
+> that killed each). **#834** retires the CEO-facing "tg is BEHIND on `--json`" verdict, which was
+> false: measured on the shipped v1.101.4 against an ACL-denied directory (denial asserted to bite,
+> readable sibling asserted still listable), `rg --json` exits 2 and `tg --json` exits 2 *carrying*
+> `result_incomplete` / `incomplete_reason_class: "unreadable_path"` / `incomplete_paths_count` —
+> exit-code parity, plus an in-band cause rg does not have. Scope is stated in the row itself: one
+> shape, not a benchmark lead; #72 stays CEO-gated.
+> **What the census opened.** DISCLOSURE POSITION was fixed for the symbol commands, `blast-radius`
+> and `--mermaid` (**#822**, which also re-labelled a truncation wearing the advisory `note:` prefix
+> and stopped it advising `--max-callers`/`--max-files` for a `--max-repo-files` cap — wrong-knob
+> advice is the #762 failure). But position is the MILD half: on roughly a dozen surfaces the text
+> path discloses **nothing at all**. `code-map`, `route-test`, `session open` and `agent` trail;
+> `map`, `context`, `context-render`, `edit-plan`, `blast-radius-render` and `blast-radius-plan`
+> exit `2` while saying nothing. Worst of the set and now fixed in **#831**: `tg scan`, a SECURITY
+> ruleset, printed `Scan completed. total_matches=N` and exit `0` over files it could not open —
+> dogfooded on v1.101.4, where `--json` reported `partial: true` with a 2-path `unreadable_paths`
+> sample while stdout said nothing. Fixing it surfaced a second defect only dogfooding could find:
+> the disclosure claimed `"2 file(s) could not be read"` for ONE blocked file, because two backends
+> each attempt it and the counter counts EVENTS.
+> **Contract hygiene from the same census.** **#830**: `CONTRACTS.md` still excluded the
+> multi-pattern (task 317) and `gpu_native` (task 316) routes from the `incomplete_reason_class`
+> allow-list months after both landed — and that exclusion was never actionable, since both
+> envelopes stamp `routing_backend` from the same `decision.routing_backend()`, so the excluded
+> route reports the identical `"NativeCpuBackend"` string as the included one. *An exclusion must be
+> expressible in a field the consumer receives.* The same PR found two of three line-number anchors
+> rotted onto unrelated code while the pinning test stayed green (it asserted the doc *contained*
+> the strings, never that they pointed anywhere); anchors are now SYMBOLS and the test resolves each
+> in the Rust. **#833**: `budget_remediable` had been on the MCP wire since #826 at contract `1.6.0`
+> — `tg_repo_map` returns `build_repo_map(...)` VERBATIM, so a CLI-shaped edit in a file that never
+> mentions MCP was a wire change. **A pass-through handler makes the producer it wraps an MCP wire
+> surface.** Bumped to `1.7.0` with a ratchet pinning the declared wire key set.
+> **NEXT CAMPAIGN (tracked, not started):** model the text-disclosure class — one shared helper plus
+> a ratchet enumerating every command whose payload can go incomplete — rather than enumerating a
+> dozen PRs. Also open: the `--deadline` arm reaches exit `2` with ZERO disclosure on every branch
+> (`_scan_truncation_warning` reads only `scan_limit`/`caller_scan_limit`/`output_limit` while
+> `_scan_incomplete` also fires on `partial`), and a `%%` mermaid comment is invisible in a RENDERED
+> diagram, so that disclosure serves the source-reading audience only.
+>
+> Prior refresh 2026-07-27 (post-**v1.101.3**) — the **incompleteness-envelope** wave, closing
 > the `--json`/`--ndjson` gap that the trustworthy-tg thread below had left as its load-bearing
 > hole. The rule it settles: a machine consumer must be able to tell *truncated* from *absent*
 > without reading stderr, and the exit code must agree with the envelope.
