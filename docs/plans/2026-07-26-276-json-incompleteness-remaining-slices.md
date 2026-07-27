@@ -111,12 +111,22 @@ Its `Err` arm holds an `ignore::Error`, so `is_io()` IS valid here — but that 
 
 ### Task 5: the SECOND envelope, in `main.rs` (task 317, expanded)
 
-**The first draft named the wrong file.** `collect_native_multi_pattern_matches` (`main.rs:8180`) returns `Vec<SearchMatchJson>` and discards stats — `let stats = execute_native_search(...)` at `:8217` consumes only `stats.matches` at `:8219`. There is nothing to thread at `native_search.rs:889-963`.
+**The first draft named the wrong file.** `collect_native_multi_pattern_matches` (`main.rs:8195`) returns `Vec<SearchMatchJson>` and discards stats — `let stats = execute_native_search(...)` at `:8231` consumes only `stats.matches` at `:8233`. There is nothing to thread at `native_search.rs:889-963`.
 
-**A whole second envelope is uncovered.** `SearchResultJson` is built at `main.rs:12987-13005` and printed at `:13007` — structurally parallel to the native envelope but carrying **none** of the three fields. Six live call sites: `emit_json_search_results` (`:12968`) from `:8256`, `:8952`, `:11214`; `emit_ndjson_search_results` (`:13314`) from `:8264`, `:12462`, `:12797`.
+**A whole second envelope is uncovered.** `SearchResultJson` is built at `main.rs:13002` and printed just below — structurally parallel to the native envelope but carrying **none** of the three fields.
 
-- [ ] **Step 1:** Thread stats through `collect_native_multi_pattern_matches` → `emit_multi_pattern_native_results` (`:8249`) → `emit_json_search_results`.
-- [ ] **Step 2:** Cover the warm-index (`:8952`), AST (`:11214`) and GPU (`:12462`, `:12797`) routes, or record explicitly which cannot go incomplete and why.
+> **ANCHORS RE-DERIVED against `origin/main` @ d3bcb1b (2026-07-26).** Every line number in the first draft was low by exactly **15** — one commit inserted 15 lines above them all. Re-derive by SYMBOL before using any of these; that uniform drift is why the numbers below are given with their symbol.
+
+**SEVEN live call sites, not six — the first draft missed one, and the miss is instructive.** The warm-index route has BOTH a `--json` and an `--ndjson` exit, back to back behind `if args.json` / `if args.ndjson`; the draft enumerated the json one and not its ndjson twin. That is the exact class this whole task exists to close: an emitter nobody listed silently omits the marker.
+
+| emitter | defined | called from |
+|---|---|---|
+| `emit_json_search_results` | `:12983` | `:8271` (multi-pattern), `:8967` (warm-index), `:11229` (AST) |
+| `emit_ndjson_search_results` | `:13329` | `:8279` (multi-pattern), **`:8977` (warm-index - MISSED in draft)**, `:12477` (GPU), `:12812` (GPU) |
+
+
+- [ ] **Step 1:** Thread stats through `collect_native_multi_pattern_matches` → `emit_multi_pattern_native_results` (`:8265`) → `emit_json_search_results`.
+- [ ] **Step 2:** Cover the warm-index (`:8967` json AND `:8977` ndjson), AST (`:11229`) and GPU (`:12477`, `:12812`) routes, or record explicitly which cannot go incomplete and why.
 - [ ] **Step 3:** Byte-identity control on a clean tree.
 
 ---
