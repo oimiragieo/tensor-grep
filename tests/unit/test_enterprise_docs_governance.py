@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 README_PATH = Path("README.md")
@@ -183,6 +184,13 @@ REPO_MAP_PY = Path("src/tensor_grep/cli/repo_map.py")
 # and must not be searched for there -- quoting a retraction is the opposite of asserting it.
 _RETRACTION_MARKER = "PREVIOUS TEXT, recorded because deleting a retracted claim silently"
 
+# Same idea one level down: the record that documents an anchor as ROTTED has to quote the rotted
+# anchor, so the "don't cite this again" check must excise the record before searching. Delimited
+# on both ends because, unlike the retraction bullet above, this one sits mid-paragraph and has no
+# structural terminator to key on.
+_ANCHOR_ROT_MARKER = "ANCHOR-ROT RECORD"
+_ANCHOR_ROT_END = "(END ANCHOR-ROT RECORD)"
+
 
 def test_contracts_native_json_incompleteness_claims_match_the_rust_source() -> None:
     """#318: CONTRACTS.md described the native `--json` route as silently partial. It is not.
@@ -219,8 +227,48 @@ def test_contracts_native_json_incompleteness_claims_match_the_rust_source() -> 
 
     # THE CLAIM -- the doc must state the current behaviour, with the citations a reader needs
     # to re-verify it rather than trust this prose.
-    assert "`native_search.rs:2489-2491`" in contracts
-    assert "`main.rs:8388`" in contracts
+    #
+    # These were `native_search.rs:2489-2491` and `main.rs:8388` until 2026-07-27, asserted as
+    # STRINGS. That form cannot fail for the reason it exists: it proves the doc still SAYS
+    # ":8388", never that line 8388 is the exit gate. Both had in fact rotted onto unrelated code
+    # (a `path:line:` formatter and a BrokenPipe doc comment) while this test stayed green. Now
+    # the doc cites SYMBOLS and the test resolves each one in the Rust, so a rename or deletion
+    # fails here instead of decaying silently.
+    # Matched with a trailing \b, NOT as a bare substring. The first cut used `symbol in source`
+    # and a control arm that renamed `emit_json_matches` -> `emit_json_matches_RENAMED` still
+    # PASSED, because the old name is a prefix of the new one. A premise check that survives the
+    # deletion it is meant to catch is the same arm twice.
+    for symbol, source, label in (
+        ("struct SearchStats", native_rs, "the walk-error counter"),
+        ("struct NativeJsonOutput", native_rs, "the --json envelope"),
+        ("fn emit_json_matches", native_rs, "the envelope emitter"),
+        ("fn run_native_search_with_optional_rg_fallback", main_rs, "the exit-2 gate"),
+    ):
+        bare_name = symbol.split(maxsplit=1)[1]
+        assert re.search(rf"{re.escape(symbol)}\b", source), (
+            f"CONTRACTS.md cites `{symbol}` as {label} and it no longer exists in the Rust "
+            "under that exact name; re-derive the anchor rather than deleting the citation"
+        )
+        assert re.search(rf"{re.escape(bare_name)}\b", contracts), (
+            f"CONTRACTS.md no longer cites `{symbol}` ({label}); the anchors are deliberately "
+            "SYMBOLS -- reverting them to line numbers reintroduces the silent-rot failure"
+        )
+
+    # And the rotted line-number citations must not come back as LIVE citations. Same discipline
+    # as _RETRACTION_MARKER above, and this test tripped over it on its first run: the record that
+    # documents an anchor as rotted necessarily quotes the anchor, and quoting is the opposite of
+    # asserting. The record is delimited in the doc so it can be excised here.
+    assert _ANCHOR_ROT_MARKER in contracts, (
+        "the anchor-rot record was deleted; a silently removed finding is one the next reader "
+        "re-derives from scratch"
+    )
+    before, _, after = contracts.partition(_ANCHOR_ROT_MARKER)
+    outside_the_anchor_record = before + after.partition(_ANCHOR_ROT_END)[2]
+    for rotted in ("native_search.rs:2489", "main.rs:8388"):
+        assert rotted not in outside_the_anchor_record, (
+            f"CONTRACTS.md re-cites `{rotted}` as a live anchor; it pointed at unrelated code "
+            "when it was removed -- cite the enclosing symbol instead"
+        )
 
     # THE RETRACTION -- the stale phrases may appear ONLY inside the bullet that records them as
     # withdrawn. Anywhere else they are being asserted again.
