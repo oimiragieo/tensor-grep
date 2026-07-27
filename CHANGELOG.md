@@ -1,6 +1,656 @@
 # CHANGELOG
 
 
+## v1.99.0 (2026-07-27)
+
+### Bug Fixes
+
+- **benchmarks**: Three-state exit codes + one canonical marker set (#276 slice C0)
+  ([#793](https://github.com/oimiragieo/tensor-grep/pull/793),
+  [`298ffc2`](https://github.com/oimiragieo/tensor-grep/commit/298ffc26fb0981b88f05c634fc9b6068d48c1f98))
+
+* fix(benchmarks): three-state exit codes + one canonical marker set (#276 slice C0)
+
+Two more of the six exit-code consumers the #276 adversarial review identified, plus the thing that
+  stops this becoming a maintenance trap.
+
+WHY A MODULE, NOT A THIRD COPY. This is the second and third consumer to need the same vocabulary; a
+  fourth (mcp_server) and fifth (the e2e assertion) are queued in #313. Three private tuples would
+  drift the first time a cause is added -- the repo's own "fix the class, not the instance" rule.
+  All three entry points already import from tensor_grep.cli, so the canonical home is
+  src/tensor_grep/cli/incompleteness.py and there is exactly one definition.
+
+THE MARKER SET IS THREE, NOT TWO. The JSON keys alone are not enough: an independent audit of PR
+  #792 showed a JSON-key-only check has a treatment arm that can never fire for a caller which only
+  exercises plain-text routes. So the set also carries the sentinel the plain-text route really
+  emits -- `keeping partial results` (ripgrep_backend.py:143, :324, :443, timeout variant :187).
+
+STILL AN ALLOW-LIST. Exit 2 is overloaded -- it is also what a regex syntax error returns, exactly
+  as in ripgrep ("true for both catastrophic errors ... and soft errors"). A bare `== 2` tolerance
+  would swallow those and make both harnesses checks that cannot fail.
+
+Note run_gpu_native_benchmarks.py ALREADY special-cased exit 2 for classified causes (:1209, :3212)
+  -- the pattern existed, it simply never reached the search timing path at :371. This applies it
+  there.
+
+Bidirectional, red arm PROVED: weakening disclosed_incomplete to `return True` fails BOTH control
+  tests (the undisclosed-failure arm and the names-a-path-but-claims-nothing arm); restored, 5/5
+  pass. ruff format --preview + check clean.
+
+* fix(mcp,e2e): two more C0 consumers (#276) -- 5 of 6 now three-state aware
+
+mcp_server.py:1922 was the worst of the six: it maps any non-zero exit to `invalid_input`, so once
+  slice C lands an honest partial would become a TOTAL loss of results for an MCP client on a run
+  that actually found matches.
+
+tests/e2e/test_native_json_byte_fidelity.py:100 asserts returncode == 0 and is CI-gated via
+  TG_REQUIRE_RG_PARITY=1, so a stray unreadable path would red the gate on an otherwise byte-correct
+  payload.
+
+The e2e helper is duplicated from tensor_grep.cli.incompleteness DELIBERATELY, and the comment says
+  why: this is a byte-fidelity test of the SHIPPED binary, so importing the module under test would
+  let a bug in that module mask itself here. That is the one place the "one canonical definition"
+  rule should NOT apply.
+
+REMAINING, and the blocker is real: crossover.rs:354 cannot be fixed the same way. It null-routes
+  both streams (`Stdio::null()`), so it CANNOT see a marker without switching `.status()` ->
+  `.output()` -- which changes what a benchmark measures, on Rust that cannot be compiled on this
+  box. That needs a design call plus CI as the only oracle; tracked in #313 with this note.
+
+* docs(crossover): record why the self-spawn site is safe -- C0 is 6/6
+
+The audit ranked crossover.rs:354 as its FIRST blocking finding: tg spawns ITSELF here via
+  env::current_exe() and bail!s on !status.success(), so an exit-2 child could kill `tg calibrate`
+  with a misattributed cause. The general reasoning is sound. The severity was not, and I checked
+  before accepting it.
+
+`corpus_dir` is never a user tree. It comes from ensure_cached_corpus, which create_dir_all's a
+  cache directory and writes its own chunk-{index}.log files (:368-406). tg owns every byte it
+  searches here, so a permission-denied subtree is unreachable without something external breaking
+  tg's own cache -- and in that case a hard failure is the CORRECT outcome, not a partial to
+  tolerate.
+
+Making it three-state aware would also cost something real: both streams are Stdio::null(), so
+  reading a marker needs .status() -> .output(), which adds pipe-drain work inside the very loop
+  whose elapsed time IS the measurement. Paying that for an unreachable case is a worse trade than
+  the strictness.
+
+So this closes C0 at 6/6 rather than 5/6-plus-a-blocker. The comment names the condition that would
+  REOPEN it -- calibration ever searching a caller-supplied path -- so the next reader checks the
+  premise instead of the exit code.
+
+I had called this "blocked, needs a design call" one turn earlier. That was wrong for the same
+  reason the audit's ranking was: neither of us had looked at where corpus_dir comes from.
+
+rustfmt --check: exit 0 (already formatted). Rust is CI-compiled per CPU-SAFE.
+
+- **checkpoint**: Disclose the post-checkpoint edits undo discarded (#308)
+  ([#799](https://github.com/oimiragieo/tensor-grep/pull/799),
+  [`d3bcb1b`](https://github.com/oimiragieo/tensor-grep/commit/d3bcb1b460f9a2155f4694ae20d1b6e31bc2a952))
+
+* fix(checkpoint): disclose the post-checkpoint edits undo discarded (#308)
+
+`checkpoint_store` stores NO content hashes -- verified by grep across the module; metadata is only
+  `entries: {rel_path: exists_bool}` -- and `CheckpointUndoResult` carried
+  `restored_files`/`removed_paths` counts with no paths. So `undo_checkpoint` reverted a file
+  another agent had edited since the checkpoint and reported exactly the same plain success as a
+  no-op revert. Same silent-loss family as #297, which fixed the destroys-uncaptured-content half;
+  this is the disclosure half.
+
+DISCLOSURE, NEVER A REFUSAL. Discarding post-checkpoint work is what undo is FOR. What was missing
+  is the answer to "what did I just lose?", which the result could not express at all.
+
+WHY mtime AND NOT CONTENT. "Differs from the snapshot" is the NORMAL case for undo -- that is why
+  you are undoing -- so flagging every difference is noise, not signal. "Changed since the
+  checkpoint was taken" is the thing a caller cannot otherwise see, and it is exactly the
+  concurrent-agent hazard.
+
+NO FORMAT CHANGE, NO MIGRATION: `created_at` is already written into the metadata file
+  (checkpoint_store.py:690, from `datetime.now(UTC).isoformat()` at :855). This reads what already
+  ships.
+
+SAMPLED IN PRE-FLIGHT, while still read-only. Sampling after the commit phase would read the mtimes
+  undo itself just wrote -- a field that cannot fire. There is a test pinning exactly that ordering
+  bug.
+
+FAILS OPEN, narrowly and deliberately: an unparseable timestamp or unstattable file yields NO claim
+  rather than a false one. This field gates no behaviour, so a missing entry costs the caller
+  information while a fabricated one would say a file was clobbered when it was not. That asymmetry
+  is the opposite of the fail-CLOSED rule for completeness fields, and the docstring says why.
+
+ADDITIVE-CONDITIONAL: the CLI strips `diverged_paths` when empty, so an ordinary undo payload is
+  byte-identical to before -- an always-present key teaches readers to skip it, the same reasoning
+  that keeps `unreadable_paths`/`deadline_limit` absent when they have nothing to say. Non-JSON mode
+  prints a bounded stderr line.
+
+VERIFICATION - 4 unit tests, each paired with its control (untouched file must NOT be named; a
+  no-edit undo must name nothing; an unparseable timestamp must not fabricate -- with a
+  real-timestamp control so those two cannot pass by the helper never returning). - 3 mutations, ALL
+  caught: detector always-empty; detector names every file; pre-flight sample removed. - 87 passed
+  across the 4 checkpoint suites + this file. - Dogfooded through the REAL CLI with the loaded
+  module's `__file__` asserted: edited file -> `diverged_paths: ['a.py']`, content reverted; control
+  run -> key ABSENT.
+
+Closes #308
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* fix(checkpoint): disclose paths whose divergence could not be decided (#308 CI fix)
+
+CI's silent-loss census ratchet caught my own first cut: checkpoint_store.py went 6 -> 7 because
+  `_paths_modified_since_checkpoint`'s OSError arm was a bare `continue`. The ratchet was right. A
+  file whose mtime cannot be read is a file this function CANNOT say anything about, and skipping it
+  produced output identical to "checked it, it was unchanged" -- the exact identity #292 exists to
+  remove, introduced by a #292 fix.
+
+The helper now returns `(diverged, unchecked)`; undo carries `divergence_unchecked_paths` and the
+  CLI prints a SEPARATE line for it, because "could not decide" is not "decided it was clean" and
+  collapsing them recreates the ambiguity.
+
+The count still rises to 7, and that is a DETECTOR LIMITATION recorded as such rather than a loss:
+  `_is_silent` recognises accumulate-then-RAISE as disclosure (that is the #297 false positive it
+  already excuses) but has no notion of accumulate-then-RETURN-and-emit. Raising the ceiling with a
+  written reason is the deliberate choice over widening `_is_silent` -- teaching it that "appends to
+  something the function returns" is disclosure would also excuse every handler appending to a list
+  nobody reads, which is precisely the shape it exists to catch. Modelling return-and-disclose
+  properly is filed separately rather than done by loosening the predicate.
+
+Also fixed: the `--json` emitter now strips BOTH conditional fields when empty, so an ordinary undo
+  payload stays byte-identical.
+
+New test asserts the unreadable path is REPORTED as unchecked and NOT claimed as diverged -- both
+  halves, since a probe that lumped it into `diverged` would be a false accusation and one that
+  dropped it is the silence we just removed.
+
+91 passed across the checkpoint suites + census ratchet.
+
+* fix(lint): remove unused noqa that reddened Formatting & Linting
+
+RUF100 on `# noqa: ANN202` at test_undo_divergence_disclosure.py:147. ANN202 is not in this repo's
+  enabled rule set, so the suppression suppressed nothing and ruff flags the directive itself. My
+  own line, added with the #308 tests.
+
+Removing the trailing comment shortened the line enough that `ruff format --preview` then wanted a
+  reflow -- ran it, because the CI gate is BOTH `ruff check` and `ruff format --check` and a green
+  check alone is not green.
+
+Verified in the branch worktree (not the main checkout, which does not have this file): ruff check +
+  ruff format --check both clean, 5 + census tests pass.
+
+* fix(census): model accumulate-then-RETURN, so the ratchet can discriminate at #308's site
+
+Closes #807. The census recognised accumulate-then-RAISE as disclosure but not
+  accumulate-then-RETURN, so `_paths_modified_since_checkpoint`'s OSError arm -- which appends to
+  `unchecked` and RETURNS it, surfacing as `divergence_unchecked_paths` -- counted as silent loss.
+  That is worse than a false positive: the count was IDENTICAL with the disclosure and with a bare
+  `continue`, so the ratchet could not discriminate at that line and the ceiling of 7 protected
+  nothing there.
+
+Proved before writing the fix, and again after: ARM 1 checkpoint_store 7 -> 6, ceiling lowered to 6.
+  ARM 2 mutate `unchecked.append(rel_path)` back to `continue` -> ratchet goes RED. Arm 2 is
+  load-bearing; without it the fix would be unverified in exactly the way #807 reports.
+
+Kept NARROW on purpose. `_returned_names` mirrors `_raised_names`: the accumulator must reach a
+  value the function actually hands back. "Appends to any list" would excuse every handler stuffing
+  a collection nobody reads -- which is the loss this census exists to find, and is why the ceiling
+  was raised rather than the detector loosened at the time.
+
+Re-baselined MECHANICALLY across all of src/tensor_grep (the header forbids recollection): exactly
+  two sites reclassify -- checkpoint_store 7->6 and semantic_index 1->0. The zeroed file is removed
+  rather than listed, per the convention docs_coverage/inventory set. Total 40 -> 39. A blanket
+  loosening would have moved far more; it did not, which is the evidence that this models one shape
+  rather than relaxing the gate.
+
+METHOD NOTE for the next reader: my first probe of this reported "the ratchet is slack" and was
+  WRONG -- the replacement string never matched, nothing was mutated, and GREEN meant nothing. Only
+  a `mutation applied:` premise print caught it. Assert the mutation landed before trusting either
+  arm.
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+- **checkpoint**: Report a corrupt checkpoint as corrupt, not as missing (#298)
+  ([#785](https://github.com/oimiragieo/tensor-grep/pull/785),
+  [`be75331`](https://github.com/oimiragieo/tensor-grep/commit/be7533137aaf25815db0a6cb3cff0e670a78f393))
+
+`tg checkpoint undo --json` reported EVERY failure as `checkpoint_not_found`, including
+  CheckpointCorruptError -- where the record was resolved perfectly well and its snapshot blobs are
+  missing or unreadable. That sends the reader hunting a checkpoint sitting right there and hides
+  the only fact that matters: the snapshot cannot restore the tree.
+
+`tests/unit/test_checkpoint_atomic_undo.py` already described this mislabel as the SYMPTOM of the
+  old pre-H2 buggy shape, so the code was contradicting its own test's prose.
+
+New `error: "checkpoint_corrupt"`. Additive: a consumer that only knows `checkpoint_not_found` still
+  sees `ok: false` plus a human-readable `detail`, and the new value appears exactly where the old
+  one was wrong. Both still exit 1. Documented in CONTRACTS.md section 4 -- a new JSON error code is
+  a contract change, not just code.
+
+Verified bidirectionally: with `error_code` reverted to the hardcoded string the new test fails on
+  `- checkpoint_corrupt / + checkpoint_not_found`. The CONTROL arm asserts a genuinely ABSENT
+  checkpoint still reports `checkpoint_not_found`, so the fix cannot have simply renamed every
+  failure -- which is the way this particular change could have been wrong.
+
+11 pass across the checkpoint suites, ruff clean.
+
+NOTE for the merge: this touches the same three handler lines as PR #780 (#297), which introduces
+  the `error_code` variable for its own new `CheckpointUndoUnsafeError`. Whichever lands second
+  takes a trivial conflict -- both are adding one branch to the same ladder. Kept separate
+  deliberately: a JSON-contract change should not ride along inside a data-loss fix.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+- **session**: Bound the session rebuild with a deadline, on BOTH refresh branches (#304)
+  ([#800](https://github.com/oimiragieo/tensor-grep/pull/800),
+  [`221d4a3`](https://github.com/oimiragieo/tensor-grep/commit/221d4a3a2aebf32c4870b7c837d0b9c81a9642b3))
+
+`session_store`'s THREE `build_repo_map` calls (:736 open_session, :842/:846 refresh_session) were
+  the only ones in the codebase with no time bound, while every symbol command already had one. A
+  daemon serving a stale session rebuilt the whole map unbounded, the client gave up at its own 60s,
+  and the cold path then anchored a FRESH budget -- so a single stated deadline could be exceeded
+  roughly twofold, with the truncation disclosed nowhere.
+
+THE TRAP, and why this is two parts rather than one: `build_repo_map_incremental` had NO
+  `deadline_monotonic` parameter at all while `build_repo_map` did. Threading a deadline through the
+  session layer alone would have bounded only the FULL-rebuild branch and left the INCREMENTAL one
+  -- the branch a refresh takes whenever a changeset exists, i.e. the common case for a warm session
+  -- unbounded, while the change looked complete and the tests looked green.
+
+A. build_repo_map_incremental gains `deadline_monotonic` and bounds its parse loop exactly as
+  build_repo_map bounds its own: break, keep what we have, never raise, never zero the results.
+  Unparsed files are NOT dropped -- the assembly loop falls back to the PREVIOUS map's
+  imports/symbols, so a deadline yields a staler-but- complete map rather than one with holes. Emits
+  the same `partial` + `deadline_limit` pair, deliberately with the SAME field names: a consumer
+  cannot tell which builder produced a payload, so a deadline must look identical from either. The
+  #284 comment already says the two builders "must not disagree about whether a scan was complete";
+  this is that rule applied to the deadline. B. open_session/refresh_session thread it to all four
+  build sites, and the daemon's staleness-triggered refresh (session_daemon.py:1936) passes the SAME
+  WARM_DAEMON_DEFAULT_DEADLINE_SECONDS budget already applied to agent/orient/ context-render.
+  Reusing the constant rather than inventing a second one is the point: two independently-chosen
+  daemon budgets would drift.
+
+Default `None` everywhere == today's behaviour exactly; a dedicated test compares whole payloads
+  with and without the argument to pin that.
+
+VERIFICATION - 5 tests: both branches, each with its own control, plus a seam test proving the
+  parameter REACHES build_repo_map (a signature that accepts and silently drops it would satisfy any
+  argument-shape check while leaving the defect in place). - 3 mutations, ALL caught -- including
+  THE TRAP itself (revert only Part A, keep Part B -> RED), signature-accepts-but-drops -> RED, and
+  always-partial -> RED. - 69 passed across the session/daemon/incremental suites.
+
+THREE TEST DOUBLES had to be widened (test_session_daemon_security, and three in
+  test_incremental_refresh). Each was NARROWER than the function it replaced, so a new keyword
+  became a spurious TypeError -- and in the incremental case that error was SWALLOWED by
+  session_store's incremental-failure fallback (:852), so the test reported a WRONG refresh_type
+  instead of an obvious crash. Enumerated mechanically via a monkeypatch-target sweep, not from
+  recollection: the first fix left a second failure, and the sweep is what found the rest.
+
+Closes #304
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+- **test**: De-flake large-stdout guard whose clock bound contradicted its own timeout
+  ([#802](https://github.com/oimiragieo/tensor-grep/pull/802),
+  [`5e74ee4`](https://github.com/oimiragieo/tensor-grep/commit/5e74ee4a4ba021ba24aefe057aa0dbfededd1af7))
+
+run_validation_command_captures_large_stdout_without_deadlock ran the child with a 15s time limit
+  but asserted elapsed < 10s. That leaves a 5s window in which the command succeeds, >1MB is
+  captured, the pipes demonstrably drained -- and the test still fails. Observed twice on windows CI
+  (nightly, then stable), where spawning PowerShell to write 2.6MB on a loaded runner is
+  legitimately slow.
+
+The clock was never what caught the deadlock class it cites (rust-lang#45572). A real pipe-fill
+  deadlock exhausts the time limit, terminate_for_timeout kills the child, and result.success is
+  false -- so the FIRST assertion fires. The clock can only fire where the property under test
+  HOLDS. That is a measurement with no discriminating power against the defect it names.
+
+Kept rather than deleted, because it does catch a weaker regression the success assertion cannot: a
+  drain that works but is pathologically slow (a hand-rolled poll loop reading a tiny buffer at a
+  low duty cycle). Made it derive from the timeout (half of it) so the two bounds can never
+  contradict again, and raised the timeout to 60s so runner slowness is not mistaken for a code
+  defect.
+
+Production code is unchanged and was never at fault: run_validation_command already uses
+  process_control's controlled_with_output, which drains while timing out, and main.rs:10458-10463
+  documents exactly why.
+
+Refs #303
+
+### Features
+
+- **native**: Carry a walk-error count in SearchStats (#276 slice A)
+  ([#795](https://github.com/oimiragieo/tensor-grep/pull/795),
+  [`981e50f`](https://github.com/oimiragieo/tensor-grep/commit/981e50f68a53f1c76f5275bc0ece4c5f2f13334c))
+
+* feat(native): carry a walk-error count in SearchStats (#276 slice A)
+
+C0 is now 6/6, so the producer is unblocked. This is slice A -- the PLUMBING only, deliberately
+  inert. Nothing reads `walk_errors` yet, so output is byte-identical; slice B puts it in the --json
+  envelope and slice C wires the exit code.
+
+Two decisions worth recording:
+
+A COUNT, NOT A PATH LIST. The walk runs in build_parallel() across threads. An unbounded per-path
+  Vec behind a mutex would be both a contention point on the hot walker and a DoS surface -- a tree
+  with 50k unreadable entries would produce a 50k-entry payload an agent then has to parse. A
+  consumer only needs to know THAT the answer is incomplete.
+
+THE MERGE LINE IS THE WHOLE POINT. merge_search_stats aggregates per-worker stats; omitting
+  `target.walk_errors += source.walk_errors` would have every worker count its own errors and the
+  aggregate report ZERO -- an envelope claiming a complete result on an incomplete walk, which is
+  the exact defect #276 exists to fix. The comment says so at the site.
+
+VERIFICATION -- CI is the compile oracle (CPU-SAFE forbids cargo here), but the one break I could
+  check locally, I checked MECHANICALLY rather than from recollection: `grep -rn "SearchStats\s*{"`
+  across rust_core finds no struct literals at all (the hits are GpuNativeSearchStats, a different
+  type). Every construction is SearchStats::default(), so a new usize field is Default-filled. That
+  is the failure mode a new field actually has.
+
+rustfmt --check: exit 0.
+
+Opened as a DRAFT: per the repo's own rule a draft never un-drafts without an independent gate AND a
+  green matrix, and I cannot compile Rust on this box.
+
+* feat(native): count walk errors at both streaming Err arms (#276 slice B1)
+
+Slice A landed the field and the merge; CI compiled it green on every Rust leg (test-rust-core
+  ubuntu/windows x stable/nightly, both cuda-feature-check legs, native-build-smoke, Analyze). That
+  was the oracle I was waiting on before building anything on top of it.
+
+Slice A was inert because nothing INCREMENTED the counter. This wires the two Err arms in the
+  streaming walker (`search_walk_roots_parallel`):
+
+:1253 the per-entry walk error (permission-denied subdirectory) :1295 the per-path search error (a
+  file we could not read)
+
+Both already printed to stderr -- that line is rg-parity from #263 and stays. What was missing is
+  the COUNT, which is the only thing that lets the --json envelope stop claiming a complete result
+  on an incomplete walk.
+
+Mechanism: `worker.local_stats.walk_errors += 1`. The worker is captured `mut` in the
+  `build_parallel()` closure and `local_stats` is same-module private, so this flows to the
+  aggregate through the EXISTING local->shared merge at :697. No new lock, no new allocation on the
+  hot walker.
+
+STILL INERT AT THE OUTPUT: nothing reads `walk_errors` yet, so behaviour and output remain
+  byte-identical. Slice B2 emits `result_incomplete` + `incomplete_reason_class` into the envelope;
+  slice C wires exit 2 (gated on C0, which is complete 6/6 as of #792/#793); slice D crosses to the
+  gpu_native twin.
+
+NOT COVERED BY THIS SLICE, deliberately named so it is not mistaken for done: `collect_walked_files`
+  (:1650) has the same Err arm but returns Vec<PathBuf>, not SearchStats -- it needs its own count
+  channel. That is the third arm and it is tracked, not forgotten.
+
+rustfmt --check: exit 0. Rust compiles in CI only (CPU-SAFE).
+
+* feat(native): the --json envelope can finally admit an incomplete walk (#276 slice B2)
+
+This is the fix #276 was filed for. The native envelope reported success on a walk that skipped
+  unreadable paths, so an agent parsing --json could not tell "no matches exist" from "I could not
+  finish looking".
+
+result_incomplete: true incomplete_reason_class: "unreadable_path" incomplete_paths_count: <n>
+
+THE NAMES ARE NOT NEW, deliberately. These are the vocabulary the PYTHON routes have emitted since
+  slice 1 (formatters/json_fmt.py:127, :140), with a closed class set (unreadable_path | timeout |
+  deadline | scan_limit) that #293 documented and ratcheted -- and whose proposed RENAME was judged
+  wrong. The native path adopting them verbatim is the point: one contract, two engines. An earlier
+  research pass suggested a fresh `incomplete_reason` singular; rejected, it would have been a third
+  near-synonym for a field that already exists.
+
+WHY `unreadable_path` AND NOT A BUDGET CAUSE. It is the one value in the closed set that is NOT
+  budget-remediable: no --max-repo-files or --deadline makes a permission-denied subtree readable,
+  and docs/CONTRACTS.md says so explicitly. Labelling it `scan_limit` or `deadline` would hand the
+  reader a knob that cannot help -- the wrong-knob defect #283 already cost us once.
+
+WHY A COUNT AND NOT A PATH LIST. The walk runs in build_parallel() across threads; an unbounded
+  per-path Vec behind a mutex is both a contention point on the hot walker and a DoS surface (50k
+  unreadable entries -> a 50k-entry payload the agent must parse). A consumer needs to know THAT the
+  answer is incomplete.
+
+ADDITIVE BY CONSTRUCTION: `skip_serializing_if = "Option::is_none"` on all three means a COMPLETE
+  envelope is byte-identical to every prior release. No existing consumer changes behaviour.
+
+MECHANICAL CHECK, not recollection: `grep -c "NativeJsonOutput {"` = 1, so there is exactly one
+  construction site and no hidden struct literal fails to compile. That is the failure mode adding a
+  field actually has.
+
+STILL OPEN in #276, named so this is not mistaken for closed: - slice B3: `collect_walked_files`
+  (:1650) has the same Err arm but returns Vec<PathBuf>, not SearchStats -- its own count channel -
+  slice C: exit 2 (C0 consumers are ready, 6/6 as of #792/#793) - slice D: the gpu_native.rs twin
+  (#273's sibling; A27 says a class fix must cross to its twin) - the --ndjson emitter still needs
+  locating; #276's plan says do NOT assume it shares emit_json_matches
+
+rustfmt --check: exit 0. Rust compiles in CI only (CPU-SAFE); slice A already came back green on
+  every Rust leg, which is why this could be built on it.
+
+* feat(native): exit 2 on an incomplete walk (#276 slice C)
+
+The out-of-band half of #276. With B2 the envelope admits incompleteness; this makes the process say
+  so too, for the shell/CI consumer that never parses JSON.
+
+ORDERING IS THE DESIGN DECISION, not an accident. The walk_errors check goes BEFORE the no-match
+  branch because the two answer different questions and rg resolves them the same way: `rg needle .`
+  over a tree with one access-denied subdirectory exits 2 whether or not it matched elsewhere. "I
+  could not finish looking" outranks "I found nothing", because the second is only trustworthy if
+  the first is false.
+
+Reversed, a zero-match incomplete scan would exit 1 -- which reads as an authoritative "no matches
+  exist". That is precisely the lie #276 exists to stop, and it would have been a silent regression
+  hiding inside the fix.
+
+SAFE ONLY BECAUSE C0 LANDED FIRST. All six exit-code consumers are three-state aware as of #792/#793
+  -- agent_readiness (x3 sites), both benchmark harnesses, the byte-fidelity e2e, mcp_server -- and
+  crossover.rs was verified unreachable (tg-generated corpus). Shipping this before them would have
+  broken `tg calibrate` (tg spawns itself and bails on non-zero) and `tg dogfood` (a shipped
+  command), and reddened the windows-agent-readiness gate. That was the adversarial review's first
+  blocking finding and the reason C0 exists at all.
+
+Two channels now, per the prior art the research converged on: exit code for the shell, in-band
+  marker for the agent piping into `jq`. Neither is the sole source of truth -- ripgrep's --json is
+  the cautionary case, carrying completeness ONLY in the exit code, invisible to a payload consumer.
+
+rustfmt --check: exit 0. CI compiles.
+
+* fix(native): walk_errors was droppable by the Drop fast path (#276 slice B1 defect)
+
+A real defect in my own slice B1, found by auditing my own diff against the question I had just
+  handed an independent auditor: "can the count be WRONG rather than absent?" Wrong is the more
+  dangerous failure -- absent is visible, wrong is not.
+
+`ParallelWalkWorker::drop` (:686-695) short-circuits before merging when the worker contributed
+  nothing. That guard listed five counters. It did not list `walk_errors`, which slice A added.
+
+Under `build_parallel()` a worker can legitimately be handed ONLY unreadable entries: it searches no
+  files, matches nothing, and returns at the guard with a
+
+non-zero walk_errors that `std::mem::take` then never moves into shared_stats. The count vanishes.
+
+The consequence is the whole point of #276 inverted: the envelope would report a COMPLETE scan of an
+  INCOMPLETE walk. B2's `result_incomplete` and C's exit 2 both key off this count, so a dropped
+  count means both channels silently lie -- the fix reintroducing the defect it fixes, invisibly, on
+  exactly the workload (many unreadable paths) where it matters most.
+
+Fix is one line: add `walk_errors == 0` to the guard.
+
+THE GENERALIZABLE SHAPE, worth carrying: adding a field to an aggregate is never just the struct +
+  the merge. Every EARLY RETURN that decides "there is nothing to aggregate" is a third site, and it
+  fails silently by construction because the data never reaches the code that would notice.
+  `merge_search_stats` was the site I remembered; `Drop` was the site I had to look for.
+
+* fix(native): the branch DID NOT COMPILE, and I claimed it did (#276 audit findings 1+2)
+
+Independent audit returned HOLD. Both blocking findings were real; I verified each against the tree
+  before accepting them.
+
+FINDING 1 -- E0609, the branch never compiled. `ParallelWalkWorker::new` returns `Result<Self>`
+  (native_search.rs:497), and `worker` is bound as that Result at :1275. The shadowing `let worker =
+  match worker.as_mut()` happens BELOW the first Err arm, so my `worker.local_stats.walk_errors +=
+  1` was field access on a Result. The second increment sits after the shadowing and was always
+  fine; only the first was broken. Fixed with `if let Ok(worker) = worker.as_mut()`, and the Err
+  case is now a DELIBERATE decision rather than a compile accident: a thread whose matcher failed
+  owns no worker and no stats channel, quits on its first real entry, and the whole search returns
+  Err -- so there is no "complete" envelope for a lost count to corrupt.
+
+WHY NO GATE CAUGHT IT, which is the part that matters. Three commit messages in this branch assert
+  "CI compiles." That was FALSE. Runs 30216169390 (slice B1 -- the commit that introduced the broken
+  line) and 30216212015 (B2) both show every `test-rust-core` job CANCELLED, not green: ci.yml sets
+  `cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}`, so each push to this branch killed
+  the previous run's Rust legs. The ONLY green Rust legs on this branch belong to slice A -- which
+  added no increments.
+
+I leaned on `rustfmt --check` plus slice A's green as if together they were a type-check of later
+  commits. This repo's own rules say otherwise in two places: "rustfmt is NOT a compiler" and "CI
+  red is sufficient; CI green is not". I had neither red nor green -- I had CANCELLED, and read it
+  as green.
+
+FINDING 2 -- a false claim baked into a permanent code comment. main.rs asserted "Safe to emit only
+  because slice C0 landed first ... as of #792/#793". Both PRs are OPEN (`mergedAt: null`), and
+  origin/main's agent_readiness.py:348 still rejects any exit outside {0,1}. Rewritten as a MERGE
+  PRECONDITION with the dependency stated as a requirement, plus a note that the earlier revision
+  claimed it as completed history. A comment asserting a merge that never happened is worse than no
+  comment: it is what the next reader trusts instead of re-checking.
+
+Findings 3 (no test), 4 (unreadable_path over-asserted -- ignore::Error also carries gitignore-parse
+  and same-filesystem errors), and 5 (a SECOND envelope seam: the multi-pattern route discards
+  walk_errors at main.rs:8217) are real and tracked separately. This commit fixes only what makes
+  the branch broken and what makes it lie.
+
+* fix(native): allow-list the walk-error count -- a false "incomplete" is worse (#276 audit finding
+  4)
+
+Audit finding 4, verified against the pinned crate source rather than assumed.
+
+`ignore::Error` is not only "this path was unreadable". The parallel walker also reports a failure
+  to PARSE an ancestor or global gitignore -- `Error::Glob` / `WithLineNumber`, surfaced through
+  `add_parents` -- plus `UnrecognizedFileType` and `InvalidDefinition`. My increment counted all of
+  them.
+
+The consequence is worse than the bug #276 fixes: ONE malformed glob in a user's
+  ~/.config/git/ignore would make EVERY `tg search --json` on that machine emit result_incomplete +
+  incomplete_reason_class="unreadable_path" + exit 2, on a walk that completed. A false "I could not
+  finish looking" teaches an agent to distrust a true answer, and the class asserted is
+  budget-non-remediable, so the reader is handed a knob that cannot help. Silence is bad; confident
+  wrongness is worse.
+
+Fix is #282's rule applied literally -- fail-closed guidance is an ALLOW-LIST, never a deny-list.
+  Enumerate the SAFE case and reject the rest:
+
+if err.is_io() { ...count... }
+
+`is_io()` is the crate's own "exclusively an I/O error" predicate (verified in
+  ignore/src/lib.rs:171-183): it recurses through WithPath/WithDepth/ WithLineNumber, treats a
+  single-element Partial as its inner error, and returns FALSE for Glob, UnrecognizedFileType,
+  InvalidDefinition and Loop. Loop cannot fire here regardless -- `build_walk_builder` never calls
+  `follow_links`.
+
+Non-I/O errors still PRINT (rg-parity, #263). They simply no longer claim the answer is incomplete.
+
+KNOWN RESIDUAL, not fixed here and not hidden: the second increment site (:1357+) counts any
+  non-broken-pipe `search_path` error, which includes stdout WRITE failures -- also not an
+  unreadable path. That one is anyhow::Error, so it needs a different classifier than is_io();
+  tracked separately rather than guessed at.
+
+rustfmt --check: exit 0. NOT compile-verified -- see the previous commit: the Rust legs on this
+  branch have been CANCELLED by the concurrency group, and I will not claim "CI compiles" again
+  without a completed run.
+
+* test(#276): bidirectional oracle for the --json incompleteness envelope
+
+The plan's section 6 demanded a proved-red pair and slice B2 shipped without one. Four tests, each
+  half of a pair:
+
+- envelope ADMITS an incomplete walk (walk_errors=2 -> the three keys, in the vocabulary json_fmt.py
+  already emits, not a synonym) - envelope is byte-identical when the walk was COMPLETE (all three
+  keys ABSENT, not present-and-false) -- this is the arm that fails on the pre-B2 tree, and it is
+  what keeps skip_serializing_if from silently becoming a shape change - Drop merges a
+  walk-error-only worker (the defect this branch introduced: the "nothing to contribute" fast path
+  predates walk_errors, so a worker handed ONLY unreadable entries dropped its count and the
+  envelope reported a COMPLETE scan of an INCOMPLETE walk) - Drop still skips the lock for a
+  genuinely empty worker -- without it, "delete the fast path" would pass the test above
+
+Driven through a real Drop and a real Buffer output target rather than by restating the guard's
+  boolean, so the tests stay honest under restructuring.
+
+NOT compile-verified locally: cargo is forbidden on this box (CPU-safe), so CI is the only oracle
+  for these. rustfmt --check clean.
+
+- **prepare**: Surface a live foreign ledger claim on the read-only path (#306 W2)
+  ([#801](https://github.com/oimiragieo/tensor-grep/pull/801),
+  [`b6377e4`](https://github.com/oimiragieo/tensor-grep/commit/b6377e4ffb8989ed07f620bbfdc3533b0ee3a7bf))
+
+`tg prepare` reported claim overlaps ONLY when `--claim` was passed -- you discovered another agent
+  had claimed your target only by claiming it yourself. An agent running the ordinary read-only
+  `prepare` to get edit-ready got no signal at all, while the ledger held the answer and nothing
+  asked it. That is the coordination gap in miniature.
+
+REPORTS, NEVER REFUSES. The #306 verdict is STAY ADVISORY, and docs/CONTRACTS.md:225 states the
+  ledger has "no enforcement mechanism of any kind". An `ask_user` gate here would be enforcement
+  without any of the machinery real locking needs (fencing tokens, lease-expiry handling) -- the
+  plan's section 5 "what NOT to build" names exactly that shape, citing Jepsen's 18% lost updates
+  under lease-only mutexes.
+
+`list_claims` is a pure read (ledger_store.py:782): no write lock, no writes, expired entries pruned
+  for display only. Failure is swallowed for the same reason the `--claim` path swallows its own --
+  an advisory hook must never fail prepare's primary read.
+
+ADDITIVE-CONDITIONAL, and deliberately symmetric on failure: the key is absent both when no foreign
+  claim exists AND when the probe itself errors. A reader must not be able to distinguish "nothing
+  claimed" from "the probe broke" via an empty list, so neither emits one. An ordinary prepare
+  payload is byte-identical to before.
+
+VERIFICATION - 3 unit tests: the positive arm plus BOTH controls the plan's section 6 names -- your
+  own claim must not be echoed back (else the field is noise that trains readers to skip it), and
+  no-claims-at-all must stay silent (else a hook that always attached the field would satisfy the
+  positive arm). - Dogfooded through the REAL CLI with the loaded module's __file__ asserted:
+  agent-OTHER claims src/ -> agent-ME's read-only prepare shows foreign_claim_count=1 with
+  agent/scope/symbols/intent/expires_at, and `submitted` stays False -- reported without claiming.
+  no claims -> key ABSENT. only my own claim -> key ABSENT.
+
+Closes #306 W2. W1 was deleted (TTL already ships, ledger_store.py:106), W3 dropped (it contradicted
+  CONTRACTS.md:225), W4 is docs-only.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+### Testing
+
+- **locks**: Retire the last flat wall-clock bounds in the stale-lock reclaim tests (#309)
+  ([#798](https://github.com/oimiragieo/tensor-grep/pull/798),
+  [`9d7a377`](https://github.com/oimiragieo/tensor-grep/commit/9d7a3772db5517759ac787fb6c2dbda324f05a6e))
+
+`test_open_session_reclaims_stale_lock` and `test_create_checkpoint_reclaims_stale_lock` still
+  asserted `elapsed < 4.0`. That is the exact form this repo has already retired everywhere else,
+  and for good reason -- #244 measured 4.968s against a 4.0s ceiling on a loaded Windows runner and
+  blocked a release.
+
+It was also a poor proxy on its own terms: 4.0 is neither the acquire timeout (5s) nor anything the
+  code promises, so a pass meant "fast enough on this runner today" rather than "took the reclaim
+  path".
+
+THE REAL INVARIANT is that the wait loop is never entered. `_index_lock.acquire`'s stale-reclaim
+  branch ends in `continue` (`_index_lock.py:239`) and so never reaches the
+  `time.sleep(poll_interval_s)` at `:254`. Counting that sleep answers "did it WAIT?" exactly --
+  instantly, and immune to runner load.
+
+Adds `test_a_live_lock_does_make_the_waiter_sleep` as the CONTROL, which is what makes the pair mean
+  anything: `assert sleeps == []` is satisfied just as well by a probe patched onto the wrong
+  module, a renamed wait primitive, or a lock that was never contended -- each of which would leave
+  both reclaim tests permanently, silently green. The control holds a FRESH lock and asserts the
+  waiter really does sleep, proving the counter can register before its emptiness is read as
+  evidence.
+
+PROVEN BIDIRECTIONAL: disable stale reclaim (`if False:` at _index_lock.py:235) -> reclaim tests RED
+  attach the probe to the wrong module -> control RED
+
+mypy on this file reports 10 errors both here and on clean origin/main (identical count, none
+  introduced); CI's lint gate runs `mypy src/tensor_grep` only, so tests are outside it.
+
+Closes #309
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.98.27 (2026-07-26)
 
 ### Bug Fixes
