@@ -229,6 +229,23 @@ concrete failure observed this session.
   while red, because merging onto a broken `main` compounds it and obscures which commit owns the
   failure.
 
+- **A33 — `release-intent` being SKIPPED proves nothing; the publish job runs on every main push
+  (2026-07-26, cost: one reddened release).** Before merging into an in-flight main run I checked its
+  job list, saw `release-intent` *skipped*, and concluded "this run publishes nothing, so there is no
+  push to race". Wrong on two counts. `release-intent` has `if: github.event_name == 'pull_request'`
+  — it is a PR-title validator and is ALWAYS skipped on a push, so it says nothing about whether a
+  release will happen. The job that matters is `release` ("Semantic Release"), gated on
+  `github.ref == 'refs/heads/main' && github.event_name == 'push'`, and because it `needs:` the full
+  test matrix it does not even appear in the job list until late. Merging landed a second push on top
+  of it and its `git push` was rejected non-fast-forward (`Failed to push branch (main) to remote`,
+  run `30223536622`). It self-heals on the next push — do NOT rerun — but the release was lost.
+  **The only safe signal is the newest `ci.yml` run on main reaching `completed`.** `tag == PyPI` is
+  not sufficient either: a run can have tagged and still be mid-publish.
+  **Second window, different failure:** once `Semantic Release` HAS succeeded, the push race is over
+  but the publish tail (wheels, native assets, `publish-pypi`) is still running. Merging then starts
+  a new run whose concurrency group CANCELS the tail, leaving a tag with no PyPI artifact — the
+  version-soup state #47 exists to detect. Wait for PyPI to actually serve the new version.
+
 ## Current Handoff
 
 release_docs_current_tag: v1.99.0
@@ -644,7 +661,7 @@ zero behavioral change, and is strictly stronger than reading the diff by eye. U
 on `test_index_lock_concurrency.py`'s comment-only revisions; cheap enough to run on every claimed no-op
 commit before skipping a gate on the strength of "it's just a comment."
 
-## The Verification-Oracle Family — seven forms (2026-07-25, 7th added 2026-07-26)
+## The Verification-Oracle Family — eight forms (2026-07-25, 7th + 8th added 2026-07-26)
 
 **The single most repeated failure mode this project has.** Every form shares one shape: *something that
 looks like verification isn't.* Before trusting ANY green signal, ask: **what would this check show if the
@@ -744,6 +761,35 @@ tied-at-floor column is worse than no column, because it looks like a finding. *
 scored dimension needs at least one run where arms differ, or it gets deleted with the reason
 written down. Tracked as #302; the fixture almost certainly deletes the file *before* the search
 starts, so every tool correctly reports nothing — the race the column claims to measure never opens.
+
+**Form 8 — the SPLIT ORACLE (2026-07-26).** *A precondition proved in a DIFFERENT run is not
+THIS run's precondition.* Caught by an external codex audit in a test whose own docstring described
+it as bidirectional. `tests/unit/test_trust_benchmark_premise.py` pins the claim "rg cannot signal an
+incomplete scan inside its JSON stream" with two arms: ARM 1 runs `rg --json` over a tree containing
+an unreadable directory and asserts the summary carries no incompleteness marker; ARM 2 asserts rg
+exits 2. **ARM 1 never asserted its OWN run exited 2.** On a tree where the directory turns out to be
+readable, rg exits 0, completes the scan, and correctly emits no marker — and ARM 1 passes, then
+reports "rg hides incompleteness" on the evidence of a scan that was never incomplete.
+
+What made it feel safe is the shape to learn: a helper DID verify the directory was unreadable — *to
+the test process* — and ARM 2 DID assert exit 2. Both true, neither load-bearing for ARM 1.
+"Unreadable to pytest" is a different claim from "rg's scan was incomplete", and ARM 2 is a separate
+subprocess. Two correct checks sitting beside a conclusion neither supports.
+
+**Rule:** for every conclusion ask *which run produced the evidence for the premise, and is it the
+same run that produced the thing I am judging?* If the answer is "a sibling test", "an earlier
+fixture", or "the helper checked it", the oracle is split. The fix is usually one line — move the
+premise assertion INTO the run that draws the conclusion (`assert proc.returncode == 2` before
+reading the summary) — and the failure message should name the real cause (*"something made the
+locked directory readable to rg"*), not blame the assertion, because a split oracle fails
+confusingly precisely because the assertion is fine. **A control in another process controls
+nothing.** This is the mirror of the setup-not-assertion trap: that one asks *did this check run
+against the thing I think it did?*; this one asks *did this RUN establish the condition my
+conclusion needs?*
+
+Second-order, and the reason the independent audit step keeps paying for itself: an external
+reviewer found this in work that had already been self-reviewed AND given a careful docstring
+asserting its rigour. **Prose describing a test as bidirectional is not evidence that it is.**
 
 **Running the probe: the LOCATION trap.** A perturbation proves nothing if the thing you perturbed
 survives elsewhere. Verifying the `truncation_cause` doc ratchet, the first probe removed ONE
