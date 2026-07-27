@@ -169,7 +169,9 @@ with an empty list the way it did before this PR — it returns real, line-numbe
 **But resolution — WHICH file/module each row's `module` string actually points to — is
 still deferred for all three, and it is honestly deferred, never silently faked.**
 `_resolve_raw_import_entry` (`repo_map.py:16654`) gained an
-`elif language_id in ("go", "php", "csharp")` branch (`repo_map.py:16723-16735`, mirroring
+`elif language_id in ("go", "php", "csharp", "c", "cpp")` branch (re-grep `elif language_id in (`
+in `repo_map.py` -- it sits just below `_resolve_raw_import_entry`; the old `:16723-16735` pin
+drifted AND predated c/cpp being folded into the same branch, mirroring
 the `elif language_id == "java"` branch immediately above it at `repo_map.py:16714-16722`)
 that always returns `resolved, external, provenance, confidence = None, False, [], 0.0` —
 every row comes back `resolved=None, external=False` rather than a fabricated file path or a
@@ -272,7 +274,9 @@ proof this step cannot be skipped:
   an older/differently-built grammar can omit it — silently zeroing out every import in the
   file with no error and no `resolution_gaps` entry (the parser loaded fine, so nothing marks
   a gap). Fix: fall back to quote-stripping the raw node text.
-- **Row-counting divergence** (`lang_go.py:226-229`, F26 fix): tree-sitter's row index
+- **Row-counting divergence** (`lang_go.py:766`, the row-counting fix -- **cite this by LINE, not
+  by F-tag**: `F26` is reused across at least 5 sites in `lang_go.py`, so an F-tag grep lands on a
+  different fix): tree-sitter's row index
   advances only on `"\n"`; naive Python line-splitting also splits on other separators — one
   stray separator shifts every later line lookup out of alignment with tree-sitter's own rows
   unless you count rows the same way tree-sitter does.
@@ -417,7 +421,8 @@ rule, not specific to language PRs.
   and asserts both functions return that spec's own `language_id` for each of its suffixes,
   so it fails loudly if you wire only one of the pair), and the
   `test_*_provenance_is_tree_sitter_when_grammar_present` /
-  `test_grammar_absent_monkeypatch_*_provenance_flips_to_grammar_missing` pair (17 tests
+  `test_grammar_absent_monkeypatch_*_provenance_flips_to_grammar_missing` pair (21 tests as of 2026-07-27 -- re-run the grep rather
+  than trusting this number; it grows with every language
   total as of this writing — `grep -c "def test_" tests/unit/test_lang_registry.py`).
 - **Fixture/parity dogfood**: write a minimal real-world-shaped fixture file in the new
   language exercising every construct you extract (functions, types/generics if the
