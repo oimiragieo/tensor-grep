@@ -511,6 +511,21 @@ struct ParallelWalkWorker {
     search_path: String,
     local_stats: SearchStats,
     shared_stats: Arc<Mutex<SearchStats>>,
+    /// Task 321: set when the failure `search_path` is about to return came from writing OUTPUT,
+    /// not from reading the INPUT file.
+    ///
+    /// `search_path` returns one `anyhow::Error` for two unrelated events -- "I could not read
+    /// this file" and "I could not write the answer" -- and the caller could not tell them apart,
+    /// so a full disk or an `EIO` on stdout was counted into `walk_errors` and surfaced as
+    /// `incomplete_reason_class: "unreadable_path"`. That is a lie in the direction that matters:
+    /// it sends a reader to check file permissions when the input was read perfectly.
+    ///
+    /// A FLAG rather than a marker error type on purpose. The alternative -- wrapping the error so
+    /// the call site can `downcast_ref` it, mirroring `search_path_error_is_broken_pipe` -- would
+    /// put a new type in front of the `Display` that `eprintln!("tg: {err}")` and the golden tests
+    /// pin, and buys nothing here: the writer and the reader of this signal are the same worker,
+    /// one call apart, so a field carries it without touching the error's rendering at all.
+    output_write_failed: bool,
 }
 
 impl ParallelWalkWorker {
@@ -522,12 +537,17 @@ impl ParallelWalkWorker {
             search_path: display_search_path(&config.paths),
             local_stats: SearchStats::default(),
             shared_stats,
+            output_write_failed: false,
             config,
         })
     }
 
     fn search_path(&mut self, path: &Path) -> Result<()> {
         self.output_buffer.clear();
+        // Cleared per call: the caller reads it only on the Err path of THIS call, and a worker is
+        // reused across files, so a stale `true` from an earlier file would misclassify a later
+        // genuine read failure as an output failure.
+        self.output_write_failed = false;
 
         let file_result = if self.config.count {
             self.search_count(path)?
@@ -557,13 +577,18 @@ impl ParallelWalkWorker {
         if binary_detected {
             self.local_stats.skipped_binary_files += 1;
             if binary_match_detected {
-                emit_binary_match_warning(
+                // Task 321: this warning goes to the OUTPUT target, so its failure is a write
+                // failure, not an unreadable input.
+                if let Err(err) = emit_binary_match_warning(
                     &self.config.output_target,
                     path,
                     binary_byte_offset,
                     self.config.json || self.config.ndjson,
                     self.config.with_filename,
-                )?;
+                ) {
+                    self.output_write_failed = true;
+                    return Err(err);
+                }
                 self.local_stats.binary_match_files += 1;
             }
             self.output_buffer.clear();
@@ -571,7 +596,12 @@ impl ParallelWalkWorker {
         }
 
         if !self.output_buffer.is_empty() {
-            self.config.output_target.write_all(&self.output_buffer)?;
+            // Task 321: the ONLY bulk write on this path. A failure here means the disk is full or
+            // stdout is gone -- the input file was read fine.
+            if let Err(err) = self.config.output_target.write_all(&self.output_buffer) {
+                self.output_write_failed = true;
+                return Err(err);
+            }
             self.output_buffer.clear();
         }
 
@@ -1401,7 +1431,15 @@ fn search_walk_roots_parallel(
                 // unreadable between being listed and opened) now logs and continues, matching
                 // `rg`'s own behavior for exactly this case (task #263's third defect; verified
                 // against `rg.exe` 15.1.0 the same way as the entry-error case above).
-                if search_path_error_is_broken_pipe(&err) {
+                // Task 321: an OUTPUT-write failure aborts on exactly the same reasoning as the
+                // broken pipe beside it -- every remaining file would hit the same dead target,
+                // so continuing burns the whole walk to produce nothing. `ENOSPC`/`EIO` were
+                // previously NOT caught here (only `BrokenPipe` was), so they fell through to the
+                // `walk_errors` counter below and the envelope reported
+                // `incomplete_reason_class: "unreadable_path"` for a file it had read perfectly.
+                // Wrong in the direction that matters: it sends the reader to check permissions on
+                // an input that was fine, and hides that the OUTPUT is the thing that failed.
+                if search_path_error_is_broken_pipe(&err) || worker.output_write_failed {
                     should_quit.store(true, Ordering::Relaxed);
                     if let Ok(mut guard) = shared_error.lock() {
                         if guard.is_none() {
@@ -1412,7 +1450,8 @@ fn search_walk_roots_parallel(
                 }
                 // Task #276 slice B: same reasoning as the entry-error arm above -- a file we
                 // could not read is a hole in the answer, and the envelope has to be able to say
-                // so. Counted here, emitted by slice B2.
+                // so. Counted here, emitted by slice B2. Reached ONLY for genuine INPUT failures
+                // now -- the output-write arm above returns before this.
                 worker.local_stats.walk_errors += 1;
                 eprintln!("tg: {err}");
                 return WalkState::Continue;
