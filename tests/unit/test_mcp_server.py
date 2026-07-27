@@ -2402,7 +2402,9 @@ def test_mcp_server_initialization_version_tracks_mcp_contract() -> None:
     options = mcp_server.mcp._mcp_server.create_initialization_options()
 
     assert options.server_name == "tensor-grep"
-    assert options.server_version == "1.6.0"
+    assert (
+        options.server_version == "1.7.0"
+    )  # task 336: budget_remediable on the repo_map-backed wire
     assert options.server_version == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
     assert mcp_server._mcp_server_version() == version("tensor-grep")
 
