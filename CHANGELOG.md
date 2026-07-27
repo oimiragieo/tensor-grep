@@ -1,6 +1,54 @@
 # CHANGELOG
 
 
+## v1.101.3 (2026-07-27)
+
+### Bug Fixes
+
+- **cli**: Give every CLI incompleteness cause a machine-branchable remediability flag (task 307-C)
+  ([#825](https://github.com/oimiragieo/tensor-grep/pull/825),
+  [`b33fea2`](https://github.com/oimiragieo/tensor-grep/commit/b33fea2c5caa1aa09028c6a2b06b1d23e8c4416e))
+
+`budget_remediable` shipped on exactly ONE surface -- the MCP `scan_limit` object (#283). Every CLI
+  route stamped a `truncation_cause` with no machine-branchable "is a retry worth it?" signal, so a
+  consumer could not tell `raise --max-repo-files` (fixable) from `you will never read that
+  directory` (not). It either retries forever or gives up on a fixable scan.
+
+The knowledge already existed -- inside `tests/unit/test_truncation_cause_vocabulary_ratchet.py`, as
+  KNOWN_TRUNCATION_CAUSES / NON_BUDGET_REMEDIABLE. CI could branch on it; the shipped CLI could not.
+  This moves it into the product and has the ratchet cross-check the product rather than own a
+  second copy.
+
+`budget_remediable(cause)` lives in `cli/incompleteness.py` -- the module that already owns this
+  vocabulary and already states the allow-list design point. It is an ALLOW-LIST (#282): naming the
+  SAFE causes means an unrecognised value returns False. A deny-list ("False only for
+  unreadable-path") fails OPEN on every cause a future author adds -- the new value would be
+  advertised as "just raise the limit", which is exactly the wrong-knob advice #283 fixed. It maps
+  BOTH spellings without unifying them (#293): `truncation_cause` is hyphenated,
+  `incomplete_reason_class`/`partial_reason` underscored, each internally consistent, and renaming
+  either breaks a documented contract.
+
+Wired at all 3 `scan_limit` emitters -- inventory (1) and docs-coverage (2, the coverage report and
+  --stale mode). Emitted ONLY when `possibly_truncated`, so a complete scan stays byte-identical.
+
+VERIFIED BIDIRECTIONALLY. Mutating the allow-list into the deny-list shape (assert-applied, not
+  assumed) fails `test_budget_remediable_fails_closed_on_anything_it_was_not_taught`; restored and
+  re-run green. Both arms are pinned: budget causes True, unreadable-path False -- a helper that
+  returns True for everything is a brick and a one-sided test cannot tell. The ratchet cross-check
+  loads the ratchet module BY PATH (`tests/` is not a package, so `from tests.unit...` raises
+  ModuleNotFoundError and the check would have been silently lost) and asserts both sets are
+  non-empty first, so the loop cannot pass vacuously.
+
+78 passed across the new parity suite + inventory + docs-coverage + ratchet. ruff check + format
+  --preview clean.
+
+NOTE: the census behind this was re-run after discovering the shared checkout was 28 commits stale.
+  On the current tree the finding holds AND widened -- the new `cli/sarif.py` is a 10th
+  cause-emitting surface without the flag. Wiring the remaining 7 (agent_capsule, codemap,
+  formatters/json_fmt, main, repo_map, orient_capsule, sarif) is a follow-up; those stamp causes
+  through different shapes than `scan_limit` and each needs its own emit-only-when-truncated gate.
+
+
 ## v1.101.2 (2026-07-27)
 
 ### Bug Fixes
