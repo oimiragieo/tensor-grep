@@ -8195,29 +8195,34 @@ fn exit_on_native_multi_pattern_ceiling_refusal(err: anyhow::Error) -> anyhow::E
 fn collect_native_multi_pattern_matches(
     patterns: &[String],
     mut base_config: NativeSearchConfig,
-) -> anyhow::Result<Vec<SearchMatchJson>> {
+) -> anyhow::Result<(Vec<SearchMatchJson>, Option<usize>)> {
     let include_pattern_metadata = patterns.len() > 1;
     let fast_path_matches = run_native_fixed_multi_pattern_search(base_config.clone(), patterns)
         .map_err(exit_on_native_multi_pattern_ceiling_refusal)?;
     if let Some(matches) = fast_path_matches {
-        return Ok(matches
-            .into_iter()
-            .map(|matched| {
-                let (text, bytes) = native_json_text_fields(&matched.raw);
-                let text = text.map(str::to_string);
-                SearchMatchJson {
-                    file: matched.path.to_string_lossy().into_owned(),
-                    line: matched.line_number as usize,
-                    text,
-                    bytes,
-                    raw: matched.raw,
-                    range: None,
-                    meta_variables: None,
-                    pattern_id: include_pattern_metadata.then_some(matched.pattern_id),
-                    pattern_text: include_pattern_metadata.then_some(matched.pattern_text),
-                }
-            })
-            .collect());
+        // The AhoCorasick fast path owns no `SearchStats`, so it genuinely cannot report a
+        // count -- `None`, never `Some(0)`. Tracked as the residual of task 317.
+        return Ok((
+            matches
+                .into_iter()
+                .map(|matched| {
+                    let (text, bytes) = native_json_text_fields(&matched.raw);
+                    let text = text.map(str::to_string);
+                    SearchMatchJson {
+                        file: matched.path.to_string_lossy().into_owned(),
+                        line: matched.line_number as usize,
+                        text,
+                        bytes,
+                        raw: matched.raw,
+                        range: None,
+                        meta_variables: None,
+                        pattern_id: include_pattern_metadata.then_some(matched.pattern_id),
+                        pattern_text: include_pattern_metadata.then_some(matched.pattern_text),
+                    }
+                })
+                .collect(),
+            None,
+        ));
     }
 
     base_config.json = false;
@@ -8226,11 +8231,15 @@ fn collect_native_multi_pattern_matches(
     base_config.output_target = NativeOutputTarget::Buffer(Arc::new(Mutex::new(Vec::new())));
 
     let mut matches = Vec::new();
+    // Task 276 finding 5: this loop already HAD `stats` and used only `stats.matches`, so every
+    // per-pattern walk error was discarded right here.
+    let mut walk_errors = 0usize;
     for (pattern_id, pattern) in patterns.iter().enumerate() {
         let mut pattern_config = base_config.clone();
         pattern_config.pattern = pattern.clone();
         let stats = execute_native_search(pattern_config)
             .map_err(exit_on_native_multi_pattern_ceiling_refusal)?;
+        walk_errors += stats.walk_errors;
         matches.extend(stats.matches.into_iter().map(|matched| {
             let (text, bytes) = native_json_text_fields(&matched.raw);
             let text = text.map(str::to_string);
@@ -8248,7 +8257,7 @@ fn collect_native_multi_pattern_matches(
         }));
     }
 
-    Ok(matches)
+    Ok((matches, Some(walk_errors)))
 }
 
 struct NativeSearchOutputOptions<'a> {
@@ -8265,6 +8274,7 @@ struct NativeSearchOutputOptions<'a> {
 fn emit_multi_pattern_native_results(
     options: NativeSearchOutputOptions<'_>,
     matches: Vec<SearchMatchJson>,
+    incomplete_paths: Option<usize>,
 ) -> anyhow::Result<()> {
     let has_matches = !matches.is_empty();
     if options.json {
@@ -8274,6 +8284,7 @@ fn emit_multi_pattern_native_results(
             options.path,
             options.requested_gpu_device_ids,
             matches,
+            incomplete_paths,
         )?;
     } else if options.ndjson {
         emit_ndjson_search_results(
@@ -8282,6 +8293,7 @@ fn emit_multi_pattern_native_results(
             options.path,
             options.requested_gpu_device_ids,
             matches,
+            incomplete_paths,
         )?;
     } else if options.count {
         emit_count_search_matches(options.path, &matches)?;
@@ -8686,7 +8698,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                 .then(|| command_ripgrep_args(&args, &request));
 
             if request.patterns.len() > 1 {
-                let matches = match collect_native_multi_pattern_matches(
+                let (matches, incomplete_paths) = match collect_native_multi_pattern_matches(
                     &request.patterns,
                     native_search_config_for_command(
                         &args,
@@ -8696,7 +8708,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                         decision,
                     ),
                 ) {
-                    Ok(matches) => matches,
+                    Ok(collected) => collected,
                     Err(err) => {
                         exit_json_search_runtime_error_if_needed(args.json, args.ndjson, &err);
                         return Err(err);
@@ -8714,6 +8726,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                         line_number: args.line_number && !args.no_line_number,
                     },
                     matches,
+                    incomplete_paths,
                 );
             }
 
@@ -8970,6 +8983,9 @@ fn run_index_query(
             request.primary_path(),
             &[],
             matches,
+            // Task 276: this route observed no walk of its own, so it cannot report a
+            // count. `None` means "cannot report", NEVER "complete".
+            None,
         );
     }
 
@@ -8980,6 +8996,9 @@ fn run_index_query(
             request.primary_path(),
             &[],
             matches,
+            // Task 276: this route observed no walk of its own, so it cannot report a
+            // count. `None` means "cannot report", NEVER "complete".
+            None,
         );
     }
 
@@ -9050,6 +9069,35 @@ struct SearchResultJson<'a> {
     matched_file_paths: Vec<String>,
     match_counts_by_file: std::collections::BTreeMap<String, usize>,
     matches: Vec<SearchMatchJson>,
+    // Task 276 (#314). This is the SECOND envelope -- parallel to the native one at
+    // `native_search.rs:2489-2491` but, until now, carrying none of its disclosure.
+    // Omit-when-complete, so a complete search stays byte-identical.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result_incomplete: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    incomplete_reason_class: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    incomplete_paths_count: Option<usize>,
+}
+
+/// The `--ndjson` TERMINAL SUMMARY record (task 276 slice B2b).
+///
+/// `--ndjson` emitted one record per match and nothing else, so there was nowhere for an
+/// incompleteness marker to live -- not a missing field, a missing RECORD. Emitted on EVERY
+/// run, complete or not: a summary that appears only when something went wrong is one a
+/// streaming reader never learns to expect. `type` is the discriminator.
+#[derive(Serialize)]
+struct SearchSummaryNdjson {
+    #[serde(rename = "type")]
+    record_type: &'static str,
+    version: u32,
+    total_matches: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result_incomplete: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    incomplete_reason_class: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    incomplete_paths_count: Option<usize>,
 }
 
 #[cfg(feature = "cuda")]
@@ -11235,6 +11283,9 @@ fn handle_ast_run(mut args: RunArgs) -> anyhow::Result<()> {
                 .iter()
                 .map(|matched| ast_match_to_search_json(matched, &mut source_contexts))
                 .collect::<anyhow::Result<Vec<_>>>()?,
+            // Task 276: this route observed no walk of its own, so it cannot report a
+            // count. `None` means "cannot report", NEVER "complete".
+            None,
         )?;
         if match_count == 0 {
             warn_windows_single_quote_ast_pattern(pattern);
@@ -12028,7 +12079,8 @@ fn handle_gpu_unavailable_cpu_fallback(
         emit_verbose_metadata(decision);
     }
     if params.patterns.len() > 1 {
-        let matches = collect_native_multi_pattern_matches(params.patterns, cpu_config)?;
+        let (matches, incomplete_paths) =
+            collect_native_multi_pattern_matches(params.patterns, cpu_config)?;
         return emit_multi_pattern_native_results(
             NativeSearchOutputOptions {
                 decision,
@@ -12041,6 +12093,7 @@ fn handle_gpu_unavailable_cpu_fallback(
                 line_number: params.line_number,
             },
             matches,
+            incomplete_paths,
         );
     }
     run_native_search_with_optional_rg_fallback(cpu_config, None)
@@ -12480,6 +12533,9 @@ fn execute_gpu_native_route(
             params.path,
             params.gpu_device_ids,
             gpu_native_match_json_entries(&stats),
+            // Task 276: this route observed no walk of its own, so it cannot report a
+            // count. `None` means "cannot report", NEVER "complete".
+            None,
         )?;
     } else if params.count {
         emit_gpu_native_count_results(params, &stats)?;
@@ -12522,7 +12578,7 @@ fn handle_auto_gpu_search(
                         ));
                     }
                     if params.patterns.len() > 1 {
-                        let matches = collect_native_multi_pattern_matches(
+                        let (matches, incomplete_paths) = collect_native_multi_pattern_matches(
                             params.patterns,
                             cpu_fallback_config,
                         )?;
@@ -12541,6 +12597,7 @@ fn handle_auto_gpu_search(
                                 line_number: params.line_number,
                             },
                             matches,
+                            incomplete_paths,
                         );
                     }
                     run_native_search_with_optional_rg_fallback(cpu_fallback_config, rg_fallback)
@@ -12697,7 +12754,7 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                         emit_verbose_metadata(fallback_decision);
                     }
                     if params.patterns.len() > 1 {
-                        let matches =
+                        let (matches, incomplete_paths) =
                             collect_native_multi_pattern_matches(params.patterns, cpu_config)?;
                         return emit_multi_pattern_native_results(
                             NativeSearchOutputOptions {
@@ -12711,6 +12768,7 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                                 line_number: params.line_number,
                             },
                             matches,
+                            incomplete_paths,
                         );
                     }
                     run_native_search_with_optional_rg_fallback(cpu_config, rg_fallback)
@@ -12815,6 +12873,9 @@ fn handle_gpu_sidecar_search(params: GpuSearchParams) -> anyhow::Result<()> {
                         params.path,
                         params.gpu_device_ids,
                         matches,
+                        // Task 276: this route observed no walk of its own, so it cannot
+                        // report a count. `None` means "cannot report", NEVER "complete".
+                        None,
                     )?;
                 } else if params.json {
                     let normalized =
@@ -12980,12 +13041,26 @@ fn exit_with_sidecar_error(err: SidecarError) -> anyhow::Result<()> {
     std::process::exit(err.exit_code.max(1));
 }
 
+/// Task 276: turn a walk-error count into the three envelope fields.
+///
+/// ONE place, so the `--json` envelope and the `--ndjson` summary cannot drift -- the #276
+/// family is a long record of one route disclosing while its twin stayed silent.
+fn incomplete_envelope_fields(
+    incomplete_paths: Option<usize>,
+) -> (Option<bool>, Option<&'static str>, Option<usize>) {
+    match incomplete_paths {
+        Some(count) if count > 0 => (Some(true), Some("unreadable_path"), Some(count)),
+        _ => (None, None, None),
+    }
+}
+
 fn emit_json_search_results(
     decision: RoutingDecision,
     pattern: &str,
     path: &str,
     requested_gpu_device_ids: &[i32],
     matches: Vec<SearchMatchJson>,
+    incomplete_paths: Option<usize>,
 ) -> anyhow::Result<()> {
     let proof_fields = gpu_proof_fields(
         requested_gpu_device_ids,
@@ -12999,6 +13074,8 @@ fn emit_json_search_results(
             .or_insert(0) += 1;
     }
     let matched_file_paths = match_counts_by_file.keys().cloned().collect::<Vec<_>>();
+    let (result_incomplete, incomplete_reason_class, incomplete_paths_count) =
+        incomplete_envelope_fields(incomplete_paths);
     let payload = SearchResultJson {
         version: JSON_OUTPUT_VERSION,
         routing_backend: decision.routing_backend(),
@@ -13017,6 +13094,9 @@ fn emit_json_search_results(
         matched_file_paths,
         match_counts_by_file,
         matches,
+        result_incomplete,
+        incomplete_reason_class,
+        incomplete_paths_count,
     };
 
     println!("{}", serde_json::to_string(&payload)?);
@@ -13332,7 +13412,9 @@ fn emit_ndjson_search_results(
     path: &str,
     requested_gpu_device_ids: &[i32],
     matches: Vec<SearchMatchJson>,
+    incomplete_paths: Option<usize>,
 ) -> anyhow::Result<()> {
+    let total_matches = matches.len();
     for matched in matches {
         let proof_fields = gpu_proof_fields(
             requested_gpu_device_ids,
@@ -13363,6 +13445,20 @@ fn emit_ndjson_search_results(
         };
         println!("{}", serde_json::to_string(&payload)?);
     }
+
+    let (result_incomplete, incomplete_reason_class, incomplete_paths_count) =
+        incomplete_envelope_fields(incomplete_paths);
+    println!(
+        "{}",
+        serde_json::to_string(&SearchSummaryNdjson {
+            record_type: "summary",
+            version: JSON_OUTPUT_VERSION,
+            total_matches,
+            result_incomplete,
+            incomplete_reason_class,
+            incomplete_paths_count,
+        })?
+    );
 
     Ok(())
 }
