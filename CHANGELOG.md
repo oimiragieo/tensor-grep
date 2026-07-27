@@ -1,6 +1,70 @@
 # CHANGELOG
 
 
+## v1.99.3 (2026-07-27)
+
+### Bug Fixes
+
+- **search**: Give the main.rs --json/--ndjson envelopes an incompleteness marker (#276)
+  ([#811](https://github.com/oimiragieo/tensor-grep/pull/811),
+  [`8d91121`](https://github.com/oimiragieo/tensor-grep/commit/8d91121f853453517e30557c8ef8e72a10baeaa4))
+
+* fix(search): give the main.rs --json/--ndjson envelopes an incompleteness marker (#276)
+
+`native_search.rs` has disclosed walk errors since #276 slice A. `main.rs` has a SECOND, entirely
+  separate pair of envelopes that disclosed nothing:
+
+SearchResultJson (main.rs:9031-9053) -- no result_incomplete, no incomplete_reason_class, no
+  incomplete_paths_count. Structurally parallel to the native envelope at
+  native_search.rs:2489-2491, carrying none of it. emit_ndjson_search_results -- emitted one record
+  per match and NOTHING else. Not a missing field: a missing RECORD. There was nowhere for a marker
+  to live.
+
+Both emitters took `matches` with no stats parameter, so neither could even see a count.
+
+WHAT LANDS - The three fields on SearchResultJson, omit-when-complete, so a complete search stays
+  byte-identical. - A `SearchSummaryNdjson` terminal record (`type: "summary"`), emitted on EVERY
+  run. A summary that appears only when something went wrong is one a streaming reader never learns
+  to expect. - ONE shared `incomplete_envelope_fields()` feeding both, so the two cannot drift --
+  the #276 family is a long record of one route disclosing while its twin stayed silent. -
+  `collect_native_multi_pattern_matches` returns `(matches, Option<usize>)`. Its per-pattern loop
+  already HAD `stats` and used only `stats.matches`, discarding every walk error right there; it now
+  accumulates them. THIS is the live wire that makes the field able to fire.
+
+THE `None` SITES ARE AN ALLOW-LIST, NOT SILENCE. Five routes (warm-index json + ndjson, AST, two
+  GPU) genuinely observed no walk, and each passes `None` with a comment saying so. `None` means
+  "cannot report", NEVER "complete" -- defaulting them to `Some(0)` would be fail-open by omission,
+  which is the defect being fixed.
+
+SEVEN call sites, not the six the plan first listed: the warm-index route has a --json exit AND an
+  --ndjson exit back to back, and the draft enumerated only the first. An emitter nobody lists is an
+  emitter that omits the marker.
+
+CPU-SAFE: cargo is forbidden on this box; `rustfmt --edition 2021 --check` is clean and every edit
+  was exact-string anchored with an asserted match count. Compilation and tests are CI's call.
+
+* fix(native): bind the multi-pattern walk-error count outside the match arm
+
+CI (smoke ubuntu-latest, job 89859216088) reported:
+
+error[E0425]: cannot find value `_incomplete_paths` in this scope --> src/main.rs:8729:21
+
+The `match` form at :8701 destructured `Ok((matches, _incomplete_paths))` inside the arm, so the
+  count did not escape into the `emit_multi_pattern_ native_results` call below it. Its three
+  sibling call sites (:12083, :12581, :12758) already use tuple destructuring on the `let`; this
+  makes the fourth match them.
+
+rustfmt is a syntax oracle, not a name-resolution one -- it passed on the broken form. E0425 also
+  aborts before typeck, so every arity/type error in this branch was invisible behind it; the seven
+  emitter call sites were re-counted by hand (all 6 args, last `Option<usize>`) before this push.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.99.2 (2026-07-27)
 
 ### Bug Fixes
