@@ -8698,7 +8698,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                 .then(|| command_ripgrep_args(&args, &request));
 
             if request.patterns.len() > 1 {
-                let matches = match collect_native_multi_pattern_matches(
+                let (matches, incomplete_paths) = match collect_native_multi_pattern_matches(
                     &request.patterns,
                     native_search_config_for_command(
                         &args,
@@ -8708,7 +8708,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                         decision,
                     ),
                 ) {
-                    Ok((matches, _incomplete_paths)) => matches,
+                    Ok(collected) => collected,
                     Err(err) => {
                         exit_json_search_runtime_error_if_needed(args.json, args.ndjson, &err);
                         return Err(err);
@@ -8726,7 +8726,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                         line_number: args.line_number && !args.no_line_number,
                     },
                     matches,
-                    _incomplete_paths,
+                    incomplete_paths,
                 );
             }
 
