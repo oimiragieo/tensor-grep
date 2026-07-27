@@ -1,6 +1,447 @@
 # CHANGELOG
 
 
+## v1.99.1 (2026-07-27)
+
+### Bug Fixes
+
+- **symbols**: Stop two false claims an external dogfood caught (tasks 326, 327)
+  ([#814](https://github.com/oimiragieo/tensor-grep/pull/814),
+  [`251d412`](https://github.com/oimiragieo/tensor-grep/commit/251d412874b78926c64d221bb9183b97f9b882bf))
+
+An independent codex dogfood of the published v1.98.27 wheel found three things. One is a real
+  defect, one is a real defect in a field nobody had checked, and one is contracted behaviour that
+  is merely undiscoverable. Only the first two are code changes; see below for why the third is not.
+
+326 -- the regex reference fallback labelled DECLARATIONS as calls.
+
+tg refs . collect_walked_files --json -> line 3879, "fn collect_walked_files(config:
+  &GpuNativeSearchConfig ...", ref_kind: "call", provenance: "regex-heuristic",
+  resolution_confidence: 1.0
+
+`_regex_references_and_calls` matched `\bNAME\s*\(`, which the definition line satisfies. The
+  tree-sitter arm of the SAME feature already refuses to count it (`_is_definition_identifier`
+  excludes function_item/struct_item/ enum_item/trait_item) -- a twin gap, guard on one arm and not
+  the other.
+
+Not theoretical: the tree-sitter arm returns ([], []) with no Rust grammar installed, and a pip/uvx
+  wheel ships none, so the regex arm is the one real users reach. That is how an external reviewer
+  hit it on the shipped wheel. It also spanned languages -- the fallback gates on JS/TS suffixes
+  too, so `function NAME(` mislabelled identically; fixing only Rust would have left the twin live.
+
+The guard is a NARROW deny-list of declaration keywords, not an allow-list of call shapes. The usual
+  fail-closed rule inverts here because the error directions are not symmetric: over-suppressing
+  DROPS real call sites, and a missing caller silently understates impact -- worse than a surplus
+  row a reader can see and dismiss. Rationale is in the code, not just here.
+
+327 -- `not_found: true` asserted over a scan that read ZERO files.
+
+tg refs . collect_walked_files --deadline 0.1 --json -> deadline_exceeded: true, files_scanned: 0,
+  references: [], not_found: true
+
+`not_found` claims "we looked and it is absent". A truncated scan never looked. This is the
+  confident-false-zero class the whole #276 campaign is about, surviving in the one field the
+  completeness machinery never covered -- while the emitter docstring six lines above the stamp site
+  says its purpose is preventing exactly that.
+
+The predicate is `_scan_incomplete`, reused rather than rewritten, because that gate is already
+  where "the scan-vs-output-cap contract is defined exactly once". A second notion of incompleteness
+  here could drift from the exit-code gate and reintroduce the inconsistency being fixed. It also
+  gets the output-cap boundary right for free: an output cap is a complete analysis capped for
+  display, so it must NOT suppress `not_found`.
+
+Exit codes are unchanged -- `_scan_incomplete` payloads already exit 2 on a branch evaluated before
+  `not_found` is read. This only changes what the FIELD tells a caller parsing the JSON.
+
+NOT FIXED, deliberately. The reviewer's top-ranked defect was `tg callers --json` returning 1 of 4
+  callers with `result_incomplete: false` and exit 0. That is contracted: CONTRACTS.md:156 -- "An
+  OUTPUT-only cap ... is a COMPLETE analysis capped only for display and stays exit 0; only a SCAN
+  truncation exits 2" -- and the omission IS machine-branchable via token_budget.primary_truncated /
+  primary_omitted / omissions. Flipping it would relitigate a settled contract and break the pins
+  that hold it. The real residual is that a reviewer with full repo access and the JSON in hand
+  still concluded the tool claimed completeness: defensible, not discoverable. Tracked as task 328
+  as a docs fix.
+
+Tests assert BOTH arms. The controls run first in each file: a real call site must still classify as
+  a call, and a complete scan finding nothing must still report not_found (exit 1). A guard that
+  suppressed everything would satisfy every positive assertion here, so without those arms the tests
+  would prove nothing. The old-vs-new predicate was also run side by side to confirm the three
+  truncation shapes flip True->False while both control shapes stay unchanged.
+
+Verified: 6/6 + 7/7 new, 527 test_cli_modes, 243 deadline/not_found pins, 242 language suites. All
+  green.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+### Documentation
+
+- Stop citing local task IDs as GitHub links in the public docs (#322)
+  ([#810](https://github.com/oimiragieo/tensor-grep/pull/810),
+  [`c305a66`](https://github.com/oimiragieo/tensor-grep/commit/c305a662d57d29a28720c03c84a85ca667ada93c))
+
+A bare "#NNN" auto-links to a GitHub issue/PR of that number. Twelve citations in the public-facing
+  docs were LOCAL task-tracker IDs, so each resolved to an unrelated pull request.
+
+THE MECHANICAL SWEEP WAS REFUSED, and that is the main finding. PRs in this repo start at #1, so
+  every task ID in 1..330 collides with a real PR, and the number alone cannot disambiguate.
+  Verified against the live repo:
+
+#141 -> PR "fix: harden agent output budget hygiene" vs task 141 (native AstBackend vs ast-grep DSL
+  divergence) #223 -> PR "fix: bound agent-loop memory and dogfood contracts" vs task 223
+  (route-test wall-clock SLA) #264 -> PR "docs(skill): de-brittle release-history governance" vs
+  task 264 (--json searches fewer files than plain text) #276 -> PR "chore: post-release Docker
+  dogfood harness" vs task 276 (the --json incompleteness disclosure gap)
+
+A regex rewrite would reassign provenance in both directions and be near impossible to audit
+  afterwards. So every occurrence here was read in its own sentence, and only those the prose ITSELF
+  labels ("Task", "audit", "campaign", "consolidation") were rewritten.
+
+Deliberately left alone: - PAPER.md's "PR #37/#39/#40/#42/#64/#72" -- genuine pull requests,
+  correctly linked. - installation.md's "[issue #48](.../issues/48)" -- issue 48 exists and its
+  title ("perf: reduce public shim startup overhead") matches the sentence. - docs/BACKLOG.md,
+  AGENTS.md, SESSION_HANDOFF.md, CLAUDE.md -- internal ledgers, 400+ occurrences; a wrong auto-link
+  costs an internal reader one click, which does not pay for per-occurrence reading at that volume.
+  - docs/code-map/** -- generated output.
+
+Scope measured at 504 occurrences across 20 files; this PR is the 12 where a wrong link actually
+  misleads an external reader.
+
+- **agents**: Fold in the 8th oracle form and the drain-gate correction
+  ([#813](https://github.com/oimiragieo/tensor-grep/pull/813),
+  [`1934544`](https://github.com/oimiragieo/tensor-grep/commit/1934544e07541874fadd295315594b4cc38f0c6f))
+
+Two things this session earned that lived only in session memory.
+
+FORM 8 -- the SPLIT ORACLE. A precondition proved in a DIFFERENT run is not THIS run's precondition.
+  Found by an EXTERNAL codex audit in a test whose own docstring called it bidirectional: ARM 1 of
+  the rg-premise test asserted the summary carried no incompleteness marker but never asserted its
+  own run exited 2, so on a tree where the directory turned out readable it would report "rg hides
+  incompleteness" from a scan that was never incomplete.
+
+What made it feel safe is the part worth teaching: a helper DID verify the directory was unreadable
+  -- to the TEST process -- and ARM 2 DID assert exit 2. Both true, neither load-bearing for ARM 1.
+  Two correct checks beside a conclusion neither supports. A control in another process controls
+  nothing.
+
+A33 -- `release-intent` being SKIPPED proves nothing. I merged into an in-flight main run after
+  reading its job list and concluding it would not publish. That job is `if: github.event_name ==
+  'pull_request'` -- a PR-title validator, always skipped on a push. The job that matters is
+  `release`, push-gated, and it `needs:` the whole test matrix so it does not even appear until
+  late. My merge landed on top of it and its push was rejected non-fast-forward (run 30223536622).
+  Cost: one reddened release.
+
+A33 also records the SECOND window, which is not the same failure: after `Semantic Release` succeeds
+  the push race is over, but the publish tail is still running, and a new push cancels it via the
+  concurrency group -- leaving a tag with no PyPI artifact. Wait for PyPI to actually serve the
+  version.
+
+Both are recorded with their receipts rather than as rules, because the reasoning that produced each
+  mistake was locally plausible and will be plausible again.
+
+- **backlog**: Reconcile the canonical ledger to v1.98.27
+  ([#812](https://github.com/oimiragieo/tensor-grep/pull/812),
+  [`cb592b2`](https://github.com/oimiragieo/tensor-grep/commit/cb592b242a22067b11feb2c285989546279ca989))
+
+docs/BACKLOG.md was anchored at v1.98.13 while main shipped v1.98.27 -- fourteen releases of drift
+  in the one document that claims to be the canonical work list.
+
+The new refresh block records the trustworthy-tg wave (#292) as one thread rather than a list of
+  PRs: a surface that cannot complete its work must SAY so, in a field a machine can branch on, and
+  exit accordingly. Enumerated mechanically from `git log v1.98.13..v1.98.27`, not from
+  recollection.
+
+Two things deliberately included that a release summary would omit: - The METHOD items (#771 census,
+  #765 ratchet, #776 closed vocabulary, #774/#772/#787 tests that assert the contract instead of a
+  rendering). They are why the wave converged rather than regenerating. - What the trust benchmark
+  actually showed (#784) and why its vanished-file column was dropped (#789) -- it scored correct
+  behaviour as dishonest. A ledger that records only the flattering half is the thing this wave
+  exists to stop.
+
+Also names what is IN FLIGHT and unmerged, pointing at `gh pr list` as the source of truth rather
+  than freezing PR state into prose.
+
+### Refactoring
+
+- **native**: Searchstats::is_empty so the Drop guard cannot forget a field
+  ([#805](https://github.com/oimiragieo/tensor-grep/pull/805),
+  [`d7ade3e`](https://github.com/oimiragieo/tensor-grep/commit/d7ade3e925a9cb9a80d14bffd5a790d62d7b93e2))
+
+* refactor(native): SearchStats::is_empty so the Drop guard cannot forget a field
+
+ParallelWalkWorker::drop enumerated five of SearchStats' six countable fields inline, omitting
+  binary_match_files (native_search.rs:80). Moved the emptiness test onto SearchStats so "did you
+  cover the new field?" is a single-site question.
+
+HONESTY NOTE -- the tempting version of this commit is wrong, and adversarial review caught me
+  writing it. The omission is NOT currently reachable: every writer of binary_match_files is
+  preceded by searched_files += 1 in the same block (:536/:547, :1136/:1147), so binary_match_files
+  > 0 implies searched_files > 0 and the guard could never return early on it. My first draft called
+  this a "verified" silent-loss defect and proposed a test that reached the state only by assigning
+  the field directly -- red-then-green while proving nothing about production. That is the
+  discrimination failure this repo keeps re-learning, committed inside a plan that warns about it.
+
+So this ships as defense-in-depth against a FUTURE field that is not so protected, and the test
+  asserts the INVARIANT that makes the guard honest (each field alone makes is_empty() false) rather
+  than staging an unreachable state.
+
+Targets main deliberately: #795 should rebase onto this, not the reverse. The only
+
+Verified: rustfmt --check clean. Rust compilation is CI-only here (CPU-safe policy);
+
+NativeSearchMatch's lack of a Default derive (:43) was checked by reading before constructing one,
+  since a wrong constructor costs a full CI cycle.
+
+Refs #319
+
+* docs(native): "every PRODUCTION writer", per codex audit
+
+The codex audit of this branch against the plan returned SHIP with one real correction, and it is a
+  precision defect worth fixing rather than waving through.
+
+I wrote "every writer of binary_match_files is preceded by searched_files += 1". That is literally
+  FALSE on this branch: the invariant test I added in the previous commit writes binary_match_files
+  alone (:2475). The true and load-bearing claim is "every PRODUCTION writer" -- and the test's
+  violation of it is deliberate, which is exactly what lets it test the guard's contract without
+  staging a reachable state.
+
+Also folds in the third production site the audit found and I had not cited: merge_search_stats
+  merges searched_files (:1348) before binary_match_files (:1352), alongside the worker path
+  (:544/:556) and the serial path (:1121/:1133).
+
+Audit also confirmed, each with a citation: the six closures are non-capturing so they coerce to
+  `fn(&mut SearchStats)`; NativeSearchMatch's three fields and types match; PathBuf reaches `mod
+  tests` via `use super::*`; no duplicate impl block. It found no functional regression, and
+  confirmed main.rs:8353 is semantically "no text or binary matches" rather than "stats entirely
+  empty", so it correctly stays explicit.
+
+Compilation and CI remain UNVERIFIED here by policy -- a static review is not a build.
+
+### Testing
+
+- **deadline**: Stop pinning an incidental byproduct in the clamp-to-floor test
+  ([#809](https://github.com/oimiragieo/tensor-grep/pull/809),
+  [`d4683b7`](https://github.com/oimiragieo/tensor-grep/commit/d4683b7c20617e2d319750b54e123428987d2cd1))
+
+* test(deadline): stop pinning an incidental byproduct in the clamp-to-floor test
+
+test_agent_second_scan_deadline_clamps_to_floor asserted `call_site_evidence.status == "collected"`.
+  That is STRICTER THAN THE CODE IT GUARDS, and it went red on a loaded windows-latest runner:
+  `assert 'collected_no_call_sites' == 'collected'` (PR #796 run 30223655149).
+
+WHY THE ASSERTION WAS WRONG, from the source rather than from the failure: agent_capsule.py:800 and
+  :949 "status": "collected" if related_call_sites else "collected_no_call_sites" The only
+  difference between the two is whether the scan HAPPENED TO FIND a caller. And
+  agent_capsule.py:2040 is the product's own verdict: if status not in ("collected",
+  "collected_no_call_sites"): i.e. both are success. The test pinned one of two equally-valid
+  outcomes.
+
+This scenario makes that a coin flip BY DESIGN: it injects a 0.5s sleep against a 0.3s budget
+  precisely so the rescue scan runs inside a FLOORED sub-budget. Whether a floored scan finds the
+  caller is a race with the machine. The old test's own comment even names it as incidental -- "the
+  rescue scan's OWN substantive result (found the caller) is still present and still useful" -- and
+  then asserted it.
+
+BLAST RADIUS: the false red landed on PR #796, a SARIF feature whose entire diff contains ZERO
+  occurrences of `call_site_evidence`. An over-specified assertion does not just fail -- it charges
+  its failure to whichever unrelated PR happens to run next.
+
+BIDIRECTIONALLY PROVEN, because a widened assertion that cannot fail is worse than the one it
+  replaces: ARM 1 (real code) -> PASSES ARM 2 (both status sites -> "skipped") -> RED, and the
+  failure names this line The mutation harness asserts `mutation sites found == 2` BEFORE trusting
+  either arm, and restores the source in a finally: a probe whose replacement string never matched
+  would report GREEN and prove nothing.
+
+What still pins the behaviour this test is NAMED for is untouched: the recorded floored deadline,
+  exit 2, partial=True, partial_reason="deadline".
+
+* test(deadline): correct two overclaims the codex audit caught
+
+AUDIT: codex, gpt-5.6-sol, on bce70c5 -> PASS_WITH_FIXES. Both findings were real and both were
+  mine.
+
+(A) I called the two statuses "equally valid" without saying that THIS fixture is
+  `_write_helper_and_caller` -- a caller DOES exist here. So the old assertion was also an
+  INCIDENTAL caller-discovery guard: a deterministic regression breaking caller discovery surfaces
+  as `collected_no_call_sites`, and the widened form no longer catches it. That is a real cost, and
+  omitting it made the change sound free. It is still the right trade -- in a scenario built around
+  an EXHAUSTED deadline the regression signal cannot be told apart from the timing race -- but
+  caller discovery deserves its own test with a normal budget, and the comment now says so instead
+  of implying nothing was given up.
+
+(D) A downstream comment still read "proven by the substantive 'collected' result above" -- untrue
+  the moment `collected_no_call_sites` began passing. That is the same defect I fixed in
+  gpu_native.rs earlier today (PR #808): a comment asserting a fact that has stopped being true,
+  which is worse than no comment because the next reader trusts it instead of re-checking. Committed
+  by me, one hour later, in the fix for an over-specified assertion. The floor is proven by
+  `recorded["deadline_seconds"] == 0.1`, which reads the value the collector was actually handed;
+  the comment now points there.
+
+No executable change -- the widened assertion and its bidirectional proof stand. 39 tests in the
+  file pass; ruff format + check clean.
+
+- **determinism**: Make output stability a named, CI-gated invariant (#311)
+  ([#797](https://github.com/oimiragieo/tensor-grep/pull/797),
+  [`1129548`](https://github.com/oimiragieo/tensor-grep/commit/1129548d23ab27f24469275d3751a2497b15b9fd))
+
+* test(determinism): make output stability a named, CI-gated invariant (#311)
+
+`docs/CONTRACTS.md` is full of byte-identity language and the repo has many golden tests, but none
+  of them check the property this file checks:
+
+A golden test runs the command ONCE against a stored expectation. That catches drift FROM the
+  golden. It cannot catch run-to-run INSTABILITY -- a field emitted in set-iteration order passes
+  whenever it happens to match and reads as a FLAKE when it does not. "Flaky golden" is what
+  unpinned nondeterminism looks like from the inside, which is why it gets re-run instead of
+  diagnosed.
+
+Seven machine-facing surfaces (codemap / inventory / docs-coverage / orient / callers / imports /
+  scan --ruleset) each run three times and must be identical.
+
+Why it is a real check and not a ritual:
+
+- SEPARATE PROCESSES, not repeated in-process calls. A second in-process call inherits lru_cache,
+  module globals and warm session state, so it would be trivially identical -- a check that cannot
+  fail. - PYTHONHASHSEED is VARIED deliberately (0/1/2). Python randomises string hashing per
+  process, so set/dict-iteration order changes between seeds. Left to chance that is a coin flip
+  this gate could miss for years; pinned to known-different seeds it reliably detects the most
+  common nondeterminism source in Python. Three seeds rather than two because the measured 2-element
+  case had seeds 0 and 1 agreeing while 2 differed. - The volatile set is an ALLOW-LIST, split by
+  whether the field is ALWAYS present. Normalising away whatever differs is how a gate like this
+  becomes decoration, so fields are named with reasons, anything else that moves fails with its JSON
+  path, and `generated_at` has its liveness asserted. `daemon_response_cache` is declared
+  CONDITIONAL and deliberately not liveness-checked (its presence depends on whether a daemon served
+  the call) -- the honest tradeoff is written down rather than papered over by relaxing an assertion
+  until it passed.
+
+MEASURED: 4 of 7 surfaces are byte-identical with NO normalisation at all. The other three differ
+  ONLY in provenance/runtime metadata (codemap's wall-clock `generated_at`,
+  `daemon_response_cache.{hits,status}`). tg's RESULTS were already deterministic; what this adds is
+  that they cannot stop being so without CI naming the field that moved.
+
+PROVEN BIDIRECTIONAL by injecting nondeterminism into live emit sites: codemap set-union un-sorted
+  -> RED, 4 fields moved main.py:6688 backends un-sorted -> RED, named .backends[0]/.backends[1]
+
+Three earlier injections did NOT trip it and all three were BAD INJECTIONS, not blind spots -- a
+  dict misread as a set, a markdown-only code path, and a sidecar module the tested invocation never
+  routes to. All three are recorded in the module docstring with the rule they share: verify the
+  mutation site is on the path under test AND genuinely varies before concluding anything from a
+  green.
+
+No new CI job: tests/unit is already covered by `test-python`, so this gates every PR without adding
+  queue pressure to a runner-scarce release pipeline.
+
+Closes #311
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* fix(determinism): isolate each run so the gate measures output, not accumulated state (#311)
+
+CI caught a real defect in the gate itself, and it is worth naming precisely because it is the
+  inverse of the usual failure: this passed LOCALLY and failed on CI.
+
+`tg codemap` WRITES its output (`docs/code-map/`) into the tree it scans. With all three runs
+  sharing one fixture, run 1 mutated the input for runs 2 and 3, so CI observed `.revision.dirty`
+  flipping False->True, `dirty_file_count` 0->1, a changed `dirty_tree_sha256`, and
+  `scan_limit.scanned_files` going 7->13 between seeds. None of that is hash-seed nondeterminism --
+  it is accumulated state, and reported as-is it would have been a product bug that does not exist.
+
+WHY IT WAS GREEN HERE: my working copy already held the generated files from an earlier run, so
+  every run saw the same steady state. CI starts clean, so run 1 was the only one with a pristine
+  tree. **A check whose result depends on whether you have run it before is not measuring the
+  software** -- and a local green proves the machine, not the commit.
+
+FIX: each invocation now runs against its own `copytree` sandbox in the system temp dir.
+
+The fixture is never written to at all (verified: `git status` on it stays empty after a full run,
+  and a second back-to-back run is stable).
+
+Sandbox paths differ per run by construction, so they are normalised back to a stable token. THREE
+  forms are needed and the JSON-escaped one is the trap: inside a JSON document a Windows path's
+  separators are doubled, so a single-backslash replace misses every absolute path -- and it
+  surfaces as absent-vs-present dict KEYS (`per_page_token_estimates.<abs path>`), which again reads
+  like product nondeterminism rather than a normalisation gap. Longest-first so the escaped form is
+  consumed before the plain one can partially match. This normalises the PATH, never a RESULT.
+
+RE-PROVEN through the new sandbox: un-sorting `backends` at main.py:6688 still goes RED naming
+  `.backends[0]`/`.backends[1]`, so isolation did not blunt the detector.
+
+* test(determinism): make the premise failure explain itself (exit code + stderr)
+
+The ubuntu leg fails with "scan-ruleset-json produced 0 bytes" and nothing else. stdout is empty by
+  definition when that premise fires, so the reason lives entirely in the two channels _run was
+  discarding -- and this gate runs on platforms I cannot reproduce locally, which turns a one-cycle
+  diagnosis into guesswork.
+
+_run now returns an _Outcome (normalised stdout + returncode + stderr) and the premise assertion
+  prints the exit code, the first 2000 chars of stderr, and the argv.
+
+This does NOT fix the ubuntu failure. It is the instrument fix that makes the next run say why,
+  instead of me guessing at a Linux-only cause from a Windows box.
+
+Ruled out locally first, so the next reader does not redo it: ast-grep absence is NOT the cause.
+  With ast-grep genuinely off PATH (premise verified -- the first attempt missed a second copy under
+  AppData/Roaming/npm and silently compared two identical arms), the tree-sitter fallback still
+  emits 2676 bytes, exit 0.
+
+Refs #311
+
+* fix(determinism): skip the ast-grep-dependent surface on its OWN error, not a guess
+
+The instrument commit did its job in one CI cycle. Ubuntu now reports:
+
+exit code: 1 stderr: Explicit AST search requires AST dependencies: ast-grep wrapper backend is
+  required for this pattern but is not available
+
+So the ORIGINAL ast-grep hypothesis was right and my "falsification" of it was wrong.
+  `secrets-basic` uses metavar patterns ($SECRET), which fail CLOSED to the ast-grep wrapper by
+  design -- the native tree-sitter fallback deliberately refuses them (backends/ast_backend.py:691,
+  whose comment at :683 names "CI without the ast-grep binary" as a known condition). Ubuntu CI has
+  no ast-grep. Expected, documented, and not something the determinism gate should red on.
+
+WHY MY LOCAL CONTROL LIED: I checked `command -v ast-grep` -- the CLI -- and declared the premise
+  verified. The wrapper is not resolved that way, so both arms of my "bidirectional" check had it
+  available and agreed for the wrong reason. I verified a premise; it was the wrong premise. Third
+  instance of that fault this session, which is why the skip below keys on the tool's OWN refusal
+  string rather than on `sys.platform` or a `which` probe: the command's error cannot drift away
+  from the behaviour it guards.
+
+The skip is LOUD (names the surface, prints exit code + stderr) and narrow -- the other six surfaces
+  still run on every platform, so this cannot hollow the gate out, and any machine WITH ast-grep
+  (dev boxes, the windows leg) exercises it normally.
+
+* fix(test): the determinism gate reported its OWN normalisation gap as a product defect
+
+On windows-latest (py3.11 + py3.12) this gate failed with "codemap-json is NOT deterministic -- 19
+  field(s) moved". The product was fine. All 19 were the per-run scratch directory: `str(sandbox)`
+  never appeared in the emitted text, so all three replaces missed, the path survived into the
+  comparison, and two runs with different temp dirs duly differed. Linux and macOS passed, so it
+  read as a genuine platform-specific defect.
+
+Two changes, the second more important than the first:
+
+1. Normalise the RESOLVED spelling as well as the handed one. The tool resolves the path it is
+  given; where the two differ (8.3-shortened or junctioned TEMP, casing, UNC prefix) replacing only
+  the handed form matches nothing at all.
+
+2. Assert that normalisation actually FIRED. A gate that misreports its own gap as a product finding
+  is worse than no gate: it is confidently wrong in the product's voice. The marker is the scratch
+  prefix, which can reach stdout by exactly one route -- an unreplaced sandbox path -- so it cannot
+  fire on a real product defect and cannot stay silent on a normalisation gap. The prefix is now one
+  constant used both to create the sandbox and to detect it, so the two cannot drift.
+
+Change 1 is a HYPOTHESIS about which spelling CI emits; it could not be reproduced on this Windows
+  box, where the two spellings are identical. Change 2 is what makes shipping that acceptable -- if
+  the hypothesis is wrong, the next run says NORMALISATION GAP and prints the excerpt containing the
+  third spelling instead of accusing the product a second time.
+
+Verified bidirectionally in one process: as written, 8 passed; with both spellings made non-matching
+  (reproducing the CI condition), red with NORMALISATION GAP rather than "N field(s) moved".
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.99.0 (2026-07-27)
 
 ### Bug Fixes
