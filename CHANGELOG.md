@@ -1,6 +1,293 @@
 # CHANGELOG
 
 
+## v1.101.6 (2026-07-27)
+
+### Bug Fixes
+
+- **cli**: Tg scan's text output must say it could not read part of the scope
+  ([#831](https://github.com/oimiragieo/tensor-grep/pull/831),
+  [`61ab34b`](https://github.com/oimiragieo/tensor-grep/commit/61ab34b96d2f747cbd63ee3934b2b2361ad3b5f8))
+
+`tg scan --ruleset secrets` printed `Scan completed. total_matches=N` and exited 0 over files it
+  could not open. For a SECURITY scanner that is the worst shape in the product: an unread file is
+  indistinguishable from a clean one.
+
+Task #299 built the payload (`partial`, `partial_reason`, `remediation`, `unreadable_paths`) and
+  #310's SARIF carries it in-band -- but the DEFAULT text renderer read none of it. A payload-level
+  fix that never reached the default output.
+
+## Dogfooded on the shipped v1.101.4, not inferred from a code read
+
+An ACL-denied fixture with ONE blocked file holding two secrets both rules match. Controls asserted
+  first: the denial bites (UnauthorizedAccessException), and the sibling file stays readable.
+
+--json partial=true, partial_reason="unreadable_path", unreadable_paths={"count": 2, "sample":
+  [...]} text "Scan completed. rules=6 matched_rules=2 total_matches=2" exit 0
+
+Same invocation, same payload. Only the renderer differs.
+
+## LEADING, not trailing
+
+`codemap` is the sibling that already reads `remediation`, but it prints `PARTIAL:` AFTER its
+  counts. That ordering is the task #329 defect and is not the half of the precedent worth copying:
+  a reader who has seen `total_matches` has already formed the answer.
+
+## A second defect, found only by dogfooding
+
+The disclosure said "2 file(s) in scope could not be read" and named the same path TWICE -- with
+  exactly one file blocked. `_UnreadablePathFlag.record` increments per `OSError`, and `scan` runs
+  two backends (ast-grep wrapper + regex leg) that each open the same file. Surfacing that sentence
+  to stdout would have shipped a new lie.
+
+The event COUNT is deliberately unchanged: other `_UnreadablePathFlag` consumers count `os.scandir`
+  failures where per-event IS right, and task 320 settled the same event-vs-path question for the
+  native `incomplete_paths_count` by DOCUMENTING it rather than deduplicating a hot-path counter.
+  What changed is the prose (it no longer claims files) and the SAMPLE, which de-duplicates because
+  it is a list of PLACES, not a tally -- two slots spent on one path names fewer of them.
+
+## Exit code deliberately NOT changed
+
+`tg scan` has returned 0 on a disclosed partial since #299; flipping it is a contract change with
+  its own consumers (the six-consumer surprise #276 slice C0 had to clear), not a drive-by on a
+  rendering fix. SARIF already carries the signal in-band for CI gates.
+
+## Verification (bidirectional, control arms run)
+
+treatment 7 passed control (renderer reverted, git apply -R) 3 failed, 3 passed
+
+The 3 still-passing are the control arms -- a complete scan emits no banner, and --json stays a
+  single parseable document.
+
+The de-dup regression test needed two attempts: the first used the existing single-rule `_scan`
+  helper, where only ONE read attempt occurs, so the duplicate condition it exists for was never
+  reached. Its premise assertion caught that (`assert count >= 2`); it now drives two rules to force
+  the double attempt.
+
+An earlier draft of the text test invented `_emit_scan_text_report`, which does not exist -- it
+  would have failed on AttributeError as a false red. The renderer is inline in the command body, so
+  the test drives the real command with the producer stubbed.
+
+Re-dogfooded through the real bootstrap front door with the loaded module's source asserted to be
+  the worktree copy (not a shadowing venv install).
+
+Found by an adversarially-verified census of the incompleteness-envelope campaign; this is the
+  highest-severity of ~12 surfaces in the same class.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- **plans**: Close the 276 remaining-slices plan as a campaign record
+  ([#832](https://github.com/oimiragieo/tensor-grep/pull/832),
+  [`4c5d0d5`](https://github.com/oimiragieo/tensor-grep/commit/4c5d0d568e12aede2b6bbb6da04319a1a7a75199))
+
+* docs(plan): implementation plan for task 276's remaining slices
+
+Re-cut clean from main. The previous branch carried two foreign files that its own title called
+  docs-only:
+
+- rust_core/src/main.rs -- a duplicate of the task 303 de-flake, which has since landed
+  independently as PR #802 (main.rs:3853 on main today) - tests/unit/test_output_determinism_gate.py
+  -- PR #797's file, not on main
+
+Neither belonged to a plan document. Both were inherited from a dirty working tree, and the tell was
+  a "docs-only" PR failing test-python and test-gpu-nvidia -- a docs change cannot reach those jobs,
+  so the failure was a CONTENTS problem, not a test problem.
+
+Guard applied rather than trusted: the branch is built by checking out main, writing exactly one
+  file, and asserting `git diff --cached --name-only` returns exactly 1 path before committing.
+  Verified: count=1.
+
+The plan itself is unchanged from the reviewed version, including the citation convention (local
+  tasks written "task NNN", no "#", because GitHub auto-links bare #NNN and this repo's two
+  numbering spaces overlap).
+
+Task 2 of the plan remains GATED on external review -- the council dispatched for it returned no
+  verdict from either seat, and adding a benchmark column only tg can score is not something I will
+  self-certify.
+
+* docs(plan): re-derive 276 anchors and add the emitter the draft missed
+
+Two corrections to Task 5, both found by re-deriving every anchor against origin/main @ d3bcb1b
+  instead of trusting the numbers.
+
+1. UNIFORM +15 DRIFT. Every line number in the first draft was low by exactly 15 -- one commit
+  inserted 15 lines above them all. Corrected, and each is now given WITH its symbol so the next
+  reader re-derives rather than trusts.
+
+2. SEVEN call sites, not six. The warm-index route has BOTH a `--json` and an `--ndjson` exit, back
+  to back behind `if args.json` / `if args.ndjson` (main.rs:8966-8977). The draft enumerated the
+  json one (:8952 -> :8967) and silently omitted its ndjson twin at :8977.
+
+The second is the one that matters. An emitter nobody listed is an emitter that silently omits the
+  incompleteness marker -- which is the exact defect class this whole task exists to close. The plan
+  was reproducing the bug it was written to fix, one level up.
+
+No behaviour change; this is the artifact the remaining slices get built from, so it lands before
+  they do.
+
+* docs(plan): reconcile the 276 plan against what actually shipped
+
+Four of the seven tasks landed while this PR sat in the drain queue (task 319, 315, 317, 314), so
+  their unchecked boxes were stale. A plan that lists shipped work as open is the same failure the
+  276 campaign exists to fix: a document asserting something it never re-checked.
+
+Adds an EXECUTION STATE table reconciled against the task ledger + live PR list, not recollection.
+  Two tasks remain genuinely open (321, 320); task 325 is in flight as PR #818.
+
+Also records that Task 6 was materially RE-SCOPED when built, because the plan text below it is
+  wrong and a reader would otherwise trust it: the plan assumed the --json/--ndjson routes broadly
+  failed to exit 2. They did not -- the single-pattern native route already exited 2 at
+  main.rs:8400, which is what task 324 measured on the release binary. The real defect was the
+  MULTI-pattern twin, which never inspected its incomplete_paths argument at all.
+
+Cross-references task 332 / PR #819 (deadline-blind truncation gates in repo_map.py, 3 of 3 swept)
+  as same-family reading for whoever starts Task 2 or 3 -- both turn on the same "which truncations
+  count" question.
+
+Citation convention preserved: local tasks stay `task NNN`; only #818/#819 are bare, and both are
+  real PRs.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* docs(plan): Task 3's rename is now OFF the table -- its precondition expired
+
+Last commit added an EXECUTION STATE table marking Task 3 open, but left its BODY still instructing
+  "rename inside #795 before merge -- two-line diff". That instruction is now impossible and
+  actively harmful, and a plan that still tells the next builder to do a harmful thing is not
+  reconciled.
+
+The "Rename cost verified as ZERO" reasoning was CORRECT WHEN WRITTEN: the field was unpublished,
+  sitting in the unmerged #795. That precondition expired. #795 merged 2026-07-26,
+  `incomplete_paths_count` SHIPPED in v1.99.5, and it is now contract-documented. Per
+  docs/SUPPORT_MATRIX.md a published field needs >=90 days AND >=2 minor versions of DEPRECATED
+  marking -- so the rename is a 90-day dual-emit exercise, not a cleanup, and it would double the
+  field surface this campaign exists to make legible.
+
+Step 4 (the uncited premise) is DONE and came back TRUE, via a mechanism the plan never named.
+  Measured on the shipped v1.99.5 native binary (SHA256-verified) against an ACL-denied fixture
+  whose denial was asserted to bite first: one root -> count 1; the SAME root passed twice -> count
+  2, with one distinct unreadable path. Cause: build_walk_builder (native_search.rs:1844-1847) adds
+  every root with no dedup. rg prints its access-denied line twice too, so the double visit is
+  correct at rg parity -- the counting is right, the NAME is the defect.
+
+Resolution recorded: DOCUMENT the field's event semantics in CONTRACTS.md, do not rename.
+  Non-breaking, and it is what this campaign's own fail-open rule already prescribes.
+
+* docs(plan): strike Task 3 Step 1 itself, not just warn above it
+
+The 2026-07-27 correction block explained why the rename is off the table, but Step 1's own checkbox
+  still read 'Rename inside #795 before merge'. A reader who skips to the checkboxes -- which is how
+  this plan is meant to be executed -- would have followed the wrong instruction past the warning.
+  Struck it and put the replacement (document the event semantics) in its place.
+
+* docs(plans): close the 276 remaining-slices plan as a campaign record
+
+This plan has been sitting on an un-PR'd branch while every task in it shipped. Its EXECUTION STATE
+  table has now been wrong twice for the same reason the campaign exists: a document asserting
+  something it had not re-checked.
+
+Closed, not deleted. The value is not the checklist -- it is the REVERSALS. Three ideas are retired
+  here with the evidence that killed them, so nobody re-derives them:
+
+* the `HashSet<PathBuf>` distinct-path counter, which the code it would have edited already
+  documents as REJECTED (native_search.rs) for memory, DoS and determinism reasons -- proposed
+  without citing the comment that rejected it; * the `incomplete_paths_count` rename, whose "cost is
+  zero" precondition expired the moment the field shipped in v1.99.5; * the
+  `SearchStats::is_empty()` "live bug", where the guarded state is provably unreachable.
+
+Every row is re-derived from the merged commit and, where the change is in code, a grep against
+  origin/main -- never from the previous version of the table. Tasks 8, 9 and 10 are added; they
+  were tracked outside the table and so were invisible in it.
+
+Task 10's row carries the sharpest finding: it was closed by #815 and was still wrong twice over on
+  2026-07-27 (both repaired in #830) -- a stale route exclusion that had never been actionable, and
+  two of three line-number anchors rotted onto unrelated code while the pinning test stayed green.
+  That is this task's own premise reproducing inside the bullet it was written about.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+- **skills**: Close the #276 enterprise gap -- its "tg is BEHIND" verdict is measurably false
+  ([#834](https://github.com/oimiragieo/tensor-grep/pull/834),
+  [`6105184`](https://github.com/oimiragieo/tensor-grep/commit/6105184d0a86b5362885c5e01317cca7440e76bc))
+
+* docs(skills): close the #276 enterprise gap -- its "tg is BEHIND" verdict is measurably false
+
+`tensor-grep-enterprise-agent/SKILL.md` is a CEO-facing decision surface. Two of its rows still said
+  the load-bearing enterprise gap was OPEN:
+
+"Trust: --json/--ndjson incompleteness marker | Open, and the load-bearing enterprise gap (#276).
+  The native JSON envelope reports success while walk errors go only to stderr..."
+
+"...on the --json surface that actually matters tg is BEHIND: rg --json exits 2 on an unreadable
+  path, tg --json exits 0 with a success envelope (#276)."
+
+#276 closed across nine PRs. A verdict that outlives its evidence is worse than no verdict: it is a
+  decision input pointing the wrong way, and this one told the CEO the product's headline trust gap
+  was still open.
+
+## Corrected by MEASUREMENT, not by flipping the claim
+
+A disproved claim's replacement needs the verification the original failed, so this is a paired arm
+  on the SHIPPED artifact rather than a code read.
+
+Fixture: one ACL-denied directory beside a readable sibling. Both controls asserted BEFORE either
+  arm ran -- the denial bites (UnauthorizedAccessException on listing), and the readable sibling
+  still lists. A permission probe whose denial does not bite reports the same thing for everything
+  and proves nothing.
+
+ARM A rg --json exit 2 ARM B uvx --from "tensor-grep==1.101.4" tg --json exit 2 result_incomplete
+  true incomplete_reason_class "unreadable_path" incomplete_paths_count 1 routing_backend
+  "NativeCpuBackend"
+
+Exit-code parity with the comparator the old claim named, and tg additionally carries the cause
+  IN-BAND where rg signals only via exit code plus stderr.
+
+## Scope stated in the row itself
+
+One shape -- unreadable directory, native CPU route, Windows. That establishes the GAP IS CLOSED; it
+  is not a general benchmark lead, and #72 (publishing benchmark claims) stays CEO-gated. The row
+  says so, so the next reader cannot promote it into a marketing number the way the previous verdict
+  was promoted into a standing gap.
+
+The stale wording is quoted in the replacement rather than deleted: a silently removed claim is one
+  the next reader re-derives from scratch.
+
+67 governance tests green (skill-index sync, enterprise docs, public docs); ruff format --preview
+  --check clean.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs(backlog): reconcile the canonical ledger to v1.101.4 and name the next campaign
+
+#276 is CLOSED. The ledger now says so, and says what the census that re-derived it found instead:
+  the envelope was the NARROW half.
+
+DISCLOSURE POSITION is fixed on three emitters (#822). On roughly a dozen surfaces the text path
+  discloses NOTHING -- four TRAIL, six exit 2 while silent, and `tg scan` (a SECURITY ruleset)
+  printed "Scan completed" over files it could not open (#831). That class is named as the NEXT
+  campaign with its shape stated -- one shared helper plus a ratchet -- so the next session does not
+  enumerate a dozen PRs.
+
+Also recorded: the two contract-hygiene findings (#830 stale route exclusion plus two rotted anchors
+  a passing test could not see; #833 a pass-through MCP handler making a CLI-file edit a wire
+  change), and the two open items the campaign did not cover -- the --deadline arm reaching exit 2
+  with zero disclosure, and a % mermaid comment being invisible in a rendered diagram.
+
+Every claim here is pinned to the PR or the measurement that established it, not to recollection.
+  Flag literals verified intact after the edit; CI formats markdown fences repo-wide and that is a
+  release gate.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.101.5 (2026-07-27)
 
 ### Bug Fixes
