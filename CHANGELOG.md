@@ -1,6 +1,153 @@
 # CHANGELOG
 
 
+## v1.100.0 (2026-07-27)
+
+### Features
+
+- **mcp**: Expose incomplete_reason_class, the closed vocabulary MCP never carried
+  ([#806](https://github.com/oimiragieo/tensor-grep/pull/806),
+  [`f1d3afd`](https://github.com/oimiragieo/tensor-grep/commit/f1d3afdca917654f38efbb5d7cd4f06dd8e3e077))
+
+* feat(mcp): expose incomplete_reason_class, the closed vocabulary MCP never carried
+
+MCP set `result_incomplete` at 14 sites and the free-text `incomplete_reason`, but `grep -c
+  incomplete_reason_class src/tensor_grep/cli/mcp_server.py` returned ZERO. The closed-vocabulary
+  field exists Python-side in five other modules (core/result.py, formatters/json_fmt.py, main.py,
+  orient_capsule.py, ripgrep_backend.py) and is contract-documented -- it just never reached the
+  most machine-facing surface tg has. An agent fleet on MCP could learn THAT a scan was partial but
+  had to string-sniff prose to learn WHY, which is the exact thing the field was introduced to
+  prevent.
+
+Needs no Rust and no #795: SearchResult already carries the field (core/result.py:123) and the
+  aggregate already propagates it (:168-169). Only the emission was missing.
+
+- Two sites now classify: both native-walk deadline paths -> "deadline". - The AST-backend-failure
+  site deliberately sets NO class. A parse/exec failure is none of {unreadable_path, scan_limit,
+  deadline, timeout}, and labelling it with the nearest-looking member (`unreadable_path`) would
+  send an agent to fix file permissions for a backend bug. The vocabulary is an ALLOW-LIST (#282):
+  "cannot classify" means emit nothing, not invent a member. - Emitted via
+  `**_incomplete_class_fragment(...)`, which returns {} when unclassified, so a payload without a
+  classified cause stays byte-identical to contract 1.5.0. Emitting null instead would teach readers
+  to skip the key. - Contract bumped 1.5.0 -> 1.6.0 (additive field = minor, CHANGELOG.md:1358
+  precedent) and all THREE governance pins updated in the same commit, per the house rule that a
+  contract change is pinned by tests and must move with them.
+
+Tests are bidirectional and mutation-proved: removing ONE of the five splat call sites turns
+  `test_payload_builders_actually_splat_the_fragment` RED, so a helper that nothing calls cannot
+  pass. The control (`unclassified emits no key`) is what makes the field's PRESENCE meaningful, and
+  a separate test pins that an ABSENT class means "unclassified", never "complete" -- the fail-open
+  misreading the AST site could otherwise invite.
+
+97 tests pass locally (7 new + 90 existing MCP).
+
+* fix(mcp): close the two coverage holes + make the seam test exhaustive (codex audit)
+
+The codex audit returned FIX_FIRST on the previous commit and was right on the point I had just
+  gotten wrong in the opposite direction.
+
+1. BROAD-SCAN REFUSAL NOW CLASSIFIES as "scan_limit". Minutes earlier I had written a comment
+  arguing it should NOT -- "it already carries error.code, so the class adds nothing". That
+  reasoning was wrong: the site sets `truncated: true` AND `result_incomplete: true`, which is a
+  scan-policy ceiling, exactly what scan_limit denotes. My objection was that "raise the limit" and
+  "narrow the scope" are different remedies, but the class encodes BUDGET-REMEDIABILITY and both are
+  budget-remediable. "It already has an error code" is a seductive reason to skip a disclosure; it
+  was wrong here.
+
+2. THE invalid_input ENVELOPE now routes through the helper for structural coverage. It legitimately
+  contributes {} -- nothing was walked -- but every serialized result_incomplete payload now passes
+  through one place, so the seam is mechanically checkable.
+
+3. THE SEAM TEST WAS COUNTING, NOT COVERING. It asserted `call_sites >= 5`, which passes if splats
+  land on dead builders and cannot see a builder with no splat at all -- precisely the two holes it
+  missed. Replaced with an exhaustive check that enumerates every `"result_incomplete":` emitter and
+  requires each to carry a class decision. Mutation-proved: removing the new scan_limit literal
+  turns it RED, so it catches the exact hole the count-based version was blind to. Counting
+  occurrences is not coverage, and I shipped that fault inside the test written to prevent it.
+
+4. VOCABULARY ENFORCEMENT now also covers the helper's OUTPUT, not just source literals, and the
+  documented limit (the helper forwards what it is handed; confinement lives at the assignment
+  sites) is ASSERTED so it cannot drift silently.
+
+5. docs/CONTRACTS.md corrected -- it still said the CLI has "deadline"/"timeout" "where MCP
+  currently has nothing", which this PR makes false. Now states the 1.6.0 behaviour, both classified
+  causes, the deliberate AST omission, and the rule that an ABSENT class means "not classifiable",
+  never "complete".
+
+Also corrected in the PR body: "byte-identical to 1.5.0" was too broad. The contract version itself
+  changes (mcp_server.py:120, injected at :674). Accurate claim: the payload BODY is unchanged when
+  the class is unclassified.
+
+Confirmed correct by the audit and unchanged: both "deadline" choices (a whole-walk wall-clock
+  budget, not a bounded per-op timeout), the AST omission, and that the two remaining "1.5.0" doc
+  references are historical notes rather than stale pins.
+
+* docs(harness): document incomplete_reason_class on the MCP payload
+
+Third of the codex audit's doc findings. The field is now user-facing on tg_search/tg_ast_search at
+  contract 1.6.0 and was undocumented.
+
+States the closed vocabulary, both classified causes, and the rule that matters most: an ABSENT
+  class means "cause not classifiable", NEVER "scan complete". Also flags that it is a DIFFERENT set
+  from the neighbouring scan_limit.truncation_cause and must not be conflated (#293).
+
+The audit's fourth finding -- "no CHANGELOG entry for the 1.6.0 wire change" -- needs no action and
+  would be wrong to act on: CHANGELOG.md is generated by python-semantic-release from conventional
+  commits (the `## v1.98.27 (2026-07-26)` + typed-section shape at the head is its output). The
+  `feat(mcp):` commit produces its own entry; a hand-written one would be clobbered on the next
+  release.
+
+* docs(contracts): stop citing local task IDs as GitHub issue links
+
+CONTRACTS.md is the public contract doc and cited local task-tracker IDs as bare "#NNN". GitHub
+  auto-links that form, so each resolved to an unrelated merged PR -- "task #276" (the --json
+  incompleteness campaign) linked to "chore: post-release Docker dogfood harness"; "audit #113"
+  linked to a multi-pattern search PR.
+
+Line 158 held the clearest case: "#276/#767/#768" mixes BOTH namespaces in one slash-separated list.
+  #767/#768 are genuine PRs whose titles match the sentence ("report an unreadable subtree instead
+  of claiming a complete scan"); #276 is a task. Only resolving each number tells them apart, so
+  each of the 14 numbers in this file was resolved against the real repo rather than assumed.
+
+Local tasks are now "task NNN"; #767 and #768 keep their links.
+
+METHOD NOTE -- my first attempt at this de-linked #767, the opposite of the intended fix. A
+  slash-list rule used "#(\d{2,4})/#(\d{2,4})(?!/)"; \d{2,4} BACKTRACKED so the second group matched
+  "76" instead of "767", the lookahead passed, and the sentence became "tasks 276/767/#768". Caught
+  only by asserting the genuine-PR refs survived UNCHANGED. Both arms are now asserted in the
+  rewrite: (1) every genuine PR ref still present at the same count, (2) nothing but those two
+  auto-links. The digit groups carry (?!\d) so they cannot backtrack.
+
+Docs-only; no behaviour change. 218 contract/governance tests pass.
+
+* chore(ci): retrigger the test matrix on this head
+
+The push of 34473ae created no ci.yml run -- verified, not assumed: the PR head is 34473ae while the
+  newest CI run for this branch is on c909fea, the PREVIOUS commit. ci.yml has no paths filter
+  (pull_request: branches: [main]), so a docs-only change is not the explanation.
+
+The consequence is the reason this matters: `gh pr checks` reports 7 checks, all green, 0 pending --
+  CodeQL plus a skipped dependabot job -- so every mechanical readiness test says MERGE while the
+  entire 38-job matrix never ran on this code. Absence of a signal read as success, on the merge
+  gate, in a PR whose subject is absence-of-a-signal-read-as-success.
+
+This empty commit exists only to create a run against the real head. A squash merge collapses it, so
+  it leaves no trace in main.
+
+* docs(contracts): fix two doubled "Task task NNN" left by the de-linking pass
+
+My own earlier commit on this branch (34473ae) rewrote local task-tracker IDs from the
+  GitHub-auto-linking `#NNN` form to `task NNN`. In two places the sentence already began with the
+  word "Task", so the substitution produced "Task task 294" and "Task task 108".
+
+Caught by re-reading the branch's own diff rather than the merged result -- the commit is not on
+  main yet, so nothing downstream had a chance to flag it and it would have shipped with #806.
+
+Verified alongside: the genuine PR references #767 and #768 are still LINKS (they are real pull
+  requests, not local task IDs), no other doubled words remain, and the 20 de-linked citations are
+  unchanged.
+
+
 ## v1.99.5 (2026-07-27)
 
 ### Bug Fixes
