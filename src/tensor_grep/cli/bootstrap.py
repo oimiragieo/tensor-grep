@@ -115,6 +115,11 @@ _SCAN_FULL_CLI_FLAGS = {
     "--path",
     "--rule",
     "--ruleset",
+    # #310. Registering here is what makes `--sarif` REACH the renderer: a scan without a
+    # full-CLI flag routes to `_run_ast_workflow_cli` (line 1423), whose argparse has never heard
+    # of it. Omitting this entry is the silent-misroute trap AGENTS.md warns about -- the flag
+    # would parse, the command would succeed, and the user would get ordinary scan output.
+    "--sarif",
     "--suppressions",
     "--write-baseline",
     "--write-suppressions",

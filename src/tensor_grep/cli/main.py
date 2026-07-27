@@ -14042,6 +14042,11 @@ def scan(
         "--json",
         help="Emit structured scan findings.",
     ),
+    sarif: bool = typer.Option(
+        False,
+        "--sarif",
+        help="Emit findings as a SARIF v2.1.0 log (GitHub code scanning, Azure DevOps, Sonar).",
+    ),
     baseline: str | None = typer.Option(
         None,
         "--baseline",
@@ -14241,7 +14246,7 @@ def scan(
         if scan_paths:
             project_scan_fast_path = False
 
-    if not json_output:
+    if not json_output and not sarif:
         typer.echo(f"{scan_banner} based on {project_cfg['config_path']}...")
     try:
         payload = _run_ast_scan_payload(
@@ -14271,6 +14276,33 @@ def scan(
     except (ValueError, RuntimeError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         sys.exit(1)
+    if sarif:
+        # #310. Rendered from the SAME payload `--json` emits, deliberately: a second extraction
+        # path would be a second place for the completeness fields to be forgotten, which is the
+        # defect family this whole surface exists to close. `sarif.py` maps `partial` /
+        # `unreadable_paths` onto `invocations[].executionSuccessful`, so an incomplete scan is
+        # visible to a CI gate that never reads our exit code.
+        #
+        # The exit code is deliberately NOT changed here. `tg scan` returns 0 on a disclosed
+        # partial today (#299), and flipping that is a contract change with its own consumers --
+        # exactly the six-consumer surprise that #276 slice C0 had to clear first. SARIF carries
+        # the signal in-band instead.
+        from tensor_grep.cli.sarif import scan_payload_to_sarif
+
+        # `base_path` is what makes the output usable by the consumer that matters: the payload
+        # carries absolute paths, and GitHub code scanning resolves URIs against the repo root.
+        typer.echo(
+            json.dumps(
+                scan_payload_to_sarif(
+                    payload,
+                    tool_version=_cli_package_version(),
+                    base_path=str(project_cfg.get("root_dir") or ""),
+                ),
+                indent=2,
+            )
+        )
+        return
+
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
         return
