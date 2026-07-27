@@ -9177,6 +9177,16 @@ struct GpuNativeSearchResultJson<'a> {
     native_gpu_unavailable: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     not_gpu_proof_reason: Option<String>,
+    // Task 316: the same incompleteness triple the CPU envelopes carry, filled by the SHARED
+    // `incomplete_envelope_fields` so the GPU route cannot drift from them. `skip_serializing_if`
+    // keeps a complete GPU scan byte-identical to the pre-316 payload -- the omit-when-complete
+    // convention `result_incomplete` already follows everywhere else.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result_incomplete: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    incomplete_reason_class: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    incomplete_paths_count: Option<usize>,
     pipeline: &'a GpuPipelineStats,
     matches: Vec<SearchMatchJson>,
 }
@@ -12589,14 +12599,27 @@ fn execute_gpu_native_route(
             params.path,
             params.gpu_device_ids,
             gpu_native_match_json_entries(&stats),
-            // Task 276: this route observed no walk of its own, so it cannot report a
-            // count. `None` means "cannot report", NEVER "complete".
-            None,
+            // Task 316: this used to pass `None` with a comment claiming "this route observed no
+            // walk of its own". That was FALSE -- `gpu_native_search_paths_multi` walks via
+            // `collect_search_files` -> `collect_walked_files`; the count simply had nowhere to go.
+            // It does now, and a comment asserting a false fact about its own route is exactly the
+            // failure the gpu_native.rs note warned about. `None` still means "cannot report",
+            // never "complete", so passing the real count is strictly more honest.
+            Some(stats.walk_errors),
         )?;
     } else if params.count {
         emit_gpu_native_count_results(params, &stats)?;
     } else {
         emit_gpu_native_plain_results(params, &stats)?;
+    }
+
+    // Task 316, mirroring #818 on the multi-pattern route: an incomplete walk is checked BEFORE
+    // the no-match branch, because a scan that could not read part of the tree must never report
+    // a confident "0 matches" (exit 1) -- that reads as a genuine absence and is the exact
+    // green-light-to-delete-live-code this campaign exists to prevent. Same shared predicate as
+    // the envelope above, so disclosure and exit code cannot be derived independently.
+    if walk_was_incomplete(Some(stats.walk_errors)) {
+        std::process::exit(2);
     }
 
     if stats.total_matches == 0 {
@@ -13338,6 +13361,13 @@ fn emit_gpu_native_json_results(
         decision.routing_backend(),
         decision.sidecar_used(),
     );
+    // Task 316. Reuse the helper the CPU envelopes use rather than re-deriving the triple here:
+    // re-deriving truncation locally is the exact defect class this campaign closes (task 332
+    // found 3 of 3 repo_map gates deadline-blind for that reason), and `walk_was_incomplete`
+    // below reads the SAME `Some(stats.walk_errors)` so the payload and the exit code cannot
+    // disagree.
+    let (result_incomplete, incomplete_reason_class, incomplete_paths_count) =
+        incomplete_envelope_fields(Some(stats.walk_errors));
     let payload = GpuNativeSearchResultJson {
         version: JSON_OUTPUT_VERSION,
         routing_backend: decision.routing_backend(),
@@ -13357,6 +13387,9 @@ fn emit_gpu_native_json_results(
         gpu_proof: proof_fields.gpu_proof,
         native_gpu_unavailable: proof_fields.native_gpu_unavailable,
         not_gpu_proof_reason: proof_fields.not_gpu_proof_reason,
+        result_incomplete,
+        incomplete_reason_class,
+        incomplete_paths_count,
         pipeline: &stats.pipeline,
         matches: gpu_native_match_json_entries(stats),
     };
