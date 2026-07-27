@@ -40,6 +40,29 @@ def _scan(root: Path) -> dict:
     )
 
 
+def _scan_with_rules(root: Path, rule_count: int) -> dict:
+    """`_scan` with N distinct regex rules, so the leg opens each file N times."""
+    from tensor_grep.cli.main import _run_ast_scan_payload
+
+    rules = []
+    for i in range(rule_count):
+        rule = dict(_REGEX_RULE)
+        rule["id"] = f"{_REGEX_RULE['id']}-{i}"
+        rules.append(rule)
+    return _run_ast_scan_payload(
+        {
+            "config_path": "builtin:auth-safe",
+            "root_dir": root,
+            "rule_dirs": [],
+            "test_dirs": [],
+            "language": "python",
+        },
+        rules,
+        routing_reason="builtin-ruleset-scan",
+        ruleset_name="test-regex",
+    )
+
+
 def _read_text_raiser(canary: str, pristine):
     def fake(self, *args, **kwargs):
         if self.name == canary:
@@ -77,3 +100,45 @@ def test_scan_discloses_a_file_the_rules_could_not_read(tmp_path: Path, monkeypa
     assert payload["partial_reason"] == "unreadable_path"
     # Must not send the reader to a budget knob: no cap increase makes a file readable.
     assert "does NOT prove they are clean" in payload["remediation"]
+
+
+def test_the_unreadable_sample_names_distinct_places_not_repeated_attempts(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """`scan` runs two backends, so ONE unreadable file raises TWO OSErrors.
+
+    `_UnreadablePathFlag.record` increments per error and appends per error, so the pre-fix
+    sample was `[locked.py, locked.py]` and the prose read "2 file(s) in scope could not be
+    read" -- a false statement about the world, found by dogfooding the real front door against
+    an ACL-denied fixture holding exactly ONE blocked file.
+
+    The event COUNT is deliberately left alone (other `_UnreadablePathFlag` consumers count
+    `os.scandir` failures, where per-event is right, and task 320 settled the same question for
+    the native counter by documenting it). The SAMPLE is a list of PLACES, so it de-duplicates,
+    and the prose no longer claims files.
+    """
+    (tmp_path / "clean.py").write_text("SENTINEL_TOKEN = 1\n", encoding="utf-8")
+    (tmp_path / "locked.py").write_text("SENTINEL_TOKEN = 2\n", encoding="utf-8")
+
+    pristine = Path.read_text
+    monkeypatch.setattr(Path, "read_text", _read_text_raiser("locked.py", pristine))
+    # TWO rules, so the regex leg opens each file twice -- the same double-attempt shape the real
+    # command produces by running the ast-grep wrapper AND the regex leg over one file. With a
+    # single rule only one OSError is raised and the duplicate condition never occurs, which the
+    # premise assertion below would (and did) catch.
+    payload = _scan_with_rules(tmp_path, 2)
+
+    unreadable = payload["unreadable_paths"]
+    # PREMISE: the double-attempt really happened, otherwise this test proves nothing about
+    # de-duplication -- it would just be observing a one-element list that was never at risk.
+    assert unreadable["count"] >= 2, (
+        "premise failed: only one read attempt was recorded, so the duplicate-sample condition "
+        "this test exists for was never reached"
+    )
+    assert len(unreadable["sample"]) == len(set(unreadable["sample"])), (
+        f"sample repeats a path: {unreadable['sample']}"
+    )
+    assert len(unreadable["sample"]) == 1  # exactly one file was ever blocked
+    # And the prose must not render an EVENT count as a FILE count.
+    assert "file(s) in scope could not be read" not in payload["remediation"]
+    assert "read attempt(s) in scope failed" in payload["remediation"]

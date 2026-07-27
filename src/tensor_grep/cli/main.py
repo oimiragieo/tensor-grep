@@ -6695,17 +6695,33 @@ def _run_ast_scan_payload(
         # (#276), so a consumer that understands one understands all of them. Emitted ONLY when
         # something was actually skipped: a field that is always present teaches readers to
         # ignore it, and `partial` must mean something when it appears.
+        # `count` counts failed READ ATTEMPTS, not distinct files. `_UnreadablePathFlag.record`
+        # increments per `OSError`, and `scan` runs two backends (the ast-grep wrapper and the
+        # regex leg) that each open the same file -- so ONE unreadable file reports 2. Dogfooded
+        # on an ACL-denied fixture holding exactly one blocked file: count=2, sample=[f, f].
+        #
+        # The event semantics are deliberately NOT changed: other `_UnreadablePathFlag` consumers
+        # count `os.scandir` failures, where per-event IS the right number, and task 320 already
+        # settled that question for the native `incomplete_paths_count` by DOCUMENTING it rather
+        # than deduplicating a hot-path counter. What was wrong is the PROSE, which rendered an
+        # event count as "N file(s) ... could not be read" -- a false statement about the world,
+        # and one the default text output now prints to stdout rather than burying in --json.
+        #
+        # The SAMPLE is de-duplicated because it is a list of PLACES, not a tally: two slots spent
+        # on one path is a sample that names fewer of them. It is already capped, so this is
+        # O(cap) and preserves first-seen order.
+        distinct_unreadable = list(dict.fromkeys(scan_unreadable.sample))
         payload["unreadable_paths"] = {
             "count": scan_unreadable.count,
-            "sample": list(scan_unreadable.sample),
+            "sample": distinct_unreadable,
         }
         payload["partial"] = True
         payload["partial_reason"] = "unreadable_path"
         payload["remediation"] = (
-            f"{scan_unreadable.count} file(s) in scope could not be read (e.g. "
-            f"{', '.join(scan_unreadable.sample) or 'an unreadable path'}), so no rule ran "
-            "against them and this result does NOT prove they are clean. Make them readable, or "
-            "scope the scan away from them."
+            f"{scan_unreadable.count} read attempt(s) in scope failed (e.g. "
+            f"{', '.join(distinct_unreadable) or 'an unreadable path'}), so no rule ran "
+            "against those files and this result does NOT prove they are clean. Make them "
+            "readable, or scope the scan away from them."
         )
     _apply_ruleset_baseline(
         payload,
@@ -14306,6 +14322,31 @@ def scan(
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
         return
+
+    # Task #299 gave `scan` a `partial` / `partial_reason` / `remediation` / `unreadable_paths`
+    # payload, and #310's SARIF output carries it in-band -- but the DEFAULT text renderer read
+    # none of them. Measured on the shipped v1.101.4 against an ACL-denied fixture (denial
+    # asserted to bite first): `--json` reported `partial: true` with a 2-path `unreadable_paths`
+    # sample, while the same invocation's stdout printed `Scan completed. total_matches=2` and
+    # exited 0 -- silent about two secrets in a file no rule ever opened. On a SECURITY ruleset
+    # that is the worst shape in the product: an unread file is indistinguishable from a clean one.
+    #
+    # LEADING, not trailing. `codemap` is the sibling that already reads `remediation`, but it
+    # prints its `PARTIAL:` line AFTER the counts -- that ordering is exactly the task #329 defect
+    # and is not the half of the precedent worth copying. A disclosure must be read BEFORE the
+    # total it qualifies, or the reader has already formed the answer.
+    #
+    # The exit code deliberately stays 0; see the SARIF block above. `tg scan` has returned 0 on a
+    # disclosed partial since #299, and flipping it is a contract change with its own consumers,
+    # not a drive-by on a rendering fix.
+    if payload.get("partial"):
+        remediation = str(payload.get("remediation") or "").strip()
+        typer.echo(
+            f"warning: INCOMPLETE SCAN: {remediation}"
+            if remediation
+            else "warning: INCOMPLETE SCAN: part of the scope could not be read, so this result "
+            "does NOT prove those files are clean."
+        )
 
     for finding in cast(list[dict[str, object]], payload["findings"]):
         typer.echo(
