@@ -1274,6 +1274,39 @@ output-preserving optimization is byte-identical. See the global skill
    OUTPUT-IDENTITY (`total == total` both sides = byte-identical AND faster). Receipts:
    ast.walk-merge 961→446 ms (~54%); validation-scan 3657→1172 ms (~68%).
 
+## A Red Run With No Failing STEP Is An Interrupted Run (2026-07-27, #339)
+
+`CI red is sufficient; CI green is not` makes a red run on `main` blocking by default — correct, and it
+leaves a question that costs a cycle if you answer it by argument: is this red telling me something about
+the code? Read the **step** conclusions before you believe the **run** conclusion.
+
+    success   Set up job / checkout / Install uv / Setup Python / Install Rust dependencies
+    (empty)   Install Dependencies (Unix with retry)
+    (empty)   Run Pytest
+    (empty)   Post Run actions/checkout
+
+A genuine test failure records `Run Pytest: failure`. An **empty** conclusion on every step after a
+successful one means the job was KILLED before those steps finished — no step failed, so nothing was
+measured about the code. `gh run view <id> --json jobs` gives you this; print EVERY step with its
+conclusion rather than filtering, because a naive `conclusion not in ("success","skipped",None)` filter
+lets empty strings through and reports not-run steps as failures.
+
+**Discharge it by measurement, never by plausibility.** *A correctly-diagnosed flake still holds its
+AUTHORITY* — deciding a red is environmental does not remove its power to block, so the exit is a control,
+not a story. The cheap control: re-check **the same job on the commit that SUPERSEDES it**. Receipt —
+run 30282929109 (`a1bbdac3`, a docs-only commit) went red on `test-python (macos-latest, py3.12)`; the
+superseding commit `9e0df69` contains that tree plus another PR, and its `test-python (macos-latest,
+py3.12)` is `success`. Same job, superset tree, passes ⇒ the earlier red carried no information. That
+verdict needs no theory of the cause, which is the point: the timing did not cleanly fit a
+concurrency-cancel and the cause was never established, yet the question was still settled.
+
+**The log-expiry false zero, which sits in the middle of this.** `gh run view <id> --log-failed` on an
+expired (or still-running) run prints `log not found: <job-id>` and nothing else, so a `grep -E "FAILED|assert"`
+over it returns EMPTY — indistinguishable from "no failures found". Check the raw byte count before
+interpreting the filtered result: 26 bytes of `log not found` is a measurement that did not happen. Same
+family as any probe that returns EMPTY: the number cannot tell you whether it measured nothing
+or never measured at all, so every zero needs a control proving the probe CAN return non-zero.
+
 ## CI / Release Rules
 
 CI is not just a test runner. It enforces:
