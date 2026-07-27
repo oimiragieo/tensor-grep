@@ -85,6 +85,51 @@ def test_docs_coverage_emits_the_flag_at_both_scan_limit_sites() -> None:
     assert "from tensor_grep.cli.incompleteness import budget_remediable" in text
 
 
+def test_repo_map_emits_the_flag_at_all_three_cause_sites() -> None:
+    """repo_map was the LAST cause-emitting surface; without it the class was half fixed (#336).
+
+    Enumerated mechanically, not from recollection -- a campaign note claimed SEVEN residual
+    surfaces and `git grep '"truncation_cause":'` found THREE, all in this one file.
+    agent_capsule/codemap/orient_capsule/sarif emit no cause at all, so wiring them would have
+    been dead code.
+    """
+    from tensor_grep.cli import repo_map as repo_map_mod
+
+    source = repo_map_mod.__file__
+    assert source is not None
+    text = open(source, encoding="utf-8").read()
+
+    # Two scan_limit blocks + one output_limit block. The COUNT is the assertion: this file has a
+    # documented history of a fix landing on one arm and not its twin.
+    assert text.count('"budget_remediable": budget_remediable(_cause)') == 2
+    assert text.count('"budget_remediable": budget_remediable("project-files")') == 1
+    assert "from tensor_grep.cli.incompleteness import budget_remediable" in text
+
+
+def test_repo_map_scan_limit_gates_on_capped_not_on_possibly_truncated() -> None:
+    """The GATE is the load-bearing choice, so pin it -- not just the key's presence.
+
+    `_truncated` is deliberately narrow here (`_capped and _cause == "project-files"`), so gating
+    the flag on it emits NOTHING for an `unreadable-path` cap -- withholding
+    `budget_remediable: false` in the one case a consumer must not retry. That is the wrong-knob
+    defect #283 exists to prevent, and it would look like a harmless consistency edit.
+    """
+    from tensor_grep.cli import repo_map as repo_map_mod
+
+    source = repo_map_mod.__file__
+    assert source is not None
+    text = open(source, encoding="utf-8").read()
+
+    # PREMISE: the narrow definition still exists. If `_truncated` is ever widened to mean "capped
+    # at all", this distinction dissolves and the reasoning must be re-derived, not inherited.
+    assert '_truncated = _capped and _cause == "project-files"' in text
+
+    # CONTROL: never gated on the narrow flag.
+    assert '{"budget_remediable": budget_remediable(_cause)} if _truncated' not in text
+    # TREATMENT: gated on the broad one, at both twins.
+    assert text.count('{"budget_remediable": budget_remediable(_cause)} if _capped else {}') == 2
+
+
 def test_the_ratchet_and_the_product_agree_on_which_causes_are_remediable() -> None:
     """The ratchet test owned this fact; the product now does. Pin them together.
 

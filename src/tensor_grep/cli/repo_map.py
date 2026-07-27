@@ -21,6 +21,7 @@ from typing import Any, Literal, NamedTuple, TypeVar, cast
 from urllib.parse import unquote, urlparse
 
 from tensor_grep.cli import lang_c, lang_cpp, lang_csharp, lang_go, lang_php, lang_registry
+from tensor_grep.cli.incompleteness import budget_remediable
 from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager, LSPTransportError
 from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
 
@@ -7536,6 +7537,14 @@ def build_repo_map(
                 # the full picture.
                 "possibly_truncated": _truncated,
                 "truncation_cause": _cause if _capped else None,
+                # Gated on `_capped`, NOT on `_truncated` (#336). `_truncated` is deliberately
+                # narrow -- see the comment above: True only for dropped project files. An
+                # `unreadable-path` cap therefore has `_truncated is False`, and gating there
+                # would withhold the flag in exactly the case a consumer most needs it -- the one
+                # cause no budget can fix, which is the wrong-knob advice #283 exists to prevent.
+                # Keying on `_capped` means the flag appears whenever a cause does, so a COMPLETE
+                # scan emits neither and stays byte-identical.
+                **({"budget_remediable": budget_remediable(_cause)} if _capped else {}),
             }
             payload["scan_remediation"] = _SCAN_LIMIT_TRUNCATED_REMEDIATION if _truncated else None
         # moat P0-6: signal a deadline-truncated parse as a top-level `partial` flag (the one field
@@ -7696,6 +7705,9 @@ def build_repo_map_incremental(
             "scanned_files": capped_file_count,
             "possibly_truncated": _truncated,
             "truncation_cause": _cause if _capped else None,
+            # Same `_capped` gate as its twin above, for the same reason. A fix applied to one arm
+            # and not its twin is the recurring defect of this whole campaign.
+            **({"budget_remediable": budget_remediable(_cause)} if _capped else {}),
         }
         payload["scan_remediation"] = _SCAN_LIMIT_TRUNCATED_REMEDIATION if _truncated else None
     # Task #304: same `partial` + `deadline_limit` pair `build_repo_map` emits, and deliberately
@@ -7779,6 +7791,11 @@ def apply_repo_map_output_limits(
         # so these are always project files; possibly_truncated is accurate here.
         "possibly_truncated": _output_capped,
         "truncation_cause": "project-files" if _output_capped else None,
+        # Unlike the two scan_limit blocks, "truncated" and "capped" are the SAME condition here,
+        # so this gate is not the narrow one. The value is DERIVED from the cause rather than
+        # hardcoded True: output_limit only ever reports `project-files` today, but deriving it
+        # means a future cause cannot silently inherit "just raise the limit".
+        **({"budget_remediable": budget_remediable("project-files")} if _output_capped else {}),
     }
     return limited
 

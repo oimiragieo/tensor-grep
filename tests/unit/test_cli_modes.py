@@ -5185,6 +5185,9 @@ def test_map_json_accepts_agent_output_bounds(tmp_path):
         "original_files": 2,
         "possibly_truncated": True,
         "truncation_cause": "project-files",
+        # ADDED #336: exact-dict assertions exist so a new field must be declared DELIBERATELY.
+        # `project-files` is the budget cap, so True is right; an `unreadable-path` cap emits False.
+        "budget_remediable": True,
     }
 
 
@@ -5270,6 +5273,9 @@ def test_context_json_accepts_agent_output_bounds(tmp_path):
         "original_files": 2,
         "possibly_truncated": True,
         "truncation_cause": "project-files",
+        # ADDED #336: exact-dict assertions exist so a new field must be declared DELIBERATELY.
+        # `project-files` is the budget cap, so True is right; an `unreadable-path` cap emits False.
+        "budget_remediable": True,
     }
 
 
@@ -5957,6 +5963,9 @@ def test_blast_radius_prioritizes_source_dirs_before_bounded_scan_cap(tmp_path):
         "scanned_files": 1,
         "possibly_truncated": True,
         "truncation_cause": "project-files",
+        # ADDED #336: exact-dict assertions exist so a new field must be declared DELIBERATELY.
+        # `project-files` is the budget cap, so True is right; an `unreadable-path` cap emits False.
+        "budget_remediable": True,
     }
 
 
@@ -8735,6 +8744,9 @@ def test_context_render_json_reports_bounded_repo_scan(tmp_path):
         "scanned_files": 1,
         "possibly_truncated": True,
         "truncation_cause": "project-files",
+        # ADDED #336: exact-dict assertions exist so a new field must be declared DELIBERATELY.
+        # `project-files` is the budget cap, so True is right; an `unreadable-path` cap emits False.
+        "budget_remediable": True,
     }
 
 
