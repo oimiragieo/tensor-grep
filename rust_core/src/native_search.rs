@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::routing::gpu_proof_fields;
@@ -938,8 +938,14 @@ pub fn run_native_search(config: NativeSearchConfig) -> Result<SearchStats> {
         let root_stats = if should_use_parallel_walk_search(&effective_config) {
             search_walk_roots_parallel(&effective_config, &inputs.roots)?
         } else {
-            let files = collect_walked_files(&effective_config, &inputs.roots)?;
-            run_native_search_files(&effective_config, &matcher, files)?
+            // Task 276 slice B3: the serial walk's own error count must reach `stats`, or the
+            // `--json` envelope at :2436 reports a COMPLETE scan of an INCOMPLETE walk -- the
+            // exact defect task 276 exists to close, on the one path that had no channel for it.
+            let walked = collect_walked_files(&effective_config, &inputs.roots)?;
+            let mut walk_stats =
+                run_native_search_files(&effective_config, &matcher, walked.files)?;
+            walk_stats.walk_errors += walked.walk_errors;
+            walk_stats
         };
         merge_search_stats(&mut stats, root_stats);
     }
@@ -964,7 +970,13 @@ pub fn run_native_fixed_multi_pattern_search(
     let inputs = split_search_inputs(&config)?;
     let mut files = inputs.files;
     if !inputs.roots.is_empty() {
-        files.extend(collect_walked_files(&config, &inputs.roots)?);
+        // TASK 317, deliberately NOT closed here: this route returns
+        // `Option<Vec<NativeMultiPatternMatch>>` and owns no `SearchStats`, so there is nowhere
+        // to fold the count. Discarding it is explicit rather than incidental -- `.files` names
+        // the drop at the call site so the next reader sees a decision, not an oversight.
+        // Closing 317 means giving this function a stats channel, which changes its public
+        // signature and every caller; that is its own slice.
+        files.extend(collect_walked_files(&config, &inputs.roots)?.files);
     }
     files.sort_unstable();
     files.dedup();
@@ -1732,15 +1744,35 @@ fn build_searcher(config: &NativeSearchConfig, line_number: bool) -> Searcher {
     builder.build()
 }
 
-fn collect_walked_files(config: &NativeSearchConfig, roots: &[PathBuf]) -> Result<Vec<PathBuf>> {
+/// A completed walk: the files, plus how many entries the walker could not read.
+///
+/// Task 276 slice B3. `collect_walked_files` used to return a bare `Vec<PathBuf>`, which gave it
+/// no way to tell its caller that the list is INCOMPLETE -- the Err arm printed to stderr and the
+/// count died there. Its sibling `search_walk_roots_parallel` never had this problem: its worker
+/// owns a `SearchStats` and increments `walk_errors` directly (:1330).
+struct WalkedFiles {
+    files: Vec<PathBuf>,
+    /// Entries the walker reported an I/O error for. Same `is_io()` filter as the streaming path
+    /// (:1328) -- a malformed global gitignore must NOT make a complete walk claim incompleteness.
+    walk_errors: usize,
+}
+
+fn collect_walked_files(config: &NativeSearchConfig, roots: &[PathBuf]) -> Result<WalkedFiles> {
     if let Some(refusal) = check_native_implicit_walk_ceiling(config, roots) {
         return Err(anyhow!(refusal));
     }
     let builder = build_walk_builder(config, roots)?;
     let walked_files = Arc::new(Mutex::new(Vec::new()));
     let shared_files = Arc::clone(&walked_files);
+    // Task 276 slice B3. AtomicUsize rather than a Mutex<usize>: this is a pure counter on the
+    // hot walker, incremented under contention by every worker thread. Relaxed ordering is
+    // sufficient -- no other memory is published through it, and the value is only read after
+    // `run()` has joined every worker, which is itself the synchronisation point.
+    let walk_errors = Arc::new(AtomicUsize::new(0));
+    let shared_walk_errors = Arc::clone(&walk_errors);
     builder.build_parallel().run(|| {
         let shared_files = Arc::clone(&shared_files);
+        let shared_walk_errors = Arc::clone(&shared_walk_errors);
         Box::new(move |entry| {
             let entry = match entry {
                 Ok(entry) => entry,
@@ -1753,14 +1785,32 @@ fn collect_walked_files(config: &NativeSearchConfig, roots: &[PathBuf]) -> Resul
                     // prints one line. Real `rg` prints one stderr line per unreadable path
                     // and keeps walking every readable file; both tg walkers now match that.
                     //
-                    // NOTE (task #280): printing is only half the contract. `rg` also exits 2
-                    // on an unreadable path while still emitting its matches, and the JSON
-                    // envelope should carry `result_incomplete` + `incomplete_reason_class`
-                    // the way the Python routes do since #276 slice 1 (c0c3404). Neither is
-                    // wired here yet -- that needs an error count threaded through
-                    // `SearchStats` into `emit_json_matches` and the exit code, and is the
-                    // next slice. Until then this path is honest on stderr but still reports
-                    // success.
+                    // NOTE (task 280 -> 276 slice A -> 276 slice B3/task 315, CLOSED here).
+                    // Printing is only half the contract: `rg` also exits 2 on an unreadable path
+                    // while still emitting its matches, and the JSON envelope carries
+                    // `result_incomplete` + `incomplete_reason_class` the way the Python routes
+                    // have since 276 slice 1 (c0c3404). The rest of that chain lives at:
+                    //     :91                     `walk_errors: usize` on SearchStats
+                    //     :2436-2438              the envelope emits result_incomplete /
+                    //                             incomplete_reason_class / incomplete_paths_count
+                    //     main.rs:8388            exit(2) when walk_errors > 0
+                    // Do NOT re-derive any of those as missing; earlier revisions of this comment
+                    // said they were, and that sent readers off to rebuild what already shipped.
+                    //
+                    // What WAS missing until slice B3 is the link below: `collect_walked_files`
+                    // returned a bare Vec<PathBuf>, so it owned no channel back to its caller and
+                    // the count died at this `eprintln!` -- unlike `search_walk_roots_parallel`,
+                    // whose worker owns `local_stats` and increments directly (:1330). It now
+                    // returns `WalkedFiles`, and `run_native_search` folds the count into `stats`.
+                    //
+                    // Same `is_io()` gate as the streaming walker (:1328), for the same reason
+                    // recorded there: `ignore::Error` also covers a malformed ancestor/global
+                    // gitignore, and counting those would label a COMPLETE walk incomplete with a
+                    // budget-non-remediable cause. Non-I/O errors still PRINT; they just do not
+                    // claim the answer is partial.
+                    if err.is_io() {
+                        shared_walk_errors.fetch_add(1, Ordering::Relaxed);
+                    }
                     eprintln!("tg: {err}");
                     return WalkState::Continue;
                 }
@@ -1784,7 +1834,10 @@ fn collect_walked_files(config: &NativeSearchConfig, roots: &[PathBuf]) -> Resul
         .clone();
     walked_files.sort_unstable();
     walked_files.dedup();
-    Ok(walked_files)
+    Ok(WalkedFiles {
+        files: walked_files,
+        walk_errors: walk_errors.load(Ordering::Relaxed),
+    })
 }
 
 fn build_walk_builder(config: &NativeSearchConfig, roots: &[PathBuf]) -> Result<WalkBuilder> {
@@ -2865,6 +2918,7 @@ mod tests {
         let roots = vec![dir.to_path_buf()];
         let mut names: Vec<String> = collect_walked_files(config, &roots)
             .expect("collect_walked_files must not error on a small fixture dir")
+            .files
             .iter()
             .filter_map(|path| {
                 path.file_name()
@@ -2873,6 +2927,84 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    /// Task 276 slice B3 (task 315). BIDIRECTIONAL BY CONSTRUCTION -- both arms run in THIS
+    /// test, in this process:
+    ///   ARM B (control): a fully readable tree MUST report `walk_errors == 0`.
+    ///   ARM A: a tree with an unreadable subdirectory MUST report `walk_errors >= 1`.
+    /// Either arm alone is not verification. ARM A alone would pass against a counter wired to
+    /// a constant; ARM B alone would pass against the pre-slice-B3 code, which had no counter
+    /// at all and let the error die at the `eprintln!`.
+    ///
+    /// Unix-only: this needs a directory the walker genuinely cannot read, and Windows ACL
+    /// denial is not reachable through `PermissionsExt`. On GitHub-hosted ubuntu/macos runners
+    /// the job user is NOT root, so ARM A executes there -- if this test ever prints the
+    /// root-skip below on hosted CI, the runner image changed and the arm has gone inert.
+    #[cfg(unix)]
+    #[test]
+    fn collect_walked_files_counts_an_unreadable_dir_and_reports_zero_on_a_clean_tree() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // ARM B (control) first, so a failure here reads as "the counter is always hot" rather
+        // than as a missing error in ARM A.
+        let clean = tempfile::tempdir().unwrap();
+        write_fixture_file(clean.path(), "readable.txt", "sentinel\n");
+        let clean_config = config_with_paths(vec![clean.path().to_path_buf()], false);
+        let clean_roots = vec![clean.path().to_path_buf()];
+        let clean_walk = collect_walked_files(&clean_config, &clean_roots)
+            .expect("a readable fixture tree must not error");
+        assert_eq!(
+            clean_walk.walk_errors, 0,
+            "a fully readable tree must report ZERO walk errors; a non-zero count here means \
+             the counter fires on something other than an unreadable entry, and ARM A below \
+             would prove nothing"
+        );
+
+        // ARM A.
+        let dir = tempfile::tempdir().unwrap();
+        write_fixture_file(dir.path(), "top.txt", "sentinel\n");
+        let locked = dir.path().join("locked");
+        fs::create_dir_all(&locked).unwrap();
+        fs::write(locked.join("hidden.txt"), "sentinel\n").unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+
+        // PREMISE: the setup must actually deny THIS process. Under root (some container
+        // images) the mode bits are ignored, the walk is never obstructed, and asserting on it
+        // would be an inert check wearing a green badge. Restore and bail loudly instead.
+        if fs::read_dir(&locked).is_ok() {
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+            eprintln!(
+                "SKIP unreadable-dir arm: mode 0o000 did not deny this process (running as \
+                 root?), so the walk would not have been obstructed"
+            );
+            return;
+        }
+
+        let config = config_with_paths(vec![dir.path().to_path_buf()], false);
+        let roots = vec![dir.path().to_path_buf()];
+        let walked = collect_walked_files(&config, &roots);
+
+        // Restore before asserting, so a failing assertion does not also leak an undeletable
+        // temp directory into the runner.
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let walked =
+            walked.expect("an unreadable subdirectory must degrade the walk, not abort it");
+        assert!(
+            walked.walk_errors >= 1,
+            "an unreadable subdirectory must be COUNTED so the `--json` envelope can mark the \
+             result incomplete (:2489); got walk_errors={}",
+            walked.walk_errors
+        );
+        assert!(
+            walked
+                .files
+                .iter()
+                .any(|path| path.file_name().is_some_and(|name| name == "top.txt")),
+            "the readable sibling must still be returned -- the contract is keep-partial, not \
+             abort-on-first-error"
+        );
     }
 
     #[test]

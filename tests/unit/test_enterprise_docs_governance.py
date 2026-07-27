@@ -173,3 +173,69 @@ def test_operational_runbooks_should_include_windows_safe_commands() -> None:
 
     assert '$env:TG_FORCE_CPU = "1"' in gpu
     assert "Remove-Item -LiteralPath .tg_cache -Recurse -Force" in cache
+
+
+NATIVE_SEARCH_RS = Path("rust_core/src/native_search.rs")
+MAIN_RS = Path("rust_core/src/main.rs")
+
+# The bullet that RECORDS the retracted wording. The stale phrases legitimately appear inside it
+# and must not be searched for there -- quoting a retraction is the opposite of asserting it.
+_RETRACTION_MARKER = "PREVIOUS TEXT, recorded because deleting a retracted claim silently"
+
+
+def test_contracts_native_json_incompleteness_claims_match_the_rust_source() -> None:
+    """#318: CONTRACTS.md described the native `--json` route as silently partial. It is not.
+
+    For several releases this doc told agents the compiled engine "does NOT emit
+    `incomplete_reason_class`" and "exits `0` where `rg` ... exits `2`". Task #276 made both
+    false, and nothing failed -- the paragraph was pinned by no test at all, which is why it
+    survived the change that invalidated it. A contract doc that is wrong in the SAFE direction
+    is merely stale; this one was wrong in the UNSAFE direction, telling a caller to distrust a
+    disclosure that is now present and to expect exit 0 where the binary now exits 2.
+
+    So this pins the doc against the RUST SOURCE rather than against itself. Both arms can fail:
+    remove the emission or the exit gate and the premise assertions fail pointing at the Rust;
+    let the prose drift back and the claim assertions fail pointing at the doc. A test that only
+    grepped the doc for a phrase would pass just as happily against a native engine that had
+    silently regressed.
+    """
+    native_rs = NATIVE_SEARCH_RS.read_text(encoding="utf-8")
+    main_rs = MAIN_RS.read_text(encoding="utf-8")
+    contracts = CONTRACTS_PATH.read_text(encoding="utf-8")
+
+    # PREMISE -- the behaviour the doc now claims must actually be in the source. Without these,
+    # the assertions below would keep passing over a native engine that had stopped disclosing,
+    # and the doc would be "correct" about a fiction.
+    assert "incomplete_reason_class:" in native_rs, (
+        "the native --json envelope no longer emits incomplete_reason_class; CONTRACTS.md's "
+        "claim that it does is now the wrong half of this pair -- fix the Rust, or the doc"
+    )
+    assert "incomplete_paths_count:" in native_rs
+    assert "walk_errors" in native_rs
+    assert "std::process::exit(2)" in main_rs, (
+        "the native exit-2-on-incomplete gate is gone; CONTRACTS.md promises rg-parity here"
+    )
+
+    # THE CLAIM -- the doc must state the current behaviour, with the citations a reader needs
+    # to re-verify it rather than trust this prose.
+    assert "`native_search.rs:2489-2491`" in contracts
+    assert "`main.rs:8388`" in contracts
+
+    # THE RETRACTION -- the stale phrases may appear ONLY inside the bullet that records them as
+    # withdrawn. Anywhere else they are being asserted again.
+    assert _RETRACTION_MARKER in contracts, (
+        "the retraction record was deleted; a silently removed claim is one the next reader "
+        "re-derives from scratch"
+    )
+    head, _, tail = contracts.partition(_RETRACTION_MARKER)
+    retraction_end = tail.index("\n  - WHAT REMAINS TRUE")
+    outside_the_retraction = head + tail[retraction_end:]
+    for stale in (
+        "does NOT emit `incomplete_reason_class`",
+        "exits `0` where `rg` on the same unreadable directory exits `2`",
+        "nobody in this development environment can compile Rust",
+    ):
+        assert stale not in outside_the_retraction, (
+            f"CONTRACTS.md asserts the retracted claim {stale!r} outside the retraction record; "
+            "task #276 made it false and Rust is compiled in CI"
+        )
