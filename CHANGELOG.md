@@ -1,6 +1,61 @@
 # CHANGELOG
 
 
+## v1.99.4 (2026-07-27)
+
+### Bug Fixes
+
+- **refs**: Guard the alias-call producers that actually answer (task 326, REOPENED)
+  ([#816](https://github.com/oimiragieo/tensor-grep/pull/816),
+  [`1cf1e3d`](https://github.com/oimiragieo/tensor-grep/commit/1cf1e3ddbaf37364268d07bdfccfee3cb16c5582))
+
+Task 326 was "fixed" in #814, shipped in v1.99.1 with 6/6 green unit tests, and the defect survived.
+  Codex round 3 caught it on the published wheel:
+
+tg refs . collect_walked_files --json -> line 3879, "fn collect_walked_files(config:
+  &GpuNativeSearchConfig...)", ref_kind: "call"
+
+The #814 guard was correct and shipped correctly. It simply never ran. The Rust fallback chain is:
+
+_rust_references_and_calls -> ([], []) with no tree-sitter grammar, i.e. EVERY pip/uvx wheel install
+  _rust_provider_alias_calls -> RETURNS ROWS, chain stops here _regex_references_and_calls -> never
+  reached <- what #814 patched
+
+So the guard sat in a shadowed arm. This moves it to the arm that answers.
+
+TWIN FIXED IN THE SAME CHANGE. The offending line is byte-identical in both
+  `_rust_provider_alias_calls` and `_js_ts_provider_alias_calls`, so this is a single replace-all
+  against one shared `_DEFINITION_KEYWORD_BEFORE_SYMBOL` constant -- not a second regex. Fixing only
+  Rust would have made this the third one-arm fix of the same defect.
+
+WHY THE TEST TARGETS THE REPO'S OWN SOURCES. Four synthetic fixtures were built and every one failed
+  to reproduce, each for a different measured reason: 1. ONE declaration -> the symbol becomes THE
+  definition and never enters `references` at all 2. the dev venv HAS the tree-sitter grammar, so
+  the AST arm answers and this arm is skipped -- a synthetic end-to-end test PASSES ON A BROKEN
+  BUILD unless the grammar is stubbed 3. `alias_names` is populated only from `use` statements that
+  RESOLVE to the symbol, so files without one make the producer emit nothing 4. resolution needs a
+  plausible crate layout Rather than keep approximating the conditions, the test calls the producer
+  on rust_core/src/{gpu_native,native_search}.rs, which are PROVEN to reproduce. The content
+  coupling is deliberate and guarded: two premise assertions fail loudly if the files stop declaring
+  the symbol or the producer stops emitting, so drift cannot turn into a silent pass.
+
+Both arms asserted. The control (a genuine call site must still classify as a call) is what stops an
+  over-firing guard from reading as a fix -- the failure mode that would look identical to success.
+
+Observed RED before the fix (declaration lines 3879 and 1760 leaked), GREEN after, and the
+  end-to-end producer output re-measured: gpu_native.rs calls=[3871] declarations=[3879] leaked=[]
+  native_search.rs calls=[915,941,2781] declarations=[1709] leaked=[]
+
+81 adjacent tests green (typed_ref_kinds, cross_lang_resolution, lang_go,
+  regex_reference_call_classification, cap_fix_chokepoint). ruff clean.
+
+Not closing task 326 on this commit: it must be re-verified against a PUBLISHED wheel (codex round
+  4) before being called fixed. Shipping green unit tests is exactly how the first attempt shipped
+  broken.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.99.3 (2026-07-27)
 
 ### Bug Fixes
