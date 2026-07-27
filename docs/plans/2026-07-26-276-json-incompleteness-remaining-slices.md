@@ -111,7 +111,41 @@ The producer fields (`walk_errors`, the three envelope fields) exist only on `or
 
 ---
 
-### Task 3: rename `incomplete_paths_count` INSIDE #795 — do not build a path set (task 320)
+### Task 3: ~~rename `incomplete_paths_count` INSIDE #795~~ → DOCUMENT it — do not build a path set (task 320)
+
+> **REVERSED AGAIN, 2026-07-27 — the rename is now OFF THE TABLE, and Step 1 below must NOT be
+> followed.** The reasoning at "Rename cost verified as ZERO" was sound *when written*: the field
+> was unpublished, sitting in the unmerged #795, so renaming it cost nothing. That precondition
+> expired. #795 MERGED 2026-07-26, the field SHIPPED in v1.99.5 (measured on the release binary,
+> see below), and it is now contract-documented in `docs/CONTRACTS.md`. `docs/SUPPORT_MATRIX.md`
+> §"Semantic Versioning & Deprecation" binds published fields to **at least 90 days AND 2 minor
+> versions** of `DEPRECATED` marking before removal — so a rename is a 90-day dual-emit exercise,
+> not a two-line diff. It would also double the field surface this campaign exists to make
+> legible.
+>
+> **Step 4 is DONE and its premise came back TRUE**, by a mechanism this plan never named.
+> Measured on the shipped v1.99.5 `tg-windows-amd64-cpu.exe` (SHA256-verified), against an
+> ACL-denied fixture whose denial was asserted to bite first:
+>
+> | arm | roots | distinct unreadable paths | `incomplete_paths_count` |
+> |---|---|---|---|
+> | A | `<root>` | 1 | 1 |
+> | B | `<root> <root>` | 1 | **2** |
+>
+> Cause: `build_walk_builder` (`native_search.rs:1844-1847`) adds `roots[0]` then `.add()` per
+> remaining root with **no dedup**, so a duplicate or overlapping root (`tg search PAT . src` —
+> routine for agents) walks the subtree twice. `rg NEEDLE <root> <root>` prints its access-denied
+> line twice too, so the double visit is correct walker behaviour at rg parity: tg is faithfully
+> counting two genuinely failed reads. **The counting is right; the NAME is the defect.**
+>
+> **Resolution: document, do not rename.** Extend the `incomplete_paths_count` bullet in
+> `docs/CONTRACTS.md` to say it counts walk-error EVENTS, that duplicate/overlapping roots make it
+> exceed the distinct-path count, that this matches rg, and that a caller wanting distinct paths
+> must not read it as one. Non-breaking, immediate, and it is what this campaign's own rule
+> already prescribes — "a field that a caller must read to detect incompleteness has to be NAMED
+> in this contract, or the contract fails open." The gap is an unstated semantic, not a wrong
+> value. Keep DISTINCT from MCP's `unreadable_path_count`, which IS a genuine per-path count
+> (task 293).
 
 **REVERSED from the first draft.** I proposed carrying `HashSet<PathBuf>`. The code I would have edited **documents that exact design as rejected**, at `native_search.rs:82-90`: the count is "deliberately a COUNT, not a path list", because an unbounded per-path Vec behind a mutex is "both a contention point on the hot walker and a DoS surface (a tree with 50k unreadable entries would produce a 50k-entry payload)". I proposed the rejected design without citing the comment that rejected it.
 
