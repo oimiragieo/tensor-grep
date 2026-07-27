@@ -118,7 +118,50 @@ def _mcp_server_version() -> str:
 # way to tell "raise the limit" from "the limit is irrelevant". Every field is additive and
 # emitted ONLY when the scan was actually truncated, so a complete scan stays byte-identical
 # and no existing caller breaks; bumped so a version-pinning client can discover them.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.5.0"
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.6.0"
+
+
+def _incomplete_class_fragment(results: Any) -> dict[str, str]:
+    """`incomplete_reason_class` as a splat-able fragment, emitted ONLY when classified.
+
+    MCP carried `result_incomplete` (14 sites) and the free-text `incomplete_reason`, but never
+    the closed-vocabulary CLASS the CLI has emitted since task #276 slice 1 -- so an agent on the
+    most machine-facing surface tg has could learn THAT a result was partial but had to
+    string-sniff prose to learn WHY. `docs/CONTRACTS.md` introduced the class precisely so callers
+    would not have to do that.
+
+    Returns an EMPTY dict when unclassified, so `**` contributes nothing and a payload without a
+    classified cause stays byte-identical to contract 1.5.0. Emitting `null` instead would teach
+    readers to skip the key, which is how a disclosure field quietly becomes decoration.
+
+    NOTE the asymmetry, because it is deliberate and a caller must not get it backwards: an
+    ABSENT class means "cause not classifiable", NOT "scan complete". Completeness is carried by
+    `result_incomplete` alone. See the AST-backend-failure site, which sets `result_incomplete`
+    and deliberately emits no class rather than mislabelling a backend bug as `unreadable_path`.
+
+    Distinct from MCP's own `truncation_cause` on the `scan_limit` object, which has an explicit
+    `"unknown"` member and its own hyphenated vocabulary. Task #293 settled that these two must
+    NOT be unified; this helper only ever emits the CLI-family value it is handed.
+
+    THE TWO ERROR ENVELOPES ARE NOT ALIKE, and an audit corrected me on this. Both set
+    `result_incomplete: True` as a literal rather than from the aggregate:
+
+    * `broad_scan_refused` DOES classify, as `"scan_limit"`. I first argued it should not --
+      "it already has `error.code`, so the class adds nothing" -- but that reasoning was wrong.
+      The site reports `truncated: true` AND `result_incomplete: true`, which is a scan-policy
+      ceiling: precisely what `scan_limit` denotes. My objection was that "raise the limit" and
+      "narrow the scope" are different remedies, but the class encodes BUDGET-REMEDIABILITY, and
+      both of those are budget-remediable. `error.code` is a sibling signal, not a substitute.
+    * `invalid_input` does NOT classify. Nothing was walked and the request never became a scan,
+      so no member of a completeness vocabulary applies. It still routes through this helper so
+      the coverage is structural: every serialized `result_incomplete` payload goes through one
+      place, and this one legitimately contributes `{}`.
+
+    Recorded because "already has an error code" is a seductive reason to skip a disclosure, and
+    it was wrong once here already.
+    """
+    value = getattr(results, "incomplete_reason_class", None)
+    return {"incomplete_reason_class": value} if value else {}
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -2176,6 +2219,11 @@ def _broad_root_scan_refusal_result(
             "truncated": True,
             "result_incomplete": True,
             "incomplete_reason": message,
+            # A scan-policy ceiling: `truncated` AND `result_incomplete` are both true, which is
+            # exactly what `scan_limit` denotes. `error.code` below is a sibling signal for
+            # WHICH policy refused; this is the standard budget-remediability answer an agent
+            # branches on without reading either string.
+            "incomplete_reason_class": "scan_limit",
             "error": {
                 "code": "broad_scan_refused",
                 "message": message,
@@ -4708,6 +4756,11 @@ def tg_search(
                 "truncated": False,
                 "result_incomplete": True,
                 "incomplete_reason": str(exc),
+                # Routed through the helper for STRUCTURAL coverage: every serialized
+                # `result_incomplete` payload passes through one place, so a future auditor can
+                # verify the seam mechanically. This site legitimately contributes {} -- nothing
+                # was walked, so no completeness class applies. `error.code` carries the signal.
+                **_incomplete_class_fragment(None),
                 "error": {"code": "invalid_input", "message": str(exc)},
             }
             return json.dumps(payload, indent=2)
@@ -4786,6 +4839,7 @@ def tg_search(
                         "returning partial results. Scope the search to a smaller path, or "
                         "lower max_repo_files."
                     )
+                    all_results.incomplete_reason_class = "deadline"
                     break
                 try:
                     result = backend.search(current_file, search_pattern, config=config)
@@ -4913,6 +4967,7 @@ def tg_search(
                     # top-level so an agent caller can't read a truncated result as complete.
                     "result_incomplete": all_results.result_incomplete,
                     "incomplete_reason": all_results.incomplete_reason,
+                    **_incomplete_class_fragment(all_results),
                     "routing": _routing_payload(all_results),
                 }
                 if scan_limit_payload is not None:
@@ -4946,6 +5001,7 @@ def tg_search(
                     "total_files": all_results.total_files,
                     "result_incomplete": all_results.result_incomplete,
                     "incomplete_reason": all_results.incomplete_reason,
+                    **_incomplete_class_fragment(all_results),
                     "routing": _routing_payload(all_results),
                 }
                 if scan_limit_payload is not None:
@@ -5007,6 +5063,7 @@ def tg_search(
                 # read a truncated result as complete (suppression != absence).
                 "result_incomplete": all_results.result_incomplete,
                 "incomplete_reason": all_results.incomplete_reason,
+                **_incomplete_class_fragment(all_results),
                 "routing": _routing_payload(all_results),
             }
             if scan_limit_payload is not None:
@@ -5195,6 +5252,7 @@ def tg_ast_search(
                     "returning partial results. Scope the search to a smaller path, or "
                     "lower max_repo_files."
                 )
+                all_results.incomplete_reason_class = "deadline"
                 break
             try:
                 result = backend.search(current_file, pattern, config=config)
@@ -5216,6 +5274,18 @@ def tg_ast_search(
                         f"AST backend failed on one or more files (first: {current_file}); "
                         "returning partial results."
                     )
+                # `incomplete_reason_class` is DELIBERATELY NOT SET here. The closed vocabulary is
+                # exactly {unreadable_path, scan_limit, deadline, timeout} (docs/CONTRACTS.md), and
+                # a backend parse/exec failure is none of them. Labelling it with the nearest-
+                # looking member -- `unreadable_path` is the tempting one -- would tell an agent the
+                # PATH was the problem and send it to fix file permissions for a backend bug.
+                #
+                # The vocabulary is an allow-list, so "cannot classify" means EMIT NOTHING, not
+                # "invent a member". `result_incomplete` is still true, so the caller still knows
+                # the answer is partial; it just cannot branch on remediability, which is the
+                # honest state of affairs. A consumer must therefore treat an ABSENT class as
+                # "unclassified", never as "complete" -- see the contract note added with this
+                # change.
                 files_scanned += 1
                 continue
             files_scanned += 1
@@ -5262,6 +5332,7 @@ def tg_ast_search(
                         "omitted_files": 0,
                         "result_incomplete": all_results.result_incomplete,
                         "incomplete_reason": all_results.incomplete_reason,
+                        **_incomplete_class_fragment(all_results),
                         "scan_limit": scan_limit_payload,
                         "routing": _routing_payload(all_results),
                     },
@@ -5325,6 +5396,7 @@ def tg_ast_search(
                     "omitted_files": omitted_files,
                     "result_incomplete": all_results.result_incomplete,
                     "incomplete_reason": all_results.incomplete_reason,
+                    **_incomplete_class_fragment(all_results),
                     "scan_limit": scan_limit_payload,
                     "routing": _routing_payload(all_results),
                 },
