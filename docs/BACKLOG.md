@@ -3,7 +3,42 @@
 > **Canonical prioritized work list.** Kept in sync with the CLI task store (`TaskUpdate`) and
 > GitHub (`gh pr list` is the source of truth for PRs). **CEO status** = summarize SHIPPING + P0/P1.
 > Update whenever a PR opens/merges or the queue changes. Task-store IDs (`#NNN`) cross-referenced.
-> Last refreshed 2026-07-26 (post-**v1.98.27**) — the **trustworthy-tg** wave (#292), continuing
+> Last refreshed 2026-07-27 (post-**v1.101.3**) — the **incompleteness-envelope** wave, closing
+> the `--json`/`--ndjson` gap that the trustworthy-tg thread below had left as its load-bearing
+> hole. The rule it settles: a machine consumer must be able to tell *truncated* from *absent*
+> without reading stderr, and the exit code must agree with the envelope.
+> **#276 closed across nine PRs**: **#795** gave `SearchStats` a walk-error count and **#808** fed
+> it from the serial walk, so `--json` can no longer claim a complete scan; **#811** put the marker
+> on the `main.rs` `SearchResultJson`/ndjson envelopes and **#818** made the multi-pattern route
+> exit `2` when it discloses an incomplete walk; **#823** crossed the count to the `gpu_native`
+> twin; **#793** gave the benchmarks three-state exit codes and one canonical marker set; **#821**
+> stopped classifying an OUTPUT-write failure as an unreadable path; **#820** wrote down that
+> `incomplete_paths_count` counts EVENTS, not distinct paths; and **#805** added
+> `SearchStats::is_empty()` so the `Drop` guard cannot silently forget a new field — the class fix
+> rather than the instance fix.
+> What an EXTERNAL dogfood caught that our own gates did not: **#814** and **#816** killed two false
+> claims (`not_found` asserted over a scan that read ZERO files, and a guard applied to a SHADOWED
+> function while the real producer went untouched); **#819** found the same shape a third time in
+> the truncation gates, which were blind to `--deadline` and so asserted absence over an unfinished
+> scan; **#815** named the incompleteness fields the contract had never named; **#825** gave every
+> CLI incompleteness cause a machine-branchable `budget_remediable` flag, so "would a bigger budget
+> help?" stops being a guess.
+> New surface: **#796** SARIF v2.1.0 for `tg scan`; **#806** exposed `incomplete_reason_class` over
+> MCP; **#801** surfaced a live foreign ledger claim on `prepare`'s read-only path; **#800** bounded
+> the session rebuild on BOTH refresh branches. Checkpoint honesty: **#785** reports a corrupt
+> checkpoint as corrupt rather than missing; **#799** discloses the post-checkpoint edits `undo`
+> discarded. **#804** fixed the trust benchmark, which had been measuring ripgrep twice and
+> reporting it as tg.
+> Test FORM, not just coverage: **#797** made output determinism a named CI-gated invariant;
+> **#798/#809/#802/#817** retired the last flat wall-clock bounds, an incidental-byproduct
+> assertion, and two latency assertions masquerading as hang guards. **#810** stopped the public
+> docs citing local task IDs as though they were GitHub links; **#813** folded in the 8th oracle
+> form and the drain-gate correction.
+> IN FLIGHT (not yet merged, see `gh pr list`): the session-laws capture (**#824**), the
+> `budget_remediable` extension to `repo_map`'s `scan_limit`/`output_limit` (**#826**), and three
+> TorchBackend tests rewritten against a matcher that actually exists (**#827**).
+>
+> Prior refresh 2026-07-26 (post-**v1.98.27**) -- the **trustworthy-tg** wave (#292), continuing
 > the unreadable-path honesty thread below across 14 releases. The through-line: a surface that
 > cannot complete its work must SAY so, in a field a machine can branch on, and exit accordingly.
 > What shipped: **#767/#768/#769/#770** carried the unreadable-subtree signal into `inventory`,
@@ -22,9 +57,6 @@
 > wall-clock overlap with ones that assert the contract. **#784** committed the trust benchmark
 > harness AND reported what it actually shows — which was NOT a clean lead — and **#789** dropped
 > its vanished-file column for scoring correct behaviour as dishonest.
-> IN FLIGHT (not yet merged, see `gh pr list`): the #276 `--json`/`--ndjson` incompleteness
-> envelope across the native producer (#808) and the second `main.rs` envelope pair (#811), SARIF
-> output (#796), the determinism gate (#797), and the trust-benchmark fix (#804).
 >
 > Prior refresh 2026-07-25b (post-**v1.98.13**, with v1.98.14 releasing) — the **unreadable-path
 > honesty** wave. One question drove it: when tg cannot READ part of a tree, does it say so, or does
