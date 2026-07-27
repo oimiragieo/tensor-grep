@@ -18,6 +18,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from tensor_grep.cli.incompleteness import budget_remediable
 from tensor_grep.cli.inventory import DEFAULT_MAX_INVENTORY_FILES, _is_test_path
 from tensor_grep.cli.repo_map import (
     _deadline_monotonic_from_seconds,
@@ -306,6 +307,15 @@ def build_docs_coverage(
             "max_files": max_files,
             "possibly_truncated": possibly_truncated,
             "truncation_cause": truncation_cause,
+            # Task #307-C: the machine-branchable "is a retry worth it?" flag. Emitted ONLY
+            # when the scan was actually truncated, so a complete scan stays byte-identical.
+            # Same allow-list the MCP `scan_limit` surface uses (#283) -- one definition in
+            # `cli/incompleteness.py`, so CLI and MCP cannot drift into different advice.
+            **(
+                {"budget_remediable": budget_remediable(truncation_cause)}
+                if possibly_truncated
+                else {}
+            ),
         },
         "coverage": {
             "match": "path-or-basename",
@@ -519,6 +529,15 @@ def build_docs_stale_references(
             "max_files": max_files,
             "possibly_truncated": possibly_truncated,
             "truncation_cause": truncation_cause,
+            # Task #307-C: the machine-branchable "is a retry worth it?" flag. Emitted ONLY
+            # when the scan was actually truncated, so a complete scan stays byte-identical.
+            # Same allow-list the MCP `scan_limit` surface uses (#283) -- one definition in
+            # `cli/incompleteness.py`, so CLI and MCP cannot drift into different advice.
+            **(
+                {"budget_remediable": budget_remediable(truncation_cause)}
+                if possibly_truncated
+                else {}
+            ),
         },
     }
     if walk_deadline_hit.hit:

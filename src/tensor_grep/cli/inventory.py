@@ -26,6 +26,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from tensor_grep.cli.incompleteness import budget_remediable
 from tensor_grep.cli.repo_map import (
     _DeadlineBreakFlag,
     _iter_repo_files,
@@ -352,6 +353,15 @@ def build_inventory(
             "scanned_files": total_files,
             "possibly_truncated": possibly_truncated,
             "truncation_cause": truncation_cause,
+            # Task #307-C: the machine-branchable "is a retry worth it?" flag. Emitted ONLY
+            # when the scan was actually truncated, so a complete scan stays byte-identical.
+            # Same allow-list the MCP `scan_limit` surface uses (#283) -- one definition in
+            # `cli/incompleteness.py`, so CLI and MCP cannot drift into different advice.
+            **(
+                {"budget_remediable": budget_remediable(truncation_cause)}
+                if possibly_truncated
+                else {}
+            ),
         },
     }
 

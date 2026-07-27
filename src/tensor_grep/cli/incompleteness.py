@@ -34,6 +34,39 @@ INCOMPLETENESS_MARKERS: tuple[str, ...] = (
 )
 
 
+# Causes a bigger budget CAN fix, in BOTH spellings the product ships. The two vocabularies are
+# deliberately NOT unified (#293): `truncation_cause` is hyphenated, `incomplete_reason_class` /
+# `partial_reason` are underscored, each is internally consistent, and renaming either breaks a
+# documented contract for no correctness gain. So this maps both rather than normalising.
+_BUDGET_REMEDIABLE_CAUSES: frozenset[str] = frozenset({
+    "project-files",  # the --max-files/--max-repo-files count cap -- raise it
+    "max-scan-entries",  # DirectoryScanner's own entry budget -- raise it
+    "scan_limit",  # underscored sibling of the above
+    "deadline",  # the --deadline wall-clock bound -- raise it
+    "timeout",  # a per-file/subprocess wall-clock bound -- raise it
+})
+
+
+def budget_remediable(cause: str | None) -> bool:
+    """Can a BIGGER budget fix this truncation cause? Fail-closed.
+
+    Task #307-C. The knowledge this encodes already existed -- but only inside
+    `tests/unit/test_truncation_cause_vocabulary_ratchet.py`, which meant CI could branch on it and
+    the shipped CLI could not. `budget_remediable` was emitted by exactly ONE surface (the MCP
+    `scan_limit` object, `mcp_server.py`, task #283) while every CLI route stamped a cause with no
+    machine-branchable "is a retry worth it?" flag. A consumer that cannot tell
+    `raise --max-repo-files` from `you will never read that directory` retries forever or gives up
+    on a fixable scan.
+
+    ALLOW-LIST, never a deny-list (#282). ``unreadable-path``/``unreadable_path`` is the value that
+    must return False, but enumerating the *unsafe* cases fails OPEN on any cause a future author
+    adds and this function has not been taught -- an unrecognised cause would be advertised as
+    "just raise the limit", which is the wrong-knob advice #283 exists to prevent. So: name the
+    SAFE causes, and return False for everything else including ``None`` and ``"unknown"``.
+    """
+    return cause in _BUDGET_REMEDIABLE_CAUSES
+
+
 def disclosed_incomplete(stdout: str | None, stderr: str | None) -> bool:
     """True when an exit-2 run DISCLOSED that its scan was incomplete.
 
