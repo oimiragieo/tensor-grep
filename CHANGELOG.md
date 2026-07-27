@@ -1,6 +1,343 @@
 # CHANGELOG
 
 
+## v1.101.5 (2026-07-27)
+
+### Bug Fixes
+
+- **cli**: Lead, re-label, and correct the knob on every truncation disclosure the symbol commands
+  emit ([#822](https://github.com/oimiragieo/tensor-grep/pull/822),
+  [`53488ee`](https://github.com/oimiragieo/tensor-grep/commit/53488eeb8c7fedcfc4fa2afbbd66e1b97f9a73d2))
+
+* fix(cli): lead the text output with the truncation warning, not trail it (#329)
+
+An incomplete result whose only marker is a trailing `warning: INCOMPLETE RESULT: ...` line reads as
+  a complete document with a footnote: the consumer treats the prefix as the answer and the final
+  line as commentary. That is exactly the "confident false zero" the exit-2 gate exists to prevent
+  -- a caller-set truncated at a file cap gets trusted as exhaustive anyway.
+
+Both text emitters now put a truncation warning ABOVE the payload:
+
+* `_emit_symbol_command_result` (defs/refs/callers/impact/...) * the `blast-radius` command's counts
+  block (the twin -- an agent reading `callers=3` first has already formed the answer by the time a
+  trailing line lands)
+
+The advisory zero-callers caveat stays TRAILING: that result is COMPLETE and the note only warns
+  against over-reading it. The asymmetry is the point.
+
+`_completeness_caveat_lines` defines the ordering exactly once and returns `(leading_banner,
+  trailing_note)`, so the two emitters cannot drift apart. JSON output is unchanged -- `caveat` is a
+  field there and field order carries no reading bias (pinned by a test).
+
+Verified bidirectionally: with the split reverted to trailing, the three ordering tests fail (both
+  emitters + the shared policy) while the four control/advisory/JSON tests still pass, so the
+  assertions discriminate rather than merely observing "a marker appeared somewhere in stdout". Each
+  ordering assertion is preceded by a premise assert that the payload line was really rendered.
+
+Also records the law in AGENTS.md: a disclosure must precede the data it qualifies, and position --
+  not presence -- is what the test must pin.
+
+* fix(cli): cross the leading-disclosure fix to the --mermaid twin
+
+`blast-radius` has THREE emitters, not two. This PR's first cut fixed the two text ones and left
+  `_render_blast_radius_mermaid` -- the AGENT-facing renderer -- appending its disclosure after
+  every graph node, which is the more damaging half: a consumer that has already walked the edges
+  formed its answer several lines ago.
+
+A comment three lines from the edited site even named it ("the mermaid renderer also reads
+  payload.result_incomplete for its `%% truncated` comment"). Knowing a twin exists is not crossing
+  to it.
+
+Sourcing the text from the shared `_scan_truncation_warning` / `_completeness_caveat_lines` pair,
+  rather than the hand-written literal, retires three defects at once:
+
+1. POSITION -- the banner now leads. `graph TD` is the diagram-type declaration, not payload, so it
+  stays line 1 and the banner is the first CONTENT line. 2. VOCABULARY -- the literal said `note:`
+  for a TRUNCATION, inverting the warning-vs-advisory split defined one function above. 3. WRONG
+  KNOB -- the literal hardcoded "raise --max-callers/--max-files" for every cause, naming the only
+  two knobs that cannot lift a --max-repo-files scan cap or a caller-scan ceiling. Wrong-knob
+  remediation advice is the failure #762 fixed on the MCP surface.
+
+The trailing `%% no callers found` line is deliberately NOT swept in: that scan COMPLETED and
+  genuinely found nothing, so it is the advisory half of the split and trailing is correct. Grep
+  exhaustively, then classify individually.
+
+Verification (bidirectional, control arm run):
+
+treatment 22 passed control (fix reverted via `git apply -R`) 5 failed, 17 passed
+
+The 17 still-passing include both control arms (a complete graph emits no banner; the zero-callers
+  advisory still trails), so the suite discriminates rather than observing "a marker appeared
+  somewhere".
+
+The control fixture was corrected mid-verification: the first one carried only `scan_limit`, but
+  `blast_radius` calls `_annotate_result_completeness` before either `--mermaid` exit, so a
+  production payload always carries the `result_incomplete` flag too. The uncorrected arm made the
+  pre-fix renderer emit NO disclosure at all -- discriminating against a state the CLI cannot reach.
+  The live defect is position/prefix/knob, not absence; deriving the text in the renderer
+  additionally makes it correct when called directly.
+
+Neighbouring suites green: test_main_cli_contracts + test_answer_first_symbol_payloads +
+  test_deadline_blind_truncation_gates + test_cap_fix_chokepoint + both mermaid suites -> 124
+  passed. `ruff check` + `ruff format --preview --check` clean.
+
+AGENTS.md's new law gains a third consequence -- enumerate the command's emitters, not the ones you
+  were shown -- with this miss as its receipt.
+
+Found by the Codex review on this PR.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* fix(cli): harden the mermaid banner and correct three claims the gate falsified
+
+An independent Opus gate returned SHIP-WITH-FIXES on the previous commit. Both blockers were claims
+  THIS PR made stale -- the same failure the PR is about.
+
+B1. `_completeness_caveat_lines`' docstring said "the two text emitters". The previous commit wired
+  a THIRD (`_render_blast_radius_mermaid`) and did not update it. The helper's own docstring
+  under-counted its twins by one, three lines from the change that added it.
+
+B2. AGENTS.md said the helper serves "every text emitter" and that "tg's text emitters therefore put
+  a truncation warning above the payload". Both false of most of the CLI, in a doc of record.
+  Measured and now written down: `code-map`, `route-test`, `session open` and `agent` still TRAIL,
+  and `map`, `context`, `context-render`, `edit-plan`, `blast-radius-render` and `blast-radius-plan`
+  exit 2 while saying nothing in text at all. Three emitters are CONVERTED; that is not a
+  completeness claim about the CLI.
+
+Also fixed, from the gate's non-blocking set:
+
+N4a. The comment credited the wrong MECHANISM: it said the leading space BEFORE `%%` prevents the
+  `%%{...}%%` directive form. The indentation is irrelevant -- what guarantees it is the space AFTER
+  `%%`, from the `warning: ` prefix. A disproved mechanism attached to a correct fix is a shape this
+  repo has paid for before. The comment now also records that an existing contract test pins
+  `payload["mermaid"].startswith("graph TD")`, which is a stronger reason to keep the declaration on
+  line 1 than the one originally given.
+
+N3. The deleted literal was a fixed string; the replacement interpolates payload-derived values into
+  a `%%` comment, which ends at a newline. No reachable injection was found (every cold path types
+  those as int), but the warm/daemon payload is parsed JSON with no field typing, so the banner is
+  now flattened -- the same reasoning `_mermaid_label` already applies to node text. Pinned by a
+  test that feeds a newline-bearing cap value and asserts the banner stays one line; it fails with
+  the flattening removed.
+
+N6. Coverage gap: every mermaid test called the RENDERER, so the command wiring was untested and
+  could have stopped reaching the branch with all of them green. Added a test that drives
+  `blast_radius(..., mermaid_output=True)`.
+
+N5. The test file claimed a red-green that is not literally reproducible: reverting the fix deletes
+  the imported helper, so the module ERRORS at import rather than failing. A file that cannot be
+  collected is not a red arm. The docstring now records how to reproduce it (back-fill the helper,
+  then 7 fail / 15 pass) instead of asserting a number nobody could re-derive.
+
+Gate receipts kept for the record: no regression across 7 payload shapes (post is a strict superset
+  of pre); JSON round-trip intact through the real `--json --mermaid` path; no missed twin INSIDE
+  blast-radius (the renderer has exactly two production call sites). The gate's own first probe was
+  a false zero -- it had imported a shadowed site-packages install -- and it re-ran with `src/`
+  forced onto `sys.path`.
+
+24 passed. `ruff check` + `ruff format --preview --check` clean.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- **agents**: A red run with no failing STEP is an interrupted run
+  ([#829](https://github.com/oimiragieo/tensor-grep/pull/829),
+  [`0899ad7`](https://github.com/oimiragieo/tensor-grep/commit/0899ad740f51c508279a2214cdc55205b0ac427e))
+
+`CI red is sufficient; CI green is not` correctly makes a red run on main blocking. It leaves open
+  the question that actually costs a cycle: does this red say anything about the code? This adds the
+  cheap discriminator and, more importantly, the rule that the discharge must be a MEASUREMENT.
+
+Found while investigating run 30282929109 (a1bbdac3 = #824, a DOCS-ONLY commit whose PR matrix was
+  green). Reading the STEP conclusions settled it: everything through `Install Rust dependencies`
+  succeeded, then `Install Dependencies`, `Run Pytest` and `Post Run checkout` all had EMPTY
+  conclusions. A real test failure records `Run Pytest: failure`; empty means the job was killed
+  before those steps ran, so nothing was measured about the code.
+
+The confirming control is the part worth writing down. The logs had expired, so the cause could not
+  be read at all. Instead: re-check THE SAME JOB on the commit that SUPERSEDES it. `9e0df69`
+  contains a1bbdac's tree plus another PR, and its `test-python (macos-latest, py3.12)` is
+  `success`. Same job, superset tree, passes => the earlier red carried no information. That verdict
+  needed no theory of the cause -- which matters here, because the timing did NOT cleanly fit a
+  concurrency-cancel and the cause was never established.
+
+This composes with the flake law rather than weakening it: *a correctly-diagnosed flake still holds
+  its AUTHORITY*, so the exit from a red must be a control, never an argument from plausibility.
+
+Also documents the log-expiry false zero sitting in the middle of it: `gh run view <id>
+  --log-failed` on an expired run prints `log not found: <job-id>` and nothing else, so a grep over
+  it returns EMPTY -- indistinguishable from "no failures found". Check the raw byte count before
+  trusting the filtered result; 26 bytes of `log not found` is a measurement that did not happen.
+
+Two authoring notes: print EVERY step with its conclusion rather than filtering (a naive `not in
+  ("success","skipped",None)` filter lets empty strings through and reports not-run steps as
+  failures -- that bug happened during this investigation), and the cross-reference to the
+  false-zero law was replaced with self-contained prose after grepping showed it resolved to nothing
+  in this file.
+
+Gate: `test_skill_index_sync.py` + `test_public_docs_governance.py` = 47 passed. Docs-only,
+  non-releasing. Task #339.
+
+- **backlog**: Reconcile the canonical ledger to v1.101.3
+  ([#828](https://github.com/oimiragieo/tensor-grep/pull/828),
+  [`d90589a`](https://github.com/oimiragieo/tensor-grep/commit/d90589a71eef48b1c2db9bbea0a0c5bcfec9fcb4))
+
+* docs(backlog): reconcile the canonical ledger to v1.101.3
+
+The ledger's newest entry was v1.98.27 while live was v1.101.3 -- 13 releases and 29 substantive
+  commits unrecorded.
+
+Two things, not one:
+
+1. ADDS the v1.99.0->v1.101.3 wave. The through-line is the incompleteness envelope: a machine
+  consumer must be able to tell *truncated* from *absent* without reading stderr, and the exit code
+  must agree with the envelope. #276 closed across nine PRs (#795 #808 #811 #818 #823 #793 #821 #820
+  #805); an external dogfood caught three false-claim defects our own gates missed (#814 #816 #819);
+  the contract gained the names it lacked (#815 #825); new surface landed (#796 SARIF, #806 MCP
+  incomplete_reason_class, #801, #800); checkpoint honesty (#785 #799); and #804 fixed a trust
+  benchmark that had been measuring ripgrep twice and reporting it as tg.
+
+2. REMOVES a block that had become FALSE. The header listed #808, #811, #796, #797 and #804 under
+  "IN FLIGHT (not yet merged)". All five are merged on main -- verified per PR against the commit
+  log before deleting the block, not assumed from the dates. A stale in-flight list is worse than no
+  list: it tells a reader work is pending that already shipped.
+
+The current IN FLIGHT line now names what is actually open: #824, #826, #827.
+
+Verified: flag literals (`--json`/`--ndjson`/`--deadline`) intact after the em-dash normalisation,
+  and `ruff format --preview --check` clean (CI formats markdown fences repo-wide and that is a
+  release gate).
+
+* docs(backlog): name the co-landing PRs as co-landing, not as in-flight
+
+The reconcile this amends deletes a stale IN FLIGHT block, so opening a new one that goes stale the
+  same hour would repeat the defect it fixes. #824/#826/#827 merge alongside this PR, so they are
+  labelled as co-landing and `gh pr list` is named as the source of truth.
+
+- **contracts**: Stop excluding two routes from the allow-list that both landed
+  ([#830](https://github.com/oimiragieo/tensor-grep/pull/830),
+  [`e39bf42`](https://github.com/oimiragieo/tensor-grep/commit/e39bf421f75438a3f8452225f318407c78c648bc))
+
+* docs(contracts): stop excluding two routes from the allow-list that both landed
+
+`docs/CONTRACTS.md`'s "WHAT REMAINS TRUE" bullet still told agents that "two routes still discard
+  the count and are tracked, so they belong in neither list until they land: the multi-pattern
+  `-e`/`-f` JSON route (task 317) and the CUDA-gated `gpu_native.rs` twin (task 316)". Both landed
+  -- #811 and #823 -- so a load-bearing contract was instructing consumers to distrust two surfaces
+  that had been fixed. Wrong in the UNSAFE direction is the sibling failure this same bullet was
+  rewritten for once already.
+
+## Why it rotted, which is the reusable part
+
+`test_contracts_native_json_incompleteness_claims_match_the_rust_source` pins THREE retracted
+  phrases in this paragraph and not the sentence sitting beside them. That is plan Task 10's finding
+  reproducing itself inside the very bullet it was written about: pinning some claims of a
+  multi-claim paragraph leaves the rest free to rot, and the unpinned ones are exactly where drift
+  lands.
+
+## The exclusion was never actionable
+
+Recorded rather than quietly deleted, because the reason generalises. Both envelopes stamp
+  `routing_backend` from `decision.routing_backend()` (`routing.rs`), so the "excluded"
+  multi-pattern route reports the same `"NativeCpuBackend"` string as the included single-pattern
+  one. A consumer following this bullet's own advice -- allow-list on `routing_backend` -- had no
+  field on the wire that could tell them apart. An exclusion has to be expressible in a field the
+  consumer actually receives; if it is not, it is not a caveat, it is a footnote that reads as one.
+
+## Verification (bidirectional, control arm run)
+
+New `test_contracts_does_not_still_exclude_the_two_routes_that_have_landed`, pinned against the RUST
+  SOURCE in both directions like its sibling -- remove the emission and the premise fails pointing
+  at the Rust; let the exclusion return and the claim fails pointing at the doc. Cited by SYMBOL
+  (`struct SearchResultJson`, `struct GpuNativeSearchResultJson`) rather than line number, per the
+  #764 receipt that prose line numbers into a churning file rot by construction.
+
+treatment 20 passed control (doc reverted via `git apply -R`) 1 failed, 19 passed
+
+Exactly one test moves, and it is the new one -- so the pin discriminates rather than riding on a
+  neighbour.
+
+`ruff check` + `ruff format --preview --check` clean.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs(contracts): cite the native disclosure anchors by SYMBOL -- two had rotted
+
+Same bullet, same class as the parent commit: a claim no test could verify.
+
+`CONTRACTS.md` anchored its three native-disclosure claims to line numbers, and two of the three had
+  silently drifted onto unrelated code:
+
+native_search.rs:2489-2491 cited as the --json envelope emit -> actually a `write!` formatting
+  `path:line:` prefixes main.rs:8388 cited as the exit-2 gate -> actually a doc comment about
+  BrokenPipe error chains native_search.rs:91 still correct (so this is drift, not renumbering)
+
+`test_contracts_native_json_incompleteness_claims_match_the_rust_source` asserted the doc CONTAINED
+  those strings -- never that they pointed anywhere -- so it went green across every commit that
+  moved them. A citation a reader cannot trust is worse than none: it costs them the lookup and then
+  teaches them to discount the document.
+
+Anchors are now SYMBOLS (`struct SearchStats`, `struct NativeJsonOutput`, `fn emit_json_matches`,
+  `fn run_native_search_with_optional_rg_fallback`), and the test RESOLVES each one in the Rust
+  instead of grepping the doc for a string.
+
+## Verification -- both arms fail, which took two tries
+
+treatment 20 passed CONTROL A doc reverted to line-number anchors 1 failed, 19 passed CONTROL B `fn
+  emit_json_matches` renamed 1 failed, 19 passed
+
+CONTROL B did NOT discriminate on the first attempt: the premise used `symbol in source`, and the
+  mutation renamed `emit_json_matches` -> `emit_json_matches_RENAMED`, of which the old name is a
+  PREFIX -- so the check survived the exact deletion it exists to catch. Matching on `\b` fixed it.
+  A premise check that passes through its own mutation is the same arm twice, and only running the
+  control exposed it.
+
+Two markers, not one: the anchor-rot record necessarily QUOTES the rotted anchors, so the "never
+  cite these again" assertion excises the record first -- the same discipline `_RETRACTION_MARKER`
+  already applies one level up. This test tripped over that on its first run.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Testing
+
+- **torch**: Point 3 born-dead TorchBackend tests at the matcher that exists
+  ([#827](https://github.com/oimiragieo/tensor-grep/pull/827),
+  [`6000d01`](https://github.com/oimiragieo/tensor-grep/commit/6000d015fae893eff09bad59c0ab61a5cdc7ff85))
+
+`tests/unit/test_backend_bug_fixes.py` had three tests calling
+  `TorchBackend._batch_match_lines_torch`. That method has never existed in `src/`: `git log
+  -S"_batch_match_lines_torch" --all -- src/` returns zero commits, and the name appears nowhere
+  outside this test file. They were born dead in 29ac86b and have never once executed successfully.
+
+The reason nobody noticed is the interesting part, and it is a verification-oracle failure rather
+  than a typo: the skip guard keys on whether `import torch` succeeds, NOT on whether the method
+  under test exists. No CI job installs torch for pytest -- the only `uv pip install torch` is
+  release.yml:148, a Nuitka binary-build job that runs no tests -- so all three SKIP and read green
+  in every job, while any developer box WITH torch fails on AttributeError. The tests' premise was
+  never asserted, so "absent" and "passing" looked identical.
+
+Rewritten against the real matcher rather than deleted. `_contains_literal_torch`
+  (torch_backend.py:127), driven per line by `_search_lines_on_device` (:138), is what actually
+  implements literal matching, and it had NO direct coverage. The original intent -- right rows
+  match / empty input / all-too-short -- maps onto it unchanged.
+
+Bidirectional control, run before committing: ARM A as-shipped ........... 9 passed, 0 skipped (with
+  -rs; torch present, so they genuinely executed, not silently skipped) ARM B guard deleted ........
+  FAILED with RuntimeError: maximum size for tensor at dimension 0 is 3 but size is 5 i.e.
+  `line_tensor.unfold(0, pattern_len, 1)` raising on a short line src/ restored byte-identical
+  afterwards (`git diff --quiet src/`).
+
+So the `len(line_bytes) < pattern_len` guard at :131-132 is load-bearing and is now pinned by a test
+  that provably fails without it.
+
+Test-only; no src/ change; non-releasing.
+
+
 ## v1.101.4 (2026-07-27)
 
 ### Bug Fixes
