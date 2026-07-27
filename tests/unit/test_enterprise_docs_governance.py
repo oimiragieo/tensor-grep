@@ -177,6 +177,7 @@ def test_operational_runbooks_should_include_windows_safe_commands() -> None:
 
 NATIVE_SEARCH_RS = Path("rust_core/src/native_search.rs")
 MAIN_RS = Path("rust_core/src/main.rs")
+REPO_MAP_PY = Path("src/tensor_grep/cli/repo_map.py")
 
 # The bullet that RECORDS the retracted wording. The stale phrases legitimately appear inside it
 # and must not be searched for there -- quoting a retraction is the opposite of asserting it.
@@ -239,3 +240,123 @@ def test_contracts_native_json_incompleteness_claims_match_the_rust_source() -> 
             f"CONTRACTS.md asserts the retracted claim {stale!r} outside the retraction record; "
             "task #276 made it false and Rust is compiled in CI"
         )
+
+
+def test_contracts_incomplete_paths_count_is_documented_as_an_event_count() -> None:
+    """Task 320: the field is named `..._paths_count` and does NOT count distinct paths.
+
+    An external dogfood read the name and inferred "how many places could I not look". Measured
+    on the v1.99.5 release binary against ONE ACL-denied directory: passing the same root twice
+    yields `2`. `build_walk_builder` adds every root without deduplicating, so an overlapping
+    root (`tg search PAT . src` -- routine for agents) walks the subtree twice and the same
+    denied directory raises the count twice. `rg` prints its access-denied line per visit too,
+    so the number is a faithful count of failed reads, not a defect.
+
+    The fix was DOCUMENTATION, not a rename: the field shipped in v1.99.5 and is contract-
+    documented, so `docs/SUPPORT_MATRIX.md` binds it to >=90 days AND >=2 minor versions of
+    DEPRECATED marking before removal. Renaming would be a 90-day dual-emit exercise that
+    doubles the field surface this campaign exists to make legible.
+
+    Pinned against the SOURCE, not against itself, so both arms can fail: add dedup to the
+    root loop and the premise assertion fires pointing at the Rust (the doc's caveat would then
+    be describing behaviour that no longer exists); let the prose drift back to "how many paths"
+    and the claim assertions fire pointing at the doc.
+    """
+    native_rs = NATIVE_SEARCH_RS.read_text(encoding="utf-8")
+    contracts = CONTRACTS_PATH.read_text(encoding="utf-8")
+
+    # PREMISE -- roots are still added WITHOUT dedup, which is the whole reason one distinct
+    # path can raise the count more than once. If this ever gains dedup, the caveat below
+    # becomes false and must be revisited rather than left as stale reassurance.
+    assert "for root in roots.iter().skip(1)" in native_rs, (
+        "build_walk_builder no longer iterates the extra roots as-is; the CONTRACTS caveat "
+        "that overlapping roots double-count may now be wrong -- re-measure before trusting it"
+    )
+    assert "builder.add(root);" in native_rs
+
+    # THE CLAIM -- the doc must say EVENTS, and must warn the name is misleading.
+    assert "walk-error EVENTS" in contracts
+    assert "it is NOT a count of distinct paths" in contracts
+
+    # The old, wrong phrasing must not survive anywhere.
+    assert "-- how many paths the walk could not read" not in contracts, (
+        "the pre-task-320 phrasing is back; it tells a caller the field answers a question "
+        "it does not answer"
+    )
+
+
+def test_contracts_says_result_incomplete_alone_is_not_a_completeness_check() -> None:
+    """Task 328/333: an OUTPUT cap is contract-legal but was UNDISCOVERABLE.
+
+    An external reviewer with full repo access, holding the JSON, still concluded the tool
+    claimed completeness: `tg callers . <symbol> --json` can return 1 of 4 callers with
+    `result_incomplete: false`, `not_found: false`, and exit 0. Every one of those is correct
+    per the OUTPUT-cap-stays-exit-0 rule -- the analysis DID run to completion and only the
+    rendering was capped -- so the fix was never to flip the flag or the exit code (that
+    relitigates task 294 and breaks the pins). The fix was to name the field a caller must
+    branch on instead. This test exists because that fix shipped as documentation ONLY
+    (4195cbf / PR #815: one file, ten insertions, zero tests), which is the exact shape of
+    task 318 -- a contract paragraph nothing fails when it drifts.
+
+    Pinned against the SOURCE so both arms can fail: delete the paragraph and the claim
+    assertions fire; change `_apply_symbol_token_budget` to stop emitting `token_budget` on a
+    complete result and the premise fires, because the doc's load-bearing warning is precisely
+    that the object's PRESENCE proves nothing.
+    """
+    repo_map = REPO_MAP_PY.read_text(encoding="utf-8")
+    contracts = CONTRACTS_PATH.read_text(encoding="utf-8")
+
+    # PREMISE -- `_apply_symbol_token_budget` still stamps `token_budget` on BOTH paths: the
+    # under-budget path (`primary_truncated: False`) and the capped path. That asymmetry with
+    # `result_incomplete` (omitted when complete) is the whole reason the doc has to spell out
+    # per-field presence rules. If the complete-result branch ever goes away, the paragraph
+    # becomes wrong and must be rewritten rather than left as stale reassurance.
+    assert "def _apply_symbol_token_budget(" in repo_map
+    assert '"primary_truncated": False,' in repo_map, (
+        "_apply_symbol_token_budget no longer emits token_budget on a COMPLETE result; the "
+        "CONTRACTS paragraph that the object's presence proves nothing is now wrong"
+    )
+    assert '"primary_truncated": primary_truncated,' in repo_map
+
+    # THE CLAIM -- the doc must say the flag is insufficient AND name the replacement field.
+    assert "`result_incomplete` alone is NOT a sufficient completeness check" in contracts
+    assert "primary_truncated" in contracts, (
+        "the contract no longer names the field a caller must branch on, which is the entire "
+        "remedy for the 1-of-4-callers report"
+    )
+    assert "primary_omitted" in contracts
+
+
+def test_contracts_documents_that_the_two_scan_count_fields_can_disagree() -> None:
+    """Task 328/333: `scan_limit.scanned_files` vs `deadline_limit.files_scanned`.
+
+    Near-identical names, different phases, and one payload can legitimately carry both with
+    wildly different values (`247` and `0`) -- the map was already built and the scan that
+    consumes it never started. Nothing in the payload explained which was authoritative, so a
+    reader could not tell the difference from a bug. Documented rather than renamed: both
+    fields are published and `docs/SUPPORT_MATRIX.md` binds a published field to >=90 days AND
+    >=2 minor versions of DEPRECATED marking, so a rename is a dual-emit exercise that doubles
+    the surface this campaign exists to shrink.
+
+    Pinned against the SOURCE: collapse the two producers into one field and the premise fires.
+    """
+    repo_map = REPO_MAP_PY.read_text(encoding="utf-8")
+    contracts = CONTRACTS_PATH.read_text(encoding="utf-8")
+
+    # PREMISE -- the two counts are still written by SEPARATE blocks with separate meanings.
+    # `build_repo_map` stamps the collection-stage count into `scan_limit` and the
+    # deadline-stage count into `deadline_limit`; the doc's "can legitimately disagree" claim
+    # only holds while both exist independently.
+    assert '"scanned_files": capped_file_count,' in repo_map
+    assert '"files_scanned": files_scanned,' in repo_map, (
+        "the deadline-stage file count is gone or renamed; the CONTRACTS paragraph explaining "
+        "why the two counts disagree may now describe a payload shape that no longer exists"
+    )
+
+    # THE CLAIM -- the doc must warn they differ AND name both fields explicitly, so a reader
+    # hitting the confusing payload can search either name and land on the explanation.
+    assert "Two similarly-named count fields mean different things" in contracts
+    assert "scan_limit.scanned_files" in contracts
+    assert "deadline_limit.files_scanned" in contracts
+    # ...and must NOT advise comparing them, which is the wrong inference the names invite.
+    assert "never a comparison between these two numbers" in contracts
