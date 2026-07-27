@@ -315,12 +315,46 @@ def test_agent_second_scan_deadline_clamps_to_floor(tmp_path: Path, monkeypatch)
     assert result.exit_code == 2, result.output
     payload = json.loads(result.output)  # must not crash/hang -- valid JSON either way
     assert payload["primary_target"]["symbol"] == "helper"
-    assert payload["call_site_evidence"]["status"] == "collected"
+    # The rescue collector must have RUN and reported a collected status -- but WHICH of the two
+    # collected statuses is not this test's subject and must not be pinned.
+    #
+    # `agent_capsule.py:800`/`:949` set the status as
+    #   "collected" if related_call_sites else "collected_no_call_sites"
+    # i.e. the difference is purely "did the scan happen to find a caller", and this scenario
+    # deliberately runs the rescue scan inside a FLOORED sub-budget (0.5s injected sleep against a
+    # 0.3s deadline). Whether a floored scan finds the caller is a race with the machine, not a
+    # contract. `agent_capsule.py:2040` is the product's own view -- it accepts BOTH
+    # ("collected", "collected_no_call_sites") as success -- so pinning "collected" made this test
+    # STRICTER THAN THE CODE IT GUARDS.
+    #
+    # It duly went red on a loaded windows-latest runner (PR #796 run 30223655149,
+    # `assert 'collected_no_call_sites' == 'collected'`) on a branch whose entire diff contains
+    # ZERO occurrences of `call_site_evidence` -- a false red charged to an unrelated PR.
+    #
+    # WHAT THIS WIDENING COSTS, stated because an external audit caught me omitting it: the
+    # fixture is `_write_helper_and_caller`, so a caller DOES exist here. The old assertion was
+    # therefore also an INCIDENTAL caller-discovery guard -- a deterministic regression that broke
+    # caller discovery would surface as `collected_no_call_sites`, and this widened form no longer
+    # catches that. That guard is given up deliberately: it cannot be told apart from the timing
+    # race in THIS scenario, whose whole design is an exhausted deadline. Caller discovery
+    # deserves its own test with a normal budget, where the signal is unambiguous.
+    #
+    # This still FAILS if the clamp regresses: "skipped"/"unavailable"/a missing key all trip it,
+    # and the deadline assertions below (recorded floor + partial + partial_reason) are what
+    # actually pin the behaviour this test is named for.
+    assert payload["call_site_evidence"]["status"] in {
+        "collected",
+        "collected_no_call_sites",
+    }, payload["call_site_evidence"]
     assert payload.get("partial") is True, result.output
     assert payload.get("partial_reason") == "deadline", result.output
     # The item-3 assertion (unchanged): the shared deadline had already elapsed (0.5s sleep > 0.3s
     # budget), so the rescue scan must receive the FLOORED 0.1s budget, never a negative or zero
-    # value -- proven by the substantive "collected" result above despite the overall lateness.
+    # value. THIS assertion is what proves the floor -- it reads the value the collector was
+    # actually handed. The previous version of this comment said the floor was "proven by the
+    # substantive 'collected' result above", which is no longer true now that
+    # collected_no_call_sites also passes; leaving that sentence would have told the next reader
+    # a status check was carrying weight it does not carry.
     assert recorded.get("deadline_seconds") == 0.1
 
 
