@@ -1370,6 +1370,50 @@ The repo has proven:
 
 If the goal is to close the remaining gap to raw `rg`, the likely next step is a more native launcher/control-plane path, not more Python micro-tuning.
 
+## Check Whether It Already Shipped, And Pin What You Document (2026-07-27, #328/#333)
+
+Two failure modes at opposite ends of the same lifecycle, both cheap to prevent.
+
+**A queued task may already be DONE.** Task #328's fix was already live — merged as `4195cbf`
+(PR #815) and an ancestor of `v1.100.2`, i.e. in the *published wheel*, while the task still read
+`pending`. The task text is a snapshot of what someone believed when they filed it; `origin/main`
+is what is true. Before building anything from a filed description, read the current source
+(`git cat-file blob origin/main:<path>` — not the local checkout, which drifts and goes dirty) and
+confirm the defect still exists. `git log -S"<the exact claim>"` finds the commit that closed it.
+
+**A docs-only fix ships UNPINNED, so it drifts.** #815 was one file, ten insertions, zero tests —
+nothing failed if either paragraph was deleted or reworded, which is the #318 failure mode exactly.
+Every contract statement needs a governance test, and that test must be **pinned to the SOURCE, not
+to the doc**: a test that only greps the doc for its own words is circular and passes forever after
+the code stops behaving that way. Assert a PREMISE about the code (the producer still emits the
+field, the two counts still come from separate blocks) alongside the CLAIM about the prose, so both
+arms can fail — reword the paragraph and the claim fires; rename the producer and the premise fires.
+
+## Your Reading Is A Hypothesis; The Mechanical Check Is The Oracle (2026-07-27, #316/#307)
+
+Three times in one session a confident reading was wrong and a mechanical check was right. The
+pattern is the same each time: prose *looks* like code, and a human-shaped read of it agrees with
+whatever you already believed.
+
+- **A semantic read is not a typecheck.** Before pushing #316 I read the two walk-ceiling tests and
+  concluded a return-type change was safe because they "only use `result` as `Result<_, String>`
+  with `.expect_err`". `Result::expect_err` requires `T: Debug` to print the unexpected `Ok`; the
+  old `T` was a bare `Vec<PathBuf>` (Debug for free), a struct is not. `cuda-feature-check` caught
+  it in one cycle. This is why *CI red is sufficient and CI green is not* — reviewers read for
+  semantics, they do not typecheck.
+- **A coarse grep counts PROSE as code.** `grep -c budget_remediable` reported hits in two CLI
+  files and nearly killed a real finding as "already shipped"; every hit was inside a *comment*
+  referencing the MCP fix. Functional emitters: one. The same trap fired on `gpu_native.rs`, where
+  `grep -c result_incomplete` returned 2 and both were inside the comment's own prose. Match the
+  structural form (`"field"`, `def name(`, `fn name(`) and **read each hit** before concluding.
+- **A census expectation can be wrong in BOTH directions.** Twice the mismatch was *my* expected
+  number, not the code — an under-counted set of existing envelopes, and four sibling comments that
+  were all correct on inspection. When a census disagrees with you, check the breakdown before
+  filing; the finding is as often in the expectation as in the tree.
+
+The general rule: write the check so its result does not depend on your prior. Then when it
+disagrees with you, that disagreement is information rather than noise.
+
 ## Push Discipline
 
 Do not push from a dirty worktree if `origin/main` moved and the local tree has unrelated changes.
@@ -1377,6 +1421,15 @@ Do not push from a dirty worktree if `origin/main` moved and the local tree has 
 A branch push or open PR starts PR CI only. It is not a release, not a released version, and not complete release state. Release versioning starts only after a release-bearing PR is squash-merged to `main`, because semantic-release reads the final `main` commit subject.
 
 Merge one release-bearing PR at a time and wait for main CI + semantic-release to finish before merging the next. Concurrent squash-merges to `main` can race at the semantic-release step and produce a skipped release or a wrong version bump. `chore:` / `docs:` / `test:` titles do not bump the version — but that is NOT a licence to merge them while a prior release is in flight (see the push-race note directly below). "Safe to interleave" means *after the prior release has fully published* (its `chore(release): vX` commit is on `main` and PyPI shows the new version), not merely after its PR CI is green.
+
+**READ the type, do not assume it (2026-07-27).** The push-race bites a merge that lands *while a
+RELEASE job is pushing* — so the discriminator is whether one is in flight, and that is a fact you
+can check rather than a risk you have to sit out. Open the newest main run and look at
+`release-intent`: **`skipped` means no release will be cut for that commit**, so there is no push
+to reject. On that evidence `test:`-titled #817 and `docs:`-titled #820 were merged back-to-back
+(the earlier run's cancellation by the later push is benign — see the `cancelled != failure` note),
+while `fix:`-titled #821 was held for the full one-per-publish cycle. Batch the non-releasing,
+serialize the releasing; `gh run view <id> --json jobs` is the whole test.
 
 ### Release publish is not instant — the push-race (hard-won, re-confirmed 2026-07-02)
 
