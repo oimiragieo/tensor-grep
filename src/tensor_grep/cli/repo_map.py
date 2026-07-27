@@ -639,6 +639,18 @@ _CALLER_SCAN_CEILING_REMEDIATION = (
     "may be missing. Narrow PATH to a subdirectory containing the symbol for full coverage."
 )
 
+# Task 332: the DEADLINE twin of _SCAN_LIMIT_TRUNCATED_REMEDIATION above. Same fact -- the scan
+# stopped before it finished, so a zero or small count is not trustworthy -- reached by the other
+# cause, and therefore needing a different knob in the advice (--deadline, not --max-repo-files).
+# Kept as its own constant rather than reusing the count-cap string, because telling an agent to
+# "raise --max-repo-files" when the file cap was never the binding constraint sends it to a knob
+# that cannot fix its problem.
+_DEADLINE_TRUNCATED_REMEDIATION = (
+    "The scan stopped at the --deadline before finishing, so a zero or small count is NOT "
+    "trustworthy. Re-run with a larger --deadline, scope to a subdirectory PATH, or warm the "
+    "index with `tg session daemon start`."
+)
+
 
 def _mark_result_incomplete(
     payload: dict[str, Any],
@@ -701,6 +713,39 @@ def _copy_partial_signal(payload: dict[str, Any], source: dict[str, Any]) -> Non
         deadline_limit = source.get("deadline_limit")
         if isinstance(deadline_limit, dict):
             payload["deadline_limit"] = dict(deadline_limit)
+
+
+def _scan_did_not_finish(payload: dict[str, Any]) -> bool:
+    """Whether this payload's SCAN stopped early -- by EITHER truncation cause (task 332).
+
+    The file-count cap (``scan_limit.possibly_truncated``) and the ``--deadline`` cutoff
+    (``partial`` / ``deadline_limit.deadline_exceeded``) are two causes of ONE fact: we stopped
+    looking before we were done, so an empty or small result proves nothing.
+
+    Every gate in this module that asked "was this truncated?" was written when the file cap was
+    the only cause, and none was widened when ``--deadline`` arrived. A mechanical sweep found
+    3 of 3 ``possibly_truncated`` readers here answering the question count-only, so a
+    deadline-truncated scan read as COMPLETE at all three -- an external dogfood of the published
+    1.99.4 wheel caught `tg callers . <symbol> --deadline 0.1 --json` reporting
+    ``files_scanned: 0`` beside a flat "No exact definition found" for a symbol that demonstrably
+    exists.
+
+    This deliberately MIRRORS ``main._scan_incomplete``, which is where the same two-cause
+    contract is already defined for the exit-code gate -- it is not a fourth independent notion.
+    Re-deriving truncation narrowly is the entire defect class; adding another private definition
+    would guarantee the next drift.
+
+    An OUTPUT cap is NOT a scan truncation (a complete analysis capped for display stays
+    complete), so no ``output_limit`` key is consulted here -- same boundary ``_scan_incomplete``
+    draws, and the reason its docstring gives for drawing it.
+    """
+    scan_limit = payload.get("scan_limit")
+    if isinstance(scan_limit, dict) and scan_limit.get("possibly_truncated"):
+        return True
+    deadline_limit = payload.get("deadline_limit")
+    if isinstance(deadline_limit, dict) and deadline_limit.get("deadline_exceeded"):
+        return True
+    return bool(payload.get("partial"))
 
 
 def _deadline_monotonic_from_seconds(deadline_seconds: float | None) -> float | None:
@@ -14084,8 +14129,11 @@ def build_context_render(
     if include_suggested_scope:
         # suggested_scope (audit #93 SUB-2 / #133 dogfood): the SAME centrality-weighted directory
         # rollup `tg orient` emits, computed from the raw map we ALREADY built above -- no second
-        # scan. Gated on the map's OWN `scan_limit.possibly_truncated` (a complete scan has nothing
-        # left to narrow), mirroring orient_capsule's gate. Reuses orient's tested helper; the local
+        # scan. Gated on the map's OWN unfinished-scan state (a complete scan has nothing
+        # left to narrow), mirroring orient_capsule's gate. Task 332: that gate read
+        # `scan_limit.possibly_truncated` directly and so never fired on a --deadline cutoff --
+        # the render that most needs a "narrow to here" hint (the clock ran out) was the one
+        # render that never offered one. Reuses orient's tested helper; the local
         # import avoids the module-level cycle (orient_capsule imports this module), exactly like the
         # `_apply_ignore_globs` reuse above. Additive + conditional: absent unless the scan was
         # truncated AND a clear winner exists, so a non-truncated render stays byte-identical.
@@ -14095,8 +14143,7 @@ def build_context_render(
         # suggested_scope rollup -- otherwise this wrapper (behind `tg context-render`, and any other
         # `include_suggested_scope=True` caller) could point an agent at a tree the sibling commands
         # already know to avoid, on the exact same repo map.
-        scan_limit = repo_map.get("scan_limit")
-        if isinstance(scan_limit, dict) and scan_limit.get("possibly_truncated"):
+        if _scan_did_not_finish(repo_map):
             from tensor_grep.cli.orient_capsule import (
                 _detect_vendored_subtrees,
                 _suggested_scope_from_map,
@@ -16169,6 +16216,19 @@ def build_symbol_defs_from_map(
                 "narrow PATH or raise --max-repo-files."
             )
             _mark_result_incomplete(payload, remediation=_SCAN_LIMIT_TRUNCATED_REMEDIATION)
+        elif _scan_did_not_finish(payload):
+            # Task 332: the DEADLINE arm of the same fact. This branch used to not exist, so a
+            # deadline-truncated defs lookup emitted the BARE sentence above -- a flat "No exact
+            # definition found" over a scan that read 0 files -- and skipped
+            # `_mark_result_incomplete` entirely, because both were gated on the file cap alone.
+            # The count arm above stays first and unchanged: when the cap IS the binding
+            # constraint its message names the right knob, and a shared branch would have to
+            # pick one knob for both causes.
+            payload["message"] += (
+                " The scan stopped at the --deadline before finishing; "
+                "raise --deadline or narrow PATH."
+            )
+            _mark_result_incomplete(payload, remediation=_DEADLINE_TRUNCATED_REMEDIATION)
         # F13 fix: unlike refs/callers (which compute `resolution_gaps` over the files they
         # actually scan), defs' own no_match path used to return bare -- indistinguishable from
         # "the symbol genuinely does not exist" even when the real cause is a grammar-missing
@@ -18209,14 +18269,23 @@ def _blast_radius_no_match_is_possibly_truncated(payload: dict[str, Any]) -> boo
     cold path (task #108, the TRAP A class); and (3) ``main._daemon_blast_radius_no_match_is_
     unreliable`` (the Tier-1 ``blast-radius`` command's own daemon-fallback gate, audit #107).
 
-    Deliberately narrow: only fires on ``no_match`` AND ``possibly_truncated`` together. A
+    Deliberately narrow: only fires on ``no_match`` AND an unfinished scan together. A
     no_match on a COMPLETE map is a real miss -- treating that as untrustworthy too would
     defeat retries/daemon-fallback for every genuine no-match, not just the truncated ones.
+
+    Task 332 widened WHICH truncations count, not how narrow the gate is. The body read
+    ``scan_limit.possibly_truncated`` directly, so it was blind to the ``--deadline`` arm and
+    treated a deadline-truncated no_match as TRUSTWORTHY at all three call sites above --
+    silently skipping the rescue in exactly the case that needs it most (a deadline cutoff can
+    leave ``files_scanned: 0``). The name is kept because three modules import it by that name;
+    the predicate is now ``_scan_did_not_finish``, which covers both causes.
+
+    Direction of the change: this only ever ADDS rescue attempts. Nothing that previously
+    retried stops retrying.
     """
     if not payload.get("no_match"):
         return False
-    scan_limit = payload.get("scan_limit")
-    return isinstance(scan_limit, dict) and bool(scan_limit.get("possibly_truncated"))
+    return _scan_did_not_finish(payload)
 
 
 def build_symbol_blast_radius(
