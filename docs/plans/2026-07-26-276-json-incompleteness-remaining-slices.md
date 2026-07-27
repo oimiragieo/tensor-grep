@@ -14,6 +14,39 @@
 
 **Status: REVISED 2026-07-26 after adversarial review falsified two of my own tasks.** The revision notes are kept inline rather than cleaned up, because the errors are instructive and a reader who does not know what was wrong will reintroduce it.
 
+## EXECUTION STATE — reconciled 2026-07-27
+
+A plan that still lists shipped work as open is the same failure this campaign exists to fix: a
+document asserting something it has not checked. Four of the seven tasks landed while this PR sat
+in the queue, so the unchecked boxes below are stale for those. Reconciled against the task ledger
+and the live PR list, not from recollection:
+
+| Plan task | Ledger | State |
+|---|---|---|
+| Task 1 — `SearchStats::is_empty()` | task 319 | **SHIPPED** |
+| Task 2 — output-write vs input-read failure | task 321 | **OPEN** — still the live defect described below |
+| Task 3 — rename `incomplete_paths_count` | task 320 | **OPEN** — and Step 4's premise check is still unperformed |
+| Task 4 — `collect_walked_files` count channel | task 315 | **SHIPPED** |
+| Task 5 — the second envelope in `main.rs` | task 317 | **SHIPPED** |
+| Task 6 — exit-code parity | task 325 | **IN FLIGHT — PR #818** (green; see the re-scope note under Task 6) |
+| Task 7 — `--ndjson` terminal summary record | task 314 | **SHIPPED** |
+
+**Task 6 was materially re-scoped when it was built, and the plan text below is wrong about it.**
+The plan assumed the `--json`/`--ndjson` routes broadly failed to exit 2. They do not: the
+SINGLE-pattern native route already exited 2 at `main.rs:8400` (`if stats.walk_errors > 0`), which
+is what task 324 measured on the downloaded release binary. The real defect was narrower and
+sharper — the MULTI-pattern twin `emit_multi_pattern_native_results` never inspected its
+`incomplete_paths` argument at all, so it printed `result_incomplete: true` and returned `Ok(())`,
+or on a zero-match incomplete scan fell through to `exit(1)`, an authoritative "no matches exist".
+All four of its callers were already passing a real count; only the exit code never read it.
+
+**A defect of the same family, found OUTSIDE this plan's scope, is task 332 / PR #819.** Three
+`possibly_truncated` readers in `repo_map.py` (3 of 3 swept) were blind to the `--deadline` arm, so
+a deadline-truncated scan read as complete — including a bare "No exact definition found" over a
+scan that read zero files. Same root shape as this campaign: a gate written when one truncation
+cause existed, never widened when a second arrived. Worth reading before starting Tasks 2 or 3,
+because both touch the same "which truncations count" question.
+
 **Tech Stack:** Rust (`rust_core/`, `ignore` crate walk, `serde_json`), Python CLI (`src/tensor_grep/cli/`), pytest, GitHub Actions.
 
 ## Global Constraints
