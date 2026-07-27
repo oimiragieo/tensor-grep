@@ -1,6 +1,84 @@
 # CHANGELOG
 
 
+## v1.101.0 (2026-07-27)
+
+### Features
+
+- **scan**: Sarif v2.1.0 output for tg scan (#310)
+  ([#796](https://github.com/oimiragieo/tensor-grep/pull/796),
+  [`160bd59`](https://github.com/oimiragieo/tensor-grep/commit/160bd59e0b10822f57e3a3a57470262ee64cdbf2))
+
+SARIF was verified ABSENT repo-wide (zero hits for "sarif" across .py/.rs/.md). It is how findings
+  leave a scanner and enter something that can act on them -- GitHub code scanning, Azure DevOps,
+  Sonar -- so without it tg scan's findings were trapped in a tg-shaped envelope every consumer had
+  to be taught to read.
+
+`tg scan --ruleset X --sarif` now emits a SARIF log rendered from the SAME payload `--json` emits
+  (deliberately: a second extraction path is a second place for the completeness fields to be
+  forgotten).
+
+Three decisions carry the weight:
+
+1. INCOMPLETENESS IS RENDERED, NOT DROPPED. `partial` / `unreadable_paths` (#299) map onto
+  `invocations[].executionSuccessful` plus `toolExecutionNotifications`. A SARIF file reporting "no
+  results" for a scan that could not read half the tree is the #276 defect wearing a standard schema
+  -- and worse, because the consumer is a CI gate that merges on green. The notification says in
+  words that absence of a finding for a skipped path is not evidence the path is clean.
+
+2. THE SEVERITY MAP IS AN ALLOW-LIST, NEVER A PASS-THROUGH (#282). SARIF's `level` is a closed
+  four-value enum; tg severities are open (packs use high/medium, the payload defaults to warning, a
+  user sgconfig rule may say anything). One unrecognised string emitted raw is INVALID SARIF, which
+  a consumer rejects wholesale -- losing every finding in the run, not just its own. Unknown values
+  take the payload's own default AND are recorded as `tensorGrepUnmappedSeverity`, so
+  non-comprehension is disclosed rather than laundered into a level the tool never derived.
+
+3. URIs ARE REPO-RELATIVE. Found by running the real command, not by reading the spec: the payload
+  reports ABSOLUTE paths even for `--path .`, so the first version emitted `C:/Users/.../src/app.py`
+  -- valid SARIF that attaches to no file in the pull request, i.e. a feature that looks like it
+  works and delivers nothing. The unit tests used relative fixtures and were blind to it. Paths
+  outside the scan root stay absolute on purpose; `..` segments would be rejected by consumers and
+  would misattribute the finding.
+
+Also mapped: `fingerprint` -> `partialFingerprints` (the SARIF-native equivalent of the
+  baseline/suppression files tg already writes, so findings track across runs), and `status ==
+  suppressed` -> `suppressions[]`.
+
+REGISTRATION: `--sarif` is added to bootstrap's `_SCAN_FULL_CLI_FLAGS`. Without that entry a scan
+  carrying it routes to `_run_ast_workflow_cli`, whose argparse has never heard of the flag -- it
+  would parse, succeed, and print ordinary scan output. That is the silent-misroute trap AGENTS.md
+  warns about.
+
+The exit code is deliberately unchanged: `tg scan` returns 0 on a disclosed partial today, and
+  flipping that is a contract change with its own consumers (the six-consumer surprise #276 slice C0
+  had to clear first). SARIF carries the signal in-band instead.
+
+SCOPE: the completeness signal is only as good as the payload's, and #299's
+
+disclosure covers the REGEX leg. `executionSuccessful: true` means "the regex leg reported no
+  skips", not "every byte was read". Said in the module docstring so nobody infers more.
+
+VERIFICATION - 21 unit tests, every behaviour paired with the input that must NOT produce it - 6
+  mutations applied to the renderer; ALL caught (always-successful, always-failed, severity
+  pass-through, no URI normalisation, unconditional suppressions, partial-requires-both-flags) - a
+  SEAM test builds the payload with the real producer (_run_ast_scan_payload,
+  PermissionError-injected) and renders it with the consumer -- without it, producer/consumer
+  field-name drift would leave all 21 unit tests green and the feature silently reporting success
+  over an unreadable tree. Proven by mutating the key names: seam test goes RED, as designed. -
+  dogfooded through the REAL CLI (not CliRunner), with the loaded module's __file__ asserted to be
+  the worktree source, since a stale installed dist shadows src here.
+
+NOTE: tests/unit/test_bootstrap_fast_path_imports.py::test_version_fast_path_
+  does_not_import_json_via_runtime_paths fails IDENTICALLY on clean origin/main in this environment
+  and CI is green on main -- the known env-divergence class (the installed dist here is 1.83.0,
+  predating the #48 lazy-import work). Not touched: flipping an assertion to match one box while CI
+  is green on it is #289.
+
+Closes #310
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.100.2 (2026-07-27)
 
 ### Bug Fixes
