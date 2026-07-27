@@ -68,7 +68,18 @@ would this column show if a tool were GOOD at it?* A tied-at-floor column is wor
 because it looks like data. Every scored dimension needs at least one run where arms differ, or it
 gets deleted with the reason written down.
 
-**Form 8 — the REVIEWER'S expected number is the broken half (2026-07-27).** Forms 1-7 all assume
+**Form 8 — the SPLIT ORACLE (2026-07-26).** *A precondition proved in a DIFFERENT run is not THIS
+run's precondition.* `tests/unit/test_trust_benchmark_premise.py` pins "rg cannot signal an
+incomplete scan inside its JSON stream" with two arms: ARM 1 runs `rg --json` over a tree with an
+unreadable directory and asserts no incompleteness marker; ARM 2 asserts rg exits 2. **ARM 1 never
+asserted its OWN run exited 2** — so on a tree where the directory is actually readable, rg exits 0,
+completes, correctly emits no marker, and ARM 1 passes, reporting "rg hides incompleteness" on the
+evidence of a scan that was never incomplete. What made it feel safe is the shape to learn: a helper
+DID verify the directory was unreadable *to the test process*, and ARM 2 DID assert exit 2 — both
+true, neither load-bearing for ARM 1. Move the premise assertion INTO the run that draws the
+conclusion. (Canonical text: `AGENTS.md` "The Verification-Oracle Family", Form 8.)
+
+**Form 9 — the REVIEWER'S expected number is the broken half (2026-07-27).** Forms 1-8 all assume
 the checker is wrong about the CODE. This one inverts the subject: a census mismatch is a
 **two-sided hypothesis**, and the side that is wrong is often the expectation you brought to it. In
 one session this fired twice in opposite directions — an envelope seam expected at 2 sites was

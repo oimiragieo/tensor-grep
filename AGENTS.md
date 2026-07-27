@@ -661,7 +661,7 @@ zero behavioral change, and is strictly stronger than reading the diff by eye. U
 on `test_index_lock_concurrency.py`'s comment-only revisions; cheap enough to run on every claimed no-op
 commit before skipping a gate on the strength of "it's just a comment."
 
-## The Verification-Oracle Family — eight forms (2026-07-25, 7th + 8th added 2026-07-26)
+## The Verification-Oracle Family — nine forms (2026-07-25; 7th + 8th 2026-07-26, 9th 2026-07-27)
 
 **The single most repeated failure mode this project has.** Every form shares one shape: *something that
 looks like verification isn't.* Before trusting ANY green signal, ask: **what would this check show if the
@@ -790,6 +790,21 @@ conclusion needs?*
 Second-order, and the reason the independent audit step keeps paying for itself: an external
 reviewer found this in work that had already been self-reviewed AND given a careful docstring
 asserting its rigour. **Prose describing a test as bidirectional is not evidence that it is.**
+
+**Form 9 — the REVIEWER'S EXPECTED NUMBER is the broken half (2026-07-27, #334).** Forms 1-8 all
+assume the checker is wrong about the CODE. This one inverts the subject: a census mismatch is a
+**two-sided hypothesis**, and the wrong side is often the expectation you brought to it. It fired in
+both directions in one session — an envelope seam expected at 2 sites was really 3, and four comments
+suspected of claiming "observed no walk" were each individually correct. Both were a keystroke from
+being filed as product defects on the strength of a number that merely felt wrong. **Read the
+breakdown before filing the finding**: a count that disagrees with your expectation is a prompt to
+enumerate the members and look at each, not evidence of a bug.
+
+The same law governs a finding handed to you by another agent. The 2026-07-27 skill audit reported
+real drift, but every corrected line number in it was itself wrong — computed against a worktree 28
+commits behind `origin/main`. Right finding, wrong expected value. **Re-derive before you act on
+someone else's number**, and where the class recurs, replace the number with a command that
+regenerates it (`.claude/skill_anchor_audit.py` — see "Model The Class").
 
 **Running the probe: the LOCATION trap.** A perturbation proves nothing if the thing you perturbed
 survives elsewhere. Verifying the `truncation_cause` doc ratchet, the first probe removed ONE
