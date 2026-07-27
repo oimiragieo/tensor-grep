@@ -1,6 +1,41 @@
 # CHANGELOG
 
 
+## v1.100.2 (2026-07-27)
+
+### Bug Fixes
+
+- **native**: Exit 2 when the multi-pattern route discloses an incomplete walk (task 325)
+  ([#818](https://github.com/oimiragieo/tensor-grep/pull/818),
+  [`8b41d95`](https://github.com/oimiragieo/tensor-grep/commit/8b41d95b998a2f93257916acf640453f3490417f))
+
+`emit_multi_pattern_native_results` stamped `result_incomplete: true` into the --json / --ndjson
+  envelope and then returned Ok(()) -- exit 0. On a zero-match incomplete scan it fell through to
+  the no-match branch and exited 1, which reads as an authoritative "no matches exist". That is the
+  exact lie task 276 exists to stop, sitting in the twin of the single-pattern route whose own
+  comment says the ordering exists to prevent it.
+
+All four callers already pass a REAL walk-error count straight out of
+  `collect_native_multi_pattern_matches`, so the count was present the whole time -- only the exit
+  code never read it.
+
+Fix: one shared `walk_was_incomplete` predicate. Both the envelope stamp
+  (`incomplete_envelope_fields`) and the new exit-2 guard read it, so a route cannot claim
+  incompleteness in its payload and exit 0. Checked BEFORE the no-match branch, matching the order
+  `run_native_search_with_optional_rg_fallback` already uses: "I could not finish looking" outranks
+  "I found nothing".
+
+Merge precondition SATISFIED (unlike the state the slice-C comment recorded): #792 and #793 are both
+  merged, and scripts/agent_readiness.py:409 now accepts exit 2 when the run discloses
+  incompleteness.
+
+Test asserts the two derivations agree for every input, with a control arm pinning that None and
+  Some(0) are NOT incompleteness claims -- an unconditionally-true guard would satisfy the agreement
+  assertion while exiting 2 on every clean search.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.100.1 (2026-07-27)
 
 ### Bug Fixes
