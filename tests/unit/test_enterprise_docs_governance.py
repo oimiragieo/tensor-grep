@@ -239,3 +239,46 @@ def test_contracts_native_json_incompleteness_claims_match_the_rust_source() -> 
             f"CONTRACTS.md asserts the retracted claim {stale!r} outside the retraction record; "
             "task #276 made it false and Rust is compiled in CI"
         )
+
+
+def test_contracts_incomplete_paths_count_is_documented_as_an_event_count() -> None:
+    """Task 320: the field is named `..._paths_count` and does NOT count distinct paths.
+
+    An external dogfood read the name and inferred "how many places could I not look". Measured
+    on the v1.99.5 release binary against ONE ACL-denied directory: passing the same root twice
+    yields `2`. `build_walk_builder` adds every root without deduplicating, so an overlapping
+    root (`tg search PAT . src` -- routine for agents) walks the subtree twice and the same
+    denied directory raises the count twice. `rg` prints its access-denied line per visit too,
+    so the number is a faithful count of failed reads, not a defect.
+
+    The fix was DOCUMENTATION, not a rename: the field shipped in v1.99.5 and is contract-
+    documented, so `docs/SUPPORT_MATRIX.md` binds it to >=90 days AND >=2 minor versions of
+    DEPRECATED marking before removal. Renaming would be a 90-day dual-emit exercise that
+    doubles the field surface this campaign exists to make legible.
+
+    Pinned against the SOURCE, not against itself, so both arms can fail: add dedup to the
+    root loop and the premise assertion fires pointing at the Rust (the doc's caveat would then
+    be describing behaviour that no longer exists); let the prose drift back to "how many paths"
+    and the claim assertions fire pointing at the doc.
+    """
+    native_rs = NATIVE_SEARCH_RS.read_text(encoding="utf-8")
+    contracts = CONTRACTS_PATH.read_text(encoding="utf-8")
+
+    # PREMISE -- roots are still added WITHOUT dedup, which is the whole reason one distinct
+    # path can raise the count more than once. If this ever gains dedup, the caveat below
+    # becomes false and must be revisited rather than left as stale reassurance.
+    assert "for root in roots.iter().skip(1)" in native_rs, (
+        "build_walk_builder no longer iterates the extra roots as-is; the CONTRACTS caveat "
+        "that overlapping roots double-count may now be wrong -- re-measure before trusting it"
+    )
+    assert "builder.add(root);" in native_rs
+
+    # THE CLAIM -- the doc must say EVENTS, and must warn the name is misleading.
+    assert "walk-error EVENTS" in contracts
+    assert "it is NOT a count of distinct paths" in contracts
+
+    # The old, wrong phrasing must not survive anywhere.
+    assert "-- how many paths the walk could not read" not in contracts, (
+        "the pre-task-320 phrasing is back; it tells a caller the field answers a question "
+        "it does not answer"
+    )
