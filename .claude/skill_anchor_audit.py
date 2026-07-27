@@ -115,7 +115,14 @@ def _definition_lines(lines: list[str], symbol: str) -> list[int]:
     keyword = re.compile(
         rf"\b(?:def|class|fn|struct|enum|trait|impl|const|static|type)\s+{escaped}\b"
     )
-    binding = re.compile(rf"^\s*{escaped}\s*[:=]")
+    # The trailing `(?!.*,\s*$)` rejects lines that end in a comma, which is what separates a real
+    # binding from a PARAMETER in a wrapped signature or a KEYWORD ARGUMENT in a wrapped call --
+    # both of which look identical to `NAME: ...` / `NAME=...` at the start of a line. Without it
+    # the tool reported three permanent false positives on CORRECT citations (`incomplete_reason`,
+    # `deadline_monotonic`, `file`), and three findings that can never be resolved are how a tool
+    # teaches its readers to ignore it. Module-level constants and ci.yml env keys -- the bindings
+    # this tier exists to catch -- do not end in a comma, so they still match.
+    binding = re.compile(rf"^\s*{escaped}\s*[:=](?!.*,\s*$)")
     return [i + 1 for i, line in enumerate(lines) if keyword.search(line) or binding.match(line)]
 
 

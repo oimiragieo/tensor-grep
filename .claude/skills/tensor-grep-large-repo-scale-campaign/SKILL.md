@@ -127,7 +127,7 @@ v1.93.2 — several anchors below drifted by 1000+ lines and have been re-pinned
 
 | Ship | What it does | Verify |
 | --- | --- | --- |
-| **#384-#388** deadline threading | `deadline_seconds` -> `_deadline_monotonic_from_seconds` -> `build_repo_map(deadline_monotonic=...)`; converted once to an absolute `time.monotonic()` stamp so the scan can self-bound and return partial. | `grep -n deadline_seconds src/tensor_grep/cli/repo_map.py` (e.g. `_deadline_monotonic_from_seconds` at `repo_map.py:751`, `build_repo_map`'s own `deadline_monotonic` param at `repo_map.py:7010`) |
+| **#384-#388** deadline threading | `deadline_seconds` -> `_deadline_monotonic_from_seconds` -> `build_repo_map(deadline_monotonic=...)`; converted once to an absolute `time.monotonic()` stamp so the scan can self-bound and return partial. | `grep -n deadline_seconds src/tensor_grep/cli/repo_map.py` (e.g. `_deadline_monotonic_from_seconds` at `repo_map.py:751`, `build_repo_map`'s own `deadline_monotonic` param at `repo_map.py:7426`) |
 | **#389/#393** graph-command CLI `--deadline` | `tg callers / refs / impact / blast-radius` gained `--deadline FLOAT`; #393 bounds the **caller-scan traversal** itself. | `tg callers --help` shows `--deadline FLOAT RANGE`; source `main.py:11752/11645/11440/12083` (callers/refs/impact/blast-radius, in that order) |
 | **#394** payload `result_incomplete` | Truncation stamped at the payload layer so MCP/`_json` consumers see it, not just the CLI. | `grep -n result_incomplete src/tensor_grep/cli/repo_map.py` |
 | **#395** `tg inventory --deadline` | inventory walk wall-clock bounded. | `main.py:8414` (`--deadline`), `build_inventory(..., deadline_seconds=...)` (`cli/inventory.py:183`) |
@@ -185,7 +185,7 @@ project's merge-gate guardrail: an open PR is guidance, not a receipt, until it 
   always takes its `if max_files is not None:` branch (`repo_map.py:1008`), whose FIRST
   step is a single blocking `list(os.scandir(normalized_root))` (`repo_map.py:1010`) with
   **no deadline check before or during that one call** — the per-bucket
-  `deadline_monotonic` check (`repo_map.py:1052-1057`) only runs AFTER this initial
+  `deadline_monotonic` check (`repo_map.py:1220-1221`) only runs AFTER this initial
   top-level listing has already fully materialized. On an ordinary repo this is instant;
   on a workspace-union root whose TOP LEVEL itself fans out to a huge number of entries
   (e.g. a parent folder of many independently-cloned projects, not a normal nested tree),
