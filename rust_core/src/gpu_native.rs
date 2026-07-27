@@ -15,6 +15,7 @@ use std::fs;
 use std::io::Read;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::Once;
 use std::time::Instant;
@@ -492,6 +493,12 @@ pub struct GpuNativeSearchStats {
     pub device_stats: Vec<GpuNativeDeviceStats>,
     pub matches: Vec<GpuNativeSearchMatch>,
     pub pipeline: GpuPipelineStats,
+    /// Entries the walk reported an I/O error for (task 316, the GPU twin of
+    /// `native_search::SearchStats::walk_errors`). Non-zero means the file list is INCOMPLETE:
+    /// `main.rs` turns it into the envelope's `result_incomplete` /
+    /// `incomplete_reason_class` / `incomplete_paths_count` triple via the shared
+    /// `incomplete_envelope_fields`, and into exit 2 via `walk_was_incomplete`.
+    pub walk_errors: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -1171,7 +1178,10 @@ fn run_cuda_graph_benchmark_search_paths(
         ));
     }
 
-    let files = collect_search_files(config)?;
+    // Task 316: the walk now returns its error count alongside the paths, so the GPU route
+    // can disclose an incomplete file list instead of silently reporting a short answer.
+    let walked = collect_search_files(config)?;
+    let files = walked.files;
     let pattern_batches = plan_pattern_batches(&config.patterns)?;
     let batch_plans = plan_file_batches(
         &files,
@@ -1492,6 +1502,7 @@ fn run_cuda_graph_benchmark_search_paths(
         device_stats,
         matches,
         pipeline,
+        walk_errors: walked.walk_errors,
     })
 }
 
@@ -1741,7 +1752,10 @@ fn gpu_native_search_paths_multi_with_options(
         ));
     }
 
-    let files = collect_search_files(config)?;
+    // Task 316: the walk now returns its error count alongside the paths, so the GPU route
+    // can disclose an incomplete file list instead of silently reporting a short answer.
+    let walked = collect_search_files(config)?;
+    let files = walked.files;
     let selected_devices = resolve_cuda_devices(device_ids)?;
     let assignments = assign_files_to_devices(&files, &selected_devices)?;
     let device_outcomes = assignments
@@ -1780,6 +1794,7 @@ fn gpu_native_search_paths_multi_with_options(
         device_stats,
         matches,
         pipeline,
+        walk_errors: walked.walk_errors,
     })
 }
 
@@ -3849,9 +3864,28 @@ fn check_gpu_native_implicit_walk_ceiling(
     }
 }
 
-fn collect_search_files(config: &GpuNativeSearchConfig) -> Result<Vec<PathBuf>> {
+/// Files the GPU walk collected, plus how many entries it could not read.
+///
+/// Task 316, the GPU twin of `native_search::WalkedFiles` (#276 slice B3) and introduced for the
+/// same reason: `collect_walked_files` returned a bare `Vec<PathBuf>`, so it owned NO channel back
+/// to its caller and the walk-error count died at the `eprintln!`. Without this the GPU envelope
+/// could only ever say "complete", which is the silence #276 exists to end.
+/// `Debug` is REQUIRED, not decorative: `collect_search_files`'s walk-ceiling tests call
+/// `Result::expect_err`, which needs `T: Debug` to print the unexpected Ok. Before task 316 that
+/// `T` was a bare `Vec<PathBuf>` (Debug for free), so swapping in a struct broke the tests --
+/// caught by `cuda-feature-check`, the only oracle for this cuda-gated module.
+#[derive(Debug)]
+struct GpuWalkedFiles {
+    files: Vec<PathBuf>,
+    /// Same `is_io()` filter as both CPU walkers (`native_search.rs:1328`/`:1806`) -- a malformed
+    /// global gitignore must NOT make a complete walk claim incompleteness.
+    walk_errors: usize,
+}
+
+fn collect_search_files(config: &GpuNativeSearchConfig) -> Result<GpuWalkedFiles> {
     let mut files = Vec::new();
     let mut roots = Vec::new();
+    let mut walk_errors = 0usize;
 
     for path in &config.paths {
         if !path.exists() {
@@ -3868,24 +3902,40 @@ fn collect_search_files(config: &GpuNativeSearchConfig) -> Result<Vec<PathBuf>> 
     }
 
     if !roots.is_empty() {
-        files.extend(collect_walked_files(config, &roots)?);
+        let walked = collect_walked_files(config, &roots)?;
+        files.extend(walked.files);
+        walk_errors += walked.walk_errors;
     }
 
     files.sort_unstable();
     files.dedup();
-    Ok(files)
+    // The count is deliberately NOT deduped alongside the paths: like the CPU side's
+    // `incomplete_paths_count`, it counts walk-error EVENTS, not distinct paths (task 320), so
+    // overlapping roots can raise it more than once for the same directory -- which is exactly
+    // what `rg` does, printing one line per visit.
+    Ok(GpuWalkedFiles { files, walk_errors })
 }
 
-fn collect_walked_files(config: &GpuNativeSearchConfig, roots: &[PathBuf]) -> Result<Vec<PathBuf>> {
+fn collect_walked_files(
+    config: &GpuNativeSearchConfig,
+    roots: &[PathBuf],
+) -> Result<GpuWalkedFiles> {
     if let Some(refusal) = check_gpu_native_implicit_walk_ceiling(config, roots) {
         return Err(anyhow!(refusal));
     }
     let builder = build_walk_builder(config, roots)?;
     let walked_files = Arc::new(std::sync::Mutex::new(Vec::new()));
     let shared_files = Arc::clone(&walked_files);
+    // AtomicUsize rather than a Mutex<usize>, same reasoning as the CPU twin
+    // (`native_search.rs:1767`): a pure counter on the hot walker, incremented under contention by
+    // every worker thread. Relaxed ordering suffices -- no other memory is published through it,
+    // and it is only read after `run()` has joined every worker.
+    let walk_errors = Arc::new(AtomicUsize::new(0));
+    let shared_walk_errors = Arc::clone(&walk_errors);
 
     builder.build_parallel().run(|| {
         let shared_files = Arc::clone(&shared_files);
+        let shared_walk_errors = Arc::clone(&shared_walk_errors);
         Box::new(move |entry| {
             let entry = match entry {
                 Ok(entry) => entry,
@@ -3896,32 +3946,35 @@ fn collect_walked_files(config: &GpuNativeSearchConfig, roots: &[PathBuf]) -> Re
                     // completely silently. Real `rg` prints one stderr line per unreadable
                     // path and keeps walking.
                     //
-                    // THE CPU SIDE IS NOW WIRED; THIS ONE IS NOT. That asymmetry is the whole
-                    // of task 316 and is stated here because the previous version of this
-                    // comment said the exit code and envelope marker were "still unwired here,
-                    // same as the CPU side" -- which stopped being true when task 276 slice A
-                    // landed. A comment asserting a false fact about its twin is worse than no
-                    // comment: it tells the next reader the parity gap does not exist.
+                    // TASK 316 CLOSED THE PARITY GAP. Earlier revisions of this comment said the
+                    // exit code and envelope marker were unwired here, and named two obstacles.
+                    // Both are resolved; the chain now matches the CPU side end to end:
+                    //   :493                    `walk_errors` on GpuNativeSearchStats
+                    //   here                    the increment, behind the same `is_io()` gate
+                    //   main.rs (GPU envelope)  result_incomplete / incomplete_reason_class /
+                    //                           incomplete_paths_count, via the SHARED
+                    //                           `incomplete_envelope_fields` -- not a parallel
+                    //                           copy, so the GPU envelope cannot drift from the
+                    //                           CPU one
+                    //   main.rs (GPU exit arm)  exit 2 via the shared `walk_was_incomplete`
+                    // Obstacle 1 (adding a field to a `Serialize` struct changes JSON shape) is
+                    // answered by the envelope's existing `skip_serializing_if = "Option::is_none"`
+                    // idiom: a complete GPU scan emits none of the three and stays byte-identical.
+                    // Obstacle 2 (this module owns no envelope) is answered by identifying the
+                    // route: `GpuNativeSearchResultJson` / `emit_gpu_native_json_results`.
                     //
-                    // What the CPU side has that this does not (all on `main` today):
-                    //   native_search.rs:91        `walk_errors: usize` on SearchStats
-                    //   native_search.rs:1330/1378 the two increment sites
-                    //   native_search.rs:2436-2438 envelope emits result_incomplete /
-                    //                              incomplete_reason_class="unreadable_path" /
-                    //                              incomplete_paths_count
-                    //   main.rs:8388               `exit(2)` when walk_errors > 0
-                    //
-                    // Closing the gap here is NOT a mechanical port, and the difference is why
-                    // it is a separate slice rather than a line in slice A:
-                    //   1. `GpuNativeSearchStats` (:484) has no `walk_errors` field, and it
-                    //      derives `Serialize` -- adding a field changes emitted JSON shape, so
-                    //      it needs the same omit-when-zero treatment the CPU envelope uses or
-                    //      it breaks byte-identity for complete GPU scans.
-                    //   2. This module emits NO JSON envelope of its own (grep: zero hits for
-                    //      `result_incomplete` in this file). There is no seam here to add the
-                    //      marker to; the count has to reach whichever envelope the GPU route
-                    //      actually renders through, and that route must be identified first.
-                    // Both are CUDA-gated, so CI is the only place either can be exercised.
+                    // Same `is_io()` allow-list as both CPU walkers (`native_search.rs:1328`
+                    // and `:1806`), for the reason recorded there: `ignore::Error` also covers a
+                    // malformed ancestor/global gitignore (Glob / WithLineNumber via `add_parents`),
+                    // plus UnrecognizedFileType / InvalidDefinition / Loop. Counting those would
+                    // label a COMPLETE walk incomplete with a budget-non-remediable cause -- one bad
+                    // glob in ~/.config/git/ignore would make every GPU `--json` search on that
+                    // machine claim it could not finish. A false "incomplete" is worse than the
+                    // silence #276 set out to fix. Non-I/O errors still PRINT (rg-parity, #263);
+                    // they just do not claim the answer is partial.
+                    if err.is_io() {
+                        shared_walk_errors.fetch_add(1, Ordering::Relaxed);
+                    }
                     eprintln!("tg: {err}");
                     return WalkState::Continue;
                 }
@@ -3943,7 +3996,10 @@ fn collect_walked_files(config: &GpuNativeSearchConfig, roots: &[PathBuf]) -> Re
         .lock()
         .map_err(|_| anyhow!("failed to collect GPU native search walk results"))?
         .clone();
-    Ok(files)
+    Ok(GpuWalkedFiles {
+        files,
+        walk_errors: walk_errors.load(Ordering::Relaxed),
+    })
 }
 
 fn build_walk_builder(config: &GpuNativeSearchConfig, roots: &[PathBuf]) -> Result<WalkBuilder> {

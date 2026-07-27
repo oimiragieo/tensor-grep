@@ -1103,7 +1103,12 @@ mod tests {
     };
     use serde_json::json;
     use std::env;
-    use std::ffi::{OsStr, OsString};
+    // `OsStr`'s only use in this module is inside a `#[cfg(windows)]` test (:1344), so an
+    // unconditional import is dead on Linux and warns there. `OsString` stays ungated -- the
+    // compiler named only `OsStr`, which is the tell that the other symbol is used on both.
+    #[cfg(windows)]
+    use std::ffi::OsStr;
+    use std::ffi::OsString;
     use std::fs;
     use std::io::Cursor;
     use std::path::Path;
