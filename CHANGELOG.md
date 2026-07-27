@@ -1,6 +1,155 @@
 # CHANGELOG
 
 
+## v1.101.1 (2026-07-27)
+
+### Bug Fixes
+
+- **native**: An OUTPUT-write failure is not an unreadable path (task 321)
+  ([#821](https://github.com/oimiragieo/tensor-grep/pull/821),
+  [`4a0c356`](https://github.com/oimiragieo/tensor-grep/commit/4a0c35665cc71e4bb1969c97e466e047c8f4c85b))
+
+`search_path` returns ONE `anyhow::Error` for two unrelated events -- "I could not read this file"
+  and "I could not write the answer" -- and the walker could not tell them apart. Only `BrokenPipe`
+  was special-cased, so ENOSPC/EIO on the output target fell through to `walk_errors += 1` and the
+  envelope reported `incomplete_reason_class: "unreadable_path"` for a file it had read perfectly.
+  Wrong in the direction that matters: it sends the reader to check permissions on an input that was
+  fine, and hides that the OUTPUT is what failed.
+
+Fix: the worker records whether the error it is about to return came from writing, at the two sites
+  that write (the bulk `write_all` and `emit_binary_match_warning`), and the walk arm treats that
+  like the broken pipe beside it -- ABORT, do not count. Aborting is right for the same reason the
+  pipe case aborts: every remaining file hits the same dead target, so continuing burns the whole
+  walk to produce nothing.
+
+A FLAG, not a marker error type. Wrapping the error so the call site could `downcast_ref` it
+  (mirroring `search_path_error_is_broken_pipe`) would put a new type in front of the `Display` that
+  `eprintln!("tg: {err}")` and the golden tests pin, and buys nothing: the writer and reader of this
+  signal are the same worker one call apart. The flag is cleared at the top of every `search_path`
+  so a stale `true` cannot misclassify a later genuine read failure.
+
+Deliberately avoided `Result::inspect_err` (1.76+): the crate has NO `rust-version` pin and zero
+  existing uses, and I cannot compile locally (CPU-SAFE), so an API-availability guess would be the
+  E0425 trap again. Plain `if let Err(..)` is valid in any edition.
+
+NOT INCLUDED: the injection test. `NativeOutputTarget::Buffer` only fails on mutex poisoning, so a
+  genuine failing-output-target test needs a seam that does not exist yet. Recorded as a required
+  follow-up on task 321 rather than shipped as a test that cannot fail.
+
+rustfmt --edition 2021 --check clean. All six sites hand-verified for name resolution
+  (decl/init/reset/2x set/read) because rustfmt does not resolve names. CI IS THE COMPILE ORACLE.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+### Documentation
+
+- **contracts**: Incomplete_paths_count counts EVENTS, not distinct paths (task 320)
+  ([#820](https://github.com/oimiragieo/tensor-grep/pull/820),
+  [`d1f2e3f`](https://github.com/oimiragieo/tensor-grep/commit/d1f2e3fdc02b04862b4397bd8b4adf58943320b7))
+
+* docs(contracts): incomplete_paths_count counts EVENTS, not distinct paths (task 320)
+
+The bullet said "how many paths the walk could not read". It does not. An external dogfood read the
+  name, inferred "how many places could I not look", and was wrong -- which is the fail-open shape
+  this campaign exists to close: a caller cannot branch correctly on a field whose stated meaning
+  differs from its actual one.
+
+MEASURED on the v1.99.5 release binary (SHA256-verified) against ONE ACL-denied directory, denial
+  asserted to bite first: one root -> 1; the SAME root passed twice -> 2. Cause: build_walk_builder
+  (native_search.rs:1844-1847) adds every root without deduplicating, so an overlapping root -- `tg
+  search PAT . src`, routine for agents -- walks the subtree twice. `rg NEEDLE <root> <root>` prints
+  its access-denied line twice too, so the double visit is correct at rg parity: the count
+  faithfully records two failed reads. The counting is right; the NAME is the defect.
+
+DOCUMENTED rather than RENAMED, deliberately. The plan (PR #803 Task 3) said "rename inside #795
+  before merge -- two-line diff", and that was correct WHEN WRITTEN: the field was unpublished. #795
+  merged, the field shipped in v1.99.5, and it is contract-documented, so docs/SUPPORT_MATRIX.md now
+  binds it to >=90 days AND >=2 minor versions of DEPRECATED marking. A rename is a 90-day dual-emit
+  exercise that would double the field surface this campaign is trying to make legible. #803 has
+  been updated so the next reader does not follow the stale instruction.
+
+Ratchet pinned against the SOURCE, not against itself (the #318 idiom): add dedup to the root loop
+  and the premise assertion fires at the Rust; let the prose drift back and the claim assertions
+  fire at the doc. Proven bidirectional -- restoring the old sentence FAILS the test, the corrected
+  doc passes. 17/17 governance tests green, ruff clean.
+
+Keeps MCP's `unreadable_path_count` distinct (a genuine per-path count) -- converging them would
+  repeat the task 293 mistake.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* test(contracts): pin the two task-328 completeness statements (task 333)
+
+Task 328's fix shipped as documentation ONLY -- 4195cbf / PR #815 was one file, ten insertions, zero
+  tests -- so nothing failed if either paragraph drifted. That is the same shape as task 318, in the
+  same file, one campaign later. Folded into this PR rather than a sixth open one: it is the same
+  concern (a CONTRACTS.md claim that needs a governance pin) and the same test module.
+
+Both tests pin against the SOURCE, not against the doc itself, so both arms can fail:
+
+* `result_incomplete` alone is not a completeness check -- PREMISE: `_apply_symbol_token_budget`
+  still stamps `token_budget` on the COMPLETE path (`"primary_truncated": False`) as well as the
+  capped one. That asymmetry with `result_incomplete` (omitted when complete) is the entire reason
+  the paragraph has to spell out per-field presence rules; if the complete-result branch goes away
+  the doc is wrong, not stale. CLAIM: the doc says the flag is insufficient AND names
+  `primary_truncated` / `primary_omitted` as the fields to branch on.
+
+* the two count fields can legitimately disagree -- PREMISE: `build_repo_map` still writes the
+  collection-stage count into `scan_limit.scanned_files` and the deadline-stage count into
+  `deadline_limit.files_scanned` from separate blocks. CLAIM: the doc warns they differ, names both,
+  and says not to compare them.
+
+Control arm run, four mutations, each asserted applied before trusting the result: reword either
+  claim -> the claim assertions fire; rename either producer -> the premise fires pointing at the
+  source. 4/4 discriminate. Suite: 19 passed. Both mutated files restored byte-identical (CRLF
+  intact, verified by byte count, not by eyeball).
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+### Testing
+
+- **sidecar**: Make the sidecar timeout a hang guard, not a latency assertion (task 331)
+  ([#817](https://github.com/oimiragieo/tensor-grep/pull/817),
+  [`acd8d63`](https://github.com/oimiragieo/tensor-grep/commit/acd8d6331f4d9eb750bdcccda2b162c83fe086fe))
+
+Two GPU-error-message tests failed on `test-rust-core (windows-latest, nightly)` in run 30235825250,
+  blocking PR #815 -- whose entire diff is docs/CONTRACTS.md and therefore cannot reach a Rust IPC
+  test. The re-run passed with no code change, confirming an environmental flake.
+
+MECHANISM, not a guess. `run_with_timeout` PANICS on expiry, and a panic is a test failure.
+  `sidecar_test_timeout()` returned 15s on Windows. So that constant was silently acting as "the
+  sidecar must answer within 15s" for two tests whose actual invariant is the CONTENT of an error
+  message:
+
+test_gpu_search_cuda_visible_devices_empty_reports_clear_error_without_traceback
+  test_gpu_search_invalid_device_id_reports_clear_error_without_traceback
+
+Both spawn `tg` which spawns a Python sidecar. On a contended windows-nightly runner that start
+  exceeded 15s and the tests reported a product defect that did not exist. This is the
+  wall-clock-assertion form task 309 retired elsewhere in this suite, and it has now cost two
+  separate red CI runs -- task 167 de-flaked two siblings for v1.74.2 and did not cover these.
+
+WHY THIS IS NOT THE CEILING-RAISING THAT FAILED TWICE ON TASK 259. There, the ceiling WAS the
+  assertion: a perf test asserting a duration, where a bigger number erases the very signal the test
+  exists to produce. Here the timeout asserts nothing anyone cares about. Its only job is to stop a
+  wedged subprocess from hanging CI forever, which the anti-hang-test-protocol requires. A hang
+  guard and a latency bound are different instruments, and 15s is far too tight to serve as the
+  former on a shared runner. Raising it removes a false signal rather than suppressing a true one.
+
+Chosen so a merely SLOW start cannot reach it while a genuine wedge is still bounded well inside the
+  job timeout. The doc comment states this outright, so the next reader does not have to re-derive
+  it -- and records that a failure AFTER this change is not scheduling latency and must be diagnosed
+  as a real defect rather than re-tuned.
+
+CPU-SAFE: cargo is forbidden on this box, so `rustfmt --edition 2021 --check` is the local oracle
+  and is clean; compilation and execution are CI's call. The change is one constant plus a comment
+  in a test file.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.101.0 (2026-07-27)
 
 ### Features
