@@ -1,6 +1,51 @@
 # CHANGELOG
 
 
+## v1.100.1 (2026-07-27)
+
+### Bug Fixes
+
+- **symbols**: Truncation gates were blind to --deadline, so absence was asserted over an unfinished
+  scan (task 332) ([#819](https://github.com/oimiragieo/tensor-grep/pull/819),
+  [`ccf21f7`](https://github.com/oimiragieo/tensor-grep/commit/ccf21f74c933b1a682c0088826d4771e59f8669a))
+
+An external dogfood of the PUBLISHED 1.99.4 wheel found `tg defs/callers/blast-radius` reporting
+  `no_match: true` and "No exact definition found for symbol 'collect_walked_files'" over a
+  --deadline-truncated scan -- for a symbol the same run's complete arm proved exists.
+
+A mechanical sweep found the CLASS, not the instance: 3 of 3 readers of
+  `scan_limit.possibly_truncated` in repo_map.py answered "was this truncated?" with "was the FILE
+  CAP hit?". Every one was written when the count cap was the only truncation cause and none was
+  widened when --deadline arrived, so a deadline-truncated scan read as COMPLETE at all three:
+
+:14099 build_context_render -- never offered the "narrow your scope" hint on a deadline cutoff (the
+  render that most needs it) :16166 defs no_match branch -- emitted the BARE absence sentence and
+  skipped _mark_result_incomplete entirely :18219 blast-radius trust -- treated a deadline no_match
+  as TRUSTWORTHY, skipping the literal-seed retry + both daemon fallbacks
+
+Fix: one shared `_scan_did_not_finish` predicate covering both causes, mirroring
+  `main._scan_incomplete` -- which is where that two-cause contract is ALREADY defined for the
+  exit-code gate. Not a fourth private notion: re-deriving truncation narrowly is the whole defect
+  class.
+
+Deliberately NOT done: `no_match` is left alone. It is control flow across twelve consumers
+  (literal-seed retry, Tier-2 daemon capsule cold-path fallback, the blast-radius daemon gate), so
+  suppressing it -- the obvious fix, and the one the reviewer recommended -- would silently disable
+  those rescues. The helper's own docstring warns about exactly that.
+
+Direction: the trust-helper change only ADDS rescue attempts; nothing that retried stops.
+
+BIDIRECTIONAL RECEIPT (measured, not assumed). Pre-fix: result_incomplete None, bare message, trust
+  helper False. Post-fix: True, deadline caveat naming --deadline, trust helper True. Both controls
+  unchanged in both arms -- a complete scan stays a clean honest miss (exit 1 path intact), and the
+  count arm keeps its original --max-repo-files sentence verbatim, which a shared-branch refactor
+  would have silently degraded.
+
+11 new tests pass; 68 neighbouring repo_map/incompleteness tests pass; ruff clean.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+
+
 ## v1.100.0 (2026-07-27)
 
 ### Features
