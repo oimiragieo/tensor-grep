@@ -4,12 +4,20 @@ A truncated result whose only incompleteness signal is a trailing ``warning:`` l
 complete document with a footnote -- the prefix is what a model treats as the answer. These
 tests pin the POSITION, not merely the presence, of the marker:
 
-* a truncation ``warning:`` appears ABOVE the first payload line (both text emitters);
+* a truncation ``warning:`` appears ABOVE the first payload line (all THREE wired emitters --
+  the symbol commands, the ``blast-radius`` counts block, and the ``--mermaid`` renderer);
 * an advisory ``note:`` (the zero-callers caveat) stays BELOW it -- that result is complete and
   the note only warns against over-reading it, so trailing is correct there;
-* a complete result emits neither (the control arm: with the fix reverted the first two tests
-  fail on ordering, and this one must keep passing so the assertions are discriminating rather
-  than "some marker appeared somewhere in stdout").
+* a complete result emits neither (the control arm: with the fix reverted the ordering tests fail
+  and this one must keep passing, so the assertions are discriminating rather than "some marker
+  appeared somewhere in stdout").
+
+Reproducing that control arm needs one setup note, because the obvious way to do it does NOT work:
+reverting the fix wholesale deletes ``_completeness_caveat_lines``, so this module dies at import
+and the whole file ERRORS rather than failing. A file that cannot be collected is not a red arm --
+it proves nothing about any assertion in it. Back-fill the helper into the pre-fix tree (or revert
+only the call sites) so the ASSERTIONS are what discriminate. Measured that way: 7 fail, 15 pass,
+and every one of the 15 is labelled below as a control arm or a deliberate non-sweep guard.
 
 Every ordering assertion is preceded by a premise assertion that the payload line was actually
 emitted, so an inert ``emit_text`` cannot make ``index()`` comparisons pass vacuously.
@@ -307,6 +315,53 @@ def test_mermaid_zero_callers_advisory_still_trails_the_graph() -> None:
     assert "no callers found" in out
     assert lines[-1].strip().startswith("%% no callers found")
     assert "warning:" not in out
+
+
+def test_mermaid_banner_survives_the_real_command_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Every other mermaid test calls the RENDERER. That leaves the wiring untested: the command
+    # could stop reaching this branch, or annotate the payload differently, and the renderer-level
+    # tests would all stay green. Drives `blast_radius` itself with `--mermaid`.
+    _stub_blast_radius_payload(
+        monkeypatch,
+        _blast_payload(
+            callers=[{"file": str(tmp_path / "c.py"), "line": 3}],
+            scan_limit=_truncated_scan_limit(),
+        ),
+    )
+    with pytest.raises(typer.Exit):
+        main_mod.blast_radius(
+            path=str(tmp_path),
+            symbol_arg="x",
+            symbol=None,
+            provider="native",
+            max_depth=3,
+            max_repo_files=512,
+            max_callers=None,
+            max_files=None,
+            deadline=None,
+            json_output=False,
+            mermaid_output=True,
+        )
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == "graph TD"
+    assert lines[1].startswith("  %% warning: INCOMPLETE RESULT:")
+
+
+def test_mermaid_banner_is_one_line_so_it_cannot_inject_graph_statements() -> None:
+    # A `%%` comment ends at the newline. The deleted literal was a fixed string; the replacement
+    # interpolates payload-derived values, so a newline reaching the banner would close the
+    # comment and turn the rest into live graph statements. No reachable cold path types these as
+    # anything but int -- this pins the flattening so that stays true regardless.
+    hostile = _truncated_scan_limit()
+    hostile["max_repo_files"] = 'BAD\n  evil["pwn"]\n  evil --> target'
+    out = _render_blast_radius_mermaid(_mermaid_payload(scan_limit=hostile, result_incomplete=True))
+    banner_lines = [ln for ln in out.splitlines() if "INCOMPLETE RESULT" in ln]
+    assert len(banner_lines) == 1, f"banner spans multiple lines: {banner_lines}"
+    assert 'evil["pwn"]' not in out.replace(banner_lines[0], "")
+    # Premise: the hostile value really did reach the banner, or this proves nothing.
+    assert "BAD" in banner_lines[0]
 
 
 def test_mermaid_upstream_result_incomplete_still_gets_a_leading_disclosure() -> None:

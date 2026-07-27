@@ -921,9 +921,19 @@ Two lessons from building it, both from the control arm rather than from review:
 Emitting the incompleteness signal is only half the contract — **where** it lands decides whether it is
 read. A trailing `warning: INCOMPLETE RESULT: ...` line is the easiest thing to append and the most
 ignored: the consumer (human or model) treats the prefix as the document and a final line as a footnote,
-so a caller-set truncated at a file cap still gets trusted as exhaustive. `tg`'s text emitters therefore
-put a truncation warning **above** the payload and keep advisory commentary (the zero-callers "not dead
-code" caveat, whose result is COMPLETE) **below** it. The asymmetry is the rule, not an inconsistency.
+so a caller-set truncated at a file cap still gets trusted as exhaustive. The rule is therefore that a
+truncation warning goes **above** the payload and advisory commentary (the zero-callers "not dead code"
+caveat, whose result is COMPLETE) goes **below** it. The asymmetry is the rule, not an inconsistency.
+
+**That is the rule, not yet the state of the CLI.** Three emitters are wired to it today
+(`_emit_symbol_command_result`, the `blast-radius` counts block, `_render_blast_radius_mermaid`).
+Measured against the rest: `code-map`, `route-test`, `session open` and `agent` still TRAIL their
+disclosure, and `map`, `context`, `context-render`, `edit-plan`, `blast-radius-render` and
+`blast-radius-plan` exit `2` while saying **nothing** in text at all — the ABSENT case, which is worse
+than a mispositioned one. Worst of the set: `scan`, a SECURITY ruleset, printed `Scan completed.
+total_matches=N` and exit `0` over files it could not open. Write the scope down when you state this
+rule; the first version of this section said `tg`'s text emitters "therefore" do it, which reads as a
+completeness claim about a CLI where most of them do not.
 
 Three consequences when you touch any disclosure surface:
 

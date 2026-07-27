@@ -11240,9 +11240,17 @@ def _completeness_caveat_lines(
     The zero-callers caveat (P7) is the opposite shape: the result IS complete, the note only
     warns against over-reading it, so it stays trailing. That asymmetry is the point.
 
-    Defined once, here, so the two text emitters (``_emit_symbol_command_result`` and the
-    ``blast-radius`` command) cannot drift into different orderings. JSON output is unaffected:
-    ``caveat`` is a field there, and field order carries no such reading bias.
+    Defined once, here, so the THREE emitters wired to it cannot drift into different orderings:
+    ``_emit_symbol_command_result``, the ``blast-radius`` counts block, and
+    ``_render_blast_radius_mermaid``. JSON output is unaffected: ``caveat`` is a field there, and
+    field order carries no such reading bias.
+
+    Three is the count of emitters CONVERTED, not of emitters that should be. Much of the CLI is
+    still unwired -- ``code-map``, ``route-test``, ``session open`` and ``agent`` trail their
+    disclosure, and ``map``/``context``/``context-render``/``edit-plan``/``blast-radius-render``/
+    ``blast-radius-plan`` exit 2 while saying nothing in text at all. Stated explicitly because
+    the previous version of this docstring said "the two text emitters" and went stale the moment
+    a third was wired -- an unqualified count here reads as a completeness claim about the CLI.
     """
     if caveat is None:
         return None, None
@@ -12276,8 +12284,11 @@ def _render_blast_radius_mermaid(payload: dict[str, Any]) -> str:
     # Task #329's law, crossed to this twin: a truncation disclosure must be read BEFORE the data
     # it qualifies. A `%%` note after the nodes is a footnote -- a reader who has already traced
     # the graph formed the answer several lines ago. `graph TD` is the diagram-type DECLARATION,
-    # not payload, so it stays line 1 and the banner becomes the first CONTENT line. (The leading
-    # space before `%%` also keeps it from ever reading as mermaid's `%%{...}%%` directive form.)
+    # not payload, so it stays line 1 and the banner becomes the first CONTENT line. (An existing
+    # contract test already pins `payload["mermaid"].startswith("graph TD")`, so this is also the
+    # only option that does not break a shipped promise.) What keeps the line from reading as
+    # mermaid's `%%{...}%%` DIRECTIVE form is the space AFTER `%%`, guaranteed by the `warning: `
+    # prefix `_completeness_caveat_lines` always emits -- not the indentation, which is cosmetic.
     #
     # The text comes from the shared _scan_truncation_warning/_completeness_caveat_lines pair
     # rather than a hardcoded literal, which fixes two further defects the old line carried: it
@@ -12293,7 +12304,15 @@ def _render_blast_radius_mermaid(payload: dict[str, Any]) -> str:
         truncation = _truncation_message("the result was truncated")
     leading, _ = _completeness_caveat_lines(truncation, is_truncation=truncation is not None)
     if leading is not None:
-        lines.append(f"  %% {leading}")
+        # Flattened because a `%%` comment ends at the newline: an embedded one would close the
+        # comment and turn the remainder into live graph statements. The deleted literal was a
+        # fixed string and could not carry one; this line interpolates payload-derived values
+        # (`scan_limit.max_repo_files`, `caller_scan_limit.ceiling`, the `output_limit` counts).
+        # Every COLD path types those as int, so no reachable injection was found -- but the
+        # warm/daemon payload (`_maybe_symbol_command_via_running_daemon`) is parsed JSON with no
+        # field typing, so this is cheap fail-closed hardening rather than a proven vector, and
+        # `_mermaid_label` already sanitizes node text on exactly this reasoning.
+        lines.append(f"  %% {' '.join(leading.split())}")
     lines.append(f'  target["{_mermaid_label(symbol)}"]')
     for idx, rel in enumerate(sorted(grouped)):
         node = f"n{idx}"
