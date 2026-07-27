@@ -1,6 +1,129 @@
 # CHANGELOG
 
 
+## v1.99.2 (2026-07-27)
+
+### Bug Fixes
+
+- **native**: Count serial-walk errors so --json cannot claim a complete scan (#276 slice B3)
+  ([#808](https://github.com/oimiragieo/tensor-grep/pull/808),
+  [`995f2ca`](https://github.com/oimiragieo/tensor-grep/commit/995f2ca40584d164b7c1ccd2b340eb69a2b85d2d))
+
+* docs(gpu): correct a comment that now asserts a false fact about its CPU twin
+
+The walk-error Err arm in `collect_walked_files` said the exit code and JSON envelope marker were
+  "still unwired here, same as the CPU side". The second half stopped being true when task 276 slice
+  A landed. On main today the CPU side has:
+
+native_search.rs:91 walk_errors: usize on SearchStats native_search.rs:1330/1378 the two increment
+  sites native_search.rs:2436-2438 result_incomplete / incomplete_reason_class ("unreadable_path") /
+  incomplete_paths_count main.rs:8388 exit(2) when walk_errors > 0
+
+A comment claiming parity with a twin that has moved is worse than no comment: it tells the next
+  reader the gap does not exist, so nobody looks. That is the same failure mode as the code this
+  campaign is fixing -- absence of a signal read as "fine" -- committed in prose.
+
+The comment now states the asymmetry plainly and records why closing it is NOT a mechanical port, so
+  the next session does not start by re-deriving it:
+
+1. GpuNativeSearchStats (:484) has no walk_errors field and derives Serialize, so adding one changes
+  emitted JSON shape and needs omit-when-zero treatment or complete GPU scans stop being
+  byte-identical. 2. This module emits NO JSON envelope of its own -- zero hits for
+  `result_incomplete` in the file. There is no seam here to hang the marker on; the count must reach
+  whichever envelope the GPU route renders through, and that route has to be identified first.
+
+Comment-only: 30 added lines, 0 of them non-comment (asserted, not eyeballed). rustfmt --check
+  clean. Behaviour unchanged; both items above are CUDA-gated, so CI is the only place either can
+  ever be exercised.
+
+* docs(native): the sibling stale comment -- collect_walked_files, not just the gpu twin
+
+Swept for the CLASS rather than fixing the one instance, per "model the class, don't enumerate the
+  cases". Exactly TWO comments in rust_core/ claimed task 276 machinery is not wired; #808 already
+  fixed the gpu_native.rs one, this is its sibling and the sweep is now complete.
+
+native_search.rs:1732 said: "Neither is wired here yet -- that needs an error count threaded through
+  `SearchStats` into `emit_json_matches` and the exit code, and is the next slice." All three
+  prerequisites now exist on main (task 276 slice A, #795): :91 walk_errors: usize on SearchStats
+  :2436-2438 the envelope emits result_incomplete / incomplete_reason_class / incomplete_paths_count
+  main.rs:8388 exit(2) when walk_errors > 0 A reader trusting that sentence would go and build a
+  chain that already exists.
+
+WHAT IS ACTUALLY LEFT is narrower, and the comment now says so: this is `collect_walked_files`,
+  which returns Vec<PathBuf> and owns no SearchStats to increment -- unlike
+  `search_walk_roots_parallel`, whose worker owns local_stats. Task 315 is giving THIS collector a
+  channel into the existing chain, not rebuilding the chain. Naming that precisely is the difference
+  between a 20-line slice and someone re-deriving the whole design.
+
+The old comment's closing line ("this path is honest on stderr but still reports success") was true
+  of BOTH walkers when written and is now true of only one; it is scoped to "THIS path" so it cannot
+  be read as a claim about the streaming search path, which has disclosed since slice A.
+
+Comment-only: 25 added lines, 0 non-comment (asserted, not eyeballed). rustfmt --check clean on both
+  files. No behaviour change.
+
+* fix(native): count serial-walk errors so --json cannot claim a complete scan
+
+Task 276 slice B3 (task 315). `collect_walked_files` returned a bare Vec<PathBuf>, so when the
+  walker hit an unreadable entry the error was printed to stderr and the COUNT died there -- it had
+  no channel back to its caller. On that path `--json` therefore emitted an envelope with no
+  `result_incomplete` marker over a walk that was demonstrably incomplete, which is the exact defect
+  task 276 exists to close.
+
+Its sibling `search_walk_roots_parallel` never had this problem: its worker owns a SearchStats and
+  increments `walk_errors` directly (:1330). The rest of the chain already shipped and is NOT
+  rebuilt here -- SearchStats.walk_errors (:91), the envelope fields (:2489-2491), and
+  main.rs:8388's exit(2).
+
+Change: - `collect_walked_files` now returns `WalkedFiles { files, walk_errors }`, counting under
+  the same `is_io()` gate the streaming walker uses (:1328) so a malformed global gitignore cannot
+  make a COMPLETE walk claim otherwise. - `run_native_search` folds the count into `stats`, which is
+  what the envelope reads. - The multi-pattern caller discards the count EXPLICITLY, with the
+  reason: that route owns no SearchStats, and giving it one changes its signature and every caller.
+  Filed as task 317, named at the call site so the next reader sees a decision rather than an
+  oversight.
+
+Test is bidirectional in ONE process: a readable tree must report 0, an unreadable subdirectory must
+  report >= 1. Either arm alone proves nothing -- the clean arm passes against the old no-counter
+  code, and the error arm passes against a counter wired to a constant. The unreadable arm asserts
+  its own premise (mode 0o000 actually denies THIS process) and bails loudly under root rather than
+  running inert.
+
+Also corrects two now-stale comments that described this gap as open.
+
+* fix(docs): CONTRACTS.md told agents the native --json route hides truncation (#318)
+
+For several releases docs/CONTRACTS.md stated that the compiled engine "has the equivalent
+  silent-truncation defect ... and does NOT emit `incomplete_reason_class`", that fixing it was "out
+  of scope (nobody in this development environment can compile Rust)", and that a native `--json`
+  result "exits `0` where `rg` on the same unreadable directory exits `2`".
+
+All three were true when written. Task #276 made all three false: native_search.rs:91 walk_errors on
+  SearchStats native_search.rs:2489-2491 result_incomplete / incomplete_reason_class /
+  incomplete_paths_count in the envelope main.rs:8388 exit(2) when the count is non-zero and Rust is
+  compiled in CI, which is where every native #276 change was verified.
+
+This one was wrong in the UNSAFE direction. A stale doc that under-promises is merely out of date;
+  this told a caller to DISTRUST a disclosure that is now present and to expect exit 0 from a binary
+  that now exits 2 -- the opposite of the trust property #276 exists to establish.
+
+The retracted wording is kept verbatim in a PREVIOUS TEXT bullet. Deleting a withdrawn claim
+  silently is how the next reader re-derives it from scratch. The two routes that still discard the
+  count are named as such and excluded from the allow-list until they land: multi-pattern JSON
+  (#317) and the CUDA twin (#316).
+
+Pinned by a new test, because the paragraph survived the change that invalidated it precisely by
+  being pinned by nothing. It cross-checks the DOC against the RUST SOURCE, not against itself:
+  remove the emission or the exit gate and the premise assertions fail pointing at the Rust; let the
+  prose drift back and the claim assertions fail pointing at the doc. A doc-only grep would pass
+  just as happily over a native engine that had silently regressed.
+
+Bidirectionally verified, both arms: - stale phrase re-asserted outside the retraction record -> RED
+  (names the doc) - `incomplete_reason_class:` removed from the Rust -> RED (names the Rust) The
+  first attempt at arm 1 passed because the injection landed INSIDE the excluded retraction span --
+  a setup error, re-run outside it before believing it.
+
+
 ## v1.99.1 (2026-07-27)
 
 ### Bug Fixes
