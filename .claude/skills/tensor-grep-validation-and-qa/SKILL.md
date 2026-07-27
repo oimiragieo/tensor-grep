@@ -68,6 +68,18 @@ would this column show if a tool were GOOD at it?* A tied-at-floor column is wor
 because it looks like data. Every scored dimension needs at least one run where arms differ, or it
 gets deleted with the reason written down.
 
+**Form 8 — the REVIEWER'S expected number is the broken half (2026-07-27).** Forms 1-7 all assume
+the checker is wrong about the CODE. This one inverts the subject: a census mismatch is a
+**two-sided hypothesis**, and the side that is wrong is often the expectation you brought to it. In
+one session this fired twice in opposite directions — an envelope seam expected at 2 sites was
+really 3, and four comments suspected of claiming "observed no walk" turned out to be individually
+correct. Both would have been filed as product defects on the strength of a number that felt wrong.
+So: **read the breakdown before filing the finding.** A count that disagrees with your expectation
+is a prompt to enumerate the members and look at each, not evidence of a bug. The same applies to
+an audit handed to you by another agent: the 2026-07-27 skill audit's own corrected line numbers
+were stale, because they were computed against a worktree 28 commits behind `origin/main` — the
+finding was real, the expected value was not. Re-derive before you act on someone else's number.
+
 ### Running the probe: the LOCATION trap (2026-07-26)
 
 A perturbation proves nothing if the thing you perturbed survives elsewhere. Verifying the
@@ -367,6 +379,12 @@ Ranked by how hard each is to fake, cheapest-to-check first:
     payload-ratio assertion: (a) check whether either side's payload includes a shared, non-data
     envelope/header the assertion doesn't intend to measure, and (b) reproduce with a SHORT
     `pytest --basetemp` locally before trusting a Windows-local pass as proof of a Linux-CI pass.
+    (c) **Measure bytes with a BINARY read, never `Path.read_text()`.** `read_text()` applies
+    universal newlines, so every CRLF in the file collapses to one LF and the count comes back
+    SHORT on Windows — a budget check written that way silently passes a file that is already over.
+    Caught on a 17.1 KB doc budget that `read_text()` reported as comfortably under while `wc -c`
+    showed it over. Use `len(path.read_bytes())` (or `wc -c`) for any size/ratio assertion; keep
+    `read_text()` for content matching, where the normalisation is what you want.
 17. **A self-gate's declared test SUBSET is not the full CI matrix — state what ran, not just that
     "tests passed" (#733/#734, 2026-07-24).** The build agent's own pre-merge gate on #733 ran a
     real, substantial suite (`test_harness_api_docs.py`, `test_session_cli.py`,

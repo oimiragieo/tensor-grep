@@ -107,6 +107,21 @@ python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 tg dogfood --output artifacts/dogfood_readiness.json
 ```
 
+**Layer B's structural blind spot: it compares a doc to a doc, never to the CODE (2026-07-27).**
+Every assertion above is `assert "phrase" in doc`. That pins *consistency across the doc set* — real
+value, keep it — but it cannot detect the failure that actually hurts: a doc set that agrees with
+itself and disagrees with the shipped binary. Both arms are prose, so both stay green while the
+behaviour underneath changes. Receipts in this repo's own task log: #318 (`docs/CONTRACTS.md`
+contradicted shipped behaviour, unpinned by any test) and #333 (two more completeness statements in
+the same file, same gap) — the class recurs precisely because Layer B looks like coverage.
+
+**The rule for a CONTRACT claim** (an exit code, a field name, a disclosure, a default): pin it to
+the SOURCE, not to another doc's text. The shape that works, from `test_enterprise_docs_governance.py`:
+read the implementing module's text and assert the literal expression it must contain, plus a
+**premise assertion** that fails loudly if the emitter is restructured — so both arms can fail. A
+plain `assert "phrase" in doc` has only one arm and passes for a claim that stopped being true a
+release ago. Doc-to-doc pinning is correct for *wording*; source-pinning is required for *behaviour*.
+
 This is what caught (and was itself the root cause of 4 wasted CI cycles in) the June-2026 README-rewrite incident — see `tensor-grep-failure-archaeology` for the full story; the operational lesson for docs work specifically is: **decode the structured failing check first**. `docs-claim-check` failing tells you a *version or fragment* problem; it does not by itself tell you *which* pytest in Layer B also broke — run Layer B directly (Part 4) rather than theorizing from the readiness JSON alone.
 
 ### Layer D — The published mkdocs site (a separate universe)
