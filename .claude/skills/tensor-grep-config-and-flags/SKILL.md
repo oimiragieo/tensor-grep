@@ -187,7 +187,10 @@ Not every load-bearing bound in `tg` is an environment variable — some are del
 constants, single-sourced so multiple call sites cannot drift apart. Distinguish these from the
 env-configurable knobs above before assuming a behavior can be tuned at runtime:
 
-- **`IMPLICIT_SEARCH_WALK_FILE_CEILING = 1500`** (`src/tensor_grep/io/directory_scanner.py:92`) — the
+- **`IMPLICIT_SEARCH_WALK_FILE_CEILING = 1500`** (DEFINED at `src/tensor_grep/io/scan_limits.py:106`;
+  `io/directory_scanner.py` only RE-EXPORTS it. An earlier revision cited directory_scanner, which
+  would send someone changing the ceiling to edit a re-export and wonder why nothing moved —
+  matches the sibling `tensor-grep-architecture-contract` A9 wording) — the
   fast-refuse ceiling for an unscoped/defaulted-path search or `tg find` walk (A9, v1.92.3/#702). It is
   imported by both `src/tensor_grep/cli/main.py`'s `_LARGE_ROOT_SCAN_FILE_CEILING` and
   `src/tensor_grep/cli/bootstrap.py`'s `_search_paths_include_oversized_implicit_root` — one constant,
@@ -530,7 +533,8 @@ Re-verified as of 2026-07-22 (v1.93.2): the 3 native-delegation cites (`_can_del
 → `main.py:3698`, `_build_native_tg_search_command` → `main.py:3720`,
 `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` → `main.py:1883`); the new `TG_CAPSULE_INLINE_CALLERS`
 catalog row (`agent_capsule.py:1941`); the new "Internal constants" subsection
-(`IMPLICIT_SEARCH_WALK_FILE_CEILING = 1500`, `io/directory_scanner.py:92`); and the `tg prepare --out`
+(`IMPLICIT_SEARCH_WALK_FILE_CEILING = 1500`, defined in `io/scan_limits.py`, re-exported by
+`io/directory_scanner.py`); and the `tg prepare --out`
 worked non-registration example. The rest of this file (env-var catalog, front-door tables, GPU/LSP/
 provider sections above) was **not** re-walked line-by-line in this pass — treat those sections'
 exact line numbers as needing a fresh check per the rule below, independent of the sections just
