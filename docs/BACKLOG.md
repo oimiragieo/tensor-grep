@@ -3,7 +3,30 @@
 > **Canonical prioritized work list.** Kept in sync with the CLI task store (`TaskUpdate`) and
 > GitHub (`gh pr list` is the source of truth for PRs). **CEO status** = summarize SHIPPING + P0/P1.
 > Update whenever a PR opens/merges or the queue changes. Task-store IDs (`#NNN`) cross-referenced.
-> Last refreshed 2026-07-25b (post-**v1.98.13**, with v1.98.14 releasing) — the **unreadable-path
+> Last refreshed 2026-07-26 (post-**v1.98.27**) — the **trustworthy-tg** wave (#292), continuing
+> the unreadable-path honesty thread below across 14 releases. The through-line: a surface that
+> cannot complete its work must SAY so, in a field a machine can branch on, and exit accordingly.
+> What shipped: **#767/#768/#769/#770** carried the unreadable-subtree signal into `inventory`,
+> `docs-coverage`, session snapshot and edit-plan validation discovery; **#764** stopped
+> `session_store` reporting an UNREADABLE file as REMOVED (it was causing false-stale rebuilds);
+> **#778** taught it to tell a dropped mount from a mass delete; **#773** made `docs-coverage`
+> exit `2` on an unread path, since the old exit-`0` was defensible only while truncation could
+> mean "raise the budget"; **#775** stopped `_path_is_relative_to` crashing on `OSError` and made
+> the validation-plan family disclose dropped files; **#779** closed `codemap`'s post-walk silent
+> drops; **#780** stopped `undo` destroying a file it could not capture for the revert; **#783**
+> made `tg scan` name the files its rules could not read instead of reporting clean.
+> Method, not features: **#771** pinned a Python silent-loss census and drained the three sites it
+> caught in the previous week's own fixes; **#765** ratcheted the native walk-error-discard class
+> so it cannot grow; **#776** pinned `scan_limit.truncation_cause` as a documented closed
+> vocabulary; **#774/#772/#787** replaced tests that asserted a rendering, an unearned exit-0, or
+> wall-clock overlap with ones that assert the contract. **#784** committed the trust benchmark
+> harness AND reported what it actually shows — which was NOT a clean lead — and **#789** dropped
+> its vanished-file column for scoring correct behaviour as dishonest.
+> IN FLIGHT (not yet merged, see `gh pr list`): the #276 `--json`/`--ndjson` incompleteness
+> envelope across the native producer (#808) and the second `main.rs` envelope pair (#811), SARIF
+> output (#796), the determinism gate (#797), and the trust-benchmark fix (#804).
+>
+> Prior refresh 2026-07-25b (post-**v1.98.13**, with v1.98.14 releasing) — the **unreadable-path
 > honesty** wave. One question drove it: when tg cannot READ part of a tree, does it say so, or does
 > it report success over a silently smaller result set? Answers shipped: **#757/#761** thread the
 > existing `unreadable_paths` signal into `tg find`/`codemap`/incremental refresh and pin
