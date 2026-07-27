@@ -5564,7 +5564,17 @@ def _js_ts_provider_alias_calls(
     for line_number, line in enumerate(lines, start=1):
         sanitized_line = _strip_js_ts_string_and_comment_noise(line)
         for alias_name in sorted(alias_names):
-            if not re.search(rf"\b{re.escape(alias_name)}\s*\(", sanitized_line):
+            alias_match = re.search(rf"\b{re.escape(alias_name)}\s*\(", sanitized_line)
+            if alias_match is None:
+                continue
+            # Task 326 (REOPENED): `\bNAME\s*\(` also matches `fn NAME(` / `function NAME(` -- a
+            # DECLARATION, not a call site. The first fix for this put the guard in
+            # `_regex_references_and_calls`, which sits LATER in the fallback chain and is never
+            # reached on a wheel install (no tree-sitter grammar -> the AST arm returns nothing ->
+            # THIS arm answers and stops the chain), so the defect shipped in v1.99.1 with green
+            # unit tests. Reuses the one shared `_DEFINITION_KEYWORD_BEFORE_SYMBOL` constant
+            # rather than a second regex, so the arms cannot drift apart again.
+            if _DEFINITION_KEYWORD_BEFORE_SYMBOL.search(sanitized_line[: alias_match.start()]):
                 continue
             alias_resolution = alias_resolution_by_name.get(alias_name, {})
             calls.append({
@@ -5894,7 +5904,17 @@ def _rust_provider_alias_calls(
     for line_number, line in enumerate(lines, start=1):
         sanitized_line = _strip_rust_string_and_comment_noise(line)
         for alias_name in sorted(alias_names):
-            if not re.search(rf"\b{re.escape(alias_name)}\s*\(", sanitized_line):
+            alias_match = re.search(rf"\b{re.escape(alias_name)}\s*\(", sanitized_line)
+            if alias_match is None:
+                continue
+            # Task 326 (REOPENED): `\bNAME\s*\(` also matches `fn NAME(` / `function NAME(` -- a
+            # DECLARATION, not a call site. The first fix for this put the guard in
+            # `_regex_references_and_calls`, which sits LATER in the fallback chain and is never
+            # reached on a wheel install (no tree-sitter grammar -> the AST arm returns nothing ->
+            # THIS arm answers and stops the chain), so the defect shipped in v1.99.1 with green
+            # unit tests. Reuses the one shared `_DEFINITION_KEYWORD_BEFORE_SYMBOL` constant
+            # rather than a second regex, so the arms cannot drift apart again.
+            if _DEFINITION_KEYWORD_BEFORE_SYMBOL.search(sanitized_line[: alias_match.start()]):
                 continue
             alias_resolution = alias_resolution_by_name.get(alias_name, {})
             calls.append({
