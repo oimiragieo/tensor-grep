@@ -242,6 +242,45 @@ def test_contracts_native_json_incompleteness_claims_match_the_rust_source() -> 
         )
 
 
+def test_contracts_does_not_still_exclude_the_two_routes_that_have_landed() -> None:
+    """The same bullet's OTHER claim rotted, and this test is why it was allowed to.
+
+    The test above pins three retracted phrases. It did not pin the sentence beside them --
+    "Two routes still discard the count ... the multi-pattern `-e`/`-f` JSON route (task 317) and
+    the CUDA-gated `gpu_native.rs` twin (task 316)" -- so when #811 and #823 landed those exact
+    routes, the doc went on telling agents to distrust two surfaces that had been fixed. That is
+    plan Task 10's finding reproducing itself INSIDE the bullet it was written about: pinning
+    some claims of a multi-claim paragraph leaves the rest free to rot, and the unpinned ones are
+    exactly where drift lands.
+
+    Pinned against the RUST SOURCE in both directions, like its sibling: remove the emission and
+    the premise fails pointing at the Rust; let the exclusion return and the claim fails pointing
+    at the doc.
+    """
+    main_rs = MAIN_RS.read_text(encoding="utf-8")
+    contracts = CONTRACTS_PATH.read_text(encoding="utf-8")
+
+    # PREMISE -- both envelopes really do carry the triple now. Cited by SYMBOL: line numbers in
+    # prose about a file that keeps changing rot by construction (the #764 receipt).
+    for struct_name in ("struct SearchResultJson", "struct GpuNativeSearchResultJson"):
+        assert struct_name in main_rs, f"{struct_name} is gone; re-derive this pin before editing"
+        body = main_rs.split(struct_name, 1)[1].split("\n}", 1)[0]
+        for field in ("result_incomplete", "incomplete_reason_class", "incomplete_paths_count"):
+            assert field in body, (
+                f"{struct_name} no longer carries {field}; CONTRACTS.md now claims it does, so "
+                "either the Rust regressed or the doc is the wrong half of this pair"
+            )
+
+    # THE CLAIM -- the doc must not still be excluding them. Checked outside the retraction
+    # record, which legitimately quotes withdrawn wording.
+    head, _, tail = contracts.partition(_RETRACTION_MARKER)
+    outside_the_retraction = head + tail[tail.index("\n  - WHAT REMAINS TRUE") :]
+    assert "still discard the count" not in outside_the_retraction, (
+        "CONTRACTS.md still excludes the multi-pattern and gpu_native routes from the "
+        "incomplete_reason_class allow-list; both landed (#811 task 317, #823 task 316)"
+    )
+
+
 def test_contracts_incomplete_paths_count_is_documented_as_an_event_count() -> None:
     """Task 320: the field is named `..._paths_count` and does NOT count distinct paths.
 
