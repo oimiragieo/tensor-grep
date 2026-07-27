@@ -11080,6 +11080,30 @@ def _symbol_payload_has_no_results(payload: dict[str, Any], result_key: str) -> 
     return not payload.get(result_key)
 
 
+def _symbol_not_found_claim(payload: dict[str, Any], result_key: str) -> bool:
+    """Whether the payload may affirmatively claim the symbol is ABSENT (task 327).
+
+    ``not_found`` is a positive claim -- "we looked and it is not there" -- and rg's exit-1
+    convention is built on it. A scan cut short by ``--deadline`` or a ``--max-repo-files`` cap
+    never finished looking, so an empty result from it proves nothing. An external dogfood of
+    v1.98.27 caught ``tg refs ... --deadline 0.1 --json`` reporting ``files_scanned: 0`` and
+    ``not_found: true`` in the same payload: the confident false zero this command's own emitter
+    docstring exists to prevent, surviving in the one field the completeness machinery never
+    covered.
+
+    The truncation predicate is ``_scan_incomplete`` -- NOT a fresh check -- because that gate is
+    already where "the scan-vs-output-cap contract is defined exactly once". A second notion of
+    incompleteness here could drift from the exit-code gate and reintroduce exactly the
+    inconsistency this fixes. It also gets the OUTPUT-cap boundary right for free: an output cap
+    is a complete analysis capped for display, so it must NOT suppress ``not_found``.
+
+    Exit codes are unaffected: ``_scan_incomplete``-true payloads already exit 2 on a branch
+    evaluated before ``not_found`` is consulted, so this only changes what the FIELD says to a
+    caller reading the JSON.
+    """
+    return _symbol_payload_has_no_results(payload, result_key) and not _scan_incomplete(payload)
+
+
 _ZERO_CALLERS_CAVEAT = (
     "0 callers in the static call graph does not mean this symbol is dead code. Dynamic "
     "dispatch (getattr / decorators / string-keyed registries), test files, re-exports, and "
@@ -11294,7 +11318,7 @@ def _emit_symbol_command_result(
 
     The truncation warning supersedes the generic caveat (incompleteness is the real story).
     """
-    not_found = _symbol_payload_has_no_results(payload, result_key)
+    not_found = _symbol_not_found_claim(payload, result_key)
     payload["not_found"] = not_found
     caveat, is_truncation = _annotate_result_completeness(payload, result_key=result_key)
     if json_output:
@@ -12381,7 +12405,7 @@ def blast_radius(
     # 0 with an empty callers list -- on a refactor-safety command that reads as "resolved, zero
     # impact" instead of "never found". Compute + stamp BEFORE any output path (mirrors
     # _emit_symbol_command_result) so json/text/mermaid all see the same additive `not_found` field.
-    not_found = _symbol_payload_has_no_results(payload, "callers")
+    not_found = _symbol_not_found_claim(payload, "callers")
     payload["not_found"] = not_found
     # Annotate completeness BEFORE any output path so mermaid/json/text all see result_incomplete and
     # honor the shared exit contract (cursor review 1.40.0): a --deadline partial or output-cap
