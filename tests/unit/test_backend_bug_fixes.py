@@ -8,8 +8,9 @@ CUDA) so they run in the standard CI environment.
 from __future__ import annotations
 
 import sys
-import types
 from typing import Any
+
+import pytest
 
 # ---------------------------------------------------------------------------
 # B3 — AstBackend: no RecursionError on deeply-nested trees
@@ -162,87 +163,97 @@ def test_stringzilla_search_returns_result_without_wrapper(tmp_path: Any) -> Non
 
 
 # ---------------------------------------------------------------------------
-# O1 — TorchBackend: _batch_match_lines_torch correctness (CPU tensors)
+# O1 - TorchBackend: _contains_literal_torch correctness (CPU tensors)
+#
+# These three tests used to call `TorchBackend._batch_match_lines_torch`, which
+# has never existed in src/ (`git log -S... -- src/` returns zero commits; the
+# name only ever appeared here). They were born dead, and the skip guard hid it:
+# it keys on whether `import torch` succeeds, NOT on whether the method exists,
+# so every CI job -- none of which installs torch for pytest -- skipped them
+# green while any developer box WITH torch failed on AttributeError.
+#
+# Rewritten against the real matcher, `_contains_literal_torch`, which
+# `_search_lines_on_device` drives one line at a time. The original intent
+# (right rows match / empty input / all-too-short) carries over unchanged.
 # ---------------------------------------------------------------------------
 
 
-def _make_cpu_torch_stubs() -> types.ModuleType:
-    """Return a minimal torch stub that forwards to the real torch on CPU if available,
-    otherwise skip.  We exercise _batch_match_lines_torch logic, not CUDA."""
+def _cpu_torch_or_none() -> Any:
+    """Return the real torch if importable, else None so the caller can skip.
+
+    We exercise `_contains_literal_torch` on a CPU device; no CUDA required.
+    """
     try:
         import torch
 
         return torch
     except ImportError:
-        return None  # type: ignore[return-value]
+        return None
 
 
-def test_batch_match_lines_torch_finds_pattern() -> None:
-    """_batch_match_lines_torch must find pattern bytes in the right rows."""
-    torch = _make_cpu_torch_stubs()
-    if torch is None:
-        import pytest
-
-        pytest.skip("torch not installed")
-
+def _match_lines(torch: Any, encoded: list[bytes], pattern: bytes) -> list[bool]:
+    """Run the real per-line matcher over `encoded`, mirroring _search_lines_on_device."""
     from tensor_grep.backends.torch_backend import TorchBackend
 
-    pattern = b"hello"
+    backend = TorchBackend()
     pattern_tensor = torch.tensor(list(pattern), dtype=torch.uint8)
-    encoded = [
-        b"say hello world",  # match
-        b"goodbye world",  # no match
-        b"hello",  # exact match
-        b"hel",  # too short
+    device = torch.device("cpu")
+    return [
+        backend._contains_literal_torch(
+            torch=torch,
+            line=raw.decode("utf-8"),
+            pattern_tensor=pattern_tensor,
+            pattern_len=len(pattern),
+            device=device,
+        )
+        for raw in encoded
     ]
 
-    results = TorchBackend._batch_match_lines_torch(
-        torch, encoded, pattern_tensor, len(pattern), torch.device("cpu")
-    )
 
-    assert results[0] is True
-    assert results[1] is False
-    assert results[2] is True
-    assert results[3] is False
-
-
-def test_batch_match_lines_torch_empty_input() -> None:
-    """Empty encoded_lines must return an empty list without error."""
-    torch = _make_cpu_torch_stubs()
+def test_contains_literal_torch_finds_pattern_in_the_right_rows() -> None:
+    """The matcher must be True for exactly the rows containing the pattern."""
+    torch = _cpu_torch_or_none()
     if torch is None:
-        import pytest
-
         pytest.skip("torch not installed")
 
-    from tensor_grep.backends.torch_backend import TorchBackend
-
-    pattern = b"x"
-    pattern_tensor = torch.tensor(list(pattern), dtype=torch.uint8)
-
-    results = TorchBackend._batch_match_lines_torch(
-        torch, [], pattern_tensor, len(pattern), torch.device("cpu")
+    results = _match_lines(
+        torch,
+        [
+            b"say hello world",  # match, mid-line
+            b"goodbye world",  # no match
+            b"hello",  # match, exact
+            b"hel",  # no match, shorter than the pattern
+        ],
+        b"hello",
     )
-    assert results == []
+
+    assert results == [True, False, True, False]
 
 
-def test_batch_match_lines_torch_all_too_short() -> None:
-    """Lines all shorter than pattern must all be False."""
-    torch = _make_cpu_torch_stubs()
+def test_contains_literal_torch_empty_input_returns_empty_without_error() -> None:
+    """No lines in means no verdicts out -- and no exception."""
+    torch = _cpu_torch_or_none()
     if torch is None:
-        import pytest
-
         pytest.skip("torch not installed")
 
-    from tensor_grep.backends.torch_backend import TorchBackend
+    assert _match_lines(torch, [], b"x") == []
 
-    pattern = b"toolong"
-    pattern_tensor = torch.tensor(list(pattern), dtype=torch.uint8)
-    encoded = [b"ab", b"c", b""]
 
-    results = TorchBackend._batch_match_lines_torch(
-        torch, encoded, pattern_tensor, len(pattern), torch.device("cpu")
-    )
-    assert all(r is False for r in results)
+def test_contains_literal_torch_lines_shorter_than_pattern_are_all_false() -> None:
+    """Lines shorter than the pattern must be False, not a crash.
+
+    This pins the `len(line_bytes) < pattern_len` guard in
+    `_contains_literal_torch`: without it, `line_tensor.unfold(0, pattern_len, 1)`
+    raises on a too-short line. Control arm -- delete that guard and this test
+    fails; restore it and it passes.
+    """
+    torch = _cpu_torch_or_none()
+    if torch is None:
+        pytest.skip("torch not installed")
+
+    results = _match_lines(torch, [b"ab", b"c", b""], b"toolong")
+
+    assert results == [False, False, False]
 
 
 # ---------------------------------------------------------------------------
