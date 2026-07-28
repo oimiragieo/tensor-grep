@@ -5158,6 +5158,57 @@ def _format_broad_workspace_scan_error(project_dirs: list[str]) -> str:
     )
 
 
+def _emit_broad_scan_refusal(message: str, *, json_output: bool, path: str) -> None:
+    """Emit a scan-policy refusal on BOTH surfaces, then let the caller exit 2.
+
+    An external dogfood asked for "the same exit-2 refuse for bare `--json` unscoped as the
+    multi-project parent" and it was half-right: the exit code WAS already 2. What was missing is
+    that `--json` printed **zero bytes** to stdout, so a machine consumer got `JSONDecodeError` and
+    had to parse English off stderr to learn why. Measured on the shipped v1.101.9:
+    `tg search PAT --json` on a large implicit root -> exit 2, stdout 0 bytes.
+
+    A refusal is the one answer a `--json` caller most needs machine-readable: it is precisely the
+    case where an empty result must NOT be read as "no matches". Emitting nothing forces the
+    consumer into the inference this whole surface exists to prevent.
+
+    The envelope MIRRORS the MCP `tg_search` refusal payload (`mcp_server.py`) field for field --
+    `truncated` + `result_incomplete` + `incomplete_reason` + `incomplete_reason_class:
+    "scan_limit"` + `error.code: "broad_scan_refused"` + `retryable: false`. Deliberately not a new
+    vocabulary: MCP already settled that a scan-policy ceiling classifies as `scan_limit` and that
+    `error.code` is the sibling signal for WHICH policy refused. Two surfaces refusing the same
+    thing in two different shapes is how CLI and MCP drift into contradicting each other.
+
+    `total_matches: 0` is safe here ONLY because it travels with those flags: the zero is qualified
+    on the same line it appears, which is the difference between a count and an absence claim.
+    """
+    from tensor_grep.cli.formatters.json_fmt import JSON_OUTPUT_VERSION
+
+    typer.echo(message, err=True)
+    if not json_output:
+        return
+    typer.echo(
+        json.dumps(
+            {
+                "version": JSON_OUTPUT_VERSION,
+                "path": path,
+                "total_matches": 0,
+                "total_files": 0,
+                "matches": [],
+                "truncated": True,
+                "result_incomplete": True,
+                "incomplete_reason": message,
+                "incomplete_reason_class": "scan_limit",
+                "error": {
+                    "code": "broad_scan_refused",
+                    "message": message,
+                    "retryable": False,
+                },
+            },
+            indent=2,
+        )
+    )
+
+
 def _format_unbounded_vendored_root_scan_error(vendored_dirs: list[str]) -> str:
     visible_dirs = ", ".join(vendored_dirs[:8])
     if len(vendored_dirs) > 8:
@@ -7694,7 +7745,11 @@ def search_command(
         files_mode=files,
     )
     if refuse_generated_scan:
-        typer.echo(_format_broad_generated_scan_error(generated_scan_dirs), err=True)
+        _emit_broad_scan_refusal(
+            _format_broad_generated_scan_error(generated_scan_dirs),
+            json_output=json,
+            path=str(paths_to_search[0]) if paths_to_search else ".",
+        )
         raise typer.Exit(2)
     refuse_workspace_scan, workspace_project_dirs = _should_refuse_unbounded_workspace_root_scan(
         paths_to_search,
@@ -7703,7 +7758,11 @@ def search_command(
         paths_defaulted=paths_defaulted,
     )
     if refuse_workspace_scan:
-        typer.echo(_format_broad_workspace_scan_error(workspace_project_dirs), err=True)
+        _emit_broad_scan_refusal(
+            _format_broad_workspace_scan_error(workspace_project_dirs),
+            json_output=json,
+            path=str(paths_to_search[0]) if paths_to_search else ".",
+        )
         raise typer.Exit(2)
     refuse_vendored_scan, vendored_root_dirs = _should_refuse_unbounded_vendored_root_scan(
         paths_to_search,
@@ -7712,7 +7771,11 @@ def search_command(
         paths_defaulted=paths_defaulted,
     )
     if refuse_vendored_scan:
-        typer.echo(_format_unbounded_vendored_root_scan_error(vendored_root_dirs), err=True)
+        _emit_broad_scan_refusal(
+            _format_unbounded_vendored_root_scan_error(vendored_root_dirs),
+            json_output=json,
+            path=str(paths_to_search[0]) if paths_to_search else ".",
+        )
         raise typer.Exit(2)
 
     # Bug #88 (dogfood v1.54.1 re-harvest): an implicit-path `--glob`/`--type` search that the
