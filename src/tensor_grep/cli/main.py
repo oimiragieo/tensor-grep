@@ -9008,14 +9008,19 @@ def codemap(
     if json_output:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
     else:
+        # LEADING (task #329). This block used to sit BELOW the counts, which is the position
+        # defect: a reader who has seen `symbols=1204` has already formed the answer by the time a
+        # trailing PARTIAL line lands. `codemap` was the ONE command in this family that disclosed
+        # at all, which is exactly why its ordering went unexamined for so long -- "it discloses"
+        # read as "it is fine".
+        if payload.get("partial"):
+            _safe_stdout_line(f"PARTIAL: {payload.get('remediation', '')}")
         _safe_stdout_line(f"Code map for {payload['path']}")
         _safe_stdout_line(f"out={payload['out']} index={payload['index']}")
         _safe_stdout_line(
             f"folders={payload['folders_total']} files={payload['files_total']} "
             f"symbols={payload['symbols_total']}"
         )
-        if payload.get("partial"):
-            _safe_stdout_line(f"PARTIAL: {payload.get('remediation', '')}")
 
     if _scan_incomplete(payload):
         raise typer.Exit(2)
@@ -10463,11 +10468,17 @@ def route_test(
             f"{edit_target.get('file')}#L{edit_target.get('line')} "
             f"{edit_target.get('symbol')}"
         )
+        # `agreement=` is a VERDICT, and a verdict computed from a truncated scan is the single
+        # most over-readable line this command emits -- so the qualifier leads it (task #329).
+        # The key=value form is kept rather than converted to a `warning:` banner: this whole
+        # block is a key=value listing and something may parse `partial=true`. Same call made for
+        # `prepare`, and the opposite call for `codemap`/`inventory`, whose trailing lines are
+        # prose in the same register as a banner and would have said it twice.
+        if payload.get("partial"):
+            typer.echo(f"partial=true agreement_basis={payload.get('agreement_basis')}")
         typer.echo(f"agreement={payload['agreement']}")
         for warning in payload["warnings"]:
             typer.echo(f"warning={warning}")
-        if payload.get("partial"):
-            typer.echo(f"partial=true agreement_basis={payload.get('agreement_basis')}")
 
     if _scan_incomplete(payload):
         raise typer.Exit(2)
@@ -12931,14 +12942,17 @@ def session_open(
         typer.echo(json.dumps(_with_schema_version(payload.__dict__, version=1), indent=2))
         return
 
-    typer.echo(
-        f"Opened session {payload.session_id} "
-        f"(files={payload.file_count}, symbols={payload.symbol_count})"
-    )
+    # LEADING (task #329): `files=`/`symbols=` are the numbers the cap qualifies, and a session is
+    # opened once and then trusted for its whole lifetime -- a caveat read after the counts is a
+    # caveat read after the decision to trust them.
     if isinstance(payload.scan_limit, dict) and payload.scan_limit.get("possibly_truncated"):
         typer.echo(
             "Session repo map is capped; reopen with a larger --max-repo-files for full coverage."
         )
+    typer.echo(
+        f"Opened session {payload.session_id} "
+        f"(files={payload.file_count}, symbols={payload.symbol_count})"
+    )
 
 
 @session_daemon_app.command("start")
