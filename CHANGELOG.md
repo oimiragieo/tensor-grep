@@ -1,6 +1,83 @@
 # CHANGELOG
 
 
+## v1.101.11 (2026-07-28)
+
+### Bug Fixes
+
+- **cli**: The refusal a bare `tg search PAT --json` actually hits still printed zero bytes
+  ([#851](https://github.com/oimiragieo/tensor-grep/pull/851),
+  [`9c98a98`](https://github.com/oimiragieo/tensor-grep/commit/9c98a98a23ae0f5272e2ed84aa5e4e13d1aefba8))
+
+#843 shipped the machine-readable refusal envelope and wired it at THREE emitters (generated-scan,
+  workspace-scan, vendored-root). Two were missed: both call sites of
+  _format_unbounded_large_root_scan_error -- which is the refusal a bare `tg search PAT --json` on a
+  large single-project root actually reaches, i.e. the exact command the v1.101.7 and v1.101.9
+  dogfoods reported. The headline fix shipped while the reported command stayed broken.
+
+Measured on the shipped v1.101.10 binary from a large repo root:
+
+tg search ZZZ_NOMATCH --json -> exit 2, stdout 0 bytes, stderr 636 bytes
+
+so a --json consumer got a JSONDecodeError and had to parse English off stderr -- the inference this
+  surface exists to prevent, and indistinguishable at the call site from "no matches".
+
+After, against real src:
+
+exit 2, stdout 1591 bytes, parseable error.code = broad_scan_refused, result_incomplete = true,
+  incomplete_reason_class = scan_limit stderr unchanged (636 bytes, human prose)
+
+Pinned as a CLASS, not as two more cases: the defect is not that these two sites were wrong, it is
+  that a new refusal emitter can be added without the envelope and nothing notices. Two AST ratchets
+  -- no refusal may be emitted through a bare typer.echo, and every _format_*_scan_error must reach
+  _emit_broad_scan_refusal (so deleting the call sites cannot satisfy the first). Verified to BITE
+  against origin/main: flags exactly the 2 sites, lines 7808 and 8021.
+
+Found by the closing dogfood of the shipped artifact, which is the only reason it surfaced -- a
+  code-level read of #843 says "the refusal envelope shipped".
+
+536 + 634 tests pass across the CLI-mode, bootstrap and MCP suites.
+
+### Continuous Integration
+
+- The PyPI artifact smoke test must report why it failed, not just that it did
+  ([#848](https://github.com/oimiragieo/tensor-grep/pull/848),
+  [`1b78023`](https://github.com/oimiragieo/tensor-grep/commit/1b78023b9be3907d43110fab77e90cc80ba3fee6))
+
+validate-pypi-artifacts failed on the v1.101.10 release run (30363114542) and skipped publish-pypi,
+  leaving v1.101.10 tagged but never published. The entire diagnostic content of that log:
+
+subprocess.CalledProcessError: Command '[... 'run', '--lang', 'python', '--rewrite', ...]' returned
+  non-zero exit status 1.
+
+tg exited 1 and its stderr -- the one thing that names the cause -- was captured into a
+  CalledProcessError and discarded. The failure was neither diagnosable from the log nor
+  reproducible off it. Three hypotheses (dependency drift, an mcp 1.x->2.0.0 major bump, the #843
+  diff) were each built and falsified against that log before it became clear the cause had simply
+  been thrown away.
+
+The probes ran tg from inside a nested `python -c` payload, so the child's real error became a
+  CalledProcessError inside the child, which the outer check=True re-wrapped into a second one
+  naming only `python -c`. Two layers of wrapping, message lost at the first.
+
+- Run the probes from this process. The nesting bought nothing: the inner interpreter only wrote a
+  file and shelled out to tg. - _run_checked() prints argv, exit status, stdout and stderr on
+  failure. - _fail() covers the other half a CalledProcessError cannot express -- the command
+  SUCCEEDS but prints the wrong thing.
+
+Verified both arms: the full smoke still passes end-to-end against a real published wheel (1.101.9),
+  and a forced failure now prints both streams.
+
+The nesting ratchet was itself wrong first: it asserted no subprocess.run pairs capture_output=True
+  with check=True, which reported PASS against the pre-fix file -- zero violations, because the
+  offending call was inside a string. A ratchet that cannot fail on the code that caused the
+  incident is decoration. Re-aimed at the nesting and re-verified: it flags 2 payloads on HEAD~.
+
+Does not diagnose the underlying v1.101.10 rewrite failure, which is Linux-wheel specific and does
+  not reproduce on Windows against 1.101.9 or current main. It makes the next occurrence
+  self-explaining.
+
+
 ## v1.101.10 (2026-07-28)
 
 ### Bug Fixes
