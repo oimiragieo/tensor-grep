@@ -4,6 +4,8 @@ import importlib.util
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 def _load_module():
     root = Path(__file__).resolve().parents[2]
@@ -16,12 +18,26 @@ def _load_module():
 
 
 def test_should_run_smoke_install_from_local_dist(tmp_path: Path, monkeypatch):
+    """The probes now invoke `tg` directly instead of through a nested `python -c` payload.
+
+    The fake correspondingly has to ACT like tg -- emit the rewritten source on stdout, and write
+    the file under `--apply`. That is not incidental test upkeep: under the old shape the probe's
+    real work happened inside an opaque string this fake never executed, so the assertions could
+    only inspect argv. Moving the logic into the parent process is what makes the outcome
+    observable here at all.
+    """
     module = _load_module()
     calls: list[list[str]] = []
 
-    def _fake_run(cmd, check, **kwargs):
-        calls.append([str(item) for item in cmd])
-        return subprocess.CompletedProcess(cmd, 0)
+    def _fake_run(cmd, **kwargs):
+        argv = [str(item) for item in cmd]
+        calls.append(argv)
+        stdout = ""
+        if "run" in argv and "--rewrite" in argv:
+            stdout = '{"replacement_text": "lambda x, y: x + y"}'
+            if "--apply" in argv:
+                Path(argv[-1]).write_text("lambda x, y: x + y\n", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
 
     monkeypatch.setattr(subprocess, "run", _fake_run)
 
@@ -33,6 +49,7 @@ def test_should_run_smoke_install_from_local_dist(tmp_path: Path, monkeypatch):
 
     assert len(calls) == 7
     expected_python = module._venv_python(tmp_path / "work" / ".pypi-smoke-venv")
+    expected_tg = str(module._venv_tg(tmp_path / "work" / ".pypi-smoke-venv"))
     assert calls[0][:3] == [module.sys.executable, "-m", "venv"]
     assert calls[1][:4] == [str(expected_python), "-m", "pip", "install"]
     assert any(dep.startswith("typer") for dep in calls[1])
@@ -48,12 +65,36 @@ def test_should_run_smoke_install_from_local_dist(tmp_path: Path, monkeypatch):
     ]
     assert calls[2][-1] == "tensor-grep==0.11.1"
     assert calls[3][1] == "-c"
-    assert calls[4][-1] == "--version"
-    assert calls[5][1] == "-c"
-    assert calls[6][1] == "-c"
-    assert "'run'" in calls[5][2]
-    assert "'run'" in calls[6][2]
-    assert "'--apply'" in calls[6][2]
+    assert calls[4] == [expected_tg, "--version"]
+
+    # The two rewrite probes: real argv on the real binary, no interpreter in between.
+    assert calls[5][:2] == [expected_tg, "run"]
+    assert "--rewrite" in calls[5] and "--apply" not in calls[5]
+    assert calls[6][:2] == [expected_tg, "run"]
+    assert "--apply" in calls[6]
+    for probe in (calls[5], calls[6]):
+        assert "-c" not in probe, "a probe is still routing through a nested interpreter"
+
+
+def test_should_fail_loudly_when_the_rewrite_plans_nothing(tmp_path: Path, monkeypatch, capsys):
+    """A tg that exits 0 with useless output must fail the smoke AND say what it printed.
+
+    This is the half a `CalledProcessError` can never express, and the half the v1.101.10 log
+    needed: the command "succeeded", so the only signal was an AssertionError with no payload.
+    """
+    module = _load_module()
+
+    def _fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0, stdout="NOTHING-USEFUL", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    with pytest.raises(SystemExit) as excinfo:
+        module.run_smoke_test(dist_dir=tmp_path, version="0.11.1", work_dir=tmp_path / "work")
+
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "NOTHING-USEFUL" in err, "the smoke failed without reporting what tg actually printed"
 
 
 def test_should_resolve_linux_tg_shim_path(tmp_path: Path, monkeypatch):
