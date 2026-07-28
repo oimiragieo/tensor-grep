@@ -354,14 +354,26 @@ def test_mermaid_banner_is_one_line_so_it_cannot_inject_graph_statements() -> No
     # interpolates payload-derived values, so a newline reaching the banner would close the
     # comment and turn the rest into live graph statements. No reachable cold path types these as
     # anything but int -- this pins the flattening so that stays true regardless.
+    #
+    # There are now TWO disclosure lines -- the comment and the rendered `tg_incomplete` node --
+    # so this no longer counts "lines mentioning INCOMPLETE RESULT" and expects one. That count
+    # was the MECHANISM; the intent is that neither disclosure can be SPLIT by an injected
+    # newline. Each is asserted to be exactly one line, which is the same property stated against
+    # the shape the renderer actually has.
     hostile = _truncated_scan_limit()
     hostile["max_repo_files"] = 'BAD\n  evil["pwn"]\n  evil --> target'
     out = _render_blast_radius_mermaid(_mermaid_payload(scan_limit=hostile, result_incomplete=True))
-    banner_lines = [ln for ln in out.splitlines() if "INCOMPLETE RESULT" in ln]
-    assert len(banner_lines) == 1, f"banner spans multiple lines: {banner_lines}"
-    assert 'evil["pwn"]' not in out.replace(banner_lines[0], "")
-    # Premise: the hostile value really did reach the banner, or this proves nothing.
-    assert "BAD" in banner_lines[0]
+    lines = out.splitlines()
+    comment_lines = [ln for ln in lines if ln.lstrip().startswith("%% warning:")]
+    node_lines = [ln for ln in lines if "tg_incomplete[" in ln]
+    assert len(comment_lines) == 1, f"comment spans multiple lines: {comment_lines}"
+    assert len(node_lines) == 1, f"node spans multiple lines: {node_lines}"
+    # Premise: the hostile value really did reach BOTH disclosures, or this proves nothing.
+    assert "BAD" in comment_lines[0]
+    assert "BAD" in node_lines[0]
+    # And nothing it carried became a live graph statement on a line of its own.
+    residue = [ln for ln in lines if ln not in comment_lines + node_lines]
+    assert not any("evil" in ln for ln in residue), f"injected statement survived: {residue}"
 
 
 def test_mermaid_upstream_result_incomplete_still_gets_a_leading_disclosure() -> None:
