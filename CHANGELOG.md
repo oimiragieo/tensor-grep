@@ -1,6 +1,105 @@
 # CHANGELOG
 
 
+## v1.101.7 (2026-07-28)
+
+### Bug Fixes
+
+- **mcp**: Bump the contract to 1.7.0 -- budget_remediable shipped on the wire without one
+  ([#833](https://github.com/oimiragieo/tensor-grep/pull/833),
+  [`b2899c3`](https://github.com/oimiragieo/tensor-grep/commit/b2899c30576f8cb1d19bd7d2c138c25004577df0))
+
+* fix(mcp): bump the contract to 1.7.0 -- budget_remediable shipped on the wire without one
+
+`_TG_MCP_SERVER_CONTRACT_VERSION` sat at `1.6.0`, which promises `budget_remediable` only on
+  `tg_search`'s `scan_limit` (the 1.5.0 note). It has in fact been on a SECOND family of tools for
+  several releases.
+
+## Measured, not inferred
+
+On `origin/main` before this change:
+
+build_repo_map(<dir>, max_repo_files=3).scan_limit -> {"max_repo_files": 3, "scanned_files": 3,
+  "possibly_truncated": true, "truncation_cause": "project-files", "budget_remediable": true}
+
+and `tg_repo_map` (mcp_server.py) returns that payload VERBATIM:
+
+return _inject_mcp_contract_fields(json.dumps(build_repo_map(path, ...), indent=2))
+
+No filtering, no projection. So the field has been served at contract 1.6.0.
+
+## Why the bump was missed, which is the reusable part
+
+The repo's rule is phrased around registration sites: "a new MCP tool is a 5th registration site,
+  bump the contract version". Task 336 (#826) added NO tool. It edited three emitters in
+  `repo_map.py` -- a CLI file that names MCP nowhere -- and every reviewer, including its own
+  careful scope note ("enumerated mechanically rather than from recollection"), read it as CLI-only.
+
+**A pass-through handler makes the producer it wraps an MCP wire surface.** When editing a payload
+  builder, grep for a handler that returns it verbatim before concluding the change is CLI-only.
+  That is now written into the version-history comment beside the constant, where the next person
+  editing it will read it.
+
+## Ratchet
+
+`tests/unit/test_mcp_passthrough_wire_surface.py` pins the CONSEQUENCE, not the instance: it
+  enumerates the `scan_limit` keys `build_repo_map` may put on the wire, so a new one fails until it
+  is DECLARED -- and that edit is the moment someone has to ask whether the contract owes a bump.
+  The payload comes from a real capped scan with premise assertions that the cap actually bit; a
+  hand-built dict would pass whatever the producer did, which is the failure this file exists for.
+
+Both arms verified:
+
+treatment 2 passed CONTROL A drop the declaration (simulates #826) 1 failed -- "scan_limit gained
+  ['budget_remediable'] ... this is an MCP wire change made from a file that never mentions MCP"
+  CONTROL B revert the bump to 1.6.0 2 failed
+
+`docs/CONTRACTS.md` records the widened surface and why it originated outside `mcp_server.py`. The
+  value still comes from the ONE allow-list in `cli/incompleteness.py` -- two copies is how CLI and
+  MCP drift into opposite retry advice.
+
+Additive and emitted only on a CAPPED scan, so a complete scan stays byte-identical and no existing
+  caller breaks.
+
+47 neighbouring MCP/parity tests green; ruff check + ruff format --preview --check clean.
+
+Found by an adversarially-verified census of the incompleteness-envelope campaign.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* test(mcp): move the three contract-version pins to 1.7.0
+
+CI red on the previous commit: `test_mcp_stdio_protocol.py` asserts the served `serverInfo.version`,
+  and `test_mcp_server.py` asserts `options.server_version`. Both still said `1.6.0`. Contract
+  changes in this repo are PINNED by governance tests and must move in the same PR -- that the pins
+  exist is the feature; moving them is the deliberate act the bump requires.
+
+Why I missed them, since it is the same mistake #826 documented in its own commit message: I
+  enumerated the consumers correctly (a grep listed all three files) and then RAN only a
+  keyword-selected subset of the unit tests. A keyword filter is a guess at the consumer set. Having
+  enumerated the files, run the WHOLE files.
+
+Three pins found mechanically (`grep -rn` for the assertion shapes, not by recollection); residual
+  count re-checked at 0. The other `1.6.0` hits in the repo are unrelated -- a winget
+  ManifestVersion, an axios dependency range, and a historical PAPER.md note -- and are deliberately
+  untouched.
+
+Each pin carries a one-line reason at the assertion, so the next reader learns why the number moved
+  without going to the log.
+
+Not mine, verified rather than assumed: four `rewrite`/native-binary tests fail in this worktree.
+  Control -- the SAME four fail in a sibling worktree carrying no MCP change, and all pass in the
+  main checkout. They need a built native binary the worktree lacks. CI installs it and is the
+  oracle.
+
+Contract/capabilities tests 8 passed; passthrough ratchet + incomplete_reason_class 10 passed; ruff
+  check + ruff format --preview --check clean.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.101.6 (2026-07-27)
 
 ### Bug Fixes
