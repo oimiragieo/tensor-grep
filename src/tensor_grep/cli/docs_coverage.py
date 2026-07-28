@@ -355,30 +355,53 @@ def render_docs_coverage_fix_markdown(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def render_docs_coverage_text(payload: dict[str, Any]) -> str:
-    """ASCII-only text rendering (typer.echo crashes on non-ASCII on cp1252 Windows consoles)."""
-    totals = payload["totals"]
-    lines = [
-        f"Docs coverage for {payload['path']}",
-        f"source_files={totals['source_files']}  covered={totals['covered']}  "
-        f"uncovered={totals['uncovered']}  coverage={totals['coverage_pct']}%  "
-        f"docs={totals['doc_files']}",
-    ]
-    if payload["scan_limit"]["possibly_truncated"]:
-        # Task #284: this line HARDCODED "(project-files)" and named max_files, so an
-        # unreadable-path truncation would have rendered as budget advice that cannot help --
-        # the renderer contradicting its own payload. Read the real cause and, for the one cause
-        # no knob fixes, say so instead of naming a cap.
-        if payload["scan_limit"].get("truncation_cause") == "unreadable-path":
+def docs_scan_incompleteness_lines(payload: dict[str, Any]) -> list[str]:
+    """The LEADING disclosure for a docs scan that did not finish. Empty when it did.
+
+    Defined once and shared by BOTH renderers in this module. `--stale` previously read neither
+    `scan_limit` nor `partial`, so a truncated run could print "No stale references found (every
+    cited path still exists)" -- an ABSENCE claim over a doc set that was never fully read, which
+    is the worst shape this surface has. `--check` did disclose, but only AFTER its counts.
+
+    Task #284's cause-awareness is preserved verbatim: an `unreadable-path` truncation must NOT be
+    answered with budget advice, because no `--max-files` value makes a denied path readable.
+    `partial` (a `--deadline` cutoff) is a THIRD cause that neither renderer read at all.
+    """
+    scan_limit = payload.get("scan_limit") or {}
+    lines: list[str] = []
+    if scan_limit.get("possibly_truncated"):
+        if scan_limit.get("truncation_cause") == "unreadable-path":
             lines.append(
                 "[!] skipped unreadable path(s) (unreadable-path); counts are a floor. Raising "
                 "--max-files will NOT help: the path(s) must become readable, or be scoped out."
             )
         else:
             lines.append(
-                f"[!] truncated at max_files={payload['scan_limit']['max_files']} "
-                f"({payload['scan_limit'].get('truncation_cause') or 'project-files'})"
+                f"[!] truncated at max_files={scan_limit.get('max_files')} "
+                f"({scan_limit.get('truncation_cause') or 'project-files'})"
             )
+    elif payload.get("partial"):
+        # Deadline: named separately because raising --max-files is the wrong knob for a scan that
+        # ran out of TIME, and because the builder sets `partial` WITHOUT `possibly_truncated`.
+        lines.append(
+            "[!] the scan stopped early at its --deadline; counts are a floor. Raise --deadline "
+            "or narrow the PATH -- raising --max-files will NOT help."
+        )
+    return lines
+
+
+def render_docs_coverage_text(payload: dict[str, Any]) -> str:
+    """ASCII-only text rendering (typer.echo crashes on non-ASCII on cp1252 Windows consoles)."""
+    totals = payload["totals"]
+    # LEADING, per task #329: a reader who has seen `coverage=87%` has already formed the answer by
+    # the time a trailing `[!]` lands. This block used to sit BELOW the counts it qualifies.
+    lines = [*docs_scan_incompleteness_lines(payload)]
+    lines += [
+        f"Docs coverage for {payload['path']}",
+        f"source_files={totals['source_files']}  covered={totals['covered']}  "
+        f"uncovered={totals['uncovered']}  coverage={totals['coverage_pct']}%  "
+        f"docs={totals['doc_files']}",
+    ]
     uncovered = payload["uncovered_files"]
     if uncovered:
         lines.append(f"\nUndocumented source files ({len(uncovered)}):")
@@ -549,7 +572,13 @@ def build_docs_stale_references(
 def render_docs_stale_text(payload: dict[str, Any]) -> str:
     """ASCII-only text render of the --stale report."""
     totals = payload["totals"]
-    lines = [
+    # This renderer read NEITHER `scan_limit` NOR `partial`, so a truncated run printed
+    # "No stale references found (every cited path still exists)" -- an ABSENCE claim over a doc
+    # set that was never fully read. `--json` carried the truncation the whole time; only the
+    # default output dropped it. Leading, and via the shared helper so the two renderers in this
+    # module cannot drift into different vocabulary or different advice.
+    lines = [*docs_scan_incompleteness_lines(payload)]
+    lines += [
         f"Stale doc references for {payload['path']}",
         f"docs={totals['doc_files']}  references_checked={totals['references_checked']}  "
         f"stale={totals['stale']}",
