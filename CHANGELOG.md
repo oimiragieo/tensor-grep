@@ -1,6 +1,60 @@
 # CHANGELOG
 
 
+## v1.101.15 (2026-07-28)
+
+### Bug Fixes
+
+- **cli**: Imports exited 2 and orient exited 0, both printing a silent false zero
+  ([#854](https://github.com/oimiragieo/tensor-grep/pull/854),
+  [`720dda3`](https://github.com/oimiragieo/tensor-grep/commit/720dda39f79e022eaeae5f939434d68547105036))
+
+Two confident-false-zero bugs from an adversarial audit, both reproduced against the working tree
+  (not the audit's stale installed 1.101.9) before fixing, and both invisible to the never-silent
+  ratchet because it keys on `_scan_incomplete`, which deliberately does not read
+  `result_incomplete`.
+
+A0 -- TENSOR_GREP_MAX_PARSE_BYTES=10 tg imports <file>
+
+exit 2 | stdout "imports=0 resolved=0 external=0 unresolved=0" | stderr 0 bytes --json ->
+  result_incomplete: true + the real reason
+
+`_emit_symbol_command_result` exits on `partial or result_incomplete`, but the caveat it prints
+  comes from `_annotate_result_completeness`, computed from a DIFFERENT set of signals -- so a
+  payload arriving with `result_incomplete` already set by the command itself got no caveat at all.
+
+Fixed by deriving a fallback caveat from the SAME predicate the exit uses, so the message and the
+  exit cannot disagree by construction rather than by two lists being kept in sync. Exit behaviour
+  is untouched; this only makes an exit non-silent.
+
+NOT by adding `result_incomplete` to `_scan_incomplete`, which the audit suggested. That helper's
+  docstring says it excludes the field deliberately because an OUTPUT cap also sets it, and
+  including it would flip output-cap-only invocations to exit 2 and break the output-cap-stays-0
+  pins. The obvious fix was the wrong one.
+
+A1 -- tg orient <dir> --deadline 0.1
+
+exit 0 | stdout "central files (0):" | stderr 0 bytes --json -> partial: true
+
+orient has NO exit-2 contract by design, which makes the text line the ONLY signal a caller gets. It
+  was absent, so the deliberate exit 0 made this worse rather than better. Now leads the payload
+  with a banner keyed on `partial`.
+
+First cut interpolated `deadline_limit` verbatim and produced a banner containing
+  `{'deadline_exceeded': True, ...}`; it now reads the one actionable field ("stopped at the
+  --deadline after 3 file(s)"). Pinned by a test.
+
+Both guards verified to BITE against origin/main. Control arms included: a complete result stays
+  silent (an unconditional banner would pass every other assertion while training callers to ignore
+  it), and the banner must LEAD.
+
+41 disclosure-family tests + 526 CLI-mode tests pass.
+
+Baselined, not mine: test_refs_json_deduplicates_parser_call_references fails identically with this
+  change reverted -- a JS refs assertion needing the compiled rust_core extension, absent from my
+  rebuilt venv. Deselected, not disabled.
+
+
 ## v1.101.14 (2026-07-28)
 
 ### Bug Fixes
