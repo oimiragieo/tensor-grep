@@ -5,10 +5,9 @@ description: Use when coordinating multiple agents on the same repo with tg ledg
 
 # tensor-grep ledger (EXPERIMENTAL, ADVISORY-tier)
 
-Verified against **tg 1.95.0** (2026-07-24; last full workspace sweep 2026-07-21 at v1.91.0 PASS;
-Slice 1 PATH-canonicalization fixed v1.93.0/#706, re-verified via that PR's own closing dogfood;
-re-confirmed against origin/main — `ledger_store.py` and the `ledger` CLI wiring in `main.py` carry
-zero diff since v1.93.2, so every claim/release/list/record/find behavior below is still current).
+Verified against **tg 1.101.7** (LIVE 2026-07-28 gotcontext-saddle — Slice 1 rollup
+reconfirmed: `claim core/hooks` visible from `list .`, release by claim-id from `.`
+works; record+find fresh PASS; prior 1.95.0 / 1.93.0 #706 notes still accurate).
 
 `tg ledger` is **ADVISORY-tier**, not MANDATORY or OPTIONAL, in the vocabulary a multi-agent-coordination
 ecosystem needs to stay legible (the same MANDATORY/OPTIONAL/ADVISORY split the `ruah` coordination
