@@ -4214,7 +4214,7 @@ requires-dist = [
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.100" },
     { name = "importlib-metadata", marker = "python_full_version < '3.12'", specifier = "<8.5.0" },
     { name = "kvikio-cu12", marker = "extra == 'gpu'" },
-    { name = "mcp", specifier = ">=1.27.2" },
+    { name = "mcp", specifier = ">=1.27.2,<2" },
     { name = "model2vec", marker = "extra == 'semantic'", specifier = ">=0.5" },
     { name = "mutmut", marker = "extra == 'dev'", specifier = ">=3.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==1.19.1" },
