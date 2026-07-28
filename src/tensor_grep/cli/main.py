@@ -11140,6 +11140,24 @@ def _truncation_message(what: str) -> str:
     return f"INCOMPLETE RESULT: {what}, so callers/definitions may be missing. {_TRUNCATION_REMEDY}"
 
 
+# A deadline needs its OWN remedy. `_TRUNCATION_REMEDY` names the budget knobs, and every one of
+# them is the wrong dial for a scan that ran out of TIME -- raising --max-repo-files lets it read
+# MORE files inside the same expired budget, which cannot help and reads as actionable advice.
+# Wrong-knob remediation is the failure #762 fixed on the MCP surface and #822 fixed on --mermaid;
+# reusing the budget string here would have reintroduced it in the same commit that closes the
+# deadline gap. The last sentence says so explicitly rather than leaving it inferable.
+_DEADLINE_REMEDY = (
+    "A zero or small count here is NOT trustworthy. Remedy: raise --deadline, scope to a "
+    "subdirectory, or warm the index with `tg session daemon start`. Raising --max-repo-files "
+    "does NOT help here -- the scan ran out of TIME, not budget."
+)
+
+
+def _deadline_truncation_message(what: str) -> str:
+    # ASCII-only, same reason as _truncation_message.
+    return f"INCOMPLETE RESULT: {what}, so callers/definitions may be missing. {_DEADLINE_REMEDY}"
+
+
 def _scan_truncation_warning(payload: dict[str, Any]) -> str | None:
     """Human warning when a result was truncated before covering the project (P0).
 
@@ -11194,6 +11212,57 @@ def _scan_truncation_warning(payload: dict[str, Any]) -> str | None:
             )
             dropped.append(f"{omitted_files} file(s)")
         return _truncation_message(f"output was capped, omitting {' and '.join(dropped)}")
+    # THE DEADLINE SHAPE -- a third cause this function could not see, and the largest ABSENT case
+    # in the disclosure class. A `--deadline` cutoff sets `partial` / `deadline_limit`, never a
+    # `*_limit.possibly_truncated`, so every branch above missed it and this returned None. Meanwhile
+    # `_scan_incomplete` DOES fire on `partial`, so the process exited 2 while stdout said nothing.
+    # Measured as a paired arm through `blast_radius`, one variable moving:
+    #     ARM A  scan_limit cap        exit 2 + "warning: INCOMPLETE RESULT: ..."
+    #     ARM B  partial + deadline    exit 2 + nothing at all
+    # Exit 2 with silent stdout is worse than a mispositioned warning: a reader who never sees a
+    # line has nothing to be late about.
+    #
+    # Written LAST so it cannot mask a more specific cause -- a payload carrying both a file cap and
+    # a deadline still reports the cap, which names the actionable knob.
+    #
+    # Predicate deliberately MIRRORS `repo_map._scan_did_not_finish` / `_scan_incomplete` rather than
+    # adding a fourth private notion of "truncated". Re-deriving truncation narrowly IS this defect
+    # class (task 332 swept 3 of 3 readers for exactly this), so a new definition would guarantee
+    # the next drift.
+    deadline_limit = payload.get("deadline_limit")
+    deadline_hit = isinstance(deadline_limit, dict) and deadline_limit.get("deadline_exceeded")
+    if deadline_hit or payload.get("partial"):
+        scanned = None
+        if isinstance(deadline_limit, dict):
+            scanned = deadline_limit.get("files_scanned")
+            total = deadline_limit.get("files_total")
+            if scanned is not None and total is not None:
+                return _deadline_truncation_message(
+                    f"the --deadline elapsed after {scanned} of {total} files"
+                )
+        return _deadline_truncation_message("the scan stopped early at its --deadline")
+    # FAIL-CLOSED TAIL -- the class fix, of which the deadline branch above is one instance.
+    #
+    # Two predicates decide two halves of the same contract: `_scan_incomplete` decides the EXIT
+    # CODE, this function decides the MESSAGE. Nothing made them agree, so any cause reaching one
+    # and not the other exits 2 in silence. That is not hypothetical -- it was true of TWO fields
+    # on `origin/main`, and only one of them was the deadline gap this commit set out to close:
+    #
+    #     scan_limit cap          exit2=True  discloses=True
+    #     caller_scan_limit       exit2=True  discloses=True
+    #     partial (deadline)      exit2=True  discloses=False   <- the reported gap
+    #     caller_scan_truncated   exit2=True  discloses=False   <- found while fixing it
+    #
+    # Enumerating causes is what produced the gap in the first place (each branch above was added
+    # when its cause arrived, and the next cause arrived without one). So the fix is structural:
+    # ask the EXIT GATE. If it considers this scan truncated and nothing above described why, say
+    # so generically rather than returning None. A vague warning is recoverable; silence beside
+    # exit 2 is the failure this whole surface exists to prevent.
+    #
+    # Deliberately LAST, so every specific message above still wins and keeps naming its knob.
+    # This is the floor, not the answer -- a new cause should still get its own branch.
+    if _scan_incomplete(payload):
+        return _truncation_message("the scan did not finish")
     return None
 
 
