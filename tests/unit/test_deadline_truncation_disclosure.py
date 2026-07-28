@@ -199,3 +199,75 @@ def test_renderer_level_deadline_banner_is_present_and_single_line() -> None:
     banners = [ln for ln in out.splitlines() if "INCOMPLETE RESULT" in ln]
     assert len(banners) == 1
     assert out.splitlines()[0] == "graph TD"
+
+
+# ------------------------------------------------------------------- the class ratchet
+
+
+def _every_incompleteness_cause() -> dict[str, dict[str, Any]]:
+    """Every payload field that makes `_scan_incomplete` fire, one per entry.
+
+    Kept as an explicit map rather than derived, so ADDING a cause to `_scan_incomplete` without
+    adding it here is itself caught by `test_the_cause_map_covers_every_field_the_exit_gate_reads`
+    below. Derivation would silently cover a new field and defeat the point.
+    """
+    return {
+        "scan_limit.possibly_truncated": {"scan_limit": _scan_cap()},
+        "caller_scan_limit.possibly_truncated": {
+            "caller_scan_limit": {"possibly_truncated": True, "ceiling": 512, "files_total": 1941}
+        },
+        # `partial` + `deadline_limit` are ONE cause, not two: both producers in `repo_map`
+        # (`build_repo_map` and the #304 session rebuild) set them TOGETHER, and say so in their
+        # own comments -- "a top-level `partial` flag ... plus a `deadline_limit` sibling". A row
+        # for `deadline_limit` alone was tried and the premise assertion below rejected it: the
+        # field does not trip `_scan_incomplete` on its own, so that row tested a shape production
+        # cannot emit. Left recorded rather than deleted, because the obvious "fix" -- teaching
+        # `_scan_incomplete` to read `deadline_limit` -- would be hardening against an unreachable
+        # state, and should be a deliberate choice if anyone wants it.
+        "partial + deadline_limit (the production pair)": {
+            "partial": True,
+            "deadline_limit": _deadline_limit(),
+        },
+        "partial alone": {"partial": True},
+        "caller_scan_truncated": {"caller_scan_truncated": True},
+    }
+
+
+def test_exit_two_never_happens_silently_for_any_cause() -> None:
+    """THE INVARIANT: `_scan_incomplete` implies a message. No cause may exit 2 in silence.
+
+    Two predicates decide two halves of one contract -- `_scan_incomplete` the exit code,
+    `_scan_truncation_warning` the message -- and nothing made them agree. On `origin/main` TWO
+    fields reached the first and not the second (`partial`, and `caller_scan_truncated`, the
+    second found only while fixing the first). Enumerating causes is what produced the gap: each
+    branch was added when its cause arrived, and the next cause arrived without one.
+    """
+    silent = []
+    for name, extra in _every_incompleteness_cause().items():
+        payload = _payload(**extra)
+        # Premise: this fixture really does trip the exit gate. A cause that does not is not
+        # exercising the invariant at all, and would make its row vacuously pass.
+        assert _scan_incomplete(payload) is True, f"{name} does not trip the exit gate"
+        if _scan_truncation_warning(payload) is None:
+            silent.append(name)
+    assert not silent, (
+        f"these causes exit 2 with NO message: {silent}. Every `_scan_incomplete` cause must "
+        "produce a warning -- add a specific branch to `_scan_truncation_warning` (preferred, it "
+        "can name the right knob) or confirm the fail-closed tail covers it."
+    )
+
+
+def test_the_cause_map_covers_every_field_the_exit_gate_reads() -> None:
+    # The ratchet's own ratchet. If `_scan_incomplete` learns a new field and nobody adds it to
+    # `_every_incompleteness_cause`, the invariant test above silently stops covering it -- a
+    # ratchet that quietly narrows is worse than none, because it still reads as green.
+    import inspect
+
+    source = inspect.getsource(_scan_incomplete)
+    covered = " ".join(_every_incompleteness_cause())
+    for field in ("scan_limit", "caller_scan_limit", "partial", "caller_scan_truncated"):
+        assert field in source, f"{field} is no longer read by _scan_incomplete; re-derive this map"
+        assert field in covered, (
+            f"`_scan_incomplete` reads {field!r} but `_every_incompleteness_cause` has no entry "
+            "for it, so the exit-2-never-silent invariant does not cover it"
+        )

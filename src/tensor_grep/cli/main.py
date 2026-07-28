@@ -11241,6 +11241,28 @@ def _scan_truncation_warning(payload: dict[str, Any]) -> str | None:
                     f"the --deadline elapsed after {scanned} of {total} files"
                 )
         return _deadline_truncation_message("the scan stopped early at its --deadline")
+    # FAIL-CLOSED TAIL -- the class fix, of which the deadline branch above is one instance.
+    #
+    # Two predicates decide two halves of the same contract: `_scan_incomplete` decides the EXIT
+    # CODE, this function decides the MESSAGE. Nothing made them agree, so any cause reaching one
+    # and not the other exits 2 in silence. That is not hypothetical -- it was true of TWO fields
+    # on `origin/main`, and only one of them was the deadline gap this commit set out to close:
+    #
+    #     scan_limit cap          exit2=True  discloses=True
+    #     caller_scan_limit       exit2=True  discloses=True
+    #     partial (deadline)      exit2=True  discloses=False   <- the reported gap
+    #     caller_scan_truncated   exit2=True  discloses=False   <- found while fixing it
+    #
+    # Enumerating causes is what produced the gap in the first place (each branch above was added
+    # when its cause arrived, and the next cause arrived without one). So the fix is structural:
+    # ask the EXIT GATE. If it considers this scan truncated and nothing above described why, say
+    # so generically rather than returning None. A vague warning is recoverable; silence beside
+    # exit 2 is the failure this whole surface exists to prevent.
+    #
+    # Deliberately LAST, so every specific message above still wins and keeps naming its knob.
+    # This is the floor, not the answer -- a new cause should still get its own branch.
+    if _scan_incomplete(payload):
+        return _truncation_message("the scan did not finish")
     return None
 
 
