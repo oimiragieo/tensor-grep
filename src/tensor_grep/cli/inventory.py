@@ -369,10 +369,14 @@ def build_inventory(
 def render_inventory_text(inventory: dict[str, Any]) -> str:
     """One-screen human summary mirroring tg's other summary conventions."""
     totals = inventory["totals"]
-    lines = [
-        f"inventory: {totals['files']} files, {_human_bytes(totals['bytes'])} "
-        f"({inventory['path']})",
-    ]
+    # LEADING (task #329). This block sat BELOW every count it qualifies, so a reader saw
+    # "inventory: 812 files, 4.1 MB" -- a confident total -- and met "counts are a floor" only
+    # after forming an impression of the repo's size. Moved verbatim; the three cause-specific
+    # arms (task #284's wrong-knob guard among them) are unchanged.
+    lines = _inventory_truncation_lines(inventory)
+    lines.append(
+        f"inventory: {totals['files']} files, {_human_bytes(totals['bytes'])} ({inventory['path']})"
+    )
     binary = inventory["binary"]
     if binary["files"]:
         lines.append(f"  binary: {binary['files']} files, {_human_bytes(binary['bytes'])}")
@@ -384,6 +388,12 @@ def render_inventory_text(inventory: dict[str, Any]) -> str:
     if inventory["categories"]:
         cats = ", ".join(f"{rec['category']} {rec['files']}" for rec in inventory["categories"])
         lines.append(f"  categories: {cats}")
+    return "\n".join(lines)
+
+
+def _inventory_truncation_lines(inventory: dict[str, Any]) -> list[str]:
+    """The leading disclosure for a truncated inventory. Empty when the scan finished."""
+    lines: list[str] = []
     scan = inventory["scan_limit"]
     if scan["possibly_truncated"]:
         if scan["truncation_cause"] == "unreadable-path":
@@ -406,7 +416,7 @@ def render_inventory_text(inventory: dict[str, Any]) -> str:
                 f"  [!] truncated at max_files={scan['max_files']} "
                 f"(cause={scan['truncation_cause']}); counts are a floor, not complete."
             )
-    return "\n".join(lines)
+    return lines
 
 
 def _human_bytes(num: int) -> str:
