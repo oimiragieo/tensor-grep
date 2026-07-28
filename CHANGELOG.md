@@ -1,6 +1,53 @@
 # CHANGELOG
 
 
+## v1.101.14 (2026-07-28)
+
+### Bug Fixes
+
+- **io**: Directoryscanner yielded symlinked files, disclosing out-of-root content
+  ([#847](https://github.com/oimiragieo/tensor-grep/pull/847),
+  [`4d5d085`](https://github.com/oimiragieo/tensor-grep/commit/4d5d0853f90422604bdc51a988711bcf2f478cb6))
+
+DirectoryScanner is the single Python file-enumeration primitive behind tg search's CPU path, tg
+  agent, tg orient, every AST workflow (defs/refs/callers/blast-radius/ scan) and the MCP server's
+  directory scan. It yielded symlinked FILES, and every consumer open()s what it yields.
+
+PROVEN on a temp fixture, not inferred: repo/leak.txt -> ../outside/secret.txt
+  (SECRET_MARKER_998877) walk(repo) -> ['leak.txt', 'normal.py'] open('.../leak.txt') ->
+  'SECRET_MARKER_998877'
+
+os.walk(followlinks=False) -- which this scanner relies on -- stops the walk DESCENDING into a
+  symlinked DIRECTORY. It does not stop a symlink-to-a-FILE appearing in `files`, and open() follows
+  the link regardless of that setting.
+
+A git-tracked symlink is an ordinary mode-120000 blob. One pointing at ~/.ssh/id_rsa, a sibling
+  project's .env, or /etc/passwd disclosed that file into search output, the on-disk symbol cache,
+  and -- because this is the walker behind tg agent and the MCP tools -- an LLM agent's context
+  window.
+
+checkpoint_store.py already carried this guard, and AGENTS.md names symlink-follow as a repo-wide
+  SWEEP target rather than a one-file patch. This is the walker the sweep missed, and it matters
+  more than the site it landed on: checkpoint create/restore is occasional, this is the default read
+  path for ordinary search.
+
+SKIPPED, not resolved-and-bounded: an in-root link loses nothing by being skipped (its target is
+  walked by its own path), while resolve-then-compare would have to get root containment exactly
+  right on every platform to avoid reintroducing the escape. Pinned by a test so a later
+  "improvement" has to argue with it.
+
+VERIFICATION (bidirectional): treatment 4 passed control (guard removed) 3 failed, 1 passed The 1
+  still-passing is the "ordinary files still walked" control -- without it a scanner yielding
+  NOTHING would satisfy every other assertion. The fixture asserts its own premises and skips rather
+  than silently passing where symlinks cannot be created.
+
+580 passed across scanner + cli-modes + cli-contracts; ruff clean.
+
+Found by a six-lens adversarially-verified audit.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.101.13 (2026-07-28)
 
 ### Bug Fixes
