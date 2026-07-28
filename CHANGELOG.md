@@ -1,6 +1,281 @@
 # CHANGELOG
 
 
+## v1.101.9 (2026-07-28)
+
+### Bug Fixes
+
+- **cli**: Exit 2 must never be silent -- 13 commands disclosed nothing in text mode
+  ([#837](https://github.com/oimiragieo/tensor-grep/pull/837),
+  [`972e506`](https://github.com/oimiragieo/tensor-grep/commit/972e5062014b44152f087b098b7e2758121d7f18))
+
+* fix(cli): exit 2 must never be silent -- 13 commands disclosed nothing in text mode
+
+The ABSENT half of the disclosure class, at its full width.
+
+`cli/main.py` has fourteen `_scan_incomplete` gates that raise `typer.Exit(2)`. THIRTEEN of them did
+  so over text output that read exactly like a complete result. `codemap` was the only one that said
+  anything. An agent branching on the exit code was fine; every human, and every agent reading the
+  text, was told a truncated answer was the whole answer.
+
+Enumerated mechanically, not from the earlier audit's list -- which was right about the shape and
+  short by two: `inventory` and `prepare` were also silent.
+
+## One helper, wired at the fork
+
+`_emit_scan_incompleteness_banner(payload)` emits the LEADING disclosure and returns whether it did.
+  Wired at the top of the `else` of each `if json_output` fork -- never beside the `json.dumps`,
+  because a stray line there breaks `json.loads` on stdout, the exact failure this surface exists to
+  prevent. JSON carries the same fact as `result_incomplete` / `caveat`, where position and prose
+  are irrelevant. Text comes from the shared `_scan_truncation_warning`, so these commands cannot
+  drift into their own vocabulary or their own idea of which knob to suggest. Emits nothing for a
+  complete payload, so output stays byte-identical.
+
+## The sweep was a hypothesis, and reading it found three bugs
+
+The insertion was scripted. Reviewing the diff site-by-site caught what the script could not:
+
+* THREE daemon fast paths (`context_render`, `agent`, `edit_plan`) gate on `daemon_payload`, and the
+  script had inserted `...(payload)` -- disclosing the state of the wrong object; * `codemap`
+  already discloses via its own `PARTIAL:` line, so the insertion made it say the same thing twice
+  in the same register. Removed. Its trailing POSITION is a separate tracked defect and is
+  deliberately untouched here; * `prepare` ends with `partial=true partial_reason=...` -- but only
+  for the `partial` cause and only AFTER the lines it qualifies, so a scan-cap truncation was
+  silent. Now banner-led; the key=value line stays, being a structured field in a key=value listing
+  rather than prose duplicating prose.
+
+## Ratchet
+
+`test_every_exit_two_gate_has_a_disclosure_on_its_text_branch` pins the invariant against the
+  SOURCE, keyed on the same payload variable each gate reads -- so the `payload`/`daemon_payload`
+  bug above cannot recur silently. A sibling test pins that the banner never appears on a `--json`
+  branch.
+
+Two false positives from the ratchet were fixed in the ratchet, not silenced: it flagged its own
+  helper's guard (excluded by enclosing function), and it flagged `prepare` because a 40-line window
+  could not see a correctly-placed banner ~50 lines up. The window is now the enclosing FUNCTION --
+  an arbitrary window makes the verdict depend on unrelated code length, and its obvious cure is to
+  widen it until it stops complaining, which is how a ratchet stops ratcheting.
+
+## Verification (bidirectional, control arm run)
+
+treatment 5 passed control (13 call sites removed, helper kept) 2 failed, 3 passed
+
+The control removes only the CALL SITES, keeping the helper importable, so the ASSERTIONS
+  discriminate rather than an ImportError. It names all 12 gates including the three
+  `daemon_payload` ones -- proof the variable-keyed check works.
+
+Sweep: 616 passed across `test_cli_modes`, `test_main_cli_contracts`, `test_cap_fix_chokepoint`,
+  `test_deadline_blind_truncation_gates` and this file. `ruff check` + `ruff format --preview
+  --check` clean.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* fix(cli): do not double-disclose on inventory -- it already has its own notice
+
+The same duplication I removed from `codemap`, caught one file later.
+
+`inventory` is the ONE wired site that delegates its text rendering: `render_inventory_text`
+  (cli/inventory.py) already ends with a cause-specific "[!] truncated at max_files=N (cause=X);
+  counts are a floor, not complete." That is prose in the SAME register as the banner, so the
+  leading banner made it say the same thing twice.
+
+How it got past the first review, which is the reusable part: the audit that checked each wired site
+  for a pre-existing disclosure scanned only `main.py`, and inventorys disclosure is one call away
+  in another module. It reported inventory as NONE. A probe that cannot see past the file it greps
+  will report a DELEGATING caller as silent -- so the audit was re-run asking a different question,
+  "which sites delegate rendering elsewhere", and inventory was the only one.
+
+The ratchet gains a named exemption rather than an inferred one: a source-only check cannot see into
+  the callee, and naming it is what stops the next reader "fixing" inventory into disclosing twice.
+
+Inventorys trailing POSITION remains a separate tracked defect. Fixing it belongs in `inventory.py`
+  where the message is built, not as a second message in front of it.
+
+`route_test` and `prepare` keep BOTH their banner and their `partial=true ...` line, deliberately:
+  those are structured key=value fields in a key=value listing, a different register from a prose
+  warning, and something may parse them.
+
+* test(cli): define an exit-2 gate by BEHAVIOUR, not by mentioning the predicate
+
+Caught by rebasing this branch onto current main and running the UNION with #835, #836 and #838
+  BEFORE merging -- the check that #835/#836 did not get and that turned main red.
+
+Two defects, both in the ratchet, neither visible on this branch alone:
+
+1. #835 added a fail-closed tail to `_scan_truncation_warning`: `if _scan_incomplete(payload):
+  return _truncation_message(...)`. The ratchet counted any `if _scan_incomplete(...)` as a GATE, so
+  it reported a missing disclosure in the one function whose entire job is producing that
+  disclosure. An earlier cut had exempted this files own helper BY NAME; naming exemptions does not
+  scale -- the next non-gate use arrived from another PR.
+
+A gate is now defined by what it DOES: `Exit(2)` appears in its body. Nothing needs exempting, and a
+  real gate cannot dodge the check by living somewhere unexpected.
+
+2. The first cut of that check used a 4-line body window, which silently dropped BOTH `agent` gates
+  -- they put `raise typer.Exit(2)` 5-7 lines below the `if`. The control arm named 9 gates where
+  the previous form named 12, which is the only reason it was noticed: a narrowed ratchet still
+  reads green.
+
+Window widened to 8, and the count floor raised to 12 -- but a count cannot say WHICH gate vanished,
+  so the gate set is now also asserted BY NAME for map, agent, context, edit_plan and prepare.
+
+Union verified: 49 passed across test_exit_two_is_never_silent, test_deadline_truncation_disclosure,
+  test_leading_truncation_banner, test_blast_radius_mermaid and
+  test_mermaid_visible_incomplete_node, on this branch rebased onto main with #838 applied.
+
+Control arm (12 call sites removed, helper kept importable): the ratchet names 10 gates -- 12
+  detected minus the two that disclose by other means (inventory via render_inventory_text, codemap
+  via its PARTIAL line).
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- **cli**: The last four disclosures that arrived after the numbers they qualify
+  ([#842](https://github.com/oimiragieo/tensor-grep/pull/842),
+  [`e17ea60`](https://github.com/oimiragieo/tensor-grep/commit/e17ea60f362435504e5920c1f74873143659146f))
+
+codemap, inventory, route-test and session open all DID disclose -- unlike the thirteen silent
+  commands (#837) or docs-coverage --stale (#840). The line just landed after the data (task #329).
+
+codemap is the instructive one: it was the ONLY command in its family that disclosed at all, which
+  is exactly why its ordering went unexamined. "It discloses" read as "it is fine", and the position
+  defect hid behind the presence of a correct line.
+
+REGISTER decides whether the old line moves or stays. codemap and inventory emit PROSE -- same
+  register as a leading banner -- so those move outright. route-test emits `partial=true
+  agreement_basis=...`, a structured field in a key=value listing that something may parse, so it
+  moves POSITION but keeps its FORM. Same call made for prepare; the opposite call was made for
+  inventory in #837, where adding a banner beside its prose would have said it twice.
+
+session open matters more than its size suggests: a session is opened once and then trusted for its
+  whole lifetime, so a caveat read after the counts is a caveat read after the decision to trust
+  them.
+
+inventory's three cause-specific arms (including task #284's wrong-knob guard -- no --max-files
+  value makes a denied path readable) moved VERBATIM into _inventory_truncation_lines, each pinned
+  by its own test so the extraction cannot have quietly flattened them.
+
+VERIFICATION (bidirectional, control arm run):
+
+treatment 4 passed control (leading call removed, helper kept) 3 failed, 1 passed
+
+The control reverts only the CALL SITE -- reverting the whole diff makes the module unimportable,
+  and a file that cannot be collected is not a red arm. The 1 still passing is the
+  complete-inventory control, which must stay byte-identical.
+
+640 passed across test_inventory*, test_session_cli, test_cli_modes and this file; ruff check + ruff
+  format --preview --check clean.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- **docs-coverage**: --stale claimed absence over a scan it never finished
+  ([#840](https://github.com/oimiragieo/tensor-grep/pull/840),
+  [`5ad77f8`](https://github.com/oimiragieo/tensor-grep/commit/5ad77f8f7916dc72b1bfca892dd5daecec236468))
+
+Two defects, one cause: each renderer decided for itself what counts as truncation.
+
+--stale read NEITHER `scan_limit` NOR `partial`, so a truncated run printed "No stale references
+  found (every cited path still exists)" -- an ABSENCE claim over a doc set that was never fully
+  read. `--json` carried the truncation the whole time; only the default output dropped it. That is
+  the same shape as `tg scan` reporting a clean security scan over a file it could not open.
+
+--check DID disclose, but BELOW the counts it qualifies. A reader who has seen `coverage=90%` has
+  already formed the answer by the time a trailing `[!]` lands (task #329).
+
+Neither read `partial`, so a --deadline cutoff was invisible on BOTH -- the builder sets `partial`
+  WITHOUT `possibly_truncated`, so every existing branch missed it.
+
+ONE shared `docs_scan_incompleteness_lines` helper now feeds both, leading. The two cannot drift
+  into different vocabulary or different advice, and a third renderer added later inherits it rather
+  than re-deriving truncation narrowly -- which is the defect class itself.
+
+Task #284 cause-awareness preserved verbatim through the extraction and pinned by its own test: an
+  `unreadable-path` truncation must NOT be answered with budget advice, because no --max-files value
+  makes a denied path readable. The new deadline branch names --deadline and says explicitly that
+  --max-files will not help.
+
+VERIFICATION (bidirectional, control arm run):
+
+treatment 9 passed control (both call sites reverted) 3 failed, 6 passed
+
+The control reverts only the CALL SITES, keeping the helper importable -- reverting the whole diff
+  makes the test module die on ImportError, and a file that cannot be collected is not a red arm.
+  The 6 that still pass are the helper-behaviour tests and the complete-payload controls.
+
+43 passed across the docs-coverage suites; ruff check + ruff format --preview --check clean.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- **agents**: Capture the 2026-07-28 session laws (oracle Form 10, the empty-string field, ratchet
+  narrowing, delegating callers) ([#839](https://github.com/oimiragieo/tensor-grep/pull/839),
+  [`e0e1080`](https://github.com/oimiragieo/tensor-grep/commit/e0e1080781481b026ca394ce3d55a4ecdbe43beb))
+
+Four laws, each paid for in this session.
+
+ORACLE FORM 10 -- the unit is the BRANCH, the defect lives in the MERGE. Added to BOTH canonical
+  files in this commit, per the family MAINTENANCE rule. PRs #835 and #836 were each fully green (48
+  checks apiece, bidirectional controls, an independent adversarial gate on one) and main went RED
+  the moment both were on it. #835 asserted exactly ONE line of --mermaid output mentions INCOMPLETE
+  RESULT; #836 deliberately added a second. Git merged them with NO textual conflict -- the
+  collision is semantic and exists only in the union, which CI never evaluated because each PR ran
+  against its own base. Cost: main red and a release lost (Semantic Release skipped, v1.101.8 never
+  produced). It recurred immediately on #837, rebased onto the still-broken main. Rule: rebase onto
+  the REAL target and run the union before pushing; the file you are editing is not the boundary of
+  the blast radius.
+
+THE EMPTY-STRING FIELD. `gh` returns `conclusion: ""` -- not null -- while a CheckRun runs, so
+  `.conclusion // "PENDING"` never fires and a merge gate reports 0 pending while jobs are running.
+  Four instances in one session, twice AFTER the warning was written into two cron definitions.
+  Branch on `.status` for CheckRun and `.state` for StatusContext, guard the TOTAL (jobs register
+  progressively), and give the probe a control that proves it can return non-zero.
+
+A RATCHET THAT NARROWS STILL READS GREEN. A 4-line proximity window silently dropped BOTH `agent`
+  gates from an exit-2 coverage check; the only tell was the control arm naming 9 where the previous
+  form named 12. Define what you count by BEHAVIOUR not by name or proximity, and assert coverage BY
+  NAME as well as by count -- a floor says something vanished, never which, and the members that
+  drop out are the irregular ones the guard existed for.
+
+A PROBE THAT CANNOT SEE PAST ITS FILE reports a DELEGATING caller as silent. A census of `main.py`
+  reported `inventory` as having no incompleteness disclosure; it has a good one, one call away in
+  `inventory.py`. Acting on the report added a duplicate. It only became correct when re-run asking
+  a different question -- which sites delegate their rendering elsewhere.
+
+67 governance tests green; ruff format --preview --check clean on both edited files.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- **skills**: Land the 1.101.7 live-dogfood corrections (workspace skill was on 1.92.1)
+  ([#841](https://github.com/oimiragieo/tensor-grep/pull/841),
+  [`1097f2c`](https://github.com/oimiragieo/tensor-grep/commit/1097f2c60a8e632c2414e71286b77eb071d4bef8))
+
+Captured from a 2026-07-28 sweep on gotcontext-saddle; they were sitting uncommitted in the working
+  tree and would have been lost.
+
+`tensor-grep-workspace-dogfood` was stamped 1.92.1 and wrong on four behaviours that have since
+  changed: the ledger PATH trap (root-caused and fixed in v1.93.0 / #706, so the skill still
+  described the old symptom), the GPU probe verdict (now `probe unsupported` /
+  `gpu-auto-fallback-cpu`, not `failed_probe_path`), the `tg find` BM25 fallback hint (now leads
+  with `tg install-dense`), and `prepare --out`. A skill four minor versions stale is worse than a
+  missing one -- it is read as current and acted on.
+
+Newly documented from the live sweep: `route-test` reports agreement via `agreement_details` (NOT
+  `details`), the ledger Slice 1 rollup (claim visible from `list .`, release by id from `.`), the
+  bare-`--json` PATH footgun, and doctor autostart ("on-first-use (not yet warmed)" -> warm running:
+  true).
+
+Stamps deliberately say 1.101.7, not the currently-live 1.101.8: the sweep ran against 1.101.7, and
+  restamping forward would claim a verification that never happened. The stamp records what was
+  MEASURED, not what is newest.
+
+67 governance tests green; ruff format --preview --check clean.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.101.8 (2026-07-28)
 
 ### Bug Fixes
