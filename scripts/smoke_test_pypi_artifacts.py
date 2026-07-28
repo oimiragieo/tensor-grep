@@ -31,6 +31,47 @@ def _project_dependencies() -> list[str]:
     return list(metadata["project"].get("dependencies", []))
 
 
+_SOURCE = "def add(x, y): return x + y\n"
+_REWRITTEN = "lambda x, y: x + y"
+_PATTERN = "def $F($$$ARGS): return $EXPR"
+_REPLACEMENT = "lambda $$$ARGS: $EXPR"
+
+
+def _run_checked(command: list[str], *, what: str) -> subprocess.CompletedProcess[str]:
+    """Run a command; on failure print the output that explains the failure.
+
+    `subprocess.run(..., capture_output=True, check=True)` raises a `CalledProcessError` whose
+    string form carries the argv and the exit status and nothing else. The captured streams hang
+    off the exception and are never printed, so a failure here reports THAT the artifact is bad
+    while withholding WHY.
+
+    Receipt: `validate-pypi-artifacts` failed on the v1.101.10 release run (30363114542). The log
+    contains exactly `... 'run', '--lang', 'python', '--rewrite', ... returned non-zero exit
+    status 1` -- `tg`'s own stderr, the one thing that would have named the cause, was captured and
+    discarded. The failure was neither diagnosable from the log nor reproducible off it, and it
+    blocked the PyPI publish for that version.
+
+    A smoke test exists to explain a bad artifact. Swallowing the artifact's error message is the
+    one thing it must not do.
+    """
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"SMOKE FAILURE: {what}", file=sys.stderr)
+        print(f"  command:     {command}", file=sys.stderr)
+        print(f"  exit status: {result.returncode}", file=sys.stderr)
+        print(f"  --- stdout ---\n{result.stdout or '(empty)'}", file=sys.stderr)
+        print(f"  --- stderr ---\n{result.stderr or '(empty)'}", file=sys.stderr)
+        raise SystemExit(1)
+    return result
+
+
+def _fail(what: str, *, detail: str) -> None:
+    """A wrong-output failure, reported with the output rather than as a bare AssertionError."""
+    print(f"SMOKE FAILURE: {what}", file=sys.stderr)
+    print(detail, file=sys.stderr)
+    raise SystemExit(1)
+
+
 def run_smoke_test(*, dist_dir: Path, version: str, work_dir: Path) -> None:
     resolved_dist = dist_dir.resolve()
     venv_dir = work_dir / ".pypi-smoke-venv"
@@ -42,17 +83,11 @@ def run_smoke_test(*, dist_dir: Path, version: str, work_dir: Path) -> None:
     python_exe = _venv_python(venv_dir)
     dependencies = _project_dependencies()
     if dependencies:
-        subprocess.run(
-            [
-                str(python_exe),
-                "-m",
-                "pip",
-                "install",
-                *dependencies,
-            ],
-            check=True,
+        _run_checked(
+            [str(python_exe), "-m", "pip", "install", *dependencies],
+            what="install project dependencies into the smoke venv",
         )
-    subprocess.run(
+    _run_checked(
         [
             str(python_exe),
             "-m",
@@ -64,9 +99,9 @@ def run_smoke_test(*, dist_dir: Path, version: str, work_dir: Path) -> None:
             "--no-deps",
             f"tensor-grep=={version}",
         ],
-        check=True,
+        what=f"install the built tensor-grep=={version} artifact",
     )
-    subprocess.run(
+    _run_checked(
         [
             str(python_exe),
             "-c",
@@ -76,57 +111,61 @@ def run_smoke_test(*, dist_dir: Path, version: str, work_dir: Path) -> None:
                 "import tensor_grep"
             ),
         ],
-        check=True,
+        what=f"import tensor_grep and confirm it reports version {version}",
     )
-    subprocess.run(
-        [
-            str(_venv_tg(venv_dir)),
-            "--version",
-        ],
-        check=True,
-    )
+    tg_exe = str(_venv_tg(venv_dir))
+    _run_checked([tg_exe, "--version"], what="tg --version")
+
     rewrite_smoke_dir = work_dir / "rewrite-smoke"
     rewrite_smoke_dir.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [
-            str(python_exe),
-            "-c",
-            (
-                "import subprocess, sys; "
-                "from pathlib import Path; "
-                "source = Path(sys.argv[2]); "
-                "source.write_text('def add(x, y): return x + y\\n', encoding='utf-8'); "
-                "result = subprocess.run([sys.argv[1], 'run', '--lang', 'python', "
-                "'--rewrite', 'lambda $$$ARGS: $EXPR', "
-                "'def $F($$$ARGS): return $EXPR', str(source)], "
-                "capture_output=True, text=True, check=True); "
-                "assert 'lambda x, y: x + y' in result.stdout"
-            ),
-            str(_venv_tg(venv_dir)),
-            str(rewrite_smoke_dir / "plan.py"),
-        ],
-        check=True,
+
+    # Run the probes from this process rather than through a nested `python -c`. The nesting bought
+    # nothing -- the inner interpreter only wrote a file and shelled out to `tg` -- while putting a
+    # second CalledProcessError between the real failure and the log.
+    plan_source = rewrite_smoke_dir / "plan.py"
+    plan_source.write_text(_SOURCE, encoding="utf-8")
+    plan = _run_checked(
+        [tg_exe, "run", "--lang", "python", "--rewrite", _REPLACEMENT, _PATTERN, str(plan_source)],
+        what="tg run --rewrite (plan mode)",
     )
-    subprocess.run(
-        [
-            str(python_exe),
-            "-c",
-            (
-                "import subprocess, sys; "
-                "from pathlib import Path; "
-                "source = Path(sys.argv[2]); "
-                "source.write_text('def add(x, y): return x + y\\n', encoding='utf-8'); "
-                "subprocess.run([sys.argv[1], 'run', '--lang', 'python', "
-                "'--rewrite', 'lambda $$$ARGS: $EXPR', '--apply', "
-                "'def $F($$$ARGS): return $EXPR', str(source)], "
-                "capture_output=True, text=True, check=True); "
-                "assert source.read_text(encoding='utf-8') == 'lambda x, y: x + y\\n'"
+    if _REWRITTEN not in plan.stdout:
+        _fail(
+            "tg run --rewrite planned no usable edit",
+            detail=(
+                f"  expected {_REWRITTEN!r} in stdout\n"
+                f"  --- stdout ---\n{plan.stdout or '(empty)'}\n"
+                f"  --- stderr ---\n{plan.stderr or '(empty)'}"
             ),
-            str(_venv_tg(venv_dir)),
-            str(rewrite_smoke_dir / "apply.py"),
+        )
+
+    apply_source = rewrite_smoke_dir / "apply.py"
+    apply_source.write_text(_SOURCE, encoding="utf-8")
+    applied = _run_checked(
+        [
+            tg_exe,
+            "run",
+            "--lang",
+            "python",
+            "--rewrite",
+            _REPLACEMENT,
+            "--apply",
+            _PATTERN,
+            str(apply_source),
         ],
-        check=True,
+        what="tg run --rewrite --apply",
     )
+    final = apply_source.read_text(encoding="utf-8")
+    expected = f"{_REWRITTEN}\n"
+    if final != expected:
+        _fail(
+            "tg run --rewrite --apply did not rewrite the file on disk",
+            detail=(
+                f"  expected: {expected!r}\n"
+                f"  actual:   {final!r}\n"
+                f"  --- stdout ---\n{applied.stdout or '(empty)'}\n"
+                f"  --- stderr ---\n{applied.stderr or '(empty)'}"
+            ),
+        )
 
 
 def main() -> int:
