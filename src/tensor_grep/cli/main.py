@@ -8951,6 +8951,28 @@ def orient(
         typer.echo(json.dumps(payload, indent=2))
         return
 
+    # `tg orient` has no exit-2 contract by design (see --deadline's help): a truncated scan still
+    # exits 0. That makes the TEXT disclosure the ONLY signal a caller gets -- and it was absent.
+    # Measured on `tg orient src/tensor_grep/cli --deadline 0.1`: exit 0, `central files (0)`, zero
+    # bytes of stderr, while the `--json` arm carried `partial: true`. An agent reading that sees a
+    # codebase with no central files and no reason to look further, which is the confident-false-zero
+    # this surface exists to prevent -- made worse here, not better, by the deliberate exit 0.
+    #
+    # Leads the payload rather than trailing it, per the disclosure-position contract.
+    if payload.get("partial") or payload.get("result_incomplete"):
+        reason = payload.get("incomplete_reason")
+        limit = payload.get("deadline_limit")
+        if not isinstance(reason, str) or not reason:
+            # `deadline_limit` is a dict of counters, not prose -- interpolating it verbatim
+            # produced a banner containing a raw `{'deadline_exceeded': True, ...}`. Read the one
+            # field a caller can act on and say it in words.
+            scanned = limit.get("files_scanned") if isinstance(limit, dict) else None
+            reason = (
+                f"the scan stopped at the --deadline after {scanned} file(s)"
+                if isinstance(scanned, int)
+                else "the scan stopped at the --deadline"
+            )
+        typer.echo(_truncation_message(reason))
     typer.echo(f"# Codebase orientation: {payload['path']}")
     typer.echo(f"central files ({len(payload['central_files'])}):")
     for cf in payload["central_files"]:
@@ -11570,6 +11592,27 @@ def _emit_symbol_command_result(
     not_found = _symbol_not_found_claim(payload, result_key)
     payload["not_found"] = not_found
     caveat, is_truncation = _annotate_result_completeness(payload, result_key=result_key)
+    # FAIL-CLOSED COUPLING between the message and the exit code below.
+    #
+    # The exit gate fires on `partial` / `result_incomplete`. The caveat above is computed by
+    # `_annotate_result_completeness` from a DIFFERENT set of signals, so a payload that arrives
+    # with `result_incomplete` ALREADY SET by the command itself produced no caveat at all.
+    # Measured on `TENSOR_GREP_MAX_PARSE_BYTES=10 tg imports <file>`: exit 2, stdout
+    # `imports=0 resolved=0 external=0 unresolved=0`, and ZERO bytes of stderr, while the `--json`
+    # arm carried `result_incomplete: true` plus the real reason. A confident false zero with no
+    # signal on the text path is precisely the failure this surface exists to prevent, and it was
+    # invisible to the never-silent ratchet because that keys on `_scan_incomplete`, which
+    # deliberately does not read `result_incomplete`.
+    #
+    # Deriving the fallback from the SAME predicate as the exit makes the two impossible to
+    # disagree by construction, rather than by two lists staying in sync. Exit behaviour is
+    # untouched -- this only guarantees an exit is never silent.
+    if caveat is None and (payload.get("partial") or payload.get("result_incomplete")):
+        reason = payload.get("incomplete_reason")
+        caveat = _truncation_message(
+            str(reason) if reason else "the result is incomplete and may be missing entries"
+        )
+        is_truncation = True
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
     else:
