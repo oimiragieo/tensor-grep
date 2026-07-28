@@ -1,6 +1,49 @@
 # CHANGELOG
 
 
+## v1.101.10 (2026-07-28)
+
+### Bug Fixes
+
+- **cli**: A --json scan refusal must be parseable, not zero bytes on stdout
+  ([#843](https://github.com/oimiragieo/tensor-grep/pull/843),
+  [`b7d7239`](https://github.com/oimiragieo/tensor-grep/commit/b7d7239de5f97c7f60754100008b289fea9ac2e6))
+
+Closes the external-dogfood ask ("same exit-2 refuse for bare --json unscoped as the multi-project
+  parent", v1.101.7, unchanged on v1.101.9). The exit code was already 2; the payload was the
+  problem.
+
+Measured on the shipped v1.101.9: `tg search PAT --json` on a large implicit root exits 2 with
+  stdout of ZERO BYTES, refusal prose on stderr only, so `json.loads(stdout)` raises JSONDecodeError
+  and the consumer must parse English to learn why. A refusal is the one answer a --json caller most
+  needs in-band: it is exactly the case where an empty result must NOT be read as "no matches
+  found".
+
+The envelope MIRRORS MCP's tg_search refusal field for field rather than inventing a second shape --
+  MCP already settled that a scan-policy ceiling classifies as `scan_limit` and that `error.code`
+  names WHICH policy refused. Two surfaces refusing the same thing in two shapes is how CLI and MCP
+  drift into contradicting each other (#293). `total_matches: 0` is safe ONLY because it travels
+  with `truncated`/`result_incomplete`/`incomplete_reason_class`; the zero is qualified on the same
+  line it appears, which is the difference between a count and an absence claim. Pinned.
+
+Wired at all three refusal sites. Text mode byte-identical: stderr prose unchanged, stdout still
+  empty.
+
+VERIFICATION (bidirectional): treatment 6 passed control (envelope suppressed) 4 failed, 2 passed
+  The 2 still-passing are the stderr-parity and text-mode controls.
+
+A TEST-POLLUTION BUG THIS PR CAUGHT IN ITSELF: the first cut poisoned four unrelated --help tests in
+  test_cli_modes.py -- green with that file alone, red whenever this one was collected first. First
+  hypothesis (redirect_stdout width-fragility) was WRONG: switching to capsys did not fix it. The
+  actual cause was the MODULE-LEVEL `from tensor_grep.cli.main import ...`, which perturbs the
+  lazy-import state those help tests depend on; deferring it into the helper fixed it. The capsys
+  change is kept regardless -- capturing without swapping the stream is correct either way.
+
+Full original failing order: 587 passed. ruff check + ruff format --preview --check clean.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.101.9 (2026-07-28)
 
 ### Bug Fixes
