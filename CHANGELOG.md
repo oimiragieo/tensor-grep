@@ -1,6 +1,64 @@
 # CHANGELOG
 
 
+## v1.101.13 (2026-07-28)
+
+### Bug Fixes
+
+- **ast**: --apply wrote through symlinks, overwriting files outside the repo
+  ([#852](https://github.com/oimiragieo/tensor-grep/pull/852),
+  [`9fef15c`](https://github.com/oimiragieo/tensor-grep/commit/9fef15c0aac9176baa15467ffe1b74a30ec0b216))
+
+* fix(ast): --apply wrote through symlinks, overwriting files outside the repo
+
+`backend_ast::direct_write_file` used a bare `std::fs::write`, so `tg run --rewrite --apply` on a
+  repo containing a git-tracked symlink -- an ordinary mode-120000 blob, nothing exotic -- wrote
+  THROUGH the link to its target. A link named `config.py -> ~/.ssh/config`, a sibling project's
+  `.env`, or any absolute path redirected the rewrite out of the repo entirely.
+
+This is the WRITE-side twin of the read-side disclosure fixed in #847. It is worse: that one leaked
+  bytes out, this one overwrites bytes in.
+
+Root cause is a crate boundary, not an oversight. The guard `write_bytes_refuse_symlink` already
+  existed and is used by the audit-manifest, checkpoint and rollback paths -- but it lived in
+  `main.rs`, the BINARY crate, while `backend_ast` is in the LIB crate, so it was unreachable from
+  the one place that needed it most.
+
+Moved to `tensor_grep_rs::safe_write` and used from both. Deliberately moved, not copied: two
+  implementations of a security guard drift, and `main.rs` now delegates in 2 lines so there is
+  exactly one.
+
+READ THE RECEIPT, DON'T DELETE IT: the comment at the call site says the direct overwrite "matches
+  sg's std::fs::write() behavior". That trade-off is about ATOMICITY -- no temp-file + rename, for
+  Windows rewrite throughput -- and it is deliberate and preserved. It was never a decision to
+  follow symlinks. The comment is kept and extended to say so, so the next reader does not
+  re-litigate the atomicity choice or mistake this for a revert of it.
+
+Tests (rust_core/src/safe_write.rs): - refuses the write AND asserts the symlink TARGET is
+  byte-identical afterwards -- asserting only on the Err would pass for an implementation that wrote
+  the bytes and then errored - CONTROL ARM: an ordinary file is still written, and an overwrite
+  truncates (a guard that refused every write would satisfy the first test) - skips rather than
+  silently passing where symlink creation needs privilege, mirroring
+  tests/unit/test_scanner_skips_symlinked_files.py
+
+Found by an external audit; independently confirmed against this tree before acting on it (the same
+  audit's headline P0 was a WSL line-ending artifact).
+
+NOT COMPILED LOCALLY -- a cargo build of rust_core is CPU-heavy and this desktop is off-limits for
+  it, so CI's 6 test-rust-core legs plus `cargo clippy -D warnings` are the arbiter. rustfmt --check
+  is clean on all four files.
+
+* style(rust): rustfmt lib.rs module ordering
+
+I ran `rustfmt --check` on safe_write.rs, backend_ast.rs and main.rs but not on lib.rs, which the
+  same change also edited. CI's Formatting & Linting caught the gap: rustfmt sorts `pub mod`
+  declarations, and `safe_write` was inserted next to `backend_ast` rather than in alphabetical
+  position.
+
+Checking three of the four files I touched is the same shape as checking one arm of a control -- the
+  gate is only as wide as the file list you hand it.
+
+
 ## v1.101.12 (2026-07-28)
 
 ### Bug Fixes
