@@ -1579,7 +1579,13 @@ fn direct_write_file(file: &Path, contents: &[u8]) -> Result<()> {
     // On NTFS, in-place overwrites are journaled at the filesystem level, so after a crash readers
     // observe either the previous committed bytes or the completed overwrite rather than a half-
     // renamed temp file sequence. That trade-off matches sg's std::fs::write() behavior.
-    std::fs::write(file, contents)
+    //
+    // That trade-off is about ATOMICITY (no temp-file + rename), and it is deliberate. It is NOT
+    // a decision to follow symlinks: a bare `std::fs::write` here wrote THROUGH a git-tracked
+    // symlink to its target, so `--apply` could overwrite a file outside the repo. Matching sg's
+    // atomicity choice does not require inheriting that. The guard costs one open() flag and
+    // leaves the direct-overwrite fast path intact.
+    crate::safe_write::write_bytes_refuse_symlink(file, contents)
         .with_context(|| format!("failed to overwrite {}", file.display()))
 }
 

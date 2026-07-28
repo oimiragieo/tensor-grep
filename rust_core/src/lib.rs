@@ -16,6 +16,7 @@ pub mod python_sidecar;
 pub mod rg_passthrough;
 pub mod routing;
 pub mod runtime_paths;
+pub mod safe_write;
 
 use crate::backend_ast::AstBackend;
 use crate::backend_cpu::CpuBackend;

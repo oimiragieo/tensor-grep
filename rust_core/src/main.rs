@@ -10916,81 +10916,13 @@ fn emit_rollback_status(summary: &ValidationRollbackSummary) {
     }
 }
 
-/// Writes `bytes` to `path`, refusing to follow a symlink/reparse point at the final path
-/// component (audit #110 Gap 1). Closes a cross-process TOCTOU: the Python front door
-/// resolves and confines the `--audit-manifest` target before invoking this native binary,
-/// but a symlink swapped into that path between the Python check and this write was
-/// previously followed by a plain `std::fs::write` -- a confined write could escape its
-/// anchor. Mirrors the confine-then-open discipline `_write_json_refuse_symlink` already
-/// uses on the Python side (`src/tensor_grep/cli/main.py`).
-///
-/// audit #115: also guards `create_checkpoint`'s metadata.json + the shared/predictable
-/// index.json write, and `restore_validation_rollback_snapshots`'s per-file restore write --
-/// the same TOCTOU class, just with the checkpoint/rollback root standing in for
-/// `--audit-manifest`'s confined target.
+/// Delegates to the single implementation in the lib crate
+/// (`tensor_grep_rs::safe_write`). It lived HERE, in the binary crate, which is why
+/// `backend_ast::direct_write_file` (lib crate) could not reach it and used a bare
+/// `std::fs::write` -- the `--apply`-writes-through-a-symlink hole. Kept as a thin alias so the
+/// existing audit-manifest / checkpoint / rollback call sites read unchanged.
 fn write_bytes_refuse_symlink(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
-    use std::fs::OpenOptions;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        // O_NOFOLLOW makes the open() itself fail (ELOOP) if the final path component is
-        // a symlink -- atomic, no separate check->open window.
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(path)
-            .with_context(|| format!("refusing to write through symlink at {}", path.display()))?;
-        file.write_all(bytes)?;
-        Ok(())
-    }
-
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
-        // Not in a dependency here (neither `windows` nor `winapi` is in Cargo.toml) -- these
-        // are the real documented values (winnt.h / fileapi.h), kept as local consts rather
-        // than pulling in a crate for two flag bits.
-        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
-
-        // FILE_FLAG_OPEN_REPARSE_POINT makes CreateFile open the reparse point entry
-        // itself instead of traversing it -- so if `path` is a symlink, we open the link,
-        // not its target. Deliberately no truncate-at-open: on a real reparse point that
-        // would touch the reparse buffer before we get to check it below.
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
-            .open(path)
-            .with_context(|| format!("failed to open {}", path.display()))?;
-        let attributes = file.metadata()?.file_attributes();
-        if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-            anyhow::bail!(
-                "refusing to write through symlink/reparse point at {}",
-                path.display()
-            );
-        }
-        // Confirmed a regular file (or a freshly created one) -- now safe to truncate and
-        // write, preserving create-or-overwrite semantics for a legitimate rerun.
-        file.set_len(0)?;
-        file.write_all(bytes)?;
-        Ok(())
-    }
-
-    #[cfg(not(any(unix, windows)))]
-    {
-        if std::fs::symlink_metadata(path)
-            .map(|metadata| metadata.file_type().is_symlink())
-            .unwrap_or(false)
-        {
-            anyhow::bail!("refusing to write through symlink at {}", path.display());
-        }
-        std::fs::write(path, bytes)?;
-        Ok(())
-    }
+    tensor_grep_rs::safe_write::write_bytes_refuse_symlink(path, bytes)
 }
 
 struct AuditManifestWriteInput<'a> {
