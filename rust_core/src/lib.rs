@@ -1,6 +1,7 @@
 #![allow(clippy::useless_conversion)]
 
 pub mod backend_ast;
+pub mod safe_write;
 pub mod backend_ast_workflow;
 pub mod backend_cpu;
 pub mod cli;
