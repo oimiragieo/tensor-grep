@@ -13,7 +13,7 @@ tg doctor --json ROOT
 tg devices
 ```
 
-## Recommended sweep (v1.95.0)
+## Recommended sweep (v1.101.7)
 
 ```bash
 cd /path/to/workspace
@@ -39,24 +39,22 @@ tg agent agent-studio/.claude/lib/routing "task" --json
 tg dogfood --root . --output /tmp/dogfood-ws.json
 ```
 
-## Latest sweep (2026-07-22, tg 1.92.1, gotcontext-saddle) — historical; 4 rows fixed since, not re-run as one workspace sweep
+## Latest sweep (2026-07-28, tg 1.101.7, gotcontext-saddle)
 
 | Category | Result | Notes |
 | --- | --- | --- |
-| Symbol ladder / imports / orient / map / route-test / evidence | ✅ | route agreement=true; trunc hard-stop exit 2; symbol-graph registry now 10/10 top languages (Java v1.94.0, PHP v1.95.0, C# v1.96.0, then c/cpp; **Java is registered INLINE in `repo_map.py`, there is no `lang_java.py`** -- only go/php/csharp/c/cpp have their own `lang_<x>.py`, so mirror `lang_go.py` and NOT Java when onboarding a language, B6). REGISTRY membership, not caller-graph parity -- see tensor-grep-enterprise-agent for the tier split — no live Java/C#/PHP target swept in this workspace yet |
-| `tg agent` scoped + root `--deadline 90` | ✅ | root ~50s rc 0 non-partial (improved vs tight deadline) |
-| **`tg prepare`** | ✅ | ~8–9s; blast_radius_floor; `--claim` submits |
-| ledger claim/list/record/find/release | ⚠️→**fixed v1.93.0 (A13, #706)** | was: **list PATH must match claim PATH**; now canonicalizes to the nearest `.git` ancestor, `list [PATH]` rolls scope UP — the footgun is closed for Slice 1 (claim/release/list); Slice 2 (record/find) stays literal-path-rooted |
-| `tg find` without dense | ✅ | BM25 + `rank_fallback_reason` (message now leads with `tg install-dense`, A12(a)) |
-| GPU | ⚠️→**partially fixed v1.93.0 (A11, #704)** | was: CPU front door; probe `failed_probe_path` on WSL — that specific bare-shim cross-domain misclassification is fixed (honest `unsupported`/`gpu-auto-fallback-cpu` now); GPU search itself is still CPU-fallback on a non-CUDA build, unchanged |
-| Unscoped search | ⚠️→**fixed v1.92.3 (A9, #702)** | was: timeout-first / empty under short TG_* timeout, not a fast refuse; now a generic `IMPLICIT_SEARCH_WALK_FILE_CEILING=1500` fast-refuse fires in ~1.7s on any defaulted PATH across all 3 doors |
-| Cold `doctor` session_daemon | ⚠️ | often `running: false` until warm traffic; now additively reports `autostart` (A12(b)) explaining why |
+| Symbol ladder / blast / orient / map / route-test / evidence / dogfood | ✅ | route `agreement: true` via **`agreement_details`**; trunc hard-stop exit 2 |
+| `tg agent` scoped + root `--deadline 90` | ✅ | scoped ~12s; root ~76s rc 0 non-partial |
+| lexical camelCase → snake | ✅ | `readBlockEnabled` → `read_block_enabled` |
+| **`tg prepare`** / `--out` / `--claim` | ✅ | ~13s; `--out` persists; `agent_id_hint` when anonymous |
+| ledger Slice 1 rollup + Slice 2 record/find | ✅ | `list .` sees `claim core/hooks`; find fresh exit 0 |
+| `tg find` without dense | ✅ | BM25; fallback leads with `` `tg install-dense` `` |
+| GPU | ⚠️ | honest `unsupported` / `gpu-auto-fallback-cpu`; calibrate exit 2 (no CUDA) |
+| Multi-project parent unscoped | ✅ | exit 2 refuse + remediation |
+| Single-repo bare `search --json` (no PATH) | ⚠️ | ~2s exit 1 empty, **no** refuse stderr — always pass PATH |
+| Cold doctor daemon | ✅ | `autostart: on-first-use…`; warm → `running: true` |
 
-Prior workspace (2026-07-21, 1.91.0): **57 PASS / 8 INCOMPLETE / 2 TIMEOUT / 1 FAIL**
-(`/tmp/tg-dogfood-v21/report.tsv`). Suite artifact this run: `/tmp/tg-dogfood-1921.json`. No fresh
-whole-workspace re-run has been recorded past v1.92.1 as of v1.93.2 — the four fixed rows above are
-individually verified against their shipping PRs' own gate-run/dogfood evidence (docs/BACKLOG.md), not
-a repeat of this sweep.
+Artifact: `/tmp/tg-dogfood-11017.json`.
 
 ## Trend
 
@@ -65,9 +63,9 @@ a repeat of this sweep.
 | 1.81.18 | 46 | 2 | deadline symbol flaky |
 | 1.83.0 | 52 | 2 | ledger ships |
 | 1.91.0 | 57 | 2 | prepare + install-dense |
-| 1.92.1 | saddle ✅ | — | prepare solid; ledger PATH-scope footgun documented |
-| **1.93.2** | not re-swept | — | ledger PATH fix (A13), unscoped fast-refuse (A9), WSL GPU-probe fix (A11), dynamic-import honesty (A10/A15), install-dense/doctor-autostart/prepare-`--out` UX batch (A12) all shipped since 1.92.1 — see the row-by-row fixes above; a fresh whole-workspace PASS/TIMEOUT count is not yet recorded |
-| **1.95.0** | not re-swept | — | Java (v1.94.0) + PHP (v1.95.0) join the symbol-graph tier (5→8 of top-10 at the time; **10/10 registered as of 2026-07-27** once C# v1.96.0 and c/cpp landed). PHP used the `lang_<x>.py` module pattern; **Java did NOT -- it is inline in `repo_map.py`**, which is the pattern CLAUDE.md's Adding-a-Language rule tells new work to avoid, so do not mirror it (B6) — no live Java/C#/PHP target has been swept in this workspace yet; c:/dev workspace-scale dogfood (300k+ files, D1) confirms `orient` bounds at 4.9s (scan_limit+centrality) and `search` degrades to an honest partial/exit-124 on an unscoped run; known low-priority edge unchanged: a pathological cross-project union directory can still blow `inventory --deadline` — `_iter_repo_files`'s root-level `list(os.scandir(...))` (re-grep `os.scandir` inside `_iter_repo_files`; the old `:1010` pin drifted and a nearby scandir belongs to a DIFFERENT helper, so cite by enclosing function not by bare line) has no mid-scandir deadline check, rare, not a load-bearing fix |
+| 1.92.1 | saddle ✅ | — | prepare solid; ledger PATH footgun documented |
+| 1.93.x–1.95.0 | fixes ship | — | ledger rollup, install-dense hint, prepare `--out`, GPU probe honesty |
+| **1.101.7** | **saddle ✅** | — | live reconfirm; route-test `agreement_details`; bare-json PATH footgun remains |
 
 ## Sibling skills
 
