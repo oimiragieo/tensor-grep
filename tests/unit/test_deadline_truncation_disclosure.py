@@ -196,9 +196,26 @@ def test_renderer_level_deadline_banner_is_present_and_single_line() -> None:
         "partial": True,
         "deadline_limit": _deadline_limit(),
     })
-    banners = [ln for ln in out.splitlines() if "INCOMPLETE RESULT" in ln]
-    assert len(banners) == 1
-    assert out.splitlines()[0] == "graph TD"
+    # TWO disclosure lines now, not one: the `%%` comment AND the rendered `tg_incomplete[...]`
+    # node that #836 added, because a Mermaid comment is stripped by the parser and never reaches
+    # a rendered diagram. Counting lines that mention INCOMPLETE RESULT was the MECHANISM; the
+    # property is that NEITHER disclosure may be split across lines by an injected newline.
+    #
+    # This assertion was written in #835 and #836 was authored against a tree that did not yet
+    # contain it. Both PRs were green alone, git merged them with no textual conflict, and main
+    # went red on the semantic collision. The identical assertion in
+    # `test_leading_truncation_banner.py` WAS updated by #836 -- the sibling here was missed
+    # because it lived in a file that PR never opened. When a change alters an output SHAPE, grep
+    # the whole test suite for assertions about that shape, not just the file you are editing.
+    lines = out.splitlines()
+    assert lines[0] == "graph TD"
+    comment_lines = [ln for ln in lines if ln.lstrip().startswith("%% warning:")]
+    node_lines = [ln for ln in lines if "tg_incomplete[" in ln]
+    assert len(comment_lines) == 1, f"comment spans multiple lines: {comment_lines}"
+    assert len(node_lines) == 1, f"node spans multiple lines: {node_lines}"
+    # Premise: the deadline cause really reached both, or this proves nothing about it.
+    assert "--deadline" in comment_lines[0]
+    assert "INCOMPLETE RESULT" in node_lines[0]
 
 
 # ------------------------------------------------------------------- the class ratchet
