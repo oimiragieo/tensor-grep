@@ -83,6 +83,12 @@ def test_every_exit_two_gate_has_a_disclosure_on_its_text_branch() -> None:
         # separate, tracked defect and deliberately not changed here.
         if "PARTIAL:" in window:
             continue
+        # `inventory` delegates its text to `render_inventory_text`, which ends with its own
+        # "[!] truncated at max_files=..." notice. A source-only ratchet cannot see into the
+        # callee, so the exemption is named here rather than inferred -- and naming it is what
+        # stops the next reader "fixing" inventory into disclosing twice.
+        if "render_inventory_text(" in window:
+            continue
         undisclosed.append((idx + 1, var))
     assert not undisclosed, (
         f"these exit-2 gates have no disclosure on their text branch: {undisclosed}. "

@@ -8606,7 +8606,16 @@ def inventory(
     if json_output:
         typer.echo(_json.dumps(payload))
     else:
-        _emit_scan_incompleteness_banner(payload)
+        # NOT banner-wired, and not an oversight: `render_inventory_text` (cli/inventory.py) already
+        # ends with its own cause-specific notice -- "[!] truncated at max_files=N (cause=X); counts
+        # are a floor, not complete." That is prose in the SAME register as the banner, so adding
+        # one here would say the same thing twice, exactly as it would have in `codemap`. Its
+        # trailing POSITION is a separate, tracked defect; fixing it belongs in `inventory.py`
+        # where the message is built, not as a second message in front of it.
+        #
+        # Found late: an audit that scanned only THIS file reported inventory as having no
+        # disclosure, because its disclosure is one call away in another module. A probe that
+        # cannot see past the file it greps will report a delegating caller as silent.
         typer.echo(render_inventory_text(payload))
 
     # #130(a) optional bundle: mirror `map`'s exit-2-on-scan-truncation contract (:7418-7419)
