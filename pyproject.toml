@@ -568,7 +568,21 @@ dependencies = [
     # >=1.27.2: CVE-2026-52870 fix (mcp 1.26.0 advisory); floor bumped, not just relocked, so a
     # fresh resolve without --upgrade-package can never silently settle back below the patched
     # version.
-    "mcp>=1.27.2",
+    #
+    # <2: mcp 2.0.0 REMOVED `mcp.server.fastmcp`, which `cli/mcp_server.py:20` imports at module
+    # scope. Because `tg run --rewrite` lazily imports `mcp_server` (ast_workflows.py:64 ->
+    # execute_rewrite_plan_json), a fresh `pip install tensor-grep` resolving 2.x makes the rewrite
+    # path die with `ModuleNotFoundError: No module named 'mcp.server.fastmcp'` -- a USER-FACING
+    # break, not just a CI one. It went unnoticed for two releases because every in-repo consumer
+    # installs from uv.lock (pinned 1.28.1); the ONLY component that resolves fresh is the PyPI
+    # smoke venv, which is exactly what caught it (release runs 30363114542, 30375308409 -- both
+    # blocked `publish-pypi`, so v1.101.10 and v1.101.11 tagged without publishing).
+    #
+    # A cap, not a port, deliberately: the cap restores publishing today, and migrating to the 2.x
+    # API is a real change that deserves its own PR and its own tests. Lifting this cap REQUIRES
+    # porting `cli/mcp_server.py` off `mcp.server.fastmcp` first -- see the guard in
+    # tests/unit/test_mcp_dependency_is_upper_bounded.py, which fails if the bound is dropped.
+    "mcp>=1.27.2,<2",
     "pathspec>=1.0.4",
     "pyyaml>=6.0",
     # opentelemetry-api only: the 6 `trace.get_tracer` call sites (cudf_backend.py,
