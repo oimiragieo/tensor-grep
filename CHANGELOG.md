@@ -1,6 +1,133 @@
 # CHANGELOG
 
 
+## v1.101.12 (2026-07-28)
+
+### Bug Fixes
+
+- **deps**: Cap mcp below 2.0, which removed mcp.server.fastmcp and broke `tg run --rewrite`
+  ([#853](https://github.com/oimiragieo/tensor-grep/pull/853),
+  [`0a19bc4`](https://github.com/oimiragieo/tensor-grep/commit/0a19bc426f634e5ff35f167b2c73ffa68fdfaca6))
+
+ROOT CAUSE of the PyPI publish blocker, finally in hand. `validate-pypi-artifacts` failed on two
+  consecutive release runs (30363114542 / v1.101.10 and 30375308409 / v1.101.11), skipping
+  `publish-pypi` both times, so PyPI has been stuck on 1.101.9 while two tags shipped without
+  artifacts.
+
+The actual error, visible only after #848 made the smoke print the child's stderr instead of
+  swallowing it:
+
+ModuleNotFoundError: No module named 'mcp.server.fastmcp' cli/mcp_server.py:20 from
+  mcp.server.fastmcp import FastMCP cli/ast_workflows.py:64 (lazy import from
+  execute_rewrite_plan_json) cli/main.py:17617 execute_run(...)
+
+mcp 2.0.0 removed `mcp.server.fastmcp`. `tg run --rewrite` lazily imports `mcp_server`, so ANY fresh
+  install resolving 2.x kills the rewrite path. This is a USER-FACING break -- `pip install
+  tensor-grep` today -- not just a CI one.
+
+Why it hid for two releases: every in-repo consumer installs from uv.lock, which pins mcp 1.28.1, so
+  the full test suite and every dev environment are immune. The ONLY component that resolves fresh
+  is the PyPI smoke venv. It was doing its job.
+
+A CAP, NOT A PORT, deliberately: this restores publishing today. Migrating cli/mcp_server.py to the
+  mcp 2.x API is a real change deserving its own PR and tests. The comment and the guard both say
+  so.
+
+Guard (tests/unit/test_mcp_dependency_is_upper_bounded.py) reads pyproject rather than importing
+  anything -- an import-based check passes under the lock forever and could never see the drift it
+  exists to catch: - the declared requirement must not admit 2.0.0 (BITES on origin/main: admits it)
+  - CONTROL ARM: the >=1.27.2 CVE-2026-52870 floor must survive any capping change, so "fix the cap
+  by dropping the floor" cannot pass - PREMISE: the locked version must satisfy the declared range,
+  catching the cap-excludes-the-lock silent-downgrade trap this repo has hit before
+
+uv.lock: ONE line (the specifier). A full `uv lock` regenerate produced 131 lines of unrelated
+  platform_machine marker churn on cuda-pathfinder/pywin32 from a newer uv -- reverted; no resolved
+  version changes, so none were shipped.
+
+CORRECTION TO MY OWN EARLIER ANALYSIS: I A/B'd mcp 1.29.0 vs 2.0.0 against the same wheel and
+  reported "both arms pass, mcp is not the cause". That test was structurally incapable of showing
+  this bug -- on Windows the rewrite routes to AstBackend and never imports mcp_server. The
+  dependency diff was the correct lead and I talked myself out of it with a repro that had removed
+  the mechanism.
+
+### Documentation
+
+- **agents**: A probe that discards the child's error, and Form 1 applied to guards
+  ([#849](https://github.com/oimiragieo/tensor-grep/pull/849),
+  [`5f314ac`](https://github.com/oimiragieo/tensor-grep/commit/5f314ac47605898028e5bac072ef272bc51f7568))
+
+Two laws from the v1.101.10 publish failure (PR #848), both of which cost real time this session.
+
+1. A probe that discards the child's error is worse than no probe. `capture_output=True` +
+  `check=True` raises a CalledProcessError carrying argv and exit status only; the streams are never
+  printed. The validate-pypi-artifacts log said `returned non-zero exit status 1` and nothing else,
+  and three hypotheses were built and falsified against it before it became clear the cause had been
+  thrown away at capture time. Adds the question to ask first -- did this log ever contain the
+  cause? -- plus the nested-interpreter double-wrap and the case a CalledProcessError cannot
+  represent at all (succeeds, prints the wrong thing).
+
+2. Form 1, applied to GUARDS: run every new ratchet against the pre-fix revision and require a
+  NON-ZERO violation count. Deliberately NOT an eleventh oracle form -- it is Form 1 pointed at the
+  guard you just wrote -- but it gets its own heading because the failure is invisible: the guard is
+  green on the fixed file, which is what you expect. The #848 ratchet was green on the pre-fix file
+  too, guarding a shape that file never contained. Carries the `git cat-file blob` recipe (not `git
+  show rev:path`, MSYS mangles it) and the two follow-on traps: quoting-vs-asserting, and match AST
+  nodes rather than text.
+
+Non-releasing. Placed after Form 10 so the oracle family stays contiguous and the count stays at 10.
+
+- **backlog**: Add TASK_BOARD.md, the operational queue beside the historical ledger
+  ([#846](https://github.com/oimiragieo/tensor-grep/pull/846),
+  [`d9b66d8`](https://github.com/oimiragieo/tensor-grep/commit/d9b66d83cf857f324cc1d524d88035dfdafe7f71))
+
+docs/BACKLOG.md is append-only release history -- the right shape for "what happened", the wrong
+  shape for "what is next". A session needing the queue reads ~940 lines of history to find four
+  open items.
+
+TASK_BOARD.md is the one-pager: in-flight PRs with release-type, P1 external dogfood findings, P2
+  audit queue, P3 strategic (from fresh competitive research), P4 carried backlog,
+  blocked-on-environment, CEO-gated, and RETIRED.
+
+RETIRED is the part that earns its keep: seven ideas that each cost a cycle to settle -- the
+  HashSet<PathBuf> counter (rejected in the very code it would edit: DoS surface +
+  byte-reproducibility), the incomplete_paths_count rename (zero-cost precondition expired when the
+  field shipped), SearchStats::is_empty as a live bug (guarded state provably unreachable), cAST
+  chunking (net-wash, 24.4x slower), GPU-for-search crossover (none at any scale), and "beat rg on
+  cold search" (tg's native walk IS rg's walk). A documented retirement stops the next session
+  re-deriving it.
+
+Working rules are encoded in the file: take the top unblocked item; every item needs a bidirectional
+  oracle stating what the test shows PRE-fix; DONE needs a PR number and a merged commit; and the
+  merge gate is "no runs in flight on main, full stop" -- `tag == PyPI` cannot distinguish released
+  from not-started from died, and that substitution cost a release today.
+
+67 governance tests green; ruff format --preview --check clean.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- **skills**: Land the 1.101.9 live-dogfood corrections
+  ([#844](https://github.com/oimiragieo/tensor-grep/pull/844),
+  [`15312c9`](https://github.com/oimiragieo/tensor-grep/commit/15312c9369daadc6ceb4d25a29a90fd50fc494ba))
+
+Captured from the 2026-07-28 sweep on gotcontext-saddle; they were sitting uncommitted in the
+  working tree and would have been lost, same as the 1.101.7 batch (#841).
+
+Stamps moved to 1.101.9 across the workspace + prepare/ledger/tensor-grep skills, plus the measured
+  facts a skill reader would otherwise carry forward wrong: `agent` root --deadline 90 now ~61s (was
+  ~76s), `prepare --out/--claim` ~6-8s (was ~13s), the truncation hard-stop reporting an HONEST
+  confidence of 0.72 where it previously reported a misleading 0.9, `evidence verify` digests under
+  `checks.digest_valid`, and MaxSim late-rerank noted as help-mentioned but NOT exercised without
+  dense installed rather than implied working.
+
+Stamps say 1.101.9, not whatever is newest: the sweep ran against 1.101.9 and stamping forward would
+  claim a verification that never happened.
+
+67 governance tests green; the four edited files are ruff-format clean. Two other skill files show
+  unformatted repo-wide -- pre-existing, untouched here.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.101.11 (2026-07-28)
 
 ### Bug Fixes
