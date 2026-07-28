@@ -7805,9 +7805,10 @@ def search_command(
             paths_to_search, config, _LARGE_ROOT_SCAN_FILE_CEILING
         )
     ):
-        typer.echo(
+        _emit_broad_scan_refusal(
             _format_unbounded_large_root_scan_error(_LARGE_ROOT_SCAN_FILE_CEILING),
-            err=True,
+            json_output=json,
+            path=str(paths_to_search[0]) if paths_to_search else ".",
         )
         raise typer.Exit(2)
 
@@ -8018,9 +8019,10 @@ def search_command(
         allow_broad_generated_scan=allow_broad_generated_scan,
         paths_defaulted=paths_defaulted,
     ):
-        typer.echo(
+        _emit_broad_scan_refusal(
             _format_unbounded_large_root_scan_error(_LARGE_ROOT_SCAN_FILE_CEILING),
-            err=True,
+            json_output=json,
+            path=str(paths_to_search[0]) if paths_to_search else ".",
         )
         raise typer.Exit(2)
 
