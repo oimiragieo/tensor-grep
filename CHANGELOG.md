@@ -1,6 +1,226 @@
 # CHANGELOG
 
 
+## v1.101.8 (2026-07-28)
+
+### Bug Fixes
+
+- **cli**: Every incomplete scan must DISCLOSE, not just exit 2
+  ([#835](https://github.com/oimiragieo/tensor-grep/pull/835),
+  [`1210574`](https://github.com/oimiragieo/tensor-grep/commit/1210574d65db6bac44ea41c70bc5171accd59fa6))
+
+* fix(cli): a --deadline cutoff must DISCLOSE, not just exit 2
+
+The ABSENT half of the disclosure class, and the largest instance of it.
+
+`_scan_truncation_warning` read only `scan_limit` / `caller_scan_limit` / `output_limit`. A
+  `--deadline` cutoff sets `partial` / `deadline_limit` and none of those, so it returned None and
+  every emitter wired to it stayed silent -- while `_scan_incomplete`, which DOES fire on `partial`,
+  exited 2.
+
+Measured as a paired arm through `blast_radius`, one variable moving:
+
+ARM A scan_limit cap exit 2 + "warning: INCOMPLETE RESULT: ..." ARM B partial + deadline_limit exit
+  2 + nothing at all
+
+Exit 2 with silent stdout is worse than a mispositioned warning: a reader who never sees a line has
+  nothing to be late about. Found by the independent Opus gate on task #329 as a pre-existing
+  in-class gap, and left out of that PR deliberately because it is not a rendering fix.
+
+## Fixed at the SHARED source, not per emitter
+
+One branch in `_scan_truncation_warning` gives the disclosure to all THREE emitters already wired to
+  `_completeness_caveat_lines` -- the symbol commands, the `blast-radius` counts block, and
+  `--mermaid`. That is the point of modelling the class rather than patching emitters one at a time,
+  and a test asserts the mermaid twin inherits it so a future drift shows up as a failure rather
+  than a silent divergence.
+
+The predicate MIRRORS `repo_map._scan_did_not_finish` / `_scan_incomplete` rather than adding a
+  fourth private notion of "truncated". Re-deriving truncation narrowly IS this defect class -- task
+  332 swept 3 of 3 readers for exactly it -- so a new definition would have guaranteed the next
+  drift.
+
+Written LAST in the function so it cannot mask a more specific cause: a payload carrying both a file
+  cap and a deadline still reports the cap, which names the actionable knob. Pinned by a test.
+
+## A deadline needs its OWN remedy
+
+`_TRUNCATION_REMEDY` names `--max-repo-files` / `--max-callers` / `--max-files`, and every one is
+  the wrong dial for a scan that ran out of TIME: a bigger file budget lets it read MORE files
+  inside the same expired deadline. Reusing that string would have reintroduced the #762/#822
+  wrong-knob failure in the very commit that closes this gap. `_DEADLINE_REMEDY` names `--deadline`
+  and says plainly that raising `--max-repo-files` does not help. Pinned by its own test.
+
+## Verification (bidirectional, control arm run)
+
+treatment 9 passed control (fix reverted via `git apply -R`) 6 failed, 3 passed
+
+The 3 still-passing are the boundary arms -- file-cap-wins, complete-payload,
+  output-cap-is-not-a-deadline -- which test unchanged behaviour and so correctly hold in both arms.
+
+Regression sweep, because this flips `result_incomplete` for deadline payloads that previously
+  reported complete: 172 passed across the deadline/truncation suites
+  (`test_deadline_blind_truncation_gates`, `test_cli_deadline_flag`,
+  `test_cli_deadline_coverage_gaps`, `test_leading_truncation_banner`, `test_blast_radius_mermaid`,
+  `test_answer_first_symbol_payloads`, `test_cap_fix_chokepoint`,
+  `test_not_found_requires_a_complete_scan`); 124 across the contract/governance suites; 599 across
+  `test_cli_modes` + `test_session_cli`, the exact-dict assertion sites most exposed to an added
+  field.
+
+`ruff check` + `ruff format --preview --check` clean.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* fix(cli): make the exit-2 gate and the message source agree BY CONSTRUCTION
+
+Generalises this PR from an instance fix to the class fix.
+
+Two predicates decide two halves of one contract -- `_scan_incomplete` the EXIT CODE,
+  `_scan_truncation_warning` the MESSAGE -- and nothing made them agree, so any cause reaching one
+  and not the other exits 2 in silence. Measured on `origin/main`, TWO fields did:
+
+scan_limit cap exit2=True discloses=True caller_scan_limit exit2=True discloses=True partial
+  (deadline) exit2=True discloses=False <- the reported gap caller_scan_truncated exit2=True
+  discloses=False <- found while fixing it
+
+The second was never reported. Finding a new instance of a class while fixing the first is the
+  signal to stop enumerating and model it: each branch here was added when its cause arrived, and
+  the next cause arrived without one.
+
+So `_scan_truncation_warning` now ends by asking the EXIT GATE. If it considers the scan truncated
+  and nothing above described why, say so generically rather than returning None. A vague warning is
+  recoverable; silence beside exit 2 is the failure this surface exists to prevent. Deliberately
+  LAST, so every specific message still wins and keeps naming its knob -- the tail is the floor, not
+  the answer.
+
+RATCHET: `test_exit_two_never_happens_silently_for_any_cause` enumerates every cause and asserts the
+  invariant, each row preceded by a premise assert that the fixture really trips the exit gate. A
+  second test asserts the cause MAP still covers every field `_scan_incomplete` reads -- a ratchet
+  that quietly narrows is worse than none, because it still reads green.
+
+The premise assert earned its place immediately: a `deadline_limit`-only row FAILED it. Both
+  producers in `repo_map` set `partial` AND `deadline_limit` together (their own comments say so),
+  so that row tested a shape production cannot emit. Merged into one production-pair row, with the
+  finding recorded -- the obvious "fix" of teaching `_scan_incomplete` to read `deadline_limit`
+  would be hardening against an unreachable state.
+
+Control arm, isolating the tail (deadline branch kept, so the assertions rather than an ImportError
+  discriminate): removing it fails exactly one test, naming exactly `caller_scan_truncated`. 11
+  passed treatment.
+
+Sweep: 95 passed across the deadline/truncation/cap/not-found/symbol-payload suites. ruff check +
+  ruff format --preview --check clean.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- **cli**: Make the --mermaid truncation disclosure survive RENDERING
+  ([#836](https://github.com/oimiragieo/tensor-grep/pull/836),
+  [`1196234`](https://github.com/oimiragieo/tensor-grep/commit/1196234f45449cd4bf98789fe3ce638422070fab))
+
+Task #329 moved this disclosure to LEAD its graph. That fixed the reader who consumes the raw text
+  and did nothing for the reader looking at the picture.
+
+Mermaid's own flowchart documentation states that comments "will be ignored by the parser", so a
+  `%%` line is absent from every rendered diagram. Verified against the upstream docs rather than
+  assumed -- the premise is a claim about an external parser, and #329's own review explicitly
+  declined to assert it without running one.
+
+That reader is the one who matters most here: `--mermaid` exists to produce a picture, and a human
+  glancing at a caller graph is far likelier to trust it at a glance than someone reading the
+  source. A truncated graph looked exactly like a complete one.
+
+## Both, not either
+
+- the `%%` comment stays -- machine-greppable, and it carries the full remedy; - a real
+  `tg_incomplete[...]` node is added -- it renders, and it carries the CAUSE.
+
+Dropping the comment to "clean up" would trade one audience for the other; a test pins that both
+  survive.
+
+## The node cannot damage what it warns about
+
+- **No edge.** Declared standalone, so the "never invent edges" contract and every `-->` count are
+  untouched. A disclosure that fabricated an edge would be a lie in the shape of a warning. -
+  **Emitted only when incomplete**, so a complete graph stays byte-identical. - **Label bounded** at
+  110 chars. The cause clause is producer-controlled (the caller-scan message names two counts and a
+  path hint), and an unbounded label would make the WORST-truncated graph render worst -- the signal
+  degrading exactly where it matters most. Yes, that truncates a truncation notice; the ellipsis
+  says so and the untruncated text is one line above. - **Label stripped** of the `warning:` prefix
+  (a log convention, meaningless inside a box) and of the remedy sentence (long enough to distort
+  the diagram).
+
+## One existing test UPDATED, not loosened
+
+`test_mermaid_banner_is_one_line_so_it_cannot_inject_graph_statements` counted lines mentioning
+  `INCOMPLETE RESULT` and expected exactly one. There are now legitimately two disclosure lines.
+  That count was the MECHANISM; the intent is that neither disclosure can be SPLIT by an injected
+  newline. It now asserts each is exactly one line and that nothing the hostile value carried became
+  a live graph statement -- the same property against the shape the renderer actually has.
+
+## Verification (bidirectional, control arm run)
+
+treatment 9 passed (33 across all three mermaid suites) control (node emission removed) 2 failed, 7
+  passed
+
+The control was run a SECOND time to be worth anything: reverting the whole diff removes
+  `_mermaid_incomplete_label`, so the test module dies on ImportError and the file ERRORS rather
+  than failing -- and a file that cannot be collected is not a red arm. Reverting only the emission
+  line, keeping the helper importable, makes the ASSERTIONS the discriminator. The 7 that still pass
+  are genuine controls (complete graph, zero-caller advisory, the label helper's own behaviour).
+
+Regression sweep: 96 passed across `test_main_cli_contracts`, `test_answer_first_symbol_payloads`,
+  `test_cap_fix_chokepoint`, `test_incompleteness_markers`. `ruff check` + `ruff format --preview
+  --check` clean.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Testing
+
+- **cli**: Fix main -- two of my own PRs collided on a mermaid line count
+  ([#838](https://github.com/oimiragieo/tensor-grep/pull/838),
+  [`6416504`](https://github.com/oimiragieo/tensor-grep/commit/64165044c6e23f25da4ddf40634f685a58b625fd))
+
+main went RED on run 30318711557 (#835 merge): 7 test jobs failed, Semantic Release SKIPPED, so no
+  v1.101.8 was ever produced. Root cause decoded from the job log rather than theorised:
+
+tests/unit/test_deadline_truncation_disclosure.py::
+  test_renderer_level_deadline_banner_is_present_and_single_line E assert 2 == 1
+
+#835 asserted that exactly ONE line of the mermaid output mentions "INCOMPLETE RESULT". #836 then
+  added the rendered `tg_incomplete[...]` node beside the `%` comment -- deliberately, because a
+  Mermaid comment is stripped by the parser and never reaches a rendered diagram -- so there are now
+  TWO.
+
+BOTH PRs WERE GREEN ALONE. Git merged them with no textual conflict; the collision is semantic and
+  only exists in the union. #836 authored against a tree that did not yet contain #835 assertion,
+  and #835 was already merged by the time #836 landed.
+
+The sharper miss: #836 DID update the identical assertion in `test_leading_truncation_banner.py`. It
+  missed the sibling here because that file was one #836 never opened. When a change alters an
+  output SHAPE, grep the WHOLE suite for assertions about that shape -- the file you are editing is
+  not the boundary of the blast radius.
+
+FIX: assert the property, not the count. Neither disclosure may be split across lines by an injected
+  newline, so the comment is pinned to one line and the node to one line, each with a premise assert
+  that the deadline cause actually reached it. Same treatment the sibling assertion already
+  received.
+
+Swept the rest of the suite for other counts over this shape: none. The remaining `out.count("-->")`
+  assertions are EDGE counts and the node deliberately declares no edge -- pinned explicitly by
+  test_the_node_adds_no_edge.
+
+VERIFICATION (control arm reproduces CI exactly):
+
+treatment 44 passed across all four mermaid/ disclosure suites control (pre-fix assertion restored)
+  1 failed -- "assert 2 == 1", the same line CI reported
+
+ruff check + ruff format --preview --check clean.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.101.7 (2026-07-28)
 
 ### Bug Fixes
