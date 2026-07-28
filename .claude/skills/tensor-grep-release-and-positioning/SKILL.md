@@ -274,10 +274,38 @@ Never declare a release "done" from PyPI visibility alone if the installer/updat
 ```bash
 python - << 'PY'
 import json, urllib.request
-data = json.load(urllib.request.urlopen("https://pypi.org/pypi/tensor-grep/json"))
-print(data["info"]["version"])
+# Cache-Control matters: see the trap below.
+req = urllib.request.Request("https://pypi.org/pypi/tensor-grep/json",
+                             headers={"Cache-Control": "no-cache"})
+data = json.load(urllib.request.urlopen(req))
+print("info.version:", data["info"]["version"])
+print("v1.101.14 present:", "1.101.14" in data["releases"])   # ask for YOUR version by name
 PY
 ```
+
+**TRAP — `info.version` is CDN-cached and lies for a window after a publish.** Twice on 2026-07-28
+a post-release probe read the PREVIOUS version and was one sentence away from being reported as
+"the release did not publish", while `publish-pypi` and `publish-success-gate` were both green and
+the tag existed. A 60-second settle delay was **not** enough.
+
+Two independent fixes, use both:
+
+1. Send `Cache-Control: no-cache` on the request.
+2. Ask the `releases` **map** for the exact version you expect (`"1.101.14" in data["releases"]`)
+   rather than reading `info.version`. A membership test on a specific key is a different question
+   than "what is latest", and it does not depend on the summary field being fresh.
+
+Cross-check against the tag and the job conclusion — three signals, not one:
+
+```bash
+git fetch -q origin --tags && git tag --sort=-v:refname | head -3
+gh run view <run-id> --json jobs \
+  --jq '.jobs[]|select(.name|test("publish-pypi|publish-success"))|"\(.name): \(.conclusion)"'
+```
+
+This is the same class as everything else in this file: **a stale read and a real failure are
+indistinguishable in the output**, so the probe needs a second, independently-sourced signal before
+you act on a negative.
 
 Then run the Docker dogfood harness (`scripts/dogfood/README.md`) — it installs the *published*
 package into a clean container and drives the *real* `tg` binary (not `CliRunner`, which bypasses
