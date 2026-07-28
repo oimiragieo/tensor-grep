@@ -300,6 +300,31 @@ class DirectoryScanner:
                     continue
 
                 file_path = Path(root) / file_name
+                # SYMLINK-FOLLOW DISCLOSURE. `os.walk(followlinks=False)` (the default above) stops
+                # us DESCENDING into a symlinked directory -- it does NOT stop a symlink-to-a-file
+                # appearing in `files`. Every consumer of this walk then does a plain
+                # `open(path, "rb")`, which follows the link to its real target regardless of the
+                # walk's setting. So a git-tracked symlink (an ordinary mode-120000 blob) pointing
+                # at `~/.ssh/id_rsa`, a sibling project's `.env`, or /etc/passwd disclosed that
+                # file's contents into search output, the on-disk symbol cache, and -- because this
+                # is the walker behind `tg agent`/`orient`/the MCP tools -- an LLM agent's context.
+                #
+                # Proven on a temp fixture before the fix: a link at `repo/leak.txt` -> an
+                # out-of-root `secret.txt` was YIELDED by this loop and `open()` returned its
+                # contents.
+                #
+                # `checkpoint_store.py` already carries this guard (`is_dir() and not
+                # is_symlink()`), and AGENTS.md names symlink-follow as a repo-wide SWEEP target
+                # rather than a one-file patch -- this is the core walker the sweep missed, which
+                # matters more than the site it landed on: checkpoint create/restore is occasional,
+                # this is the default read path for ordinary search.
+                #
+                # Skipped, not resolved-and-bounded: a link whose target sits INSIDE the root is
+                # still reachable by its real path, so skipping loses no legitimate content while
+                # a resolve-then-compare would have to get root-containment exactly right on every
+                # platform to avoid reintroducing the escape.
+                if file_path.is_symlink():
+                    continue
                 relative_path = Path(_relative_posix(file_path))
                 if spec_stack and self._path_ignored_by_stack(file_path, False, spec_stack):
                     continue
