@@ -12264,6 +12264,34 @@ def _mermaid_label(text: str) -> str:
     return text.replace("\\", "/").replace('"', "'")
 
 
+_MERMAID_INCOMPLETE_LABEL_LIMIT = 110
+
+
+def _mermaid_incomplete_label(banner: str) -> str:
+    """The disclosure banner reduced to something a DIAGRAM BOX can carry.
+
+    A node label is read in a picture, not a terminal, so it needs the CAUSE and nothing else:
+    the ``warning:`` prefix is a log convention that means nothing inside a box, and the remedy
+    sentence is long enough to distort the graph it is warning about. Both stay one line up in
+    the ``%%`` comment, which is where a source reader looks and where the full text belongs.
+
+    Bounded deliberately. The cause clause is producer-controlled (a caller-scan message names two
+    counts and a path-narrowing hint) and an unbounded label would let the worst-truncated graph
+    render worst -- the incompleteness signal degrading exactly when it matters most, which is the
+    defect inverted. Yes, this truncates a truncation notice; the ellipsis says so, and the
+    untruncated text is one line above.
+    """
+    cause = " ".join(banner.split())
+    for prefix in ("warning: ", "note: "):
+        if cause.startswith(prefix):
+            cause = cause[len(prefix) :]
+            break
+    cause = cause.split(", so ", 1)[0].split(". ", 1)[0]
+    if len(cause) > _MERMAID_INCOMPLETE_LABEL_LIMIT:
+        cause = cause[: _MERMAID_INCOMPLETE_LABEL_LIMIT - 3].rstrip() + "..."
+    return cause
+
+
 def _mermaid_relpath(file_path: str, root: str) -> str:
     """A short forward-slashed path for a Mermaid node (relative to root when it stays inside)."""
     forward = file_path.replace("\\", "/")
@@ -12329,6 +12357,19 @@ def _render_blast_radius_mermaid(payload: dict[str, Any]) -> str:
         # field typing, so this is cheap fail-closed hardening rather than a proven vector, and
         # `_mermaid_label` already sanitizes node text on exactly this reasoning.
         lines.append(f"  %% {' '.join(leading.split())}")
+        # AND a real NODE, because the comment above is invisible in a RENDERED diagram.
+        # Mermaid's own flowchart docs say comments "will be ignored by the parser", so `%%`
+        # serves the agent reading the source and nobody looking at the picture -- who is
+        # precisely the reader most likely to trust a caller graph at a glance. Verified against
+        # the upstream docs rather than assumed; the earlier fix that moved this disclosure to
+        # LEAD improved the source-reading case only.
+        #
+        # Declared with no edge, so `-->` counts and the "no invented edges" guard are untouched;
+        # emitted only when incomplete, so a complete graph stays byte-identical. The node carries
+        # the CAUSE clause (up to the first sentence break) rather than the full text -- the
+        # remedy sentence is long enough to distort a diagram, and it remains one line up in the
+        # comment for whoever is reading the source.
+        lines.append(f'  tg_incomplete["{_mermaid_label(_mermaid_incomplete_label(leading))}"]')
     lines.append(f'  target["{_mermaid_label(symbol)}"]')
     for idx, rel in enumerate(sorted(grouped)):
         node = f"n{idx}"
