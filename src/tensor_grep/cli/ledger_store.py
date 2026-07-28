@@ -43,9 +43,24 @@ fix does not add rollup matching to release -- a release call could otherwise si
 unrelated sibling agent's claim just because it happens to share a symbol name and live under an
 ancestor scope), but when nothing matches, it now names what IS live elsewhere
 (``unmatched_reason``/``live_claims_elsewhere``) instead of a bare, indistinguishable
-``released_count: 0``. Slice 2 (``record_finding``/``find_findings`` below) deliberately keeps
-plain ``session_store._resolve_root`` -- untouched by this fix, per the same footgun it has not
-(yet) been reported for.
+``released_count: 0``.
+
+Slice 2 (``record_finding``/``find_findings`` below) originally kept plain
+``session_store._resolve_root``, deliberately, "per the same footgun it has not (yet) been
+reported for". **It has now been reported** -- twice, in the live external dogfoods of v1.101.7
+and v1.101.9 ("Slice 2 ledger still more path-literal than Slice 1"), so the condition that
+justified leaving it alone has expired and both entry points now use
+:func:`_ledger_physical_root` on the same terms as Slice 1. The symptom was the identical one
+Slice 1 was fixed for: ``record`` from the repo root and ``find`` from a subtree resolved to
+different physical indices, so the lookup returned nothing and the sibling agent recomputed an
+artifact that was already on disk -- silently, since "no finding" and "finding filed elsewhere"
+were indistinguishable. The non-git fallback is unchanged (literal path, not regressed).
+
+Findings recorded by a pre-fix binary under a subtree's own ``.tensor-grep/`` are not migrated.
+That is deliberate and safe: the findings ledger is advisory, TTL-bounded coordination state
+whose worst case on a miss is recomputation, and Slice 1 accepted the identical one-time
+invisibility when it moved. Do NOT add a migration/merge step -- reading a second index would
+reintroduce the two-root ambiguity this removes.
 
 Backend Fail-Closed Contract (AGENTS.md): a lock-acquire timeout
 (:class:`tensor_grep.cli._index_lock.IndexLockTimeoutError`), a symlink at the index
@@ -1143,7 +1158,7 @@ def record_finding(
             f"--artifact-kind must be one of {sorted(_VALID_ARTIFACT_KINDS)}, got {artifact_kind!r}"
         )
 
-    root = _resolve_root(Path(path))
+    root = _ledger_physical_root(path)
     artifact_file = Path(receipt_path).expanduser().resolve()
     artifact = _read_artifact_file(artifact_file)
 
@@ -1280,7 +1295,7 @@ def find_findings(
         raise LedgerUsageError("tg ledger find requires --symbol")
     resolved_symbol = symbol.strip()
 
-    root = _resolve_root(Path(path))
+    root = _ledger_physical_root(path)
     now = datetime.now(UTC)
     # Display-only prune, exactly like list_claims: expired findings are excluded from the
     # result but the index is never rewritten by a pure read (physical cleanup happens lazily
