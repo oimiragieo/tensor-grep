@@ -40,7 +40,7 @@ prefer the canonical path-first form.
    - `tg source REPO_PATH/src SYMBOL`
 4. Symbol navigation — prefer `src/`:
    - `tg callers REPO_PATH/src SYMBOL --deadline 15 --json`
-5. Edit readiness — **prefer `tg prepare REPO/src`** (~13s PASS on gotcontext-saddle hooks @ 1.101.7; ~27s on larger src @ 1.91.0):
+5. Edit readiness — **prefer `tg prepare REPO/src`** (~6s PASS on gotcontext-saddle hooks @ 1.101.9; ~27s on larger src @ 1.91.0):
    - `tg prepare REPO_PATH/src "task" --json`  # primary + blast floor + validation + coordination hooks
    - `tg prepare REPO_PATH/src "task" --out capsule.json --json`  # also persists the full capsule to FILE (byte-identical to stdout JSON; symlink/dangling-symlink/dir refused; feeds `tg evidence emit --capsule FILE` directly, no manual redirect)
    - `tg prepare REPO_PATH/src "task" --claim --json`  # also submit advisory ledger claim; anonymous claims stamp `coordination.claim.agent_id_hint` unless `TG_LEDGER_AGENT_ID` is set
