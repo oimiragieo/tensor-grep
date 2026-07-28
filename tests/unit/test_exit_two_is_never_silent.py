@@ -57,15 +57,38 @@ def test_every_exit_two_gate_has_a_disclosure_on_its_text_branch() -> None:
         m = re.search(r"_scan_incomplete\((\w+)\)", line)
         if not m:
             continue
-        # Skip the helper's OWN guard -- it is the disclosure, not a gate needing one. Found by
-        # this test flagging line ~11308 on its first run, which is the ratchet catching itself.
-        enclosing = next((lines[j] for j in range(i, 0, -1) if lines[j].startswith("def ")), "")
-        if _CALL in enclosing:
+        # A GATE is defined by BEHAVIOUR -- it exits 2 -- not by mentioning `_scan_incomplete`.
+        # Two other uses exist and neither owes a disclosure: this file's own helper guards on it
+        # (`if not _scan_incomplete(...): return False`) and `_scan_truncation_warning` ends with
+        # a fail-closed tail that RETURNS a message on it. An earlier cut exempted the first by
+        # name; the second then appeared from another PR and was flagged as a missing disclosure
+        # in the one function whose entire job is producing that disclosure.
+        #
+        # Keying on `typer.Exit(2)` in the body is self-maintaining: a new non-gate use needs no
+        # exemption, and a new real gate cannot dodge the check by living somewhere unexpected.
+        # 8 lines, not 4: the two `agent` gates put `raise typer.Exit(2)` 5-7 lines below their
+        # `if`, and a 4-line window silently dropped BOTH -- the ratchet covering less while
+        # still reading green, which is exactly the failure this file warns about elsewhere.
+        # Caught by the control arm naming 9 gates where the previous form named 12.
+        body = "\n".join(lines[i : i + 8])
+        if "Exit(2)" not in body:
             continue
         gates.append((i, m.group(1)))
     # PREMISE: the gates still exist and are plural. If a refactor renamed them this test would
     # otherwise pass over an empty list -- a ratchet that quietly covers nothing still reads green.
-    assert len(gates) >= 10, f"expected the exit-2 gate family, found {len(gates)}"
+    assert len(gates) >= 12, f"expected the exit-2 gate family, found {len(gates)}"
+    # By NAME, not just by count. A count floor cannot say WHICH gate vanished, and the window bug
+    # above dropped precisely the two that sit furthest from their `raise`. These are commands
+    # whose text output an agent is most likely to read as a finished answer.
+    covered = {
+        next((lines[j] for j in range(i, 0, -1) if lines[j].startswith("def ")), "").split("(")[0]
+        for i, _ in gates
+    }
+    for command in ("def map", "def agent", "def context", "def edit_plan", "def prepare"):
+        assert command in covered, (
+            f"{command} is no longer recognised as an exit-2 gate; the gate detector narrowed "
+            "and this ratchet has silently stopped covering it"
+        )
 
     undisclosed = []
     for idx, var in gates:
