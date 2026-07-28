@@ -821,6 +821,29 @@ commits behind `origin/main`. Right finding, wrong expected value. **Re-derive b
 someone else's number**, and where the class recurs, replace the number with a command that
 regenerates it (`.claude/skill_anchor_audit.py` — see "Model The Class").
 
+**Form 10 — the ORACLE'S UNIT IS THE BRANCH, and the defect lives in the MERGE (2026-07-28).** Every
+form above assumes the check is looking at the right *code*. This one is about looking at the right
+*tree*. PRs #835 and #836 were each fully green — 48 checks apiece, bidirectional control arms, an
+independent adversarial gate on one of them — and **main went red the moment they were both on it**.
+#835 asserted that exactly ONE line of `--mermaid` output mentions `INCOMPLETE RESULT`; #836 added a
+second disclosure line on purpose. Git merged them with **no textual conflict**, because there is
+none: the collision is semantic and exists only in the union. CI never evaluated that union, since
+each PR's checks ran against its own base.
+
+Cost: main red, a release lost (`Semantic Release` skipped, so v1.101.8 was never produced), and
+`tag == PyPI` kept reading "gate open" precisely *because* the release had died rather than finished.
+
+It then recurred on the very next PR. #837 was rebased onto a main that still lacked the fix, and
+came back with the identical `assert 2 == 1` — the same defect inherited rather than introduced.
+
+**The rule: before pushing, rebase onto the REAL target and run the union.** A branch that is green
+against a stale base has verified a tree nobody will ever ship. Two smells that a merge is
+semantically live even when git is silent: (a) the PRs touch the same OUTPUT SHAPE, even in different
+files or different functions; (b) one PR adds to a rendering that another PR *counts*. Grep the whole
+suite for assertions about the shape you are changing — **the file you are editing is not the
+boundary of the blast radius.** #836 did correctly update the identical assertion in
+`test_leading_truncation_banner.py`, and missed its twin in a file that PR never opened.
+
 **MAINTENANCE: this family is MIRRORED, so adding a form is a TWO-FILE EDIT, always.** This section
 is canonical; `tensor-grep-validation-and-qa`'s Part 0 carries the same family for cheap-session
 readers. Grep BOTH files for the next number before assigning it, and update the mirror in the same
@@ -915,6 +938,60 @@ Two lessons from building it, both from the control arm rather than from review:
   findings, mostly noise. Anchoring to **definition sites** cut it to 92 real ones. A checker that cries wolf
   gets switched off, and a switched-off gate is worse than none, which is also why this is a maintenance
   command rather than a pytest: pinning these numbers in CI would red every PR that adds a line to `main.py`.
+
+## A Field That Is `""` Instead Of `null` Defeats Your Default (2026-07-28, four instances in one session)
+
+`gh`'s check API returns `conclusion: ""` — an EMPTY STRING, not `null` — while a `CheckRun` is still
+running. jq's `//` substitutes only for `null` and `false`, so the idiomatic
+`.conclusion // "PENDING"` **never fires**, every in-progress check reads as resolved, and a merge
+gate reports **0 pending while jobs are running**. It is the most dangerous shape a probe can have:
+it fails toward "everything is fine".
+
+It landed four times in one session, in four different probes, including twice AFTER the warning had
+been written into two cron definitions — the second of those in an ad-hoc `gh run view --json jobs
+--jq 'select(.conclusion==null)'` that returned an empty list for a run with two jobs still going.
+
+- **For a `CheckRun`, branch on `.status == "COMPLETED"`. For a `StatusContext`, branch on `.state`.**
+  The rollup mixes both node types; `__typename` tells them apart.
+- **Guard the TOTAL too.** Jobs register progressively, so a freshly-pushed PR legitimately shows
+  `pending=2, total=11` when the real matrix is ~48. "Almost nothing pending" over a partial roster is
+  the same false green in a different coat.
+- **Give the probe a control.** Run it against something you KNOW is in flight and confirm it returns
+  non-zero before you trust a zero from it. This is the workspace's "a ZERO means measured-nothing or
+  DID-NOT-MEASURE" law applied to a merge gate — the place a false zero is most expensive.
+- Print the raw tally beside the verdict. Every one of the four was caught that way and by nothing else.
+
+## A Ratchet That Narrows Still Reads Green (2026-07-28)
+
+A guard that silently starts covering LESS is worse than no guard, because it keeps reporting
+success. Two instances, same session, same file:
+
+- A gate-detector matched `if _scan_incomplete(...)` and then required `Exit(2)` within **4 lines** of
+  the `if`. Both `agent` gates put their `raise` 5-7 lines down, so **both silently dropped out of
+  coverage**. The only reason it surfaced: the control arm named **9** gates where the previous form
+  named **12**. Nothing in the passing run said anything was missing.
+- The same detector had earlier been taught to skip its own helper BY NAME. That does not scale — the
+  next non-gate use of the predicate arrived from a different PR and was flagged as a missing
+  disclosure inside the one function whose entire job is producing that disclosure.
+
+So: **define the thing you are counting by BEHAVIOUR, not by name or proximity** (a gate is a site
+that exits 2, wherever it lives), and **assert coverage BY NAME as well as by count** — a count floor
+tells you something vanished but never *which*, and the members that drop out are exactly the
+irregular ones the guard existed for. Where an exemption is genuinely right, NAME it with its reason
+(`inventory` discloses via `render_inventory_text`, one call away in another module) so the next
+reader does not "fix" it into disclosing twice.
+
+## A Probe That Cannot See Past Its File Reports A Delegating Caller As Silent (2026-07-28)
+
+Auditing which commands disclose an incomplete scan, a script scanned `cli/main.py` and reported
+`inventory` as having NO disclosure. It has a good one — `render_inventory_text` ends with
+`[!] truncated at max_files=N (cause=X); counts are a floor, not complete.` — and it lives one call
+away in `cli/inventory.py`. Acting on the report added a second, duplicate banner.
+
+The audit only became correct when it was re-run asking a **different question**: *which sites
+delegate their rendering elsewhere?* — which returned `inventory`, and only `inventory`. When a
+source-level census answers "does X do Y", it is really answering "does X do Y **in this file**".
+Before trusting it, ask what it would say about a caller that delegates.
 
 ## A Disclosure Must Precede The Data It Qualifies (2026-07-27, #329)
 

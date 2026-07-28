@@ -91,6 +91,23 @@ an audit handed to you by another agent: the 2026-07-27 skill audit's own correc
 were stale, because they were computed against a worktree 28 commits behind `origin/main` — the
 finding was real, the expected value was not. Re-derive before you act on someone else's number.
 
+**Form 10 — the oracle's UNIT is the BRANCH, and the defect lives in the MERGE (2026-07-28).** Every
+form above assumes the check is looking at the right CODE. This one is about the right TREE. PRs
+#835 and #836 were each fully green (48 checks apiece, bidirectional controls, an independent
+adversarial gate on one) and **main went red the moment both were on it**: #835 asserted exactly ONE
+line of `--mermaid` output mentions `INCOMPLETE RESULT`, #836 deliberately added a second. Git merged
+them with NO textual conflict — the collision is semantic and exists only in the union, which CI
+never evaluated because each PR's checks ran against its own base. Cost: main red and a release lost
+(`Semantic Release` skipped, so v1.101.8 was never produced). It recurred immediately: #837, rebased
+onto the still-broken main, returned the identical `assert 2 == 1`.
+
+**Before pushing, rebase onto the REAL target and run the union.** A branch green against a stale
+base has verified a tree nobody will ship. Merge is semantically live even when git is silent when
+(a) two PRs touch the same OUTPUT SHAPE — different files and different functions still collide, or
+(b) one PR adds to a rendering that another PR COUNTS. Grep the whole suite for assertions about the
+shape you are changing: **the file you are editing is not the boundary of the blast radius.** (This
+family is MIRRORED — see `AGENTS.md`; adding a form is a two-file edit.)
+
 ### Running the probe: the LOCATION trap (2026-07-26)
 
 A perturbation proves nothing if the thing you perturbed survives elsewhere. Verifying the
