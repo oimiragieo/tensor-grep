@@ -1,6 +1,50 @@
 # CHANGELOG
 
 
+## v1.101.16 (2026-07-28)
+
+### Bug Fixes
+
+- **ledger**: Findings were filed per-directory, so a subtree lookup silently missed them
+  ([#850](https://github.com/oimiragieo/tensor-grep/pull/850),
+  [`feff33b`](https://github.com/oimiragieo/tensor-grep/commit/feff33b13cbc513377420d5e358f101f2f83eb8c))
+
+Slice 1 (claims) was fixed for the PATH-scope footgun in v1.92.1: `claim core/hooks` and `list .`
+  resolved to DIFFERENT physical directories, so a claim filed from one subtree was invisible from
+  another within the same repository.
+
+Slice 2 (record_finding / find_findings) was deliberately left on the literal
+  `session_store._resolve_root`, and the module docstring said why: "per the same footgun it has not
+  (yet) been reported for."
+
+It has now been reported -- twice, in the live external dogfoods of v1.101.7 and v1.101.9 ("Slice 2
+  ledger still more path-literal than Slice 1"). The condition that justified leaving it alone has
+  expired, so both entry points now use _ledger_physical_root on the same terms as Slice 1.
+
+The consequence is worse here than for claims, because a findings miss is SILENT and
+  self-justifying. The caller asks "has anyone computed this?", gets "no", and recomputes -- exactly
+  what it would do if the answer were legitimately no. "Nothing recorded" and "recorded under a
+  different root" are indistinguishable at the call site, so the reuse pillar degrades to zero
+  without reporting a fault.
+
+Measured, with a control arm:
+
+pre-fix : record at root, find from core/hooks -> count 0 (assert 0 == 1) post-fix: same -> count 1
+
+Bounded by the .git boundary, not unconditional. Pinned by tests: two unrelated repos still do not
+  share findings; a non-git directory keeps literal-path behaviour; and exactly one .tensor-grep
+  directory exists after recording from either location -- asserting only on `find` would pass for
+  an implementation that wrote two indices and read both, which reintroduces the ambiguity instead
+  of removing it.
+
+Pre-fix findings under a subtree's own .tensor-grep are not migrated. Deliberate and safe: the
+  ledger is advisory, TTL-bounded state whose worst case on a miss is recomputation, and Slice 1
+  accepted the identical one-time invisibility. The docstring now records that a migration/merge
+  step must NOT be added -- reading a second index would reintroduce the two-root ambiguity.
+
+178 ledger/findings tests pass.
+
+
 ## v1.101.15 (2026-07-28)
 
 ### Bug Fixes
