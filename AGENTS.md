@@ -908,6 +908,76 @@ This is the CI-probe twin of the false-zero law: there, an instrument returns EM
 reads as a clean bill; here, an instrument returns a REASON-LESS failure and the exit status reads as
 a diagnosis.
 
+### Trace the SIGNAL PATH to the instrument before believing a negative
+
+The parent pattern behind the false-zero law, the both-arms law, and the setup-lies law. Those name
+symptoms; this names the cause: **a negative result has two indistinguishable explanations — the
+phenomenon is absent, or the signal never reached the probe.** Nothing in the output separates them,
+and confidence is highest exactly when the probe is your own, because you know what you *intended*
+it to measure.
+
+Six wrong conclusions in one session (2026-07-28), every one the same failure — the instrument
+silently lacked REACH:
+
+| instrument | the hop it could not reach | the false conclusion |
+|---|---|---|
+| CI log of the failing smoke | `capture_output=True` discarded the child's stderr | 3 hypotheses "tested" against a log with no cause in it |
+| a newly written ratchet | the offending call lived in a STRING, not a call node | "guard added" — 0 violations on the code that caused the incident |
+| `uv run --no-sync tg` | resolves `.venv/site-packages`, not `src/` | two separate wrong verdicts, one of them a phantom Python-vs-Rust divergence |
+| an mcp 1.x-vs-2.0 A/B | on Windows the rewrite routes to `AstBackend` and never imports `mcp_server` | "mcp is not the cause" — it **was** the cause |
+| an external audit's `git status` | WSL git over a `core.autocrlf=true` Windows checkout | "338-file dirty tree", P0, *discard it* (destructive) |
+| `rustfmt --check <3 files>` | the change edited 4 | "format clean" → CI red |
+
+**The rule: name every hop the phenomenon must travel to reach your probe, and verify each one.**
+
+```
+mcp 2.0 breaks tg  ⇒  pattern parsed → command routed → backend selected → mcp_server imported
+                                                        ^^^^^^^^^^^^^^^^ Windows exits here
+```
+
+Hop 3 was never checked, so hop 4 could not fire, so the probe was structurally incapable of a
+positive. One `print(routing_backend)` would have shown it.
+
+Cheapest checks first:
+
+- **Does the probe load MY code?** `PYTHONPATH=src` **and** assert `module.__file__`. Never
+  `uv run tg` for a behavioural claim — a dev box can carry three disagreeing `tg`s (PATH-installed,
+  `.venv` site-packages, `src/`).
+- **Can the probe return non-zero at all?** Run it against the pre-fix revision and require a
+  non-zero count (see Form 1 applied to guards, above).
+- **Did the failing path actually execute?** Print the branch/route taken, not just the result.
+- **Is the probe's scope the whole change?** A gate is only as wide as the file list you hand it.
+- **Whose environment produced this snapshot?** A WSL git over a Windows checkout, a stale branch, a
+  clean clone — each yields a confident number about a tree nobody is working on.
+
+**Corollary, and the one that cost the most: a simplification that removes the mechanism can never
+discriminate.** The mcp A/B was a *correct* experiment on the wrong path. When a repro is simpler
+than the failing scenario, ask which hop the simplification deleted — and if the answer is "the one
+the bug lives in", the result is not evidence in either direction.
+
+### A lockfile immunises everyone except the canary
+
+`mcp` 2.0.0 removed `mcp.server.fastmcp`, which `cli/mcp_server.py` imports at module scope and
+`tg run --rewrite` reaches lazily. Any fresh `pip install tensor-grep` broke the rewrite path. It
+blocked `publish-pypi` on two consecutive releases — v1.101.10 and v1.101.11 tagged and never
+published — against a declared `mcp>=1.27.2` with no upper bound.
+
+Nobody saw it because **every in-repo consumer installs from `uv.lock`** (pinned 1.28.1): the full
+suite, every dev environment, and every CI leg were immune *by construction*. The only component
+that resolves fresh is the PyPI artifact smoke venv. One canary, firing correctly twice while it was
+treated as the problem.
+
+- **A lockfile is a blindfold as well as a seatbelt.** It guarantees your tests cannot observe what a
+  new user gets. Know which component resolves fresh — its failures are user-facing by definition.
+- **When only the fresh-resolve component fails, suspect the DECLARED constraint, not the
+  component.**
+- **Cap majors on anything imported by submodule path.** `from x.y.z import W` is a promise about
+  another project's internal layout; a major bump is entitled to break it.
+- **Guard the cap by reading `pyproject.toml`, not by importing** — an import-based check passes
+  under the lock forever. Pair it with a control arm (the CVE floor survives the cap) and a premise
+  (the locked version satisfies the range; a cap excluding the lock is the silent-downgrade trap).
+- **A cap is not a port.** Say so in the comment *and* the guard, or someone lifts it to "clean up".
+
 **MAINTENANCE: this family is MIRRORED, so adding a form is a TWO-FILE EDIT, always.** This section
 is canonical; `tensor-grep-validation-and-qa`'s Part 0 carries the same family for cheap-session
 readers. Grep BOTH files for the next number before assigning it, and update the mirror in the same
