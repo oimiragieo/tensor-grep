@@ -844,6 +844,70 @@ suite for assertions about the shape you are changing — **the file you are edi
 boundary of the blast radius.** #836 did correctly update the identical assertion in
 `test_leading_truncation_banner.py`, and missed its twin in a file that PR never opened.
 
+### Form 1, applied to GUARDS: run every new ratchet against the PRE-FIX revision
+
+Not an eleventh form — Form 1 (*what would this check show if the thing were BROKEN?*) pointed at the
+guard you just wrote. It earns its own heading because the failure is invisible in the usual way: the
+guard is **green on the fixed file**, which is exactly what you expect, so nothing prompts you to
+question it.
+
+Receipt (2026-07-28, PR #848). After fixing a smoke probe that swallowed its child's error, the
+ratchet asserted that no `subprocess.run` pairs `capture_output=True` with `check=True`. Green on the
+fix. Run against the pre-fix file it was **also green — zero violations** — because the offending
+call lived inside a string handed to `python -c`, so no call node in that file ever carried those
+keywords. The guard was protecting a shape the file has never contained, and would have shipped as
+permanent proof of nothing.
+
+**The check:**
+
+```bash
+git cat-file blob HEAD:path/to/file.py > /tmp/prefix.py   # NOT `git show rev:path` -- MSYS mangles it
+# run the guard's matcher against /tmp/prefix.py and require a NON-ZERO violation count
+```
+
+A guard that reports 0 on the code that caused the incident is decoration. Re-aim it at the property
+that actually differed — here, the nesting — and re-run until the pre-fix count is non-zero (it
+became 2).
+
+Two recurring traps once the guard does bite:
+
+- **Quoting vs. asserting.** A source-scanning guard trips on the docstrings that *quote* the
+  forbidden pattern in order to explain it — third occurrence in this campaign, after the
+  `CONTRACTS.md` anchor-rot record. Exclude prose **structurally** (AST docstring nodes by identity),
+  never by pattern-matching the wording, or any future edit silently re-breaks the checker.
+- **Match nodes, not text.** `ast.walk` over real call/constant nodes cannot be fooled by a comment,
+  a test fixture, or a changelog entry that mentions the pattern.
+
+### A probe that discards the child's error is worse than no probe
+
+`subprocess.run(..., capture_output=True, check=True)` raises a `CalledProcessError` whose string
+form is argv + exit status. The captured streams hang off the exception object and are **never
+printed**. The probe then reports THAT something failed while withholding WHY — and a confident
+wrong theory is more expensive than an admitted unknown.
+
+Receipt (2026-07-28): `validate-pypi-artifacts` failed on the v1.101.10 release run (30363114542),
+skipping `publish-pypi` and leaving the version tagged but unpublished. The log's entire diagnostic
+content was `... returned non-zero exit status 1`. **Three** hypotheses — dependency drift, an `mcp`
+1.28.1→2.0.0 major bump visible in the dep diff, and the diff of the PR that triggered the release —
+were each built and falsified against that log before it became clear the cause had been thrown away
+at capture time.
+
+- **Before theorising from a CI failure, ask: did this log ever contain the cause?** If the runner
+  captured output, the answer may be no, and every hypothesis built on it is unfalsifiable.
+- Never pair `capture_output=True` with `check=True` in a diagnostic. Print argv, exit status,
+  stdout AND stderr, then exit. stdout matters as much as stderr for `tg` — refusals and
+  incompleteness envelopes go there, and a stderr-only report hides the common case.
+- **Don't drive a command through a nested interpreter.** Each layer re-wraps the error: the child's
+  real failure becomes a `CalledProcessError` inside the child, which the outer `check=True` wraps
+  into a second one naming only `python -c`. The message is lost at the first.
+- A `CalledProcessError` also cannot represent the other half — the command **succeeds** and prints
+  the wrong thing. That path needs its own reporter, or it surfaces as a bare `AssertionError` with
+  no payload.
+
+This is the CI-probe twin of the false-zero law: there, an instrument returns EMPTY and the zero
+reads as a clean bill; here, an instrument returns a REASON-LESS failure and the exit status reads as
+a diagnosis.
+
 **MAINTENANCE: this family is MIRRORED, so adding a form is a TWO-FILE EDIT, always.** This section
 is canonical; `tensor-grep-validation-and-qa`'s Part 0 carries the same family for cheap-session
 readers. Grep BOTH files for the next number before assigning it, and update the mirror in the same
