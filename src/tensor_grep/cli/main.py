@@ -8560,6 +8560,7 @@ def map(
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
     else:
+        _emit_scan_incompleteness_banner(payload)
         typer.echo(f"Repository map for {payload['path']}")
         typer.echo(f"files={len(payload['files'])} tests={len(payload['tests'])}")
         typer.echo(f"symbols={len(payload['symbols'])} imports={len(payload['imports'])}")
@@ -8605,6 +8606,7 @@ def inventory(
     if json_output:
         typer.echo(_json.dumps(payload))
     else:
+        _emit_scan_incompleteness_banner(payload)
         typer.echo(render_inventory_text(payload))
 
     # #130(a) optional bundle: mirror `map`'s exit-2-on-scan-truncation contract (:7418-7419)
@@ -9087,6 +9089,7 @@ def context(
     if json_output:
         typer.echo(json.dumps(payload))
     else:
+        _emit_scan_incompleteness_banner(payload)
         typer.echo(f"Context pack for {payload['path']}")
         typer.echo(f"query={payload['query']}")
         typer.echo(f"files={len(payload['files'])} tests={len(payload['tests'])}")
@@ -9533,6 +9536,7 @@ def context_render(
                 else:
                     typer.echo(json.dumps(daemon_payload, indent=2))
             else:
+                _emit_scan_incompleteness_banner(daemon_payload)
                 typer.echo(str(daemon_payload.get("rendered_context", "")))
             if _scan_incomplete(daemon_payload):
                 raise typer.Exit(2)
@@ -9569,6 +9573,7 @@ def context_render(
         else:
             typer.echo(json.dumps(payload, indent=2))
     else:
+        _emit_scan_incompleteness_banner(payload)
         typer.echo(payload["rendered_context"])
 
     if _scan_incomplete(payload):
@@ -9785,6 +9790,7 @@ def agent(
             if json_output:
                 typer.echo(json.dumps(daemon_payload, ensure_ascii=False, indent=2))
             else:
+                _emit_scan_incompleteness_banner(daemon_payload)
                 payload = daemon_payload
                 primary = payload.get("primary_target", {})
                 primary_file = primary.get("file") or "<none>"
@@ -9868,6 +9874,7 @@ def agent(
     if json_output:
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
+        _emit_scan_incompleteness_banner(payload)
         primary = payload.get("primary_target", {})
         primary_file = primary.get("file") or "<none>"
         primary_line = primary.get("line") or 1
@@ -10005,6 +10012,7 @@ def edit_plan(
             if json_output:
                 typer.echo(json.dumps(daemon_payload, indent=2))
             else:
+                _emit_scan_incompleteness_banner(daemon_payload)
                 payload = daemon_payload
                 typer.echo(f"Edit plan for {payload['path']}")
                 typer.echo(f"query={payload['query']}")
@@ -10039,6 +10047,7 @@ def edit_plan(
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
     else:
+        _emit_scan_incompleteness_banner(payload)
         typer.echo(f"Edit plan for {payload['path']}")
         typer.echo(f"query={payload['query']}")
         typer.echo(
@@ -10430,6 +10439,7 @@ def route_test(
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
     else:
+        _emit_scan_incompleteness_banner(payload)
         context_target = payload["context_render"]["primary_target"]
         edit_target = payload["edit_plan"]["primary_target"]
         typer.echo(f"Route test for {payload['path']}")
@@ -10968,6 +10978,12 @@ def prepare(
         primary = payload.get("primary_target", {})
         floor = payload.get("blast_radius_floor", {})
         claim_hook = payload.get("coordination", {}).get("claim", {})
+        # `prepare` already ended with `partial=true partial_reason=...`, but only for the
+        # `partial` cause and only AFTER every line it qualifies. The banner covers every cause
+        # and leads. The key=value line stays: it is a structured field in a key=value listing,
+        # not prose duplicating prose (contrast `codemap`, where adding a banner beside its
+        # existing `PARTIAL:` sentence would have said the same thing twice in the same register).
+        _emit_scan_incompleteness_banner(payload)
         typer.echo(f"Prepare for {payload['path']}")
         typer.echo(f"query={payload['query']}")
         typer.echo(f"primary={primary.get('file')}#L{primary.get('line')} {primary.get('symbol')}")
@@ -11342,6 +11358,36 @@ def _completeness_caveat_lines(
     if is_truncation:
         return f"warning: {caveat}", None
     return None, f"note: {caveat}"
+
+
+def _emit_scan_incompleteness_banner(payload: dict[str, Any]) -> bool:
+    """Print the leading disclosure for a payload whose SCAN did not finish. Returns whether it did.
+
+    THE INVARIANT: a command that exits ``2`` must have SAID something on stdout. Thirteen of the
+    fourteen ``_scan_incomplete`` gates in this module raised ``typer.Exit(2)`` over text output
+    that read exactly like a complete result -- ``codemap`` was the only one that disclosed. An
+    agent branching on the exit code was fine; every human, and every agent reading the text, was
+    told a truncated answer was the whole answer.
+
+    TEXT PATH ONLY. Call this inside the ``else`` of an ``if json_output`` block, never beside the
+    ``json.dumps``: a stray line on the JSON route breaks ``json.loads`` on stdout, which is the
+    failure this whole surface exists to prevent. JSON carries the same fact as ``result_incomplete``
+    / ``caveat`` fields, where position and prose are irrelevant.
+
+    LEADING, by the task #329 rule -- a disclosure must be read BEFORE the data it qualifies. Emits
+    nothing for a complete payload, so existing output stays byte-identical.
+
+    The message comes from the shared ``_scan_truncation_warning`` so these commands cannot drift
+    into their own vocabulary or their own idea of which knob to suggest.
+    """
+    if not _scan_incomplete(payload):
+        return False
+    caveat = _scan_truncation_warning(payload)
+    leading, _ = _completeness_caveat_lines(caveat, is_truncation=True)
+    if leading is None:
+        return False
+    typer.echo(leading)
+    return True
 
 
 def _attach_symbol_omissions(
@@ -12751,6 +12797,7 @@ def blast_radius_render(
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
     else:
+        _emit_scan_incompleteness_banner(payload)
         typer.echo(payload["rendered_context"])
 
     if _scan_incomplete(payload):
@@ -12838,6 +12885,7 @@ def blast_radius_plan(
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
     else:
+        _emit_scan_incompleteness_banner(payload)
         typer.echo(f"Blast radius plan for {payload['symbol']} in {payload['path']}")
         typer.echo(
             f"files={len(payload['files'])} tests={len(payload['tests'])} symbols={len(payload['symbols'])}"
