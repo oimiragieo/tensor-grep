@@ -5,8 +5,8 @@ description: Use when an agent needs one-call edit readiness before changing cod
 
 # tensor-grep prepare (one-call edit readiness)
 
-Verified against **tg 1.101.7** (LIVE 2026-07-28 gotcontext-saddle; prior 1.95.0 CLI
-contract / 1.92.1–1.91.0 dogfoods still representative of the core CUJ).
+Verified against **tg 1.101.9** (LIVE 2026-07-28 gotcontext-saddle; prior 1.101.7 /
+1.95.0 CLI contract / 1.92.1–1.91.0 dogfoods still representative of the core CUJ).
 
 ## When to use
 
@@ -33,6 +33,8 @@ Dogfood:
 
 | Case | Result |
 | --- | --- |
+| `prepare … --out` (**1.101.9**) | PASS ~6s — overall 0.9, callers_count=1, file ~8KB |
+| `prepare … --claim` (**1.101.9**) | PASS ~8s — submitted=true + `agent_id_hint` when anonymous |
 | `prepare core/hooks matches_trigger` (**1.101.7**) | PASS ~13s — overall 0.9, callers_count=1, claim.submitted=false |
 | `prepare … --out` / `--claim` (**1.101.7**) | PASS — file ~8KB; submitted=true + `agent_id_hint` when anonymous |
 | `prepare core/hooks matches_trigger` (1.92.1) | PASS ~8s — overall 0.9, callers_count=1, claim.submitted=false |
