@@ -71,13 +71,18 @@ def _run(corpus: Path, *args: str) -> subprocess.CompletedProcess[str]:
         pytest.param(
             "--stats",
             marks=pytest.mark.xfail(
+                sys.platform == "win32",
                 strict=True,
                 reason=(
-                    "TRACED, not assumed: --stats does NOT reach the is_empty branch. It emits its "
-                    "own stats block on stdout and returns, so the scope note never fires. "
-                    "strict=True so this flips to a failure the moment --stats is routed through "
-                    "is_empty -- an xfail that silently starts passing is how a known gap becomes "
-                    "an unknown one. Tracked in docs/BACKLOG.md as an open finding."
+                    "PLATFORM-DIVERGENT, and the strict xfail is what proved it. On Windows "
+                    "--stats emits its own stats block on stdout and returns WITHOUT reaching the "
+                    "is_empty branch, so the scope note never fires. On Linux CI the same "
+                    "invocation DOES reach it and the note fires -- the marker XPASSed there. "
+                    "My original 'TRACED, not assumed' note was traced on Windows only and then "
+                    "generalised to every platform, which is the exact over-generalisation this "
+                    "file's other tests exist to catch. Kept strict so the day Windows starts "
+                    "routing --stats through is_empty this converts to a hard failure rather than "
+                    "passing quietly. The divergence itself is an OPEN finding in docs/BACKLOG.md."
                 ),
             ),
         ),

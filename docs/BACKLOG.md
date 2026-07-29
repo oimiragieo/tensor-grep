@@ -744,13 +744,15 @@ found by an EXTERNAL audit of code I had already written tests for and called do
 | F3 | LOW | Three of four "control arms" in the first cut still PASSED with the fix reverted; they exercised pre-existing helpers (`_requires_full_cli`, `_search_args_include_explicit_path`) instead of the new behaviour. A control arm that survives the revert is not a control arm. | FIXED — tests rewritten behavioural, revert-proof verified |
 | F4 | LOW | The primary test asserted on `inspect.getsource(...)`, so it could pass with the predicate present but misplaced or emitting the wrong text. | FIXED — subprocess-based |
 
-**STILL OPEN — `tg search --stats` does not disclose a defaulted scope.** TRACED, not assumed:
-`--stats` emits its own stats block on stdout and returns without reaching the `is_empty` branch,
-so the scope note never fires for it. The other three `_requires_full_cli` flags (`--ast`,
-`--rank`, `--semantic`) are covered. Pinned as a **strict** xfail in
-`tests/unit/test_full_cli_route_names_its_scope.py` so it converts to a hard failure the moment
-`--stats` is routed through `is_empty` — an xfail that silently starts passing is how a known gap
-becomes an unknown one.
+**STILL OPEN — `tg search --stats` routing DIVERGES BY PLATFORM.** On Windows, `--stats` emits its
+own stats block on stdout and returns WITHOUT reaching the `is_empty` branch, so the defaulted-scope
+note never fires. On Linux CI the same invocation DOES reach it and the note fires. Found because the
+strict xfail **XPASSed on Linux** — a non-strict marker would have passed on both platforms and
+hidden the divergence entirely. My original claim ("TRACED, not assumed: --stats does not reach
+is_empty") was traced on Windows only and then generalised, which is the over-generalisation this
+whole file's tests exist to catch. Now a `sys.platform == "win32"` strict xfail. **The divergence
+itself is unexplained and worth root-causing** — two platforms taking different routes through the
+same flag is a latent source of Windows-only behaviour gaps.
 
 **STILL OPEN — the A1b class ratchet reports 9 candidate silent emitters.** A first run of
 `test_disclosure_covers_every_incompleteness_emitter.py` flagged `_run_ast_scan_payload`,
