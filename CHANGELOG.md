@@ -1,6 +1,238 @@
 # CHANGELOG
 
 
+## v1.101.19 (2026-07-29)
+
+### Bug Fixes
+
+- **search**: Terminate options before user positionals in the native argv builder (CWE-88)
+  ([#860](https://github.com/oimiragieo/tensor-grep/pull/860),
+  [`98e6421`](https://github.com/oimiragieo/tensor-grep/commit/98e6421327e00e38a2f23b6ce044f0615a8c27d8))
+
+Audit item B2, reclassified UP by the plan audit. `_build_native_tg_search_command` appended the
+  pattern and paths as bare positionals, and stayed unfixed because the comment sitting on it was
+  FALSE:
+
+# The native binary's `search` positionals use clap allow_hyphen_values, so it # already accepts
+  dash-leading patterns/paths without an -e/-- shim
+
+Only `-e/--regexp` carries allow_hyphen_values (rust_core/src/main.rs:686). The `pattern` (:690-691)
+  and `path` (:693-695) positionals do not.
+
+WHY THIS IS CWE-88 AND NOT A CORRECTNESS NIT. My own plan first called it "not the RCE class -- CLI
+  self-argv only". AGENTS.md:1259 defines that class with NO CLI-vs-MCP carve-out and names
+  "remaining tg sweep (tracked): the other native-argv builders" -- this builder is literally that
+  item. The downgrade licensed skipping the mandatory adversarial security gate. Corrected.
+
+THE SILENT HALF is what makes it worse than a crash: with a dash-leading pattern eaten as a flag,
+  the intended path slides into pattern position, so the search runs against a scope the caller
+  never chose AND STILL EXITS 0. Wrong scope, no error -- the confident-false-answer family this
+  codebase keeps closing.
+
+UNCONDITIONAL sentinel, deliberately. A conditional form (emit `--` only when the pattern starts
+  with `-`) looks equivalent and leaves exactly that path-promotion case exposed. Matches the
+  siblings that already do it right: ripgrep_backend.py and mcp_server.py.
+
+TDD. Red arm verified first: `assert '--' in ['tg.exe','search','ERROR','.']`. Six tests including
+  three control arms -- the sentinel must be UNCONDITIONAL (a smart conditional variant would pass
+  every other assertion), tg's own flags must stay BEFORE it (a sentinel emitted too early turns
+  --json into a path), and the rationale comment must survive (deleting it satisfies the anti-claim
+  check while removing the reason the sentinel exists).
+
+FIVE EXISTING ARGV PINS UPDATED IN THE SAME PR, exactly as the audit predicted:
+  test_cli_modes.py:3991, 4474, 4555, 4587, 5115 pinned the exact argv with `==` and no `--`. The
+  invariant is behaviour-identical, NOT argv-identical -- the plan's original "byte-identical argv"
+  control arm was wrong and would have read as a regression.
+
+My anti-claim guard tripped on itself first: the replacement comment NAMES allow_hyphen_values in
+  order to explain the old claim was false, so a bare substring check fired on the correction.
+  Fourth instance of the quoting-vs-asserting trap this campaign. It now matches the ASSERTION
+  shape, not the token, and carries a premise that the rationale comment is still present.
+
+532 tests pass. test_refs_json_deduplicates_parser_call_references is deselected and NOT mine -- it
+  fails identically with this change reverted (needs the compiled rust_core absent from a
+  --no-install-project venv).
+
+### Documentation
+
+- **mcp**: Pin the contract version and tool count to the live constants
+  ([#859](https://github.com/oimiragieo/tensor-grep/pull/859),
+  [`ea2164b`](https://github.com/oimiragieo/tensor-grep/commit/ea2164b4f9cbb8c44cf840e55d473360c4354636))
+
+Audit item A2. Both docs asserted a contract version the code had long passed:
+
+docs/harness_api.md "currently 1.2.0" 5 minor versions stale docs/architecture.md '= "1.0.0"' at :74
+  7 minor versions stale, rotted anchor
+
+Live constant is 1.7.0 at mcp_server.py:138.
+
+This is not cosmetic. serverInfo.version is what a harness negotiates against, and a doc claiming
+  1.0.0 tells an integrator the payload is byte-identical to the 1.0.0 body -- when 1.5.0 added
+  truncation_cause/budget_remediable, 1.6.0 added incomplete_reason_class, and 1.7.0 covered a
+  pass-through wire surface. Every one is an ADDITIVE field an integrator would not know to read.
+
+TOOL COUNT ALSO WRONG, WITH A TRAP: architecture.md claimed 45 `@mcp.tool()`- decorated functions.
+  There are 12 decorators. Most tools register through `_register_legacy_tool`, which calls
+  `mcp.tool()` only when legacy tools are enabled -- so grepping the decorator undercounts by ~46.
+  The real total is len(_MCP_TOOL_CAPABILITIES) = 58. Anyone "correcting" the doc by grepping would
+  have made it worse, so the doc now says which number is authoritative and why.
+
+GOVERNANCE TEST, because prose restating a constant goes stale twice and then a third time.
+  harness_api.md already carried "re-check the constant before citing a version number, it has
+  already moved once" -- an instruction to a human, in a file no human re-reads on a bump.
+
+MY FIRST CUT OF THE GUARD DID NOT BITE. It scanned only the line naming the constant and PASSED
+  against the stale docs, because harness_api.md wraps the sentence: the constant is named on one
+  line and "currently `1.2.0`" lands on the next. Caught solely by running the control arm against
+  the pre-fix docs -- the rule that a new ratchet must fail on the code that caused the incident.
+  Now windows 3 lines around each mention.
+
+Verified both directions: post-fix 4 passed; pre-fix the version guard FAILS on harness_api.md and
+  the count guard fails on architecture.md.
+
+Scoped so ordinary historical references stay legal -- "contract `1.5.0`+ carries truncation_cause"
+  is a correct statement about when a field appeared, not a claim about the current version.
+
+- **skills**: Repair the anchor auditor, then the anchors it could finally see
+  ([#858](https://github.com/oimiragieo/tensor-grep/pull/858),
+  [`eed420e`](https://github.com/oimiragieo/tensor-grep/commit/eed420e4a072688fd8603bd331629ec3d196572b))
+
+* docs(skills): repair the anchor auditor, then the anchors it could finally see
+
+THE AUDITOR WAS BROKEN, WHICH IS WHY THE ANCHORS ROTTED.
+
+`.claude/skill_anchor_audit.py` had two defects that made it unusable, so nobody ran it, so nothing
+  caught the drift it exists to catch:
+
+1. It crashed outright. `path.is_file()` raised OSError WinError 1920 on a dangling symlink inside
+  `rust_core/.venv/bin/python`, aborting the whole audit before it checked a single anchor. The skip
+  list already excluded that tree -- it was just applied AFTER the stat() instead of before. Fixed,
+  plus a try/except so one unreadable entry can never take the run down again.
+
+2. Once it ran, it drowned its own signal: 762 AMBIGUOUS_PATH findings because the path index walked
+  `.venv/`, `rust_core/.venv/`, and `.claude/worktrees/*`, so an ordinary citation like
+  `pyproject.toml:43` resolved to 14 copies. A checker that cannot discriminate is not a checker.
+  Widened the skip list to every tree that holds a COPY of the source; ambiguity dropped 762 -> 553
+  and the real signal surfaced: 3 SYMBOL_MOVED.
+
+THE ANCHORS IT THEN FOUND (all 3 fixed, re-verified: SYMBOL_MOVED now 0):
+  code-search-and-retrieval-reference repo_map.py:8897 -> :8914 benchmark-and-proof-toolkit
+  repo_map.py:11095 -> :11112 semantic-search-campaign pyproject.toml:606 -> :620
+
+PLUS 3 MORE I ROTTED MYSELF. #857 added ~45 lines to bootstrap.py and moved `main_entry` 1398->1444,
+  `TG_REEXEC_GUARD` 1207->1497, and `_run_requires_ast_workflow` 1339->1385 out from under the
+  architecture skill. The line-range citation for the rg-passthrough dispatch is now a re-grep
+  instruction instead of a range, since that region has drifted three times.
+
+NEW DEBUGGING ROW -- and an admission. "Your fix to a search behaviour has NO observable effect, and
+  tracing shows your new code IS being called." That is the signature of editing a path the
+  invocation never takes: a bare `tg search PAT` is dispatched by bootstrap.main_entry straight to
+  ripgrep and SystemExits with rg's code, so Typer never runs and every emitter in cli/main.py is
+  unreachable. A trace calling `main.app()` directly WILL show the code running, which is what makes
+  it so convincing and so wrong.
+
+This was ALREADY DOCUMENTED in tensor-grep-architecture-contract. The knowledge was not missing; I
+  did not load the skill before editing the surface it governs, and it cost a multi-hour detour. The
+  row is the mechanism -- a symptom a reader will actually search for, pointing at the skill that
+  already had the answer.
+
+test_skill_index_sync passes. Anchor audit: 0 SYMBOL_MOVED.
+
+* docs(skills): the Slice-2 lie had spread to four skills, not one
+
+Workflow audit (12 sonnet verifiers + opus chairman) over all 28 skills, hunting claims this session
+  falsified. Then a CLASS grep, which found one the audit missed.
+
+THE CLASS: #856 corrected "Slice 2 is still literal-path-rooted" in the ledger skill. That was one
+  instance. Grepping the library found the same false claim in THREE more:
+
+tensor-grep/SKILL.md:114 "Slice 2 (record/find) is still literal-path-rooted"
+  research-frontier/SKILL.md:206 "did NOT get this fix -- a known open footgun"
+  run-and-operate/SKILL.md:80,180 "unchanged and still literal-path-rooted"
+
+All three are the highest-cost error shape: a skill asserting something is BROKEN when it was fixed.
+  A reader hits a subtree miss and files it as expected behaviour, or avoids the feature entirely.
+  #850 fixed it in v1.101.16; both entry points call _ledger_physical_root. The workflow found 2 of
+  3 -- the grep found research-frontier, whose batch was one of three that hit a rate limit. Model
+  the class, do not enumerate the instances.
+
+ARCHITECTURE-CONTRACT, two FALSE provenance blocks, both self-contradicting: enum Commands 889 ->
+  910 Ledger/Prepare arms 5451/5456 -> 6686/6691 (over 1,200 lines adrift) PUBLIC_TOP_LEVEL_COMMANDS
+  18 -> 46 (the table 2 paragraphs up was right) SEARCH_PYTHON_PASSTHROUGH 183 -> 204 (ditto) The
+  section asserted "All 4 confirmed byte-stable at v1.95.0" while being wrong about 4 of 4. Replaced
+  with a re-grep instruction and the receipt -- a "confirmed stable" claim about a file that grows
+  every release has a short half-life, and stating it discourages the check that would catch the
+  drift.
+
+DOCS-AND-WRITING: claimed "none of these are pytest-pinned, the grep matches only
+  test_benchmark_scripts.py". Running its OWN command returns 5 files. test_skill_index_sync.py
+  landed 2026-07-14, before this skill's 2026-07-23 "re-verified" pass -- so its hedge ("a future
+  governance test could start pinning this library") had already come true and nobody re-ran the
+  grep. Now states what is still true: no test pins an individual skill's PROSE; the index test pins
+  the folder SET.
+
+Every agent-reported line number was re-verified against the tree before use -- 7/7 correct, but
+  they were checked, not trusted.
+
+COVERAGE, stated honestly: 10/13 agents completed. Batches 1, 5 and 10 hit API rate limits, so
+  validation-and-qa, change-control, ledger, prepare, workspace-dogfood, backlog-campaign and
+  add-language are UNAUDITED -- not clean.
+
+test_skill_index_sync passes; anchor audit 0 SYMBOL_MOVED.
+
+* docs(skills): convert change-control's repo_map seams from line numbers to greps
+
+The rate-limit retry recovered the 3 throttled batches (13/13 agents, 0 errors), and the recovered
+  work was concentrated in tensor-grep-change-control: 5 of its 5 symbol-graph seam citations were
+  stale, by 283 to 515 lines.
+
+_imports_and_symbols_for_path 6244 -> 6627 (+383) build_symbol_source_from_map 15815 -> 16326 (+511)
+  _target_language_for_path 7383 -> 7867 (+484) _SUPPORTED_FILE_DEPENDENCY_LANG 16633 -> 17148
+  (+515) go register_language 6090 -> ~6368 (+278) SEARCH_PYTHON_PASSTHROUGH_FLAGS 183 -> 204
+
+NOT re-stamped with today's numbers, because that is what the last five maintenance passes did and
+  every one shipped anchors already wrong. repo_map.py is over 19,000 lines and grows every release;
+  a line number pointing into it has a half-life measured in days. Each seam is now a GREP for the
+  symbol, with the was->now drift kept beside it as the receipt for why.
+
+That is the same reasoning .claude/skill_anchor_audit.py's own docstring gives for existing: when
+  round N+1 keeps finding new members of one defect family, the fix is a model, not another careful
+  reviewer. Here the model is 'cite the symbol, not the line'.
+
+Every recovered number re-verified against the tree first: 4 exact, 1 within its cited block (the
+  agent hedged with ~). Checked, not trusted.
+
+Coverage is now complete -- 13/13 batches, all 28 skills audited. The earlier '7 skills UNAUDITED'
+  from the throttled run is retired.
+
+* docs(agents): four laws from the skill-accuracy pass
+
+All four are the signal-path law applied to TOOLING and DOCS rather than code.
+
+1. A CHECKER NOBODY CAN RUN IS INDISTINGUISHABLE FROM NO CHECKER. skill_anchor_audit.py exists to
+  catch file:line drift and had caught none: it CRASHED on a dangling symlink before checking a
+  single anchor, and once fixed it drowned its own signal in 762 false ambiguities from walking
+  .venv/ and worktrees. Both fixed -> 3 real SYMBOL_MOVED appeared immediately. Confirm a detector
+  RUNS and DISCRIMINATES before reading its silence as a clean bill.
+
+2. CITE THE SYMBOL, NOT THE LINE -- AND NEVER RE-STAMP. repo_map.py is 19,000+ lines and grows every
+  release; all five seam citations in change-control were 283-515 lines adrift. FIVE previous passes
+  re-stamped them by hand and every one shipped anchors already wrong. Re-stamping is the defect on
+  a slower clock. Corollary: a confirmed-byte-stable claim has a short half-life and asserting it
+  discourages the check that would catch the drift -- architecture-contract claimed 4/4 sites stable
+  while wrong about 4/4, and contradicted its own correct table two paragraphs above.
+
+3. A RATE LIMIT IS NOT A RESULT. 3 of 13 agents throttled meant 7 of 28 skills were silently
+  unaudited, and zero findings is what a clean audit returns too. Retry via resumeFromRunId
+  recovered 13/13 and found 15 MORE findings.
+
+4. FIXING THE INSTANCE IS NOT FIXING THE CLASS -- IN DOCS TOO. A dogfood falsified one skill's claim
+  that ledger Slice 2 was still literal-path-rooted. A grep found the same false claim in three MORE
+  skills, and beat a 12-agent parallel audit which found only two of three. The dangerous shape is a
+  doc asserting something is BROKEN when it is fixed: the reader files the symptom as expected
+  behaviour and works around a working feature.
+
+
 ## v1.101.18 (2026-07-29)
 
 ### Bug Fixes
