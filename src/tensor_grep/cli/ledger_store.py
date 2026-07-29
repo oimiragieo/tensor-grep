@@ -568,7 +568,21 @@ def _find_overlaps(
     new_files = set(new_record.files)
     overlaps: list[dict[str, Any]] = []
     for entry in live_records:
-        if entry.get("agent_id") == new_record.agent_id:
+        # Self-overlap suppression REQUIRES the id to identify an agent. `_DEFAULT_AGENT_ID` is
+        # the literal string "anonymous" -- the ABSENCE of an identity, not one -- so suppressing
+        # on it makes two DIFFERENT zero-config agents indistinguishable and the whole
+        # coordination pillar silently no-ops in exactly the configuration most callers run.
+        #
+        # Measured before the fix, with a control that discriminates: two anonymous agents
+        # claiming the same symbol -> the second saw 0 overlaps; the identical scenario with a
+        # named agent -> 2 overlaps. The mechanism worked; the sentinel disabled it.
+        #
+        # A named agent's own overlapping claims are still suppressed, which is the behaviour the
+        # docstring above describes and the only case it was ever reasoning about.
+        if (
+            new_record.agent_id != _DEFAULT_AGENT_ID
+            and entry.get("agent_id") == new_record.agent_id
+        ):
             continue
         entry_symbols = set(entry.get("symbols") or [])
         entry_files = set(entry.get("files") or [])
