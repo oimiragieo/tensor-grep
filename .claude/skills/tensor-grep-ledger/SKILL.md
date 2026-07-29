@@ -5,8 +5,8 @@ description: Use when coordinating multiple agents on the same repo with tg ledg
 
 # tensor-grep ledger (EXPERIMENTAL, ADVISORY-tier)
 
-Verified against **tg 1.101.9** (LIVE 2026-07-28 gotcontext-saddle — Slice 1 rollup
-reconfirmed; prior 1.101.7 / 1.95.0 / 1.93.0 #706 notes still accurate).
+Verified against **tg 1.101.17** (LIVE 2026-07-28 gotcontext-saddle — Slice 1 rollup
++ Slice 2 `find` repo-visibility reconfirmed; prior 1.101.9 / 1.93.0 #706 notes for Slice 1).
 
 `tg ledger` is **ADVISORY-tier**, not MANDATORY or OPTIONAL, in the vocabulary a multi-agent-coordination
 ecosystem needs to stay legible (the same MANDATORY/OPTIONAL/ADVISORY split the `ruah` coordination
@@ -73,19 +73,22 @@ tg ledger release REPO --claim-id "$CLAIM_ID" --json
   agents' real edits collide even though the ledger itself never blocks either one.
 
 Dogfood: claim/list/release round-trip PASS from any subtree PATH under the same repo (v1.93.0/#706
-closing dogfood); record+find fresh PASS (Slice 2, unaffected by the Slice-1 fix — see below).
+closing dogfood); record+find fresh PASS including `find .` after `record core/hooks` (1.101.17).
 
-## Slice 2 — findings reuse (UNCHANGED — still literal-path-rooted, the OLD footgun survives here)
+## Slice 2 — findings reuse (repo-visible find as of 1.101.17 dogfood)
 
-**This slice did NOT get the #706 canonicalization fix.** `record`/`find` still resolve their store
-from the literal PATH argument exactly the way Slice 1 used to — a `record` at `core/hooks` and a
-`find` at `.`/repo-root are NOT guaranteed to hit the same store. Do not assume Slice 2 inherited
-Slice 1's fix; treat this as a known, still-open footgun until a matching PR closes it.
+**Live dogfood (1.101.17):** after `tg ledger record core/hooks --receipt …`,
+`tg ledger find PATH --symbol S --fresh-only` returns fresh findings for
+`PATH` in `{., core/hooks, core, $REPO_ROOT, core/skills}` — same-repo visibility,
+not limited to the literal record PATH. Prefer an explicit PATH on `record` still;
+do not assume cross-repo visibility. Older skills claiming Slice 2 is strictly
+literal-path-rooted are **stale** relative to this binary.
 
 ```bash
 tg evidence emit REPO --capsule capsule.json --query "task" --json --agent-id "$AGENT_ID" > receipt.json
 tg ledger record REPO --receipt receipt.json --artifact-kind evidence-receipt --symbol open_session --agent-id "$AGENT_ID" --json
 tg ledger find REPO --symbol open_session --artifact-kind evidence-receipt --fresh-only --json
+# also OK: tg ledger find . --symbol open_session --fresh-only --json
 ```
 
 `--artifact-kind`: `evidence-receipt` | `blast-radius` | `context-pack` | `repo-map`.
@@ -98,7 +101,7 @@ tg ledger find REPO --symbol open_session --artifact-kind evidence-receipt --fre
 | `1` | nothing matched **or** matches exist but none fresh → recompute |
 | `2` | fail-closed (missing `--symbol`, corrupt index/blob) |
 
-Dogfood: empty find exit 1 PASS; after record, find exit 0 PASS (~16s).
+Dogfood (1.101.17): after record, find at `.` / subtree / abs root → exit 0, `any_fresh: true`.
 
 ## Agent loop with ledger
 
