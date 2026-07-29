@@ -8436,6 +8436,20 @@ def search_command(
 
     if all_results.is_empty:
         _emit_stats()
+        # The FULL-CLI twin of the passthrough note added in #857. A `_requires_full_cli` flag
+        # (`--ast`, `--rank`, `--semantic`, `--stats`) bypasses bootstrap's rg passthrough and
+        # lands HERE, so the scope note shipped for the common route never fired for these four.
+        #
+        # Reachability traced, not assumed -- `tg search NO_MATCH --ast --lang python` exits at
+        # this branch. An earlier attempt at this fix was written into a branch the invocation
+        # never takes and had no observable effect.
+        #
+        # Exit stays 1 below: a defaulted-scope search that RAN TO COMPLETION is complete, it just
+        # answered a narrower question. Exit 2 remains reserved for result_incomplete.
+        if paths_defaulted:
+            from tensor_grep.cli.bootstrap import _write_defaulted_scope_note
+
+            _write_defaulted_scope_note()
         if json or format_type == "json":
             from tensor_grep.cli.formatters.json_fmt import JsonFormatter
 
