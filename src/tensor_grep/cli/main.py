@@ -10977,7 +10977,16 @@ def _build_prepare_payload(
                 # case -- mirrors the conditional install_hint/autostart precedent elsewhere in
                 # this module.
                 if str(submitted["claim"].get("agent_id") or "") == "anonymous":
-                    claim_hook["agent_id_hint"] = "set TG_LEDGER_AGENT_ID for a stable identity"
+                    # Strengthened from "set TG_LEDGER_AGENT_ID for a stable identity", which four
+                    # consecutive dogfoods reported as present-but-easy-to-miss. It now says what
+                    # the caller LOSES, not just what to set: attribution. Machine-branchable
+                    # sibling field so a harness can gate on it without string-matching prose.
+                    claim_hook["agent_id_hint"] = (
+                        "this claim is filed as 'anonymous' and is NOT attributable to you. Set "
+                        "TG_LEDGER_AGENT_ID (or TG_EVIDENCE_AGENT_ID) to a stable per-agent value "
+                        "so other agents can see WHO holds it."
+                    )
+                    claim_hook["agent_id_is_anonymous"] = True
 
     evidence_ref = _command_ref([
         "tg",
