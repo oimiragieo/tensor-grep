@@ -1,6 +1,44 @@
 # CHANGELOG
 
 
+## v1.101.17 (2026-07-29)
+
+### Bug Fixes
+
+- **ledger**: Two anonymous agents were treated as ONE, so overlap detection no-opped
+  ([#845](https://github.com/oimiragieo/tensor-grep/pull/845),
+  [`406162d`](https://github.com/oimiragieo/tensor-grep/commit/406162d093b99fda62a92cf6d18dec7bda0d7d0b))
+
+`_find_overlaps` suppressed entries whose agent_id equalled the claimant's -- "self-overlap is not
+  interesting", which is correct and REQUIRES the id to identify an agent. The default id is the
+  literal sentinel "anonymous" (_DEFAULT_AGENT_ID), the ABSENCE of an identity, so two genuinely
+  different zero-config agents suppressed each other and tg's multi-agent coordination pillar
+  silently no-opped in exactly the configuration most callers run.
+
+Measured, with a control that discriminates: two anonymous agents, same symbol -> second sees 0
+  overlaps (BLIND) named agent, same symbol -> sees 2 overlaps (works) The mechanism was never
+  broken; the sentinel disabled it.
+
+Suppress only for a REAL id. A named agent's own overlapping claims are still suppressed -- the
+  behaviour the docstring describes and the only case it was reasoning about.
+
+VERIFICATION (bidirectional): treatment 5 passed control (sentinel-blind suppression back) 2 failed,
+  3 passed The 3 still-passing are the named-agent controls (self-overlap suppressed, cross-agent
+  detected) which must hold in BOTH arms -- otherwise the fix is merely "report every overlap
+  unconditionally".
+
+Also covers the mixed anonymous<->named case both directions, and pins the sentinel BEHAVIOURALLY
+  rather than by name. An earlier cut of that test ended in `assert ... or True` -- a check that
+  cannot fail, in the one file whose subject is checks that cannot fail. Removed.
+
+134 passed across the ledger suites; ruff clean.
+
+Found by an independent strategic review; re-scopes task #13 from "attribution is weak" to "overlap
+  detection no-ops by default".
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.101.16 (2026-07-28)
 
 ### Bug Fixes
