@@ -3997,6 +3997,7 @@ def test_cli_should_delegate_force_cpu_search_to_native_binary(monkeypatch):
         "-g",
         "*.log",
         "--no-ignore",
+        "--",
         "ERROR",
         ".",
     ]
@@ -4471,7 +4472,7 @@ def test_cli_should_delegate_ndjson_search_to_native_binary_and_preserve_exit_co
     result = runner.invoke(app, ["search", "ERROR", ".", "--ndjson"])
 
     assert result.exit_code == 2
-    assert seen["cmd"] == ["tg.exe", "search", "--ndjson", "ERROR", "."]
+    assert seen["cmd"] == ["tg.exe", "search", "--ndjson", "--", "ERROR", "."]
 
 
 def test_cli_should_emit_ndjson_without_native_binary(monkeypatch):
@@ -4552,7 +4553,7 @@ def test_cli_should_delegate_json_search_to_native_binary(monkeypatch):
     result = runner.invoke(app, ["search", "ERROR", ".", "--json"])
 
     assert result.exit_code == 0
-    assert seen["cmd"] == ["tg.exe", "search", "--json", "ERROR", "."]
+    assert seen["cmd"] == ["tg.exe", "search", "--json", "--", "ERROR", "."]
     assert seen["check"] is False
 
 
@@ -4592,6 +4593,7 @@ def test_cli_should_delegate_native_rg_output_flags(monkeypatch):
         "/",
         "--vimgrep",
         "--json",
+        "--",
         "ERROR",
         ".",
     ]
@@ -5112,7 +5114,7 @@ def test_cli_should_delegate_explicit_gpu_device_ids_to_native_binary(monkeypatc
     result = runner.invoke(app, ["search", "ERROR", ".", "--gpu-device-ids", "3,7,7"])
 
     assert result.exit_code == 0
-    assert seen["cmd"] == ["tg.exe", "search", "--gpu-device-ids", "3,7", "ERROR", "."]
+    assert seen["cmd"] == ["tg.exe", "search", "--gpu-device-ids", "3,7", "--", "ERROR", "."]
     assert seen["check"] is False
 
 

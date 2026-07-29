@@ -3782,10 +3782,21 @@ def _build_native_tg_search_command(
     if ndjson:
         command.append("--ndjson")
 
-    # The native binary's `search` positionals use clap allow_hyphen_values, so it
-    # already accepts dash-leading patterns/paths without an -e/-- shim; the end-of-
-    # options hardening (audit B4/#8) is applied to the external ripgrep builder, which
-    # needs it. Keep the native delegation argv stable for the parity contract.
+    # End-of-options sentinel (CWE-88 / the MCP-276 class, AGENTS.md). This builder was the
+    # "remaining tg sweep" item that AGENTS.md tracks by name, and it stayed unfixed because the
+    # comment that used to live here was FALSE: it claimed the native `search` positionals carry
+    # clap `allow_hyphen_values`. Only `-e/--regexp` does (rust_core/src/main.rs:686); `pattern`
+    # (:690-691) and `path` (:693-695) do not.
+    #
+    # Consequence without the sentinel: a dash-leading pattern is parsed by the native binary as a
+    # FLAG, so the intended path slides into pattern position and the search runs against a scope
+    # the caller never chose -- and still exits 0. Wrong scope with no error, which is the silent
+    # half and the reason this matters more than a crash would.
+    #
+    # UNCONDITIONAL, deliberately. A conditional form (emit `--` only when the pattern starts with
+    # `-`) looks equivalent and leaves exactly that silent path-promotion case exposed. Matches the
+    # sibling builders: ripgrep_backend.py's `cmd.append("--")` and mcp_server.py's.
+    command.append("--")
     command.extend([pattern, *paths])
     return command
 
