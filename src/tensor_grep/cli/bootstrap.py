@@ -576,6 +576,52 @@ def _can_delegate_to_native_tg_search(search_args: list[str]) -> bool:
     return True
 
 
+def _search_args_include_explicit_path(search_args: list[str]) -> bool:
+    """Whether the caller named a PATH, as opposed to letting it default to the cwd.
+
+    The pattern is the FIRST bare positional; any bare positional after it is a path. Flags and
+    their attached values are skipped with the same helpers the dispatch logic already uses, so a
+    value like `-g *.py` cannot be mistaken for a path.
+    """
+    positionals = 0
+    skip_next = False
+    for arg in search_args:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg.startswith("-") and arg != "-":
+            if arg in _SEARCH_FLAGS_WITH_VALUES:
+                skip_next = True
+            continue
+        positionals += 1
+        if positionals > 1:
+            return True
+    return False
+
+
+def _write_defaulted_scope_note() -> None:
+    """Name the scope a zero-result search actually covered.
+
+    THE BUG THIS FIXES: a bare `tg search PAT` never reaches the Python CLI at all. `main_entry`
+    dispatches it straight to ripgrep via `_run_rg_passthrough` and re-raises rg's exit code, so a
+    no-match run returns 1 with nothing on either stream. Reported by the live dogfood on THREE
+    consecutive releases ("exit 1, empty, no refuse stderr; always pass explicit PATH"). Every
+    disclosure surface in `cli/main.py` is downstream of a branch this path never takes -- which is
+    why fixing it there had no effect, and why the fix has to live here.
+
+    Deliberately a note and exit 1, NOT the exit-2 refusal the report asked for. Exit 2 means
+    INCOMPLETE; a defaulted-scope search that ran to completion IS complete, it just answered a
+    narrower question. Refusing every bare `tg search foo` would break the ordinary invocation,
+    which works correctly. Keep the exit code honest and remove the ambiguity with words.
+    """
+    sys.stderr.write(
+        "note: no PATH was given, so the search defaulted to the current directory. "
+        "Zero matches means zero matches in THAT scope, not in the repository. "
+        "If you expected hits, re-run with an explicit PATH: tg search <pattern> <dir>\n"
+    )
+    sys.stderr.flush()
+
+
 def _search_args_include_guarded_broad_root(search_args: list[str]) -> bool:
     for arg in search_args:
         if not arg or arg == "-" or arg.startswith("-"):
@@ -1501,7 +1547,12 @@ def main_entry() -> None:
             rg_binary_path = resolve_ripgrep_binary()
             binary_name = str(rg_binary_path) if rg_binary_path else None
             if binary_name is not None:
-                raise SystemExit(_run_rg_passthrough(binary_name, passthrough_search_args))
+                exit_code = _run_rg_passthrough(binary_name, passthrough_search_args)
+                if exit_code == 1 and not _search_args_include_explicit_path(
+                    passthrough_search_args
+                ):
+                    _write_defaulted_scope_note()
+                raise SystemExit(exit_code)
 
     _run_full_cli()
 
