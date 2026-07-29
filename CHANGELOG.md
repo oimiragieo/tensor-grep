@@ -1,6 +1,132 @@
 # CHANGELOG
 
 
+## v1.101.18 (2026-07-29)
+
+### Bug Fixes
+
+- **search**: A bare `tg search PAT` that matched nothing now names the scope it searched
+  ([#857](https://github.com/oimiragieo/tensor-grep/pull/857),
+  [`62d1774`](https://github.com/oimiragieo/tensor-grep/commit/62d1774b21c1012cb7c16b9c35ef2301e44a9292))
+
+Reported by the live dogfood on THREE consecutive releases (1.101.7, 1.101.9, 1.101.17): "bare tg
+  search P and tg search P --json -- ~2s, exit 1, empty, no refuse stderr. Always pass explicit
+  PATH."
+
+WHY THREE ROUNDS OF DISCLOSURE WORK NEVER TOUCHED IT: a bare search never reaches the Python CLI at
+  all. `bootstrap.main_entry` dispatches it straight to ripgrep via `_run_rg_passthrough` and
+  re-raises rg's exit code, so every disclosure surface in cli/main.py -- the refusal envelope, the
+  incompleteness banner, the is_empty branch -- sits downstream of a branch this path does not take.
+
+I found that the expensive way. I first wrote the fix in cli/main.py, and it had NO observable
+  effect while tracing proved the note function was being invoked. That contradiction is what
+  located the real dispatch: the trace was running `m.app()` directly, while the actual CLI exits
+  inside main_entry long before typer runs. The main.py version was reverted rather than shipped
+  alongside.
+
+Also explains the reporter's 1.101.7 note that "text-mode without PATH can still print hits" -- rg
+  streams its own output; tg contributes nothing either way.
+
+EXIT 1 IS KEPT, deliberately, and this is a considered deviation from the request for an exit-2
+  refusal. Exit 2 means INCOMPLETE. A defaulted-scope search that ran to completion IS complete --
+  it just answered a narrower question than the caller may have meant. Blanket-refusing every bare
+  `tg search foo` would break the ordinary working invocation (verified: matches found, exit 0, on
+  both a 2-file and an 801-file tree). Keep the exit code honest; remove the ambiguity with words.
+
+Gated on BOTH conditions, which is what keeps it from becoming noise: exit_code == 1 AND no explicit
+  PATH among the positionals
+
+Verified end-to-end on a real 801-file tree: bare + zero matches -> note on stderr, exit 1 bare +
+  WITH matches -> stderr EMPTY, exit 0 explicit PATH + zero -> stderr EMPTY, exit 1
+
+The path predicate skips flag values, so `-g *.py PAT` is still unscoped rather than reading `*.py`
+  as a path -- 8 parametrized cases.
+
+169 bootstrap tests pass.
+
+KNOWN REMAINING: the full-CLI route (--ast and friends, which bypass the rg passthrough) has the
+  same gap at cli/main.py's is_empty branch. Not fixed here -- I could not exercise it, and shipping
+  an unverified second emitter beside a verified one is how a half-fix reads as complete. Tracked as
+  task #21.
+
+### Documentation
+
+- The signal-path law and the lockfile-canary law, plus the three-tg trap
+  ([#855](https://github.com/oimiragieo/tensor-grep/pull/855),
+  [`03a6ed0`](https://github.com/oimiragieo/tensor-grep/commit/03a6ed0c4e79279367499e007338c1dad04fae96))
+
+* docs: the signal-path law and the lockfile-canary law, plus the three-tg trap
+
+Two laws from the 2026-07-28 session, both earned by wrong conclusions I stated confidently, and one
+  skill section so a fresh session cannot repeat the cheapest of them.
+
+1. TRACE THE SIGNAL PATH TO THE INSTRUMENT (AGENTS.md). The parent pattern behind the false-zero,
+  both-arms and setup-lies laws -- those name symptoms, this names the cause: a negative result has
+  two indistinguishable explanations, the phenomenon is absent OR the signal never reached the
+  probe. Six instances in one session, tabulated with the hop each instrument could not reach. The
+  rule: name every hop the phenomenon must travel to your probe and verify each one. Carries the
+  corollary that cost the most -- a simplification that removes the mechanism can never
+  discriminate; an mcp A/B "ruled out" the true cause because Windows routes the rewrite to
+  AstBackend and never imports mcp_server.
+
+2. A LOCKFILE IMMUNISES EVERYONE EXCEPT THE CANARY (AGENTS.md). mcp 2.0.0 removed
+  mcp.server.fastmcp; every in-repo consumer installs from uv.lock and was immune by construction,
+  so the ONLY component that resolves fresh -- the PyPI smoke venv -- was the sole detector. It
+  fired correctly twice while being treated as the problem, and two releases tagged without
+  publishing. A lockfile is a blindfold as well as a seatbelt.
+
+3. `uv run tg` IS NOT YOUR WORKING TREE (tensor-grep-build-and-env skill). It resolves
+  .venv/site-packages, not src/. With a PATH-installed release too that is three disagreeing
+  binaries and nothing says which answered. Adds the assert-__file__ recipe and the bootstrap
+  invocation. Also documents that editing pyproject.toml can destroy the venv mid-command on Windows
+  (lib64 symlink, Access is denied) and how to recover without paying for a maturin rebuild --
+  including that --no-install-project leaves rust_core absent, so a new failure must be baselined
+  before it is blamed.
+
+test_skill_index_sync passes; AGENTS.md is ruff-format clean.
+
+* docs(skills): the PyPI info.version CDN-cache trap
+
+Twice on 2026-07-28 a post-release probe read the PREVIOUS version from `info.version` and was one
+  sentence from being reported as "the release did not publish" -- while publish-pypi and
+  publish-success-gate were both green and the tag existed. A 60-second settle delay was not enough.
+
+Two independent fixes, documented together: send Cache-Control: no-cache, AND ask the `releases` map
+  for the exact version by name rather than reading the `info.version` summary field. Plus the
+  three-signal cross-check (tag + job conclusion + registry).
+
+Same class as the rest of this session's laws: a stale read and a real failure are indistinguishable
+  in the output, so the probe needs a second, independently-sourced signal before you act on a
+  negative.
+
+- **skills**: Land the 1.101.17 live-dogfood corrections, incl. the Slice 2 reversal
+  ([#856](https://github.com/oimiragieo/tensor-grep/pull/856),
+  [`3a14e11`](https://github.com/oimiragieo/tensor-grep/commit/3a14e114676799d080a2219e02004e70051e9642))
+
+Live dogfood on gotcontext-saddle against published 1.101.17. These edits were sitting uncommitted
+  in the working tree and would have been lost.
+
+The substantive one is a REVERSAL, not a restamp. The ledger skill said:
+
+## Slice 2 -- findings reuse (UNCHANGED -- still literal-path-rooted, the OLD ## footgun survives
+  here) **This slice did NOT get the #706 canonicalization fix.** ... treat this as a known,
+  still-open footgun until a matching PR closes it.
+
+That matching PR is #850, published in 1.101.16. `record core/hooks` followed by `find .` / `find
+  core/skills` now returns fresh under the same .git root, and the dogfood confirmed it on the
+  shipped artifact. The skill was actively telling agents to route around a footgun that no longer
+  exists -- worse than silence, because it costs a workaround on every call.
+
+Also: version stamps to 1.101.17, the faster `agent` root path (~47s vs ~61s at 1.101.9), and
+  TG_LEDGER_AGENT_ID attribution behaviour.
+
+Separately removed src/tensor_grep/cli/docs/, generated codemap output left in the package source by
+  a dogfood run. It is gitignored so it was never at risk of being committed, but it is still litter
+  in the working tree.
+
+test_skill_index_sync passes.
+
+
 ## v1.101.17 (2026-07-29)
 
 ### Bug Fixes
