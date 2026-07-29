@@ -1025,6 +1025,60 @@ recovered 13/13 and surfaced **15 more findings**, including all five stale seam
 - Retry in smaller waves before concluding anything; the throttle usually clears in minutes.
 - If it re-limits, fall back to a CLI on a separate quota — it does not share the Anthropic limit.
 
+### Your own PLAN is the least-audited artifact you produce
+
+Code gets tests. PRs get review. A plan gets *written, and then followed* — and its errors
+propagate into every item built from it. On 2026-07-29 a plan of mine went through an adversarial
+audit before any code was written. It had file:line citations, a security classification, and
+acceptance tests with control arms — every outward sign of rigour. It also contained **five
+separate errors**, none of which the ceremony caught:
+
+| what I wrote | what was true |
+|---|---|
+| give zero-config `--claim` a stable per-checkout id | **silently re-breaks #845** — `ledger_store.py:582-586` suppresses when two claims share a non-sentinel id, so two agents in one checkout would drop each other's overlaps |
+| B2 is "not the CWE-88 class, CLI self-argv only" | `AGENTS.md` defines that class with **no CLI carve-out** and names this exact builder as tracked sweep work — the downgrade licensed skipping the security gate |
+| A1b acceptance: "clean against HEAD" | already satisfied by my OWN earlier fix, so the arm could not discriminate |
+| B2 control arm: "argv byte-identical" | wrong invariant — 5 legitimate test updates would have read as a regression |
+| "check the MCP surface's exit code" | **category error**: MCP returns payloads, not exit codes |
+
+**THE MECHANICAL TELL, and it is checkable.** The #845 error was detectable without any domain
+knowledge: the plan listed *"stable across invocations in one checkout"* AND *"the #845
+self-suppression survives"* as acceptance criteria **in the same document**, and no state satisfies
+both whenever two agents share a checkout. Before shipping a plan, take its acceptance criteria
+pairwise and ask: *is there a state that satisfies both?* Contradictory criteria are the cheapest
+plan defect to find and the most expensive to discover during implementation.
+
+Corollaries:
+- **A plan that recommends a fix to a bug YOU shipped recently deserves extra suspicion** — you are
+  reasoning from the mental model that produced the bug.
+- **Never downgrade a severity class in your own plan.** If the repo's taxonomy names the class,
+  the taxonomy wins; a self-assessed downgrade is how a mandatory gate gets skipped.
+- **An acceptance test that already passes on HEAD is not an acceptance test.** Ask what state
+  would make it fail; if the answer is "none, given work already merged", it is a tautology.
+
+### Consensus is not verification — correlated hallucination, measured
+
+In the same audit, **2 of 3 independent lenses agreed on the WRONG answer** for the ledger-identity
+fork, and one dissented. Majority would have shipped the regression. Only re-deriving from source
+(`ledger_store.py:582-586`) settled it.
+
+- Never promote a claim because several reviewers said it. Promote it because it carries a citation
+  you checked.
+- An all-one-model council has elevated correlated risk by construction — say so in the synthesis,
+  and treat unanimity on an un-cited claim as a smell rather than a green light.
+- Surface the minority view even when not promoting it.
+
+### A CLI seat that answers your smoke test can still fail the real work
+
+The local thinktank passed its pong gate on both seats, then produced nothing usable: agy returned
+**0 bytes**, codex returned 179KB of file exploration and **no verdict** — its only `RECOMMENDED:`
+line was *my own question template echoed back*. Grepping with `head -1` instead of `tail -1` would
+have reported a fabricated approval of my own plan.
+
+- **The gate was easier than the workload.** A pong proves auth, not capacity for a long task.
+- Treat a no-verdict seat as FAILED, not pending; sweep its wedged processes and move on.
+- Before trusting any council output, confirm the verdict line is not your own prompt echoed back.
+
 ### Fixing the instance is not fixing the class — in DOCS too
 
 `AGENTS.md` already carries "model the class, don't enumerate the cases" for code. It applies
