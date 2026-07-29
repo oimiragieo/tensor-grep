@@ -8446,7 +8446,26 @@ def search_command(
         #
         # Exit stays 1 below: a defaulted-scope search that RAN TO COMPLETION is complete, it just
         # answered a narrower question. Exit 2 remains reserved for result_incomplete.
-        if paths_defaulted:
+        # Three gates, all load-bearing (external audit of the first cut found each one):
+        #
+        # `paths_defaulted` alone is NOT "the caller did not choose a scope" -- it only means no
+        # positional PATH. A search scoped by `--glob`/`--iglob`/`--type`/`--max-depth` DID choose
+        # a scope, and telling it "no PATH was given, so the search defaulted to the current
+        # directory" is a false positive that misdescribes what ran. `config.glob` etc. are checked
+        # directly rather than via `_has_walk_scope_bound`, which returns False for exactly the
+        # `paths_defaulted` case we are inside.
+        #
+        # `quiet` suppresses it: `--quiet` promises no incidental output, and emitting an
+        # informational note there is a silent contract change on a flag whose entire purpose is
+        # silence.
+        scope_filtered = bool(
+            config.max_depth is not None
+            or config.glob
+            or config.iglob
+            or config.file_type
+            or config.type_not
+        )
+        if paths_defaulted and not scope_filtered and not quiet:
             from tensor_grep.cli.bootstrap import _write_defaulted_scope_note
 
             _write_defaulted_scope_note()

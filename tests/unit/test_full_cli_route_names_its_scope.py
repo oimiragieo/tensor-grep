@@ -1,104 +1,149 @@
-"""The full-CLI search route must also name a defaulted scope on a zero-result run.
+"""The full-CLI search route must name a defaulted scope on a zero-result run — and only then.
 
-#857 closed this for the rg-passthrough route, which is what a bare `tg search PAT` takes. But an
-invocation carrying a `_requires_full_cli` flag -- `--ast`, `--rank`, `--semantic`, `--stats` --
-bypasses `bootstrap.main_entry`'s passthrough entirely and lands in the Python CLI's `is_empty`
-branch, which was still silent.
+#857 closed this for the rg-passthrough route (a bare `tg search PAT`). A `_requires_full_cli` flag
+(`--ast`, `--rank`, `--semantic`, `--stats`) bypasses that passthrough and lands in the Python CLI's
+`is_empty` branch, which was still silent.
 
-Reachability was TRACED, not assumed, before this test was written::
+Reachability was TRACED before a line was written::
 
-    tg search NO_MATCH_ZZZ --ast --lang python   ->   EXIT 1 at main.py:8443
+    tg search NO_MATCH_ZZZ --ast --lang python   ->   EXIT 1 at main.py's is_empty branch
 
-That is the `is_empty` branch. The trace matters: an earlier attempt at this fix was written into a
-branch the invocation never takes, produced no observable effect, and had to be reverted. Confirm
-the exit line before editing a search surface.
+An earlier attempt at this fix went into a branch the invocation never takes, produced no
+observable effect, and had to be reverted.
 
-Exit stays 1. A defaulted-scope search that ran to completion IS complete -- it answered a narrower
-question than the caller may have meant. Exit 2 means INCOMPLETE and is reserved for
-`partial`/`result_incomplete`, which the same line already handles.
+THESE TESTS ARE BEHAVIOURAL, DELIBERATELY. The first cut asserted on `inspect.getsource(...)`, and
+an external audit found the flaw: three of its four "control arms" still PASSED with the fix
+reverted, because they tested pre-existing helpers (`_requires_full_cli`,
+`_search_args_include_explicit_path`) rather than the new behaviour. A control arm that survives the
+revert is not a control arm. Every test below runs the real CLI in a subprocess and asserts on
+stderr + exit code.
+
+THE THREE GATES, each earned by a defect the audit found in the first cut:
+* `paths_defaulted` — necessary but NOT sufficient; it means only "no positional PATH".
+* not scope-filtered — `--glob`/`--iglob`/`--type`/`--max-depth` ARE a chosen scope, so the note
+  would be a false positive claiming the search covered the whole current directory.
+* not `quiet` — `--quiet` promises no incidental output; emitting a note there is a silent contract
+  change on a flag whose entire purpose is silence.
 """
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
-# DEFERRED import, deliberately. A module-level `from tensor_grep.cli import main` perturbs the
-# CLI's lazy-import state and poisons four `--help` tests in test_cli_modes.py -- they pass alone
-# and fail once this file has been collected. Same trap, same fix, second occurrence this campaign.
+_REPO = Path(__file__).resolve().parents[2]
+_NOTE = "no PATH was given"
 
 
-def _cli_main():
-    from tensor_grep.cli import main as cli_main
+@pytest.fixture(scope="module")
+def corpus(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A small tree with one findable symbol, so 'no match' is a real answer, not an empty scan."""
+    root = tmp_path_factory.mktemp("fullcli")
+    (root / "a.py").write_text("def findable_marker():\n    return 1\n", encoding="utf-8")
+    (root / "b.py").write_text("x = findable_marker()\n", encoding="utf-8")
+    return root
 
-    return cli_main
 
-
-def test_the_full_cli_route_has_a_defaulted_scope_note() -> None:
-    """THE DEFECT: the is_empty branch exited 1 with nothing on either stream.
-
-    Pinned by source rather than behaviour: reaching this branch needs a real repo scan through a
-    `_requires_full_cli` flag, and a test that shells out would be slow and platform-fragile. The
-    reachability claim itself is verified by the trace recorded in the module docstring.
-    """
-    import inspect
-
-    source = inspect.getsource(_cli_main().search_command)
-    marker = "if all_results.is_empty:"
-    assert marker in source, "the is_empty branch moved; re-trace before updating this guard"
-
-    branch = source.split(marker, 1)[1].split("if quiet:", 1)[0]
-
-    assert "_write_defaulted_scope_note" in branch or "_defaulted_scope_note" in branch, (
-        "the full-CLI zero-result branch does not name the defaulted scope. A --ast/--rank/"
-        "--semantic/--stats search with no PATH exits 1 with nothing on either stream, so a "
-        "caller cannot tell 'absent from the repository' from 'absent from the directory I "
-        "happened to be in'."
-    )
-    assert "paths_defaulted" in branch, (
-        "the note is not gated on paths_defaulted -- an explicitly scoped search would print it "
-        "too, and a note that fires when the caller DID choose the scope is noise"
+def _run(corpus: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(_REPO / "src")
+    env.setdefault("TG_RG_TIMEOUT_SECONDS", "60")
+    return subprocess.run(
+        [sys.executable, "-m", "tensor_grep.cli.bootstrap", "search", *args],
+        cwd=corpus,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=180,
     )
 
 
-def test_the_branch_still_exits_1_not_2() -> None:
-    """CONTROL ARM: the fix must not promote a COMPLETE result to exit 2.
+@pytest.mark.parametrize(
+    "flag",
+    [
+        "--ast",
+        "--rank",
+        "--semantic",
+        pytest.param(
+            "--stats",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason=(
+                    "TRACED, not assumed: --stats does NOT reach the is_empty branch. It emits its "
+                    "own stats block on stdout and returns, so the scope note never fires. "
+                    "strict=True so this flips to a failure the moment --stats is routed through "
+                    "is_empty -- an xfail that silently starts passing is how a known gap becomes "
+                    "an unknown one. Tracked in docs/BACKLOG.md as an open finding."
+                ),
+            ),
+        ),
+    ],
+)
+def test_a_defaulted_zero_result_names_its_scope(corpus: Path, flag: str) -> None:
+    """THE DEFECT: exit 1 with nothing on either stream, on all four full-CLI routes.
 
-    Exit 2 is the incompleteness contract. Without this, 'make the zero louder' slides into
-    'make the zero an error', which breaks every consumer branching on 1-vs-2 and contradicts
-    AGENTS.md's closed exit-code contract.
+    Parametrized over all four because the plan's first draft named only `--ast` — covering one
+    would have left three siblings silent while the item read as closed.
     """
-    import inspect
+    result = _run(corpus, "NO_MATCH_ZZZ", flag, *(["--lang", "python"] if flag == "--ast" else []))
 
-    source = inspect.getsource(_cli_main().search_command)
-    branch = source.split("if all_results.is_empty:", 1)[1].split("if quiet:", 1)[0]
-
-    assert "sys.exit(2 if all_results.result_incomplete else 1)" in branch, (
-        "the is_empty exit no longer keys exit 2 exclusively on result_incomplete"
+    assert _NOTE in result.stderr, (
+        f"{flag}: a zero-result search with no PATH said nothing. A caller cannot tell 'absent "
+        f"from the repository' from 'absent from the directory I was in'. stderr={result.stderr!r}"
+    )
+    assert result.returncode == 1, (
+        f"{flag}: expected exit 1 (complete, no match); got {result.returncode}. Exit 2 is the "
+        "INCOMPLETE contract and a defaulted-scope search that ran to completion is complete."
     )
 
 
-@pytest.mark.parametrize("flag", ["--ast", "--rank", "--semantic", "--stats"])
-def test_every_full_cli_flag_is_covered(flag: str) -> None:
-    """All four `_requires_full_cli` flags take this route, not just --ast.
+def test_a_matching_search_stays_silent(corpus: Path) -> None:
+    """CONTROL ARM: with matches, no note and exit 0.
 
-    The plan's first draft named only `--ast`. Covering one flag would have left three siblings
-    silent while the item read as closed.
+    Without this, printing the note unconditionally passes every test above while training callers
+    to ignore it.
     """
-    from tensor_grep.cli.bootstrap import _requires_full_cli
+    result = _run(corpus, "findable_marker", "--ast", "--lang", "python")
 
-    assert _requires_full_cli([flag, "PATTERN"]), (
-        f"{flag} no longer routes to the full CLI; this test's premise is stale and the fix may "
-        "be guarding a route this flag never takes"
+    assert _NOTE not in result.stderr, f"note fired on a successful search: {result.stderr!r}"
+    assert result.returncode == 0
+
+
+def test_an_explicitly_scoped_search_stays_silent(corpus: Path) -> None:
+    """CONTROL ARM: the caller chose the scope, so there is nothing to disclose."""
+    result = _run(corpus, "NO_MATCH_ZZZ", ".", "--ast", "--lang", "python")
+
+    assert _NOTE not in result.stderr, f"note fired on an explicit PATH: {result.stderr!r}"
+    assert result.returncode == 1
+
+
+@pytest.mark.parametrize("scope_flag", [["--glob", "*.py"], ["--max-depth", "1"]])
+def test_a_filter_scoped_search_stays_silent(corpus: Path, scope_flag: list[str]) -> None:
+    """AUDIT FINDING (MEDIUM): `paths_defaulted` is not "the caller chose no scope".
+
+    `--glob`/`--iglob`/`--type`/`--max-depth` ARE a chosen scope. The first cut printed
+    "no PATH was given, so the search defaulted to the current directory" for these — a false
+    positive that misdescribes what actually ran.
+    """
+    result = _run(corpus, "NO_MATCH_ZZZ", "--ast", "--lang", "python", *scope_flag)
+
+    assert _NOTE not in result.stderr, (
+        f"note fired on a filter-scoped search ({scope_flag}); the caller DID bound the scope: "
+        f"{result.stderr!r}"
     )
 
 
-def test_a_scoped_full_cli_search_is_not_covered_by_the_note() -> None:
-    """CONTROL ARM on the predicate itself: an explicit PATH must not be treated as defaulted.
+def test_quiet_suppresses_the_note(corpus: Path) -> None:
+    """AUDIT FINDING (LOW): `--quiet` promises no incidental output.
 
-    Without this, a fix that hard-codes the note into the branch (ignoring `paths_defaulted`)
-    passes the first test while printing on every scoped zero-result search.
+    The first cut emitted the note before the `quiet` branch, so a `--quiet` zero-result search
+    started writing stderr where it had been silent — an unmentioned contract change on the one
+    flag whose entire purpose is silence.
     """
-    from tensor_grep.cli.bootstrap import _search_args_include_explicit_path
+    result = _run(corpus, "NO_MATCH_ZZZ", "--ast", "--lang", "python", "--quiet")
 
-    assert _search_args_include_explicit_path(["--ast", "PATTERN", "src/"]) is True
-    assert _search_args_include_explicit_path(["--ast", "PATTERN"]) is False
+    assert _NOTE not in result.stderr, f"--quiet emitted an informational note: {result.stderr!r}"
