@@ -141,6 +141,47 @@ uv run pytest tests/unit/test_rust_core.py -q
 `RustCoreBackend().search(...)` returns real results — a stronger check than "the install didn't
 error," which can pass even when the extension silently failed to build (see Trap 8).
 
+### `uv run tg` is NOT your working tree — assert `__file__` before any behavioural claim
+
+`uv run --no-sync tg <args>` resolves `tg` from `.venv/Lib/site-packages/tensor_grep`, **not** from
+`src/`. On a box with a PATH-installed release as well, that is **three disagreeing `tg`s**, and
+nothing in the output says which one answered.
+
+Cost, measured 2026-07-28: two confidently-stated wrong conclusions in one session — a fix
+"verified" against a copy that predated it, and a phantom Python-vs-Rust divergence that was
+actually the same stale copy on both arms. The tell was there and skipped: *both arms read
+identical*, which should trigger "is my instrument loading my code?" before "I found a divergence."
+
+```bash
+# ALWAYS, before believing any measured tg behaviour:
+PYTHONPATH=src uv run --no-sync python -c "import tensor_grep.cli.main as m; print(m.__file__)"
+# must print ...\src\tensor_grep\cli\main.py -- if it says site-packages, every number is stale
+
+PYTHONPATH=src uv run --no-sync python -m tensor_grep.cli.bootstrap <args>   # not `uv run tg`
+```
+
+Use `bootstrap` rather than the console script: it is the real front door (`CliRunner` bypasses it),
+and it honours `PYTHONPATH`.
+
+### Editing `pyproject.toml` can destroy the venv mid-command
+
+`uv run --no-sync` re-syncs anyway when `pyproject.toml` changes. On Windows that sync deletes the
+venv and can then fail on `.venv/lib64` (a symlink) with `Access is denied`, leaving only
+`pyvenv.cfg` and a dangling link — every subsequent command dies with "No module named pytest".
+
+```bash
+# recover WITHOUT paying for a maturin rebuild (the Rust extension is the expensive part):
+powershell -c "(Get-Item .venv\lib64 -Force).Delete(); Remove-Item .venv -Recurse -Force"
+uv sync --no-install-project     # deps only, no cargo build
+uv pip install pytest            # dev extras are not covered by --no-install-project
+```
+
+`--no-install-project` leaves the compiled `rust_core` **absent**, so tests needing the native
+extension will fail. That is a degraded environment, not a regression: baseline any new failure by
+reverting your change and re-running before blaming it (`tests/unit/test_cli_modes.py::
+test_refs_json_deduplicates_parser_call_references` fails this way). Run a full `uv sync` when you
+need the extension back.
+
 ## Rebuilding after a Rust-side change
 
 | You changed... | Rebuild with | Typical time |
