@@ -13,7 +13,7 @@ tg doctor --json ROOT
 tg devices
 ```
 
-## Recommended sweep (v1.101.9)
+## Recommended sweep (v1.101.17)
 
 ```bash
 cd /path/to/workspace
@@ -39,32 +39,30 @@ tg agent agent-studio/.claude/lib/routing "task" --json
 tg dogfood --root . --output /tmp/dogfood-ws.json
 ```
 
-## Latest sweep (2026-07-28, tg 1.101.9, gotcontext-saddle)
+## Latest sweep (2026-07-28, tg 1.101.17, gotcontext-saddle)
 
 | Category | Result | Notes |
 | --- | --- | --- |
-| Symbol ladder / blast / orient / map / route-test / evidence / dogfood | ✅ | `agreement_details` true; evidence `checks.digest_valid` |
-| `tg agent` scoped + root `--deadline 90` | ✅ | scoped ~12s; root ~61s rc 0 non-partial (faster vs 1.101.7) |
-| lexical + trunc hard-stop | ✅ | lexical OK; trunc now honest **conf 0.72** + ask.required (was 0.9) |
-| **`tg prepare`** / `--out` / `--claim` | ✅ | ~6–8s (faster); `agent_id_hint` |
-| ledger Slice 1 rollup + Slice 2 | ✅ | list `.` sees subtree claim; find fresh |
-| `tg find` without dense | ✅ | BM25; install-dense hint; help mentions optional MaxSim |
-| GPU | ⚠️ | `unsupported` / cpu-fallback + explicit “not GPU proof” stderr |
-| Multi-project parent unscoped | ✅ | exit 2 refuse |
-| Bare `search --json` (no PATH) | ⚠️ | still ~1s exit 1 empty, no refuse stderr |
+| Symbol ladder / blast / orient / map / route-test / evidence / dogfood | ✅ | `agreement_details`; evidence `checks.digest_valid` |
+| `tg agent` scoped + root `--deadline 90` | ✅ | scoped ~7s; root ~**47s** (faster vs 1.101.9 ~61s) |
+| lexical + trunc hard-stop | ✅ | trunc conf **0.72** + ask.required |
+| **`tg prepare`** / `--out` / `--claim` | ✅ | ~7–8s; env `TG_LEDGER_AGENT_ID` attributed |
+| ledger Slice 1 + Slice 2 find | ✅ | list rollup; **`find .` sees `record core/hooks`** (skill was stale) |
+| `tg find` without dense | ✅ | BM25 + install-dense hint |
+| GPU | ⚠️ | `unsupported` / cpu-fallback + not-proof stderr |
+| Multi-project parent unscoped | ✅ | exit 2 + JSON `incomplete_reason` |
+| Bare `search` / `search --json` (no PATH) | ⚠️ | ~2s exit 1 empty, **no** refuse stderr (text also empty now) |
 | Cold doctor daemon | ✅ | autostart hint → warm running |
 
-Artifact: `/tmp/tg-dogfood-11019.json`. Prior same-day 1.101.7: `/tmp/tg-dogfood-11017.json`.
+Artifact: `/tmp/tg-dogfood-110117.json`.
 
 ## Trend
 
 | Version | PASS | TIMEOUT | Notable |
 | --- | ---: | ---: | --- |
-| 1.91.0 | 57 | 2 | prepare + install-dense |
-| 1.92.1 | saddle ✅ | — | prepare solid; ledger PATH footgun |
-| 1.93.x–1.95.0 | fixes ship | — | ledger rollup, prepare `--out`, GPU probe honesty |
 | 1.101.7 | saddle ✅ | — | agreement_details; bare-json PATH footgun |
-| **1.101.9** | **saddle ✅** | — | faster prepare/agent; trunc conf honesty; MaxSim in find help |
+| 1.101.9 | saddle ✅ | — | faster prepare/agent; trunc conf honesty |
+| **1.101.17** | **saddle ✅** | — | Slice 2 find repo-visible; agent root ~47s; bare text also silent-empty |
 
 ## Sibling skills
 
