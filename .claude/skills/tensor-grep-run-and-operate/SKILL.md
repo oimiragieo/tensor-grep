@@ -77,7 +77,7 @@ command name).
 | `tg doctor` | `PATH` | System/GPU/cache/AST/daemon/shell diagnostics |
 | `tg route-test PATH "query"` | `PATH QUERY` | Diagnose routing agreement between `context-render` and `edit-plan` for one query -- reports `agreement`/`warnings` |
 | `tg prepare PATH "task"` | `PATH QUERY` | One-call edit readiness: composes orient→search→agent→route-test→callers→evidence→ledger into a single call (primary target, confidence, blast-radius floor, validation commands, claim/evidence coordination hooks) |
-| `tg ledger claim\|release\|list\|record\|find` | (subcommand-driven) | Advisory multi-agent coordination: claim/release/list a symbol/file scope (Slice 1); record/find a content-addressed finding for reuse (Slice 2, still literal-path-rooted) |
+| `tg ledger claim\|release\|list\|record\|find` | (subcommand-driven) | Advisory multi-agent coordination: claim/release/list a symbol/file scope (Slice 1); record/find a content-addressed finding for reuse (Slice 2, repo-root canonicalized since #850) |
 | `tg dogfood` | (flag-driven) | Wraps `agent_readiness.py` into one verdict + JSON |
 | `tg upgrade` | — | Upgrade the installed `tensor-grep` package |
 | `tg calibrate` | -- (no positional; delegates to the native binary) | Measure CPU-vs-GPU crossover thresholds; exit 1 with a remediation pointer if no CUDA-enabled native binary is installed (#596). See `docs/gpu_crossover.md`. |
@@ -177,8 +177,11 @@ Never blocks an edit — a claim is advisory, and overlaps are reported for the 
 enforced. Slice 1 (`claim`/`release`/`list`, `main.py:16297`/`16415`/`16523`) canonicalizes its store to
 the nearest `.git` ancestor (worktree-aware; v1.93.0/#706 — before this, each command resolved the store
 from the literal PATH argument, so `claim core/hooks` + `list .` silently used two different stores).
-Slice 2 (`record`/`find`, `main.py:4625`/`16686`) is **unchanged and still literal-path-rooted** — do
-not assume it inherited the Slice-1 fix. `find`'s exit contract is a distinct 3-state family from §11a's
+Slice 2 (`ledger_record` `main.py:17323` / `ledger_find` `main.py:17417`) got the SAME fix in #850
+(v1.101.16): both call `_ledger_physical_root`, so `record core/hooks` + `find .` now hit one store.
+This line said "unchanged and still literal-path-rooted" for three releases after it stopped being
+true -- a reader would treat a subtree miss as expected instead of a regression, or avoid Slice 2
+entirely. Re-grep the `main.py:NNNNN` cites; they drift every release. `find`'s exit contract is a distinct 3-state family from §11a's
 symbol-command contract: `0` = at least one fresh finding (revision matches, safe to reuse); `1` =
 nothing matched, or matches exist but none are fresh (recompute); `2` = fail-closed (missing `--symbol`,
 corrupt index/blob). Full command reference: `tensor-grep-ledger`.

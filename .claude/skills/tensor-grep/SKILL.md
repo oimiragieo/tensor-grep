@@ -111,7 +111,7 @@ A resolved zero-caller result is NOT dead code either — the call graph can't s
 
 **`tg install-dense`:** once per host; post-install `tg find` drops the BM25-only `rank_fallback_reason` (the fallback message itself now leads with `tg install-dense` when dense is absent).
 
-**`tg ledger`:** claim/release/list/record/find — see `tensor-grep-ledger`. Slice 1 (claim/release/list) is PATH-canonicalization-fixed (A13); Slice 2 (record/find) is still literal-path-rooted.
+**`tg ledger`:** claim/release/list/record/find — see `tensor-grep-ledger`. Slice 1 (claim/release/list) AND Slice 2 (record/find) are both PATH-canonicalization-fixed -- Slice 1 by A13, Slice 2 by #850 (v1.101.16). Both canonicalize to the nearest `.git` ancestor via `_ledger_physical_root`.
 
 **Unscoped multi-project search refuses fast (~1.7s, not a silent 60s timeout).** A single `IMPLICIT_SEARCH_WALK_FILE_CEILING=1500` fast-refuse fires on any defaulted PATH >1500 files, coherent across all 3 doors (bootstrap probe, `main.py`, `rg_passthrough.rs`); escape hatches are an explicit PATH, `--max-depth`, or `--allow-broad-generated-scan` — `--glob`/`--type` alone do NOT bypass it when the path was defaulted. Prefer per-repo for deep `--type ts`.
 
