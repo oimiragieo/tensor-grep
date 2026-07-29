@@ -978,6 +978,65 @@ treated as the problem.
   (the locked version satisfies the range; a cap excluding the lock is the silent-downgrade trap).
 - **A cap is not a port.** Say so in the comment *and* the guard, or someone lifts it to "clean up".
 
+### A checker nobody can run is indistinguishable from no checker
+
+`.claude/skill_anchor_audit.py` exists precisely to catch `file:line` drift in the skill library. It
+had not caught any, for two reasons that both look like "the tool is fine":
+
+1. It **crashed** — `path.is_file()` raised `OSError WinError 1920` on a dangling symlink inside a
+   nested venv, aborting before it checked a single anchor. The skip list already excluded that
+   tree; it was applied *after* the `stat()`.
+2. Once it ran, it **drowned its own signal** — 762 `AMBIGUOUS_PATH` findings, because the index
+   walked `.venv/` and `.claude/worktrees/*`, so `pyproject.toml:43` resolved to 14 copies.
+
+Both fixed, and the real signal appeared immediately: 3 genuine `SYMBOL_MOVED`. **Before trusting
+that a class of defect is absent, confirm its detector RUNS and DISCRIMINATES.** A crash and a
+clean bill are the same silence from outside. Same family as the false-zero law, applied to your
+own tooling.
+
+### Cite the SYMBOL, not the line — and never re-stamp
+
+`src/tensor_grep/cli/repo_map.py` is over 19,000 lines and grows every release. Its seam citations
+in `tensor-grep-change-control` were adrift by **283 to 515 lines** — all five of them:
+
+```
+_imports_and_symbols_for_path     6244 -> 6627      build_symbol_source_from_map  15815 -> 16326
+_target_language_for_path         7383 -> 7867      _SUPPORTED_FILE_DEPENDENCY_L  16633 -> 17148
+```
+
+**Five previous maintenance passes re-stamped these by hand, and every one shipped anchors that
+were already wrong** (the auditor's own docstring records this). Re-stamping is not a fix; it is
+the defect on a slower clock. Replace the number with a `grep <symbol>` instruction and keep the
+`was -> now` drift beside it as the receipt.
+
+Corollary: **"confirmed byte-stable" has a short half-life, and asserting it discourages the check
+that would catch the drift.** `tensor-grep-architecture-contract` claimed all 4 command-registration
+sites byte-stable at v1.95.0 while being wrong about 4 of 4 — and contradicted its own correct table
+two paragraphs above.
+
+### A rate limit is not a result
+
+A fan-out that throttles returns **zero findings for the skills it never read**, and zero findings
+is what a clean audit also returns. 3 of 13 agents hit an API rate limit; that silently meant 7 of
+28 skills were unaudited. Retrying the same run (`resumeFromRunId`, so successes replay from cache)
+recovered 13/13 and surfaced **15 more findings**, including all five stale seams above.
+
+- Label a throttled batch UNAUDITED, never "clean", at the point of reporting.
+- Retry in smaller waves before concluding anything; the throttle usually clears in minutes.
+- If it re-limits, fall back to a CLI on a separate quota — it does not share the Anthropic limit.
+
+### Fixing the instance is not fixing the class — in DOCS too
+
+`AGENTS.md` already carries "model the class, don't enumerate the cases" for code. It applies
+verbatim to documentation. A dogfood reported that one skill wrongly said ledger Slice 2 was "still
+literal-path-rooted"; that skill was corrected. **A grep of the library found the identical false
+claim in three more skills** — and the class grep beat a 12-agent parallel audit, which found only
+two of the three.
+
+The dangerous shape is specifically **a doc asserting something is BROKEN when it is fixed**: a
+reader hits the symptom, files it as expected behaviour, and works around a feature that works. When
+a dogfood falsifies one doc claim, grep every doc for that claim before closing it.
+
 **MAINTENANCE: this family is MIRRORED, so adding a form is a TWO-FILE EDIT, always.** This section
 is canonical; `tensor-grep-validation-and-qa`'s Part 0 carries the same family for cheap-session
 readers. Grep BOTH files for the next number before assigning it, and update the mirror in the same
