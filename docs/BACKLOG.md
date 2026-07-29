@@ -754,13 +754,21 @@ whole file's tests exist to catch. Now a `sys.platform == "win32"` strict xfail.
 itself is unexplained and worth root-causing** — two platforms taking different routes through the
 same flag is a latent source of Windows-only behaviour gaps.
 
-**STILL OPEN — the A1b class ratchet reports 9 candidate silent emitters.** A first run of
-`test_disclosure_covers_every_incompleteness_emitter.py` flagged `_run_ast_scan_payload`,
-`docs_coverage`, `codemap`, `_agent_trustworthy_deadline_partial_note`, `_build_route_test_payload`,
-`_build_prepare_blast_radius_floor`, `_build_prepare_payload`, `impact`, `scan`. **These are NOT yet
-confirmed defects** — several almost certainly disclose through a surface the matcher does not know
-about (e.g. `docs_scan_incompleteness_lines`, the `PARTIAL:` prefix, the `INCOMPLETE SCAN` banner).
-Triage each before treating any as a bug; reporting 9 false P0s would be worse than the gap.
+**RESOLVED — the A1b class ratchet's 9 candidates were ALL false positives.** Triaged rather than
+reported: every one carried 7-29 disclosure signals through a surface the matcher did not know
+about. Two matcher defects, both fixed:
+
+1. The disclosure list held only helper-function names. Real emitters disclose via literal banner
+   text (`codemap`'s `PARTIAL:` prefix, `scan`'s `INCOMPLETE`) and via helpers the list omitted
+   (`_docs_scan_is_unreadable_truncated`). A literal banner IS a disclosure surface; requiring a
+   helper call would force every emitter through one function for the checker's convenience.
+2. The read-matcher matched `payload["partial"]`, which also matches the ASSIGNMENT
+   `payload["partial"] = True`. That flagged `_run_ast_scan_payload`, a payload BUILDER whose job
+   is precisely to stamp the field — the disclosure belongs downstream. **A producer is not a
+   presenter**, and a checker that cannot tell them apart reports correct code as broken.
+
+Net: 0 real defects, and the ratchet now discriminates. Had these shipped as findings it would have
+been 9 false P0s — worse than the gap the ratchet exists to close.
 
 
 ## SHIPPING — open PRs (drain one-per-publish) — task #117
