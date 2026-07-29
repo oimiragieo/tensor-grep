@@ -180,9 +180,12 @@ dispatches them straight to the Python passthrough (`Commands::Session`, `main.r
 
 ## MCP server
 
-`cli/mcp_server.py` runs a `FastMCP("tensor-grep")` server (`mcp_server.py:82`) at a pinned
-contract version (`_TG_MCP_SERVER_CONTRACT_VERSION = "1.0.0"`, `mcp_server.py:74`) exposing 45
-`@mcp.tool()`-decorated functions. They group into:
+`cli/mcp_server.py` runs a `FastMCP("tensor-grep")` server (`mcp_server.py:189`) at a pinned
+contract version (`_TG_MCP_SERVER_CONTRACT_VERSION = "1.7.0"`, `mcp_server.py:138`) exposing 58
+tools. Note the count is NOT the number of `@mcp.tool()` decorators (12) -- most tools register
+through `_register_legacy_tool`, which calls `mcp.tool()` only when legacy tools are enabled, so
+grepping the decorator undercounts by ~46. The authoritative number is
+`len(_MCP_TOOL_CAPABILITIES)`. They group into:
 
 - repo-map/context: `tg_repo_map` (`mcp_server.py:1819`), `tg_context_pack` (`1865`),
   `tg_edit_plan` (`1910`), `tg_context_render` (`1981`), `tg_agent_capsule` (`2056`)
