@@ -315,7 +315,7 @@ in project memory for the full incident writeup, and `tensor-grep-change-control
 ## 4. PageRank / centrality — and why `tg orient` deliberately does NOT use it
 
 tg has a real, hand-rolled **personalized PageRank** implementation over the reverse-import graph:
-`_personalized_reverse_import_pagerank` (`src/tensor_grep/cli/repo_map.py:8897`) — damping
+`_personalized_reverse_import_pagerank` (`src/tensor_grep/cli/repo_map.py:8914`) — damping
 factor `alpha=0.85` (the standard Google PageRank default), `12` power-iteration steps, a
 personalization vector seeded uniformly over up to `_GRAPH_PAGERANK_SEED_FILE_LIMIT = 64` query-
 relevant files (`repo_map.py:319`), teleporting back to those seeds rather than to a uniform distribution.

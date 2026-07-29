@@ -42,7 +42,7 @@ flag-flip** (see Phase 5).
 > front doors at `bootstrap.py:70` [`_TG_ONLY_SEARCH_FLAGS`, keeps it off the
 > rg-passthrough] and `bootstrap.py:478` [`_can_delegate_to_native_tg_search`'s
 > `unsupported_flags`, keeps it off native-Rust delegation]) gated on the optional
-> `semantic` extra (`pyproject.toml:606`, `model2vec>=0.5`+`numpy>=1.26`; all four
+> `semantic` extra (`pyproject.toml:620`, `model2vec>=0.5`+`numpy>=1.26`; all four
 > citations re-verified 2026-07-24 against v1.96.0). **Sections 1-2 below still
 > describe the PRE-BUILD state and are now WRONG on the "does not exist yet" claims —
 > read them as historical design intent, not current fact.** No `tg index` command
@@ -534,7 +534,7 @@ drifted; date-stamp any change.
   Re-check: `grep -m1 release_docs_current_tag AGENTS.md` and `grep -m1 '"version"' npm/package.json`.
 - **Dense leg + RRF now shipped:** `ls src/tensor_grep/core/retrieval_dense.py src/tensor_grep/core/retrieval_fusion.py`;
   `grep -n "\-\-semantic" src/tensor_grep/cli/main.py src/tensor_grep/cli/bootstrap.py`;
-  `grep -n "semantic = " pyproject.toml` (the optional extra, now at `pyproject.toml:606`).
+  `grep -n "semantic = " pyproject.toml` (the optional extra, now at `pyproject.toml:620`).
 - **BM25 leg + defaults:** `Read src/tensor_grep/core/retrieval_bm25.py` (`DEFAULT_K1=1.5`,
   `DEFAULT_B=0.75`, `retrieval_bm25.py:18-19`), `retrieval_chunker.py` (chunk_size=30, overlap=5,
   `MAX_CHUNKS=100_000` at `retrieval_chunker.py:37`) — all re-verified 2026-07-24 against v1.96.0.
