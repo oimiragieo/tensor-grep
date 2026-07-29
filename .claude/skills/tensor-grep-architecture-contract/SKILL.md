@@ -38,12 +38,12 @@ description: Use when you need the load-bearing design of tensor-grep and WHY it
 
 ## The front door: intercept before Typer
 
-`tg` is not "a Typer app." The published entry point is `bootstrap.main_entry` (`src/tensor_grep/cli/bootstrap.py:1398` -- re-grep `^def main_entry`, this has drifted twice). It parses `argv` itself and, for a **plain text search**, forwards to the native `tg` binary or to ripgrep *before Typer ever runs* (`bootstrap.py:1187-1260` — from the `_normalize_search_invocation` call through the final `_run_rg_passthrough` dispatch, traced and confirmed this pass). The Typer app is only reached for TG-only flags, help, or commands that require full CLI (`_requires_full_cli`, `bootstrap.py:396`).
+`tg` is not "a Typer app." The published entry point is `bootstrap.main_entry` (`src/tensor_grep/cli/bootstrap.py:1444` -- re-grep `^def main_entry`, this has drifted twice). It parses `argv` itself and, for a **plain text search**, forwards to the native `tg` binary or to ripgrep *before Typer ever runs* (re-grep `_run_rg_passthrough` — the dispatch runs from the `_normalize_search_invocation` call through the final `raise SystemExit(_run_rg_passthrough(...))`; traced live 2026-07-29 and confirmed a bare `tg search PAT` exits THERE, never reaching Typer). The Typer app is only reached for TG-only flags, help, or commands that require full CLI (`_requires_full_cli`, `bootstrap.py:396`).
 
 Why this matters, concretely:
 
 - **CliRunner cannot see routing bugs.** It invokes the Typer app directly, so any bug in `bootstrap` routing (a flag that leaks to `rg`, a fork-bomb delegation loop, a wrong native/Python choice) is **invisible** to CliRunner tests and green in CI while broken for real users. This is exactly how the `--rank` plain-text crash shipped (AGENTS.md §"Dogfood the Real Binary, Not CliRunner", `AGENTS.md:422`). **Rule: verify front-door behavior against the REAL published binary** via `scripts/dogfood/` (Dockerfile + `dogfood_features.py`), never CliRunner alone.
-- **Two mutual-delegation fork-bomb hazards are guarded, not theoretical.** `TG_REEXEC_GUARD` (checked at `bootstrap.py:1207`) stops native→python→native search loops; `_json_aggregate_blocks_passthrough` (`bootstrap.py:488`) stops `--json` + a render-only flag (e.g. `-b`) from deadlocking the native front door; `_run_requires_ast_workflow` (`bootstrap.py:1339`) keeps `tg run --selector/--strictness/--stdin/--globs` in Python so it does not ping-pong. If you touch delegation, you can re-arm a fork bomb — see `tensor-grep-failure-archaeology`.
+- **Two mutual-delegation fork-bomb hazards are guarded, not theoretical.** `TG_REEXEC_GUARD` (checked at `bootstrap.py:1497`) stops native→python→native search loops; `_json_aggregate_blocks_passthrough` (`bootstrap.py:488`) stops `--json` + a render-only flag (e.g. `-b`) from deadlocking the native front door; `_run_requires_ast_workflow` (`bootstrap.py:1385`) keeps `tg run --selector/--strictness/--stdin/--globs` in Python so it does not ping-pong. If you touch delegation, you can re-arm a fork bomb — see `tensor-grep-failure-archaeology`.
 
 ## Native-vs-Python routing (the decision tree)
 
@@ -76,7 +76,7 @@ This is a **universal bug class**: "register in N places, miss one, fail *quietl
 | # | Site | File |
 |---|---|---|
 | 1 | `KNOWN_COMMANDS` set | `src/tensor_grep/cli/commands.py:9` |
-| 2 | `Commands::X` variant + dispatch arm | `rust_core/src/main.rs:889` (enum); e.g. `Commands::Prepare`/`Commands::Ledger` dispatch arms at `main.rs:5456`/`5451` |
+| 2 | `Commands::X` variant + dispatch arm | `rust_core/src/main.rs:910` (enum); e.g. `Commands::Prepare`/`Commands::Ledger` dispatch arms at `main.rs:6691`/`6686` |
 | 3 | `PUBLIC_TOP_LEVEL_COMMANDS` (parity test) | `tests/e2e/test_routing_parity.py:46` |
 | 4 | `@app.command` function | `src/tensor_grep/cli/main.py` |
 
@@ -313,8 +313,8 @@ undetected staleness actually touched. Re-verify anything volatile before relyin
 
 - **Version:** `grep '^version' pyproject.toml` (was `1.95.0`).
 - **Front-door entry point:** read `def main_entry` in `src/tensor_grep/cli/bootstrap.py` (:1398 as of 2026-07-27 -- grep the symbol, not the line) and confirm `pyproject.toml`/`packaging` still points `tg` at `tensor_grep.cli.bootstrap:main_entry`.
-- **Command registration sites (4):** `commands.py:9` (`KNOWN_COMMANDS`), `rust_core/src/main.rs:889` (`enum Commands`; `Commands::Prepare`/`Commands::Ledger` dispatch arms at `:5456`/`:5451`), `tests/e2e/test_routing_parity.py:18` (`PUBLIC_TOP_LEVEL_COMMANDS`), `@app.command` in `src/tensor_grep/cli/main.py`. (All 4 confirmed byte-stable at v1.95.0 — the only registration-table entry that drifted was the flag front door below.)
-- **Flag front doors (2):** `rust_core/src/main.rs:183` (`SEARCH_PYTHON_PASSTHROUGH_FLAGS`, stable), `bootstrap.py:50` (`_TG_ONLY_SEARCH_FLAGS`, moved from `:38`).
+- **Command registration sites (4):** `commands.py:9` (`KNOWN_COMMANDS`), `rust_core/src/main.rs:910` (`enum Commands`; `Commands::Prepare`/`Commands::Ledger` dispatch arms at `:6691`/`:6686`), `tests/e2e/test_routing_parity.py:46` (`PUBLIC_TOP_LEVEL_COMMANDS`), `@app.command` in `src/tensor_grep/cli/main.py`. **Re-grep these, do not trust the numbers.** The v1.95.0 pass called all 4 "byte-stable"; by 2026-07-29 the enum had moved 889->910, the dispatch arms 5456/5451->6691/6686 (over 1,200 lines), and `PUBLIC_TOP_LEVEL_COMMANDS` 18->46 -- while this very section still asserted stability, and contradicted the table above it, which had the right number for `PUBLIC_TOP_LEVEL_COMMANDS` all along. A "confirmed stable" claim about a growing file is a claim with a short half-life.
+- **Flag front doors (2):** `rust_core/src/main.rs:204` (`SEARCH_PYTHON_PASSTHROUGH_FLAGS`), `bootstrap.py:50` (`_TG_ONLY_SEARCH_FLAGS`, moved from `:38`).
 - **Native-delegation cites (3):** `main.py:3709` (`_can_delegate_to_native_tg_search`), `main.py:3709` (`_build_native_tg_search_command`), `main.py:3731` (`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`).
 - **A9 walk-ceiling:** `grep -n IMPLICIT_SEARCH_WALK_FILE_CEILING src/tensor_grep/io/scan_limits.py` (moved from `directory_scanner.py`, which now only re-exports it at `:34`); `grep -n _search_paths_include_oversized_implicit_root src/tensor_grep/cli/bootstrap.py`.
 - **A10/A15 dynamic_unresolved:** `grep -n dynamic_unresolved src/tensor_grep/cli/repo_map.py`.

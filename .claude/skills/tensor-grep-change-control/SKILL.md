@@ -156,7 +156,7 @@ Rule 6 is easy to underrate: if you touch `.github/workflows/ci.yml`, `.github/w
 
 | # | Front door | File | Verified anchor |
 |---|---|---|---|
-| 1 | `SEARCH_PYTHON_PASSTHROUGH_FLAGS` (native allowlist) | `rust_core/src/main.rs` | `:183` |
+| 1 | `SEARCH_PYTHON_PASSTHROUGH_FLAGS` (native allowlist) | `rust_core/src/main.rs` | grep `SEARCH_PYTHON_PASSTHROUGH_FLAGS` (was `:183`, now `:204`) |
 | 2 | `bootstrap._TG_ONLY_SEARCH_FLAGS` (Python bootstrap allowlist) | `src/tensor_grep/cli/bootstrap.py` | `:50` (checked at `:355`) |
 
 **Why / incident:** The `tg search --rank` flag missed one of the two front doors. CliRunner tests were green — because CliRunner bypasses the bootstrap front door (Part 5) — so the crash shipped and only surfaced for users of the published binary (`AGENTS.md:405-410`). The **CI registration-completeness gate is BLOCKING since v1.17.1 (#282)** and its extractor is comment-aware (`#`-commented entries are not counted as registered) (`AGENTS.md:414`).
@@ -192,15 +192,15 @@ language works for some commands and quietly does nothing for others):
 
 | # | Seam | Feeds | File | Verified anchor |
 |---|---|---|---|---|
-| 1 | `_imports_and_symbols_for_path` | `tg imports` (import list + symbols) | `repo_map.py` | `:6244`; per-language branches at `:6272-6287` |
+| 1 | `_imports_and_symbols_for_path` | `tg imports` (import list + symbols) | `repo_map.py` | grep `def _imports_and_symbols_for_path` (was `:6244`, now `:6627`; branches `:6650-6679`) |
 | 2 | `_imports_with_lines_for_path` | `tg imports`' line-numbered spans | `repo_map.py` | `:6440` — currently dispatches only python/javascript/typescript/rust/java; go/php/csharp fall through to `[]` here today (matches seam 5's exclusion below) |
-| 3 | `build_symbol_source_from_map` | `tg source` | `repo_map.py` | `:15815`; per-language branches at `:15853-15860` |
-| 4 | `_target_language_for_path` | **MOST-FORGOTTEN.** Feeds the `tg agent` capsule's query-language-vs-target-language confidence gate (`agent_capsule.py`) | `repo_map.py` | `:7383` — the function's own comments say "MOST-FORGOTTEN seam" at each of the 4 newest branches (`:7396`, `:7403`, `:7407`, `:7411`); skip it and the capsule can silently report "no target language" for a real target instead of downgrading confidence honestly |
-| 5 | `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` | `tg imports <file>`'s file-dependency-resolution "supported" gate | `repo_map.py` | `:16633` — currently `{python, javascript, typescript, rust, java}`; go/php/csharp are deliberately excluded (their `import_update_target` is still `None`, a tracked follow-up), so those files get an honest `result_incomplete=True` instead of a silently-empty resolved-imports list |
+| 3 | `build_symbol_source_from_map` | `tg source` | `repo_map.py` | grep `def build_symbol_source_from_map` (was `:15815`, now `:16326` -- 511 lines adrift) |
+| 4 | `_target_language_for_path` | **MOST-FORGOTTEN.** Feeds the `tg agent` capsule's query-language-vs-target-language confidence gate (`agent_capsule.py`) | `repo_map.py` | grep `def _target_language_for_path` (was `:7383`, now `:7867`) -- the function's own comments say "MOST-FORGOTTEN seam" at each of the 4 newest branches, grep that phrase rather than trusting sub-line numbers; skip it and the capsule can silently report "no target language" for a real target instead of downgrading confidence honestly |
+| 5 | `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` | `tg imports <file>`'s file-dependency-resolution "supported" gate | `repo_map.py` | grep `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` (was `:16633`, now `:17148`) -- currently `{python, javascript, typescript, rust, java}`; go/php/csharp are deliberately excluded (their `import_update_target` is still `None`, a tracked follow-up), so those files get an honest `result_incomplete=True` instead of a silently-empty resolved-imports list |
 
 **Fail closed for a missing grammar.** Every language added since the registry existed
 (go/java/php/csharp) sets `provenance_when_missing="grammar-missing"` in its `register_language(...)`
-call (e.g. `repo_map.py:6090` for go) — never `"regex-heuristic"` — so a file whose tree-sitter grammar
+call (grep `language_id="go"`; was `repo_map.py:6090`, now ~`:6368`) — never `"regex-heuristic"` — so a file whose tree-sitter grammar
 package isn't installed surfaces as an honest `resolution_gaps` entry via
 `_language_coverage_gaps_for_universe` (`repo_map.py:8461`, the fail-closed branch at `:8019`) instead
 of a silent empty result. This is Part 4's Backend Fail-Closed Contract, applied inside the language
@@ -229,7 +229,7 @@ moment a rebase silently drops a language (see Part 7's sequential-drain corolla
 **Concrete example outside `backends/` (the same contract, a different subsystem):** the multi-language
 symbol registry (Part 3) applies this identically. `LanguageSpec.provenance_when_missing` must be
 `"grammar-missing"` (never `"regex-heuristic"`) for any language with no text-heuristic fallback —
-go/java/php/csharp all set it this way in their `register_language(...)` call (e.g. `repo_map.py:6090`)
+go/java/php/csharp all set it this way in their `register_language(...)` call (grep `language_id="go"`; was `repo_map.py:6090`, now ~`:6368`)
 — so `_language_coverage_gaps_for_universe` (`repo_map.py:8461`) can tell "grammar not installed, fail
 closed" apart from "language has a regex fallback, degrade quietly" at its branch on line `:8019`. Get
 this backwards (label a no-fallback language `"regex-heuristic"`) and a grammar-missing file would read

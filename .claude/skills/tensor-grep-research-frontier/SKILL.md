@@ -203,7 +203,7 @@ dogfood-#1 footgun: claims were scoped to the LITERAL PATH argument (a physical 
 resolved its store dir from PATH, so `claim core/hooks` + `list .` silently used two different
 stores) — fixed via canonicalization to the nearest `.git` ancestor (worktree-aware) + a stored
 `ClaimRecord.scope` field + subtree-rollup `list` + fail-closed bare-path release. **Slice 2
-(`record`/`find`) did NOT get this fix — it remains literal-path-rooted, a known open footgun.**
+(`record`/`find`) DID get this fix in #850 (v1.101.16) -- both entry points now canonicalize via `_ledger_physical_root`, on the same terms as Slice 1. The former "known open footgun" is closed.**
 
 **Result — CLOSED, not open-ended:** the operator/reference documentation for this surface now lives
 in its own registered skill, `tensor-grep-ledger` (plus `tensor-grep-enterprise-review-bundle` for the

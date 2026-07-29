@@ -66,7 +66,32 @@ _CITATION = re.compile(
 # check, it is a decoration.
 _SYMBOL_BEFORE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]*)`[^`]{0,80}`?$")
 
-_SKIP_PATH_PARTS = ("node_modules", ".git", "__pycache__")
+# Anything that holds a COPY of the source tree. Without these the index picks up
+# `.venv/Lib/site-packages/tensor_grep/...`, `rust_core/.venv/...`, and every
+# `.claude/worktrees/*` checkout, so an ordinary citation like `pyproject.toml:43` resolves to
+# 14 files and is reported AMBIGUOUS. That produced 762 ambiguous findings and zero usable
+# signal -- a checker that cannot discriminate is not a checker. Verified: the same run drops to
+# a handful of real findings once the duplicate trees are excluded.
+_SKIP_PATH_PARTS = (
+    "node_modules",
+    ".git",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "worktrees",
+    "site-packages",
+    "target",
+    "dist",
+    "build",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "bench_data",
+    "bench_ast_data",
+    "gpu_bench_data",
+    "external_repos",
+    "htmlcov",
+)
 
 
 def _repo_root(start: Path) -> Path:
@@ -91,9 +116,20 @@ def _build_path_index(root: Path) -> dict[str, list[Path]]:
     """
     index: dict[str, list[Path]] = {}
     for path in root.rglob("*"):
-        if not path.is_file():
-            continue
+        # Skip BEFORE stat()-ing. A dangling symlink inside a nested venv
+        # (`rust_core/.venv/bin/python` -> a Linux interpreter that does not exist on Windows)
+        # raises OSError WinError 1920 from `is_file()` and aborted the entire audit before it
+        # checked a single anchor -- which is why this tool had stopped being run at all. The
+        # skip list already excludes those trees; applying it first makes the exclusion actually
+        # protective instead of merely intended.
         if any(part in _SKIP_PATH_PARTS for part in path.parts):
+            continue
+        try:
+            if not path.is_file():
+                continue
+        except OSError:
+            # Unreadable entry (dangling link, permission, reparse point). Not indexable, and a
+            # crash here would take the whole audit down for one bad file.
             continue
         rel = path.relative_to(root)
         parts = rel.parts
