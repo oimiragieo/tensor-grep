@@ -1,6 +1,92 @@
 # CHANGELOG
 
 
+## v1.101.21 (2026-07-30)
+
+### Bug Fixes
+
+- **skills**: Guard against unstaged .claude/skills/ dogfood edits (task 336-25)
+  ([#865](https://github.com/oimiragieo/tensor-grep/pull/865),
+  [`db9e82f`](https://github.com/oimiragieo/tensor-grep/commit/db9e82f9c38fcfebfde4ca387a5b0ba060155374))
+
+Three times this campaign a live-dogfood SKILL.md correction (once a reversal telling agents a
+  previously-broken thing was fixed) sat MODIFIED but unstaged in the main checkout -- one `git
+  checkout -b`/`git stash` from being lost.
+
+Add scripts/check_unstaged_skill_edits.py: a small script (not a git hook, no operator git-config
+  consent needed) that reports any file under .claude/skills/ with an unstaged working-tree change
+  via `git diff --name-only` (no --cached), which by construction ignores staged and committed
+  edits. Silent and exit 0 on a clean tree; exit 1 with a clear file list when it fires. Covered by
+  tests/unit/test_unstaged_skill_edit_guard.py against a real temp git repo (deliberate unstaged
+  edit reported; clean tree silent; staged and committed edits do not fire; a partially-staged
+  remainder still fires).
+
+Documented as a pre-branch-switch step in tensor-grep-change-control's local validation section;
+  deliberately not wired into CI since a CI checkout is always clean and could never exercise it.
+
+### Documentation
+
+- Review layers are orthogonal, plus the 1.101.19 dogfood skill stamps
+  ([#863](https://github.com/oimiragieo/tensor-grep/pull/863),
+  [`bf3c570`](https://github.com/oimiragieo/tensor-grep/commit/bf3c5701b5ef3759f792fbfaa28b5ae9755c3900))
+
+FOUR LAWS from one feature going through four independent review layers.
+
+1. REVIEW LAYERS ARE ORTHOGONAL, NOT REDUNDANT. The defaulted-scope search note went through plan
+  audit, external code audit, CI, and live dogfood. They found 12 defects with essentially ZERO
+  overlap:
+
+plan audit 5 criteria no state satisfies together; a severity self-downgrade codex 4 three control
+  arms that PASS with the fix reverted; a false-positive note for filter-scoped searches; a --quiet
+  contract change CI 2 --stats routes differently on Windows vs Linux; a verbatim string pin in a
+  test I never opened dogfood 1 a THIRD dispatch route (--json) neither earlier fix reached
+
+None was reachable from another layer's vantage point. Skipping a layer does not cost a FRACTION of
+  the defects, it costs a CATEGORY.
+
+2. ONE SYMPTOM, REPORTED REPEATEDLY, CAN BE N DIFFERENT BUGS. "bare tg search is silent" across four
+  releases was THREE dispatch routes, not one stubborn bug. Every fix was correct; the reporter's
+  next invocation just took a different route. When a symptom survives a fix you verified, enumerate
+  the ROUTES rather than doubting the fix.
+
+3. A CONTROL ARM THAT SURVIVES THE REVERT IS NOT A CONTROL ARM. Three of four I wrote still passed
+  with the fix reverted -- they exercised pre-existing helpers. Includes the mechanical apply -R
+  check, and the related rule: grep every test/doc for a user-facing string BEFORE changing it, and
+  fix a broken verbatim pin with a SUBSTANCE assertion rather than a new verbatim pin (which only
+  relocates the tripwire).
+
+4. A CHECKER THAT CANNOT TELL A PRODUCER FROM A PRESENTER REPORTS CORRECT CODE AS BROKEN. All 9
+  candidates from the new class ratchet were false positives: the disclosure list held only helper
+  names while real emitters use literal banner text, and the read-matcher matched an ASSIGNMENT as a
+  read, flagging a payload builder. Triage every candidate before reporting any.
+
+Also lands the 1.101.19 live-dogfood skill stamps, which were sitting uncommitted in the working
+  tree and would have been lost -- third time this campaign that dogfood corrections needed rescuing
+  from an unstaged state.
+
+- **backlog**: Refresh CURRENT STATE to v1.101.19 and point the queue at TASK_BOARD.md
+  ([#864](https://github.com/oimiragieo/tensor-grep/pull/864),
+  [`b7a94c2`](https://github.com/oimiragieo/tensor-grep/commit/b7a94c27e7818bd6052160db77e6c0410ead6acd))
+
+Audit item A3. BACKLOG.md's CURRENT STATE header claimed "v1.98.11 (2026-07-25)" while PyPI is at
+  1.101.19 -- 21 versions and five days stale, on the one section the file labels "authoritative".
+
+PER-SURFACE VERIFICATION FIRST, per the plan audit's requirement. The old NEXT CAMPAIGN section
+  listed silent-Exit(2) surfaces as open. Each was checked individually against HEAD before any
+  deletion: map, context, agent, edit-plan, blast-radius, inventory, scan, codemap, route-test,
+  prepare and docs-coverage all lead their text output with a disclosure, and imports/orient were
+  closed by #854. Deleting them on the assumption they were fixed would have been the
+  already-shipped mistake in reverse -- removing a still-open item.
+
+QUEUE OWNERSHIP MADE EXPLICIT. This file is 135KB of campaign history: valuable as the archive of
+  WHY, useless as a work queue, and actively harmful when read as one. The header now says the live
+  queue is docs/TASK_BOARD.md and that reconciling beats adding a third list -- the exact trap the
+  audit flagged.
+
+The v1.98.11 --json-family block is relabelled HISTORICAL rather than deleted; it is the best
+  surviving write-up of the renderer-picks-the-engine root generator.
+
+
 ## v1.101.20 (2026-07-30)
 
 ### Bug Fixes
