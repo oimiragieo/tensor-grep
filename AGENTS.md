@@ -1025,6 +1025,71 @@ recovered 13/13 and surfaced **15 more findings**, including all five stale seam
 - Retry in smaller waves before concluding anything; the throttle usually clears in minutes.
 - If it re-limits, fall back to a CLI on a separate quota — it does not share the Anthropic limit.
 
+### Review layers are ORTHOGONAL, not redundant -- each is blind to a class the others catch
+
+The strongest receipt in this campaign. ONE feature (the defaulted-scope search note) went through
+four independent review layers. They found **12 defects with essentially zero overlap**:
+
+| layer | what only IT could catch | found |
+|---|---|---|
+| **plan audit** (reads intent, pre-code) | two acceptance criteria no state satisfies together; a severity self-downgrade | 5 |
+| **external code audit** (reads the diff cold) | three "control arms" that still PASS with the fix reverted; a false-positive note for filter-scoped searches; a `--quiet` contract change | 4 |
+| **CI** (runs other platforms) | `--stats` takes a DIFFERENT dispatch route on Windows vs Linux; a verbatim string pin in a test never opened | 2 |
+| **live dogfood** (runs the real product) | a THIRD dispatch route (`--json`) neither earlier fix reached | 1 |
+
+None was reachable from another layer's vantage point. A plan audit cannot know Windows routes
+differently; CI cannot know a criterion contradicts another in prose; a local suite cannot know the
+shipped binary takes a third path.
+
+**Skipping a layer does not cost a FRACTION of the defects -- it costs a CATEGORY.** Budget the
+layers, not the individual reviews.
+
+### One symptom, reported repeatedly, can be N DIFFERENT bugs
+
+A live dogfood reported "bare `tg search` is silent on zero results" across **four consecutive
+releases**. It read as one stubborn bug and a series of inadequate fixes. It was **three distinct
+dispatch routes**:
+
+```
+bare text                 -> bootstrap rg passthrough        #857
+--ast/--rank/--semantic   -> Python CLI is_empty branch      #862
+--json                    -> bootstrap native delegation     #862 (later)
+```
+
+Every fix was correct and each looked like it closed the feature, because the reporter's next
+invocation took a different route. There is no single chokepoint.
+
+**When a symptom survives a fix you verified, do not assume the fix was wrong -- enumerate the
+ROUTES that reach the symptom and find which one the reporter took.** Tell: your repro passes and
+theirs fails with no environmental difference. Trace `sys.exit` and compare the exit LINE.
+
+### A control arm that survives the revert is not a control arm
+
+An external audit found **three of four** control arms I had written still passed with the fix
+reverted -- they exercised pre-existing helpers rather than the new behaviour. They looked like
+rigour and tested nothing about the change.
+
+```bash
+git diff origin/main -- <file> > /tmp/fix.patch
+git apply -R /tmp/fix.patch && pytest <new-tests>   # MUST fail
+git apply    /tmp/fix.patch && pytest <new-tests>   # MUST pass
+```
+
+Related: **before changing any user-facing string, grep every test and doc for it** -- a verbatim
+prose pin in a file you never open will red the build. When fixing such a pin, assert on SUBSTANCE
+rather than re-pinning the new sentence, or you have only relocated the tripwire.
+
+### A checker that cannot tell a PRODUCER from a PRESENTER reports correct code as broken
+
+A class ratchet flagged 9 functions as "reads incompleteness but never discloses". **All 9 were
+false positives**: its disclosure list held only helper names while real emitters use literal banner
+text (`PARTIAL:`, `INCOMPLETE`), and its read-matcher matched `payload["partial"]` -- which also
+matches the ASSIGNMENT `payload["partial"] = True`, flagging a payload BUILDER whose whole job is to
+stamp the field.
+
+**Triage every candidate before reporting any.** Shipping those 9 would have been 9 false P0s --
+worse than the gap, because it teaches readers to ignore the tool.
+
 ### Your own PLAN is the least-audited artifact you produce
 
 Code gets tests. PRs get review. A plan gets *written, and then followed* — and its errors
