@@ -319,7 +319,16 @@ def test_prepare_claim_anonymous_agent_id_gets_hint(
     claim = payload["coordination"]["claim"]
     assert claim.get("submitted") is True, claim
     assert claim["result"]["claim"]["agent_id"] == "anonymous", claim
-    assert claim.get("agent_id_hint") == "set TG_LEDGER_AGENT_ID for a stable identity", claim
+    # Backlog #23: the hint now states the CONSEQUENCE, not just the remedy. Four consecutive
+    # dogfoods reported the old wording ("set TG_LEDGER_AGENT_ID for a stable identity") as
+    # present-but-easy-to-miss. Asserted on SUBSTANCE rather than the exact sentence, so a future
+    # rewording does not red the suite while a REGRESSION (losing the unattributable warning, or
+    # dropping the env var the caller must set) still does.
+    hint = claim.get("agent_id_hint") or ""
+    assert "NOT attributable" in hint, claim
+    assert "TG_LEDGER_AGENT_ID" in hint, claim
+    # Machine-branchable sibling, so a harness gates on a boolean instead of parsing prose.
+    assert claim.get("agent_id_is_anonymous") is True, claim
 
 
 def test_prepare_claim_explicit_agent_id_env_has_no_hint(
