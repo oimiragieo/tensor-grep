@@ -8436,6 +8436,39 @@ def search_command(
 
     if all_results.is_empty:
         _emit_stats()
+        # The FULL-CLI twin of the passthrough note added in #857. A `_requires_full_cli` flag
+        # (`--ast`, `--rank`, `--semantic`, `--stats`) bypasses bootstrap's rg passthrough and
+        # lands HERE, so the scope note shipped for the common route never fired for these four.
+        #
+        # Reachability traced, not assumed -- `tg search NO_MATCH --ast --lang python` exits at
+        # this branch. An earlier attempt at this fix was written into a branch the invocation
+        # never takes and had no observable effect.
+        #
+        # Exit stays 1 below: a defaulted-scope search that RAN TO COMPLETION is complete, it just
+        # answered a narrower question. Exit 2 remains reserved for result_incomplete.
+        # Three gates, all load-bearing (external audit of the first cut found each one):
+        #
+        # `paths_defaulted` alone is NOT "the caller did not choose a scope" -- it only means no
+        # positional PATH. A search scoped by `--glob`/`--iglob`/`--type`/`--max-depth` DID choose
+        # a scope, and telling it "no PATH was given, so the search defaulted to the current
+        # directory" is a false positive that misdescribes what ran. `config.glob` etc. are checked
+        # directly rather than via `_has_walk_scope_bound`, which returns False for exactly the
+        # `paths_defaulted` case we are inside.
+        #
+        # `quiet` suppresses it: `--quiet` promises no incidental output, and emitting an
+        # informational note there is a silent contract change on a flag whose entire purpose is
+        # silence.
+        scope_filtered = bool(
+            config.max_depth is not None
+            or config.glob
+            or config.iglob
+            or config.file_type
+            or config.type_not
+        )
+        if paths_defaulted and not scope_filtered and not quiet:
+            from tensor_grep.cli.bootstrap import _write_defaulted_scope_note
+
+            _write_defaulted_scope_note()
         if json or format_type == "json":
             from tensor_grep.cli.formatters.json_fmt import JsonFormatter
 
@@ -10944,7 +10977,16 @@ def _build_prepare_payload(
                 # case -- mirrors the conditional install_hint/autostart precedent elsewhere in
                 # this module.
                 if str(submitted["claim"].get("agent_id") or "") == "anonymous":
-                    claim_hook["agent_id_hint"] = "set TG_LEDGER_AGENT_ID for a stable identity"
+                    # Strengthened from "set TG_LEDGER_AGENT_ID for a stable identity", which four
+                    # consecutive dogfoods reported as present-but-easy-to-miss. It now says what
+                    # the caller LOSES, not just what to set: attribution. Machine-branchable
+                    # sibling field so a harness can gate on it without string-matching prose.
+                    claim_hook["agent_id_hint"] = (
+                        "this claim is filed as 'anonymous' and is NOT attributable to you. Set "
+                        "TG_LEDGER_AGENT_ID (or TG_EVIDENCE_AGENT_ID) to a stable per-agent value "
+                        "so other agents can see WHO holds it."
+                    )
+                    claim_hook["agent_id_is_anonymous"] = True
 
     evidence_ref = _command_ref([
         "tg",

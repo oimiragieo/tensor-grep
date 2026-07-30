@@ -1530,7 +1530,22 @@ def main_entry() -> None:
                 if _can_delegate_to_native_tg_search(effective_search_args)
                 else search_args
             )
-            raise SystemExit(_run_native_tg_search(native_binary, command_args))
+            exit_code = _run_native_tg_search(native_binary, command_args)
+            # THIRD route needing the defaulted-scope note, and the one the live dogfood kept
+            # reporting after the other two were fixed: "bare `tg search P --json` -- still exit 1,
+            # empty, no refuse stderr (text mode is fixed; JSON lagging)."
+            #
+            # `--json` is a SUPPORTED TRIGGER for native delegation
+            # (`_can_delegate_to_native_tg_search`), so a bare `--json` search never reaches the rg
+            # passthrough where the note was added, nor the Python CLI's is_empty branch. Three
+            # dispatch routes, three separate emissions -- there is no single chokepoint, which is
+            # exactly why fixing one kept looking like fixing the feature.
+            #
+            # stderr, not the JSON body: stdout is the machine contract and the native binary owns
+            # that document. Injecting a field here would mean parsing and re-emitting its output.
+            if exit_code == 1 and not _search_args_include_explicit_path(command_args):
+                _write_defaulted_scope_note()
+            raise SystemExit(exit_code)
 
         # audit #8: `explicit_rg_json` (`--format rg --json`) must NOT be an unconditional
         # green light for rg passthrough -- it only means real `rg`'s own JSON output is

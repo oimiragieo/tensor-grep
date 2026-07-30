@@ -3,7 +3,20 @@
 > **Canonical prioritized work list.** Kept in sync with the CLI task store (`TaskUpdate`) and
 > GitHub (`gh pr list` is the source of truth for PRs). **CEO status** = summarize SHIPPING + P0/P1.
 > Update whenever a PR opens/merges or the queue changes. Task-store IDs (`#NNN`) cross-referenced.
-> Last refreshed 2026-07-27b (post-**v1.101.4**) — **#276 IS CLOSED, AND THE CLASS BEHIND IT IS NOW
+> **Last refreshed 2026-07-29 (enterprise deep audit, live tip **v1.101.18**).** Spec:
+> `docs/plans/2026-07-29-enterprise-deep-audit-design.md` (also mirrored under gitignored
+> `docs/superpowers/specs/`). Headline corrections over the
+> 2026-07-27b note below: (1) the text-disclosure **helper + leading banners are largely WIRED**
+> (`_scan_truncation_warning` now covers `partial` + a fail-closed tail; `_emit_scan_incompleteness_banner`
+> fires on map/context/context-render/edit-plan/agent/prepare/route-test/blast-radius-*); calling the
+> campaign "not started" is stale — residual work is inventory **trailing** disclosure, codemap's
+> ad-hoc `PARTIAL:` (only on `partial`, not every `_scan_incomplete` cause), mermaid's rendered
+> visibility pin, and retiring the lie in `main.py`'s `_completeness_caveat_lines` docstring.
+> (2) NEW/confirmed actionable items filed under Ready-to-build / LOW as **#858–#863** (local ledger
+> IDs until the task store catches up). (3) MCP argv CWE-88 core builders still CLEAN; `mcp>=1.27.2,<2`
+> caps the lockfile-canary class. Do **not** reopen GPU/cAST/free-threading settled battles.
+>
+> Prior refresh 2026-07-27b (post-**v1.101.4**) — **#276 IS CLOSED, AND THE CLASS BEHIND IT IS NOW
 > THE CAMPAIGN.** The envelope wave below finished; an adversarially-verified census (4 read-only
 > lenses, 22 agents, 14 findings confirmed / 3 refuted) then re-derived the whole surface and found
 > the envelope was the *narrow* half of the problem.
@@ -40,12 +53,13 @@
 > — `tg_repo_map` returns `build_repo_map(...)` VERBATIM, so a CLI-shaped edit in a file that never
 > mentions MCP was a wire change. **A pass-through handler makes the producer it wraps an MCP wire
 > surface.** Bumped to `1.7.0` with a ratchet pinning the declared wire key set.
-> **NEXT CAMPAIGN (tracked, not started):** model the text-disclosure class — one shared helper plus
-> a ratchet enumerating every command whose payload can go incomplete — rather than enumerating a
-> dozen PRs. Also open: the `--deadline` arm reaches exit `2` with ZERO disclosure on every branch
-> (`_scan_truncation_warning` reads only `scan_limit`/`caller_scan_limit`/`output_limit` while
-> `_scan_incomplete` also fires on `partial`), and a `%%` mermaid comment is invisible in a RENDERED
-> diagram, so that disclosure serves the source-reading audience only.
+> **NEXT CAMPAIGN (reframed 2026-07-29 — PARTIALLY SHIPPED, residuals remain):** the shared helper +
+> leading-banner wiring largely landed after the 07-27 census prose was written. Finish the class
+> with one ratchet enumerating every `_scan_incomplete`→Exit(2) site ↔ banner/delegate disclosure
+> (**#861**), not a dozen one-off PRs. Still open residuals: inventory trailing notice position;
+> codemap shared-banner parity; mermaid visible-node (not only `%%`) pin. The old "deadline arm
+> silent because `_scan_truncation_warning` ignores `partial`" claim is **FIXED in code**
+> (`main.py` deadline/partial branch + fail-closed tail) — update any skill/doc that still asserts it.
 >
 > Prior refresh 2026-07-27 (post-**v1.101.3**) — the **incompleteness-envelope** wave, closing
 > the `--json`/`--ndjson` gap that the trustworthy-tg thread below had left as its load-bearing
@@ -718,6 +732,45 @@ wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while 
 
 ---
 
+## OPEN FINDINGS — 2026-07-29 codex audit of the implemented branches (#860, #862)
+
+Recorded per the CEO's "document any new issues, bugs or findings in backlog.md". All four were
+found by an EXTERNAL audit of code I had already written tests for and called done.
+
+| # | sev | finding | status |
+|---|---|---|---|
+| F1 | MEDIUM | `paths_defaulted` means only "no positional PATH". A search scoped by `--glob`/`--iglob`/`--type`/`--max-depth` DID choose a scope, so the defaulted-scope note was a FALSE POSITIVE claiming the search covered the whole current directory. | FIXED in #862 |
+| F2 | LOW | `--quiet` zero-result searches began writing an informational note to stderr where they had been silent — an unmentioned contract change on the one flag whose purpose is silence. | FIXED in #862 |
+| F3 | LOW | Three of four "control arms" in the first cut still PASSED with the fix reverted; they exercised pre-existing helpers (`_requires_full_cli`, `_search_args_include_explicit_path`) instead of the new behaviour. A control arm that survives the revert is not a control arm. | FIXED — tests rewritten behavioural, revert-proof verified |
+| F4 | LOW | The primary test asserted on `inspect.getsource(...)`, so it could pass with the predicate present but misplaced or emitting the wrong text. | FIXED — subprocess-based |
+
+**STILL OPEN — `tg search --stats` routing DIVERGES BY PLATFORM.** On Windows, `--stats` emits its
+own stats block on stdout and returns WITHOUT reaching the `is_empty` branch, so the defaulted-scope
+note never fires. On Linux CI the same invocation DOES reach it and the note fires. Found because the
+strict xfail **XPASSed on Linux** — a non-strict marker would have passed on both platforms and
+hidden the divergence entirely. My original claim ("TRACED, not assumed: --stats does not reach
+is_empty") was traced on Windows only and then generalised, which is the over-generalisation this
+whole file's tests exist to catch. Now a `sys.platform == "win32"` strict xfail. **The divergence
+itself is unexplained and worth root-causing** — two platforms taking different routes through the
+same flag is a latent source of Windows-only behaviour gaps.
+
+**RESOLVED — the A1b class ratchet's 9 candidates were ALL false positives.** Triaged rather than
+reported: every one carried 7-29 disclosure signals through a surface the matcher did not know
+about. Two matcher defects, both fixed:
+
+1. The disclosure list held only helper-function names. Real emitters disclose via literal banner
+   text (`codemap`'s `PARTIAL:` prefix, `scan`'s `INCOMPLETE`) and via helpers the list omitted
+   (`_docs_scan_is_unreadable_truncated`). A literal banner IS a disclosure surface; requiring a
+   helper call would force every emitter through one function for the checker's convenience.
+2. The read-matcher matched `payload["partial"]`, which also matches the ASSIGNMENT
+   `payload["partial"] = True`. That flagged `_run_ast_scan_payload`, a payload BUILDER whose job
+   is precisely to stamp the field — the disclosure belongs downstream. **A producer is not a
+   presenter**, and a checker that cannot tell them apart reports correct code as broken.
+
+Net: 0 real defects, and the ratchet now discriminates. Had these shipped as findings it would have
+been 9 false P0s — worse than the gap the ratchet exists to close.
+
+
 ## SHIPPING — open PRs (drain one-per-publish) — task #117
 
 **Queue empty -- 0 open PRs (verified 2026-07-24 via `gh pr list --state open`).** Since the prior
@@ -879,7 +932,24 @@ for the next audit rather than re-opened as active work):**
   either shipped or intentionally dropped.
 
 ### Ready to build (no mandatory-gate blocker)
-- **#58** promote `tg route-test` hidden->public (small feature follow-up).
+- **#858** (2026-07-29 audit S1) route `tg codemap` writes through `_index_lock.atomic_write_bytes`
+  — retire hand-rolled `codemap._atomic_write_text` (`codemap.py:801-812`). Explicitly deferred out of
+  #665/#211 as "doc-generation". Bidirectional probe 2026-07-29: baseline refuses symlink dest;
+  `_atomic_write_text` replaces the link entry (target content intact — not RCE). TDD pin the refusal;
+  mandatory Opus security gate (installer/write surface). Spec §3 S1.
+- **#859** (audit S2) AST ratchet: every `cli/` `replace_with_retry`/`os.replace` publish site routes
+  through `atomic_write_bytes` (Form-1: must report non-zero on pre-fix `codemap.py`). Closes the
+  "enumeration without ratchet" hole that made #858 invisible. Ship with or immediately after #858.
+- **#860** (audit D2) docs reconcile: stamp BACKLOG/CURRENT STATE + `_completeness_caveat_lines`
+  docstring (`main.py:11456-11461`) to live disclosure wiring / tip **v1.101.18**. Non-releasing
+  `docs:` PR. Pin SOURCE behavior beside any claim retired.
+- **#861** (audit D1 residual) finish text-disclosure class — inventory **leading** truncation
+  position (`inventory.py` / `main.py:8675-8679` names trailing as tracked); codemap share
+  `_emit_scan_incompleteness_banner` for all `_scan_incomplete` causes (not only `partial`);
+  mermaid rendered-node pin (not `%%`-only). Prefer one class ratchet over N one-off PRs.
+- **#58** promote `tg route-test` hidden->public — **VERIFY-BEFORE-BUILD:** likely already shipped as
+  #601 / v1.76.0; confirm against `origin/main` before opening a PR (AGENTS "check whether it already
+  shipped").
 - **#98** MCP tool consolidation (45->~10 task-shaped dispatch tools, non-breaking,
   `TG_MCP_TOOL_SURFACE=lean`) + staleness receipts (P2). Design previously recovered/verified
   (campaign #142). Note: `#554`/v1.67.1 shipped a much narrower precursor under the same tracking
@@ -892,6 +962,12 @@ for the next audit rather than re-opened as active work):**
   work; re-check before scoping a PR).
 
 ### LOW-severity follow-ups (non-blocking)
+- **#862** (audit S3) add `--` sentinel before `agent_capsule` GPU `evidence_path` positional
+  (`agent_capsule.py:1711-1721`); optional twin for `wslpath` in `runtime_paths`. Defense-in-depth
+  (paths are `resolve()`-absolute today). MCP-276 / CWE-88 class.
+- **#863** (audit S4) make `session_daemon` `token` required (drop tokenless fail-open at
+  `is_authorized` when `token=""`) **or** document as deliberate bootstrap trust boundary in
+  `CONTRACTS.md`. Latent — production always generates a token; test pins tokenless compat today.
 - **#115** symlink sweep — 3 unguarded `std::fs::write` sites (checkpoint metadata, checkpoint index,
   rollback-restore); the `write_bytes_refuse_symlink` helper already exists with one caller, mechanical
   swap to 4.

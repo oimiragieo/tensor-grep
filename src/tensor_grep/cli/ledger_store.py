@@ -300,7 +300,30 @@ def resolve_agent_id(explicit: str | None) -> str:
     """``--agent-id`` else ``TG_LEDGER_AGENT_ID`` else ``TG_EVIDENCE_AGENT_ID`` else a stable
     fallback. Recorded verbatim, never inferred from process/user identity -- callers must not
     put secrets in ``--agent-id``/``--note`` (the value is written to a plaintext, per-repo,
-    multi-agent-readable JSON file)."""
+    multi-agent-readable JSON file).
+
+    DO NOT AUTO-DERIVE AN ID HERE. It looks like an obvious improvement and it re-breaks #845.
+
+    A live dogfood asked four times for zero-config ``--claim`` to stop filing as ``"anonymous"``,
+    and the natural fix -- derive a stable id (a persisted per-checkout uuid, a hostname+path hash,
+    anything) -- was rejected by an adversarial audit with the receipt below.
+
+    ``_find_overlaps`` suppresses an entry when::
+
+        new_record.agent_id != _DEFAULT_AGENT_ID and entry["agent_id"] == new_record.agent_id
+
+    Two zero-config agents TODAY both resolve to the sentinel, so the first conjunct is False, the
+    suppression is skipped, and they see each other's overlaps -- that *is* the #845 fix. Under any
+    per-checkout derivation they would share one non-sentinel id, the suppression WOULD fire, and
+    each would silently drop the other's overlaps: #845 reproduced by a new mechanism, in the
+    ledger's own primary use case (concurrent agents on one repo).
+
+    And no derivation can escape this: ``tg`` is a CLI, so every invocation is a fresh process. A
+    per-CHECKOUT id conflates distinct agents; a per-PROCESS id is not stable across one agent's
+    successive calls. **Agent identity is not derivable from the environment -- only the caller
+    knows it.** Hence the sentinel stays, and ``prepare`` emits a loud ``agent_id_hint`` +
+    ``agent_id_is_anonymous`` instead. Refusing outright was also rejected: it breaks every
+    existing caller and doc example for a problem the hint covers."""
     if explicit is not None:
         stripped = explicit.strip()
         if stripped:

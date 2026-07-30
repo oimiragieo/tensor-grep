@@ -99,3 +99,41 @@ def test_the_dispatch_site_gates_on_both_conditions() -> None:
     assert "_search_args_include_explicit_path" in source, (
         "the note is not gated on the path being defaulted -- a scoped search would print it too"
     )
+
+
+def test_the_json_route_also_names_its_scope() -> None:
+    """THE THIRD ROUTE, reported by live dogfood after the other two were fixed.
+
+    v1.101.19 dogfood: "bare `tg search P --json` -- still ~2s exit 1, empty, no refuse stderr
+    (text mode is fixed; JSON lagging)."
+
+    `--json` is a SUPPORTED TRIGGER for native delegation (`_can_delegate_to_native_tg_search`),
+    so a bare `--json` search reaches NEITHER the rg passthrough (where #857 put the note) NOR the
+    Python CLI's `is_empty` branch (where #862 put it). Three dispatch routes, three separate
+    emissions -- there is no single chokepoint, which is exactly why fixing one route kept looking
+    like fixing the feature.
+
+    Pinned by source at the dispatch site because exercising it needs the real native binary.
+    """
+    import inspect
+
+    from tensor_grep.cli import bootstrap
+
+    source = inspect.getsource(bootstrap.main_entry)
+    native = source.split("_run_native_tg_search(native_binary, command_args)", 1)
+    assert len(native) == 2, "the native search dispatch moved; re-trace before updating this guard"
+
+    tail = (
+        native[1].split("raise SystemExit", 1)[0] + native[1].split("raise SystemExit", 1)[1][:200]
+    )
+    assert "_write_defaulted_scope_note" in tail, (
+        "the native-delegation route (which `--json` takes) does not name a defaulted scope; a "
+        "`--json` consumer gets exit 1 with an empty-matches document and no reason"
+    )
+    assert "_search_args_include_explicit_path" in tail, (
+        "the native route's note is not gated on the path being defaulted"
+    )
+    assert "exit_code == 1" in tail, (
+        "the native route's note is not gated on a no-match exit -- a successful search would "
+        "print it too"
+    )
