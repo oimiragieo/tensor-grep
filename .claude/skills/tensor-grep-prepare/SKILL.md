@@ -5,8 +5,8 @@ description: Use when an agent needs one-call edit readiness before changing cod
 
 # tensor-grep prepare (one-call edit readiness)
 
-Verified against **tg 1.101.17** (LIVE 2026-07-28 gotcontext-saddle; prior 1.101.9 /
-1.101.7 / 1.95.0 CLI contract still representative of the core CUJ).
+Verified against **tg 1.101.19** (LIVE 2026-07-29 gotcontext-saddle; prior 1.101.17 /
+1.101.9 / 1.95.0 CLI contract still representative of the core CUJ).
 
 ## When to use
 
@@ -33,6 +33,8 @@ Dogfood:
 
 | Case | Result |
 | --- | --- |
+| `prepare … --out` (**1.101.19**) | PASS ~7s — overall 0.9, callers_count=1, file ~8KB |
+| `prepare … --claim` (**1.101.19**) | PASS ~8s — anonymous + hint; env id clears hint |
 | `prepare … --out` (**1.101.17**) | PASS ~7s — overall 0.9, callers_count=1, file ~8KB |
 | `prepare … --claim` (**1.101.17**) | PASS ~8s — anonymous + hint; `TG_LEDGER_AGENT_ID` clears hint |
 | `prepare … --out` (**1.101.9**) | PASS ~6s — overall 0.9, callers_count=1, file ~8KB |
