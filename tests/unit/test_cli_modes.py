@@ -3824,7 +3824,11 @@ def test_cli_should_parse_gpu_device_ids_into_search_config(monkeypatch):
         ["search", "ERROR", ".", "--ltl", "--gpu-device-ids", "3,7,7"],
     )
 
-    assert result.exit_code == 0
+    # Backlog #22: this fixture's `_FakeBackend`/`_FakePipeline` never claims
+    # `routing_backend="NativeGpuBackend"`, so the explicit `--gpu-device-ids` request this
+    # test issues is (correctly) reported as unhonoured -- exit 2, not 0. The assertion this
+    # test actually cares about (config parsing/dedup below) is unaffected.
+    assert result.exit_code == 2
     assert _LAST_PIPELINE_CONFIG is not None
     assert _LAST_PIPELINE_CONFIG.gpu_device_ids == [3, 7]
 
@@ -3958,9 +3962,18 @@ def test_cli_search_warns_when_gpu_device_id_out_of_local_inventory(monkeypatch)
     runner = CliRunner()
     result = runner.invoke(app, ["search", "ERROR", ".", "--gpu-device-ids", "5"])
 
-    # PREMISE: a match exists, so 0 means "searched and found", not "vacuously fine". Without the
-    # fixture above this asserts a value the command is contractually right to refuse.
-    assert result.exit_code == 0, result.output
+    # PREMISE: a match exists, so a non-1 code means "searched and found", not "vacuously
+    # fine". Without the fixture above this asserts a value the command is contractually right
+    # to refuse.
+    #
+    # Backlog #22 update: id 5 is explicitly requested and absent from the mocked inventory
+    # ([0, 1]), and this fixture's fake backend never claims `routing_backend=
+    # "NativeGpuBackend"` -- so the explicit GPU request is (correctly, and consistently with
+    # the WARN this test asserts below) reported as unhonoured and now exits 2, not 0. The WARN
+    # is orthogonal to the exit code: it is pre-flight advice, not a hard gate, and the search
+    # still runs to completion and reports its match -- it just also signals via the exit code
+    # that the caller's explicit "use device 5" request could not be honoured.
+    assert result.exit_code == 2, result.output
     assert "5" in result.output
     assert "0, 1" in result.output
 
@@ -13379,7 +13392,11 @@ def test_cli_json_output_includes_routing_metadata_fields(monkeypatch):
         ["search", "ERROR", ".", "--gpu-device-ids", "7,3", "--ltl", "--format", "json"],
     )
 
-    assert result.exit_code == 0
+    # Backlog #22: `routing_backend` is "FakeBackend", not "NativeGpuBackend", so this explicit
+    # --gpu-device-ids request is (correctly) reported as unhonoured -- exit 2, not 0. The JSON
+    # payload is still emitted in full (formatted output prints before the exit-code check), so
+    # every routing-metadata assertion below is unaffected.
+    assert result.exit_code == 2
     payload = json.loads(result.stdout)
     assert payload["version"] == 1
     assert payload["sidecar_used"] is False
@@ -13393,6 +13410,8 @@ def test_cli_json_output_includes_routing_metadata_fields(monkeypatch):
     ]
     assert payload["routing_distributed"] is True
     assert payload["routing_worker_count"] == 2
+    assert payload["gpu_evidence_status"] == "unsupported"
+    assert payload["native_gpu_unavailable"] is True
 
 
 def test_cli_json_output_should_surface_distributed_worker_metadata_from_backend(monkeypatch):

@@ -167,6 +167,19 @@ def merge_runtime_routing(aggregate: SearchResult, result: SearchResult) -> None
     aggregate.routing_worker_count = max(
         aggregate.routing_worker_count, result.routing_worker_count
     )
+    # Backlog #22: `sidecar_used` is monotonic like `result_incomplete` below -- once ANY
+    # per-file result reports sidecar routing, the aggregate must keep reporting it, never
+    # reset to False by a later file that happened to run natively. Previously unmerged: every
+    # existing caller either sets `aggregate.sidecar_used` once, up front, before the per-file
+    # loop starts (`sidecar.py`, always True) or never sets it at all (`cli/main.py`,
+    # `mcp_server.py`, whose `core.pipeline.Pipeline` backends never set `sidecar_used=True` on
+    # a per-file `SearchResult` today) -- so this OR-merge is a no-op for every current caller
+    # and only starts mattering the day a backend on either of those paths legitimately reports
+    # sidecar routing on a per-file result. Read by both the `--json` envelope's `sidecar_used`
+    # field and `gpu_request_unhonoured()` (json_fmt.py), which the `tg search` exit-code
+    # decision delegates to -- an unmerged sidecar signal there would silently misreport an
+    # unhonoured explicit GPU request as honoured.
+    aggregate.sidecar_used = aggregate.sidecar_used or result.sidecar_used
     # Partial-results incompleteness is monotonic: any incomplete sub-result taints the aggregate,
     # so ALL consumers (CLI, MCP, sidecar) inherit the rg-parity exit-2 + envelope marker uniformly.
     aggregate.result_incomplete = aggregate.result_incomplete or result.result_incomplete

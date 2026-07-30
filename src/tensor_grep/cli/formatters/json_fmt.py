@@ -167,6 +167,24 @@ def _gpu_proof_payload(result: SearchResult) -> dict[str, object]:
     }
 
 
+def gpu_request_unhonoured(result: SearchResult) -> bool:
+    """True iff GPU was EXPLICITLY requested (``--gpu-device-ids``) and this run could not
+    produce NativeGpuBackend-with-``sidecar_used=False`` proof — the "explicit GPU request
+    that cannot be honoured" condition backlog #22's exit-code contract keys on.
+
+    False in both cases the CLI's exit-code contract must NOT touch:
+    * no GPU was requested at all (``requested_gpu_device_ids`` empty) — a CPU search that
+      merely served the query is complete, not incomplete;
+    * GPU was requested AND honoured (``routing_backend == "NativeGpuBackend"`` and
+      ``sidecar_used is False``).
+
+    Delegates to `_gpu_proof_payload` rather than re-deriving the native/sidecar test, so the
+    exit-code decision and the `--json` envelope (`native_gpu_unavailable`) agree by
+    construction and can never drift apart.
+    """
+    return bool(_gpu_proof_payload(result).get("native_gpu_unavailable", False))
+
+
 class JsonFormatter(OutputFormatter):
     def __init__(self, config: SearchConfig | None = None) -> None:
         self.config = config

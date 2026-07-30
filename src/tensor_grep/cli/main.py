@@ -8437,6 +8437,18 @@ def search_command(
 
     _emit_runtime_debug()
 
+    # Backlog #22: an EXPLICIT --gpu-device-ids request that could not be honoured (no
+    # NativeGpuBackend-with-sidecar_used=False proof) must exit 2, same as `result_incomplete`
+    # — the run answered, but not the question the caller explicitly asked ("use this GPU").
+    # False (and therefore a no-op below) when no GPU was requested at all: a CPU search that
+    # merely served the query is complete, not incomplete. Computed once via the shared
+    # predicate so this decision and the `--json` envelope's `native_gpu_unavailable` field can
+    # never drift apart (`tensor_grep.cli.formatters.json_fmt.gpu_request_unhonoured`).
+    from tensor_grep.cli.formatters.json_fmt import gpu_request_unhonoured
+
+    gpu_request_incomplete = gpu_request_unhonoured(all_results)
+    exit_incomplete = all_results.result_incomplete or gpu_request_incomplete
+
     if files_with_matches:
         if matched_files:
             _emit_stats()
@@ -8445,9 +8457,9 @@ def search_command(
                 config,
             )
             _write_path_list(output_paths, use_nul=null)
-            sys.exit(2 if all_results.result_incomplete else 0)
+            sys.exit(2 if exit_incomplete else 0)
         _emit_stats()
-        sys.exit(2 if all_results.result_incomplete else 1)
+        sys.exit(2 if exit_incomplete else 1)
 
     if files_without_match:
         unmatched_candidates = candidate_files_set - matched_files
@@ -8459,9 +8471,9 @@ def search_command(
         if unmatched:
             _emit_stats()
             _write_path_list(unmatched, use_nul=null)
-            sys.exit(2 if all_results.result_incomplete else 0)
+            sys.exit(2 if exit_incomplete else 0)
         _emit_stats()
-        sys.exit(2 if all_results.result_incomplete else 1)
+        sys.exit(2 if exit_incomplete else 1)
 
     if all_results.is_empty:
         _emit_stats()
@@ -8512,11 +8524,11 @@ def search_command(
             from tensor_grep.cli.formatters.json_fmt import JsonFormatter
 
             _safe_stdout_line(JsonFormatter().format(all_results))
-        sys.exit(2 if all_results.result_incomplete else 1)
+        sys.exit(2 if exit_incomplete else 1)
 
     if quiet:
         _emit_stats()
-        sys.exit(2 if all_results.result_incomplete else 0)
+        sys.exit(2 if exit_incomplete else 0)
 
     formatter: OutputFormatter
 
@@ -8545,9 +8557,10 @@ def search_command(
 
     _safe_stdout_line(formatter.format(all_results))
     _emit_stats()
-    if all_results.result_incomplete:
+    if exit_incomplete:
         # rg-parity: partial results (rg exit 2, soft per-file error) exit 2 after a formatted
-        # success, not 0 — so a caller/agent sees the same incompleteness rg would signal.
+        # success, not 0 — so a caller/agent sees the same incompleteness rg would signal. An
+        # unhonoured explicit --gpu-device-ids request (backlog #22) takes the same exit.
         sys.exit(2)
 
 
