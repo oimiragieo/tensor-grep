@@ -470,6 +470,16 @@ python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 tg dogfood --output artifacts/dogfood_readiness.json
 ```
 
+**Before `git checkout -b` / `git stash` / any branch switch during a live dogfood session,**
+run `python scripts/check_unstaged_skill_edits.py`. Three times in one campaign a real skill
+correction under `.claude/skills/*/SKILL.md` — once a REVERSAL nobody would re-derive from
+memory — sat MODIFIED but unstaged in the main checkout, a branch switch away from being lost.
+The script fires only on the unstaged half of a change (staged/committed edits are silent, by
+design) and is silent itself on a clean tree; see `tests/unit/test_unstaged_skill_edit_guard.py`
+for the guard's own regression coverage. It is not wired into CI — a CI checkout is always
+clean, so it can never fire there and would be theater; it exists for the local/drain-session
+moment where the loss actually happens.
+
 **The ruff `--preview` trap (this costs a cycle every time it's missed):** CI runs `ruff format --check --preview .`. Running `ruff format` **without** `--preview` is an **active revert** — it rewrites preview-style lines back on disk, so the next CI `ruff format --check --preview` fails on lines you never meant to touch. Always pass `--preview` to `ruff format`; **never** pass it to `ruff check` (preview lint rules like RUF056 produce false failures that don't match CI) (`CONTRIBUTING.md:22`, `AGENTS.md:604`).
 
 **Windows CRLF false-alarm:** `.gitattributes` pins `*.py`/`*.rs` to `eol=lf`. A bare local `ruff format --check` can false-alarm over LF blobs; run `ruff format --preview <files>` (which normalizes) before commit. Audit real endings with `git ls-files --eol` (`git show` smudges output) (`CONTRIBUTING.md:24`, `AGENTS.md:906`).
