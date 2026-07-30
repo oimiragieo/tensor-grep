@@ -4151,6 +4151,58 @@ mod tests {
     }
 
     #[test]
+    fn broad_scan_refusal_json_envelope_matches_python_field_for_field() {
+        // Task #17: pins the exact vocabulary `cli/main.py`'s `_emit_broad_scan_refusal` uses
+        // (`tests/unit/test_broad_scan_refusal_json_envelope.py` pins the Python side) -- the
+        // whole point of this task is that BOTH front doors must use these same field names.
+        let message = tensor_grep_rs::rg_passthrough::format_unbounded_implicit_search_walk_error(
+            tensor_grep_rs::rg_passthrough::IMPLICIT_SEARCH_WALK_FILE_CEILING,
+        );
+        let payload = broad_scan_refusal_json_envelope(".", &message);
+        assert_eq!(payload["version"], JSON_OUTPUT_VERSION);
+        assert_eq!(payload["path"], ".");
+        assert_eq!(payload["total_matches"], 0);
+        assert_eq!(payload["total_files"], 0);
+        assert_eq!(payload["matches"], serde_json::json!([]));
+        assert_eq!(payload["truncated"], true);
+        assert_eq!(payload["result_incomplete"], true);
+        assert_eq!(payload["incomplete_reason"], message);
+        assert_eq!(payload["incomplete_reason_class"], "scan_limit");
+        assert_eq!(payload["error"]["code"], "broad_scan_refused");
+        assert_eq!(payload["error"]["message"], message);
+        assert_eq!(payload["error"]["retryable"], false);
+    }
+
+    #[test]
+    fn exit_on_native_multi_pattern_ceiling_refusal_passes_through_other_errors_unchanged() {
+        // CONTROL ARM for task #17's `json`/`path` parameters: an error that is NOT the shared
+        // ceiling refusal must return completely unmodified -- no printing, no exit, and (unlike
+        // the refusal path) this half CAN be observed in-process because it never reaches
+        // `std::process::exit`. Regressing this would mean bad-pattern/bad-path errors under
+        // `--json` start being misreported as `broad_scan_refused`.
+        let original = "native search path does not exist: /nope";
+        let err = anyhow::anyhow!(original);
+        let returned = exit_on_native_multi_pattern_ceiling_refusal(err, true, ".");
+        assert_eq!(returned.to_string(), original);
+    }
+
+    #[test]
+    fn native_search_config_path_display_mirrors_resolved_search_request_convention() {
+        // Same join-with-space-or-default-to-dot convention as `ResolvedSearchRequest::
+        // path_display` (used for the SAME field on a successful result), so a refusal's `path`
+        // never reads differently from what a successful run of the same invocation would show.
+        assert_eq!(native_search_config_path_display(&[]), ".");
+        assert_eq!(
+            native_search_config_path_display(&[PathBuf::from("src")]),
+            "src"
+        );
+        assert_eq!(
+            native_search_config_path_display(&[PathBuf::from("src"), PathBuf::from("tests")]),
+            "src tests"
+        );
+    }
+
+    #[test]
     fn search_request_resolves_multiple_regexp_patterns_and_paths() {
         let args = parse_search_args(&[
             "tg",
@@ -8213,6 +8265,67 @@ fn execute_native_search(config: NativeSearchConfig) -> anyhow::Result<SearchSta
     run_native_search(config)
 }
 
+/// Mirrors `ResolvedSearchRequest::path_display`'s join-with-space convention (this module, used
+/// by the SearchArgs/positional-CLI request types) so a refusal's `path` field matches what a
+/// SUCCESSFUL result on the same invocation would have shown, rather than inventing a second
+/// "path" convention just for this one envelope.
+fn native_search_config_path_display(paths: &[PathBuf]) -> String {
+    if paths.is_empty() {
+        ".".to_string()
+    } else {
+        paths
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+/// Task #17 (2026-07-30): pure envelope builder, kept separate from the `println!` wrapper below
+/// so it can be unit-tested without needing to capture process stdout or trigger
+/// `std::process::exit`. Mirrors the Python CLI's `_emit_broad_scan_refusal` JSON payload
+/// (`cli/main.py`) field for field -- `version`, `path`, `total_matches: 0`, `total_files: 0`,
+/// `matches: []`, `truncated: true`, `result_incomplete: true`, `incomplete_reason`,
+/// `incomplete_reason_class: "scan_limit"`, and an `error` object carrying `code:
+/// "broad_scan_refused"`, `message`, `retryable: false`. Two front doors refusing the same thing
+/// in two different shapes is exactly the drift AGENTS.md warns about, so this is not a new
+/// vocabulary -- it is the existing one, reproduced.
+fn broad_scan_refusal_json_envelope(path: &str, message: &str) -> serde_json::Value {
+    serde_json::json!({
+        "version": JSON_OUTPUT_VERSION,
+        "path": path,
+        "total_matches": 0,
+        "total_files": 0,
+        "matches": [],
+        "truncated": true,
+        "result_incomplete": true,
+        "incomplete_reason": message,
+        "incomplete_reason_class": "scan_limit",
+        "error": {
+            "code": "broad_scan_refused",
+            "message": message,
+            "retryable": false,
+        },
+    })
+}
+
+/// Task #17: the stdout half of the fix below. A no-op unless BOTH `json` is set AND `err` is
+/// specifically the shared implicit-walk-ceiling refusal (`is_unbounded_implicit_search_walk_
+/// refusal`) -- every other native-search error keeps its pre-existing `--json` behavior
+/// untouched (handled by `exit_json_search_runtime_error_if_needed`'s own code-recognition, which
+/// deliberately does not recognize this refusal's text). Never prints to stderr itself; the
+/// caller's own `eprintln!` is unconditional and unchanged so text-mode output cannot drift.
+fn emit_broad_scan_refusal_json_if_needed(json: bool, path: &str, err: &anyhow::Error) {
+    if !json {
+        return;
+    }
+    let message = err.to_string();
+    if !is_unbounded_implicit_search_walk_refusal(&message) {
+        return;
+    }
+    println!("{}", broad_scan_refusal_json_envelope(path, &message));
+}
+
 /// Audit #105: `collect_native_multi_pattern_matches`'s two fallible native-search calls (the
 /// AhoCorasick fast path and the per-pattern regex loop below) both funnel any `Err` through
 /// this helper instead of a bare `?`. Every one of this function's 4 call sites (the single- and
@@ -8221,16 +8334,31 @@ fn execute_native_search(config: NativeSearchConfig) -> anyhow::Result<SearchSta
 /// `main()`'s default `Result` termination, which exits 1 -- the "exit-1-vs-exit-2 no-match
 /// ambiguity bug" (audit #81 #7) -- instead of the fast-bounded exit-2 refusal every other
 /// native-CPU route already gets via `run_native_search_with_optional_rg_fallback`'s generic Err
-/// handling. Deliberately mirrors `execute_ripgrep_search`'s OWN refusal (rg_passthrough.rs):
-/// always a plain `eprintln!`, never a structured JSON error object, even under `--json` -- so
-/// this refusal reads identically regardless of which internal engine produced it. Any OTHER
-/// native-search error (bad path, bad pattern, ...) is returned completely unchanged; this must
-/// not alter exit-code behavior for pre-existing error kinds.
-fn exit_on_native_multi_pattern_ceiling_refusal(err: anyhow::Error) -> anyhow::Error {
+/// handling. Deliberately mirrors `execute_ripgrep_search`'s OWN refusal (rg_passthrough.rs) on
+/// stderr: the exact same plain `eprintln!` text, byte-for-byte, regardless of which internal
+/// engine produced it -- that half of the symmetry is untouched and must stay untouched.
+///
+/// Task #17 (2026-07-30), reversing the second half of this comment's old claim: this used to end
+/// "never a structured JSON error object, even under `--json`" -- coherent only while NEITHER
+/// front door emitted one. #851 gave the Python CLI's own emitter (`_emit_broad_scan_refusal`,
+/// cli/main.py) a machine-readable `error.code: "broad_scan_refused"` envelope on stdout for this
+/// exact refusal family, which broke the symmetry this rationale protected: pip users got the
+/// envelope, standalone-binary/Homebrew/winget users still got 0 stdout bytes under `--json`. This
+/// helper (and its single-pattern sibling in `run_native_search_with_optional_rg_fallback`) now
+/// ALSO emits that same envelope, field-for-field, via `emit_broad_scan_refusal_json_if_needed`,
+/// while leaving the stderr line completely unchanged. Any OTHER native-search error (bad path,
+/// bad pattern, ...) is returned completely unchanged; this must not alter exit-code or `--json`
+/// behavior for pre-existing error kinds.
+fn exit_on_native_multi_pattern_ceiling_refusal(
+    err: anyhow::Error,
+    json: bool,
+    path: &str,
+) -> anyhow::Error {
     if !is_unbounded_implicit_search_walk_refusal(&err.to_string()) {
         return err;
     }
     eprintln!("{err}");
+    emit_broad_scan_refusal_json_if_needed(json, path, &err);
     std::process::exit(2);
 }
 
@@ -8239,8 +8367,17 @@ fn collect_native_multi_pattern_matches(
     mut base_config: NativeSearchConfig,
 ) -> anyhow::Result<(Vec<SearchMatchJson>, Option<usize>)> {
     let include_pattern_metadata = patterns.len() > 1;
+    // Task #17: captured BEFORE the per-pattern loop below force-clears `base_config.json` (so
+    // each per-pattern `execute_native_search` call doesn't render its own partial envelope) --
+    // `exit_on_native_multi_pattern_ceiling_refusal` needs the CALLER's original `--json`
+    // request, not that internal "don't render yet" override, or the second call site a few
+    // lines down would always see `json = false` and silently drop the envelope it exists to add.
+    let json_output = base_config.json;
+    let refusal_path = native_search_config_path_display(&base_config.paths);
     let fast_path_matches = run_native_fixed_multi_pattern_search(base_config.clone(), patterns)
-        .map_err(exit_on_native_multi_pattern_ceiling_refusal)?;
+        .map_err(|err| {
+            exit_on_native_multi_pattern_ceiling_refusal(err, json_output, &refusal_path)
+        })?;
     if let Some(matches) = fast_path_matches {
         // The AhoCorasick fast path owns no `SearchStats`, so it genuinely cannot report a
         // count -- `None`, never `Some(0)`. Tracked as the residual of task 317.
@@ -8279,8 +8416,9 @@ fn collect_native_multi_pattern_matches(
     for (pattern_id, pattern) in patterns.iter().enumerate() {
         let mut pattern_config = base_config.clone();
         pattern_config.pattern = pattern.clone();
-        let stats = execute_native_search(pattern_config)
-            .map_err(exit_on_native_multi_pattern_ceiling_refusal)?;
+        let stats = execute_native_search(pattern_config).map_err(|err| {
+            exit_on_native_multi_pattern_ceiling_refusal(err, json_output, &refusal_path)
+        })?;
         walk_errors += stats.walk_errors;
         matches.extend(stats.matches.into_iter().map(|matched| {
             let (text, bytes) = native_json_text_fields(&matched.raw);
@@ -8431,6 +8569,12 @@ fn run_native_search_with_optional_rg_fallback(
     let json = config.json;
     let ndjson = config.ndjson;
     let verbose = config.verbose;
+    // Task #17: captured before `config` moves into `execute_native_search` below -- this is the
+    // shared chokepoint for BOTH single-pattern front doors (`tg search PATTERN` and the bare
+    // positional `tg PATTERN`), so a ceiling refusal reached through either one needs a `path`
+    // for the same `--json` envelope `exit_on_native_multi_pattern_ceiling_refusal` emits for the
+    // multi-`-e` route.
+    let refusal_path = native_search_config_path_display(&config.paths);
     match execute_native_search(config) {
         Ok(stats) => {
             // Task #276 slice C. An incomplete walk exits 2 -- and it is checked BEFORE the
@@ -8496,6 +8640,13 @@ fn run_native_search_with_optional_rg_fallback(
             }
 
             eprintln!("{err}");
+            // Task #17: this is the dominant real-world path for the shared implicit-walk-ceiling
+            // refusal -- a bare `tg search PAT --json` (or the positional `tg PAT --json`) on a
+            // large implicit root always has `rg_fallback = None` under `--json` (every
+            // structured-output `RoutingDecision` sets `allow_rg_fallback = false`), so it falls
+            // straight through to this catch-all. A no-op for every other error kind and for text
+            // mode; see `emit_broad_scan_refusal_json_if_needed`'s doc comment.
+            emit_broad_scan_refusal_json_if_needed(json, &refusal_path, &err);
             std::process::exit(2);
         }
     }
