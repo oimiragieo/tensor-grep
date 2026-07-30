@@ -1,6 +1,51 @@
 # CHANGELOG
 
 
+## v1.101.22 (2026-07-30)
+
+### Bug Fixes
+
+- **search**: Give the native binary's broad-scan refusal a --json envelope (task 17)
+  ([#867](https://github.com/oimiragieo/tensor-grep/pull/867),
+  [`9deaab8`](https://github.com/oimiragieo/tensor-grep/commit/9deaab8c9bac9c6dcb59e33f81437aebd5c41724))
+
+#851 gave the Python CLI's `_emit_broad_scan_refusal` a machine-readable `error.code:
+  "broad_scan_refused"` envelope for the shared implicit-walk-ceiling refusal, but the standalone
+  native `tg` binary (Homebrew/winget/direct-download users, not pip) kept emitting a bare
+  `eprintln!` and 0 stdout bytes under `--json` for the exact same refusal -- documented in main.rs
+  as a deliberate choice that was coherent only while NEITHER surface emitted JSON.
+
+Adds `broad_scan_refusal_json_envelope` (field-for-field identical to the Python payload: version,
+  path, total_matches/total_files: 0, matches: [], truncated/result_incomplete: true,
+  incomplete_reason(_class), and an error{code,message,retryable} object) and threads it through
+  BOTH refusal call sites that can produce this message under --json: -
+  `exit_on_native_multi_pattern_ceiling_refusal` (multi-`-e` / GPU-fallback routes), the helper the
+  backlog item names directly, and - `run_native_search_with_optional_rg_fallback`'s catch-all Err
+  branch, which is the DOMINANT real-world path (a bare `tg search PAT --json` on a large implicit
+  root, per the v1.101.9 dogfood that motivated #851) -- every structured-output `RoutingDecision`
+  sets `allow_rg_fallback: false`, so it always falls through to this branch under --json.
+
+Text-mode stderr is untouched: the existing `eprintln!("{err}")` lines are unmodified, and
+  `emit_broad_scan_refusal_json_if_needed` only ever adds a stdout side effect, gated on `json` and
+  on `is_unbounded_implicit_search_walk_ refusal` recognizing the message -- every other
+  native-search error keeps its pre-existing --json behavior.
+
+Testing: - 3 in-process unit tests (main.rs `mod tests`): the envelope shape pinned field-for-field
+  against the Python vocabulary, a control arm proving an unrelated error passes through
+  `exit_on_native_multi_pattern_ceiling_ refusal` unmodified, and the new path-display helper's join
+  convention. - `rust_core/tests/test_broad_scan_refusal_json_envelope.rs`: 4 real-binary
+  integration tests (via `TG_TEST_NATIVE_SEARCH_FORCE_ERROR`, an existing test-only hook, so no
+  >1500-file corpus is needed) covering the single-pattern route, the multi-`-e` route,
+  byte-identical stderr between --json and text mode (the CRITICAL CONSTRAINT), and a control arm
+  proving an unrelated forced error does not gain the envelope.
+
+NOT COMPILED LOCALLY -- this box forbids local `cargo build`/`cargo test` (CPU-heavy work). CI's 6
+  test-rust-core legs (ubuntu/windows/macos x stable/nightly) plus `cargo clippy -- -D warnings` are
+  the arbiter; do not merge on a local green because there isn't one.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.101.21 (2026-07-30)
 
 ### Bug Fixes
