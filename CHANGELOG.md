@@ -1,6 +1,256 @@
 # CHANGELOG
 
 
+## v1.101.20 (2026-07-30)
+
+### Bug Fixes
+
+- **search**: The --ast/--rank/--semantic/--stats route also names a defaulted scope
+  ([#862](https://github.com/oimiragieo/tensor-grep/pull/862),
+  [`3419bf2`](https://github.com/oimiragieo/tensor-grep/commit/3419bf2c2c77920e73c761a9c5cc2bfbb1b321ca))
+
+* fix(search): the --ast/--rank/--semantic/--stats route also names a defaulted scope
+
+Backlog #21, second half. #857 closed the rg-passthrough route (a bare `tg search PAT`). An
+  invocation carrying a `_requires_full_cli` flag bypasses bootstrap's passthrough entirely and
+  lands in the Python CLI's `is_empty` branch, which was still silent -- exit 1, nothing on either
+  stream.
+
+REACHABILITY TRACED, NOT ASSUMED, before a line was written:
+
+tg search NO_MATCH_ZZZ --ast --lang python -> EXIT 1 at main.py:8443
+
+That is the is_empty branch. This matters because the FIRST attempt at this fix (reverted,
+  unshipped) was written into a branch the invocation never takes and had no observable effect --
+  the signal-path law exists because of it.
+
+EXIT STAYS 1. A defaulted-scope search that RAN TO COMPLETION is complete; it answered a narrower
+  question than the caller may have meant. Exit 2 is reserved for result_incomplete, and the same
+  line still keys it exclusively on that -- a control arm pins this so "make the zero louder" cannot
+  slide into "make the zero an error".
+
+Verified end-to-end, three arms: --ast, no PATH, zero matches -> note on stderr, rc=1 --ast, WITH
+  matches -> silent, rc=0 --ast, explicit PATH, zero -> silent
+
+All FOUR full-CLI flags covered (--ast/--rank/--semantic/--stats), not just --ast: the plan's first
+  draft named one flag, which would have left three siblings silent while the item read as closed.
+
+TEST-POLLUTION TRAP, SECOND OCCURRENCE. A module-level `from tensor_grep.cli import main` in the new
+  test file poisoned four --help tests in test_cli_modes.py -- they pass alone and fail once this
+  file is collected. Baselined (the help test passes in isolation) before blaming the change, then
+  fixed by deferring the import behind a helper, same as the earlier instance this campaign.
+
+533 tests pass; ruff format + check clean.
+
+* fix(search): gate the scope note on filters and quiet, and make its tests revert-proof
+
+Codex audit of #862 found four issues in code I had already tested and called done. All four were
+  real.
+
+MEDIUM -- FALSE POSITIVE. `paths_defaulted` means only "no positional PATH". A search scoped by
+  --glob/--iglob/--type/--max-depth DID choose a scope, so the note claimed the search covered the
+  whole current directory when it had not. Now gated on the absence of scope filters too.
+  (`_has_walk_scope_bound` is not usable here: it returns False for exactly the paths_defaulted case
+  we are in.)
+
+LOW -- QUIET REGRESSION. The note was emitted before the `quiet` branch, so a --quiet zero-result
+  search began writing stderr where it had been silent. Gated.
+
+LOW x2 -- MY TESTS COULD NOT FAIL. Three of four control arms still PASSED with the fix reverted,
+  because they tested pre-existing helpers rather than the new behaviour, and the primary test
+  asserted on inspect.getsource() so it could pass with the predicate misplaced. All rewritten as
+  subprocess tests asserting stderr and exit code. Revert-proof VERIFIED: reverted -> FAILED,
+  restored -> 8 passed.
+
+--stats TRACED and found NOT to reach is_empty (it emits its own stats block and returns). Marked
+  strict-xfail with the reason, so it flips to a hard failure the moment that route changes -- an
+  xfail that silently starts passing is how a known gap becomes an unknown one. Recorded in
+  docs/BACKLOG.md rather than quietly dropped from the parametrization.
+
+docs/BACKLOG.md gains an OPEN FINDINGS section: the 4 fixed above, the --stats gap, and the 9
+  candidate silent emitters the new A1b class ratchet reports -- explicitly marked
+  NOT-yet-confirmed, because several likely disclose through a surface the matcher does not know
+  about and shipping 9 false P0s is worse than the gap.
+
+* fix(tests): --stats routing diverges by PLATFORM; the strict xfail is what proved it
+
+CI caught XPASS(strict) on ubuntu py3.11 and py3.12: the --stats test PASSES on Linux and FAILS on
+  Windows.
+
+So my own note was wrong. I wrote "TRACED, not assumed: --stats does NOT reach the is_empty branch"
+  -- traced on Windows, then generalised to every platform. That is the exact over-generalisation
+  the other tests in this file exist to catch, committed in the same commit that added them.
+
+WHAT ACTUALLY HAPPENS: on Windows --stats emits its own stats block on stdout and returns without
+  reaching is_empty, so the scope note never fires. On Linux the same invocation DOES reach it and
+  the note fires.
+
+THE STRICT MARKER IS THE ONLY REASON THIS SURFACED. A non-strict xfail would have passed on both
+  platforms -- silently on Linux where the behaviour is already correct, and silently on Windows
+  where it is not -- and the divergence would have stayed invisible. This is the second receipt
+  today for "an xfail that silently starts passing is how a known gap becomes an unknown one",
+  except here it caught something better than a gap: a platform split I did not know existed.
+
+Now a sys.platform == 'win32' strict xfail, so it still converts to a hard failure the day Windows
+  starts routing --stats through is_empty.
+
+docs/BACKLOG.md's finding corrected from "--stats does not disclose" to the real one: the routing
+  diverges by platform, the cause is unexplained, and two platforms taking different routes through
+  one flag is a latent source of Windows-only behaviour gaps worth root-causing.
+
+* fix(search): the --json route also names a defaulted scope (THIRD dispatch route)
+
+v1.101.19 live dogfood, after the other two routes were fixed:
+
+"bare tg search P --json -- still ~2s exit 1, empty, no refuse stderr (text mode is fixed; JSON
+  lagging)"
+
+Correct, and the reason is dispatch, not the emitter. `--json` is a SUPPORTED TRIGGER for native
+  delegation (_can_delegate_to_native_tg_search), so a bare --json search reaches NEITHER the rg
+  passthrough where #857 put the note NOR the Python CLI's is_empty branch where #862 put it. It
+  goes straight to the native binary and re-raises its exit code.
+
+THREE DISPATCH ROUTES, THREE SEPARATE EMISSIONS. There is no single chokepoint, which is exactly why
+  fixing one route kept looking like fixing the feature -- the dogfood reported this same symptom
+  across four consecutive releases while each report described a DIFFERENT route:
+
+bare text -> bootstrap rg passthrough #857 --ast/--rank/... -> Python CLI is_empty branch #862
+  --json -> bootstrap native delegation this commit
+
+Gated identically: exit_code == 1 AND no explicit PATH. stderr, not the JSON body -- stdout is the
+  machine contract and the native binary owns that document; injecting a field would mean parsing
+  and re-emitting its output.
+
+Verified four arms on a real 801-file tree: bare --json, zero matches -> note on stderr, rc=1 bare
+  --json, WITH matches -> stderr empty, rc=0 --json + explicit PATH -> stderr empty stdout still
+  parses as JSON (total_matches=0), unchanged
+
+12 tests pass; ruff clean.
+
+* fix(ledger): say an anonymous claim is UNATTRIBUTABLE, and forbid auto-deriving an id
+
+Backlog #23, reported by four consecutive dogfoods as "default --claim -> anonymous unless
+  env/--agent-id (hint helps; still easy to misuse)".
+
+WHAT CHANGED: the hint now states the CONSEQUENCE, not just the remedy -- "this claim is filed as
+  'anonymous' and is NOT attributable to you" instead of "set TG_LEDGER_AGENT_ID for a stable
+  identity" -- plus a machine-branchable agent_id_is_anonymous sibling so a harness need not
+  string-match prose.
+
+WHAT DELIBERATELY DID NOT CHANGE, which is the load-bearing half. The obvious fix is to auto-derive
+  a stable id. An adversarial audit rejected it with a receipt, and resolve_agent_id now carries
+  that receipt so nobody re-proposes it:
+
+_find_overlaps suppresses when new.agent_id != _DEFAULT_AGENT_ID and entry.agent_id == new.agent_id
+  Two zero-config agents TODAY both resolve to the sentinel -> first conjunct False -> suppression
+  skipped -> they see each other. That IS #845. Under a per-checkout derived id they share one
+  non-sentinel id -> suppression FIRES -> each silently drops the other's overlaps. #845 reproduced
+  by a new mechanism, in the ledger's own primary use case.
+
+And no derivation escapes it: tg is a CLI, every invocation is a fresh process. A per-CHECKOUT id
+  conflates agents; a per-PROCESS id is not stable across one agent's calls. Agent identity is not
+  derivable from the environment -- only the caller knows it.
+
+Refusing outright (what the dogfood asked for) was also rejected: it breaks every existing caller
+  and doc example for a problem the hint covers.
+
+The #845 regression pin is restated in the new test file, because THIS item is the one most likely
+  to break it -- a future contributor reading "make --claim identify itself" will reach for a
+  derived id, and that test is what stops it landing green. 9 tests pass; ruff clean.
+
+* test(a1b): a class ratchet for incompleteness disclosure, triaged to zero false positives
+
+Audit item A1b. The existing ratchet (test_exit_two_is_never_silent.py) keys on _scan_incomplete()
+  gates containing typer.Exit(2). Correct for its family, and STRUCTURALLY INCAPABLE of catching the
+  two P0s #854 fixed:
+
+tg imports -- exits via the shared symbol-command emitter on partial-or-result_incomplete and never
+  calls _scan_incomplete. Invisible to the scan, not failing it. tg orient -- has NO exit-2
+  contract, so an Exit(2)-proximity heuristic cannot reach the one surface where text is the ONLY
+  signal.
+
+This file is the complement, keyed on the payload FIELDS rather than one helper. Kept separate:
+  neither ratchet subsumes the other.
+
+GENERALIZATION ARM, per the plan audit. "Clean against HEAD" is a tautology -- #854's own inline fix
+  already satisfies it, so it cannot distinguish a generalized ratchet from the point fix. And
+  "assert coverage by name" catches exactly the two known bugs and no third. So a synthetic THIRD
+  emitter is injected into a scratch copy and MUST be flagged, with a control arm that the same
+  emitter, once it discloses, must NOT be.
+
+TRIAGED BEFORE REPORTING. The first run flagged 9 functions. All 9 were FALSE POSITIVES -- each
+  carried 7-29 disclosure signals through a surface the matcher did not know. Two matcher defects,
+  both fixed:
+
+1. The list held only helper names. Real emitters disclose via literal banner text (codemap's
+  "PARTIAL:", scan's "INCOMPLETE") and via helpers it omitted. A literal banner IS a disclosure
+  surface; demanding a helper call would force every emitter through one function for the checker's
+  convenience. 2. The read-matcher matched payload["partial"], which also matches the ASSIGNMENT
+  payload["partial"] = True -- flagging _run_ast_scan_payload, a payload BUILDER whose job is to
+  stamp the field. A PRODUCER IS NOT A PRESENTER, and a checker that cannot tell them apart reports
+  correct code as broken.
+
+Shipping those 9 as findings would have been 9 false P0s -- worse than the gap the ratchet exists to
+  close. docs/BACKLOG.md's open finding is updated from "9 candidates" to the resolution.
+
+4 arms pass; ruff clean.
+
+* test(prepare): update the anonymous-hint pin, and make it substance-based
+
+CI caught it: test_prepare_claim_anonymous_agent_id_gets_hint pinned the OLD hint text VERBATIM, so
+  #23's reword reddened 7 checks across ubuntu and windows.
+
+MY MISS, and a repeat. I changed a user-facing string without grepping its consumers -- the exact
+  class the plan audit caught on B2 (five argv pins that had to move in the same PR). The lesson did
+  not transfer from argv to strings, so: before changing ANY user-facing string, grep every test/doc
+  for it.
+
+Fixed as SUBSTANCE, not a new verbatim pin: "NOT attributable" in hint -- the consequence must
+  survive a reword "TG_LEDGER_AGENT_ID" in hint -- the actionable remedy must survive too
+  agent_id_is_anonymous is True -- the machine-branchable sibling
+
+A verbatim pin on prose is why this broke; replacing it with another verbatim pin would just
+  relocate the tripwire. Substance assertions still fail on a real REGRESSION (losing the
+  unattributable warning, or dropping the env var name) while surviving a harmless rewording.
+
+### Documentation
+
+- **agents**: Your own plan is the least-audited artifact you produce
+  ([#861](https://github.com/oimiragieo/tensor-grep/pull/861),
+  [`54201bc`](https://github.com/oimiragieo/tensor-grep/commit/54201bc7f120af42093e6a17c4e854338d4cd7d6))
+
+Three laws from an adversarial audit of MY OWN backlog close-out plan, run before any code was
+  written. The plan had file:line citations, a security classification, and acceptance tests with
+  control arms -- every outward sign of rigour. It contained five errors and the ceremony caught
+  none of them.
+
+1. YOUR OWN PLAN IS THE LEAST-AUDITED ARTIFACT. Code gets tests, PRs get review, a plan gets written
+  and then followed -- and its errors propagate into every item built from it. The five: - a stable
+  per-checkout claim id that would SILENTLY RE-BREAK #845, a fix I shipped hours earlier
+  (ledger_store.py:582-586) - "B2 is not the CWE-88 class, CLI self-argv only" -- AGENTS.md defines
+  that class with NO CLI carve-out and names this exact builder; the downgrade licensed skipping the
+  security gate - an A1b acceptance arm already satisfied by my own earlier fix, so it could not
+  discriminate - "argv byte-identical" as a control arm -- wrong invariant; 5 legitimate test
+  updates would have read as a regression - "check the MCP surface's exit code" -- a category error;
+  MCP returns payloads, not exit codes THE MECHANICAL TELL: the plan listed "stable across
+  invocations in one checkout" AND "the #845 suppression survives" as acceptance criteria in the
+  same document, and NO STATE SATISFIES BOTH when two agents share a checkout. Take a plan's
+  acceptance criteria PAIRWISE before shipping it. Corollaries: a plan fixing a bug you shipped
+  recently deserves extra suspicion (you are reasoning from the model that produced it); never
+  downgrade a severity class in your own plan; an acceptance test already passing on HEAD is a
+  tautology.
+
+2. CONSENSUS IS NOT VERIFICATION -- correlated hallucination, measured. 2 of 3 independent lenses
+  agreed on the WRONG answer for the identity fork; one dissented. Majority would have shipped the
+  regression. Only re-deriving from source settled it. Promote a claim because it carries a citation
+  you checked, never because several reviewers said it.
+
+3. A CLI SEAT THAT ANSWERS YOUR SMOKE TEST CAN STILL FAIL THE REAL WORK. Both thinktank seats passed
+  the pong gate, then produced nothing usable: agy 0 bytes, codex 179KB of exploration and no
+  verdict -- its only RECOMMENDED: line was my own question template echoed back. `head -1` would
+  have reported a fabricated approval of my own plan. The gate was easier than the workload.
+
+
 ## v1.101.19 (2026-07-29)
 
 ### Bug Fixes
