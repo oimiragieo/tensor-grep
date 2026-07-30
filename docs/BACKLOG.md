@@ -430,9 +430,28 @@ wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while 
 
 ---
 
-## ⭐ CURRENT STATE (2026-07-25) — authoritative; every section BELOW is HISTORICAL until the next full refresh
+## ⭐ CURRENT STATE (2026-07-30) — authoritative; every section BELOW is HISTORICAL until the next full refresh
 
-- **Live PyPI: v1.98.11 (2026-07-25). THE `--json` BUG FAMILY IS CLOSED — v1.98.4→v1.98.11, 16 PRs
+> **THE LIVE QUEUE IS `docs/TASK_BOARD.md`, NOT THIS FILE.** This document is 135KB of campaign
+> history and is useful as an archive of WHY decisions were made. It is not a work queue and must
+> not become a second one — reconcile against TASK_BOARD.md rather than adding a third list.
+
+**Live PyPI: v1.101.19 (2026-07-30).** The 2026-07-28/29 wave shipped v1.101.12 → v1.101.19: the mcp
+cap that unblocked publishing at all, both halves of a symlink hole (read-side disclosure and
+write-side `--apply`), a machine-readable broad-scan refusal envelope, `imports`/`orient` false
+zeros, both ledger coordination bugs, a CWE-88 argv sentinel, and the defaulted-scope search note
+across all three dispatch routes.
+
+**PER-SURFACE VERIFICATION, done before this refresh rather than assumed.** The previous NEXT
+CAMPAIGN section named silent-Exit(2) surfaces as open. Checked individually against HEAD: `map`,
+`context`, `agent`, `edit-plan`, `blast-radius`, `inventory`, `scan`, `codemap`, `route-test`,
+`prepare`, `docs-coverage` all lead their text output with a disclosure, and `imports`/`orient`
+were closed by #854. The class ratchet
+`tests/unit/test_disclosure_covers_every_incompleteness_emitter.py` now holds the line. Deleting
+those entries without checking would have been the already-shipped mistake in reverse — removing a
+still-open item — which is why the check came first.
+
+- **[HISTORICAL — v1.98.11 era] THE `--json` BUG FAMILY IS CLOSED — v1.98.4→v1.98.11, 16 PRs
   drained one-per-publish, zero rollbacks.** The campaign began as the CEO `/goal` "beat rg
   cold-start" and ended somewhere better: **the value was BUGS, not milliseconds.** A 3-seat council
   closed the speed lever for good — tg's native walk *is* ripgrep's walk (the same `ignore` crate,
