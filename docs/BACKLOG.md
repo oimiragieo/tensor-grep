@@ -751,6 +751,32 @@ still-open item — which is why the check came first.
 
 ---
 
+## OPEN FINDINGS — 2026-07-31 deep-dive audit (Wave-1+2)
+
+Full register: `docs/audits/2026-07-31-tensor-grep-deep-dive.md`. Remediation:
+`docs/superpowers/plans/2026-07-31-tensor-grep-audit-remediation.md`. Local checkout audited at
+**v1.101.20**; live tip then **v1.101.22**.
+
+| # | sev | finding | wave2 | status |
+|---|---|---|---|---|
+| #858 | LOW | `codemap._atomic_write_text` replaces symlink dest (integrity, not RCE) | VERIFIED (sev↓) | Ready-to-build |
+| #859 | MED | Form-1 writer ratchet missing | VERIFIED | Ready (with #858) |
+| #861 | INFO | Position bugs already fixed; shared-banner unify cosmetic | WEAKENED→INFO | Fold into #860; close as product gap |
+| #860 | LOW | Disclosure docstring lie + tip stamp lag + Slice-2 CONTRACTS lie (DD-003) | VERIFIED | Ready docs |
+| DD-001/#864 | LOW | Python relative `$file` can be dash-named; Rust absolute OK; MCP default-OFF | WEAKENED (sev↓) | LOW / Ready optional |
+| DD-003 | MED | `CONTRACTS.md` Slice-2 path-literal lie vs `_ledger_physical_root` | VERIFIED | Fold into #860 |
+| DD-008/#865 | MED | `--ltl` in bootstrap, absent from `rust_core` (clap-reject) | VERIFIED | Ready |
+| DD-005 | MED | `--stats` Win vs Linux route divergence | VERIFIED (documented) | Open |
+| #862 | LOW | GPU evidence argv missing `--` (paths always absolute) | WEAKENED | LOW |
+| #863 | LOW | Daemon tokenless `is_authorized` fail-open | VERIFIED | LOW |
+| DD-002 | — | Audit-manifest Rust `O_NOFOLLOW` “gap” | **KILLED** | Comment rot only |
+| #115/#125 | — | Listed open LOW | **KILLED** | Mark CLOSED |
+| DD-004 | INFO | `cpu_backend` `RuntimeError` hygiene | WEAKENED | Bank |
+
+Do **not** reopen: #276, GPU HOLD, cAST, free-threading, MCP `<2` cap.
+
+---
+
 ## OPEN FINDINGS — 2026-07-29 codex audit of the implemented branches (#860, #862)
 
 Recorded per the CEO's "document any new issues, bugs or findings in backlog.md". All four were
@@ -986,10 +1012,13 @@ for the next audit rather than re-opened as active work):**
 - **#860** (audit D2) docs reconcile: stamp BACKLOG/CURRENT STATE + `_completeness_caveat_lines`
   docstring (`main.py:11456-11461`) to live disclosure wiring / tip **v1.101.18**. Non-releasing
   `docs:` PR. Pin SOURCE behavior beside any claim retired.
-- **#861** (audit D1 residual) finish text-disclosure class — inventory **leading** truncation
-  position (`inventory.py` / `main.py:8675-8679` names trailing as tracked); codemap share
-  `_emit_scan_incompleteness_banner` for all `_scan_incomplete` causes (not only `partial`);
-  mermaid rendered-node pin (not `%%`-only). Prefer one class ratchet over N one-off PRs.
+- **#861** (audit D1 residual) — **CLOSE as product gap (2026-07-31 Wave-2)**: inventory
+  leading + mermaid visible node + codemap leading `PARTIAL:` already shipped. Remaining
+  shared-banner unify is cosmetic; fold stale comments into **#860**.
+- **#864** (2026-07-31 audit DD-001, Wave-2 LOW) CWE-88 `--` before Python relative `$file` in
+  `apply_policy` (Rust already absolute). MCP default-OFF. Optional with #862.
+- **#865** (2026-07-31 audit DD-008) register `--ltl` on native `SEARCH_PYTHON_PASSTHROUGH_FLAGS`
+  (bootstrap already lists it; rust_core has zero matches → clap-reject). Parity test.
 - **#58** promote `tg route-test` hidden->public — **VERIFY-BEFORE-BUILD:** likely already shipped as
   #601 / v1.76.0; confirm against `origin/main` before opening a PR (AGENTS "check whether it already
   shipped").
@@ -1011,11 +1040,9 @@ for the next audit rather than re-opened as active work):**
 - **#863** (audit S4) make `session_daemon` `token` required (drop tokenless fail-open at
   `is_authorized` when `token=""`) **or** document as deliberate bootstrap trust boundary in
   `CONTRACTS.md`. Latent — production always generates a token; test pins tokenless compat today.
-- **#115** symlink sweep — 3 unguarded `std::fs::write` sites (checkpoint metadata, checkpoint index,
-  rollback-restore); the `write_bytes_refuse_symlink` helper already exists with one caller, mechanical
-  swap to 4.
-- **#125** H3+H4 gate follow-ups — checkpoint `except Exception`->`except BaseException`
-  cleanup-on-abort + create-vs-undo symlink consistency. MCP-reachable (`tg_checkpoint_undo`).
+- **#115** / **#125** — **CLOSED** (CHANGELOG closes #115/#125a; Rust checkpoint/audit/rollback
+  writes use `write_bytes_refuse_symlink`). Do not re-open from the old LOW bullets; 2026-07-31
+  audit DD-007.
 - **#143** Opus-gate LOW follow-ups — `#543`'s race-test/symbol-timeout/`lru_cache` flip + `#140`'s
   `--` sentinel (non-blocking).
 - **#155** `#152` Opus-gate LOW nits — dead reverse-tag block + an ordering comment.

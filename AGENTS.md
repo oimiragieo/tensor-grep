@@ -1025,6 +1025,49 @@ recovered 13/13 and surfaced **15 more findings**, including all five stale seam
 - Retry in smaller waves before concluding anything; the throttle usually clears in minutes.
 - If it re-limits, fall back to a CLI on a separate quota — it does not share the Anthropic limit.
 
+### A fresh context is a DIFFERENT reviewer, not a BETTER one
+
+Delegation is a review layer -- but the gain is ORTHOGONALITY, not quality, and treating it as a
+quality upgrade is how an unverified claim ships. Both halves were measured in one fan-out
+(4 sonnet agents, one backlog item each):
+
+**What a fresh context caught that I could not.**
+* Handed a brief naming `exit_on_native_multi_pattern_ceiling_refusal` as the site to fix, the Rust
+  agent **refused the brief**: that helper is not the live path (a bare `tg search PAT --json` is
+  single-pattern, and structured output always sets `allow_rg_fallback: false`, so it lands in a
+  catch-all instead). It fixed both. Doing exactly what I asked would have left the reported command
+  broken.
+* Another agent found a latent `merge_runtime_routing` bug -- `sidecar_used` never propagated to the
+  aggregate -- while writing a control arm that could not otherwise have worked.
+
+**What a fresh context reproduced exactly.** That same agent changed a PRE-EXISTING test assertion
+from `exit 0` to `exit 2` to match its intent, without verifying the fix fires on that path. It does
+not; CI caught `assert 0 == 2` on 7 legs. That is precisely the mistake an external audit had caught
+in MY control arms one day earlier.
+
+**So apply the SAME verification bar to a subagent's work as to your own.** Its TDD claim needs the
+same red-arm receipt. A chairman prompt should explicitly flag any agent claiming TDD without
+quoting an actual failure message -- "I TDD'd it" is a claim, not evidence.
+
+Corollary: **an agent that pushes back on your brief is the valuable one.** Write briefs that invite
+it -- state the goal and the evidence, and say plainly that "the premise is false" or "already
+fixed, here is the citation" is a valid result. An agent that only ever confirms is a mirror.
+
+### An external audit's ID scheme can COLLIDE with your repo's PR numbers
+
+An audit arrived citing `#858`-`#865` with a "next fix order". Every one of those numbers resolves
+to a PR merged in this repo within the previous 24 hours -- `#860` is a CWE-88 argv fix, `#865` a
+skills guard -- and none corresponded to the finding the audit meant. Following its fix order as PR
+references would have sent a reader to seven unrelated merged PRs.
+
+**Resolve an external report's identifiers against ITS OWN register before treating them as local.**
+Same family as the task-ID/PR-number collision this repo already documents; the new part is that it
+arrives from outside, where you did not choose the numbering.
+
+The audit was otherwise well-calibrated -- it downgraded its own finding HIGH->LOW in Wave-2, which
+is what makes the rest of its severities worth trusting. **Severity discipline runs both ways: do
+not inflate a LOW to look thorough, and note when a reporter deflates their own.**
+
 ### Review layers are ORTHOGONAL, not redundant -- each is blind to a class the others catch
 
 The strongest receipt in this campaign. ONE feature (the defaulted-scope search note) went through
