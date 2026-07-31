@@ -32,14 +32,35 @@ itself" because these builders shell out. They do not. Every one below is a pure
 function; `tests/unit/test_native_argv_end_of_options.py` (#860) has been calling one of them
 directly since it was written.
 
-So this file calls each builder and asserts the ONE property that matters:
-**`argv.index("--")` is less than the index of the first positional.**
+A SECOND round of the same review found two more, and both were POPULATION defects again:
+
+* **`_build_command` was assumed covered by `search_project`. It is not** -- `search_project`
+  builds its argv inline and never calls it. Deleting BOTH of `_build_command`'s sentinels left the
+  suite fully green. It is also the one member whose regression is DESTRUCTIVE rather than merely
+  wrong: a path of `-U` / `--update-all` reaching ast-grep's `run` subcommand is its AUTO-FIX
+  switch, so a read-only scan becomes a file rewrite on disk.
+* **A count is blind to an ORDER SWAP.** Two members used a bare `len(tail) == 2` because their
+  positionals are tg-generated. Exchanging a probe's pattern and path keeps the count and passed --
+  in production that searches a directory NAMED like the pattern, for a pattern that is the temp
+  path, so the probe reports a status from a scan that never touched the probe file. The
+  justification was half wrong too: both PATTERN positionals are hardcoded literals, so only the
+  PATH ever needed shape treatment (`_ANY`).
+
+So this file calls each builder and asserts the property that actually matters:
+**everything after `--` is exactly the positionals, in order, and nothing precedes it.**
+
+THE RECURRING DEFECT IS THE POPULATION, NOT THE ASSERTION. It has been wrong three times -- 5, then
+8, now 10 -- and every miss was a JUDGEMENT that one builder transitively covered another. Each
+entry below is a builder that was CALLED and observed. Do not add one by reasoning that it is
+already covered; call it.
 
 ## WHAT THIS CANNOT COVER, stated rather than glossed
 
-`rust_core/src/rg_passthrough.rs::ripgrep_operand_args` builds an argv on the Rust side and is
-structurally out of reach of a Python test. It is NOT covered here and must not be assumed covered
-by this file's name. Its guard belongs in a Rust unit test.
+* `rust_core/src/rg_passthrough.rs::ripgrep_operand_args` builds an argv on the Rust side and is
+  structurally out of reach of a Python test. NOT covered here; its guard belongs in a Rust test.
+* `cli/dogfood.py::_build_release_docs_worktree_status` is a deliberate EXCLUSION, not an omission:
+  it puts `--` before a hardcoded governance path list and invokes `git`, with no caller-supplied
+  positional. Recorded here so the next reviewer does not re-derive it.
 """
 
 from __future__ import annotations
@@ -57,6 +78,11 @@ from tensor_grep.core.config import SearchConfig
 # the shape that gets promoted to a flag when the sentinel is missing or misplaced.
 _PATTERN = "-i"
 _PATH = "-r"
+
+# The two tg-GENERATED pattern positionals. Hardcoded literals in the product, so they are pinnable
+# by value -- which is what catches an order swap that a count alone cannot see.
+_PROBE_PATTERN = "tg agent gpu probe sentinel"
+_DOCTOR_PATTERN = "tg doctor gpu runtime probe"
 
 
 def _native_search() -> list[str]:
@@ -110,6 +136,49 @@ def _ast_scan_project() -> list[str]:
     return captured[0]
 
 
+def _ast_build_command(pattern: str, **config_kwargs: object) -> list[str]:
+    """`_build_command`'s argv, called directly. It returns `(cmd, context_manager)`.
+
+    THE MEMBER A JUDGEMENT CALL DROPPED, and the only one in this sweep whose regression is
+    DESTRUCTIVE rather than merely wrong: a path of `-U` / `--update-all` reaching ast-grep's `run`
+    subcommand is its AUTO-FIX switch, so a read-only scan becomes a file rewrite on disk. The
+    product's own comment at `ast_wrapper_backend.py:158-162` says exactly that.
+
+    It was assumed covered by `search_project`. It is not -- `search_project` builds its argv inline
+    and calls the runner directly, never touching `_build_command`. Proven by deleting both of this
+    function's sentinels and watching the suite stay green.
+    """
+    from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend
+    from tensor_grep.core.config import SearchConfig as _Config
+
+    cmd, context = AstGrepWrapperBackend()._build_command(
+        pattern,
+        [_PATH],
+        _Config(**config_kwargs),  # type: ignore[arg-type]
+    )
+    with context:
+        return list(cmd)
+
+
+def _ast_run_argv() -> list[str]:
+    return _ast_build_command("needle")
+
+
+def _ast_run_stdin_argv() -> list[str]:
+    """The `ast_stdin=True` arm.
+
+    The run form's sentinel lives in the `else:` of `if stdin_enabled`, so this configuration takes
+    a DIFFERENT branch. A builder whose guard is config-conditional has as many members as it has
+    configurations, and checking only the default arm is sampling.
+    """
+    return _ast_build_command("needle", ast_stdin=True)
+
+
+def _ast_multiline_argv() -> list[str]:
+    """The inline-rule form: a multiline pattern routes to `scan --rule <tmpfile> -- <paths>`."""
+    return _ast_build_command("def a():\n    pass")
+
+
 class _StopBuild(BaseException):
     """Unwinds once the argv is captured. A sentinel, not an error path under test.
 
@@ -121,24 +190,51 @@ class _StopBuild(BaseException):
     """
 
 
+# `_ANY` marks a positional whose VALUE is generated at runtime (a temp path) and so cannot be
+# pinned. It still occupies a slot, so ORDER and COUNT stay checked.
+#
+# It replaces a bare `len(tail) == N` count, which a second review proved blind to a positional
+# ORDER SWAP: exchanging the probe's pattern and path keeps the count and passes, while in
+# production it searches a directory NAMED "tg agent gpu probe sentinel" for a pattern that is the
+# temp path -- the probe reports a status from a scan that never touched the probe file. And the
+# justification for the count form was half wrong: both PATTERN positionals here are hardcoded
+# literals (`agent_capsule.py:1652`, `main.py:2949`), so only the PATH ever needed shape treatment.
+_ANY = object()
+
 # THE POPULATION: (label, callable returning the built argv, the positionals it must protect).
 #
-# A builder that is not here is the failure this file exists to catch — and the FIRST version of
-# this file listed five members while the plan that specified it had enumerated ten. Incomplete
-# enumeration is the same defect as no enumeration, wearing a number.
-_BUILDERS: tuple[tuple[str, object, list[str] | int], ...] = (
+# A builder that is not here is the failure this file exists to catch, and the count has now been
+# wrong TWICE: five members in the first cut (the plan had enumerated ten), then eight -- still
+# missing `_build_command`'s two shapes, whose regression is the only one in this sweep that
+# REWRITES FILES rather than merely searching the wrong scope. Both misses were judgement calls
+# about transitive coverage. Judgement is what keeps failing here; each entry below is a builder
+# that was CALLED and observed, not one reasoned about.
+_BUILDERS: tuple[tuple[str, object, list[object]], ...] = (
     ("cli/main.py::_build_native_tg_search_command", _native_search, [_PATTERN, _PATH]),
     ("cli/mcp_server.py::_build_index_search_command", _mcp_index_search, [_PATTERN, _PATH]),
     ("cli/mcp_server.py::_build_rewrite_command", _mcp_rewrite, [_PATTERN, _PATH]),
     ("backends/ripgrep_backend.py::_append_search_paths", _rg_paths, [_PATH]),
     ("backends/ast_wrapper_backend.py::search_project", _ast_scan_project, [_PATH]),
-    # The probe argv's positionals are tg-GENERATED (a fixed sentinel string and a temp file), so
-    # the expectation is its SHAPE -- 2 trailing items -- rather than fixed values. Expressed as an
-    # int so the check stays real: a builder that emitted zero positionals after `--`, or that let
-    # one slide in front of it, still fails.
-    ("cli/agent_capsule.py::_agent_gpu_evidence[probe]", lambda: _agent_argv()[0], 2),
+    # `_build_command` builds TWO distinct argvs and `search_project` calls NEITHER -- it builds its
+    # own inline. Treating one as covering the other is the transitive-coverage judgement that a
+    # second review disproved by deleting both sentinels here and watching the suite stay green.
+    # The run form's sentinel additionally sits in the `else:` of `if stdin_enabled`, so it is
+    # CONFIG-CONDITIONAL and needs the stdin arm too -- a builder whose guard depends on config has
+    # as many members as it has configurations.
+    ("backends/ast_wrapper_backend.py::_build_command[run]", _ast_run_argv, [_PATH]),
+    ("backends/ast_wrapper_backend.py::_build_command[run,stdin]", _ast_run_stdin_argv, []),
+    ("backends/ast_wrapper_backend.py::_build_command[multiline]", _ast_multiline_argv, [_PATH]),
+    (
+        "cli/agent_capsule.py::_agent_gpu_evidence[probe]",
+        lambda: _agent_argv()[0],
+        [_PROBE_PATTERN, _ANY],
+    ),
     ("cli/agent_capsule.py::_agent_gpu_evidence[evidence]", lambda: _agent_argv()[1], [_PATH]),
-    ("cli/main.py::_doctor_gpu_search_runtime_probe", lambda: _doctor_probe_argv(), 2),
+    (
+        "cli/main.py::_doctor_gpu_search_runtime_probe",
+        lambda: _doctor_probe_argv(),
+        [_DOCTOR_PATTERN, _ANY],
+    ),
 )
 
 
@@ -240,25 +336,32 @@ def test_the_sentinel_precedes_every_positional(label, build, positionals) -> No
     """
     argv = build()
 
+    if not positionals:
+        # A configuration that emits NO positionals (`--stdin`) has nothing to protect. Asserting
+        # a sentinel here would demand a `--` with nothing after it, which is noise, not safety.
+        # The arm exists because the sentinel it skips is CONFIG-CONDITIONAL: the run form guards
+        # only the non-stdin branch, and a member with no configuration coverage is a member
+        # checked in one of its two shapes.
+        assert "--" not in argv or argv[-1] != "--", (
+            f"{label} emits a trailing `--` with no positionals after it: {argv}"
+        )
+        return
+
     assert "--" in argv, f"{label} emits no end-of-options sentinel: {argv}"
     sentinel_at = argv.index("--")
     tail = argv[sentinel_at + 1 :]
 
-    if isinstance(positionals, int):
-        # Shape-only: this builder's positionals are tg-generated, so their VALUES are not
-        # meaningful to pin. The count still is -- a builder that emitted none, or that let one
-        # slide in front of the sentinel, fails here.
-        assert len(tail) == positionals, (
-            f"{label} expected {positionals} positional(s) after `--`, got {tail!r}. A positional "
-            f"missing from the tail is one that slid IN FRONT of the sentinel: {argv}"
-        )
-        return
-
-    for value in positionals:
-        assert value in argv, f"{label} dropped the positional {value!r}: {argv}"
-        assert argv.index(value) > sentinel_at, (
-            f"{label} places the sentinel AFTER the positional {value!r} -- that value is still "
-            f"parsed as a flag by the callee. Position is the property, not presence: {argv}"
+    assert len(tail) == len(positionals), (
+        f"{label} expected {len(positionals)} positional(s) after `--`, got {tail!r}. A positional "
+        f"missing from the tail is one that slid IN FRONT of the sentinel: {argv}"
+    )
+    for index, expected in enumerate(positionals):
+        if expected is _ANY:
+            continue
+        assert tail[index] == expected, (
+            f"{label} positional {index} is {tail[index]!r}, expected {expected!r}. A SWAP keeps "
+            f"the count and changes the meaning -- here it would search a directory named like "
+            f"the pattern, for a pattern that is the path: {argv}"
         )
 
 
@@ -271,13 +374,15 @@ def test_the_positionals_are_the_trailing_run(label, build, positionals) -> None
     for. This is the sibling of the misplacement bug and would otherwise be invisible in the same
     way.
     """
+    if not positionals:
+        return
     argv = build()
     tail = argv[argv.index("--") + 1 :]
 
-    if isinstance(positionals, int):
-        assert len(tail) == positionals, (
-            f"{label}: expected exactly {positionals} item(s) after `--`, got {tail!r}. Anything "
-            "extra there is read as another positional by the callee."
+    if any(p is _ANY for p in positionals):
+        assert len(tail) == len(positionals), (
+            f"{label}: expected exactly {len(positionals)} item(s) after `--`, got {tail!r}. "
+            "Anything extra there is read as another positional by the callee."
         )
         return
 
