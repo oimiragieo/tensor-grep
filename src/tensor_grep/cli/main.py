@@ -4668,7 +4668,22 @@ def find(
     ),
 ) -> None:
     """EXPERIMENTAL: whole-repo hybrid semantic search (BM25 + local CPU dense-embedding
-    relevance, RRF-fused [+ optional MaxSim late rerank]), ranked file:line results.
+    relevance, RRF-fused), ranked file:line results.
+
+    MAXSIM LATE RERANK IS NOT REACHABLE BY A DOCUMENTED PATH, and this docstring used to advertise
+    it as though it were ("[+ optional MaxSim late rerank]"). Stating the honest version instead,
+    because a capability the artifact claims and no install path reaches is the same class of
+    dishonesty as a stamped-but-unpublished version:
+
+      * it needs the `rerank` extra, NOT the `semantic` extra that `tg install-dense` installs;
+      * its model is fetched by `python -m tensor_grep.core.retrieval_late --fetch`, which no `tg`
+        command invokes;
+      * its only control is the undocumented env var `TG_LATE_RERANK=1` -- there is no flag;
+      * and the stage is deliberately HELD as measurably regressing on the retrieval-quality
+        benchmark (`docs/BACKLOG.md`), so this is a hold, not an oversight.
+
+    Do not re-add it to the advertised feature list without an install path a user can follow and
+    a benchmark result that justifies the stage. See task #15.
 
     Unlike `tg search --rank`/`--semantic` (which re-rank an EXISTING regex match set), `tg find`
     walks and ranks the WHOLE repo -- no pattern pre-filter, so it can surface content a
