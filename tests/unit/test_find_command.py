@@ -443,7 +443,24 @@ def test_find_late_head_only_when_env_set(tmp_path: Path, monkeypatch) -> None: 
 
 
 def test_find_late_head_runs_when_env_set(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """The flip side: TG_LATE_RERANK=1 DOES probe/run the late stage, observably reordering."""
+    """The flip side: TG_LATE_RERANK=1 DOES run the late stage, observably reordering.
+
+    THIS TEST USED TO ASSERT NOTHING. Its three assertions were `exit_code == 0`, a non-empty
+    `matches` list, and `result.exception is None` -- and ALL THREE hold with `TG_LATE_RERANK`
+    unset, so it passed identically in both arms while its docstring claimed "observably
+    reordering". A comment claiming a property is not a check of that property, and this is the
+    exact shape `AGENTS.md`'s oracle family names: ask what the check would show if the thing were
+    broken, and if the answer is "the same", it is not verification.
+
+    The fixture was already capable of discriminating -- `_prefer_sparse_encode` deliberately
+    INVERTS the ranking, scoring `sparse.py` (one incidental mention) above `dense.py` (the real
+    definition). Nothing was missing but the assertion. Measured, both arms, same fixture:
+
+        TG_LATE_RERANK=1   ['sparse.py', 'dense.py']    <- the reranker moved it
+        env unset          ['dense.py', 'sparse.py']    <- RRF order, untouched
+
+    So ordering is the observable, and it is the ONLY one here that separates the arms.
+    """
     monkeypatch.setenv("TG_LATE_RERANK", "1")
     _stub_dense_clean(monkeypatch)
     (tmp_path / "dense.py").write_text(
@@ -468,9 +485,17 @@ def test_find_late_head_runs_when_env_set(tmp_path: Path, monkeypatch) -> None: 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
     assert payload["matches"], "expected at least one ranked match"
-    # The late stage was demonstrably consulted -- either it reordered (no fallback reason) or it
-    # degraded and said so; either way the run must not have skipped straight past it silently.
     assert result.exception is None
+
+    # THE ASSERTION THAT ACTUALLY DISCRIMINATES. `_prefer_sparse_encode` scores `sparse.py` above
+    # `dense.py`, which is the OPPOSITE of the RRF order the earlier stages produce. If the late
+    # stage did not run, `dense.py` leads and this fails -- verified by running the arm.
+    order = [Path(match["file"]).name for match in payload["matches"]]
+    assert order[0] == "sparse.py", (
+        "the late rerank stage did not reorder. The stub reranker deliberately prefers "
+        f"sparse.py, so an RRF-ordered result (dense.py first) means the stage was skipped. "
+        f"Observed order: {order}"
+    )
 
 
 def test_find_output_is_ascii(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
