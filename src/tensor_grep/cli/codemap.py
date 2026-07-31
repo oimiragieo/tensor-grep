@@ -33,13 +33,11 @@ from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 from tensor_grep.cli import evidence_receipt as _evidence_receipt
 from tensor_grep.cli import lang_registry
 from tensor_grep.cli import orient_capsule as _orient_capsule
 from tensor_grep.cli import repo_map as _repo_map
-from tensor_grep.cli._index_lock import replace_with_retry
 from tensor_grep.cli.subprocess_policy import (
     configured_git_timeout_seconds,
     deadline_capped_timeout_seconds,
@@ -799,17 +797,27 @@ def _format_stamp_line(revision: dict[str, Any], now_iso: str) -> str:
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
+    """Write ``content`` to ``path``, refusing a symlinked destination.
+
+    Delegates to the shared guarded writer instead of hand-rolling temp+replace. This module wrote
+    its own for years and therefore skipped the symlink refusal that `atomic_write_bytes` exists to
+    provide (`O_CREAT|O_EXCL|O_NOFOLLOW`, mode-at-create, same-directory temp, fsync).
+
+    THIRD instance of one class, which is why the fix is delegation rather than another precheck:
+    #847 closed the read side (`DirectoryScanner` yielding symlinked files), #852 closed the
+    `--apply` write side (`backend_ast::direct_write_file`), and this closed the doc-generation
+    write side. Each earlier fix patched its own site; a hand-rolled writer anywhere is how the
+    next instance gets written, so new publish sites must call the shared helper.
+
+    Severity is LOW and stated deliberately: `replace()` swaps the LINK ENTRY, leaving the target's
+    content intact, so this is an integrity/doc-generation surface rather than #852's
+    content-overwrite. Fixed anyway -- a write surface that bypasses the guarded writer is a
+    standing invitation.
+    """
+    from tensor_grep.cli._index_lock import atomic_write_bytes
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
-    tmp_path.write_text(content, encoding="utf-8")
-    try:
-        replace_with_retry(tmp_path, path)
-    except OSError:
-        try:
-            tmp_path.unlink()
-        except OSError:
-            pass
-        raise
+    atomic_write_bytes(path, content.encode("utf-8"))
 
 
 # ---------------------------------------------------------------------------
