@@ -1,6 +1,98 @@
 # CHANGELOG
 
 
+## v1.101.23 (2026-07-31)
+
+### Bug Fixes
+
+- **codemap**: Route the doc writer through the symlink-refusing shared writer (DD-858)
+  ([#869](https://github.com/oimiragieo/tensor-grep/pull/869),
+  [`543b067`](https://github.com/oimiragieo/tensor-grep/commit/543b0673af3acd8e891100184d59a19ca09a97d2))
+
+External audit finding DD-858, VERIFIED against source before acting: codemap._atomic_write_text
+  hand-rolled write_text(tmp) + replace_with_retry with no is_symlink precheck;
+  _index_lock.atomic_write_bytes exists precisely to refuse a symlinked destination
+  (O_CREAT|O_EXCL|O_NOFOLLOW, mode-at-create); and codemap.py called it ZERO times.
+
+THIRD INSTANCE OF ONE CLASS, which is why the fix is delegation rather than another bespoke
+  precheck: #847 DirectoryScanner yielded symlinked FILES read side, disclosure #852 backend_ast
+  direct_write_file followed symlinks write side, --apply DD-858 codemap._atomic_write_text write
+  side, doc-gen Each earlier fix patched its own site. A hand-rolled writer anywhere is how the next
+  instance gets written, so new publish sites must call the shared helper.
+
+SEVERITY LOW, stated deliberately rather than inflated: replace() swaps the LINK ENTRY and leaves
+  the target's content intact, so this is an integrity / doc-generation surface, not #852's
+  content-overwrite. Fixed anyway -- a write surface that bypasses the guarded writer is a standing
+  invitation.
+
+TDD, red arm seen first (test_a_symlinked_destination_is_refused FAILED pre-fix). Four tests incl.
+  two control arms: the symlink TARGET must be byte-identical afterwards (raising is not enough --
+  an implementation could write then raise), an ordinary destination must still be written AND
+  overwritten (codemap regenerates in place, so 'refuse everything' must fail), and a refusal must
+  leave no .tmp orphans in a directory codemap rewrites repeatedly.
+
+48 codemap tests pass. Collection errors in test_cybert_backend.py /
+  test_eval_late_rerank_quality.py / test_find_command.py are PRE-EXISTING and environmental --
+  baselined on main with this change stashed; they need optional extras absent from a
+  --no-install-project venv.
+
+### Documentation
+
+- A fresh context is a DIFFERENT reviewer, not a better one
+  ([#870](https://github.com/oimiragieo/tensor-grep/pull/870),
+  [`0c46863`](https://github.com/oimiragieo/tensor-grep/commit/0c46863cd038efa438fe6af2fc533109af257dc7))
+
+Two laws from a 4-agent backlog fan-out and an external audit, plus the audit register itself
+  (docs/audits/, previously untracked).
+
+1. A FRESH CONTEXT IS A DIFFERENT REVIEWER, NOT A BETTER ONE. Delegation is a review layer, but the
+  gain is ORTHOGONALITY, not quality. Measured both halves in the same fan-out: CAUGHT WHAT I COULD
+  NOT -- handed a brief naming a specific helper as the fix site, the Rust agent REFUSED the brief
+  and showed that helper is not the live path; doing what I asked would have left the reported
+  command broken. Another agent found a latent merge_runtime_routing bug (sidecar_used never
+  propagated) while writing a control arm that could not otherwise work. REPRODUCED MY OWN MISTAKE
+  -- that same agent changed a pre-existing assertion from exit 0 to exit 2 to match intent without
+  verifying the fix fires there. CI caught assert 0 == 2 on 7 legs. An external audit had caught the
+  identical error in MY control arms one day earlier. Therefore: same verification bar for a
+  subagent as for yourself; its TDD claim needs the same red-arm receipt. And an agent that pushes
+  back on the brief is the valuable one -- write briefs that invite it.
+
+2. AN EXTERNAL AUDIT'S ID SCHEME CAN COLLIDE WITH YOUR PR NUMBERS. An audit cited #858-#865 with a
+  fix order. Every number resolved to a PR merged here in the previous 24 hours, and none was the
+  finding it meant. Resolve an external report's identifiers against its OWN register first. Noted
+  also that the audit downgraded its own finding HIGH->LOW, which is what makes its other severities
+  trustworthy -- severity discipline runs both ways.
+
+- **cli**: Root-cause the tg search --stats platform-divergent dispatch (task #24)
+  ([#866](https://github.com/oimiragieo/tensor-grep/pull/866),
+  [`56315fc`](https://github.com/oimiragieo/tensor-grep/commit/56315fc29d9e69520820c3a542562e9f0a6bc48d))
+
+Traced why a strict xfail XPASSed on Windows CI but not Linux for `tg search NO_MATCH --stats`:
+  cli/main.py::search_command has a SECOND, internal rg-passthrough branch (can_passthrough_rg and
+  stats and _selected_route_supports_rg_passthrough(...), main.py:8004-8017) that hands the whole
+  search to a live `rg --stats` subprocess and exits on its code, skipping the is_empty
+  defaulted-scope note entirely. Whether it fires depends only on Pipeline.selected_backend_name ==
+  "RipgrepBackend", which depends only on whether `rg`/`rg.exe` resolves on PATH
+  (resolve_ripgrep_binary) -- there is no sys.platform/os.name check anywhere in the chain. The
+  `test-python` CI job installs no ripgrep package on any OS, so the split is an ambient per-runner
+  PATH fact, not platform-conditional code. Confirmed via a local paired-proof (PATH with/without a
+  real rg.exe reproduces both reported symptoms on the same tree) and ruled out the native tg binary
+  as a candidate (--stats is excluded from native delegation on both platforms).
+
+Also sweeps the same internal-passthrough fork for downstream surfaces and files a new, distinct
+  finding: neither of cli/main.py's two internal rg-passthrough branches ever forwards --quiet into
+  RipgrepBackend's rg invocation, so `--stats --quiet` silently breaks --quiet's contract whenever
+  RipgrepBackend is selected (not platform-specific, not fixed here).
+
+No code behavior changes -- both dispatch routes are contractually honest (exit 1, real output
+  either way). Documents the mechanism in tensor-grep-architecture-contract, sharpens the xfail
+  reason to name it instead of "PLATFORM-DIVERGENT", and gives the one-line CI command (`python -c
+  "from tensor_grep.cli.runtime_paths import resolve_ripgrep_binary as r; print(r())"`) that
+  confirms it directly inside the test-python job matrix.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.101.22 (2026-07-30)
 
 ### Bug Fixes
