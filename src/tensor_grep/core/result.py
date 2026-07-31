@@ -78,6 +78,13 @@ class SearchResult:
     routing_backend: str | None = None
     routing_reason: str | None = None
     requested_gpu_device_ids: list[int] = field(default_factory=list)
+    # Advisory, additive, and deliberately NOT part of the incompleteness family. A search whose
+    # PATH defaulted to the cwd RAN TO COMPLETION -- it answered a narrower question than the
+    # caller may have meant. Setting `result_incomplete` here would be a lie AND would flip the
+    # exit code to 2, breaking the closed 0/1/2 contract. Live dogfood (v1.101.22) asked for the
+    # stderr scope note to reach the JSON body: "agents that ignore stderr can miss it".
+    path_was_defaulted: bool = False
+    scope_note: str | None = None
     routing_gpu_device_ids: list[int] = field(default_factory=list)
     routing_gpu_chunk_plan_mb: list[tuple[int, int]] = field(default_factory=list)
     routing_distributed: bool = False

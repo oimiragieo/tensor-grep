@@ -188,6 +188,13 @@ class JsonFormatter(OutputFormatter):
             "routing_worker_count": envelope["routing_worker_count"],
             "matches": [_match_payload(match, self.config) for match in result.matches],
         }
+        # Additive-only: absent on an explicitly-scoped search, so an existing consumer's payload
+        # is byte-identical. Present ONLY when the caller did not choose the scope, which is the
+        # case where `total_matches: 0` is ambiguous on its own.
+        if result.path_was_defaulted:
+            data["path_was_defaulted"] = True
+            if result.scope_note:
+                data["scope_note"] = result.scope_note
         for key in (
             "gpu_evidence_status",
             "gpu_proof",

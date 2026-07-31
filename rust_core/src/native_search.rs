@@ -900,6 +900,48 @@ struct NativeJsonOutput<'a> {
     incomplete_reason_class: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     incomplete_paths_count: Option<usize>,
+    // Task #26. The scope-disclosure pair, SIBLING to the incompleteness triple above and
+    // deliberately NOT part of it: a search whose PATH defaulted to `.` RAN TO COMPLETION. It
+    // answered a narrower question than the caller may have meant, which is an advisory, not an
+    // incompleteness -- setting `result_incomplete` here would be false AND would drag the exit
+    // code to 2, breaking the closed 0/1/2 contract for the most ordinary invocation there is.
+    //
+    // Same `skip_serializing_if` convention as everything above it, for the same reason: an
+    // explicitly-scoped search emits neither key and stays byte-identical for every consumer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path_was_defaulted: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scope_note: Option<&'static str>,
+}
+
+/// The defaulted-scope note, in the ONE place BOTH Rust engines can reach it.
+///
+/// Lives in the lib crate, not in `main.rs`, for the reason `write_bytes_refuse_symlink` was
+/// moved here in #852: `main.rs` is the BINARY crate, so anything defined there is unreachable
+/// from this module and a second copy is the only alternative. Two copies of a user-facing string
+/// is how two engines start disagreeing.
+///
+/// Kept byte-identical to `cli/bootstrap.py::_defaulted_scope_note()`, which is the Python front
+/// door's single source for the same sentence. `tests/unit/test_scope_note_parity.py` pins the
+/// two together -- a doc comment asking for parity is not parity.
+pub const DEFAULTED_SCOPE_NOTE: &str = "note: no PATH was given, so the search defaulted to the \
+current directory. Zero matches means zero matches in THAT scope, not in the repository. If you \
+expected hits, re-run with an explicit PATH: tg search <pattern> <dir>";
+
+/// Task #26: turn "the caller gave no PATH" into the two advisory scope fields.
+///
+/// GATED ON ZERO MATCHES, not on the default alone. A defaulted search that FOUND something
+/// answered the caller's question; annotating it would fire on the overwhelmingly common case and
+/// train every consumer to ignore the field. The note only carries information when the answer was
+/// empty, because "empty" is the answer a silently-narrowed scope fakes.
+pub fn defaulted_scope_fields(
+    path_was_implicit: bool,
+    total_matches: usize,
+) -> (Option<bool>, Option<&'static str>) {
+    if path_was_implicit && total_matches == 0 {
+        return (Some(true), Some(DEFAULTED_SCOPE_NOTE));
+    }
+    (None, None)
 }
 
 /// Mirrors real `rg --json`'s own `lines` protocol (verified via hexdump against `rg.exe`
@@ -2520,6 +2562,8 @@ fn emit_json_matches(config: &NativeSearchConfig, stats: &SearchStats) -> Result
         *match_counts_by_file.entry(path).or_insert(0) += 1;
     }
     let matched_file_paths = match_counts_by_file.keys().cloned().collect::<Vec<_>>();
+    let (path_was_defaulted, scope_note) =
+        defaulted_scope_fields(config.path_was_implicit, stats.total_matches);
     let payload = NativeJsonOutput {
         version: JSON_OUTPUT_VERSION,
         routing_backend: config.routing_backend,
@@ -2554,6 +2598,8 @@ fn emit_json_matches(config: &NativeSearchConfig, stats: &SearchStats) -> Result
         result_incomplete: (stats.walk_errors > 0).then_some(true),
         incomplete_reason_class: (stats.walk_errors > 0).then_some("unreadable_path"),
         incomplete_paths_count: (stats.walk_errors > 0).then_some(stats.walk_errors),
+        path_was_defaulted,
+        scope_note,
     };
 
     let mut bytes = serde_json::to_vec(&payload)?;
@@ -2695,6 +2741,108 @@ mod tests {
             envelope.get("incomplete_paths_count").is_none(),
             "a COMPLETE walk must not carry incomplete_paths_count: {envelope}"
         );
+    }
+
+    // --- Task #26: the --json envelope must NAME the scope a zero-result search covered -------
+    //
+    // The v1.101.22 dogfood: "PATH note is stderr-only -- bare `--json` still returns empty
+    // aggregate JSON with no warnings/notes field; agents that ignore stderr can miss it."
+    //
+    // `defaulted_scope_fields` has THREE inputs' worth of behaviour (implicit x matches), and the
+    // arms below cover all of it. That matters more than usual here: this exact symptom has taken
+    // four separate fixes because each one closed the one route that happened to be reported, so
+    // a test that only exercises the treatment arm would look like coverage and be sampling.
+
+    fn envelope_for_scope(
+        path_was_implicit: bool,
+        matches: Vec<NativeSearchMatch>,
+    ) -> serde_json::Value {
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let config = NativeSearchConfig {
+            output_target: NativeOutputTarget::Buffer(Arc::clone(&buffer)),
+            path_was_implicit,
+            ..NativeSearchConfig::default()
+        };
+        let total_matches = matches.len();
+        let stats = SearchStats {
+            total_matches,
+            matches,
+            ..SearchStats::default()
+        };
+        emit_json_matches(&config, &stats).expect("emit_json_matches must succeed");
+        let bytes = buffer.lock().expect("buffer lock").clone();
+        serde_json::from_slice(&bytes).expect("envelope must be valid JSON")
+    }
+
+    fn one_match() -> Vec<NativeSearchMatch> {
+        vec![NativeSearchMatch {
+            path: PathBuf::from("a.rs"),
+            line_number: Some(1),
+            raw: b"needle".to_vec(),
+        }]
+    }
+
+    #[test]
+    fn json_envelope_names_the_scope_when_a_defaulted_search_found_nothing() {
+        // TREATMENT. This is the only combination that carries information: the caller did not
+        // choose the scope AND the answer was empty, so "empty" may be an artefact of the scope
+        // rather than a fact about the repository.
+        let envelope = envelope_for_scope(true, Vec::new());
+        assert_eq!(envelope["path_was_defaulted"], serde_json::json!(true));
+        assert_eq!(
+            envelope["scope_note"],
+            serde_json::json!(DEFAULTED_SCOPE_NOTE),
+            "the envelope must carry the SHARED note text, not a local paraphrase"
+        );
+    }
+
+    #[test]
+    fn json_envelope_stays_silent_when_the_caller_chose_the_scope() {
+        // CONTROL ARM 1. An explicit PATH that found nothing is an authoritative zero -- the
+        // caller asked exactly this question and got the answer. Annotating it would be noise,
+        // and it would also break the byte-identical promise for every existing consumer that
+        // passes a PATH (which is the documented, recommended usage).
+        let envelope = envelope_for_scope(false, Vec::new());
+        assert!(
+            envelope.get("path_was_defaulted").is_none(),
+            "an explicitly-scoped search must not carry path_was_defaulted: {envelope}"
+        );
+        assert!(
+            envelope.get("scope_note").is_none(),
+            "an explicitly-scoped search must not carry scope_note: {envelope}"
+        );
+    }
+
+    #[test]
+    fn json_envelope_stays_silent_when_a_defaulted_search_found_something() {
+        // CONTROL ARM 2, and the one that keeps the field worth reading. Without it, gating on
+        // `path_was_implicit` alone would pass the treatment test while stamping the note onto
+        // the overwhelmingly common case -- a successful bare search -- which trains every
+        // consumer to ignore the key and puts us back where the dogfood started.
+        let envelope = envelope_for_scope(true, one_match());
+        assert_eq!(envelope["total_matches"], serde_json::json!(1));
+        assert!(
+            envelope.get("path_was_defaulted").is_none(),
+            "a defaulted search that FOUND matches must not carry the note: {envelope}"
+        );
+        assert!(
+            envelope.get("scope_note").is_none(),
+            "a defaulted search that FOUND matches must not carry scope_note: {envelope}"
+        );
+    }
+
+    #[test]
+    fn defaulted_scope_fields_is_gated_on_both_inputs() {
+        // The helper itself, exhaustively -- the envelope tests above go through
+        // `emit_json_matches`, so a bug in the gate could in principle be masked by the payload
+        // builder. Four combinations, one truth table, no sampling.
+        assert_eq!(
+            defaulted_scope_fields(true, 0),
+            (Some(true), Some(DEFAULTED_SCOPE_NOTE))
+        );
+        assert_eq!(defaulted_scope_fields(true, 1), (None, None));
+        assert_eq!(defaulted_scope_fields(false, 0), (None, None));
+        assert_eq!(defaulted_scope_fields(false, 1), (None, None));
     }
 
     fn worker_for(shared: &Arc<Mutex<SearchStats>>) -> ParallelWalkWorker {

@@ -599,6 +599,27 @@ def _search_args_include_explicit_path(search_args: list[str]) -> bool:
     return False
 
 
+def _defaulted_scope_note() -> str:
+    """THE note text, in ONE place.
+
+    Extracted so the stderr writer and the `--json` body field cannot drift. v1.101.22 dogfood
+    asked for this text to reach the JSON document ("agents that ignore stderr can miss it"); two
+    copies of a user-facing string is how the two surfaces start disagreeing.
+
+    NO TRAILING NEWLINE, deliberately, and this is load-bearing rather than cosmetic. The same
+    sentence now has a THIRD consumer -- `native_search.rs::DEFAULTED_SCOPE_NOTE`, which the Rust
+    engines stamp into their own `--json` bodies -- and a JSON string field that ends in `\n` on
+    one engine and not the other is two engines disagreeing about a value they are supposed to
+    share. Line termination belongs to the stream writer (`_write_defaulted_scope_note` appends
+    it), not to the text. `tests/unit/test_scope_note_parity.py` pins the two constants equal.
+    """
+    return (
+        "note: no PATH was given, so the search defaulted to the current directory. "
+        "Zero matches means zero matches in THAT scope, not in the repository. "
+        "If you expected hits, re-run with an explicit PATH: tg search <pattern> <dir>"
+    )
+
+
 def _write_defaulted_scope_note() -> None:
     """Name the scope a zero-result search actually covered.
 
@@ -614,11 +635,12 @@ def _write_defaulted_scope_note() -> None:
     narrower question. Refusing every bare `tg search foo` would break the ordinary invocation,
     which works correctly. Keep the exit code honest and remove the ambiguity with words.
     """
-    sys.stderr.write(
-        "note: no PATH was given, so the search defaulted to the current directory. "
-        "Zero matches means zero matches in THAT scope, not in the repository. "
-        "If you expected hits, re-run with an explicit PATH: tg search <pattern> <dir>\n"
-    )
+    # `sys.stderr`, NOT `sys.__stderr__`. An earlier cut used the latter on the theory that the rg
+    # passthrough rebinds stderr -- that theory was later disproved (the real cause of the missing
+    # note was DISPATCH: the invocation never reached this function). `sys.__stderr__` also breaks
+    # pytest's `capsys`, which captures `sys.stderr`, so the fix for a phantom problem created a
+    # real one.
+    sys.stderr.write(_defaulted_scope_note() + "\n")
     sys.stderr.flush()
 
 

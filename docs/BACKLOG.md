@@ -442,6 +442,58 @@ write-side `--apply`), a machine-readable broad-scan refusal envelope, `imports`
 zeros, both ledger coordination bugs, a CWE-88 argv sentinel, and the defaulted-scope search note
 across all three dispatch routes.
 
+### 2026-07-31 session — one root cause behind two long-open items
+
+**#868's "cause UNKNOWN" is CLOSED, and the reason it stayed unknown is the finding.** The PR sat
+RED for days with two hypotheses recorded as "falsified by controls". One of those controls moved
+the **wrong variable**: it tested that the `rust_core` Python **extension module** was present. The
+dispatch gate is `resolve_native_tg_binary()`, which looks for the compiled **`tg` binary**. Two
+different artifacts with adjacent names, and the killed hypothesis was right the whole time.
+
+```
+main.py:7521   _warn_unavailable_gpu_device_ids(...)          <- the warning CI showed
+main.py:7862   native_tg_binary = resolve_native_tg_binary()
+main.py:7877   sys.exit(_delegate_to_native_tg_search(...))   <- EXITS HERE
+main.py:8408   <#868's new exit-code rule>                    <- ~530 lines later, UNREACHABLE
+```
+
+Two arms, one variable, everything else byte-identical: `-> None` takes the Python route and exits
+2 (why it passes locally, where cargo has never run); `-> Path(...)` takes delegation and exits 0
+with **only** the inventory warning on stdout — reproducing CI byte-for-byte. A negative control
+earns its authority by reproducing the failure in one arm; "still passes" rules out nothing.
+
+Three consequences, all filed rather than noted:
+
+1. **It is a PRODUCT bug, not a test bug.** Every real install HAS a native binary, so an
+   unhonoured explicit `--gpu-device-ids` request exits 0 for actual users. Pinning the test to the
+   Python route would be the flip-the-assertion-to-match-one-box anti-pattern.
+2. **A test-harness defect wider than #868.** `_patch_cli_dependencies`
+   (`tests/unit/test_cli_modes.py:373`) patches `Pipeline`, `DirectoryScanner` and
+   `RipgrepBackend.is_available` — **not** `resolve_native_tg_binary`. Every test using it silently
+   exercises a different dispatch route on a dev box than in CI. An unpatched dependency in a shared
+   fixture is a hidden arm.
+3. **Third instance of one class**, after #26's four dispatch routes: a rule implemented on the
+   Python route while native delegation bypasses it. Being fixed with an enumerating mechanism, not
+   another one-off. Law recorded in `AGENTS.md` ("A control that moves the WRONG variable falsely
+   EXONERATES the right hypothesis").
+
+**#26 (machine-first trust envelope) — Rust half shipped as PR #871.** The v1.101.22 dogfood
+reported the same symptom for a FOURTH consecutive release ("PATH note is stderr-only; bare `--json`
+returns empty aggregate JSON with no warnings/notes field"). The binary has to stamp it: `--json`
+triggers native delegation and `_run_native_tg_search` STREAMS the document through
+`_streaming_passthrough_returncode`, so Python never holds it — injecting the field there would mean
+buffering the whole payload to fix a zero-match case. Enumerated rather than sampled: all four
+native envelopes (`NativeJsonOutput`, `SearchResultJson`, `SearchSummaryNdjson`,
+`GpuNativeSearchResultJson`) get `path_was_defaulted` + `scope_note` in one change. Deliberately NOT
+part of the incompleteness family — a defaulted-scope search RAN TO COMPLETION, so `result_incomplete`
+would be false and would drag the exit to 2, breaking the closed 0/1/2 contract for the most ordinary
+invocation there is. Gated on zero matches so the field stays worth reading. The note text moved to
+the LIB crate (`native_search.rs::DEFAULTED_SCOPE_NOTE`) because `main.rs` is the binary crate — the
+same constraint that moved `write_bytes_refuse_symlink` in #852 — and its trailing newline was
+dropped, harmless while stderr was the only consumer but a real cross-engine divergence once the same
+string became a JSON string VALUE. `tests/unit/test_scope_note_parity.py` reads BOTH sources and
+compares; red arm proven by mutating the Rust constant.
+
 **PER-SURFACE VERIFICATION, done before this refresh rather than assumed.** The previous NEXT
 CAMPAIGN section named silent-Exit(2) surfaces as open. Checked individually against HEAD: `map`,
 `context`, `agent`, `edit-plan`, `blast-radius`, `inventory`, `scan`, `codemap`, `route-test`,
