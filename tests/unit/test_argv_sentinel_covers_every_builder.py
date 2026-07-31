@@ -28,9 +28,15 @@ one of its findings was correct:
   lines.
 
 The justification for going source-based was also false: it claimed a behavioural test "would skip
-itself" because these builders shell out. They do not. Every one below is a pure list-returning
-function; `tests/unit/test_native_argv_end_of_options.py` (#860) has been calling one of them
-directly since it was written.
+itself" because these builders shell out. Every one below is either a list-returning function or is
+capturable at its runner, and `tests/unit/test_native_argv_end_of_options.py` (#860) has been
+calling one of them directly since it was written.
+
+(Stated precisely, because a careless version of that sentence was already wrong once: the ast
+builder is pure in what it RETURNS, but resolving `argv[0]` goes through `_get_binary_name`, which
+`shutil.which`-es four candidates and PROBE-RUNS each. It cannot FAIL to produce an argv -- the last
+branch falls back to the literal `"ast-grep"` -- and `test_the_ast_builder_is_environment_independent`
+pins that fallback so nothing here is silently conditional on the authoring machine.)
 
 A SECOND round of the same review found two more, and both were POPULATION defects again:
 
@@ -162,6 +168,34 @@ def _ast_build_command(pattern: str, **config_kwargs: object) -> list[str]:
 
 def _ast_run_argv() -> list[str]:
     return _ast_build_command("needle")
+
+
+def test_the_ast_builder_is_environment_independent(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The ast argv must build IDENTICALLY on a runner with no ast-grep installed.
+
+    Precision that matters, because a careless version of this claim has already been wrong once in
+    this file's history: `_build_command` is pure in what it RETURNS, but resolving `argv[0]` goes
+    through `_get_binary_name`, which `shutil.which`-es four candidates and PROBE-RUNS each one
+    (`ast_wrapper_backend.py:98-128`). So it can spawn subprocesses -- it just cannot fail to
+    produce an argv, because the last branch falls back to the literal `"ast-grep"`.
+
+    This arm forces that fallback. Without it, every assertion above would be silently
+    conditional on the authoring machine having ast-grep on PATH -- the shape of environment
+    dependence that makes a test pass locally and behave differently in CI.
+    """
+    import shutil
+
+    from tensor_grep.backends import ast_wrapper_backend as mod
+
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    backend = mod.AstGrepWrapperBackend()
+    cmd, context = backend._build_command("needle", [_PATH], None)
+    with context:
+        argv = list(cmd)
+
+    assert argv[0] == "ast-grep", f"the no-ast-grep fallback changed shape: {argv}"
+    tail = argv[argv.index("--") + 1 :]
+    assert tail == [_PATH], f"the sentinel/positional shape differs when ast-grep is absent: {argv}"
 
 
 def _ast_run_stdin_argv() -> list[str]:
