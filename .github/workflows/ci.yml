@@ -420,6 +420,17 @@ jobs:
           }
           throw "Dependency install failed after 5 attempts."
           
+      - name: "Task 22 diagnostic: which route does an explicit --gpu-device-ids search take"
+        # NON-GATING (continue-on-error): pure instrumentation for the PR #868 dispute over
+        # whether `resolve_native_tg_binary()` returns a real, working native binary on THIS job
+        # (contrary to this file's `native-build-smoke` job comment a few hundred lines below
+        # claiming "`test-python` never builds `rust_core/target/release/tg`") -- see
+        # scripts/diagnose_gpu_delegation_route.py's module docstring for the full background and
+        # why it deliberately never touches the real (unmocked) Pipeline. Runs on every OS/Python
+        # leg in the matrix so the answer is not assumed to generalize from one platform.
+        continue-on-error: true
+        run: uv run python scripts/diagnose_gpu_delegation_route.py
+
       - name: Run Pytest
         # `eval` (tests/eval/) is the agent-accuracy golden-set gate: 15 real `tg prepare`
         # subprocess calls against this repo's own ranking pipeline. Deliberately excluded from
@@ -427,6 +438,11 @@ jobs:
         # `-x` fail-fast means a single failure here would abort before any unit test runs,
         # exactly the flaky-e2e-masks-unit-tests trap already hit once on tests/e2e/. Run it
         # explicitly via `pytest tests/eval -m eval -v -s`.
+        #
+        # `test-python` never builds `rust_core/target/release/tg` (maturin builds only the
+        # `pyo3/extension-module` cdylib) -- IN DISPUTE as of the task 22 investigation: see the
+        # diagnostic step immediately above, which measures whether that is still true on THIS
+        # job rather than repeating the claim as settled.
         run: uv run pytest tests -v --tb=short -m "not eval"
 
   test-rust-core:

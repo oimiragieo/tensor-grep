@@ -1997,6 +1997,73 @@ _NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS = (
 )
 
 
+@dataclasses.dataclass(frozen=True)
+class _TailExitCodePolicy:
+    """One exit-code RULE that `search_command`'s Python TAIL applies -- i.e. code that only
+    runs when a request did NOT take the native-delegation exit
+    (``sys.exit(_delegate_to_native_tg_search(...))``, above ``_can_delegate_to_native_tg_search``
+    in this module).
+
+    Task 22 investigation: PR #868 added a tail-only exit-code rule
+    (``gpu_request_unhonoured``) keyed on a `SearchConfig` field (``gpu_device_ids``) that is
+    ELIGIBLE for delegation rather than refused, so a request that triggers the rule can also
+    take the OTHER route -- where whether the native binary applies the identical rule is a
+    completely separate question this module cannot answer by inspection. This registry makes
+    every such rule an explicit, reviewed decision instead of a silent assumption; see
+    ``tests/unit/test_search_command_tail_exit_policy_route_parity.py``, which enumerates it and
+    fails loudly on an unclassified entry.
+    """
+
+    name: str
+    """Human-readable identifier for the rule (matches the predicate/variable name in
+    `search_command`, e.g. ``"gpu_request_unhonoured"``)."""
+
+    trigger_fields: frozenset[str]
+    """`SearchConfig` field name(s) that must be non-default for this rule to ever fire. An
+    empty frozenset means the rule can fire on ANY request regardless of flags (e.g. a walk
+    error can happen on a plain search too), so route parity is unconditionally required."""
+
+    mirrored_in_native_at: str | None = None
+    """A citation into the Rust source (e.g. ``"rust_core/src/main.rs:13064
+    walk_was_incomplete()"``) where a human manually verified the native binary applies the SAME
+    rule. Exactly one of this and `route_specific_reason` must be set -- never both, never
+    neither."""
+
+    route_specific_reason: str | None = None
+    """Non-empty iff this rule is knowingly Python-route-only (unverified, or verified NOT to
+    hold, on the native binary) -- must name the tracking issue/PR so the gap stays discoverable
+    rather than silently assumed. Exactly one of this and `mirrored_in_native_at` must be set."""
+
+
+_SEARCH_COMMAND_TAIL_EXIT_CODE_POLICIES: tuple[_TailExitCodePolicy, ...] = (
+    _TailExitCodePolicy(
+        name="result_incomplete",
+        trigger_fields=frozenset(),
+        mirrored_in_native_at=(
+            "rust_core/src/main.rs: walk_was_incomplete()/incomplete_envelope_fields() are "
+            "consulted at every native plain-text exit site (run_native_search_with_optional_"
+            "rg_fallback's `if stats.walk_errors > 0 { std::process::exit(2) }` and "
+            "emit_multi_pattern_native_results's identical guard) -- manually verified during "
+            "the task 22 investigation, 2026-07-31."
+        ),
+    ),
+    _TailExitCodePolicy(
+        name="gpu_request_unhonoured",
+        trigger_fields=frozenset({"gpu_device_ids"}),
+        route_specific_reason=(
+            "backlog #22 / PR #868: gpu_device_ids is delegation-ELIGIBLE, not refused (it is "
+            "NOT a member of _NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS -- it is one of the "
+            "OR triggers _can_delegate_to_native_tg_search accepts), so a request that fires "
+            "this rule can also be delegated to the native binary. Whether the native binary "
+            "applies the identical rule on its CPU-fallback/sidecar exit paths is "
+            "CONTRACT-CONTESTED (see the task-22 diagnostic + PR #868 discussion) and NOT "
+            "implemented as of this commit -- tracked as a known gap, not silently assumed. "
+            "#868 stays blocked on this decision; do not resolve this entry by assumption."
+        ),
+    ),
+)
+
+
 def _doctor_installed_version() -> str:
     return _cli_package_version()
 
@@ -8444,6 +8511,12 @@ def search_command(
     # merely served the query is complete, not incomplete. Computed once via the shared
     # predicate so this decision and the `--json` envelope's `native_gpu_unavailable` field can
     # never drift apart (`tensor_grep.cli.formatters.json_fmt.gpu_request_unhonoured`).
+    #
+    # THIS ENTIRE BLOCK IS TAIL-ONLY CODE (unreachable whenever the native-delegation
+    # `sys.exit(_delegate_to_native_tg_search(...))` above fires instead). Every exit-code rule
+    # added here is registered in `_SEARCH_COMMAND_TAIL_EXIT_CODE_POLICIES` above, classified as
+    # either verified-mirrored-in-native or an explicit route-specific gap -- see that
+    # registry's docstring and `tests/unit/test_search_command_tail_exit_policy_route_parity.py`.
     from tensor_grep.cli.formatters.json_fmt import gpu_request_unhonoured
 
     gpu_request_incomplete = gpu_request_unhonoured(all_results)
