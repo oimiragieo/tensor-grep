@@ -2505,7 +2505,7 @@ _DOCTOR_VERSION_NOT_PROVIDED = object()
 
 def _doctor_tg_launcher_kind(
     path: str | None,
-    version_text: str | None | object = _DOCTOR_VERSION_NOT_PROVIDED,
+    version_text: str | object | None = _DOCTOR_VERSION_NOT_PROVIDED,
 ) -> str | None:
     if not path:
         return None
@@ -2971,6 +2971,13 @@ def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str,
             "--no-ignore",
             "-F",
             sentinel,
+            # End-of-options sentinel (CWE-88 class, AGENTS.md). Lower risk than the
+            # `agent_capsule.py` twin -- both `sentinel` and `probe_target` are tg-generated here,
+            # not caller-supplied -- but included for UNIFORMITY, which is the actual security
+            # property. A sweep whose members each carry their own risk assessment is a sweep
+            # nobody can check; "every argv builder ends its options" is checkable, and is what
+            # `tests/unit/test_argv_sentinel_covers_every_builder.py` enumerates.
+            "--",
             probe_target,
         ]
         base["command"] = " ".join([*command[:-1], "<doctor-gpu-probe-file>"])
