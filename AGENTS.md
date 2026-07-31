@@ -1523,7 +1523,24 @@ A round-3 security sweep (shipped v1.17.23–v1.17.25) fixed four recurring clas
 - **Symlink-follow disclosure** (any tree walk or copy that snapshots/restores a user/repo tree). Following symlinks copies the *content* of out-of-root targets into the snapshot — and can re-materialize them on restore. Use `os.walk(root, followlinks=False)` + `shutil.copy2(src, dst, follow_symlinks=False)`. Fixed in `checkpoint_store.py` (`_filesystem_snapshot_entries` + all 3 copy sites).
 - **Pre-auth unbounded read / no timeout** (any socket/pipe handler that reads *before* authenticating). Bound the read (`readline(max_bytes + 1)` + refuse over-cap) and set a socket timeout **before** the auth check, or an unauthenticated client exhausts memory or pins a worker thread. Fixed in `session_daemon.py` (`_read_bounded_request_line` + handler `timeout`).
 - **Atomic-write permission window** (any temp-then-rename of a sensitive file, e.g. a token). Create the temp at the restrictive mode from byte one via `os.open(path, O_WRONLY | O_CREAT | O_EXCL, mode)` — never `write_text()`-then-`chmod`, which leaves a world-readable window; `O_EXCL` also refuses a pre-existing temp/symlink. Fixed in `session_store.py` (`_write_json_atomic`).
-- **Native-argv flag injection** (CWE-88; the MCP-276 threat class — a *live* CVE family in MCP servers: CVE-2026-5058 aws-mcp-server, CVE-2026-23744, CVE-2026-30623 Anthropic MCP SDK). Any builder that appends a user/LLM-controlled value as a positional to a subprocess/native `tg`/`rg`/`git` command. A list-argv (`shell=False`) stops *shell* injection but **not** *flag* injection: a value beginning with `-` is parsed by the child's own option parser as a flag. Insert a `--` end-of-options sentinel **before** the user positionals. CAVEATS worth knowing: `--` protects only what comes *after* it (a user positional *before* `--` is still injectable); it does not gate `--flag=VALUE`; and not every binary honors it — **dogfood the real binary** (`tg search -- --weird` matches; `tg search --weird` errors). Fixed in `mcp_server.py` (`_build_rewrite_command`, `_build_index_search_command`); **remaining tg sweep** (tracked): the other native-argv builders + MCP write-path confinement. The three defenses layer — validate the value, list-argv, and `--` — and none alone is complete.
+- **Native-argv flag injection** (CWE-88; the MCP-276 threat class — a *live* CVE family in MCP servers: CVE-2026-5058 aws-mcp-server, CVE-2026-23744, CVE-2026-30623 Anthropic MCP SDK). Any builder that appends a user/LLM-controlled value as a positional to a subprocess/native `tg`/`rg`/`git` command. A list-argv (`shell=False`) stops *shell* injection but **not** *flag* injection: a value beginning with `-` is parsed by the child's own option parser as a flag. Insert a `--` end-of-options sentinel **before** the user positionals. CAVEATS worth knowing: `--` protects only what comes *after* it (a user positional *before* `--` is still injectable); it does not gate `--flag=VALUE`; and not every binary honors it — **dogfood the real binary** (`tg search -- --weird` matches; `tg search --weird` errors). The three defenses layer — validate the value, list-argv, and `--` — and none alone is complete.
+
+  **THE SWEEP IS NOW A TEST, NOT A SENTENCE, AND THAT CHANGE COST A LIVE HOLE.** This bullet used to
+  end with *"**remaining tg sweep** (tracked): the other native-argv builders"*. Prose did not hold
+  it. #860 fixed `cli/main.py::_build_native_tg_search_command` and the class was recorded closed —
+  while `cli/agent_capsule.py::_agent_gpu_evidence` was still appending a **caller-supplied** path as
+  a bare positional, found only by an independent plan review on 2026-07-31 (#872). Tracking a sweep
+  by name in a doc means the next person must re-derive the population from memory, and they will
+  get it wrong the same way. The population now lives in
+  `tests/unit/test_argv_sentinel_covers_every_builder.py`, enumerated **by symbol**, with a
+  blind-census arm: a symbol that stops resolving is an explicit FAILURE, never a skip.
+
+  Two rules that fell out of it: the sentinel is **unconditional** at every site (an "only when the
+  value starts with `-`" guard reads as equivalent and leaves the silent case open — and in
+  `_agent_gpu_evidence` a WSL `wslpath` branch rewrites the path *after* the caller supplies it); and
+  **uniformity is the security property** — the doctor GPU probe carries the sentinel although both
+  its positionals are tg-generated, because a sweep whose members each carry a private risk
+  assessment is a sweep nobody can check.
 
 ## EvidenceReceipt Signing (Ed25519)
 

@@ -18,48 +18,98 @@
 >    `tag == PyPI` cannot distinguish *released* from *not started* from *died* and cost a release
 >    on 2026-07-28.
 
-Last reconciled: **2026-07-28**, post-**v1.101.9**.
+Last reconciled: **2026-07-31**, post-**v1.101.22** (PyPI verified via the JSON API, not inferred
+from a tag — `tag == PyPI` cannot tell *released* from *not started* from *died*).
+
+The previous stamp read "2026-07-28, post-v1.101.9" while PyPI had moved 13 releases on, and the
+IN FLIGHT table below still listed two PRs that merged days earlier. That is the staleness this
+board exists to prevent, so it is worth naming: **a board that is only refreshed when someone
+notices it is wrong is a board nobody can trust to be right.** Reconcile it in the same turn a PR
+merges, not in a later cleanup pass.
 
 ---
 
-## IN FLIGHT (PRs open right now)
+## IN FLIGHT (PRs open right now — verified against `gh pr list`, 2026-07-31)
 
 | PR | Title | Type | State |
 |---|---|---|---|
-| #843 | `fix(cli)`: a `--json` scan refusal must be parseable, not zero bytes on stdout | RELEASING | CI running |
-| #844 | `docs(skills)`: land the 1.101.9 live-dogfood corrections | docs | CI running |
+| #872 | `fix(security)`: close the remaining CWE-88 argv hole and enumerate the sweep | RELEASING | CI running; independent adversarial gate requested |
+| #871 | `fix(search)`: carry the defaulted-scope disclosure into the JSON body on every route | RELEASING | CI running |
+| #868 | `fix(search)`: exit 2 when an explicit `--gpu-device-ids` request is unhonoured | RELEASING | **BLOCKED — do not merge.** See P1 below. |
 
 ---
 
 ## P1 — external dogfood findings (a real user hit these)
 
-Reported against 1.101.7 and re-confirmed on 1.101.9, so none of these are stale.
-
-- [ ] **Anonymous `--claim`** — `tg prepare --claim` submits with an anonymous `agent_id` unless
-  `TG_LEDGER_AGENT_ID` is exported. The ledger's entire purpose is multi-agent coordination, and an
-  anonymous claim cannot be attributed or released by its owner. **Fork to decide first:** refuse
-  without a resolvable identity (fail-closed, matches the repo's allow-list discipline) vs derive a
-  stable default (friendlier, but invents identity semantics). *Task #13.*
-- [ ] **Ledger Slice 2 rollup parity** — Slice 1 (`claim`/`list`/`release`) does subtree rollup;
-  Slice 2 (`record`/`find`) matches path-literally, so a finding recorded in a subdir is not found
-  from the parent. Check whether content-addressing makes rollup ambiguous *before* changing match
-  semantics — Slice 2 is content-addressed where Slice 1 is path-scoped. *Task #14.*
-- [ ] **MaxSim late-rerank is advertised but unexercised** — named in `tg find --help`, absent from
-  the `install-dense` CUJ docs and tests. A capability the artifact claims and nothing proves is the
-  same class as a stamped-but-unpublished version. Acceptance: a test asserting the rerank stage was
-  TAKEN, not merely that the flag parsed. *Task #15.*
-- [ ] **Bare `tg search P --json` with no PATH** — reporter sees `exit 1`, empty, no refuse on their
-  repo. **NOT reproduced here** on 1.101.7 or 1.101.9 with a checksum-verified native binary and
-  delegation confirmed firing (`routing_backend=NativeCpuBackend`). The reproducible half — refusal
-  emitting zero bytes on the `--json` surface — is fixed in #843. To pin the rest, capture from the
-  reporting host: `tg doctor --json` (`native_tg_binary_exists`), repo file count, exact cwd.
+- [x] **Anonymous `--claim`** — RESOLVED, and the resolution is the load-bearing part: the sentinel
+  STAYS. An adversarial audit killed the auto-derive option with a receipt — `_find_overlaps`
+  suppresses when `new.agent_id != _DEFAULT_AGENT_ID and entry.agent_id == new.agent_id`, so two
+  zero-config agents sharing a *derived* id would silently drop each other's overlaps, reproducing
+  #845 by a new mechanism in the ledger's primary use case. Nor can any derivation escape it: a
+  per-checkout id conflates agents, a per-process id is not stable across one agent's calls. Agent
+  identity is not derivable from the environment. The SIGNAL got louder instead (`NOT attributable`
+  + a machine-branchable `agent_id_is_anonymous`). Pinned by
+  `tests/unit/test_anonymous_claim_signal.py`. *Task #13/#23.*
+- [x] **Ledger Slice 2 rollup parity** — RESOLVED (`record`/`find` now canonicalise through
+  `_ledger_physical_root`). *Task #14.*
+- [ ] **MaxSim late-rerank is advertised but unexercised** — *Task #15.* **Now decidable, and the
+  answer is DOC-HONESTY, not CUJ coverage.** `tg install-dense` installs `tensor-grep[semantic]`;
+  MaxSim needs a DIFFERENT extra (`rerank`) whose model is fetched by
+  `python -m tensor_grep.core.retrieval_late --fetch` — **no `tg` command reaches it**. A CUJ would
+  first have to build an install path that does not exist, for a stage deliberately held as
+  measurably regressing. Two real defects to fix instead: (a) `find_command`'s docstring advertises
+  MaxSim while the only control is the undocumented `TG_LATE_RERANK=1`; (b)
+  `tests/unit/test_find_command.py` claims to prove the stage "DOES probe/run … observably
+  reordering" but asserts only `exit_code == 0` / non-empty / no-exception — **all three hold with
+  the env unset**. Its stub already inverts the ranking, so the fix is a one-line ORDER assertion
+  with a genuine red arm. `docs(find):`, non-releasing.
+- [x] **Bare `tg search P --json` with no PATH** — RESOLVED across all routes. Four dispatch routes
+  and then FIVE JSON emitters, fixed one at a time over four releases because each fix closed the
+  route that happened to be reported. Both populations are now held by enumerating tests
+  (`test_every_search_dispatch_route_discloses.py`,
+  `test_scope_note_covers_every_json_emitter.py`). The fifth emitter is the lesson:
+  `normalize_gpu_sidecar_json` builds the document by hand with `serde_json::json!()`, so a census
+  keyed on `#[derive(Serialize)]` reported "4 of 4 covered" and was wrong by one. **Enumerate
+  EMITTERS, not the mechanism they happen to use.** PR #871.
+- [ ] **GPU exit-2 calibration — BLOCKED, twice over.** *Task #22.* (1) The CAUSE of #868's CI
+  failure is still unknown. A two-arm control proved that IF `resolve_native_tg_binary()` returns a
+  path, `main.py:7877` `sys.exit`s ~530 lines before #868's rule at `main.py:8408`, reproducing CI
+  byte-for-byte — but `.github/workflows/ci.yml:688` says `test-python` never builds that binary, so
+  the mechanism is *sufficient*, not *confirmed operative*. A CI-only diagnostic with a positive
+  control is in flight. (2) The PREMISE is contract-contested: exit 2 means INCOMPLETE, and that
+  search ran to completion and returned its match; the capability is already in-band via
+  `native_gpu_unavailable` / `gpu_evidence_status`. Needs a contract decision, not more code.
 
 ## P2 — audit queue (deep audit `wf_38d4b580-d89`, 2026-07-28)
 
 Six read-only lenses — security, CI/release workflow, disclosure edge cases, dead/unwired code,
 test trustworthiness, scale-correctness — each finding adversarially verified before it lands here.
 
-- [ ] *(populated from the audit's chairman synthesis — see the run's queue output)*
+That placeholder sat unfilled for three days. Replaced with the items from the 2026-07-31 plan
+review, each verified against the real code (a finding without a `file:line` was discarded):
+
+- [x] **CWE-88 argv sentinel — a live hole in a sweep recorded as CLOSED.** `#20`-B2.
+  `agent_capsule.py::_agent_gpu_evidence` appended a caller-supplied `evidence_path` as a bare
+  positional; clap's `path` (`rust_core/src/main.rs:694-695`) has no `allow_hyphen_values`, so a
+  dash-leading path becomes an OPTION and the probe queries a scope nobody chose — **still
+  reporting `ok`**. #860 fixed the sibling and the class was marked done; this site was in nobody's
+  grep. Now held by `tests/unit/test_argv_sentinel_covers_every_builder.py` (5 builders, by symbol).
+  PR #872.
+- [ ] **`--quiet` silently dropped by both internal rg-passthrough branches** (`main.py:7937-7943`,
+  `:8004-8017`; zero "quiet" mentions in `ripgrep_backend.py`). A flag the caller passed that the
+  chosen engine ignores, with no disclosure — the silent-downgrade class.
+- [ ] **Two gates take OPPOSITE positions on `--gpu-device-ids`.** `_can_passthrough_rg:5364-5367`
+  excludes it *by name* to prevent a silent CPU downgrade at exit 0; `_can_delegate_to_native_tg_search:3728`
+  includes it as a REASON to delegate. Both cannot be right. Settle it before #868 is unblocked —
+  it is plausibly upstream of that failure.
+- [ ] **`--ndjson` zero-match discloses nothing in-band in EITHER engine.** The summary record now
+  carries the scope note (#871), but a zero-match `--ndjson` still emits no reason field.
+- [ ] **The three `main.rs` envelope literals have no direct test**, and the CUDA one is
+  type-checked but never executed anywhere in CI (`cuda-feature-check` runs `cargo check`, not
+  `cargo test`). Checking is not running.
+- [ ] **`AGENTS.md:1437` is stale on the argv sweep** — it describes the class as swept while #872
+  was open against it. A doc that certifies a sweep it cannot verify is the prose-rung failure this
+  board keeps re-learning.
 
 ## P3 — strategic / positioning (informed by Exa competitive research, 2026-07-28)
 
