@@ -74,15 +74,26 @@ def _run(corpus: Path, *args: str) -> subprocess.CompletedProcess[str]:
                 sys.platform == "win32",
                 strict=True,
                 reason=(
-                    "PLATFORM-DIVERGENT, and the strict xfail is what proved it. On Windows "
-                    "--stats emits its own stats block on stdout and returns WITHOUT reaching the "
-                    "is_empty branch, so the scope note never fires. On Linux CI the same "
-                    "invocation DOES reach it and the note fires -- the marker XPASSed there. "
-                    "My original 'TRACED, not assumed' note was traced on Windows only and then "
-                    "generalised to every platform, which is the exact over-generalisation this "
-                    "file's other tests exist to catch. Kept strict so the day Windows starts "
-                    "routing --stats through is_empty this converts to a hard failure rather than "
-                    "passing quietly. The divergence itself is an OPEN finding in docs/BACKLOG.md."
+                    "ROOT-CAUSED, NOT PLATFORM-CONDITIONAL CODE (task #24). search_command has a "
+                    "SECOND, internal rg-passthrough branch beyond bootstrap's own front door "
+                    "(`can_passthrough_rg and stats and _selected_route_supports_rg_passthrough(...)`, "
+                    "cli/main.py:8004-8017): when Pipeline picks RipgrepBackend, the whole search is "
+                    "handed to a live `rg --stats` subprocess and sys.exit()s on ITS exit code, never "
+                    "reaching the is_empty branch below (or this file's scope note). Whether that "
+                    "happens depends ONLY on whether `rg`/`rg.exe` resolves on PATH "
+                    "(resolve_ripgrep_binary, cli/runtime_paths.py) -- there is no sys.platform/os.name "
+                    "check anywhere in the chain. The `test-python` CI job installs no ripgrep package "
+                    "on any OS, so this reduces to an ambient PATH fact per runner image, not a code "
+                    "branch: XPASSes here iff a real `rg` is resolvable in THIS job's environment. "
+                    "Paired-proof (same tree, PATH with/without a real rg.exe): with rg resolvable, "
+                    "this exact symptom reproduces; with PATH stripped of rg (Pipeline falls back to "
+                    "CPUBackend), the identical invocation reaches is_empty and the note fires. "
+                    "`--ast`/`--rank`/`--semantic` never take this branch (categorically excluded in "
+                    "_can_passthrough_rg, cli/main.py:5359-5363) -- --stats is the one flag here with "
+                    "no such exclusion. Full trail: tensor-grep-architecture-contract SKILL.md, 'A "
+                    "THIRD rg-passthrough door lives INSIDE cli/main.py::search_command', and "
+                    "docs/BACKLOG.md. Kept strict so a change to this dispatch shape converts to a "
+                    "hard failure rather than passing quietly."
                 ),
             ),
         ),

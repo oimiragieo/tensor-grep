@@ -763,15 +763,39 @@ found by an EXTERNAL audit of code I had already written tests for and called do
 | F3 | LOW | Three of four "control arms" in the first cut still PASSED with the fix reverted; they exercised pre-existing helpers (`_requires_full_cli`, `_search_args_include_explicit_path`) instead of the new behaviour. A control arm that survives the revert is not a control arm. | FIXED — tests rewritten behavioural, revert-proof verified |
 | F4 | LOW | The primary test asserted on `inspect.getsource(...)`, so it could pass with the predicate present but misplaced or emitting the wrong text. | FIXED — subprocess-based |
 
-**STILL OPEN — `tg search --stats` routing DIVERGES BY PLATFORM.** On Windows, `--stats` emits its
-own stats block on stdout and returns WITHOUT reaching the `is_empty` branch, so the defaulted-scope
-note never fires. On Linux CI the same invocation DOES reach it and the note fires. Found because the
-strict xfail **XPASSed on Linux** — a non-strict marker would have passed on both platforms and
-hidden the divergence entirely. My original claim ("TRACED, not assumed: --stats does not reach
-is_empty") was traced on Windows only and then generalised, which is the over-generalisation this
-whole file's tests exist to catch. Now a `sys.platform == "win32"` strict xfail. **The divergence
-itself is unexplained and worth root-causing** — two platforms taking different routes through the
-same flag is a latent source of Windows-only behaviour gaps.
+**ROOT-CAUSED (task #24, 2026-07-30) — `tg search --stats` routing DIVERGES BY PLATFORM, but the
+divergence is ENVIRONMENTAL, not platform-conditional code.** `cli/main.py::search_command` has a
+SECOND, internal rg-passthrough branch beyond bootstrap's own front door
+(`can_passthrough_rg and stats and _selected_route_supports_rg_passthrough(...)`, `cli/main.py:8004-
+8017`) that hands the whole search to a live `rg --stats` subprocess and `sys.exit()`s on its exit
+code — skipping `_emit_stats()`, the `--debug` echo, and the `is_empty` defaulted-scope note
+entirely. Whether it fires depends only on `Pipeline.selected_backend_name == "RipgrepBackend"`,
+which depends only on whether `rg`/`rg.exe` is resolvable on `PATH` (`resolve_ripgrep_binary`,
+`cli/runtime_paths.py:561-591`) — there is **no** `sys.platform`/`os.name` check anywhere in the
+chain. The `test-python` CI job (`.github/workflows/ci.yml:361-430`) installs no ripgrep package on
+any OS, so this reduces to an ambient fact about each runner image's `PATH`, not a code branch.
+Paired-proof (same tree, `PATH` with/without a real `rg.exe`, Windows, 2026-07-30): with `rg`
+resolvable, exactly the reported Windows CI symptom reproduces; with `PATH` stripped of `rg`,
+`Pipeline` falls back to `CPUBackend` and the identical invocation reaches `is_empty` and prints the
+note — exactly the reported Linux CI symptom. `--ast`/`--rank`/`--semantic` never take this branch
+(categorically excluded in `_can_passthrough_rg`, `cli/main.py:5359-5363`) — `--stats` is the one
+flag in the family with no such exclusion, which is why only it XPASSed. Full citation trail:
+`tensor-grep-architecture-contract` SKILL.md, "A THIRD rg-passthrough door lives INSIDE
+`cli/main.py::search_command`". One-line CI confirm:
+`python -c "from tensor_grep.cli.runtime_paths import resolve_ripgrep_binary as r; print(r())"`
+(expect a real path on one OS leg, `None` on the other, inside the `test-python` job). Not fixed —
+both routes are contractually honest (exit 1, real output either way); this is a documented, not a
+broken, dispatch shape. Xfail reason sharpened to point at this mechanism instead of "platform-
+divergent" (`tests/unit/test_full_cli_route_names_its_scope.py`).
+
+**NEW FINDING (task #24 sweep, not yet filed as its own PR) — `--quiet` is silently dropped by BOTH
+of `cli/main.py`'s internal rg-passthrough branches (the plain one at `cli/main.py:7937-7943` and the
+stats one above).** `RipgrepBackend._build_cmd` (`backends/ripgrep_backend.py`) never translates
+`config.quiet` into rg's own `-q`/`--quiet` — zero mentions of "quiet" in that file. `tg search PAT
+--stats --quiet` on a box with `rg` installed (most boxes) prints rg's live stats block (and any
+matches) to stdout, breaking `--quiet`'s "no incidental output" promise that the slow path enforces
+explicitly (`cli/main.py:8468`, `:8478-8480`). Untested (`--stats --quiet` appears nowhere under
+`tests/`) and **not platform-specific**. Needs its own TDD cycle; out of scope for task #24.
 
 **RESOLVED — the A1b class ratchet's 9 candidates were ALL false positives.** Triaged rather than
 reported: every one carried 7-29 disclosure signals through a surface the matcher did not know
