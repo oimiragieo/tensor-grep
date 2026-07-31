@@ -1,6 +1,157 @@
 # CHANGELOG
 
 
+## v1.101.24 (2026-07-31)
+
+### Bug Fixes
+
+- **search**: Carry the defaulted-scope disclosure into the JSON body on every route
+  ([#871](https://github.com/oimiragieo/tensor-grep/pull/871),
+  [`88215a7`](https://github.com/oimiragieo/tensor-grep/commit/88215a760180b5d14a6088767ead54da6f48b0e4))
+
+* test(search): a MECHANISM enumerating every dispatch route, not a fifth law
+
+The rule 'enumerate ALL dispatch routes before fixing a search-surface symptom' was written into
+  AGENTS.md and then violated FOUR times in one session -- three of them AFTER it was written:
+
+bare text -> bootstrap rg passthrough #857 --ast/--rank/... -> Python CLI is_empty branch #862
+  --json stderr note -> bootstrap native delegation #862 later --json BODY field -> native
+  delegation again STILL OPEN (#26)
+
+Per convert-a-repeatedly-violated-rule-into-a-mechanism: the second violation is the signal,
+  restating a rule has near-zero yield, and the rule's own AUTHOR repeatedly breaking it is the
+  documented signature of a missing affordance rather than a discipline problem. The skill's receipt
+  names the remedy for exactly this shape -- a claim of the form 'all call sites are guarded', wrong
+  five consecutive times, closed by a test that ENUMERATES THE POPULATION.
+
+So: enumerate every search-terminating dispatch in main_entry and require each to reach a disclosure
+  guard. A new route fails HERE, at the point of addition, instead of in a dogfood report four
+  releases later.
+
+THE MECHANISM CAUGHT ITSELF FIRST. Its first run flagged the native route -- a FALSE POSITIVE: that
+  route IS guarded, but a 12-line rationale comment sits between the call and the guard and pushed
+  it past the character window. Fixed by stripping comment lines rather than widening the window (a
+  wider window would eventually span an unrelated adjacent route and accept an unguarded one). The
+  skill is explicit that a gate firing on correct code is worse than no gate -- it teaches everyone
+  to reach for --no-verify and discredits every other gate.
+
+Both mechanism arms are tested: a synthetic UNGUARDED route must be flagged, and a synthetic GUARDED
+  one must not. A gate never watched failing is unproven.
+
+ALSO REVERTED sys.__stderr__ -> sys.stderr in the note writer. That change rested on a theory (the
+  rg passthrough rebinds stderr) which was later DISPROVED -- the real cause of the missing note was
+  dispatch, not stream rebinding. __stderr__ also breaks pytest's capsys, so a fix for a phantom
+  problem had created a real one.
+
+Partial work toward #26 included: path_was_defaulted + scope_note on SearchResult, emitted
+  additively by JsonFormatter, stamped in the is_empty branch, and _defaulted_scope_note() extracted
+  so the stderr text and JSON field share ONE source. NOT yet landing on the native route --
+  verified absent on the real invocation, tracked in #26.
+
+25 passed, 1 xfailed; ruff clean.
+
+* fix(search): carry the defaulted-scope disclosure in every native JSON envelope
+
+The v1.101.22 dogfood, reporting the same symptom for the FOURTH consecutive release: "PATH note is
+  stderr-only -- bare `--json` still returns empty aggregate JSON with no warnings/notes field;
+  agents that ignore stderr can miss it."
+
+The Python half shipped earlier on this branch. This is the Rust half, and it had to be the Rust
+  half: `--json` is a supported trigger for native delegation and `_run_native_tg_search` STREAMS
+  the document straight through (`_streaming_passthrough_returncode`), so Python never holds it.
+  Injecting the field there would mean buffering the whole payload -- breaking streaming for large
+  result sets in order to fix a zero-match case. The surface that owns the document owns its
+  disclosure.
+
+ENUMERATED, NOT SAMPLED. This symptom has now taken four separate fixes because each one closed the
+  one route that happened to be reported. So all four native `--json` envelopes get the pair, in one
+  change:
+
+native_search.rs NativeJsonOutput (the CPU engine's own envelope) main.rs SearchResultJson (--json
+  aggregate) main.rs SearchSummaryNdjson (--ndjson terminal summary) main.rs
+  GpuNativeSearchResultJson (cuda-gated)
+
+DELIBERATELY NOT part of the incompleteness family. A search whose PATH defaulted to `.` RAN TO
+  COMPLETION; it answered a narrower question than the caller may have meant. Setting
+  `result_incomplete` would be false AND would drag the exit code to 2, breaking the closed 0/1/2
+  contract for the most ordinary invocation there is. Advisory only; exit stays 1.
+
+GATED ON ZERO MATCHES, not on the default alone. A defaulted search that found something answered
+  the question. Annotating it would fire on the overwhelmingly common case and train every consumer
+  to ignore the field -- putting us back where the dogfood started.
+
+Reuses the `path_was_implicit` signal that already exists on `ResolvedSearchRequest` /
+  `NativeSearchConfig` / `GpuSearchParams` (the broad-scan refusal guard's gate) rather than
+  re-deriving it, so the two cannot disagree about whether the caller chose the scope.
+  `run_search_path` becomes `run_search_path_with_origin` returning a PAIR for the same reason -- a
+  sibling predicate re-implementing the `--pattern`-dependent positional-index selection is how two
+  copies of one rule drift apart.
+
+The note text moves to `native_search.rs::DEFAULTED_SCOPE_NOTE` (the LIB crate, reachable from both
+  engines; `main.rs` is the binary crate, same constraint that moved `write_bytes_refuse_symlink` in
+  #852). Its trailing newline is dropped: harmless while stderr was the only consumer, a real
+  divergence once the same string became a JSON string VALUE on two engines. Line termination now
+  belongs to the stream writer.
+
+Tests, all with control arms: - test_scope_note_parity.py reads BOTH sources and compares -- a doc
+  comment asking two constants to stay in sync is not synchronisation. Red arm proven: mutating the
+  Rust constant fails it; restoring passes. A missing constant is an explicit FAILURE, not a skip,
+  so the check cannot go inert. - native_search.rs: treatment + both control arms (explicit PATH
+  stays silent; defaulted-but-found stays silent) + the gate's full four-row truth table. - main.rs:
+  run_search_path_with_origin pinned on both positional shapes, since it selects a different index
+  depending on `--pattern`.
+
+NOT COMPILED LOCALLY -- cargo is CPU-forbidden on this machine. `rustfmt --check` is clean on both
+  files; CI's six test-rust-core legs and `clippy -D warnings` are the arbiter.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* fix(search): cover the FIFTH json emitter, and enumerate by emitter not derive-macro
+
+An independent plan review caught this PR's own census being wrong by one, which is a better finding
+  than the fix.
+
+The first cut enumerated the population as the `#[derive(Serialize)]` structs that model a search
+  `--json` document: NativeJsonOutput, SearchResultJson, SearchSummaryNdjson,
+  GpuNativeSearchResultJson. All four got the fields. That census was complete, type-checked, and
+  MISSED ONE.
+
+`normalize_gpu_sidecar_json` (main.rs) builds the same document shape by hand with
+  `serde_json::json!()`. It shares no type with any sibling, so no sweep keyed on the derive macro
+  can see it -- and it is NOT cuda-gated, so it is live in every build on the GPU-sidecar route. It
+  silently kept its pre-#26 shape while all four siblings gained the disclosure.
+
+THE RULE: enumerate EMITTERS, not the mechanism they happen to use. The property that matters is
+  "this function writes a search JSON document"; a struct definition is only one way to satisfy it.
+  A census keyed on the implementation detail reports a number that is confidently, checkably wrong.
+
+So the mechanism added here is keyed on emitters: `test_scope_note_covers_every_json_emitter.py`
+  resolves each emitter by SYMBOL and asserts its body routes through the one shared
+  `defaulted_scope_fields` gate. Red arm proven -- reverting only the fifth emitter's gate call
+  fails it, naming `main.rs::normalize_gpu_sidecar_json` exactly. A symbol that stops resolving is
+  an explicit FAILURE, not a skip, so the census cannot go inert. Control arms: the gate must have
+  exactly ONE definition and it must be `pub` in the LIB crate (a local copy in each emitter would
+  satisfy coverage while recreating the drift), plus both synthetic arms on the matcher itself.
+
+Two further `"total_matches"` sites were audited and deliberately EXCLUDED, with the reasons
+  recorded at the ratchet rather than left to be re-litigated: `broad_scan_refusal_json_envelope` is
+  a REFUSAL (already exit-2 with `incomplete_reason_class`; the note would claim a search ran when
+  none did), and `GpuSidecarSearchPayload` is `#[derive(Deserialize)]` -- an input parser whose
+  emitter is already in the list.
+
+Also records the day's other correction in AGENTS.md: a control that moves a variable ADJACENT to
+  the real one produces a confident FALSE NEGATIVE. #868's "native-extension presence" hypothesis
+  was killed by a control that tested the `rust_core` Python EXTENSION when the dispatch gate is
+  `resolve_native_tg_binary()`, the compiled BINARY. Name the arm by the SYMBOL the code branches
+  on, and require one arm to REPRODUCE the failure -- "still passes" rules out nothing.
+
+Not compiled locally (cargo is CPU-forbidden here); rustfmt --check clean.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.101.23 (2026-07-31)
 
 ### Bug Fixes
