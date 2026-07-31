@@ -1168,6 +1168,70 @@ Two corollaries, both cheap:
   than in CI. When local and CI disagree, **diff the FIXTURE's coverage against the code path**, not
   just the platform.
 
+**⚠ CORRECTION TO THIS SECTION, SAME DAY -- AND THE CORRECTION IS THE SHARPER LESSON.** The text
+above says "the hypothesis was right the whole time". That is NOT established, and writing it as
+though it were repeats the very error the section is about, one level up.
+
+ARM B proves the mechanism is SUFFICIENT to produce CI's output. It does not prove that mechanism
+is the one FIRING. Counter-evidence found afterwards: `.github/workflows/ci.yml:688` states
+`test-python` never builds `rust_core/target/release/tg`, and `resolve_native_tg_binary`
+(`cli/runtime_paths.py:278`) needs either an in-tree build (absent) or a PATH binary that is not a
+Python console shim. So it plausibly returns `None` on that job.
+
+(A later structural finding cuts the other way and is also not a measurement:
+`rust_core/Cargo.toml:58` declares `[[bin]] name = "tg"` in the SAME manifest maturin builds, so
+`pip install -e` may produce that binary as a side effect. Two structural arguments pointing
+opposite ways is exactly the state in which you stop arguing and measure --
+`scripts/diagnose_gpu_delegation_route.py` does, with both controls.)
+
+**A MECHANISM THAT REPRODUCES THE OUTPUT IS NOT PROOF IT IS THE OPERATIVE ONE.** Reproducing a
+failure byte-for-byte feels like a root cause and is only a candidate; the discriminating question
+is whether the variable you forced is the one the real environment sets. I dispatched a fix on this
+and had to recall it. Say "sufficient" until you have measured "operative".
+
+### A SOURCE-SCANNING census is satisfied by a COMMENT, and blind to POSITION (2026-07-31, #872)
+
+Four findings from one adversarial gate, all against a census *I* wrote to close a class -- and the
+census was the weakest artifact in the PR, precisely because it was the part everyone (me included)
+treated as the proof rather than the claim.
+
+**1. The better you document a guard, the less it is checked.** The census asserted the literal
+`"--"` appeared in each builder's body. Three of five members could have their real
+`command.append("--")` DELETED and stay green, because the comment *explaining why the sentinel
+matters* still contained the string. This is the mirror of the quoting-vs-asserting trap: there,
+prose containing a forbidden pattern caused a FALSE POSITIVE; here, prose containing the required
+pattern causes a FALSE NEGATIVE. Match AST nodes, or check behaviour -- never a bare substring in a
+region that includes prose.
+
+**2. Presence is a proxy. Ask what the actual PROPERTY is.** "Does `--` appear in this function"
+is not "is `--` before every positional". The same PR shipped a sentinel sitting BETWEEN two
+positionals -- present, and useless, since the first one was still parsed as a flag. The census
+could not tell it from a correct one. **A proxy that cannot distinguish the fix from the bug is not
+a check.**
+
+**3. A census that omits the code its own PR edited was assembled from MEMORY, not derived.** The
+list had 5 members; the plan that specified it had enumerated 10, and one of the omissions was a
+builder that same PR had just added. Re-derive the population from the code at the moment you write
+the list, then diff it against your own diff.
+
+**4. A control arm that only matches a form the FORMATTER eliminates can never fire.** The
+"sentinel must be unconditional" arm keyed on a regex matching single-line
+`if cond: cmd.append("--")`. This repo's mandatory `ruff format --preview` expands that to two lines
+on sight, so the arm could not fire on any code that passes the gate. **Run your control arm's
+pattern against formatted code before believing it** -- this is the setup-lies law applied to a
+regex.
+
+**And the justification for going source-based was itself false**: I claimed a behavioural test
+"would skip itself" because these builders shell out. They do not -- every one is a pure
+list-returning function or is capturable at its runner, and `test_native_argv_end_of_options.py`
+had been calling one directly since #860. **Check whether the cheaper, stronger test is actually
+blocked before settling for the weaker one.**
+
+Corollary on granularity: **a function is not the unit; the artifact is.** Two argv builders lived
+86 lines apart inside one function, and a whole-body string match let the first one's sentinel
+"cover" the second one's bare positional. Enumerate the things being built, not the places they are
+built in.
+
 ### A checker that cannot tell a PRODUCER from a PRESENTER reports correct code as broken
 
 A class ratchet flagged 9 functions as "reads incompleteness but never discloses". **All 9 were
