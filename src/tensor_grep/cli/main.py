@@ -8465,6 +8465,16 @@ def search_command(
             or config.file_type
             or config.type_not
         )
+        if paths_defaulted and not scope_filtered:
+            # Stamp the JSON body BEFORE the formatter runs, so a machine consumer reading only
+            # stdout learns why the zero is ambiguous. v1.101.22 dogfood: "PATH note is
+            # stderr-only -- agents that ignore stderr can miss it." Not gated on `quiet`: the
+            # field is part of the document a --json caller asked for, whereas the stderr note is
+            # incidental output that --quiet legitimately suppresses.
+            from tensor_grep.cli.bootstrap import _defaulted_scope_note
+
+            all_results.path_was_defaulted = True
+            all_results.scope_note = _defaulted_scope_note()
         if paths_defaulted and not scope_filtered and not quiet:
             from tensor_grep.cli.bootstrap import _write_defaulted_scope_note
 
