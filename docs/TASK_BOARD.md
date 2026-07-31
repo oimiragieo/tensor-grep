@@ -107,6 +107,19 @@ review, each verified against the real code (a finding without a `file:line` was
 - [ ] **The three `main.rs` envelope literals have no direct test**, and the CUDA one is
   type-checked but never executed anywhere in CI (`cuda-feature-check` runs `cargo check`, not
   `cargo test`). Checking is not running.
+- [x] **THE POPULATION IS THE RECURRING DEFECT, NOT THE ASSERTION.** #872's enumerating test had
+  its population wrong **three times in one day** — 5 members, then 8, then 10 — and every miss was
+  the same judgement: *"builder A transitively covers builder B."* Each was disproved the same way,
+  by deleting B's guard and watching the suite stay green. The third miss,
+  `ast_wrapper_backend.py::_build_command`, is the only one in the sweep whose regression is
+  **destructive**: a caller-supplied path of `-U`/`--update-all` reaching ast-grep's `run`
+  subcommand is its auto-fix switch, so a read-only scan becomes a file rewrite. Two derived rules,
+  now in the test's own docstring: **do not add a member by reasoning it is covered — call it**; and
+  **a guard whose placement is config-conditional has as many members as it has configurations**
+  (the run form's sentinel lives in the `else:` of `if stdin_enabled`, so the default arm alone was
+  sampling). A third, from the same review: **a COUNT is blind to an ORDER SWAP** — two members
+  asserted `len(tail) == 2` and passed when the pattern and path were exchanged, which in production
+  searches a directory named like the pattern for a pattern that is the temp path.
 - [ ] **`AGENTS.md:1437` is stale on the argv sweep** — it describes the class as swept while #872
   was open against it. A doc that certifies a sweep it cannot verify is the prose-rung failure this
   board keeps re-learning.
