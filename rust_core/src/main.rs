@@ -39,9 +39,9 @@ use tensor_grep_rs::gpu_native::{
 };
 use tensor_grep_rs::index::TrigramIndex;
 use tensor_grep_rs::native_search::{
-    native_json_text_fields, native_search_pattern_compiles, run_native_fixed_multi_pattern_search,
-    run_native_search, smart_case_pattern_is_case_insensitive, NativeOutputTarget,
-    NativeSearchConfig, SearchStats,
+    defaulted_scope_fields, native_json_text_fields, native_search_pattern_compiles,
+    run_native_fixed_multi_pattern_search, run_native_search,
+    smart_case_pattern_is_case_insensitive, NativeOutputTarget, NativeSearchConfig, SearchStats,
 };
 use tensor_grep_rs::python_sidecar::{
     execute_python_passthrough_command, execute_python_passthrough_command_captured,
@@ -4853,7 +4853,46 @@ mod tests {
         ]);
 
         assert_eq!(run_pattern(&args).unwrap(), "class $NAME: $$$BODY");
-        assert_eq!(run_search_path(&args), "fixture.py");
+        // Task #26: the pair, so this test also pins the ORIGIN half. An explicit trailing PATH
+        // must report `false` -- the control arm for the scope note, which fires only when the
+        // caller supplied nothing.
+        assert_eq!(
+            run_search_path_with_origin(&args),
+            ("fixture.py", false),
+            "an explicit trailing PATH must not be recorded as implicit"
+        );
+    }
+
+    #[test]
+    fn run_search_path_reports_the_default_as_implicit() {
+        // CONTROL ARM for the test above, and the arm the scope note actually depends on. Without
+        // it, hard-coding `false` for the origin would satisfy every other assertion in this file
+        // while making the `--json` scope disclosure permanently silent on the AST route --
+        // exactly the "fixed the route that happened to be reported" failure #26 exists to close.
+        //
+        // Both positional shapes, because `run_search_path_with_origin` selects a DIFFERENT
+        // positional index depending on whether `--pattern` was used, and a test covering only
+        // one of them would leave half the selection logic unguarded.
+        let with_pattern_flag = parse_run_args(&[
+            "tg",
+            "run",
+            "--lang",
+            "python",
+            "--pattern",
+            "class $NAME: $$$BODY",
+        ]);
+        assert_eq!(
+            run_search_path_with_origin(&with_pattern_flag),
+            (".", true),
+            "no PATH after --pattern must default to `.` AND report implicit"
+        );
+
+        let positional = parse_run_args(&["tg", "run", "--lang", "python", "class $NAME: $$$BODY"]);
+        assert_eq!(
+            run_search_path_with_origin(&positional),
+            (".", true),
+            "no PATH after a positional pattern must default to `.` AND report implicit"
+        );
     }
 
     #[test]
@@ -8449,6 +8488,10 @@ struct NativeSearchOutputOptions<'a> {
     ndjson: bool,
     count: bool,
     line_number: bool,
+    /// Task #26. Threaded from `ResolvedSearchRequest::path_was_implicit` at every construction
+    /// site -- the same signal the broad-scan probe already gates on, reused rather than
+    /// re-derived, so the two cannot disagree about whether the caller chose the scope.
+    path_was_implicit: bool,
 }
 
 fn emit_multi_pattern_native_results(
@@ -8465,6 +8508,7 @@ fn emit_multi_pattern_native_results(
             options.requested_gpu_device_ids,
             matches,
             incomplete_paths,
+            options.path_was_implicit,
         )?;
     } else if options.ndjson {
         emit_ndjson_search_results(
@@ -8474,6 +8518,7 @@ fn emit_multi_pattern_native_results(
             options.requested_gpu_device_ids,
             matches,
             incomplete_paths,
+            options.path_was_implicit,
         )?;
     } else if options.count {
         emit_count_search_matches(options.path, &matches)?;
@@ -8931,6 +8976,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                         ndjson: args.ndjson,
                         count: args.count,
                         line_number: args.line_number && !args.no_line_number,
+                        path_was_implicit: request.path_was_implicit,
                     },
                     matches,
                     incomplete_paths,
@@ -9193,6 +9239,7 @@ fn run_index_query(
             // Task 276: this route observed no walk of its own, so it cannot report a
             // count. `None` means "cannot report", NEVER "complete".
             None,
+            request.path_was_implicit,
         );
     }
 
@@ -9206,6 +9253,7 @@ fn run_index_query(
             // Task 276: this route observed no walk of its own, so it cannot report a
             // count. `None` means "cannot report", NEVER "complete".
             None,
+            request.path_was_implicit,
         );
     }
 
@@ -9285,6 +9333,27 @@ struct SearchResultJson<'a> {
     incomplete_reason_class: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     incomplete_paths_count: Option<usize>,
+    // v1.101.22 dogfood: "PATH note is stderr-only -- bare `--json` still returns empty aggregate
+    // JSON with no warnings/notes field; agents that ignore stderr can miss it."
+    //
+    // THE BINARY MUST STAMP THIS, not Python. `--json` is a supported trigger for native
+    // delegation and `_run_native_tg_search` STREAMS this document straight through
+    // (`_streaming_passthrough_returncode`), so Python never holds it and cannot inject a field
+    // without buffering -- which would break streaming for large result sets to fix a zero-match
+    // case. Same reasoning that put the broad-scan refusal envelope on this side in #867: the
+    // surface that owns the document owns its disclosure.
+    //
+    // DELIBERATELY NOT part of the incompleteness family above. A search whose PATH defaulted to
+    // the cwd RAN TO COMPLETION -- it answered a narrower question than the caller may have meant.
+    // Setting `result_incomplete` would be false AND would flip the exit code to 2, breaking the
+    // closed 0/1/2 contract. Advisory only; exit stays 1.
+    //
+    // Omit-when-inapplicable, matching every field above: absent when the caller gave an explicit
+    // PATH, so an existing consumer's payload stays byte-identical.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path_was_defaulted: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scope_note: Option<&'static str>,
 }
 
 /// The `--ndjson` TERMINAL SUMMARY record (task 276 slice B2b).
@@ -9305,6 +9374,13 @@ struct SearchSummaryNdjson {
     incomplete_reason_class: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     incomplete_paths_count: Option<usize>,
+    // Task #26, same pair as `SearchResultJson`. A streaming reader that never sees a match record
+    // gets ONLY this summary, so leaving the scope disclosure out of it makes `--ndjson` the
+    // quietest surface of all -- an empty stream followed by a summary saying nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path_was_defaulted: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scope_note: Option<&'static str>,
 }
 
 #[cfg(feature = "cuda")]
@@ -9338,6 +9414,13 @@ struct GpuNativeSearchResultJson<'a> {
     incomplete_reason_class: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     incomplete_paths_count: Option<usize>,
+    // Task #26, third and last member of the native `--json` envelope population (the others are
+    // `SearchResultJson` and `SearchSummaryNdjson`). Enumerated, not sampled: this symptom has
+    // taken four fixes precisely because each one closed the route that happened to be reported.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path_was_defaulted: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scope_note: Option<&'static str>,
     pipeline: &'a GpuPipelineStats,
     matches: Vec<SearchMatchJson>,
 }
@@ -9684,12 +9767,23 @@ struct GpuSidecarSearchMatch {
     pattern_text: Option<String>,
 }
 
-fn run_search_path(args: &RunArgs) -> &str {
-    if args.pattern_option.is_some() {
-        args.positional.first().map(String::as_str).unwrap_or(".")
+/// The PATH `tg run` will search, paired with whether the caller actually supplied one.
+///
+/// Returned as a PAIR, not as two functions. A sibling `run_search_path_was_implicit` would have
+/// to re-implement the same `pattern_option`-dependent positional-index selection, and two copies
+/// of one rule drifting apart is precisely the failure task #26 exists to close -- the "bare
+/// search is silent" symptom took four separate fixes because four routes each derived the same
+/// fact independently.
+fn run_search_path_with_origin(args: &RunArgs) -> (&str, bool) {
+    let explicit = if args.pattern_option.is_some() {
+        args.positional.first()
     } else {
-        args.positional.get(1).map(String::as_str).unwrap_or(".")
-    }
+        args.positional.get(1)
+    };
+    (
+        explicit.map(String::as_str).unwrap_or("."),
+        explicit.is_none(),
+    )
 }
 
 fn run_batch_path(args: &RunArgs) -> anyhow::Result<&str> {
@@ -11408,7 +11502,7 @@ fn handle_ast_run(mut args: RunArgs) -> anyhow::Result<()> {
         return handle_ast_batch_rewrite(&backend, &args, &config, path);
     }
 
-    let path = run_search_path(&args);
+    let (path, path_was_implicit) = run_search_path_with_origin(&args);
 
     if let Some(replacement) = &args.rewrite {
         if args.apply && !args.diff {
@@ -11435,6 +11529,7 @@ fn handle_ast_run(mut args: RunArgs) -> anyhow::Result<()> {
             // Task 276: this route observed no walk of its own, so it cannot report a
             // count. `None` means "cannot report", NEVER "complete".
             None,
+            path_was_implicit,
         )?;
         if match_count == 0 {
             warn_windows_single_quote_ast_pattern(pattern);
@@ -12240,6 +12335,7 @@ fn handle_gpu_unavailable_cpu_fallback(
                 ndjson: params.ndjson,
                 count: params.count,
                 line_number: params.line_number,
+                path_was_implicit: params.path_was_implicit,
             },
             matches,
             incomplete_paths,
@@ -12689,6 +12785,7 @@ fn execute_gpu_native_route(
             // failure the gpu_native.rs note warned about. `None` still means "cannot report",
             // never "complete", so passing the real count is strictly more honest.
             Some(stats.walk_errors),
+            params.path_was_implicit,
         )?;
     } else if params.count {
         emit_gpu_native_count_results(params, &stats)?;
@@ -12757,6 +12854,7 @@ fn handle_auto_gpu_search(
                                 ndjson: params.ndjson,
                                 count: params.count,
                                 line_number: params.line_number,
+                                path_was_implicit: params.path_was_implicit,
                             },
                             matches,
                             incomplete_paths,
@@ -12928,6 +13026,7 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                                 ndjson: params.ndjson,
                                 count: params.count,
                                 line_number: params.line_number,
+                                path_was_implicit: params.path_was_implicit,
                             },
                             matches,
                             incomplete_paths,
@@ -13038,6 +13137,7 @@ fn handle_gpu_sidecar_search(params: GpuSearchParams) -> anyhow::Result<()> {
                         // Task 276: this route observed no walk of its own, so it cannot
                         // report a count. `None` means "cannot report", NEVER "complete".
                         None,
+                        params.path_was_implicit,
                     )?;
                 } else if params.json {
                     let normalized =
@@ -13236,6 +13336,7 @@ fn emit_json_search_results(
     requested_gpu_device_ids: &[i32],
     matches: Vec<SearchMatchJson>,
     incomplete_paths: Option<usize>,
+    path_was_implicit: bool,
 ) -> anyhow::Result<()> {
     let proof_fields = gpu_proof_fields(
         requested_gpu_device_ids,
@@ -13251,6 +13352,7 @@ fn emit_json_search_results(
     let matched_file_paths = match_counts_by_file.keys().cloned().collect::<Vec<_>>();
     let (result_incomplete, incomplete_reason_class, incomplete_paths_count) =
         incomplete_envelope_fields(incomplete_paths);
+    let (path_was_defaulted, scope_note) = defaulted_scope_fields(path_was_implicit, matches.len());
     let payload = SearchResultJson {
         version: JSON_OUTPUT_VERSION,
         routing_backend: decision.routing_backend(),
@@ -13272,6 +13374,8 @@ fn emit_json_search_results(
         result_incomplete,
         incomplete_reason_class,
         incomplete_paths_count,
+        path_was_defaulted,
+        scope_note,
     };
 
     println!("{}", serde_json::to_string(&payload)?);
@@ -13451,6 +13555,8 @@ fn emit_gpu_native_json_results(
     // disagree.
     let (result_incomplete, incomplete_reason_class, incomplete_paths_count) =
         incomplete_envelope_fields(Some(stats.walk_errors));
+    let (path_was_defaulted, scope_note) =
+        defaulted_scope_fields(params.path_was_implicit, stats.total_matches);
     let payload = GpuNativeSearchResultJson {
         version: JSON_OUTPUT_VERSION,
         routing_backend: decision.routing_backend(),
@@ -13473,6 +13579,8 @@ fn emit_gpu_native_json_results(
         result_incomplete,
         incomplete_reason_class,
         incomplete_paths_count,
+        path_was_defaulted,
+        scope_note,
         pipeline: &stats.pipeline,
         matches: gpu_native_match_json_entries(stats),
     };
@@ -13598,6 +13706,7 @@ fn emit_ndjson_search_results(
     requested_gpu_device_ids: &[i32],
     matches: Vec<SearchMatchJson>,
     incomplete_paths: Option<usize>,
+    path_was_implicit: bool,
 ) -> anyhow::Result<()> {
     let total_matches = matches.len();
     for matched in matches {
@@ -13633,6 +13742,7 @@ fn emit_ndjson_search_results(
 
     let (result_incomplete, incomplete_reason_class, incomplete_paths_count) =
         incomplete_envelope_fields(incomplete_paths);
+    let (path_was_defaulted, scope_note) = defaulted_scope_fields(path_was_implicit, total_matches);
     println!(
         "{}",
         serde_json::to_string(&SearchSummaryNdjson {
@@ -13642,6 +13752,8 @@ fn emit_ndjson_search_results(
             result_incomplete,
             incomplete_reason_class,
             incomplete_paths_count,
+            path_was_defaulted,
+            scope_note,
         })?
     );
 

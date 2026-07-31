@@ -605,11 +605,18 @@ def _defaulted_scope_note() -> str:
     Extracted so the stderr writer and the `--json` body field cannot drift. v1.101.22 dogfood
     asked for this text to reach the JSON document ("agents that ignore stderr can miss it"); two
     copies of a user-facing string is how the two surfaces start disagreeing.
+
+    NO TRAILING NEWLINE, deliberately, and this is load-bearing rather than cosmetic. The same
+    sentence now has a THIRD consumer -- `native_search.rs::DEFAULTED_SCOPE_NOTE`, which the Rust
+    engines stamp into their own `--json` bodies -- and a JSON string field that ends in `\n` on
+    one engine and not the other is two engines disagreeing about a value they are supposed to
+    share. Line termination belongs to the stream writer (`_write_defaulted_scope_note` appends
+    it), not to the text. `tests/unit/test_scope_note_parity.py` pins the two constants equal.
     """
     return (
         "note: no PATH was given, so the search defaulted to the current directory. "
         "Zero matches means zero matches in THAT scope, not in the repository. "
-        "If you expected hits, re-run with an explicit PATH: tg search <pattern> <dir>\n"
+        "If you expected hits, re-run with an explicit PATH: tg search <pattern> <dir>"
     )
 
 
