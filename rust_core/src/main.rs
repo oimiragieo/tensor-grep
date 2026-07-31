@@ -13140,8 +13140,11 @@ fn handle_gpu_sidecar_search(params: GpuSearchParams) -> anyhow::Result<()> {
                         params.path_was_implicit,
                     )?;
                 } else if params.json {
-                    let normalized =
-                        normalize_gpu_sidecar_json(&result.stdout, params.gpu_device_ids)?;
+                    let normalized = normalize_gpu_sidecar_json(
+                        &result.stdout,
+                        params.gpu_device_ids,
+                        params.path_was_implicit,
+                    )?;
                     println!("{}", serde_json::to_string_pretty(&normalized)?);
                 } else {
                     print!("{}", result.stdout);
@@ -13768,9 +13771,21 @@ fn parse_gpu_sidecar_search_payload(stdout: &str) -> anyhow::Result<GpuSidecarSe
     })
 }
 
+/// Task #26, THE FIFTH ENVELOPE -- and the one a structural sweep cannot see.
+///
+/// The other four (`NativeJsonOutput`, `SearchResultJson`, `SearchSummaryNdjson`,
+/// `GpuNativeSearchResultJson`) are `#[derive(Serialize)]` structs, so adding a field there is a
+/// visible, type-checked edit. This one is a HAND-BUILT `serde_json::json!()` value: it emits the
+/// same document shape while sharing no type with any of them, so it silently kept its pre-#26
+/// shape while all four siblings gained the disclosure. It is also NOT cuda-gated -- it is live in
+/// every build, on the GPU-sidecar route.
+///
+/// The lesson, and the reason this comment is long: **enumerate EMITTERS, not derive-macros.** A
+/// census keyed on `#[derive(Serialize)]` reports "4 of 4 covered" and is wrong by one.
 fn normalize_gpu_sidecar_json(
     stdout: &str,
     requested_gpu_device_ids: &[i32],
+    path_was_implicit: bool,
 ) -> anyhow::Result<serde_json::Value> {
     let payload = parse_gpu_sidecar_search_payload(stdout)?;
     let proof_fields = gpu_proof_fields(
@@ -13826,6 +13841,18 @@ fn normalize_gpu_sidecar_json(
     }
     if let Some(not_gpu_proof_reason) = proof_fields.not_gpu_proof_reason {
         value["not_gpu_proof_reason"] = serde_json::json!(not_gpu_proof_reason);
+    }
+    // Task #26. Same shared gate as every sibling envelope, so this route cannot drift from them
+    // -- which is exactly what it had already done by being invisible to a derive-macro census.
+    // Insert-when-applicable mirrors the siblings' `skip_serializing_if`: an explicitly-scoped
+    // search adds neither key and stays byte-identical for existing consumers.
+    let (path_was_defaulted, scope_note) =
+        defaulted_scope_fields(path_was_implicit, payload.total_matches);
+    if let Some(path_was_defaulted) = path_was_defaulted {
+        value["path_was_defaulted"] = serde_json::json!(path_was_defaulted);
+    }
+    if let Some(scope_note) = scope_note {
+        value["scope_note"] = serde_json::json!(scope_note);
     }
     Ok(value)
 }

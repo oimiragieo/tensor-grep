@@ -1079,6 +1079,52 @@ Related: **before changing any user-facing string, grep every test and doc for i
 prose pin in a file you never open will red the build. When fixing such a pin, assert on SUBSTANCE
 rather than re-pinning the new sentence, or you have only relocated the tripwire.
 
+### A control that moves the WRONG variable falsely EXONERATES the right hypothesis (2026-07-31, #868)
+
+The law above catches a control that cannot fail. This is its mirror image and it is more
+dangerous, because it produces a confident *negative* that closes the investigation: a control that
+runs cleanly, discriminates properly, and moves a variable **adjacent to** the one that matters.
+
+`#868` sat RED for days with the cause recorded as UNKNOWN and two hypotheses "falsified by
+controls". The live hypothesis was *native-extension presence changes the search dispatch route*.
+The control ran a full `uv sync`, confirmed **`rust_core` PRESENT**, re-ran the test, watched it
+pass -- and killed the hypothesis.
+
+`rust_core` is the Python **extension module**. The dispatch gate is
+`resolve_native_tg_binary()`, which looks for the compiled **`tg` binary**. Two different
+artifacts, adjacent names, and the hypothesis was right the whole time:
+
+```
+main.py:7521   _warn_unavailable_gpu_device_ids(...)      <- the warning CI showed, fires here
+main.py:7862   native_tg_binary = resolve_native_tg_binary()
+main.py:7877   sys.exit(_delegate_to_native_tg_search(...))   <- EXITS HERE
+main.py:8408   <the new exit-code rule>                        <- ~530 lines later, unreachable
+```
+
+The real control, one variable, everything else byte-identical:
+
+```
+ARM A  resolve_native_tg_binary() -> None       => Python route     => exit 2  (test passes)
+ARM B  resolve_native_tg_binary() -> Path(...)  => delegation route => exit 0  (reproduces CI
+                                                    byte-for-byte, warning and all)
+```
+
+**Name the variable as the SYMBOL the code branches on, not as the capability you believe it
+stands for.** "Is the native stuff installed" is a story; `resolve_native_tg_binary()` is a call
+site. Write the arm as *"I set `<symbol>` to `<value>`"* and the substitution becomes impossible to
+make silently.
+
+Two corollaries, both cheap:
+
+- **A negative control earns its authority by reproducing the failure in one arm.** ARM B here did
+  not merely differ -- it produced CI's exact exit code and exact stdout. A control that only shows
+  "still passes" has ruled out nothing; it has shown that whatever you changed was not it.
+- **An ambient dependency in a shared fixture is a hidden arm.** `_patch_cli_dependencies` patches
+  `Pipeline`, `DirectoryScanner` and `RipgrepBackend.is_available`, but not
+  `resolve_native_tg_binary` -- so every test using it silently takes a different route on a dev box
+  than in CI. When local and CI disagree, **diff the FIXTURE's coverage against the code path**, not
+  just the platform.
+
 ### A checker that cannot tell a PRODUCER from a PRESENTER reports correct code as broken
 
 A class ratchet flagged 9 functions as "reads incompleteness but never discloses". **All 9 were
