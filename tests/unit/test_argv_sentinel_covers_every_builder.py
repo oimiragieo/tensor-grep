@@ -1,4 +1,10 @@
-"""Every argv builder must place `--` BEFORE its first positional. Behavioural, not source-scanned.
+"""Every argv builder handing a CALLER-INFLUENCED positional to a flag-parsing child must
+place `--` before it. Behavioural, not source-scanned.
+
+SCOPE, stated because the unqualified version of that sentence swept in a dozen harmless
+tg-generated argvs (`lsp_provider_setup.py`, the pip package specs in `main.py`, `session_daemon.py`,
+`dogfood.py`). The property is not "every `subprocess` list ends its options" -- it is that a value
+the CALLER can influence never reaches a child parser in flag position.
 
 CWE-88 / the MCP-276 class. A list-argv `subprocess` call blocks a SHELL injection and does NOTHING
 about flag injection into the CALLEE's own parser. The native binary's `pattern` and `path`
@@ -55,10 +61,23 @@ A SECOND round of the same review found two more, and both were POPULATION defec
 So this file calls each builder and asserts the property that actually matters:
 **everything after `--` is exactly the positionals, in order, and nothing precedes it.**
 
-THE RECURRING DEFECT IS THE POPULATION, NOT THE ASSERTION. It has been wrong three times -- 5, then
-8, now 10 -- and every miss was a JUDGEMENT that one builder transitively covered another. Each
-entry below is a builder that was CALLED and observed. Do not add one by reasoning that it is
-already covered; call it.
+A THIRD round found a member that could not FAIL for the reason it existed. The `[run,stdin]` entry
+declared that branch covered while asserting only "no dangling trailing `--`" -- so adding
+`cmd.extend(paths)` to the `if stdin_enabled:` branch, putting a caller-supplied value in the argv
+bare in exactly that branch, left the suite green. A member that names a branch and cannot fail on
+it is worse than no member: it reports the branch as checked.
+
+The fix is the reason the main assertion is now DERIVED rather than curated per entry: **if a
+caller-supplied value appears in the argv at all, it must follow `--`**. That holds for every
+configuration without anyone deciding in advance which ones have positionals.
+
+THE RECURRING DEFECT IS THE POPULATION, NOT THE ASSERTION. It has been wrong FOUR times -- 5, then
+8, then 10, now 13 -- and every miss was the same JUDGEMENT that one builder transitively covered
+another. The fourth was surfaced by a mechanical sweep after a careful human pass dismissed the two
+`session daemon` call sites as "internal tg commands" without opening them. Each entry below is a
+builder that was CALLED and observed. Do not add one by reasoning that it is already covered; call
+it -- and treat this list as CURATED, to be re-derived by a sweep each release, not as proven
+complete.
 
 ## WHAT THIS CANNOT COVER, stated rather than glossed
 
@@ -157,7 +176,13 @@ def _ast_build_command(pattern: str, **config_kwargs: object) -> list[str]:
     from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend
     from tensor_grep.core.config import SearchConfig as _Config
 
-    cmd, context = AstGrepWrapperBackend()._build_command(
+    backend = AstGrepWrapperBackend()
+    # Pin argv[0] instead of resolving it. `_get_binary_name` `shutil.which`-es four candidates and
+    # PROBE-RUNS each (measured: 3 real `ast-grep --version` spawns for 3 calls here), which is
+    # wasted subprocess cost in a test that never asserts on argv[0]. The sibling `_ast_scan_project`
+    # already stubs `is_available` for the same reason.
+    backend._resolved_binary_name = "ast-grep"
+    cmd, context = backend._build_command(
         pattern,
         [_PATH],
         _Config(**config_kwargs),  # type: ignore[arg-type]
@@ -211,6 +236,83 @@ def _ast_run_stdin_argv() -> list[str]:
 def _ast_multiline_argv() -> list[str]:
     """The inline-rule form: a multiline pattern routes to `scan --rule <tmpfile> -- <paths>`."""
     return _ast_build_command("def a():\n    pass")
+
+
+def _wslpath_argv() -> list[str]:
+    """`translate_path_for_windows_binary`'s argv (round 3, F11).
+
+    `-w` takes no value, so the path is a bare positional -- and `agent_capsule.py` hands this the
+    USER's search root. Measured on the real binary rather than assumed: `wslpath -w "-m"` prints
+    USAGE (the path was consumed as a flag) while `wslpath -w -- "-m"` prints `-m`. It fails closed
+    (a swallowed path yields `None` -> `path_domain_mismatch`), which is why it is lower severity --
+    but a sweep whose members each carry a private severity argument is a sweep nobody can check.
+    """
+    from tensor_grep.cli import runtime_paths as mod
+
+    captured: list[list[str]] = []
+
+    class _Result:
+        returncode = 1
+        stdout = ""
+        stderr = ""
+
+    def _capture(argv, **_kwargs):  # type: ignore[no-untyped-def]
+        captured.append([str(a) for a in argv])
+        return _Result()
+
+    import shutil
+
+    import pytest as _pytest
+
+    monkeypatch = _pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(shutil, "which", lambda name: "wslpath")
+        monkeypatch.setattr(mod.subprocess, "run", _capture)
+        mod.translate_path_for_windows_binary(_PATH)
+    finally:
+        monkeypatch.undo()
+
+    assert captured, "translate_path_for_windows_binary never reached subprocess.run"
+    return captured[0]
+
+
+def test_the_generated_upgrade_script_guards_its_daemon_root() -> None:
+    """The scheduled-upgrade helper's two `session daemon` argvs (round 3, F12).
+
+    CHECKED AS TEXT, and this is the one place in this file where that is the RIGHT tool rather
+    than the lazy one: the argv lives inside `helper_code = textwrap.dedent(...)` (main.py:15399),
+    a standalone script written to disk and run by the Windows scheduler. It cannot be imported
+    and cannot be called -- the artifact under test IS source text, so reading the text is reading
+    the artifact.
+
+    A first cut extracted a shared `_session_daemon_argv` helper to make this callable. That would
+    have raised `NameError` inside the generated script, which cannot import tg;
+    `test_upgrade_scheduled_windows_helper_restarts_preexisting_session_daemon` caught it by
+    pinning the generated script's text. **Refactoring code that lives inside a generated string is
+    not the same as refactoring code.**
+
+    THE DEFECT: `daemon_root` is caller-influenced -- the PATH the user gave
+    `tg session daemon start <PATH>`, persisted in daemon state and round-tripped back into this
+    argv. The callee is a real Typer/Click command whose `path` argument DEFAULTS TO `"."`, so a
+    dash-leading root consumed as an option does NOT error: the daemon is started or queried at the
+    CWD instead of the intended root, and the status check then reports on the wrong daemon.
+    """
+    import inspect
+    import re
+
+    from tensor_grep.cli import main as cli_main
+
+    source = inspect.getsource(cli_main)
+    occurrences = re.findall(
+        r'"(status|start)",\s+"--json",\s+"--",\s+daemon_root,',
+        source,
+    )
+    assert sorted(occurrences) == ["start", "status"], (
+        "the generated upgrade script's `session daemon` argvs no longer place `--json` and the "
+        f"`--` sentinel before `daemon_root`. Found: {occurrences!r}. A dash-leading daemon root "
+        "would be consumed as an option and the Typer default of '.' would silently substitute "
+        "the CWD."
+    )
 
 
 class _StopBuild(BaseException):
@@ -269,6 +371,11 @@ _BUILDERS: tuple[tuple[str, object, list[object]], ...] = (
         lambda: _doctor_probe_argv(),
         [_DOCTOR_PATTERN, _ANY],
     ),
+    # ROUND 3. Both found only AFTER the population had been "derived" twice already -- and the
+    # second was surfaced by a mechanical sweep after a human pass dismissed the same two call
+    # sites as "internal tg session commands" without opening them. Four judgement failures on one
+    # population is why the assertion above is now derived from the argv rather than curated here.
+    ("cli/runtime_paths.py::translate_path_for_windows_binary", _wslpath_argv, [_PATH]),
 )
 
 
@@ -370,12 +477,32 @@ def test_the_sentinel_precedes_every_positional(label, build, positionals) -> No
     """
     argv = build()
 
+    # THE DERIVED PROPERTY, and the one that makes an empty-positional member able to FAIL.
+    #
+    # An earlier cut declared the `--stdin` configuration "covered" while asserting only that no
+    # dangling `--` was emitted. That entry could not fail for the reason it existed: adding
+    # `cmd.extend(paths)` to the `if stdin_enabled:` branch -- putting a caller-supplied value in
+    # the argv, bare, in exactly that branch -- left the whole suite green. A member that names a
+    # branch and cannot fail on it is worse than no member: it reports the branch as checked.
+    #
+    # So the property is DERIVED from the argv rather than hardcoded per entry: **if a
+    # caller-supplied value appears in the argv at all, it must follow `--`.** That holds for every
+    # configuration without anyone deciding in advance which ones have positionals.
+    for supplied in (_PATTERN, _PATH):
+        if supplied not in argv:
+            continue
+        assert "--" in argv, (
+            f"{label} places the caller-supplied value {supplied!r} in the argv with NO "
+            f"end-of-options sentinel anywhere: {argv}"
+        )
+        assert argv.index(supplied) > argv.index("--"), (
+            f"{label} places the caller-supplied value {supplied!r} BEFORE the sentinel -- it is "
+            f"still parsed as a flag by the callee: {argv}"
+        )
+
     if not positionals:
-        # A configuration that emits NO positionals (`--stdin`) has nothing to protect. Asserting
-        # a sentinel here would demand a `--` with nothing after it, which is noise, not safety.
-        # The arm exists because the sentinel it skips is CONFIG-CONDITIONAL: the run form guards
-        # only the non-stdin branch, and a member with no configuration coverage is a member
-        # checked in one of its two shapes.
+        # Declared-empty configurations have nothing further to check; the derived loop above is
+        # what actually guards them.
         assert "--" not in argv or argv[-1] != "--", (
             f"{label} emits a trailing `--` with no positionals after it: {argv}"
         )

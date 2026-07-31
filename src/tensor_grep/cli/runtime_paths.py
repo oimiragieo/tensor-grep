@@ -516,7 +516,21 @@ def translate_path_for_windows_binary(
         return None
     try:
         result = subprocess.run(
-            [wslpath_bin, "-w", str(path)],
+            # End-of-options sentinel (CWE-88). `path` is caller-supplied -- `agent_capsule.py`
+            # hands this the user's search root -- and `-w` takes no value, so `str(path)` is a
+            # bare positional.
+            #
+            # MEASURED, not assumed, because "does this binary honour `--`" is exactly the kind of
+            # assumption that makes a sentinel decorative (AGENTS.md: dogfood the real binary):
+            #     wslpath -w "-m"      -> prints USAGE; the path was consumed as a flag
+            #     wslpath -w -- "-m"   -> prints "-m"; translated as a path
+            # So `--` is a real sentinel here, not merely tolerated.
+            #
+            # This one fails CLOSED (a swallowed path yields a non-zero/empty result -> `None` ->
+            # `path_domain_mismatch`), which is why it is lower severity than its siblings -- but a
+            # sweep whose members each carry a private severity argument is a sweep nobody can
+            # check, so it gets the same treatment as the rest.
+            [wslpath_bin, "-w", "--", str(path)],
             capture_output=True,
             text=True,
             encoding="utf-8",

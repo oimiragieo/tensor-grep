@@ -15761,6 +15761,24 @@ def upgrade() -> None:
             def _restart_session_daemon_after_upgrade() -> str:
                 if not daemon_root:
                     return ""
+                # End-of-options sentinel (CWE-88), INLINE and duplicated, deliberately.
+                #
+                # This block is inside `helper_code = textwrap.dedent(...)` -- a standalone script
+                # written to disk and run by the Windows scheduler. It cannot import tg, so a
+                # shared `_session_daemon_argv` helper would NameError at runtime. A first cut
+                # extracted one and was caught by
+                # `test_upgrade_scheduled_windows_helper_restarts_preexisting_session_daemon`,
+                # which pins the generated script's TEXT. Refactoring code that lives inside a
+                # generated string is not the same as refactoring code.
+                #
+                # `daemon_root` is caller-influenced: it is the PATH the user gave
+                # `tg session daemon start <PATH>`, persisted in daemon state and round-tripped
+                # back here. The callee is a real Typer/Click command whose `path` argument
+                # DEFAULTS TO "." -- so a dash-leading root consumed as an option does NOT error;
+                # the daemon is started or queried at the CWD instead. Silent wrong scope.
+                #
+                # `--json` sits BEFORE the sentinel: everything after `--` is a positional, so
+                # leaving the flag there would hand Click a second positional instead.
                 status_command = [
                     sys.executable,
                     "-m",
@@ -15768,8 +15786,9 @@ def upgrade() -> None:
                     "session",
                     "daemon",
                     "status",
-                    daemon_root,
                     "--json",
+                    "--",
+                    daemon_root,
                 ]
                 start_command = [
                     sys.executable,
@@ -15778,8 +15797,9 @@ def upgrade() -> None:
                     "session",
                     "daemon",
                     "start",
-                    daemon_root,
                     "--json",
+                    "--",
+                    daemon_root,
                 ]
                 try:
                     status = subprocess.run(
