@@ -13,7 +13,7 @@ tg doctor --json ROOT
 tg devices
 ```
 
-## Recommended sweep (v1.101.19)
+## Recommended sweep (v1.101.22)
 
 ```bash
 cd /path/to/workspace
@@ -39,31 +39,30 @@ tg agent agent-studio/.claude/lib/routing "task" --json
 tg dogfood --root . --output /tmp/dogfood-ws.json
 ```
 
-## Latest sweep (2026-07-29, tg 1.101.19, gotcontext-saddle)
+## Latest sweep (2026-07-31, tg 1.101.22, gotcontext-saddle)
 
 | Category | Result | Notes |
 | --- | --- | --- |
 | Symbol ladder / blast / orient / map / route-test / evidence / dogfood | ✅ | `agreement_details`; evidence `checks.digest_valid` |
-| `tg agent` scoped + root `--deadline 90` | ✅ | scoped ~6s; root ~**43s** (faster vs 1.101.17 ~47s) |
+| `tg agent` scoped + root `--deadline 90` | ✅ | scoped ~8s; root ~50s rc 0 non-partial |
 | lexical + trunc hard-stop | ✅ | trunc conf **0.72** + ask.required |
-| **`tg prepare`** / `--out` / `--claim` | ✅ | ~7–8s; env agent id attributed |
+| **`tg prepare`** / `--out` / `--claim` | ✅ | ~7–9s; stronger anonymous `agent_id_hint` |
 | ledger Slice 1 + Slice 2 find | ✅ | list + find rollup under repo root |
 | `tg find` without dense | ✅ | BM25 + install-dense hint |
 | GPU | ⚠️ | `unsupported` / cpu-fallback + not-proof stderr |
 | Multi-project parent unscoped | ✅ | exit 2 + JSON `incomplete_reason` |
-| Bare `search` (text, no PATH) | ✅/⚠️ | exit 1 empty + **stderr PATH note** (new @ 1.101.19) |
-| Bare `search --json` (no PATH) | ⚠️ | still silent empty exit 1 |
+| Bare `search` text + `--json` (no PATH) | ✅/⚠️ | both exit 1 + **stderr PATH note** (JSON caught up @ 1.101.22); note not in JSON body |
 | Cold doctor daemon | ✅ | autostart hint → warm running |
 
-Artifact: `/tmp/tg-dogfood-110119.json`.
+Artifact: `/tmp/tg-dogfood-110122.json`.
 
 ## Trend
 
 | Version | PASS | TIMEOUT | Notable |
 | --- | ---: | ---: | --- |
-| 1.101.9 | saddle ✅ | — | trunc conf honesty; MaxSim in find help |
-| 1.101.17 | saddle ✅ | — | Slice 2 find repo-visible; bare text silent-empty |
-| **1.101.19** | **saddle ✅** | — | bare-text PATH stderr note; agent root ~43s |
+| 1.101.17 | saddle ✅ | — | Slice 2 find repo-visible |
+| 1.101.19 | saddle ✅ | — | bare-text PATH stderr note |
+| **1.101.22** | **saddle ✅** | — | bare-`--json` PATH note too; stronger anon claim hint |
 
 ## Sibling skills
 
