@@ -2970,14 +2970,21 @@ def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str,
             "--json",
             "--no-ignore",
             "-F",
-            sentinel,
-            # End-of-options sentinel (CWE-88 class, AGENTS.md). Lower risk than the
-            # `agent_capsule.py` twin -- both `sentinel` and `probe_target` are tg-generated here,
-            # not caller-supplied -- but included for UNIFORMITY, which is the actual security
-            # property. A sweep whose members each carry their own risk assessment is a sweep
-            # nobody can check; "every argv builder ends its options" is checkable, and is what
-            # `tests/unit/test_argv_sentinel_covers_every_builder.py` enumerates.
+            # End-of-options sentinel (CWE-88 class, AGENTS.md), BEFORE EVERY POSITIONAL.
+            #
+            # The first cut of this put it BETWEEN `sentinel` and `probe_target`, terminating
+            # options for the path while leaving the PATTERN unguarded. A sentinel in the wrong
+            # place reads as protection and is not -- and the source-scanning census I shipped
+            # alongside it could not tell the difference, because it only asked whether `--`
+            # appeared somewhere in the function. Caught by an independent adversarial review, and
+            # the reason the test is now BEHAVIOURAL: position is the property, presence is only a
+            # proxy for it.
+            #
+            # Both positionals here are tg-generated, so the live risk is low -- but uniformity IS
+            # the security property. A sweep whose members each carry a private risk assessment is
+            # a sweep nobody can check.
             "--",
+            sentinel,
             probe_target,
         ]
         base["command"] = " ".join([*command[:-1], "<doctor-gpu-probe-file>"])

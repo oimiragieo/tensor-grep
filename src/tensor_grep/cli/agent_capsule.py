@@ -1643,6 +1643,12 @@ def _agent_gpu_evidence(
             device_arg,
             "--json",
             "-F",
+            # End-of-options sentinel, BEFORE both positionals (CWE-88). This is the SECOND argv
+            # builder in this function, 86 lines above the one the original fix touched, and it was
+            # missed -- found by an independent adversarial review. `probe_target` is
+            # caller-derived (and rewritten by the WSL `wslpath` branch just above), so this is the
+            # same live shape, not a defensive nicety.
+            "--",
             "tg agent gpu probe sentinel",
             probe_target,
         ]
