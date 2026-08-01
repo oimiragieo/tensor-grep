@@ -661,7 +661,7 @@ zero behavioral change, and is strictly stronger than reading the diff by eye. U
 on `test_index_lock_concurrency.py`'s comment-only revisions; cheap enough to run on every claimed no-op
 commit before skipping a gate on the strength of "it's just a comment."
 
-## The Verification-Oracle Family — nine forms (2026-07-25; 7th + 8th 2026-07-26, 9th 2026-07-27)
+## The Verification-Oracle Family — ten forms (2026-07-25; 7th + 8th 2026-07-26, 9th 2026-07-27, 10th 2026-07-28)
 
 **The single most repeated failure mode this project has.** Every form shares one shape: *something that
 looks like verification isn't.* Before trusting ANY green signal, ask: **what would this check show if the

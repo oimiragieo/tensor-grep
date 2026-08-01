@@ -43,13 +43,22 @@ relax any gate in `tensor-grep-change-control`.
 ## Part 0 — THE ORACLE FAMILY: when your verification isn't (read this first)
 
 **The single most repeated failure mode in this repo.** TEN distinct forms, most in ONE session
-(2026-07-25; form 7 added 2026-07-26, forms 8-9 2026-07-27, form 10 2026-07-28). Every form shares
-one shape: *something that looks like verification isn't.*
+(2026-07-25; forms 7 + 8 added 2026-07-26, form 9 2026-07-27, form 10 2026-07-28). Every form
+shares one shape: *something that looks like verification isn't.*
 
 (The count read NINE while ten forms were present, for three days. A header that miscounts the
 thing below it is the smallest possible instance of this Part's own subject -- and it was found by
 an audit that COUNTED the forms rather than reading the sentence. Re-derive the number when you add
-one; do not trust the header, including this one.)
+one; do not trust the header, including this one.
+
+**Both halves of that two-file edit were still wrong on 2026-08-01, in OPPOSITE directions.**
+`AGENTS.md`'s header kept saying "nine forms" for four more days -- the fix landed here and never
+crossed over -- while THIS file, which had the count right, misdated forms 8-9 to 2026-07-27 when
+Form 8's own text reads 2026-07-26. Each doc was half right, and reading either one alone
+confirmed it. The dates and the count are now derived from the `**Form N —**` headings
+themselves, which are the only authority, and `tests/unit/test_skill_library_drift.py` now fails
+if the stated count and the enumerated forms disagree in EITHER file -- because a rule that says
+"re-derive the number" had already been read, agreed with, and half-applied.)
 
 **The one question that catches all ten — before trusting any green signal, ask:
 "what would this check show if the thing it verifies were BROKEN?"
