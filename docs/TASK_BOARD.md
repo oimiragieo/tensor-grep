@@ -38,6 +38,24 @@ gh pr list --state open --json number,title            # the IN FLIGHT table, ve
 python -c "import json,urllib.request;print(json.load(urllib.request.urlopen('https://pypi.org/pypi/tensor-grep/json'))['info']['version'])"
 ```
 
+**Why this is NOT a CI gate, deliberately** — recorded so the next session does not build it and
+then wonder why it got disabled. Two candidate mechanisms were considered on 2026-08-01 and both
+were rejected:
+
+- *Assert the IN FLIGHT table matches `gh pr list`.* Needs network and a GitHub token inside the
+  test run. A rate-limited or offline run fails for a reason unrelated to the repo, and a gate that
+  reds the build for environmental reasons teaches everyone to reach for `--no-verify` — which
+  discredits every other gate here, including the ones catching real defects.
+- *Assert the "post-vX.Y.Z" stamp matches `pyproject.toml`'s version.* Zero network and perfectly
+  deterministic — and it would fire after **every single release**, several times a day, forcing a
+  board edit into every unrelated PR. That is an over-eager rule, and an over-eager rule is worse
+  than no rule.
+
+The rule stays DECLARED on purpose. What changed is the *routine* (reconcile inside the merge step)
+and the *affordance* (the two commands above, so nobody retypes a number from memory). Harden a
+rule when a violation is mechanically detectable without interpretation AND a false positive would
+be rare; neither holds here.
+
 ---
 
 ## IN FLIGHT (PRs open right now — derived from `gh pr list`, 2026-08-01)
