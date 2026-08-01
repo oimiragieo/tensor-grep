@@ -490,9 +490,20 @@ def _policy_file_arg(path_value: object, *, working_root: Path) -> str | None:
     except (OSError, RuntimeError):
         return None
     try:
-        return resolved.relative_to(working_root.resolve()).as_posix()
+        relative = resolved.relative_to(working_root.resolve()).as_posix()
     except ValueError:
         return str(resolved)
+    # CWE-88 (adversarial gate finding, 2026-08-01 backlog campaign PR-D): this string is
+    # substituted verbatim into a $file/{file} policy-command template BEFORE argv splitting
+    # (_policy_command_instances). A repo-controlled filename that happens to start with '-'
+    # (e.g. "-cevil.ini") would then parse as a FLAG to the downstream tool, not a path --
+    # neither `shlex.quote` nor `subprocess.list2cmdline` escape a leading dash, since both
+    # only quote for whitespace/shell-metacharacters, not argv-parse ambiguity. Prefixing with
+    # "./" makes it unambiguously a path for every tool that reads argv, on both platforms;
+    # this is NOT the same as the deliberately-omitted `--` sentinel in `_run_policy_command`
+    # (that omission concerns the OPERATOR-authored tokens, which this function does not
+    # touch -- only the ONE token this repo's own code appends).
+    return f"./{relative}" if relative.startswith("-") else relative
 
 
 def _edited_file_args(
@@ -704,6 +715,13 @@ def _run_policy_command(name: str, command: str, cwd: Path, timeout: int) -> dic
                 f"{untrusted_root})."
             ),
         )
+    # SENTINEL RETIREMENT (2026-08-01 backlog campaign): no `--` separator is inserted here,
+    # deliberately. The CWE-88 argv-sentinel census is keyed on the artifact "OUR flags plus an
+    # UNTRUSTED positional appended to a tool WE chose" (rg/ast-grep invocations). This argv is
+    # the opposite shape: an operator-authored COMPLETE validation command; a blind `--` has no
+    # defined semantics for an arbitrary command and can break it. The path-hijack half is
+    # already closed above: argv[0] is resolved and refused if it shadows into the untrusted
+    # repo. Do not "fix" this by adding a sentinel.
     argv = [str(resolved_path), *argv[1:]]
 
     try:

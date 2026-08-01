@@ -1084,10 +1084,12 @@ signed consumable tg outputs.
   named in the original finding are output/filter concerns that never independently select a backend,
   so they were never a live instance of this gap.
 - **Dead-code (partial):** `semantic_index.py` already carries the honesty docstring asked for
-  (`semantic_index.py:1`, "kept SEPARATE from the Rust TGI v3 `.tg_index`"). NOT confirmed deleted:
-  `sidecar.py::_classify_lines` (still defined, `sidecar.py:157`, a thin unused wrapper around
-  `_classify_lines_with_metadata`) and `rust_core/src/backend_cpu.rs::replace_in_place`
-  (`backend_cpu.rs:212`, still `pub fn`) — kept as a small LOW item below rather than marked shipped.
+  (`semantic_index.py:1`, "kept SEPARATE from the Rust TGI v3 `.tg_index`"). `sidecar.py::_classify_lines`
+  (the thin unused wrapper around `_classify_lines_with_metadata`) is now **DELETED** (2026-08-01
+  backlog campaign, PR-D, `chore:`) — re-verified zero callers via `tg callers`/`tg refs`/tracked-file
+  grep before removal, positive control 4 callers/3 files on the sibling. `rust_core/src/backend_cpu.rs::replace_in_place`
+  (`backend_cpu.rs:212`, still `pub fn`) is a SEPARATE item, still NOT confirmed deleted — kept as the
+  remaining LOW item below.
 - **#171** GPU Phase-0 program (de-risking toward a possible Phase-1 `cuda-check` CI gate) -> SHIPPED:
   P0-1 WSL probe path-domain bridging + `cargo check --features cuda` anti-bit-rot CI gate (`7f8de84`/
   #594, v1.75.1) | P0-2/P0-3 doctor probe failure-taxonomy + honest device-id validation (`7350d77`/
@@ -1160,9 +1162,27 @@ for the next audit rather than re-opened as active work):**
 - **#143** Opus-gate LOW follow-ups — `#543`'s race-test/symbol-timeout/`lru_cache` flip + `#140`'s
   `--` sentinel (non-blocking).
 - **#155** `#152` Opus-gate LOW nits — dead reverse-tag block + an ordering comment.
-- **Dead-code (partial, see reconciliation note above):** delete `sidecar.py::_classify_lines` (unused
-  wrapper) + `rust_core/src/backend_cpu.rs::replace_in_place` if confirmed zero-caller; light Opus
-  parity review for the Rust deletion (`cpu_backend` is a mandatory-gate surface).
+- **Dead-code (partial, see reconciliation note above):** `sidecar.py::_classify_lines` — **DONE**
+  (2026-08-01 backlog campaign, PR-D). Remaining: `rust_core/src/backend_cpu.rs::replace_in_place`
+  if confirmed zero-caller; light Opus parity review for the Rust deletion (`cpu_backend` is a
+  mandatory-gate surface).
+- **apply_policy argv-sentinel — RETIRED, not fixed (2026-08-01 backlog campaign, PR-D).** The
+  `argv = [str(resolved_path), *argv[1:]]` site at `apply_policy.py:707` (mirrored in
+  `rust_core/src/main.rs`'s `Command::new(program)` construction) does NOT get a `--` separator.
+  The CWE-88 argv-sentinel census is keyed on "OUR flags plus an UNTRUSTED positional appended to
+  a tool WE chose" (rg/ast-grep invocations); this site is the opposite shape — an
+  operator-authored COMPLETE validation command, where a blind `--` has no defined semantics and
+  can break it. The path-hijack half is already closed by the repo-local shadow refusal
+  immediately above (`apply_policy.py:696-706`). **Mandatory adversarial security gate (rule A3)
+  found a REAL, adjacent bug while attacking this claim** — the retirement claim itself held, but
+  `_policy_file_arg` (`apply_policy.py:484-505`) returned a repo-controlled relative filename
+  UNMODIFIED, and a file named e.g. `-cevil.ini`, substituted via `$file`/`{file}` into a policy
+  command template, parses as a FLAG rather than a path on both POSIX and Windows tokenizers
+  (neither `shlex.quote` nor `subprocess.list2cmdline` escape a leading dash). Fixed in the same PR
+  (TDD-first, 2 new tests in `tests/unit/test_apply_policy.py`): `_policy_file_arg` now prefixes a
+  dash-leading relative path with `./`. This is a DIFFERENT fix from a `--` sentinel and does not
+  reopen the retirement reasoning above — it neutralizes the one token tg's OWN code appends,
+  which the retirement's "operator-authored" premise never covered.
 
 ### Blocked on a Linux/WSL box (env-blocked, not CEO-gated)
 - **#89** WSL `/mnt/c` absolute-path resolution in the native backend.

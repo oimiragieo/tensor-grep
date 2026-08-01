@@ -2122,3 +2122,80 @@ def test_run_policy_command_allows_local_drive_letter_tool_not_flagged_as_unc(
         assert result["passed"] is True, f"local tool spelled {which_return!r} must run"
         assert captured.get("argv") is not None
         assert "UNC" not in str(result["detail"])
+
+
+def test_policy_file_arg_neutralizes_a_dash_leading_relative_path(tmp_path: Path) -> None:
+    """CWE-88, adversarial gate finding (2026-08-01 backlog campaign PR-D): a repo-controlled
+    file whose relative path starts with ``-`` must not come back from ``_policy_file_arg`` as a
+    bare dash-leading string. Substituted into a ``$file``/``{file}`` policy command template,
+    a bare ``-cevil.ini`` (or similar) is parsed by the downstream tool as ONE OR MORE FLAGS, not
+    a path -- neither ``shlex.quote`` nor ``subprocess.list2cmdline`` escape a leading dash (they
+    only quote for whitespace/shell-metacharacters), so quoting alone does not neutralize this.
+
+    Pre-fix baseline: ``_policy_file_arg`` returns the relative path completely unmodified
+    (``resolved.relative_to(working_root.resolve()).as_posix()``), so this test FAILS pre-fix
+    because the returned string starts with ``-``.
+    """
+    from tensor_grep.cli.apply_policy import _policy_file_arg
+
+    working_root = tmp_path
+    dash_file = working_root / "-cevil.ini"
+    dash_file.write_text("", encoding="utf-8")
+
+    file_arg = _policy_file_arg(dash_file, working_root=working_root)
+
+    assert file_arg is not None
+    assert not file_arg.startswith("-"), (
+        f"{file_arg!r} starts with '-' and will be parsed as a flag when substituted "
+        "into a $file/{file} policy command template"
+    )
+
+
+def test_policy_command_instances_never_produces_a_flag_looking_file_token(
+    tmp_path: Path,
+) -> None:
+    """End-to-end version of the above: the fully-expanded, then argv-split command must
+    contain the edited file as an unambiguous PATH token, never a bare flag-shaped string --
+    on both the POSIX (``shlex.split``) and Windows (``_split_windows_command``) tokenizers.
+
+    Pre-fix baseline: FAILS on both tokenizers because ``_policy_command_instances`` embeds
+    the untouched dash-leading relative path.
+    """
+    import shlex
+
+    from tensor_grep.cli.apply_policy import (
+        _parse_policy_command,
+        _policy_command_instances,
+        _split_windows_command,
+    )
+
+    working_root = tmp_path
+    dash_file = working_root / "-cevil.ini"
+    dash_file.write_text("", encoding="utf-8")
+
+    rewrite_payload = {"edits": [{"file": str(dash_file)}]}
+    instances, expansion_error = _policy_command_instances(
+        "lint",
+        "ruff check $file",
+        rewrite_payload=rewrite_payload,
+        target_path=dash_file,
+        working_root=working_root,
+    )
+
+    assert expansion_error is None
+    assert len(instances) == 1
+    _file_arg, expanded_command = instances[0]
+
+    posix_argv = shlex.split(expanded_command, posix=True)
+    windows_argv = _split_windows_command(expanded_command)
+    # The real CLI-boundary parser (`_run_policy_command`'s own parse step) must agree with
+    # whichever of the two tokenizers is native to this OS.
+    native_argv = _parse_policy_command(expanded_command)
+    assert native_argv == (windows_argv if os.name == "nt" else posix_argv)
+
+    for argv, tokenizer in ((posix_argv, "posix shlex"), (windows_argv, "windows")):
+        file_token = argv[-1]
+        assert not file_token.startswith("-"), (
+            f"{tokenizer} tokenizer parsed the edited file as {file_token!r}, "
+            "which a downstream tool reads as a flag, not a path"
+        )

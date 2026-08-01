@@ -154,11 +154,6 @@ def _classify_lines_with_metadata(
         )
 
 
-def _classify_lines(lines: list[str]) -> list[dict[str, Any]]:
-    results, _metadata = _classify_lines_with_metadata(lines)
-    return results
-
-
 def _classify_line_budget(total_lines: int, max_lines: int | None) -> dict[str, Any]:
     effective_max = None if max_lines is None or max_lines <= 0 else max_lines
     emitted_lines = total_lines if effective_max is None else min(total_lines, effective_max)

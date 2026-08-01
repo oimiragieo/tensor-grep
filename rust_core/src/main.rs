@@ -11042,6 +11042,15 @@ fn run_validation_command(
     // a hand-rolled `spawn` + `wait_timeout` + `wait_with_output`: if the child fills the OS pipe
     // buffer before exiting, it blocks on write() until someone reads, but `wait_timeout` never
     // reads the pipes -- the parent and child deadlock before the timeout can fire (rust-lang#45572).
+    // SENTINEL RETIREMENT (2026-08-01 backlog campaign, mirrors apply_policy.py): no `--`
+    // separator here either -- `program`/`args` are an operator-authored complete validation
+    // command, not our flags plus an untrusted positional, so the CWE-88 argv-sentinel census
+    // does not apply to this construction site. Adversarial gate note: this holds here only
+    // because `validation_template_file_path` (below) ALWAYS absolutizes the substituted
+    // `$file`/`{file}` token before it reaches `args` -- an absolute path can never lead with
+    // `-`, so the sibling Python bug (a repo file named e.g. `-cevil.ini` parsing as a flag,
+    // fixed in `apply_policy.py::_policy_file_arg`) cannot recur here. Do NOT "simplify" this by
+    // substituting a relative path -- the absolutization is load-bearing for this exact reason.
     let mut command = Command::new(program);
     command
         .args(args)
