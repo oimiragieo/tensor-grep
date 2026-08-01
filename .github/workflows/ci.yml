@@ -727,6 +727,21 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --disable-pip-version-check pytest==8.4.2
+          # The native binary DELEGATES some flags (e.g. --ltl) to the Python sidecar via
+          # SEARCH_PYTHON_PASSTHROUGH_FLAGS, and `cli/main.py` imports typer/click. Until
+          # test_native_ltl_passthrough.py this glob only exercised the self-contained Rust
+          # path, so pytest alone sufficed and the gap was invisible: `test-python` has the
+          # deps but never builds the release binary, and this job builds the binary but had
+          # no deps -- so NO job could test native->sidecar delegation end to end.
+          # DERIVE the runtime deps from pyproject; do not hand-list them here (a hardcoded
+          # list rots the moment a dependency is added). A requirements FILE, not an inline
+          # $(...), because the dep strings carry environment markers and <>= operators.
+          python - <<'PYEOF' > "${RUNNER_TEMP:-/tmp}/tg-runtime-deps.txt"
+          import tomllib
+          for dep in tomllib.load(open("pyproject.toml", "rb"))["project"]["dependencies"]:
+              print(dep)
+          PYEOF
+          python -m pip install --disable-pip-version-check -r "${RUNNER_TEMP:-/tmp}/tg-runtime-deps.txt"
           python -m pytest tests/e2e/test_native_*.py -v --tb=short -p no:cacheprovider
 
   test-gpu-linux:
