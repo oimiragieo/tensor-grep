@@ -250,6 +250,42 @@ Windows ACL specifics learned the hard way (#281):
   inert capture FAILS rather than returning an empty value that passes everything. This is Form 5's
   topology trap on the test-construction side: convenience picked the seam, and the seam was the bug.
 
+- **A BLOCKED instrument and a definitive negative are the same shape on screen.** The false-zero
+  bullets above cover a probe that RAN and measured nothing; this is a probe that could not run YET
+  and answered anyway. Four instances in the 2026-08-01 campaign: an `awk` range that never matched
+  (read as "the CI job does not build the binary"); `pytest --collect-only | grep -c` returning 0
+  because `-x` aborted collection two files before the target; `gh run view --log` returning 0 lines
+  because the RUN was `in_progress` even though the JOB had already concluded failure; and
+  `uvx --from <pkg>==<ver>` reporting the version does not exist when it was a stale uv index cache
+  and the wheels were on PyPI. Before believing a negative, prove the instrument can return non-zero
+  ON THIS INPUT, NOW. For a package index, `--refresh` is not always enough (`uv cache clean <pkg>`
+  is), and the discriminator between "release failed" and "index stale" is the PyPI files endpoint
+  `/pypi/<pkg>/<ver>/json` -> `urls[]`. For CI, query the job's `conclusion` and failing STEP name,
+  which are available while the run is still going.
+- **Separate ROUTING from EVALUATION before asserting end-to-end.** A `--ltl` e2e test asserted
+  `returncode == 0` through the native binary and failed on all four OSes -- permanently, because
+  `native-build-smoke` runs `cargo build --bin tg` and never builds the PyO3 extension the LTL engine
+  needs. Two separable properties had been fused: the front door FORWARDING the flag (needs only the
+  binary) and the sidecar ANSWERING it (needs the extension). Assert the one the change actually
+  delivers unconditionally, and gate the other on the capability being present -- but keep the
+  degraded arm DISCRIMINATING (here, a fail-closed "search backend failed" is textually impossible
+  for a clap rejection to produce, so the routing-only arm is still evidence). And measure against
+  the SHIPPED artifact before relaxing anything: relaxing an assertion without confirming real users
+  are unaffected is how a genuine defect gets defined away.
+- **Check that some CI job can execute BOTH sides of a boundary you are testing.** `test-python` has
+  the Python deps but never builds the release binary; `native-build-smoke` builds the binary but
+  installed only `pytest`. So no job could test native->sidecar delegation end to end -- the surface
+  was untestable and the only possible symptom was a test nobody had written. It surfaced only
+  because an audit forced the new test into the job where a skip becomes a hard FAILURE; in its
+  original home it would have skipped silently and reported green.
+- **A test can assert a PROXY that cannot distinguish the fix from the bug.** The CWE-88 tests
+  asserted `not token.startswith("-")` and never path IDENTITY. Two mutations passed undetected:
+  prefixing only the exact fixture value (leaving `--evil.ini` and bare `-` injectable), and
+  returning a wholly WRONG filename so the validation command checked a different file. Parameterize
+  the shapes AND assert the value resolves to the intended target; the same mutation then killed 45
+  tests. Ask of every security assertion: what is the cheapest wrong implementation that still
+  passes this?
+
 Related global skill: `measure-what-it-claims` (same family, generalised beyond this repo).
 
 ## Part 1 — What counts as evidence here (in order of trust)
