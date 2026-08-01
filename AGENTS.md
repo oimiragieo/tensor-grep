@@ -2440,6 +2440,111 @@ When a candidate is accepted or explicitly rejected, update:
 
 The paper should preserve failed attempts too, so future agents do not retry the same losing ideas.
 
+## A BLOCKED Instrument And A Definitive Negative Look Identical (2026-08-01, #883-#887)
+
+The false-zero law elsewhere in this file covers a probe that RAN and measured nothing. This is its
+third face: a probe that **could not run yet** and answered anyway. Same shape on screen, opposite
+meaning, and it fired **four times in one campaign**:
+
+| probe | said | actually meant |
+|---|---|---|
+| `awk` range over `ci.yml` | job does not build the binary | the range pattern never matched; job builds it fine |
+| `pytest --collect-only \| grep -c` | the forbidden module is excluded | `-x` aborted collection two files earlier |
+| `gh run view --log` | 0 lines, so no failures | logs are undownloadable while the RUN is in progress (the JOB had already failed) |
+| `uvx --from tensor-grep==X` | that version does not exist | stale uv index cache; the 4 wheels were on PyPI |
+
+Every one was caught by a positive control, never by re-reading. The one time the control was
+skipped, the wrong answer reached a committed audit document and survived until an outside seat
+disproved it.
+
+**Rules:**
+- **Before believing a negative, prove the instrument can return non-zero right now.** Not in
+  principle — on this input, at this moment.
+- **`--refresh` is not always enough for a package index.** `uv cache clean <pkg>` is, and the
+  discriminator between "release failed" and "cache stale" is the PyPI files endpoint
+  (`/pypi/<pkg>/<version>/json` → `urls[]`). A version string can update before an index serves it.
+- **A run being `in_progress` makes its logs unavailable even when a JOB inside it has already
+  concluded.** Query the job's `conclusion` and its failing STEP name, which ARE available, rather
+  than reading an empty log as a clean bill.
+
+## Two Different Audits Beat More Seats Of The Same Shape (2026-08-01)
+
+An 8-seat thinktank council and one `codex gpt-5.6-sol` pass audited the same plan. They overlapped
+on **one finding out of nine**.
+
+- Six seats across five providers ALL missed a 15-test collision and a red arm that could not fail.
+  They converged on the most legible defect — a named test whose comment described itself — and
+  stopped.
+- Codex alone caught both, plus a mandatory gate the plan had waived.
+
+**Consensus is not coverage.** Seats of the same shape share blind spots no matter how many
+providers they span. Escalate BREADTH when the question is "what is wrong with this?"; collapse to
+DIRECT VERIFICATION once the question is "is this specific claim true?" — round 2 of that same audit
+needed no council at all, just four commands with positive controls.
+
+Corollary, learned the hard way in the same round: **direct verification is only as good as the
+probe.** Two of that round's answers were wrong until codex disproved them.
+
+## Release Class Is Part Of The Fix (2026-08-01, #883)
+
+A CWE-88 security fix sat in a `chore:`-titled PR. `scripts/validate_pr_title_semver.py` maps
+`chore` → `"none"`, so it would have merged and **never published**. Users stay exposed while the
+tracker says shipped.
+
+**Before merging, ask what the PR title does to the release, and read the mapping rather than
+recalling it.** `fix`/`feat`/`perf` publish; `chore`/`docs`/`test`/`ci`/`build`/`refactor`/`bench`
+do not. A fix that does not ship is not a fix — and "merged" is the most convincing possible
+evidence for something that did not happen.
+
+## Separate ROUTING From EVALUATION Before Asserting End-To-End (2026-08-01, #884)
+
+A new e2e test asserted `returncode == 0` for `--ltl` through the native binary. It failed on all
+four OSes and would have failed **forever**: `native-build-smoke` runs `cargo build --bin tg`, which
+never builds the PyO3 extension the LTL engine needs.
+
+Two separable properties had been fused:
+
+- **ROUTING** — the front door forwards the flag instead of clap-rejecting it. Needs only the binary.
+- **EVALUATION** — the sidecar can answer. Needs the extension.
+
+The fix asserts routing unconditionally and evaluation only where the engine exists, and the
+routing-only arm still discriminates because a fail-closed refusal is textually impossible for a clap
+rejection to produce. **Measured against the published wheel first** to confirm real users were
+unaffected before relaxing anything — relaxing an assertion without that check is how a real defect
+gets defined away.
+
+## A Job That Cannot Reach A Surface Makes That Surface Invisible (2026-08-01, #884)
+
+`test-python` has the Python deps but never builds the release binary. `native-build-smoke` builds
+the binary but installed only `pytest`. So **no job could test native→sidecar delegation end to
+end** — and the only possible symptom was a test nobody had written yet.
+
+It surfaced only because an audit forced a new test into the job where a skip becomes a hard failure.
+In its original location it would have skipped silently and reported green.
+
+**When adding a test that crosses a boundary, check that some job can actually execute BOTH sides.**
+Fixed by deriving the deps from `pyproject.toml` rather than hand-listing them — a hardcoded list
+would rot exactly like the six prose enumerations this campaign fixed, and like the CI comment that
+miscounted this very glob.
+
+## Harden A Rule Only When It Is Mechanically Detectable AND Rarely Wrong (2026-08-01, #886)
+
+`docs/TASK_BOARD.md` went stale a fourth time; nine open items were already fixed. Two candidate
+gates were on the table, and the outcome split:
+
+- **SHIPPED** — a *tolerance* on the reconcile stamp (>5 releases behind fails). Deterministic, no
+  network, silent on a normal 1–2 release lag. The board's own header had rejected the STRICT
+  equality form for firing every release, and never considered a tolerance.
+- **RETIRED WITH REASONS** — a citation gate over board items. Measured: only 3 of 24 open items cite
+  a file or symbol, and even those prove a citation *resolves*, not that the defect exists. The
+  worked example is `--quiet`, listed OPEN for months after being fixed with a perfectly resolving
+  citation.
+
+**Harden when a violation is detectable without interpretation AND a false positive would be rare.**
+When only one holds, write the retirement down with its measurement — a documented retirement stops
+the next session re-deriving it, and an over-eager gate teaches people to reach for `--no-verify`,
+which discredits every honest gate beside it.
+
 ## Bottom Line
 
 Work like this:
