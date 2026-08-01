@@ -1002,7 +1002,20 @@ in `tensor-grep-change-control` were adrift by **283 to 515 lines** — all five
 ```
 _imports_and_symbols_for_path     6244 -> 6627      build_symbol_source_from_map  15815 -> 16326
 _target_language_for_path         7383 -> 7867      _SUPPORTED_FILE_DEPENDENCY_L  16633 -> 17148
+_imports_with_lines_for_path      6440 -> 6832      <- the 5th; see below
 ```
+
+🚨 **That table said "all five of them" and listed FOUR, for four days.** The omitted member,
+`_imports_with_lines_for_path`, was the one still stale — 392 lines adrift, the largest of the five
+— and it sat inside the very fix that introduced the never-re-stamp law. The skill's own grep
+instruction (`tensor-grep-change-control`, the 5-language-seam census) names all five symbols
+correctly; only the *execution* was short by one, and the prose asserted completeness over it.
+
+**A census and its own count are two artifacts, and the count is not evidence about the census.**
+When you write "all N", COUNT the rows you actually wrote — do not carry N over from the sentence
+that motivated the work. This is the same failure as the `population is the defect` family, arriving
+inside the remedy for it: the fix was correct, the claim of completeness was not, and the claim is
+what everyone downstream read.
 
 **Five previous maintenance passes re-stamped these by hand, and every one shipped anchors that
 were already wrong** (the auditor's own docstring records this). Re-stamping is not a fix; it is
