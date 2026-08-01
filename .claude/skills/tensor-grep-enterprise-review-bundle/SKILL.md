@@ -42,15 +42,17 @@ tg review-bundle verify /tmp/review-bundle.json \
   --json
 ```
 
-**Source anchors (added 2026-07-27 — this skill previously cited NO source at all).** Every flag
-claim below was pinned only to `docs/enterprise_review_bundle_ci.md` prose, so a doc and a skill
-could agree with each other while both drifted from the binary. The option parsing lives in
-`src/tensor_grep/cli/main.py`: `@review_bundle_app.command("create")` at `:15896`
-(`review_bundle_create` `:15897`), `@review_bundle_app.command("verify")` at `:16040`, with
-`min_receipts` at `:16071` and `expect_key` at `:16080`. Re-derive with
-`grep -n '@review_bundle_app.command\|min_receipts\|expect_key' src/tensor_grep/cli/main.py` —
-these are command-tail line numbers, which drift with every new `tg` command (see
-`tensor-grep-diagnostics-and-tooling` Provenance), so trust the grep over the number. Repo-wide,
+**Source anchors (added 2026-07-27 — this skill previously cited NO source at all; re-derived
+2026-08-01, all five had drifted uniformly by +618 lines in five days of `main.py` growth — proof
+these numbers are not worth re-stamping by hand).** Every flag claim below was pinned only to
+`docs/enterprise_review_bundle_ci.md` prose, so a doc and a skill could agree with each other while
+both drifted from the binary. The option parsing lives in `src/tensor_grep/cli/main.py`; re-derive
+with `grep -n '@review_bundle_app.command\|min_receipts: int = typer.Option\|expect_key: list' src/tensor_grep/cli/main.py`
+— these are command-tail line numbers, which drift with every new `tg` command (see
+`tensor-grep-diagnostics-and-tooling` Provenance), so trust the grep over any number written here:
+`@review_bundle_app.command("create")` was `:15896` now `:16514` (`review_bundle_create` was
+`:15897` now `:16515`), `@review_bundle_app.command("verify")` was `:16040` now `:16658`, with
+`min_receipts` was `:16071` now `:16689` and `expect_key` was `:16080` now `:16698`. Repo-wide,
 `python .claude/skill_anchor_audit.py` re-checks every citation in the skill library at once.
 
 Both `--min-receipts` and `--expect-key` are default-OFF policy levers — a bundle with a stripped-empty
