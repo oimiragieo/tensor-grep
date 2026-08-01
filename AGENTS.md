@@ -1381,16 +1381,26 @@ reads 2026-07-26. Each doc was half correct, so **reading either one alone confi
 by `test_skill_library_drift.py`, because "re-derive the number when you add one" was already
 written down, agreed with, and half-applied.
 
-### An exact-phrase grep is the wrong instrument for asking whether a LESSON was captured
+### GREP IS AN INSTRUMENT, and mine was wrong four times in one session
 
-Auditing whether six session lessons had reached `AGENTS.md`, a phrase-grep reported four of seven
-probes absent. The doc says "the check and the **defect** agreed"; I searched for "check and the
-bug" and read `0` as missing. Every one of those four was present under different wording.
+Four probes, four believable numbers, four different causes — three of them produced while auditing
+for exactly this class of failure:
 
-**Absence of a phrase is not absence of an idea.** Prose has synonyms; grep does not. Use grep to
-locate candidates, then read to adjudicate — and treat a zero from a phrase probe as *unresolved*,
-never as *absent*. Sibling of the source-census law below: that one is a grep that matches a
-comment and passes; this is a grep that misses a paraphrase and fails.
+| probe | returned | why it was wrong |
+|---|---|---|
+| `grep -ic "check and the bug"` on this file | **0** | the doc says "check and the **defect**" — a PARAPHRASE miss. Four of seven lesson-capture probes read "absent"; all four were present in different words |
+| `grep -cE "was [0-9]+ ?->"` for repair receipts | **0** | the file's format is ``was `:1444`, now `:1466` `` — a FORMAT assumption. I nearly rejected a correct 38-anchor repair on it |
+| `grep -coE 'was \`:[0-9]+\`'` (the "fix" for the above) | **0** | GNU grep ERE treats `` \` `` as a **start-of-buffer anchor**, not a literal backtick — a REGEX-DIALECT trap that can never match anything |
+| `grep -ci "byte-stable"` before vs after a cleanup | **2 → 3** | it counted WARNINGS ABOUT the phrase as instances OF it, so a correct removal read as an increase |
+
+Re-counting in Python settled it: 34 receipts, 78 grep instructions, 12 anchors verified unchanged.
+**The agent's self-report was accurate; my verification was broken three times running.**
+
+**A grep zero is UNRESOLVED, never ABSENT.** Grep locates candidates; only reading adjudicates.
+Before believing a count, confirm the pattern matches ONE known-present instance — the same positive
+control any probe needs. Grep cannot distinguish an assertion from a sentence about that assertion
+(the source-census law below), a paraphrase from a gap, or your regex dialect from the one you meant.
+When a count disagrees with a careful reader's report, suspect the pattern first.
 
 ### A checker that cannot tell a PRODUCER from a PRESENTER reports correct code as broken
 
