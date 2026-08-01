@@ -11045,12 +11045,16 @@ fn run_validation_command(
     // SENTINEL RETIREMENT (2026-08-01 backlog campaign, mirrors apply_policy.py): no `--`
     // separator here either -- `program`/`args` are an operator-authored complete validation
     // command, not our flags plus an untrusted positional, so the CWE-88 argv-sentinel census
-    // does not apply to this construction site. Adversarial gate note: this holds here only
-    // because `validation_template_file_path` (below) ALWAYS absolutizes the substituted
-    // `$file`/`{file}` token before it reaches `args` -- an absolute path can never lead with
+    // does not apply to this construction site. Adversarial gate note (corrected 2026-08-01: the
+    // prior comment overclaimed): `validation_template_file_path` (below) does NOT always
+    // absolutize the substituted `$file`/`{file}` token -- when `std::env::current_dir()` fails,
+    // its fallback joins the candidate against `PathBuf::from(".")`, which stays relative. The
+    // invariant that actually holds on BOTH arms is narrower but still sufficient: the result is
+    // either genuinely absolute or dot-PREFIXED (`./...`), and neither shape can ever lead with
     // `-`, so the sibling Python bug (a repo file named e.g. `-cevil.ini` parsing as a flag,
-    // fixed in `apply_policy.py::_policy_file_arg`) cannot recur here. Do NOT "simplify" this by
-    // substituting a relative path -- the absolutization is load-bearing for this exact reason.
+    // fixed in `apply_policy.py::_policy_file_arg`) cannot recur here either way. Do NOT
+    // "simplify" this by substituting a bare relative path with no dot-prefix guarantee -- the
+    // dot-prefix-or-absolute guarantee, not absolutization per se, is load-bearing.
     let mut command = Command::new(program);
     command
         .args(args)

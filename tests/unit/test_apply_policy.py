@@ -2124,25 +2124,86 @@ def test_run_policy_command_allows_local_drive_letter_tool_not_flagged_as_unc(
         assert "UNC" not in str(result["detail"])
 
 
-def test_policy_file_arg_neutralizes_a_dash_leading_relative_path(tmp_path: Path) -> None:
-    """CWE-88, adversarial gate finding (2026-08-01 backlog campaign PR-D): a repo-controlled
-    file whose relative path starts with ``-`` must not come back from ``_policy_file_arg`` as a
-    bare dash-leading string. Substituted into a ``$file``/``{file}`` policy command template,
-    a bare ``-cevil.ini`` (or similar) is parsed by the downstream tool as ONE OR MORE FLAGS, not
-    a path -- neither ``shlex.quote`` nor ``subprocess.list2cmdline`` escape a leading dash (they
-    only quote for whitespace/shell-metacharacters), so quoting alone does not neutralize this.
+def _identity_path_value(target: Path, working_root: Path) -> Path:
+    """Pass the target straight through -- the ordinary case."""
+    del working_root
+    return target
 
-    Pre-fix baseline: ``_policy_file_arg`` returns the relative path completely unmodified
-    (``resolved.relative_to(working_root.resolve()).as_posix()``), so this test FAILS pre-fix
-    because the returned string starts with ``-``.
+
+def _dot_slash_embedded_path_value(target: Path, working_root: Path) -> str:
+    """Re-spell the SAME absolute path with an embedded ``.`` component (``..././name``)
+    rather than the canonical spelling. ``Path.resolve()`` normalizes this away before
+    ``_policy_file_arg`` ever computes a relative path, so this proves the ``./`` prefixing
+    is idempotent under an input that is already ``./``-shaped -- it must not become
+    ``././-again.ini`` (a double prefix) nor lose its prefix entirely."""
+    relative = target.relative_to(working_root)
+    return f"{working_root}{os.sep}.{os.sep}{relative}"
+
+
+# Each entry: (relative path under working_root, a factory building the `path_value` argument
+# from (target, working_root), whether `_policy_file_arg` must add a `./` prefix). Covers the
+# adversarial shape family the audit found missing (2026-08-01 backlog campaign, PR #883 audit
+# F1): `-cevil.ini`-style single dash, `--`-leading, exactly `-`, exactly `--`, an `-rf`-shaped
+# flag lookalike, a dash-leading name containing a space (quoting-dialect trap), and an
+# already-`./`-prefixed input (idempotency) -- plus two CONTROLS that must pass through
+# unmodified: an ordinary name, and a name with an INTERIOR (non-leading) dash, which must NOT
+# be mistaken for a dash-leading relative path.
+_POLICY_FILE_ARG_SHAPES = [
+    pytest.param("-cevil.ini", _identity_path_value, True, id="dash-leading-simple"),
+    pytest.param("--evil.ini", _identity_path_value, True, id="dash-dash-leading"),
+    pytest.param("-", _identity_path_value, True, id="bare-dash"),
+    pytest.param("--", _identity_path_value, True, id="double-dash"),
+    pytest.param("-rf", _identity_path_value, True, id="dash-rf-flag-lookalike"),
+    pytest.param("- evil.ini", _identity_path_value, True, id="dash-leading-with-space"),
+    pytest.param("-again.ini", _dot_slash_embedded_path_value, True, id="already-dot-slash-input"),
+    pytest.param("normal.ini", _identity_path_value, False, id="control-normal-unchanged"),
+    pytest.param("sub/-dash.py", _identity_path_value, False, id="control-interior-dash-unchanged"),
+]
+
+
+@pytest.mark.parametrize("relpath, path_value_factory, expect_prefixed", _POLICY_FILE_ARG_SHAPES)
+def test_policy_file_arg_neutralizes_a_dash_leading_relative_path(
+    tmp_path: Path,
+    relpath: str,
+    path_value_factory,
+    expect_prefixed: bool,
+) -> None:
+    """CWE-88, adversarial gate finding (2026-08-01 backlog campaign PR-D, strengthened per the
+    PR #883 audit's F1): a repo-controlled file whose relative path starts with ``-`` must not
+    come back from ``_policy_file_arg`` as a bare dash-leading string. Substituted into a
+    ``$file``/``{file}`` policy command template, a bare ``-cevil.ini`` (or similar) is parsed by
+    the downstream tool as ONE OR MORE FLAGS, not a path -- neither ``shlex.quote`` nor
+    ``subprocess.list2cmdline`` escape a leading dash (they only quote for
+    whitespace/shell-metacharacters), so quoting alone does not neutralize this.
+
+    This asserts TWO independent properties, not one: (1) SHAPE -- the returned token does not
+    start with ``-``; and (2) IDENTITY -- the token, resolved against ``working_root``, still
+    names the EXACT SAME file that was passed in. Shape alone is satisfiable by a fix that
+    returns any non-dash string (including a completely wrong file); identity alone (without the
+    parametrized shape family) is satisfiable by a fix that only special-cases the one fixture
+    value it was written against. The audit proved both gaps by mutation:
+
+      - ``return f"./{relative}" if relative == "-cevil.ini" else relative`` (handles ONLY the
+        exact fixture) still passed the pre-existing single-case test -- killed here by the
+        ``--evil.ini``/``-``/``--``/``-rf``/space/already-``./`` parametrizations, each of which
+        the mutant leaves dash-leading and unprefixed.
+      - ``return "totally_wrong_file.py"`` (a fixed, wrong file) still passed the pre-existing
+        shape-only assertion -- killed here by the IDENTITY assertion below, which fails for
+        every case (including the controls) because the resolved token never matches the edited
+        file.
+
+    Pre-fix baseline (the whole feature reverted): ``_policy_file_arg`` returns the relative path
+    completely unmodified, so every ``expect_prefixed=True`` case fails on the shape assertion.
     """
     from tensor_grep.cli.apply_policy import _policy_file_arg
 
     working_root = tmp_path
-    dash_file = working_root / "-cevil.ini"
-    dash_file.write_text("", encoding="utf-8")
+    target = working_root / relpath
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("", encoding="utf-8")
 
-    file_arg = _policy_file_arg(dash_file, working_root=working_root)
+    path_value = path_value_factory(target, working_root)
+    file_arg = _policy_file_arg(path_value, working_root=working_root)
 
     assert file_arg is not None
     assert not file_arg.startswith("-"), (
@@ -2150,16 +2211,45 @@ def test_policy_file_arg_neutralizes_a_dash_leading_relative_path(tmp_path: Path
         "into a $file/{file} policy command template"
     )
 
+    # IDENTITY: the returned token, resolved against working_root, must still name the exact
+    # file that was passed in -- not a different file, and not a fixed wrong constant.
+    resolved_back = (working_root / file_arg).resolve()
+    assert resolved_back == target.resolve(), (
+        f"{file_arg!r} resolves to {resolved_back}, not the edited file {target.resolve()}"
+    )
 
+    expected_relative = target.resolve().relative_to(working_root.resolve()).as_posix()
+    if expect_prefixed:
+        assert file_arg.startswith("./"), f"{file_arg!r} should carry exactly one './' prefix"
+    else:
+        # CONTROL: a non-dash-leading relative path must pass through completely UNCHANGED --
+        # no prefix added, no rewrite at all.
+        assert file_arg == expected_relative, (
+            f"control path {expected_relative!r} was rewritten to {file_arg!r}; "
+            "only dash-leading relative paths should ever be modified"
+        )
+
+
+@pytest.mark.parametrize("relpath, path_value_factory, expect_prefixed", _POLICY_FILE_ARG_SHAPES)
+@pytest.mark.parametrize("placeholder", ["$file", "{file}"])
 def test_policy_command_instances_never_produces_a_flag_looking_file_token(
     tmp_path: Path,
+    placeholder: str,
+    relpath: str,
+    path_value_factory,
+    expect_prefixed: bool,
 ) -> None:
     """End-to-end version of the above: the fully-expanded, then argv-split command must
     contain the edited file as an unambiguous PATH token, never a bare flag-shaped string --
-    on both the POSIX (``shlex.split``) and Windows (``_split_windows_command``) tokenizers.
+    on both the POSIX (``shlex.split``) and Windows (``_split_windows_command``) tokenizers, and
+    for BOTH template placeholder spellings the policy-command contract supports (``$file`` and
+    ``{file}``). Same shape family and same two properties (shape + identity) as the direct test
+    above -- see that docstring for the mutation-kill rationale, which applies identically here
+    since both tests exercise ``_policy_file_arg`` on the same inputs, just through a different
+    call path (full command expansion + real argv tokenization instead of the bare function).
 
-    Pre-fix baseline: FAILS on both tokenizers because ``_policy_command_instances`` embeds
-    the untouched dash-leading relative path.
+    Pre-fix baseline (the whole feature reverted): FAILS on both tokenizers because
+    ``_policy_command_instances`` embeds the untouched dash-leading relative path.
     """
     import shlex
 
@@ -2170,15 +2260,17 @@ def test_policy_command_instances_never_produces_a_flag_looking_file_token(
     )
 
     working_root = tmp_path
-    dash_file = working_root / "-cevil.ini"
-    dash_file.write_text("", encoding="utf-8")
+    target = working_root / relpath
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("", encoding="utf-8")
 
-    rewrite_payload = {"edits": [{"file": str(dash_file)}]}
+    path_value = path_value_factory(target, working_root)
+    rewrite_payload = {"edits": [{"file": str(path_value)}]}
     instances, expansion_error = _policy_command_instances(
         "lint",
-        "ruff check $file",
+        f"ruff check {placeholder}",
         rewrite_payload=rewrite_payload,
-        target_path=dash_file,
+        target_path=target,
         working_root=working_root,
     )
 
@@ -2198,4 +2290,12 @@ def test_policy_command_instances_never_produces_a_flag_looking_file_token(
         assert not file_token.startswith("-"), (
             f"{tokenizer} tokenizer parsed the edited file as {file_token!r}, "
             "which a downstream tool reads as a flag, not a path"
+        )
+        # IDENTITY: the token, resolved against working_root, must still name the exact file
+        # that was edited -- this is what catches a fix that neutralizes the dash but resolves
+        # to the wrong file (or a fixed, unrelated constant).
+        resolved_back = (working_root / file_token).resolve()
+        assert resolved_back == target.resolve(), (
+            f"{tokenizer} token {file_token!r} resolves to {resolved_back}, "
+            f"not the edited file {target.resolve()}"
         )

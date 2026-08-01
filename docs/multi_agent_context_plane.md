@@ -145,8 +145,8 @@ To keep harnesses from overclaiming, be precise about the current limits:
   `docs/enterprise_review_bundle_ci.md` for how `record`/`find` compose with the evidence-receipt
   CI gate. Still true: nothing in `tg agent`/`tg edit-plan`/the daemon consults the ledger
   automatically (explicit-invoke only), there is no MCP tool surface for it, and it does not
-  extend into a general message bus or cross-repo lookup. Since 2026-07-22, all five entry
-  points canonicalize `PATH` to the nearest `.git` ancestor rather than rooting themselves at
+  extend into a general message bus or cross-repo lookup. Since 2026-07-22, every entry point
+  canonicalizes `PATH` to the nearest `.git` ancestor rather than rooting itself at
   `PATH` taken literally -- do not enumerate which commands here (that list rots the moment a
   slice migrates onto it, as it did once already); derive current membership from
   `_ledger_physical_root`'s call sites (`grep -n "_ledger_physical_root" src/tensor_grep/cli/ledger_store.py`)
