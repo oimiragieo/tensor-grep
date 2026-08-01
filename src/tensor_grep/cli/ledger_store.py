@@ -386,8 +386,9 @@ def _normalize_relative_file(root: Path, raw: str) -> str:
 # ---------------------------------------------------------------------------
 # PATH-scope footgun fix (CEO v1.92.1 dogfood #1): physical-root canonicalization + the claim
 # `scope` concept it enables. See the module docstring's "PATH scoping" paragraph for the full
-# rationale. Claims-subtree (Slice 1) only -- record_finding/find_findings (Slice 2) below
-# deliberately keep plain `_resolve_root`, untouched.
+# rationale. Used by both slices: Slice 1 (claims: submit_claim/release_claim/list_claims) and
+# Slice 2 (findings: record_finding/find_findings) share this same canonicalization now -- see
+# the module docstring above for when/why Slice 2 was migrated onto it.
 # ---------------------------------------------------------------------------
 
 
@@ -432,10 +433,12 @@ def _discover_repo_root(start: Path) -> Path:
 
 
 def _ledger_physical_root(path: str) -> Path:
-    """The canonical physical location for THIS repository's claims index: today's literal
-    ``_resolve_root(path)`` resolution followed by the ``.git``-boundary walk-up above. Used by
-    ``submit_claim``/``release_claim``/``list_claims`` ONLY -- Slice 2 keeps plain
-    ``_resolve_root`` (see module docstring)."""
+    """The canonical physical location for THIS repository's claims/findings index: today's
+    literal ``_resolve_root(path)`` resolution followed by the ``.git``-boundary walk-up above.
+    Used by all five Slice 1 + Slice 2 entry points -- ``submit_claim``/``release_claim``/
+    ``list_claims`` (Slice 1, claims) and ``record_finding``/``find_findings`` (Slice 2,
+    findings) -- see the module docstring's "PATH scoping" paragraph for why Slice 2 was
+    migrated onto this helper rather than keeping its own plain ``_resolve_root``."""
     return _discover_repo_root(_resolve_root(Path(path)))
 
 

@@ -11647,12 +11647,17 @@ def _completeness_caveat_lines(
     ``_render_blast_radius_mermaid``. JSON output is unaffected: ``caveat`` is a field there, and
     field order carries no such reading bias.
 
-    Three is the count of emitters CONVERTED, not of emitters that should be. Much of the CLI is
-    still unwired -- ``code-map``, ``route-test``, ``session open`` and ``agent`` trail their
-    disclosure, and ``map``/``context``/``context-render``/``edit-plan``/``blast-radius-render``/
-    ``blast-radius-plan`` exit 2 while saying nothing in text at all. Stated explicitly because
-    the previous version of this docstring said "the two text emitters" and went stale the moment
-    a third was wired -- an unqualified count here reads as a completeness claim about the CLI.
+    Three is the count of emitters CONVERTED to this ORDERING helper, not of emitters that
+    disclose at all: the leading-banner path (``_emit_scan_incompleteness_banner``) now covers
+    the payload-emitting commands -- derive the current membership from that function's call
+    sites (grep ``_emit_scan_incompleteness_banner(``), never from this sentence. Commands
+    still trailing their disclosure (if any) are whatever that grep does NOT reach; re-derive,
+    do not enumerate here. Stated this way because two earlier enumerations here already rotted:
+    one claimed ``code-map``/``route-test``/``session open``/``agent`` all trail disclosure
+    (``route-test`` and ``agent`` are wired now), the other claimed
+    ``map``/``context``/``context-render``/``edit-plan``/``blast-radius-render``/
+    ``blast-radius-plan`` "say nothing in text at all" (all six are wired now too). An
+    enumeration in prose rots the moment the set grows; a grep does not.
     """
     if caveat is None:
         return None, None
