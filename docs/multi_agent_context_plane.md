@@ -145,10 +145,13 @@ To keep harnesses from overclaiming, be precise about the current limits:
   `docs/enterprise_review_bundle_ci.md` for how `record`/`find` compose with the evidence-receipt
   CI gate. Still true: nothing in `tg agent`/`tg edit-plan`/the daemon consults the ledger
   automatically (explicit-invoke only), there is no MCP tool surface for it, and it does not
-  extend into a general message bus or cross-repo lookup. Since 2026-07-22, `claim`/`release`/
-  `list` (Slice 1 only) canonicalize `PATH` to the nearest `.git` ancestor rather than rooting
-  themselves at `PATH` taken literally -- see `docs/CONTRACTS.md` section 9's "PATH scoping"
-  bullet for the fixed footgun and the new claim `scope` field.
+  extend into a general message bus or cross-repo lookup. Since 2026-07-22, every entry point
+  canonicalizes `PATH` to the nearest `.git` ancestor rather than rooting itself at
+  `PATH` taken literally -- do not enumerate which commands here (that list rots the moment a
+  slice migrates onto it, as it did once already); derive current membership from
+  `_ledger_physical_root`'s call sites (`grep -n "_ledger_physical_root" src/tensor_grep/cli/ledger_store.py`)
+  or see `docs/CONTRACTS.md` section 9's "PATH scoping" bullet for the fixed footgun and the new
+  claim `scope` field.
 
 ## Demand instrumentation (step 0 for a possible shared-context surface)
 

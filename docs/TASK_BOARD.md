@@ -199,7 +199,9 @@ review, each verified against the real code (a finding without a `file:line` was
 - [ ] **#115** symlink sweep — 3 unguarded `std::fs::write` sites *(LOW)*
 - [ ] **#125** checkpoint `except Exception` → `except BaseException` *(LOW)*
 - [ ] **#143 / #155** Opus-gate LOW follow-ups *(LOW)*
-- [ ] Dead code: delete `sidecar.py::_classify_lines` *(LOW)*
+- [x] Dead code: delete `sidecar.py::_classify_lines` *(LOW)* — done 2026-08-01 backlog campaign, PR-D
+- [x] apply_policy argv-sentinel — RETIRED (not fixed), 2026-08-01 backlog campaign, PR-D. See
+      `docs/BACKLOG.md`'s LOW-severity section for the reasoning.
 
 ## BLOCKED — environment (not CEO-gated, just needs hardware)
 

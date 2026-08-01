@@ -2122,3 +2122,254 @@ def test_run_policy_command_allows_local_drive_letter_tool_not_flagged_as_unc(
         assert result["passed"] is True, f"local tool spelled {which_return!r} must run"
         assert captured.get("argv") is not None
         assert "UNC" not in str(result["detail"])
+
+
+def _identity_path_value(target: Path, working_root: Path) -> Path:
+    """Pass the target straight through -- the ordinary case."""
+    del working_root
+    return target
+
+
+def _dot_slash_embedded_path_value(target: Path, working_root: Path) -> str:
+    """Re-spell the SAME absolute path with an embedded ``.`` component (``..././name``)
+    rather than the canonical spelling. ``Path.resolve()`` normalizes this away before
+    ``_policy_file_arg`` ever computes a relative path, so this proves the ``./`` prefixing
+    is idempotent under an input that is already ``./``-shaped -- it must not become
+    ``././-again.ini`` (a double prefix) nor lose its prefix entirely."""
+    relative = target.relative_to(working_root)
+    return f"{working_root}{os.sep}.{os.sep}{relative}"
+
+
+# Each entry: (relative path under working_root, a factory building the `path_value` argument
+# from (target, working_root), whether `_policy_file_arg` must add a `./` prefix). Covers the
+# adversarial shape family the audit found missing (2026-08-01 backlog campaign, PR #883 audit
+# F1): `-cevil.ini`-style single dash, `--`-leading, exactly `-`, exactly `--`, an `-rf`-shaped
+# flag lookalike, a dash-leading name containing a space (quoting-dialect trap), and an
+# already-`./`-prefixed input (idempotency) -- plus two CONTROLS that must pass through
+# unmodified: an ordinary name, and a name with an INTERIOR (non-leading) dash, which must NOT
+# be mistaken for a dash-leading relative path.
+_POLICY_FILE_ARG_SHAPES = [
+    pytest.param("-cevil.ini", _identity_path_value, True, id="dash-leading-simple"),
+    pytest.param("--evil.ini", _identity_path_value, True, id="dash-dash-leading"),
+    pytest.param("-", _identity_path_value, True, id="bare-dash"),
+    pytest.param("--", _identity_path_value, True, id="double-dash"),
+    pytest.param("-rf", _identity_path_value, True, id="dash-rf-flag-lookalike"),
+    pytest.param("- evil.ini", _identity_path_value, True, id="dash-leading-with-space"),
+    pytest.param("-again.ini", _dot_slash_embedded_path_value, True, id="already-dot-slash-input"),
+    pytest.param("normal.ini", _identity_path_value, False, id="control-normal-unchanged"),
+    pytest.param("sub/-dash.py", _identity_path_value, False, id="control-interior-dash-unchanged"),
+]
+
+
+@pytest.mark.parametrize("relpath, path_value_factory, expect_prefixed", _POLICY_FILE_ARG_SHAPES)
+def test_policy_file_arg_neutralizes_a_dash_leading_relative_path(
+    tmp_path: Path,
+    relpath: str,
+    path_value_factory,
+    expect_prefixed: bool,
+) -> None:
+    """CWE-88, adversarial gate finding (2026-08-01 backlog campaign PR-D, strengthened per the
+    PR #883 audit's F1): a repo-controlled file whose relative path starts with ``-`` must not
+    come back from ``_policy_file_arg`` as a bare dash-leading string. Substituted into a
+    ``$file``/``{file}`` policy command template, a bare ``-cevil.ini`` (or similar) is parsed by
+    the downstream tool as ONE OR MORE FLAGS, not a path -- neither ``shlex.quote`` nor
+    ``subprocess.list2cmdline`` escape a leading dash (they only quote for
+    whitespace/shell-metacharacters), so quoting alone does not neutralize this.
+
+    This asserts TWO independent properties, not one: (1) SHAPE -- the returned token does not
+    start with ``-``; and (2) IDENTITY -- the token, resolved against ``working_root``, still
+    names the EXACT SAME file that was passed in. Shape alone is satisfiable by a fix that
+    returns any non-dash string (including a completely wrong file); identity alone (without the
+    parametrized shape family) is satisfiable by a fix that only special-cases the one fixture
+    value it was written against. The audit proved both gaps by mutation:
+
+      - ``return f"./{relative}" if relative == "-cevil.ini" else relative`` (handles ONLY the
+        exact fixture) still passed the pre-existing single-case test -- killed here by the
+        ``--evil.ini``/``-``/``--``/``-rf``/space/already-``./`` parametrizations, each of which
+        the mutant leaves dash-leading and unprefixed.
+      - ``return "totally_wrong_file.py"`` (a fixed, wrong file) still passed the pre-existing
+        shape-only assertion -- killed here by the IDENTITY assertion below, which fails for
+        every case (including the controls) because the resolved token never matches the edited
+        file.
+
+    Pre-fix baseline (the whole feature reverted): ``_policy_file_arg`` returns the relative path
+    completely unmodified, so every ``expect_prefixed=True`` case fails on the shape assertion.
+    """
+    from tensor_grep.cli.apply_policy import _policy_file_arg
+
+    working_root = tmp_path
+    target = working_root / relpath
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("", encoding="utf-8")
+
+    path_value = path_value_factory(target, working_root)
+    file_arg = _policy_file_arg(path_value, working_root=working_root)
+
+    assert file_arg is not None
+    assert not file_arg.startswith("-"), (
+        f"{file_arg!r} starts with '-' and will be parsed as a flag when substituted "
+        "into a $file/{file} policy command template"
+    )
+
+    # IDENTITY: the returned token, resolved against working_root, must still name the exact
+    # file that was passed in -- not a different file, and not a fixed wrong constant.
+    resolved_back = (working_root / file_arg).resolve()
+    assert resolved_back == target.resolve(), (
+        f"{file_arg!r} resolves to {resolved_back}, not the edited file {target.resolve()}"
+    )
+
+    expected_relative = target.resolve().relative_to(working_root.resolve()).as_posix()
+    if expect_prefixed:
+        assert file_arg.startswith("./"), f"{file_arg!r} should carry exactly one './' prefix"
+    else:
+        # CONTROL: a non-dash-leading relative path must pass through completely UNCHANGED --
+        # no prefix added, no rewrite at all.
+        assert file_arg == expected_relative, (
+            f"control path {expected_relative!r} was rewritten to {file_arg!r}; "
+            "only dash-leading relative paths should ever be modified"
+        )
+
+
+def _expand_one_policy_command_instance(
+    *,
+    placeholder: str,
+    target: Path,
+    path_value_factory,
+    working_root: Path,
+) -> str:
+    """Shared setup for both the cross-platform and Windows-only end-to-end tests below: build
+    the rewrite payload, expand the ``$file``/``{file}`` template, and return the ONE expanded
+    command string. Kept in one place so the two tests cannot silently diverge in how they
+    construct the thing they tokenize."""
+    from tensor_grep.cli.apply_policy import _policy_command_instances
+
+    path_value = path_value_factory(target, working_root)
+    rewrite_payload = {"edits": [{"file": str(path_value)}]}
+    instances, expansion_error = _policy_command_instances(
+        "lint",
+        f"ruff check {placeholder}",
+        rewrite_payload=rewrite_payload,
+        target_path=target,
+        working_root=working_root,
+    )
+    assert expansion_error is None
+    assert len(instances) == 1
+    _file_arg, expanded_command = instances[0]
+    return expanded_command
+
+
+def _assert_file_token_is_the_edited_file(
+    file_token: str, *, tokenizer: str, working_root: Path, target: Path
+) -> None:
+    """The two properties every tokenizer arm must prove: SHAPE (not flag-looking) and IDENTITY
+    (resolves back to the exact edited file, not a different or fixed-wrong one)."""
+    assert not file_token.startswith("-"), (
+        f"{tokenizer} tokenizer parsed the edited file as {file_token!r}, "
+        "which a downstream tool reads as a flag, not a path"
+    )
+    resolved_back = (working_root / file_token).resolve()
+    assert resolved_back == target.resolve(), (
+        f"{tokenizer} token {file_token!r} resolves to {resolved_back}, "
+        f"not the edited file {target.resolve()}"
+    )
+
+
+@pytest.mark.parametrize("relpath, path_value_factory, expect_prefixed", _POLICY_FILE_ARG_SHAPES)
+@pytest.mark.parametrize("placeholder", ["$file", "{file}"])
+def test_policy_command_instances_never_produces_a_flag_looking_file_token(
+    tmp_path: Path,
+    placeholder: str,
+    relpath: str,
+    path_value_factory,
+    expect_prefixed: bool,
+) -> None:
+    """End-to-end version of the direct test above: the fully-expanded, then argv-split command
+    must contain the edited file as an unambiguous PATH token, never a bare flag-shaped string --
+    for BOTH template placeholder spellings the policy-command contract supports (``$file`` and
+    ``{file}``). Runs on every platform: it exercises the POSIX ``shlex.split`` tokenizer plus
+    ``_parse_policy_command`` (the real CLI-boundary parser, which branches internally to
+    whichever tokenizer is native to the running OS). It deliberately does NOT call
+    ``_split_windows_command`` directly -- that function reaches ``ctypes.windll``, which does
+    not exist off Windows, so a prior revision of this test that called it unconditionally
+    hard-failed the entire non-Windows CI matrix (AttributeError: module 'ctypes' has no
+    attribute 'windll'). See the Windows-only sibling test below for a DIRECT check of that
+    tokenizer -- it is the only call site of ``_split_windows_command`` outside
+    ``apply_policy.py`` itself, and it is ``skipif``-guarded to never execute off Windows.
+
+    Same shape family and same two properties (shape + identity) as the direct test above -- see
+    that docstring for the mutation-kill rationale, which applies identically here since both
+    tests exercise ``_policy_file_arg`` on the same inputs, just through a different call path
+    (full command expansion + real argv tokenization instead of the bare function).
+
+    Pre-fix baseline (the whole feature reverted): FAILS because ``_policy_command_instances``
+    embeds the untouched dash-leading relative path.
+    """
+    import shlex
+
+    from tensor_grep.cli.apply_policy import _parse_policy_command
+
+    working_root = tmp_path
+    target = working_root / relpath
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("", encoding="utf-8")
+
+    expanded_command = _expand_one_policy_command_instance(
+        placeholder=placeholder,
+        target=target,
+        path_value_factory=path_value_factory,
+        working_root=working_root,
+    )
+
+    posix_argv = shlex.split(expanded_command, posix=True)
+    # The real CLI-boundary parser: branches internally to `_split_windows_command` on Windows,
+    # POSIX `shlex.split` elsewhere (`apply_policy.py::_parse_policy_command`) -- so on a Windows
+    # runner this arm independently exercises the Windows tokenizer too, without this test file
+    # ever calling `ctypes.windll` itself off-Windows.
+    native_argv = _parse_policy_command(expanded_command)
+
+    for argv, tokenizer in ((posix_argv, "posix shlex"), (native_argv, "native (this OS)")):
+        file_token = argv[-1]
+        _assert_file_token_is_the_edited_file(
+            file_token, tokenizer=tokenizer, working_root=working_root, target=target
+        )
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="_split_windows_command calls ctypes.windll, which only exists on Windows",
+)
+@pytest.mark.parametrize("relpath, path_value_factory, expect_prefixed", _POLICY_FILE_ARG_SHAPES)
+@pytest.mark.parametrize("placeholder", ["$file", "{file}"])
+def test_policy_command_instances_windows_tokenizer_never_produces_a_flag_looking_file_token(
+    tmp_path: Path,
+    placeholder: str,
+    relpath: str,
+    path_value_factory,
+    expect_prefixed: bool,
+) -> None:
+    """Windows-only DIRECT check of ``_split_windows_command`` (``CommandLineToArgvW`` via
+    ``ctypes.windll``) -- the sibling of the cross-platform test above, which exercises the same
+    tokenizer only indirectly (through ``_parse_policy_command``'s OS-branch) when it happens to
+    run on a Windows CI runner. This test calls the Windows tokenizer directly on every platform
+    it actually runs on, and is ``skipif``-guarded to never execute (and never import/call
+    ``ctypes.windll``) off Windows."""
+    del expect_prefixed  # shape/identity are asserted unconditionally below, not branched on it
+
+    from tensor_grep.cli.apply_policy import _split_windows_command
+
+    working_root = tmp_path
+    target = working_root / relpath
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("", encoding="utf-8")
+
+    expanded_command = _expand_one_policy_command_instance(
+        placeholder=placeholder,
+        target=target,
+        path_value_factory=path_value_factory,
+        working_root=working_root,
+    )
+
+    windows_argv = _split_windows_command(expanded_command)
+    _assert_file_token_is_the_edited_file(
+        windows_argv[-1], tokenizer="windows", working_root=working_root, target=target
+    )

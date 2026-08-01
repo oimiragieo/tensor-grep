@@ -20,7 +20,10 @@ grow the index without limit even though none of them are individually expired y
 entries for DISPLAY only and never writes, so listing claims cannot itself create
 ``.tensor-grep/ledger/`` (default-inert until the first ``claim``).
 
-PATH scoping (claims subtree only -- fix for the CEO v1.92.1 dogfood #1 "PATH-scope footgun"):
+PATH scoping (fix for the CEO v1.92.1 dogfood #1 "PATH-scope footgun" -- this paragraph describes
+the Slice 1 fix as it originally shipped; Slice 2 was migrated onto the SAME helper below, so do
+not read "claims" here as excluding findings -- see :func:`_ledger_physical_root` for the current,
+derived membership):
 unlike every sibling store, ``root`` for ``submit_claim``/``release_claim``/``list_claims`` is
 NOT simply ``session_store._resolve_root(path)`` (the literal, caller-supplied directory) --
 that was the bug. ``claim core/hooks`` and ``list .`` each independently resolved to a
@@ -386,8 +389,9 @@ def _normalize_relative_file(root: Path, raw: str) -> str:
 # ---------------------------------------------------------------------------
 # PATH-scope footgun fix (CEO v1.92.1 dogfood #1): physical-root canonicalization + the claim
 # `scope` concept it enables. See the module docstring's "PATH scoping" paragraph for the full
-# rationale. Claims-subtree (Slice 1) only -- record_finding/find_findings (Slice 2) below
-# deliberately keep plain `_resolve_root`, untouched.
+# rationale. Used by both slices: Slice 1 (claims: submit_claim/release_claim/list_claims) and
+# Slice 2 (findings: record_finding/find_findings) share this same canonicalization now -- see
+# the module docstring above for when/why Slice 2 was migrated onto it.
 # ---------------------------------------------------------------------------
 
 
@@ -432,10 +436,14 @@ def _discover_repo_root(start: Path) -> Path:
 
 
 def _ledger_physical_root(path: str) -> Path:
-    """The canonical physical location for THIS repository's claims index: today's literal
-    ``_resolve_root(path)`` resolution followed by the ``.git``-boundary walk-up above. Used by
-    ``submit_claim``/``release_claim``/``list_claims`` ONLY -- Slice 2 keeps plain
-    ``_resolve_root`` (see module docstring)."""
+    """The canonical physical location for THIS repository's claims/findings index: today's
+    literal ``_resolve_root(path)`` resolution followed by the ``.git``-boundary walk-up above.
+    Used by every Slice 1 + Slice 2 entry point that reads or writes the ledger index -- derive
+    the CURRENT membership from this function's own call sites
+    (``grep -n "_ledger_physical_root(path)" src/tensor_grep/cli/ledger_store.py``), never from an
+    enumerated list here: a name list goes stale the moment a new entry point is added, which is
+    exactly why Slice 2 was migrated onto this helper in the first place -- see the module
+    docstring's "PATH scoping" paragraph for that history."""
     return _discover_repo_root(_resolve_root(Path(path)))
 
 
