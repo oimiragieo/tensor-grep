@@ -712,9 +712,13 @@ jobs:
       # gate found this step naming exactly one file (`test_native_plain_text_parity.py`), so a
       # second native-binary-dependent suite added later (`test_native_json_byte_fidelity.py`)
       # silently skipped everywhere -- correct when written, incomplete the moment a sibling file
-      # was added. Verified against every file using `TG_REQUIRE_RG_PARITY`
-      # (`grep -rl TG_REQUIRE_RG_PARITY tests/`): exactly these two, both matching this glob, so
-      # widening it introduces no accidental inclusion.
+      # was added. Do NOT re-enumerate a count here: it already drifted once, silently, from
+      # "exactly these two" to (as of the 2026-08-01 backlog campaign) at least four --
+      # `test_native_renderer_file_set_invariant.py` and `test_native_ltl_passthrough.py` both
+      # joined uncited. `tests/unit/test_native_e2e_ci_coverage_contract.py` is the live
+      # governance gate: it derives the census itself via `grep -rl TG_REQUIRE_RG_PARITY tests/`
+      # and fails CI the moment this glob misses one. Trust that test, not a number in this
+      # comment.
       - name: Run native binary-dependent e2e suites
         shell: bash
         env:

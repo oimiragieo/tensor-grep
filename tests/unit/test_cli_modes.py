@@ -3835,7 +3835,7 @@ def test_cli_should_parse_gpu_device_ids_into_search_config(monkeypatch):
     runner = CliRunner()
     result = runner.invoke(
         app,
-        ["search", "ERROR", ".", "--ltl", "--gpu-device-ids", "3,7,7"],
+        ["search", "ERROR -> eventually ERROR", ".", "--ltl", "--gpu-device-ids", "3,7,7"],
     )
 
     assert result.exit_code == 0
@@ -13279,7 +13279,7 @@ def test_cli_debug_prints_pipeline_routing_reason(monkeypatch):
     _patch_cli_dependencies(monkeypatch)
 
     runner = CliRunner()
-    result = runner.invoke(app, ["search", "ERROR", ".", "--debug", "--ltl"])
+    result = runner.invoke(app, ["search", "ERROR -> eventually ERROR", ".", "--debug", "--ltl"])
 
     assert result.exit_code == 0
     assert "[debug] routing.backend=FakeBackend reason=unit_test_fake_pipeline" in result.output
@@ -13319,7 +13319,7 @@ def test_cli_stats_prints_summary_when_matches_found(monkeypatch):
     _patch_cli_dependencies(monkeypatch)
 
     runner = CliRunner()
-    result = runner.invoke(app, ["search", "ERROR", ".", "--stats", "--ltl"])
+    result = runner.invoke(app, ["search", "ERROR -> eventually ERROR", ".", "--stats", "--ltl"])
 
     assert result.exit_code == 0
     assert "[stats] scanned_files=1 matched_files=1 total_matches=1" in result.output
@@ -13342,7 +13342,7 @@ def test_cli_debug_prints_gpu_routing_details_when_available(monkeypatch):
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeScanner)
 
     runner = CliRunner()
-    result = runner.invoke(app, ["search", "ERROR", ".", "--debug", "--ltl"])
+    result = runner.invoke(app, ["search", "ERROR -> eventually ERROR", ".", "--debug", "--ltl"])
 
     assert result.exit_code == 0
     assert "[debug] routing.gpu_device_ids=[7, 3]" in result.output
@@ -13365,7 +13365,7 @@ def test_cli_stats_prints_gpu_routing_details_when_available(monkeypatch):
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeScanner)
 
     runner = CliRunner()
-    result = runner.invoke(app, ["search", "ERROR", ".", "--stats", "--ltl"])
+    result = runner.invoke(app, ["search", "ERROR -> eventually ERROR", ".", "--stats", "--ltl"])
 
     assert result.exit_code == 0
     assert "[stats] gpu_device_ids=[7, 3]" in result.output
@@ -13390,7 +13390,16 @@ def test_cli_json_output_includes_routing_metadata_fields(monkeypatch):
     runner = CliRunner()
     result = runner.invoke(
         app,
-        ["search", "ERROR", ".", "--gpu-device-ids", "7,3", "--ltl", "--format", "json"],
+        [
+            "search",
+            "ERROR -> eventually ERROR",
+            ".",
+            "--gpu-device-ids",
+            "7,3",
+            "--ltl",
+            "--format",
+            "json",
+        ],
     )
 
     assert result.exit_code == 0
@@ -13427,7 +13436,9 @@ def test_cli_json_output_should_surface_distributed_worker_metadata_from_backend
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeScanner)
 
     runner = CliRunner()
-    result = runner.invoke(app, ["search", "ERROR", ".", "--ltl", "--format", "json"])
+    result = runner.invoke(
+        app, ["search", "ERROR -> eventually ERROR", ".", "--ltl", "--format", "json"]
+    )
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
@@ -13541,7 +13552,9 @@ def test_cli_json_output_should_prefer_runtime_backend_metadata_over_pipeline_se
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeScanner)
 
     runner = CliRunner()
-    result = runner.invoke(app, ["search", "ERROR", ".", "--ltl", "--format", "json"])
+    result = runner.invoke(
+        app, ["search", "ERROR -> eventually ERROR", ".", "--ltl", "--format", "json"]
+    )
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
@@ -13575,7 +13588,7 @@ def test_cli_debug_should_print_runtime_routing_when_backend_falls_back(monkeypa
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeScanner)
 
     runner = CliRunner()
-    result = runner.invoke(app, ["search", "ERROR", ".", "--debug", "--ltl"])
+    result = runner.invoke(app, ["search", "ERROR -> eventually ERROR", ".", "--debug", "--ltl"])
 
     assert result.exit_code == 0
     assert "[debug] routing.backend=FakeBackend reason=unit_test_fake_pipeline" in result.output
@@ -13607,7 +13620,7 @@ def test_cli_stats_should_prefer_runtime_backend_metadata_when_backend_falls_bac
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeScanner)
 
     runner = CliRunner()
-    result = runner.invoke(app, ["search", "ERROR", ".", "--stats", "--ltl"])
+    result = runner.invoke(app, ["search", "ERROR -> eventually ERROR", ".", "--stats", "--ltl"])
 
     assert result.exit_code == 0
     assert "[stats] backend=CPUBackend reason=torch_regex_cpu_fallback" in result.output
@@ -13632,7 +13645,7 @@ def test_cli_debug_should_print_gpu_chunk_plan_when_pipeline_selected_fallback_h
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeScanner)
 
     runner = CliRunner()
-    result = runner.invoke(app, ["search", "ERROR", ".", "--debug", "--ltl"])
+    result = runner.invoke(app, ["search", "ERROR -> eventually ERROR", ".", "--debug", "--ltl"])
 
     assert result.exit_code == 0
     assert (
@@ -13696,7 +13709,9 @@ def test_cli_json_output_should_prefer_runtime_single_worker_gpu_metadata_over_s
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeScanner)
 
     runner = CliRunner()
-    result = runner.invoke(app, ["search", "ERROR", ".", "--ltl", "--format", "json"])
+    result = runner.invoke(
+        app, ["search", "ERROR -> eventually ERROR", ".", "--ltl", "--format", "json"]
+    )
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
@@ -13730,7 +13745,7 @@ def test_cli_debug_should_prefer_runtime_single_worker_gpu_metadata_over_selecte
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeScanner)
 
     runner = CliRunner()
-    result = runner.invoke(app, ["search", "ERROR", ".", "--debug", "--ltl"])
+    result = runner.invoke(app, ["search", "ERROR -> eventually ERROR", ".", "--debug", "--ltl"])
 
     assert result.exit_code == 0
     assert (
@@ -13767,7 +13782,7 @@ def test_cli_stats_should_prefer_runtime_single_worker_gpu_metadata_over_selecte
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeScanner)
 
     runner = CliRunner()
-    result = runner.invoke(app, ["search", "ERROR", ".", "--stats", "--ltl"])
+    result = runner.invoke(app, ["search", "ERROR -> eventually ERROR", ".", "--stats", "--ltl"])
 
     assert result.exit_code == 0
     assert "[stats] backend=CuDFBackend reason=cudf_chunked_single_worker_plan" in result.output
@@ -13792,7 +13807,7 @@ def test_cli_stats_prints_summary_when_no_matches(monkeypatch):
     _patch_cli_dependencies(monkeypatch)
 
     runner = CliRunner()
-    result = runner.invoke(app, ["search", "ERROR", ".", "--stats", "--ltl"])
+    result = runner.invoke(app, ["search", "ERROR -> eventually ERROR", ".", "--stats", "--ltl"])
 
     assert result.exit_code == 1
     assert "[stats] scanned_files=1 matched_files=0 total_matches=0" in result.output

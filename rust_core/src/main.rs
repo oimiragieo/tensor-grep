@@ -316,6 +316,10 @@ const SEARCH_PYTHON_PASSTHROUGH_FLAGS: &[&str] = &[
     // Local hybrid semantic search (RRF fusion of BM25 + dense embeddings) is also a Python-side
     // post-process (roadmap #27, Path B Stage 1) -- same reasoning as --rank/--bm25 above.
     "--semantic",
+    // --ltl is a Python-side temporal-query post-process (CPUBackend::_search_ltl); route it
+    // to the sidecar so the native front door does not clap-reject the unknown flag. Paired
+    // with bootstrap.py::_TG_ONLY_SEARCH_FLAGS (the 2-front-door law).
+    "--ltl",
 ];
 
 #[derive(Parser, Debug)]
@@ -4471,6 +4475,28 @@ mod tests {
             Some(vec![
                 "--semantic".to_string(),
                 "invoice".to_string(),
+                "src".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn search_format_python_passthrough_args_routes_ltl_flag_to_python() {
+        // `tg search --ltl` is a Python-side temporal query (CPUBackend::_search_ltl);
+        // it must delegate to the Python sidecar instead of being clap-rejected as an
+        // unknown flag by the native front door -- mirrors the --rank case above.
+        // Registered on BOTH front doors per the 2-front-door law (the other door is
+        // bootstrap.py::_TG_ONLY_SEARCH_FLAGS).
+        let raw_args = ["tg", "search", "--ltl", "open -> eventually close", "src"]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            search_format_python_passthrough_args(&raw_args),
+            Some(vec![
+                "--ltl".to_string(),
+                "open -> eventually close".to_string(),
                 "src".to_string()
             ])
         );
