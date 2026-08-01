@@ -1314,6 +1314,71 @@ and being adjacent to one is not being covered by it. (The Skills section alread
 artifact invisible to this same test for the same reason: `skill_rules.json`, which has no
 `SKILL.md`.)
 
+### Building ONE checker produced THREE wrong readings, and an extreme rate is the tell (2026-08-01)
+
+The section above is about a check and a defect agreeing. This is its acquisition-side twin: an
+instrument that is simply **aimed wrong**, which yields a confident number rather than an error.
+Three readings in a row while building a single skill-citation checker
+(`tests/unit/test_skill_library_drift.py`), each individually plausible, each caught only because a
+control arm ran first:
+
+| reading | cause | what would have been reported |
+|---|---|---|
+| **100%** of citations broken | the probe walked up looking for a `.claude` marker and found the **user home** (`C:\Users\<me>\.claude`), which also has one | "92 broken citations" — in a directory that is not this repo |
+| **60.5%** broken | it resolved only repo-relative paths; skills also cite by bare basename and partial suffix | "a library 60% rotten" — the exact false-positive flood that drowned an earlier auditor |
+| **100%** ambiguous | a filesystem walk also enumerated 6 stale agent worktrees and 20 checkpoint snapshots, each a full source tree, so every citation matched 7–21 paths | "clean" — it checked **nothing** and said so as success |
+
+**A rate at 0% or 100% is a property of the instrument far more often than of the subject.** Real
+populations are lumpy. Before reporting either extreme, ask what would have to be true of the world
+for it to be genuine, and check that instead.
+
+**And the control fixture must itself be unambiguous.** The first known-good arm cited
+`pyproject.toml:1` — a basename this repo has several of, so it resolved to nothing and the arm read
+`0/0/0`, which is byte-identical to a dead checker. A control that cannot pass proves as little as
+one that cannot fail.
+
+**Aim at what CI sees.** The fix for the third reading was to resolve against `git ls-files` rather
+than the filesystem. Untracked litter is invisible to CI and to reviewers, and it silently changed
+the answer.
+
+### A gate that fires at EVERY historical revision is guarding a shape the repo never had
+
+Form 1 says run every new ratchet against the pre-fix revision. This is the failure that rule
+catches when the ratchet is *wrong*, and it is easy to miss because the ratchet looks vindicated.
+
+I read `**27 skills**` beside 28 folders on disk and called it live shipped drift. Then I ran the
+proposed count gate across history and it fired at **all three** revisions checked — 20-vs-21,
+26-vs-27, 27-vs-28. A defect introduced at some commit does not exist before that commit; **a
+constant verdict across arms that should differ is a broken check**, exactly as a constant verdict
+across a treatment and control is.
+
+The number was correct. The sentence *defines* what it counts —
+"(`.claude/skills/tensor-grep-*` + `code-search-and-retrieval-reference`, **N skills**)" — which
+deliberately excludes the bare `tensor-grep` usage skill listed on its own line above. Under that
+definition history reads 20/20, 26/26, 27/27, silent everywhere. **Read the DEFINITION beside a
+number before calling it wrong**, and had this shipped it would have forced someone to "fix" a
+correct doc into a wrong one.
+
+**The real drift of this class was one section away, and BOTH halves of the two-file edit were wrong
+in OPPOSITE directions.** `AGENTS.md`'s header said "nine forms" while the section enumerates Form 1
+through Form 10 — stale for four days. `tensor-grep-validation-and-qa`, which had the count right
+and *documented the miscount in prose*, misdated forms 8–9 to 2026-07-27 when Form 8's own text
+reads 2026-07-26. Each doc was half correct, so **reading either one alone confirmed it**; only the
+`**Form N —**` headings settle it. Both prose counts are now derived from those headings and gated
+by `test_skill_library_drift.py`, because "re-derive the number when you add one" was already
+written down, agreed with, and half-applied.
+
+### An exact-phrase grep is the wrong instrument for asking whether a LESSON was captured
+
+Auditing whether six session lessons had reached `AGENTS.md`, a phrase-grep reported four of seven
+probes absent. The doc says "the check and the **defect** agreed"; I searched for "check and the
+bug" and read `0` as missing. Every one of those four was present under different wording.
+
+**Absence of a phrase is not absence of an idea.** Prose has synonyms; grep does not. Use grep to
+locate candidates, then read to adjudicate — and treat a zero from a phrase probe as *unresolved*,
+never as *absent*. Sibling of the source-census law below: that one is a grep that matches a
+comment and passes; this is a grep that misses a paraphrase and fails.
+
 ### A checker that cannot tell a PRODUCER from a PRESENTER reports correct code as broken
 
 A class ratchet flagged 9 functions as "reads incompleteness but never discloses". **All 9 were
