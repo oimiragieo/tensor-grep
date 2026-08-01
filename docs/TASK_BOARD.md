@@ -18,24 +18,38 @@
 >    `tag == PyPI` cannot distinguish *released* from *not started* from *died* and cost a release
 >    on 2026-07-28.
 
-Last reconciled: **2026-07-31**, post-**v1.101.22** (PyPI verified via the JSON API, not inferred
+Last reconciled: **2026-08-01**, post-**v1.101.27** (PyPI verified via the JSON API, not inferred
 from a tag — `tag == PyPI` cannot tell *released* from *not started* from *died*).
 
-The previous stamp read "2026-07-28, post-v1.101.9" while PyPI had moved 13 releases on, and the
-IN FLIGHT table below still listed two PRs that merged days earlier. That is the staleness this
-board exists to prevent, so it is worth naming: **a board that is only refreshed when someone
-notices it is wrong is a board nobody can trust to be right.** Reconcile it in the same turn a PR
-merges, not in a later cleanup pass.
+**This has now gone stale THREE times in the same way, so the pattern is the finding.** The stamp
+once read "2026-07-28, post-v1.101.9" while PyPI had moved 13 releases on; then "2026-07-31,
+post-v1.101.22" while PyPI served **v1.101.27** and the IN FLIGHT table below still listed **all
+three** of #872/#871/#868 as open — every one of them merged, two of them on 2026-08-01. Each time,
+the board was corrected *because someone noticed*, and the correction added a sterner warning rather
+than anything that could fire on its own.
+
+**A warning that has been ignored three times is not a weak warning, it is the wrong instrument.**
+The reconcile step belongs in the merge routine — the same turn the PR merges, before the next item
+is picked up — not in a cleanup pass that only happens when the board embarrasses someone. Derive
+both numbers, never retype them:
+
+```bash
+gh pr list --state open --json number,title            # the IN FLIGHT table, verbatim
+python -c "import json,urllib.request;print(json.load(urllib.request.urlopen('https://pypi.org/pypi/tensor-grep/json'))['info']['version'])"
+```
 
 ---
 
-## IN FLIGHT (PRs open right now — verified against `gh pr list`, 2026-07-31)
+## IN FLIGHT (PRs open right now — derived from `gh pr list`, 2026-08-01)
 
 | PR | Title | Type | State |
 |---|---|---|---|
-| #872 | `fix(security)`: close the remaining CWE-88 argv hole and enumerate the sweep | RELEASING | CI running; independent adversarial gate requested |
-| #871 | `fix(search)`: carry the defaulted-scope disclosure into the JSON body on every route | RELEASING | CI running |
-| #868 | `fix(search)`: exit 2 when an explicit `--gpu-device-ids` request is unhonoured | RELEASING | **BLOCKED — do not merge.** See P1 below. |
+| #882 | `test`: gate skill-library citation + stated-count drift, and fix the oracle-form miscount | non-releasing (`test:`) | CI green; carries the drift gate, `/tg-skill-audit`, and 6 skill/doc repairs |
+
+*(#872, #871 and #868 all MERGED — #871 on 2026-07-31, #872 and #868 on 2026-08-01. They sat in
+this table as "CI running" / "BLOCKED — do not merge" after landing, which is the exact failure mode
+described above: a board that says BLOCKED about shipped code will eventually stop someone from
+merging something correct.)*
 
 ---
 
