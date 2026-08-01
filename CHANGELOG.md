@@ -1,6 +1,298 @@
 # CHANGELOG
 
 
+## v1.101.26 (2026-08-01)
+
+### Bug Fixes
+
+- **search**: Honour --quiet on the rg route, and stop a zero-match --ndjson going silent
+  ([#876](https://github.com/oimiragieo/tensor-grep/pull/876),
+  [`31f793f`](https://github.com/oimiragieo/tensor-grep/commit/31f793f9c893fd79ad13bb11b71ca803e2108afd))
+
+Two dropped-disclosure defects from the same audit, both verified against real code before being
+  believed (three plan-sourced findings have been wrong today).
+
+(1) `--quiet` NEVER REACHED RIPGREP. `_can_passthrough_rg` does not refuse `quiet` the way it
+  refuses ast/ltl/force_cpu/rank_bm25/semantic_rank/ gpu_device_ids -- verified by calling the gate:
+  it returns True for `SearchConfig(quiet=True)`. But `RipgrepBackend._build_cmd` emitted no `-q`,
+  and the module contained ZERO occurrences of "quiet". So the caller asked for silence and the
+  engine that served the query had never heard of the word: rg printed every match, exit code still
+  success. The silent-downgrade class -- the flag is dropped rather than refused. `-q` is the exact
+  semantic twin of tg's `--quiet` (suppress output; exit 0 when a match exists), so this is a
+  like-for-like honour, not an approximation.
+
+(2) A ZERO-MATCH `--ndjson` RUN EMITTED NOTHING AT ALL. Structural, not a missing field:
+  `NdjsonFormatter` merges the envelope into each MATCH ROW, so the disclosure rides on the rows and
+  vanishes when there are none. A search that was CUT SHORT and found nothing returned the empty
+  string -- and `result_incomplete`, `incomplete_reason_class`, `path_was_defaulted` and
+  `scope_note` all live in that envelope. The reader could not tell "nothing matched" from "the scan
+  died before it could look".
+
+FOUND WHILE FIXING (2): the Python `--ndjson` surface never carried the scope disclosure AT ALL.
+  #871 added `path_was_defaulted`/`scope_note` to `JsonFormatter.format` alone, not to the shared
+  `_routing_envelope`, so ndjson missed it on every path, not just the empty one. Read off the
+  result directly now.
+
+DELIBERATELY NARROWER THAN THE RUST ENGINE, and said so at the site. Rust emits a `type: "summary"`
+  record on EVERY --ndjson run, on the reasoning that a record appearing only on failure is one a
+  reader never learns to expect. That is the better contract and Python should reach it -- but it
+  adds a line to every existing stream, which is a wire change several consumers `json.loads`-ing
+  the whole output would break on, and likely needs an MCP contract bump. Tracked separately. This
+  closes only the case where the current design loses information outright.
+
+RED ARMS, both observed failing first: - quiet: "config.quiet never reached the ripgrep argv ...
+  ['rg','-n','--color','auto','needle','--','somewhere']" - ndjson: "a zero-match INCOMPLETE
+  --ndjson run emitted nothing at all"
+
+CONTROL ARMS that keep each honest: a non-quiet search must NOT get `-q` (an unconditional flag
+  would silence every ordinary search -- worse than the bug); a COMPLETE zero-match run must stay
+  byte-identical (empty), or the disclosure becomes noise on every empty stream and readers learn to
+  skip it; and a run WITH matches must stay exactly one row, which is what keeps this off the
+  wire-change list. Plus a premise pin: if `quiet` ever joins the passthrough refuse-list, the argv
+  test's subject is unreachable and it fails loudly rather than sitting green over a dead path.
+
+A note on how (1) nearly got dismissed: dogfooding `--quiet` on this box printed nothing and looked
+  correct -- the run took NativeCpuBackend and never reached the code under test. A behavioural
+  probe that cannot reach the mechanism reports a pass that means nothing. The argv is where the
+  defect lives, so the argv is what these tests assert.
+
+10 new tests; 82 existing ndjson-consumer tests and 97 rg-route tests green.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Continuous Integration
+
+- **diagnostics**: Measure the GPU dispatch route, and RETIRE the exit-2 rule the contract already
+  rejected ([#868](https://github.com/oimiragieo/tensor-grep/pull/868),
+  [`50595ef`](https://github.com/oimiragieo/tensor-grep/commit/50595efc145189706a5359e90f65d70d3aae986c))
+
+* fix(search): exit 2 when an explicit --gpu-device-ids request is unhonoured (task 22)
+
+`tg search --gpu-device-ids` silently exited 0 whenever the request fell back to CPU (or was
+  sidecar-routed), so a caller could not tell "used the GPU" from "quietly downgraded" without
+  parsing the JSON envelope. Wire the exit code to the existing
+  gpu_evidence_status/native_gpu_unavailable signal (_gpu_proof_payload, json_fmt.py) via a new
+  shared predicate, gpu_request_unhonoured(), so the exit-code decision and the --json envelope can
+  never drift apart:
+
+- exit 2 when --gpu-device-ids was explicitly requested and the run did not produce
+  NativeGpuBackend-with-sidecar_used=False proof (CPU fallback, sidecar routing, or any other
+  backend), even when matches were found and printed -- mirrors the existing result_incomplete
+  exit-2 convention. - exit 0/1 unchanged for a search that never requested GPU (a CPU search that
+  merely served the query is complete, not incomplete).
+
+Also fixes a latent gap this surfaced: merge_runtime_routing never propagated sidecar_used from a
+  per-file backend result into the aggregate, so a sidecar-routed per-file result would have
+  silently reported sidecar_used=False on the aggregate. Merged monotonically, matching
+  result_incomplete's pattern; a no-op for every current caller (no backend on the cli/main.py or
+  mcp_server.py paths sets sidecar_used=True today) and only starts mattering once one does.
+
+The MCP tg_search tool does not accept gpu_device_ids at all (only tg_agent_capsule and tg_context
+  do), and MCP tools return payloads rather than process exit codes, so this exit-code contract is
+  CLI-only -- noted in docs/CONTRACTS.md.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* ci(diagnostics): MEASURE which route an explicit --gpu-device-ids search takes
+
+#868's CI failure has been "cause unknown" for days, with two hypotheses killed by controls that
+  moved the wrong variable. This stops arguing about it from source and instruments the actual
+  runner.
+
+WHAT THE PROBE DOES, AND WHY IT PROVES IT CAN FIRE. `scripts/diagnose_gpu_delegation_route.py` runs
+  three controlled comparisons per OS/Python leg and instruments `subprocess.run` directly, so
+  "delegation was attempted" is an OBSERVED fact rather than an inference from an exit code. It
+  carries both controls:
+
+forced Path(...) -> delegation OBSERVED (the probe CAN see delegation) forced None -> Python tail,
+  exit 2 (the probe CAN see the Python route)
+
+If either control fails to discriminate the script exits non-zero, because an instrument that never
+  fires and one that fires and finds nothing look identical otherwise. Measured locally: both
+  controls PASS; ambient on this box is "no delegation, exit 2", matching the Python route (no cargo
+  has ever run here).
+
+IT NEVER CALLS THE REAL PIPELINE, and the reason is a trap it hit while being built:
+  `Pipeline._raise_explicit_gpu_configuration_error` raises exit 2 whenever `--gpu-device-ids` is
+  requested and neither CuDF nor Torch imports -- true on most CPU boxes. That exit 2 predates #868
+  entirely, so a naive real-Pipeline probe would observe "exit 2 either way" and report it as
+  confirmation, having actually watched two unrelated mechanisms land on the same number. The
+  same-arm-twice trap, in a probe.
+
+A HYPOTHESIS THIS SURFACED, worth recording because it inverts a claim this file makes about itself:
+  `.github/workflows/ci.yml` asserts `test-python` "never builds rust_core/target/release/tg". But
+  `rust_core/Cargo.toml:58` declares `[[bin]] name = "tg"` in the SAME manifest maturin builds
+  (`pyproject.toml` `manifest-path = "rust_core/Cargo.toml"`), so unless maturin's cargo invocation
+  is scoped to `--lib`, `pip install -e` produces that binary as a side effect -- which is Priority
+  2 of `resolve_native_tg_binary()`, checked before any PATH scan. Structural evidence, NOT a
+  measurement; the comment is now marked IN DISPUTE and points at the probe rather than repeating
+  itself.
+
+THE HARNESS DEFECT, which is real regardless of which hypothesis wins: `_patch_cli_dependencies`
+  mocked Pipeline/DirectoryScanner/rg but never pinned `resolve_native_tg_binary`, so every test
+  using it silently took a route determined by whether the MACHINE happened to have a built binary.
+  Now pinned to None (the hermetic Python route), with tests that deliberately exercise delegation
+  still winning by patching it themselves afterwards.
+
+AND A MECHANISM THAT DOES NOT DEPEND ON THE UNCONFIRMED CAUSE:
+  `_SEARCH_COMMAND_TAIL_EXIT_CODE_POLICIES` makes every tail-only exit rule an explicit, reviewed
+  decision -- each entry must cite EITHER a verified native mirror OR a non-empty route-specific
+  reason naming its tracking issue, never both and never neither. `gpu_request_unhonoured` is
+  classified route-specific and CONTRACT-CONTESTED, so #868 cannot be resolved by assumption.
+
+Local suite is flaky under load on this box (three runs, three DIFFERENT failures, one of them a
+  wall-clock assert, and the control with these changes REVERTED failed too) -- so CI is the
+  arbiter, as it should be. The 21 tests directly covering this work pass.
+
+Non-releasing.
+
+* fix(search): RETIRE the GPU exit-2 rule -- the written contract already answered this
+
+Backlog #22 is DECIDED, and against this branch's original premise. An unhonoured explicit
+  `--gpu-device-ids` request does NOT flip the exit code.
+
+I had this filed as needing a CEO decision. It does not: `docs/CONTRACTS.md` section 4 already
+  answers it, and reading a rule we already have is not taste.
+
+`2` = INCOMPLETE, meaning the SCAN was truncated. A CPU-served search runs to completion over every
+  file it was asked about and returns correct, complete results. Which processor did the arithmetic
+  is a ROUTING fact, not an incompleteness. The contract carries the analogous precedent twice and
+  both go this way: * "An OUTPUT-only cap ... is a COMPLETE analysis capped only for display and
+  stays exit `0`; only a SCAN truncation exits `2`." * `tg imports --deadline` is "a documented
+  NO-OP ... output is byte-identical with or without it" -- an accepted flag that changes nothing
+  does not move the exit code.
+
+And it would break every consumer branching on 1-vs-2 for the most ordinary GPU-requesting
+  invocation there is: a `--gpu-device-ids` search on a machine with no GPU.
+
+THE STRONGEST EVIDENCE WAS ALREADY IN THE SUITE AND I WALKED PAST IT. Landing exit 2 required
+  editing THREE independent pre-existing tests that each asserted `exit_code == 0` for exactly this
+  case. When a change has to flip three unrelated expectations written at different times, the
+  behaviour it is "fixing" was deliberate. All three are now back at `main`'s value -- verified by
+  count, 45 occurrences of `exit_code == 2` in test_cli_modes.py on both sides.
+
+NOTHING IS LOST. `gpu_request_unhonoured` still classifies the request, and the `--json` envelope
+  still carries gpu_evidence_status / gpu_proof / native_gpu_unavailable / not_gpu_proof_reason.
+  Those are strictly MORE informative: an exit code cannot distinguish "no GPU present" from "GPU
+  present but the sidecar served it", and `gpu_evidence_status` does it in one string. The
+  retargeted test proves exactly that case.
+
+The `_SEARCH_COMMAND_TAIL_EXIT_CODE_POLICIES` entry is KEPT rather than deleted, now recording the
+  retirement and its reasoning -- so a future reader who reaches for exit 2 here meets the argument
+  that already rejected it, from the registry rather than from a comment they would have to find.
+
+WHAT SURVIVES FROM THIS BRANCH, all of it independent of the retired rule: - the CI diagnostic that
+  MEASURES which dispatch route the request takes, with both controls (it is the thing that answers
+  the remaining open question); - the `_patch_cli_dependencies` harness fix -- the fixture never
+  pinned `resolve_native_tg_binary`, so every test using it took a route decided by ambient machine
+  state; - `_SEARCH_COMMAND_TAIL_EXIT_CODE_POLICIES`, which makes every tail-only exit rule an
+  explicit mirrored-or-route-specific decision; - the `sidecar_used` monotonic merge in result.py.
+
+24 targeted tests green; the 11 gpu/routing-metadata tests in test_cli_modes.py green at their
+  original expectations.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Retain the session's verification lessons, and fix what the audit found in them
+  ([#878](https://github.com/oimiragieo/tensor-grep/pull/878),
+  [`67ab0ec`](https://github.com/oimiragieo/tensor-grep/commit/67ab0ecc6fbb6e13014929b2c78c89013ff14329))
+
+Four skill files gained this session's durable lessons, one owner per file so parallel writes could
+  not collide. An independent auditor then found four real defects in the result -- all fixed here,
+  because a retention pass that ships its own bugs teaches the wrong thing twice.
+
+WHAT THE AUDIT CAUGHT, and the first one is the best:
+
+1. A FALSE-ZERO GREP SHIPPED INSIDE THE FALSE-ZERO LESSON. Battle 28's re-verify block ran `grep -n
+  "\"rerank\"\|'rerank'" pyproject.toml`, which returns NOTHING, exit 1 -- the extra is declared
+  BARE (`rerank = [...]`) at pyproject.toml:627. A reader re-verifying the battle would have read
+  that zero as "the rerank extra is gone, the hold is over". Found only because the auditor RAN
+  every command in the block instead of eyeballing them. A re-verify command you have not executed
+  is a claim, not a check.
+
+2. TWO SKILLS GAVE OPPOSITE INSTRUCTIONS ON THE SAME OPERATION. The new debugging-playbook section
+  says a windowed `gh run list --branch ... --limit N` merge gate gives a false "complete";
+  change-control still prescribed exactly that -- in its strictest, most exposed form, `--limit 1`
+  -- as THE correct gate. Rewritten to capture the run ID once and poll that ID, with the measured
+  receipt (`--limit 3` reported 0 in flight while a release was mid-publish; `--limit 20` found it)
+  and the reminder to read the JOB's conclusion, since `release-tag-smoke` sat red for four releases
+  behind a green run roll-up.
+
+3. A HEADER THAT MISCOUNTED THE THING BELOW IT. The oracle family read "NINE distinct forms" while
+  ten were present, for three days -- the smallest possible instance of that Part's own subject.
+  Fixed, with a note to re-derive the number rather than trust the header, including the new one.
+
+4. MY OWN UNCORRECTED TEXT IN docs/BACKLOG.md, which scope does not excuse. Line 451 still asserted
+  the killed #868 hypothesis "was right the whole time" -- a claim I had already retracted in
+  AGENTS.md, leaving the doc set disagreeing with itself with the WRONG version in the archive. And
+  the #26 entry still said "all four native envelopes" when the census had turned out wrong by one.
+  Both corrected in place, each carrying why it was wrong rather than being quietly reworded.
+
+The archaeology agent's judgement is worth recording: it DECLINED to write battles for six lessons
+  it could not cite honestly, checked which sibling skill owned them, and said so -- rather than
+  padding its assignment. That is the behaviour the no-embellishment instruction was asking for.
+
+Known and accepted: the sufficient-vs-operative lesson now appears in four places (AGENTS.md
+  canonical, plus three skills), each in its own file's voice and for its own audience. Left as-is
+  rather than de-duplicated -- these files are loaded independently, and a lesson absent from the
+  skill you happened to open is worse than one stated twice.
+
+test_skill_index_sync green; all five files' fences balanced; the corrected re-verify command
+  returns non-empty.
+
+Non-releasing.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Testing
+
+- **native**: Cover the main.rs JSON envelope literals, and name the one that CANNOT be covered
+  ([#877](https://github.com/oimiragieo/tensor-grep/pull/877),
+  [`95a40f6`](https://github.com/oimiragieo/tensor-grep/commit/95a40f6b8418a45b670a3dcd7832a03c19a48520))
+
+`SearchResultJson` and `SearchSummaryNdjson` had NO direct test. The only envelope with one was
+  `NativeJsonOutput` in `native_search.rs`, whose tests go through `emit_json_matches` because that
+  emitter writes to a configurable `output_target`. These two `println!` instead, so testing them
+  "properly" would mean capturing process stdout -- which is why they went untested.
+
+Serialising the struct DIRECTLY tests the thing that actually matters: the omit-when-inapplicable
+  shape. Every `skip_serializing_if` on these types is a promise that a complete, explicitly-scoped
+  search stays BYTE-IDENTICAL for existing consumers, and nothing was checking that promise. A
+  `null` where a key used to be absent is a wire change wearing a default value.
+
+Four tests, both arms on each envelope: - all five optionals ABSENT when nothing is wrong (the shape
+  every current `--json`/`--ndjson` consumer sees), plus assertions that the UNCONDITIONAL fields
+  are still present -- an "omits everything" check passes trivially against an emitter that emits
+  nothing at all - both disclosure families present together when they apply. Deliberately BOTH at
+  once: incompleteness and defaulted-scope are independent and can co-occur, so a test that only
+  ever sets one would pass against an emitter that dropped the other - the scope note asserted
+  against the SHARED `DEFAULTED_SCOPE_NOTE` constant, not a local paraphrase
+
+THE THIRD LITERAL IS DELIBERATELY NOT TESTED, and the comment at the site says why rather than
+  leaving a silent hole. `GpuNativeSearchResultJson` is `#[cfg(feature = "cuda")]`, and the only job
+  compiling that feature is `cuda-feature-check`, which runs `cargo check --features cuda
+  --all-targets` -- CHECK, not TEST. A `#[cfg(feature = "cuda")] #[test]` here would be type-checked
+  and NEVER EXECUTED by any job on any runner. That is worse than no test: it reports the surface as
+  covered. Whether `cargo test --features cuda` can even LINK on a GPU-less runner is UNANSWERED
+  (task #279 territory); I did not verify it and am not claiming either way.
+
+`DEFAULTED_SCOPE_NOTE` is imported INSIDE `mod tests`, not at module level -- a top-level `use`
+  referenced only by tests is an unused import in every non-test build, which `cargo clippy -- -D
+  warnings` turns into a CI failure.
+
+NOT COMPILED LOCALLY (cargo is CPU-forbidden here). `rustfmt --check` clean, and both struct
+  literals were mechanically cross-checked against their declarations -- 22/22 and 8/8 fields, no
+  missing, no extra. Worth noting the first version of that checker reported five fields MISSING: it
+  did not understand Rust's field-init shorthand. My own probe's false positive, not a real gap.
+  CI's six test-rust-core legs are the arbiter.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.101.25 (2026-08-01)
 
 ### Bug Fixes
