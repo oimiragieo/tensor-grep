@@ -1168,6 +1168,70 @@ Two corollaries, both cheap:
   than in CI. When local and CI disagree, **diff the FIXTURE's coverage against the code path**, not
   just the platform.
 
+**⚠ CORRECTION TO THIS SECTION, SAME DAY -- AND THE CORRECTION IS THE SHARPER LESSON.** The text
+above says "the hypothesis was right the whole time". That is NOT established, and writing it as
+though it were repeats the very error the section is about, one level up.
+
+ARM B proves the mechanism is SUFFICIENT to produce CI's output. It does not prove that mechanism
+is the one FIRING. Counter-evidence found afterwards: `.github/workflows/ci.yml:688` states
+`test-python` never builds `rust_core/target/release/tg`, and `resolve_native_tg_binary`
+(`cli/runtime_paths.py:278`) needs either an in-tree build (absent) or a PATH binary that is not a
+Python console shim. So it plausibly returns `None` on that job.
+
+(A later structural finding cuts the other way and is also not a measurement:
+`rust_core/Cargo.toml:58` declares `[[bin]] name = "tg"` in the SAME manifest maturin builds, so
+`pip install -e` may produce that binary as a side effect. Two structural arguments pointing
+opposite ways is exactly the state in which you stop arguing and measure --
+`scripts/diagnose_gpu_delegation_route.py` does, with both controls.)
+
+**A MECHANISM THAT REPRODUCES THE OUTPUT IS NOT PROOF IT IS THE OPERATIVE ONE.** Reproducing a
+failure byte-for-byte feels like a root cause and is only a candidate; the discriminating question
+is whether the variable you forced is the one the real environment sets. I dispatched a fix on this
+and had to recall it. Say "sufficient" until you have measured "operative".
+
+### A SOURCE-SCANNING census is satisfied by a COMMENT, and blind to POSITION (2026-07-31, #872)
+
+Four findings from one adversarial gate, all against a census *I* wrote to close a class -- and the
+census was the weakest artifact in the PR, precisely because it was the part everyone (me included)
+treated as the proof rather than the claim.
+
+**1. The better you document a guard, the less it is checked.** The census asserted the literal
+`"--"` appeared in each builder's body. Three of five members could have their real
+`command.append("--")` DELETED and stay green, because the comment *explaining why the sentinel
+matters* still contained the string. This is the mirror of the quoting-vs-asserting trap: there,
+prose containing a forbidden pattern caused a FALSE POSITIVE; here, prose containing the required
+pattern causes a FALSE NEGATIVE. Match AST nodes, or check behaviour -- never a bare substring in a
+region that includes prose.
+
+**2. Presence is a proxy. Ask what the actual PROPERTY is.** "Does `--` appear in this function"
+is not "is `--` before every positional". The same PR shipped a sentinel sitting BETWEEN two
+positionals -- present, and useless, since the first one was still parsed as a flag. The census
+could not tell it from a correct one. **A proxy that cannot distinguish the fix from the bug is not
+a check.**
+
+**3. A census that omits the code its own PR edited was assembled from MEMORY, not derived.** The
+list had 5 members; the plan that specified it had enumerated 10, and one of the omissions was a
+builder that same PR had just added. Re-derive the population from the code at the moment you write
+the list, then diff it against your own diff.
+
+**4. A control arm that only matches a form the FORMATTER eliminates can never fire.** The
+"sentinel must be unconditional" arm keyed on a regex matching single-line
+`if cond: cmd.append("--")`. This repo's mandatory `ruff format --preview` expands that to two lines
+on sight, so the arm could not fire on any code that passes the gate. **Run your control arm's
+pattern against formatted code before believing it** -- this is the setup-lies law applied to a
+regex.
+
+**And the justification for going source-based was itself false**: I claimed a behavioural test
+"would skip itself" because these builders shell out. They do not -- every one is a pure
+list-returning function or is capturable at its runner, and `test_native_argv_end_of_options.py`
+had been calling one directly since #860. **Check whether the cheaper, stronger test is actually
+blocked before settling for the weaker one.**
+
+Corollary on granularity: **a function is not the unit; the artifact is.** Two argv builders lived
+86 lines apart inside one function, and a whole-body string match let the first one's sentinel
+"cover" the second one's bare positional. Enumerate the things being built, not the places they are
+built in.
+
 ### A checker that cannot tell a PRODUCER from a PRESENTER reports correct code as broken
 
 A class ratchet flagged 9 functions as "reads incompleteness but never discloses". **All 9 were
@@ -1523,7 +1587,24 @@ A round-3 security sweep (shipped v1.17.23–v1.17.25) fixed four recurring clas
 - **Symlink-follow disclosure** (any tree walk or copy that snapshots/restores a user/repo tree). Following symlinks copies the *content* of out-of-root targets into the snapshot — and can re-materialize them on restore. Use `os.walk(root, followlinks=False)` + `shutil.copy2(src, dst, follow_symlinks=False)`. Fixed in `checkpoint_store.py` (`_filesystem_snapshot_entries` + all 3 copy sites).
 - **Pre-auth unbounded read / no timeout** (any socket/pipe handler that reads *before* authenticating). Bound the read (`readline(max_bytes + 1)` + refuse over-cap) and set a socket timeout **before** the auth check, or an unauthenticated client exhausts memory or pins a worker thread. Fixed in `session_daemon.py` (`_read_bounded_request_line` + handler `timeout`).
 - **Atomic-write permission window** (any temp-then-rename of a sensitive file, e.g. a token). Create the temp at the restrictive mode from byte one via `os.open(path, O_WRONLY | O_CREAT | O_EXCL, mode)` — never `write_text()`-then-`chmod`, which leaves a world-readable window; `O_EXCL` also refuses a pre-existing temp/symlink. Fixed in `session_store.py` (`_write_json_atomic`).
-- **Native-argv flag injection** (CWE-88; the MCP-276 threat class — a *live* CVE family in MCP servers: CVE-2026-5058 aws-mcp-server, CVE-2026-23744, CVE-2026-30623 Anthropic MCP SDK). Any builder that appends a user/LLM-controlled value as a positional to a subprocess/native `tg`/`rg`/`git` command. A list-argv (`shell=False`) stops *shell* injection but **not** *flag* injection: a value beginning with `-` is parsed by the child's own option parser as a flag. Insert a `--` end-of-options sentinel **before** the user positionals. CAVEATS worth knowing: `--` protects only what comes *after* it (a user positional *before* `--` is still injectable); it does not gate `--flag=VALUE`; and not every binary honors it — **dogfood the real binary** (`tg search -- --weird` matches; `tg search --weird` errors). Fixed in `mcp_server.py` (`_build_rewrite_command`, `_build_index_search_command`); **remaining tg sweep** (tracked): the other native-argv builders + MCP write-path confinement. The three defenses layer — validate the value, list-argv, and `--` — and none alone is complete.
+- **Native-argv flag injection** (CWE-88; the MCP-276 threat class — a *live* CVE family in MCP servers: CVE-2026-5058 aws-mcp-server, CVE-2026-23744, CVE-2026-30623 Anthropic MCP SDK). Any builder that appends a user/LLM-controlled value as a positional to a subprocess/native `tg`/`rg`/`git` command. A list-argv (`shell=False`) stops *shell* injection but **not** *flag* injection: a value beginning with `-` is parsed by the child's own option parser as a flag. Insert a `--` end-of-options sentinel **before** the user positionals. CAVEATS worth knowing: `--` protects only what comes *after* it (a user positional *before* `--` is still injectable); it does not gate `--flag=VALUE`; and not every binary honors it — **dogfood the real binary** (`tg search -- --weird` matches; `tg search --weird` errors). The three defenses layer — validate the value, list-argv, and `--` — and none alone is complete.
+
+  **THE SWEEP IS NOW A TEST, NOT A SENTENCE, AND THAT CHANGE COST A LIVE HOLE.** This bullet used to
+  end with *"**remaining tg sweep** (tracked): the other native-argv builders"*. Prose did not hold
+  it. #860 fixed `cli/main.py::_build_native_tg_search_command` and the class was recorded closed —
+  while `cli/agent_capsule.py::_agent_gpu_evidence` was still appending a **caller-supplied** path as
+  a bare positional, found only by an independent plan review on 2026-07-31 (#872). Tracking a sweep
+  by name in a doc means the next person must re-derive the population from memory, and they will
+  get it wrong the same way. The population now lives in
+  `tests/unit/test_argv_sentinel_covers_every_builder.py`, enumerated **by symbol**, with a
+  blind-census arm: a symbol that stops resolving is an explicit FAILURE, never a skip.
+
+  Two rules that fell out of it: the sentinel is **unconditional** at every site (an "only when the
+  value starts with `-`" guard reads as equivalent and leaves the silent case open — and in
+  `_agent_gpu_evidence` a WSL `wslpath` branch rewrites the path *after* the caller supplies it); and
+  **uniformity is the security property** — the doctor GPU probe carries the sentinel although both
+  its positionals are tg-generated, because a sweep whose members each carry a private risk
+  assessment is a sweep nobody can check.
 
 ## EvidenceReceipt Signing (Ed25519)
 
