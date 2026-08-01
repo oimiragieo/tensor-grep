@@ -50,3 +50,39 @@ def test_merge_ignores_empty_backend() -> None:
 
     assert aggregate.is_mixed_routing is False
     assert aggregate.routing_backends_seen == ["CPUBackend"]
+
+
+# Backlog #22: `sidecar_used` must be monotonic like `result_incomplete`, so the `tg search`
+# exit-code decision (`gpu_request_unhonoured()`, json_fmt.py) and the `--json` envelope's own
+# `sidecar_used` field both see a per-file sidecar signal that a LATER natively-routed file
+# cannot silently erase.
+
+
+def test_merge_sidecar_used_stays_true_once_any_result_reports_it() -> None:
+    aggregate = SearchResult(routing_backend="NativeGpuBackend", sidecar_used=False)
+    merge_runtime_routing(
+        aggregate, SearchResult(routing_backend="NativeGpuBackend", sidecar_used=True)
+    )
+
+    assert aggregate.sidecar_used is True
+
+
+def test_merge_sidecar_used_is_not_reset_by_a_later_non_sidecar_result() -> None:
+    """A later per-file result that ran WITHOUT the sidecar must not flip the aggregate back to
+    False -- sidecar_used describes "did the sidecar contribute to this aggregate at all", not
+    "did the LAST file use the sidecar"."""
+    aggregate = SearchResult(routing_backend="NativeGpuBackend", sidecar_used=True)
+    merge_runtime_routing(
+        aggregate, SearchResult(routing_backend="NativeGpuBackend", sidecar_used=False)
+    )
+
+    assert aggregate.sidecar_used is True
+
+
+def test_merge_sidecar_used_stays_false_when_no_result_reports_it() -> None:
+    aggregate = SearchResult(routing_backend="NativeCpuBackend", sidecar_used=False)
+    merge_runtime_routing(
+        aggregate, SearchResult(routing_backend="NativeCpuBackend", sidecar_used=False)
+    )
+
+    assert aggregate.sidecar_used is False

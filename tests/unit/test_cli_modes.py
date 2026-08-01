@@ -377,6 +377,20 @@ def _patch_cli_dependencies(monkeypatch):
         "tensor_grep.backends.ripgrep_backend.RipgrepBackend.is_available",
         lambda self: False,
     )
+    # HARNESS DEFECT found during the task-22 investigation, and independent of that task's
+    # outcome. This fixture describes a fully-mocked Python-engine environment
+    # (FakePipeline/FakeScanner/no rg) but never pinned `resolve_native_tg_binary` -- so any
+    # caller satisfying `_can_delegate_to_native_tg_search`'s eligibility gate silently took a
+    # DIFFERENT dispatch route depending on whether the MACHINE happened to have a built native
+    # binary. A dev box that has never run `cargo build` gets `None` and exercises the mocks
+    # above; a runner that has one `sys.exit`s out of `search_command` via a real subprocess
+    # before any mock is consulted. Same test, same code, two routes, decided by ambient state.
+    #
+    # Pinning to `None` makes the route EXPLICIT (the hermetic Python route). A test that
+    # deliberately wants delegation patches it itself AFTER calling this fixture (e.g.
+    # `test_cli_should_delegate_json_search_to_native_binary`) -- monkeypatch applies
+    # immediately, so the later, more specific call wins.
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
 
 
 class _FakeRipgrepPipeline:

@@ -1997,6 +1997,77 @@ _NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS = (
 )
 
 
+@dataclasses.dataclass(frozen=True)
+class _TailExitCodePolicy:
+    """One exit-code RULE that `search_command`'s Python TAIL applies -- i.e. code that only
+    runs when a request did NOT take the native-delegation exit
+    (``sys.exit(_delegate_to_native_tg_search(...))``, above ``_can_delegate_to_native_tg_search``
+    in this module).
+
+    Task 22 investigation: PR #868 added a tail-only exit-code rule
+    (``gpu_request_unhonoured``) keyed on a `SearchConfig` field (``gpu_device_ids``) that is
+    ELIGIBLE for delegation rather than refused, so a request that triggers the rule can also
+    take the OTHER route -- where whether the native binary applies the identical rule is a
+    completely separate question this module cannot answer by inspection. This registry makes
+    every such rule an explicit, reviewed decision instead of a silent assumption; see
+    ``tests/unit/test_search_command_tail_exit_policy_route_parity.py``, which enumerates it and
+    fails loudly on an unclassified entry.
+    """
+
+    name: str
+    """Human-readable identifier for the rule (matches the predicate/variable name in
+    `search_command`, e.g. ``"gpu_request_unhonoured"``)."""
+
+    trigger_fields: frozenset[str]
+    """`SearchConfig` field name(s) that must be non-default for this rule to ever fire. An
+    empty frozenset means the rule can fire on ANY request regardless of flags (e.g. a walk
+    error can happen on a plain search too), so route parity is unconditionally required."""
+
+    mirrored_in_native_at: str | None = None
+    """A citation into the Rust source (e.g. ``"rust_core/src/main.rs:13064
+    walk_was_incomplete()"``) where a human manually verified the native binary applies the SAME
+    rule. Exactly one of this and `route_specific_reason` must be set -- never both, never
+    neither."""
+
+    route_specific_reason: str | None = None
+    """Non-empty iff this rule is knowingly Python-route-only (unverified, or verified NOT to
+    hold, on the native binary) -- must name the tracking issue/PR so the gap stays discoverable
+    rather than silently assumed. Exactly one of this and `mirrored_in_native_at` must be set."""
+
+
+_SEARCH_COMMAND_TAIL_EXIT_CODE_POLICIES: tuple[_TailExitCodePolicy, ...] = (
+    _TailExitCodePolicy(
+        name="result_incomplete",
+        trigger_fields=frozenset(),
+        mirrored_in_native_at=(
+            "rust_core/src/main.rs: walk_was_incomplete()/incomplete_envelope_fields() are "
+            "consulted at every native plain-text exit site (run_native_search_with_optional_"
+            "rg_fallback's `if stats.walk_errors > 0 { std::process::exit(2) }` and "
+            "emit_multi_pattern_native_results's identical guard) -- manually verified during "
+            "the task 22 investigation, 2026-07-31."
+        ),
+    ),
+    _TailExitCodePolicy(
+        name="gpu_request_unhonoured",
+        trigger_fields=frozenset({"gpu_device_ids"}),
+        route_specific_reason=(
+            "RETIRED as an exit-code rule, 2026-08-01 (backlog #22 / PR #868). An unhonoured "
+            "explicit --gpu-device-ids request does NOT flip the exit code, so there is no "
+            "tail-only exit policy here to mirror. docs/CONTRACTS.md section 4 defines `2` as "
+            "INCOMPLETE -- a TRUNCATED SCAN -- and that search runs to completion over every file "
+            "it was asked about, returning correct results computed on the CPU. Which processor "
+            "did the work is a routing fact, not an incompleteness; the contract's own precedents "
+            "(an output-only cap stays 0; `tg imports --deadline` is a documented no-op) both go "
+            "this way. The signal lives in the --json envelope instead -- gpu_evidence_status / "
+            "gpu_proof / native_gpu_unavailable / not_gpu_proof_reason -- which is strictly more "
+            "informative than a coarse exit code. This entry is KEPT rather than deleted so the "
+            "decision is discoverable from the registry, and so a future reader who reaches for "
+            "exit 2 here finds the reasoning that already rejected it."
+        ),
+    ),
+)
+
+
 def _doctor_installed_version() -> str:
     return _cli_package_version()
 
@@ -8437,6 +8508,36 @@ def search_command(
 
     _emit_runtime_debug()
 
+    # Backlog #22 RULING, 2026-08-01: an unhonoured explicit `--gpu-device-ids` request does
+    # NOT exit 2. It stays whatever the search itself earned (0 / 1).
+    #
+    # An earlier cut of this branch made it exit 2 on the reasoning that "the caller asked for a
+    # specific execution mode and tg could not provide it, so the request went unhonoured, and
+    # that is a refusal". Defensible in isolation, and it CONTRADICTS the written contract.
+    # `docs/CONTRACTS.md` section 4: `2` = INCOMPLETE, meaning the SCAN was truncated. That
+    # search ran to completion over every file it was asked about and returned correct, complete
+    # results -- it simply computed them on the CPU. Which processor did the work is a ROUTING
+    # fact, not an incompleteness.
+    #
+    # The contract already carries the analogous precedent, twice, and both go the other way:
+    #   * "An OUTPUT-only cap ... is a COMPLETE analysis capped only for display and stays exit
+    #     `0`; only a SCAN truncation exits `2`."
+    #   * `tg imports --deadline` is "a documented NO-OP ... output is byte-identical with or
+    #     without it" -- an accepted flag that changes nothing does not move the exit code.
+    #
+    # Promoting this to exit 2 would also break every consumer branching on 1-vs-2 for the most
+    # ordinary GPU-requesting invocation there is, on a machine that simply has no GPU.
+    #
+    # THE SIGNAL IS NOT LOST -- it was never missing. `gpu_request_unhonoured` still classifies
+    # the request, and the `--json` envelope carries `gpu_evidence_status` / `gpu_proof` /
+    # `native_gpu_unavailable` / `not_gpu_proof_reason` (json_fmt.py). Those are strictly MORE
+    # informative than a coarse exit code, and a harness that wants to know "did GPU actually run"
+    # should read them rather than branch on 0-vs-2. That is what the fields are for.
+    #
+    # Recorded in `_SEARCH_COMMAND_TAIL_EXIT_CODE_POLICIES` above so the decision is discoverable
+    # from the registry rather than only from this comment.
+    exit_incomplete = all_results.result_incomplete
+
     if files_with_matches:
         if matched_files:
             _emit_stats()
@@ -8445,9 +8546,9 @@ def search_command(
                 config,
             )
             _write_path_list(output_paths, use_nul=null)
-            sys.exit(2 if all_results.result_incomplete else 0)
+            sys.exit(2 if exit_incomplete else 0)
         _emit_stats()
-        sys.exit(2 if all_results.result_incomplete else 1)
+        sys.exit(2 if exit_incomplete else 1)
 
     if files_without_match:
         unmatched_candidates = candidate_files_set - matched_files
@@ -8459,9 +8560,9 @@ def search_command(
         if unmatched:
             _emit_stats()
             _write_path_list(unmatched, use_nul=null)
-            sys.exit(2 if all_results.result_incomplete else 0)
+            sys.exit(2 if exit_incomplete else 0)
         _emit_stats()
-        sys.exit(2 if all_results.result_incomplete else 1)
+        sys.exit(2 if exit_incomplete else 1)
 
     if all_results.is_empty:
         _emit_stats()
@@ -8512,11 +8613,11 @@ def search_command(
             from tensor_grep.cli.formatters.json_fmt import JsonFormatter
 
             _safe_stdout_line(JsonFormatter().format(all_results))
-        sys.exit(2 if all_results.result_incomplete else 1)
+        sys.exit(2 if exit_incomplete else 1)
 
     if quiet:
         _emit_stats()
-        sys.exit(2 if all_results.result_incomplete else 0)
+        sys.exit(2 if exit_incomplete else 0)
 
     formatter: OutputFormatter
 
@@ -8545,9 +8646,10 @@ def search_command(
 
     _safe_stdout_line(formatter.format(all_results))
     _emit_stats()
-    if all_results.result_incomplete:
+    if exit_incomplete:
         # rg-parity: partial results (rg exit 2, soft per-file error) exit 2 after a formatted
-        # success, not 0 — so a caller/agent sees the same incompleteness rg would signal.
+        # success, not 0 — so a caller/agent sees the same incompleteness rg would signal. An
+        # unhonoured explicit --gpu-device-ids request (backlog #22) takes the same exit.
         sys.exit(2)
 
 
