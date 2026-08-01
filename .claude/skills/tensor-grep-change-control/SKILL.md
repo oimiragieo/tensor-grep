@@ -165,8 +165,8 @@ Rule 6 is easy to underrate: if you touch `.github/workflows/ci.yml`, `.github/w
 | # | Site | File | Verified anchor |
 |---|---|---|---|
 | 1 | `KNOWN_COMMANDS` (Python known-command registry) | `src/tensor_grep/cli/commands.py` | `commands.py:9` |
-| 2 | `Commands::X` enum variant + dispatch arm (native front door) | `rust_core/src/main.rs` | `enum Commands` at `main.rs:889` |
-| 3 | `PUBLIC_TOP_LEVEL_COMMANDS` (parity contract test) | `tests/e2e/test_routing_parity.py` | `:18` (asserted at `:563-564`) |
+| 2 | `Commands::X` enum variant + dispatch arm (native front door) | `rust_core/src/main.rs` | `grep -n "enum Commands" rust_core/src/main.rs` (was `:889`, now `:910`) |
+| 3 | `PUBLIC_TOP_LEVEL_COMMANDS` (parity contract test) | `tests/e2e/test_routing_parity.py` | `grep -n "PUBLIC_TOP_LEVEL_COMMANDS = " tests/e2e/test_routing_parity.py` (was `:18`, now `:46`); asserted by `test_top_level_help_visible_commands_match_public_contract` (was `:563-564`, now def `:583`, asserts `:592-593`) |
 | 4 | `@app.command` function (Typer entry point) | `src/tensor_grep/cli/main.py` | `grep -c "@app.command" src/tensor_grep/cli/main.py` (re-run before citing a count — it drifts every release; do not trust a stamped number) |
 
 ### Adding a search flag (`tg search --myflag`) — 2 front doors (miss one → `rg: unrecognized flag` crash for installed users)
@@ -174,7 +174,7 @@ Rule 6 is easy to underrate: if you touch `.github/workflows/ci.yml`, `.github/w
 | # | Front door | File | Verified anchor |
 |---|---|---|---|
 | 1 | `SEARCH_PYTHON_PASSTHROUGH_FLAGS` (native allowlist) | `rust_core/src/main.rs` | grep `SEARCH_PYTHON_PASSTHROUGH_FLAGS` (was `:183`, now `:204`) |
-| 2 | `bootstrap._TG_ONLY_SEARCH_FLAGS` (Python bootstrap allowlist) | `src/tensor_grep/cli/bootstrap.py` | `:50` (checked at `:355`) |
+| 2 | `bootstrap._TG_ONLY_SEARCH_FLAGS` (Python bootstrap allowlist) | `src/tensor_grep/cli/bootstrap.py` | `grep -n "_TG_ONLY_SEARCH_FLAGS" src/tensor_grep/cli/bootstrap.py` — def `:50`, checked at `:404` (was cited as checked at `:355`) |
 
 **Why / incident:** The `tg search --rank` flag missed one of the two front doors. CliRunner tests were green — because CliRunner bypasses the bootstrap front door (Part 5) — so the crash shipped and only surfaced for users of the published binary (`AGENTS.md:405-410`). The **CI registration-completeness gate is BLOCKING since v1.17.1 (#282)** and its extractor is comment-aware (`#`-commented entries are not counted as registered) (`AGENTS.md:414`).
 
@@ -210,7 +210,7 @@ language works for some commands and quietly does nothing for others):
 | # | Seam | Feeds | File | Verified anchor |
 |---|---|---|---|---|
 | 1 | `_imports_and_symbols_for_path` | `tg imports` (import list + symbols) | `repo_map.py` | grep `def _imports_and_symbols_for_path` (was `:6244`, now `:6627`; branches `:6650-6679`) |
-| 2 | `_imports_with_lines_for_path` | `tg imports`' line-numbered spans | `repo_map.py` | `:6440` — currently dispatches only python/javascript/typescript/rust/java; go/php/csharp fall through to `[]` here today (matches seam 5's exclusion below) |
+| 2 | `_imports_with_lines_for_path` | `tg imports`' line-numbered spans | `repo_map.py` | `grep -n "^def _imports_with_lines_for_path" src/tensor_grep/cli/repo_map.py` (was `:6440`, now `:6832`) — currently dispatches only python/javascript/typescript/rust/java; go/php/csharp fall through to `[]` here today (matches seam 5's exclusion below) |
 | 3 | `build_symbol_source_from_map` | `tg source` | `repo_map.py` | grep `def build_symbol_source_from_map` (was `:15815`, now `:16326` -- 511 lines adrift) |
 | 4 | `_target_language_for_path` | **MOST-FORGOTTEN.** Feeds the `tg agent` capsule's query-language-vs-target-language confidence gate (`agent_capsule.py`) | `repo_map.py` | grep `def _target_language_for_path` (was `:7383`, now `:7867`) -- the function's own comments say "MOST-FORGOTTEN seam" at each of the 4 newest branches, grep that phrase rather than trusting sub-line numbers; skip it and the capsule can silently report "no target language" for a real target instead of downgrading confidence honestly |
 | 5 | `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` | `tg imports <file>`'s file-dependency-resolution "supported" gate | `repo_map.py` | grep `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` (was `:16633`, now `:17148`) -- currently `{python, javascript, typescript, rust, java}`; go/php/csharp are deliberately excluded (their `import_update_target` is still `None`, a tracked follow-up), so those files get an honest `result_incomplete=True` instead of a silently-empty resolved-imports list |
@@ -219,7 +219,7 @@ language works for some commands and quietly does nothing for others):
 (go/java/php/csharp) sets `provenance_when_missing="grammar-missing"` in its `register_language(...)`
 call (grep `language_id="go"`; was `repo_map.py:6090`, now ~`:6368`) — never `"regex-heuristic"` — so a file whose tree-sitter grammar
 package isn't installed surfaces as an honest `resolution_gaps` entry via
-`_language_coverage_gaps_for_universe` (`repo_map.py:8461`, the fail-closed branch at `:8019`) instead
+`_language_coverage_gaps_for_universe` (`grep -n "^def _language_coverage_gaps_for_universe" src/tensor_grep/cli/repo_map.py` — was `:8461`, now `:8478`; the fail-closed branch — `grep -n "fail_closed = True" src/tensor_grep/cli/repo_map.py`, now `:8521` — was previously cited as `:8019`, which today lands inside an unrelated AST-symbol-matching helper, `_thin_cli_dispatcher_call_targets`, not this function at all) instead
 of a silent empty result. This is Part 4's Backend Fail-Closed Contract, applied inside the language
 registry (see Part 4's own worked example below).
 
@@ -300,13 +300,13 @@ gets printed.
 symbol registry (Part 3) applies this identically. `LanguageSpec.provenance_when_missing` must be
 `"grammar-missing"` (never `"regex-heuristic"`) for any language with no text-heuristic fallback —
 go/java/php/csharp all set it this way in their `register_language(...)` call (grep `language_id="go"`; was `repo_map.py:6090`, now ~`:6368`)
-— so `_language_coverage_gaps_for_universe` (`repo_map.py:8461`) can tell "grammar not installed, fail
-closed" apart from "language has a regex fallback, degrade quietly" at its branch on line `:8019`. Get
+— so `_language_coverage_gaps_for_universe` (`grep -n "^def _language_coverage_gaps_for_universe" src/tensor_grep/cli/repo_map.py` — was `:8461`, now `:8478`) can tell "grammar not installed, fail
+closed" apart from "language has a regex fallback, degrade quietly" at its branch — `grep -n "fail_closed = True" src/tensor_grep/cli/repo_map.py`, now `:8521` (was cited as `:8019`, which today lands inside an unrelated AST-symbol-matching helper, not this function). Get
 this backwards (label a no-fallback language `"regex-heuristic"`) and a grammar-missing file would read
 as a clean, silent "zero symbols found" instead of an honest gap — precisely the failure class this Part
 exists to prevent, just reached through a registry field instead of a bare `except`.
 
-**Domain note (ripgrep):** tg's default regex path matches invalid UTF-8; **PCRE2 requires valid UTF-8 and transcodes** — which is *why* swapping `--pcre2` to a non-PCRE2 engine changes results, not just performance. `rg` exit code `1` with empty output is a legitimate "no match" (`AGENTS.md:367`); exit code `2` with matches already parsed is treated as **partial** (kept + `result_incomplete=True`, the "surface degraded, don't discard" posture this Part argues for, not a swallow); any other case (`2`+ with nothing parsed, or `>2`) is a **real ripgrep failure** — `ripgrep_backend.py` raises `BackendExecutionError` (not a bare `RuntimeError`) on `returncode > 1 and not partial` at three call sites (`:126`, `:297`, `:413`) and this must not be swallowed as non-fatal.
+**Domain note (ripgrep):** tg's default regex path matches invalid UTF-8; **PCRE2 requires valid UTF-8 and transcodes** — which is *why* swapping `--pcre2` to a non-PCRE2 engine changes results, not just performance. `rg` exit code `1` with empty output is a legitimate "no match" (`AGENTS.md:367`); exit code `2` with matches already parsed is treated as **partial** (kept + `result_incomplete=True`, the "surface degraded, don't discard" posture this Part argues for, not a swallow); any other case (`2`+ with nothing parsed, or `>2`) is a **real ripgrep failure** — `ripgrep_backend.py` raises `BackendExecutionError` (not a bare `RuntimeError`) on `returncode > 1 and not partial` at three call sites — `grep -n "if result.returncode > 1 and not partial" src/tensor_grep/backends/ripgrep_backend.py` (was `:126`, `:297`, `:413`, now `:127`, `:308`, `:426`) — and this must not be swallowed as non-fatal.
 
 ---
 
