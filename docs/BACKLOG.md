@@ -882,7 +882,7 @@ Full register: `docs/audits/2026-07-31-tensor-grep-deep-dive.md`. Remediation:
 | DD-008/#865 | MED | `--ltl` in bootstrap, absent from `rust_core` (clap-reject) | VERIFIED | Ready |
 | DD-005 | MED | `--stats` Win vs Linux route divergence | VERIFIED (documented) | Open |
 | #862 | LOW | GPU evidence argv missing `--` (paths always absolute) | WEAKENED | LOW |
-| #863 | LOW | Daemon tokenless `is_authorized` fail-open | VERIFIED | LOW |
+| #863 | LOW | Daemon tokenless `is_authorized` fail-open | VERIFIED | **CLOSED** (2026-08-01 backlog campaign, PR-B: fails closed) |
 | DD-002 | — | Audit-manifest Rust `O_NOFOLLOW` “gap” | **KILLED** | Comment rot only |
 | #115/#125 | — | Listed open LOW | **KILLED** | Mark CLOSED |
 | DD-004 | INFO | `cpu_backend` `RuntimeError` hygiene | WEAKENED | Bank |
@@ -1153,9 +1153,13 @@ for the next audit rather than re-opened as active work):**
 - **#862** (audit S3) add `--` sentinel before `agent_capsule` GPU `evidence_path` positional
   (`agent_capsule.py:1711-1721`); optional twin for `wslpath` in `runtime_paths`. Defense-in-depth
   (paths are `resolve()`-absolute today). MCP-276 / CWE-88 class.
-- **#863** (audit S4) make `session_daemon` `token` required (drop tokenless fail-open at
-  `is_authorized` when `token=""`) **or** document as deliberate bootstrap trust boundary in
-  `CONTRACTS.md`. Latent — production always generates a token; test pins tokenless compat today.
+- **#863** — **CLOSED** (2026-08-01 backlog campaign, PR-B). `is_authorized` now fails CLOSED when
+  `self.token` is falsy; this is a POLICY REVERSAL of the previously pinned tokenless-compat
+  behavior (`tests/unit/test_session_daemon_security.py::test_tokenless_daemon_fails_closed`
+  replaces the retired `test_tokenless_server_stays_backward_compatible` pin), argued on the
+  merits because the sole production constructor (`run_session_daemon_server`) always generates a
+  token via `secrets.token_urlsafe(32)`, so the "legacy/in-test" population the old pin protected
+  is empty in production.
 - **#115** / **#125** — **CLOSED** (CHANGELOG closes #115/#125a; Rust checkpoint/audit/rollback
   writes use `write_bytes_refuse_symlink`). Do not re-open from the old LOW bullets; 2026-07-31
   audit DD-007.

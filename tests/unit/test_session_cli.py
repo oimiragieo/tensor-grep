@@ -2458,7 +2458,7 @@ def test_session_daemon_edit_plan_reuses_identical_response_cache(
 
     monkeypatch.setattr(session_daemon, "serve_session_request", fake_serve_session_request)
 
-    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0))
+    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0), token="tok")
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -2472,9 +2472,9 @@ def test_session_daemon_edit_plan_reuses_identical_response_cache(
             "max_repo_files": 2,
         }
 
-        first = session_daemon._daemon_request(host, port, request)
-        second = session_daemon._daemon_request(host, port, request)
-        stats = session_daemon._daemon_request(host, port, {"command": "stats"})
+        first = session_daemon._daemon_request(host, port, request, token="tok")
+        second = session_daemon._daemon_request(host, port, request, token="tok")
+        stats = session_daemon._daemon_request(host, port, {"command": "stats"}, token="tok")
     finally:
         server.shutdown()
         thread.join(timeout=1)
@@ -2525,7 +2525,7 @@ def test_session_daemon_refresh_on_stale_response_is_cached(
 
     monkeypatch.setattr(session_daemon, "serve_session_request", fake_serve_session_request)
 
-    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0))
+    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0), token="tok")
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -2540,9 +2540,9 @@ def test_session_daemon_refresh_on_stale_response_is_cached(
             "max_repo_files": 2,
         }
 
-        first = session_daemon._daemon_request(host, port, request)
-        second = session_daemon._daemon_request(host, port, request)
-        stats = session_daemon._daemon_request(host, port, {"command": "stats"})
+        first = session_daemon._daemon_request(host, port, request, token="tok")
+        second = session_daemon._daemon_request(host, port, request, token="tok")
+        stats = session_daemon._daemon_request(host, port, {"command": "stats"}, token="tok")
     finally:
         server.shutdown()
         thread.join(timeout=1)
@@ -2581,7 +2581,7 @@ def test_session_daemon_refresh_on_added_file_response_is_cached(
         encoding="utf-8",
     )
 
-    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0))
+    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0), token="tok")
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -2598,9 +2598,9 @@ def test_session_daemon_refresh_on_added_file_response_is_cached(
             "optimize_context": True,
         }
 
-        first = session_daemon._daemon_request(host, port, request)
-        second = session_daemon._daemon_request(host, port, request)
-        stats = session_daemon._daemon_request(host, port, {"command": "stats"})
+        first = session_daemon._daemon_request(host, port, request, token="tok")
+        second = session_daemon._daemon_request(host, port, request, token="tok")
+        stats = session_daemon._daemon_request(host, port, {"command": "stats"}, token="tok")
     finally:
         server.shutdown()
         thread.join(timeout=1)
@@ -2631,7 +2631,7 @@ def test_session_daemon_edit_plan_repeated_core_payload_is_stable(
     runner = CliRunner()
     opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
 
-    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0))
+    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0), token="tok")
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -2645,10 +2645,10 @@ def test_session_daemon_edit_plan_repeated_core_payload_is_stable(
             "max_repo_files": 2,
         }
 
-        first = session_daemon._daemon_request(host, port, request)
-        second = session_daemon._daemon_request(host, port, request)
-        third = session_daemon._daemon_request(host, port, request)
-        stats = session_daemon._daemon_request(host, port, {"command": "stats"})
+        first = session_daemon._daemon_request(host, port, request, token="tok")
+        second = session_daemon._daemon_request(host, port, request, token="tok")
+        third = session_daemon._daemon_request(host, port, request, token="tok")
+        stats = session_daemon._daemon_request(host, port, {"command": "stats"}, token="tok")
     finally:
         server.shutdown()
         thread.join(timeout=1)
@@ -2705,7 +2705,7 @@ def test_session_daemon_context_render_reuses_identical_response_cache(
 
     monkeypatch.setattr(session_daemon, "serve_session_request", fake_serve_session_request)
 
-    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0))
+    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0), token="tok")
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -2721,9 +2721,9 @@ def test_session_daemon_context_render_reuses_identical_response_cache(
             "max_repo_files": 2,
         }
 
-        first = session_daemon._daemon_request(host, port, request)
-        second = session_daemon._daemon_request(host, port, request)
-        stats = session_daemon._daemon_request(host, port, {"command": "stats"})
+        first = session_daemon._daemon_request(host, port, request, token="tok")
+        second = session_daemon._daemon_request(host, port, request, token="tok")
+        stats = session_daemon._daemon_request(host, port, {"command": "stats"}, token="tok")
     finally:
         server.shutdown()
         thread.join(timeout=1)
@@ -2772,7 +2772,7 @@ def test_session_daemon_context_render_without_session_uses_implicit_cached_sess
 
     monkeypatch.setattr(session_daemon, "serve_session_request", fake_serve_session_request)
 
-    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0))
+    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0), token="tok")
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -2787,9 +2787,9 @@ def test_session_daemon_context_render_without_session_uses_implicit_cached_sess
             "max_repo_files": 2,
         }
 
-        first = session_daemon._daemon_request(host, port, request)
-        second = session_daemon._daemon_request(host, port, request)
-        stats = session_daemon._daemon_request(host, port, {"command": "stats"})
+        first = session_daemon._daemon_request(host, port, request, token="tok")
+        second = session_daemon._daemon_request(host, port, request, token="tok")
+        stats = session_daemon._daemon_request(host, port, {"command": "stats"}, token="tok")
     finally:
         server.shutdown()
         thread.join(timeout=1)
@@ -2842,7 +2842,7 @@ def test_session_daemon_implicit_sessions_are_keyed_by_repo_scan_budget(
 
     monkeypatch.setattr(session_daemon, "serve_session_request", fake_serve_session_request)
 
-    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0))
+    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0), token="tok")
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -2857,6 +2857,7 @@ def test_session_daemon_implicit_sessions_are_keyed_by_repo_scan_budget(
                 "query": "create invoice",
                 "max_repo_files": 1,
             },
+            token="tok",
         )
         second = session_daemon._daemon_request(
             host,
@@ -2867,8 +2868,9 @@ def test_session_daemon_implicit_sessions_are_keyed_by_repo_scan_budget(
                 "query": "create invoice",
                 "max_repo_files": 10,
             },
+            token="tok",
         )
-        stats = session_daemon._daemon_request(host, port, {"command": "stats"})
+        stats = session_daemon._daemon_request(host, port, {"command": "stats"}, token="tok")
     finally:
         server.shutdown()
         thread.join(timeout=1)
@@ -2894,7 +2896,7 @@ def test_session_daemon_implicit_session_lru_eviction_cleans_payload(
 
     monkeypatch.setattr(session_daemon, "_DAEMON_IMPLICIT_SESSION_MAX_ENTRIES", 1)
 
-    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0))
+    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0), token="tok")
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -2909,6 +2911,7 @@ def test_session_daemon_implicit_session_lru_eviction_cleans_payload(
                 "query": "create invoice",
                 "max_repo_files": 1,
             },
+            token="tok",
         )
         second = session_daemon._daemon_request(
             host,
@@ -2919,6 +2922,7 @@ def test_session_daemon_implicit_session_lru_eviction_cleans_payload(
                 "query": "create invoice",
                 "max_repo_files": 2,
             },
+            token="tok",
         )
     finally:
         server.shutdown()
@@ -2965,7 +2969,7 @@ def test_session_daemon_edit_plan_without_session_uses_implicit_cached_session(
 
     monkeypatch.setattr(session_daemon, "serve_session_request", fake_serve_session_request)
 
-    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0))
+    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0), token="tok")
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -2978,9 +2982,9 @@ def test_session_daemon_edit_plan_without_session_uses_implicit_cached_session(
             "max_repo_files": 2,
         }
 
-        first = session_daemon._daemon_request(host, port, request)
-        second = session_daemon._daemon_request(host, port, request)
-        stats = session_daemon._daemon_request(host, port, {"command": "stats"})
+        first = session_daemon._daemon_request(host, port, request, token="tok")
+        second = session_daemon._daemon_request(host, port, request, token="tok")
+        stats = session_daemon._daemon_request(host, port, {"command": "stats"}, token="tok")
     finally:
         server.shutdown()
         thread.join(timeout=1)
@@ -3033,7 +3037,7 @@ def test_session_daemon_edit_plan_cache_checks_stale_files_before_hit(
 
     monkeypatch.setattr(session_daemon, "serve_session_request", fake_serve_session_request)
 
-    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0))
+    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0), token="tok")
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -3047,9 +3051,9 @@ def test_session_daemon_edit_plan_cache_checks_stale_files_before_hit(
             "max_repo_files": 2,
         }
 
-        first = session_daemon._daemon_request(host, port, request)
+        first = session_daemon._daemon_request(host, port, request, token="tok")
         module_path.write_text("def create_invoice():\n    return 100\n", encoding="utf-8")
-        second = session_daemon._daemon_request(host, port, request)
+        second = session_daemon._daemon_request(host, port, request, token="tok")
     finally:
         server.shutdown()
         thread.join(timeout=1)
@@ -3104,7 +3108,7 @@ def test_session_daemon_capped_refresh_checks_modified_files_before_hit(
 
     monkeypatch.setattr(session_daemon, "serve_session_request", fake_serve_session_request)
 
-    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0))
+    server = session_daemon._ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0), token="tok")
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -3119,10 +3123,10 @@ def test_session_daemon_capped_refresh_checks_modified_files_before_hit(
             "max_repo_files": 1,
         }
 
-        first = session_daemon._daemon_request(host, port, request)
+        first = session_daemon._daemon_request(host, port, request, token="tok")
         module_path.write_text("def create_invoice():\n    return 100\n", encoding="utf-8")
-        second = session_daemon._daemon_request(host, port, request)
-        stats = session_daemon._daemon_request(host, port, {"command": "stats"})
+        second = session_daemon._daemon_request(host, port, request, token="tok")
+        stats = session_daemon._daemon_request(host, port, {"command": "stats"}, token="tok")
     finally:
         server.shutdown()
         thread.join(timeout=1)

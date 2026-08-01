@@ -55,12 +55,44 @@ def test_is_authorized_requires_matching_token() -> None:
         server.server_close()
 
 
-def test_tokenless_server_stays_backward_compatible() -> None:
-    # A server constructed without a token (legacy/in-test path) must not reject requests.
-    server = session_daemon._ThreadedSessionDaemon(Path.cwd(), ("127.0.0.1", 0))
+def test_tokenless_daemon_fails_closed(tmp_path: Path) -> None:
+    # POLICY REVERSAL (2026-08-01 backlog campaign, PR-B): this test REPLACES
+    # test_tokenless_server_stays_backward_compatible, which pinned the OPPOSITE behavior
+    # ("A server constructed without a token (legacy/in-test path) must not reject
+    # requests"). Reversal rationale: the sole production constructor
+    # (run_session_daemon_server) always generates a token via secrets.token_urlsafe(32),
+    # so the pinned "legacy/in-test" population that behavior protected is empty in
+    # production; on an IPC socket, "no shared secret exists" must never read as
+    # "everyone is authorized". A tokenless daemon now refuses every request instead.
+    server = session_daemon._ThreadedSessionDaemon(tmp_path.resolve(), ("127.0.0.1", 0), token="")
     try:
-        assert server.is_authorized({}) is True
-        assert server.is_authorized({"command": "ping"}) is True
+        assert server.is_authorized({}) is False
+        assert server.is_authorized({"token": ""}) is False
+        assert server.is_authorized({"token": "anything"}) is False
+        assert server.is_authorized({"command": "ping"}) is False
+    finally:
+        server.server_close()
+
+
+def test_tokenless_daemon_request_gets_unauthorized_envelope(tmp_path: Path) -> None:
+    # Over-the-wire arm (round-2 audit point): is_authorized's only consumer is
+    # _SessionDaemonHandler.handle, which turns a failed check into the "unauthorized"
+    # envelope. A direct-predicate test alone never proves the envelope actually reaches
+    # the wire; mirror the handler __new__ + BytesIO idiom used by
+    # test_session_daemon_returns_invalid_request_for_malformed_json in
+    # test_session_serve.py, with a WELL-FORMED but tokenless request.
+    server = session_daemon._ThreadedSessionDaemon(tmp_path.resolve(), ("127.0.0.1", 0), token="")
+    try:
+        handler = session_daemon._SessionDaemonHandler.__new__(session_daemon._SessionDaemonHandler)
+        handler.server = server
+        handler.rfile = io.BytesIO(b'{"command":"ping"}\n')
+        handler.wfile = io.BytesIO()
+
+        session_daemon._SessionDaemonHandler.handle(handler)
+
+        payload = json.loads(handler.wfile.getvalue().decode("utf-8").strip())
+        assert payload["error"]["code"] == "unauthorized"
+        assert "ok" not in payload
     finally:
         server.server_close()
 
@@ -672,6 +704,10 @@ def test_lifecycle_monitor_defers_shutdown_while_request_in_flight(
 def test_lifecycle_monitor_returns_when_both_limits_disabled(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv(session_daemon._DAEMON_MAX_UPTIME_SECONDS_ENV, "0")
     monkeypatch.setenv(session_daemon._DAEMON_IDLE_SHUTDOWN_SECONDS_ENV, "0")
+    # Deliberately left tokenless (PR-B census, disposition: DELIBERATE): this daemon
+    # never handles a request, so is_authorized is never called and the fail-closed
+    # policy reversal above does not apply here. This test is the living proof that
+    # tokenless CONSTRUCTION stays legal -- only tokenless AUTHORIZATION is forbidden.
     server = session_daemon._ThreadedSessionDaemon(tmp_path.resolve(), ("127.0.0.1", 0))
     stop_event = threading.Event()
     try:
