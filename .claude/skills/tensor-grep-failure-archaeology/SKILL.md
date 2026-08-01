@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-failure-archaeology
-description: Use when about to "fix" or "optimize" something in tensor-grep that feels novel — before proposing PyO3/FFI for directory walking, re-enabling free-threading, adding a --json self-test, tightening a dependency upper-cap, blaming an IDF/ranking flip, trusting a green mock/FFI test, diagnosing a release that "didn't publish", chasing a reported latency "regression" without profiling at scale, shipping a doc-drift/precision heuristic off green fixtures alone, adding a "differs-from-default" native-delegation gate, reading a `capfd`-based CliRunner test result, micro-optimizing a hot loop without checking who actually consumes the value, re-proposing cAST structural chunking as the default, re-proposing dense int8/binary/PCA embedding compression, proposing a warm-session/daemon search-index shortcut, proposing GPU-for-search or re-litigating the PFAC-vs-brute-force kernel claim, hitting the many-pattern Aho-Corasick dedup bug, trusting an unverified "cheap win" from a paper/research steal-list, cloning a "mirror language X" onboarding brief without checking which module is the CURRENT template, trusting a conflict-free git rebase across several PRs that touch the same shared registration file as proof nothing was silently dropped, or trusting a BANKED fix hypothesis (a memory note from a prior session) without re-deriving it against the real AST/code; trusting a cause-emitter census count reached by "this one covers that one" reasoning instead of counting each emitter directly; re-proposing an auto-derived agent-id for `tg ledger --claim`; treating MaxSim reranking's absence after `tg install-dense` as a CUJ-coverage gap instead of the separate `rerank`-extra hold it is; or chasing a GPU exit-code-2 report, or trusting a control/repro that reproduces the failing output, before confirming which exact symbol the control checked and whether that code path runs in the real CI job. A chronicle of settled battles (symptom -> root cause -> evidence -> status) so no one re-fights them. Load it to check "has this already been tried and lost?" before spending effort. For a live NEW failure use tensor-grep-debugging-playbook; for the process gates to re-attempt one use tensor-grep-change-control.
+description: Use when about to "fix" or "optimize" something in tensor-grep that feels novel — before proposing PyO3/FFI for directory walking, re-enabling free-threading, adding a --json self-test, tightening a dependency upper-cap, blaming an IDF/ranking flip, trusting a green mock/FFI test, diagnosing a release that "didn't publish", chasing a reported latency "regression" without profiling at scale, shipping a doc-drift/precision heuristic off green fixtures alone, adding a "differs-from-default" native-delegation gate, reading a `capfd`-based CliRunner test result, micro-optimizing a hot loop without checking who actually consumes the value, re-proposing cAST structural chunking as the default, re-proposing dense int8/binary/PCA embedding compression, proposing a warm-session/daemon search-index shortcut, proposing GPU-for-search or re-litigating the PFAC-vs-brute-force kernel claim, hitting the many-pattern Aho-Corasick dedup bug, trusting an unverified "cheap win" from a paper/research steal-list, cloning a "mirror language X" onboarding brief without checking which module is the CURRENT template, trusting a conflict-free git rebase across several PRs that touch the same shared registration file as proof nothing was silently dropped, or trusting a BANKED fix hypothesis (a memory note from a prior session) without re-deriving it against the real AST/code; trusting a cause-emitter census count reached by "this one covers that one" reasoning instead of counting each emitter directly; re-proposing an auto-derived agent-id for `tg ledger --claim`; treating MaxSim reranking's absence after `tg install-dense` as a CUJ-coverage gap instead of the separate `rerank`-extra hold it is; or chasing a GPU exit-code-2 report, or trusting a control/repro that reproduces the failing output, before confirming which exact symbol the control checked and whether that code path runs in the real CI job; or re-adding a shared-argv-builder flag like `-q` to `_build_cmd` instead of `search_passthrough`, silently starving the consumers that parse rg's stdout rather than stream it. A chronicle of settled battles (symptom -> root cause -> evidence -> status) so no one re-fights them. Load it to check "has this already been tried and lost?" before spending effort. For a live NEW failure use tensor-grep-debugging-playbook; for the process gates to re-attempt one use tensor-grep-change-control.
 ---
 
 # Tensor-Grep Failure Archaeology
@@ -77,6 +77,9 @@ Load this **before** you spend effort on any of these, because each has already 
 - Chasing a GPU-path **exit code 2** as a plain regression, or trusting a control/repro that
   reproduces the failing output, before confirming which exact symbol it exercised and whether
   that symbol's job runs in the real CI path (Battle 29).
+- Adding a flag that **suppresses or alters rg's output** (e.g. `-q`) to the shared `_build_cmd`
+  argv builder instead of `search_passthrough` — three of its four consumers PARSE stdout, and
+  suppression reads as a false no-match, not a quieter one (Battle 30).
 
 ## When NOT to use this skill (use a sibling instead)
 
@@ -571,6 +574,20 @@ OPERATIVE in the real path (here: read the actual workflow file to see whether t
 builds the binary) — "reproduces byte-for-byte" rules out nothing about which of several plausible
 mechanisms is the live one. Sibling of Battle 12 (profiled the wrong command) on the measurement side,
 and Battle 25 (a banked hypothesis not re-derived against real code) on the planning side.
+
+## Battle 30 -- `-q` shipped in the shared `_build_cmd`, not `search_passthrough`: suppression read as a false no-match (#876/#880)
+
+| Field | Detail |
+|---|---|
+| **Symptom** | `tg search -q --count` on a file with real matches reported `total_matches: 0` and exited 1 -- a false no-match, not merely a quieter one. |
+| **Root cause** | `-q` was added to `RipgrepBackend._build_cmd` -- the shared argv builder where ~30 other flags live, so it looked like the natural home. `_build_cmd` has FOUR consumers; only ONE streams rg's output. The other three PARSE rg's stdout, and `-q` makes rg print nothing. MEASURED on the real binary: `rg --count-matches needle f.txt` -> `"2"`, with `-q` -> `""`; `rg -l needle f.txt` -> `"f.txt"`, with `-q` -> `""`; `rg --json needle f.txt` -> 5 lines, with `-q` -> 1 line. Each parsing consumer read the starved stdout as zero matches. |
+| **Evidence** | Shipped in #876, fixed in #880. |
+| **Status** | **SETTLED.** `-q` lives ONLY in `search_passthrough`, never in `_build_cmd`. |
+
+**Rule:** Before adding a flag to a SHARED argv builder, enumerate its consumers and ask which of
+them CONSUME the thing the flag changes. A flag that alters/suppresses output belongs to the
+consumers that stream it, not the ones that parse it. Anyone who "tidies" `-q` back into the
+shared `_build_cmd` re-ships this exact false zero.
 
 ---
 

@@ -260,6 +260,28 @@ the *shape of the output* (every place this exact artifact gets constructed), ne
 implementation mechanism -- a sibling that reaches the same artifact by a different path is exactly the
 member a mechanism-keyed search cannot see.
 
+### A shared builder's flag belongs to its consumers, not its neighbors (#876, fixed #880)
+
+**Rule:** before adding a flag/param to a SHARED builder, enumerate every consumer of what it builds and
+ask which of them CONSUME the thing the flag changes -- not just where the flag fits among its neighbors.
+
+**Why / incident:** `-q` was added to `RipgrepBackend._build_cmd` -- the shared argv builder, where ~30
+other flags already live, so it looked like the natural home. `_build_cmd` has FOUR consumers; only ONE
+streams rg's stdout, the other THREE parse it, and `-q` makes rg print nothing. Measured on the real
+binary:
+
+    rg --count-matches needle f.txt -> "2"     with -q -> ""
+    rg -l             needle f.txt -> "f.txt"  with -q -> ""
+    rg --json         needle f.txt -> 5 lines  with -q -> 1
+
+So `tg search -q --count` on a MATCHING file reported `total_matches=0`, exit 1 -- a false no-match plus
+an exit-contract violation, shipped in #876. A flag that alters OUTPUT belongs to the consumers that
+stream, not the ones that parse.
+
+**Applies to:** any shared builder (argv, query, request) with more than one consumer -- grep every call
+site and classify each "streams the result" or "parses the result" before adding a flag that changes what
+gets printed.
+
 ---
 
 ## Part 4 — Backend fail-closed contract (the silent-wrong-answer bug class)
@@ -387,6 +409,12 @@ byte-for-byte, not because the refactor itself was re-read carefully enough to n
 applying any "extract a shared helper" refactor, check whether either call site is a string later written
 to disk / `exec`'d / handed to another process -- a DRY fix that crosses that boundary is a correctness bug
 wearing a cleanup's clothes.
+
+**A plan's stated base commit is a claim, not a fact -- prove it (2026-08-01).** A plan must state its
+base commit AND prove it with `git rev-parse origin/main`; an auditor re-derives that base rather than
+accepting the plan's header. A planning agent stated one commit as its base while its own citations
+matched a different one, and `origin/main` was 15 minutes ahead of both -- its Item 1 "warned" about a
+trap that was already live on `main`, and two of its items were already shipped.
 
 ---
 
@@ -614,7 +642,12 @@ Volatile facts are dated **2026-07-02, release `v1.17.25`**, with a round-4 refr
 **2026-07-31** pass added Part 1 Rule 7 ("not mine"/"CI doesn't flag it" is not a disposition), a new Part
 3 subsection on census-population fallibility (curate the list by deletion-proof, enumerate by artifact
 not shared mechanism), and a new Part 6 paragraph (refactoring code that lives inside a generated string
-is not refactoring code) — doc-only, no release tag re-verified for this pass. Re-verify anything below before relying on it:
+is not refactoring code) — doc-only, no release tag re-verified for this pass. A **2026-08-01** pass
+added a Part 3 subsection on shared-builder flag placement (`-q` landed in `RipgrepBackend._build_cmd`,
+the shared argv builder, and suppressed output for the three of its four consumers that parse rather than
+stream — #876, fixed #880: enumerate consumers before adding a flag that changes output) and a Part 6
+one-liner requiring a plan to prove its stated base commit with `git rev-parse origin/main` rather than
+have an auditor accept the header — doc-only, no release tag re-verified for this pass. Re-verify anything below before relying on it:
 
 | Claim | Re-verify command |
 |---|---|
