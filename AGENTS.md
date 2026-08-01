@@ -1232,6 +1232,88 @@ Corollary on granularity: **a function is not the unit; the artifact is.** Two a
 "cover" the second one's bare positional. Enumerate the things being built, not the places they are
 built in.
 
+### The check and the defect AGREED with each other, so neither could catch the other (2026-08-01)
+
+Six instances in one day, one shape: **the check was built from the same wrong model that produced
+the defect, so the two were mutually consistent -- and mutual consistency reads as green.** Every
+oracle form above asks "what would this check show if the thing were broken?"; this is the case
+where the answer is "the same" BECAUSE check and defect share an author and a premise. The escape is
+always a third thing neither of them controls: the real consumer, the seam the value crosses, the
+real base commit, the measurement, the guard's actual input list.
+
+**1. Suppressing the OUTPUT is not suppressing the ANSWER.** `-q` was added to
+`RipgrepBackend._build_cmd` -- the shared argv builder where ~30 other flags live, so it looked like
+the natural home. `_build_cmd` has FOUR consumers; only ONE streams. The other three PARSE rg's
+stdout, and `-q` makes rg print nothing. Measured on the real binary:
+
+    rg --count-matches needle f.txt -> "2"      with -q -> ""
+    rg -l             needle f.txt -> "f.txt"   with -q -> ""
+    rg --json         needle f.txt -> 5 lines   with -q -> 1
+
+So `tg search -q --count` on a MATCHING file reported `total_matches=0`, exit 1 -- a false no-match
+AND an exit-contract violation. Shipped in #876, fixed in #880. Before adding a flag to a SHARED
+builder, enumerate its consumers and ask which of them CONSUME the thing the flag changes; a flag
+that alters output belongs to the consumers that stream, not the ones that parse. (The same law
+already binds when WIDENING a flag's meaning -- "grep its CONSUMERS" under Fail-Closed Guidance
+below; this is it at authoring time.)
+
+**2. My own test ASSERTED the bug.** The control arm required `-q` to appear ALONGSIDE
+`--count`/`-l`, reasoning "rg accepts it and suppression wins on stdout". True of rg; irrelevant to
+tg, which CONSUMES that stdout. The revert discipline above ("a control arm that survives the
+revert...") could not have caught this one: the arm DID track the change -- it pinned the change's
+wrong premise. When writing a control arm, state what the CONSUMER does with the value, not what
+the callee accepts. "The tool permits X" is not "our use of X is correct".
+
+**3. A test built at the WRONG SEAM cannot see the defect.** That same test built its argv via
+`_build_cmd` -- precisely where the flag was wrongly placed -- so it was structurally incapable of
+showing the difference. Form 5's law one seam up: the probe shared the defect's location instead of
+its topology. Retargeted to capture at `run_subprocess`, where the argv actually leaves, with an
+`assert captured` arm so an inert capture FAILS rather than returning an empty value that passes
+everything. Build the probe at the seam the VALUE CROSSES, not the seam that is convenient to call.
+
+**4. A stale checkout makes a planner describe a SHIPPED defect as hypothetical.** A planning agent
+stated its base as one commit while its citations matched another, and `origin/main` was 15 minutes
+ahead of both. Its Item 1 "warned" about the exact trap that was already live on main; two of its
+items were ALREADY SHIPPED. A plan must state its base commit AND prove it
+(`git rev-parse origin/main`), and an auditor must re-derive that base rather than accept the
+header. (Extends "Check Whether It Already Shipped" and Form 9's re-derive rule from tasks and
+handed numbers to PLANS.)
+
+**5. A writing seat reproduces the FLATTERING version when it lacks the measurement.** A fable@high
+seat writing onboarding docs flattened the symbol-graph tiers into "10 languages, uniform depth" --
+the exact claim `docs/BACKLOG.md` forbids in as many words, and the exact fact MEASURED hours
+earlier -- 5 parser-backed (go/js/py/rust/ts), 5 foundational defs+imports-only
+(c/cpp/c#/java/php), derived by ASKING THE PRODUCT (`repo_map._symbol_navigation_descriptor()`),
+not by reading the registry field.
+
+    **AND THIS SENTENCE SHIPPED THE WRONG NUMBER, WHICH IS THE POINT.** The first cut of this law
+    said "3 parser-backed, 5 regex-fallback, 2 unresolved". I had hand-counted the
+    `references_and_calls` field at each `register_language` call, found js/ts ABSENT rather than
+    `None`, labelled them "unresolved -- confirm before relying", never confirmed, and then quoted
+    the unconfirmed guess AS THE MEASUREMENT. The figures summed to 10, so it survived a sanity
+    check. `.claude/skills/tensor-grep-enterprise-agent/SKILL.md` says **"Never hand-count this"**,
+    gives the exact command, and records that this line was ALREADY WRONG TWICE (it once said 4/10
+    with go demoted). Mine was the third. The command is one line:
+
+    ```
+    python -c "import sys;sys.path.insert(0,'src');from tensor_grep.cli import repo_map as r;print(r._symbol_navigation_descriptor())"
+    ```
+
+    **A law that cites a number must cite the DERIVATION, not the number.** Caught by an
+    independent audit that ran the command instead of reading the sentence -- in a file that is
+    trusted precisely because people do not re-derive it. The seat did not have that measurement in
+context. Hand a writing seat the MEASUREMENTS, not just the sources: absent a number, a capable
+writer produces the plausible, tidier version -- and it reads as authoritative.
+
+**6. A doc claimed a guard covered it; the guard reads TWO OTHER FILES.** The same doc asserted
+`tests/unit/test_skill_index_sync.py` kept its skill table in sync. That test reads exactly
+`AGENTS.md` and `CLAUDE.md` (:22-23) and had never heard of the doc -- which was already FIVE
+skills short of the 28 on disk, missing `tensor-grep` itself. Before citing a guard as covering
+your artifact, open the guard and read WHICH FILES it consumes; a guard is scoped to its inputs,
+and being adjacent to one is not being covered by it. (The Skills section already records one
+artifact invisible to this same test for the same reason: `skill_rules.json`, which has no
+`SKILL.md`.)
+
 ### A checker that cannot tell a PRODUCER from a PRESENTER reports correct code as broken
 
 A class ratchet flagged 9 functions as "reads incompleteness but never discloses". **All 9 were

@@ -51,7 +51,7 @@ thing below it is the smallest possible instance of this Part's own subject -- a
 an audit that COUNTED the forms rather than reading the sentence. Re-derive the number when you add
 one; do not trust the header, including this one.)
 
-**The one question that catches all nine — before trusting any green signal, ask:
+**The one question that catches all ten — before trusting any green signal, ask:
 "what would this check show if the thing it verifies were BROKEN?"
 If the answer is "the same", it is not verification.**
 
@@ -223,6 +223,23 @@ Windows ACL specifics learned the hard way (#281):
   message was absent from the output. Assert the mutation actually applied (diff the file, or grep
   for the string you just removed) before trusting any red/green arm it produces -- this is Form 6's
   fixture-never-applied trap on the code side of the boundary instead of the environment side.
+- **A control arm that states what the CALLEE accepts is a control the defect agrees with.** The `-q`
+  regression (#876, fixed #880) shipped with its own test requiring `-q` to appear ALONGSIDE
+  `--count`/`-l`, on the reasoning "rg accepts the combination and suppression wins on stdout" --
+  true of rg, irrelevant to tg, which PARSES that stdout. Measured on the real binary:
+  `rg --count-matches needle f.txt` returns `"2"`; with `-q` it returns `""` -- so
+  `tg search -q --count` on a MATCHING file reported `total_matches=0`, exit 1: a false no-match and
+  an exit-contract violation. The test and the defect encoded the same wrong theory, so neither could
+  catch the other. When writing a control arm, state what the CONSUMER does with the value, not what
+  the callee permits -- "the tool accepts X" is not "our use of X is correct".
+- **A probe built at the seam where the defect was INTRODUCED cannot see it -- build it at the seam
+  the value CROSSES.** The same regression's test built its argv via `RipgrepBackend._build_cmd`,
+  precisely the shared builder where `-q` had been wrongly placed (it holds ~30 flags and has FOUR
+  consumers, only ONE of which streams; the other three parse rg's stdout, which `-q` empties), so
+  the test was structurally incapable of showing the difference. The fix retargeted the capture to
+  `run_subprocess`, where the argv actually leaves the process, with an `assert captured` arm so an
+  inert capture FAILS rather than returning an empty value that passes everything. This is Form 5's
+  topology trap on the test-construction side: convenience picked the seam, and the seam was the bug.
 
 Related global skill: `measure-what-it-claims` (same family, generalised beyond this repo).
 
@@ -938,6 +955,12 @@ census member that names a branch it cannot structurally fail on; a count blind 
 an unapplied mutation reading as a passing control arm -- deliberately as unnumbered bullets, not new
 Forms (the Forms table is mirrored in `AGENTS.md`; adding a Form there is a two-file edit owned
 separately).
+A same-day follow-up pass **2026-07-31** appended two more unnumbered bullets to the same list from
+the `-q` shared-builder regression (#876, fixed #880): a control arm stating what the callee accepts
+rather than what the consumer does with the value, and a probe built at the seam the defect was
+introduced (`_build_cmd`) instead of the seam the value crosses (`run_subprocess`). It also corrected
+"catches all nine" to "all ten" in Part 0's opening -- the header's own miscount recurring one
+sentence below the parenthetical warning about it; re-derive the count whenever a form is added.
 Re-verify before relying on them:
 
 | Claim | Re-verify command |

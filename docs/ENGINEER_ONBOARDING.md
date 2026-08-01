@@ -32,15 +32,23 @@ useful to humans for the same reasons. It layers three tiers on one command surf
 
   | tier | languages | what you actually get |
   |---|---|---|
-  | **Parser-backed** | Python, Rust, Go | `defs` / `refs` / `callers` / `blast-radius` resolved from a real parse |
-  | **Foundational** | Java, C#, PHP, C, C++ | `defs` + `imports` parser-backed; **`refs`/`callers` fall back to a REGEX heuristic** |
-  | **Unresolved** | JS, TS | registry field absent rather than `None`; a `_js_ts_references_and_calls` exists on another path -- confirm before relying on it |
+  | **Parser-backed (5)** | Go, JavaScript, Python, Rust, TypeScript | `defs` / `refs` / `callers` / `blast-radius` resolved from a real parse |
+  | **Foundational (5)** | C, C++, C#, Java, PHP | `defs` + `imports` are real; **`refs` / `callers` / `blast-radius` fall back to a REGEX heuristic** |
 
-  Verified 2026-08-01 by reading the `references_and_calls` VALUE at every
-  `lang_registry.register_language` call in `cli/repo_map.py` -- python, rust and go bind a real
-  resolver; java/php/csharp/c/cpp bind `None`. A first pass at this reported *8 of 10 parser-backed*
-  because it grepped for the string `references_and_calls=`, which also matches
-  `references_and_calls=None`. Substring presence is not value.
+  **NEVER HAND-COUNT THIS. Ask the product:**
+
+  ```bash
+  python -c "import sys;sys.path.insert(0,'src');from tensor_grep.cli import repo_map as r;print(r._symbol_navigation_descriptor())"
+  # parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-java-php
+  ```
+
+  That instruction is not decoration -- this line has been wrong THREE times. It once said 4/10
+  with Go wrongly demoted (corrected 2026-07-27). The first version of THIS table said 3/5/2 with
+  a phantom "unresolved" tier, because it hand-counted the `references_and_calls` field, found
+  js/ts ABSENT rather than `None`, and quoted the unconfirmed guess as a measurement. An earlier
+  pass reported 8/10 by grepping for the string `references_and_calls=`, which also matches
+  `references_and_calls=None`. Substring presence is not value, a field's absence is not its
+  meaning, and the product already knows the answer.
 
   **Why a junior must know this on day one:** run `tg callers` on a Java symbol and you get a
   regex-heuristic answer. The payload DOES label its provenance

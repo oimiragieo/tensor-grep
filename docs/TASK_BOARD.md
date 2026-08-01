@@ -98,10 +98,24 @@ review, each verified against the real code (a finding without a `file:line` was
 - [ ] **`--quiet` silently dropped by both internal rg-passthrough branches** (`main.py:7937-7943`,
   `:8004-8017`; zero "quiet" mentions in `ripgrep_backend.py`). A flag the caller passed that the
   chosen engine ignores, with no disclosure — the silent-downgrade class.
-- [ ] **Two gates take OPPOSITE positions on `--gpu-device-ids`.** `_can_passthrough_rg:5364-5367`
-  excludes it *by name* to prevent a silent CPU downgrade at exit 0; `_can_delegate_to_native_tg_search:3728`
-  includes it as a REASON to delegate. Both cannot be right. Settle it before #868 is unblocked —
-  it is plausibly upstream of that failure.
+- [x] **RETIRED, not fixed: the two `--gpu-device-ids` gates are NOT in contradiction.** The entry
+  claimed `_can_passthrough_rg` excluding the flag and `_can_delegate_to_native_tg_search`
+  including it could not both be right. They can, because they gate DIFFERENT CALLEES:
+  - `_can_passthrough_rg` (`main.py:5467`) hands the query to **rg**, which has no GPU. Excluding
+    the flag is what stops a silent CPU downgrade at exit 0 with no `fallback_reason` -- its own
+    comment says exactly that.
+  - `_can_delegate_to_native_tg_search` (`main.py:3813`) hands it to the **native tg binary**,
+    which DOES accept `--gpu-device-ids` (declared at `rust_core/src/main.rs:395` and `:650`, and
+    forwarded by `_build_native_tg_search_command:3828-3833`).
+
+  So each gate routes GPU work AWAY from the engine that cannot do it and TOWARD the one that can.
+  That is the same policy expressed twice, not two policies fighting.
+
+  **The finding was a category error: same flag, different callees.** It survived two passes
+  because both sites mention `gpu_device_ids`, and a grep that matches the same identifier in two
+  places looks like a contradiction until you read what each one is gating. Recorded rather than
+  silently deleted -- a documented retirement is worth as much as a fix (board rule 4), and this
+  one would otherwise be re-derived every time someone greps that flag.
 - [ ] **`--ndjson` zero-match discloses nothing in-band in EITHER engine.** The summary record now
   carries the scope note (#871), but a zero-match `--ndjson` still emits no reason field.
 - [ ] **The three `main.rs` envelope literals have no direct test**, and the CUDA one is
