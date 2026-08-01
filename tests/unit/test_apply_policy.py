@@ -2230,39 +2230,18 @@ def test_policy_file_arg_neutralizes_a_dash_leading_relative_path(
         )
 
 
-@pytest.mark.parametrize("relpath, path_value_factory, expect_prefixed", _POLICY_FILE_ARG_SHAPES)
-@pytest.mark.parametrize("placeholder", ["$file", "{file}"])
-def test_policy_command_instances_never_produces_a_flag_looking_file_token(
-    tmp_path: Path,
+def _expand_one_policy_command_instance(
+    *,
     placeholder: str,
-    relpath: str,
+    target: Path,
     path_value_factory,
-    expect_prefixed: bool,
-) -> None:
-    """End-to-end version of the above: the fully-expanded, then argv-split command must
-    contain the edited file as an unambiguous PATH token, never a bare flag-shaped string --
-    on both the POSIX (``shlex.split``) and Windows (``_split_windows_command``) tokenizers, and
-    for BOTH template placeholder spellings the policy-command contract supports (``$file`` and
-    ``{file}``). Same shape family and same two properties (shape + identity) as the direct test
-    above -- see that docstring for the mutation-kill rationale, which applies identically here
-    since both tests exercise ``_policy_file_arg`` on the same inputs, just through a different
-    call path (full command expansion + real argv tokenization instead of the bare function).
-
-    Pre-fix baseline (the whole feature reverted): FAILS on both tokenizers because
-    ``_policy_command_instances`` embeds the untouched dash-leading relative path.
-    """
-    import shlex
-
-    from tensor_grep.cli.apply_policy import (
-        _parse_policy_command,
-        _policy_command_instances,
-        _split_windows_command,
-    )
-
-    working_root = tmp_path
-    target = working_root / relpath
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text("", encoding="utf-8")
+    working_root: Path,
+) -> str:
+    """Shared setup for both the cross-platform and Windows-only end-to-end tests below: build
+    the rewrite payload, expand the ``$file``/``{file}`` template, and return the ONE expanded
+    command string. Kept in one place so the two tests cannot silently diverge in how they
+    construct the thing they tokenize."""
+    from tensor_grep.cli.apply_policy import _policy_command_instances
 
     path_value = path_value_factory(target, working_root)
     rewrite_payload = {"edits": [{"file": str(path_value)}]}
@@ -2273,29 +2252,124 @@ def test_policy_command_instances_never_produces_a_flag_looking_file_token(
         target_path=target,
         working_root=working_root,
     )
-
     assert expansion_error is None
     assert len(instances) == 1
     _file_arg, expanded_command = instances[0]
+    return expanded_command
+
+
+def _assert_file_token_is_the_edited_file(
+    file_token: str, *, tokenizer: str, working_root: Path, target: Path
+) -> None:
+    """The two properties every tokenizer arm must prove: SHAPE (not flag-looking) and IDENTITY
+    (resolves back to the exact edited file, not a different or fixed-wrong one)."""
+    assert not file_token.startswith("-"), (
+        f"{tokenizer} tokenizer parsed the edited file as {file_token!r}, "
+        "which a downstream tool reads as a flag, not a path"
+    )
+    resolved_back = (working_root / file_token).resolve()
+    assert resolved_back == target.resolve(), (
+        f"{tokenizer} token {file_token!r} resolves to {resolved_back}, "
+        f"not the edited file {target.resolve()}"
+    )
+
+
+@pytest.mark.parametrize("relpath, path_value_factory, expect_prefixed", _POLICY_FILE_ARG_SHAPES)
+@pytest.mark.parametrize("placeholder", ["$file", "{file}"])
+def test_policy_command_instances_never_produces_a_flag_looking_file_token(
+    tmp_path: Path,
+    placeholder: str,
+    relpath: str,
+    path_value_factory,
+    expect_prefixed: bool,
+) -> None:
+    """End-to-end version of the direct test above: the fully-expanded, then argv-split command
+    must contain the edited file as an unambiguous PATH token, never a bare flag-shaped string --
+    for BOTH template placeholder spellings the policy-command contract supports (``$file`` and
+    ``{file}``). Runs on every platform: it exercises the POSIX ``shlex.split`` tokenizer plus
+    ``_parse_policy_command`` (the real CLI-boundary parser, which branches internally to
+    whichever tokenizer is native to the running OS). It deliberately does NOT call
+    ``_split_windows_command`` directly -- that function reaches ``ctypes.windll``, which does
+    not exist off Windows, so a prior revision of this test that called it unconditionally
+    hard-failed the entire non-Windows CI matrix (AttributeError: module 'ctypes' has no
+    attribute 'windll'). See the Windows-only sibling test below for a DIRECT check of that
+    tokenizer -- it is the only call site of ``_split_windows_command`` outside
+    ``apply_policy.py`` itself, and it is ``skipif``-guarded to never execute off Windows.
+
+    Same shape family and same two properties (shape + identity) as the direct test above -- see
+    that docstring for the mutation-kill rationale, which applies identically here since both
+    tests exercise ``_policy_file_arg`` on the same inputs, just through a different call path
+    (full command expansion + real argv tokenization instead of the bare function).
+
+    Pre-fix baseline (the whole feature reverted): FAILS because ``_policy_command_instances``
+    embeds the untouched dash-leading relative path.
+    """
+    import shlex
+
+    from tensor_grep.cli.apply_policy import _parse_policy_command
+
+    working_root = tmp_path
+    target = working_root / relpath
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("", encoding="utf-8")
+
+    expanded_command = _expand_one_policy_command_instance(
+        placeholder=placeholder,
+        target=target,
+        path_value_factory=path_value_factory,
+        working_root=working_root,
+    )
 
     posix_argv = shlex.split(expanded_command, posix=True)
-    windows_argv = _split_windows_command(expanded_command)
-    # The real CLI-boundary parser (`_run_policy_command`'s own parse step) must agree with
-    # whichever of the two tokenizers is native to this OS.
+    # The real CLI-boundary parser: branches internally to `_split_windows_command` on Windows,
+    # POSIX `shlex.split` elsewhere (`apply_policy.py::_parse_policy_command`) -- so on a Windows
+    # runner this arm independently exercises the Windows tokenizer too, without this test file
+    # ever calling `ctypes.windll` itself off-Windows.
     native_argv = _parse_policy_command(expanded_command)
-    assert native_argv == (windows_argv if os.name == "nt" else posix_argv)
 
-    for argv, tokenizer in ((posix_argv, "posix shlex"), (windows_argv, "windows")):
+    for argv, tokenizer in ((posix_argv, "posix shlex"), (native_argv, "native (this OS)")):
         file_token = argv[-1]
-        assert not file_token.startswith("-"), (
-            f"{tokenizer} tokenizer parsed the edited file as {file_token!r}, "
-            "which a downstream tool reads as a flag, not a path"
+        _assert_file_token_is_the_edited_file(
+            file_token, tokenizer=tokenizer, working_root=working_root, target=target
         )
-        # IDENTITY: the token, resolved against working_root, must still name the exact file
-        # that was edited -- this is what catches a fix that neutralizes the dash but resolves
-        # to the wrong file (or a fixed, unrelated constant).
-        resolved_back = (working_root / file_token).resolve()
-        assert resolved_back == target.resolve(), (
-            f"{tokenizer} token {file_token!r} resolves to {resolved_back}, "
-            f"not the edited file {target.resolve()}"
-        )
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="_split_windows_command calls ctypes.windll, which only exists on Windows",
+)
+@pytest.mark.parametrize("relpath, path_value_factory, expect_prefixed", _POLICY_FILE_ARG_SHAPES)
+@pytest.mark.parametrize("placeholder", ["$file", "{file}"])
+def test_policy_command_instances_windows_tokenizer_never_produces_a_flag_looking_file_token(
+    tmp_path: Path,
+    placeholder: str,
+    relpath: str,
+    path_value_factory,
+    expect_prefixed: bool,
+) -> None:
+    """Windows-only DIRECT check of ``_split_windows_command`` (``CommandLineToArgvW`` via
+    ``ctypes.windll``) -- the sibling of the cross-platform test above, which exercises the same
+    tokenizer only indirectly (through ``_parse_policy_command``'s OS-branch) when it happens to
+    run on a Windows CI runner. This test calls the Windows tokenizer directly on every platform
+    it actually runs on, and is ``skipif``-guarded to never execute (and never import/call
+    ``ctypes.windll``) off Windows."""
+    del expect_prefixed  # shape/identity are asserted unconditionally below, not branched on it
+
+    from tensor_grep.cli.apply_policy import _split_windows_command
+
+    working_root = tmp_path
+    target = working_root / relpath
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("", encoding="utf-8")
+
+    expanded_command = _expand_one_policy_command_instance(
+        placeholder=placeholder,
+        target=target,
+        path_value_factory=path_value_factory,
+        working_root=working_root,
+    )
+
+    windows_argv = _split_windows_command(expanded_command)
+    _assert_file_token_is_the_edited_file(
+        windows_argv[-1], tokenizer="windows", working_root=working_root, target=target
+    )
