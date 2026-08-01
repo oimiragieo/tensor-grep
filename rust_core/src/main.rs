@@ -4895,6 +4895,190 @@ mod tests {
         );
     }
 
+    // --- The main.rs JSON envelope LITERALS ------------------------------------------------
+    //
+    // These three structs had NO direct test. The only envelope with one was `NativeJsonOutput`
+    // over in `native_search.rs`, whose tests go through `emit_json_matches` because that emitter
+    // writes to a configurable `output_target`. The three here `println!` instead, so capturing
+    // their output means capturing process stdout -- which is why they went untested.
+    //
+    // Serialising the struct DIRECTLY tests the thing that actually matters: the omit-when-
+    // inapplicable shape. Every `skip_serializing_if` here is a promise that a complete,
+    // explicitly-scoped search stays BYTE-IDENTICAL for existing consumers, and nothing was
+    // checking that promise.
+
+    // Imported HERE rather than at module level: `DEFAULTED_SCOPE_NOTE` is referenced only by the
+    // tests below, and a top-level `use` for it would be an unused import in every non-test build
+    // -- which `cargo clippy -- -D warnings` turns into a CI failure.
+    use tensor_grep_rs::native_search::DEFAULTED_SCOPE_NOTE;
+
+    fn summary_value(summary: &SearchSummaryNdjson) -> serde_json::Value {
+        serde_json::to_value(summary).expect("summary must serialize")
+    }
+
+    #[test]
+    fn ndjson_summary_omits_every_optional_field_when_nothing_is_wrong() {
+        // THE BYTE-IDENTICAL PROMISE. All five optionals must be ABSENT, not present-and-null:
+        // a `null` is a NEW KEY on the happy path, which is a wire change wearing a default value.
+        let value = summary_value(&SearchSummaryNdjson {
+            record_type: "summary",
+            version: JSON_OUTPUT_VERSION,
+            total_matches: 3,
+            result_incomplete: None,
+            incomplete_reason_class: None,
+            incomplete_paths_count: None,
+            path_was_defaulted: None,
+            scope_note: None,
+        });
+
+        assert_eq!(value["type"], serde_json::json!("summary"));
+        assert_eq!(value["total_matches"], serde_json::json!(3));
+        for key in [
+            "result_incomplete",
+            "incomplete_reason_class",
+            "incomplete_paths_count",
+            "path_was_defaulted",
+            "scope_note",
+        ] {
+            assert!(
+                value.get(key).is_none(),
+                "a complete, explicitly-scoped summary must not carry `{key}`: {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn ndjson_summary_carries_both_disclosure_families_when_they_apply() {
+        // TREATMENT, and deliberately BOTH families at once. They are independent -- an incomplete
+        // walk and a defaulted scope can co-occur -- and a test that only ever sets one would pass
+        // against an emitter that dropped the other.
+        let value = summary_value(&SearchSummaryNdjson {
+            record_type: "summary",
+            version: JSON_OUTPUT_VERSION,
+            total_matches: 0,
+            result_incomplete: Some(true),
+            incomplete_reason_class: Some("unreadable_path"),
+            incomplete_paths_count: Some(2),
+            path_was_defaulted: Some(true),
+            scope_note: Some(DEFAULTED_SCOPE_NOTE),
+        });
+
+        assert_eq!(value["result_incomplete"], serde_json::json!(true));
+        assert_eq!(
+            value["incomplete_reason_class"],
+            serde_json::json!("unreadable_path")
+        );
+        assert_eq!(value["incomplete_paths_count"], serde_json::json!(2));
+        assert_eq!(value["path_was_defaulted"], serde_json::json!(true));
+        assert_eq!(
+            value["scope_note"],
+            serde_json::json!(DEFAULTED_SCOPE_NOTE),
+            "the summary must carry the SHARED note constant, not a local paraphrase"
+        );
+    }
+
+    fn aggregate_value(
+        result_incomplete: Option<bool>,
+        incomplete_reason_class: Option<&'static str>,
+        incomplete_paths_count: Option<usize>,
+        path_was_defaulted: Option<bool>,
+        scope_note: Option<&'static str>,
+    ) -> serde_json::Value {
+        let payload = SearchResultJson {
+            version: JSON_OUTPUT_VERSION,
+            routing_backend: "NativeCpuBackend",
+            routing_reason: "native_cpu",
+            sidecar_used: false,
+            requested_gpu_device_ids: Vec::new(),
+            routing_gpu_device_ids: Vec::new(),
+            gpu_evidence_status: None,
+            gpu_proof: None,
+            native_gpu_unavailable: None,
+            not_gpu_proof_reason: None,
+            query: "needle",
+            path: ".",
+            total_files: 0,
+            total_matches: 0,
+            matched_file_paths: Vec::new(),
+            match_counts_by_file: std::collections::BTreeMap::new(),
+            matches: Vec::new(),
+            result_incomplete,
+            incomplete_reason_class,
+            incomplete_paths_count,
+            path_was_defaulted,
+            scope_note,
+        };
+        serde_json::to_value(&payload).expect("aggregate envelope must serialize")
+    }
+
+    #[test]
+    fn aggregate_envelope_omits_every_optional_field_when_nothing_is_wrong() {
+        // CONTROL, and the load-bearing half: this is the shape every existing `--json` consumer
+        // sees today. A key appearing here is a silent contract change.
+        let value = aggregate_value(None, None, None, None, None);
+
+        for key in [
+            "result_incomplete",
+            "incomplete_reason_class",
+            "incomplete_paths_count",
+            "path_was_defaulted",
+            "scope_note",
+            "gpu_evidence_status",
+            "gpu_proof",
+            "native_gpu_unavailable",
+            "not_gpu_proof_reason",
+        ] {
+            assert!(
+                value.get(key).is_none(),
+                "a complete, explicitly-scoped, non-GPU search must not carry `{key}`: {value}"
+            );
+        }
+        // The unconditional fields must still be there -- an "omits everything" assertion passes
+        // trivially against an emitter that emits nothing at all.
+        assert_eq!(
+            value["routing_backend"],
+            serde_json::json!("NativeCpuBackend")
+        );
+        assert_eq!(value["total_matches"], serde_json::json!(0));
+        assert_eq!(value["query"], serde_json::json!("needle"));
+    }
+
+    #[test]
+    fn aggregate_envelope_carries_both_disclosure_families_when_they_apply() {
+        let value = aggregate_value(
+            Some(true),
+            Some("unreadable_path"),
+            Some(1),
+            Some(true),
+            Some(DEFAULTED_SCOPE_NOTE),
+        );
+
+        assert_eq!(value["result_incomplete"], serde_json::json!(true));
+        assert_eq!(
+            value["incomplete_reason_class"],
+            serde_json::json!("unreadable_path")
+        );
+        assert_eq!(value["incomplete_paths_count"], serde_json::json!(1));
+        assert_eq!(value["path_was_defaulted"], serde_json::json!(true));
+        assert_eq!(value["scope_note"], serde_json::json!(DEFAULTED_SCOPE_NOTE));
+    }
+
+    // THE THIRD LITERAL, `GpuNativeSearchResultJson`, IS DELIBERATELY NOT TESTED HERE, and this
+    // comment is the honest record of why rather than a silent omission.
+    //
+    // It is `#[cfg(feature = "cuda")]`. The only job that compiles that feature is
+    // `cuda-feature-check`, which runs `cargo check --features cuda --all-targets` -- CHECK, not
+    // TEST. So a `#[cfg(feature = "cuda")] #[test]` added here would be type-checked and NEVER
+    // EXECUTED by any job in CI, on any runner. Checking is not running, and a test that never
+    // runs is worse than no test: it reports the surface as covered.
+    //
+    // Whether `cargo test --features cuda` can even LINK on a GPU-less runner is UNANSWERED (task
+    // #279 territory) -- I did not verify it, and cargo is CPU-forbidden on the authoring machine,
+    // so I am not going to claim either way. If someone establishes that it links, the two tests
+    // above port to it directly: the struct differs only by the `pipeline` field and the GPU proof
+    // quartet, and `incomplete_envelope_fields`/`defaulted_scope_fields` already feed it the same
+    // way they feed these.
+
     #[test]
     fn run_rejects_duplicate_pattern_forms() {
         let args = parse_run_args(&[
