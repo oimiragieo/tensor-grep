@@ -232,4 +232,39 @@ class NdjsonFormatter(OutputFormatter):
                 "line": match.line_number,
             }
             rows.append(json.dumps(row))
+        if not rows:
+            # ZERO ROWS MEANS ZERO CARRIERS. The envelope above -- which holds
+            # `result_incomplete`, `incomplete_reason_class`, `path_was_defaulted` and
+            # `scope_note` -- is merged into each MATCH ROW, so on an empty result every one of
+            # those disclosures is silently dropped and the stream is the empty string. A reader
+            # then cannot tell "nothing matched" from "the scan died before it could look", which
+            # is precisely the distinction those fields exist to carry.
+            #
+            # Emitted ONLY when there is something to say. A COMPLETE zero-match search has
+            # nothing to disclose, and putting a record on every empty stream to serve the rare
+            # truncated case is how a disclosure trains its readers to skip it.
+            #
+            # DELIBERATELY NARROWER THAN THE RUST ENGINE, which emits a `type: "summary"` record on
+            # EVERY `--ndjson` run (see `SearchSummaryNdjson`) on the reasoning that a record
+            # appearing only on failure is one a streaming reader never learns to expect. That is
+            # the better contract and Python should reach it -- but doing so adds a line to every
+            # existing stream, which is a WIRE CHANGE several consumers and tests would break on
+            # and which likely needs an MCP contract bump. Tracked separately; this closes only the
+            # case where the current design loses information outright.
+            disclosure: dict[str, object] = {
+                key: value
+                for key, value in envelope.items()
+                if key in ("result_incomplete", "incomplete_reason", "incomplete_reason_class")
+            }
+            # `path_was_defaulted`/`scope_note` are read off the RESULT, not filtered out of the
+            # envelope, because `_routing_envelope` never carried them: #871 added the pair to
+            # `JsonFormatter.format` alone, so the Python `--ndjson` surface never had the scope
+            # disclosure at all -- not merely on the empty path. Found while fixing the
+            # zero-carrier bug above, which is the only reason it surfaced.
+            if getattr(result, "path_was_defaulted", False):
+                disclosure["path_was_defaulted"] = True
+                if getattr(result, "scope_note", None):
+                    disclosure["scope_note"] = result.scope_note
+            if disclosure:
+                rows.append(json.dumps({**envelope, **disclosure}))
         return "\n".join(rows)

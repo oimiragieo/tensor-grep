@@ -660,6 +660,18 @@ class RipgrepBackend(ComputeBackend):
                 cmd.extend(["--max-depth", str(config.max_depth)])
             if config.no_config:
                 cmd.append("--no-config")
+            if config.quiet:
+                # The caller asked for silence and this engine had never heard of it. `quiet` is
+                # PASSTHROUGH-ELIGIBLE -- `_can_passthrough_rg` does not refuse it the way it
+                # refuses `ast`/`ltl`/`force_cpu`/`rank_bm25`/`semantic_rank`/`gpu_device_ids` --
+                # so a `tg search PAT PATH --quiet` could reach `search_passthrough`, and this
+                # module contained ZERO occurrences of "quiet". rg then printed every match while
+                # the exit code still reported success: the silent-downgrade class, where the flag
+                # is dropped rather than refused.
+                #
+                # `-q` is the exact semantic twin of tg's `--quiet` (suppress output; exit 0 when a
+                # match exists), so threading it is a like-for-like honour, not an approximation.
+                cmd.append("-q")
             if config.only_matching:
                 cmd.append("-o")
             if config.text:
