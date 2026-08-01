@@ -488,6 +488,27 @@ class RipgrepBackend(ComputeBackend):
             config=config,
             json_mode=bool(config and config.json_mode),
         )
+        if config and config.quiet:
+            # `-q` LIVES HERE AND NOWHERE ELSE, and the reason is a regression I shipped.
+            #
+            # It was first added inside `_build_cmd`, which looks like the natural home -- that is
+            # where the other ~30 flags are forwarded. But `_build_cmd` has FOUR consumers and only
+            # THIS one streams rg's output straight to tg's stdout. The other three PARSE it:
+            #   search()                      :104   parses --json
+            #   _search_files_with_matches()  :290   parses -l output
+            #   _search_counts()              :409   parses --count output
+            #
+            # `-q` makes rg print NOTHING and exit 0 on the first match. Measured on the real rg:
+            #     rg --count-matches needle f.txt      -> "2"        rg --count-matches -q ... -> ""
+            #     rg -l needle f.txt                   -> "f.txt"    rg -l -q ...              -> ""
+            #     rg --json needle f.txt               -> 5 lines    rg --json -q ...          -> 1
+            # So a parsing consumer saw an empty stream and reported total_matches=0 -- a FALSE
+            # NO-MATCH on a file that matches, and an exit-code contract violation (1 instead of 0).
+            # Suppressing OUTPUT and suppressing the ANSWER are not the same thing.
+            #
+            # `test_quiet_survives_rg_passthrough.py` guards the placement now, and its control arm
+            # asserts the three parsing consumers do NOT receive `-q`.
+            cmd.append("-q")
         try:
             result = run_subprocess(
                 cmd,
@@ -660,18 +681,6 @@ class RipgrepBackend(ComputeBackend):
                 cmd.extend(["--max-depth", str(config.max_depth)])
             if config.no_config:
                 cmd.append("--no-config")
-            if config.quiet:
-                # The caller asked for silence and this engine had never heard of it. `quiet` is
-                # PASSTHROUGH-ELIGIBLE -- `_can_passthrough_rg` does not refuse it the way it
-                # refuses `ast`/`ltl`/`force_cpu`/`rank_bm25`/`semantic_rank`/`gpu_device_ids` --
-                # so a `tg search PAT PATH --quiet` could reach `search_passthrough`, and this
-                # module contained ZERO occurrences of "quiet". rg then printed every match while
-                # the exit code still reported success: the silent-downgrade class, where the flag
-                # is dropped rather than refused.
-                #
-                # `-q` is the exact semantic twin of tg's `--quiet` (suppress output; exit 0 when a
-                # match exists), so threading it is a like-for-like honour, not an approximation.
-                cmd.append("-q")
             if config.only_matching:
                 cmd.append("-o")
             if config.text:
