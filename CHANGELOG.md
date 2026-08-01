@@ -1,6 +1,131 @@
 # CHANGELOG
 
 
+## v1.101.29 (2026-08-01)
+
+### Bug Fixes
+
+- Give an invalid --ltl query a clean error and register --ltl on the native front door
+  ([#884](https://github.com/oimiragieo/tensor-grep/pull/884),
+  [`7d14162`](https://github.com/oimiragieo/tensor-grep/commit/7d1416263613aaa33f16ce8330b2b27b0622936d))
+
+* fix: give an invalid --ltl query a clean error and register --ltl on the native front door
+
+Task 3: an invalid --ltl query (e.g. "def ") raised CPUBackend._compile_ltl's raw ValueError as an
+  unhandled ~25-line traceback, exit 1. It now validates the LTL grammar once at the CLI boundary in
+  search_command, before the file-scan loop, and routes through the existing exit-2
+  _exit_search_error taxonomy (error code invalid_ltl_query), matching the
+  path_not_found/invalid_regex convention. Deliberately NOT converted to BackendExecutionError,
+  which would wrongly trigger the CPU-retry fallback and mislabel a user typo as an engine failure.
+
+Migrated all 15 pre-existing tests/unit/test_cli_modes.py fixtures that used the invalid grammar
+  "ERROR" under --ltl to "ERROR -> eventually ERROR" (valid grammar, inert to their fake backends);
+  the already-valid positive control at the "AUTH_FAIL -> eventually DB_TIMEOUT" test was left
+  untouched.
+
+Red-arm proof (tests/unit/test_ltl_invalid_query_clean_error.py): the invalid-query text and JSON
+  arms were observed FAILING pre-fix (exit_code 1, ValueError escaping) and PASSING post-fix;
+  re-confirmed by a git-stash revert-in-place of main.py alone (grep-verified the revert actually
+  removed the new code before re-running). The invalid-regex-subexpression case is a baseline-GREEN
+  regression guard, not a red arm (re.error already routed through _exit_invalid_regex before this
+  fix).
+
+Task 4: --ltl was missing from SEARCH_PYTHON_PASSTHROUGH_FLAGS in rust_core/src/main.rs, so
+  native-frontdoor binary users got a clap "unrecognized flag" rejection instead of routing to the
+  Python sidecar (bootstrap.py's _TG_ONLY_SEARCH_FLAGS already had it -- a 2-front-door registration
+  gap, not a latent issue). Added --ltl to the const and a mirrored Rust unit test. A stale pre-fix
+  debug binary already present in rust_core/target/debug/tg.exe (not rebuilt by this change) gave a
+  genuine LOCAL red-arm observation for the new tests/e2e/test_native_ltl_passthrough.py suite: both
+  new tests fail against that binary with clap's "unexpected argument '--ltl'" exactly as predicted.
+  The Rust unit test's own red/green arms were not run locally (no cargo on this shared box) and
+  rely on CI's test-rust-core job.
+
+Updated the ci.yml native-build-smoke glob-census comment: it previously claimed "exactly these two"
+  files use TG_REQUIRE_RG_PARITY, which had already silently drifted to at least four
+  (test_native_renderer_file_set_invariant.py joined uncited before this change). Replaced the stale
+  count with a pointer to the live governance test (test_native_e2e_ci_coverage_contract.py) instead
+  of re-enumerating.
+
+Plan deviation (reported per instructions): the plan asked for a new TG_REQUIRE_NATIVE_BINARY env
+  var for the new e2e suite. The live convention is to reuse TG_REQUIRE_RG_PARITY even for suites
+  needing no rg (test_native_renderer_file_set_invariant.py already does this), and that marker is
+  what the existing coverage-contract test keys on -- so test_native_ltl_passthrough.py reuses
+  TG_REQUIRE_RG_PARITY instead, requiring no new ci.yml env line.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* ci: give native-build-smoke the runtime deps its sidecar tests need
+
+PR #884's new e2e test failed on all four OSes with:
+
+ModuleNotFoundError: No module named 'click'
+
+Not a code defect -- a CI gap the new test was the first to reach.
+
+`native-build-smoke` installed ONLY pytest. Every pre-existing test in its
+  `tests/e2e/test_native_*.py` glob exercises the self-contained Rust path, so pytest sufficed and
+  the gap stayed invisible. `test_native_ltl_passthrough.py` is the first to cross the
+  native->Python SIDECAR boundary (the binary delegates --ltl via SEARCH_PYTHON_PASSTHROUGH_FLAGS
+  into cli/main.py, which imports typer -> click).
+
+The gap in one line: `test-python` has the deps but never builds the release binary;
+  `native-build-smoke` builds the binary but had no deps. So NO job could test native->sidecar
+  delegation end to end. That is worth more than the fix -- the whole delegation surface was
+  untestable and nobody could have noticed, because the only symptom is a test nobody had written
+  yet.
+
+DERIVED from pyproject, not hand-listed. A hardcoded dep list here would rot the moment a dependency
+  is added -- this campaign has now fixed six prose enumerations that rotted exactly that way, plus
+  a CI comment miscounting this very glob. Written to a requirements FILE rather than an inline
+  $(...) because the dep strings carry environment markers (`; python_version < '3.12'`) and <>=
+  operators that a bare shell expansion would mangle.
+
+Verified before pushing: YAML parses; the rendered `run` script has no leading whitespace on the
+  heredoc body (a YAML block-scalar indent would have been an IndentationError); and the derivation
+  produces 8 requirements that all parse via packaging.requirements with markers and operators
+  intact.
+
+* test: assert --ltl ROUTING, not evaluation, in the binary-only CI job
+
+The e2e belt failed on all four OSes for a reason unrelated to what #884 fixes, and the way it was
+  wrong is the point: it conflated two separable properties.
+
+ROUTING -- the native front door forwards --ltl to the Python sidecar instead of clap-rejecting it.
+  THIS is what #884 fixes. EVALUATION -- the sidecar can actually answer the query. This needs the
+  PyO3 extension module.
+
+`native-build-smoke` runs `cargo build --bin tg`. It builds the standalone binary and NEVER the
+  extension, so evaluation cannot succeed there -- not now, not ever. Asserting `returncode == 0`
+  made the test permanently red for a build-scope reason while proving nothing about routing.
+
+Measured, not assumed: on the PUBLISHED wheel v1.101.28 -- which DOES ship the extension
+  (`tensor_grep.rust_core` imports) -- the identical invocation exits 0 and returns both matches.
+  Real users are unaffected.
+
+So the test now asserts routing unconditionally and evaluation only where the engine exists:
+
+always "unexpected argument" must NOT appear (a clap rejection IS the bug) engine yes exit 0 + both
+  matches (the full end-to-end arm) engine no exit != 0 AND "search backend failed" -- the sidecar
+  was REACHED and fail-closed honestly, which a clap rejection can never produce
+
+That last line is what keeps the routing-only arm from being a hole: the two outcomes are textually
+  distinguishable, so the arm still discriminates.
+
+RED ARM, NOW OBSERVED RATHER THAN ARGUED. The plan could only argue this one from pinned source,
+  since cargo cannot run on this shared box. But a stale PRE-FIX debug binary was already on disk,
+  and against it the new assertion fires exactly as intended:
+
+assert "unexpected argument" not in result.stderr E AssertionError: the native front door
+  clap-REJECTED --ltl E assert 'unexpected argument' not in "error: unexpected argument '--ltl'
+  found..."
+
+No cargo was run to obtain that.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.101.28 (2026-08-01)
 
 ### Bug Fixes
