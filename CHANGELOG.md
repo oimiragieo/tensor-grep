@@ -1,6 +1,115 @@
 # CHANGELOG
 
 
+## v1.101.27 (2026-08-01)
+
+### Bug Fixes
+
+- **search**: -q belongs ONLY on the streaming consumer -- it was causing a FALSE ZERO
+  ([#880](https://github.com/oimiragieo/tensor-grep/pull/880),
+  [`cfc3264`](https://github.com/oimiragieo/tensor-grep/commit/cfc326444079d428e17d550e8bc8526b439a1cf9))
+
+REGRESSION I SHIPPED IN #876, caught by an adversarial audit of a plan that warned about this exact
+  trap while believing it hypothetical. Its checkout was stale by 15 minutes; the trap was already
+  live on main.
+
+THE DEFECT. #876 added `-q` inside `_build_cmd`, which is where the other ~30 flags are forwarded
+  and therefore looks like the natural home. But `_build_cmd` has FOUR consumers and only ONE
+  streams rg's output to tg's stdout. The other three PARSE it:
+
+search() :104 parses --json _search_files_with_matches() :290 parses -l _search_counts() :409 parses
+  --count search_passthrough() :485 STREAMS <- the only one that wanted -q
+
+`-q` makes rg print NOTHING and exit 0 on first match. Measured on the real binary, every arm with a
+  control:
+
+rg --count-matches needle f.txt -> "2" with -q -> "" rg -l needle f.txt -> "f.txt" with -q -> "" rg
+  --json needle f.txt -> 5 lines with -q -> 1
+
+So `tg search -q --count` on a MATCHING file reported total_matches=0 and exit 1. A false no-match:
+  the silent-wrong-answer class, and an exit-contract violation (1 where 0 is correct). Suppressing
+  OUTPUT and suppressing the ANSWER are not the same thing, and I conflated them.
+
+MY OWN TEST ASSERTED THE BUG. `test_quiet_composes_with_the_other_output_flags` required `-q` to
+  appear ALONGSIDE `--count`/`-o`/`-l`, reasoning that "rg accepts it and suppression wins on
+  stdout". True of rg, irrelevant to tg -- which CONSUMES that stdout. The test and the defect
+  agreed with each other, so neither could catch the other. That is the failure mode, not the typo.
+
+FIXED: `-q` moved to `search_passthrough` alone, with the four-consumer split written at the site so
+  the next person does not re-hoist it into the shared builder.
+
+THE TEST NOW TESTS THE REAL SEAM. It used to build via `_build_cmd` -- precisely where the flag was
+  wrongly placed -- so it could not have seen the difference. It now captures at `run_subprocess`,
+  which is where the argv actually leaves, with an `assert captured` arm so an inert capture FAILS
+  rather than returning an empty argv that passes everything.
+
+New arm, and it is the one that would have caught this:
+  `test_the_parsing_consumers_never_receive_quiet` asserts all four parsing configurations (count /
+  only_matching / files_with_matches / json_mode) do NOT get `-q`. Red-armed against the shipped
+  shape: it fails with "a PARSING consumer received -q alongside count: rg will emit nothing and tg
+  will report a false zero. ['rg','-q','-n','--color','auto','-c','needle','--','somewhere']".
+
+Control arm kept: `-q` must STILL reach the streaming route alongside those same flags, so deleting
+  it outright cannot pass.
+
+98 tests green across the rg/passthrough/quiet surface.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Add a junior-engineer onboarding guide, and fix the six defects its audit found
+  ([#879](https://github.com/oimiragieo/tensor-grep/pull/879),
+  [`c1298f8`](https://github.com/oimiragieo/tensor-grep/commit/c1298f88aaeea9d0ddf460e93ced39d6552249a7))
+
+AGENTS.md is 2251 lines of hard-won law written by and for people who already know this codebase;
+  CLAUDE.md is 85 lines pointing at it. A junior engineer handed those two files cannot work -- the
+  rules are real and expensive but they arrive as an undifferentiated wall, each stated at the
+  moment it was learned rather than at the moment it bites.
+
+This organises them BY TASK, with every law keeping its one-line receipt. Ten sections: what tg is,
+  your first hour, the architecture, changing code safely, knowing your change is correct, shipping
+  it, the exit-code contract, where to look things up, the mistakes already paid for, and what is
+  honestly unsettled.
+
+AN INDEPENDENT AUDIT FOUND 13 DEFECTS IN THE FIRST DRAFT. Six are fixed here; the three load-bearing
+  ones are worth naming because each would have taught something false on day one:
+
+1. It claimed `test_skill_index_sync.py` kept its skill table in sync. IT DOES NOT -- that test
+  reads exactly two files, AGENTS.md and CLAUDE.md (test_skill_index_sync.py:22-23), and has never
+  heard of this document. The claim shipped beside a table already FIVE SKILLS SHORT of the 28 on
+  disk, including `tensor-grep` itself, the one CLAUDE.md names first. A false green, inside the
+  document that teaches the a-guard-is-scoped-to-its-consumers law. Now: all 28 present (derived
+  mechanically, not counted by eye) and the sync claim replaced with the command to re-derive it.
+
+2. It flattened the symbol-graph tier split, presenting all 10 languages as carrying
+  defs/refs/callers/blast-radius. docs/BACKLOG.md says in as many words: "do not read '10/10
+  languages' as uniform depth." Only python/rust/go are parser-backed; java/c#/php/c/cpp fall back
+  to a REGEX heuristic for refs/callers. A newcomer would run `tg callers` on a Java symbol and
+  trust a heuristic as a parse. Now a three-tier table with the measurement behind it, including
+  that js/ts are UNRESOLVED rather than a known gap.
+
+3. AGENTS.md's entire Security Hardening section was absent and unmarked -- the only omission whose
+  violation ships a CVE-class defect. Its fourth target (native-argv flag injection, CWE-88 / the
+  MCP-276 family) was rewritten on 2026-07-31 precisely because prose-tracking let a LIVE hole
+  survive in `cli/agent_capsule.py::_agent_gpu_evidence`. New section 8.5 covers all four targets
+  and the three rules that fell out of getting the sweep wrong four times.
+
+Also fixed: a receipt attached to the wrong claim (the four-releases story was fused with the
+  three-rg-doors list on the coincidence of "three" -- only one of those routes is an rg door, and
+  the real lesson is that the route space spans rg-passthrough AND native-delegation AND the Python
+  is_empty branch); a routing step that dropped the clause routing.rs itself calls "the ONLY thing
+  standing between a plain-text search and the rg subprocess"; and CPU-SAFE used as an undefined
+  proper noun, now defined at first use with the "check whether the REASON applies" caveat that
+  rustfmt depends on.
+
+816 lines, pure ASCII (0 non-ASCII bytes verified), fences balanced, test_skill_index_sync green.
+
+Non-releasing.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.101.26 (2026-08-01)
 
 ### Bug Fixes
