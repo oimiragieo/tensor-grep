@@ -1643,6 +1643,12 @@ def _agent_gpu_evidence(
             device_arg,
             "--json",
             "-F",
+            # End-of-options sentinel, BEFORE both positionals (CWE-88). This is the SECOND argv
+            # builder in this function, 86 lines above the one the original fix touched, and it was
+            # missed -- found by an independent adversarial review. `probe_target` is
+            # caller-derived (and rewritten by the WSL `wslpath` branch just above), so this is the
+            # same live shape, not a defensive nicety.
+            "--",
             "tg agent gpu probe sentinel",
             probe_target,
         ]
@@ -1718,6 +1724,20 @@ def _agent_gpu_evidence(
     ]
     for term in query_terms:
         evidence_command.extend(["-e", term])
+    # End-of-options sentinel (CWE-88 / the MCP-276 class, AGENTS.md). `evidence_path` is
+    # caller-supplied, and it is appended as a BARE POSITIONAL: the native binary's clap `path`
+    # argument (rust_core/src/main.rs:694-695) carries no `allow_hyphen_values`, so a dash-leading
+    # path is parsed as a FLAG rather than a path. A list-argv `subprocess` call blocks a SHELL
+    # injection; it does nothing at all about flag injection into the callee's own parser.
+    #
+    # This builder was missed by the #860 sweep, which fixed the sibling
+    # `_build_native_tg_search_command` in cli/main.py. Same class, same fix, and the reason the
+    # sweep is now tracked by an enumerating test rather than by memory.
+    #
+    # UNCONDITIONAL, matching #860 and `ripgrep_backend.py`/`mcp_server.py`. A conditional form
+    # (emit `--` only when the path starts with `-`) reads as equivalent and leaves the silent
+    # case exposed -- the evidence probe would query a scope nobody chose and still report `ok`.
+    evidence_command.append("--")
     evidence_command.append(evidence_path)
     evidence = _run_agent_gpu_json_command(
         evidence_command,
