@@ -1381,6 +1381,40 @@ reads 2026-07-26. Each doc was half correct, so **reading either one alone confi
 by `test_skill_library_drift.py`, because "re-derive the number when you add one" was already
 written down, agreed with, and half-applied.
 
+### A LONG DOCUMENT CONTRADICTS ITSELF, and the reader believes whichever half they reach first
+
+The 2026-08-01 sweep of all 28 skills found **six documents holding both a claim and its refutation
+at the same time**. Not one of them was flagged by any gate, because every gate this repo owns
+compares a document to the CODE — nothing compares a document to ITSELF.
+
+| document | what one part said | what another part of the SAME file said |
+|---|---|---|
+| `tensor-grep-run-and-operate` | §3: "`defs`/`source` do **not**" take `--deadline` | §12's table lists both as taking it, and the pitfall table at :745 warns *"don't trust a stale 'these don't take it' claim"* |
+| `AGENTS.md` (never-re-stamp) | "adrift ... **all five of them**" | the table beneath it listed **four**, and the omitted one was the still-stale one |
+| `tensor-grep-add-language` | "8 call sites" | its own "Current status" section, two paragraphs above: **10** |
+| `tensor-grep-diagnostics-and-tooling` | cited `run_benchmarks.py:212-243` | its own provenance log had `:194-225`, correct |
+| `tensor-grep-large-repo-scale-campaign` | Phase 0/1: blame "the still-open #390 daemon-path gap" | its own §2 documents #390 as **CLOSED** |
+| `tensor-grep-validation-and-qa` + `AGENTS.md` | the skill had the oracle COUNT right and the DATES wrong | AGENTS.md had the dates right and the count wrong — each half correct, and reading either alone confirmed it |
+
+Two of those, `architecture-contract` and `code-search-reference`, additionally cited *one* line
+number for *two different functions*, and cited the same symbol at two different wrong lines.
+
+**Why this shape is dangerous and hard to see.** A contradiction is invisible to the author, who
+holds one mental model and reads only the part expressing it. It is invisible to grep, which
+matches a string without knowing another string disagrees. And it is invisible to a reader, because
+prose does not announce that it is in an argument — the reader resolves it by whichever half they
+reached first, silently and with full confidence. **A file that says X in §3 and not-X in §12 is
+worse than a file that is simply wrong**, because it will confirm whatever the reader already
+believed and produce two people who cannot reproduce each other's result.
+
+**What to do about it.** When you correct a fact, grep the WHOLE document for the claim you are
+changing, not just the line you noticed — the correction and the error live in different sections by
+construction, since a document long enough to contradict itself is long enough that you edited only
+one place. Then prefer a DERIVATION over an assertion (`tg defs --help | grep deadline`), because
+two derivations cannot disagree while two sentences can. And treat a pitfall table warning against a
+belief as a strong hint that the belief is asserted elsewhere in the same file — in this sweep, it
+was.
+
 ### GREP IS AN INSTRUMENT, and mine was wrong four times in one session
 
 Four probes, four believable numbers, four different causes — three of them produced while auditing
