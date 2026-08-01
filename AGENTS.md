@@ -661,7 +661,7 @@ zero behavioral change, and is strictly stronger than reading the diff by eye. U
 on `test_index_lock_concurrency.py`'s comment-only revisions; cheap enough to run on every claimed no-op
 commit before skipping a gate on the strength of "it's just a comment."
 
-## The Verification-Oracle Family — nine forms (2026-07-25; 7th + 8th 2026-07-26, 9th 2026-07-27)
+## The Verification-Oracle Family — ten forms (2026-07-25; 7th + 8th 2026-07-26, 9th 2026-07-27, 10th 2026-07-28)
 
 **The single most repeated failure mode this project has.** Every form shares one shape: *something that
 looks like verification isn't.* Before trusting ANY green signal, ask: **what would this check show if the
@@ -1002,7 +1002,20 @@ in `tensor-grep-change-control` were adrift by **283 to 515 lines** — all five
 ```
 _imports_and_symbols_for_path     6244 -> 6627      build_symbol_source_from_map  15815 -> 16326
 _target_language_for_path         7383 -> 7867      _SUPPORTED_FILE_DEPENDENCY_L  16633 -> 17148
+_imports_with_lines_for_path      6440 -> 6832      <- the 5th; see below
 ```
+
+🚨 **That table said "all five of them" and listed FOUR, for four days.** The omitted member,
+`_imports_with_lines_for_path`, was the one still stale — 392 lines adrift, the largest of the five
+— and it sat inside the very fix that introduced the never-re-stamp law. The skill's own grep
+instruction (`tensor-grep-change-control`, the 5-language-seam census) names all five symbols
+correctly; only the *execution* was short by one, and the prose asserted completeness over it.
+
+**A census and its own count are two artifacts, and the count is not evidence about the census.**
+When you write "all N", COUNT the rows you actually wrote — do not carry N over from the sentence
+that motivated the work. This is the same failure as the `population is the defect` family, arriving
+inside the remedy for it: the fix was correct, the claim of completeness was not, and the claim is
+what everyone downstream read.
 
 **Five previous maintenance passes re-stamped these by hand, and every one shipped anchors that
 were already wrong** (the auditor's own docstring records this). Re-stamping is not a fix; it is
@@ -1313,6 +1326,115 @@ your artifact, open the guard and read WHICH FILES it consumes; a guard is scope
 and being adjacent to one is not being covered by it. (The Skills section already records one
 artifact invisible to this same test for the same reason: `skill_rules.json`, which has no
 `SKILL.md`.)
+
+### Building ONE checker produced THREE wrong readings, and an extreme rate is the tell (2026-08-01)
+
+The section above is about a check and a defect agreeing. This is its acquisition-side twin: an
+instrument that is simply **aimed wrong**, which yields a confident number rather than an error.
+Three readings in a row while building a single skill-citation checker
+(`tests/unit/test_skill_library_drift.py`), each individually plausible, each caught only because a
+control arm ran first:
+
+| reading | cause | what would have been reported |
+|---|---|---|
+| **100%** of citations broken | the probe walked up looking for a `.claude` marker and found the **user home** (`C:\Users\<me>\.claude`), which also has one | "92 broken citations" — in a directory that is not this repo |
+| **60.5%** broken | it resolved only repo-relative paths; skills also cite by bare basename and partial suffix | "a library 60% rotten" — the exact false-positive flood that drowned an earlier auditor |
+| **100%** ambiguous | a filesystem walk also enumerated 6 stale agent worktrees and 20 checkpoint snapshots, each a full source tree, so every citation matched 7–21 paths | "clean" — it checked **nothing** and said so as success |
+
+**A rate at 0% or 100% is a property of the instrument far more often than of the subject.** Real
+populations are lumpy. Before reporting either extreme, ask what would have to be true of the world
+for it to be genuine, and check that instead.
+
+**And the control fixture must itself be unambiguous.** The first known-good arm cited
+`pyproject.toml:1` — a basename this repo has several of, so it resolved to nothing and the arm read
+`0/0/0`, which is byte-identical to a dead checker. A control that cannot pass proves as little as
+one that cannot fail.
+
+**Aim at what CI sees.** The fix for the third reading was to resolve against `git ls-files` rather
+than the filesystem. Untracked litter is invisible to CI and to reviewers, and it silently changed
+the answer.
+
+### A gate that fires at EVERY historical revision is guarding a shape the repo never had
+
+Form 1 says run every new ratchet against the pre-fix revision. This is the failure that rule
+catches when the ratchet is *wrong*, and it is easy to miss because the ratchet looks vindicated.
+
+I read `**27 skills**` beside 28 folders on disk and called it live shipped drift. Then I ran the
+proposed count gate across history and it fired at **all three** revisions checked — 20-vs-21,
+26-vs-27, 27-vs-28. A defect introduced at some commit does not exist before that commit; **a
+constant verdict across arms that should differ is a broken check**, exactly as a constant verdict
+across a treatment and control is.
+
+The number was correct. The sentence *defines* what it counts —
+"(`.claude/skills/tensor-grep-*` + `code-search-and-retrieval-reference`, **N skills**)" — which
+deliberately excludes the bare `tensor-grep` usage skill listed on its own line above. Under that
+definition history reads 20/20, 26/26, 27/27, silent everywhere. **Read the DEFINITION beside a
+number before calling it wrong**, and had this shipped it would have forced someone to "fix" a
+correct doc into a wrong one.
+
+**The real drift of this class was one section away, and BOTH halves of the two-file edit were wrong
+in OPPOSITE directions.** `AGENTS.md`'s header said "nine forms" while the section enumerates Form 1
+through Form 10 — stale for four days. `tensor-grep-validation-and-qa`, which had the count right
+and *documented the miscount in prose*, misdated forms 8–9 to 2026-07-27 when Form 8's own text
+reads 2026-07-26. Each doc was half correct, so **reading either one alone confirmed it**; only the
+`**Form N —**` headings settle it. Both prose counts are now derived from those headings and gated
+by `test_skill_library_drift.py`, because "re-derive the number when you add one" was already
+written down, agreed with, and half-applied.
+
+### A LONG DOCUMENT CONTRADICTS ITSELF, and the reader believes whichever half they reach first
+
+The 2026-08-01 sweep of all 28 skills found **six documents holding both a claim and its refutation
+at the same time**. Not one of them was flagged by any gate, because every gate this repo owns
+compares a document to the CODE — nothing compares a document to ITSELF.
+
+| document | what one part said | what another part of the SAME file said |
+|---|---|---|
+| `tensor-grep-run-and-operate` | §3: "`defs`/`source` do **not**" take `--deadline` | §12's table lists both as taking it, and the pitfall table at :745 warns *"don't trust a stale 'these don't take it' claim"* |
+| `AGENTS.md` (never-re-stamp) | "adrift ... **all five of them**" | the table beneath it listed **four**, and the omitted one was the still-stale one |
+| `tensor-grep-add-language` | "8 call sites" | its own "Current status" section, two paragraphs above: **10** |
+| `tensor-grep-diagnostics-and-tooling` | cited `run_benchmarks.py:212-243` | its own provenance log had `:194-225`, correct |
+| `tensor-grep-large-repo-scale-campaign` | Phase 0/1: blame "the still-open #390 daemon-path gap" | its own §2 documents #390 as **CLOSED** |
+| `tensor-grep-validation-and-qa` + `AGENTS.md` | the skill had the oracle COUNT right and the DATES wrong | AGENTS.md had the dates right and the count wrong — each half correct, and reading either alone confirmed it |
+
+Two of those, `architecture-contract` and `code-search-reference`, additionally cited *one* line
+number for *two different functions*, and cited the same symbol at two different wrong lines.
+
+**Why this shape is dangerous and hard to see.** A contradiction is invisible to the author, who
+holds one mental model and reads only the part expressing it. It is invisible to grep, which
+matches a string without knowing another string disagrees. And it is invisible to a reader, because
+prose does not announce that it is in an argument — the reader resolves it by whichever half they
+reached first, silently and with full confidence. **A file that says X in §3 and not-X in §12 is
+worse than a file that is simply wrong**, because it will confirm whatever the reader already
+believed and produce two people who cannot reproduce each other's result.
+
+**What to do about it.** When you correct a fact, grep the WHOLE document for the claim you are
+changing, not just the line you noticed — the correction and the error live in different sections by
+construction, since a document long enough to contradict itself is long enough that you edited only
+one place. Then prefer a DERIVATION over an assertion (`tg defs --help | grep deadline`), because
+two derivations cannot disagree while two sentences can. And treat a pitfall table warning against a
+belief as a strong hint that the belief is asserted elsewhere in the same file — in this sweep, it
+was.
+
+### GREP IS AN INSTRUMENT, and mine was wrong four times in one session
+
+Four probes, four believable numbers, four different causes — three of them produced while auditing
+for exactly this class of failure:
+
+| probe | returned | why it was wrong |
+|---|---|---|
+| `grep -ic "check and the bug"` on this file | **0** | the doc says "check and the **defect**" — a PARAPHRASE miss. Four of seven lesson-capture probes read "absent"; all four were present in different words |
+| `grep -cE "was [0-9]+ ?->"` for repair receipts | **0** | the file's format is ``was `:1444`, now `:1466` `` — a FORMAT assumption. I nearly rejected a correct 38-anchor repair on it |
+| `grep -coE 'was \`:[0-9]+\`'` (the "fix" for the above) | **0** | GNU grep ERE treats `` \` `` as a **start-of-buffer anchor**, not a literal backtick — a REGEX-DIALECT trap that can never match anything |
+| `grep -ci "byte-stable"` before vs after a cleanup | **2 → 3** | it counted WARNINGS ABOUT the phrase as instances OF it, so a correct removal read as an increase |
+
+Re-counting in Python settled it: 34 receipts, 78 grep instructions, 12 anchors verified unchanged.
+**The agent's self-report was accurate; my verification was broken three times running.**
+
+**A grep zero is UNRESOLVED, never ABSENT.** Grep locates candidates; only reading adjudicates.
+Before believing a count, confirm the pattern matches ONE known-present instance — the same positive
+control any probe needs. Grep cannot distinguish an assertion from a sentence about that assertion
+(the source-census law below), a paraphrase from a gap, or your regex dialect from the one you meant.
+When a count disagrees with a careful reader's report, suspect the pattern first.
 
 ### A checker that cannot tell a PRODUCER from a PRESENTER reports correct code as broken
 
@@ -1710,7 +1832,7 @@ Three kinds of skills apply to this repo; load the relevant one before non-trivi
   - `profile-guided-byte-identical-optimization` — find a lever on the shipped wheel + prove output
     byte-identical; the warm/cold measurement trap (see "Optimization Discipline" above).
   (the global-skill half of this list is manually maintained — no CI gate — diff it by hand against `CLAUDE.md`'s copy.)
-- **Carrying the project forward -- the in-repo skill library** (`.claude/skills/tensor-grep-*` + `code-search-and-retrieval-reference`, **27 skills**): the onboarding handbook so a new engineer or a Sonnet-class session can debug, extend, validate, and advance `tg` without the original authors. Each auto-loads by its `description`; load the one matching your task. Index by intent -- this exact bucket list is kept byte-identical with `CLAUDE.md`'s skill index; `tests/unit/test_skill_index_sync.py` fails if either doc drifts from the real `.claude/skills/` folder set:
+- **Carrying the project forward -- the in-repo skill library** (`.claude/skills/tensor-grep-*` + `code-search-and-retrieval-reference`, **27 skills**): the onboarding handbook so a new engineer or a Sonnet-class session can debug, extend, validate, and advance `tg` without the original authors. Each auto-loads by its `description`; load the one matching your task. Index by intent -- this exact bucket list is kept byte-identical with `CLAUDE.md`'s skill index; `tests/unit/test_skill_index_sync.py` fails if either doc drifts from the real `.claude/skills/` folder set, and `tests/unit/test_skill_library_drift.py` additionally pins every `file:line` citation (must resolve to a git-tracked file, line in range) and the stated `**N skills**` count against the folders that sentence names. **Neither gate can tell you a skill is CORRECT** — they prove a citation resolves, not that the cited line still contains the claimed symbol. Anchors drift 14-500 lines while resolving perfectly; run `/tg-skill-audit` (`.claude/workflows/tg-skill-audit.js`) for that half, and never fix drift by re-stamping a new line number (see "Cite the SYMBOL, not the line" above):
   - **Change safely:** `tensor-grep-change-control` (the gates), `tensor-grep-debugging-playbook`, `tensor-grep-failure-archaeology` (don't re-fight settled battles), `tensor-grep-validation-and-qa`.
   - **Understand:** `tensor-grep-architecture-contract`, `code-search-and-retrieval-reference` (domain theory), `tensor-grep-config-and-flags`.
   - **Operate:** `tensor-grep-build-and-env`, `tensor-grep-run-and-operate`, `tensor-grep-diagnostics-and-tooling`, `tensor-grep-docs-and-writing`, `tensor-grep-release-and-positioning`, `tensor-grep-workspace-dogfood` (multi-repo stress dogfood), `tensor-grep-enterprise-agent` (enterprise readiness gaps + agent hard-stops), `tensor-grep-prepare` (one-call edit readiness), `tensor-grep-ledger` (advisory multi-agent claim/finding-reuse), `tensor-grep-find-and-route` (whole-repo hybrid find + route-test), `tensor-grep-multi-project-search` (scoped cross-repo search), `tensor-grep-enterprise-review-bundle` (review-bundle create/verify), `tensor-grep-gpu` (experimental GPU probes).

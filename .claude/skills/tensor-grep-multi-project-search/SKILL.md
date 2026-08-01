@@ -42,9 +42,14 @@ tg search TODO . --type ts --max-depth 4   # can TIMEOUT on large workspaces
 ```
 
 **The bare-`tg search` refusal (A9, v1.92.3) is a single generic mechanism, not a special multi-project
-case.** `IMPLICIT_SEARCH_WALK_FILE_CEILING = 1500` is one constant, single-sourced in
-`io/directory_scanner.py`, checked coherently across all 3 doors (the Python bootstrap probe, `main.py`,
-and the Rust `rg_passthrough.rs`) — it fires whenever the scan PATH was **defaulted** (no path argument
+case.** `IMPLICIT_SEARCH_WALK_FILE_CEILING = 1500` is one constant. Content check (this pass): it is
+**defined** in `io/scan_limits.py` (`grep -n IMPLICIT_SEARCH_WALK_FILE_CEILING src/tensor_grep/io/scan_limits.py`
+→ `= 1500`), and merely **re-exported** from `io/directory_scanner.py` for import convenience — the prior
+wording of this note ("single-sourced in `io/directory_scanner.py`") named the re-export site as the
+source, not the definition site. It is checked coherently across all 3 doors (the Python bootstrap probe
+`bootstrap._search_paths_include_oversized_implicit_root`, `main.py`'s `_LARGE_ROOT_SCAN_FILE_CEILING`
+alias, and the Rust `rg_passthrough.rs::IMPLICIT_SEARCH_WALK_FILE_CEILING` constant — all three confirmed
+present via grep this pass) — it fires whenever the scan PATH was **defaulted** (no path argument
 given at all) and the resulting root is over 1500 files, workspace-parent or not. Before this shipped,
 the same shape was a **silent ~60s timeout**, not a fast refusal — don't describe the old magnitude as
 current.

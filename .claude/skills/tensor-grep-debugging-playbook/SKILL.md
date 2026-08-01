@@ -159,8 +159,9 @@ fails fast rather than hanging: the configured ripgrep timeout defaults to **60 
 from 600s specifically because ripgrep does GB/s and a >60s search means something pathological is
 being scanned (an unexcluded huge/index directory), not a legitimately slow query. On timeout, the
 child is killed and the process exits **124** with a stderr hint to scope the search or raise the
-timeout (`src/tensor_grep/cli/bootstrap.py:1020` backward-compat shim path, `1063-1071` the primary
-`Popen`/`_terminate_child` path — re-verify with `grep -n "return 124" src/tensor_grep/cli/bootstrap.py`,
+timeout (`src/tensor_grep/cli/bootstrap.py`, backward-compat shim path and the primary
+`Popen`/`_terminate_child` path both `return 124` — re-verify with
+`grep -n "return 124" src/tensor_grep/cli/bootstrap.py`; was `:1020`/`:1063-1071`, now `:1269`/`:1320`,
 line numbers drift every release).
 
 **Discriminating experiment:** check the exit code. `124` = the configured timeout fired (not a
@@ -185,14 +186,18 @@ fully resolve full-tree speed. Full env-var reference: `tensor-grep-config-and-f
 **Related, known limitation — `tg inventory --deadline` on a pathological workspace-union tree:**
 `tg inventory --deadline` is a *different* command from `tg search` but shares the same root-cause
 class as the hang above (an unbounded directory read), and normally bounds cleanly per project
-(truncates at N files, stamps `truncation_cause="deadline"`,
-`src/tensor_grep/cli/main.py:8404`/`:8420`). On a PATHOLOGICAL **workspace-union** tree — many
+(truncates at N files, stamps `truncation_cause = "deadline"` — `build_inventory` has since moved out
+of `main.py` into its own module; re-verify with
+`grep -n 'truncation_cause = "deadline"' src/tensor_grep/cli/inventory.py`; was
+`main.py:8404`/`:8420`, now `inventory.py:318`). On a PATHOLOGICAL **workspace-union** tree — many
 unrelated repos flattened under one huge root, not a single normal project — it can still blow its
-deadline: the shared walker `_iter_repo_files` (`src/tensor_grep/cli/repo_map.py:1143`) reads an
-entire huge directory's entries in one non-lazy `list(os.scandir(normalized_root))` call
-(`src/tensor_grep/cli/repo_map.py:1009`) before its own per-file deadline check gets a chance to
-run, so one abnormally large subdirectory can exceed the deadline before the mid-walk check fires
-even once. This is a KNOWN, accepted, low-priority edge (rare shape; verified against a real
+deadline: the shared walker `_iter_repo_files` (re-verify with `grep -n "def _iter_repo_files"
+src/tensor_grep/cli/repo_map.py`; was `:1143`, now `:1144`) reads an entire huge directory's entries
+in one non-lazy `list(os.scandir(normalized_root))` call inside that same function (re-verify with
+`grep -n "list(os.scandir(normalized_root))" src/tensor_grep/cli/repo_map.py`; was `:1009`, now
+`:1172` — the `def` itself barely moved but this internal call drifted much further as the
+function's docstring grew) before its own per-file deadline check gets a chance to run, so one
+abnormally large subdirectory can exceed the deadline before the mid-walk check fires even once. This is a KNOWN, accepted, low-priority edge (rare shape; verified against a real
 300k+-file multi-project workspace) — not worth a load-bearing lazy-`scandir` rewrite. Don't
 re-diagnose it as a new bug; if the SAME deadline-blown symptom shows up on a normal single-project
 repo (not a workspace union), that IS a regression and should be treated as a new incident, not
@@ -253,9 +258,10 @@ Run the same probe through any code path that builds subprocess argv from a
 pattern/path/replacement value (MCP tool handlers, rewrite commands) — a value beginning with `-`
 should error or be treated as data, never silently change tg's own behavior.
 
-**Fixed reference implementation** (`src/tensor_grep/cli/mcp_server.py:1259`
-`_build_rewrite_command` / `:1310` `_build_index_search_command` — re-verify with
-`grep -n "def _build_rewrite_command\|def _build_index_search_command" src/tensor_grep/cli/mcp_server.py`):
+**Fixed reference implementation** (`src/tensor_grep/cli/mcp_server.py`, `_build_rewrite_command` /
+`_build_index_search_command` — re-verify with
+`grep -n "def _build_rewrite_command\|def _build_index_search_command" src/tensor_grep/cli/mcp_server.py`;
+was `:1259`/`:1310`, now `:1328`/`:1379`, +69 each):
 a `--` end-of-options sentinel is inserted before the user-controlled `pattern`/`path` positionals,
 with an inline comment explaining why.
 
@@ -263,7 +269,8 @@ with an inline comment explaining why.
 `rust_core/src/rg_passthrough.rs` appending `paths` directly with no `--` sentinel (a directory
 literally named `-l` parsed by `rg` as the `-l`/files-with-matches flag instead of a path) was fixed
 in `#326` (v1.17.26), silently regressed by a later refactor, then restored in `#370` (v1.28.1) as
-the extracted, unit-tested `ripgrep_operand_args` helper (`rust_core/src/rg_passthrough.rs:581-600`)
+the extracted, unit-tested `ripgrep_operand_args` helper (`rust_core/src/rg_passthrough.rs` — see the
+grep below; was `:581-600`, now `:584-603`)
 — the sentinel is now pushed unconditionally before the path loop whenever `!args.paths.is_empty()`.
 Patterns going through `-e` were never affected (`-e` consumes the next token as its value regardless
 of a leading `-`); only bare path positionals were ever at risk, and that risk is now closed. Verify
@@ -288,9 +295,10 @@ missing-flag bug compounded, because the bridge call itself never got exercised
 (`AGENTS.md`, "Local Dev Gotchas").
 
 **Discriminating experiment:** does the test import/patch `tensor_grep.rust_core` (or its Python
-wrapper `RustCoreBackend`, `src/tensor_grep/backends/rust_backend.py:28-33`,
-`try: from tensor_grep.rust_core import RustBackend as NativeRustBackend`), or does it patch
-something *around* that boundary? If a test replaces `bootstrap.run_subprocess` or stubs
+wrapper `RustCoreBackend`, the `try: from tensor_grep.rust_core import RustBackend as
+NativeRustBackend` / `HAVE_RUST` block in `src/tensor_grep/backends/rust_backend.py` — re-verify with
+`grep -n "HAVE_RUST" src/tensor_grep/backends/rust_backend.py`; was `:28-33`, now `:9-14`), or does it
+patch something *around* that boundary? If a test replaces `bootstrap.run_subprocess` or stubs
 `RustCoreBackend.inner`, it is validating call shape, not that the real extension does the right
 thing.
 
@@ -338,12 +346,22 @@ If a fresh install on a new Python resolves to an old `tg --version`, do not ass
 
 ## 8. Ranking flip
 
-The agent capsule's **primary-target candidate selection** (`score_term_overlap`,
-`src/tensor_grep/core/retrieval_lexical.py:15`, called from `repo_map.py:7737` inside
-`_score_file_source_terms`, one of the family of scoring helpers around `repo_map.py:8211`
-(`_score_symbol`) / `:7725` (`_score_import_entry`) / `:7732` (`_score_file_source_terms`) that feed
-the capsule's `primary_target` selection) is a **flat, no-IDF** set-membership scorer plus a hard top-N candidate
-cap — an acknowledged, not-yet-fixed weak point. A small, unrelated corpus change can flip which
+The agent capsule's **primary-target candidate selection** relies on three scoring helpers in
+`repo_map.py` — `_score_symbol`, `_score_import_entry`, `_score_file_source_terms` — plus
+`score_term_overlap` (`src/tensor_grep/core/retrieval_lexical.py:15`), which
+`_score_file_source_terms` calls. Re-verify their positions before citing one; they do NOT move
+together, only relative to each other:
+
+```bash
+grep -n "def _score_symbol\|def _score_import_entry\|def _score_file_source_terms" src/tensor_grep/cli/repo_map.py
+grep -n "score_term_overlap(" src/tensor_grep/cli/repo_map.py
+```
+
+`_score_symbol` used to sit **after** the other two (`:8211` vs `:7725`/`:7732`, with the call site
+at `:7737`) and now sits **before** them (`:8194` vs `:8221`/`:8228`, call site now `:8233`) — a
+relative reordering, not a uniform shift, so don't assume a fixed offset holds between any two of
+these four line numbers. Together they implement a **flat, no-IDF** set-membership scorer plus a
+hard top-N candidate cap — an acknowledged, not-yet-fixed weak point. A small, unrelated corpus change can flip which
 candidate wins a near-tie, and that flip is invisible to the call graph (nothing "broke" in the
 traditional sense — the ranking function just picked a different winner). This produced a real
 incident: an unrelated GPU-code change flipped the agent capsule's top pick from "tied, ask the
@@ -373,8 +391,9 @@ tg agent PATH QUERY --json > after.json                # on the post-change comm
 
 For the agent capsule specifically, check the `ambiguity` / `ask_reasons` fields
 (`src/tensor_grep/cli/agent_capsule.py`) rather than only the `primary_target` — a **degrade-to-ask
-safety floor** (`agent_capsule.py:3224`, the `# Degrade-to-ask safety floor:` comment — re-verify
-with `grep -n "Degrade-to-ask safety floor" src/tensor_grep/cli/agent_capsule.py`) forces `ask_user`-style output whenever ranking
+safety floor** (the `# Degrade-to-ask safety floor:` comment in `agent_capsule.py` — re-verify
+with `grep -n "Degrade-to-ask safety floor" src/tensor_grep/cli/agent_capsule.py`; was `:3224`, now
+`:3244`, line numbers drift every release) forces `ask_user`-style output whenever ranking
 buried the real implementation behind an unrequested marker/no-op helper, so a correctly-behaving
 flip should surface as `ambiguity`/`ask_user_before_editing` metadata, not a silent wrong answer.
 If you see a confident wrong `primary_target` with no ambiguity signal, that is a regression in the
@@ -452,7 +471,9 @@ latency-diagnosis pass on `tg blast-radius` identified AST parsing (`compile()`)
 path by reading the code, and reasoned toward caching it. Profiling the *actual* `tg blast-radius`
 call at depth 2 on this repo showed `compile()` was only **3.6% of runtime** — caching it would
 have saved roughly 3%. The real hotspot, invisible from code review, was `_module_aliases_for_path`
-(`src/tensor_grep/cli/repo_map.py:8197`), called **1,431,341 times** for ~1,000 unique path inputs
+(`src/tensor_grep/cli/repo_map.py` — re-verify with
+`grep -n "def _module_aliases_for_path" src/tensor_grep/cli/repo_map.py`; was `:8197`, now `:8693`),
+called **1,431,341 times** for ~1,000 unique path inputs
 from the reverse-import-graph / PageRank loops — 6.1s self / 38s cumulative of a 62s run. The commit
 message states this directly: "this corrects the regression-hunt synthesis, which guessed AST-parse
 caching (would have saved ~3%) — the real hotspot only showed under measurement."
@@ -480,8 +501,9 @@ directly — a fresh process (cold cache), a single pass over distinct real file
 it is genuinely **~54% faster** (961ms→446ms on the probe corpus), verified byte-identical by a
 monkeypatched-`ast.walk`-call-count assertion plus an old-vs-new diff over a
 static/nested/relative-imports/classes/sync+async/dynamic-import corpus. The companion
-validation-scan optimization (`_framework_test_pattern_bonus`,
-`src/tensor_grep/cli/repo_map.py:10616`, commit `d2c1266`, PR #723, v1.93.10 — a textual pre-check
+validation-scan optimization (`_framework_test_pattern_bonus` in `src/tensor_grep/cli/repo_map.py` —
+re-verify with `grep -n "def _framework_test_pattern_bonus" src/tensor_grep/cli/repo_map.py`; was
+`:10616`, now `:11112` — commit `d2c1266`, PR #723, v1.93.10 — a textual pre-check
 that skips an expensive per-candidate AST parse when nothing in `expanded_terms` could possibly
 score) shows the identical shape: **~68% faster** (3657ms→1172ms) in isolation, invisible from a
 warm end-to-end read.
@@ -694,9 +716,9 @@ consecutive PRs (#720, #721).
 
 **Fix (already shipped, #722):** the `test-rust-core` matrix job's `Setup Rust` step now pre-fetches
 the pin inside a 3x retry loop (`cd rust_core && for attempt in 1 2 3; do cargo --version && break;
-...; sleep 15; done`) so the later `cargo test` step never hits the un-retried path
-(`.github/workflows/ci.yml:449-459` — re-verify with
-`grep -n "pinned-toolchain fetch" .github/workflows/ci.yml`).
+...; sleep 15; done`) so the later `cargo test` step never hits the un-retried path (re-verify with
+`grep -n "pinned-toolchain fetch" .github/workflows/ci.yml`; was `.github/workflows/ci.yml:449-459`,
+now `:482-492`).
 
 **Discriminating experiment:**
 
@@ -854,11 +876,23 @@ agent has to be recalled mid-flight.
 
 **Root cause:** "sufficient to reproduce the symptom" and "the actual cause in the real failing job"
 are different claims, and a control that succeeds only proves the first. Receipt: a control that
-forced the native binary to build reproduced the CI failure exactly -- but
-`.github/workflows/ci.yml:688` documents in-line that the `test-python` job (the one that was
-actually red) **never builds** `rust_core/target/release/tg` at all (maturin there only builds the
-`pyo3/extension-module` cdylib; the release binary only exists in a different job). The reproduced
-failure and the real failure shared symptoms, not cause.
+forced the native binary to build reproduced the CI failure exactly -- but an in-line comment on the
+`test-python` job's `Run Pytest` step (the job that was actually red) stated `test-python` **never
+builds** `rust_core/target/release/tg` at all (maturin there only builds the `pyo3/extension-module`
+cdylib; the release binary only exists in a different job) -- re-verify with
+`grep -n "never builds" .github/workflows/ci.yml`; was `.github/workflows/ci.yml:688`, now `:704-705`
+(that comment moved, and the file has since grown a second, near-identical copy at `:442-443`). The
+reproduced failure and the real failure shared symptoms, not cause.
+
+**Update, since re-verified (task 22 / PR #868): `ci.yml` now marks this exact claim "IN DISPUTE."**
+A later investigation questioned whether `test-python` genuinely never reaches a real native binary
+on every job/OS leg, and the file has since grown a NON-GATING diagnostic step ("Task 22 diagnostic:
+which route does an explicit --gpu-device-ids search take", `continue-on-error: true`) specifically
+to re-measure this on a live job instead of trusting the comment as settled
+(`grep -n "Task 22 diagnostic" .github/workflows/ci.yml`). Treat the underlying "never builds the
+release binary" claim as under active re-verification, not as closed, until that diagnostic's finding
+is folded back into this section -- the *methodology* lesson below (reproduction is not proof of the
+operative mechanism) still holds regardless of how that dispute resolves.
 
 **Discriminating experiment:** after any control reproduces a failure, read the real failing job's
 own config for the step in question and confirm it can reach the mechanism you forced:
@@ -963,12 +997,24 @@ returning a false-negative spot-check on a sibling PR) and the concrete clock-re
 session: §18 (a control that verified the wrong symbol -- `rust_core` the importable extension vs.
 `resolve_native_tg_binary()` the compiled-binary resolver -- falsely exonerated a correct hypothesis on
 #868), §19 (a control reproduced CI's failure byte-for-byte but the mechanism it forced was never
-exercised by the real failing job, per the in-line note at `.github/workflows/ci.yml:688`; the
+exercised by the real failing job, per an in-line comment in `.github/workflows/ci.yml`; the
 dispatched fix had to be recalled mid-flight), §20 (a `gh run list --branch ... --limit N` merge-gate
 query reported "0 in flight" while a real release run was mid-publish, because unrelated
 cron-triggered rows sharing the same commit SHA filled the limited window), and §21 (a Windows-built
 `tg` binary invoked from Git Bash defaulted to a POSIX-style `/tmp/...` cwd it could not resolve,
 reading as a phantom regression until re-run with an explicit Windows-form path).
+**2026-08-01 citation-repair pass:** every hardcoded `file:line` citation in §3/§5/§6/§8/§10/§15/§19
+had drifted again since the 2026-07-23 pass (`repo_map.py`'s moved the most -- `_score_symbol` /
+`_score_import_entry` / `_score_file_source_terms` REORDERED relative to each other, not just shifted
+together; `_module_aliases_for_path` and `_framework_test_pattern_bonus` each drifted ~495 lines; the
+`tg inventory --deadline` truncation-cause stamp moved out of `main.py` into its own `inventory.py`
+module entirely). Each was converted from a bare line number to a `grep`-verifiable symbol/phrase,
+with a `was -> now` pair kept beside it as a drift-rate receipt, not a number to trust on the next
+read (per AGENTS.md's "cite the SYMBOL, not the line" law -- re-stamping a citation with today's
+correct number just ships the next wrong anchor on a slower clock). §19 additionally picked up a
+substantive update, not just a line move: `ci.yml` itself now marks the "`test-python` never builds
+the release binary" claim "IN DISPUTE" pending a task-22 diagnostic step, so that section now flags
+the claim as under active re-verification rather than settled.
 Re-verify anything below before trusting it on a later version — this table
 drifts whenever the cited line numbers, defaults, or contracts change.
 

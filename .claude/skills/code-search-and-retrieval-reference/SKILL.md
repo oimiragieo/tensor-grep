@@ -14,6 +14,11 @@ and this document does not update itself. Verified against the repo **as of 2026
 **Every `file:line` citation in the document re-grepped against `origin/main`, §2's AST-routing
 description corrected, and new §2a (the `lang_registry` symbol-graph tier) added, 2026-07-23,
 v1.95.0** — see the dated note at the end of "Provenance and maintenance" for what changed and why.
+**2026-08-01, v1.101.27: §2a's language-tier claim corrected (all 10 top-10 languages are
+registered, not 8; there is no unregistered-C/C++ gap) and every drifted `file:line` citation in
+the document converted to a `grep <symbol>` instruction carrying a `was -> now` receipt** — see the
+final dated note in "Provenance and maintenance" for the full list and for why a "verified as of
+DATE" tag on a line number does not stop it from rotting.
 
 ## When NOT to use this skill (use a sibling instead)
 
@@ -51,15 +56,15 @@ of the partial-results contract (see `tensor-grep-architecture-contract` for the
 |---|---|---|
 | `0` | at least one match found | pass through |
 | `1` | search ran cleanly, zero matches | **not** an error — a `SearchResult` with 0 matches, never raised as a failure |
-| `2`, matches parsed (soft per-file error, e.g. one unreadable path among many) | rg still emitted matches for the readable files | tg **keeps** those matches, sets `result_incomplete=True` + an `incomplete_reason`, and does **not** raise — `partial = result.returncode == 2 and total_matches > 0` (`ripgrep_backend.py:123`, mirrored in `_search_files_with_matches`/`_search_counts`) |
-| `2`, nothing parsed, or any `> 2` | a genuine fatal failure (bad regex, unreadable path with no other matches, etc.) | `RipgrepBackend.search()` raises `BackendExecutionError` whenever `result.returncode > 1 and not partial` (`ripgrep_backend.py:124-128`; the two sibling methods raise the same way at `:297` and `:413`; the rg-missing guard at `:505` too). **RESOLVED #79/#10/#14 (commit `a7c9431`)** -- every `RipgrepBackend` fatal path used to raise a bare `RuntimeError`, deliberately not `BackendExecutionError`, so it would not get caught by `cli/main.py`'s `except BackendExecutionError:` per-file CPU-fallback retry; the fix flipped all of them to `BackendExecutionError` so that retry now catches rg failures the same way it does every other backend, per the Backend Fail-Closed Contract's normal convention. |
+| `2`, matches parsed (soft per-file error, e.g. one unreadable path among many) | rg still emitted matches for the readable files | tg **keeps** those matches, sets `result_incomplete=True` + an `incomplete_reason`, and does **not** raise — `partial = result.returncode == 2 and total_matches > 0` (grep that exact expression in `ripgrep_backend.py` -- was `:123`, now `:124`, mirrored in `_search_files_with_matches`/`_search_counts`) |
+| `2`, nothing parsed, or any `> 2` | a genuine fatal failure (bad regex, unreadable path with no other matches, etc.) | `RipgrepBackend.search()` raises `BackendExecutionError` whenever `result.returncode > 1 and not partial` (grep `result.returncode > 1 and not partial` in `ripgrep_backend.py` -- was `:124-128`, now `:125-129`; the two sibling methods raise the same way -- was `:297` and `:413`, now `:308` and `:426`; the rg-missing guard -- was `:505`, now `:541` -- too). **RESOLVED #79/#10/#14 (commit `a7c9431`)** -- every `RipgrepBackend` fatal path used to raise a bare `RuntimeError`, deliberately not `BackendExecutionError`, so it would not get caught by `cli/main.py`'s `except BackendExecutionError:` per-file CPU-fallback retry; the fix flipped all of them to `BackendExecutionError` so that retry now catches rg failures the same way it does every other backend, per the Backend Fail-Closed Contract's normal convention. |
 
 **Do not describe exit-2 as unconditionally "raise `BackendExecutionError`"** — that was true before
 #341 (round-4 slice 3) and is no longer true; a partial exit-2 with real matches is now a **kept**
 result, not a failure. `tests/e2e/test_rg_parity_edges.py::test_rg_exit_code_edges_match` is
-parametrized exactly on the fatal-failure boundary (`ids=["match", "no-match", "parse-error",
-"binary-skip"]`, line 149) and asserts `tg.returncode == rg.returncode` for every case
-(`_assert_same_rg_behavior`, line 81) — a regex `(` (unbalanced paren, nothing parsed) must still
+parametrized exactly on the fatal-failure boundary (grep `ids=\["match", "no-match", "parse-error",`
+in the same file -- was line `149`, now `169`) and asserts `tg.returncode == rg.returncode` for
+every case (grep `def _assert_same_rg_behavior` -- was line `81`, now `96`) — a regex `(` (unbalanced paren, nothing parsed) must still
 make tg exit `2`, same as rg. Partial-parse-with-matches is covered separately by
 `tests/unit/test_rg_exit2_partial.py`.
 
@@ -67,28 +72,32 @@ make tg exit `2`, same as rg. Partial-parse-with-matches is covered separately b
 time, but **no lookaround, no backreferences**. `--pcre2`/`-P` switches to libpcre2, which supports
 both but requires the *pattern* to be valid UTF-8 (it transcodes). tg detects PCRE2 support with a
 real smoke test — build help output contains `--pcre2`/`PCRE2`, then actually run
-`rg -P "a(?=b)" -V` and check `returncode == 0` (`ripgrep_backend.py:27-51`, `supports_pcre2()`).
+`rg -P "a(?=b)" -V` and check `returncode == 0` (grep `def supports_pcre2` in `ripgrep_backend.py`
+-- was `:27-51`, now `:54-77`).
 This matters because of the **fail-closed contract**: `--pcre2` routed through an engine that cannot
 honor PCRE2 semantics must raise, never silently execute as a plain-regex search that returns wrong
 (or merely different) matches (`src/tensor_grep/backends/base.py:7-14`, `BackendExecutionError`;
-AGENTS.md "Fail closed" bullet, line 444). A prior incident shipped exactly this bug — a broad
-`except Exception: pass` around the Rust passthrough silently ran `--pcre2` through the non-PCRE2
-Python-regex engine — fixed in v1.17.17/18 (see `tensor-grep-change-control`, Part 4 — Backend
-fail-closed contract, lines 125-134).
+grep `**Fail closed**` in `AGENTS.md` -- was line `444`, now `:1668`). A prior incident shipped
+exactly this bug — a broad `except Exception: pass` around the Rust passthrough silently ran
+`--pcre2` through the non-PCRE2 Python-regex engine — fixed in v1.17.17/18 (see
+`tensor-grep-change-control`, grep `## Part 4` in that skill's `SKILL.md` -- was lines `125-134`,
+now `:287-311` -- Backend fail-closed contract).
 
 **Binary detection is NUL-byte sniffing, and it changes exit codes.** rg's default binary heuristic
 scans early file bytes for a `\0`; on a hit, the file is treated as binary and searched under the
 binary-skip policy unless `-a`/`--text` is passed (`rg_contract.py` row `"text"`, `public_flags:
 ("-a", "--text")`). The parity fixture builds exactly this case —
-`binary_path.write_bytes(b"needle\0binary tail\n")` (`test_rg_parity_edges.py:41-43`) — and the
-`"binary-skip"` parametrization (line 149) asserts tg's exit code matches rg's on a NUL-containing
-file, not just its stdout.
+`binary_path.write_bytes(b"needle\0binary tail\n")` (grep that exact line in `test_rg_parity_edges.py`
+-- was `:41-43`, now `:44`) — and the
+`"binary-skip"` parametrization (grep `ids=\["match", "no-match", "parse-error",` -- was line `149`,
+now `169`) asserts tg's exit code matches rg's on a NUL-containing file, not just its stdout.
 
 **`-u`/`-uu`/`-uuu` are not blind passthrough here.** Upstream, each additional `-u` widens scope
 (`-u` = `--no-ignore`, `-uu` = `--no-ignore --hidden`, `-uuu` = `--no-ignore --hidden --binary`). tg's
 Python front door specifically *detects* any `-u*` flag (or `--unrestricted`, or an explicit
 no-ignore/hidden flag) as a request for unrestricted scanning and routes it through a broad-root
-safety guard (`bootstrap.py:581-590`, `_search_args_request_unrestricted_generated_scan`). This
+safety guard (grep `def _search_args_request_unrestricted_generated_scan` in `bootstrap.py` --
+was `:581-590`, now `:726-732`). This
 exists because of a real v1.13.1 incident: an unguarded broad-root unrestricted scan could recurse
 into `node_modules`/`.git`/multi-project workspace roots. If you're adding a new flag that widens
 scan scope, check whether it needs to join this guard's flag set — a missed case is a silent safety
@@ -97,10 +106,11 @@ regression, not just a slow query.
 **`--` and `-e` matter for argv safety, not just POSIX correctness.** `--` ends option parsing so a
 user- or LLM-supplied pattern beginning with `-` cannot be reinterpreted as a flag (CWE-88 / the
 MCP-276 CVE class). tg's MCP tool handlers build subprocess argv with an explicit `--` sentinel
-before positionals for exactly this reason: `command.extend(["--", pattern, path])`
-(`src/tensor_grep/cli/mcp_server.py:1306`, comment two lines above: "round-3 security: end options
-before the user-controlled positionals so a pattern beginning with `-` cannot be parsed by the
-native binary as a flag"). Note the narrower scope of this fix: it blocks *flag* injection via a
+before positionals for exactly this reason: `command.extend(["--", pattern, path])` (grep that
+exact call in `src/tensor_grep/cli/mcp_server.py` -- was `:1306`, now `:1375`, comment two lines
+above: "round-3 security: end options before the user-controlled positionals so a pattern
+beginning with `-` cannot be parsed by the native binary as a flag"). Note the narrower scope of
+this fix: it blocks *flag* injection via a
 missing `--`, not shell injection (list-argv subprocess calls already block shell injection). See
 `tensor-grep-change-control` before touching any subprocess argv builder.
 
@@ -135,20 +145,26 @@ picks between them per query:
 `def $FUNC($$$ARGS):` matches any Python function definition, binding `$FUNC` and `$$$ARGS`).
 
 **Corrected — the routing default is the OPPOSITE of what this section previously said.** The real
-routing decision lives in `_select_ast_backend_for_pattern` (`main.py:6737` as of 2026-07-27 -- grep the symbol), and its own comment is
-unambiguous: *"Prefer the ast-grep wrapper whenever it is available: it is the stable,
-results-defining backend for BOTH pattern kinds. The native tree-sitter AstBackend uses a DIFFERENT
-DSL and returns DIFFERENT results, so it must not be silently preferred ... Native-as-CPU-default is
-task #141. Native is reached ONLY as the ast-grep-absent fallback for native patterns."*
-(`main.py:6692-6697`). Concretely: `if ast_wrapper.is_available(): backend = ast_wrapper` runs
-**first** (`main.py:6698`), unconditionally, regardless of GPU/CUDA or pattern shape; native
-`AstBackend` is reached only when the wrapper is unavailable AND the pattern qualifies as
-"native" (`base_config.ast_prefer_native` and `is_native_ast_language(base_config.lang)` — the
-native-capable language set is narrower than the wrapper's, `_NATIVE_AST_LANGUAGES =
-("python", "javascript", "typescript", "tsx", "rust")`, `ast_backend.py:104`). This applies to AST
-search, `--rewrite` planning, `--apply`, `--diff`, and batch rewrite flows alike. **`docs/routing_policy.md`'s own "AST commands" section (lines 107-113) is itself stale here** — it
-still describes a `torch-geometric`/CUDA-style gate — trust the code cited above, not that doc's
-prose, until it is refreshed.
+routing decision lives in `_select_ast_backend_for_pattern` (grep `def
+_select_ast_backend_for_pattern` in `main.py` -- was `:6737`, then a prior pass tagged that same
+number "as of 2026-07-27" and it had ALREADY drifted to `:6915` by this pass: a dated hedge does not
+stop a line number from rotting, it just makes the rot look supervised, so no citation in this
+document carries a date anymore), and its own comment is unambiguous: *"Prefer the ast-grep wrapper
+whenever it is available: it is the stable, results-defining backend for BOTH pattern kinds. The
+native tree-sitter AstBackend uses a DIFFERENT DSL and returns DIFFERENT results, so it must not be
+silently preferred ... Native-as-CPU-default is task #141. Native is reached ONLY as the
+ast-grep-absent fallback for native patterns."* (grep "Prefer the ast-grep wrapper" in `main.py` --
+was `:6692-6697`, now `:6952-6957`). Concretely: `if ast_wrapper.is_available(): backend =
+ast_wrapper` runs **first** (grep that exact line in `main.py` -- was `:6698`, now `:6958`),
+unconditionally, regardless of GPU/CUDA or pattern shape; native `AstBackend` is reached only when
+the wrapper is unavailable AND the pattern qualifies as "native" (`base_config.ast_prefer_native`
+and `is_native_ast_language(base_config.lang)` — the native-capable language set is narrower than
+the wrapper's, `_NATIVE_AST_LANGUAGES = ("python", "javascript", "typescript", "tsx", "rust")`,
+`ast_backend.py:104`). This applies to AST search, `--rewrite` planning, `--apply`, `--diff`, and
+batch rewrite flows alike. **`docs/routing_policy.md`'s own "AST commands" section is itself stale
+here** (grep `## AST commands` in that doc -- was `:107-113`, now `:156`) — it still describes a
+`torch-geometric`/CUDA-style gate — trust the code cited above, not that doc's prose, until it is
+refreshed.
 
 **Practical corollary (updated):** on almost any real dev or CI box, `ast-grep`/`sg` being installed
 is now the thing that decides the backend, not GPU presence — with ast-grep installed (the common
@@ -188,57 +204,83 @@ no shared routing function with `AstBackend`/`AstGrepWrapperBackend` above.
 This tier's single source of truth is `lang_registry.py`
 (`src/tensor_grep/cli/lang_registry.py`): a frozen `LanguageSpec` dataclass registry answering
 "which languages does the symbol graph support, and which callable implements each extraction
-stage for each" (module docstring, lines 1-18). `repo_map.py` calls
-`lang_registry.register_language(LanguageSpec(...))` once per language — **8 calls**
-(`repo_map.py:6004` python, `:6039` javascript, `:6048` typescript, `:6057` rust, `:6083` go,
-`:6119` java, `:6156` php, `:6195` csharp) — covering **8 of the top-10 languages** by
-TIOBE-Jul-2026/Stack-Overflow-2025/GitHub-Octoverse-2025 consensus ranking (Python, JavaScript,
-TypeScript, Java, C#, C++, C, Go, Rust, PHP); only C and C++ remain unregistered, both
-deliberately deferred (neither has an `#include`/macro/header-resolution model in tg yet — a
-different shape of problem than the other 8). A language's callables live either as older helpers
-defined directly in `repo_map.py` (python needs no external grammar at all — it parses with the
-stdlib `ast` module; rust's `_rust_*` helpers and java's `_java_*` helpers predate/mirror that
-inline style) or in a newer, self-contained per-language module mirroring `lang_go.py`
-(`lang_go.py`, `lang_php.py`, `lang_csharp.py` — each importing nothing from `repo_map.py`, to
-avoid an import cycle). `LanguageSpec` does not care which shape a language's callables take, only
-that they exist, so both are equally contract-consistent — do not assume "inline" means "old" or
-"module" means "new" from the shape alone; check the registration date.
+stage for each" (module docstring). `repo_map.py` calls
+`lang_registry.register_language(LanguageSpec(...))` once per language.
+
+**Do not hand-derive this count or its tier split — this repo's memory records the split being
+stated WRONG three separate times** (a hand-count landing on 4/10 with go demoted, a grep for a
+string that happened to also match `=None` landing on 8/10, and an invented third "unresolved" tier
+built from a field's absence). The authoritative source is the product's own descriptor function,
+run it rather than trust any number written here:
+
+```bash
+python -c "import sys;sys.path.insert(0,'src');from tensor_grep.cli import repo_map as r;print(r._symbol_navigation_descriptor())"
+# -> parser-backed-refs-callers:go-javascript-python-rust-typescript
+#    +foundational-defs-imports-only:c-cpp-csharp-java-php
+```
+
+cross-checked against `grep -c "lang_registry.register_language(" src/tensor_grep/cli/repo_map.py`,
+which returns **10**. **All 10 of the top-10 languages** by TIOBE-Jul-2026/Stack-Overflow-2025/
+GitHub-Octoverse-2025 consensus ranking (Python, JavaScript, TypeScript, Java, C#, C++, C, Go,
+Rust, PHP) are registered — there is no unregistered language on this list and nothing deliberately
+deferred. **There is also no third tier.** The 10 split exactly in half: **five parser-backed**
+languages with full refs/callers support (go, javascript, python, rust, typescript) and **five
+foundational** languages with defs+imports only (c, cpp, csharp, java, php). The cpp registration's
+own in-repo comment says this outright: *"C++ joins the symbol graph as a FOUNDATIONAL-TIER
+language, closing the top-10 language-support campaign to 10/10."* The real open backlog item here
+is **upgrading the five foundational languages to parser-backed refs/callers** — not registering a
+new language; c/cpp/java/php/csharp are already on the symbol graph, just at the shallower tier. A
+language's callables live either as older helpers defined directly in `repo_map.py` (python needs
+no external grammar at all — it parses with the stdlib `ast` module; rust's `_rust_*` helpers and
+java's `_java_*` helpers predate/mirror that inline style) or in a newer, self-contained
+per-language module mirroring `lang_go.py` (`lang_go.py`, `lang_php.py`, `lang_csharp.py`,
+`lang_c.py`, `lang_cpp.py` — each importing nothing from `repo_map.py`, to avoid an import cycle).
+`LanguageSpec` does not care which shape a language's callables take, only that they exist, so both
+are equally contract-consistent — do not assume "inline" means "old" or "module" means "new" from
+the shape alone; check the registration date.
 
 **The fail-closed default matters more here than in section 2 above.** `LanguageSpec.
 provenance_when_missing` defaults to `"regex-heuristic"` (`lang_registry.py:89`) — the original
-four languages fall back differently when their grammar is missing: python's `provenance_when_missing="python-ast"` (`repo_map.py:6011`, no external grammar to miss at all) and
-javascript/typescript/rust keep the inherited `"regex-heuristic"` default (`repo_map.py:6064`),
-meaning they degrade to a regex-based heuristic scan — honest, but imprecise. Every language added
-since (go/java/php/csharp) instead sets `provenance_when_missing="grammar-missing"` explicitly
-(`repo_map.py:6090`, `:6126`, `:6163`, `:6202` respectively) and ships **no regex fallback at
-all**: a grammar-absent file for one of these four returns `([], [])` from
-`_imports_and_symbols_for_path` (`repo_map.py:6626`) rather than silently degrading. That flag is
-consumed by `_language_coverage_gaps_for_universe` (`repo_map.py:8461`, the check at `:8019`:
-`if spec.provenance_when_missing not in {"regex-heuristic", "heuristic"}:`), which turns it into an
-honest, labeled `resolution_gaps` entry instead of a silent empty result — the Backend Fail-Closed
-Contract's "treat a zero as UNKNOWN, never as a silently proven zero" rule, applied at the
-language-registration layer instead of the backend layer. This is a deliberate per-language
-precision/recall tradeoff, not an oversight; see `tensor-grep-change-control` if you are adding a
-9th language and need the full seam checklist rather than the theory.
+four languages fall back differently when their grammar is missing: python's
+`provenance_when_missing="python-ast"` (grep that exact string in `repo_map.py` -- was `:6011`, now
+`:6294`, no external grammar to miss at all) and javascript/typescript/rust keep the inherited
+`"regex-heuristic"` default (grep each `register_language(` call and read the block — there is no
+separate literal string to grep for on those three, since it is the field's own default). Every
+language added since (go/java/php/csharp, and both foundational-tier c/cpp) instead sets
+`provenance_when_missing="grammar-missing"` explicitly on its own `register_language(...)` call
+(`grep -n 'provenance_when_missing="grammar-missing"' src/tensor_grep/cli/repo_map.py` — 6 hits as
+of this pass, one per foundational-tier language) and ships **no regex fallback at all**: a
+grammar-absent file for one of these six returns `([], [])` from `_imports_and_symbols_for_path`
+(grep `def _imports_and_symbols_for_path` in `repo_map.py` -- was `:6626`, now `:6627`) rather than
+silently degrading. That flag is consumed by `_language_coverage_gaps_for_universe` (grep `def
+_language_coverage_gaps_for_universe` in `repo_map.py` -- was `:8461`, now `:8478`; the check
+itself is the literal `if spec.provenance_when_missing not in {"regex-heuristic", "heuristic"}:` --
+grep that string rather than trust a sub-line offset, was `:8019`, now `:8515`), which turns it
+into an honest, labeled `resolution_gaps` entry instead of a silent empty result — the Backend
+Fail-Closed Contract's "treat a zero as UNKNOWN, never as a silently proven zero" rule, applied at
+the language-registration layer instead of the backend layer. This is a deliberate per-language
+precision/recall tradeoff, not an oversight; see `tensor-grep-change-control` if you are adding an
+11th language and need the full seam checklist rather than the theory.
 
 **A concrete consequence of this design worth knowing (ties back to §3/§4's ranking theme below):**
-`_target_language_for_path` (`repo_map.py:7850`) feeds the `tg agent` capsule's
-query-language-vs-target-language confidence cap (`agent_capsule.py`). Its own in-repo comment
-calls each new-language branch the "MOST-FORGOTTEN seam" — miss it, and the capsule never learns
-the new language exists as a candidate target, so it can silently misfire (e.g. reporting "no
-target language" for a C# file instead of `primary_target_language == "csharp"`) with no error,
-just a quietly wrong answer. Same failure shape as the ranking weak points below: a missing
-registration doesn't crash, it degrades a downstream signal invisibly.
+`_target_language_for_path` (grep `def _target_language_for_path` in `repo_map.py` -- was `:7850`,
+now `:7867`) feeds the `tg agent` capsule's query-language-vs-target-language confidence cap
+(`agent_capsule.py`). Its own in-repo comment calls each new-language branch the "MOST-FORGOTTEN
+seam" — miss it, and the capsule never learns the new language exists as a candidate target, so it
+can silently misfire (e.g. reporting "no target language" for a C# file instead of
+`primary_target_language == "csharp"`) with no error, just a quietly wrong answer. Same failure
+shape as the ranking weak points below: a missing registration doesn't crash, it degrades a
+downstream signal invisibly.
 
 **Positioning (ties back to the ast-grep discussion above):** **text search = any language** (`rg`
 passthrough, no tg-side language awareness at all); **structural scan/rewrite = 26 languages**
 (`tg run`/`tg scan`, via the ast-grep CLI this section describes — `_SUPPORTED_AST_LANGUAGES`,
-`ast_backend.py:76-103`, `get_supported_languages()` at `:128`); **deep symbol-graph = 8 languages**
-(this subsection, the tree-sitter grammars `lang_registry` wires up for
-`tg orient`/`defs`/`imports`/`callers`). tg is `rg` (text) + ast-grep (structural) + a
-symbol/retrieval/capsule LAYER on top of that — not "a faster grep," and the three tiers do NOT
-share a language-support number, so check which tier a coverage claim is actually about before
-citing it.
+`ast_backend.py:76-103`, `get_supported_languages()` at `:128`); **deep symbol-graph = 10
+languages, split across two tiers** (this subsection — 5 parser-backed refs/callers + 5
+foundational defs/imports-only, per the `_symbol_navigation_descriptor()` derivation above). tg is
+`rg` (text) + ast-grep (structural) + a symbol/retrieval/capsule LAYER on top of that — not "a
+faster grep," and the three tiers do NOT share a language-support number, so check which tier a
+coverage claim is actually about before citing it.
 
 ---
 
@@ -254,26 +296,36 @@ tg has **two independent ranking surfaces**, and only one of them actually imple
 1. **`retrieval_bm25.py`** (`src/tensor_grep/core/retrieval_bm25.py`) — a real Okapi BM25 index
    (`k1=1.5`, `b=0.75`, standard defaults; `DEFAULT_K1`/`DEFAULT_B`, lines 18-19), full IDF term
    `math.log(1.0 + (n - freq + 0.5) / (freq + 0.5))` (line 44). This backs `tg search --rank`
-   (alias `--bm25`; `main.py:7135`) via `reranker.py::rerank_by_bm25`, which chunks matched
+   (alias `--bm25`; grep `"--bm25"` in `main.py` -- was `:7135`, now `:7395`) via
+   `reranker.py::rerank_by_bm25`, which chunks matched
    files and re-sorts matches by the BM25 score of the chunk containing each match
    (`reranker.py:162-214`, stable sort at line 203) — a stable sort, so ties keep original grep order.
 2. **The `tg orient` / capsule symbol-ranking family** (`src/tensor_grep/cli/repo_map.py`) — **a flat
    presence-count stack, no IDF anywhere in it.** Three layered pieces, not one function — do not
    conflate them:
-   - `_score_text_terms` (`repo_map.py:7912` as of 2026-07-27 -- grep the symbol) — the primitive: counts term hits in a haystack, no
-     rarity weighting.
-   - `_score_symbol` (`repo_map.py:8177` as of 2026-07-27 -- grep the symbol) — the actual per-symbol composite scorer, and the thing
-     that produces `symbol["score"]`: name-match (`_score_text_terms` on the symbol name, `x3`
-     weight) + kind-match + file-path score (`_score_file_path`, `repo_map.py:8100`), plus two
-     additive heuristics shipped for task #254 (the CEO deep-research #251 steal / A7): a **+1
-     word-boundary bonus** (`_symbol_name_exact_boundary_bonus`, `repo_map.py:8159`; fires when a
+   - `_score_text_terms` (grep `def _score_text_terms` in `repo_map.py` -- was `:7912`, now
+     `:7929`) — the primitive: counts term hits in a haystack, no rarity weighting.
+   - `_score_symbol` (grep `def _score_symbol` in `repo_map.py` -- was `:8177`, now `:8194`) — the
+     actual per-symbol composite scorer, and the thing that produces `symbol["score"]`: name-match
+     (`_score_text_terms` on the symbol name, `x3` weight) + kind-match + file-path score
+     (`_score_file_path`, grep `def _score_file_path` in `repo_map.py` -- was `:8100`, now
+     `:8117`), plus two additive heuristics shipped for task #254 (the CEO deep-research #251 steal
+     / A7): a **+1 word-boundary bonus** (`_symbol_name_exact_boundary_bonus`, grep `def
+     _symbol_name_exact_boundary_bonus` in `repo_map.py` -- was `:8159`, now `:8176`; fires when a
      query term longer than 3 chars matches a clean token in `split_terms(symbol_name)` rather than
-     only a raw substring) and a **`_TEST_SHADOW_PENALTY = 2`** demotion (`repo_map.py:7661`, floored
-     at 0 in `_score_symbol`) that sinks a test-file hit below a same-named non-test definition
-     instead of letting it compete on equal footing. Both are additive refinements to *order among
+     only a raw substring) and a **`_TEST_SHADOW_PENALTY = 2`** demotion (grep
+     `_TEST_SHADOW_PENALTY` in `repo_map.py` -- was `:7661`, now `:8157`, floored at 0 in
+     `_score_symbol`) that sinks a test-file hit below a same-named non-test definition instead of
+     letting it compete on equal footing. Both are additive refinements to *order among
      already-matching candidates* — neither changes *which* symbols match, and neither adds IDF.
-   - `_symbol_rank_key` (`repo_map.py:8044`) — the final sort key, called as
-     `scored_symbols.sort(key=_symbol_rank_key)` (`repo_map.py:8685`). Its 7-tuple is
+
+     (The two "as of 2026-07-27" hedges this bullet list used to carry had already drifted a
+     further 17 lines by the very next pass — a dated hedge does not stop a line number from
+     rotting, it just makes the rot look supervised, so this document tags no citation with a date
+     anymore; see the note beside the AST-routing citation in §2 for the same lesson applied there.)
+   - `_symbol_rank_key` (grep `def _symbol_rank_key` in `repo_map.py` -- was `:8044`, now `:8061`)
+     — the final sort key, called as `scored_symbols.sort(key=_symbol_rank_key)` (grep that exact
+     call in `repo_map.py` -- was `:8685`, now `:9181`). Its 7-tuple is
      `(query_match_rank, -score, kind-is-function?, -span_length, file, line, name)`. The **first**
      field, `query_match_rank`, is a query-relevance bucket (0 = `exact_query_match`, 1 =
      `bridge_query_match`, 2 = `covered_query_match`, 3 = none) evaluated **before** the flat
@@ -281,7 +333,8 @@ tg has **two independent ranking surfaces**, and only one of them actually imple
      to it. The **final** tie-break field is `str(symbol.name)`, **not** a file-path string.
 
    This whole stack feeds `tg orient`'s symbol ranking and the `tg agent` capsule's target selection;
-   the top-N candidate cap is `ranked_symbols[: max(max_symbols, 8)]` (`repo_map.py:13187,13364`).
+   the top-N candidate cap is `ranked_symbols[: max(max_symbols, 8)]` (grep that exact expression in
+   `repo_map.py` -- was `:13187,13364`, now `:13683,13860`).
 
 **Why this is still a known weak point, just a narrower one than it used to be:** `_score_symbol`
 still has no IDF, so two symbols in the same `query_match_rank` bucket can still tie on the flat
@@ -318,7 +371,8 @@ tg has a real, hand-rolled **personalized PageRank** implementation over the rev
 `_personalized_reverse_import_pagerank` (`src/tensor_grep/cli/repo_map.py:8914`) — damping
 factor `alpha=0.85` (the standard Google PageRank default), `12` power-iteration steps, a
 personalization vector seeded uniformly over up to `_GRAPH_PAGERANK_SEED_FILE_LIMIT = 64` query-
-relevant files (`repo_map.py:319`), teleporting back to those seeds rather than to a uniform distribution.
+relevant files (grep `_GRAPH_PAGERANK_SEED_FILE_LIMIT` in `repo_map.py` -- was `:319`, now `:327`),
+teleporting back to those seeds rather than to a uniform distribution.
 This feeds descriptive-query file ranking (`graph-centrality` reason) inside `repo_map`/capsule/edit-
 plan retrieval — pure Python, no `networkx` dependency (unlike Aider's repo-map, which uses
 `networkx`'s PageRank over the full import graph — an external comparison, not yet documented in this
@@ -401,8 +455,9 @@ a PyO3 rewrite of a hot path; benchmark first (`tensor-grep-benchmark-and-proof-
 **MCP (Model Context Protocol)** is the tool-calling protocol that lets an LLM agent invoke
 structured "tools" (typed functions with a JSON schema) exposed by a server process. tg's MCP server
 is built on the official Python `mcp` SDK's `FastMCP` class:
-`from mcp.server.fastmcp import FastMCP` / `mcp = FastMCP("tensor-grep")`
-(`src/tensor_grep/cli/mcp_server.py:20,120`), a ~7700-line module (`mcp_server.py`) — it has grown
+`from mcp.server.fastmcp import FastMCP` (`src/tensor_grep/cli/mcp_server.py:20`, still current) /
+`mcp = FastMCP("tensor-grep")` (grep that exact call in the same file -- was `:120`, now `:189`), a
+~7700-line module (`mcp_server.py`) — it has grown
 substantially (from ~4500 lines) on unrelated feature work since this doc's baseline; re-check the
 line count before citing it as a "small module" argument in a review.
 
@@ -413,21 +468,23 @@ end option-parsing first, the "data" is reinterpreted as a flag — this is CWE-
 injection), the same class as the MCP-276 CVE. **List-argv subprocess calls (no `shell=True`) already
 block shell injection; they do NOT block flag injection** — that needs an explicit `--` sentinel
 before user-controlled positionals. tg's rewrite/index-search command builders do this:
-`command.extend(["--", pattern, path])` (`mcp_server.py:1306`) and the parallel index-search builder,
-`_build_index_search_command` (`mcp_server.py:1362-1372`). If you add a new MCP tool that shells out
+`command.extend(["--", pattern, path])` (grep that exact call in `mcp_server.py` -- was `:1306`,
+now `:1375`) and the parallel index-search builder, `_build_index_search_command` (grep `def
+_build_index_search_command` in `mcp_server.py` -- was `:1362-1372`, now `:1379-1390`). If you add a new MCP tool that shells out
 with user-controlled string values, this is the pattern to copy — and the gap to check for if you
 don't see it.
 
 **The native rg-passthrough path-sentinel gap is now FIXED, not open.** A prior round-4 sweep flagged
 that `rust_core/src/rg_passthrough.rs` forwarded user **paths** with no `--` sentinel of its own — a
 directory literally named `-l` could silently flip rg into files-with-matches mode at the native
-layer (CWE-88). This is closed: `ripgrep_operand_args` (`rg_passthrough.rs:581-600`) builds patterns
-flag-safely via `-e` and then, whenever there is at least one user path, inserts a `--` sentinel
-before the path loop (`:593-598`; the sentinel is intentionally omitted only when there are no paths
-at all, so as not to change the piped-stdin invocation shape). Three unit tests pin this:
-`operand_args_insert_end_of_options_sentinel_before_paths`,
-`operand_args_no_sentinel_when_no_paths`, `operand_args_files_mode_omits_patterns_but_keeps_sentinel`
-(`rg_passthrough.rs:788-826`). Don't cite this as an open gap anymore; do still check any *new*
+layer (CWE-88). This is closed: `ripgrep_operand_args` (grep `fn ripgrep_operand_args` in
+`rg_passthrough.rs` -- was `:581-600`, now `:584-603`) builds patterns flag-safely via `-e` and
+then, whenever there is at least one user path, inserts a `--` sentinel before the path loop (same
+function body; the sentinel is intentionally omitted only when there are no paths at all, so as not
+to change the piped-stdin invocation shape). Three unit tests pin this, no longer contiguous as a
+range — grep each name: `operand_args_insert_end_of_options_sentinel_before_paths` (was in a
+`:788-826` block, now `:1034`), `operand_args_no_sentinel_when_no_paths` (now `:1056`),
+`operand_args_files_mode_omits_patterns_but_keeps_sentinel` (now `:1065`). Don't cite this as an open gap anymore; do still check any *new*
 argv builder you touch for the same pattern — the class of bug recurs.
 
 ---
@@ -493,10 +550,12 @@ landed under different, real module names in `src/tensor_grep/core/`:
 `potion-base-8M` from the old plan doc's draft snippet was never shipped.
 
 **The user-facing surface is a flag, not a new command:** `tg search PATTERN PATH --semantic`
-(`main.py:7141` registers `--semantic`; `config.semantic_rank` drives `_apply_semantic_rerank` at
-`main.py:8048-8051`). There is no separate `tg index` command for the dense leg. A genuine dense-backend
+(grep `"--semantic"` in `main.py` -- was `:7141`, now `:7403`, registers the flag; `config.semantic_rank`
+drives `_apply_semantic_rerank` at the `if config.semantic_rank:` call site -- was `:8048-8051`,
+now `:8392-8395`). There is no separate `tg index` command for the dense leg. A genuine dense-backend
 fault (e.g. a corrupt model directory) surfaces as a `BackendExecutionError` and exits the CLI
-cleanly with a `tg:`-prefixed message (never a raw traceback) — `main.py:8051-8060`.
+cleanly with a `tg:`-prefixed message (never a raw traceback) — grep `f"tg: {exc}"` in that same
+function -- was `:8051-8060`, now `:8396-8405`.
 
 This feature remains **EXPERIMENTAL / default-off-by-flag** per project discipline (it is shipped
 code, not a marketed default) — `--semantic` must be explicitly passed. If you are actually building
@@ -569,24 +628,24 @@ router, not just `tg find`.
 
 | Concept | tg file | One-line gotcha |
 |---|---|---|
-| rg exit code 2 (kept, not raised) | `ripgrep_backend.py:123-128,297,413` | matches parsed -> `result_incomplete=True`, kept; nothing parsed / `>2` -> `BackendExecutionError` (RESOLVED #79, `a7c9431`) |
-| PCRE2 detection | `ripgrep_backend.py:53` (`supports_pcre2`) | real smoke test (`-P "a(?=b)" -V`), not a version-string guess |
-| Binary NUL detection | `test_rg_parity_edges.py:41-43,149` | exit code must match rg's, not just stdout |
-| `-u`/`-uu`/`-uuu` | `bootstrap.py:581` (`_search_args_request_unrestricted_generated_scan`) | intercepted by the broad-root safety guard, not blind passthrough |
-| `--` argv sentinel (MCP) | `mcp_server.py:1306`, `:1310-1320` | blocks flag injection; list-argv alone only blocks shell injection |
-| `--` argv sentinel (native rg passthrough) | `rg_passthrough.rs:581-600` | FIXED — `ripgrep_operand_args` inserts `--` before paths; 3 tests at `:788-826` |
-| AST native vs sidecar | `main.py:6655` (`_select_ast_backend_for_pattern`), `ast_backend.py:505` (`is_available`) | ast-grep WRAPPER is preferred whenever installed; native tree-sitter is a fallback-only path with no GPU gate anymore |
-| Symbol-graph language registry | `lang_registry.py`, `repo_map.py:6004-6222` (8 `register_language` calls) | 8 of top-10 languages; grammar-missing fails closed to `resolution_gaps`, never a silent empty result — see §2a |
+| rg exit code 2 (kept, not raised) | `ripgrep_backend.py`, grep `partial = result.returncode == 2` (was `:123-128,297,413`, now `:124-129,308,426`) | matches parsed -> `result_incomplete=True`, kept; nothing parsed / `>2` -> `BackendExecutionError` (RESOLVED #79, `a7c9431`) |
+| PCRE2 detection | `ripgrep_backend.py`, grep `def supports_pcre2` (was `:53`, now `:54`) | real smoke test (`-P "a(?=b)" -V`), not a version-string guess |
+| Binary NUL detection | `test_rg_parity_edges.py`, grep `ids=\["match", "no-match", "parse-error",` (was `:41-43,149`, now `:44,169`) | exit code must match rg's, not just stdout |
+| `-u`/`-uu`/`-uuu` | `bootstrap.py`, grep `def _search_args_request_unrestricted_generated_scan` (was `:581`, now `:726`) | intercepted by the broad-root safety guard, not blind passthrough |
+| `--` argv sentinel (MCP) | `mcp_server.py`, grep `command.extend\(\["--", pattern, path\]\)` (was `:1306`, now `:1375`) | blocks flag injection; list-argv alone only blocks shell injection |
+| `--` argv sentinel (native rg passthrough) | `rg_passthrough.rs`, grep `fn ripgrep_operand_args` (was `:581-600`, now `:584-603`) | FIXED — `ripgrep_operand_args` inserts `--` before paths; 3 tests, no longer contiguous — grep `operand_args_insert_end_of_options_sentinel_before_paths` / `operand_args_no_sentinel_when_no_paths` / `operand_args_files_mode_omits_patterns_but_keeps_sentinel` (was `:788-826`, now `:1034`/`:1056`/`:1065`) |
+| AST native vs sidecar | `main.py`, grep `def _select_ast_backend_for_pattern` (was `:6655`, then hedged `:6737`, now `:6915`); `ast_backend.py:505` (`is_available`, still current) | ast-grep WRAPPER is preferred whenever installed; native tree-sitter is a fallback-only path with no GPU gate anymore |
+| Symbol-graph language registry | `lang_registry.py`, `repo_map.py` -- `grep -c "lang_registry.register_language(" src/tensor_grep/cli/repo_map.py` (was `:6004-6222` claiming 8 calls, now returns **10**) | 10/10 top-10 languages, split 5 parser-backed refs/callers + 5 foundational defs/imports-only (`_symbol_navigation_descriptor()`); grammar-missing fails closed to `resolution_gaps`, never a silent empty result — see §2a |
 | BM25 (real IDF) | `retrieval_bm25.py`, `reranker.py` | backs `tg search --rank`/`--bm25` only |
-| Flat scorer (no IDF) | `repo_map.py:7433` (`_score_text_terms`) | backs `tg orient`/`tg agent` symbol ranking — known weak point |
-| Personalized PageRank | `repo_map.py:8418` (`_personalized_reverse_import_pagerank`) | alpha=0.85, seeded, answers "relevant to this query" |
-| Central-files centrality | `orient_capsule.py:694` (`_central_files_from_map`) | composite in-degree + fan-in/symbol-density caps — `tg orient`'s deliberate choice over PageRank, answers "what's foundational" |
-| Trigram index | `rust_core/src/index.rs:138,1131` | falls back to full scan when no literal is extractable (never drops matches) |
-| GIL release | `rust_core/src/lib.rs:32,55` | `py.detach` (formerly `allow_threads`) around the mmap/scan closure |
-| `gil_used` pin | `rust_core/src/lib.rs:353` | pinned `true`; free-threading needs a full green Linux CI run to re-attempt |
-| LSP framing | `lsp_external_provider.py:91,173` | `Content-Length` capped at 64MB against a malicious/buggy server |
+| Flat scorer (no IDF) | `repo_map.py`, grep `def _score_text_terms` (was `:7433`, now `:7929`) | backs `tg orient`/`tg agent` symbol ranking — known weak point |
+| Personalized PageRank | `repo_map.py`, grep `def _personalized_reverse_import_pagerank` (was `:8418`, now `:8914`) | alpha=0.85, seeded, answers "relevant to this query" |
+| Central-files centrality | `orient_capsule.py:694` (`_central_files_from_map`, still current) | composite in-degree + fan-in/symbol-density caps — `tg orient`'s deliberate choice over PageRank, answers "what's foundational" |
+| Trigram index | `rust_core/src/index.rs:138,1131` (still current) | falls back to full scan when no literal is extractable (never drops matches) |
+| GIL release | `rust_core/src/lib.rs:32,55` (still current) | `py.detach` (formerly `allow_threads`) around the mmap/scan closure |
+| `gil_used` pin | `rust_core/src/lib.rs:353` (still current) | pinned `true`; free-threading needs a full green Linux CI run to re-attempt |
+| LSP framing | `lsp_external_provider.py:91,173` (still current) | `Content-Length` capped at 64MB against a malicious/buggy server |
 | Model2Vec/potion (SHIPPED) | `retrieval_dense.py`, `retrieval_fusion.py` | `tg search --semantic`; `potion-code-16M`; default-off-by-flag, not marketed default |
-| ReDoS gate (`-w`/`-x`/`-C`/`--ltl`/UTF-8-fallback/native-failure/`--pcre2`) | `cpu_backend.py:355` (`config.ltl`), `:377-384` (word/context routing), `:438` (UTF-8-fallback gate) + `:485` (`--pcre2`) + `:513` (native-failure) all calling `_fallback_pattern_is_provably_linear` (`:280`) | CLOSED (audit #6/#16/#111) — every path that could reach Python's backtracking `re` either routes through the linear-time Rust engine first or fails closed with `BackendExecutionError` unless the pattern is `fixed_strings` (the only provably-linear shape); see §1a below |
+| ReDoS gate (`-w`/`-x`/`-C`/`--ltl`/UTF-8-fallback/native-failure/`--pcre2`) | `cpu_backend.py`, grep each: `if config.ltl:` (was `:355`, now `:391`), `needs_word_or_context_rust_routing` (was `:377-384`, now `:413-420`), UTF-8-fallback check (was `:438`, now `:490`), `--pcre2` check (was `:485`, now `:521`), native-failure check (was `:513`, now `:549`), all calling `def _fallback_pattern_is_provably_linear` (was `:280`, now `:316`) | CLOSED (audit #6/#16/#111) — every path that could reach Python's backtracking `re` either routes through the linear-time Rust engine first or fails closed with `BackendExecutionError` unless the pattern is `fixed_strings` (the only provably-linear shape); see §1a below |
 
 ### 1a. ReDoS-gate bypass on `-w`/`-x`/`-C`/`--ltl`/UTF-8-fallback/native-failure — CLOSED (audit #6/#16/#111)
 
@@ -595,23 +654,27 @@ standard `re` module ... we route complex pure-python CPU requests to the native
 crate"*) now covers every path that can reach this backend:
 
 - **`-w`/`-x`/`-C`/`-A`/`-B` (word/line/context flags)**: `needs_word_or_context_rust_routing`
-  (`cpu_backend.py:377-384`) routes these to `_search_word_line_context_via_rust` (`:800`), which
-  resolves the match-SET via the linear-time Rust engine (`_rust_match_set`, `:763`) and
-  assembles context windows in pure Python — no backtracking regex ever runs on this path. On any
-  Rust failure it raises `BackendExecutionError` (fail closed) instead of falling back to Python
-  `re`.
-- **`--ltl`**: `_search_ltl` (`:931`) resolves both LTL sub-expressions via the same
-  `_rust_match_set` helper and fails closed identically.
-- **`--pcre2`**: the generic Rust-exception handler's `pcre2` branch (`:485`) fails closed
-  unconditionally (`BackendExecutionError`) regardless of *why* Rust could not service the
-  request — CPUBackend has no real PCRE2 engine, only Python `re` as a backtracking
-  approximation, so it never silently swaps to that engine.
+  (grep that name in `cpu_backend.py` -- was `:377-384`, now `:413-420`) routes these to
+  `_search_word_line_context_via_rust` (grep `def _search_word_line_context_via_rust` -- was
+  `:800`, now `:852`), which resolves the match-SET via the linear-time Rust engine
+  (`_rust_match_set`, grep `def _rust_match_set` -- was `:763`, now `:815`) and assembles context
+  windows in pure Python — no backtracking regex ever runs on this path. On any Rust failure it
+  raises `BackendExecutionError` (fail closed) instead of falling back to Python `re`.
+- **`--ltl`**: `_search_ltl` (grep `def _search_ltl` -- was `:931`, now `:983`) resolves both LTL
+  sub-expressions via the same `_rust_match_set` helper and fails closed identically.
+- **`--pcre2`**: the generic Rust-exception handler's `pcre2` branch (grep `if getattr(config,
+  "pcre2", False):` -- was `:485`, now `:521`) fails closed unconditionally
+  (`BackendExecutionError`) regardless of *why* Rust could not service the request — CPUBackend
+  has no real PCRE2 engine, only Python `re` as a backtracking approximation, so it never silently
+  swaps to that engine.
 - **UTF-8-fallback + native-runtime-failure (audit #111, closed 2026-07-10)**: two residual paths
   of the "simple pattern" route used to fall through to unbounded Python `re` — (1) the empty-Rust-
-  result-on-a-non-UTF-8-file retry (`_RustUtf8DecodeMismatch`, handled at `:438`), on the premise
-  "Rust already ran the pattern in O(n), so it's ReDoS-safe"; and (2) the generic `except Exception`
-  branch on a non-syntax Rust runtime fault (native panic / IO / version skew), which fell open
-  "for robustness" (`:513`). Both premises are the SAME one already refuted for `--pcre2` — a
+  result-on-a-non-UTF-8-file retry (`_RustUtf8DecodeMismatch`, handled at `except
+  _RustUtf8DecodeMismatch as exc:` -- was `:438`, now `:474`), on the premise "Rust already ran the
+  pattern in O(n), so it's ReDoS-safe"; and (2) the generic `except Exception` branch on a
+  non-syntax Rust runtime fault (native panic / IO / version skew), which fell open "for
+  robustness" (grep `except Exception as exc:` in the same method -- was `:513`, now `:508`). Both
+  premises are the SAME one already refuted for `--pcre2` — a
   pattern Rust runs in guaranteed linear time can still catastrophically backtrack under Python's
   backtracking engine; Rust accepting/running a pattern proves nothing about Python-`re` safety
   (Rust has no catastrophic-backtracking failure mode for ANY pattern it accepts). Reproduced
@@ -622,7 +685,8 @@ crate"*) now covers every path that can reach this backend:
   (`"(a|aa)"*k + "b"`) contains no quantifier char yet backtracks 2^k (measured pure-Python `re`:
   k=24 → 6.19s, clean 2^k), and the attacker dials severity via pattern length on a tiny file. **No
   static pattern analysis can be the gate.** The shipped fix gates ALL these paths on
-  `CPUBackend._fallback_pattern_is_provably_linear` (`:280`), which admits ONLY `fixed_strings`
+  `CPUBackend._fallback_pattern_is_provably_linear` (grep `def
+  _fallback_pattern_is_provably_linear` -- was `:280`, now `:316`), which admits ONLY `fixed_strings`
   (re.escape'd → a literal automaton → provably linear regardless of the raw pattern text); EVERY
   other pattern fails closed with `BackendExecutionError`. This deliberately fails closed a legit
   non-ASCII regex on a non-UTF-8 file (e.g. `caf\xe9\d+` on latin-1) — the endorsed
@@ -686,6 +750,32 @@ campaign repo, pin a specific commit SHA for the duration of a citation sweep ra
 the floating branch tip on every grep, or your own citations can end up internally inconsistent
 with each other.
 
+**2026-08-01, v1.101.27 — repaired a substantive error and stopped re-stamping line numbers.**
+§2a's core claim ("only C and C++ remain unregistered, both deliberately deferred") was **FALSE**:
+`grep -c "lang_registry.register_language(" repo_map.py` returns **10**, and
+`_symbol_navigation_descriptor()` confirms all 10 of the top-10 languages are registered, split
+exactly **5 parser-backed** (go, javascript, python, rust, typescript) + **5 foundational**
+defs/imports-only (c, cpp, csharp, java, php) — there is no unregistered language and no third
+tier. This repo's own memory records the tier split being stated wrong three separate times before
+this one (a hand-count, a string grep that also matched `=None`, and an invented "unresolved"
+tier), so §2a now derives the count from the product's own descriptor function rather than stating
+a number by hand. Separately, and independent of that content error: nearly every `file:line`
+citation touching `repo_map.py`, `mcp_server.py`, `cpu_backend.py`, `main.py`, and
+`rg_passthrough.rs` (the fastest-growing files in the repo) had drifted since the 2026-07-23 sweep
+above — including two citations that a still-more-recent partial touch-up had tagged "as of
+2026-07-27" and which had ALREADY drifted a further 17 lines by this pass. That is the proof, not
+just the theory, behind AGENTS.md's "re-stamping is not a fix; it is the defect on a slower clock"
+rule: a dated hedge on a line number does not slow its rot, it only makes the rot look supervised.
+Every citation this pass touched was converted from a bare line number to a `grep <symbol>`
+instruction with a `was -> now` drift receipt kept beside it (matching the style
+`tensor-grep-change-control` already uses), and no new "confirmed as of DATE" line-number claim was
+introduced anywhere in this document. A handful of small, stable files (`base.py`, `lang_registry.py`,
+`ast_backend.py`, `ast_wrapper_backend.py`, `orient_capsule.py`, `reranker.py`, `agent_capsule.py`,
+`index.rs`, `lib.rs`, `lsp_external_provider.py`, `retrieval_dense.py`) were independently re-grepped
+and found still accurate (within a line or two, well inside normal review noise) — those were left
+as plain citations rather than churned into grep form for no reason, per the same "don't re-stamp
+for its own sake" discipline applied in the other direction.
+
 Re-verification commands:
 
 ```bash
@@ -701,8 +791,14 @@ grep -n "_central_files_from_map" C:/dev/projects/tensor-grep/src/tensor_grep/cl
 grep -n "py.detach\|gil_used" C:/dev/projects/tensor-grep/rust_core/src/lib.rs
 grep -n "Content-Length\|_MAX_LSP_MESSAGE_BYTES" C:/dev/projects/tensor-grep/src/tensor_grep/cli/lsp_external_provider.py
 
-# Re-check the §2a symbol-graph registry hasn't silently regressed (8 languages expected: python,
-# javascript, typescript, rust, go, java, php, csharp) and the MOST-FORGOTTEN seam is still wired
+# Re-check the §2a symbol-graph registry hasn't silently regressed. Do NOT hand-count the
+# languages or their tier split (this has been done wrong three times in this repo's history) --
+# run the product's own descriptor and cross-check the registration count:
+python -c "import sys;sys.path.insert(0,'src');from tensor_grep.cli import repo_map as r;print(r._symbol_navigation_descriptor())"
+grep -c "lang_registry.register_language(" C:/dev/projects/tensor-grep/src/tensor_grep/cli/repo_map.py
+# Expect: 10 registrations, split parser-backed-refs-callers:go-javascript-python-rust-typescript
+# + foundational-defs-imports-only:c-cpp-csharp-java-php -- and confirm the MOST-FORGOTTEN seam is
+# still wired for every one of the 10:
 grep -n 'register_language(\|language_id="' C:/dev/projects/tensor-grep/src/tensor_grep/cli/repo_map.py
 grep -n "_target_language_for_path\|_SUPPORTED_FILE_DEPENDENCY_LANGUAGES\|_language_coverage_gaps_for_universe" C:/dev/projects/tensor-grep/src/tensor_grep/cli/repo_map.py
 

@@ -436,11 +436,57 @@ wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while 
 > history and is useful as an archive of WHY decisions were made. It is not a work queue and must
 > not become a second one — reconcile against TASK_BOARD.md rather than adding a third list.
 
-**Live PyPI: v1.101.19 (2026-07-30).** The 2026-07-28/29 wave shipped v1.101.12 → v1.101.19: the mcp
+**Live PyPI: v1.101.27 (2026-08-01)** — derive, don't trust this line:
+`python -c "import json,urllib.request;print(json.load(urllib.request.urlopen('https://pypi.org/pypi/tensor-grep/json'))['info']['version'])"`.
+(It read v1.101.19 until 2026-08-01, eight releases stale.) The 2026-07-28/29 wave shipped v1.101.12 → v1.101.19: the mcp
 cap that unblocked publishing at all, both halves of a symlink hole (read-side disclosure and
 write-side `--apply`), a machine-readable broad-scan refusal envelope, `imports`/`orient` false
 zeros, both ledger coordination bugs, a CWE-88 argv sentinel, and the defaulted-scope search note
 across all three dispatch routes.
+
+### 2026-08-01 session — the skill library was documenting a repo it no longer matched (PR #882)
+
+**The library's FACTS are sound; its POINTERS had rotted.** Eight of 28 skills audited, and every
+one carried drift. Across them, all 14 flags, 11 env vars, every default value, and the 58-tool MCP
+count re-derived exactly — but line anchors were adrift 14 to 500 lines, and one section dated
+**2026-07-30 was already 250 lines stale two days later**.
+
+Three findings were substantive, not cosmetic:
+
+- **CRITICAL — `code-search-and-retrieval-reference` said "only C and C++ remain unregistered".**
+  Both ship. `grep -c "lang_registry.register_language(" repo_map.py` → **10**, and
+  `_symbol_navigation_descriptor()` → 5 parser-backed (go/js/python/rust/ts) + 5 foundational
+  (c/cpp/csharp/java/php). A reader would have re-done shipped work, or scoped task #31 as
+  "register C/C++" when it is "upgrade the five foundational languages to parser-backed".
+- **HIGH — `tensor-grep-run-and-operate` §3 said `defs`/`source` do not take `--deadline`.** Both do
+  (`tg defs --help | grep deadline`). §12's own table listed them as taking it, and the pitfall
+  table warned against believing a stale "these don't take it" claim. **The document carried its own
+  correction and its own error simultaneously**, 530 lines apart.
+- **HIGH — AGENTS.md's never-re-stamp corrective pass said "all five of them" and listed FOUR.** The
+  omitted seam, `_imports_with_lines_for_path`, was the one still stale — 392 lines, the largest of
+  the five — sitting inside the very fix that introduced the law. A census and its own count are two
+  artifacts; the count is not evidence about the census.
+
+**Shipped:** `tests/unit/test_skill_library_drift.py` — pins every citation (must resolve to a
+git-tracked file, line in range) and every stated `**N skills**` / `**Form N**` count against the
+population it names. 7 mutation arms proven to fire. Plus `/tg-skill-audit`
+(`.claude/workflows/tg-skill-audit.js`) for the semantic half, with its ledger DERIVED at run time —
+a hardcoded fact is the exact defect it audits for.
+
+**What the gate deliberately cannot do:** it proves a citation RESOLVES, not that the cited line
+still contains the claimed symbol. That limitation is stated in the test's own docstring and in both
+doc indices, because "there's a citation gate now" is precisely the claim that would stop the
+reading which catches real drift.
+
+**Open:** 20 of 28 skills unaudited (task #36 — every audited one had drift, so assume these do
+too). Task #37: `test_lang_go`'s fallback test fails deterministically on the Windows dev box while
+green on 6/6 CI combos — environmental, root cause unknown; **do not relax the assertion** to match
+one box.
+
+**Method note worth keeping:** building the gate produced three wrong readings before the truth
+(100% broken → 60% → 100% ambiguous → 0 broken), and four separate greps returned false numbers
+during verification, twice nearly rejecting a correct 38-anchor repair. Full receipts in AGENTS.md,
+"Building ONE checker produced THREE wrong readings" and "GREP IS AN INSTRUMENT".
 
 ### 2026-07-31 session — one root cause behind two long-open items
 

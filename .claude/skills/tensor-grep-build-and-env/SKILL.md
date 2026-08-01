@@ -57,13 +57,13 @@ version-shaped before trusting it long-term — see "Provenance and maintenance"
 ## Repo layout: two build systems, one package
 
 - **Python package**: `src/tensor_grep/` — driven by `pyproject.toml`. Entry point:
-  `tg = "tensor_grep.cli.bootstrap:main_entry"` (`pyproject.toml:648`).
+  `tg = "tensor_grep.cli.bootstrap:main_entry"` (`grep -n "main_entry" pyproject.toml` — was `:648`, now `:668`; found during this pass's audit, not previously measured).
 - **Rust workspace**: `rust_core/` — driven by `rust_core/Cargo.toml` (crate `tensor_grep_rs`). It
   builds **two separate targets** from the same source:
   1. a `cdylib` PyO3 extension module, importable as `tensor_grep.rust_core`
      (`module-name = "tensor_grep.rust_core"`, `pyproject.toml:8`) — this is what the Python CLI calls
      into for accelerated search.
-  2. two standalone binaries declared as `[[bin]]` targets (`rust_core/Cargo.toml:53-59`): `tg` and
+  2. two standalone binaries declared as `[[bin]]` targets (`grep -n "^\[\[bin\]\]" rust_core/Cargo.toml` — was `:53-59`, now `:58-60` (`tg`) and `:62-64` (`tg-search-fast`)): `tg` and
      `tg-search-fast` — the "native front door" shipped as a release asset and picked up by launcher
      resolution ahead of the Python path.
 
@@ -215,8 +215,9 @@ cargo clippy -- -D warnings
 cd ..
 ```
 
-Rust equivalent of CI's separate `test-rust-core` job (`ci.yml:415-481`, a 3 OS × stable/nightly
-matrix — not covered by the block above):
+Rust equivalent of CI's separate `test-rust-core` job (a 3 OS × stable/nightly matrix — not covered by
+the block above; `grep -n "^  test-rust-core:" .github/workflows/ci.yml` — was `:415-481`, now header
+`:448`; found during this pass's audit, not previously measured):
 
 ```bash
 cd rust_core
@@ -260,7 +261,7 @@ PATH.") Source: `AGENTS.md:900`.
 
 **Symptom:** `cargo build --release` or `maturin develop --release` appears to sit for minutes with
 no output.
-**Cause:** `rust_core/Cargo.toml:463-464` sets `[profile.release] lto = true` — link-time optimization
+**Cause:** `grep -n "profile.release" -A2 rust_core/Cargo.toml` (was `:463-464`, now `:467-468`) sets `[profile.release] lto = true` — link-time optimization
 is slow to run but does complete.
 **Fix:** don't kill it; let it finish. Use plain `maturin develop` (no `--release`, ~15s) for the fast
 inner dev loop, and reserve `--release` builds for when you actually need release-profile
@@ -425,7 +426,7 @@ Volatile facts stated above and how to re-check them if this skill feels stale:
   Note this counts *files*, not individual `def test_*` cases — the suite has thousands of the latter.
   **Re-run this yourself before trusting the stamped numbers** — they drift every session.
 - **CI job names/order**: read `.github/workflows/ci.yml` directly (`grep -n "^  [a-z][a-z-]*:$" .github/workflows/ci.yml`).
-- **LTO / release-profile setting**: `grep -n "profile.release" -A2 rust_core/Cargo.toml` (currently `:463-464`)
+- **LTO / release-profile setting**: `grep -n "profile.release" -A2 rust_core/Cargo.toml` (was `:463-464`, now `:467-468` — re-run before trusting either)
 - **Registration-completeness gate presence**: `ls .tg-registration.toml` and
   `grep -n "registration_check" .github/workflows/ci.yml`
 - **Current versions re-verified 2026-07-08, toolchain pins RE-CONFIRMED unchanged 2026-07-16, again

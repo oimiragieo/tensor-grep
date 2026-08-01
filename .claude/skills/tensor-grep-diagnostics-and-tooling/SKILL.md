@@ -61,9 +61,11 @@ dogfood only after a version actually publishes.
 ## Tool 1: `tg doctor --json` — field-by-field interpretation
 
 Source: `_build_doctor_payload` / `_render_doctor_payload` in `src/tensor_grep/cli/main.py`
-(payload builder at `main.py:3142`, `_build_doctor_payload`; command registration at
-`main.py:14763` — re-verify with `grep -n "^def doctor(" src/tensor_grep/cli/main.py`, and see
-"which anchors drift" under Provenance before trusting any registration line number here).
+(payload builder — `grep -n "^def _build_doctor_payload" src/tensor_grep/cli/main.py`, was
+`:3142`, now `:3227`; command registration — `grep -n "^def doctor(" src/tensor_grep/cli/main.py`,
+was `:14763`, now `:15361` — and see "which anchors drift" under Provenance before trusting any
+registration line number here, including this one: `main.py` grew another ~944 lines this pass and
+even the "stable" helper band moved).
 
 ```powershell
 tg doctor --json --no-lsp        # fast (~2-5s); always prefer this while iterating
@@ -91,13 +93,13 @@ gap.
 | `fresh_shell_path_tg_first_launcher_kind` / `*_version_matches` | same shape as above, but simulated for a **brand-new shell** (reads Windows registry `PATH` on Windows) | catches "your current shell is fixed but a fresh terminal still resolves the wrong `tg`" |
 | `python_subprocess_path_tg_first_*` (Windows only) | same shape | Python's own `subprocess.run(["tg", ...])` can resolve **differently** than your interactive shell (e.g. Windows `CreateProcess` picks `.exe` ahead of a `.com` bridge) — this is what MCP servers and other Python tooling actually see |
 | `rust_binary_version_status` | `matches` or `stale-skipped` | `missing` is often benign (no standalone native binary in play; check `search_acceleration_backend`). `stale` or `mismatch` is a real problem — see remediation below. |
-| `rust_binary_remediation` | `null` except for `mismatch`, `stale`, and the healthy `stale-skipped` case | when non-null, it is a copy-pasteable fix string, e.g. rebuild-the-in-tree-binary guidance; note `stale-skipped` always carries this rebuild-hint string even though it needs no action (`_doctor_rust_binary_remediation`, `main.py:2432`, unconditionally returns it on `stale-skipped`) |
+| `rust_binary_remediation` | `null` except for `mismatch`, `stale`, and the healthy `stale-skipped` case | when non-null, it is a copy-pasteable fix string, e.g. rebuild-the-in-tree-binary guidance; note `stale-skipped` always carries this rebuild-hint string even though it needs no action (`_doctor_rust_binary_remediation` — `grep -n "^def _doctor_rust_binary_remediation" src/tensor_grep/cli/main.py`, was `:2432`, now `:2503` — unconditionally returns it on `stale-skipped`) |
 | `skipped_native_tg_binaries` | `[]`, or a list of correctly-ignored stale in-tree binaries | a non-empty list here is the **healthy** outcome when you have an old local dev build lying around — it means doctor correctly did NOT select it |
 | `mcp_stdio_launcher_warning` | `null` | non-null on Windows usually means a PowerShell shim (`tg.ps1`) is ambiguous for MCP stdio clients; the message tells you to point the MCP client at the native `tg.exe` directly |
 | `gpu.available` / `gpu.search_ready` / `gpu.tier.promotion_proof` | `available` reflects CUDA device presence; `search_ready` reflects whether a real search actually routed through `NativeGpuBackend` | **`gpu.available=true` does NOT mean GPU search works.** Always read `search_ready` and `tier.promotion_proof`, not just `available`. GPU is experimental-until-proven (see `docs/gpu_crossover.md`) — never a PASS/FAIL signal, always informational. |
-| `gpu.search_runtime_probe.status` (v1.75.2, #595 + gate-nits v1.75.4, #597) | `supported`, or one of the failure-taxonomy statuses: `not_run`, `path_domain_mismatch`, `failed_input`, `failed_gpu_unavailable`, `failed_path_bridging` (WSL cross-domain), `failed_probe_path` (same-domain path vanished), `failed_other` (unrecognized/unparseable -- fails closed) | Replaces a single opaque `"failed"` for every `rc!=0` outcome -- read the specific status before assuming "GPU is just broken"; `failed_input` (e.g. `gpu_invalid_device_id`) means a bad request, not an unavailable GPU (`_doctor_gpu_probe_failure_status`, `main.py:2905`; `_doctor_gpu_search_runtime_probe`, `main.py:2921`) |
+| `gpu.search_runtime_probe.status` (v1.75.2, #595 + gate-nits v1.75.4, #597) | `supported`, or one of the failure-taxonomy statuses: `not_run`, `path_domain_mismatch`, `failed_input`, `failed_gpu_unavailable`, `failed_path_bridging` (WSL cross-domain), `failed_probe_path` (same-domain path vanished), `failed_other` (unrecognized/unparseable -- fails closed) | Replaces a single opaque `"failed"` for every `rc!=0` outcome -- read the specific status before assuming "GPU is just broken"; `failed_input` (e.g. `gpu_invalid_device_id`) means a bad request, not an unavailable GPU (`_doctor_gpu_probe_failure_status` — `grep -n "^def _doctor_gpu_probe_failure_status" src/tensor_grep/cli/main.py`, was `:2905`, now `:2976`; `_doctor_gpu_search_runtime_probe` — same grep pattern with its own name, was `:2921`, now `:2992`) |
 | `gpu.search_runtime_probe.native_error_kind` | `null`, or the native binary's own structured `--json` error kind (e.g. `path_not_found`, `empty_pattern`, `invalid_regex`, `gpu_fatal`, `gpu_invalid_device_id`) | the raw kind behind the mapped `status` above -- `null` means stdout wasn't the expected structured JSON at all (a raw panic, empty output), not that there was no error |
-| `native_frontdoor_flavor` / `native_frontdoor_requested_flavor` / `native_frontdoor_asset_name` / `native_frontdoor_metadata_status` / `native_frontdoor_flavor_mismatch_note` | populated strings when a managed native front door is installed | surfaces "you asked for `nvidia` but got `cpu`" (`_doctor_native_frontdoor_flavor_mismatch_note`, `main.py:3121`) -- previously only a benchmark script could see this; now visible in plain `tg doctor`. **A14/#708 (v1.93.1):** `_agent_gpu_tg_command` (`agent_capsule.py:1522`) now pre-resolves a bare `"tg"` via `shutil.which` before it reaches the WSL cross-domain gate, closing a residual case where an unresolved bare command name skipped the check entirely; field semantics here are unchanged by that fix. |
+| `native_frontdoor_flavor` / `native_frontdoor_requested_flavor` / `native_frontdoor_asset_name` / `native_frontdoor_metadata_status` / `native_frontdoor_flavor_mismatch_note` | populated strings when a managed native front door is installed | surfaces "you asked for `nvidia` but got `cpu`" (`_doctor_native_frontdoor_flavor_mismatch_note` — `grep -n "^def _doctor_native_frontdoor_flavor_mismatch_note" src/tensor_grep/cli/main.py`, was `:3121`, now `:3206`) -- previously only a benchmark script could see this; now visible in plain `tg doctor`. **A14/#708 (v1.93.1):** `_agent_gpu_tg_command` (`agent_capsule.py:1522` — re-verified unchanged this pass) now pre-resolves a bare `"tg"` via `shutil.which` before it reaches the WSL cross-domain gate, closing a residual case where an unresolved bare command name skipped the check entirely; field semantics here are unchanged by that fix. |
 | `lsp.enabled` / `lsp.providers[].health_status` | `health_status` in `{ready, available_unverified, unhealthy, missing}` | **provider availability is not navigation proof.** A provider counts as real LSP evidence only when a completed request set `lsp_provider_response = true` — `provenance = "lsp-*"` alone is not enough (`AGENTS.md` LSP rules). |
 | `ast_grep.available` / `ast_grep.binary` | `true` / a resolved path | `false` degrades `tg run`'s semantic (`--selector`/`--strictness`) options; AST structural search itself still works via the native backend |
 | `session_daemon.running` | informational | `true` means a warm localhost daemon is serving cached repo-map/session state for this root |
@@ -138,7 +140,7 @@ presence.
 
 ## Tool 2: `python scripts/agent_readiness.py` — the governed pre-push gate
 
-Source: `scripts/agent_readiness.py` (entire file; `build_check_plan` at line 698).
+Source: `scripts/agent_readiness.py` (entire file; `build_check_plan` — `grep -n "^def build_check_plan" scripts/agent_readiness.py`, was `:698`, now `:761`).
 
 ```powershell
 python scripts/agent_readiness.py --json --output artifacts/agent_readiness.json
@@ -218,7 +220,7 @@ useful when the shell-probe phase is slow.
 ## Tool 3: `tg dogfood` — verdict + JSON envelope around `agent_readiness.py`
 
 Source: `src/tensor_grep/cli/dogfood.py` (`run_dogfood_readiness`), CLI command at
-`main.py:14493` (re-verify with `grep -n "^def dogfood(" src/tensor_grep/cli/main.py`).
+`grep -n "^def dogfood(" src/tensor_grep/cli/main.py` (was `:14493`, now `:15091`).
 
 ```powershell
 tg dogfood --output artifacts/dogfood_readiness.json
@@ -315,7 +317,7 @@ Two newer JSON surfaces belong in this skill's "what does the field actually pro
 neither is a health-check tool like Tools 1-4 above, but both need the same field-by-field
 interpretation discipline before you trust them.
 
-**`tg find` (`main.py:4625` onward — re-verify with `grep -n "^def find(" src/tensor_grep/cli/main.py`):**
+**`tg find` (`grep -n "^def find(" src/tensor_grep/cli/main.py`, was `:4625`, now `:4721`, onward):**
 
 | Field | Healthy value | What a bad/absent value means |
 |---|---|---|
@@ -323,7 +325,7 @@ interpretation discipline before you trust them.
 | `result_incomplete` | `false`/absent on a complete scan | `true` means `--deadline`/`--max-repo-files`/the internal corpus-wide chunk cap truncated the walk — the ranked results are a FLOOR, not the full answer. Exit code confirms this independent of the JSON: any truncation exits **2**, whether or not matches were found (`tensor-grep-run-and-operate` §11c, `tensor-grep-large-repo-scale-campaign` §1/§5). |
 | exit code | `0` = complete + found; `1` = complete + empty; `2` = `BackendExecutionError` OR any truncation | do not read exit `2` here as a plain usage error the way `tg search`'s exit-2 convention works (§11b) — `tg find` follows the symbol-command-style "truncation trumps found" shape, a DIFFERENT convention than `tg search`. |
 
-**`tg route-test` (`main.py:10302` onward — re-verify with `grep -n "^def route_test(" src/tensor_grep/cli/main.py`) — diagnoses routing agreement between `context-render` and `edit-plan`:**
+**`tg route-test` (`grep -n "^def route_test(" src/tensor_grep/cli/main.py`, was `:10302`, now `:10613`, onward) — diagnoses routing agreement between `context-render` and `edit-plan`:**
 
 | Field | Healthy value | What a bad value means |
 |---|---|---|
@@ -353,7 +355,10 @@ reach for" lookup (source: `AGENTS.md` "Benchmark Rules", verified against each 
 
 `benchmarks/run_benchmarks.py` refuses **claim-quality** output (not the run itself) when the timed
 `tg` entrypoint is a stale in-tree native binary (`benchmark_binary_warnings` /
-`benchmark_claim_blockers` in `run_benchmarks.py:212-243`) — it prints a blocker to stderr and
+`benchmark_claim_blockers` in `run_benchmarks.py:194-225` — corrected this pass; a prior pass had
+mis-cited this as `:212-243`, which is `benchmark_claim_blockers`'s own def line through past the
+end of the block, not the block's real start at `benchmark_binary_warnings`'s def line) — it
+prints a blocker to stderr and
 requires `--allow-claim-unsafe-launcher` to proceed anyway for exploratory-only timing. It also
 tags every artifact with `tg_launcher_mode` and `tg_launcher_command_kind`
 (`classify_tg_launcher_command`, e.g. `native_exe`, `uv`, `python_module`, `cmd_shim`,
@@ -457,6 +462,38 @@ nearly filed as a dead reference. The skill never said `scripts/` — it correct
 `benchmarks/run_benchmarks.py` (:345, :352), and its `:194-225` cite is still exact. The bad path
 was invented by the checker, not the doc. Re-read what the doc actually claims before filing
 drift against it.
+
+**2026-08-01 re-derivation — the "stable anchor" theory from the 2026-07-27 paragraph above did
+NOT hold on the next pass.** That paragraph reported six `main.py` private helpers "had not moved
+at all" and proposed a rule — private helpers in the ~2400-3500 band are stable, `@app.command()`
+registrations in the tail are not. This pass re-derived the same six against `origin/main`
+(`main.py` grew again, 17032 -> 17976 lines) and found **all six had moved 71-85 lines**:
+`_doctor_rust_binary_remediation` `:2432`->`:2503`, the GPU probes `:2905`->`:2976` /
+`:2921`->`:2992`, the flavor-mismatch helper `:3121`->`:3206`, `_build_doctor_payload`
+`:3142`->`:3227` — while `agent_capsule.py:1522`, `dogfood.py:207`,
+`agent_readiness.py`'s `validate_docs_claims` `:623`, and `build_check_plan` `:761` (the
+already-corrected 07-27 value) stayed exactly put. **The refined rule: it is not "private helper
+vs. command registration" — it is "lives in `main.py`'s own private-helper band vs. lives in a
+separate, smaller file."** `main.py` is the single fastest-growing file in this repo (every new
+`tg` command AND most doctor/GPU features land there), so nothing inside it is a stable anchor
+across passes, helper or command; `dogfood.py`/`agent_capsule.py`/`agent_readiness.py` helpers
+have held steady across three consecutive passes because those files grow far slower. Every
+`main.py` citation in the live sections above (Tools 1-3, the `tg find`/`tg route-test` section,
+the Benchmarks section) has been converted to a `grep -n "^def <name>("` instruction with its own
+`was -> now` receipt rather than a bare number, per `AGENTS.md`'s never-re-stamp rule — do the
+same for any NEW `main.py` citation added to this file, regardless of whether it looks like a
+"stable" private helper. Also corrected this pass, an internal inconsistency rather than pure
+staleness: the "Source:" line for Tool 2 (`agent_readiness.py`) still said `build_check_plan` was
+at line 698, even though the 07-27 paragraph two sections below it had already corrected that to
+761 — the live citation and the file's own provenance record had drifted apart. And the
+Benchmarks-section citation for `benchmark_binary_warnings`/`benchmark_claim_blockers` said
+`run_benchmarks.py:212-243`, which does not match either the actual current location (`:194-225`,
+confirmed unchanged since 2026-07-23) or make sense as a block start — `:212` is
+`benchmark_claim_blockers`'s own def line, after `benchmark_binary_warnings` at `:194`. Every
+other fact re-checked this pass (23 total agent-readiness checks, the 65-flag-token sweep, the
+banned-marketing-phrase list, the 7-path `RELEASE_DOCS_GOVERNANCE_PATHS` tuple, the
+`_ledger_physical_root`-style function names referenced elsewhere) is confirmed STILL ACCURATE —
+this was a pure line-number-and-one-typo pass, no other field semantics changed.
 
 Re-verify if this skill feels stale:
 

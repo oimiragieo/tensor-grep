@@ -62,7 +62,10 @@ skill without beating a measurable gate and a conscious flag-flip** (Phase 4).
   — the code comment measures **~18 s of ~22 s** wall time was redundant `resolve()`
   churn (`src/tensor_grep/cli/repo_map.py:76-80`), claims **7.9x on central symbols.**
   So the pre-#396 receipt numbers are STALE — **Phase 0 re-measures at HEAD.**
-- **The unscoped-`tg search` hang was real and is now fixed, not in-flight.** `AGENTS.md:378`
+- **The unscoped-`tg search` hang was real and is now fixed, not in-flight.** `AGENTS.md`
+  (`grep -n "hangs ~600 s then errors" AGENTS.md`; was `:378`, now `:480` — drifted +102 lines this
+  pass, same-size drift as the other `AGENTS.md` cites below, consistent with one insertion earlier
+  in that file)
   still narrates the pre-fix symptom ("hangs ~600 s then errors" because tg's own index dirs +
   a vendored tree were not auto-excluded) — that doc lags. The fix, **#400**, shipped in
   **v1.40.4** (`bb14abe`) and was hardened further by **#413** (v1.42.0) and **#428**; see
@@ -127,17 +130,17 @@ v1.93.2 — several anchors below drifted by 1000+ lines and have been re-pinned
 
 | Ship | What it does | Verify |
 | --- | --- | --- |
-| **#384-#388** deadline threading | `deadline_seconds` -> `_deadline_monotonic_from_seconds` -> `build_repo_map(deadline_monotonic=...)`; converted once to an absolute `time.monotonic()` stamp so the scan can self-bound and return partial. | `grep -n deadline_seconds src/tensor_grep/cli/repo_map.py` (e.g. `_deadline_monotonic_from_seconds` at `repo_map.py:751`, `build_repo_map`'s own `deadline_monotonic` param at `repo_map.py:7426`) |
-| **#389/#393** graph-command CLI `--deadline` | `tg callers / refs / impact / blast-radius` gained `--deadline FLOAT`; #393 bounds the **caller-scan traversal** itself. | `tg callers --help` shows `--deadline FLOAT RANGE`; source `main.py:11752/11645/11440/12083` (callers/refs/impact/blast-radius, in that order) |
+| **#384-#388** deadline threading | `deadline_seconds` -> `_deadline_monotonic_from_seconds` -> `build_repo_map(deadline_monotonic=...)`; converted once to an absolute `time.monotonic()` stamp so the scan can self-bound and return partial. | `grep -n deadline_seconds src/tensor_grep/cli/repo_map.py` (e.g. `_deadline_monotonic_from_seconds` at `repo_map.py:752`, was `:751`; `build_repo_map`'s own `deadline_monotonic` param at `repo_map.py:7427`, was `:7426` — both 1-line churn, re-grep rather than trust either number) |
+| **#389/#393** graph-command CLI `--deadline` | `tg callers / refs / impact / blast-radius` gained `--deadline FLOAT`; #393 bounds the **caller-scan traversal** itself. | `tg callers --help` shows `--deadline FLOAT RANGE`; source: `grep -n "^def callers\|^def refs\|^def impact\|^def blast_radius" src/tensor_grep/cli/main.py` → `callers:12467, refs:12360, impact:12155, blast_radius:12853` (was `main.py:11752/11645/11440/12083` — all four drifted +715/+715/+715/+770 lines; re-grep, do not trust these numbers either) |
 | **#394** payload `result_incomplete` | Truncation stamped at the payload layer so MCP/`_json` consumers see it, not just the CLI. | `grep -n result_incomplete src/tensor_grep/cli/repo_map.py` |
-| **#395** `tg inventory --deadline` | inventory walk wall-clock bounded. | `main.py:8414` (`--deadline`), `build_inventory(..., deadline_seconds=...)` (`cli/inventory.py:183`) |
-| **#396** caller-scan cache | `_mtime_aware_cache` (mtime+size in key) + `_resolved_path_str` `lru_cache(8192)` + `_module_aliases_for_path` `lru_cache(16384)`->`frozenset` (PR #345). **7.9x on central symbols.** | `repo_map.py:99/92/8181` |
-| **#398/#399/#401** exit semantics | #398 exit 2 on ANY truncated partial; #399 walked it back to exit 2 only when the partial is **also EMPTY** (found-but-capped exited 0); **#401 reverted #399** — a UNANIMOUS design council restored exit 2 on ANY truncated/partial result **REGARDLESS of whether matches were found** ("truncation trumps found": an agent must never trust a capped caller-set as exhaustive). This is the CURRENT, final contract — do not describe #399's found-exits-0 behavior as current. | `main.py:11054-11099` (`_emit_symbol_command_result`); `docs/CONTRACTS.md:156` |
-| **#400** unscoped-hang fix (e7f18b7) — **shipped v1.40.4** (`bb14abe`), hardened by **#413** (v1.42.0) and **#428** | (A) `_SKIP_DIR_NAMES` excludes `_tg_refs` / `.tg_semantic_index` / `external_repos` (`repo_map.py:194`); (B) **native per-file search walk** got a wall-clock bound — `compute_native_walk_deadline` / `native_walk_deadline_exceeded` (`backends/cpu_backend.py`), checked per file, breaks to a partial with `result_incomplete`+stderr warning (`main.py:7979-7992`); (C) `_should_refuse_unbounded_vendored_root_scan` (`main.py:5094`, backed by the O(top-level-entries)-only probe `_root_top_level_vendored_dir_names` at `main.py:5075`, exit 2, <1s — never walks) refuses a root with `node_modules`/`vendor`/`external_repos`/`third_party` at top level, **duplicated by design** into `bootstrap.py`'s `_search_paths_include_vendored_root` (`bootstrap.py:930`) because that front door fast-paths native/rg past `main.py` (the recurring "two front doors" class) — both guards import the same `UNBOUNDED_VENDORED_ROOT_DIR_NAMES` set, now DEFINED in `io/scan_limits.py:60` and merely re-exported from `io/directory_scanner.py`, as the single source of truth so they cannot drift apart. #413 added a bounded-`scandir` instant-refusal for a large *single-project* root (no vendored top-level dir but still huge); #428 ported the same walk-deadline/refusal into the MCP surface (`tg_search`/`tg_ast_search` had never inherited it). | `tg --version` (expect >= 1.40.4); `git log --oneline --all \| grep -i '#400\|#413\|#428'` |
-| **#478** (`67f9779`, shipped v1.54.3) -- **CLOSES #52**, the 4 residual unbounded loops | (A) `_iter_repo_files`' file-tree walk gains `deadline_monotonic`/`deadline_hit` params (was count-only bound); `build_inventory` now computes its deadline BEFORE the walk, not after. (B) `_relevant_tests_for_symbol`'s two unguarded `any()` loops (the dominant cause on a high-fan-out symbol like `"main"`) now break on a shared deadline. (C) `build_symbol_impact_from_map` (`repo_map.py:16441`) gained a `deadline_monotonic` parameter it never had, threaded into its `_preferred_definition_files`/`_relevant_tests_for_symbol` calls, plus a new `partial`/`deadline_limit` payload block; `build_symbol_impact`/`build_symbol_blast_radius_from_map` updated to pass it through. (D) the `string_refs` second pass in `build_symbol_refs_from_map` folds into the existing `refs_scan_deadline_hit` local. All four guarded `if deadline_monotonic is not None` (byte-identical no-op otherwise). **Scope note:** the design doc explicitly keeps `session_store.py` (the daemon call sites) out of scope -- see #390 in S2, which #478 narrows but does not close. | `git show --stat 67f9779`; `grep -n "deadline_monotonic" src/tensor_grep/cli/repo_map.py | grep -i impact` |
+| **#395** `tg inventory --deadline` | inventory walk wall-clock bounded. | `tg inventory --help` shows `--deadline`; source `grep -n "^def inventory" src/tensor_grep/cli/main.py` → `:8823` (was `:8414`, drift +409), `build_inventory(..., deadline_seconds=...)` at `cli/inventory.py:185` (was `:183`, drift +2) |
+| **#396** caller-scan cache | `_mtime_aware_cache` (mtime+size in key) + `_resolved_path_str` `lru_cache(8192)` + `_module_aliases_for_path` `lru_cache(16384)`->`frozenset` (PR #345). **7.9x on central symbols.** | `grep -n "_mtime_aware_cache\|_resolved_path_str\|_module_aliases_for_path" src/tensor_grep/cli/repo_map.py` → defs at `:100/:93/:8693` (was `repo_map.py:99/92/8181` — the first two are 1-line churn, `_module_aliases_for_path` drifted +512 lines) |
+| **#398/#399/#401** exit semantics | #398 exit 2 on ANY truncated partial; #399 walked it back to exit 2 only when the partial is **also EMPTY** (found-but-capped exited 0); **#401 reverted #399** — a UNANIMOUS design council restored exit 2 on ANY truncated/partial result **REGARDLESS of whether matches were found** ("truncation trumps found": an agent must never trust a capped caller-set as exhaustive). This is the CURRENT, final contract — do not describe #399's found-exits-0 behavior as current. | `grep -n "^def _emit_symbol_command_result" src/tensor_grep/cli/main.py` → `:11762` (function body runs to `:11832`; was `main.py:11054-11099`, drift +708 lines); `docs/CONTRACTS.md:157` (was `:156`, drift +1 — `grep -n "Symbol-command exit codes are a three-state agent contract" docs/CONTRACTS.md`) |
+| **#400** unscoped-hang fix (e7f18b7) — **shipped v1.40.4** (`bb14abe`), hardened by **#413** (v1.42.0) and **#428** | (A) `_SKIP_DIR_NAMES` excludes `_tg_refs` / `.tg_semantic_index` / `external_repos` (`repo_map.py:195`, was `:194`, 1-line churn); (B) **native per-file search walk** got a wall-clock bound — `compute_native_walk_deadline` / `native_walk_deadline_exceeded` (`backends/cpu_backend.py`), checked per file, breaks to a partial with `result_incomplete`+stderr warning (`main.py:8248-8270`, was `main.py:7979-7992`, drift +~270 lines — `grep -n native_walk_deadline_exceeded src/tensor_grep/cli/main.py`); (C) `_should_refuse_unbounded_vendored_root_scan` (`main.py:5205`, was `:5094`, drift +111; backed by the O(top-level-entries)-only probe `_root_top_level_vendored_dir_names` at `main.py:5186`, was `:5075`, drift +111; exit 2, <1s — never walks) refuses a root with `node_modules`/`vendor`/`external_repos`/`third_party` at top level, **duplicated by design** into `bootstrap.py`'s `_search_paths_include_vendored_root` (`bootstrap.py:998`, was `:930`, drift +68) because that front door fast-paths native/rg past `main.py` (the recurring "two front doors" class) — both guards import the same `UNBOUNDED_VENDORED_ROOT_DIR_NAMES` set, now DEFINED in `io/scan_limits.py:60` (re-verified exact this pass) and merely re-exported from `io/directory_scanner.py`, as the single source of truth so they cannot drift apart. #413 added a bounded-`scandir` instant-refusal for a large *single-project* root (no vendored top-level dir but still huge); #428 ported the same walk-deadline/refusal into the MCP surface (`tg_search`/`tg_ast_search` had never inherited it). | `tg --version` (expect >= 1.40.4); `git log --oneline --all \| grep -i '#400\|#413\|#428'` |
+| **#478** (`67f9779`, shipped v1.54.3) -- **CLOSES #52**, the 4 residual unbounded loops | (A) `_iter_repo_files`' file-tree walk gains `deadline_monotonic`/`deadline_hit` params (was count-only bound); `build_inventory` now computes its deadline BEFORE the walk, not after. (B) `_relevant_tests_for_symbol`'s two unguarded `any()` loops (the dominant cause on a high-fan-out symbol like `"main"`) now break on a shared deadline. (C) `build_symbol_impact_from_map` (`repo_map.py:16458`, was `:16441`, drift +17) gained a `deadline_monotonic` parameter it never had, threaded into its `_preferred_definition_files`/`_relevant_tests_for_symbol` calls, plus a new `partial`/`deadline_limit` payload block; `build_symbol_impact`/`build_symbol_blast_radius_from_map` updated to pass it through. (D) the `string_refs` second pass in `build_symbol_refs_from_map` folds into the existing `refs_scan_deadline_hit` local. All four guarded `if deadline_monotonic is not None` (byte-identical no-op otherwise). **Scope note:** the design doc explicitly keeps `session_store.py` (the daemon call sites) out of scope -- see #390 in S2, which #478 narrows but does not close. | `git show --stat 67f9779`; `grep -n "deadline_monotonic" src/tensor_grep/cli/repo_map.py | grep -i impact` |
 
-| **`tg find`** (v1.77.0, #189, `main.py:4574-4676`) — whole-repo hybrid NL search, a NEW command that reuses this campaign's bounding shape from day one rather than retrofitting it later | Takes `--deadline`/`--max-repo-files` plus an internal corpus-wide chunk cap (`_FIND_CORPUS_CHUNK_CAP`); a truncated scan sets `result_incomplete=true` and exits 2 (found-but-truncated prints results THEN exits 2 -- same "truncation trumps found" rule as #401 below, not the found-exits-0 shape #399 walked back). **Unlike `tg search`, `tg find` does NOT get the instant vendored/workspace-root refusal (#400)** -- it always attempts the bounded scan rather than refusing outright, because ranking the whole repo (not raw-text matching it) is the command's entire point. | `tensor-grep-run-and-operate` §11c has the full exit-contract prose; `main.py:4574-4676` |
-| **#702** (v1.92.3, A9) -- a **4th** unscoped front-door fix alongside #400/#413/#428, closing a gap those three never covered | `bootstrap._run_rg_passthrough` (`bootstrap.py:1088`) -- the plain **flag-less** search front door that runs *before* `main.py`'s Typer app is ever reached -- had **NO walk ceiling at all** until this shipped; the three existing `main.py`-side refusal guards (#400/#413) never ran for this path. Fixed by adding `bootstrap._search_paths_include_oversized_implicit_root` (`bootstrap.py:804`), gated on `paths_defaulted`, sharing the SAME `IMPLICIT_SEARCH_WALK_FILE_CEILING = 1500` constant (`io/scan_limits.py:106`, re-exported via `io/directory_scanner.py`) the other 3 doors already used -- natively reproduced, not a WSL artifact. An over-ceiling implicit root now refuses in ~1.7s instead of silently walking up to the 60s `TG_RG_TIMEOUT_SECONDS` backstop. | `grep -n _search_paths_include_oversized_implicit_root src/tensor_grep/cli/bootstrap.py`; `grep -n IMPLICIT_SEARCH_WALK_FILE_CEILING src/tensor_grep/io/scan_limits.py` |
+| **`tg find`** (v1.77.0, #189, `main.py:4721-4837`, was `:4574-4676`, drift +147 lines) — whole-repo hybrid NL search, a NEW command that reuses this campaign's bounding shape from day one rather than retrofitting it later | Takes `--deadline`/`--max-repo-files` plus an internal corpus-wide chunk cap (`_FIND_CORPUS_CHUNK_CAP`); a truncated scan sets `result_incomplete=true` and exits 2 (found-but-truncated prints results THEN exits 2 -- same "truncation trumps found" rule as #401 below, not the found-exits-0 shape #399 walked back). **Unlike `tg search`, `tg find` does NOT get the instant vendored/workspace-root refusal (#400)** -- it always attempts the bounded scan rather than refusing outright, because ranking the whole repo (not raw-text matching it) is the command's entire point. | `tensor-grep-run-and-operate` §11c has the full exit-contract prose; `grep -n "^def find" src/tensor_grep/cli/main.py` → `:4721` |
+| **#702** (v1.92.3, A9) -- a **4th** unscoped front-door fix alongside #400/#413/#428, closing a gap those three never covered | `bootstrap._run_rg_passthrough` (`bootstrap.py:1337`, was `:1088`, drift +249) -- the plain **flag-less** search front door that runs *before* `main.py`'s Typer app is ever reached -- had **NO walk ceiling at all** until this shipped; the three existing `main.py`-side refusal guards (#400/#413) never ran for this path. Fixed by adding `bootstrap._search_paths_include_oversized_implicit_root` (`bootstrap.py:1053`, was `:804`, drift +249, the same-size shift as `_run_rg_passthrough` above -- consistent with one insertion earlier in the file), gated on `paths_defaulted`, sharing the SAME `IMPLICIT_SEARCH_WALK_FILE_CEILING = 1500` constant (`io/scan_limits.py:106`, re-verified exact this pass, re-exported via `io/directory_scanner.py`) the other 3 doors already used -- natively reproduced, not a WSL artifact. An over-ceiling implicit root now refuses in ~1.7s instead of silently walking up to the 60s `TG_RG_TIMEOUT_SECONDS` backstop. | `grep -n _search_paths_include_oversized_implicit_root src/tensor_grep/cli/bootstrap.py`; `grep -n IMPLICIT_SEARCH_WALK_FILE_CEILING src/tensor_grep/io/scan_limits.py` |
 
 **Merge/release state to stamp every session:** #400/#413/#428/#702 are all in the **installed
 binary** as of v1.96.0 — this is not a source-only or in-flight fix. If a future session finds
@@ -163,9 +166,10 @@ project's merge-gate guardrail: an open PR is guidance, not a receipt, until it 
   This was **framed OPEN in earlier passes of this skill — that framing is now STALE and risks a
   future session re-implementing already-shipped code.** Verify directly rather than trusting
   either framing: `session_store.py` (the daemon's request-dispatch module) now threads a real
-  `deadline_monotonic` value into its `build_symbol_impact_from_map` (`session_store.py:1276`) and
-  `build_symbol_callers_from_map` (`session_store.py:1317`) call sites — the code comment at
-  `session_store.py:1311-1315` states explicitly: *"the exact #390 daemon-path shape this task
+  `deadline_monotonic` value into its `build_symbol_impact_from_map` (`session_store.py:1449`, was
+  `:1276`, drift +173) and
+  `build_symbol_callers_from_map` (`session_store.py:1490`, was `:1317`, drift +173) call sites — the code comment at
+  `session_store.py:1484-1488` (was `:1311-1315`, drift +173) states explicitly: *"the exact #390 daemon-path shape this task
   (#203) closes."* The same threading was extended to `refs`/`blast-radius`/`file_importers`
   (search `session_store.py` for `WARM_DAEMON_DEFAULT_DEADLINE_SECONDS` to see every site). A
   daemon-served graph query on a cached session `repo_map` is now bounded the same way a fresh
@@ -174,18 +178,19 @@ project's merge-gate guardrail: an open PR is guidance, not a receipt, until it 
   **Candidate (c) below is retained as the historical solution-menu entry that predicted this fix's
   shape, not as an open task — do not re-propose closing #390 as new work.**
 - **Default budget.** The native-walk bound reuses `configured_ripgrep_timeout_seconds()`,
-  which now defaults to **60 s** (`subprocess_policy.py:75`, was 600 s). `AGENTS.md:378`
+  which now defaults to **60 s** (`subprocess_policy.py:75`, confirmed exact this pass, was 600 s).
+  `AGENTS.md:480` (was `:378`, drift +102 -- `grep -n "hangs ~600 s then errors" AGENTS.md`)
   still narrates the pre-#400 "600 s" symptom — that doc lags; the resolver is the source of
   truth.
 - **NEW (surfaced by the 2026-07-23 c:/dev dogfood receipt above) — a pathological
   workspace-union root can still blow an `inventory --deadline` budget**, even though
   #478 bounded `_iter_repo_files`'s walk. `tg inventory` always calls `build_inventory`
   with an explicit integer `max_files` (default `DEFAULT_MAX_INVENTORY_FILES = 50_000`,
-  `cli/inventory.py:40`/`186` — never `None`), so `_iter_repo_files` (`repo_map.py:1143`)
-  always takes its `if max_files is not None:` branch (`repo_map.py:1008`), whose FIRST
-  step is a single blocking `list(os.scandir(normalized_root))` (`repo_map.py:1010`) with
+  `cli/inventory.py:42`/`188` — was `:40`/`186`, both +2 lines, never `None`), so `_iter_repo_files` (`repo_map.py:1144`, was `:1143`)
+  always takes its `if max_files is not None:` branch (`repo_map.py:1170`, was `:1008`, drift +162), whose FIRST
+  step is a single blocking `list(os.scandir(normalized_root))` (`repo_map.py:1172`, was `:1010`, drift +162) with
   **no deadline check before or during that one call** — the per-bucket
-  `deadline_monotonic` check (`repo_map.py:1220-1221`) only runs AFTER this initial
+  `deadline_monotonic` check (`repo_map.py:1220-1221`, re-verified exact this pass) only runs AFTER this initial
   top-level listing has already fully materialized. On an ordinary repo this is instant;
   on a workspace-union root whose TOP LEVEL itself fans out to a huge number of entries
   (e.g. a parent folder of many independently-cloned projects, not a normal nested tree),
@@ -230,15 +235,18 @@ Measure-Command { uv run --no-sync python -m tensor_grep callers $repo Node --de
   `true` **iff** the scan was actually truncated, and a truncated result must carry a
   non-empty `incomplete_reason`/`caveat`.
 - **If elapsed >> deadline (e.g. 25 s for a 10 s budget)** -> **a NEW regression, not #52
-  reopened** -- #52 is CLOSED at HEAD (#478/`67f9779`, S1/§2), built specifically to prevent
-  exactly this shape across all four loops (A/B/C/D), so a live overrun here means either a
-  new unbounded loop was introduced since #478, or you are hitting the still-open #390
-  daemon-path gap (a *session-served* query, not a fresh CLI one -- check which path you ran).
+  reopened, and not #390 either** -- #52 is CLOSED at HEAD (#478/`67f9779`, S1/§2), built
+  specifically to prevent exactly this shape across all four loops (A/B/C/D), and #390 (the
+  daemon-path gap) is ALSO CLOSED (task #203, S1/§2 above) -- a *session-served* query is bounded
+  the same way a fresh CLI one is now, so do not reach for "still-open #390" as the explanation.
+  A live overrun here means a new unbounded loop was introduced since #478/#203; if you can
+  reproduce it specifically on a session-served/daemon query and NOT on a fresh CLI one, that is a
+  fresh, narrower finding (a regression in the #203 threading), not a reopening of #390 itself.
   Proceed to Phase 1 to find where the budget leaks.
 - **If elapsed is bounded AND truncation is honestly flagged** -> matches the current
   expectation (§2: #52 closed). Do NOT just declare victory: re-run on a *second*
   large repo and a *central* symbol (highest fan-in), confirm the exit code matches
-  `docs/CONTRACTS.md:156` (exit 2 fires on ANY truncation, found or not — §5), then route
+  `docs/CONTRACTS.md:157` (was `:156`, drift +1; exit 2 fires on ANY truncation, found or not — §5), then route
   promotion of the "closed" claim through Phase 4 / change-control.
 - **If it HANGS (no return, no error) on an unscoped `tg search`** on a root with a
   vendored dir -> this is a NEW bug, not the old #400 shape: #400's instant refusal
@@ -261,10 +269,11 @@ uv run --no-sync python -m cProfile -s tottime -m tensor_grep callers $repo Node
 
 **Expected + gate (verified shape on a real repo):** the top `tottime` rows are the
 **per-file parse** — on Python targets `{built-in method builtins.compile}`, `ast.walk`,
-and `repo_map.py:1921(_python_imports_and_symbols)`; on TS targets the analog is the
-tree-sitter parse via `repo_map.py:2065(_typescript_parser)` — invoked **many times**,
+and `repo_map.py:2127(_python_imports_and_symbols)` (was `:1921`, drift +206); on TS targets the analog is the
+tree-sitter parse via `repo_map.py:2271(_typescript_parser)` (was `:2065`, drift +206) — invoked **many times**,
 because `build_symbol_callers_from_map` re-parses candidate files in its `any()`-loop
-(`repo_map.py:3407-3409` documents the "N definitions -> N re-reads/re-parses" hazard).
+(`repo_map.py:3639` documents the "N definitions -> N re-reads/re-parses" hazard, was `:3407-3409`,
+drift +231 — `grep -n "N definitions means N re-reads" src/tensor_grep/cli/repo_map.py`).
 
 - **GATE 1a — caller-scan re-parse dominates** (many parse calls, high `ncalls` on the
   parse/`resolve` functions): the leak is the **re-parse loop**, not the one-shot map
@@ -272,11 +281,12 @@ because `build_symbol_callers_from_map` re-parses candidate files in its `any()`
 - **GATE 1b — a single `build_repo_map` pass dominates** (parse called ~once per file,
   not per definition): the map build itself is the cost -> the fix is bounding/caching
   `build_repo_map`, which #384-#388 already partly did via `deadline_monotonic`;
-  re-measure whether the deadline is honored INSIDE that pass -> different branch,
-  likely the #390 gap, not #52.
+  re-measure whether the deadline is honored INSIDE that pass -> different branch --
+  a NEW gap, since #390 (the daemon-path deadline gap) is CLOSED (S1/§2 above), not an
+  open "#390 gap" to attribute this to.
 - **GATE 1c — `resolve()` / path work dominates** despite #396: the cache is being
-  defeated (e.g. an uncached `resolve()` before the cache lookup — `repo_map.py:2506-2507`
-  warns about exactly this) -> candidate (b), fix the cache ordering.
+  defeated (e.g. an uncached `resolve()` before the cache lookup — `repo_map.py:2712`
+  warns about exactly this, was `:2506-2507`, drift +206 — `grep -n "this resolve() runs BEFORE the re_export_cache lookup" src/tensor_grep/cli/repo_map.py`) -> candidate (b), fix the cache ordering.
 
 > **Redundancy measurement before you design a cache (candidate b obligation):**
 > monkeypatch the parse function with a `collections.Counter` keyed by path and count
@@ -295,10 +305,10 @@ caller-scan `any()`-loop: check `native_walk_deadline_exceeded` (or an equivalen
 `deadline_monotonic`) once per file, and on expiry break to a partial.
 - **Obligation:** the partial must be **fail-closed and flagged** — set
   `result_incomplete = True` + a concrete `incomplete_reason`, and let
-  `_emit_symbol_command_result` (`main.py:11298`) apply the exit contract: per §5, ANY
+  `_emit_symbol_command_result` (`main.py:11762`, was `:11298`, drift +464 — `grep -n "^def _emit_symbol_command_result" src/tensor_grep/cli/main.py`) apply the exit contract: per §5, ANY
   truncated/partial result exits **2**, regardless of whether it's empty or non-empty
   (#401 — do not build toward the old #399 "found-but-capped exits 0" shape). Mirror
-  #400's shape (`main.py:7979-7992`): break, never return a clean empty.
+  #400's shape (`main.py:8248-8270`, was `:7979-7992`): break, never return a clean empty.
 - **Why preferred:** it directly closes #52 with a mechanism already proven in-tree; low
   blast radius; deterministic. **This is what #478 (`67f9779`) actually shipped** -- the same
   per-file-deadline-check shape, applied to all four residual loops (S1/S2). This menu entry
@@ -307,7 +317,7 @@ caller-scan `any()`-loop: check `native_walk_deadline_exceeded` (or an equivalen
 #### Candidate (b) — extend the #396 caching to the residual re-parse
 If Phase 1 shows re-parses that #396's caches miss, widen coverage.
 - **Obligation — cache-key correctness:** a repo-map cache MUST key on file
-  **mtime+size** (use the existing `_mtime_aware_cache`, `repo_map.py:99`), not a plain
+  **mtime+size** (use the existing `_mtime_aware_cache`, `repo_map.py:100`, was `:99`, 1-line churn), not a plain
   `lru_cache` keyed on path alone — a plain cache returns **stale** results in the
   long-lived daemon (the code comments at `repo_map.py:30-34` + the
   `_MTIME_CACHE_CLEAR_REGISTRY` declaration at `repo_map.py:55` document this trap
@@ -320,12 +330,12 @@ If Phase 1 shows re-parses that #396's caches miss, widen coverage.
 #### Candidate (c) — close the #390 daemon-path deadline gap — SHIPPED (task #203, #647/#652/#653, v1.81.2-.4); retained here as historical record, not an open candidate
 This entry correctly predicted the shape of the eventual fix and is kept for that reason, but the
 work itself is DONE — do not re-propose it as new. What actually shipped: `session_store.py`'s
-daemon call sites (`build_symbol_impact_from_map` at `session_store.py:1276`,
-`build_symbol_callers_from_map` at `session_store.py:1317`, plus `refs`/`blast-radius`/
+daemon call sites (`build_symbol_impact_from_map` at `session_store.py:1449`, was `:1276`, drift +173,
+`build_symbol_callers_from_map` at `session_store.py:1490`, was `:1317`, drift +173, plus `refs`/`blast-radius`/
 `file_importers` siblings) now pass a real `deadline_monotonic` value
 (`WARM_DAEMON_DEFAULT_DEADLINE_SECONDS`-derived) into every builder call — exactly the call-site
 wiring this candidate originally scoped as the remaining work after #478's builder-side prerequisite.
-See S2 above for the closing citation (`session_store.py:1311-1315`'s own code comment names task
+See S2 above for the closing citation (`session_store.py:1484-1488`'s own code comment, was `:1311-1315`, names task
 #203 as the closer). If a NEW daemon-served command is added in the future, use this shipped pattern
 as the template — thread `deadline_monotonic` at the call site, mirroring the sibling commands in
 the same file, rather than assuming the daemon path is unbounded by default going forward.
@@ -364,7 +374,7 @@ Only if (a)+(b)+(c) leave the parse itself as the irreducible hotspot.
 | --- | --- |
 | Wall-clock vs budget | elapsed **<= `--deadline` + ~10%** (the #52 bar) |
 | Truncation honesty | `partial`/`result_incomplete` set **iff** truncated; non-empty `incomplete_reason` |
-| Exit code | matches `docs/CONTRACTS.md:156` (0 complete / 1 complete-not-found / 2 incomplete — **regardless of whether anything was found**, per #401) |
+| Exit code | matches `docs/CONTRACTS.md:157` (was `:156`, drift +1) (0 complete / 1 complete-not-found / 2 incomplete — **regardless of whether anything was found**, per #401) |
 | No regression | benchmark-regression CI gate green (`benchmarks/check_regression.py`); correctness identical on the AST parity corpus |
 | Real binary | dogfood via `scripts/dogfood/` on the REAL artifact, not CliRunner |
 
@@ -391,7 +401,7 @@ This skill produces evidence; **`tensor-grep-change-control` owns the flip.**
 | Forbidden | Why | Do instead |
 | --- | --- | --- |
 | **Raise the default timeout** to "fix" a hang | Masks, doesn't bound. A bigger number still hangs on a bigger repo; it just moves the wall. | Add a real per-file wall-clock bound that returns a flagged partial (#400 pattern). |
-| **Return a silent empty / clean 0-result** on timeout | Violates the Backend Fail-Closed Contract (`AGENTS.md:438-440`). A partial that reads as "no matches / no callers / dead code" is the exact bug this campaign exists to kill. | `result_incomplete = True` + `incomplete_reason` + stderr warning + the exit-2-regardless-of-found contract (§5). |
+| **Return a silent empty / clean 0-result** on timeout | Violates the Backend Fail-Closed Contract (`AGENTS.md`, `grep -n "^## Backend Fail-Closed Contract" AGENTS.md` → `:1672`; was `:438-440`, drift +1233 — a cross-file citation this far stale is worth a grep, not a re-stamped number). A partial that reads as "no matches / no callers / dead code" is the exact bug this campaign exists to kill. | `result_incomplete = True` + `incomplete_reason` + stderr warning + the exit-2-regardless-of-found contract (§5). |
 | **Assume "each stage bounded => pipeline bounded"** | The #52 lesson: `build_repo_map` and caller-scan were each bounded in isolation, yet the end-to-end command overran because the caller-scan re-parses ~all files. | Measure the WHOLE command wall-clock (Phase 0), then profile it (Phase 1). |
 | **Guess the hotspot from code review** | PR #345 receipt: a review council guessed a 3.6%-of-runtime path; the live profile found the real one (`_module_aliases_for_path` called ~1.4M times) -> `lru_cache`+`frozenset` cut the run **61.7 s -> 12.8 s (4.8x)**. | Profile the ACTUAL slow command at scale (Phase 1); the profiler is the oracle. |
 | **"Fix" a golden to match your dev box** | #363 receipt: a "stale" golden was edited to include rg submatches, then reverted — the golden is backend-sensitive and CI has no rg. CI is the oracle. | Read the failing CI job's -/+ diff first; force a deterministic backend in the test. `tensor-grep-failure-archaeology`. |
@@ -403,8 +413,8 @@ This skill produces evidence; **`tensor-grep-change-control` owns the flip.**
 
 ## 5. The contract you are defending (exit codes + fail-closed)
 
-**Symbol-command exit codes are a 3-state agent contract** (`docs/CONTRACTS.md:156`,
-enforced at `main.py:11054-11099`). **This is the current, FINAL shape — #401 reverted #399,**
+**Symbol-command exit codes are a 3-state agent contract** (`docs/CONTRACTS.md:157`, was `:156`, drift +1,
+enforced at `main.py:11762-11832`, was `:11054-11099`, drift +708 — `grep -n "^def _emit_symbol_command_result" src/tensor_grep/cli/main.py`). **This is the current, FINAL shape — #401 reverted #399,**
 so exit 2 fires on ANY truncated/partial result, whether or not it found something:
 
 | Exit | Meaning | Agent action |
@@ -418,7 +428,7 @@ walked back by #401 after a unanimous design council concluded truncation must a
 "found something," so a caller/blast-radius consumer can never mistake a capped result for a
 complete one. The **native-walk bound** (#400) is the search-side analog: on expiry it sets
 `all_results.result_incomplete = True` + `incomplete_reason`, writes a stderr warning,
-and **breaks** (`main.py:7979-7992`) — a flagged partial, never a silent empty. Any new
+and **breaks** (`main.py:8248-8270`, was `:7979-7992`) — a flagged partial, never a silent empty. Any new
 bound you add MUST follow this shape (see `tensor-grep-architecture-contract` for the
 full `BackendExecutionError` contract).
 
@@ -496,14 +506,14 @@ question. Re-run these when a claim may have drifted; date-stamp any change.
 - **#390 daemon gap — CLOSED, verify the daemon call sites directly, not just the builder
   signatures:** `grep -n "deadline_monotonic" src/tensor_grep/cli/session_store.py` should show
   `WARM_DAEMON_DEFAULT_DEADLINE_SECONDS`-derived values threaded into `build_symbol_impact_from_map`
-  (`session_store.py:1276`), `build_symbol_callers_from_map` (`session_store.py:1317`), and the
+  (`session_store.py:1449`, was `:1276`, drift +173), `build_symbol_callers_from_map` (`session_store.py:1490`, was `:1317`, drift +173), and the
   `refs`/`blast-radius`/`file_importers` siblings — read the code comment directly above each call
   site, which names task #203 as the closing fix.
 - **Native-walk bound + default budget:** `grep -n "native_walk_deadline\|compute_native_walk_deadline" src/tensor_grep/backends/cpu_backend.py`;
-  `grep -n TG_RG_TIMEOUT_SECONDS src/tensor_grep/cli/subprocess_policy.py` (default 60 s, not the
-  pre-#400 600 s `AGENTS.md:378` still narrates as the historical symptom).
+  `grep -n TG_RG_TIMEOUT_SECONDS src/tensor_grep/cli/subprocess_policy.py` (default 60 s, confirmed exact at `subprocess_policy.py:75` this pass, not the
+  pre-#400 600 s `AGENTS.md:480`, was `:378`, drift +102, still narrates as the historical symptom).
 - **Vendored-root refusal (two front doors):** `grep -n "_should_refuse_unbounded_vendored_root_scan\|_search_paths_include_vendored_root" src/tensor_grep/cli/main.py src/tensor_grep/cli/bootstrap.py`.
-- **Exit contract:** `sed -n '114p' docs/CONTRACTS.md` and `grep -n "council-verified B" src/tensor_grep/cli/main.py` (find the current `raise typer.Exit(2)` block — the exact line drifts every release, grep for the comment, don't trust a hardcoded number).
+- **Exit contract:** `grep -n "Symbol-command exit codes are a three-state agent contract" docs/CONTRACTS.md` (→ `:157` this pass; the previously-recorded `sed -n '114p'` shortcut was ITSELF stale — line 114 is unrelated PowerShell-quoting prose, not the exit-code contract) and `grep -n "council-verified B" src/tensor_grep/cli/main.py` (find the current `raise typer.Exit(2)` block — the exact line drifts every release, grep for the comment, don't trust a hardcoded number).
 - **#396 caches:** `grep -n "_mtime_aware_cache\|_resolved_path_str\|_module_aliases_for_path" src/tensor_grep/cli/repo_map.py`.
 - **Profiling / parity harness:** `ls benchmarks/run_ast_parity_check.py benchmarks/check_regression.py`; `grep -n "class _ProfileCollector" src/tensor_grep/cli/repo_map.py`.
 
@@ -522,9 +532,36 @@ question. Re-run these when a claim may have drifted; date-stamp any change.
   never be worth it. The caller-scan re-parse bound (candidate a) shipped as #478 (see S3 Phase 2
   candidate (a) note) -- it is no longer an open candidate for the #52 shape specifically, though
   the pattern remains the template for the next similar finding.
-- Doc-of-record narrative lags reality: `AGENTS.md:378` (still narrates the pre-#400 "600 s"
+- Doc-of-record narrative lags reality: `AGENTS.md:480` (was `:378`, drift +102 — `grep -n "hangs ~600 s then errors" AGENTS.md`; still narrates the pre-#400 "600 s"
   hang symptom as if unfixed), `SESSION_HANDOFF.md` — trust the code + `docs/CONTRACTS.md`,
   note the doc lags.
 - **Merge-gate discipline:** if a future in-flight PR (not yet on `origin/main`) looks relevant
   to this campaign, capture the PATTERN as guidance only — do not write "#NNN shipped" until
   `git log --oneline origin/main | head` shows a `chore(release)` commit above it.
+
+**Drift-gate pass (against local `tg` 1.101.24 / installed; PyPI 1.101.27): nearly every numeric
+`file:line` citation in this skill had drifted again since the 2026-07-24 (v1.96.0) re-verification
+above — the SAME class of drift that pass itself found and fixed, recurring on the identical
+anchors.** Representative drifts, all confirmed by re-deriving the symbol's current definition line
+(not by incrementing the old number): `main.py`'s `callers`/`refs`/`impact` command defs +715 lines,
+`blast_radius` +770; `_run_rg_passthrough` and `_search_paths_include_oversized_implicit_root` in
+`bootstrap.py` +249 each; `_should_refuse_unbounded_vendored_root_scan` +111;
+`_emit_symbol_command_result` +708; `_module_aliases_for_path` +512; `tg find`'s `def find` +147;
+`repo_map.py`'s `_python_imports_and_symbols`/`_typescript_parser`/the re-parse-hazard comment/the
+uncached-`resolve()` comment all +206 to +231 (one shared insertion window); `session_store.py`'s
+three #390 call-site citations +173 each; and four separate `AGENTS.md` cites (the 600s-hang
+symptom, the callers-blind-spot note in the sibling `tensor-grep-backlog-campaign` skill, and the
+Backend Fail-Closed Contract heading) drifted +102 to +1233 lines. Two constants held EXACT
+(`UNBOUNDED_VENDORED_ROOT_DIR_NAMES` and `IMPLICIT_SEARCH_WALK_FILE_CEILING`, both in
+`io/scan_limits.py`) and two were substantively correct (`subprocess_policy.py:75`'s 60s default,
+and the `repo_map.py:1220-1221` per-bucket deadline check) — proving the drift is not uniform
+file-wide churn but concentrated wherever an unrelated feature (the Java/C#/PHP language campaign,
+further `AGENTS.md` growth) inserted lines above a citation. Per the "cite the SYMBOL, not the line"
+rule this section already carries, every citation above was rewritten as a `grep -n "<symbol-or-
+distinctive-phrase>" <file>` instruction with the was→now drift kept as the receipt, rather than
+re-stamped with a fifth hardcoded number. This pass ALSO found and corrected two live self-
+contradictions this skill's own drift had produced: Phase 0's GATE 0 branch and Phase 1's GATE 1b
+branch both still told a reader to attribute an overrun to "the still-open #390 daemon-path gap"
+several sections after this same skill's own S1/§2 documents #390 as CLOSED (task #203) — a stale
+number is silent, but a stale CAUSAL claim actively misdirects debugging. Do not re-stamp any of the
+citations above with a sixth hardcoded number; re-run the grep.
