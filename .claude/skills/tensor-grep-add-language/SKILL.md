@@ -65,14 +65,15 @@ JavaScript, TypeScript, Java, C#, C++, C, Go, Rust, PHP.
 **not** the inline `_rust_*` / `_parser_for_source_suffix` machinery still visible in
 `repo_map.py` for Rust and Python — that style predates the registry (Stage 0's pure-parity
 refactor wrapped it, it did not replace it). Java is the one exception that used
-inline-in-`repo_map.py` (`_java_imports_and_symbols` etc., `repo_map.py:4782`+) and still
+inline-in-`repo_map.py` (`_java_imports_and_symbols` etc. — `grep -n "^def _java_imports_and_symbols" src/tensor_grep/cli/repo_map.py`, was `:4782`, now `:4783`) and still
 registers through `lang_registry` — both shapes are contract-consistent, but **the module
 shape is what Go, PHP, and C# (the three most recent additions) all converged on**, and is
 what `lang_go.py`'s own docstring recommends: it keeps `repo_map.py` from growing further.
 
 One-directional import rule (stated in both `lang_registry.py:10-12` and `lang_go.py:9-15`):
 `repo_map.py` → `lang_<x>.py`, never the reverse. A helper the new module needs that
-`repo_map.py` already has must be **duplicated locally** (see `lang_go.py:37-87`'s
+`repo_map.py` already has must be **duplicated locally** (see `lang_go.py:44-87`'s (was cited
+`:37-87`, re-grep `grep -n "Duplicated tiny helpers"` to relocate the block if this drifts again)
 byte-identical-to-`repo_map.py` tiny helpers), not imported — importing back creates a
 cycle.
 
@@ -106,13 +107,13 @@ version (`main.py`/`repo_map.py` churn every release):
 
 | # | Seam | Location | Feeds | Miss-it symptom |
 |---|---|---|---|---|
-| 1 | `lang_registry.register_language(LanguageSpec(...))` | `repo_map.py` (8 call sites, "near the bottom") | wiring the suffix at all | new suffix never resolves; silently excluded everywhere |
-| 2 | `_imports_and_symbols_for_path` | `repo_map.py:6626` | symbol/def extraction dispatch | new language absent from defs/symbols |
-| 3 | `_imports_with_lines_for_path` | `repo_map.py:6831` | `tg imports` (line-numbered import entries) | `tg imports` silently empty even though defs exist |
-| 4 | `build_symbol_source_from_map` | `repo_map.py:16309` | `tg source` | `tg source` returns nothing for a real symbol |
-| 5a | **`_target_language_for_path` — MOST-FORGOTTEN** | `repo_map.py:7850` | `tg agent` capsule's `primary_target_language` / confidence gate | a target file in the new language does not filter a mismatched-language validation suggestion |
-| 5b | **`_provider_language_for_path` — a SIBLING seam, easy to miss because 5a's own comments never mention it** | `repo_map.py:15192` | the LSP-provider language dispatch (sits just above `_path_from_lsp_file_uri`/`_lsp_symbol_kind_name` — a DIFFERENT purpose than 5a's symbol-graph capsule gate, but it must resolve the SAME `language_id` for any suffix a `LanguageSpec` registers) | `test_target_and_provider_language_agree_with_registry` (below) fails loudly for the new suffix; less obviously, an LSP-provider code path silently disagrees with the symbol graph about what language a file is |
-| 6 | `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` | `repo_map.py:17131` | gates whether `tg imports`/`tg importers` even attempts dependency resolution | file-dependency graph silently (but honestly, see B3) excludes the language |
+| 1 | `lang_registry.register_language(LanguageSpec(...))` | `repo_map.py` (**10** call sites as of this pass — was reported "8" in an earlier pass of this table, already stale then; re-derive, don't trust either number: `grep -c "register_language(" src/tensor_grep/cli/repo_map.py`) | wiring the suffix at all | new suffix never resolves; silently excluded everywhere |
+| 2 | `_imports_and_symbols_for_path` | `repo_map.py` — `grep -n "^def _imports_and_symbols_for_path" src/tensor_grep/cli/repo_map.py` (was `:6626`, now `:6627`) | symbol/def extraction dispatch | new language absent from defs/symbols |
+| 3 | `_imports_with_lines_for_path` | `repo_map.py` — `grep -n "^def _imports_with_lines_for_path" src/tensor_grep/cli/repo_map.py` (was `:6831`, now `:6832`) | `tg imports` (line-numbered import entries) | `tg imports` silently empty even though defs exist |
+| 4 | `build_symbol_source_from_map` | `repo_map.py` — `grep -n "^def build_symbol_source_from_map" src/tensor_grep/cli/repo_map.py` (was `:16309`, now `:16326`) | `tg source` | `tg source` returns nothing for a real symbol |
+| 5a | **`_target_language_for_path` — MOST-FORGOTTEN** | `repo_map.py` — `grep -n "^def _target_language_for_path" src/tensor_grep/cli/repo_map.py` (was `:7850`, now `:7867`) | `tg agent` capsule's `primary_target_language` / confidence gate | a target file in the new language does not filter a mismatched-language validation suggestion |
+| 5b | **`_provider_language_for_path` — a SIBLING seam, easy to miss because 5a's own comments never mention it** | `repo_map.py` — `grep -n "^def _provider_language_for_path" src/tensor_grep/cli/repo_map.py` (was `:15192`, now `:15209`) | the LSP-provider language dispatch (sits just above `_path_from_lsp_file_uri`/`_lsp_symbol_kind_name` — a DIFFERENT purpose than 5a's symbol-graph capsule gate, but it must resolve the SAME `language_id` for any suffix a `LanguageSpec` registers) | `test_target_and_provider_language_agree_with_registry` (below) fails loudly for the new suffix; less obviously, an LSP-provider code path silently disagrees with the symbol graph about what language a file is |
+| 6 | `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` | `repo_map.py` — `grep -n '_SUPPORTED_FILE_DEPENDENCY_LANGUAGES\s*=' src/tensor_grep/cli/repo_map.py` (was `:17131`, now `:17148`) | gates whether `tg imports`/`tg importers` even attempts dependency resolution | file-dependency graph silently (but honestly, see B3) excludes the language |
 
 **Seam 5b is easy to miss precisely because seam 5a's own code comments never mention it** —
 unlike every other seam in this table, nothing in `_target_language_for_path` points you at
@@ -152,56 +153,65 @@ dispatch (`repo_map.py:14711-14739`) with no "MOST-FORGOTTEN"-style warning atta
 of its branches, which is exactly why it is the one this skill itself omitted until this
 pass: nothing in the code nudges you toward it the way seam 5a's comments do.
 
-**Worked example, UPDATED after PR #728 — seam 6 was closed for go/php/csharp, but only at
-the FOUNDATIONAL tier, not full resolution; re-read this before assuming "in the frozenset"
-means "fully working."** `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` (`repo_map.py:17131`) on
-`main` today is `frozenset({"python", "javascript", "typescript", "rust", "java", "go",
-"php", "csharp"})` — **all 8 registered languages are now members**, closing the exact gap
-this worked example used to describe (go/php/csharp were absent; as of #728, none are). PR
-#728 shipped three new per-language extractors — `lang_go.go_imports_with_lines`,
+**Worked example, from PR #728, SUPERSEDED by the top-10 C/C++ campaign — seam 6 was closed
+for go/php/csharp at the FOUNDATIONAL tier first, then C/C++ joined the same frozenset later;
+re-read this before assuming "in the frozenset" means "fully working," and re-derive the
+member count rather than trusting either number below.** `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES`
+(`grep -n '_SUPPORTED_FILE_DEPENDENCY_LANGUAGES\s*=' src/tensor_grep/cli/repo_map.py` — was
+`:17131`, now `:17148`) on `main` today is `frozenset({"python", "javascript", "typescript",
+"rust", "java", "go", "php", "csharp", "c", "cpp"})` — **all 10 registered languages are now
+members** (this table used to say "all 8" right after #728 landed C/C++ hadn't joined yet; a
+later "Top-10 language campaign" commit added `"c"`/`"cpp"` to the same frozenset with its own
+inline comment — re-count with the grep above, don't carry either "8" or "10" forward without
+checking). PR #728 shipped three new per-language extractors — `lang_go.go_imports_with_lines`,
 `lang_php.php_imports_with_lines`, `lang_csharp.csharp_imports_with_lines` — dispatched from
-`_imports_with_lines_for_path` (`repo_map.py:6831`); each walks the same node kind its
-`*_imports_and_symbols` sibling already walks (`import_spec` / `namespace_use_clause` /
-`using_directive` respectively) and emits one `{"module": ..., "line": ...}` row per
-statement. `tg imports` on a `.go`/`.php`/`.cs` file no longer reports `result_incomplete`
-with an empty list the way it did before this PR — it returns real, line-numbered rows.
+`_imports_with_lines_for_path` (`grep -n "^def _imports_with_lines_for_path" src/tensor_grep/cli/repo_map.py`
+— was `:6831`, now `:6832`); each walks the same node kind its `*_imports_and_symbols` sibling
+already walks (`import_spec` / `namespace_use_clause` / `using_directive` respectively) and
+emits one `{"module": ..., "line": ...}` row per statement. `tg imports` on a `.go`/`.php`/`.cs`
+file no longer reports `result_incomplete` with an empty list the way it did before this PR —
+it returns real, line-numbered rows.
 
 **But resolution — WHICH file/module each row's `module` string actually points to — is
-still deferred for all three, and it is honestly deferred, never silently faked.**
-`_resolve_raw_import_entry` (`repo_map.py:17160`) gained an
-`elif language_id in ("go", "php", "csharp", "c", "cpp")` branch (re-grep `elif language_id in (`
-in `repo_map.py` -- it sits just below `_resolve_raw_import_entry`; the old `:16723-16735` pin
-drifted AND predated c/cpp being folded into the same branch, mirroring
-the `elif language_id == "java"` branch immediately above it at `repo_map.py:16714-16722`)
-that always returns `resolved, external, provenance, confidence = None, False, [], 0.0` —
-every row comes back `resolved=None, external=False` rather than a fabricated file path or a
-fabricated `external=True`. Each language is missing *different* resolver machinery: Go's own
-`_go_import_path_to_dir` (`lang_go.py`) already resolves an import path to a **package
+still deferred for all five (go/php/csharp/c/cpp), and it is honestly deferred, never silently
+faked.** `_resolve_raw_import_entry` (`grep -n "^def _resolve_raw_import_entry" src/tensor_grep/cli/repo_map.py`
+— was `:17160`, now `:17177`) carries an `elif language_id in ("go", "php", "csharp", "c",
+"cpp")` branch (re-grep `elif language_id in (` in `repo_map.py`; currently `:17246`, mirroring
+the `elif language_id == "java"` branch immediately above it, currently `:17237-17245` — both
+numbers already superseded twice across this skill's re-verify passes, re-grep rather than
+trusting either) that always returns `resolved, external, provenance, confidence = None, False,
+[], 0.0` — every row comes back `resolved=None, external=False` rather than a fabricated file
+path or a fabricated `external=True`. Each language is missing *different* resolver machinery:
+Go's own `_go_import_path_to_dir` (`lang_go.py`) already resolves an import path to a **package
 directory**, not a single file — a Go import names a package that can span many `.go` files
 with no 1:1 import-to-file mapping, so picking "the" file needs new design, not just wiring
 existing code; PHP has no PSR-4/`composer.json` autoload-map reader; C# has no `.csproj`/
-assembly-reference map. None of that resolver machinery is built by #728 — see
-`docs/BACKLOG.md`'s `#728` entry for the exact per-language scope still open. The fail-closed
-contract (B3) still fires exactly as before for any language genuinely outside the 8-member
-set: `build_file_imports` (`repo_map.py:17271`) sets `result_incomplete=True` with
+assembly-reference map; C/C++ have no standardized manifest at all (no
+go.mod/composer.json/.csproj equivalent). None of that resolver machinery is built yet — see
+`docs/BACKLOG.md` for the exact per-language scope still open. The fail-closed contract (B3)
+still fires exactly as before for any language genuinely outside this frozenset:
+`build_file_imports` (`grep -n "^def build_file_imports" src/tensor_grep/cli/repo_map.py` — was
+`:17271`, now `:17288`) sets `result_incomplete=True` with
 `incomplete_reason=f"'{language_id}' has no import-resolution support in \`tg imports\` yet"`
 for any registered-but-unsupported language, and `_imports_with_lines_for_path`'s own
-docstring (`repo_map.py:6440`) names Kotlin as its worked example of one — go/php/csharp just
-are not examples of it anymore.
+docstring (inside the function body, `grep -n "unsupported language (e.g. Kotlin)" src/tensor_grep/cli/repo_map.py`
+— was cited `:6440`, now `:6835`) names Kotlin as its worked example of one — go/php/csharp/c/cpp
+just are not examples of it anymore.
 
 **A second, separate gate stays narrower still, and closing seam 6 does not close it too.**
-`_confirm_import_edges` (`repo_map.py:17350`, the `tg importers` reverse-confirm step that
-turns a prefiltered "maybe imports it" into a confirmed edge) has its own independent
-language allow-list — `if language_id not in ("javascript", "typescript", "rust", "python"):
-return []` — which still excludes java, go, php, AND csharp alike. Membership in
-`_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` does not imply membership in this second, stricter
-gate; a future PR that builds true forward resolution for go/php/csharp still would not make
-`tg importers`'s reverse-confirm step cover them without touching this allow-list too. This is
-the same "forgot a seam but the honesty floor caught it" lesson as before, one tier deeper:
+`_confirm_import_edges` (`grep -n "^def _confirm_import_edges" src/tensor_grep/cli/repo_map.py`
+— was `:17350`, now `:17367`; the `tg importers` reverse-confirm step that turns a prefiltered
+"maybe imports it" into a confirmed edge) has its own independent language allow-list —
+`if language_id not in ("javascript", "typescript", "rust", "python"): return []` (re-verified
+unchanged this pass) — which still excludes java, go, php, csharp, c, AND cpp alike. Membership
+in `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` does not imply membership in this second, stricter
+gate; a future PR that builds true forward resolution for go/php/csharp/c/cpp still would not
+make `tg importers`'s reverse-confirm step cover them without touching this allow-list too. This
+is the same "forgot a seam but the honesty floor caught it" lesson as before, one tier deeper:
 even a foundational landing must decide, per emitted row, whether to fabricate confidence it
-doesn't have — #728 chose not to, matching Java's (#725) precedent exactly. True forward
-resolution for go/php/csharp (and then extending `_confirm_import_edges`'s allow-list) remains
-a good next PR for whoever reads this skill next.
+doesn't have — every landing so far has chosen not to, matching Java's (#725) precedent exactly.
+True forward resolution for go/php/csharp/c/cpp (and then extending
+`_confirm_import_edges`'s allow-list) remains a good next PR for whoever reads this skill next.
 
 Two more seams exist beyond this table, found by reading `lang_go.py` itself rather than
 the ledger (not independently re-grepped against `repo_map.py`'s call sites this pass —
@@ -319,14 +329,23 @@ WRAPS:
 
 A `parenthesized_declarator` hop alone is not the signal — a real function can be wrapped in
 meaningless redundant parens too (row 4); what matters is whether the parens wrap a bare name (real
-function) or a pointer declarator (variable). `lang_cpp.py` has its OWN, independently-written
-declarator walker (`_cpp_declarator_name_node`) with the same latent bug shape — do not assume fixing
-one fixes the other; C++ also has a member-function-pointer wrinkle (`void (C::*mp)(int);`, which
-wraps a `qualified_identifier` instead of a `pointer_declarator`) that C alone does not have. **Rule
-for this skill's audience specifically:** a banked "the fix is obviously X" note — even one written in
-a prior session about this exact bug class — is a hypothesis about a declarator SHAPE, and declarator
-shapes are exactly the thing B5 already tells you not to guess. Dump the real parse tree for every
-shape you plan to include/exclude before trusting a one-line fix description, including your own.
+function) or a pointer declarator (variable). `lang_cpp.py` had its OWN, independently-written
+declarator walker (`_cpp_declarator_name_node`) with the same latent bug shape — **this WAS fixed
+by PR #737 (confirmed landed: `git log --oneline -- src/tensor_grep/cli/lang_cpp.py` shows
+`3c68a34 fix(lang-cpp): exclude function-pointer variables (were mis-kinded "function") (#737)`
+on top of the #732 landing) — do not assume this skill's own older passes describing it as "not
+yet landed" are still current, re-run the git log**. The fix ports `lang_c.py`'s
+`_c_parenthesized_declarator_wraps_bare_name` tell via a new
+`_cpp_parenthesized_declarator_wraps_bare_name` (`lang_cpp.py:381`) and confirms the
+member-function-pointer wrinkle (`void (C::*mp)(int);`, which wraps a `qualified_identifier`
+instead of a `pointer_declarator`) is SCOPE-DEPENDENT: file/namespace-scope excludes via the
+bare-name type check, while in-class scope excludes via a different path entirely (tree-sitter-cpp
+can't resolve `C::` inside a class body and emits an `ERROR` node, giving the
+`parenthesized_declarator` two named children instead of one). **Rule for this skill's audience
+specifically:** a banked "the fix is obviously X" note — even one written in a prior session about
+this exact bug class — is a hypothesis about a declarator SHAPE, and declarator shapes are exactly
+the thing B5 already tells you not to guess. Dump the real parse tree for every shape you plan to
+include/exclude before trusting a one-line fix description, including your own.
 
 ## B6 — tiered model recap (see "Current status" above for the live table)
 
@@ -378,18 +397,20 @@ next language beyond the top-10, not as an open task:
 **Known post-ship correction (PR #736, v1.98.2 — see B5's declarator-shape addendum above for
 the full worked example):** C's file-scope function-pointer VARIABLE
 (`void (*handler)(int);`) was initially mis-kinded `"function"` — fixed by distinguishing
-what a `function_declarator`'s own `declarator` field wraps, not whether it's outermost. A
+what a `function_declarator`'s own `declarator` field wraps, not whether it's outermost. **The
 sibling fix for `lang_cpp.py`'s independently-written declarator walker (same bug shape, plus
-a C++-only member-function-pointer wrinkle) is tracked as a follow-up, not yet landed as of
-this pass — re-verify with `git log --oneline -- src/tensor_grep/cli/lang_cpp.py` before
-assuming it's done.
+a C++-only member-function-pointer wrinkle) HAS SINCE LANDED as PR #737** (`3c68a34
+fix(lang-cpp): exclude function-pointer variables (were mis-kinded "function") (#737)`,
+confirmed via `git log --oneline -- src/tensor_grep/cli/lang_cpp.py` — two earlier passes of
+this skill said "not yet landed"; that was accurate when written and is now stale, which is
+exactly why this section says "re-verify with git log" instead of asserting a fixed date).
 
 ## Parallel-drain hygiene (cross-ref: AGENTS.md Campaign Orchestration A22)
 
 A new grammar touches three files that several in-flight language PRs are likely to touch
 at once: `tests/unit/test_lang_registry.py` (the `LANGUAGE_REGISTRY.keys()` set-pin test,
 `test_language_registry_has_exactly_the_stage2_languages`), the pyproject `ast` extra
-(`pyproject.toml:600`, plus the mirrored `dev`/`bench` extras), and `uv.lock` (a new
+(`grep -n '^ast = ' pyproject.toml` — was `:600`, now `:614`, plus the mirrored `dev`/`bench` extras), and `uv.lock` (a new
 `tree-sitter-<lang>` `[[package]]` block). When more than one language PR is in flight:
 
 - Drain ONE at a time and rebase each onto the prior, **UNIONing** the assertions — e.g. the
@@ -458,6 +479,39 @@ tg --version
 
 ## Provenance and maintenance
 
+- **Fourth re-verify pass, 2026-08-01** (skill-library drift audit). Every `repo_map.py` seam in
+  B2/the worked example had drifted 1-85 lines since the third pass (register_language count
+  unchanged at 10; `_imports_and_symbols_for_path` `:6626`->`:6627`;
+  `_imports_with_lines_for_path` `:6831`->`:6832`; `_target_language_for_path` `:7850`->`:7867`;
+  `_provider_language_for_path` `:15192`->`:15209`; `build_symbol_source_from_map`
+  `:16309`->`:16326`; `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` `:17131`->`:17148`;
+  `_resolve_raw_import_entry` `:17160`->`:17177`; `build_file_imports` `:17271`->`:17288`;
+  `_confirm_import_edges` `:17350`->`:17367`; the `elif language_id == "java"` branch
+  `:16714-16722`->`:17237-17245`; the Kotlin-example docstring inside
+  `_imports_with_lines_for_path` `:6440`->`:6835`; the Java inline extractor
+  `_java_imports_and_symbols` `:4782`->`:4783`; `pyproject.toml`'s `ast` extra `:600`->`:614`).
+  Replaced every one of these with a `grep -n "^def <symbol>"` instruction plus the `was -> now`
+  receipt per `AGENTS.md`'s never-re-stamp rule, rather than swapping in a fresh bare number that
+  would just rot again. **One substantive content error found and fixed, not just a line-number
+  drift:** B5's fifth example and E1's "Known post-ship correction" both said the `lang_cpp.py`
+  sibling fix for the C++ function-pointer-variable mis-kind was "tracked as a follow-up, not yet
+  landed" — false as of this pass. It landed as PR #737 (`3c68a34 fix(lang-cpp): exclude
+  function-pointer variables (were mis-kinded "function") (#737)`, confirmed via
+  `git log --oneline -- src/tensor_grep/cli/lang_cpp.py`), including the scope-dependent
+  member-function-pointer resolution both prior passes flagged as open. Also found and fixed: B2
+  table row 1 said "8 call sites" for `register_language(...)` while the "Current status" section
+  two paragraphs above it correctly said 10 — an internal inconsistency, not just staleness. The
+  worked-example's `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` frozenset was also stale at "8 members"
+  — a later "Top-10 language campaign" commit added `"c"`/`"cpp"` to the same frozenset (now 10
+  members), which this pass's own "Current status" section already knew but the worked example
+  had not caught up to. **Everything in B1, B3, B4, B5's first four examples, and Sections
+  lang_registry.py/lang_go.py/lang_csharp.py cite: re-verified UNCHANGED this pass** — every
+  `lang_registry.py`, `lang_go.py`, and `lang_csharp.py` line citation in this skill (including
+  the 126-159/162-189/449/711/766/820 F-tag fixes, the 9-12/17-24 docstring rules, and the
+  67-111/89/114/118-128 registry-contract lines) matched the live file exactly, byte-for-byte
+  range, with zero drift — those three files are far more stable than `repo_map.py` and did not
+  need touching. `test_lang_registry.py`'s own test count (`grep -c "def test_"
+  tests/unit/test_lang_registry.py`) is still 21, unchanged.
 - **Third re-verify pass, 2026-07-24, against tg v1.98.2** (`main` HEAD `ba63aa0`). Corrected the
   "Current status" section and E1 from stale "C/C++ deferred, C# is next" framing (accurate as of
   the prior pass, staled by C landing in PR #731/v1.97.0 and C++ in PR #732/v1.98.0 — both merged

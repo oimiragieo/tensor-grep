@@ -335,7 +335,7 @@ uv run --no-sync pytest tests/<targeted>.py    # scoped locally on this desktop
 
 - **`uv run --no-sync` is mandatory** — plain `uv run` re-syncs away the `[dev]` tree-sitter tree.
 - **`ruff format --preview` is a SEPARATE gate from `ruff check`** — check-only misses format CI (#424). Never pass `--preview` to `ruff check`. Bare `ruff format` without `--preview` reverts preview style.
-- **Full pytest + Rust test/clippy matrix + benchmarks + release-asset builds → PR/main CI only** (`AGENTS.md:385` — high-memory; don't run full suite locally unless user explicitly approves).
+- **Full pytest + Rust test/clippy matrix + benchmarks + release-asset builds → PR/main CI only** (`grep -n "full pytest, full Rust test/clippy matrices" AGENTS.md`; was `AGENTS.md:385`, now `:487` — drifted +102 lines since the 2026-07-23 pass, see Provenance — high-memory; don't run full suite locally unless user explicitly approves).
 - Rust changes: `maturin develop` + `cargo test --manifest-path rust_core/Cargo.toml`.
 
 ### Concurrent shared-checkout
@@ -375,7 +375,7 @@ worktree remove --force <path>`. Never open a PR straight from a worktree's own 
 | 1 | `SEARCH_PYTHON_PASSTHROUGH_FLAGS` | `rust_core/src/main.rs` |
 | 2 | `_TG_ONLY_SEARCH_FLAGS` | `src/tensor_grep/cli/bootstrap.py` |
 
-- `tg callers` for callables; **grep / `tg scan`** for sets/decorators/dispatch tables (`callers` cannot see them — `AGENTS.md:412`).
+- `tg callers` for callables; **grep / `tg scan`** for sets/decorators/dispatch tables (`callers` cannot see them — `AGENTS.md`, `grep -n "cannot see set/list/decorator registrations" AGENTS.md`; was `:412`, now `:514` — drifted +102 lines since the 2026-07-23 pass, see Provenance).
 - Change a pinned contract → update its governance test in the **same PR**.
 
 ### CLI hygiene
@@ -386,7 +386,7 @@ ASCII-only CLI output (emoji → cp1252 crash). `git commit -m` backticks → ba
 
 Profiler is the oracle: `tg … --profile` on the actual slow command before designing.
 
-**IDF blast-radius (`AGENTS.md:379`):** BM25/IDF surfaces (`--rank`, agent-capsule, semantic search) are sensitive to corpus changes — adding query-adjacent terms lowers corpus-wide IDF and can silently flip rankings (invisible to call graph). Harden tie/marker detection for IDF shifts; **never relax a failing ranking test** (that masks real degradation). Tracked: capsule-hardening Task #4 (ledger B3).
+**IDF blast-radius** (`grep -n "This IDF blast-radius is invisible to the call graph" AGENTS.md`; was `AGENTS.md:379`, now `:481` — drifted +102 lines since the 2026-07-23 pass, see Provenance): BM25/IDF surfaces (`--rank`, agent-capsule, semantic search) are sensitive to corpus changes — adding query-adjacent terms lowers corpus-wide IDF and can silently flip rankings (invisible to call graph). Harden tie/marker detection for IDF shifts; **never relax a failing ranking test** (that masks real degradation). Tracked: capsule-hardening Task #4 (ledger B3).
 
 ### Dogfood
 
@@ -514,3 +514,14 @@ Steward-cron section (AGENTS.md A26): the 2026-07-24 session found a presumed-de
 still alive alongside its replacement, firing a stale instruction. This is the mirror case to the
 already-documented "assumed alive, actually dead" direction (A25) — `CronList` and inspect every
 returned entry after a restart, don't just re-arm and assume the old one is gone.
+
+**Drift-gate pass (this pass): the three AGENTS.md line citations this skill fixed 2026-07-23 (`:165→:412`,
+`:168→:379`, `:174→:385`) had ALL drifted again, by the same +102 lines each** (`:412→:514`,
+`:379→:481`, `:385→:487` — confirmed by grepping the actual sentence, not by incrementing the old
+number). This is the exact "five previous maintenance passes re-stamped these by hand, and every one
+shipped anchors that were already wrong" pattern `AGENTS.md`'s own "Cite the SYMBOL, not the line"
+section warns about, now observed a sixth time on this skill's own citations. Per that section's rule,
+the three citations above were rewritten as `grep -n "<distinctive phrase>" AGENTS.md` instructions with
+the was→now drift kept as the receipt, rather than re-stamped with a fourth hardcoded number that will
+just as certainly go stale on the next `AGENTS.md` growth pass. Do not "fix" them back to bare
+`AGENTS.md:NNN` citations.

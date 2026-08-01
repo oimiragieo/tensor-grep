@@ -354,8 +354,10 @@ flag-flip**, not a multi-week rebuild. That flip changes only whether the built 
 it does **not** promote GPU, change the CPU-default auto-recommendation, or prove a speed crossover.
 Keep the honesty floor: no speed crossover is proven vs `rg`/`tg_cpu`, GPU auto-recommendation stays
 `false`, and the reviewer-gated `public-gpu-proof.yml` speed-crossover gate remains unmet
-(`docs/CONTRACTS.md:80-82`). Do not treat any GPU number you produce as promotion evidence; it is
-implementation history at best.
+(`grep -n "Public managed GPU promotion additionally requires" docs/CONTRACTS.md`; corrected
+2026-08-01 — the prior `:80-82` citation pointed at the unrelated ripgrep-flag-compatibility list a
+few dozen lines above the real promotion-contract paragraph, currently `:123`). Do not treat any GPU
+number you produce as promotion evidence; it is implementation history at best.
 
 **Re-verified current as of v1.95.0**: `docs/gpu_crossover.md` now carries its own "Current
 post-`v1.95.0` GPU dogfood Read" section, and the verdict above is unchanged in substance — still no

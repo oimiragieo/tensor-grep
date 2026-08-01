@@ -22,6 +22,20 @@ and refreshed four drifted `file:line` citations (`_score_symbol`, `ripgrep_oper
 Problems 1-5 was not re-walked line-by-line this pass. Re-verify volatile facts with the commands in
 **Provenance and maintenance** before you cite them.
 
+**Skill-library drift audit, 2026-08-01, against `v1.101.27` (local `tg` build lags at 1.101.24 —
+irrelevant to this doc, which cites source, not the installed binary).** Two real defects found and
+fixed, beyond ordinary line drift: (1) Problem 6's "Honest framing of the coverage number" paragraph
+had re-invented a three-tier split ("full AST-backed caller support (4)... go is partial") that
+contradicts the product's own canonical `_symbol_navigation_descriptor()` binary split (parser-backed
+5 including go / foundational 5) — corrected in place, with the real within-tier hook gap (go lacks
+`provider_alias_calls`/`import_update_target`/`classify_ref_kind`) kept as a citable nuance, not a
+tier. (2) the **2026-07-24 pass's own claim to have refreshed `docs/CONTRACTS.md`'s promotion-gate
+line was itself wrong** — both that citation (Problem 1) and its Provenance-section twin pointed at
+`:80-82`/`:81`, the ripgrep-flag-compatibility list, not the GPU promotion-contract paragraph (now
+`:123`); fixed both, this time as a `grep`, not a number. Also re-anchored `_score_symbol`
+(`:8177`/`~7698` -> `:8194`, drift of ~500 lines in a week — `repo_map.py` is still growing fast).
+Everything else in Problems 1-5 and the fused-thesis section was spot-checked, not fully re-walked.
+
 ## When to use this skill — and when a sibling is the right door
 
 | Your situation | Use instead |
@@ -54,7 +68,7 @@ Some sibling skills in this list are authored in the same batch and may not exis
 
 **Why current SOTA fails.** Naive GPU grep loses. Single-pattern cold grep is dominated by CUDA startup + PCIe H2D transfer + output materialization: measured `rg = 73.8ms` vs `tg GPU = 1093.8ms` at 1GB, and 29–35x slower than `rg` at 5GB on RTX 4070 / RTX 5070 (`docs/gpu_crossover.md` "Current native evidence"). Against the *fair* single-invocation `rg -F -e … -e …` multi-pattern baseline (never sequential `rg`, which is a strawman), the public managed lane still falls back to `NativeCpuBackend` and loses. The only *candidate* wins are (a) **many** fixed strings resident over a large corpus, and (b) an **amortized resident** mode (compiled plan + corpus kept resident across queries) — and (b) is explicitly `candidate/not-measured until a benchmark exists` (`docs/CONTRACTS.md`).
 
-**Status:** GPU Phase-0 SHIPPED (v1.75.0-v1.75.4, PRs #593-#597) and locally correctness-proven (RTX 4070 `sm_89` / RTX 5070 `sm_120`, 1GB/5GB match+file-set identity -- `docs/gpu_crossover.md`), gated OFF the public release by the CI Actions var `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE` (default `native-frontdoor`, CPU-only; GPU asset publishing needs the non-default `native-frontdoor-gpu`) -- Phase 1 (publishing those already-built assets) is now a **reversible flag-flip**, not a multi-week rebuild, so the old "roadmap holds all GPU work until three CPU-only wins ship first" gate no longer describes reality (five GPU PRs shipped through v1.75.4 without waiting on it). **The honesty floor is unchanged and does not move with the flag:** flipping the CI var publishes assets only -- it does not promote GPU, does not change the CPU-default auto-recommendation, and does not prove a speed crossover. No speed crossover is proven vs `rg`/`tg_cpu`, GPU auto-recommendation stays `false`, and the reviewer-gated `public-gpu-proof.yml` speed-crossover gate remains unmet (`docs/CONTRACTS.md:81`). The PFAC automaton itself, and the resident/many-pattern crossover this Problem targets, remain unbuilt/unproven -- that is still the open research question below, independent of the publish-flag decision.
+**Status:** GPU Phase-0 SHIPPED (v1.75.0-v1.75.4, PRs #593-#597) and locally correctness-proven (RTX 4070 `sm_89` / RTX 5070 `sm_120`, 1GB/5GB match+file-set identity -- `docs/gpu_crossover.md`), gated OFF the public release by the CI Actions var `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE` (default `native-frontdoor`, CPU-only; GPU asset publishing needs the non-default `native-frontdoor-gpu`) -- Phase 1 (publishing those already-built assets) is now a **reversible flag-flip**, not a multi-week rebuild, so the old "roadmap holds all GPU work until three CPU-only wins ship first" gate no longer describes reality (five GPU PRs shipped through v1.75.4 without waiting on it). **The honesty floor is unchanged and does not move with the flag:** flipping the CI var publishes assets only -- it does not promote GPU, does not change the CPU-default auto-recommendation, and does not prove a speed crossover. No speed crossover is proven vs `rg`/`tg_cpu`, GPU auto-recommendation stays `false`, and the reviewer-gated `public-gpu-proof.yml` speed-crossover gate remains unmet (`grep -n "Public managed GPU promotion additionally requires" docs/CONTRACTS.md`; corrected 2026-08-01 — the earlier `:81` citation pointed at the unrelated ripgrep-flag-compatibility list, not this promotion-contract paragraph, currently `:123`). The PFAC automaton itself, and the resident/many-pattern crossover this Problem targets, remain unbuilt/unproven -- that is still the open research question below, independent of the publish-flag decision.
 
 **Funding note (2026-07-16, do not oversell):** `docs/BACKLOG.md`'s CEO desk now frames the CPU semantic
 direction (`tg find` / `--semantic`, campaign #189, see `tensor-grep-semantic-search-campaign`) as the
@@ -98,7 +112,7 @@ open crossover *research* question, the same split Problem 4d uses to hand its o
 **The tg asset.** `_score_text_terms` / `_symbol_rank_key` / `_score_file_path` in `repo_map.py`; the deterministic controlled-corpus fixture; the degrade-to-ask safety-floor pattern in `agent_capsule.py`.
 
 **Progress since (v1.92.2/#699/A7) — a SIBLING scorer hardened, the primary flat scorer unchanged.**
-`_score_symbol` (`repo_map.py:8177`) — a THIRD scorer, distinct from both `_score_text_terms` above and
+`_score_symbol` (`grep -n "^def _score_symbol" src/tensor_grep/cli/repo_map.py`; was `:8177`, now `:8194`) — a THIRD scorer, distinct from both `_score_text_terms` above and
 the real IDF-weighted BM25 in `retrieval_bm25.py`, used only by the deadline-truncated best-effort-
 primary fallback path — gained an exact word-boundary bonus (+1, capped, subordinate to match-tier
 rank) and a test-file demotion (best-effort path only; the main path already drops test files
@@ -281,10 +295,24 @@ call-graph seams are deliberately unwired.
    extraction handles this by name-dedup; a cross-file graph has to pick a canonical site, and that
    decision is still unmade.
 
-**Honest framing of the coverage number.** "10/10 languages" is REGISTRY membership, not caller-graph
-parity. Full AST-backed caller support is python/javascript/typescript/rust (4), go is partial
-(`references_and_calls` only), and java/php/csharp/c/cpp are foundational-tier. Quote the tier split,
-never the bare 10/10, in anything user-facing — see `tensor-grep-enterprise-agent` for the same split.
+**Honest framing of the coverage number — CORRECTED 2026-08-01, do not re-invent a third tier.** "10/10
+languages" is REGISTRY membership, not caller-graph parity, but the product's OWN canonical split is a
+strict BINARY, not a hand-counted "4 full + 1 partial + 5 foundational" list. `_symbol_navigation_descriptor()`
+(`grep -n "_symbol_navigation_descriptor" src/tensor_grep/cli/repo_map.py`, currently `:562`) partitions
+`LANGUAGE_REGISTRY` on exactly one field — `LanguageSpec.references_and_calls is not None` — into
+**parser-backed** (go, javascript, python, rust, typescript — 5) vs **foundational** (c, cpp, csharp,
+java, php — 5). Go belongs in the parser-backed five: the descriptor's own docstring says so explicitly
+("this tier currently also includes go, which several PR-comment summaries lump in with the
+foundational-only languages below -- that undercounts it. Go's own dedicated
+`lang_go.go_references_and_calls` is a full tree-sitter extractor ... so it belongs here"). An earlier
+revision of this section demoted go to a separate "partial" tier based on which of go's OTHER hooks are
+`None` — exactly the "invented a tier from a field's absence" mistake the descriptor's docstring was
+written to pre-empt (verified live: go's `LanguageSpec` wires `references_and_calls` +
+`file_imports_symbol_from_definition` + `prime_repo_context`, leaves `provider_alias_calls` /
+`import_update_target` / `classify_ref_kind` as `None`; python/javascript/typescript/rust wire all six
+except python's own `prime_repo_context`, also `None`). That is a real, citable WITHIN-tier capability
+gap — cite it as exactly that, never as a separate coverage tier — see `tensor-grep-enterprise-agent` for
+the same split.
 
 **You have a result when (falsifiable):** for a representative multi-file C/C++ fixture, `tg callers`
 returns AST-derived call sites (not regex-heuristic ones) and `tg imports` resolves at least
@@ -315,7 +343,7 @@ Re-verify anything below before you cite it; line numbers drift.
 - **Version / date stamp** (`v1.96.0`, 2026-07-24): `grep -n '^version' pyproject.toml` and `grep -n 'release_docs_current_tag' AGENTS.md`.
 - **GPU pause + the 3 gating CPU wins:** `grep -n "Roadmap Sequencing" -A 15 AGENTS.md`; `#319` in `CHANGELOG.md`. Promotion rule: `docs/gpu_crossover.md` "Required Promotion Rule" + "Supported semantics" (PFAC). **B-GPU publish=HOLD (2026-07-21):** `tensor-grep-failure-archaeology` Battle 20. **Semantic-search-shipped / GPU-operator-skill reconciliation (2026-07-24):** `grep -n '"--semantic"' src/tensor_grep/cli/main.py` and `ls src/tensor_grep/core/retrieval_dense.py src/tensor_grep/core/retrieval_fusion.py`; day-to-day GPU commands: `tensor-grep-gpu` skill.
 - **Problem 6 (C/C++ cross-file graph):** confirm the SHIPPED baseline with `grep -c "lang_registry.register_language(" src/tensor_grep/cli/repo_map.py` (expect **10**) and `ls src/tensor_grep/cli/lang_*.py` (expect lang_c.py AND lang_cpp.py to EXIST -- an earlier revision told you to confirm they do not, which was wrong by 2026-07-27). Then read the c/cpp `LanguageSpec` literals and list which call-graph hooks are still `None` -- that set, not the registration, is the open work. The five seams' current definitions: `grep -n "^def _imports_and_symbols_for_path\|^def _imports_with_lines_for_path\|^def build_symbol_source_from_map\|^def _target_language_for_path" src/tensor_grep/cli/repo_map.py` and `grep -n "_SUPPORTED_FILE_DEPENDENCY_LANGUAGES = frozenset" src/tensor_grep/cli/repo_map.py`. Full scoping menu: `.claude/skills/tensor-grep-add-language/SKILL.md` section E1.
-- **Flat no-IDF scorer + fragility:** `grep -n "_score_text_terms\|_symbol_rank_key\|_score_file_path" src/tensor_grep/cli/repo_map.py`; safety floor `grep -n "_primary_target_is_unrequested_marker_helper\|_prefer_implementation_over_marker_helper\|_alternative_targets" src/tensor_grep/cli/agent_capsule.py`; AGENTS.md "BM25/IDF-ranked surfaces … sensitive to corpus changes". Disproof-of-IDF-as-fix: `tensor-grep-failure-archaeology`. **`_score_symbol` hardening (A7/#699):** `grep -n "def _score_symbol" src/tensor_grep/cli/repo_map.py` (expect `~7698`); H1 dead-end: `grep -n '"symbols"' src/tensor_grep/cli/repo_map.py`.
+- **Flat no-IDF scorer + fragility:** `grep -n "_score_text_terms\|_symbol_rank_key\|_score_file_path" src/tensor_grep/cli/repo_map.py`; safety floor `grep -n "_primary_target_is_unrequested_marker_helper\|_prefer_implementation_over_marker_helper\|_alternative_targets" src/tensor_grep/cli/agent_capsule.py`; AGENTS.md "BM25/IDF-ranked surfaces … sensitive to corpus changes". Disproof-of-IDF-as-fix: `tensor-grep-failure-archaeology`. **`_score_symbol` hardening (A7/#699):** `grep -n "def _score_symbol" src/tensor_grep/cli/repo_map.py` (was `~7698`, now `:8194` as of 2026-08-01 — repo_map.py grows fast, re-grep rather than trust either number); H1 dead-end: `grep -n '"symbols"' src/tensor_grep/cli/repo_map.py`.
 - **Raw-grep parity / native control-plane closed outcomes:** `docs/world_class_plan.md` Roadmap C + "Roadmap 1: Native Control Plane". Round-4 argv-injection item is **RESOLVED** (`#326`/`#370`) — verify with `grep -n "fn ripgrep_operand_args" -A 20 rust_core/src/rg_passthrough.rs`, expect an unconditional `operands.push("--".to_string())` before the path loop. **B-warm-session retirement (2026-07-21):** `tensor-grep-failure-archaeology` Battle 19.
 - **Moat-deepener references (arXiv ids + which competitor gap):** the `tensor-grep-market-research-2026-06-25` memory. MCP surface + capability tiers: `grep -n "tg_mcp_capabilities" src/tensor_grep/**/mcp_server.py`.
 - **Problem 4d (`tg ledger`, SHIPPED) + Problem 4b sub-item (`#74` scoped file-deps):** design docs `tensor-grep-a2a-ledger-audit-2026-07-08` and `tensor-grep-benchmark-proofpoint-2026-07-08` memories; ship receipts `#673`(v1.82.0)/`#675`(v1.83.0), hardening `#701`/`#706`(v1.93.0) — `git log --oneline origin/main | grep -E "673|675|701|706"` to confirm. Day-to-day reference: `tensor-grep-ledger` skill.
