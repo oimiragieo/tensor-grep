@@ -352,8 +352,13 @@ def test_session_serve_refresh_on_stale_detects_added_files(tmp_path: Path) -> N
 
 
 def test_session_daemon_returns_invalid_request_for_malformed_json(tmp_path: Path) -> None:
+    # PR-B census (2026-08-01): token="tok" added for uniformity with the rest of this
+    # file's constructions. The request itself is malformed JSON, so json.loads() raises
+    # BEFORE server.is_authorized() is ever reached (verified by reading
+    # _SessionDaemonHandler.handle) -- this test's expected envelope (invalid_request,
+    # not unauthorized) is unaffected by the fail-closed policy reversal either way.
     project = _build_project(tmp_path / "project", "payments", "create_invoice")
-    server = _ThreadedSessionDaemon(project, ("127.0.0.1", 0))
+    server = _ThreadedSessionDaemon(project, ("127.0.0.1", 0), token="tok")
     try:
         handler = _SessionDaemonHandler.__new__(_SessionDaemonHandler)
         handler.server = server
@@ -390,7 +395,7 @@ def test_session_daemon_retries_initial_missing_session_payload(
     tmp_path: Path, monkeypatch
 ) -> None:
     project = _build_project(tmp_path / "project", "payments", "create_invoice")
-    server = _ThreadedSessionDaemon(project, ("127.0.0.1", 0))
+    server = _ThreadedSessionDaemon(project, ("127.0.0.1", 0), token="tok")
     calls = {"count": 0}
     session_payload = {
         "repo_map": {
@@ -430,6 +435,7 @@ def test_session_daemon_retries_initial_missing_session_payload(
                     "session_id": opened.session_id,
                     "path": str(project),
                     "query": "invoice",
+                    "token": "tok",
                 })
                 + "\n"
             ).encode("utf-8")
@@ -454,7 +460,7 @@ def test_session_daemon_resolves_relative_request_path_against_daemon_root(
     other_cwd = tmp_path / "other"
     other_cwd.mkdir()
     opened = session_store.open_session(str(project))
-    server = _ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0))
+    server = _ThreadedSessionDaemon(project.resolve(), ("127.0.0.1", 0), token="tok")
     monkeypatch.chdir(other_cwd)
 
     try:
@@ -467,6 +473,7 @@ def test_session_daemon_resolves_relative_request_path_against_daemon_root(
                     "session_id": opened.session_id,
                     "path": ".",
                     "query": "invoice",
+                    "token": "tok",
                 })
                 + "\n"
             ).encode("utf-8")

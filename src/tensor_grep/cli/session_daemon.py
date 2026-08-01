@@ -1761,9 +1761,19 @@ class _ThreadedSessionDaemon(socketserver.ThreadingMixIn, socketserver.TCPServer
             self.last_activity_at = monotonic()
 
     def is_authorized(self, request: dict[str, Any]) -> bool:
-        # audit S3: constant-time compare to avoid leaking the token via timing.
+        # POLICY REVERSAL (2026-08-01, PR-B): a tokenless daemon fails CLOSED. This
+        # reverses the earlier pinned behavior (tokenless => authorize everything,
+        # "legacy/in-test path") that test_tokenless_server_stays_backward_compatible
+        # used to pin. Production always generates a token in the serve path
+        # (run_session_daemon_server -> secrets.token_urlsafe(32)); a tokenless daemon
+        # is a misconfiguration and must refuse everything, never accept everything.
+        # Tokenless CONSTRUCTION stays legal (see
+        # test_lifecycle_monitor_returns_when_both_limits_disabled) -- only tokenless
+        # AUTHORIZATION is forbidden. Hold this invariant in this one place only; the
+        # constructor deliberately does not also raise on an empty token.
         if not self.token:
-            return True
+            return False
+        # audit S3: constant-time compare to avoid leaking the token via timing.
         provided = request.get(_DAEMON_TOKEN_FIELD)
         if not isinstance(provided, str) or not provided:
             return False
