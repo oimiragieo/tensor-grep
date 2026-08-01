@@ -1,6 +1,50 @@
 # CHANGELOG
 
 
+## v1.101.30 (2026-08-01)
+
+### Bug Fixes
+
+- Session daemon is_authorized fails closed without a token
+  ([#885](https://github.com/oimiragieo/tensor-grep/pull/885),
+  [`22ec8b7`](https://github.com/oimiragieo/tensor-grep/commit/22ec8b724d1af23258d40ea61a96abf40f7b3be3))
+
+POLICY REVERSAL, not a bug fix: is_authorized returned True for every request when self.token was
+  falsy. That behavior was PINNED as deliberate by test_tokenless_server_stays_backward_compatible
+  ("legacy/in-test path... must not reject requests"). This commit reverses that
+  documented-intentional policy and retires the pin on the record.
+
+Why fail-closed still stands, argued against the pin: the sole production constructor of
+  _ThreadedSessionDaemon (run_session_daemon_server) always passes a freshly generated token via
+  secrets.token_urlsafe(32), never empty, never config-derived -- re-derived independently against
+  origin/main, with the 31 tokened test constructions as a positive control. The "legacy/in-test"
+  population the old pin protected is empty in production, so flipping the default cannot change
+  production behavior today. On an IPC socket, "no shared secret exists" must never read as
+  "everyone is authorized."
+
+Census (16 direct tokenless constructions, independently re-derived by calling every site, matching
+  both audit rounds exactly): - test_session_cli.py: 11 sites, all migrated to token="tok" +
+  threaded through every _daemon_request call. - test_session_serve.py: 3 sites -- the
+  malformed-JSON test gets token="tok" for uniformity only (json.loads raises before is_authorized
+  is ever reached, so its invalid_request envelope is unaffected either way); the two
+  well-formed-request tests migrated to token="tok" at construction plus "token": "tok" in the
+  request payload. - test_session_daemon_security.py: 2 sites -- the old pin retired and replaced by
+  test_tokenless_daemon_fails_closed (direct predicate) and
+  test_tokenless_daemon_request_gets_unauthorized_envelope (over-the-wire handler arm, proving the
+  unauthorized envelope reaches the client, not just the predicate); the lifecycle-monitor test at
+  test_lifecycle_monitor_returns_when_ both_limits_disabled is left deliberately tokenless with a
+  comment, since it never calls is_authorized.
+
+Red-arm proof: both new tests observed failing pre-fix (is_authorized({}) is True; KeyError 'error'
+  on the envelope), confirmed again via git stash revert-and-rerun with the reverted source grepped
+  to prove the revert applied, then green again after popping the stash.
+
+Blast radius confined to is_authorized's one production caller (_SessionDaemonHandler.handle) -- the
+  16-site test migration is the whole visible radius. docs/BACKLOG.md #863 closed to match.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.101.29 (2026-08-01)
 
 ### Bug Fixes
