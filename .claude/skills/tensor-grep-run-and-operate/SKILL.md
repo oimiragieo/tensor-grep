@@ -210,7 +210,15 @@ A hidden `--symbol` / `--query` flag still works and prints a deprecation warnin
 Common flags: `--provider native|lsp|hybrid` (default `native`), `--max-repo-files` (2000,
 `_DEFAULT_AGENT_REPO_SCAN_LIMIT` — raised from the old 512 the #398→#399 exit-code history below
 calls out as "the actual friction"), `--json`. `callers`/`refs`/`impact`/`blast-radius` also take
-`--deadline SECONDS` to wall-clock-bound the scan (§12); `defs`/`source` do **not**. `blast-radius`
+`--deadline SECONDS` to wall-clock-bound the scan (§12) — **and so do `defs`/`source`** (plus
+`orient`/`context`/`docs-coverage`); the #232/`#585` waves extended it well past the original
+graph-commands-only set. Derive it, don't trust this sentence: `tg defs --help | grep deadline`.
+(This line read "`defs`/`source` do **not**" until 2026-08-01, while §12's own table listed both as
+taking it and the pitfall table below explicitly warned against believing a stale "these don't take
+it" claim — the doc carried its own correction and its own error at the same time. The `--deadline`
+option on `defs` even carries an in-source comment naming the v1.71.3 dogfood fix that added it.
+**A contradiction inside one document is not resolved by whichever half you read first.**)
+`blast-radius`
 additionally takes `--max-depth` (3), `--max-callers` (25), `--max-files` (25) (in the `blast_radius`
 def, `main.py:12047`+). `defs` additionally takes `--class TEXT` to disambiguate a common method name
 by its enclosing class (`main.py:11251`).
