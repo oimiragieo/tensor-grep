@@ -448,7 +448,17 @@ across all three dispatch routes.
 RED for days with two hypotheses recorded as "falsified by controls". One of those controls moved
 the **wrong variable**: it tested that the `rust_core` Python **extension module** was present. The
 dispatch gate is `resolve_native_tg_binary()`, which looks for the compiled **`tg` binary**. Two
-different artifacts with adjacent names, and the killed hypothesis was right the whole time.
+different artifacts with adjacent names.
+
+**CORRECTED SAME DAY -- the correction outranks the finding.** An earlier version of this entry
+ended "and the killed hypothesis was right the whole time". That is NOT established. The two-arm
+control proves the mechanism SUFFICIENT to produce CI's output; it does not prove that mechanism is
+the one FIRING. `.github/workflows/ci.yml:688` says the job never builds the binary the control
+forced. (`rust_core/Cargo.toml:58` declares `[[bin]] name = "tg"` in the same manifest maturin
+builds, which cuts the other way -- also structural, also not a measurement.) Two structural
+arguments pointing opposite ways is exactly when you stop arguing and measure;
+`scripts/diagnose_gpu_delegation_route.py` does, with both controls. Writing "right the whole time"
+repeated the error this entry is about, one level up.
 
 ```
 main.py:7521   _warn_unavailable_gpu_device_ids(...)          <- the warning CI showed
@@ -482,9 +492,15 @@ reported the same symptom for a FOURTH consecutive release ("PATH note is stderr
 returns empty aggregate JSON with no warnings/notes field"). The binary has to stamp it: `--json`
 triggers native delegation and `_run_native_tg_search` STREAMS the document through
 `_streaming_passthrough_returncode`, so Python never holds it — injecting the field there would mean
-buffering the whole payload to fix a zero-match case. Enumerated rather than sampled: all four
-native envelopes (`NativeJsonOutput`, `SearchResultJson`, `SearchSummaryNdjson`,
-`GpuNativeSearchResultJson`) get `path_was_defaulted` + `scope_note` in one change. Deliberately NOT
+buffering the whole payload to fix a zero-match case. Enumerated rather than sampled -- and the enumeration was WRONG BY ONE on its first pass, which is
+the more useful half of this entry. The census keyed on `#[derive(Serialize)]` and reported "4 of 4
+covered": `NativeJsonOutput`, `SearchResultJson`, `SearchSummaryNdjson`, `GpuNativeSearchResultJson`.
+A FIFTH emitter, `normalize_gpu_sidecar_json`, builds the same document by hand with
+`serde_json::json!()` -- it shares no type with any sibling, so no derive-macro sweep can see it, and
+it is NOT cuda-gated, so it is live in every build on the GPU-sidecar route. Caught by an independent
+plan review, not by the census. **Enumerate EMITTERS, not the mechanism they happen to use.** All
+five now carry `path_was_defaulted` + `scope_note`, held by
+`tests/unit/test_scope_note_covers_every_json_emitter.py` (keyed on emitter, red-arm proven). Deliberately NOT
 part of the incompleteness family — a defaulted-scope search RAN TO COMPLETION, so `result_incomplete`
 would be false and would drag the exit to 2, breaking the closed 0/1/2 contract for the most ordinary
 invocation there is. Gated on zero matches so the field stays worth reading. The note text moved to

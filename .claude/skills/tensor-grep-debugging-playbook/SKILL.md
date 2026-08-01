@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-debugging-playbook
-description: Use when a tensor-grep (tg) run fails, hangs, returns wrong/empty/silently-degraded results, a CI check goes red, a release doesn't publish, a worktree agent's PR reports "No commits between main and <branch>" after a reported commit, or a wall-clock/timing-ratio test flakes on a loaded CI runner. Symptom-to-triage table, each row giving a discriminating experiment and a fix pointer, for CI red, release not published (push-race), search hangs/slow, silent-empty result (fail-closed contract), argv/flag injection, mock-green-but-real-dead FFI, dependency-cap silent downgrade, ranking flip, a `CliRunner`/`capfd` test that goes green-on-PR-red-on-main after a delegation/routing change, a latency fix/regression report that needs profiling-at-scale instead of a code-reading guess, a detached-HEAD worktree push that pushes a stale branch ref instead of the real commit, and a timing-ratio test flake caused by a degenerate baseline below clock resolution. Load BEFORE theorizing from a traceback or re-running a failing gate blind.
+description: Use when a tensor-grep (tg) run fails, hangs, returns wrong/empty/silently-degraded results, a CI check goes red, a release doesn't publish, a worktree agent's PR reports "No commits between main and <branch>" after a reported commit, or a wall-clock/timing-ratio test flakes on a loaded CI runner. Symptom-to-triage table, each row giving a discriminating experiment and a fix pointer, for CI red, release not published (push-race), search hangs/slow, silent-empty result (fail-closed contract), argv/flag injection, mock-green-but-real-dead FFI, dependency-cap silent downgrade, ranking flip, a `CliRunner`/`capfd` test that goes green-on-PR-red-on-main after a delegation/routing change, a latency fix/regression report that needs profiling-at-scale instead of a code-reading guess, a detached-HEAD worktree push that pushes a stale branch ref instead of the real commit, a timing-ratio test flake caused by a degenerate baseline below clock resolution, a diagnostic control that checked the wrong symbol or only proved a mechanism sufficient rather than operative, a windowed `gh run list`+filter query that misses an in-flight run, and a Windows-binary-from-Git-Bash path-domain false negative. Load BEFORE theorizing from a traceback or re-running a failing gate blind.
 ---
 
 # tensor-grep Debugging Playbook
@@ -76,6 +76,10 @@ If your symptom isn't in the table below, it's probably not covered here — che
 | `gh pr create` (or the GitHub UI) rejects a branch push with **"No commits between main and `<branch>`"** even though a worktree agent reported it committed real work | The agent committed on a DETACHED `HEAD` (not the named branch), then `git push origin <branchname>` pushed the branch REF — still sitting at `main`'s tip — instead of the commit; the work is not lost, just not reachable from the ref that was pushed | `git -C <worktree> rev-parse HEAD` vs `git -C <worktree> rev-parse <branchname>` — if they differ, the commit is real but the branch ref never moved | [S16](#16-no-commits-between-main-and-branch-detached-head-push) |
 | Your fix to a **search** behaviour has NO observable effect, and tracing shows your new code IS being called | You are editing a code path the invocation never takes. A bare `tg search PAT` (and any invocation without a `_requires_full_cli` flag) is dispatched by `bootstrap.main_entry` straight to ripgrep via `_run_rg_passthrough`, which `raise SystemExit(...)`s with rg's exit code — **Typer never runs**, so every emitter in `cli/main.py` is downstream of a branch that never executes. A trace calling `main.app()` directly WILL show your code running, which is what makes this so convincing and so wrong. | Trace `sys.exit` and print the LINE it fires from: `m.sys.exit = lambda c: (print(traceback.extract_stack()[-2].lineno), orig(c))`. If it exits inside `bootstrap.py`, your edit in `main.py` is unreachable for that invocation. Then re-read `tensor-grep-architecture-contract` §"The front door: intercept before Typer" — this is documented, and not loading it cost a multi-hour detour on 2026-07-29. | [`tensor-grep-architecture-contract`](../tensor-grep-architecture-contract/SKILL.md) |
 | A wall-clock/timing-ratio test flakes on a loaded Windows CI runner, and each attempt to widen its tolerance either doesn't fix it or makes it worse | A `max(baseline * N, floor)` assertion silently degenerates to the floor alone once the baseline collapses below the platform's clock resolution (or the "fix" attributed the flake to the wrong noise source without profiling) | `gh run view <run-id> --log-failed` for the exact overshoot numbers, then re-measure the baseline in isolation (does it read as a real, non-zero number across several runs?) and cProfile the real command before touching the assertion | [§17](#17-timing-testflake-de-flaking-a-ratiowall-clock-assertion) |
+| A diagnostic control reports a capability "present" and rules out an otherwise-live hypothesis for a red gate, which then sits "cause unknown" | The control checked a symbol adjacent to, but different from, the one the code actually branches on (e.g. the importable `rust_core` extension module vs. the resolved native-binary path `resolve_native_tg_binary()`) | Grep the real branch point for the exact symbol it reads, then restate the control as "I set `<that symbol>` to `<value>`" rather than the capability you believe it proves | [§18](#18-a-control-that-names-the-wrong-symbol-falsely-exonerates-the-right-hypothesis) |
+| A control reproduces a CI failure byte-for-byte and gets treated as "confirmed" before a fix is designed and dispatched around it | The control's forced mechanism is *sufficient* to reproduce the symptom, but nobody checked whether the REAL failing job's own config can even reach that mechanism | Read the real failing job's own config/log for the step in question -- does it execute the code path your control forced? | [§19](#19-a-reproduced-failure-is-not-proof-of-the-operative-mechanism) |
+| A merge-gate or release-monitor check runs `gh run list --branch ... --limit N` (optionally filtered by SHA) and reports "0 in flight" / "all terminal" while a real run is still mid-publish | The limited window filled with unrelated rows sharing the same filter (other workflows on the branch, or cron-scheduled runs that happen to fire on the same commit SHA), pushing the real run out of view | Query the ONE run by its unique ID (`gh run view <run-id>`), never a list plus a filter; if you must list first, read every row's workflow name, not just whether the filter matched | [§20](#20-a-windowed-list-plus-filter-query-gives-a-false-complete) |
+| A dogfood/verification run through a Windows-built `tg` binary invoked from Git Bash reports zero files found against a fix that actually works | Git Bash defaults the child process's cwd to a POSIX-style path (e.g. `/tmp/...`) the Windows binary cannot resolve -- it walks an empty/nonexistent directory in its own path domain, not the one you meant | Re-run the identical command with an explicit Windows-form path (`C:\...`) instead of the defaulted Git Bash cwd, and compare | [§21](#21-the-setup-lies-git-bash-cwd-vs-windows-binary-path-domain) |
 
 ---
 
@@ -810,6 +814,125 @@ degenerate-`max()` comment-trap that followed it: `tensor-grep-validation-and-qa
 
 ---
 
+## 18. A control that names the wrong symbol falsely exonerates the right hypothesis
+
+**Symptom:** A live, plausible hypothesis for a red gate gets ruled out by a diagnostic control, and
+the failure sits "cause unknown" for days -- even though the original hypothesis was correct all
+along.
+
+**Root cause:** the control checked whether `rust_core` (the importable Python **extension module**)
+was present, and read "present" as proof native dispatch was live. The actual gate `tg` branches on
+for native dispatch is `resolve_native_tg_binary()` (`src/tensor_grep/cli/runtime_paths.py:278`) -- a
+resolver for the compiled standalone **binary**, a different artifact with an adjacent, easy-to-
+conflate name. Receipt: #868 sat RED for days on exactly this mix-up before the correct hypothesis
+was re-examined.
+
+**Discriminating experiment:** before trusting any control's present/absent verdict, grep the real
+branch point for the exact symbol it reads:
+
+```bash
+grep -n "resolve_native_tg_binary\|HAVE_RUST" src/tensor_grep/cli/main.py src/tensor_grep/cli/bootstrap.py
+```
+
+Then restate the control as "I set `<that exact symbol>` to `<value>`" -- not "I verified native
+support is available." If the restated sentence names a different symbol than the one the real
+branch reads, the control proves nothing about that gate.
+
+**Rule:** name a control arm by the SYMBOL the code branches on, never by the capability you believe
+it stands for. Two adjacent-sounding artifacts (an importable extension module vs. a resolved binary
+path) can gate two completely different code paths, and a control that verifies the wrong one will
+falsely exonerate a correct hypothesis. Sibling of §6 one layer up: there a *test* mocks the wrong
+*boundary*; here a human-run *control* checks the wrong *symbol* -- same family, different failure
+point.
+
+## 19. A reproduced failure is not proof of the operative mechanism
+
+**Symptom:** A two-arm control reproduces CI's failure byte-for-byte -- same exit code, same stdout --
+and gets called "confirmed." A fix is designed and dispatched around that mechanism. It later turns
+out the real failing job doesn't even exercise the mechanism the control forced, and the dispatched
+agent has to be recalled mid-flight.
+
+**Root cause:** "sufficient to reproduce the symptom" and "the actual cause in the real failing job"
+are different claims, and a control that succeeds only proves the first. Receipt: a control that
+forced the native binary to build reproduced the CI failure exactly -- but
+`.github/workflows/ci.yml:688` documents in-line that the `test-python` job (the one that was
+actually red) **never builds** `rust_core/target/release/tg` at all (maturin there only builds the
+`pyo3/extension-module` cdylib; the release binary only exists in a different job). The reproduced
+failure and the real failure shared symptoms, not cause.
+
+**Discriminating experiment:** after any control reproduces a failure, read the real failing job's
+own config for the step in question and confirm it can reach the mechanism you forced:
+
+```bash
+gh run view <run-id> --json jobs                                # confirm which job actually failed
+grep -n "build\|maturin\|cargo build" .github/workflows/ci.yml  # does THAT job's config run this step?
+```
+
+**Rule:** say "sufficient" the moment a control reproduces a failure; only say "operative" once
+you've confirmed the real failing job's own config actually exercises that mechanism. A reproduction
+that never checks against the real job's steps is a coincidence wearing a confirmation's clothes.
+Companion to §1/§2 ("decode the structured check first"): those tell you WHICH job failed; this
+section is about verifying your control actually explains THAT job, not a different one that happens
+to fail the same way.
+
+## 20. A windowed list-plus-filter query gives a false "complete"
+
+**Symptom:** A merge-gate or release-monitor check runs `gh run list --branch main --limit N`
+(optionally filtered by commit SHA) and reports "0 runs in flight" / "everything terminal" while a
+real run is still mid-publish. Merging on that reading risks rejecting the in-flight release's own
+push (§2).
+
+**Root cause:** the limited window fills up with unrelated rows that satisfy the same filter --
+other workflows on the same branch, or even **cron-scheduled workflows that happen to fire on the
+same commit SHA** -- pushing the real run out of a small `--limit` view. Checking `total > 0` doesn't
+catch this either: the population is full of the wrong rows, not empty.
+
+**Discriminating experiment:** query the ONE object you care about by its unique ID, never a list
+plus a filter:
+
+```bash
+gh run view <run-id>                    # the specific run, not a list
+gh run view <run-id> --json jobs        # then check the JOB's own conclusion, not the run's
+```
+
+If you must list first to find the ID, widen the limit and read every row's workflow **name**, not
+just whether the branch/SHA filter matched -- a cron job matching your filter is not the run you're
+looking for.
+
+**Rule:** a list-plus-filter query is a hypothesis about which rows matter, not a fact about what's
+running. Query one object by its unique ID, and check the JOB's own conclusion, not the run's
+aggregate status -- the same discipline as §11's "aggregate green hides one job's red," applied to
+the *selection* step instead of the *reading* step.
+
+## 21. The setup lies: Git Bash cwd vs Windows binary path domain
+
+**Symptom:** A dogfood/verification run through a Windows-built `tg` binary, invoked from a Git Bash
+shell, reports zero files found against a fix that demonstrably works.
+
+**Root cause:** Git Bash defaults a spawned Windows process's working directory to a POSIX-style path
+(e.g. `/tmp/...`). The Windows binary does not translate that path -- it resolves it in its OWN path
+domain, where it refers to nothing (or an empty directory), and walks zero files. The reported
+"wrong" result is not the fix failing; it's the harness handing the binary a cwd it cannot interpret.
+
+**Discriminating experiment:** re-run the identical command with an explicit Windows-form path
+instead of relying on the shell's defaulted cwd:
+
+```bash
+tg search PATTERN /tmp/some/dir        # Git Bash cwd/path form -- may silently see nothing
+tg search PATTERN 'C:\Users\...\dir'   # explicit Windows-form path -- the discriminator
+```
+
+If the Windows-form path finds the file immediately, the fix was never broken -- the first reading
+was an artifact of the path domain, not the code.
+
+**Rule:** on Windows, a Git-Bash-launched native binary and the shell invoking it can disagree about
+what a bare/defaulted path even means. Before filing a regression off a Windows-binary-from-Git-Bash
+run, re-run with an explicit native-form path -- stopping at the first reading risks filing a phantom
+regression against a real fix. Sibling of §6's dogfood-the-real-binary rule: this is the same
+discipline one step earlier, applied to the INVOCATION environment rather than the binary itself.
+
+---
+
 ## Provenance and maintenance
 
 Facts here were originally verified **2026-07-02, tensor-grep v1.17.25** for §1–§8, and
@@ -836,6 +959,16 @@ the structural ENTER/EXIT marker-order fix — receipts #737/#739, cross-referen
 `tensor-grep-validation-and-qa` Part 1 points 18-20 and `tensor-grep-change-control` Part 6). A
 coordinator review of that same pass added the §14 addendum (a malformed `grep -E \|` alternation
 returning a false-negative spot-check on a sibling PR) and the concrete clock-resolution figure to §17.
+**2026-07-31 against v1.101.24** added four diagnosis-process lessons from a single debugging
+session: §18 (a control that verified the wrong symbol -- `rust_core` the importable extension vs.
+`resolve_native_tg_binary()` the compiled-binary resolver -- falsely exonerated a correct hypothesis on
+#868), §19 (a control reproduced CI's failure byte-for-byte but the mechanism it forced was never
+exercised by the real failing job, per the in-line note at `.github/workflows/ci.yml:688`; the
+dispatched fix had to be recalled mid-flight), §20 (a `gh run list --branch ... --limit N` merge-gate
+query reported "0 in flight" while a real release run was mid-publish, because unrelated
+cron-triggered rows sharing the same commit SHA filled the limited window), and §21 (a Windows-built
+`tg` binary invoked from Git Bash defaulted to a POSIX-style `/tmp/...` cwd it could not resolve,
+reading as a phantom regression until re-run with an explicit Windows-form path).
 Re-verify anything below before trusting it on a later version — this table
 drifts whenever the cited line numbers, defaults, or contracts change.
 
