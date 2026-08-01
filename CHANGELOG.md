@@ -1,6 +1,667 @@
 # CHANGELOG
 
 
+## v1.101.28 (2026-08-01)
+
+### Bug Fixes
+
+- Neutralize dash-leading policy file argument (CWE-88), retire the sentinel claim, and correct five
+  canonicalization lies ([#883](https://github.com/oimiragieo/tensor-grep/pull/883),
+  [`097b1b2`](https://github.com/oimiragieo/tensor-grep/commit/097b1b21a0a5b7676e3c32f1c57da2b5def1659a))
+
+* docs: record the 2026-08-01 backlog verification + two-round plan audit
+
+Ground-truth verification of every open item on TASK_BOARD.md and the 2026-07-31 deep-dive table,
+  plus the plan built on it and both audit rounds.
+
+THE BOARD WAS BADLY STALE -- the 4th time in the same way, per its own header. Of the items listed
+  open, 9 are already fixed, refuted, or deliberate-by-design (--quiet fixed by cfc3264, the
+  AGENTS.md argv sweep, #115/#125, #15 MaxSim, #858/#859/#862/#860b, --ndjson divergence, 2-of-3
+  main.rs envelope literals).
+
+7 items confirmed genuinely open. Only one carries user-facing harm: an invalid --ltl query escapes
+  as a raw ~25-line traceback with exit 1, where the house convention is a clean `Error:` + exit 2.
+  Proven with a three-arm control (valid query exit 0, invalid exit 1, unrelated user error exit 2).
+
+The plan was BLOCKED unanimously in round 1 -- council 6/6 seats plus an independent codex
+  gpt-5.6-sol pass (7 must-fix) -- and revised against all of it:
+
+- PR-B would have REVERSED a documented-intentional policy while calling it a bug fix.
+  tests/unit/test_session_daemon_security.py:58 pins the tokenless fail-open as deliberate, in its
+  name and its comment. Now reframed as an explicit policy reversal with the pin retired on the
+  record. - The --ltl fix would have reddened 15 existing tests that pass "ERROR" as an LTL pattern
+  (not valid grammar). All 15 enumerated by calling each site. - One stated red arm COULD NOT FAIL:
+  the e2e parity case skips pre-fix and post-fix alike. Withdrawn as a receipt and rebuilt inside
+  the CI job that actually builds the binary and escalates a skip to a failure. - PR-D had waived
+  the mandatory adversarial security gate; the trigger is the surface (apply_policy + native front
+  door), not the diff shape.
+
+Method note kept in the receipts: the council and codex overlapped on exactly ONE finding. Six seats
+  across five providers all missed the 15-test collision and the skipping red arm -- they converged
+  on the most legible defect and stopped. Consensus is not coverage; two structurally different
+  audits were.
+
+Also recorded: three instrument failures hit while producing this, including a shared /tmp log
+  collision that led me to blame a healthy tool and kill its run.
+
+No product code changed.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs: round-2 plan audit, and correct two findings I got wrong myself
+
+Round 2 of the plan audit. Q1 and Q2 -- the two claims carrying real risk -- were re-derived
+  independently and both hold exactly:
+
+Q1 Exactly ONE production construction of _ThreadedSessionDaemon exists (session_daemon.py:2069),
+  always token=secrets.token_urlsafe(32). Positive control: 31 constructions in tests/. So the
+  "legacy tokenless" population PR-B's policy reversal depends on is genuinely empty. Q2 The 16-site
+  tokenless test census is exact: 11 + 3 + 2, derived here without consulting the plan's list,
+  matching line-for-line. The two harness files the revision REMOVED are confirmed tokened.
+
+I ALSO GOT TWO ANSWERS WRONG, and an independent codex pass caught both.
+
+Q3 -- I said "clean". The plan prescribed `pytest -q --maxfail=0` as its local gate; testpaths has
+  no E2E exclusion, so that COLLECTS 53 routing-parity tests, which resolve cargo and self-compile
+  Rust. The plan held an explicit shared-server prohibition and a command violating it, two lines
+  apart.
+
+Two probe failures, not one: - I grepped for the forbidden NAMES. The violating line invokes the
+  module by COLLECTION; the forbidden string appears nowhere in it. - Checking the finding,
+  `--collect-only | grep -c` returned 0 and I nearly filed codex as wrong. `-x` in addopts had
+  aborted collection on an unrelated error two files earlier. The zero meant "never reached", not
+  "absent".
+
+Q4 -- I deferred it. There is a fifth prose site: multi_agent_context_plane.md :149 says "(Slice 1
+  only) canonicalize PATH", implying Slice 2 does not. It does (ledger_store.py:1198,1335). Current
+  architecture doc, not a changelog.
+
+Both fixed. The corrected local gate is proven bidirectionally: scoped command collects 0 parity
+  tests but 6354 real ones (not inert); the old command still collects 53 (so the difference is the
+  fix).
+
+Three instrument failures by me in one session -- an awk range pattern, the collect-only zero, and a
+  shared /tmp log collision that led me to blame a healthy tool and kill its run. All false
+  NEGATIVES, all caught by a positive control rather than by re-reading. The one time I skipped the
+  control, the wrong answer survived into a committed audit document.
+
+* docs: correct disclosure docstring and ledger canonicalization docs
+
+Five self-contradicting prose sites fixed by one shared derivation, not enumeration: main.py's
+  _completeness_caveat_lines disclosure docstring (both its six-command "say nothing in text at all"
+  enumeration and its "code-map/route-test/session-open/agent trail disclosure" enumeration had
+  rotted -- route-test and agent are wired to the banner now too), CONTRACTS.md sections 9 and 10,
+  ledger_store.py's _ledger_physical_root docstring + section-banner comment (both contradicted
+  their own module docstring), and a fifth site in docs/multi_agent_context_plane.md found by an
+  independent codex audit after this PR was dispatched (a "(Slice 1 only)" parenthetical carrying
+  the same false implication).
+
+All five replaced with a derivation pointer (grep the call sites /
+  _emit_scan_incompleteness_banner(...)) instead of a fresh enumeration, so the next migration
+  cannot rot the same way. AST-neutrality proven for both edited .py files via docstring-stripped
+  ast.dump() comparison against HEAD. Swept both docs whole-file for a sixth instance (with a
+  positive control on each sweep); found none.
+
+* chore: remove dead _classify_lines wrapper; record apply-policy sentinel retirement
+
+Deletes sidecar.py::_classify_lines, a 3-line unused wrapper around _classify_lines_with_metadata.
+  Re-verified zero callers via tg callers, tg refs, and a word-boundary grep over git-tracked files
+  (matches only the def itself plus prose mentions in docs/audits and docs/plans); the positive
+  control (_classify_lines_with_metadata) returns 4 callers across 3 files by every method,
+  confirming the instrument works.
+
+Records the apply_policy.py / rust_core main.rs argv-sentinel retirement reasoning in-code: no `--`
+  separator is inserted before the resolved executable's own arguments, because that argv is an
+  operator-authored complete validation command, not our flags plus an untrusted positional.
+
+The mandatory adversarial security gate for this PR (apply_policy + native-asset surface, AGENTS.md
+  rule A3) found the retirement claim itself sound, but surfaced a real, adjacent CWE-88 gap while
+  attacking it: _policy_file_arg returned a repo-controlled relative filename unmodified, so a file
+  named e.g. "-cevil.ini" substituted via $file/{file} into a policy command template parses as a
+  flag rather than a path on both POSIX and Windows tokenizers. Fixed TDD-first in this same PR:
+  _policy_file_arg now prefixes a dash-leading relative path with "./". Two new regression tests in
+  test_apply_policy.py, observed RED before the fix and GREEN after. The Rust mirror site was
+  independently clean (validation_template_file_path always absolutizes before substitution) -- its
+  comment now records that absolutization is load-bearing so a future "simplification" cannot reopen
+  the class.
+
+Closes the two board lines in docs/BACKLOG.md and docs/TASK_BOARD.md.
+
+* test: make the CWE-88 tests prove path identity, not just flag shape
+
+The two apply_policy CWE-88 tests only asserted "not flag-shaped" -- a proxy that a mutation audit
+  (docs/audits/2026-08-01-codex-pr883-audit.md, F1) proved insufficient: `return f"./{relative}" if
+  relative == "-cevil.ini" else relative` (handles only the one fixture) and `return
+  "totally_wrong_file.py"` (checks a completely different file) both passed. Parameterize the
+  adversarial shape family (-cevil.ini, --evil.ini, bare -, bare --, -rf, a dash-leading name with a
+  space, an already-./-prefixed input, plus two unchanged controls: a normal name and one with only
+  an interior dash) across both $file/{file} placeholders and both POSIX/Windows tokenizers, and
+  assert path IDENTITY (the token resolves back to the exact edited file) alongside shape. Both
+  mutations now go RED across the new cases (verified in-worktree, then reverted to a byte-identical
+  file).
+
+Also close two LOW findings from the same audit: ledger_store.py's module docstring still called the
+  PATH-scoping fix "claims subtree only" after Slice 2 was migrated onto the same canonicalization
+  (F2) -- along with sibling prose in CONTRACTS.md and multi_agent_context_plane.md that hard-coded
+  "five" call sites by name instead of deriving the count via grep, which will go stale the moment a
+  sixth caller is added; and the Rust mirror's new security comment claimed
+  `validation_template_file_path` "ALWAYS absolutizes," which is false on a `current_dir()` failure
+  (the fallback is dot-prefixed, not absolute) -- the comment now states the real invariant
+  (absolute-or-dot-prefixed, never flag-shaped) without touching the (already-safe) Rust behavior
+  (F3).
+
+* docs: format the plan doc's Python fences with the LOCKED ruff version
+
+CI's `ruff format --check --preview .` formats Python code fences inside Markdown, repo-wide. The
+  plan doc this PR added was never checked -- my local pre-push gate covered only .py files, so an
+  .md I authored went out unformatted and reddened `Formatting & Linting`.
+
+Formatted with ruff pinned to 0.15.20 (the version `pyproject.toml` locks and CI resolves), NOT the
+  0.16.0 in this venv. Verified clean under BOTH versions, so it is forward-compatible rather than
+  pinned to today's resolver.
+
+Content is unchanged -- the diff is fence dedenting and line joining only.
+
+Note this is NOT the ruff-version artifact dismissed elsewhere in this campaign (the ~2 check errors
+  + 4 reformat candidates that 0.16.0 reports on files main is green on). That dismissal stands.
+  This was a real red on a file this PR adds, and the two are distinguishable by exactly one
+  question: is main green on it?
+
+* fix: stop the CWE-88 e2e test from calling ctypes.windll off Windows
+
+CI (ubuntu-latest, macos 3.11/3.12) red on
+  test_policy_command_instances_never_produces_a_flag_looking_file_token: it called
+  _split_windows_command() unconditionally, and that function reaches ctypes.windll, which does not
+  exist off Windows -- AttributeError on every non-Windows runner. This bug predates the
+  path-identity rewrite (the original single-fixture test had the same unconditional call); the
+  parameterized version just gave CI more cases to fail on.
+
+Split the end-to-end test in two: -
+  test_policy_command_instances_never_produces_a_flag_looking_file_token now runs on every platform.
+  It tokenizes with POSIX shlex.split and with _parse_policy_command (the real CLI-boundary parser,
+  which branches internally to the OS-native tokenizer) -- never calling _split_windows_command
+  directly, so it cannot reach ctypes.windll off Windows. On a Windows runner, the native_argv arm
+  already exercises the Windows tokenizer indirectly through that branch. -
+  test_policy_command_instances_windows_tokenizer_never_produces_a_flag_looking_file_token is the
+  direct, Windows-only check of _split_windows_command itself, skipif-guarded on sys.platform !=
+  "win32". It is now the ONLY call site of _split_windows_command outside apply_policy.py, and
+  pytest never executes (or imports the name inside) its body on a non-Windows collection.
+
+Both tests share one setup helper (_expand_one_policy_command_instance) and one shape+identity
+  assertion helper (_assert_file_token_is_the_edited_file) so the two tokenizer arms cannot silently
+  diverge in what they check.
+
+Re-ran the F1 mutation-kill proof against the restructured tests: both the single-fixture mutation
+  and the fixed-wrong-file mutation still go RED across all three test functions (30 and 45 failures
+  respectively), and the file was restored byte-identical to HEAD after each. Verified clean under
+  both the local ruff 0.16.0 and the CI-pinned ruff 0.15.20 (ruff==0.15.20 --no-project).
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Retain the false-zero lesson family, and correct a number I got wrong three ways
+  ([#881](https://github.com/oimiragieo/tensor-grep/pull/881),
+  [`a9c6b17`](https://github.com/oimiragieo/tensor-grep/commit/a9c6b17247de7ea4799c426114564c99b85488b8))
+
+Two things in one commit because the second is a defect in the first.
+
+## The retention (AGENTS.md + 3 skills)
+
+The 2026-08-01 lesson family, whose unifying claim is **the check and the defect agreed with each
+  other, so neither could catch the other**: `-q` in a shared builder whose consumers parse the
+  output it suppresses; a control arm that asserted the bug; a probe built at the seam the flag was
+  misplaced in; a stale checkout that made a planner call a live regression hypothetical; a writing
+  seat that lacked the measurement; a doc citing a guard that reads two other files.
+
+Placed one owner per file to avoid collision: AGENTS.md (canonical law), validation-and-qa (the
+  oracle home, unnumbered bullets -- no new Form, since that is a two-file edit), change-control
+  (the gate), failure-archaeology (the settled outcome: `-q` lives ONLY in `search_passthrough`).
+
+## The correction, which is the more useful half
+
+**I put a wrong measured number in the sentence about wrong measured numbers.**
+
+It said the symbol-graph split was "3 parser-backed, 5 regex-fallback, 2 unresolved". The real
+  answer is **5 and 5, with no third tier**:
+
+parser-backed: go, javascript, python, rust, typescript foundational: c, cpp, csharp, java, php
+
+I hand-counted `references_and_calls` at each `register_language` call, found js/ts ABSENT rather
+  than `None`, labelled them "unresolved -- confirm before relying", NEVER CONFIRMED, and quoted the
+  unconfirmed guess as the measurement. The figures summed to 10, so it passed a sanity check. It
+  reached AGENTS.md, the onboarding doc (#879, merged), a memory file and a task before an audit ran
+  the command.
+
+`.claude/skills/tensor-grep-enterprise-agent/SKILL.md` says **"Never hand-count this"** in those
+  words, gives the exact command, and records that this line was ALREADY WRONG TWICE -- 4/10 with go
+  wrongly demoted, and 8/10 from grepping a string that also matches `=None`. Mine was the third. I
+  did not read it first.
+
+Corrected in AGENTS.md and in docs/ENGINEER_ONBOARDING.md, both now carrying the DERIVATION rather
+  than the number:
+
+python -c "import sys;sys.path.insert(0,'src');from tensor_grep.cli import repo_map as
+  r;print(r._symbol_navigation_descriptor())"
+
+THREE RULES BANKED FROM IT: a claim that cites a number must cite the derivation (the number is a
+  snapshot, the command stays true); a field's ABSENCE is not its meaning (js/ts have no registry
+  entry and are fully parser-backed); and "confirm before relying" is a promise to yourself -- the
+  hedge made an unverified guess look careful.
+
+## Also here
+
+docs/TASK_BOARD.md retires the "two gates contradict on --gpu-device-ids" finding. They do not:
+  `_can_passthrough_rg` excludes the flag because rg has no GPU, `_can_delegate_to_native_tg_search`
+  includes it because the native binary does (declared `rust_core/src/main.rs:395`,`:650`; forwarded
+  at `main.py:3828-3833`). Same policy expressed twice. A category error -- same flag, different
+  callees -- retired with its reason rather than deleted.
+
+test_skill_index_sync green; all six files' fences balanced.
+
+Non-releasing.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Testing
+
+- Gate skill-library citation + stated-count drift, and fix the oracle-form miscount
+  ([#882](https://github.com/oimiragieo/tensor-grep/pull/882),
+  [`0126cb3`](https://github.com/oimiragieo/tensor-grep/commit/0126cb3b8dc67cf4e6310dfe65250f93a016c835))
+
+* test: gate skill-library citation + stated-count drift, and fix the oracle-form miscount
+
+The existing `test_skill_index_sync.py` pins the skill ROSTER by comparing name sets. Two adjacent
+  properties sat entirely unguarded, and both had drifted.
+
+1. CITATIONS. The library carries ~770 `file:line` citations and nothing ever resolved them.
+  Measured: 755 resolve, 18 ambiguous basenames, 0 broken -- so this ships as a ratchet on a
+  currently-clean surface, not a cleanup.
+
+2. STATED COUNTS beside enumerations. AGENTS.md's header read "nine forms" while the section
+  enumerates Form 1..Form 10 -- stale for four days. The sibling skill had the count right and even
+  documented the miscount, but misdated forms 8-9 to 2026-07-27 when Form 8's own text reads
+  2026-07-26. Each doc was half correct, so reading either alone confirmed it. Both are now derived
+  from the `**Form N —**` headings, which are the only authority.
+
+Modelled as a CLASS (a prose number beside an enumeration), not two one-off cases, per AGENTS.md
+  "Model The Class, Don't Enumerate The Cases".
+
+Three design decisions were forced by measurement, each after a wrong reading:
+
+* Resolution is via `git ls-files`, not a filesystem walk. A walk also picks up 6 stale agent
+  worktrees under `.claude/worktrees/` and 20 snapshot copies under `src/.tensor-grep/checkpoints/`,
+  so EVERY citation matched 7-21 paths and 100% went ambiguous -- the scan checked nothing while
+  reporting success. * Suffix indexing, because skills cite by bare basename, partial suffix, AND
+  repo-relative path. Resolving only the last marks ~60% of a correct library "missing" -- the same
+  false-positive flood that drowned an earlier auditor. * The skill count is derived from the doc
+  sentence's OWN definition (`tensor-grep-*` + `code-search-and-retrieval-reference`, excluding the
+  bare `tensor-grep` usage skill). A raw folder count fires on a CORRECT repo: checked against three
+  historical revisions, it was wrong at 20/20, 26/26 and 27/27. That was caught only by running the
+  ratchet against pre-fix revisions.
+
+Named for what they enforce. These check that a cited file EXISTS and the line is IN RANGE; they do
+  NOT check that the line still contains the claimed symbol. A name promising more would let a
+  future session skip the semantic read.
+
+Every arm proven to fire by mutation, none assumed: missing file, out-of-range line, vacuous
+  zero-citation scan, count mismatch, count deleted, stale oracle count, non-contiguous form
+  numbering. 7/7 fired.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs: capture the three instrument-aiming failures from building the drift gate
+
+Three lessons, all paid for while building `test_skill_library_drift.py`:
+
+1. ONE checker produced THREE wrong readings (100% broken / 60.5% broken / 100% ambiguous), each
+  plausible, each caught only by a control arm run first. An extreme rate is a property of the
+  instrument far more often than of the subject. Also: the control FIXTURE must itself be
+  unambiguous -- the first known-good arm cited a non-unique basename and read 0/0/0, which is
+  byte-identical to a dead checker.
+
+2. A gate that fires at EVERY historical revision is guarding a shape the repo never had. I called
+  `**27 skills**` beside 28 folders live drift; running the proposed gate across history fired at
+  all three revisions, which is the same broken-check signal as a constant verdict across treatment
+  and control. The sentence DEFINES what it counts and the number was right. The real drift of that
+  class was one section away, with both halves of a two-file edit wrong in opposite directions --
+  each doc half correct, so reading either one alone confirmed it.
+
+3. An exact-phrase grep is the wrong instrument for asking whether a LESSON was captured: four of
+  seven probes read absent because the doc says "check and the defect", not "check and the bug".
+  Absence of a phrase is not absence of an idea.
+
+* docs: the never-re-stamp corrective pass said "all five" and listed four
+
+The omitted seam, `_imports_with_lines_for_path`, was the one still stale -- 392 lines adrift (6440
+  -> 6832), the LARGEST of the five -- and it sat inside the very fix that introduced the
+  never-re-stamp law. `tensor-grep-change-control` still cites the dead `:6440`.
+
+The skill's own grep instruction for the 5-language-seam census names all five symbols correctly.
+  Only the execution was short by one, and the prose asserted completeness over it -- so every
+  downstream reader saw "all five".
+
+A census and its own count are two artifacts, and the count is not evidence about the census. When
+  you write "all N", count the rows you actually wrote rather than carrying N over from the sentence
+  that motivated the work. Same failure as the population-is-the-defect family, arriving inside its
+  own remedy.
+
+Found by an independent audit that counted the table instead of reading the sentence above it.
+
+* chore: save the skill-library audit as a reusable /tg-skill-audit workflow
+
+Catches the drift class `tests/unit/test_skill_library_drift.py` cannot see by design: citations
+  that RESOLVE (file exists, line in range) while pointing at unrelated code. Measured 14-500 line
+  drift across the first four skills audited.
+
+Two design choices come from this run's own failures:
+
+* The ledger is DERIVED AT RUN TIME, not hardcoded. The first version froze the facts into the
+  script -- which is the exact defect it audits for, and it shipped one WRONG fact to 11 agents at
+  once (a correct skill count reported as drift). Every fact now carries the command that produced
+  it, so a downstream agent can re-run rather than trust. * Waves of 3 are enforced in the SCRIPT,
+  not in guidance. A 21-agent single-shot fan-out of this same workflow died wholesale on a session
+  token limit and returned zeros -- which read exactly like a clean audit. Holes are retried once
+  and then reported as NOT COVERED; the chairman is instructed to open with a PAYLOAD SHORTFALL line
+  rather than synthesize over a lane that never ran.
+
+Agents are told NOT to propose new line numbers: AGENTS.md's never-re-stamp section records five
+  passes that re-stamped by hand and shipped already-wrong anchors every time.
+
+* docs: point both indices at the drift gate, and say what it CANNOT prove
+
+Adds the new gate to the skill-index sentence in both docs, with the limitation stated in the same
+  breath: it proves a citation RESOLVES, not that the cited line still contains the claimed symbol.
+
+That sentence is the load-bearing part. Anchors in this library drift 14-500 lines while resolving
+  perfectly -- one section was ~100 lines stale two days after being dated current -- so a green
+  gate is not evidence a skill is accurate. Without the caveat, "there's a citation gate now" is
+  exactly the kind of claim that stops the reading that would catch real drift.
+
+Also points at /tg-skill-audit for the semantic half, and repeats the never-re-stamp rule at the
+  place someone will be tempted to break it.
+
+* docs: tg defs/source DO take --deadline; the skill asserted the opposite of its own table
+
+`tensor-grep-run-and-operate` §3 said "`defs`/`source` do **not**" take `--deadline`. Both do:
+
+tg defs --help -> --deadline FLOAT RANGE tg source --help -> --deadline FLOAT RANGE main.py: `def
+  defs` at :11964, its --deadline option at :12007, carrying an in-source comment "CLI consistency
+  fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on `tg defs`"
+
+The document contained its own correction the whole time: §12's table lists both commands as taking
+  it, and the pitfall table at :745 warns in as many words against believing a stale "these don't
+  take it" claim. §3 WAS that claim.
+
+A reader trusting §3 would believe a working command errors -- the failure mode of a doc
+  contradicting itself is that whichever half you read first wins, and neither half knows it is in
+  an argument. Replaced with the derivation (`tg defs --help | grep deadline`) rather than another
+  assertion.
+
+Found by an independent audit that read both sections instead of one.
+
+* docs: convert ~38 drifted anchors in architecture-contract to symbol-grep form
+
+Not a re-stamp. AGENTS.md's never-re-stamp law records five passes that replaced old line numbers
+  with new ones and shipped already-wrong anchors every time, so each citation becomes a `grep -n
+  "<symbol>" <file>` instruction plus a `was :N, now :M` receipt. 34 receipts, 78 grep instructions,
+  12 anchors verified unchanged this pass.
+
+8 rows were independently verified before editing; the agent's own sweep found ~30 more. The worst
+  cluster is the "A THIRD rg-passthrough door" section, dated 2026-07-30 and already 100-250 lines
+  stale in places -- two days.
+
+Also corrected: a Provenance block asserting four numbers "found UNCHANGED" when three of the four
+  had drifted, plus 8 stale docs/CONTRACTS.md citations and 2 stale AGENTS.md cross-references (:414
+  -> :516, :422 -> :578).
+
+Two anchors that had NOT moved are now marked "unchanged this pass" rather than silently rewritten
+  -- a repair pass that cannot distinguish "I checked and it moved" from "I checked and it did not"
+  teaches the next reader nothing.
+
+* docs: grep is an instrument, and mine was wrong four times in one session
+
+Four probes, four believable numbers, four distinct causes -- three of them produced WHILE auditing
+  for exactly this class:
+
+paraphrase miss "check and the bug" -> 0; the doc says "the defect" format assumption "was N ->" ->
+  0; the file writes "was `:N`, now `:M`" regex dialect GNU grep ERE reads \` as a start-of-buffer
+  ANCHOR, so the "fixed" pattern could never match anything category error counting warnings ABOUT a
+  phrase as instances OF it, so a correct removal read as an increase (2 -> 3)
+
+The second and third nearly caused me to reject a correct 38-anchor repair. Python re-counting
+  settled it: 34 receipts, 78 grep instructions, 12 anchors verified unchanged -- the agent was
+  right and my verification was broken three times running.
+
+A grep zero is UNRESOLVED, never ABSENT. Confirm the pattern matches one known-present instance
+  before believing a count -- the same positive control any probe needs.
+
+Replaces the narrower "exact-phrase grep" note with the full evidence.
+
+* docs: code-search-reference said C/C++ were unregistered; all 10 languages ship
+
+The CRITICAL half of this repair is content, not line numbers. §2a claimed "only C and C++ remain
+  unregistered, both deliberately deferred". Both ship:
+
+grep -c "lang_registry.register_language(" repo_map.py -> 10 _symbol_navigation_descriptor() ->
+  parser-backed-refs-callers:go-javascript-python-rust-typescript
+  +foundational-defs-imports-only:c-cpp-csharp-java-php
+
+The cpp registration carries an in-source comment: "C++ joins the symbol graph as a
+  FOUNDATIONAL-TIER language, closing the top-10 language-support campaign to 10/10." A reader
+  trusting the skill would have re-done shipped work, or scoped the open backlog item as "register
+  C/C++" when it is actually "upgrade the five foundational languages to parser-backed
+  refs/callers".
+
+The count is now DERIVED from `_symbol_navigation_descriptor()` rather than stated by hand -- this
+  repo's memory records that split being wrong three times, twice from hand-counting or grepping a
+  substring.
+
+Anchors converted to grep-the-symbol form with was/now receipts, never re-stamped. All three "as of
+  2026-07-27 -- grep the symbol" hedges converted: two had already drifted a further 17 lines, which
+  is the point -- a dated hedge does not stop a number rotting, it makes the rot look supervised.
+
+Deliberately NOT churned: ~11 small stable files whose anchors are accurate to within a line, and
+  the historical provenance entries recording what earlier passes found. Converting an accurate
+  citation is churn, and rewriting history to match today erases the drift evidence.
+
+* docs(backlog): record the 2026-08-01 skill-library audit, and unstale the PyPI line
+
+Eight of 28 skills audited; all eight carried drift. Facts sound, pointers rotten: every flag, env
+  var, default and the 58-tool MCP count re-derived exactly, while anchors sat 14-500 lines adrift.
+
+Three substantive, not cosmetic: - code-search-reference said C/C++ unregistered; all 10 languages
+  ship - run-and-operate said defs/source lack --deadline; both have it, and the doc's own pitfall
+  table warned against that exact stale claim - AGENTS.md's never-re-stamp pass said "all five" and
+  listed four; the omitted one was the still-stale one
+
+Also: the header said "Live PyPI: v1.101.19" while PyPI served 1.101.27 -- eight releases stale in
+  the file that opens with "authoritative". Replaced with the command that derives it, per the house
+  rule that a claim citing a number cites its derivation.
+
+* docs(board): reconcile against gh + PyPI; the staleness warning has now failed three times
+
+The board listed #872/#871/#868 as IN FLIGHT -- one "CI running", one "BLOCKED - do not merge" --
+  while all three had MERGED, two of them today. The stamp read post-v1.101.22 while PyPI served
+  v1.101.27.
+
+This is the third time in the same shape. Each previous correction added a sterner warning; the
+  third one landed under a paragraph explicitly naming the failure and telling the reader to
+  reconcile in the same turn a PR merges. It did not fire, because prose cannot fire.
+
+So the note now says what it should have said the first time: a warning ignored three times is not a
+  weak warning, it is the wrong instrument. The reconcile belongs in the merge routine, and both
+  numbers are given as commands to run rather than values to retype.
+
+Worth stating plainly because it is the risk, not the tidiness: a board that says BLOCKED about
+  already-shipped code will eventually stop someone merging something correct.
+
+* docs(board): record WHY the staleness rule stays declared rather than gated
+
+Three violations of the same rule normally argues for a mechanism. Both candidates were considered
+  and rejected, and the reasoning is written down so the next session does not build one and then
+  wonder why it got disabled:
+
+- matching IN FLIGHT against `gh pr list` needs network + a token inside the test run, so an offline
+  or rate-limited run reds the build for a reason unrelated to the repo -- that is how a team learns
+  to reach for --no-verify, which costs you every other gate too - matching the stamp against
+  pyproject's version is deterministic and needs no network, and would fire after EVERY release
+  (several a day), forcing a board edit into every unrelated PR
+
+What changed instead is the routine (reconcile inside the merge step) and the affordance (the two
+  derive-commands, so nobody retypes a number from memory).
+
+Harden when a violation is mechanically detectable without interpretation AND a false positive would
+  be rare. Neither holds here.
+
+* docs: convert release-and-positioning + debugging-playbook anchors to grep form
+
+Third repair in the sweep. Rows A-G re-verified before editing; none rejected.
+
+release-and-positioning: the whole ci.yml gate-DAG was off by a uniform +121 with topology INTACT
+  (no renamed or removed job), so the repair stops citing line numbers for job headers at all and
+  cites JOB NAMES -- the thing that is actually stable. Deleted the "ci.yml's current 1454 lines"
+  pin (real: 1575); a file length is the least stable thing you can pin and it buys nothing.
+
+Beyond the briefed rows, the sweep found 16 more. The two worth naming:
+
+- NINE AGENTS.md cross-citations had ALL drifted to unrelated content, and one of them points at
+  material that has since been REMOVED from AGENTS.md entirely. A cross-file citation rots faster
+  than an in-file one and nothing was watching them. - `truncation_cause="deadline"` had moved OUT
+  of main.py into a new module (inventory.py). A citation can be wrong because the code MOVED HOUSE,
+  not just because lines shifted -- re-grepping within the old file finds nothing and reads as
+  "deleted".
+
+debugging-playbook §8 was not a line shift: `_score_symbol` moved from ~480 lines AFTER its siblings
+  to ~30 BEFORE them, so the prose framing "a family of helpers around :8211" no longer described
+  the file. Rewritten to name the call-graph relationship instead of a position.
+
+§19's underlying claim ("test-python never builds the release binary") is no longer settled --
+  ci.yml now marks it IN DISPUTE as of the #868 task-22 investigation and added a diagnostic step to
+  re-measure. Softened to flag the dispute rather than restate a closed fact, which is the honest
+  state.
+
+* docs: repair enterprise-agent + review-bundle anchors; 3 sibling skills verified clean
+
+Of five skills audited, three needed nothing and say so with named evidence: prepare (every flag
+  confirmed against main.py's `prepare` command, default deadline 60s), ledger (all 5 subcommands, 8
+  flags, TTL 900s, and the --artifact-kind closed vocab matching on BOTH record and find),
+  find-and-route (the 1500 walk ceiling, --max-repo-files 2000, and --format rg genuinely absent
+  from `find`). Not converting a correct citation is part of the job; churn costs review attention
+  and buys nothing.
+
+enterprise-review-bundle is the sharpest receipt in the sweep. A 2026-07-27 pass ADDED source
+  anchors to a skill that had cited none -- and all five had drifted uniformly by +618 lines within
+  FIVE DAYS. Adding line anchors did not make the skill more verifiable, it created a liability with
+  a five-day half-life. Now a grep instruction, with the +618 recorded as the argument against ever
+  hand-restamping them.
+
+enterprise-agent: 4 drifted cross-file citations (BACKLOG.md x4 occurrences, repo_map.py, three
+  codemap.py git-touching sites, and a bootstrap.py pair whose old anchors pointed at an unrelated
+  TimeoutExpired handler). Also records the THIRD failure of the language-tier hand-count -- the
+  skill already said "Never hand-count this" and listed two prior failures; mine was the third, an
+  invented "unresolved" tier read out of a field's absence. A rule that has now been broken three
+  times in the file that states it is worth the extra line.
+
+* docs: repair 9 more skills + fix a CONTRACTS.md census that stopped being complete
+
+Completes the 28-skill sweep. Three findings outrank the anchor drift:
+
+1. CONTRACTS.md said only claim/release/list canonicalize PATH. FIVE functions do -- record_finding
+  and find_findings were added later (`grep -n "_ledger_physical_root"
+  src/tensor_grep/cli/ledger_store.py`). Slice 2 WAS more path-literal once; that got fixed and the
+  contract never learned. The sentence was complete when written and silently stopped being
+  complete. Found because a skill matched live code and the CONTRACT did not -- normally the skill
+  is the suspect.
+
+2. research-frontier had RE-INVENTED the three-tier language split ("full AST-backed caller support
+  (4)... go is partial"). That is the FOURTH time this claim has been wrong, it is the same
+  invented-tier shape as mine, and `_symbol_navigation_descriptor`'s own docstring explicitly warns
+  against demoting go. It matters more than the other three instances combined: the wrong version
+  was living IN THE LIBRARY people read, so the error had a source, not just a habit. Corrected to
+  the binary the product reports, with go's genuine within-tier hook gap kept as a nuance rather
+  than a tier.
+
+3. add-language claimed a lang_cpp function-pointer fix was "not yet landed". It shipped in #737. A
+  stale "this is broken" is worse than a stale line number -- someone rebuilds it.
+
+Three more self-contradictions, matching the pattern already seen twice today: add-language said "8
+  call sites" two paragraphs below its own "10"; diagnostics cited run_benchmarks.py:212-243 while
+  its own provenance log had :194-225 correct; docs-and-writing said "five test files" when there
+  are seven.
+
+Anchors converted to grep form with was/now receipts throughout. Drift into AGENTS.md ran ~1250
+  lines and was UNEVEN by target position, which is why a uniform re-stamp would have been wrong
+  even if re-stamping were allowed. Deliberately left alone: every citation that still resolved
+  exactly (lang_go, lang_registry, lang_csharp, config.py, pyproject.toml and ~20 benchmark script
+  anchors), plus historical provenance entries.
+
+diagnostics-and-tooling also falsified its OWN 2026-07-27 theory that private helpers make stable
+  anchors -- all six moved this pass -- recorded as a new dated entry rather than by editing the
+  history.
+
+* docs: six documents contradicted THEMSELVES, and no gate we own can see that
+
+The 28-skill sweep found six files holding a claim and its refutation simultaneously --
+  run-and-operate (§3 vs §12 vs its own pitfall table on --deadline), AGENTS.md ("all five" over a
+  table of four), add-language (8 vs its own 10 two paragraphs up), diagnostics (a citation its own
+  provenance log had right), large-repo-scale (#390 "still open" vs its own §2 "CLOSED"), and the
+  validation-skill/AGENTS.md pair where each held one half correct.
+
+Every gate here compares a document to the CODE. Nothing compares a document to ITSELF, which is why
+  all six survived.
+
+The shape is dangerous because it is invisible three ways: to the author, who holds one model and
+  reads only the part expressing it; to grep, which matches a string without knowing another string
+  disagrees; and to the reader, who resolves it by whichever half they reached first, silently. A
+  file that says X in §3 and not-X in §12 is worse than a file that is plainly wrong -- it confirms
+  whatever the reader already believed and yields two people who cannot reproduce each other's
+  result.
+
+Remedy is in the entry: grep the WHOLE document for a claim you are changing (the correction and the
+  error live in different sections by construction); prefer a derivation to an assertion, because
+  two derivations cannot disagree while two sentences can; and read a pitfall table warning against
+  a belief as a hint that the belief is asserted elsewhere in the same file -- in this sweep it
+  always was.
+
+Not proposed as a gate: detecting semantic self-contradiction is not mechanically decidable without
+  interpretation, and a heuristic one would fire on legitimate nuance and get switched off.
+
+* docs: close the last 4 skills -- 28/28 audited, and one dead sub-claim retraced
+
+These four had been AUDITED earlier in the campaign with drift MEASURED, and never repaired. Found
+  by counting the population instead of asserting it: 18 edited + 6 audited-clean = 24, not 28. A
+  status line would have hidden that.
+
+change-control (7 items): enum Commands :889->:910; PUBLIC_TOP_LEVEL_COMMANDS :18->:46 plus its
+  asserting test; _TG_ONLY_SEARCH_FLAGS :355->:404; _imports_with_lines_for_path :6440->:6832 -- the
+  392-line seam AGENTS.md's own corrective pass omitted while claiming "all five";
+  _language_coverage_gaps_for_universe :8461->:8478 at both occurrences; the ripgrep_backend raise
+  trio.
+
+The substantive one: the "fail-closed branch at :8019" sub-claim was DEAD. :8019 is now inside an
+  unrelated AST helper (`for node in ast.walk(tree)`). The agent traced the real branch to
+  `fail_closed = True` at :8521 and cited that -- a retrace, not a re-stamp, which is the difference
+  between fixing a citation and moving it.
+
+config-and-flags: 10 env-var/flag pointers converted, VALUES untouched (all were
+
+already correct). build-and-env: Cargo.toml lto + [[bin]] targets, plus 2 more found in its own
+  sweep (pyproject entry point, test-rust-core job header). failure-archaeology: Battle 23's Java
+  comment :4515-4519 -> :4755, content re-verified verbatim; the still-open incident claims
+  deliberately untouched.
+
+The agent bounded itself honestly: it did NOT exhaustively re-walk all ~500+ citations in the two
+  largest files (config-and-flags 567 lines, change-control 673). Spot-checks found the rest
+  accurate. Recording the bound rather than implying full coverage.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.101.27 (2026-08-01)
 
 ### Bug Fixes
