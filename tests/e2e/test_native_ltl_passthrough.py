@@ -80,12 +80,40 @@ def test_native_binary_routes_ltl_query_to_python_sidecar(tmp_path: Path) -> Non
         check=False,
     )
 
-    assert result.returncode == 0, (
-        f"--ltl through the native binary must succeed, not clap-reject the flag\n"
-        f"stdout={result.stdout!r}\nstderr={result.stderr!r}"
+    # THE PROPERTY UNDER TEST IS ROUTING, NOT EVALUATION -- they are separable, and the
+    # first cut of this test conflated them. What #884 fixes is that the native front door
+    # no longer clap-rejects `--ltl`; it forwards to the Python sidecar. Whether the sidecar
+    # can then EVALUATE the query needs the PyO3 extension module, and `native-build-smoke`
+    # builds only the standalone binary (`cargo build --bin tg`), never the extension. So
+    # asserting returncode==0 here failed on all four OSes for a reason unrelated to the fix,
+    # and would keep failing forever -- that job will never have the extension.
+    # Measured on the PUBLISHED wheel v1.101.28, which DOES ship it: the same invocation
+    # exits 0 and matches. Real users are unaffected; this is a build-scope artifact.
+    assert "unexpected argument" not in result.stderr, (
+        "the native front door clap-REJECTED --ltl -- exactly the defect #884 fixes\n"
+        f"stderr={result.stderr!r}"
     )
-    assert "open request" in result.stdout, result.stdout
-    assert "close request" in result.stdout, result.stdout
+
+    engine_present = "without the linear-time Rust engine" not in result.stderr
+    if engine_present:
+        # Full end-to-end arm -- runs anywhere the extension exists (real installs, and any
+        # CI job that builds it). This is the arm that would catch a routing regression that
+        # still somehow produced a zero exit.
+        assert result.returncode == 0, (
+            "--ltl routed and the engine is present, so it must succeed\n"
+            f"stdout={result.stdout!r}\nstderr={result.stderr!r}"
+        )
+        assert "open request" in result.stdout, result.stdout
+        assert "close request" in result.stdout, result.stdout
+    else:
+        # Routing-only arm: the sidecar was REACHED and fail-closed honestly (evaluating LTL
+        # on the CPU regex path is a ReDoS surface, so refusing is correct). A clap rejection
+        # could never produce this message -- that is precisely what discriminates the two,
+        # and why this arm is evidence of routing rather than a hole in the test.
+        assert result.returncode != 0, "a fail-closed refusal must not report success"
+        assert "search backend failed" in result.stderr, (
+            f"expected the honest fail-closed refusal, got\nstderr={result.stderr!r}"
+        )
 
 
 def test_native_binary_gives_clean_error_for_invalid_ltl_query(tmp_path: Path) -> None:
