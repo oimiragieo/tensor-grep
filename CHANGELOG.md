@@ -1,6 +1,381 @@
 # CHANGELOG
 
 
+## v1.101.25 (2026-08-01)
+
+### Bug Fixes
+
+- **security**: Close the remaining CWE-88 argv hole and enumerate the sweep
+  ([#872](https://github.com/oimiragieo/tensor-grep/pull/872),
+  [`c1a6630`](https://github.com/oimiragieo/tensor-grep/commit/c1a6630328f898a955f6c95d0ea576e0b2bc424e))
+
+* fix(security): close the remaining CWE-88 argv hole and enumerate the sweep
+
+`agent_capsule.py::_agent_gpu_evidence` appended a CALLER-SUPPLIED `evidence_path` as a bare
+  positional with no end-of-options sentinel.
+
+The native binary's clap `path` positional (rust_core/src/main.rs:694-695) carries no
+  `allow_hyphen_values`, so a dash-leading path is parsed as an OPTION, not a path. A list-argv
+  `subprocess` call blocks a SHELL injection; it does nothing about flag injection into the callee's
+  own parser. The failure mode is not a crash -- the GPU evidence probe queries a scope nobody chose
+  and still reports `ok`. Wrong scope, no error, which is the half that matters.
+
+WHY IT SURVIVED: `AGENTS.md` tracked this sweep BY NAME, in prose, as "the remaining tg sweep". #860
+  fixed the sibling `_build_native_tg_search_command` and the class was recorded as closed. This
+  site was never in anyone's grep. A rule that has now been violated twice needs a mechanism, not a
+  restatement.
+
+So `tests/unit/test_argv_sentinel_covers_every_builder.py` enumerates the population by SYMBOL and
+  asserts each builder emits `"--"`. Red arm proven: reverting only this sentinel fails it, naming
+  `agent_capsule.py::_agent_gpu_evidence` exactly. A symbol that stops resolving is an explicit
+  FAILURE, not a skip -- that arm fired for real during development when I guessed a wrong symbol
+  name, which is the behaviour a blind census must have. Control arms: the sentinel must be
+  UNCONDITIONAL at every site (the "emit `--` only when it starts with `-`" form reads as equivalent
+  and leaves the silent case open, especially where a WSL `wslpath` branch rewrites the path AFTER
+  the caller supplies it), plus both synthetic arms on the matcher.
+
+Also adds the sentinel to `_doctor_gpu_probe`'s command. Both of ITS positionals are tg-generated,
+  so the risk is low -- but uniformity is the actual security property here. A sweep whose members
+  each carry a private risk assessment is a sweep nobody can check; "every argv builder ends its
+  options" is checkable.
+
+Drive-by: `main.py:2508` RUF036 (`None` not last in a type union), pre-existing on main and flagged
+  by a newer local ruff than CI's pinned one. Semantically identical, zero risk, so not left behind.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* fix(security): address the adversarial review — 2 more argv holes, and a census that could not see
+  them
+
+An independent adversarial gate returned FIX FIRST on the first cut of this PR with 7 findings.
+  Every one was correct. The two production one-liners it validated empirically (it reproduced the
+  injection on the shipped 1.101.22: `-e NEEDLE "-i"` returns `path:"", total_files:0, exit 0`,
+  while `-e NEEDLE -- "-i"` returns `path:"-i", total_files:1`). What it took apart was the TEST --
+  the PR's entire argument for why this class would not recur.
+
+TWO MORE PRODUCTION HOLES, both found by the review, neither by me:
+
+* `agent_capsule.py:1639-1648` builds a SECOND argv (`probe_command`) 86 lines above the one I
+  fixed, appending `probe_target` bare. My source-scanning census string-matched the whole 226-line
+  function, so the second builder was "covered" by the first builder's sentinel -- a member
+  satisfied by a check it does not meet. A function is not the unit; an argv is. *
+  `main.py:2973-2981` -- I put the doctor probe's sentinel BETWEEN its two positionals, terminating
+  options for the path while leaving the PATTERN unguarded. A sentinel in the wrong place reads as
+  protection and is not, and a presence-only check cannot tell the difference. Moved before both.
+
+THE CENSUS IS NOW BEHAVIOURAL, which fixes four findings at once:
+
+* A COMMENT satisfied the old one. Three of five members could have their real `append("--")`
+  deleted and stay GREEN because a comment EXPLAINING the sentinel still contained the string. The
+  better the guard was documented, the less it was checked. * It could not see position -- the
+  property that actually matters. * Its "unconditional" control arm could never fire: the regex
+  matched only a single-line `if cond: cmd.append("--")`, a form this repo's mandatory `ruff format`
+  immediately expands to two lines. A check that cannot fire on formatted code is a check that
+  cannot fire. * The population was 5 where the plan had enumerated 10 -- including the doctor probe
+  THIS PR had just edited. A census that omits the code its own change touched was assembled from
+  memory, not derived.
+
+My justification for going source-based was also simply false: I claimed a behavioural test "would
+  skip itself" because these builders shell out. They do not -- `test_native_argv_end_of_options.py`
+  has called one directly since #860.
+
+Now 7 builders, each CALLED and its argv inspected, asserting `argv.index("--") < index of every
+  positional` plus a control arm that nothing sits between the sentinel and the positionals.
+  Builders that build-then-call are captured at their runner (still behavioural -- the argv under
+  test is the real one), each with an `assert captured` arm so an inert capture FAILS rather than
+  returning an empty argv that passes everything.
+
+Both red arms proven: - delete the probe sentinel -> "emits no end-of-options sentinel", naming it -
+  misplace the doctor sentinel -> "expected 2 positional(s) after `--`, got 1 ... A positional
+  missing from the tail is one that slid IN FRONT" The second is the one the old census shipped and
+  could not see.
+
+Stated rather than glossed: `rust_core/src/rg_passthrough.rs::ripgrep_operand_args` is out of reach
+  of a Python census and is NOT covered here.
+
+37 argv/native-argv/gpu-probe tests green; 82 doctor+gpu tests in test_cli_modes.py green.
+
+* fix(security): round 2 — cover _build_command's two shapes, and pin positional ORDER
+
+The same adversarial gate re-reviewed and found two more. Both were POPULATION defects again, which
+  is now the pattern rather than the incident.
+
+F8 [HIGH] `_build_command` was assumed covered by `search_project`. IT IS NOT -- `search_project`
+  builds its argv inline and never calls it. The reviewer proved it by deleting BOTH of
+  `_build_command`'s sentinels and watching the suite stay fully green. It is also the one member in
+  this whole sweep whose regression is DESTRUCTIVE rather than merely wrong: a caller-supplied path
+  of `-U` / `--update-all` reaching ast-grep's `run` subcommand is its AUTO-FIX switch, so a
+  read-only scan becomes a file rewrite on disk. The product's own comment at
+  ast_wrapper_backend.py:158-162 says exactly that.
+
+It ships as TWO entries plus a third for configuration: the run form, the run form under
+  `ast_stdin=True` (the sentinel lives in the `else:` of `if stdin_enabled`, so it is
+  CONFIG-CONDITIONAL and the default arm alone is sampling), and the multiline inline-rule form.
+
+F9 [MED] A COUNT IS BLIND TO AN ORDER SWAP. Two members asserted only `len(tail) == 2` because their
+  positionals are tg-generated. Exchanging the GPU probe's pattern and path keeps the count and
+  passed -- in production that searches a directory NAMED "tg agent gpu probe sentinel" for a
+  pattern that is the temp path, so the probe reports a status from a scan that never touched the
+  probe file. The justification was also half wrong: BOTH pattern positionals are hardcoded literals
+  (agent_capsule.py:1652, main.py:2949), so only the PATH ever needed shape treatment. Replaced the
+  int form with a per-slot list using an `_ANY` marker for the runtime-generated path, so order and
+  count stay checked and the literal is pinned by value.
+
+Red arms, both against defects the previous version passed: - delete both `_build_command` sentinels
+  -> "emits no end-of-options sentinel", naming `_build_command[run]` - swap the probe's positionals
+  -> "positional 0 is '<tmpdir>', expected 'tg agent gpu probe sentinel'. A SWAP keeps the count and
+  changes the meaning"
+
+THE RECURRING DEFECT IS THE POPULATION, NOT THE ASSERTION. It has been wrong three times -- 5, then
+  8, now 10 -- and every miss was a JUDGEMENT that one builder transitively covered another. The
+  docstring now says so, and says the rule: do not add a member by reasoning it is covered; call it.
+  Also records `cli/dogfood.py`'s exclusion explicitly so the next reviewer does not re-derive it,
+  alongside the Rust builder that no Python census can reach.
+
+68 tests green across argv/native-argv/ast-wrapper.
+
+* test(security): pin the ast argv builder against a runner with no ast-grep
+
+Pre-empting the environment-dependence question rather than waiting to be asked it, because the
+  answer required correcting a claim this file already got wrong once.
+
+`_build_command` is pure in what it RETURNS, but resolving `argv[0]` goes through `_get_binary_name`
+  (ast_wrapper_backend.py:98-128), which `shutil.which`-es four candidates and PROBE-RUNS each. So
+  it CAN spawn subprocesses -- the docstring's flat "they do not shell out" was imprecise in the
+  same careless direction as the original false justification for going source-based.
+
+It cannot fail to produce an argv: the last branch falls back to the literal "ast-grep". The new arm
+  forces that fallback with `shutil.which` stubbed to None and asserts the sentinel/positional shape
+  is IDENTICAL. Without it, every ast assertion in this file was silently conditional on the
+  authoring machine having ast-grep on PATH -- the shape of environment dependence that passes
+  locally and behaves differently in CI.
+
+26 tests green.
+
+* fix(security): round 3 — 2 more argv holes, and a member that could not fail
+
+Third round of the adversarial gate. It found a member that DECLARED a branch covered while being
+  structurally unable to fail on it, and two more builders -- one of which its own first pass had
+  dismissed without opening.
+
+F10 [MED-HIGH] The `[run,stdin]` entry named the stdin branch and asserted only "no dangling
+  trailing `--`". Adding `cmd.extend(paths)` to `if stdin_enabled:` -- a caller-supplied value,
+  bare, in exactly that branch -- left the suite green. A member that names a branch and cannot fail
+  on it is WORSE than no member: it reports the branch as checked.
+
+The fix is why the main assertion is now DERIVED rather than curated per entry: if a caller-supplied
+  value appears in the argv at all, it must follow `--`. That holds for every configuration without
+  anyone deciding in advance which ones have positionals.
+
+F11 `runtime_paths.py::translate_path_for_windows_binary` -- `-w` takes no value, so the
+  caller-supplied path is a bare positional. MEASURED on the real binary rather than assumed,
+  because "does this binary honour `--`" is exactly the assumption that makes a sentinel decorative:
+  wslpath -w "-m" -> prints USAGE (path consumed as a flag) wslpath -w -- "-m" -> prints "-m"
+  (translated as a path)
+
+F12 The scheduled-upgrade helper's two `session daemon` argvs. `daemon_root` is the PATH the user
+  gave `tg session daemon start <PATH>`, persisted in daemon state and round-tripped back into an
+  argv. The callee is a real Typer/Click command whose `path` DEFAULTS TO "." -- so a dash-leading
+  root consumed as an option does NOT error; the daemon is started or queried at the CWD instead,
+  and the status check then reports on the wrong daemon. `--json` moves before the sentinel
+  (everything after `--` is a positional).
+
+AND THE MISTAKE WORTH RECORDING: I first extracted a shared `_session_daemon_argv` helper for F12.
+  That code lives inside `helper_code = textwrap.dedent(...)` -- a standalone script written to disk
+  and run by the Windows scheduler, which cannot import tg. It would have raised NameError at
+  runtime. Caught by `test_upgrade_scheduled_windows_helper_restarts_preexisting_session_daemon`,
+  which pins the generated script's TEXT. REFACTORING CODE THAT LIVES INSIDE A GENERATED STRING IS
+  NOT THE SAME AS REFACTORING CODE. Reverted to inline, and that member is now checked as TEXT --
+  the one place in this file where that is the right tool rather than the lazy one, because the
+  artifact under test IS source text.
+
+Population 5 -> 8 -> 10 -> 13, and every miss was the same judgement that one builder transitively
+  covered another. The docstring now says to treat the list as CURATED and re-derive it by sweep
+  each release, rather than claiming it complete. Scope also qualified: the property is not "every
+  subprocess list ends its options" but "a caller-influenced value never reaches a child parser in
+  flag position" -- the unqualified version swept in a dozen harmless tg-generated argvs.
+
+Red arms, all three: stdin-branch injection, wslpath, and the generated script. Nits applied:
+  argv[0] pinned instead of probe-resolved (3 real `ast-grep --version` spawns removed).
+
+29 argv tests + 98 daemon/doctor/upgrade tests green.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Reconcile the task board, and convert the argv sweep from prose to a test
+  ([#873](https://github.com/oimiragieo/tensor-grep/pull/873),
+  [`11c3bc0`](https://github.com/oimiragieo/tensor-grep/commit/11c3bc0041610c54b1d50df892edd82a923df86e))
+
+* docs: reconcile the task board, and convert the argv sweep from prose to a test
+
+Two staleness defects, same root: a tracker refreshed only when someone notices it is wrong.
+
+TASK_BOARD.md was stamped "2026-07-28, post-v1.101.9" while PyPI had moved 13 releases on to
+  v1.101.22, and its IN FLIGHT table still listed #843/#844, merged days earlier. A board that lies
+  about what is in flight is worse than no board: it is the thing a fresh session trusts first.
+  Reconciled against `gh pr list` and the PyPI JSON API (not a tag -- `tag == PyPI` cannot
+  distinguish released from not-started from died).
+
+Also filled the P2 audit-queue placeholder that had sat empty for three days, with items verified
+  against real code -- a finding without a file:line was discarded. Two of them are worth naming
+  here because they are live: `--quiet` is silently dropped by both internal rg-passthrough branches
+  (main.py:7937-7943, :8004-8017), and two gates take OPPOSITE positions on `--gpu-device-ids`
+  (`_can_passthrough_rg:5364-5367` excludes it by name to prevent a silent CPU downgrade;
+  `_can_delegate_to_native_tg_search:3728` includes it as a reason to delegate). Both cannot be
+  right, and that contradiction is plausibly upstream of #868.
+
+AGENTS.md's CWE-88 bullet ended with "**remaining tg sweep** (tracked)". Prose did not hold it: #860
+  fixed one builder, the class was recorded closed, and `agent_capsule.py::_agent_gpu_evidence` was
+  still appending a caller-supplied path as a bare positional until #872 found it. Tracking a sweep
+  by name means the next person re-derives the population from memory and gets it wrong the same
+  way. The bullet now points at the enumerating test and carries the two rules that fell out: the
+  sentinel is UNCONDITIONAL at every site, and uniformity is the security property (a sweep whose
+  members each carry a private risk assessment is a sweep nobody can check).
+
+P1 statuses corrected: the anonymous-claim and ledger-rollup items are RESOLVED (with the anonymous
+  one recording WHY the obvious auto-derive fix was rejected, so it is not re-attempted); #15 is now
+  decidable as doc-honesty rather than CUJ coverage, with the two real defects named; #22 is marked
+  BLOCKED on both an unconfirmed cause and a contested contract premise, rather than merely "open".
+
+Non-releasing.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs: record the four ways a source-scanning census reports green on a broken guard
+
+From the adversarial gate on #872, which took apart a census I had written to close a class -- and
+  the census was the weakest artifact in that PR precisely because everyone, me included, treated it
+  as the proof rather than as another claim needing proof.
+
+1. THE BETTER YOU DOCUMENT A GUARD, THE LESS IT IS CHECKED. The census asserted the literal `"--"`
+  appeared in each builder's body. Three of five members could have their real
+  `command.append("--")` DELETED and stay green, because the comment EXPLAINING why the sentinel
+  matters still contained the string. This is the mirror of the quoting-vs-asserting trap: there,
+  prose containing a forbidden pattern caused a false POSITIVE; here, prose containing the required
+  pattern causes a false NEGATIVE.
+
+2. PRESENCE IS A PROXY -- ask what the actual PROPERTY is. "Does `--` appear in this function" is
+  not "is `--` before every positional". The same PR shipped a sentinel sitting BETWEEN two
+  positionals: present, and useless, since the first was still parsed as a flag. The census could
+  not tell it from a correct one. A proxy that cannot distinguish the fix from the bug is not a
+  check.
+
+3. A CENSUS THAT OMITS THE CODE ITS OWN PR EDITED WAS ASSEMBLED FROM MEMORY. The list had 5 members;
+  the plan specifying it had enumerated 10, and one omission was a builder that same PR had just
+  added. Re-derive the population from the code as you write the list, then diff it against your own
+  diff.
+
+4. A CONTROL ARM MATCHING ONLY A FORM THE FORMATTER ELIMINATES CAN NEVER FIRE. The "unconditional"
+  arm keyed on single-line `if cond: cmd.append("--")`; mandatory `ruff format --preview` expands
+  that to two lines on sight. Run the arm's pattern against FORMATTED code before believing it --
+  the setup-lies law, applied to a regex.
+
+Plus the justification failure worth naming on its own: I claimed a behavioural test "would skip
+  itself" because these builders shell out. They do not. Verify the cheaper, stronger test is
+  actually blocked before settling for the weaker one.
+
+And the granularity corollary: a function is not the unit, the ARTIFACT is. Two argv builders lived
+  86 lines apart inside one function, and a whole-body string match let the first one's sentinel
+  "cover" the second one's bare positional.
+
+* docs(board): record that the POPULATION is the recurring defect, not the assertion
+
+#872's enumerating test had its population wrong THREE times in one day -- 5 members, then 8, then
+  10 -- and every miss was the same judgement call: "builder A transitively covers builder B." Each
+  was disproved the same way, by deleting B's guard and watching the suite stay green.
+
+The third miss is the one worth the entry: `ast_wrapper_backend.py::_build_command` is the only
+  member in the whole sweep whose regression is DESTRUCTIVE rather than merely wrong. A
+  caller-supplied path of `-U` / `--update-all` reaching ast-grep's `run` subcommand is its AUTO-FIX
+  switch, so a read-only scan becomes a file rewrite on disk.
+
+Three derived rules, all now in the test's own docstring so they travel with the code rather than
+  only living here:
+
+- do not add a member by reasoning it is covered -- CALL it; - a guard whose placement is
+  CONFIG-CONDITIONAL has as many members as it has configurations (the run form's sentinel sits in
+  the `else:` of `if stdin_enabled`, so checking only the default arm was sampling); - a COUNT is
+  blind to an ORDER SWAP -- two members asserted `len(tail) == 2` and passed when pattern and path
+  were exchanged, which in production searches a directory named like the pattern for a pattern that
+  is the temp path.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- **find**: Stop advertising a MaxSim stage no install path reaches, and make its test discriminate
+  ([#874](https://github.com/oimiragieo/tensor-grep/pull/874),
+  [`3c98da2`](https://github.com/oimiragieo/tensor-grep/commit/3c98da2e631393c53dbb6bcb5cc633cb3f82939d))
+
+Task #15, reported by a live dogfood as "advertised in --help but never exercised in the
+  install-dense CUJ". The framing in the report was CUJ-coverage. It is not: a CUJ would first have
+  to build an install path that does not exist.
+
+WHAT IS ACTUALLY TRUE. `tg install-dense` installs `tensor-grep[semantic]`. MaxSim needs a DIFFERENT
+  extra (`rerank`), whose model is fetched by `python -m tensor_grep.core.retrieval_late --fetch` --
+  which no `tg` command invokes. Its only control is the undocumented env var `TG_LATE_RERANK=1`;
+  there is no flag. And the stage is deliberately HELD as measurably regressing on the
+  retrieval-quality benchmark. So this is a hold, not an oversight, and the docstring was writing a
+  cheque the artifact cannot cash -- the same class as a stamped-but-unpublished version. The
+  docstring now says so, and says what would have to be true to re-add it.
+
+THE SECOND DEFECT, which is the worse one. `test_find_late_head_runs_when_env_set` claimed in its
+  docstring to prove the stage "DOES probe/run, observably reordering" and asserted exactly three
+  things: `exit_code == 0`, a non-empty `matches` list, and `result.exception is None`. ALL THREE
+  HOLD WITH THE ENV UNSET. The test passed identically in both arms -- it could not fail, and it had
+  been standing in for coverage of the one stage nobody could otherwise reach.
+
+Nothing was missing but the assertion. The fixture was already built to discriminate:
+  `_prefer_sparse_encode` deliberately INVERTS the ranking, scoring `sparse.py` (one incidental
+  mention) above `dense.py` (the real definition). Measured, both arms, same fixture:
+
+TG_LATE_RERANK=1 ['sparse.py', 'dense.py'] <- the reranker moved it env unset ['dense.py',
+  'sparse.py'] <- RRF order, untouched
+
+So the test now asserts the ORDER. Red arm proven by disabling the env var at the fixture: it fails
+  with "the late rerank stage did not reorder ... Observed order: ['dense.py', 'sparse.py']", and
+  passes again when restored.
+
+(My first attempt at that red arm silently did nothing -- the reversion string did not match, so the
+  "failing" run was the unchanged test passing. Caught by the missing failure message. A mutation
+  that does not apply is a control arm that never ran.)
+
+27 tests green in test_find_command.py. Non-releasing.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- **skills**: Land the 1.101.22 live-dogfood corrections
+  ([#875](https://github.com/oimiragieo/tensor-grep/pull/875),
+  [`97abc3d`](https://github.com/oimiragieo/tensor-grep/commit/97abc3d4015c90616f73f022015bb9e2709bc801))
+
+Four skill files carrying real observations from the 2026-07-31 gotcontext-saddle sweep. They had
+  been sitting UNSTAGED in the working tree across several sessions, which is the exact failure task
+  #25 was opened for -- a correction that is not committed is a correction that will be re-derived
+  by the next session from scratch. Committing them is the point of that task, so: observations
+  first, then the commit, in the same turn.
+
+What the sweep changed:
+
+- `tensor-grep-workspace-dogfood`: bare `search --json` with no PATH now emits the stderr PATH note,
+  so the "text discloses / JSON silent" split that stood at 1.101.19 is gone. The row is honest
+  about what is still missing: the note is on stderr, NOT in the JSON body. (#871 closes that half.)
+  - `tensor-grep-prepare`: the anonymous `--claim` hint is materially stronger -- it now states the
+  claim is NOT attributable, rather than only suggesting an env var. Recorded with the timing. -
+  `tensor-grep-ledger` / `tensor-grep`: version headers rolled to 1.101.22 with Slice 1 rollup +
+  Slice 2 `find` repo-visibility reconfirmed rather than assumed. - `tg agent` root timing moved
+  ~43s -> ~50s. Recorded as observed, NOT interpreted as a regression: this is a single unpaired
+  sample on a loaded desktop, and a number from an uncontrolled probe is not a measurement. If it
+  matters, it needs a paired arm, not a trend line.
+
+`test_skill_index_sync.py` green (the skill-set/doc-index parity gate). Non-releasing.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.101.24 (2026-07-31)
 
 ### Bug Fixes
