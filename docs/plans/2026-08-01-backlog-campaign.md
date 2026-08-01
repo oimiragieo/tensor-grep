@@ -274,13 +274,13 @@ A green suite + green strict mypy after deletion is the discriminator (an actual
 - [ ] **Step 3: Add the retirement comment in `apply_policy.py`** immediately above `argv = [str(resolved_path), *argv[1:]]`:
 
 ```python
-    # SENTINEL RETIREMENT (2026-08-01 backlog campaign): no `--` separator is inserted here,
-    # deliberately. The CWE-88 argv-sentinel census is keyed on the artifact "OUR flags plus an
-    # UNTRUSTED positional appended to a tool WE chose" (rg/ast-grep invocations). This argv is
-    # the opposite shape: an operator-authored COMPLETE validation command; a blind `--` has no
-    # defined semantics for an arbitrary command and can break it. The path-hijack half is
-    # already closed above: argv[0] is resolved and refused if it shadows into the untrusted
-    # repo. Do not "fix" this by adding a sentinel.
+# SENTINEL RETIREMENT (2026-08-01 backlog campaign): no `--` separator is inserted here,
+# deliberately. The CWE-88 argv-sentinel census is keyed on the artifact "OUR flags plus an
+# UNTRUSTED positional appended to a tool WE chose" (rg/ast-grep invocations). This argv is
+# the opposite shape: an operator-authored COMPLETE validation command; a blind `--` has no
+# defined semantics for an arbitrary command and can break it. The path-hijack half is
+# already closed above: argv[0] is resolved and refused if it shadows into the untrusted
+# repo. Do not "fix" this by adding a sentinel.
 ```
 
 Mirror one-line comment (same reasoning, compressed) above `let mut command = Command::new(program);` in `rust_core/src/main.rs` (currently `:11045`) — comment-only Rust change; CI compiles it, never compile locally.
@@ -393,9 +393,7 @@ def test_invalid_ltl_query_exits_2_with_one_line_clean_error(tmp_path: Path) -> 
 
 def test_invalid_ltl_query_json_mode_emits_error_envelope(tmp_path: Path) -> None:
     # RED ARM 2. Pre-fix: traceback, exit 1, no envelope.
-    result = runner.invoke(
-        app, ["search", "def ", "--ltl", "--json", str(_target(tmp_path))]
-    )
+    result = runner.invoke(app, ["search", "def ", "--ltl", "--json", str(_target(tmp_path))])
     assert result.exit_code == 2
     payload = jsonlib.loads(result.output.strip())
     # Full _search_error_payload presenter shape (version, schema_version, ok, error, detail)
@@ -424,9 +422,7 @@ def test_ltl_with_invalid_subexpression_regex_stays_on_invalid_regex_convention(
     # that convention (post-fix the same observable is produced at the boundary instead
     # of inside the per-file loop). It passes in both arms BY DESIGN and is never cited
     # as a red receipt.
-    result = runner.invoke(
-        app, ["search", "( -> eventually X", "--ltl", str(_target(tmp_path))]
-    )
+    result = runner.invoke(app, ["search", "( -> eventually X", "--ltl", str(_target(tmp_path))])
     assert result.exit_code == 2
     assert "Traceback" not in result.output
 ```
@@ -453,19 +449,19 @@ Expected: arms 1, 2 FAIL (exit_code 1, ValueError escapes); tests 3, 4 PASS (bot
 - [ ] **Step 3: Implement.** In `main.py`'s `search` command, immediately before `scanner = DirectoryScanner(config)` (i.e. AFTER the multi-pattern combine block that reassigns `pattern` — grep `_combine_multi_patterns(file_sourced_patterns`), insert:
 
 ```python
-    if ltl:
-        # An invalid --ltl query is a USER error, not an engine failure: surface it once,
-        # cleanly, through the same exit-2 taxonomy as path_not_found/invalid_regex --
-        # never as CPUBackend._compile_ltl's raw ValueError traceback (exit 1), and never
-        # as a BackendExecutionError (which would wrongly trigger the CPU-retry fallback).
-        from tensor_grep.backends.cpu_backend import CPUBackend
+if ltl:
+    # An invalid --ltl query is a USER error, not an engine failure: surface it once,
+    # cleanly, through the same exit-2 taxonomy as path_not_found/invalid_regex --
+    # never as CPUBackend._compile_ltl's raw ValueError traceback (exit 1), and never
+    # as a BackendExecutionError (which would wrongly trigger the CPU-retry fallback).
+    from tensor_grep.backends.cpu_backend import CPUBackend
 
-        try:
-            CPUBackend._compile_ltl(pattern, 0)
-        except re.error as exc:
-            _exit_invalid_regex(exc, json_mode=json)
-        except ValueError as exc:
-            _exit_search_error("invalid_ltl_query", str(exc), json_mode=json)
+    try:
+        CPUBackend._compile_ltl(pattern, 0)
+    except re.error as exc:
+        _exit_invalid_regex(exc, json_mode=json)
+    except ValueError as exc:
+        _exit_search_error("invalid_ltl_query", str(exc), json_mode=json)
 ```
 
 Check `re` is already imported at module top (it is — grep `^import re`); check `_exit_invalid_regex`'s signature at its def (grep `def _exit_invalid_regex`) and match it; check the actual local names for the `--ltl` flag and json mode in `search_command`'s signature and use those. Keep the message ASCII.
@@ -669,14 +665,14 @@ Expected: both new tests FAIL (`is_authorized({})` currently `True`; the envelop
 - [ ] **Step 4: Implement** — replace the branch at `is_authorized` (keep the S3 comment, add the decision):
 
 ```python
-        # audit S3: constant-time compare to avoid leaking the token via timing.
-        # POLICY REVERSAL (2026-08-01, PR-B): a tokenless daemon fails CLOSED. This reverses
-        # the earlier pinned behavior (tokenless => authorize everything, "legacy/in-test
-        # path"). Production always generates a token in the serve path
-        # (secrets.token_urlsafe(32)); a tokenless daemon is a misconfiguration and must
-        # refuse everything, never accept everything.
-        if not self.token:
-            return False
+# audit S3: constant-time compare to avoid leaking the token via timing.
+# POLICY REVERSAL (2026-08-01, PR-B): a tokenless daemon fails CLOSED. This reverses
+# the earlier pinned behavior (tokenless => authorize everything, "legacy/in-test
+# path"). Production always generates a token in the serve path
+# (secrets.token_urlsafe(32)); a tokenless daemon is a misconfiguration and must
+# refuse everything, never accept everything.
+if not self.token:
+    return False
 ```
 
 - [ ] **Step 5: Migrate the census — all 16 direct tokenless constructions, each with a per-site disposition (MF2).** Re-derive first (`grep -rn "_ThreadedSessionDaemon(" tests/` and READ every hit in full — several constructions are multi-line and the grep line alone does not show the token), then apply. Census as of base commit, verified by calling each site:
