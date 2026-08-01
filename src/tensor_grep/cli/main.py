@@ -2051,14 +2051,18 @@ _SEARCH_COMMAND_TAIL_EXIT_CODE_POLICIES: tuple[_TailExitCodePolicy, ...] = (
         name="gpu_request_unhonoured",
         trigger_fields=frozenset({"gpu_device_ids"}),
         route_specific_reason=(
-            "backlog #22 / PR #868: gpu_device_ids is delegation-ELIGIBLE, not refused (it is "
-            "NOT a member of _NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS -- it is one of the "
-            "OR triggers _can_delegate_to_native_tg_search accepts), so a request that fires "
-            "this rule can also be delegated to the native binary. Whether the native binary "
-            "applies the identical rule on its CPU-fallback/sidecar exit paths is "
-            "CONTRACT-CONTESTED (see the task-22 diagnostic + PR #868 discussion) and NOT "
-            "implemented as of this commit -- tracked as a known gap, not silently assumed. "
-            "#868 stays blocked on this decision; do not resolve this entry by assumption."
+            "RETIRED as an exit-code rule, 2026-08-01 (backlog #22 / PR #868). An unhonoured "
+            "explicit --gpu-device-ids request does NOT flip the exit code, so there is no "
+            "tail-only exit policy here to mirror. docs/CONTRACTS.md section 4 defines `2` as "
+            "INCOMPLETE -- a TRUNCATED SCAN -- and that search runs to completion over every file "
+            "it was asked about, returning correct results computed on the CPU. Which processor "
+            "did the work is a routing fact, not an incompleteness; the contract's own precedents "
+            "(an output-only cap stays 0; `tg imports --deadline` is a documented no-op) both go "
+            "this way. The signal lives in the --json envelope instead -- gpu_evidence_status / "
+            "gpu_proof / native_gpu_unavailable / not_gpu_proof_reason -- which is strictly more "
+            "informative than a coarse exit code. This entry is KEPT rather than deleted so the "
+            "decision is discoverable from the registry, and so a future reader who reaches for "
+            "exit 2 here finds the reasoning that already rejected it."
         ),
     ),
 )
@@ -8504,23 +8508,35 @@ def search_command(
 
     _emit_runtime_debug()
 
-    # Backlog #22: an EXPLICIT --gpu-device-ids request that could not be honoured (no
-    # NativeGpuBackend-with-sidecar_used=False proof) must exit 2, same as `result_incomplete`
-    # — the run answered, but not the question the caller explicitly asked ("use this GPU").
-    # False (and therefore a no-op below) when no GPU was requested at all: a CPU search that
-    # merely served the query is complete, not incomplete. Computed once via the shared
-    # predicate so this decision and the `--json` envelope's `native_gpu_unavailable` field can
-    # never drift apart (`tensor_grep.cli.formatters.json_fmt.gpu_request_unhonoured`).
+    # Backlog #22 RULING, 2026-08-01: an unhonoured explicit `--gpu-device-ids` request does
+    # NOT exit 2. It stays whatever the search itself earned (0 / 1).
     #
-    # THIS ENTIRE BLOCK IS TAIL-ONLY CODE (unreachable whenever the native-delegation
-    # `sys.exit(_delegate_to_native_tg_search(...))` above fires instead). Every exit-code rule
-    # added here is registered in `_SEARCH_COMMAND_TAIL_EXIT_CODE_POLICIES` above, classified as
-    # either verified-mirrored-in-native or an explicit route-specific gap -- see that
-    # registry's docstring and `tests/unit/test_search_command_tail_exit_policy_route_parity.py`.
-    from tensor_grep.cli.formatters.json_fmt import gpu_request_unhonoured
-
-    gpu_request_incomplete = gpu_request_unhonoured(all_results)
-    exit_incomplete = all_results.result_incomplete or gpu_request_incomplete
+    # An earlier cut of this branch made it exit 2 on the reasoning that "the caller asked for a
+    # specific execution mode and tg could not provide it, so the request went unhonoured, and
+    # that is a refusal". Defensible in isolation, and it CONTRADICTS the written contract.
+    # `docs/CONTRACTS.md` section 4: `2` = INCOMPLETE, meaning the SCAN was truncated. That
+    # search ran to completion over every file it was asked about and returned correct, complete
+    # results -- it simply computed them on the CPU. Which processor did the work is a ROUTING
+    # fact, not an incompleteness.
+    #
+    # The contract already carries the analogous precedent, twice, and both go the other way:
+    #   * "An OUTPUT-only cap ... is a COMPLETE analysis capped only for display and stays exit
+    #     `0`; only a SCAN truncation exits `2`."
+    #   * `tg imports --deadline` is "a documented NO-OP ... output is byte-identical with or
+    #     without it" -- an accepted flag that changes nothing does not move the exit code.
+    #
+    # Promoting this to exit 2 would also break every consumer branching on 1-vs-2 for the most
+    # ordinary GPU-requesting invocation there is, on a machine that simply has no GPU.
+    #
+    # THE SIGNAL IS NOT LOST -- it was never missing. `gpu_request_unhonoured` still classifies
+    # the request, and the `--json` envelope carries `gpu_evidence_status` / `gpu_proof` /
+    # `native_gpu_unavailable` / `not_gpu_proof_reason` (json_fmt.py). Those are strictly MORE
+    # informative than a coarse exit code, and a harness that wants to know "did GPU actually run"
+    # should read them rather than branch on 0-vs-2. That is what the fields are for.
+    #
+    # Recorded in `_SEARCH_COMMAND_TAIL_EXIT_CODE_POLICIES` above so the decision is discoverable
+    # from the registry rather than only from this comment.
+    exit_incomplete = all_results.result_incomplete
 
     if files_with_matches:
         if matched_files:
