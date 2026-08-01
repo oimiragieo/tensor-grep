@@ -18,7 +18,7 @@
 >    `tag == PyPI` cannot distinguish *released* from *not started* from *died* and cost a release
 >    on 2026-07-28.
 
-Last reconciled: **2026-08-01**, post-**v1.101.27** (PyPI verified via the JSON API, not inferred
+Last reconciled: **2026-08-01** (backlog campaign: 7 stale-open items closed), post-**v1.101.28** (PyPI verified via the JSON API, not inferred
 from a tag — `tag == PyPI` cannot tell *released* from *not started* from *died*).
 
 **This has now gone stale THREE times in the same way, so the pattern is the finding.** The stamp
@@ -84,7 +84,7 @@ merging something correct.)*
   `tests/unit/test_anonymous_claim_signal.py`. *Task #13/#23.*
 - [x] **Ledger Slice 2 rollup parity** — RESOLVED (`record`/`find` now canonicalise through
   `_ledger_physical_root`). *Task #14.*
-- [ ] **MaxSim late-rerank is advertised but unexercised** — *Task #15.* **Now decidable, and the
+- [x] **MaxSim late-rerank is advertised but unexercised** — RESOLVED. Both named defects are fixed: `find_command`'s docstring now states plainly that MaxSim is NOT reachable by a documented path, and `tests/unit/test_find_command.py` asserts the real ORDER inversion rather than only `exit_code == 0`. Verified 2026-08-01. ORIGINAL TEXT FOLLOWS — — *Task #15.* **Now decidable, and the
   answer is DOC-HONESTY, not CUJ coverage.** `tg install-dense` installs `tensor-grep[semantic]`;
   MaxSim needs a DIFFERENT extra (`rerank`) whose model is fetched by
   `python -m tensor_grep.core.retrieval_late --fetch` — **no `tg` command reaches it**. A CUJ would
@@ -127,7 +127,7 @@ review, each verified against the real code (a finding without a `file:line` was
   reporting `ok`**. #860 fixed the sibling and the class was marked done; this site was in nobody's
   grep. Now held by `tests/unit/test_argv_sentinel_covers_every_builder.py` (5 builders, by symbol).
   PR #872.
-- [ ] **`--quiet` silently dropped by both internal rg-passthrough branches** (`main.py:7937-7943`,
+- [x] **`--quiet` silently dropped by both internal rg-passthrough branches** — RESOLVED by `cfc3264`, which moved `-q` out of the shared `_build_cmd` into streaming-only `search_passthrough` (`backends/ripgrep_backend.py`); `test_quiet_survives_rg_passthrough.py` covers both arms. **This entry sat OPEN for months after the fix and is the worked example in `docs/audits/2026-08-01-task-board-staleness.md`** of why a citation gate cannot catch content drift: its `main.py:7937-7943` citation still resolves perfectly. ORIGINAL TEXT FOLLOWS — (`main.py:7937-7943`,
   `:8004-8017`; zero "quiet" mentions in `ripgrep_backend.py`). A flag the caller passed that the
   chosen engine ignores, with no disclosure — the silent-downgrade class.
 - [x] **RETIRED, not fixed: the two `--gpu-device-ids` gates are NOT in contradiction.** The entry
@@ -148,9 +148,9 @@ review, each verified against the real code (a finding without a `file:line` was
   places looks like a contradiction until you read what each one is gating. Recorded rather than
   silently deleted -- a documented retirement is worth as much as a fix (board rule 4), and this
   one would otherwise be re-derived every time someone greps that flag.
-- [ ] **`--ndjson` zero-match discloses nothing in-band in EITHER engine.** The summary record now
+- [x] **`--ndjson` zero-match discloses nothing in-band in EITHER engine** — RETIRED, not a defect. The Python emitter deliberately stays silent on a COMPLETE zero-match so readers are not trained to expect a record every run; the Rust divergence is documented at `core/json_fmt.py` (see the comment above the summary emitter). Verified 2026-08-01. ORIGINAL TEXT FOLLOWS — The summary record now
   carries the scope note (#871), but a zero-match `--ndjson` still emits no reason field.
-- [ ] **The three `main.rs` envelope literals have no direct test**, and the CUDA one is
+- [x] **The three `main.rs` envelope literals have no direct test** — PARTIALLY REFUTED. Two of three carry serialization tests; the third is `#[cfg(feature="cuda")]` and its exclusion is justified in-code (`cuda-feature-check` runs `cargo check`, not `cargo test`). Verified 2026-08-01 — the finding as written overstated the gap. ORIGINAL TEXT FOLLOWS —, and the CUDA one is
   type-checked but never executed anywhere in CI (`cuda-feature-check` runs `cargo check`, not
   `cargo test`). Checking is not running.
 - [x] **THE POPULATION IS THE RECURRING DEFECT, NOT THE ASSERTION.** #872's enumerating test had
@@ -166,7 +166,7 @@ review, each verified against the real code (a finding without a `file:line` was
   sampling). A third, from the same review: **a COUNT is blind to an ORDER SWAP** — two members
   asserted `len(tail) == 2` and passed when the pattern and path were exchanged, which in production
   searches a directory named like the pattern for a pattern that is the temp path.
-- [ ] **`AGENTS.md:1437` is stale on the argv sweep** — it describes the class as swept while #872
+- [x] **`AGENTS.md:1437` is stale on the argv sweep** — REFUTED; already corrected. AGENTS.md now records the sweep-is-now-a-test conversion and the `_agent_gpu_evidence` hole #872 found. Verified 2026-08-01. ORIGINAL TEXT FOLLOWS — — it describes the class as swept while #872
   was open against it. A doc that certifies a sweep it cannot verify is the prose-rung failure this
   board keeps re-learning.
 
@@ -196,8 +196,8 @@ review, each verified against the real code (a finding without a `file:line` was
 - [ ] **#98** MCP tool consolidation (45 → ~10 task-shaped dispatch tools, non-breaking)
 - [ ] **#141** native `AstBackend` vs ast-grep wrapper — DSL divergence
 - [ ] **#160** v1.71.3 dogfood feature tail (`suggested_ignore`, orient auto-deweight)
-- [ ] **#115** symlink sweep — 3 unguarded `std::fs::write` sites *(LOW)*
-- [ ] **#125** checkpoint `except Exception` → `except BaseException` *(LOW)*
+- [x] **#115** symlink sweep — CLOSED. `docs/BACKLOG.md` already carried the KILLED/CLOSED verdict; THIS BOARD was the stale copy (verified 2026-08-01).
+- [x] **#125** checkpoint `except Exception` → `except BaseException` — CLOSED. Same as #115: `docs/BACKLOG.md` was right, this board was the stale copy (verified 2026-08-01).
 - [ ] **#143 / #155** Opus-gate LOW follow-ups *(LOW)*
 - [x] Dead code: delete `sidecar.py::_classify_lines` *(LOW)* — done 2026-08-01 backlog campaign, PR-D
 - [x] apply_policy argv-sentinel — RETIRED (not fixed), 2026-08-01 backlog campaign, PR-D. See

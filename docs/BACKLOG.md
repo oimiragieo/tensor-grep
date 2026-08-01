@@ -430,6 +430,51 @@ wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while 
 
 ---
 
+## ⭐ 2026-08-01 backlog campaign — shipped v1.101.28/29, and what the audits caught
+
+**The board was stale for the 4th time: 9 of 24 open items were already fixed, refuted, or
+deliberate-by-design.** Root-caused rather than corrected a 5th time — see
+`docs/audits/2026-08-01-task-board-staleness.md` and the tolerance gate in
+`tests/unit/test_task_board_freshness.py`.
+
+**Shipped.** #883 (v1.101.28): a **CWE-88** hole in `apply_policy.py::_policy_file_arg` (a
+repo-controlled filename beginning `-` was substituted into a `$file` template BEFORE argv
+splitting, so it parsed as a FLAG); six prose lies claiming ledger Slice-2 does not canonicalize
+PATH, all converted to DERIVATIONS rather than corrected lists; dead `sidecar.py::_classify_lines`.
+#884 (v1.101.29): an invalid `--ltl` query escaping as a raw traceback at exit 1 instead of the
+house `Error:`+exit-2 convention, plus `--ltl` missing from `SEARCH_PYTHON_PASSTHROUGH_FLAGS` — a
+LIVE break for native-frontdoor users, not latent.
+
+**NEW FINDING — a CI infrastructure gap nobody could have seen.** No job could test
+native→Python-sidecar delegation end to end: `test-python` has the deps but never builds the release
+binary; `native-build-smoke` builds the binary but installed only `pytest`. The entire delegation
+surface was untestable, and the only possible symptom was a test nobody had written yet. Surfaced
+only because the audit forced #884's e2e test into the job where a skip becomes a hard failure.
+Fixed with a **pyproject-derived** dep install (a hand-list would rot exactly like the six prose
+enumerations above).
+
+**The audits earned their keep, and every real catch was in a VERIFIER, not the code:**
+
+- The mandatory adversarial security gate — which the plan had **waived** and the audit
+  **restored** on the rule that the trigger is the SURFACE, not the diff shape — found the CWE-88
+  hole the plan never anticipated.
+- Those CWE-88 tests then **could not distinguish a correct fix from a broken one**: two mutations
+  (fixture-only prefixing; returning a wholly WRONG filename) both passed undetected. Rewritten to
+  assert path IDENTITY over 9 shapes — the same mutation now kills 45 tests.
+- A **Windows-only** call (`ctypes.windll`) reddened every POSIX leg — the dev-box-masks-CI trap.
+  Guarded with `skipif` WITHOUT hollowing out the POSIX assertions (AST-verified single call site).
+- One stated red arm **could not fail** (it skipped pre- and post-fix alike) and was withdrawn.
+- The `--ltl` e2e test conflated ROUTING with EVALUATION, making it permanently red in a job that
+  never builds the PyO3 extension. Measured against the published wheel first to confirm real users
+  were unaffected, then split into a routing arm (always) and an evaluation arm (engine-gated).
+
+**Method note worth keeping.** The 8-seat council and the codex pass overlapped on exactly ONE
+finding out of nine. Six seats across five providers all missed the 15-test collision and the
+unfalsifiable red arm — they converged on the most legible defect and stopped. Consensus is not
+coverage; two structurally different audits were.
+
+---
+
 ## ⭐ CURRENT STATE (2026-07-30) — authoritative; every section BELOW is HISTORICAL until the next full refresh
 
 > **THE LIVE QUEUE IS `docs/TASK_BOARD.md`, NOT THIS FILE.** This document is 135KB of campaign
