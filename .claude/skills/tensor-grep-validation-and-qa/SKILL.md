@@ -42,9 +42,14 @@ relax any gate in `tensor-grep-change-control`.
 
 ## Part 0 — THE ORACLE FAMILY: when your verification isn't (read this first)
 
-**The single most repeated failure mode in this repo.** NINE distinct forms, most in ONE session
-(2026-07-25; form 7 added 2026-07-26). Every form shares one shape: *something that looks like
-verification isn't.*
+**The single most repeated failure mode in this repo.** TEN distinct forms, most in ONE session
+(2026-07-25; form 7 added 2026-07-26, forms 8-9 2026-07-27, form 10 2026-07-28). Every form shares
+one shape: *something that looks like verification isn't.*
+
+(The count read NINE while ten forms were present, for three days. A header that miscounts the
+thing below it is the smallest possible instance of this Part's own subject -- and it was found by
+an audit that COUNTED the forms rather than reading the sentence. Re-derive the number when you add
+one; do not trust the header, including this one.)
 
 **The one question that catches all nine — before trusting any green signal, ask:
 "what would this check show if the thing it verifies were BROKEN?"
@@ -175,6 +180,49 @@ Windows ACL specifics learned the hard way (#281):
 - **A modelled gate must be proven able to FAIL.** #745's fuzz gate was validated by reverting one line
   (72 shapes, exit 1), mutation-killing 6/6, and checking its oracle against real `rg --debug`
   (301/301). A green gate that cannot fail is worse than no gate.
+- **A control that reproduces the failure is SUFFICIENT, not proven OPERATIVE.** A two-arm control
+  matched CI's failure byte-for-byte (same exit code, same stdout) and was called "confirmed"; a fix
+  was dispatched on that basis. `.github/workflows/ci.yml:688` then showed the failing job never
+  builds the binary the control had forced into the mix -- the reproduction was real, the mechanism
+  was not the one CI runs there, and the agent had to be recalled mid-flight. Say "sufficient" until
+  you have traced that the SAME mechanism fires in the real failing job; a control earns authority
+  only by REPRODUCING the failure in one arm -- "the unmodified control still passes" rules out
+  nothing on its own.
+- **A source-scanning census can be satisfied by a COMMENT.** A census asserting the literal `"--"`
+  sentinel appears in each argv builder's body was checked with a substring scan over the whole
+  function body -- prose included. Three of five members could have their real `append("--")` call
+  DELETED and stay green, because the comment explaining the sentinel still contained the string. The
+  better a guard is documented, the less it is actually checked -- the false-NEGATIVE mirror of the
+  quoting-vs-asserting trap (there prose causes a false positive, here a false negative). Match AST
+  nodes or assert BEHAVIOUR; never a bare substring scan over a region that also contains prose.
+- **Presence is a proxy; position is the property.** The same argv fix shipped a sentinel sitting
+  BETWEEN two positionals -- present in the argv, and useless, because the first value was still
+  parsed as a flag ahead of it. A presence-only check ("does `--` appear anywhere in argv") cannot
+  distinguish that from a correctly-placed one. A proxy that cannot tell the fix from the bug is not a
+  check -- assert WHERE the marker sits relative to the values it must protect, not just that it
+  exists.
+- **A census member that names a branch and cannot fail on it is worse than no member.** An entry
+  declared a `--stdin` configuration "covered" while asserting only "no dangling trailing `--`" --
+  injecting a caller-supplied path into exactly that branch left the suite green, because nothing in
+  the assertion could ever fire there; it reported the branch as checked when the check was
+  structurally incapable of touching it. Derive the property from the artifact instead of
+  hand-writing per-entry expectations ("if a caller-supplied value appears in argv at all, it must
+  follow `--`" holds for every configuration without deciding in advance which ones have
+  positionals) -- a guard whose placement is config-conditional has as many members as
+  configurations.
+- **A count is blind to an order swap.** Two members asserted `len(tail) == 2` on the theory that
+  both positionals were generated values and therefore safely un-pinnable by content. Swapping a
+  probe's pattern and path kept the count and passed, while in production it now searches a
+  directory NAMED like the pattern for a pattern that is really the temp path. The justification was
+  also half wrong -- both positionals were hardcoded literals the whole time and could have been
+  pinned by VALUE from the start. A length assertion proves membership, never order; when order
+  carries meaning, assert the values at their positions.
+- **A mutation that does not apply is a control arm that never ran.** A red-arm attempt silently
+  no-op'd because the reversion string it tried to substitute did not match the file on disk -- the
+  "failing" run was really the unchanged test passing, caught only because the EXPECTED failure
+  message was absent from the output. Assert the mutation actually applied (diff the file, or grep
+  for the string you just removed) before trusting any red/green arm it produces -- this is Form 6's
+  fixture-never-applied trap on the code side of the boundary instead of the environment side.
 
 Related global skill: `measure-what-it-claims` (same family, generalised beyond this repo).
 
@@ -883,6 +931,13 @@ timing assertion degenerating to its floor below clock resolution plus the profi
 discipline, #739; preferring a structural order-based assertion over any wall-clock form, #739) and
 their checklist items. A coordinator review of that same pass added the concrete clock-resolution
 number (`time.get_clock_info('monotonic').resolution` = 0.015625s on Windows) to point 19's mechanism.
+A further pass **2026-07-31, release `v1.101.24`** appended six oracle-adjacent bullets to Part 0's
+"rules that fall out" list -- a control that reproduces a failure without being proven the operative
+one; a source-scanning census satisfied by a comment; presence vs position of a placement guard; a
+census member that names a branch it cannot structurally fail on; a count blind to an order swap; and
+an unapplied mutation reading as a passing control arm -- deliberately as unnumbered bullets, not new
+Forms (the Forms table is mirrored in `AGENTS.md`; adding a Form there is a two-file edit owned
+separately).
 Re-verify before relying on them:
 
 | Claim | Re-verify command |

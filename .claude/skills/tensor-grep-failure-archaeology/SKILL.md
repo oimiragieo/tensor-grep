@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-failure-archaeology
-description: Use when about to "fix" or "optimize" something in tensor-grep that feels novel — before proposing PyO3/FFI for directory walking, re-enabling free-threading, adding a --json self-test, tightening a dependency upper-cap, blaming an IDF/ranking flip, trusting a green mock/FFI test, diagnosing a release that "didn't publish", chasing a reported latency "regression" without profiling at scale, shipping a doc-drift/precision heuristic off green fixtures alone, adding a "differs-from-default" native-delegation gate, reading a `capfd`-based CliRunner test result, micro-optimizing a hot loop without checking who actually consumes the value, re-proposing cAST structural chunking as the default, re-proposing dense int8/binary/PCA embedding compression, proposing a warm-session/daemon search-index shortcut, proposing GPU-for-search or re-litigating the PFAC-vs-brute-force kernel claim, hitting the many-pattern Aho-Corasick dedup bug, trusting an unverified "cheap win" from a paper/research steal-list, cloning a "mirror language X" onboarding brief without checking which module is the CURRENT template, trusting a conflict-free git rebase across several PRs that touch the same shared registration file as proof nothing was silently dropped, or trusting a BANKED fix hypothesis (a memory note from a prior session) without re-deriving it against the real AST/code. A chronicle of settled battles (symptom -> root cause -> evidence -> status) so no one re-fights them. Load it to check "has this already been tried and lost?" before spending effort. For a live NEW failure use tensor-grep-debugging-playbook; for the process gates to re-attempt one use tensor-grep-change-control.
+description: Use when about to "fix" or "optimize" something in tensor-grep that feels novel — before proposing PyO3/FFI for directory walking, re-enabling free-threading, adding a --json self-test, tightening a dependency upper-cap, blaming an IDF/ranking flip, trusting a green mock/FFI test, diagnosing a release that "didn't publish", chasing a reported latency "regression" without profiling at scale, shipping a doc-drift/precision heuristic off green fixtures alone, adding a "differs-from-default" native-delegation gate, reading a `capfd`-based CliRunner test result, micro-optimizing a hot loop without checking who actually consumes the value, re-proposing cAST structural chunking as the default, re-proposing dense int8/binary/PCA embedding compression, proposing a warm-session/daemon search-index shortcut, proposing GPU-for-search or re-litigating the PFAC-vs-brute-force kernel claim, hitting the many-pattern Aho-Corasick dedup bug, trusting an unverified "cheap win" from a paper/research steal-list, cloning a "mirror language X" onboarding brief without checking which module is the CURRENT template, trusting a conflict-free git rebase across several PRs that touch the same shared registration file as proof nothing was silently dropped, or trusting a BANKED fix hypothesis (a memory note from a prior session) without re-deriving it against the real AST/code; trusting a cause-emitter census count reached by "this one covers that one" reasoning instead of counting each emitter directly; re-proposing an auto-derived agent-id for `tg ledger --claim`; treating MaxSim reranking's absence after `tg install-dense` as a CUJ-coverage gap instead of the separate `rerank`-extra hold it is; or chasing a GPU exit-code-2 report, or trusting a control/repro that reproduces the failing output, before confirming which exact symbol the control checked and whether that code path runs in the real CI job. A chronicle of settled battles (symptom -> root cause -> evidence -> status) so no one re-fights them. Load it to check "has this already been tried and lost?" before spending effort. For a live NEW failure use tensor-grep-debugging-playbook; for the process gates to re-attempt one use tensor-grep-change-control.
 ---
 
 # Tensor-Grep Failure Archaeology
@@ -20,8 +20,10 @@ catch and its sequential multi-PR shared-file union-rebase discipline), a warm-h
 Battle 12, and re-pointing Battle 16's evidence at its post-squash commit hashes (`501dc26`/`6d79945`)
 plus fixing a stale `AGENTS.md` section-letter reference, and a seventh, same-day pass **2026-07-24 at
 v1.98.2** adding Battle 25 (the banked C function-pointer fix hypothesis, falsified before any code was
-written). Re-verify anything load-bearing with the commands in **Provenance and maintenance** before
-you act on it.
+written), and an eighth pass **2026-07-31 at v1.101.24** adding Battles 26-29 (the defaulted-scope
+disclosure census undercount, the anonymous `--claim` sentinel-id retention, the MaxSim `rerank`-extra
+deliberate hold, and the #868 GPU exit-2 investigation's two false-confirmation traps). Re-verify
+anything load-bearing with the commands in **Provenance and maintenance** before you act on it.
 
 ## When to use this skill
 
@@ -63,6 +65,18 @@ Load this **before** you spend effort on any of these, because each has already 
 - Trusting a **conflict-free git rebase** across several PRs that all touch the same shared
   registration file (a suffix dict, an extras list, a lockfile) as proof the merged file is still
   complete (Battle 24).
+- Trusting a cause-emitter **census count** ("N of N covered") that was reached by reasoning one
+  emitter transitively covers another, instead of counting each one directly — the defaulted-scope
+  disclosure census undercounted by one (Battle 26).
+- Re-proposing an **auto-derived agent-id** for `tg ledger --claim` to remove the explicit
+  `--agent-id` requirement — evaluated and REJECTED, it silently reproduces #845 through the
+  ledger's own overlap suppression (Battle 27).
+- Treating **MaxSim reranking's absence** after `tg install-dense` as a CUJ-coverage gap — it
+  depends on the separate `rerank` extra, which no `tg` command provisions; a deliberate hold
+  (Battle 28).
+- Chasing a GPU-path **exit code 2** as a plain regression, or trusting a control/repro that
+  reproduces the failing output, before confirming which exact symbol it exercised and whether
+  that symbol's job runs in the real CI path (Battle 29).
 
 ## When NOT to use this skill (use a sibling instead)
 
@@ -494,6 +508,72 @@ failure shape as Battle 23, a third venue.
 
 ---
 
+## Battle 26 -- defaulted-scope disclosure: the census population was FIVE emitters, not four (2026-07-31, #26)
+
+| Field | Detail |
+|---|---|
+| **Symptom** | A disclosure feature (flag it when `tg` silently defaulted its search scope, e.g. ran repo-wide because nothing narrowed it) needs to fire from every code path that can default the scope. An initial census of those cause-emitters counted **four**. |
+| **Root cause** | The population was undercounted by reasoning, not by direct enumeration — the same failure shape Battle 24's shared-file union-rebase discipline and Cross-cutting lesson 9 already warn about: a count arrived at by judging "the others are covered by this one" instead of listing every emitter and checking each individually. A fifth emitter existed outside the counted four. |
+| **Evidence** | Shipped in **v1.101.24**. Verified against the **published native binary** (checksum-matched, not a local rebuild) across four arms: (1) treatment — the defaulted-scope case actually discloses; (2) explicit-PATH control — an explicit path does not spuriously disclose; (3) found-matches control — the disclosure does not suppress or alter real results; (4) byte-identical cross-engine string parity — the disclosure text matches regardless of which engine (native/Python) answered. |
+| **Status** | **SETTLED / SHIPPED** (v1.101.24). |
+
+**Rule:** A cause-emitter census is only as good as the enumeration, never the enumerator's confidence
+that "the rest are covered." Count directly (grep/AST-derive every emitter and check each one), and
+re-run the count as a governance ratchet, the same discipline Battle 24 requires for shared
+registration files. The four-arm verification pattern here (treatment / a control that must NOT fire /
+a control that must not corrupt real output / cross-engine parity) is a reusable oracle shape for any
+future disclosure-style feature — keep it, don't rebuild ad hoc.
+
+## Battle 27 -- anonymous `--claim`: an auto-derived agent-id was proposed and REJECTED (#23)
+
+| Field | Detail |
+|---|---|
+| **Symptom** | A proposal to drop `tg ledger --claim`'s requirement for an explicit `--agent-id`, auto-deriving one for zero-config callers instead of falling back to the anonymous sentinel value. |
+| **Root cause** | Any deterministic auto-derivation scheme makes it likely that two independently-launched, zero-config agents compute the SAME non-sentinel id. The ledger's overlap detector, `_find_overlaps`, then treats those matching ids as one claimant's own (non-conflicting) claims and suppresses them — so each agent's real overlap with the OTHER agent's claim is silently dropped, reproducing **#845**'s failure mode through a new mechanism. This is not one bad derivation scheme; no derivation escapes it, because the defect is `_find_overlaps` conflating "same id value" with "same claimant," and any zero-config auto-derivation is exactly what makes two different claimants collide on id. |
+| **Evidence** | #23. Auto-derivation was traced through `_find_overlaps`'s same-id suppression path to a reproduction of #845 before it was proposed for implementation. |
+| **Status** | **SETTLED / REJECTED.** The anonymous sentinel agent-id stays. Do not re-propose auto-deriving one. |
+
+**Rule:** A dedup/suppression key (here: agent id) that conflates "same value" with "same actor" will
+silently merge two different actors the moment ANY id-assignment scheme — even one meant only to
+remove a config burden — can produce a collision. An explicit identity input that downstream code
+trusts for correctness (not just labeling) is not friction to be removed; removing it removes the
+only thing preventing the collision.
+
+## Battle 28 -- MaxSim reranking's absence is a deliberate hold, not a `tg install-dense` coverage gap (#15)
+
+| Field | Detail |
+|---|---|
+| **Symptom** | MaxSim (late-interaction) reranking appeared unavailable after running `tg install-dense`, read as a CUJ-coverage gap in the semantic-search stack. |
+| **Root cause** | `tg install-dense` installs the `semantic` extra — the BM25+dense-embedding RRF leg (`tensor-grep-semantic-search-campaign`). MaxSim reranking depends on a DIFFERENT extra, `rerank`, whose model **no `tg` command fetches** — there is no install path that provisions it today. Nothing regressed; the feature was never wired to auto-provision. |
+| **Evidence** | #15. The fix shipped was doc-honesty (state the gap plainly instead of implying `install-dense` covers it) plus making the existing test for this path able to fail — it previously could not distinguish "MaxSim ran" from "MaxSim was silently skipped." |
+| **Status** | **SETTLED / DELIBERATE HOLD**, not a capability gap. Do not re-file this as a CUJ-coverage miss without first checking whether the `rerank` extra has since gained an install path. |
+
+**Rule:** `semantic` and `rerank` are different extras gating different capabilities — confirm which
+one actually provisions the feature you're testing before calling its absence a coverage gap. A test
+that cannot fail when the dependent feature silently no-ops is the same broken-oracle shape as
+Battle 8; here the fix was making the test able to fail, not adding new capability.
+
+## Battle 29 -- #868 GPU exit-2: two false-confirmation traps before reaching BLOCKED, not fixed
+
+| Field | Detail |
+|---|---|
+| **Symptom** | A GPU-path `tg` invocation exits with code 2 (#868); the issue sat RED for days with the cause logged as "unknown." Two sequential root-cause hypotheses were built and killed before the real state was reached. |
+| **Root cause** | Two independent false-confirmation traps, not one bug. **(1)** The live hypothesis (the GPU dispatch path is misrouting) was killed by a control that checked whether `rust_core` — the Python **extension module** — was present and loaded. But the code that actually decides native-vs-Python dispatch is `resolve_native_tg_binary()`, which resolves the compiled **binary** — an adjacent-named, different artifact. The control proved the wrong symbol and falsely exonerated a hypothesis that was never actually tested. **(2)** After the hypothesis was reopened, a two-arm control reproduced CI's exact failure byte-for-byte (same exit code, same stdout); it was called "confirmed" and a fix was dispatched on that basis. `.github/workflows/ci.yml:688` then showed that job **never builds the binary** the control had forced into the picture — the control's mechanism was **sufficient** to produce the same output, but not the **operative** cause in the real CI job, and the fix-dispatch had to be recalled mid-flight. |
+| **Evidence** | #868. Arm 1 named `rust_core` (extension module) present/absent rather than `resolve_native_tg_binary()` (compiled binary); arm 2's byte-for-byte reproduction was traced to `.github/workflows/ci.yml:688`, which shows the accused job path is not the one exercised in real CI. |
+| **Status** | **OPEN / BLOCKED** on two independent things, neither of which is "write more code": (1) the actual cause is now **measurable but unmeasured** — a diagnostic has been deployed but its output has not yet been read; (2) the premise itself is **contract-contested** — the existing tensor-grep exit-code contract treats exit 2 as "incomplete" (`tensor-grep-large-repo-scale-campaign`), but the #868 search in question ran to completion and returned its match, so whether exit-2 is even the right signal to be chasing here is unresolved, not a confirmed bug. |
+
+**Rule:** Name a control arm by the exact SYMBOL the code branches on ("I set `resolve_native_tg_binary()`
+to X"), never by the capability you believe it stands for ("the GPU extension is present") — two
+adjacent-sounding artifacts (`rust_core` the extension module vs `resolve_native_tg_binary()` the
+compiled binary) can sit one hypothesis apart and send an investigation the wrong way for days. And a
+control that REPRODUCES a failure is only SUFFICIENT until you have measured that its mechanism is
+OPERATIVE in the real path (here: read the actual workflow file to see whether the accused job even
+builds the binary) — "reproduces byte-for-byte" rules out nothing about which of several plausible
+mechanisms is the live one. Sibling of Battle 12 (profiled the wrong command) on the measurement side,
+and Battle 25 (a banked hypothesis not re-derived against real code) on the planning side.
+
+---
+
 ## Cross-cutting lessons (the meta-patterns behind the battles)
 
 These recur across the chronicle; internalize them and you avoid the next re-fight too.
@@ -534,6 +614,13 @@ These recur across the chronicle; internalize them and you avoid the next re-fig
    a speed/quality claim, run the actual measurement here — never assume the source material's claim
    transfers unchanged. Battle 23's stale "mirror inline `_rust_*`" onboarding brief is the same lesson
    fired from INSIDE a same-session orchestration brief rather than an external paper.
+10. **A control proves what it names, and "reproduces" is not "operative."** Battle 29's #868
+    investigation lost days to a control that checked an adjacent-but-different symbol
+    (`rust_core` the extension module, not `resolve_native_tg_binary()` the dispatch gate), then to
+    a second control that reproduced the failure byte-for-byte via a mechanism that turned out not
+    to run in the real CI job at all. Name a control arm by the exact symbol it sets, and treat a
+    successful reproduction as SUFFICIENT, not OPERATIVE, until you've traced it through the real
+    path (here, the workflow file) that the live bug actually takes.
 
 ## Provenance and maintenance
 
@@ -541,11 +628,12 @@ Re-verify these before treating any claim above as current (drift-prone facts ar
 **as of 2026-07-02, v1.17.25**, with Battles 9-14 verified **2026-07-03, v1.19.3**, Battle 9's
 `case_sensitive` correction + Battle 16 verified **2026-07-16, v1.78.1**, Battles 17-22 +
 cross-cutting lesson 9 added **2026-07-22, v1.93.2**, and Battles 23-24 + the Battle 12 addendum +
-Battle 16's evidence-hash/section-letter correction added **2026-07-24, v1.96.0**):
+Battle 16's evidence-hash/section-letter correction added **2026-07-24, v1.96.0**, and Battles 26-29 +
+Cross-cutting lesson 10 added **2026-07-31, v1.101.24**):
 
 ```bash
 # Current version + latest settled entries
-grep -E '^version' pyproject.toml               # expect 1.96.0 (or newer)
+grep -E '^version' pyproject.toml               # expect 1.101.24 (or newer)
 head -20 CHANGELOG.md
 
 # Battles 17-21 (research retirements) + Battle 22 (meta)
@@ -615,6 +703,28 @@ grep -n "tree-sitter-java\|tree-sitter-php\|tree-sitter-c-sharp" pyproject.toml
 # Battle 25 (banked C function-pointer fix hypothesis, falsified before code was written)
 git show 226d887 --stat
 grep -n "_c_parenthesized_declarator_wraps_bare_name\|def _c_declarator_name_node" src/tensor_grep/cli/lang_c.py
+
+# Battle 26 (defaulted-scope disclosure census -- confirm the shipped version and re-count emitters)
+grep -nE '^version' pyproject.toml              # expect 1.101.24 or newer
+grep -rn "scope_defaulted\|defaulted.scope\|scope_disclosure" src/tensor_grep/
+
+# Battle 27 (anonymous --claim sentinel-id retention -- confirm no auto-derivation was reintroduced)
+grep -rn "_find_overlaps\|agent_id" src/tensor_grep/cli/*.py | grep -i ledger
+
+# Battle 28 (MaxSim rerank-extra deliberate hold -- confirm rerank still has no install path)
+# `^rerank`, NOT a quoted form: the extra is declared BARE (`rerank = [...]`) at pyproject.toml:627.
+# The first version of this line searched for `"rerank"`/`'rerank'` and returned NOTHING, exit 1 --
+# which a reader re-verifying Battle 28 would have read as "the rerank extra is gone, the hold is
+# over". A false zero, shipped inside the file that teaches the false-zero trap. Caught by an
+# independent audit that actually RAN every re-verify command in this block instead of eyeballing
+# them. A re-verify command you have not executed is a claim, not a check.
+grep -n "^rerank" pyproject.toml
+grep -rn "MaxSim\|install-dense\|install_dense" src/tensor_grep/ docs/
+
+# Battle 29 (#868 GPU exit-2 -- confirm the two accused symbols and the CI job wiring)
+grep -rn "def resolve_native_tg_binary" src/tensor_grep/
+grep -rn "rust_core" src/tensor_grep/ | grep -i import
+sed -n '680,700p' .github/workflows/ci.yml
 ```
 
 If any command's output no longer matches the entry (e.g. the typer cap moved, a guard file was

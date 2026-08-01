@@ -35,7 +35,7 @@ Two readers at once — write and act to the **lower bound** of each:
 
 ---
 
-## Part 1 — The four UNWRITTEN non-negotiables
+## Part 1 — The seven UNWRITTEN non-negotiables
 
 These are not in a config file; they are CEO-confirmed law. Breaking one is a process failure even if the code is clean.
 
@@ -120,6 +120,23 @@ claims; only a pin catches the second one.
 
 **Applies to:** any PR touching `repo_map.py`'s scorers, the reverse-import/blast-radius graph, PageRank/
 centrality, or any BM25/RRF/dense-fusion weighting.
+
+### 7. "Not mine" / "CI doesn't flag it" is not a disposition
+
+**Rule:** Authorship, CI visibility, tracked-vs-untracked status, and whether a finding sits inside the
+current task's stated scope are all irrelevant to whether a real defect gets fixed. If you find one while
+doing something else, fix it in the same turn -- in place, even if you cannot commit it (e.g. it lives in
+a file you were told not to touch, or another agent's in-flight WIP) -- rather than reasoning your way past
+it. The only legitimate stop is a hard blocker (needs a build/fire, is irreversible, or is human/CEO-gated),
+and that gets a tracked follow-up with a concrete acceptance test, never a sentence of justification.
+
+**Why / incident:** A lint/audit finding was named out loud and then waved past **twice** with exactly
+this reasoning -- "not my file," "CI doesn't flag it" -- and both times the underlying defect was real. A
+constraint on one verb (e.g. "do not **commit** this file") is not permission on another (silently
+generalizing it into "do not **fix** this file" and leaving a live bug in the tree).
+
+**Applies to:** any lint/grep/audit finding you surface incidentally while doing something else, regardless
+of who owns the file, whether it is tracked by git, or whether CI currently exercises it.
 
 ---
 
@@ -211,6 +228,37 @@ registry (see Part 4's own worked example below).
 then widen `tests/unit/test_lang_registry.py:84-94` (`test_language_registry_has_exactly_the_stage2_languages`) to include the new language — this is a **pin test for registry membership** (same
 principle as Part 1 Rule 6's ranking pin, applied to a set instead of a ranked list): it fails loud the
 moment a rebase silently drops a language (see Part 7's sequential-drain corollary below).
+
+### A census's population is itself a defect surface -- curate it, don't derive it
+
+Every table above (4 command sites, 2 flag front doors, 5 language seams) is a **census**: a claim that
+"these are all the places this thing lives." The census itself is where the recurring bugs live, not just
+the code it protects.
+
+**Never add a census member by reasoning it is covered -- CALL it.** The native-argv `--`-sentinel
+completeness census (the round-4 argv item tracked in this skill's provenance table below,
+`rust_core/src/rg_passthrough.rs`) had its population wrong **four times in one session** -- 5, then 8,
+then 10, then 13 members -- and every single miss was the same judgment: "builder A transitively covers
+builder B." Each was disproved only by deleting B's own guard and watching the suite stay green anyway.
+One of the missed members (`_build_command`) carried the worst possible cost of the four: a path of
+`-U`/`--update-all` reaching ast-grep's `run` is its **auto-fix switch**, so an unguarded miss there turns
+a read-only scan into a file rewrite. **Rule:** treat a census list as **curated, not complete** -- prove
+membership by deleting the candidate's guard and confirming red, and re-derive the whole list by sweep
+every release; never claim it final (compare Part 3's own "do not cite a stamped count" rule for the
+language-registration count above -- same discipline, applied to a security-relevant guard instead of a
+head-count).
+
+**Enumerate EMITTERS/ARTIFACTS, not the mechanism they happen to share.** A census keyed on a common
+implementation mechanism (e.g. "every builder that uses decorator/pattern X") can report "N of N covered"
+and still be wrong by one, because a sibling can produce the identical artifact by an entirely different
+mechanism -- sharing no type, no decorator, nothing a mechanism-keyed grep would match -- and land
+uncovered by the guard the census was supposed to feed. The same trap recurs one level down inside a
+single site: **a function is not the unit, the artifact is** -- two independently-built argv sequences
+constructed dozens of lines apart inside one function let a whole-function substring match report the
+first one's sentinel as "covering" the second one's bare, unguarded positional. **Rule:** key a census on
+the *shape of the output* (every place this exact artifact gets constructed), never on a shared
+implementation mechanism -- a sibling that reaches the same artifact by a different path is exactly the
+member a mechanism-keyed search cannot see.
 
 ---
 
@@ -328,6 +376,18 @@ both revisions with `ast`, strip docstrings (plain comments never enter the AST)
 than a `git diff` read. Used this session on `lang_cpp.py` and `test_index_lock_concurrency.py`'s
 comment-only revisions.
 
+**Refactoring code that lives inside a generated string is not refactoring code.** Extracting a shared
+helper out of two duplicated blocks is a real DRY win only if both call sites execute in the *same*
+interpreter. If one of them instead lives inside a `textwrap.dedent(...)`-built string that gets written
+to disk and run as a **standalone script** (e.g. by the Windows Task Scheduler, which cannot `import
+tensor_grep`), then "extracting the shared helper" replaces inline code with a call the standalone script
+has no way to resolve -- a `NameError` at runtime, invisible at review time because the diff still reads as
+a clean DRY cleanup. This was caught only because an existing test pins the **generated script's text**
+byte-for-byte, not because the refactor itself was re-read carefully enough to notice. **Rule:** before
+applying any "extract a shared helper" refactor, check whether either call site is a string later written
+to disk / `exec`'d / handed to another process -- a DRY fix that crosses that boundary is a correctness bug
+wearing a cleanup's clothes.
+
 ---
 
 ## Part 7 — Push discipline & the push-race (one-merge-per-tick)
@@ -417,7 +477,11 @@ So: **~23-44 min before the version-bump commit is even on `main`**, and **~40-6
 
 **Gate a sequential merge-watcher on ABSOLUTE conditions, never "has the tag/commit changed since I started watching":**
 
-- **Correct:** poll `gh pr view <N> --json state -q .state` until it reads `MERGED`, **and independently** poll `gh run list --workflow=ci.yml --branch main --limit 1 --json status,conclusion` until the latest run reports `status == "completed"` **and** `conclusion == "success"` — require the completed state on **2 consecutive polls** (a multi-job run can transiently look "done" while a late job like `release-tag-smoke` is still finishing) before treating the prior release as fully published and starting the next merge.
+- **Correct:** poll `gh pr view <N> --json state -q .state` until it reads `MERGED`, then **capture the release run's ID once and poll THAT ID** — `gh run view <run-id> --json status,conclusion` — until it reports `status == "completed"` and `conclusion == "success"`, and independently confirm PyPI carries the new version.
+
+  ⚠ **NOT `gh run list --branch main --limit N`.** That form was prescribed here until 2026-08-01 and it is BROKEN as a merge gate: it is a windowed query, so unrelated rows (a second `Push on main`, a Dependabot `Graph Update`) fill the window and push the real release run out of it. Measured that day: `--limit 3` reported **0 runs in flight** while the release was mid-publish; `--limit 20` found it; `--limit 1` — the strictest form, and the one this bullet used to recommend — is the most exposed of all. Merging on that reading rejects the in-flight release's push. Query ONE OBJECT BY ITS UNIQUE ID, never a list plus a filter (`tensor-grep-debugging-playbook` §20).
+
+  Also check the **job's own** conclusion, not the run's: `release-tag-smoke` sat red for four releases while PyPI kept publishing, and a run-level roll-up hid it.
 - **Wrong / deadlocks:** "wait until the release tag / `chore(release)` commit differs from what it was when my watcher launched." If the prior release **already finished publishing between the last time you looked and the moment the watcher actually started** — normal in a fast merge sequence like v1.19.0→v1.19.3 above, all landed inside roughly an hour — the tag is *already* at the target value the instant the watcher begins polling, so a changed-since-launch condition never fires and the watcher hangs forever on an event that already happened. Compare current absolute state against the registry/PR API, never against a snapshot taken at launch time.
 - **This v1.19.x sequence is itself the reaffirmation receipt for one-merge-per-tick:** four releases merged one at a time, each waited out to a confirmed publish before the next merge started, and **zero** `! [rejected] main -> main` push-races occurred — contrast the `v1.17.23`/#319 incident above, which is exactly what happens when that wait is skipped. Two PR-CI runs in this window did report `conclusion: "failure"` (`28657702879` — a capfd-vs-stdout test-capture regression, the round-4 ledger's `--rank`-routing item; `28648738456` — a one-off `macos-15-intel` native-asset build failure): both were **ordinary red PR-branch CI**, fixed and re-pushed before merge, not push-races. Triage tell: a red run on a **PR branch** is a normal fix-and-repush gate; a red **`main`**-branch `Semantic Release` push step with `! [rejected]` in its log is the push-race signature and self-heals on the next push (see above — don't panic-rerun).
 
@@ -533,6 +597,9 @@ uv export --format requirements.txt --all-extras --no-emit-project --locked
 - [ ] Hot-path change → **benchmarked vs the accepted baseline**; artifact carries launcher mode/kind; no stale in-tree binary.
 - [ ] Contract/CI/docs change → **validator-backed test updated**.
 - [ ] Multiple PRs touch the SAME shared file (e.g. a registry test, `uv.lock`) → drained sequentially, each rebased onto the prior with a **UNIONED** assertion, test suite **re-run after every rebase** (Part 7, C4).
+- [ ] Relying on a census/coverage list (registration sites, argv-sentinel guards) → each member **CALLED** (guard deleted, suite re-run red) not reasoned as covered, and keyed on the **artifact**, not a shared mechanism (Part 3).
+- [ ] A "DRY, extract the shared helper" refactor → checked that neither call site is a generated string later written to disk / `exec`'d / run standalone (Part 6).
+- [ ] Any defect noticed in passing, regardless of authorship/CI-visibility/scope → fixed now or filed as a concrete tracked blocker, never waved past (Part 1 Rule 7).
 - [ ] Local gate green: `ruff check` + `ruff format --check --preview` + `mypy src/tensor_grep` + `pytest -q`.
 - [ ] Subagent claims **re-run in the real venv** — none trusted as-reported.
 - [ ] PR title matches intended release bump; **squash-merge** for release-bearing.
@@ -543,7 +610,11 @@ uv export --format requirements.txt --all-extras --no-emit-project --locked
 
 ## Provenance and maintenance
 
-Volatile facts are dated **2026-07-02, release `v1.17.25`**, with a round-4 refresh dated **2026-07-03, release `v1.19.3`** (Part 7 wall-time section + this table's tag/wall-time rows), a **2026-07-08, release `v1.49.3`** touch-up (Part 1 Rule 5 / Part 10 adversarial-security-gate addition — the Part 7 wall-time numbers themselves are NOT re-measured at v1.49.3, treat them as an illustrative historical sample, not a current SLA), a **2026-07-16, release `v1.78.1`** fix (the stale `37 @app.command` count, actual 44, replaced with a re-verify command instead of a stamped number), a **2026-07-22, release `v1.93.2`** addition (Part 1 Rule 6 pin-first ranking gate / C-pin, #709; Part 7 rapid-window batch-merge / C-batch, #703-706; Part 7 second release-failure shape / C-release-flake, v1.76.9/#612-613 and v1.92.2/#701 — the Part 7 wall-time numbers again NOT re-measured in this pass), and a **2026-07-23, release `v1.95.0`** refresh (Part 3 gained a 3rd registration table — the symbol-graph language registry's 5 seams, `lang_registry.register_language` + `repo_map.py` citations; Part 4 gained a grammar-missing fail-closed worked example; Part 7 gained the sequential-drain union-rebase corollary (C4); Part 9 gained the CRLF-binary-preserve edit landmine and the `uv.lock` hand-splice discipline (C1/C2); and every pre-existing `file:line` citation into Rust/Python source, test, and workflow files in this skill was re-walked against `origin/main` and repointed where drifted — several had moved 20-300 lines since the last pass (e.g. `main.rs`'s `enum Commands` 838→889, the `Semantic Release` job's `needs:` list in `ci.yml` 862→943, `ripgrep_backend.py`'s fail-closed raise sites 88/164/199→126/297/413, which ALSO now raise `BackendExecutionError` there instead of a bare `RuntimeError`). AGENTS.md's own prose citations were re-pointed too (its "Current Handoff" section grew substantially since the last pass), but AGENTS.md is itself mid-refresh in this same campaign, so treat any `AGENTS.md:NNN` citation below as good only as of `v1.95.0` — re-grep by symbol/phrase, don't trust the number blind, before citing it in a future pass. The Part 7 wall-time numbers themselves are STILL not re-measured in this pass — they remain the v1.19.x historical sample. A **2026-07-24, release `v1.98.2`** pass added Part 6's banked-hypothesis (#736) and gate's-disclosed-edge (#736) paragraphs. A further same-day pass, **release `v1.98.3`**, added Part 6's four newest paragraphs (a test proving nothing until seen fail on the pre-fix baseline, #737; gating comments/docstrings with the same rigor as code, #739; diff-review-is-not-measurement-review, #739; the `ast.dump()` behavior-neutral proof technique). A coordinator review of that same pass added a fifth Part 6 paragraph (a verification instrument — a malformed `grep -E \|` alternation — can itself be the thing that's wrong) and the concrete clock-resolution figure into the CI/Release Rules mirror of the timing-flake lesson. Re-verify anything below before relying on it:
+Volatile facts are dated **2026-07-02, release `v1.17.25`**, with a round-4 refresh dated **2026-07-03, release `v1.19.3`** (Part 7 wall-time section + this table's tag/wall-time rows), a **2026-07-08, release `v1.49.3`** touch-up (Part 1 Rule 5 / Part 10 adversarial-security-gate addition — the Part 7 wall-time numbers themselves are NOT re-measured at v1.49.3, treat them as an illustrative historical sample, not a current SLA), a **2026-07-16, release `v1.78.1`** fix (the stale `37 @app.command` count, actual 44, replaced with a re-verify command instead of a stamped number), a **2026-07-22, release `v1.93.2`** addition (Part 1 Rule 6 pin-first ranking gate / C-pin, #709; Part 7 rapid-window batch-merge / C-batch, #703-706; Part 7 second release-failure shape / C-release-flake, v1.76.9/#612-613 and v1.92.2/#701 — the Part 7 wall-time numbers again NOT re-measured in this pass), and a **2026-07-23, release `v1.95.0`** refresh (Part 3 gained a 3rd registration table — the symbol-graph language registry's 5 seams, `lang_registry.register_language` + `repo_map.py` citations; Part 4 gained a grammar-missing fail-closed worked example; Part 7 gained the sequential-drain union-rebase corollary (C4); Part 9 gained the CRLF-binary-preserve edit landmine and the `uv.lock` hand-splice discipline (C1/C2); and every pre-existing `file:line` citation into Rust/Python source, test, and workflow files in this skill was re-walked against `origin/main` and repointed where drifted — several had moved 20-300 lines since the last pass (e.g. `main.rs`'s `enum Commands` 838→889, the `Semantic Release` job's `needs:` list in `ci.yml` 862→943, `ripgrep_backend.py`'s fail-closed raise sites 88/164/199→126/297/413, which ALSO now raise `BackendExecutionError` there instead of a bare `RuntimeError`). AGENTS.md's own prose citations were re-pointed too (its "Current Handoff" section grew substantially since the last pass), but AGENTS.md is itself mid-refresh in this same campaign, so treat any `AGENTS.md:NNN` citation below as good only as of `v1.95.0` — re-grep by symbol/phrase, don't trust the number blind, before citing it in a future pass. The Part 7 wall-time numbers themselves are STILL not re-measured in this pass — they remain the v1.19.x historical sample. A **2026-07-24, release `v1.98.2`** pass added Part 6's banked-hypothesis (#736) and gate's-disclosed-edge (#736) paragraphs. A further same-day pass, **release `v1.98.3`**, added Part 6's four newest paragraphs (a test proving nothing until seen fail on the pre-fix baseline, #737; gating comments/docstrings with the same rigor as code, #739; diff-review-is-not-measurement-review, #739; the `ast.dump()` behavior-neutral proof technique). A coordinator review of that same pass added a fifth Part 6 paragraph (a verification instrument — a malformed `grep -E \|` alternation — can itself be the thing that's wrong) and the concrete clock-resolution figure into the CI/Release Rules mirror of the timing-flake lesson. A
+**2026-07-31** pass added Part 1 Rule 7 ("not mine"/"CI doesn't flag it" is not a disposition), a new Part
+3 subsection on census-population fallibility (curate the list by deletion-proof, enumerate by artifact
+not shared mechanism), and a new Part 6 paragraph (refactoring code that lives inside a generated string
+is not refactoring code) — doc-only, no release tag re-verified for this pass. Re-verify anything below before relying on it:
 
 | Claim | Re-verify command |
 |---|---|
