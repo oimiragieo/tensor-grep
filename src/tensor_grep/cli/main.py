@@ -8073,6 +8073,20 @@ def search_command(
         pattern = _combine_multi_patterns(file_sourced_patterns, fixed_strings=config.fixed_strings)
         config = dataclasses.replace(config, query_pattern=pattern, fixed_strings=False)
 
+    if ltl:
+        # An invalid --ltl query is a USER error, not an engine failure: surface it once,
+        # cleanly, through the same exit-2 taxonomy as path_not_found/invalid_regex --
+        # never as CPUBackend._compile_ltl's raw ValueError traceback (exit 1), and never
+        # as a BackendExecutionError (which would wrongly trigger the CPU-retry fallback).
+        from tensor_grep.backends.cpu_backend import CPUBackend
+
+        try:
+            CPUBackend._compile_ltl(pattern, 0)
+        except re.error as exc:
+            _exit_invalid_regex(exc, json_mode=json)
+        except ValueError as exc:
+            _exit_search_error("invalid_ltl_query", str(exc), json_mode=json)
+
     scanner = DirectoryScanner(config)
     candidate_files_ordered, candidate_files_set = _collect_candidate_files(
         scanner, paths_to_search
