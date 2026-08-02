@@ -113,8 +113,20 @@ Claude Code guidance for the **tensor-grep** repository.
   - **Advance (SOTA):** `tensor-grep-semantic-search-campaign`, `tensor-grep-benchmark-and-proof-toolkit`, `tensor-grep-research-frontier`, `tensor-grep-research-methodology`, `tensor-grep-large-repo-scale-campaign` (bounding scale/deadline on large repos).
   - **Extend:** `tensor-grep-add-language` (the symbol-graph language-onboarding checklist).
   - **Orchestrate:** `tensor-grep-backlog-campaign` (the multi-PR drain+build campaign playbook).
+- **Evidence discipline** (global, `~/.claude/skills/`) — **load one of these before trusting a green
+  signal or acting on a measured number; they are the general form of the AGENTS.md evidence laws
+  above, and this repo's dominant failure mode is a check that reports GREEN.**
+  - **`detect-the-false-green`** — about to trust a passing suite, a zero-match grep, a clean gate
+    run, or a count that confirms your prediction. Especially when the green licenses a claim
+    ("fixed", "clean", "safe to delete") or the check has never been observed to fail.
+  - **`author-a-probe-that-cannot-lie`** — BEFORE writing any script whose number you will act on
+    (latency, throughput, cost, hit-rate, pass-rate). Positive control, blind-vs-busy empty results,
+    arm interleaving, max-not-mean, shared-resource pollution windows. The dev box is shared, so the
+    pollution section is not optional here.
 - **Build/release discipline** (global, `~/.claude/skills/`): `dogfood-the-shipped-artifact`,
-  `verify-plan-against-code`, `supply-chain-hardening`, `worktree-fanout-verification-gate`,
+  `verify-plan-against-code` (its **Step 0** is the premise check: is the work still needed? A plan
+  against a fixed bug has perfectly resolving citations), `supply-chain-hardening`,
+  `worktree-fanout-verification-gate`,
   `anti-hang-test-protocol` (hang-class test hygiene: shell-timeout + fix-before-red-test),
   `instrumented-build-gate` (measure demand before building a speculative feature),
   `agent-liveness-probe` (probe via `SendMessage` before killing/`TaskStop`-ing a stalled subagent),

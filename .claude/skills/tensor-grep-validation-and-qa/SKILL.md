@@ -67,6 +67,22 @@ If the answer is "the same", it is not verification.**
 **Forms 1-5 assume the setup worked and the comparison was wrong. Form 6 inverts it: the assertion is
 fine and the SETUP silently no-opped, so the hostile arm was never hostile.** Ask both questions.
 
+**Two GLOBAL skills carry the general form of this Part — load them, they are not tensor-grep-specific
+and this file is not a substitute for either** (added 2026-08-02; a census found them referenced in
+ZERO tracked files here while `verify-plan-against-code` had 23, so nothing routed to them):
+
+- **`detect-the-false-green`** (`~/.claude/skills/`) — when a green result is about to LICENSE a
+  claim ("fixed", "clean", "covered", "safe to delete"), or when the check has never been observed
+  to fail. Covers the shapes this Part's forms are instances of: an early return, a skip nobody
+  reads, a platform-gated test, a confident zero, and an audit that re-implements the gate it audits.
+- **`author-a-probe-that-cannot-lie`** (`~/.claude/skills/`) — read it BEFORE writing any probe or
+  benchmark whose number you will act on. Positive control, blind-vs-busy empty results, arm
+  interleaving, max-not-mean, and shared-resource pollution windows — the last one binds here,
+  because the dev box is a shared server.
+
+Adding a Form to the family stays a two-file edit (`AGENTS.md` + this file). Adding a POINTER, like
+the two above, does not — those skills own their own content and must not be copied in.
+
 | Form | What it looks like | Direction of harm | Receipt |
 |---|---|---|---|
 | **1. Normalize-both-sides** | A comparator applies the same lossy transform to BOTH arms | **Masks** real defects — silent | #262 (CRLF/encoding-blind rg-parity oracles); surviving accepted limit at `tests/helpers/rg_parity.py:560`, now *proven* lossy and pinned by PR #748 |
