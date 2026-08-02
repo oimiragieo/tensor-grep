@@ -59,7 +59,7 @@ command name).
 | --- | --- | --- |
 | `tg orient PATH` | `PATH` | One-call codebase orientation: central files by import in-degree, entry points, symbol map, AST snippets |
 | `tg search PATTERN PATH --rank` | `PATTERN PATH` | Text search with a real hit re-ranked by BM25 relevance instead of grep order |
-| `tg find PATH "query"` | `PATH QUERY` | Whole-repo natural-language hybrid search (BM25 [+ CPU dense [+ MaxSim]] -> RRF -> budget-fitted `file:line`); v1.77.0, #189 |
+| `tg find PATH "query"` | `PATH QUERY` | Whole-repo natural-language hybrid search (BM25 [+ CPU dense] -> RRF -> budget-fitted `file:line`); v1.77.0, #189 |
 | `tg defs PATH SYMBOL` | `PATH SYMBOL` | Exact definition locations |
 | `tg source PATH SYMBOL` | `PATH SYMBOL` | Full source block for a symbol |
 | `tg refs PATH SYMBOL` | `PATH SYMBOL` | References to a symbol |
