@@ -8,12 +8,13 @@
 [![PyPI](https://img.shields.io/pypi/v/tensor-grep)](https://pypi.org/project/tensor-grep/)
 [![CI](https://github.com/oimiragieo/tensor-grep/actions/workflows/ci.yml/badge.svg)](https://github.com/oimiragieo/tensor-grep/actions/workflows/ci.yml)
 
-**Fast text, AST, indexed, and GPU-aware search CLI.** One binary for ripgrep-compatible text search, BM25 re-ranking, native AST search and rewrite, indexed acceleration for repeated queries, codebase orientation for agents, machine-readable context for AI agents, symbol call-graph analysis, security and compliance rule packs, and an embedded MCP server.
+**Fast text, AST, indexed, and GPU-aware search CLI.** One binary for ripgrep-compatible text search, BM25 re-ranking, native AST search and rewrite, indexed acceleration for repeated queries, codebase orientation for agents, one-call edit readiness and machine-readable context for AI agents, symbol call-graph analysis, security and compliance rule packs, and an embedded MCP server.
 
 ```bash
 pip install tensor-grep        # or: uvx tensor-grep
 
 tg PATTERN [PATH]                                    # ripgrep-compatible text search
+tg prepare src/ "add invoice tax field" --json       # one-call edit readiness for agents
 tg agent src/ "add invoice tax field" --json         # AI-agent context capsule
 tg blast-radius-render src/ create_invoice           # blast-radius for a symbol
 tg scan --config sgconfig.yml                        # AST structural search/rewrite
@@ -47,6 +48,26 @@ It ships as a native CLI on Windows, macOS, and Linux — no server required for
 - **`tg new`** — scaffold a new rule, test, or project. `tg new project NAME` creates a named AST project; `tg new` initializes the current directory.
 
 ### AI-agent context
+- **`tg prepare PATH "task" --json`** — one-call edit readiness. A single call returns everything an agent otherwise assembles from a multi-step tool loop: the primary edit target (file/symbol) with a confidence score, a callers/blast-radius floor with graph-trust provenance, detected validation commands, a machine-branchable `ask_user_before_editing` recommendation, and ready-to-use claim/evidence coordination hooks for multi-agent work.
+
+  ```bash
+  tg prepare src/ "add invoice tax field" --out capsule.json --json
+  ```
+
+  What comes back (abridged; real field names):
+
+  ```json
+  {
+    "primary_target": {"file": "...", "symbol": "...", "kind": "function", "confidence": 0.9},
+    "confidence": {"overall": 0.9, "downgrade_reasons": []},
+    "ask_user_before_editing": {"required": false, "reasons": []},
+    "blast_radius_floor": {"callers_count": 3, "top_callers": ["..."], "graph_trust_summary": {"...": "..."}},
+    "validation_commands": ["uv run pytest tests/unit/... -q"],
+    "coordination": {"claim": {"submitted": false}, "evidence": {"argv": ["..."]}}
+  }
+  ```
+
+  Budget-honest by default: `tg prepare` runs under a 60s `--deadline` (override it, or pass `--no-deadline`), and when the deadline binds it prints the full payload, exits `2` with `partial: true`, and downgrades the confidence score itself with named reasons — it never presents a truncated scan as a complete, full-confidence answer. `--out capsule.json` persists the capsule byte-identical to stdout so `tg evidence emit --capsule capsule.json` can reuse it; `--claim` submits an advisory ledger claim so concurrent agents see the overlap. See [docs/CONTRACTS.md](docs/CONTRACTS.md) for the full contract.
 - **`tg agent PATH "query" --json`** — Actionable Context Capsule: primary files/functions, alternative targets, snippets with line maps, validation commands, rollback/checkpoint metadata, confidence, and an ask-before-editing recommendation. Mixed-language queries report `validation_alignment` instead of silently pairing mismatched targets and validators.
 - **`tg orient [PATH]`** — one-call codebase orientation capsule for agents. Ranks files by import in-degree (imported-by-many = foundational), identifies entry points via main/cli/index/lib heuristics, produces a symbol map, and emits AST-boundary code snippets within a token budget. Pure-CPU, no API key, no GPU. Options: `--max-tokens` (default 3000; bounds the snippet budget only, not the whole capsule), `--max-central-files` (default 10), `--json`. JSON keys include `central_files[{file,graph_score,symbols}]`, `entry_points`, `symbol_map`, `snippets`, `token_estimate`, `token_budget_label`, `truncated`, `scan_limit`, `routing_reason="orient"`. Honest caveat: in-degree centrality is import-graph based and works best on Python; Rust/JS edges resolve fully only in whole-repo scans.
 - **`tg map`** — machine-readable file/symbol map of a codebase.
@@ -113,8 +134,8 @@ uvx tensor-grep
 > runs. The install script and npm below also set up the managed **native** `tg` binary
 > (`~/.tensor-grep/bin/tg`), which starts close to raw `rg` speed, and `tg upgrade` keeps an existing
 > native front door in sync with new releases. Either way, `rg` stays the fastest baseline for cold
-> literal search — tg's edge is agent-native context (`tg orient` / `tg callers` / `tg blast-radius` /
-> `tg find`), not raw grep speed.
+> literal search — tg's edge is agent-native context (`tg prepare` / `tg orient` / `tg callers` /
+> `tg blast-radius` / `tg find`), not raw grep speed.
 
 Supported on Windows, macOS, and Linux. See [docs/installation.md](docs/installation.md) for Homebrew, winget, and source build options.
 
@@ -131,6 +152,9 @@ tg -t py "class.*Service" api/
 
 # Deterministic ripgrep-shaped output (for automation)
 tg --format rg --sort path "import" src/
+
+# One-call edit readiness — target + confidence + blast-radius floor + validation commands
+tg prepare src/ "add invoice tax field" --out capsule.json --json
 
 # AI-agent context capsule — structured JSON for agent workflows
 tg agent src/ "add invoice tax field" --json
