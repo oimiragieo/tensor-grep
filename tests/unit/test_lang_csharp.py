@@ -31,6 +31,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 from tensor_grep.cli import agent_capsule, lang_csharp, lang_registry, repo_map
 
 # ---------------------------------------------------------------------------
@@ -118,6 +120,7 @@ def test_target_language_for_path_reports_csharp() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_defs_finds_class_with_tree_sitter_provenance(tmp_path: Path) -> None:
     _write_csharp_fixture(tmp_path)
 
@@ -134,6 +137,7 @@ def test_defs_finds_class_with_tree_sitter_provenance(tmp_path: Path) -> None:
     assert definition["file"].replace("\\", "/").endswith("Widget.cs")
 
 
+@pytest.mark.requires_grammar
 def test_defs_finds_interface_struct_enum_record_as_class_kind(tmp_path: Path) -> None:
     _write_csharp_fixture(tmp_path)
 
@@ -143,6 +147,7 @@ def test_defs_finds_interface_struct_enum_record_as_class_kind(tmp_path: Path) -
         assert payload["definitions"][0]["kind"] == "class", f"{name} should be kind=class"
 
 
+@pytest.mark.requires_grammar
 def test_defs_finds_constructor_and_method_as_function_kind(tmp_path: Path) -> None:
     _write_csharp_fixture(tmp_path)
 
@@ -159,6 +164,7 @@ def test_defs_finds_constructor_and_method_as_function_kind(tmp_path: Path) -> N
     assert all(d["kind"] == "function" for d in create_payload["definitions"])
 
 
+@pytest.mark.requires_grammar
 def test_defs_finds_both_interface_and_impl_methods_sharing_a_name(tmp_path: Path) -> None:
     _write_csharp_fixture(tmp_path)
 
@@ -177,6 +183,7 @@ def test_defs_finds_both_interface_and_impl_methods_sharing_a_name(tmp_path: Pat
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_source_returns_full_method_body(tmp_path: Path) -> None:
     _write_csharp_fixture(tmp_path)
 
@@ -194,6 +201,7 @@ def test_source_returns_full_method_body(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_csharp_imports_and_symbols_extracts_using_directive_targets(tmp_path: Path) -> None:
     source = (
         "using System;\n"
@@ -223,6 +231,7 @@ def test_csharp_imports_and_symbols_extracts_using_directive_targets(tmp_path: P
     assert any(s["name"] == "Program" and s["kind"] == "class" for s in symbols)
 
 
+@pytest.mark.requires_grammar
 def test_build_repo_map_surfaces_csharp_imports_and_symbols(tmp_path: Path) -> None:
     _write_csharp_fixture(tmp_path)
 
@@ -250,6 +259,7 @@ def test_build_repo_map_surfaces_csharp_imports_and_symbols(tmp_path: Path) -> N
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_csharp_imports_with_lines_extracts_using_directives_with_lines(tmp_path: Path) -> None:
     cs_file = _write_csharp_fixture(tmp_path)
 
@@ -281,6 +291,7 @@ def test_csharp_imports_with_lines_grammar_absent_returns_empty(
     assert lang_csharp.csharp_imports_with_lines(cs_file) == []
 
 
+@pytest.mark.requires_grammar
 def test_file_imports_returns_csharp_using_directives_with_lines(tmp_path: Path) -> None:
     cs_file = _write_csharp_fixture(tmp_path)
 
@@ -314,6 +325,7 @@ def test_file_imports_returns_csharp_using_directives_with_lines(tmp_path: Path)
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_refs_grammar_present_still_reports_import_resolution_gap(tmp_path: Path) -> None:
     _write_csharp_fixture(tmp_path)
 
@@ -412,6 +424,7 @@ def _deep_nested_csharp_source(depth: int) -> str:
     )
 
 
+@pytest.mark.requires_grammar
 def test_csharp_walkers_survive_pathologically_deep_ast_without_recursion_error(
     tmp_path: Path,
 ) -> None:

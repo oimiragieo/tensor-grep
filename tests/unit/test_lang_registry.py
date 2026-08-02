@@ -26,6 +26,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tensor_grep.cli import lang_c, lang_cpp, lang_csharp, lang_go, lang_registry, repo_map
 
 # ---------------------------------------------------------------------------
@@ -159,6 +161,7 @@ def test_python_provenance_is_always_python_ast_no_parser_gate() -> None:
     assert repo_map._symbol_navigation_provenance_for_path("foo.py") == "python-ast"
 
 
+@pytest.mark.requires_grammar
 def test_js_ts_and_rust_provenance_is_tree_sitter_when_grammar_present() -> None:
     # In this dev/test environment the tree-sitter grammar packages ARE installed (ast extra),
     # so the happy path should report "tree-sitter", not fall back.
@@ -167,18 +170,22 @@ def test_js_ts_and_rust_provenance_is_tree_sitter_when_grammar_present() -> None
     assert repo_map._symbol_navigation_provenance_for_path("foo.rs") == "tree-sitter"
 
 
+@pytest.mark.requires_grammar
 def test_go_provenance_is_tree_sitter_when_grammar_present() -> None:
     assert repo_map._symbol_navigation_provenance_for_path("foo.go") == "tree-sitter"
 
 
+@pytest.mark.requires_grammar
 def test_csharp_provenance_is_tree_sitter_when_grammar_present() -> None:
     assert repo_map._symbol_navigation_provenance_for_path("foo.cs") == "tree-sitter"
 
 
+@pytest.mark.requires_grammar
 def test_c_provenance_is_tree_sitter_when_grammar_present() -> None:
     assert repo_map._symbol_navigation_provenance_for_path("foo.c") == "tree-sitter"
 
 
+@pytest.mark.requires_grammar
 def test_cpp_provenance_is_tree_sitter_when_grammar_present() -> None:
     assert repo_map._symbol_navigation_provenance_for_path("foo.cpp") == "tree-sitter"
     assert repo_map._symbol_navigation_provenance_for_path("foo.h") == "tree-sitter"

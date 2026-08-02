@@ -39,6 +39,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tensor_grep.cli import agent_capsule, lang_registry, repo_map
 
 # ---------------------------------------------------------------------------
@@ -118,6 +120,7 @@ def test_target_and_provider_language_for_path_report_java() -> None:
     assert repo_map._provider_language_for_path("Widget.java") == "java"
 
 
+@pytest.mark.requires_grammar
 def test_java_provenance_is_tree_sitter_when_grammar_present() -> None:
     assert repo_map._symbol_navigation_provenance_for_path("Widget.java") == "tree-sitter"
 
@@ -136,6 +139,7 @@ def test_grammar_absent_monkeypatch_java_provenance_flips_to_grammar_missing(mon
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_java_imports_and_symbols_extracts_classes_interface_and_methods(tmp_path: Path) -> None:
     fixture = _write_java_fixture(tmp_path)
 
@@ -213,6 +217,7 @@ def test_java_imports_and_symbols_handles_unreadable_file(tmp_path: Path) -> Non
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_build_repo_map_surfaces_java_symbols_and_imports(tmp_path: Path) -> None:
     _write_java_fixture(tmp_path)
 
@@ -239,6 +244,7 @@ def test_build_repo_map_surfaces_java_symbols_and_imports(tmp_path: Path) -> Non
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_defs_finds_class_interface_and_method_with_tree_sitter_provenance(
     tmp_path: Path,
 ) -> None:
@@ -263,6 +269,7 @@ def test_defs_finds_class_interface_and_method_with_tree_sitter_provenance(
     assert method_payload["definitions"][0]["file"].replace("\\", "/").endswith("Widget.java")
 
 
+@pytest.mark.requires_grammar
 def test_source_returns_exact_method_body_for_java_symbol(tmp_path: Path) -> None:
     _write_java_fixture(tmp_path)
 
@@ -281,6 +288,7 @@ def test_source_returns_exact_method_body_for_java_symbol(tmp_path: Path) -> Non
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_file_imports_returns_java_import_statements_with_lines(tmp_path: Path) -> None:
     fixture = _write_java_fixture(tmp_path)
 
@@ -348,6 +356,7 @@ def test_grammar_absent_yields_no_fabricated_defs_and_resolution_gap(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_refs_and_callers_never_crash_and_flag_java_as_import_resolution_gap(
     tmp_path: Path,
 ) -> None:
@@ -370,6 +379,7 @@ def test_refs_and_callers_never_crash_and_flag_java_as_import_resolution_gap(
         assert "fail-closed" not in java_gap["reason"]
 
 
+@pytest.mark.requires_grammar
 def test_java_only_target_symbol_has_no_cross_file_callers_yet(tmp_path: Path) -> None:
     """Honesty check for the explicit deferral: a caller of a Java method living in a SEPARATE
     Java file is not yet discoverable (no cross-file reference/call resolver wired for Java) --

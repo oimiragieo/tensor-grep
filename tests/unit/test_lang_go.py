@@ -30,6 +30,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from tensor_grep.cli import agent_capsule, lang_go, lang_registry, repo_map
 
 # ---------------------------------------------------------------------------
@@ -161,6 +163,7 @@ def test_target_language_for_path_reports_go() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_defs_finds_exported_function_with_tree_sitter_provenance(tmp_path: Path) -> None:
     _write_go_fixture(tmp_path)
 
@@ -174,6 +177,7 @@ def test_defs_finds_exported_function_with_tree_sitter_provenance(tmp_path: Path
     assert definition["file"].replace("\\", "/").endswith("pkg/foo/foo.go")
 
 
+@pytest.mark.requires_grammar
 def test_defs_finds_method_and_struct(tmp_path: Path) -> None:
     _write_go_fixture(tmp_path)
 
@@ -191,6 +195,7 @@ def test_defs_finds_method_and_struct(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_refs_cross_package_call_has_call_ref_kind_and_import_resolution(
     tmp_path: Path,
 ) -> None:
@@ -231,6 +236,7 @@ def test_refs_cross_package_call_has_call_ref_kind_and_import_resolution(
     assert all(ref["ref_kind"] == "call" for ref in same_package_refs)
 
 
+@pytest.mark.requires_grammar
 def test_callers_cross_package_ref_kind_call(tmp_path: Path) -> None:
     _write_go_fixture(tmp_path)
 
@@ -242,6 +248,7 @@ def test_callers_cross_package_ref_kind_call(tmp_path: Path) -> None:
     assert all(c["ref_kind"] == "call" for c in payload["callers"])
 
 
+@pytest.mark.requires_grammar
 def test_type_position_reference_classified_as_type(tmp_path: Path) -> None:
     _write_go_fixture(tmp_path)
 
@@ -258,6 +265,7 @@ def test_type_position_reference_classified_as_type(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_unexported_symbol_has_no_cross_package_caller(tmp_path: Path) -> None:
     _write_go_fixture(tmp_path)
 
@@ -273,6 +281,7 @@ def test_unexported_symbol_has_no_cross_package_caller(tmp_path: Path) -> None:
     assert caller_files == {"foo.go"}
 
 
+@pytest.mark.requires_grammar
 def test_go_file_imports_symbol_from_definition_exported_gate(tmp_path: Path) -> None:
     fixture = _write_go_fixture(tmp_path)
     foo_source = fixture["foo.go"].read_text(encoding="utf-8")
@@ -297,6 +306,7 @@ def test_go_file_imports_symbol_from_definition_exported_gate(tmp_path: Path) ->
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_receiver_method_call_is_equifinal_low_confidence(tmp_path: Path) -> None:
     _write_go_fixture(tmp_path)
 
@@ -383,6 +393,7 @@ def test_grammar_absent_cli_exit_code_is_honest_not_found(tmp_path: Path, monkey
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_agent_capsule_reports_go_target_language_and_call_sites(tmp_path: Path) -> None:
     _write_go_fixture(tmp_path)
 
@@ -399,6 +410,7 @@ def test_agent_capsule_reports_go_target_language_and_call_sites(tmp_path: Path)
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_generic_receiver_method_associates_with_base_type_name(tmp_path: Path) -> None:
     go_mod = tmp_path / "go.mod"
     go_mod.write_text("module example.com/genmod\n\ngo 1.21\n", encoding="utf-8")
@@ -436,6 +448,7 @@ def test_generic_receiver_method_associates_with_base_type_name(tmp_path: Path) 
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_package_qualified_var_read_classified_as_value(tmp_path: Path) -> None:
     (tmp_path / "go.mod").write_text("module example.com/cfgmod\n\ngo 1.21\n", encoding="utf-8")
     config_dir = tmp_path / "pkg" / "config"
@@ -477,6 +490,7 @@ def test_package_qualified_var_read_classified_as_value(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_shadowed_alias_call_downgrades_to_receiver_heuristic_confidence(tmp_path: Path) -> None:
     (tmp_path / "go.mod").write_text("module example.com/shadowmod\n\ngo 1.21\n", encoding="utf-8")
 
@@ -534,6 +548,7 @@ def test_shadowed_alias_call_downgrades_to_receiver_heuristic_confidence(tmp_pat
         assert caller["resolution_confidence"] <= 0.7
 
 
+@pytest.mark.requires_grammar
 def test_go_package_defines_function_fallback_confirms_or_denies(tmp_path: Path) -> None:
     """Direct unit coverage of the F10 fallback path (``definition_dirs=None``, e.g. a standalone
     caller of ``go_references_and_calls`` outside the repo_map.py refs/callers dispatch)."""
@@ -619,6 +634,7 @@ def _write_go_imports_fixture(root: Path) -> Path:
     return go_file
 
 
+@pytest.mark.requires_grammar
 def test_go_imports_with_lines_extracts_grouped_and_single_import_statements(
     tmp_path: Path,
 ) -> None:
@@ -644,6 +660,7 @@ def test_go_imports_with_lines_grammar_absent_returns_empty(tmp_path: Path, monk
     assert lang_go.go_imports_with_lines(go_file) == []
 
 
+@pytest.mark.requires_grammar
 def test_file_imports_returns_go_import_statements_with_lines(tmp_path: Path) -> None:
     go_file = _write_go_imports_fixture(tmp_path)
 
@@ -750,6 +767,7 @@ def test_nested_go_mod_boundary_stops_import_resolution(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_go_reference_text_survives_form_feed_in_a_comment(tmp_path: Path) -> None:
     """F26 (audit #63): `_line_text`'s row-indexed lookup (lang_go.py:697/:707-709) used
     ``source.splitlines()`` for the row-indexed `text` array, but tree-sitter's OWN row
@@ -809,6 +827,7 @@ def _deep_nested_go_source(depth: int) -> str:
     )
 
 
+@pytest.mark.requires_grammar
 def test_go_walkers_survive_pathologically_deep_ast_without_recursion_error(
     tmp_path: Path,
 ) -> None:

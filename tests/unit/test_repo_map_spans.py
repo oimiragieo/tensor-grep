@@ -282,6 +282,7 @@ def test_build_repo_map_includes_javascript_class_spans(tmp_path: Path) -> None:
     assert symbol["end_line"] == 5
 
 
+@pytest.mark.requires_grammar
 def test_build_repo_map_includes_javascript_class_method_spans(tmp_path: Path) -> None:
     project = tmp_path / "project"
     src_dir = project / "src"
@@ -305,6 +306,7 @@ def test_build_repo_map_includes_javascript_class_method_spans(tmp_path: Path) -
     assert source["source"] == "static multiply(a, b) {\n    return a * b;\n  }\n"
 
 
+@pytest.mark.requires_grammar
 def test_context_edit_plan_maps_javascript_method_query_to_primary_span(
     tmp_path: Path,
 ) -> None:

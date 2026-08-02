@@ -33,6 +33,34 @@ def pytest_collection_modifyitems(config, items):
             if "gpu" in item.keywords:
                 item.add_marker(skip_gpu)
 
+    # `tree-sitter` lives in the OPTIONAL `ast` extra, so a plain `pip install tensor-grep` has no
+    # grammar. Tests that need one are then misleading in BOTH directions: the positive ones fail
+    # with messages that read like product bugs ("expected at least one reference to X"), and the
+    # EXCLUSION ones pass VACUOUSLY -- nothing can parse, so nothing is found, so the exclusion
+    # "holds". Measured 2026-08-02: 113 failures across 9 files, plus vacuous passers such as
+    # test_declarator_shape_4_function_pointer_variable_is_excluded.
+    #
+    # Marker, not a module-level importorskip: every affected file MIXES grammar-dependent tests
+    # with parser-independent ones (static registry metadata, missing-file/wrong-suffix
+    # short-circuits) AND with a deliberate `*_grammar_absent_*` family that must keep running in
+    # BOTH environments. A module gate would have skipped ~338 legitimately-passing tests.
+    #
+    # CI installs `.[dev]`, which contains tree-sitter, so this never fires there -- no coverage
+    # is lost; it only stops a parser-less dev env from reporting env problems as product bugs.
+    if not _tree_sitter_available():
+        skip_grammar = pytest.mark.skip(reason="needs the optional `ast` extra (tree-sitter)")
+        for item in items:
+            if "requires_grammar" in item.keywords:
+                item.add_marker(skip_grammar)
+
+
+def _tree_sitter_available() -> bool:
+    try:
+        import tree_sitter  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
 
 @pytest.fixture
 def sample_log_file(tmp_path):

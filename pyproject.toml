@@ -43,6 +43,7 @@ markers = [
   "snapshot: output format regression tests",
   "performance: performance benchmarks",
   "eval: agent-accuracy / capsule-ranking golden-set gate (tests/eval/, opt-in via -m eval)",
+  "requires_grammar: needs a tree-sitter grammar from the OPTIONAL `ast` extra (see tests/conftest.py)",
 ]
 addopts = [
   "--import-mode=importlib",
