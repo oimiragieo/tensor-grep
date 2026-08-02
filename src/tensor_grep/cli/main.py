@@ -6546,7 +6546,7 @@ def _run_ast_scan_payload(
         if candidate_files is not None
         else None
     )
-    backend_cache: dict[tuple[str | None, str, bool], ComputeBackend] = {}
+    backend_cache: dict[tuple[str | None, str, bool, bool], ComputeBackend] = {}
     backend_names_used: set[str] = set()
 
     total_matches = 0
@@ -6644,7 +6644,7 @@ def _run_ast_scan_payload(
             )
         except Exception:
             for rule, rule_cfg in wrapper_rules:
-                other_resolved.append((rule, rule_cfg, cast(ComputeBackend, wrapper_backend)))
+                other_resolved.append((rule, rule_cfg, cast("ComputeBackend", wrapper_backend)))
             wrapper_rules = []
 
     for rule, _rule_cfg in wrapper_rules:
@@ -6915,68 +6915,36 @@ def _describe_ast_backend_modes(backend_names: set[str]) -> str:
 def _select_ast_backend_for_pattern(
     base_config: "SearchConfig",
     pattern: str,
-    backend_cache: dict[tuple[str | None, str, bool], "ComputeBackend"] | None = None,
+    backend_cache: dict[tuple[str | None, str, bool, bool], "ComputeBackend"] | None = None,
 ) -> "ComputeBackend":
-    from tensor_grep.backends.ast_backend import is_native_ast_language
-    from tensor_grep.core.pipeline import ConfigurationError, Pipeline
+    """Thin forwarding shim onto `cli.ast_workflows._select_ast_backend_for_pattern` -- the
+    single implementation `tg run` and `tg scan`'s rule loop now share.
 
-    stripped_pattern = pattern.strip()
-    supports_native_pattern = bool(
-        stripped_pattern
-        and (
-            stripped_pattern.startswith("(")
-            or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", stripped_pattern)
-        )
+    This used to be an independently hand-maintained near-duplicate of the ast_workflows.py
+    function, and the two drifted: this copy silently dropped the `requires_ast_grep_wrapper`
+    fail-closed guard (ast_selector/ast_strictness/ast_stdin/glob), so a native-shaped pattern
+    (e.g. a bare identifier) combined with a wrapper-only knob would fall through to the native
+    tree-sitter backend -- which has no concept of those knobs and would silently ignore them --
+    instead of refusing per the Backend Fail-Closed Contract. See
+    `tests/unit/test_ast_workflows.py`'s Invariant C family for the behavior this pins.
+
+    The import stays function-local (not hoisted to module scope) deliberately: hoisting it
+    would eagerly pull in `tensor_grep.backends.ast_backend` -> `tensor_grep.core.config` on
+    every `tg` invocation, including `--help`, which is exactly the module-level import cost
+    this file's imports already avoid (see the `tensor_grep.io.scan_limits` comment above).
+    """
+    from tensor_grep.cli.ast_workflows import (
+        _select_ast_backend_for_pattern as _select_ast_backend_for_pattern_impl,
     )
-    pattern_kind = (
-        "native"
-        if (
-            base_config.ast_prefer_native
-            and supports_native_pattern
-            and is_native_ast_language(base_config.lang)
-        )
-        else "wrapper"
+
+    # String forward-reference form: "ComputeBackend" is only bound under TYPE_CHECKING in this
+    # module (see the import block above), so the bare-name form `cast(ComputeBackend, ...)`
+    # would raise NameError at runtime the moment this line executed -- mypy resolves the string
+    # the same way it resolves any other forward reference, with no runtime name lookup.
+    return cast(
+        "ComputeBackend",
+        _select_ast_backend_for_pattern_impl(base_config, pattern, backend_cache),
     )
-    cache_key = (base_config.lang, pattern_kind, base_config.ast_prefer_native)
-    if backend_cache is not None and cache_key in backend_cache:
-        return backend_cache[cache_key]
-
-    backend: ComputeBackend
-    if Pipeline.__module__ == "tensor_grep.core.pipeline":
-        try:
-            from tensor_grep.backends.ast_backend import AstBackend
-            from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend
-
-            ast_backend = AstBackend()
-            ast_wrapper = AstGrepWrapperBackend()
-            # Prefer the ast-grep wrapper whenever it is available: it is the stable,
-            # results-defining backend for BOTH pattern kinds. The native tree-sitter
-            # AstBackend uses a DIFFERENT DSL and returns DIFFERENT results, so it must not
-            # be silently preferred (that would change tg run/tg scan results on every
-            # ast-grep+tree-sitter box without CUDA). Native-as-CPU-default is task #141.
-            # Native is reached ONLY as the ast-grep-absent fallback for native patterns.
-            if ast_wrapper.is_available():
-                backend = ast_wrapper
-            elif pattern_kind == "native":
-                if ast_backend.is_available():
-                    backend = ast_backend
-                else:
-                    backend = Pipeline(
-                        config=replace(base_config, query_pattern=pattern)
-                    ).get_backend()
-            else:
-                raise ConfigurationError(
-                    "Explicit AST search requires AST dependencies: ast-grep wrapper backend "
-                    "is required for this pattern but is not available"
-                )
-        except ImportError:
-            backend = Pipeline(config=replace(base_config, query_pattern=pattern)).get_backend()
-    else:
-        backend = Pipeline(config=replace(base_config, query_pattern=pattern)).get_backend()
-
-    if backend_cache is not None:
-        backend_cache[cache_key] = backend
-    return backend
 
 
 @app.command(
