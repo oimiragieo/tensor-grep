@@ -270,12 +270,23 @@ the worktree, which is exactly how 519 lines hid behind an "ANCESTOR of main" ve
   reason the MaxSim and cAST negatives are kept indexed). Branch retained as the real-query
   counterpart to #641's synthetic de-risk asset; delete only if that asset is deliberately retired.
 
-- [ ] **`rescue/lazy-wave-stash-2026-08-01` -- likely obsolete, kept deliberately.** The orphaned
-  stash rescued during the parallel-worktree stash collision; a `temp-verify-preexisting-flake` hack
-  on a **v1.64.2** base, ~38 releases stale. Almost certainly discardable, but it is the receipt for
-  that incident. Delete once someone confirms nothing in it is wanted.
+- [x] **`rescue/lazy-wave-stash-2026-08-01` -- CLOSED 2026-08-02, and the commit MESSAGE nearly
+  cost the check.** I twice described this as "a `temp-verify-preexisting-flake` hack on a v1.64.2
+  base, almost certainly discardable" -- reading the subject line, not the diff. The CONTENT is a
+  real lazy-import perf change (task #94 PR-2) with a measured rationale: defer
+  `tensor_grep.backends.base` off every other `tg` command's hot import path (~5ms on that box),
+  plus a lazy `test_command`.
 
-## BLOCKED — environment (not CEO-gated, just needs hardware)
+  **Verified already shipped, both halves, against `origin/main`:** `BackendExecutionError` is
+  function-local at `main.py:4782` and `:7471`; `ast_workflows` is function-local at `:14949`
+  (checked by indentation, not by presence -- a module-level import would have looked identical to
+  a grep). Positive control: the same blob yields 6 top-level `tensor_grep` imports, so the search
+  works. Nothing in the branch is unshipped.
+
+  Kept on origin as the receipt for the parallel-worktree stash collision
+  (`git branch <name> stash@{0}` is the non-destructive rescue); no longer open work. **The lesson
+  is the near-miss: a commit subject is not a diff.** A `temp-verify-*` subject on a stash entry
+  described the WIP it was taken from, not the change it carried.
 
 - [ ] **#89** WSL `/mnt/c` absolute-path resolution in the native backend
 - [ ] **#90** `tg scan` ast-grep Linux/WSL portability + doctor false-"available" exit-127
