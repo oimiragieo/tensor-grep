@@ -279,7 +279,7 @@ Phase 0 of.
 
 **2026-07-16 addendum -- `tg find` CPU semantic moat (v1.77.0-v1.78.1, campaign #189).** Three build
 waves plus an MCP tool shipped whole-repo natural-language code search -- the CPU-only ColGrep-class
-response: BM25 + local CPU dense embeddings -> weighted RRF -> optional MaxSim -> budget-fitted
+response: BM25 + local CPU dense embeddings -> weighted RRF -> budget-fitted
 `file:line` output. `#626` (v1.77.0) shipped the CLI `tg find` through the standard 4-site registration
 path with a fail-closed matrix (`BackendExecutionError` -> exit-2; internal chunk-cap /
 `--max-repo-files` / `--deadline` truncation -> `result_incomplete=true` + exit-2, never a silent
@@ -2544,6 +2544,114 @@ gates were on the table, and the outcome split:
 When only one holds, write the retirement down with its measurement — a documented retirement stops
 the next session re-deriving it, and an over-eager gate teaches people to reach for `--no-verify`,
 which discredits every honest gate beside it.
+
+## A List Written At DISPATCH Time Is Stale By DEFINITION (2026-08-02)
+
+Three instances in ONE session, each in code I had just written, and the third **within an hour of
+writing the law about the first two**:
+
+| instrument | hardcoded | what it missed |
+|---|---|---|
+| the hourly backlog cron | PRs #886, #887 | #888, opened after the cron was armed -- it sat green with nothing watching it |
+| my eligibility scan | first line of each board item | a **CEO-GATED** item marked ELIGIBLE, because the gate sat on line 3 of a 4-line entry and even said "not an AI-doable item" |
+| my merge drain | PRs #891/#892/#893 | #894 and #895, opened after -- orphaned, no mechanism would land them |
+
+**Derive the set at USE time, never at authoring time.** `gh pr list --state open` on every pass, not
+a list baked in when the loop was written. Multi-line entries must be ACCUMULATED before matching --
+a line-based filter silently truncates the item it is judging.
+
+This is the same defect as the six prose enumerations this repo fixed the day before, and the CI
+comment that miscounted its own glob. **Writing the law does not immunise you against it**: the third
+instance was authored after the first two were documented. The only durable fix is structural -- if a
+loop can enumerate, it must not be handed a list.
+
+## A Constraint's REASON Defines Its Scope, Not Its Wording (2026-08-02)
+
+The WIP cap ("do not exceed ~3 open PRs") exists because **release-bearing** PRs drain one-per-publish
+and merging two into one publish window rejects the release push. I applied it to non-releasing
+`docs:`/`test:` PRs, which batch freely -- and throttled a five-item fan-out to one item per hour
+until the CEO called it out.
+
+Before applying a rule to a new case, state the rule's REASON and check that it holds there. The
+identical failure is on record from 2026-07-27 (a Workflow-only no-clock policy generalised to a
+hand-run script) and 2026-07-24 ("do not COMMIT this file" read as "do not FIX this file"). Third
+receipt for one law: **a constraint on one class is not a constraint on its neighbour.**
+
+## Briefing A MECHANISM Is Asserting A HYPOTHESIS (2026-08-02)
+
+Three times in one session I handed a subagent a mechanism and the subagent proved it wrong. It was
+right all three times:
+
+- **"the escalation grep returns 16"** -- 14 of those were inside gitignored `.tensor-grep/checkpoints/`
+  snapshots. Tracked-only: **2**. The agent's number was right and mine was contaminated.
+- **"imitate `nlp_backend_unavailable_fallback`, it sets `fallback_reason` like every sibling"** -- it
+  does neither. That branch is a silent swap too. My brief AND the investigation doc repeated the same
+  wrong claim.
+- **"the classifier drift triggers on metavar patterns (`$NAME`/`$$$ARGS`)"** -- metavars were
+  **already safe in both copies**; they fail the native-pattern regex either way. The real reachable
+  trigger is a native-SHAPED pattern plus `ast_selector`/`ast_strictness`/`ast_stdin`/`glob`.
+
+**Brief the SYMPTOM and the evidence; require the agent to re-derive the mechanism.** A brief that
+states the mechanism as fact invites an implementer to build the wrong fix and call it done -- and the
+PR body then ships your wrong explanation as the project's record. When corrected, fix the ARTIFACT
+(PR body, plan, doc), not just the next message.
+
+## After A Fix, A Grep Hit Is Often The Fix's OWN DOCUMENTATION (2026-08-02)
+
+The census-satisfied-by-a-comment trap has a mirror on the other side of the repair, and it fires
+exactly when you are verifying success:
+
+- `grep -c "cast(ComputeBackend,"` returned **1** after the NameError fix -- the hit was the docstring
+  explaining the trap.
+- `grep -c "requires_ast_grep_wrapper"` returned **1** in `main.py` after the shim collapse -- the hit
+  was the docstring explaining the drift.
+
+Both read as "still broken". Both were fully fixed.
+
+**Self-demonstration, one turn after writing this law.** Dogfooding v1.101.31, my own probe tested
+`'requires_ast_grep_wrapper' in ast.unparse(fn)` -- and `ast.unparse` INCLUDES THE DOCSTRING. It
+printed `VERDICT: REGRESSION` on a correct wheel. The fix is to count AST **nodes**
+(`ast.Name` / `ast.Attribute`), never string containment over a region that also contains prose:
+
+```python
+refs = [
+    n
+    for n in ast.walk(fn)
+    if (isinstance(n, ast.Name) and n.id == TARGET)
+    or (isinstance(n, ast.Attribute) and n.attr == TARGET)
+]
+```
+
+A verification probe is code, and it deserves the same scrutiny as the code it verifies -- **more**,
+when it is about to tell you something shipped correctly.
+
+## `git stash` Is UNSAFE Once Parallel Worktrees Exist (2026-08-02)
+
+Git worktrees **share `.git`'s stash refs**. Five agents working in five worktrees are all reaching
+into one drawer. A red-arm revert via `git stash` / `git stash pop` popped a DIFFERENT agent's stash
+and produced a conflict in a file that agent had never touched.
+
+Worse, that stash was **orphaned** -- its branch had no live worktree, so any parallel agent could
+have destroyed it. Preserved non-destructively with `git branch <rescue-name> stash@{0}`, which
+creates a permanent ref without checking out or popping.
+
+**For a red-arm revert, use `git checkout -- <file>` against a known commit, or a patch file.** Never
+`git stash` while another worktree is live. Second receipt for the lurking-stash hazard; parallelism
+is what made a known risk actually bite.
+
+## Committed Is Not Shipped (2026-08-02)
+
+A 27 KB research document sat **committed locally and never pushed** in its worktree. Its findings
+were read, reported to the CEO, and acted on -- while the artifact itself existed nowhere anyone else
+could reach. Discovered only by DERIVING the eligible-item list rather than trusting my own memory of
+what I had handled.
+
+**A subagent that reports "committed, not pushed, per instructions" has handed you an obligation, not
+a completion.** Land it in the same turn you consume its findings, or it is invisible work.
+
+Corollary, from the same session: **reconcile the board at completion, not "next cycle."** A board
+goes stale in the gap between finishing work and recording it; 17 stale entries accumulated exactly
+one deferral at a time, and one of them cost a dispatched agent (#58, already finished).
 
 ## Bottom Line
 

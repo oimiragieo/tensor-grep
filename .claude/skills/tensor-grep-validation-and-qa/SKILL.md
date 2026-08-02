@@ -286,6 +286,36 @@ Windows ACL specifics learned the hard way (#281):
   tests. Ask of every security assertion: what is the cheapest wrong implementation that still
   passes this?
 
+- **After a fix, a grep hit is often the fix's OWN DOCUMENTATION -- and this fires while you are
+  verifying SUCCESS.** The census-satisfied-by-a-comment trap has a mirror on the far side of the
+  repair. `grep -c "cast(ComputeBackend,"` returned 1 after the NameError fix (the docstring
+  explaining the trap); `grep -c "requires_ast_grep_wrapper"` returned 1 after a shim collapse (the
+  docstring explaining the drift). Both read "still broken"; both were fixed. **Self-demonstration:
+  one turn after writing this rule, a dogfood probe of the published wheel used
+  `'requires_ast_grep_wrapper' in ast.unparse(fn)` -- `ast.unparse` INCLUDES the docstring -- and
+  printed `VERDICT: REGRESSION` on a correct artifact.** Count AST NODES, never string containment
+  over a region that also holds prose: `[n for n in ast.walk(fn) if (isinstance(n, ast.Name) and
+  n.id == TARGET) or (isinstance(n, ast.Attribute) and n.attr == TARGET)]`. A verification probe is
+  code and deserves the same scrutiny as its subject -- MORE, when it is about to certify a ship.
+- **A list written at DISPATCH time is stale by definition; derive the set at USE time.** Three
+  instances in one session, the third authored AFTER the first two were documented: a monitoring cron
+  hardcoding two PR numbers (orphaning a third opened later), an eligibility filter reading only the
+  FIRST LINE of multi-line board items (marking a CEO-gated entry ELIGIBLE because the gate sat on
+  line 3), and a merge drain hardcoding three PRs (orphaning two opened after). Any loop that can
+  enumerate must enumerate (`gh pr list --state open` per pass), and multi-line records must be
+  ACCUMULATED before matching -- a line-based filter silently truncates the thing it is judging.
+  Writing the law does not immunise you; only the structural fix does.
+- **`git stash` is unsafe for a red-arm revert once parallel worktrees exist.** Worktrees SHARE
+  `.git`'s stash refs, so N agents in N worktrees reach into one drawer -- an agent's `stash pop`
+  took a different agent's stash and conflicted a file it had never touched. Use `git checkout --
+  <file>` against a known commit, or a patch file. To rescue an orphaned stash non-destructively:
+  `git branch <rescue-name> stash@{0}` (creates a permanent ref, does not check out or pop).
+- **A subagent's "committed locally, not pushed, per instructions" is an OBLIGATION, not a
+  completion.** A 27 KB investigation sat unpushed in a worktree while its findings were read,
+  reported and acted upon -- the artifact reachable by nobody. Land it in the same turn you consume
+  its conclusions. Same class: reconcile the board AT completion, never "next cycle" -- staleness
+  accrues exactly one deferral at a time.
+
 Related global skill: `measure-what-it-claims` (same family, generalised beyond this repo).
 
 ## Part 1 — What counts as evidence here (in order of trust)
