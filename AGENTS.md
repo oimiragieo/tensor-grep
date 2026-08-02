@@ -2545,6 +2545,27 @@ When only one holds, write the retirement down with its measurement — a docume
 the next session re-deriving it, and an over-eager gate teaches people to reach for `--no-verify`,
 which discredits every honest gate beside it.
 
+## I Reproduced An Error A SKILL Explicitly Warned About, By Writing Prose From Memory (2026-08-02)
+
+`tensor-grep-release-and-positioning` carries this row, verbatim:
+
+> `refactor:` | patch | **Not listed in `AGENTS.md`'s prose table, but the validator script treats
+> it as patch -- trust the script over the prose**
+
+Hours later I wrote a fresh release-class summary into `CLAUDE.md` and listed `refactor` among the
+non-releasing types. Ground truth, `scripts/validate_pr_title_semver.py`: `"refactor": "patch"`. **A
+`refactor:`-titled PR PUBLISHES.** Anyone trusting that line would have shipped a release believing
+they had not -- the mirror of the `chore:`-security-fix trap already recorded here, where a fix that
+should publish silently does not.
+
+- **The skill had already diagnosed this exact field as a prose-vs-script drift risk, named the
+  remedy, and I still re-derived the wrong value from memory.** A warning is not a guard.
+- **Never summarise a mapping; derive it.** That line now ships the command instead of the answer:
+  `grep -A12 _RELEASE_INTENTS scripts/validate_pr_title_semver.py`.
+- Found only because a routine "what should Semantic Release decide for this merge?" check printed
+  the real dict beside my recollection. **Print the authority next to the belief** -- the disagreement
+  is invisible if you only print one.
+
 ## Scoping The PATCH SITE Does Not Scope The OBSERVABLE (2026-08-02, #904)
 
 Three tests named `*_context_tests_deadline_folds_into_partial` passed on a baseline where

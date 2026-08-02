@@ -58,7 +58,10 @@ Claude Code guidance for the **tensor-grep** repository.
   on the next push (don't panic-rerun).
 
   **RELEASE CLASS IS PART OF THE FIX.** `scripts/validate_pr_title_semver.py` maps `feat`→minor,
-  `fix`/`perf`→patch, and `chore`/`docs`/`test`/`ci`/`build`/`refactor`/`bench`→**none**. The repo
+  `fix`/`perf`/**`refactor`**→patch, and `chore`/`docs`/`test`/`ci`/`build`/`bench`→**none**.
+  **`refactor:` RELEASES a patch** — it is the one people get wrong, and this file got it wrong
+  too until 2026-08-02. Derive rather than trust this line:
+  `grep -A12 _RELEASE_INTENTS scripts/validate_pr_title_semver.py`. The repo
   squash-merges, so the PR TITLE *is* the release semantic. A CWE-88 security fix was scoped as a
   `chore:` PR on 2026-08-01 — it would have merged, closed the ticket, and **never published**, with
   every tracker reading "shipped". Ask what the title does to the release BEFORE merging.
