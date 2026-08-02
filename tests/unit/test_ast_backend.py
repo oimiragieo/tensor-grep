@@ -1167,3 +1167,119 @@ class TestAstBackend:
         assert parser_two.parse_calls == 0
         assert parser_two.language.query_calls == 0
         assert read_text_spy.call_count == 0
+
+    def test_grammar_node_type_shaped_bare_word_silently_diverges_from_ast_grep_semantics(
+        self, tmp_path, monkeypatch
+    ):
+        """#141 investigation (2026-08-01 backlog audit): the existing fail-closed guard
+        (`test_bare_identifier_ast_grep_pattern_fails_closed_with_ast_dependency_message` above)
+        only fires when a bare-word ast-grep-DSL pattern (e.g. "calculateTotal") is NOT also a
+        real tree-sitter grammar node-type name -- the node-type-index lookup finds zero matches
+        for that case, falls through to compiling it as a query, and THAT raises the documented
+        ast-grep-dependency error.
+
+        But plenty of realistic search words a user types ARE grammar node-type names in one
+        language or another -- "identifier", "string", "call", "comment", "block", "parameters",
+        "assignment" among them. For those, the node-type-index lookup SUCCEEDS (real matches
+        exist) and `search()` returns a normal, non-empty SearchResult -- it never reaches the
+        fail-closed guard at all. ast-grep's CODE-PATTERN semantics for the identical pattern
+        text mean something completely different: "match literal source occurrences of the code
+        `identifier`" (a handful of hits), not "match every AST node of type `identifier`"
+        (dozens of hits: every variable, parameter, class, and function name in the file). Both
+        answers are non-empty, well-formed, and equally plausible-looking; nothing in the output
+        signals that the DSL was silently reinterpreted. This is the unguarded, silently-wrong
+        member of the #141 divergence family -- proven here directly against real tree-sitter
+        (no mocks), by asserting the native backend matches a line that does not even CONTAIN the
+        substring "identifier" (impossible under any code-pattern reading of that pattern)."""
+        pytest.importorskip("tree_sitter")
+        pytest.importorskip("tree_sitter_python")
+        monkeypatch.setenv("TENSOR_GREP_AST_CACHE", "0")  # hermetic: force the live index path
+        from tensor_grep.backends.ast_backend import AstBackend
+
+        backend = AstBackend()
+        assert backend.is_available() is True
+
+        file_path = tmp_path / "sample.py"
+        file_path.write_text(
+            "def compute(identifier):\n"
+            "    total = identifier + 1\n"
+            "    return total\n"
+            "\n"
+            "\n"
+            "class Foo:\n"
+            "    def bar(self):\n"
+            "        identifier = 5\n"
+            "        return identifier\n",
+            encoding="utf-8",
+        )
+
+        result = backend.search(str(file_path), "identifier", SearchConfig(ast=True, lang="python"))
+
+        # ast-grep's code-pattern reading of "identifier" can only ever match lines that
+        # literally contain the token "identifier" (lines 1, 2, 8, 9 -- 4 matches). The native
+        # tree-sitter node-type-index reading matches every `identifier`-typed AST node instead,
+        # which also covers "total"/"Foo"/"bar"/"self" -- lines with no "identifier" substring
+        # at all (3 "return total", 6 "class Foo:", 7 "def bar(self):").
+        literal_token_lines = {1, 2, 8, 9}
+        matched_lines = {m.line_number for m in result.matches}
+        assert matched_lines != literal_token_lines, (
+            "native AstBackend's node-type-index reading of a grammar-node-type-shaped bare "
+            "word happened to coincide with ast-grep's code-pattern reading for this fixture; "
+            "the whole point of this regression is that they normally do NOT agree"
+        )
+        lines_with_no_literal_token = {
+            line
+            for line in matched_lines
+            if "identifier" not in file_path.read_text(encoding="utf-8").splitlines()[line - 1]
+        }
+        assert lines_with_no_literal_token, (
+            "expected at least one matched line that does not even contain the substring "
+            "'identifier' -- proof this ran a structural node-type query, not an ast-grep "
+            "code-pattern match, for the exact same pattern text"
+        )
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "#141 follow-up, not fixed by this investigation: AstBackend._get_parser raises a "
+            "bare RuntimeError (not BackendExecutionError) for any _SUPPORTED_AST_LANGUAGES "
+            "entry outside _NATIVE_AST_LANGUAGES (java/csharp/php/c/cpp/...), and search() does "
+            "not catch it -- a Backend Fail-Closed Contract violation, distinct from (and "
+            "narrower than) the silent node-type-collision divergence proven above."
+        ),
+    )
+    def test_unsupported_but_documented_language_raises_backend_execution_error_not_bare_runtime_error(
+        self, tmp_path, monkeypatch
+    ):
+        """#141 investigation follow-on: `_SUPPORTED_AST_LANGUAGES` advertises languages (java,
+        csharp, php, c, cpp, ...) that `_get_parser` cannot actually construct a tree-sitter
+        parser for -- only `_NATIVE_AST_LANGUAGES` (python/javascript/typescript/tsx/rust) have a
+        real branch there; anything else falls to `_get_parser`'s `else: raise ValueError(...)`,
+        wrapped by `except Exception as e: raise RuntimeError(...) from e`. That RuntimeError is
+        never caught by `search()` (only the later `_get_query()` call is wrapped in
+        try/except-BackendExecutionError), so it escapes as a bare, uncaught RuntimeError --
+        violating this file's own Backend Fail-Closed Contract (every real failure must raise
+        BackendExecutionError, per backends/base.py and AGENTS.md). This is reachable in
+        production via `tg search --ast --lang java <bare-identifier-pattern>` whenever the
+        ast-grep wrapper is unavailable: `Pipeline.__init__`'s AST branch (core/pipeline.py) picks
+        AstBackend for any native-shaped pattern once the wrapper is absent, with no
+        `is_native_ast_language(config.lang)` check gating that choice. Currently xfail: fixing
+        it is a #141 follow-up, not this investigation's job."""
+        pytest.importorskip("tree_sitter")
+        pytest.importorskip("tree_sitter_java")
+        monkeypatch.setenv("TENSOR_GREP_AST_CACHE", "0")
+        from tensor_grep.backends.ast_backend import AstBackend
+        from tensor_grep.backends.base import BackendExecutionError
+
+        backend = AstBackend()
+        assert backend.is_available() is True
+
+        file_path = tmp_path / "Sample.java"
+        file_path.write_text("class Sample {\n    int someIdentifier = 1;\n}\n", encoding="utf-8")
+
+        with pytest.raises(BackendExecutionError):
+            backend.search(
+                str(file_path),
+                "someIdentifier",
+                SearchConfig(ast=True, ast_prefer_native=True, lang="java"),
+            )

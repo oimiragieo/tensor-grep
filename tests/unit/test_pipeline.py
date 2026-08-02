@@ -189,6 +189,54 @@ class TestPipeline:
                     ),
                 )
 
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "#141 investigation (2026-08-01): the ast_backend_available_fallback branch "
+            "(core/pipeline.py's AST arm) never sets fallback_reason or calls "
+            "logger.warning/warnings.warn, unlike every other silent backend swap in this file "
+            "(gpu_heuristic_*_fallback, nlp_backend_unavailable_fallback). But this swap changes "
+            "the QUERY LANGUAGE'S MEANING, not just which engine executes it -- native AstBackend "
+            "reads a bare word as a structural node-type query, the ast-grep wrapper it replaced "
+            "would have read the identical text as a code-pattern match (see "
+            "test_grammar_node_type_shaped_bare_word_silently_diverges_from_ast_grep_semantics in "
+            "test_ast_backend.py for a concrete case). Left xfail: wiring the warning is a #141 "
+            "follow-up, not this investigation's job."
+        ),
+    )
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    @patch("tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend")
+    def test_native_ast_fallback_for_a_grammar_node_type_pattern_should_surface_a_dsl_divergence_warning(
+        self, mock_ast_wrapper, mock_rust, mock_rg
+    ):
+        pytest.importorskip("tree_sitter")
+        pytest.importorskip("tree_sitter_python")
+        mock_rg.return_value.is_available.return_value = True
+        mock_rust.return_value.is_available.return_value = True
+        mock_ast_wrapper.return_value.is_available.return_value = False  # ast-grep absent
+
+        pipeline = Pipeline(
+            force_cpu=False,
+            config=SearchConfig(
+                ast=True,
+                lang="python",
+                # "identifier" is a bare word AND a real tree-sitter grammar node-type name --
+                # ast_prefer_native defaults to False (plain `tg search --ast`'s setting), so this
+                # exercises the unconditional wrapper-unavailable fallback branch, not the
+                # ast_prefer_native=True opt-in path.
+                query_pattern="identifier",
+            ),
+        )
+
+        assert pipeline.selected_backend_reason == "ast_backend_available_fallback"
+        assert pipeline.fallback_reason is not None, (
+            "native AstBackend silently serves a different query DSL (structural node-type "
+            "match) than the ast-grep wrapper it replaced (code-pattern match) would have for "
+            "the identical pattern text -- this swap must be visible via fallback_reason like "
+            "every other backend swap in Pipeline.__init__, but currently is not"
+        )
+
     @patch("tensor_grep.backends.cybert_backend.CybertBackend")
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
     @patch("tensor_grep.core.pipeline.RustCoreBackend")
