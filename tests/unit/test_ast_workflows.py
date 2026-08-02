@@ -608,6 +608,71 @@ def test_main_select_ast_backend_prefers_wrapper_when_ast_grep_available(monkeyp
     assert not isinstance(backend, _AvailableAstBackend)
 
 
+def test_main_select_ast_backend_should_reject_selector_pattern_when_wrapper_is_unavailable(
+    monkeypatch,
+):
+    """Drift regression: cli/main.py's `_select_ast_backend_for_pattern` (the copy `tg scan`'s
+    rule loop calls) was a hand-duplicated near-copy of cli/ast_workflows.py's version, and it
+    dropped the `requires_ast_grep_wrapper` guard (ast_selector/ast_strictness/ast_stdin/glob).
+    Without that guard, a NATIVE-shaped pattern (a bare identifier) combined with a wrapper-only
+    knob such as `--ast-selector`/`--glob` would silently fall through to the native tree-sitter
+    backend instead of refusing -- native has no concept of selector/strictness/stdin/globs and
+    would silently ignore them, producing a different (wrong) result set instead of an honest
+    error. ast_workflows.py's sibling function already refuses (ConfigurationError) in this exact
+    scenario (see test_select_ast_backend_should_reject_wrapper_pattern_when_wrapper_is_unavailable
+    just above); main.py's copy must match now that the two share one implementation."""
+    from tensor_grep.cli.main import _select_ast_backend_for_pattern as main_select
+
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_backend.AstBackend",
+        _AvailableAstBackend,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend",
+        _UnavailableAstGrepWrapperBackend,
+    )
+
+    with pytest.raises(ConfigurationError, match="ast-grep"):
+        main_select(
+            SearchConfig(
+                ast=True,
+                ast_prefer_native=True,
+                lang="python",
+                query_pattern="identifier",
+                ast_selector="some_selector",
+            ),
+            "identifier",
+            {},
+        )
+
+
+def test_main_select_ast_backend_delegates_to_ast_workflows_implementation(monkeypatch):
+    """Pin the de-duplication: `tg scan`'s `cli.main._select_ast_backend_for_pattern` must be a
+    pure forwarding shim onto `cli.ast_workflows._select_ast_backend_for_pattern` -- the single
+    implementation `tg run` and `tg scan` now share -- and must carry NO independent classifier
+    logic of its own. Proven by monkeypatching the ast_workflows implementation and asserting
+    main.py's call reaches it (same args, same return value) rather than some local copy. If a
+    future edit re-forks main.py's copy into a standalone function with its own logic, this
+    fails immediately instead of waiting for the next silent-wrong-answer report."""
+    from tensor_grep.cli import ast_workflows
+    from tensor_grep.cli.main import _select_ast_backend_for_pattern as main_select
+
+    calls = []
+    sentinel = object()
+
+    def fake_select(base_config, pattern, backend_cache=None):
+        calls.append((base_config, pattern, backend_cache))
+        return sentinel
+
+    monkeypatch.setattr(ast_workflows, "_select_ast_backend_for_pattern", fake_select)
+
+    cfg = SearchConfig(ast=True, ast_prefer_native=True, lang="python", query_pattern="identifier")
+    result = main_select(cfg, "identifier", {})
+
+    assert result is sentinel
+    assert calls == [(cfg, "identifier", {})]
+
+
 def test_run_command_picks_wrapper_when_ast_grep_available(monkeypatch, tmp_path, capsys):
     """Command-level proof of invariant C: `tg run` selects the ast-grep wrapper (whose
     search_many runs), NOT the native backend, when ast-grep is available -- even for a
