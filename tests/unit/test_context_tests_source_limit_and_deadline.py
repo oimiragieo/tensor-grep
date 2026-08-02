@@ -611,3 +611,52 @@ def test_callers_relevant_tests_for_symbol_call_site_receives_deadline(
     for call_kwargs in captured_calls:
         assert call_kwargs.get("deadline_monotonic") == sentinel
         assert call_kwargs.get("deadline_hit") is not None
+
+
+def test_every_context_tests_scan_on_the_callers_path_is_counted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Adversarial gate on #904, HIGH: `build_symbol_callers_from_map` reaches `_context_tests`
+    TWICE -- once inside the context pack (`_build_context_pack_from_map`) and once inside
+    `_relevant_tests_for_symbol` -- and only the first carried `_test_scan_counts`.
+
+    A budget expiring in the UNCOUNTED scan therefore still reported
+    ``test_candidates_scanned == test_candidates_total``: the attribution exonerating the very
+    stage that stopped, which is the failure this pair exists to prevent. The uncounted one is
+    also the likelier to trip, because `_test_source_limit` is deliberately not applied to it.
+
+    STRUCTURAL ON PURPOSE, and this is a limitation worth stating: it asserts every scan is
+    INSTRUMENTED, not that a particular timing produces a particular fraction. A clock-rigged
+    arm would prove more and would be timing-fragile; this one cannot flake and it fails
+    immediately if a future call site is added without the counter -- the defect that occurred.
+    """
+    # SAME fixture as test_callers_relevant_tests_for_symbol_call_site_receives_deadline: the
+    # second scan lives behind `if caller_files:`, so a repo map with no callers reaches
+    # _context_tests only ONCE and this guard would be vacuous. The `>= 2` precondition below is
+    # what makes that failure loud instead of silent -- it fired on the first draft of this test,
+    # which used the caller-less fixture.
+    project = _build_caller_fixture(tmp_path)
+    rmap = repo_map.build_repo_map(str(project))
+
+    seen: list[Any] = []
+    original = repo_map._context_tests
+
+    def _spy(*args: Any, **kwargs: Any) -> Any:
+        seen.append(kwargs.get("_test_scan_counts"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(repo_map, "_context_tests", _spy)
+    repo_map.build_symbol_callers_from_map(rmap, "widget")
+
+    assert len(seen) >= 2, (
+        "this guard is vacuous unless the callers path really reaches _context_tests more than "
+        f"once -- it was called {len(seen)} time(s)"
+    )
+    uncounted = [i for i, counts in enumerate(seen) if counts is None]
+    assert not uncounted, (
+        f"scan(s) at index {uncounted} of {len(seen)} received no _test_scan_counts, so a "
+        "deadline expiring there would report scanned == total for a stage that stopped"
+    )
+    assert len({id(c) for c in seen}) == 1, (
+        "every scan must share ONE counter object, else the emitted pair describes only one scan"
+    )

@@ -4205,6 +4205,7 @@ def _relevant_tests_for_symbol(
     fallback_tests: list[str] | None = None,
     deadline_monotonic: float | None = None,
     deadline_hit: _DeadlineBreakFlag | None = None,
+    _test_scan_counts: _TestScanCounts | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> list[str]:
     repo_root = _repo_map_root_dir(repo_map)
@@ -4293,6 +4294,12 @@ def _relevant_tests_for_symbol(
             # deliberately NOT applied at this call site.
             deadline_monotonic=deadline_monotonic,
             deadline_hit=deadline_hit,
+            # Adversarial gate on #904: this scan was UNCOUNTED, so a budget that expired here
+            # still reported scanned == total -- the attribution exonerating the stage that
+            # actually stopped, which is the failure the counter exists to prevent. It is also
+            # the likelier one to trip: `_test_source_limit` is deliberately not applied above,
+            # so it is the more expensive of the two.
+            _test_scan_counts=_test_scan_counts,
         )
         direct_definition_tests = []
         for current in tests:
@@ -9096,7 +9103,14 @@ def _context_tests(
     # `_TestScanCounts`). `total` is stamped BEFORE the loop so a deadline firing on the first
     # iteration still reports an honest denominator instead of 0/0.
     if _test_scan_counts is not None:
-        _test_scan_counts.total = len(tests)
+        # `+=`, NOT `=`. A single entry point can reach this function MORE THAN ONCE
+        # (`build_symbol_callers_from_map` hits both this call and the one in
+        # `_relevant_tests_for_symbol`), and the pair must stay a coherent fraction across all of
+        # them. Assigning would let a completed first scan be overwritten by a second, hiding the
+        # stop; naively summing `scanned` against a single-scan `total` would report
+        # scanned > total. Summing BOTH keeps `scanned <= total` an invariant and still shows
+        # `scanned < total` whenever any scan stopped early.
+        _test_scan_counts.total += len(tests)
     for current in tests:
         # opt10 #3: this whole-repo `for current in tests:` scan was the one loop feeding
         # _build_context_pack_from_map/_relevant_tests_for_symbol that never checked
@@ -16637,6 +16651,7 @@ def build_symbol_impact_from_map(
         fallback_tests=list(context_payload.get("tests", [])),
         deadline_monotonic=deadline_monotonic,
         deadline_hit=related_tests_deadline_hit,
+        _test_scan_counts=context_pack_test_scan_counts,
         _profiling_collector=_profiling_collector,
     )
     # impact's own DEDICATED --max-tests (design #96 item 2): cap BEFORE related_paths/test_matches
@@ -18284,6 +18299,7 @@ def build_symbol_callers_from_map(
         fallback_tests=list(context_payload.get("tests", [])),
         deadline_monotonic=deadline_monotonic,
         deadline_hit=related_tests_deadline_hit,
+        _test_scan_counts=context_pack_test_scan_counts,
         _profiling_collector=_profiling_collector,
     )
     # callers' own DEDICATED --max-tests (design #96 item 2): cap BEFORE related_paths derives
