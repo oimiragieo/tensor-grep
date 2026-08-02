@@ -2614,9 +2614,12 @@ printed `VERDICT: REGRESSION` on a correct wheel. The fix is to count AST **node
 (`ast.Name` / `ast.Attribute`), never string containment over a region that also contains prose:
 
 ```python
-refs = [n for n in ast.walk(fn)
-        if (isinstance(n, ast.Name) and n.id == TARGET)
-        or (isinstance(n, ast.Attribute) and n.attr == TARGET)]
+refs = [
+    n
+    for n in ast.walk(fn)
+    if (isinstance(n, ast.Name) and n.id == TARGET)
+    or (isinstance(n, ast.Attribute) and n.attr == TARGET)
+]
 ```
 
 A verification probe is code, and it deserves the same scrutiny as the code it verifies -- **more**,
