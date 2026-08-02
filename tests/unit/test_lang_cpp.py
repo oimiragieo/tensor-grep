@@ -44,6 +44,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 from tensor_grep.cli import agent_capsule, lang_cpp, lang_registry, repo_map
 
 # ---------------------------------------------------------------------------
@@ -156,6 +158,7 @@ def test_c_suffix_is_not_claimed_by_cpp() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_defs_finds_enum_scoped_enum_and_union_as_class_kind(tmp_path: Path) -> None:
     _write_cpp_fixture(tmp_path)
 
@@ -166,6 +169,7 @@ def test_defs_finds_enum_scoped_enum_and_union_as_class_kind(tmp_path: Path) -> 
         assert payload["definitions"][0]["provenance"] == "tree-sitter"
 
 
+@pytest.mark.requires_grammar
 def test_defs_finds_struct_tag_and_typedef_alias_sharing_different_names(tmp_path: Path) -> None:
     """`typedef struct Point {...} PointAlias;` -- the struct TAG (Point) and the typedef ALIAS
     (PointAlias) are two separate, legitimately different-named defs."""
@@ -180,6 +184,7 @@ def test_defs_finds_struct_tag_and_typedef_alias_sharing_different_names(tmp_pat
     assert alias_payload["definitions"][0]["kind"] == "type"
 
 
+@pytest.mark.requires_grammar
 def test_defs_finds_using_alias_as_type_kind(tmp_path: Path) -> None:
     _write_cpp_fixture(tmp_path)
 
@@ -189,6 +194,7 @@ def test_defs_finds_using_alias_as_type_kind(tmp_path: Path) -> None:
     assert payload["definitions"][0]["kind"] == "type"
 
 
+@pytest.mark.requires_grammar
 def test_defs_finds_namespace_as_namespace_kind(tmp_path: Path) -> None:
     _write_cpp_fixture(tmp_path)
 
@@ -287,6 +293,7 @@ def _write_declarator_shapes_fixture(root: Path) -> Path:
     return shapes_cpp
 
 
+@pytest.mark.requires_grammar
 def test_declarator_shape_1_prototype_is_kind_function(tmp_path: Path) -> None:
     _write_declarator_shapes_fixture(tmp_path)
 
@@ -296,6 +303,7 @@ def test_declarator_shape_1_prototype_is_kind_function(tmp_path: Path) -> None:
     assert payload["definitions"][0]["kind"] == "function"
 
 
+@pytest.mark.requires_grammar
 def test_declarator_shape_2_definition_is_kind_function(tmp_path: Path) -> None:
     _write_declarator_shapes_fixture(tmp_path)
 
@@ -305,6 +313,7 @@ def test_declarator_shape_2_definition_is_kind_function(tmp_path: Path) -> None:
     assert payload["definitions"][0]["kind"] == "function"
 
 
+@pytest.mark.requires_grammar
 def test_declarator_shape_3_function_returning_pointer_is_kind_function(tmp_path: Path) -> None:
     """The trap: `int *make_ptr(void);` -- the return-type `pointer_declarator` is outermost,
     wrapping `function_declarator` whose own `declarator` field is a bare identifier. A real
@@ -333,6 +342,7 @@ def test_declarator_shape_4_function_pointer_variable_is_excluded(tmp_path: Path
     assert payload.get("no_match") is True
 
 
+@pytest.mark.requires_grammar
 def test_declarator_shape_5_function_pointer_typedef_is_kind_type(tmp_path: Path) -> None:
     """Unchanged by the shape-4 fix: a function-pointer TYPEDEF goes through the separate
     `type_definition` branch, which always emits kind "type" regardless of
@@ -345,6 +355,7 @@ def test_declarator_shape_5_function_pointer_typedef_is_kind_type(tmp_path: Path
     assert payload["definitions"][0]["kind"] == "type"
 
 
+@pytest.mark.requires_grammar
 def test_declarator_shape_6_struct_is_kind_class(tmp_path: Path) -> None:
     _write_declarator_shapes_fixture(tmp_path)
 
@@ -354,6 +365,7 @@ def test_declarator_shape_6_struct_is_kind_class(tmp_path: Path) -> None:
     assert payload["definitions"][0]["kind"] == "class"
 
 
+@pytest.mark.requires_grammar
 def test_declarator_shape_7_redundant_paren_prototype_is_kind_function(tmp_path: Path) -> None:
     """Same Opus-gate-caught regression trap C's own fix disclosed: `int (foo)(void);` is a REAL
     function prototype with meaningless redundant parens around the name -- its
@@ -371,6 +383,7 @@ def test_declarator_shape_7_redundant_paren_prototype_is_kind_function(tmp_path:
     assert payload["definitions"][0]["kind"] == "function"
 
 
+@pytest.mark.requires_grammar
 def test_declarator_function_returning_function_pointer_is_kind_function(tmp_path: Path) -> None:
     """THE TRAP (shape 8 in the task matrix): a function that RETURNS a function pointer --
     `void (*get_handler(int x))(int);`, the same shape as the standard library's `signal()`
@@ -420,6 +433,7 @@ def test_declarator_shape_9a_filescope_member_function_pointer_variable_is_exclu
     assert payload.get("no_match") is True
 
 
+@pytest.mark.requires_grammar
 def test_declarator_shape_9b_inclass_member_function_pointer_variable_is_excluded(
     tmp_path: Path,
 ) -> None:
@@ -445,6 +459,7 @@ def test_declarator_shape_9b_inclass_member_function_pointer_variable_is_exclude
     assert payload.get("no_match") is True
 
 
+@pytest.mark.requires_grammar
 def test_declarator_shape_11_namespace_scoped_fnptr_variable_and_prototype(
     tmp_path: Path,
 ) -> None:
@@ -469,6 +484,7 @@ def test_declarator_shape_11_namespace_scoped_fnptr_variable_and_prototype(
     assert names.get("app") == "namespace"
 
 
+@pytest.mark.requires_grammar
 def test_using_alias_declaration_of_function_pointer_is_still_kind_type(tmp_path: Path) -> None:
     """C++-ONLY requirement matrix item 10: `using FP2 = void (*)(int);` -- CURRENT behavior on
     origin/main (unaffected by this fix): resolves via the `alias_declaration` branch, which reads
@@ -493,6 +509,7 @@ def test_using_alias_declaration_of_function_pointer_is_still_kind_type(tmp_path
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_defs_finds_inclass_prototype_and_outofclass_qualified_definition(
     tmp_path: Path,
 ) -> None:
@@ -511,6 +528,7 @@ def test_defs_finds_inclass_prototype_and_outofclass_qualified_definition(
     assert lines[0] != lines[1]
 
 
+@pytest.mark.requires_grammar
 def test_defs_finds_constructor_prototype_and_qualified_definition_plus_class(
     tmp_path: Path,
 ) -> None:
@@ -528,6 +546,7 @@ def test_defs_finds_constructor_prototype_and_qualified_definition_plus_class(
     assert kinds == ["class", "function", "function"]
 
 
+@pytest.mark.requires_grammar
 def test_defs_finds_template_function(tmp_path: Path) -> None:
     """`template <typename T> T identity(T value) {...}` -- the walker transparently descends
     into the `template_declaration` wrapper; the emitted kind is "function" (the wrapped
@@ -540,6 +559,7 @@ def test_defs_finds_template_function(tmp_path: Path) -> None:
     assert payload["definitions"][0]["kind"] == "function"
 
 
+@pytest.mark.requires_grammar
 def test_defs_finds_template_class_and_templated_qualified_method(tmp_path: Path) -> None:
     root = tmp_path
     (root / "box.cpp").write_text(
@@ -568,6 +588,7 @@ def test_defs_finds_template_class_and_templated_qualified_method(tmp_path: Path
     assert all(d["kind"] == "function" for d in get_payload["definitions"])
 
 
+@pytest.mark.requires_grammar
 def test_macro_prefixed_anonymous_union_does_not_emit_reserved_keyword_as_a_name(
     tmp_path: Path,
 ) -> None:
@@ -602,6 +623,7 @@ def test_reserved_keyword_helper_rejects_every_cpp_keyword() -> None:
     assert lang_cpp._is_clean_cpp_symbol_name("getValue")
 
 
+@pytest.mark.requires_grammar
 def test_defs_finds_destructor_under_bare_class_name(tmp_path: Path) -> None:
     """A destructor's `destructor_name` node's single named child is the bare identifier (no
     tilde) -- C's existing generic declarator-descent fallback resolves it for free."""
@@ -619,6 +641,7 @@ def test_defs_finds_destructor_under_bare_class_name(tmp_path: Path) -> None:
     assert kinds == ["class", "function", "function"]
 
 
+@pytest.mark.requires_grammar
 def test_operator_overload_is_honestly_excluded(tmp_path: Path) -> None:
     """`operator_name` has zero named children (no clean identifier to descend to) -- an
     operator overload is honestly excluded, not crashed on and not mis-named."""
@@ -642,6 +665,7 @@ def test_operator_overload_is_honestly_excluded(tmp_path: Path) -> None:
     assert not any("operator" in name for name in names)
 
 
+@pytest.mark.requires_grammar
 def test_anonymous_namespace_is_not_emitted_but_contents_are_reached(tmp_path: Path) -> None:
     root = tmp_path
     (root / "anon.cpp").write_text(
@@ -661,6 +685,7 @@ def test_anonymous_namespace_is_not_emitted_but_contents_are_reached(tmp_path: P
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_source_returns_full_function_body(tmp_path: Path) -> None:
     _write_cpp_fixture(tmp_path)
 
@@ -673,6 +698,7 @@ def test_source_returns_full_function_body(tmp_path: Path) -> None:
     assert "return value_;" in combined
 
 
+@pytest.mark.requires_grammar
 def test_source_for_inclass_prototype_plus_outofclass_definition_returns_both_blocks(
     tmp_path: Path,
 ) -> None:
@@ -685,6 +711,7 @@ def test_source_for_inclass_prototype_plus_outofclass_definition_returns_both_bl
     assert any("return value_;" in s["source"] for s in sources)
 
 
+@pytest.mark.requires_grammar
 def test_source_returns_class_and_namespace_blocks(tmp_path: Path) -> None:
     cpp_file = _write_cpp_fixture(tmp_path)
 
@@ -700,6 +727,7 @@ def test_source_returns_class_and_namespace_blocks(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_cpp_imports_and_symbols_extracts_include_targets(tmp_path: Path) -> None:
     source = '#include <cstdio>\n#include "local.h"\n\nint main() {\n    return 0;\n}\n'
     cpp_file = tmp_path / "main.cpp"
@@ -712,6 +740,7 @@ def test_cpp_imports_and_symbols_extracts_include_targets(tmp_path: Path) -> Non
     assert any(s["name"] == "main" and s["kind"] == "function" for s in symbols)
 
 
+@pytest.mark.requires_grammar
 def test_build_repo_map_surfaces_cpp_imports_and_symbols(tmp_path: Path) -> None:
     _write_cpp_fixture(tmp_path)
 
@@ -748,6 +777,7 @@ def test_build_repo_map_surfaces_cpp_imports_and_symbols(tmp_path: Path) -> None
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_cpp_imports_with_lines_extracts_includes_with_lines(tmp_path: Path) -> None:
     cpp_file = _write_cpp_fixture(tmp_path)
 
@@ -775,6 +805,7 @@ def test_cpp_imports_with_lines_grammar_absent_returns_empty(tmp_path: Path, mon
     assert lang_cpp.cpp_imports_with_lines(cpp_file) == []
 
 
+@pytest.mark.requires_grammar
 def test_file_imports_returns_cpp_include_directives_with_lines(tmp_path: Path) -> None:
     cpp_file = _write_cpp_fixture(tmp_path)
 
@@ -794,6 +825,7 @@ def test_file_imports_returns_cpp_include_directives_with_lines(tmp_path: Path) 
     assert all(entry["external"] is False for entry in payload["imports"])
 
 
+@pytest.mark.requires_grammar
 def test_file_imports_works_for_header_suffix(tmp_path: Path) -> None:
     """`.h` files go through the SAME extractor as `.cpp` files (both are "cpp" per the registry) --
     a header-only fixture must resolve its own #include directives too."""
@@ -807,6 +839,7 @@ def test_file_imports_works_for_header_suffix(tmp_path: Path) -> None:
     assert modules == {"vector", "helper.h"}
 
 
+@pytest.mark.requires_grammar
 def test_cpp_include_target_text_handles_macro_and_call_forms(tmp_path: Path) -> None:
     """`#include MACRO_HEADER` (macro-expanded) and `#include COMBINE(a, b)` (macro-combined)
     both parse as real preproc_include nodes (tree-sitter-cpp never runs a preprocessor) -- the
@@ -827,6 +860,7 @@ def test_cpp_include_target_text_handles_macro_and_call_forms(tmp_path: Path) ->
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_refs_grammar_present_still_reports_import_resolution_gap(tmp_path: Path) -> None:
     _write_cpp_fixture(tmp_path)
 
@@ -919,6 +953,7 @@ def _deep_nested_cpp_source(depth: int) -> str:
     return "int target()\n{\n    return " + ("(" * depth) + "1" + (")" * depth) + ";\n}\n"
 
 
+@pytest.mark.requires_grammar
 def test_cpp_walkers_survive_pathologically_deep_ast_without_recursion_error(
     tmp_path: Path,
 ) -> None:

@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tensor_grep.cli import mcp_server, repo_map
 
 
@@ -73,6 +75,7 @@ def test_python_ref_kind_classification_five_positions(tmp_path: Path) -> None:
     assert blast_payload["graph_trust_summary"]["evidence_counts"]["by_ref_kind"]["call"] == 1
 
 
+@pytest.mark.requires_grammar
 def test_js_ts_ref_kind_classification_five_positions(tmp_path: Path) -> None:
     """TS's grammar splits type-position symbols into a distinct ``type_identifier`` node type
     (never matched by the walker), so only the ``extends Symbol`` heritage clause -- parsed as a
@@ -125,6 +128,7 @@ def test_js_ts_ref_kind_classification_five_positions(tmp_path: Path) -> None:
     assert all(row["ref_kind"] == "call" for row in callers_payload["callers"])
 
 
+@pytest.mark.requires_grammar
 def test_rust_ref_kind_classification_five_positions(tmp_path: Path) -> None:
     """Rust's grammar splits type positions into ``type_identifier`` and bare field access into
     ``field_identifier`` (both distinct from ``identifier``), so neither reaches a row in T1 --
@@ -245,6 +249,7 @@ def test_rust_macro_argument_is_not_classified_as_call(tmp_path: Path) -> None:
     assert not any(row["ref_kind"] == "call" for row in use_refs.values())
 
 
+@pytest.mark.requires_grammar
 def test_rust_turbofish_call_classified_as_call(tmp_path: Path) -> None:
     """``foo::<T>()`` puts the function identifier under a ``generic_function`` node one layer
     below ``call_expression`` -- both the bare and path-qualified (``bar::Symbol::<T>()``) forms
@@ -307,6 +312,7 @@ def test_js_ts_as_and_satisfies_operand_keeps_own_kind(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_js_ts_new_expression_and_jsx_classified_as_call(tmp_path: Path) -> None:
     mod_path = tmp_path / "mod.tsx"
     mod_path.write_text("export class Symbol {}\n", encoding="utf-8")
@@ -376,6 +382,7 @@ def test_js_ts_classifier_exception_defaults_to_value_without_dropping_rows(
     assert all(row["ref_kind"] == "value" for row in use_refs)
 
 
+@pytest.mark.requires_grammar
 def test_rust_classifier_exception_defaults_to_value_without_dropping_rows(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -31,6 +31,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tensor_grep.cli import lang_php, lang_registry, repo_map
 
 # ---------------------------------------------------------------------------
@@ -130,6 +132,7 @@ def test_target_language_for_path_reports_php() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_php_imports_and_symbols_extracts_qualified_backslash_imports(tmp_path: Path) -> None:
     php_file = _write_php_fixture(tmp_path)
 
@@ -140,6 +143,7 @@ def test_php_imports_and_symbols_extracts_qualified_backslash_imports(tmp_path: 
     assert imports == ["App\\Contracts\\Named", "App\\Utils\\Str"]
 
 
+@pytest.mark.requires_grammar
 def test_php_imports_and_symbols_extracts_all_def_kinds_with_correct_lines(
     tmp_path: Path,
 ) -> None:
@@ -189,6 +193,7 @@ def test_php_imports_and_symbols_grammar_absent_returns_empty(tmp_path: Path, mo
     assert lang_php.php_imports_and_symbols(php_file) == ([], [])
 
 
+@pytest.mark.requires_grammar
 def test_php_trait_use_in_class_body_is_not_mistaken_for_a_namespace_import(
     tmp_path: Path,
 ) -> None:
@@ -210,6 +215,7 @@ def test_php_trait_use_in_class_body_is_not_mistaken_for_a_namespace_import(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_php_imports_with_lines_extracts_use_statements_with_lines(tmp_path: Path) -> None:
     php_file = _write_php_fixture(tmp_path)
 
@@ -233,6 +239,7 @@ def test_php_imports_with_lines_grammar_absent_returns_empty(tmp_path: Path, mon
     assert lang_php.php_imports_with_lines(php_file) == []
 
 
+@pytest.mark.requires_grammar
 def test_file_imports_returns_php_use_statements_with_lines(tmp_path: Path) -> None:
     php_file = _write_php_fixture(tmp_path)
 
@@ -253,6 +260,7 @@ def test_file_imports_returns_php_use_statements_with_lines(tmp_path: Path) -> N
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_php_parser_symbol_sources_finds_both_greet_declarations(tmp_path: Path) -> None:
     php_file = _write_php_fixture(tmp_path)
 
@@ -265,6 +273,7 @@ def test_php_parser_symbol_sources_finds_both_greet_declarations(tmp_path: Path)
     assert "S::upper" in impl["source"]
 
 
+@pytest.mark.requires_grammar
 def test_php_parser_symbol_sources_finds_top_level_function(tmp_path: Path) -> None:
     php_file = _write_php_fixture(tmp_path)
 
@@ -287,6 +296,7 @@ def test_php_parser_symbol_sources_no_match_returns_empty(tmp_path: Path) -> Non
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_build_repo_map_surfaces_php_symbols_and_imports(tmp_path: Path) -> None:
     _write_php_fixture(tmp_path)
 
@@ -305,6 +315,7 @@ def test_build_repo_map_surfaces_php_symbols_and_imports(tmp_path: Path) -> None
     assert php_import_entries[0]["provenance"] == "tree-sitter"
 
 
+@pytest.mark.requires_grammar
 def test_defs_finds_class_with_tree_sitter_provenance(tmp_path: Path) -> None:
     _write_php_fixture(tmp_path)
 
@@ -318,6 +329,7 @@ def test_defs_finds_class_with_tree_sitter_provenance(tmp_path: Path) -> None:
     assert definition["file"].replace("\\", "/").endswith("Widget.php")
 
 
+@pytest.mark.requires_grammar
 def test_defs_finds_interface_trait_and_enum_as_class_kind(tmp_path: Path) -> None:
     _write_php_fixture(tmp_path)
 
@@ -347,6 +359,7 @@ def test_grammar_absent_yields_no_fabricated_defs_and_fail_closed_gap(
     assert "Coverage gap detected" in defs_payload["message"]
 
 
+@pytest.mark.requires_grammar
 def test_grammar_present_still_flags_import_resolution_only_gap(tmp_path: Path) -> None:
     """audit #81 #4 parity: PHP's LanguageSpec sets import_update_target=None (the cross-file
     caller-graph is deferred), so _language_coverage_gaps_for_universe must flag that as an
