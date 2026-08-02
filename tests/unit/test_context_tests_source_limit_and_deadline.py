@@ -31,6 +31,34 @@ fix mirrors the identical per-item idiom every sibling loop in this module alrea
 symbol-scoring loop) -- checked at the iteration boundary, folding into the caller's existing
 ``partial``/``deadline_limit`` signal via the shared ``_DeadlineBreakFlag`` plumbing that already
 exists at both of ``_context_tests``'s call sites.
+
+PRE-FIX BASELINE MEASURED 2026-08-02 (orchestrator, before any merge) -- READ THIS FIRST.
+Run against unpatched `main` source in the real venv: **12 failed / 6 passed.** "It went red" is
+NOT the same as "the red arm is good", and this file needs work in both directions:
+
+WEAK RED ARMS (11 of the 12). They fail with `AttributeError` because the module has no
+`_CONTEXT_TESTS_SOURCE_FILE_CEILING` -- an ERROR while evaluating the assertion, not a
+demonstration that the property is broken. A test that errors is not a red arm. Only
+`test_callers_relevant_tests_for_symbol_call_site_receives_deadline` fails behaviourally
+(`deadline_monotonic` is None; the observed kwargs dict is `{'raw_query': 'widget'}`).
+
+VACUOUS-FOR-THEIR-NAME (3 of the 6 that PASS pre-fix):
+`test_impact_context_tests_deadline_folds_into_partial` and its refs/callers twins. Proof they
+cannot be observing what they are named for: pre-fix, `_context_tests` does not accept a
+`deadline_monotonic` parameter AT ALL (params are source_files, tests, terms, imports_by_file,
+file_distances, graph_scores, file_scores, raw_query) -- and the tests pass anyway. What they
+actually observe is the PRE-EXISTING file-scoring deadline folding into `partial`, because
+`_rig_deadline_via_score_file_path` patches `_score_file_path` GLOBALLY and that helper has five
+call sites; the budget is blown upstream before `_context_tests` is ever reached. Scope the rig to
+the new mechanism (advance the clock inside `_test_graph_score`) so the ONLY way `partial` can be
+set is via the new threading.
+
+The other three that pass pre-fix -- `..._test_source_limit_none_is_noop`,
+`test_tight_bound_would_have_changed_consumed_output`,
+`test_bound_covering_full_relevant_set_preserves_parity` -- are NOT swept: a "none is a no-op" test
+SHOULD pass in both arms, that is its job. Classify each individually; the question is whether some
+OTHER assertion already proves what it claims.
+
 """
 
 from __future__ import annotations
