@@ -1189,10 +1189,42 @@ for the next audit rather than re-opened as active work):**
   number (`tg_session_open` default `max_repo_files` 512->2000) — that is NOT this consolidation.
 - **#141** native `AstBackend` vs the ast-grep wrapper — DSL divergence + `is_available` broadening
   (design-stage; needs a design pass before a TDD build).
-- **#160** v1.71.3 dogfood Medium/Lower feature tail: `suggested_ignore`/orient-auto-deweight,
-  complete-scan `suggested_scope`, dynamic-import string/getattr breadth, cold-doctor daemon-autostart
-  hint — needs verify-against-code first (some sub-items may already be partially covered by shipped
-  work; re-check before scoping a PR).
+- **#160** — **CLOSED as reconciled (2026-08-01, worktree `feat/dogfood-feature-tail-160`)**: all
+  four named sub-features were ALREADY SHIPPED, execution-verified against real code + the real
+  CLI (not just grepped):
+  - `suggested_ignore`/orient-auto-deweight — `tg orient --help` shows `--no-auto-deweight`
+    (auto-deweight ON by default); `tg orient --json` on a fixture vendor tree returns
+    `suggested_ignore: ["third_party/**"]`, and `None` on a clean repo (positive + negative
+    control). `tg agent --json` carries the SAME `suggested_ignore` (M2 parity,
+    `agent_capsule.py::build_agent_capsule` -> `orient_capsule._suggested_ignore_from_deweighted_trees`),
+    verified live.
+  - complete-scan `suggested_scope` — the tie-confirmation path (not just scan-limit truncation)
+    already populates `suggested_scope` (`agent_capsule.py:3216-3241`, the "Dogfood fix" comment
+    there names this exact gap as already closed); covered by
+    `tests/unit/test_agent_capsule_tie_suggested_scope.py` (11/11 passing in this pass).
+  - dynamic-import string breadth — the module-level literal-string shapes (`__import__`,
+    `import_module`, `importlib.import_module`) plus the relative-import decoy exclusion shipped
+    via #504/#703 (`CHANGELOG.md` v1.93.0 entry, `repo_map.py::_python_dynamic_import_entry_for_call`).
+    The **getattr** half was live too, but only as an UNLABELED emergent case of the generic
+    `_string_literal_references`/`string_refs` regex pass (`getattr(mod, "Widget")` matched and was
+    reported, just lumped under the generic `"string-literal"` bucket, indistinguishable from an
+    unrelated string assignment) — genuinely under-specified breadth. Closed the gap this pass:
+    `_classify_string_reference` now returns a dedicated `"getattr-arg"` occurrence (same
+    same-line, unbalanced-parens heuristic precision as the pre-existing `"decorator-arg"` check),
+    additive-only (no row-count change, only a more specific label on an already-matched row).
+    TDD: `tests/unit/test_repo_map_targets.py::test_string_literal_references_classifies_getattr_arg`
+    (red-arm proved by reverting `repo_map.py` and re-running — confirmed `git diff` showed zero
+    `getattr-arg` occurrences before the revert-triggered failure). Not an MCP contract-version
+    bump: `string_refs[].occurrence` was never a closed vocabulary (`_classify_string_reference`'s
+    own docstring already called it an open "any other quoted occurrence" bucket, and no
+    `CONTRACTS.md`/wire-surface governance test enumerates it), so widening it is the same kind of
+    change as the pre-existing `"fstring"` value, not a new field.
+  - cold-doctor daemon-autostart hint — `tg doctor --json` -> `session_daemon.autostart:
+    "on-first-use (not yet warmed)"` (`main.py::_doctor_session_daemon_autostart_status`, "v1.92.1
+    dogfood item 5"); covered by 4 passing tests in `test_cli_modes.py`.
+
+  The backlog line's own wording was accurate about needing "verify-against-code first" — it
+  correctly hedged rather than asserting these were open. No CORRECTION needed to any other doc.
 
 ### LOW-severity follow-ups (non-blocking)
 - **#862** (audit S3) add `--` sentinel before `agent_capsule` GPU `evidence_path` positional

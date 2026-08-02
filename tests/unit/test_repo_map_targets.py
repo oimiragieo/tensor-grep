@@ -115,6 +115,34 @@ def test_string_literal_references_word_boundary(tmp_path: Path) -> None:
     assert lines == {2}
 
 
+def test_string_literal_references_classifies_getattr_arg(tmp_path: Path) -> None:
+    """#160 dogfood-tail (getattr breadth): `getattr(obj, "Widget")` is a dynamic-dispatch
+    reference the precise AST pass can never see (the attribute name is a runtime string, not
+    syntax) -- it must be classified distinctly from an arbitrary string-literal assignment, the
+    same way an ``@patch(...)`` decorator argument already gets its own ``decorator-arg`` kind
+    instead of being lumped into generic ``string-literal``.
+    """
+    target = tmp_path / "mod.py"
+    target.write_text(
+        "\n".join([
+            "def dispatch(handlers, name):",
+            '    direct = getattr(handlers, "Widget")',
+            "    indirect = getattr(handlers, name)",
+            '    backend = "Widget"',
+        ])
+        + "\n",
+        encoding="utf-8",
+    )
+    refs = repo_map._string_literal_references(target, "Widget")
+    by_line = {ref["line"]: ref["occurrence"] for ref in refs}
+    # line 2: getattr(..., "Widget") -- dynamic-dispatch, distinctly classified.
+    assert by_line[2] == "getattr-arg"
+    # line 3: getattr(handlers, name) has no "Widget" string at all -- nothing to misclassify.
+    assert 3 not in by_line
+    # line 4: an unrelated string-literal assignment stays generic.
+    assert by_line[4] == "string-literal"
+
+
 # --- H7: exact-symbol primary target ----------------------------------------
 
 

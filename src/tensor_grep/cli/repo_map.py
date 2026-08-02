@@ -16711,15 +16711,30 @@ def _dedupe_symbol_references(references: list[dict[str, Any]]) -> list[dict[str
     return deduped
 
 
+_GETATTR_ARG_PREFIX_RE = re.compile(r"getattr\s*\([^()]*,\s*$")
+
+
 def _classify_string_reference(line_text: str, match_start: int) -> str:
     """Classify a quoted-string occurrence of a symbol.
 
     Returns one of ``"decorator-arg"`` (inside a ``@deco(...)`` call on the same
-    line), ``"fstring"`` (the literal is an f-string), or ``"string-literal"``
-    (any other quoted occurrence, e.g. ``routing_backend="Foo"`` or an
-    ``__all__`` entry). These are *not* AST references; they exist so that
-    rename-aware agents can find ``@patch("module.Symbol")`` targets and string
-    assignments that the precise AST pass intentionally excludes.
+    line), ``"fstring"`` (the literal is an f-string), ``"getattr-arg"``
+    (the name argument of a ``getattr(obj, "Symbol")`` call -- #160 dogfood-tail
+    "getattr breadth"), or ``"string-literal"`` (any other quoted occurrence, e.g.
+    ``routing_backend="Foo"`` or an ``__all__`` entry). These are *not* AST
+    references; they exist so that rename-aware agents can find
+    ``@patch("module.Symbol")`` targets, ``getattr(mod, "Symbol")`` dynamic
+    dispatch, and string assignments that the precise AST pass intentionally
+    excludes.
+
+    ``getattr-arg`` detection is a same-line, unbalanced-parens heuristic (the
+    same precision level as the pre-existing ``decorator-arg`` check above, not
+    a full AST match) -- it requires the text between ``getattr(`` and the
+    matched quote to contain no further ``(``/``)`` at all, so
+    ``getattr(get_handler(), "Symbol")`` falls through to the generic
+    ``"string-literal"`` bucket rather than a guessed match. Fails closed:
+    missing a getattr-arg classification only under-labels an occurrence that
+    is still reported (as "string-literal"), never drops the row itself.
     """
 
     prefix = line_text[:match_start]
@@ -16729,6 +16744,8 @@ def _classify_string_reference(line_text: str, match_start: int) -> str:
     quote_lead = prefix.rstrip()
     if quote_lead.endswith(("f'", 'f"', "rf'", 'rf"', "fr'", 'fr"', "f'''", 'f"""')):
         return "fstring"
+    if _GETATTR_ARG_PREFIX_RE.search(prefix):
+        return "getattr-arg"
     return "string-literal"
 
 
