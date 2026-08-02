@@ -267,6 +267,9 @@ def test_edit_plan_context_limits_test_matching_to_requested_file_budget(monkeyp
         # count), not the unrelated deadline plumbing.
         deadline_monotonic=None,
         deadline_hit=None,
+        # opt10 #3 (counter): _context_tests also grew `_test_scan_counts`, the dedicated
+        # attribution object -- accepted and ignored here for the same reason as the two above.
+        _test_scan_counts=None,
     ):
         seen_source_counts.append(len(source_files))
         return []

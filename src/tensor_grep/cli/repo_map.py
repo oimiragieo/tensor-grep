@@ -758,6 +758,29 @@ def _deadline_monotonic_from_seconds(deadline_seconds: float | None) -> float | 
     return time.monotonic() + deadline_seconds
 
 
+class _TestScanCounts:
+    """opt10 #3: how much of the test universe ``_context_tests`` actually scanned.
+
+    DELIBERATELY NOT a field on ``_DeadlineBreakFlag``. That object is this module's
+    general-purpose mutable out-signal and ``tg callers`` reports 23 consumers across six modules
+    (agent_capsule, codemap, docs_coverage, inventory, main, repo_map), so widening it for one
+    caller's benefit would be a 23-consumer change serving a 3-consumer need. This object is passed
+    only where the counts are wanted; its blast radius is one.
+
+    WHY THE COUNTS EXIST: ``partial`` / ``deadline_limit.deadline_exceeded`` are SHARED booleans
+    that any of this module's 24 ``time.monotonic`` readers can set, so a test asserting them
+    cannot say WHICH stage ran out of budget -- which is how three tests named for the
+    ``_context_tests`` deadline passed on a baseline where ``_context_tests`` accepted no deadline
+    at all. Nothing else scans test candidates, so this pair attributes the stop.
+    """
+
+    __slots__ = ("scanned", "total")
+
+    def __init__(self) -> None:
+        self.scanned = 0
+        self.total = 0
+
+
 class _DeadlineBreakFlag:
     """Task #61: mutable out-signal for whether a deadline-scoped sibling loop broke early.
 
@@ -9063,11 +9086,17 @@ def _context_tests(
     raw_query: str | None = None,
     deadline_monotonic: float | None = None,
     deadline_hit: _DeadlineBreakFlag | None = None,
+    _test_scan_counts: _TestScanCounts | None = None,
 ) -> list[dict[str, Any]]:
     related: list[dict[str, Any]] = []
     allow_unrelated_framework_scan = len(tests) <= _FRAMEWORK_TEST_PATTERN_SMALL_TEST_LIMIT
     source_stems = {Path(current).stem.lower() for current in source_files}
     source_tokens = _source_tokens(source_files)
+    # opt10 #3: attribute WHICH stage ran out of budget -- `partial` alone cannot (see
+    # `_TestScanCounts`). `total` is stamped BEFORE the loop so a deadline firing on the first
+    # iteration still reports an honest denominator instead of 0/0.
+    if _test_scan_counts is not None:
+        _test_scan_counts.total = len(tests)
     for current in tests:
         # opt10 #3: this whole-repo `for current in tests:` scan was the one loop feeding
         # _build_context_pack_from_map/_relevant_tests_for_symbol that never checked
@@ -9082,6 +9111,8 @@ def _context_tests(
             if deadline_hit is not None:
                 deadline_hit.hit = True
             break
+        if _test_scan_counts is not None:
+            _test_scan_counts.scanned += 1
         score = _score_file_path(current, terms)
         reasons: list[str] = []
         if score > 0:
@@ -9150,6 +9181,7 @@ def _build_context_pack_from_map(
     _test_source_limit: int | None = None,
     deadline_monotonic: float | None = None,
     deadline_hit: _DeadlineBreakFlag | None = None,
+    _test_scan_counts: _TestScanCounts | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     with _profiling_phase(_profiling_collector, "context_scoring"):
@@ -9465,6 +9497,7 @@ def _build_context_pack_from_map(
             # (own_deadline_hit.hit, checked by build_context_pack_from_map's caller below).
             deadline_monotonic=deadline_monotonic,
             deadline_hit=deadline_hit,
+            _test_scan_counts=_test_scan_counts,
         )
         ranked_tests = [str(item["path"]) for item in test_matches]
 
@@ -15187,6 +15220,7 @@ def build_context_pack_from_map(
     _test_source_limit: int | None = None,
     deadline_monotonic: float | None = None,
     deadline_hit: _DeadlineBreakFlag | None = None,
+    _test_scan_counts: _TestScanCounts | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     payload = dict(repo_map)
@@ -15212,6 +15246,7 @@ def build_context_pack_from_map(
         _test_source_limit=_test_source_limit,
         deadline_monotonic=deadline_monotonic,
         deadline_hit=own_deadline_hit,
+        _test_scan_counts=_test_scan_counts,
         _profiling_collector=_profiling_collector,
     )
     if own_deadline_hit.hit:
@@ -16546,6 +16581,7 @@ def build_symbol_impact_from_map(
     # -- previously unbounded even when this same deadline_monotonic already gated the sibling
     # scans just below (the #52 fix (loop C) comment).
     context_pack_deadline_hit = _DeadlineBreakFlag()
+    context_pack_test_scan_counts = _TestScanCounts()
     context_payload = build_context_pack_from_map(
         repo_map,
         symbol,
@@ -16558,6 +16594,7 @@ def build_symbol_impact_from_map(
         _test_source_limit=_CONTEXT_TESTS_SOURCE_FILE_CEILING,
         deadline_monotonic=deadline_monotonic,
         deadline_hit=context_pack_deadline_hit,
+        _test_scan_counts=context_pack_test_scan_counts,
         _profiling_collector=_profiling_collector,
     )
     # #52 fix (loop C): build_symbol_impact_from_map previously threaded NO deadline at all into
@@ -16716,6 +16753,15 @@ def build_symbol_impact_from_map(
     ):
         payload["partial"] = True
         payload["deadline_limit"] = {"deadline_exceeded": True}
+        # opt10 #3: attribute WHICH stage ran out of budget. `deadline_exceeded` is a SHARED
+        # boolean any of this module's time.monotonic readers can set, so it cannot name the
+        # stage. Additive, and only when _context_tests actually ran -- mirrors the sibling
+        # scanned/total pairs already in this payload. See docs/CONTRACTS.md.
+        if context_pack_test_scan_counts.total:
+            payload["deadline_limit"]["test_candidates_scanned"] = (
+                context_pack_test_scan_counts.scanned
+            )
+            payload["deadline_limit"]["test_candidates_total"] = context_pack_test_scan_counts.total
     _copy_scan_limit(payload, defs_payload)
     _copy_partial_signal(payload, defs_payload)
     return _attach_profiling(payload, _profiling_collector)
@@ -16901,6 +16947,7 @@ def build_symbol_refs_from_map(
     # (repo_map.py:16431 / 15011); on a very large session repo this in-memory stage could still
     # overrun the 60s budget. Fold its early-break into the refs partial signal below.
     context_pack_deadline_hit = _DeadlineBreakFlag()
+    context_pack_test_scan_counts = _TestScanCounts()
     context_payload = build_context_pack_from_map(
         repo_map,
         symbol,
@@ -16912,6 +16959,7 @@ def build_symbol_refs_from_map(
         _test_source_limit=_CONTEXT_TESTS_SOURCE_FILE_CEILING,
         deadline_monotonic=deadline_monotonic,
         deadline_hit=context_pack_deadline_hit,
+        _test_scan_counts=context_pack_test_scan_counts,
     )
     repo_root = _repo_map_root_dir(repo_map)
     refs_universe_files, refs_universe_tests = _repo_map_file_and_test_universe(repo_map)
@@ -17158,6 +17206,15 @@ def build_symbol_refs_from_map(
             "reference_files_scanned": refs_files_scanned,
             "reference_files_total": len(bounded_files),
         }
+        # opt10 #3: attribute WHICH stage ran out of budget. `deadline_exceeded` is a SHARED
+        # boolean any of this module's time.monotonic readers can set, so it cannot name the
+        # stage. Additive, and only when _context_tests actually ran -- mirrors the sibling
+        # scanned/total pairs already in this payload. See docs/CONTRACTS.md.
+        if context_pack_test_scan_counts.total:
+            payload["deadline_limit"]["test_candidates_scanned"] = (
+                context_pack_test_scan_counts.scanned
+            )
+            payload["deadline_limit"]["test_candidates_total"] = context_pack_test_scan_counts.total
     if refs_ceiling_hit:
         # backlog #1 chokepoint: the caller-scan ceiling dropped files the map otherwise covers
         # -> the reference set is not exhaustive, so mark it honestly incomplete (exit-2 contract).
@@ -18198,6 +18255,7 @@ def build_symbol_callers_from_map(
     # task #103 Fix 2: thread the shared deadline into context-pack's own symbol-scoring loop too
     # -- previously unbounded even though it feeds the same 4-way partial fold-in just below.
     context_pack_deadline_hit = _DeadlineBreakFlag()
+    context_pack_test_scan_counts = _TestScanCounts()
     context_payload = build_context_pack_from_map(
         repo_map,
         symbol,
@@ -18209,6 +18267,7 @@ def build_symbol_callers_from_map(
         _test_source_limit=_CONTEXT_TESTS_SOURCE_FILE_CEILING,
         deadline_monotonic=deadline_monotonic,
         deadline_hit=context_pack_deadline_hit,
+        _test_scan_counts=context_pack_test_scan_counts,
         _profiling_collector=_profiling_collector,
     )
     # #52 fix (loop B): this sibling loop used to be unbounded even though it feeds the
@@ -18285,6 +18344,15 @@ def build_symbol_callers_from_map(
             "caller_files_scanned": caller_files_scanned,
             "caller_files_total": len(bounded_files),
         }
+        # opt10 #3: attribute WHICH stage ran out of budget. `deadline_exceeded` is a SHARED
+        # boolean any of this module's time.monotonic readers can set, so it cannot name the
+        # stage. Additive, and only when _context_tests actually ran -- mirrors the sibling
+        # scanned/total pairs already in this payload. See docs/CONTRACTS.md.
+        if context_pack_test_scan_counts.total:
+            payload["deadline_limit"]["test_candidates_scanned"] = (
+                context_pack_test_scan_counts.scanned
+            )
+            payload["deadline_limit"]["test_candidates_total"] = context_pack_test_scan_counts.total
     payload["ranking_quality"] = _ranking_quality(
         context_payload["file_matches"],
         context_payload["test_matches"],

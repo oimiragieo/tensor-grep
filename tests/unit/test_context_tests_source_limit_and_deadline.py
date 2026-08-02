@@ -478,7 +478,13 @@ def test_impact_context_tests_deadline_folds_into_partial(
         "_context_tests must contribute its own scanned/total pair to deadline_limit; "
         f"present keys were {sorted(deadline_limit)}"
     )
-    assert 0 < scanned < total, f"expected some-but-not-all, got {scanned}/{total}"
+    # `scanned` may legitimately be 0: the rig blows the budget UPSTREAM, so `_context_tests` is
+    # reached and breaks before its first item. That is still an attribution -- `total` is stamped
+    # before the loop precisely so this case reports an honest 0/N instead of a 0/0 that reads as
+    # "the stage never ran". The discriminating power is the KEYS' presence plus `scanned < total`;
+    # requiring `0 < scanned` was over-specified and failed on the correct implementation.
+    assert total > 0, "the stage must report the denominator it was going to scan"
+    assert scanned < total, f"expected an early stop, got {scanned}/{total}"
 
 
 def test_refs_context_tests_deadline_folds_into_partial(
@@ -507,7 +513,13 @@ def test_refs_context_tests_deadline_folds_into_partial(
         "_context_tests must contribute its own scanned/total pair to deadline_limit; "
         f"present keys were {sorted(deadline_limit)}"
     )
-    assert 0 < scanned < total, f"expected some-but-not-all, got {scanned}/{total}"
+    # `scanned` may legitimately be 0: the rig blows the budget UPSTREAM, so `_context_tests` is
+    # reached and breaks before its first item. That is still an attribution -- `total` is stamped
+    # before the loop precisely so this case reports an honest 0/N instead of a 0/0 that reads as
+    # "the stage never ran". The discriminating power is the KEYS' presence plus `scanned < total`;
+    # requiring `0 < scanned` was over-specified and failed on the correct implementation.
+    assert total > 0, "the stage must report the denominator it was going to scan"
+    assert scanned < total, f"expected an early stop, got {scanned}/{total}"
 
 
 def test_callers_context_tests_deadline_folds_into_partial(
@@ -536,7 +548,13 @@ def test_callers_context_tests_deadline_folds_into_partial(
         "_context_tests must contribute its own scanned/total pair to deadline_limit; "
         f"present keys were {sorted(deadline_limit)}"
     )
-    assert 0 < scanned < total, f"expected some-but-not-all, got {scanned}/{total}"
+    # `scanned` may legitimately be 0: the rig blows the budget UPSTREAM, so `_context_tests` is
+    # reached and breaks before its first item. That is still an attribution -- `total` is stamped
+    # before the loop precisely so this case reports an honest 0/N instead of a 0/0 that reads as
+    # "the stage never ran". The discriminating power is the KEYS' presence plus `scanned < total`;
+    # requiring `0 < scanned` was over-specified and failed on the correct implementation.
+    assert total > 0, "the stage must report the denominator it was going to scan"
+    assert scanned < total, f"expected an early stop, got {scanned}/{total}"
 
 
 # ======================================================================================================
