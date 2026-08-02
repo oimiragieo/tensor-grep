@@ -245,9 +245,18 @@ def test_shipped_ceiling_reuses_caller_scan_file_ceiling() -> None:
 
 
 # ======================================================================================================
-# Section 2 -- THE load-bearing ranking-parity gate: at the shipped ceiling, consumed output
-# (test_matches[:1] / ranking_quality / files ordering) is byte-identical to "before" (simulated by
-# forcing `_test_source_limit=None` at the call site, the exact pre-fix behavior).
+# Section 2 -- ranking-parity SMOKE CHECK, deliberately NOT the load-bearing gate. It called itself
+# "THE load-bearing ranking-parity gate" until 2026-08-02, when the re-gate on #904 PROVED (not
+# argued) that these three cannot fail: they compare ceiling None against the SHIPPED 2000 on a
+# 31-file fixture, so both arms are identical by construction -- the "population where the bound
+# cannot fail" that let a real output change ship unnoticed. Receipt: under a perturbation that
+# re-adds impact's bound, the impact test here stayed GREEN while the real guards went red. And
+# `_CONTEXT_TESTS_SOURCE_FILE_CEILING` is read at exactly two sites, neither in
+# build_symbol_impact_from_map, so for impact this is now literally f(x) == f(x).
+#
+# THE REAL GATE IS test_source_ceiling_changes_no_payload_at_the_BOUNDARY, which forces the ceiling
+# to 1. These stay as a cheap regression smoke on the default path; do not treat a green here as
+# evidence the bound is safe.
 # ======================================================================================================
 
 
@@ -724,3 +733,37 @@ def test_source_ceiling_changes_no_payload_at_the_BOUNDARY(
         "bound is only safe where the caller reads test_matches[:1]; if this fires, either drop "
         "_test_source_limit at that call site or disclose the truncation."
     )
+
+
+def test_counter_sums_BOTH_scans_so_the_fraction_stays_coherent() -> None:
+    """RE-GATE on #904, the one must-fix: the `+=` in `_context_tests` carries the entire HIGH fix,
+    and nothing tested it. Changing that ONE character to `=` keeps all 38 sibling tests green
+    while restoring the exact defect this PR exists to prevent (`6/6` for a stage that stopped) and
+    adding a nonsense `9/6` fraction on top.
+
+    The structural guard above proves every scan is INSTRUMENTED; only this pins what the numbers
+    MEAN across scans. Its docstring claimed a fraction test "would be timing-fragile" -- the
+    re-gate falsified that: the fraction needs no clock at all. One completed scan plus one
+    already-expired scan is fully deterministic.
+
+    10 stub tests, so a completed scan is 10/10 and an expired one adds 0/10 -> (10, 20).
+    Under `=` the second scan OVERWRITES rather than accumulates and this reads (10, 10).
+    """
+    counts = repo_map._TestScanCounts()
+
+    repo_map._context_tests(*_STUB_ARGS, _test_scan_counts=counts)
+    assert (counts.scanned, counts.total) == (10, 10), (
+        "a completed scan must count every candidate it walked -- if this already fails, the "
+        "assertion below cannot mean what it says"
+    )
+
+    repo_map._context_tests(
+        *_STUB_ARGS, deadline_monotonic=time.monotonic() - 1.0, _test_scan_counts=counts
+    )
+    assert (counts.scanned, counts.total) == (10, 20), (
+        f"expected the SECOND scan's denominator to ACCUMULATE, got "
+        f"{counts.scanned}/{counts.total}. `= len(tests)` would report 10/10 -- a completed "
+        "fraction for a run in which a scan never started, which is the attribution failure this "
+        "pair exists to prevent."
+    )
+    assert counts.scanned <= counts.total, "scanned > total is a nonsense fraction"
