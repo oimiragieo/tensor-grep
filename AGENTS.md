@@ -279,7 +279,7 @@ Phase 0 of.
 
 **2026-07-16 addendum -- `tg find` CPU semantic moat (v1.77.0-v1.78.1, campaign #189).** Three build
 waves plus an MCP tool shipped whole-repo natural-language code search -- the CPU-only ColGrep-class
-response: BM25 + local CPU dense embeddings -> weighted RRF -> optional MaxSim -> budget-fitted
+response: BM25 + local CPU dense embeddings -> weighted RRF -> budget-fitted
 `file:line` output. `#626` (v1.77.0) shipped the CLI `tg find` through the standard 4-site registration
 path with a fail-closed matrix (`BackendExecutionError` -> exit-2; internal chunk-cap /
 `--max-repo-files` / `--deadline` truncation -> `result_incomplete=true` + exit-2, never a silent
