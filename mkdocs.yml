@@ -27,6 +27,19 @@ theme:
     - search.highlight
     - content.code.copy
 
+# Internal analysis lives under docs/ for discoverability, but mkdocs builds EVERYTHING
+# under docs_dir into the published site -- nav'd or not. `docs/positioning/` holds
+# competitive analysis that discusses the CEO-GATED #72 benchmark, and `publish-docs`
+# runs `mkdocs gh-deploy --force` unconditionally on release into a PUBLIC repo.
+# Verified not yet exposed (gh-pages last built 2026-03-01, months before those files
+# existed; `positioning/` returns 404 there while the branch root reads 14 entries, so
+# the 404 is meaningful and not an API artifact). Excluding it keeps that true.
+exclude_docs: |
+  positioning/
+  audits/
+  investigations/
+  superpowers/
+
 nav:
   - Home: index.md
   - Getting Started:
