@@ -226,14 +226,42 @@ All three are now pushed to origin, so none is disk-only. `git merge-base --is-a
 "landed" for a branch whose COMMITTED head is on main -- it says nothing about uncommitted files in
 the worktree, which is exactly how 519 lines hid behind an "ANCESTOR of main" verdict.
 
-- [ ] **`perf/context-tests-limit-deadline` -- 519 lines, committed 2026-08-02 for PRESERVATION.**
+- [ ] **`perf/context-tests-limit-deadline` -- 519 lines, PRESERVED + REBASED + RED ARM MEASURED.**
   Another agent's opt10 campaign #3: `repo_map.py` +61 threading `_test_source_limit` through
   `build_symbol_impact/refs/callers_from_map`, which fed `ranked_files` to `_context_tests`
   UNBOUNDED (O(len(tests) * len(source_files)) via `_test_graph_score` rebuilding an aliases-by-file
   dict per test) while refs/callers consume only `test_matches[:1]` and discard the rest. Plus a
-  452-line test file and a `--deadline` gate. **NOT verified: not run, not reviewed, base is
-  #713-era.** `repo_map.py` is core -- needs a rebase, a real TDD gate and an observed red arm
-  before it goes near a PR. Do NOT merge on the strength of the docstring.
+  452-line test file and a `--deadline` gate.
+
+  Done 2026-08-02: committed for preservation (it was UNCOMMITTED behind an `ANCESTOR of main`
+  verdict), **rebased cleanly across 269 commits** (`cdeaa39`), and all six target seams verified
+  live on current `repo_map.py` (`_test_source_limit` 11, `_context_tests` 9, `_test_graph_score` 4,
+  `build_symbol_impact/refs/callers_from_map` 6/9/15; negative control 0).
+
+  **RED ARM MEASURED against the pre-fix baseline -- and it is MIXED. Do not read "it failed" as
+  "the red arm is good".** Ran the 452-line file against unpatched `main` source (import asserted to
+  resolve to `src/tensor_grep`, fix confirmed absent by an AST keyword walk, not a substring):
+  **12 failed / 6 passed**, and the 12 split **14 `AttributeError` lines vs 2 `AssertionError`
+  lines** -- so most failures are the module simply lacking `_CONTEXT_TESTS_SOURCE_FILE_CEILING`,
+  which is an ERROR, not a demonstration that the property is broken (*a test that errors is not a
+  red arm*). Only the deadline-threading test fails behaviourally
+  (`deadline_monotonic` is `None`; the kwargs dict is `{'raw_query': 'widget'}`) -- that one is a
+  genuine red arm.
+
+  **The 6 that PASS pre-fix each need a verdict before this ships** -- passing in both arms proves
+  nothing on its own, though some are legitimate regression guards and a sweep would delete real
+  coverage: `test_context_pack_from_map_test_source_limit_none_is_noop`,
+  `test_tight_bound_would_have_changed_consumed_output`,
+  `test_bound_covering_full_relevant_set_preserves_parity`, and the three
+  `*_context_tests_deadline_folds_into_partial`. The last three are the most suspicious: if the
+  deadline never threads pre-fix, what are they observing when they pass? Classify each
+  individually -- ask whether some OTHER assertion already proves what it claims.
+
+  REMAINING: strengthen the error-shaped arms to assert behaviour; classify the 6; run green in the
+  real venv; `tg blast-radius` on the three `build_symbol_*` entry points; then a draft PR titled
+  `perf:` (RELEASES a patch -- release class is part of the fix). `repo_map.py` is core; do NOT
+  merge on the strength of its docstring.
+
 - [x] **`probe/classifier-feasibility` -- VERDICT ALREADY EXISTED; the INSTRUMENT was the gap.**
   Resolved 2026-08-02 without new measurement. The probe DID reach a verdict and it is recorded in
   memory (`tensor-grep-centrality-leg-moot-2026-07-16`, agent `af308cb3` -- literally this
