@@ -5,11 +5,11 @@ description: Use when an agent needs one-call edit readiness before changing cod
 
 # tensor-grep prepare (one-call edit readiness)
 
-Verified against **tg 1.101.22** (LIVE 2026-07-31 gotcontext-saddle; prior 1.101.19 /
-1.101.17 / 1.95.0 CLI contract still representative of the core CUJ).
+Verified against **tg 1.101.31** (LIVE 2026-08-02 gotcontext-saddle; prior 1.101.22 /
+1.101.19 / 1.95.0 CLI contract still representative of the core CUJ).
 
-Note: anonymous `--claim` `agent_id_hint` is stronger as of 1.101.22 (explicitly says
-the claim is NOT attributable until `TG_LEDGER_AGENT_ID` / `TG_EVIDENCE_AGENT_ID` is set).
+Note: anonymous `--claim` `agent_id_hint` remains strong (“NOT attributable…” until
+`TG_LEDGER_AGENT_ID` / `TG_EVIDENCE_AGENT_ID` is set).
 
 ## When to use
 
@@ -36,6 +36,8 @@ Dogfood:
 
 | Case | Result |
 | --- | --- |
+| `prepare … --out` (**1.101.31**) | PASS ~8s — overall 0.9, callers_count=1, file ~8KB |
+| `prepare … --claim` (**1.101.31**) | PASS ~13s — anonymous + strong hint; env id clears hint |
 | `prepare … --out` (**1.101.22**) | PASS ~7s — overall 0.9, callers_count=1, file ~8KB |
 | `prepare … --claim` (**1.101.22**) | PASS ~9s — stronger anonymous `agent_id_hint`; env id clears hint |
 | `prepare … --out` (**1.101.19**) | PASS ~7s — overall 0.9, callers_count=1, file ~8KB |

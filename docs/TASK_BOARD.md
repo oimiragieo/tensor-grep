@@ -186,9 +186,23 @@ review, each verified against the real code (a finding without a `file:line` was
   numbers (grepai 97% input-token cut, CodeGraph ~70% fewer tool calls, GitNexus 88%, Gortex 3–50×).
   tg's own measured **7.5× fewer tokens than grep** is the same metric family. Publication is
   **CEO-gated (#72)** — not an AI-doable item, listed so it is not forgotten.
-- [ ] **Language coverage gap, stated honestly — NUMBERS CONFIRMED, ARGUMENT WEAKER THAN ASSUMED (2026-08-01).** The 10 registered / 5 parser-backed figure is CORRECT, re-derived from `repo_map._symbol_navigation_descriptor()` rather than hand-counted. But depth-vs-breadth does NOT win the argument: Gortex already publishes tiers, and its bespoke tree-sitter tier is ~30 languages WITH resolved call edges vs our 5 -- so reframing to depth relocates the gap into the tier we would rather be measured on. Tiered disclosure is also industry-normal (Semgrep maturity levels, Sourcegraph precise/syntactic/search-based), so honesty here is table stakes, not a differentiator. ORIGINAL TEXT FOLLOWS — tg: 10 registered / 5 parser-backed caller graph.
-  Gortex claims 257 languages, Serena 40+. tg's are *deeper* (resolved edges vs shape matching), so
-  the honest frame is depth-vs-breadth — but the breadth number will be used against it.
+- [x] **Language coverage gap, stated honestly -- SHIPPED #902 (2026-08-02).** Closed by the
+  premise check, not by new work: `docs/tool_comparison.md` on `main` already carries the
+  two-tier table (both tiers computed live from the language registry, with a "re-derive this
+  table; do not trust it" note), the competitor breadth numbers, AND the harder 2026-08-01
+  revision this entry was updated to demand -- a **"Where other tools are ahead, stated
+  plainly"** section conceding roughly **5 vs 30 on the deep tier, in Gortex's favor**, and the
+  explicit framing that tiered disclosure is *table stakes, not a differentiator*. Nothing was
+  left to dispatch. 18th stale entry this session; found by running Step 0 of
+  `verify-plan-against-code` (is the work still needed?) before dispatching an agent at it.
+  The 257-vs-256 discrepancy this entry flagged is RESOLVED (Exa, 2026-08-02): **Gortex's own
+  docs disagree with each other** -- `docs/languages.md` says "currently indexes 256" and its
+  table totals 256, while the README, `docs/features.md` and gortex.dev say 257. Both of our
+  numbers had a real source. `docs/tool_comparison.md` now cites the RANGE and names the
+  contradiction rather than picking a side. Same self-contradiction class we spent this session
+  fixing in our own docs -- worth knowing it is not unique to us. Also re-verified while there:
+  their bespoke tier does contain all ten of `tg`'s languages, so our "deep tier covers all ten
+  plus roughly twenty more" line is correct as written.
 
 - [x] **`tg prepare` is invisible** -- **CLOSED 2026-08-02, PR #899.** Measured before and after: README `tg prepare` 0 -> 6; `tool_comparison.md` `prepare` 0 -> 5, `incomplete` 0 -> 8 (control: `ripgrep` 6, unchanged). Added the real one-call invocation with a verified payload, plus two new sections. All 15 speed/parity rows left intact -- they are true. ORIGINAL TEXT FOLLOWS --  The capability the board calls the moat appears **zero times in `README.md`** (control: `tg agent` appears 3x) and sits in no mkdocs-nav'd page except `CONTRACTS.md`. `docs/tool_comparison.md`'s 15 data rows are ALL speed or parity: `grep -ci prepare` -> 0, `grep -ci incomplete` -> 0 (control: `ripgrep` -> 6). Surface the product before repositioning around it -- rewriting a comparison table for something nobody can see is the wrong order. Found 2026-08-01, `docs/positioning/2026-08-01-policy-layer-moat.md`.
 
@@ -204,6 +218,73 @@ review, each verified against the real code (a finding without a `file:line` was
 - [x] Dead code: delete `sidecar.py::_classify_lines` *(LOW)* — done 2026-08-01 backlog campaign, PR-D
 - [x] apply_policy argv-sentinel — RETIRED (not fixed), 2026-08-01 backlog campaign, PR-D. See
       `docs/BACKLOG.md`'s LOW-severity section for the reasoning.
+
+## UNSHIPPED ARTIFACTS -- found by a worktree sweep, 2026-08-02
+
+Not "open work" someone chose; work that was **invisible** because its branch looked like a husk.
+All three are now pushed to origin, so none is disk-only. `git merge-base --is-ancestor` says
+"landed" for a branch whose COMMITTED head is on main -- it says nothing about uncommitted files in
+the worktree, which is exactly how 519 lines hid behind an "ANCESTOR of main" verdict.
+
+- [ ] **`perf/context-tests-limit-deadline` -- 519 lines, PRESERVED + REBASED + RED ARM MEASURED.**
+  Another agent's opt10 campaign #3: `repo_map.py` +61 threading `_test_source_limit` through
+  `build_symbol_impact/refs/callers_from_map`, which fed `ranked_files` to `_context_tests`
+  UNBOUNDED (O(len(tests) * len(source_files)) via `_test_graph_score` rebuilding an aliases-by-file
+  dict per test) while refs/callers consume only `test_matches[:1]` and discard the rest. Plus a
+  452-line test file and a `--deadline` gate.
+
+  Done 2026-08-02: committed for preservation (it was UNCOMMITTED behind an `ANCESTOR of main`
+  verdict), **rebased cleanly across 269 commits** (`cdeaa39`), and all six target seams verified
+  live on current `repo_map.py` (`_test_source_limit` 11, `_context_tests` 9, `_test_graph_score` 4,
+  `build_symbol_impact/refs/callers_from_map` 6/9/15; negative control 0).
+
+  **RED ARM MEASURED against the pre-fix baseline -- and it is MIXED. Do not read "it failed" as
+  "the red arm is good".** Ran the 452-line file against unpatched `main` source (import asserted to
+  resolve to `src/tensor_grep`, fix confirmed absent by an AST keyword walk, not a substring):
+  **12 failed / 6 passed**, and the 12 split **14 `AttributeError` lines vs 2 `AssertionError`
+  lines** -- so most failures are the module simply lacking `_CONTEXT_TESTS_SOURCE_FILE_CEILING`,
+  which is an ERROR, not a demonstration that the property is broken (*a test that errors is not a
+  red arm*). Only the deadline-threading test fails behaviourally
+  (`deadline_monotonic` is `None`; the kwargs dict is `{'raw_query': 'widget'}`) -- that one is a
+  genuine red arm.
+
+  **The 6 that PASS pre-fix each need a verdict before this ships** -- passing in both arms proves
+  nothing on its own, though some are legitimate regression guards and a sweep would delete real
+  coverage: `test_context_pack_from_map_test_source_limit_none_is_noop`,
+  `test_tight_bound_would_have_changed_consumed_output`,
+  `test_bound_covering_full_relevant_set_preserves_parity`, and the three
+  `*_context_tests_deadline_folds_into_partial`. The last three are the most suspicious: if the
+  deadline never threads pre-fix, what are they observing when they pass? Classify each
+  individually -- ask whether some OTHER assertion already proves what it claims.
+
+  REMAINING: strengthen the error-shaped arms to assert behaviour; classify the 6; run green in the
+  real venv; `tg blast-radius` on the three `build_symbol_*` entry points; then a draft PR titled
+  `perf:` (RELEASES a patch -- release class is part of the fix). `repo_map.py` is core; do NOT
+  merge on the strength of its docstring.
+
+- [x] **`probe/classifier-feasibility` -- VERDICT ALREADY EXISTED; the INSTRUMENT was the gap.**
+  Resolved 2026-08-02 without new measurement. The probe DID reach a verdict and it is recorded in
+  memory (`tensor-grep-centrality-leg-moot-2026-07-16`, agent `af308cb3` -- literally this
+  worktree): the real-query probe **OVERTURNED** the synthetic oracle ceiling. On the synthetic
+  golden (4 hubs TIED at 19.0) a perfect-classifier gate scored **+0.256 ndcg@10**, leaf-regression-
+  free by construction -- "worth PROTOTYPING a real classifier". On REAL queries the
+  perfect-classifier ceiling itself goes NEGATIVE. **#189 Item-2 is DEAD, not conditionally alive;
+  the +0.256 was a synthetic artifact.** All three #189 CPU levers are now dead-as-specified.
+
+  What was actually at risk: **`benchmarks/datasets/find_realquery_golden.jsonl` -- the 26-query
+  instrument that produced that negative -- existed ONLY as an untracked file in that worktree.**
+  `git log --all` for it returned **0** commits across every ref, while its synthetic sibling
+  returned 1 (positive control). One `worktree remove --force` and the evidence behind a settled
+  verdict was gone, leaving only a conclusion nobody could re-derive -- at which point the next
+  session re-runs the synthetic arm, sees +0.256, and re-chases a dead lever. Committed as `939f133`
+  and pushed. **A negative is only durable if the instrument that produced it survives** (same
+  reason the MaxSim and cAST negatives are kept indexed). Branch retained as the real-query
+  counterpart to #641's synthetic de-risk asset; delete only if that asset is deliberately retired.
+
+- [ ] **`rescue/lazy-wave-stash-2026-08-01` -- likely obsolete, kept deliberately.** The orphaned
+  stash rescued during the parallel-worktree stash collision; a `temp-verify-preexisting-flake` hack
+  on a **v1.64.2** base, ~38 releases stale. Almost certainly discardable, but it is the receipt for
+  that incident. Delete once someone confirms nothing in it is wanted.
 
 ## BLOCKED — environment (not CEO-gated, just needs hardware)
 

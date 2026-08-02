@@ -507,7 +507,13 @@ Re-verify before trusting a stale number:
   Phase 1 = a reversible flag-flip on `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE`, default
   `native-frontdoor` CPU-only) should be re-checked since it is the fact most likely to have moved
   further -- no speed crossover is proven vs `rg`/`tg_cpu` regardless of publish-flag state
-  (`docs/CONTRACTS.md:80-82`).
+  (`grep -n 'GPU benchmark correctness\|managed GPU promotion' docs/CONTRACTS.md`).
+
+  This line cited `docs/CONTRACTS.md:80-82` until 2026-08-02. That anchor was corrected earlier in
+  THIS FILE (see the GPU section's `grep -n "gpu_evidence_status"` note) and the correction never
+  reached this duplicate 150 lines below, so the file shipped a fact and its refutation at once --
+  `:80-82` is a `--column`/`-c`/`--count-matches` flag list, not a promotion contract. **Fix a fact
+  -> grep the WHOLE doc for the old anchor**; a correction applied at one site is not applied.
 - GPU Phase-0/Phase-1 status: `grep -n "RELEASE_NATIVE_ASSET_PROFILE\|native-frontdoor-gpu" .github/workflows/ci.yml` and re-read `docs/gpu_crossover.md`'s current top section (it carries its own
   "Current post-`<version>` GPU dogfood Read" heading, updated per release) — cross-check the sibling
   skill `tensor-grep-gpu`'s own provenance stamp for the fuller current picture.

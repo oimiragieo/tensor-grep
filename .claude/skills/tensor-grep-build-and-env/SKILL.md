@@ -239,12 +239,16 @@ python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 tg dogfood --output artifacts/dogfood_readiness.json
 ```
 
-**Test corpus size** -- **do NOT stamp a number here.** This figure has been wrong in three
-consecutive passes (266 -> a mid-flight 282 -> the real 291), because it changes with every PR that
-adds a test file while nothing fails when the doc lags. Run it:
-`ls tests/unit/*.py | wc -l` / `ls tests/e2e/*.py | wc -l` / `ls tests/integration/*.py | wc -l`
-(291 / 21 / 16 as of 2026-07-27, recorded only so a reader can tell whether this line is stale --
+**Test corpus size** -- **do NOT stamp a number here.** This figure has now been wrong in FOUR
+consecutive passes (266 -> a mid-flight 282 -> 291 -> the real 327), because it changes with every
+PR that adds a test file while nothing fails when the doc lags. Run it:
+`git ls-files 'tests/unit/*.py' | wc -l` / same for `tests/e2e/*.py` / `tests/integration/*.py`
+(327 / 22 / 16 on 2026-08-02, recorded only so a reader can tell whether this line is stale --
 not as a value to cite).
+
+Use `git ls-files`, NOT `ls tests/unit/*.py`: a bare glob counts untracked scratch files, and a
+count contaminated by gitignored artifacts is how a census in this repo has been wrong before.
+Both methods agreed here (327/22/16), which is the only reason this number is trusted.
 
 ## Known traps (each one has cost a real cycle — read before debugging blind)
 
@@ -418,8 +422,8 @@ Volatile facts stated above and how to re-check them if this skill feels stale:
 - **Version pins** (Python floor, uv, maturin, Rust toolchain, ruff, mypy, pyo3):
   `grep -nE "requires-python|version|channel" pyproject.toml rust_core/Cargo.toml rust_core/rust-toolchain.toml`
 - **uv version CI pins**: `grep -n "uv==" .github/workflows/ci.yml`
-- **Test file counts** (RE-RUN the `ls | wc -l` commands -- 291/21/16 on 2026-07-27, up from
-  263/16/16 — `tests/eval/` now has 2 files, `test_agent_accuracy.py` +
+- **Test file counts** (RE-RUN the `git ls-files | wc -l` commands -- 327/22/16 on 2026-08-02, up
+  from 291/21/16 — `tests/eval/` now has 2 files, `test_agent_accuracy.py` +
   `test_retrieval_quality_regression.py` (up from 1), still not part of this count):
   `find tests/unit tests/e2e tests/integration tests/eval -name "test_*.py" | wc -l` run per
   directory, or one combined `find tests -name "test_*.py" | wc -l` for the total file count.

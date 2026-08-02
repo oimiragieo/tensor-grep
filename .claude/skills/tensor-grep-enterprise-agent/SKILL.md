@@ -30,8 +30,9 @@ stamp it.
 - **Default edit gate:** `tg prepare REPO/src "task" --json` (replaces orient→agent→route-test→callers→evidence argv guessing). Use `--claim` when multi-agent coordination is needed; use `--out FILE` to persist the capsule for `tg evidence emit --capsule FILE` with no manual save.
 - Prefer `REPO/src`. Whole-repo: `tg prepare|agent REPO --deadline N` → expect partial / ask_user.
 - **The WSL `tg agent REPO` "empty TIMEOUT @75s" claim is DEBUNKED -- do not re-chase it.**
-  `docs/BACKLOG.md` (`grep -n '#578' docs/BACKLOG.md`; was `:603`, now `:850` -- the file grows by
-  insertion so line numbers keep drifting, re-grep rather than trust either number) records #578
+  `docs/BACKLOG.md` (`grep -n '#578' docs/BACKLOG.md` -- **no line number is carried here on
+  purpose**: this citation was re-stamped `:603` -> `:850` on 2026-08-01 and `:850` was already
+  wrong by 2026-08-02. The file grows by insertion, so any stamp rots; run the grep) records #578
   correcting this as one of TWO false WSL-`/mnt/c` "regression" claims; the native repro is **~26s**.
   The scan is already interruptible and already keeps a usable partial (`repo_map.py`,
   `grep -n "Break + keep what we have" src/tensor_grep/cli/repo_map.py`; was `:7400`, now `:7490`:
@@ -49,9 +50,10 @@ stamp it.
 - Dense find: run `tg install-dense` once per machine (never auto); then `tg find`. Every dense-absent hint across the CLI now leads with `tg install-dense`.
 - Ledger remains advisory — see `tensor-grep-ledger`. Claim/release/list now canonicalize to the nearest `.git` ancestor (worktree-aware); the PATH-mismatch footgun from 1.92.1-era dogfood is fixed.
 - **The `tg codemap` WSL timeout is likewise DEBUNKED** (`docs/BACKLOG.md`, same #578 entry as
-  above, was `:603` now `:850`: native repro **41s whole-repo, `partial=false`, complete**; and
-  the older claim being corrected -- `grep -n '60-180s/no JSON' docs/BACKLOG.md`, was `:606` now
-  `:853` -- *"codemap '60-180s/no JSON' = WSL 9p (native 33s complete)"*). Its slow path is also a
+  above: native repro **41s whole-repo, `partial=false`, complete**; and the older claim being
+  corrected -- `grep -n '60-180s/no JSON' docs/BACKLOG.md` -- *"codemap '60-180s/no JSON' = WSL 9p
+  (native 33s complete)"*). Line stamps deliberately dropped here too, same reason as above.
+  Its slow path is also a
   DIFFERENT mechanism from `tg agent`'s: codemap makes three git-touching call sites
   (`grep -n '\["git"\|_repo_revision_identity(' src/tensor_grep/cli/codemap.py`; was `:612`,
   `:1054`, `:1353`, now `:568` the `git ls-files` subprocess, `:1062` and `:1361` the two
@@ -75,7 +77,7 @@ stamp it.
 | --- | --- |
 | Whole-repo agent/prepare default deadline reliability | **CLOSED 2026-07-27 -- do not re-open from this row.** Two successive framings here were both overtaken. The "bare agent TIMEOUT" was a debunked WSL-9p artifact (`BACKLOG.md` #578 entry, `grep -n '#578' docs/BACKLOG.md`, was `:603` now `:850`, native ~26s), and the follow-on "unbounded session refresh" framing is ALSO stale: task #304 bounded the staleness-triggered rebuild with the same warm-daemon budget (`session_daemon.py` carries the `Task #304: bound the staleness-triggered rebuild with the SAME budget` comment and passes `deadline_monotonic=monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS`). The old citations are deliberately DROPPED rather than re-stamped -- they described a code shape that no longer exists, and re-pointing them would preserve a dead paragraph. If you believe a deadline gap remains, re-derive it from scratch against `origin/main`; do not carry this row forward |
 | CUDA-native GPU promotion | Open (adjudicated HOLD, #169 CEO-gated; kernel is brute-force byte-compare, not PFAC) |
-| `codemap` on WSL | **Debunked, not open** (`BACKLOG.md` #578 entry, was `:603` now `:850`, plus the older claim it corrects at `grep -n '60-180s/no JSON' docs/BACKLOG.md`, was `:606` now `:853`; native 41s whole-repo complete, 33s in the earlier repro). Root cause was three git-touching call sites, fixed in `e95abfa` @ v1.82.1 |
+| `codemap` on WSL | **Debunked, not open** (`grep -n '#578' docs/BACKLOG.md`, plus the older claim it corrects at `grep -n '60-180s/no JSON' docs/BACKLOG.md` -- no line stamps, they rotted twice; native 41s whole-repo complete, 33s in the earlier repro). Root cause was three git-touching call sites, fixed in `e95abfa` @ v1.82.1 |
 | Mega-repo auto-narrow + accurate deadline primaries | Partial (`suggested_scope`/`workspace_root_detected` shipped, #684; deadline-primary accuracy still open) |
 | Unscoped-search fast-refuse on the default flag-less path | **Shipped** (A9; generic 1500-file ceiling, ~1.7s, all 3 doors) |
 | Dynamic-import / blast-radius decoy honesty | **Shipped** (A10/A15; `dynamic_unresolved` excluded from forward/reverse resolution and the blast-radius scoring prefilter) |

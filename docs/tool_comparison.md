@@ -129,7 +129,12 @@ stable spec.
 
 ## Language Coverage
 
-Competitor language counts are large: Gortex publishes 256 languages, Serena advertises 40+. `tg`
+Competitor language counts are large: Gortex publishes **256 or 257** languages depending on which
+of its own documents you read — `docs/languages.md` says "currently indexes 256 languages" and its
+per-category table totals 256, while the README, `docs/features.md`, and gortex.dev all say 257
+(verified 2026-08-02). We cite the range rather than pick a side; the distinction does not change
+any conclusion below, and quoting a competitor's number more precisely than the competitor does is
+how a comparison loses credibility. Serena advertises 40+. `tg`
 registers ten. The honest comparison needs the tier structure on both sides, because "supports
 language X" spans everything from resolved call edges to a filename glob.
 
@@ -201,7 +206,7 @@ for an entire language-onboarding campaign; the derivation exists because prose 
 - `ripgrep` still owns the cold generic text-search baseline on the current release line
 - `Semgrep` still has the stronger policy and security scanning ecosystem
 - `Zoekt` is still the external baseline for indexed search at repository scale
-- Gortex leads on language coverage at every tier: ~30 deep-tier languages with resolved call edges against `tg`'s 5, and 256 total against 10 (see "Language Coverage" above)
+- Gortex leads on language coverage at every tier: ~30 deep-tier languages with resolved call edges against `tg`'s 5, and 256-257 total against 10 (see "Language Coverage" above)
 - Minimal standalone footprint still favors pure single-purpose tools such as `rg`
 - Default cold text search on the current Windows host still favors `rg`; the latest large-file row is effectively tied between `rg` and default `tg search`, not a general cold-search win.
 
