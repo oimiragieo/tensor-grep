@@ -226,41 +226,30 @@ All three are now pushed to origin, so none is disk-only. `git merge-base --is-a
 "landed" for a branch whose COMMITTED head is on main -- it says nothing about uncommitted files in
 the worktree, which is exactly how 519 lines hid behind an "ANCESTOR of main" verdict.
 
-- [ ] **`perf/context-tests-limit-deadline` -- 519 lines, PRESERVED + REBASED + RED ARM MEASURED.**
-  Another agent's opt10 campaign #3: `repo_map.py` +61 threading `_test_source_limit` through
-  `build_symbol_impact/refs/callers_from_map`, which fed `ranked_files` to `_context_tests`
-  UNBOUNDED (O(len(tests) * len(source_files)) via `_test_graph_score` rebuilding an aliases-by-file
-  dict per test) while refs/callers consume only `test_matches[:1]` and discard the rest. Plus a
-  452-line test file and a `--deadline` gate.
+- [ ] **`perf/context-tests-limit-deadline` -> now PR #904, DRAFT, adversarially gated once and
+  re-gated.** Rescued from 519 uncommitted lines a worktree sweep nearly deleted. `_context_tests`
+  emits `test_candidates_scanned`/`_total` into `deadline_limit` via a dedicated `_TestScanCounts`
+  (not the 23-consumer `_DeadlineBreakFlag`).
 
-  Done 2026-08-02: committed for preservation (it was UNCOMMITTED behind an `ANCESTOR of main`
-  verdict), **rebased cleanly across 269 commits** (`cdeaa39`), and all six target seams verified
-  live on current `repo_map.py` (`_test_source_limit` 11, `_context_tests` 9, `_test_graph_score` 4,
-  `build_symbol_impact/refs/callers_from_map` 6/9/15; negative control 0).
+  **The first gate returned FIX-FIRST and was right on all three counts** -- worth recording,
+  because my own verification had reported zero regressions across 41 files and I would have merged:
+  - **HIGH:** `_context_tests` has TWO call sites and only one was counted, so a budget expiring in
+    the uncounted scan reported `scanned == total` -- the attribution exonerating the stage that
+    stopped, i.e. the exact failure the pair exists to prevent. Fixed `438dba5`; the gate's own
+    suggested remedy needed correcting (naive accumulation yields `scanned=12` vs `total=8`).
+  - **MEDIUM:** the impact call site's comment claimed a tighter source list "cannot change any
+    output impact actually returns". Measured false with a determinism control: score 23->2,
+    `association.confidence` **strong->weak**. Bound dropped there; refs/callers keep it, measured
+    unchanged even at ceiling 1. Fixed `ce4b89c`.
+  - **MEDIUM:** dissolved by the above -- no silently-truncating call site remains.
 
-  **RED ARM MEASURED against the pre-fix baseline -- and it is MIXED. Do not read "it failed" as
-  "the red arm is good".** Ran the 452-line file against unpatched `main` source (import asserted to
-  resolve to `src/tensor_grep`, fix confirmed absent by an AST keyword walk, not a substring):
-  **12 failed / 6 passed**, and the 12 split **14 `AttributeError` lines vs 2 `AssertionError`
-  lines** -- so most failures are the module simply lacking `_CONTEXT_TESTS_SOURCE_FILE_CEILING`,
-  which is an ERROR, not a demonstration that the property is broken (*a test that errors is not a
-  red arm*). Only the deadline-threading test fails behaviourally
-  (`deadline_monotonic` is `None`; the kwargs dict is `{'raw_query': 'widget'}`) -- that one is a
-  genuine red arm.
+  **Root cause of all three being missed: every parity arm ran a 32-file fixture where the 2000
+  ceiling is UNREACHABLE** -- the one population where the bound cannot fail. A boundary test now
+  forces the ceiling to 1; restoring the old line reddens ONLY the impact arm.
 
-  **The 6 that PASS pre-fix each need a verdict before this ships** -- passing in both arms proves
-  nothing on its own, though some are legitimate regression guards and a sweep would delete real
-  coverage: `test_context_pack_from_map_test_source_limit_none_is_noop`,
-  `test_tight_bound_would_have_changed_consumed_output`,
-  `test_bound_covering_full_relevant_set_preserves_parity`, and the three
-  `*_context_tests_deadline_folds_into_partial`. The last three are the most suspicious: if the
-  deadline never threads pre-fix, what are they observing when they pass? Classify each
-  individually -- ask whether some OTHER assertion already proves what it claims.
-
-  REMAINING: strengthen the error-shaped arms to assert behaviour; classify the 6; run green in the
-  real venv; `tg blast-radius` on the three `build_symbol_*` entry points; then a draft PR titled
-  `perf:` (RELEASES a patch -- release class is part of the fix). `repo_map.py` is core; do NOT
-  merge on the strength of its docstring.
+  Status: 119 local tests pass, ruff 0.15.20 clean, CI green-tracking. Stays DRAFT until the
+  re-gate returns, because "I fixed the gate's findings" is the self-report a gate exists to
+  distrust.
 
 - [x] **`probe/classifier-feasibility` -- VERDICT ALREADY EXISTED; the INSTRUMENT was the gap.**
   Resolved 2026-08-02 without new measurement. The probe DID reach a verdict and it is recorded in
