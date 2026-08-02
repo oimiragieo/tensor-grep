@@ -127,6 +127,7 @@ OTHER assertion already proves what it claims.
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from typing import Any
@@ -198,12 +199,27 @@ def _spy_on_build_context_pack_from_map(monkeypatch: pytest.MonkeyPatch) -> dict
     return captured
 
 
-def test_impact_threads_test_source_limit(
+def test_impact_deliberately_does_NOT_thread_test_source_limit(
     relevance_repo_map: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """INVERTED 2026-08-02. This asserted that impact threads the ceiling. It does not, on
+    purpose: the adversarial gate on #904 measured that bounding impact's source list downgrades
+    the payload it RETURNS (score 23->2, association.confidence strong->weak), because
+    `test_matches_by_path` is built from the context pack's `test_matches` and supplies those
+    values. refs and callers keep the limit -- measured unchanged even at ceiling 1, because they
+    really do read only `test_matches[:1]`.
+
+    Kept as an explicit NEGATIVE assertion rather than deleted: a removed test is silent, and the
+    next person optimising this path will find the same tempting `_test_source_limit=` line at the
+    refs/callers call sites and reasonably assume impact was an oversight. This says it was not.
+    See test_source_ceiling_changes_no_payload_at_the_BOUNDARY for the behavioural half.
+    """
     captured = _spy_on_build_context_pack_from_map(monkeypatch)
     repo_map.build_symbol_impact_from_map(relevance_repo_map, "widget")
-    assert captured.get("_test_source_limit") == repo_map._CONTEXT_TESTS_SOURCE_FILE_CEILING
+    assert captured.get("_test_source_limit") is None, (
+        "impact must NOT bound the test-source list -- doing so silently weakens "
+        "association.confidence on repos past the ceiling"
+    )
 
 
 def test_refs_threads_test_source_limit(
@@ -659,4 +675,52 @@ def test_every_context_tests_scan_on_the_callers_path_is_counted(
     )
     assert len({id(c) for c in seen}) == 1, (
         "every scan must share ONE counter object, else the emitted pair describes only one scan"
+    )
+
+
+@pytest.mark.parametrize(
+    "builder_name",
+    ["build_symbol_impact_from_map", "build_symbol_refs_from_map", "build_symbol_callers_from_map"],
+)
+def test_source_ceiling_changes_no_payload_at_the_BOUNDARY(
+    tmp_path: Path, builder_name: str
+) -> None:
+    """Adversarial gate on #904, MEDIUM: every OTHER parity arm in this file runs a 32-file
+    fixture where `_CONTEXT_TESTS_SOURCE_FILE_CEILING` (2000) is unreachable -- the one population
+    where the bound CANNOT fail. That is how a real output change shipped unnoticed: impact's
+    `test_matches` values are supplied by `test_matches_by_path`, which is built FROM the context
+    pack's `test_matches`, so bounding the source list downgraded them:
+
+        unbounded  score=23  reasons=[path, filename, test-graph, graph-centrality]  conf=strong
+        ceiling=1  score= 2  reasons=[path]                                          conf=weak
+
+    This test forces the ceiling to 1 -- unmissably past the boundary -- and pins that NO entry
+    point's payload moves. `_test_source_limit` is now applied only where that holds (refs and
+    callers, which really do read just `test_matches[:1]`); impact stays bounded by `--deadline`,
+    which is honest because it stamps `partial`.
+
+    The same-ceiling CONTROL is load-bearing: without it a comparison that always matched would
+    be indistinguishable from a nondeterministic builder whose diff this test could never see.
+    """
+    project = _build_caller_fixture(tmp_path)
+    rmap = repo_map.build_repo_map(str(project))
+    builder = getattr(repo_map, builder_name)
+
+    def _run(ceiling: int) -> str:
+        original = repo_map._CONTEXT_TESTS_SOURCE_FILE_CEILING
+        repo_map._CONTEXT_TESTS_SOURCE_FILE_CEILING = ceiling
+        try:
+            return json.dumps(builder(rmap, "widget"), default=str, sort_keys=True)
+        finally:
+            repo_map._CONTEXT_TESTS_SOURCE_FILE_CEILING = original
+
+    unbounded = _run(10_000)
+    assert unbounded == _run(10_000), (
+        f"{builder_name} is not deterministic at a fixed ceiling, so the comparison below could "
+        "never detect a real difference -- fix the nondeterminism before trusting this test"
+    )
+    assert _run(1) == unbounded, (
+        f"{builder_name}'s payload CHANGED when the test-source ceiling was forced to 1. The "
+        "bound is only safe where the caller reads test_matches[:1]; if this fires, either drop "
+        "_test_source_limit at that call site or disclose the truncation."
     )

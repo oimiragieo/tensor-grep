@@ -16599,13 +16599,22 @@ def build_symbol_impact_from_map(
     context_payload = build_context_pack_from_map(
         repo_map,
         symbol,
-        # opt10 #3: bound the whole-repo test-scorer's source list -- impact discards
-        # context_payload["test_matches"] to a by-path lookup keyed off `related_tests` (a
-        # SEPARATE, independently-computed list; see repo_map.py's test_matches_by_path just
-        # below), and _ranking_quality only reads test_matches[:1] -- so a tighter source list
-        # cannot change any output impact actually returns. Ranking-parity proven in
-        # test_context_tests_source_limit_and_deadline.py.
-        _test_source_limit=_CONTEXT_TESTS_SOURCE_FILE_CEILING,
+        # opt10 #3: `_test_source_limit` is DELIBERATELY NOT APPLIED HERE, unlike refs/callers.
+        # The original justification -- "impact keys its by-path lookup off `related_tests`, a
+        # SEPARATE independently-computed list, so a tighter source list cannot change any output
+        # impact actually returns" -- is FALSE, and was falsified by measurement (adversarial gate
+        # on #904, reproduced independently with a same-ceiling control proving determinism):
+        #
+        #   unbounded  score=23  reasons=[path, filename, test-graph, graph-centrality]  conf=strong
+        #   ceiling=1  score= 2  reasons=[path]                                          conf=weak
+        #
+        # `related_tests` selects WHICH rows appear; it does not make their VALUES independent.
+        # `test_matches_by_path` is built FROM `context_payload["test_matches"]` just below and
+        # supplies the score/reasons/provenance/association that this payload RETURNS -- so the
+        # bound silently downgraded `association.confidence` on any repo past the ceiling.
+        # The same probe shows refs and callers are genuinely unaffected (they really do read only
+        # `test_matches[:1]`), which is why they keep the limit and this call site does not.
+        # Impact stays bounded by the --deadline gate, which is honest: it stamps `partial`.
         deadline_monotonic=deadline_monotonic,
         deadline_hit=context_pack_deadline_hit,
         _test_scan_counts=context_pack_test_scan_counts,
