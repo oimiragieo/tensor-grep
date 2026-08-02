@@ -2545,6 +2545,60 @@ When only one holds, write the retirement down with its measurement — a docume
 the next session re-deriving it, and an over-eager gate teaches people to reach for `--no-verify`,
 which discredits every honest gate beside it.
 
+## Scoping The PATCH SITE Does Not Scope The OBSERVABLE (2026-08-02, #904)
+
+Three tests named `*_context_tests_deadline_folds_into_partial` passed on a baseline where
+`_context_tests` **did not accept a `deadline_monotonic` parameter at all**. A test cannot observe a
+parameter that does not exist. They were asserting `partial` / `deadline_exceeded` -- **shared
+booleans that any of this module's 24 `time.monotonic` readers can set**.
+
+The obvious fix looked airtight and FAILED. Re-scope the rig from `_score_file_path` (five call
+sites) to `_test_graph_score`, which an AST walk confirms is called from `_context_tests` and
+NOWHERE else. Implemented; mutation asserted applied (3 scoped call sites, 0 global); **all three
+still passed**, counts byte-identical. Because the clock is global: advancing it anywhere trips the
+next DOWNSTREAM check, which sets the shared boolean by itself.
+
+- **A uniquely-called patch site does not give a uniquely-caused observable.** Enumerate the
+  **WRITERS of the value you assert** -- a different population from the callers of the function you
+  patch.
+- **A shared boolean cannot attribute a cause.** Discriminating required the FIX to expose an
+  attribution (`test_candidates_scanned`/`_total`), not a better test.
+- **Revert a non-fix and keep the finding.** A scoped rig that still passes both arms adds code
+  without adding a check and reads to the next person as "fixed".
+
+## A Missing OPTIONAL Dep Makes A Suite Misleading In BOTH Directions (2026-08-02, #905)
+
+`tree-sitter` is an optional extra, so a plain install has no parser. In that env
+`tests/unit/test_parse_product_cache.py` did not merely go noisy:
+
+- **5 tests FAILED** with messages that read like product bugs ("expected at least one reference
+  to computeWidgetTotal") -- inviting a hunt for a broken emitter.
+- **Several PASSED VACUOUSLY, and that is the worse half.** Their whole claim is that a parse did
+  NOT happen (`assert calls["n"] == 0, "...must not parse"`). With nothing able to parse, that
+  assertion cannot tell a correct early-exit from an absent grammar.
+
+**Gate the MODULE, not the loud failures.** Fixing only the 5 visible reds would have left the quiet
+vacuous passes exactly as they were. And prove the gate is a CONDITION, not a blanket skip: gated on
+`tree_sitter` -> 1 skipped; gated on `json` -> 5 failed / 9 passed, i.e. it does not fire.
+
+**Dogfood before calling it a product defect.** `_js_ts_references_and_calls` returns `[], []` with
+no parser -- textbook silent-empty on a tier-1 language. The real CLI refuted it: `tg refs` on a
+`.js` file in that same venv still finds the references (`result_incomplete: false`, exit 0),
+because the pipeline has another route. Reading the helper says "defect"; running the product says
+"fine".
+
+## A Population Floor Must Be Calibrated On The SAME Population (2026-08-02)
+
+A merge monitor carried a `>= 40 jobs` floor so a partially-dispatched run could not read as green.
+It fired on a complete run. The floor came from **48 CHECKS in a PR rollup (all workflows)** and was
+being applied to **39 JOBS in one `ci.yml` run** -- different populations, so the number was never
+comparable. A sibling control settled it: `main`'s own `ci.yml` run also has exactly 39.
+
+- **Name the population when you write a threshold** -- "39 jobs in ci.yml", never a bare "40".
+- **`gh run rerun --failed` legitimately produces FEWER jobs** (failed + dependents only), so a
+  floor calibrated on a full run false-alarms on every rerun. Expected, not a red flag.
+- The rollup count and the run's job count are both useful and are not the same measurement.
+
 ## A List Written At DISPATCH Time Is Stale By DEFINITION (2026-08-02)
 
 Three instances in ONE session, each in code I had just written, and the third **within an hour of
