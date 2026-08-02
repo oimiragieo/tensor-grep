@@ -194,7 +194,7 @@ review, each verified against the real code (a finding without a `file:line` was
 
 ## P4 — carried backlog (from `docs/BACKLOG.md`, still open)
 
-- [ ] **#58** promote `tg route-test` hidden → public
+- [x] **#58** promote `tg route-test` hidden -> public -- **ALREADY DONE, verified 2026-08-01.** `tg --help` lists it (`route-test  Diagnose routing agreement between context-render...`), it is pinned in `PUBLIC_TOP_LEVEL_COMMANDS` (`tests/e2e/test_routing_parity.py:75`), and no `hidden` marker exists on it anywhere in `cli/main.py`. Found by verifying the item BEFORE dispatching work against it -- the 10th stale-open entry this campaign. ORIGINAL TEXT FOLLOWS --  → public
 - [ ] **#98** MCP tool consolidation (45 → ~10 task-shaped dispatch tools, non-breaking)
 - [ ] **#141** native `AstBackend` vs ast-grep wrapper — DSL divergence
 - [ ] **#160** v1.71.3 dogfood feature tail (`suggested_ignore`, orient auto-deweight)
