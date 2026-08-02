@@ -172,12 +172,12 @@ review, each verified against the real code (a finding without a `file:line` was
 
 ## P3 — strategic / positioning (informed by Exa competitive research, 2026-07-28)
 
-- [ ] **Articulate the policy layer as the moat.** The 2026 market consensus is that lexical +
+- [ ] **Articulate the policy layer as the moat — FRAMING CORRECTED 2026-08-01, read `docs/positioning/2026-08-01-policy-layer-moat.md` BEFORE writing any copy.** Verdict: PARTLY TRUE. `tg prepare` genuinely is rare (no surveyed tool bundles target + confidence + blast radius + validation commands in one call), and budget control is real (measured: `--deadline 0.1` -> exit 2, `partial: true`, confidence downgraded 0.9 -> 0.72 with named reasons). BUT three parts of the quote below are NOT ours to say: (a) "the 2026 market consensus" is ONE single-author blog post whose own numbers are self-labelled *illustrative, not measurements*; (b) **tg ships NO escalation** -- 2 occurrences in tracked code, both unrelated (control: `fallback` = 725); `docs/routing_policy.md` is an ENGINE router, not a retrieval-strategy escalation policy; (c) `tg prepare` does NOT fuse the semantic leg -- `agent_capsule.py` imports zero of bm25/dense/fusion (control: it does import `retrieval_lexical`). **Fix the product or drop the word; do not ship the quote.** ORIGINAL TEXT FOLLOWS — The 2026 market consensus is that lexical +
   structural + graph are all table stakes and *"there is no shortage of tools, there is a shortage
   of POLICY — the orchestration layer that combines all three with escalation and budget control is
   the real gap."* `tg prepare` and `tg agent` ARE that layer, and `docs/tool_comparison.md` still
   positions tg mostly as a search comparator. Reframe around one-call edit readiness.
-- [ ] **Name incompleteness-honesty as a differentiator.** No competitor surveyed (Gortex, Serena,
+- [ ] **Name incompleteness-honesty as a differentiator — CLAIM NARROWED 2026-08-01.** The contract is real and deep (`result_incomplete` at 124 Python + 42 Rust sites; `incomplete_reason_class` at 82 + 3; `budget_remediable()` is a fail-closed allow-list). BUT "no competitor documents such a contract" is **FALSE** and would lose on inspection: GitHub's REST Search API ships a REQUIRED `incomplete_results` boolean with near-identical doc language, and LSP ships `CompletionList.isIncomplete`. The defensible narrower claim (no counterexample found): exit code AGREEING with payload + a closed reason-class vocabulary WITH a remediability verdict + contract-level scope with two CI ratchets -- and MCP has not standardized this at all. Also note we do NOT have "one machine-branchable field": at least three vocabularies exist and CONTRACTS.md #293 defends the split deliberately. ORIGINAL TEXT FOLLOWS — No competitor surveyed (Gortex, Serena,
   claude-context, grepai, CodeGraph, Sourcegraph, Augment) documents a contract of the form
   *"a surface that cannot finish must say so, in a machine-branchable field, with the exit code
   agreeing."* agentmako's freshness labels (live/fresh_indexed/stale/contradicted/unknown) are the
@@ -186,13 +186,15 @@ review, each verified against the real code (a finding without a `file:line` was
   numbers (grepai 97% input-token cut, CodeGraph ~70% fewer tool calls, GitNexus 88%, Gortex 3–50×).
   tg's own measured **7.5× fewer tokens than grep** is the same metric family. Publication is
   **CEO-gated (#72)** — not an AI-doable item, listed so it is not forgotten.
-- [ ] **Language coverage gap, stated honestly.** tg: 10 registered / 5 parser-backed caller graph.
+- [ ] **Language coverage gap, stated honestly — NUMBERS CONFIRMED, ARGUMENT WEAKER THAN ASSUMED (2026-08-01).** The 10 registered / 5 parser-backed figure is CORRECT, re-derived from `repo_map._symbol_navigation_descriptor()` rather than hand-counted. But depth-vs-breadth does NOT win the argument: Gortex already publishes tiers, and its bespoke tree-sitter tier is ~30 languages WITH resolved call edges vs our 5 -- so reframing to depth relocates the gap into the tier we would rather be measured on. Tiered disclosure is also industry-normal (Semgrep maturity levels, Sourcegraph precise/syntactic/search-based), so honesty here is table stakes, not a differentiator. ORIGINAL TEXT FOLLOWS — tg: 10 registered / 5 parser-backed caller graph.
   Gortex claims 257 languages, Serena 40+. tg's are *deeper* (resolved edges vs shape matching), so
   the honest frame is depth-vs-breadth — but the breadth number will be used against it.
 
+- [ ] **`tg prepare` is invisible, and that outranks rewriting the comparison table.** The capability the board calls the moat appears **zero times in `README.md`** (control: `tg agent` appears 3x) and sits in no mkdocs-nav'd page except `CONTRACTS.md`. `docs/tool_comparison.md`'s 15 data rows are ALL speed or parity: `grep -ci prepare` -> 0, `grep -ci incomplete` -> 0 (control: `ripgrep` -> 6). Surface the product before repositioning around it -- rewriting a comparison table for something nobody can see is the wrong order. Found 2026-08-01, `docs/positioning/2026-08-01-policy-layer-moat.md`.
+
 ## P4 — carried backlog (from `docs/BACKLOG.md`, still open)
 
-- [ ] **#58** promote `tg route-test` hidden → public
+- [x] **#58** promote `tg route-test` hidden -> public -- **ALREADY DONE, verified 2026-08-01.** `tg --help` lists it (`route-test  Diagnose routing agreement between context-render...`), it is pinned in `PUBLIC_TOP_LEVEL_COMMANDS` (`tests/e2e/test_routing_parity.py:75`), and no `hidden` marker exists on it anywhere in `cli/main.py`. Found by verifying the item BEFORE dispatching work against it -- the 10th stale-open entry this campaign. ORIGINAL TEXT FOLLOWS --  → public
 - [ ] **#98** MCP tool consolidation (45 → ~10 task-shaped dispatch tools, non-breaking)
 - [ ] **#141** native `AstBackend` vs ast-grep wrapper — DSL divergence
 - [ ] **#160** v1.71.3 dogfood feature tail (`suggested_ignore`, orient auto-deweight)
