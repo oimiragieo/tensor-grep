@@ -80,6 +80,15 @@ tests then assert the shape this suite ALREADY uses for exactly this purpose --
 Nothing else scans test candidates, so that assertion CANNOT be satisfied by any of the other 24
 clock readers -- which is what makes it able to fail, and what the `partial` assertion never was.
 
+BLAST RADIUS CHECKED 2026-08-02 -- carry the counts on a DEDICATED object, not the shared flag.
+`tg callers src _DeadlineBreakFlag` reports **23 consumers across 6 modules** (`agent_capsule.py`,
+`codemap.py`, `docs_coverage.py`, `inventory.py`, `main.py`, `repo_map.py`). That object is the
+module's general-purpose mutable out-signal, so hanging `test_candidates_scanned`/`_total` on it
+would widen a 23-consumer shared symbol for the benefit of ONE caller. Pass a small dedicated
+counter object to `_context_tests` instead and read it in the three `build_symbol_*` call sites --
+same out-signal idiom, blast radius of one. (This fork was invisible until the callers query was
+run; it is exactly why the house rule is read-before-write on a shared symbol.)
+
 GOVERNANCE CHECKED 2026-08-02 -- the new key is ADDITIVELY SAFE, no existing test breaks:
 * 26 test files reference `deadline_limit`. **None** asserts an exclusive key set (no
   `set(deadline_limit)`, `.keys() ==`, or `sorted(deadline_limit)`), and the grep that found none is
