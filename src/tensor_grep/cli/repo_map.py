@@ -4263,6 +4263,13 @@ def _relevant_tests_for_symbol(
             graph_scores,
             file_scores,
             raw_query=symbol,
+            # opt10 #3: this call's `source_files` (caller_files + definition_files) is the fully
+            # CONSUMED copy -- `test_matches` here feeds `ranked`/`ordered` in full just below, not
+            # test_matches[:1] -- so only the deadline gate is threaded (already in scope as this
+            # function's own params, used by the sibling loops below); _test_source_limit is
+            # deliberately NOT applied at this call site.
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=deadline_hit,
         )
         direct_definition_tests = []
         for current in tests:
@@ -9030,6 +9037,20 @@ def _test_graph_score(
     return score
 
 
+# opt10 #3 (deep-dive): on the callers/impact/refs paths, _build_context_pack_from_map's
+# `test_source_files` slice (below, via `_test_source_limit`) was fed by callers that never passed
+# a limit, so `_context_tests` ran its O(len(tests) * len(source_files)) alias-rebuild
+# (`_test_graph_score`, repo_map.py:8084) against the FULL ranked-files list even though those 3
+# paths discard everything but `test_matches[:1]` (`_ranking_quality`, repo_map.py:7341/7347) or a
+# rarely-hit `fallback_tests=` last resort (`_relevant_tests_for_symbol`, repo_map.py:4049-4050).
+# Reuses CALLER_SCAN_FILE_CEILING (repo_map.py:176) -- the SAME ceiling refs/callers already accept
+# for their own reference/caller-scan file universe (`_cap_caller_scan_files`) -- rather than a new
+# magic number, so the test-scorer is no MORE unbounded than the scan it feeds already tolerates.
+# Ranking-parity (test_matches[:1] / ranking_quality / ordering byte-identical) is regression-tested
+# in test_context_tests_source_limit_and_deadline.py.
+_CONTEXT_TESTS_SOURCE_FILE_CEILING = CALLER_SCAN_FILE_CEILING
+
+
 def _context_tests(
     source_files: list[str],
     tests: list[str],
@@ -9040,12 +9061,27 @@ def _context_tests(
     file_scores: dict[str, int],
     *,
     raw_query: str | None = None,
+    deadline_monotonic: float | None = None,
+    deadline_hit: _DeadlineBreakFlag | None = None,
 ) -> list[dict[str, Any]]:
     related: list[dict[str, Any]] = []
     allow_unrelated_framework_scan = len(tests) <= _FRAMEWORK_TEST_PATTERN_SMALL_TEST_LIMIT
     source_stems = {Path(current).stem.lower() for current in source_files}
     source_tokens = _source_tokens(source_files)
     for current in tests:
+        # opt10 #3: this whole-repo `for current in tests:` scan was the one loop feeding
+        # _build_context_pack_from_map/_relevant_tests_for_symbol that never checked
+        # deadline_monotonic at all -- unbounded even under --deadline. Mirrors the identical
+        # per-item idiom every sibling loop in this module already uses (e.g. the #691/#222-fixed
+        # loops at repo_map.py:3997-4000, :4028-4031, and _build_context_pack_from_map's own
+        # symbol-scoring loop at :8218-8221) -- checked at the iteration boundary, folds into the
+        # caller's existing partial/deadline_limit signal via the shared _DeadlineBreakFlag. A None
+        # deadline_monotonic (the default at both call sites when no --deadline is in effect) short-
+        # circuits this check, so the loop runs exactly as before: a byte-identical no-op.
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            if deadline_hit is not None:
+                deadline_hit.hit = True
+            break
         score = _score_file_path(current, terms)
         reasons: list[str] = []
         if score > 0:
@@ -9423,6 +9459,12 @@ def _build_context_pack_from_map(
             graph_scores,
             file_scores,
             raw_query=query,
+            # opt10 #3: thread this function's own already-in-scope deadline through to
+            # _context_tests's now-gated loop -- the shared _DeadlineBreakFlag means an early break
+            # here folds into the SAME partial signal the symbol-scoring loop above already sets
+            # (own_deadline_hit.hit, checked by build_context_pack_from_map's caller below).
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=deadline_hit,
         )
         ranked_tests = [str(item["path"]) for item in test_matches]
 
@@ -16507,6 +16549,13 @@ def build_symbol_impact_from_map(
     context_payload = build_context_pack_from_map(
         repo_map,
         symbol,
+        # opt10 #3: bound the whole-repo test-scorer's source list -- impact discards
+        # context_payload["test_matches"] to a by-path lookup keyed off `related_tests` (a
+        # SEPARATE, independently-computed list; see repo_map.py's test_matches_by_path just
+        # below), and _ranking_quality only reads test_matches[:1] -- so a tighter source list
+        # cannot change any output impact actually returns. Ranking-parity proven in
+        # test_context_tests_source_limit_and_deadline.py.
+        _test_source_limit=_CONTEXT_TESTS_SOURCE_FILE_CEILING,
         deadline_monotonic=deadline_monotonic,
         deadline_hit=context_pack_deadline_hit,
         _profiling_collector=_profiling_collector,
@@ -16855,6 +16904,12 @@ def build_symbol_refs_from_map(
     context_payload = build_context_pack_from_map(
         repo_map,
         symbol,
+        # opt10 #3: refs reads context_payload["test_matches"]/["file_matches"] directly into
+        # _ranking_quality (test_matches[:1] only) and never re-derives payload["tests"] from
+        # context_payload -- that field comes from defs_payload's OWN _relevant_tests_for_symbol
+        # call above, computed independently. Bounding the source list is results-identical here;
+        # see test_context_tests_source_limit_and_deadline.py.
+        _test_source_limit=_CONTEXT_TESTS_SOURCE_FILE_CEILING,
         deadline_monotonic=deadline_monotonic,
         deadline_hit=context_pack_deadline_hit,
     )
@@ -18146,6 +18201,12 @@ def build_symbol_callers_from_map(
     context_payload = build_context_pack_from_map(
         repo_map,
         symbol,
+        # opt10 #3: callers never sets payload["test_matches"] from context_payload at all (only
+        # payload["tests"], via _relevant_tests_for_symbol's fallback_tests= -- a last resort only
+        # reached when its OWN graph-ranked + direct-import scans both find nothing) and
+        # _ranking_quality reads context_payload["test_matches"][:1] directly. Bounding the source
+        # list is results-identical here; see test_context_tests_source_limit_and_deadline.py.
+        _test_source_limit=_CONTEXT_TESTS_SOURCE_FILE_CEILING,
         deadline_monotonic=deadline_monotonic,
         deadline_hit=context_pack_deadline_hit,
         _profiling_collector=_profiling_collector,
