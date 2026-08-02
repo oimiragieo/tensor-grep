@@ -49,9 +49,21 @@ cannot be observing what they are named for: pre-fix, `_context_tests` does not 
 file_distances, graph_scores, file_scores, raw_query) -- and the tests pass anyway. What they
 actually observe is the PRE-EXISTING file-scoring deadline folding into `partial`, because
 `_rig_deadline_via_score_file_path` patches `_score_file_path` GLOBALLY and that helper has five
-call sites; the budget is blown upstream before `_context_tests` is ever reached. Scope the rig to
-the new mechanism (advance the clock inside `_test_graph_score`) so the ONLY way `partial` can be
-set is via the new threading.
+call sites, so the budget is blown upstream before `_context_tests` is ever reached.
+
+THE OBVIOUS FIX WAS TRIED AND MEASURED AND IT DOES NOT WORK -- do not re-attempt it. Scoping the
+rig to `_test_graph_score` (which an AST walk confirms is called from `_context_tests` and NOWHERE
+else) looks like it must isolate the mechanism. It does not: mutation asserted applied (3 scoped
+call sites, 0 global), and all three tests STILL PASS on the pre-fix baseline. The reason is that
+**24 functions in this module read `time.monotonic`**, so advancing the clock anywhere trips the
+next DOWNSTREAM pre-existing deadline check, which sets `partial` on its own. Scoping the PATCH
+SITE does not scope the OBSERVABLE.
+
+What would actually discriminate: assert something only the new code path can produce -- an
+attribution that names `_context_tests` as the stage that stopped (a reason/flag distinct from the
+file-scoring deadline) -- rather than asserting the shared `partial` / `deadline_exceeded` booleans,
+which every one of those 24 readers can set. That is a change to the FIX's observable surface, not
+just to the test, and it is the open design question on this branch.
 
 The other three that pass pre-fix -- `..._test_source_limit_none_is_noop`,
 `test_tight_bound_would_have_changed_consumed_output`,
