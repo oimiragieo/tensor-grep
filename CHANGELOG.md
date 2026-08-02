@@ -1,6 +1,431 @@
 # CHANGELOG
 
 
+## v1.101.31 (2026-08-02)
+
+### Bug Fixes
+
+- Collapse tg scan's drifted AST classifier onto its sibling implementation
+  ([#892](https://github.com/oimiragieo/tensor-grep/pull/892),
+  [`2bb9be1`](https://github.com/oimiragieo/tensor-grep/commit/2bb9be1fe351edab609d11a27b7b6eacaac035b8))
+
+* fix: collapse tg scan's drifted AST classifier onto its sibling implementation
+
+Two functions named `_select_ast_backend_for_pattern` existed:
+
+cli/ast_workflows.py HAD the requires_ast_grep_wrapper fail-closed guard cli/main.py had ZERO uses
+  of it <- and this is the one tg scan calls
+
+The guard refuses a pattern that needs the ast-grep wrapper (metavars like $NAME / $$$ARGS) instead
+  of silently mis-routing it to native tree-sitter. That matters because PR #890 proved these
+  engines disagree SILENTLY: native reads a bare word as a structural node-type query while the
+  wrapper reads it as a code-pattern match. Both return results. Neither errors. So the missing
+  guard on tg scan's path was not "a check we skip" -- it was a route to a wrong answer.
+
+FIXED BY DELETING THE DUPLICATE, not by patching both copies. Two same-named functions that must
+  stay in sync WILL drift again -- that is exactly what happened here. main.py's copy is now a thin
+  forwarding shim onto the ast_workflows implementation.
+
+The import stays function-local by design, and the shim's docstring says why: hoisting it to module
+  scope would pay the ast_workflows import cost on every single `tg` invocation including `--help`,
+  which is the cost this file's import discipline already exists to avoid.
+
+Verified the delegation is TOTAL, not partial: an AST walk of main.py finds ZERO real code
+  references to requires_ast_grep_wrapper. The one grep hit is the docstring explaining the drift --
+  a grep count alone could not tell those apart, which is the census-satisfied-by-a-comment trap in
+  AGENTS.md.
+
+tests/unit/test_ast_workflows.py: 46 passed.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* fix: a cast() in an error handler would NameError at runtime
+
+`cast(ComputeBackend, wrapper_backend)` used the BARE name, but ComputeBackend is imported only
+  under `if TYPE_CHECKING:` (main.py:66-67). `typing.cast` evaluates its first argument at runtime,
+  so that line raises NameError -- not a type warning, a crash.
+
+Worse: it sits inside an `except Exception:` handler. It fires exactly when something has ALREADY
+  gone wrong, replacing a real diagnostic with a NameError about a type annotation. That is why it
+  has never been hit and why it would be maximally confusing when it was.
+
+Fixed to the string forward-reference form `cast("ComputeBackend", ...)`, which is what this file's
+  own shim docstring already prescribes.
+
+SWEPT THE CLASS, not just the instance. An AST walk over main.py, ast_workflows.py and lsp_server.py
+  collects every name imported ONLY under TYPE_CHECKING, then finds every `cast()` whose first
+  argument is a bare Name in that set: 0 remaining, across all three files. The other `cast(Any,
+  ...)` / `cast(Path, ...)` sites the grep surfaced are safe -- those names ARE bound at runtime.
+
+A plain grep for `cast(ComputeBackend,` still returns 1 after the fix: that hit is the docstring
+  EXPLAINING the trap. A count alone would have read as "still broken" -- the
+  census-satisfied-by-a-comment trap in AGENTS.md, which is why the sweep is an AST walk and not a
+  grep.
+
+Found by the subagent that fixed the classifier drift; it was out of that task's scope so it
+  reported rather than silently widening. Fixed here -- authorship and scope are irrelevant to
+  whether a defect you just found gets fixed.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Assess the policy-layer moat against the real code and the real market
+  ([#889](https://github.com/oimiragieo/tensor-grep/pull/889),
+  [`02e2b99`](https://github.com/oimiragieo/tensor-grep/commit/02e2b99705a1f813474d1443b2a467f3606a1fea))
+
+* docs: assess the policy-layer moat against the real code and the real market
+
+Research memo for the three P3 positioning items in docs/TASK_BOARD.md. No product code changed.
+  Every internal claim is grounded in a symbol in this repo or a command run against the installed
+  binary with the output pasted; every external claim carries a URL.
+
+Three verdicts:
+
+- POLICY LAYER: partly true. The one-call edit-readiness primitive is real and no surveyed
+  competitor bundles all four of its elements (target, confidence, blast radius, validation
+  commands). But two parts of the board's framing are wrong. The "2026 market consensus" is ONE blog
+  post (ceaksan.com, 2026-05-19), whose own numbers are self-labelled "illustrative numbers, not
+  measurements"; two contemporaries name a DIFFERENT next gap. And tg ships no escalation at all --
+  the third of the three things that quote names. Measured: grep -rni "escalat" over src/ and
+  rust_core/src/ returns 1 + 1 hits, both unrelated, against a positive control of 533 "fallback"
+  hits. routing_policy.md is an ENGINE router, not a retrieval-strategy escalation policy. tg
+  prepare also does not fuse the dense/BM25 leg: agent_capsule.py and repo_map.py import zero of
+  retrieval_bm25/dense/fusion/reranker.
+
+- INCOMPLETENESS HONESTY: true as a differentiator, overstated as written. "No competitor documents
+  such a contract" is false and a reviewer would find it in one search -- GitHub's Search API ships
+  a required incomplete_results boolean, LSP ships CompletionList.isIncomplete. What survives with
+  no counterexample: the exit code agreeing with the payload, a closed reason-class vocabulary with
+  a remediability verdict, contract-level scope with two CI ratchets, and MCP not having
+  standardised it yet. Also recorded: there is no single machine-branchable field, there are at
+  least three vocabularies, which CONTRACTS.md #293 keeps separate on purpose.
+
+- DEPTH VS BREADTH: the frame is true, the numbers are right (10 registered / 5 parser-backed,
+  derived by calling _symbol_navigation_descriptor, not hand counted), and the frame does not win
+  the argument. Gortex's own docs publish a three-tier split whose DEEP tier is ~30 languages with
+  resolved call edges against our 5 -- reframing to depth relocates the gap into the tier we would
+  rather be measured on. Tiered disclosure is also normal practice (Semgrep, Sourcegraph, Zed,
+  nvim-treesitter), so honesty here is table stakes.
+
+The most actionable finding is smaller than any of them: the capability the board calls the moat
+  appears ZERO times in README.md (positive control: "tg agent" appears 3 times), and
+  docs/tool_comparison.md's 15 rows are all speed or parity, with zero mentions of prepare or
+  incompleteness.
+
+Includes a mandatory cannot-claim section -- #72's 7.5x benchmark stays CEO-gated and is referenced
+  internally only -- plus negative controls for every zero reported, and six open questions that
+  need a human.
+
+* docs: correct three P3 positioning claims the research falsified
+
+The research dispatched against the P3 "policy layer is the moat" item came back with four
+  corrections to our OWN framing. Encoding them on the board so nobody writes copy from the stale
+  version.
+
+1. "The 2026 market consensus is..." is ONE single-author blog post whose own numbers are
+  self-labelled "illustrative numbers, not measurements". Two contemporaries name a DIFFERENT next
+  gap. Citing market consensus publicly is a claim we would lose on inspection.
+
+2. tg ships NO ESCALATION -- one of the three things that quote names. Two occurrences in tracked
+  code, both unrelated (control: `fallback` = 725). docs/routing_policy.md is an ENGINE router
+  (NativeCpu/GPU/Trigram/Ast/rg), not a retrieval-strategy escalation policy. Conflating them in
+  public copy is a ten-minute rebuttal. Fix the product or drop the word. (I independently re-ran
+  this and initially got 16 -- 14 were inside gitignored .tensor-grep/checkpoints/ snapshots.
+  Tracked-only is 2. The agent was right and my first count was contaminated by the same
+  stale-snapshot trap that bit the dead-code census earlier in this campaign.)
+
+3. `tg prepare` does NOT fuse the semantic leg. agent_capsule.py imports zero of
+  retrieval_bm25/dense/fusion (control: it DOES import retrieval_lexical, and main.py imports all
+  four). BM25+dense RRF is `tg find`, unreachable from prepare.
+
+4. "No competitor documents such a contract" is FALSE. GitHub's REST Search API ships a REQUIRED
+  `incomplete_results` boolean with near-identical doc language; LSP ships
+  CompletionList.isIncomplete. The defensible NARROWER claim (no counterexample found): exit code
+  agreeing with payload + a closed reason-class vocabulary WITH a remediability verdict +
+  contract-level scope with two CI ratchets, and MCP has not standardized this at all.
+
+Also: the language numbers are CORRECT (10 registered / 5 parser-backed, re-derived from
+  _symbol_navigation_descriptor(), not hand-counted) -- but the depth-vs-breadth argument does not
+  win. Gortex already publishes tiers and its bespoke tree-sitter tier is ~30 languages WITH
+  resolved edges vs our 5, so reframing to depth relocates the gap into the tier we'd rather be
+  measured on.
+
+NEW ITEM FILED, and it outranks the rewrite: `tg prepare` appears ZERO times in README.md (control:
+  `tg agent` 3x) and tool_comparison.md's 15 data rows are all speed or parity. Surface the product
+  before repositioning around it.
+
+Original text preserved under every correction -- deleting the claim destroys the evidence for
+  anyone auditing whether the correction was right.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs: close #58 -- tg route-test was already public
+
+The hourly backlog driver picked #58 ("promote tg route-test hidden -> public") as its dispatch
+  candidate, then verified the item before spawning an agent against it. It is already done:
+
+tg --help lists "route-test Diagnose routing agreement between..." routing parity "route-test"
+  pinned in PUBLIC_TOP_LEVEL_COMMANDS (:75) cli/main.py no `hidden` marker on the command anywhere
+
+This is the 10th stale-open entry found this campaign (nine in the reconcile, this one today). It is
+  also the concrete argument for verifying an item BEFORE dispatching: an agent sent to "make
+  route-test public" would have spent a cycle discovering the same thing, or worse, invented a
+  change to justify the task.
+
+Original text preserved under the closure.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Close #143/#155 as already-fixed, and retire a comment that outlived its gap
+  ([#891](https://github.com/oimiragieo/tensor-grep/pull/891),
+  [`b062989`](https://github.com/oimiragieo/tensor-grep/commit/b062989fd69c1f213f48b76c48841af3e23a6ddd))
+
+* docs: close #143/#155 (Opus-gate LOW follow-ups) -- all 4 sub-items already fixed
+
+Backlog #143/#155 were carried forward as open LOW-severity nits with no detail beyond a one-line
+  summary. Traced each named sub-item to the real commit that closed it and verified the fix is
+  still live in the current tree:
+
+- #143 race-test (#543's daemon-flip nit) -> task #143a-a, the stale-daemon- metadata ownership
+  guard in session_daemon.py::_remove_daemon_metadata (248fa35/#603), covered by
+  test_session_daemon_metadata_ownership.py. - #143 symbol-timeout -> the #390 "9 remaining
+  warm-daemon command handlers" gap (defs/impact/refs/callers/blast_radius/file_importers/
+  blast_radius_render/blast_radius_plan/context ran with no default deadline). Closed by
+  81b2148/#203/#652 and refined by #205/#658/#669; session_store.py now computes deadline_monotonic
+  on every one of those dispatch branches. - #143 lru_cache flip -> @lru_cache(maxsize=1) on
+  runtime_paths._expected_tg_version (e575075/#604), cache_clear() wired into the test fixture. -
+  #140's -- sentinel -> confirmed PASS by the 2026-07-26 enterprise-readiness scorecard (row A6: "--
+  sentinel work landed via #140/#143"); rg_passthrough.rs and agent_capsule.py both sentinel-guard
+  user paths today. Note #862 is a separate, still-open sentinel nit -- not conflated with this
+  closure. - #155 (both nits on #152's sys.path.insert import fix) -> closed by the SAME commit as
+  #143's lru_cache item (e575075/#604): the dead reverse-tag block was
+  repo_map.py::_python_module_match_details computing a "sys-path-insert" provenance tag that its
+  sole caller discarded to a bare bool -- now threaded through as a separate path_provenance field,
+  with a positive test (path_provenance == "sys-path-insert") and a negative test (field absent on a
+  normal edge) closing the ordering/payload-bloat nit in the same diff.
+
+No code changes -- every claim above cites the real commit + current file:line and was spot-verified
+  against HEAD (all 4 commits confirmed ancestors), plus a narrow pytest slice (25 passed) covering
+  the two cited test files.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+* docs: close #143/#155 as already-fixed, and retire a comment that outlived its gap
+
+#143 and #155 are BOTH fully closed already -- four sub-items and two nits, each traced to the
+  commit that closed it, every commit confirmed an ancestor of HEAD:
+
+#143 race-test 248fa35 (#603) _remove_daemon_metadata expected_pid/port guard #143 symbol-timeout
+  81b2148 (#652) bounds all 9 warm-daemon handlers (the #390 class) #143 lru_cache e575075 (#604)
+  @lru_cache(maxsize=1) on _expected_tg_version #143 -- sentinel #140/#143 scorecard row A6 PASS
+  #155 both nits e575075 (#604) path_provenance threaded, + a negative test
+
+That is the 11th, 12th and 13th stale-open entry found this campaign. No code change was needed for
+  any of them.
+
+AND THE STALE COMMENT THE SEARCH TURNED UP, fixed here rather than reported: session_daemon.py's
+  header block still read "that residual is #390, still open" -- but #390 was closed 2026-07-17 by
+  81b2148, TWO WEEKS before this comment was read. A comment describing a gap someone already closed
+  is the self-contradicting-document class in AGENTS.md: it sends the next reader to build a fix
+  that already exists.
+
+Rewritten to cite the MECHANISM (`deadline_monotonic = monotonic() +
+  WARM_DAEMON_DEFAULT_DEADLINE_SECONDS`, derive the covered set from that constant's call sites)
+  rather than a status word that rots. Proven comment-only: ast.dump() of the pre- and post-change
+  file are IDENTICAL.
+
+Do NOT conflate the closed #143 sentinel item with #862 -- that is a SEPARATE, still-open sentinel
+  nit at a different agent_capsule.py GPU evidence_path site. Flagged because the two look alike in
+  a grep.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+---------
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+- Investigate #141 AST DSL divergence -- a third engine, and two real gaps
+  ([#890](https://github.com/oimiragieo/tensor-grep/pull/890),
+  [`35d41d0`](https://github.com/oimiragieo/tensor-grep/commit/35d41d0fb096e74125c52d987da6e51c6f748ac6))
+
+Investigation only (no redesign), per the backlog #141 item and AGENTS.md's "AST Native/Wrapper
+  Two-Engine Divergence" writeup.
+
+Headline correction: there are three AST engines, not two. bootstrap.py's main_entry delegates plain
+  `tg run <pattern>` (no --selector/--strictness/ --stdin/--globs) straight to the compiled Rust
+  binary's own AstBackend (rust_core/src/backend_ast.rs), which compiles patterns with
+  ast_grep_core::Pattern -- the real ast-grep pattern library, in-process, no subprocess. Confirmed
+  live: `tg run --pattern identifier --lang python` uses
+  routing_backend=AstBackend/routing_reason=ast-native (the Rust engine) and returns the CORRECT
+  ast-grep-DSL answer even with ast-grep installed. The Python-vs-Python divergence AGENTS.md
+  describes is real but reachable only through a narrower slice of usage (tg run with semantic
+  options, tg scan, tg search --ast, and the MCP tg_ast_search tool).
+
+Two real defects found and locked in as tests, left unfixed per the brief:
+
+1. Silent wrong-answer (the headline): tg search --ast never goes through either
+  _select_ast_backend_for_pattern classifier -- it constructs Pipeline directly. Pipeline.__init__'s
+  unconditional native fallback branch (ast_backend_available_fallback) has no
+  is_native_ast_language check and no fallback_reason/warning, unlike every sibling fallback branch
+  in the same function. A bare word that also happens to be a real tree-sitter grammar node-type
+  name (e.g. "identifier") silently returns the WRONG DSL's answer (7 structural matches vs the 4 an
+  ast-grep code-pattern reading gives) with no error and no visible signal. Regression-locked
+  (passes today, real tree-sitter, no mocks):
+  test_ast_backend.py::test_grammar_node_type_shaped_bare_word_silently_diverges_from_ast_grep_semantics
+
+2. Backend Fail-Closed Contract violation: the same unguarded branch also skips a language check, so
+  AstBackend gets selected for a _SUPPORTED_AST_LANGUAGES entry (java/csharp/php/c/cpp/...) it
+  cannot actually parse; _get_parser raises a bare RuntimeError instead of BackendExecutionError,
+  uncaught by search(). xfail(strict=True), RED today:
+  test_ast_backend.py::test_unsupported_but_documented_language_raises_backend_execution_error_not_bare_runtime_error
+
+3. Visibility gap, same root cause as #1: test_pipeline.py::
+  test_native_ast_fallback_for_a_grammar_node_type_pattern_should_surface_a_dsl_divergence_warning
+  xfail(strict=True), RED today (fallback_reason is None after the swap).
+
+Also found: an undocumented, drifted, near-duplicate copy of _select_ast_backend_for_pattern in
+  cli/main.py (used by tg scan) that omits the requires_ast_grep_wrapper check its ast_workflows.py
+  sibling has, with no parity test between the two. Not currently observed to produce a wrong
+  per-file result (glob filtering already happens upstream), but untested and maintenance-fragile.
+
+Verdict: keep demand-gating full DSL reconciliation (no new evidence of a consumer needing native
+  performance for wrapper-served patterns) but the fallback_reason/is_native_ast_language gaps above
+  are closed-scope bugs, not design work -- left for a follow-up PR.
+
+Full writeup: docs/investigations/2026-08-01-ast-dsl-divergence.md
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Reconcile the board against reality and record the campaign findings
+  ([#887](https://github.com/oimiragieo/tensor-grep/pull/887),
+  [`f49b81c`](https://github.com/oimiragieo/tensor-grep/commit/f49b81cdc54b063c679452552151c3c8f36e70c6))
+
+Closes 7 stale-open items on docs/TASK_BOARD.md (24 -> 17 open), each with the verified disposition
+  and its receipt, and adds the campaign entry to BACKLOG.md.
+
+Every closure was verified against the code, not inferred:
+
+--quiet rg-passthrough RESOLVED by cfc3264 (-q moved to streaming-only) --ndjson zero-match RETIRED
+  -- deliberate, documented divergence main.rs envelope literals PARTIALLY REFUTED -- 2/3 tested,
+  3rd cuda-justified AGENTS.md argv sweep REFUTED -- already corrected #115 / #125 CLOSED -- BACKLOG
+  was right, THIS BOARD was stale #15 MaxSim RESOLVED -- docstring honest, test asserts real order
+
+The --quiet entry is kept as the worked example in the staleness audit: it sat OPEN for months after
+  being fixed, and its main.py:7937-7943 citation still resolves perfectly -- which is precisely why
+  a citation-style gate cannot catch content drift, and why that approach was retired with reasons
+  rather than built.
+
+Original text is preserved under each closure. A closure that deletes the claim it closes destroys
+  the evidence for anyone auditing whether it was right.
+
+Stamp bumped to the shipped version -- AFTER reconciling, not instead of it, which is the failure
+  mode the new tolerance gate exists to catch.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Retain six laws the 2026-08-01 campaign paid for
+  ([#888](https://github.com/oimiragieo/tensor-grep/pull/888),
+  [`c695eab`](https://github.com/oimiragieo/tensor-grep/commit/c695eab4533fae9c36a1618f5ec0ec5c48e9642e))
+
+Six new AGENTS.md sections + four bullets in tensor-grep-validation-and-qa's Part 0. Appended as
+  unnumbered bullets, NOT new oracle Forms -- the Forms table is mirrored across both files and its
+  count is pinned, so adding one is a separate two-file edit.
+
+1. A BLOCKED INSTRUMENT AND A DEFINITIVE NEGATIVE LOOK IDENTICAL. The existing false-zero law covers
+  a probe that RAN and measured nothing. This is a probe that could not run YET and answered anyway
+  -- four instances: an awk range that never matched, `pytest --collect-only` aborted two files
+  early by `-x`, `gh run view --log` empty because the RUN was in_progress though the JOB had
+  failed, and a stale uv index reporting a live release as nonexistent. `--refresh` is not always
+  enough; `uv cache clean` is, and the PyPI FILES endpoint discriminates "release failed" from
+  "index stale".
+
+2. TWO DIFFERENT AUDITS BEAT MORE SEATS OF THE SAME SHAPE. An 8-seat council and one codex pass
+  overlapped on ONE finding of nine. Six seats across five providers all missed a 15-test collision
+  and a red arm that could not fail -- they converged on the most legible defect and stopped.
+  Escalate BREADTH for "what is wrong here?", collapse to DIRECT VERIFICATION for "is this claim
+  true?" -- with the corollary that direct verification is only as good as the probe (two of mine
+  were wrong until codex disproved them).
+
+3. RELEASE CLASS IS PART OF THE FIX. A CWE-88 fix sat in a `chore:` PR; validate_pr_title_semver
+  maps chore -> none, so it would have merged and never published. Merged is the most convincing
+  possible evidence for something that did not happen.
+
+4. SEPARATE ROUTING FROM EVALUATION before asserting end-to-end. A test asserted returncode==0 in a
+  job that structurally cannot succeed (it never builds the PyO3 extension), making it permanently
+  red for a reason unrelated to the fix. Measure the SHIPPED artifact before relaxing anything --
+  that is what keeps "relax the assertion" from defining a real defect away.
+
+5. A JOB THAT CANNOT REACH A SURFACE MAKES THAT SURFACE INVISIBLE. No CI job could test
+  native->sidecar delegation; the only symptom would have been a test nobody had written. Surfaced
+  only because an audit forced the test into the job where a skip becomes a hard failure.
+
+6. HARDEN A RULE ONLY WHEN MECHANICALLY DETECTABLE AND RARELY WRONG. The board staleness split: a
+  stamp TOLERANCE shipped; a citation gate was RETIRED with its measurement (3 of 24 items cite
+  anything). An over-eager gate teaches people to reach for --no-verify, discrediting every honest
+  gate beside it.
+
+Verified: 63 docs-governance tests pass; the skill-library drift gate (which pins every citation and
+  stated count) stays green at 9 passed.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Testing
+
+- Fail when the TASK_BOARD reconcile stamp goes many releases stale
+  ([#886](https://github.com/oimiragieo/tensor-grep/pull/886),
+  [`88e3e47`](https://github.com/oimiragieo/tensor-grep/commit/88e3e472e3c9db4b6eb9e7cc67768420574409fa))
+
+The board has gone stale four times the same way. Its header records three; the 2026-08-01 campaign
+  found the fourth by verifying every open item against the code -- NINE were already fixed,
+  refuted, or deliberate-by-design.
+
+THE GAP IN THE BOARD'S OWN ANALYSIS. Its header considers two CI gates and rejects both, correctly:
+  a `gh pr list` comparison (needs network + token, so environmental reds teach people to reach for
+  --no-verify) and a strict stamp==version equality (fires after EVERY release, forcing a board edit
+  into every unrelated PR). Both rejections stand.
+
+Neither considered a TOLERANCE. Rejection 2 is aimed at the STRICT form; it never argues against
+  letting the stamp lag a few releases and failing only on genuine neglect. That is the one
+  buildable mechanism, and it is what this adds: zero network, deterministic, and silent on a normal
+  1-2 release lag.
+
+Threshold sized from the board's RECORDED incidents, not taste -- it once read post-v1.101.9 while
+  the world had "moved 13 releases on", and later sat 8 behind. Both are pinned as parameterized
+  cases next to two must-NOT-fire cases, so a future edit to the threshold has to confront what it
+  breaks.
+
+Bidirectional proof: rewinding the live stamp to the real 13-release incident fails with `assert 19
+  <= 5` plus the full reconcile guidance; restored, 7 pass and the file is byte-identical. The
+  mutation was asserted applied before the red run -- an inert mutation otherwise reads as a passing
+  control.
+
+AND THE MORE IMPORTANT HALF -- A DOCUMENTED RETIREMENT. This gate proves the stamp is RECENT. It
+  cannot prove the CONTENT is correct, which is exactly the failure that happened nine times. The
+  obvious candidate (extend the skill-library citation gate to the board) was MEASURED and fails:
+  only 3 of 24 open items cite a file or symbol at all, so it would cover 12.5% -- and even there it
+  proves a citation RESOLVES, not that the defect still exists. Live example: `--quiet silently
+  dropped` is still listed OPEN with a perfectly resolvable main.py:7937-7943 citation, months after
+  cfc3264 fixed it.
+
+So content-level staleness is recorded as NOT mechanically detectable here, with the reason, per
+  board rule 4 -- a documented retirement stops the next session re-deriving it. The real fix stays
+  the routine the board already named (reconcile inside the merge step); what changed is that
+  prolonged neglect now reds the build, and the impossibility of the rest is written down rather
+  than implied.
+
+Harden a rule when a violation is mechanically detectable without interpretation AND a false
+  positive would be rare. For the stamp both now hold. For item state neither does.
+
+Full analysis: docs/audits/2026-08-01-task-board-staleness.md
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.101.30 (2026-08-01)
 
 ### Bug Fixes
