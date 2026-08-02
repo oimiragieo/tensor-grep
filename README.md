@@ -84,6 +84,7 @@ It ships as a native CLI on Windows, macOS, and Linux — no server required for
 - **`tg callers`** — who calls a function. Python-first: call-site resolution is strongest against Python ASTs and can under-match (or take minutes) on large TypeScript/JS repos. Prefer `tg refs` for TS/JS symbol lookups; see [docs/harness_api.md](docs/harness_api.md) for the exact contract note.
 - **`tg impact`** — what a symbol affects.
 - **`tg blast-radius`** / **`tg blast-radius-render`** / **`tg blast-radius-plan`** — ranked impact graph with rendered and plan-ready output.
+- Language coverage is two-tiered: AST-verified refs/callers for Go, JavaScript, Python, Rust, and TypeScript; parser-backed defs/imports (with heuristic refs/callers) for C, C++, C#, Java, and PHP. The split is derived live from the language registry and stamped into every repo-map JSON payload (`coverage.symbol_navigation`); the honest comparison — including where competitors are ahead — is in [docs/tool_comparison.md](docs/tool_comparison.md#language-coverage).
 
 ### Security & compliance
 - **`tg rulesets`** — built-in security and compliance AST rule packs.
@@ -199,7 +200,7 @@ tg dogfood
 | [docs/harness_api.md](docs/harness_api.md) | Machine-readable CLI and MCP contract shapes |
 | [docs/harness_cookbook.md](docs/harness_cookbook.md) | End-to-end harness workflows |
 | [docs/benchmarks.md](docs/benchmarks.md) | Benchmark matrix, artifact naming, regression rules |
-| [docs/tool_comparison.md](docs/tool_comparison.md) | Comparison against `rg`, `git grep`, `ast-grep` |
+| [docs/tool_comparison.md](docs/tool_comparison.md) | Comparison against `rg`, `git grep`, `ast-grep`, plus the two-tier language coverage table |
 | [docs/gpu_crossover.md](docs/gpu_crossover.md) | GPU crossover story and current limits |
 | [docs/routing_policy.md](docs/routing_policy.md) | CPU/GPU/index/AST routing behavior |
 | [docs/installation.md](docs/installation.md) | Supported install paths |
