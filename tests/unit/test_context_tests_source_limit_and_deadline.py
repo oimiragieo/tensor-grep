@@ -60,10 +60,29 @@ next DOWNSTREAM pre-existing deadline check, which sets `partial` on its own. Sc
 SITE does not scope the OBSERVABLE.
 
 What would actually discriminate: assert something only the new code path can produce -- an
-attribution that names `_context_tests` as the stage that stopped (a reason/flag distinct from the
-file-scoring deadline) -- rather than asserting the shared `partial` / `deadline_exceeded` booleans,
-which every one of those 24 readers can set. That is a change to the FIX's observable surface, not
-just to the test, and it is the open design question on this branch.
+attribution that names `_context_tests` as the stage that stopped -- rather than asserting the
+shared `partial` / `deadline_exceeded` booleans, which every one of those 24 readers can set.
+
+THE DESIGN ANSWER, AND IT NEEDS NO NEW CONVENTION (measured 2026-08-02). `deadline_limit` ALREADY
+carries per-stage scanned/total counter pairs, five of them:
+`files_scanned`/`files_total`, `caller_files_scanned`/`caller_files_total`,
+`reference_files_scanned`/`reference_files_total`,
+`importer_candidates_scanned`/`importer_candidates_total`,
+`source_candidates_examined`/`source_candidates_total`.
+There is NO test-candidate pair -- that absence is precisely the gap (AST-enumerated over every
+string constant ending `_scanned`/`_total`/`_examined`, so it is a key census, not a grep).
+
+So the fix should contribute `test_candidates_scanned` / `test_candidates_total` from
+`_context_tests`, following the existing convention rather than inventing a `stage` field. The three
+tests then assert the shape this suite ALREADY uses for exactly this purpose --
+`tests/unit/test_repo_map_deadline.py` carries
+`assert 0 < deadline_limit["files_scanned"] < deadline_limit["files_total"]  # some but not all`.
+Nothing else scans test candidates, so that assertion CANNOT be satisfied by any of the other 24
+clock readers -- which is what makes it able to fail, and what the `partial` assertion never was.
+
+Check before shipping: `docs/CONTRACTS.md` states `deadline_limit` carries its fields ADDITIVELY, so
+a new key fits the documented contract -- but confirm whether the payload governance tests pin the
+key set, because a contract change needs its validator test updated in the same PR.
 
 The other three that pass pre-fix -- `..._test_source_limit_none_is_noop`,
 `test_tight_bound_would_have_changed_consumed_output`,
