@@ -62,9 +62,14 @@ _DAEMON_RESPONSE_TIMEOUT_SECONDS = 60.0
 # #200 added the separate traversal-deadline this comment used to flag as "tracked" -- but only for
 # the 4 commands session_store.WARM_DAEMON_DEFAULT_DEADLINE_SECONDS covers (agent/orient/
 # context_render/context_edit_plan, the DEFAULT no-flag case). The 5 symbol commands (defs/impact/
-# refs/callers/blast_radius) plus blast_radius_render/blast_radius_plan/file_importers/context still
-# run unbounded on THIS daemon path -- that residual is #390, still open (see
-# tensor-grep-large-repo-scale-campaign skill, "#390 -- daemon-path deadline gap").
+# refs/callers/blast_radius) plus blast_radius_render/blast_radius_plan/file_importers/context were
+# the residual, tracked as #390 -- CLOSED 2026-07-17 by `81b2148` (#203/#652), which bounds all nine
+# with the default deadline; refined by #205/#658/#669. `session_store` now computes
+# `deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS` on every one of those
+# branches -- derive the current set from THAT constant's call sites, not from this comment.
+# (This block read "#390, still open" for ~2 weeks after the fix landed. A comment that describes a
+# gap someone already closed is the self-contradicting-document class in AGENTS.md: it sends the
+# next reader to build a fix that exists. Cite the mechanism, not a status word.)
 _DAEMON_RESPONSE_TIMEOUT_ENV = "TG_SESSION_DAEMON_RESPONSE_TIMEOUT_SECONDS"
 _DAEMON_START_TIMEOUT_SECONDS = 5.0
 _DAEMON_SESSION_LOOKUP_RETRY_SECONDS = 0.25
