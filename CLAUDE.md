@@ -8,6 +8,24 @@ Claude Code guidance for the **tensor-grep** repository.
 
 `AGENTS.md` covers, among other things:
 
+- **The evidence laws — the largest and most load-bearing thing in `AGENTS.md`, and the reason to read
+  it before trusting any green signal.** Two families, both keyed to one question: *what would this
+  check show if the thing it verifies were BROKEN? If the answer is "the same", it is not
+  verification.*
+  - **The verification-oracle family** — enumerate with `grep -nE '^\*\*Form [0-9]+ ' AGENTS.md`.
+    MIRRORED in `.claude/skills/tensor-grep-validation-and-qa/SKILL.md` Part 0: **adding a Form is a
+    two-file edit**, and `tests/unit/test_skill_library_drift.py` fails if the stated count and the
+    enumerated forms disagree in either file. Do not hand-count — the header was wrong in both files,
+    in opposite directions, for four days.
+  - **The dated instrument laws** — enumerate with
+    `grep -nE '^#{2,4} .*\(20[0-9]{2}-[0-9]{2}-[0-9]{2}' AGENTS.md`. Each is a receipt, not a maxim:
+    a probe that returned a believable number and was wrong. The recurring shape is that **the
+    instrument fails more often than the subject** — a blocked instrument and a definitive negative
+    look identical, a grep zero is UNRESOLVED rather than ABSENT, and after a fix a grep hit is
+    usually the fix's own docstring (count AST nodes, not substrings).
+
+  Counts are deliberately not written here. A number in a third file is a third place to drift, and
+  this repo has now been burned by exactly that — including by prose enumerations of its own laws.
 - **Adding a Command or Flag** — the four registration sites for a new `tg` command and the two front
   doors for a new search flag (miss one and it silently misroutes to ripgrep).
 - **Dogfood the Real Binary, Not CliRunner** — `CliRunner` bypasses the `bootstrap` front door; verify
@@ -38,10 +56,24 @@ Claude Code guidance for the **tensor-grep** repository.
   no-release `docs:`/`chore:` PR — rejects the in-flight release's push (`! [rejected] main -> main`).
   Wait for the prior `chore(release)` commit + PyPI before the next merge; a failed release self-heals
   on the next push (don't panic-rerun).
+
+  **RELEASE CLASS IS PART OF THE FIX.** `scripts/validate_pr_title_semver.py` maps `feat`→minor,
+  `fix`/`perf`→patch, and `chore`/`docs`/`test`/`ci`/`build`/`refactor`/`bench`→**none**. The repo
+  squash-merges, so the PR TITLE *is* the release semantic. A CWE-88 security fix was scoped as a
+  `chore:` PR on 2026-08-01 — it would have merged, closed the ticket, and **never published**, with
+  every tracker reading "shipped". Ask what the title does to the release BEFORE merging.
+  **Committed is not shipped, and merged is not released**: verify on the PUBLISHED artifact, and
+  reconcile the board AT completion, never "next cycle" (17 stale items accrued one deferral at a
+  time).
 - **Local Dev Gotchas (Windows, hard-won)** — backticks in `git commit -m` run command substitution
   (use `-F`/heredoc); cargo/rustc off `PATH` and a "hanging" Rust build is slow LTO that finishes;
   verify FFI/bridge changes against the REAL extension (not mocks); apply post-merge fixes by SYMBOL
   not line number; a dependency upper-cap can silently downgrade the whole install on a newer Python.
+  **`git stash` is UNSAFE once parallel worktrees exist** — worktrees share `.git`'s stash refs, so N
+  agents reach into ONE drawer; a red-arm revert took a different agent's stash on 2026-08-02. Revert
+  with `git checkout -- <file>` or a patch file. Rescue an orphaned stash non-destructively with
+  `git branch <name> stash@{0}` (a permanent ref, no checkout, no pop). This applies to every
+  worktree campaign this file tells you to run.
 - **Campaign Orchestration Disciplines (2026-07-08, extended 2026-07-16, 2026-07-22)** — running a
   multi-PR drain+build campaign so fixes *land*: the WIP cap, the self-firing drain-cron (beats a
   long-lived background drain), the mandatory adversarial security gate before merge,
@@ -66,7 +98,15 @@ Claude Code guidance for the **tensor-grep** repository.
 ## Skills that apply here
 
 - **Using `tg`**: `.claude/skills/tensor-grep/SKILL.md` (+ `REFERENCE.md`).
-- **Carrying the project forward -- the in-repo skill library** (`.claude/skills/tensor-grep-*` + `code-search-and-retrieval-reference`, **27 skills**): the onboarding handbook so a new engineer or a Sonnet-class session can debug, extend, validate, and advance `tg` without the original authors. Each auto-loads by its `description`; load the one matching your task. Index by intent -- this exact bucket list is kept byte-identical with `AGENTS.md`'s skill index; `tests/unit/test_skill_index_sync.py` fails if either doc drifts from the real `.claude/skills/` folder set, and `tests/unit/test_skill_library_drift.py` additionally pins every `file:line` citation (must resolve to a git-tracked file, line in range) and the stated `**N skills**` count against the folders that sentence names. **Neither gate can tell you a skill is CORRECT** — they prove a citation resolves, not that the cited line still contains the claimed symbol. Anchors drift 14-500 lines while resolving perfectly; run `/tg-skill-audit` (`.claude/workflows/tg-skill-audit.js`) for that half, and never fix drift by re-stamping a new line number (see AGENTS.md, "Cite the SYMBOL, not the line"):
+- **Carrying the project forward -- the in-repo skill library** (`.claude/skills/tensor-grep-*` + `code-search-and-retrieval-reference`, **27 skills**): the onboarding handbook so a new engineer or a Sonnet-class session can debug, extend, validate, and advance `tg` without the original authors. Each auto-loads by its `description`; load the one matching your task. Index by intent -- this exact bucket list is kept byte-identical with `AGENTS.md`'s skill index; `tests/unit/test_skill_index_sync.py` fails if either doc drifts from the real `.claude/skills/` folder set, and `tests/unit/test_skill_library_drift.py` additionally pins every `file:line` citation (must resolve to a git-tracked file, line in range) and the stated `**N skills**` count against the folders that sentence names. **Neither gate can tell you a skill is CORRECT** — they prove a citation resolves, not that the cited line still contains the claimed symbol. Anchors drift 14-500 lines while resolving perfectly; run `/tg-skill-audit` (`.claude/workflows/tg-skill-audit.js`) for that half, and never fix drift by re-stamping a new line number (see AGENTS.md, "Cite the SYMBOL, not the line").
+
+  **And no gate we own compares a document to ITSELF.** Fix a fact → grep the WHOLE doc for the old anchor: a 2026-08-02 audit found `tensor-grep-benchmark-and-proof-toolkit` shipping a corrected citation AND its refuted duplicate 150 lines apart, in one file. **Re-stamping is the live failure mode, not a hypothetical:** the 2026-08-01 anchor pass re-stamped `#578` from `:603` to `:850`, and `:850` was already wrong the next day (real hits: 977/978/1158). Both of those skills now carry the grep with no line number at all.
+
+  **`**27 skills**` above is VERIFIED CORRECT — do not "fix" it.** 28 folders exist; the bare `tensor-grep/` folder is usage-docs, deliberately uncounted. A sibling skill's frontmatter had already drifted to "26-skill library" (fixed 2026-08-02). Re-derive before changing: `ls .claude/skills/ | grep -c '^tensor-grep-'` (26) + `code-search-and-retrieval-reference`.
+
+  **Never hand-count the language tiers** — ask the product: `repo_map._symbol_navigation_descriptor()` returns **5 parser-backed** (go, javascript, python, rust, typescript) **/ 5 foundational, defs+imports only** (c, cpp, csharp, java, php), 10 registered, no third tier. That number has been wrong four times, once inside a skill.
+
+  Skills by intent:
   - **Change safely:** `tensor-grep-change-control` (the gates), `tensor-grep-debugging-playbook`, `tensor-grep-failure-archaeology` (don't re-fight settled battles), `tensor-grep-validation-and-qa`.
   - **Understand:** `tensor-grep-architecture-contract`, `code-search-and-retrieval-reference` (domain theory), `tensor-grep-config-and-flags`.
   - **Operate:** `tensor-grep-build-and-env`, `tensor-grep-run-and-operate`, `tensor-grep-diagnostics-and-tooling`, `tensor-grep-docs-and-writing`, `tensor-grep-release-and-positioning`, `tensor-grep-workspace-dogfood` (multi-repo stress dogfood), `tensor-grep-enterprise-agent` (enterprise readiness gaps + agent hard-stops), `tensor-grep-prepare` (one-call edit readiness), `tensor-grep-ledger` (advisory multi-agent claim/finding-reuse), `tensor-grep-find-and-route` (whole-repo hybrid find + route-test), `tensor-grep-multi-project-search` (scoped cross-repo search), `tensor-grep-enterprise-review-bundle` (review-bundle create/verify), `tensor-grep-gpu` (experimental GPU probes).

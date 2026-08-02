@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-backlog-campaign
-description: Use when asked to deep-dive, audit, fix, or drain tensor-grep backlog — OR investigate/rank next work and produce SPEC/TDD plans (docs/plans/requirements|design|tasks-*.md) without implementing. Triggers: "work the backlog", "what next", "investigate and plan", backlog-completion campaign. META-ORCHESTRATOR — 26-skill library. Semantic-search flagship: tensor-grep-semantic-search-campaign. Scale/hang campaign: tensor-grep-large-repo-scale-campaign. Load tensor-grep-change-control before edit.
+description: Use when asked to deep-dive, audit, fix, or drain tensor-grep backlog — OR investigate/rank next work and produce SPEC/TDD plans (docs/plans/requirements|design|tasks-*.md) without implementing. Triggers: "work the backlog", "what next", "investigate and plan", backlog-completion campaign. META-ORCHESTRATOR — 27-skill library. Semantic-search flagship: tensor-grep-semantic-search-campaign. Scale/hang campaign: tensor-grep-large-repo-scale-campaign. Load tensor-grep-change-control before edit.
 ---
 
 # tensor-grep backlog campaign
@@ -224,6 +224,13 @@ Mandatory for load-bearing / security / concurrency / FFI / public-ship / >$50. 
 
 ### 5 — Pre-dispatch gate (`verify-plan-against-code`)
 Adversarial seam verification (`file:line`). BLOCK build until clean.
+
+**Run that skill's Step 0 (the PREMISE check) FIRST on every board item.** Seam verification proves
+the anchors are real; it cannot tell you the item is already CLOSED — a plan against a fixed bug has
+citations that resolve perfectly. Reproduce the defect or find the fixing commit before dispatching.
+Receipt: the 2026-08-01/02 reconcile found **17 of ~24** open items already shipped, refuted, or
+by-design, and one agent was dispatched at finished work (#58). `docs/TASK_BOARD.md` is the live
+queue; `docs/BACKLOG.md` is a historical ledger, not a to-do list.
 
 ### 6 — Implement
 
