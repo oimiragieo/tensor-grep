@@ -195,9 +195,14 @@ review, each verified against the real code (a finding without a `file:line` was
   explicit framing that tiered disclosure is *table stakes, not a differentiator*. Nothing was
   left to dispatch. 18th stale entry this session; found by running Step 0 of
   `verify-plan-against-code` (is the work still needed?) before dispatching an agent at it.
-  NOTE for whoever next touches that doc: this entry said Gortex publishes **257** languages,
-  the shipped doc says **256**. The doc cites its source URL; the board did not. Unresolved by
-  one -- verify against the cited URL before either number is quoted anywhere new.
+  The 257-vs-256 discrepancy this entry flagged is RESOLVED (Exa, 2026-08-02): **Gortex's own
+  docs disagree with each other** -- `docs/languages.md` says "currently indexes 256" and its
+  table totals 256, while the README, `docs/features.md` and gortex.dev say 257. Both of our
+  numbers had a real source. `docs/tool_comparison.md` now cites the RANGE and names the
+  contradiction rather than picking a side. Same self-contradiction class we spent this session
+  fixing in our own docs -- worth knowing it is not unique to us. Also re-verified while there:
+  their bespoke tier does contain all ten of `tg`'s languages, so our "deep tier covers all ten
+  plus roughly twenty more" line is correct as written.
 
 - [x] **`tg prepare` is invisible** -- **CLOSED 2026-08-02, PR #899.** Measured before and after: README `tg prepare` 0 -> 6; `tool_comparison.md` `prepare` 0 -> 5, `incomplete` 0 -> 8 (control: `ripgrep` 6, unchanged). Added the real one-call invocation with a verified payload, plus two new sections. All 15 speed/parity rows left intact -- they are true. ORIGINAL TEXT FOLLOWS --  The capability the board calls the moat appears **zero times in `README.md`** (control: `tg agent` appears 3x) and sits in no mkdocs-nav'd page except `CONTRACTS.md`. `docs/tool_comparison.md`'s 15 data rows are ALL speed or parity: `grep -ci prepare` -> 0, `grep -ci incomplete` -> 0 (control: `ripgrep` -> 6). Surface the product before repositioning around it -- rewriting a comparison table for something nobody can see is the wrong order. Found 2026-08-01, `docs/positioning/2026-08-01-policy-layer-moat.md`.
 
