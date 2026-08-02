@@ -234,13 +234,25 @@ the worktree, which is exactly how 519 lines hid behind an "ANCESTOR of main" ve
   452-line test file and a `--deadline` gate. **NOT verified: not run, not reviewed, base is
   #713-era.** `repo_map.py` is core -- needs a rebase, a real TDD gate and an observed red arm
   before it goes near a PR. Do NOT merge on the strength of the docstring.
-- [ ] **`probe/classifier-feasibility` -- 1059 insertions across 34 files, never opened as a PR.**
-  The `rrf_centrality` eval arm + `find_centrality_golden.jsonl` structural-centrality golden slice,
-  built to de-risk #189 Item-2 (query-CONDITIONED centrality -- the ONE survivor after the other
-  three CPU levers died on real data). Absent from `main` (verified: the eval harness on main has
-  zero `centrality` hits, positive control 22 `def`s in the same file). **Needs a disposition:** did
-  the probe reach a verdict? If it died like its siblings, record the negative and delete -- a dead
-  lever nobody wrote down gets re-chased.
+- [x] **`probe/classifier-feasibility` -- VERDICT ALREADY EXISTED; the INSTRUMENT was the gap.**
+  Resolved 2026-08-02 without new measurement. The probe DID reach a verdict and it is recorded in
+  memory (`tensor-grep-centrality-leg-moot-2026-07-16`, agent `af308cb3` -- literally this
+  worktree): the real-query probe **OVERTURNED** the synthetic oracle ceiling. On the synthetic
+  golden (4 hubs TIED at 19.0) a perfect-classifier gate scored **+0.256 ndcg@10**, leaf-regression-
+  free by construction -- "worth PROTOTYPING a real classifier". On REAL queries the
+  perfect-classifier ceiling itself goes NEGATIVE. **#189 Item-2 is DEAD, not conditionally alive;
+  the +0.256 was a synthetic artifact.** All three #189 CPU levers are now dead-as-specified.
+
+  What was actually at risk: **`benchmarks/datasets/find_realquery_golden.jsonl` -- the 26-query
+  instrument that produced that negative -- existed ONLY as an untracked file in that worktree.**
+  `git log --all` for it returned **0** commits across every ref, while its synthetic sibling
+  returned 1 (positive control). One `worktree remove --force` and the evidence behind a settled
+  verdict was gone, leaving only a conclusion nobody could re-derive -- at which point the next
+  session re-runs the synthetic arm, sees +0.256, and re-chases a dead lever. Committed as `939f133`
+  and pushed. **A negative is only durable if the instrument that produced it survives** (same
+  reason the MaxSim and cAST negatives are kept indexed). Branch retained as the real-query
+  counterpart to #641's synthetic de-risk asset; delete only if that asset is deliberately retired.
+
 - [ ] **`rescue/lazy-wave-stash-2026-08-01` -- likely obsolete, kept deliberately.** The orphaned
   stash rescued during the parallel-worktree stash collision; a `temp-verify-preexisting-flake` hack
   on a **v1.64.2** base, ~38 releases stale. Almost certainly discardable, but it is the receipt for
