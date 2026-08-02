@@ -163,6 +163,20 @@ For every LOAD-BEARING claim, RE-DERIVE it:
   * contract claim   -> find the implementing code and read it
   * narrative        -> a stale "this is broken" is worse than a stale line number; flag anything
                         the current code contradicts
+
+ALSO CHECK THE FILE AGAINST ITSELF -- no gate we own does this, and it is how the 8th
+self-contradiction in this repo shipped (2026-08-02):
+  * SELF-CONTRADICTION -> does this file assert a claim AND its refutation? The tell is a
+                        correction that landed at ONE site while a duplicate 100+ lines away kept
+                        the refuted version. Receipt: benchmark-and-proof-toolkit corrected a
+                        CONTRACTS.md anchor in its GPU section and left the debunked ':80-82' in
+                        Provenance 150 lines below -- both shipping, each confirming itself on a
+                        local read. Grep the file for every anchor/number it states MORE THAN ONCE
+                        and compare the copies to each other, not only to the tree.
+  * RE-STAMP SMELL     -> text of the form "was :X, now :Y" is the re-stamping anti-pattern, not a
+                        fix. Verify Y; if it is wrong, report it AND recommend deleting the number
+                        rather than stamping Z. Receipt: '#578 was :603 now :850' was already wrong
+                        the next day. A stamp resets the clock; the grep is what survives.
 ${isRetry ? '\nRETRY: your prior attempt returned nothing. Narrow to the 2 highest-risk skills and RETURN A RESULT.\n' : ''}
 Report only drift you MEASURED, with the skill file:line of the wrong text and the repo evidence.`,
     { label: `audit:${c.key}`, phase: 'Audit', schema: AUDIT_SCHEMA, model: 'sonnet' },

@@ -139,7 +139,13 @@ Executive summary · evidence · skills used · tools (gaps only) · plan pointe
 from #20 as of the 2026-07-22 session-capture — 6 new registrations, #20-25 above).
 **Semantic-search flagship → #13**, not here. **Scale/hang campaign → #17**, not here.
 
-**Also load:** `tensor-grep` (usage), global `~/.claude/skills/` (`verify-plan-against-code`, `dogfood-the-shipped-artifact`, …). **NO `docs/skill_index.md`** — use `AGENTS.md` skills section + table above. **`.claude/skill_rules.json`** is a separate, harness-level mechanism, not this table: project-local keyword/intent triggers consumed by the global `skill_activation_gate.py` hook to auto-fire a skill on a matching prompt. It seeds only 12 of the 26 library skills today (`debugging-playbook`, `release-and-positioning`, `build-and-env`, `gpu`, `semantic-search-campaign`, `validation-and-qa`, `workspace-dogfood`, `ledger`, `prepare`, `find-and-route`, `multi-project-search`, `enterprise-review-bundle`) and has **zero rule** for this skill or for `tensor-grep-large-repo-scale-campaign` — its silence on a topic is not evidence a skill doesn't apply; the table above stays authoritative for manual routing.
+**Also load:** `tensor-grep` (usage), global `~/.claude/skills/` (`verify-plan-against-code`, `dogfood-the-shipped-artifact`, …). **NO `docs/skill_index.md`** — use `AGENTS.md` skills section + table above. **`.claude/skill_rules.json`** is a separate, harness-level mechanism, not this table: project-local keyword/intent triggers consumed by the global `skill_activation_gate.py` hook to auto-fire a skill on a matching prompt. It seeds only SOME of the 26 library skills. **Do not trust a number or a name list here** -- this sentence enumerated 12 skills in prose and was wrong three ways by 2026-08-02: the real count was 14, and it named `tensor-grep-large-repo-scale-campaign` as having zero rule when it had since gained one. Derive it:
+
+```bash
+python -c "import json,os; d=open('.claude/skill_rules.json').read(); \n  lib={x for x in os.listdir('.claude/skills') if x.startswith('tensor-grep-')}; \n  print(sorted(x for x in lib if x not in d))"
+```
+
+Its silence on a topic is not evidence a skill doesn't apply; the table above stays authoritative for manual routing.
 
 ---
 
