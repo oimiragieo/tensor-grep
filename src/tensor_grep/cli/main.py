@@ -6644,7 +6644,7 @@ def _run_ast_scan_payload(
             )
         except Exception:
             for rule, rule_cfg in wrapper_rules:
-                other_resolved.append((rule, rule_cfg, cast(ComputeBackend, wrapper_backend)))
+                other_resolved.append((rule, rule_cfg, cast("ComputeBackend", wrapper_backend)))
             wrapper_rules = []
 
     for rule, _rule_cfg in wrapper_rules:
