@@ -27,7 +27,29 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tensor_grep.cli import repo_map
+
+# EVERY test in this file needs a tree-sitter grammar, and `tree-sitter` is an OPTIONAL extra
+# (`[project.optional-dependencies] ast`), so a plain `pip install tensor-grep` has no parser.
+# Without one this file was not merely noisy -- it was MISLEADING IN BOTH DIRECTIONS (measured
+# 2026-08-02): 5 tests failed with messages that read like product bugs ("expected at least one
+# reference to computeWidgetTotal"), while several others PASSED VACUOUSLY, because their whole
+# claim is that a parse did NOT happen:
+#
+#     assert calls["n"] == 0, "a file with neither the literal symbol nor an alias must not parse"
+#
+# With no parser installed, no parse ever happens, so that assertion cannot tell a correct
+# early-exit from an absent grammar. A skip is honest where a vacuous pass is not.
+#
+# MODULE-level, deliberately, not per-test: the subject of this file IS the parse-product cache,
+# so with nothing able to parse there is no subject. Gating only the 5 loud failures would have
+# left the quiet vacuous passes in place -- the worse half.
+#
+# This does NOT reduce CI coverage: CI installs the `ast` extra, so all 14 run there. Matches the
+# existing convention (`pytest.importorskip("tree_sitter")`, tests/unit/test_lsp_hygiene.py).
+pytest.importorskip("tree_sitter")
 
 
 def _write(path: Path, content: str) -> Path:
