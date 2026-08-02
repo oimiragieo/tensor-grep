@@ -1,6 +1,63 @@
 # CHANGELOG
 
 
+## v1.102.0 (2026-08-02)
+
+### Features
+
+- Close #160's getattr breadth gap; verify the rest was already shipped
+  ([#893](https://github.com/oimiragieo/tensor-grep/pull/893),
+  [`584da5c`](https://github.com/oimiragieo/tensor-grep/commit/584da5c07f3eb1cbd72c16648bcc3ae4913753c6))
+
+#160 ("v1.71.3 dogfood Medium/Lower feature tail") named four sub-features. Execution-verified all
+  four against real code + the live CLI before writing any implementation, per the board's own
+  history of listing already-done work as open:
+
+- suggested_ignore / orient auto-deweight: SHIPPED. `tg orient --help` shows `--no-auto-deweight`
+  (on by default); `tg orient --json` on a fixture vendor tree returns `suggested_ignore:
+  ["third_party/**"]` and `None` on a clean repo (positive + negative control). `tg agent --json`
+  carries the same field via M2 parity (agent_capsule.py::build_agent_capsule ->
+  orient_capsule._suggested_ignore_from_deweighted_trees), verified live. - complete-scan
+  suggested_scope: SHIPPED. The tie-confirmation path (not just scan-limit truncation) already
+  populates suggested_scope (agent_capsule.py:3216-3241, the "Dogfood fix" comment there names this
+  exact gap as already closed); test_agent_capsule_tie_suggested_scope.py is 11/11 green. -
+  dynamic-import string breadth: SHIPPED via #504/#703 (CHANGELOG v1.93.0). - cold-doctor
+  daemon-autostart hint: SHIPPED (main.py::_doctor_session_daemon_autostart_status, "v1.92.1 dogfood
+  item 5"); `tg doctor --json` exposes session_daemon.autostart, 4 tests green.
+
+The getattr HALF of "dynamic-import string/getattr breadth" was genuinely under-specified:
+  getattr(mod, "Symbol") was already matched by the generic _string_literal_references/string_refs
+  regex pass, but lumped under the same "string-literal" bucket as an arbitrary string assignment --
+  no dedicated classification existed, so a rename-aware agent could not tell a dynamic getattr
+  dispatch site from an unrelated string. Added a "getattr-arg" occurrence value, same same-line
+  unbalanced-parens heuristic precision as the pre-existing "decorator-arg" check; additive-only (no
+  row-count change, only a more specific label on an already-matched row).
+
+TDD: tests/unit/test_repo_map_targets.py:: test_string_literal_references_classifies_getattr_arg.
+  RED confirmed first (assert 'string-literal' == 'getattr-arg'); red-arm re-proved by reverting
+  repo_map.py via `git stash` and grepping for zero "getattr-arg" occurrences before re-running red,
+  then restoring and re-confirming green.
+
+Not an MCP contract-version bump: string_refs[].occurrence was never a closed vocabulary
+  (_classify_string_reference's own docstring already called it an open "any other quoted
+  occurrence" bucket, and no CONTRACTS.md/wire-surface governance test enumerates it) -- the same
+  class of change as the pre-existing "fstring" value, not a new field. Verified
+  test_mcp_passthrough_wire_surface.py and test_mcp_contract_version_docs_are_pinned.py stay green.
+
+Verified clean: ruff check + ruff format --check --preview (pinned 0.15.20), mypy on the whole
+  src/tensor_grep package (89 files), and every directly relevant test file
+  (suggested_ignore/scope/typed-ref-kind/file-deps/doctor-autostart/skill-index/skill-drift/MCP-contract
+  suites, 750+ tests). One pre-existing, unrelated wall-clock timing flake
+  (test_plain_search_refuses_unbounded_large_single_project_root, a shared-server contention flake
+  per project memory) reproduces identically on a clean stash of these changes and is untouched by
+  this diff.
+
+docs/BACKLOG.md's #160 entry updated to CLOSED with the full evidence above. docs/TASK_BOARD.md
+  intentionally left untouched (owned by a concurrent PR).
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+
 ## v1.101.31 (2026-08-02)
 
 ### Bug Fixes
