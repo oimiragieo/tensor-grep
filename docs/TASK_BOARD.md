@@ -219,6 +219,33 @@ review, each verified against the real code (a finding without a `file:line` was
 - [x] apply_policy argv-sentinel — RETIRED (not fixed), 2026-08-01 backlog campaign, PR-D. See
       `docs/BACKLOG.md`'s LOW-severity section for the reasoning.
 
+## UNSHIPPED ARTIFACTS -- found by a worktree sweep, 2026-08-02
+
+Not "open work" someone chose; work that was **invisible** because its branch looked like a husk.
+All three are now pushed to origin, so none is disk-only. `git merge-base --is-ancestor` says
+"landed" for a branch whose COMMITTED head is on main -- it says nothing about uncommitted files in
+the worktree, which is exactly how 519 lines hid behind an "ANCESTOR of main" verdict.
+
+- [ ] **`perf/context-tests-limit-deadline` -- 519 lines, committed 2026-08-02 for PRESERVATION.**
+  Another agent's opt10 campaign #3: `repo_map.py` +61 threading `_test_source_limit` through
+  `build_symbol_impact/refs/callers_from_map`, which fed `ranked_files` to `_context_tests`
+  UNBOUNDED (O(len(tests) * len(source_files)) via `_test_graph_score` rebuilding an aliases-by-file
+  dict per test) while refs/callers consume only `test_matches[:1]` and discard the rest. Plus a
+  452-line test file and a `--deadline` gate. **NOT verified: not run, not reviewed, base is
+  #713-era.** `repo_map.py` is core -- needs a rebase, a real TDD gate and an observed red arm
+  before it goes near a PR. Do NOT merge on the strength of the docstring.
+- [ ] **`probe/classifier-feasibility` -- 1059 insertions across 34 files, never opened as a PR.**
+  The `rrf_centrality` eval arm + `find_centrality_golden.jsonl` structural-centrality golden slice,
+  built to de-risk #189 Item-2 (query-CONDITIONED centrality -- the ONE survivor after the other
+  three CPU levers died on real data). Absent from `main` (verified: the eval harness on main has
+  zero `centrality` hits, positive control 22 `def`s in the same file). **Needs a disposition:** did
+  the probe reach a verdict? If it died like its siblings, record the negative and delete -- a dead
+  lever nobody wrote down gets re-chased.
+- [ ] **`rescue/lazy-wave-stash-2026-08-01` -- likely obsolete, kept deliberately.** The orphaned
+  stash rescued during the parallel-worktree stash collision; a `temp-verify-preexisting-flake` hack
+  on a **v1.64.2** base, ~38 releases stale. Almost certainly discardable, but it is the receipt for
+  that incident. Delete once someone confirms nothing in it is wanted.
+
 ## BLOCKED — environment (not CEO-gated, just needs hardware)
 
 - [ ] **#89** WSL `/mnt/c` absolute-path resolution in the native backend
