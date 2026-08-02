@@ -28,9 +28,9 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
-from typing import Any
 
 from tensor_grep.cli import agent_capsule, lang_go, lang_registry, repo_map
 
