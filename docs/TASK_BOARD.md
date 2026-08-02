@@ -18,7 +18,7 @@
 >    `tag == PyPI` cannot distinguish *released* from *not started* from *died* and cost a release
 >    on 2026-07-28.
 
-Last reconciled: **2026-08-01** (backlog campaign: 7 stale-open items closed), post-**v1.101.28** (PyPI verified via the JSON API, not inferred
+Last reconciled: **2026-08-01** (backlog campaign: 7 stale-open items closed), post-**v1.102.0** (PyPI verified via the JSON API, not inferred
 from a tag — `tag == PyPI` cannot tell *released* from *not started* from *died*).
 
 **This has now gone stale THREE times in the same way, so the pattern is the finding.** The stamp
