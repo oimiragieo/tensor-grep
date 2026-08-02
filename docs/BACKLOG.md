@@ -430,6 +430,89 @@ wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while 
 
 ---
 
+## ⭐ EXTERNAL DOGFOOD — v1.101.31 on gotcontext-saddle (2026-08-02)
+
+A real user ran the published wheel against a live repo. **Verdict: works.** Symbol ladder, blast
+(1.0 + mermaid), orient/map/docs, `agent` scoped+lexical+root (conf 0.9, ~55s non-partial),
+truncation hard-stop (conf 0.72 + `ask.required` + exit 2), `prepare --out/--claim` (~8-13s),
+`route-test` agreement, ledger Slice 1 + Slice 2 rollup, `evidence emit/verify` with
+`checks.digest_valid`, `find` BM25 fallback, multi-project parent refuse, bare `--json` in-band
+disclosure, GPU honesty, doctor autostart — all correct.
+
+Below is every finding, **classified rather than queued**, because two of them collide with decisions
+this repo made deliberately and one of those collisions is a false collision.
+
+### F1 — bare search exits 1, not 2 (REPORTED AS A DEFECT; IT IS A CONTRACT QUESTION)
+
+Reproduced on the published wheel:
+
+```
+tg search <no-match> --json          (no PATH)   -> exit 1, path_was_defaulted: true, scope_note present
+tg search <no-match> f.txt           (explicit)  -> exit 1
+```
+
+The user's concern is exact: **an agent reading only the exit code cannot distinguish "searched the
+right place, found nothing" from "searched a scope nobody chose, found nothing."** The in-band
+disclosure IS there (#871 shipped `path_was_defaulted` + `scope_note` across all five JSON emitters),
+so the gap is exit-code-only.
+
+**But the requested fix — exit 2 + `incomplete_reason_class: missing_explicit_path` — contradicts the
+0/1/2 contract.** Exit 2 means INCOMPLETE. A defaulted-scope search **ran to completion**; it just ran
+somewhere the user did not choose. Making it exit 2 would drag the most ordinary invocation there is
+into the incompleteness family and break the closed contract for every consumer.
+
+**This is the SAME unresolved contract question as #22** (GPU exit-2 calibration: "exit 2 means
+INCOMPLETE, and that search ran to completion and returned its match"). **Two independent findings now
+point at one question**, which is what elevates it:
+
+> *Does exit 2 mean "the scan did not finish", or "do not trust this result at face value"?*
+
+Under the first reading both #22 and F1 are correctly WONTFIX and the answer is agent guidance.
+Under the second, both become defects and a third code exists. **CEO/contract decision — not code.**
+Options a decision should choose between: (a) keep exit 1, document that agents MUST branch on
+`path_was_defaulted`; (b) add a distinct exit 3 for "completed but scope/result is not what you
+asked for"; (c) widen exit 2's meaning and accept the blast radius.
+
+### F2 — anonymous `--claim` still allowed (THE RETIREMENT DOES NOT COVER THIS)
+
+The board records anonymous `--claim` as RESOLVED. **It is not the same question.** The adversarial
+audit killed **auto-deriving** an agent id, with a receipt: `_find_overlaps` suppresses when
+`new.agent_id != _DEFAULT_AGENT_ID and entry.agent_id == new.agent_id`, so two zero-config agents
+sharing a derived id would silently drop each other's overlaps — reproducing #845 by a new mechanism.
+
+**That kills DERIVE. It never considered REFUSE.** Refusing an anonymous claim outright (fail-closed,
+with the env var named in the error) is a third option the retirement does not touch and does not
+argue against.
+
+Same shape as the TASK_BOARD freshness gate, where two rejections were aimed at *strict equality* and
+a *tolerance* was never considered. **A rejection is aimed at the form it names.** Re-read retirements
+before treating them as closing a neighbouring option. **OPEN, actionable, needs a design call on
+default-refuse vs default-allow.**
+
+### F3-F4 — GPU non-accelerative / `calibrate` exit 2 · no `edit-ready`/`verify-edit`
+
+GPU: already CEO-gated (#131/#169, deliberate HOLD). No change.
+`edit-ready`/`verify-edit`: real gap, see F5/F6.
+
+### Feature bets from the same run
+
+| # | ask | disposition |
+|---|---|---|
+| F5 | `tg edit-ready` — one exit-0 ticket: prepare + non-anonymous claim + capsule/receipt + validation gates | **Strongest bet.** Composes shipped primitives; the fail-closed envelope is the moat this repo already claims. Depends on F2 (non-anonymous claim). |
+| F6 | `tg verify-edit --capsule` — post-edit drift vs blast floor / touched files | **Strong.** Closes the loop `prepare` opens; nothing else verifies an edit against the floor it was planned from. |
+| F7 | Caller-graph parity for Java/C#/C/C++/PHP | **Real and sized.** `_symbol_navigation_descriptor()`: 10 registered / 5 parser-backed. `defs` exist for the other five; agents key on the **blast floor**, which they lack. This is the honest content of the P3 "language coverage" item — and note it *relocates* the gap into the tier competitors are measured on (Gortex's bespoke tier is ~30 with resolved edges). |
+| F8 | Workspace federated `prepare` across multi-repo parents | Open; parent-refuse works today, federation does not exist. |
+| F9 | Ledger -> CI / review-bundle overlap gate | Open; composes `tg ledger` + `review-bundle`, both shipped. |
+| F10 | Ship or delete MaxSim | **Decision, not code.** Help now correctly says unreachable and the skills are fixed. Either add an install path or purge it from every doc. Do not leave it half-advertised. |
+
+### What the user fixed on their side
+
+Skills stamped to 1.101.31; the stale "stderr-only PATH note" corrected to document
+`path_was_defaulted`/`scope_note`; MaxSim removed from advertised `find` features; INDEX regenerated.
+**Their correction confirms our #871 work landed and that the old skill text was the stale artifact.**
+
+---
+
 ## ⭐ 2026-08-01 backlog campaign — shipped v1.101.28/29, and what the audits caught
 
 **The board was stale for the 4th time: 9 of 24 open items were already fixed, refuted, or
