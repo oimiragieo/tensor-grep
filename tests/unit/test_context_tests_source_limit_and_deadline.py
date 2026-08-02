@@ -766,4 +766,12 @@ def test_counter_sums_BOTH_scans_so_the_fraction_stays_coherent() -> None:
         "fraction for a run in which a scan never started, which is the attribution failure this "
         "pair exists to prevent."
     )
-    assert counts.scanned <= counts.total, "scanned > total is a nonsense fraction"
+    # NO `assert counts.scanned <= counts.total` here, deliberately. It reads like the obvious
+    # guard and it is a CHECK THAT CANNOT FAIL: the state is (10, 20) under `+=` and (10, 10)
+    # under `=`, so it holds in BOTH arms -- and under a correct `+=` the relation is
+    # arithmetically guaranteed, since `scanned` only increments inside a loop whose full length
+    # was already added to `total`. Asserting it would be the `assert 0.0 <= rate <= 1.0`
+    # antipattern this repo has a receipt for. The equality above is what discriminates.
+    #
+    # I had written that assert. The narrow gate on this commit caught it -- a can't-fail check
+    # added inside the fix for a can't-fail-check finding.
