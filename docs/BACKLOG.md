@@ -1208,9 +1208,35 @@ for the next audit rather than re-opened as active work):**
 - **#115** / **#125** — **CLOSED** (CHANGELOG closes #115/#125a; Rust checkpoint/audit/rollback
   writes use `write_bytes_refuse_symlink`). Do not re-open from the old LOW bullets; 2026-07-31
   audit DD-007.
-- **#143** Opus-gate LOW follow-ups — `#543`'s race-test/symbol-timeout/`lru_cache` flip + `#140`'s
-  `--` sentinel (non-blocking).
-- **#155** `#152` Opus-gate LOW nits — dead reverse-tag block + an ordering comment.
+- **#143** — **CLOSED** (2026-08-01 reconcile; all 4 named sub-items verified fixed against the
+  real tree, none reopened). `#543`'s race-test = the stale-daemon-metadata ownership guard, shipped
+  as task **#143a-a** (`session_daemon.py::_remove_daemon_metadata`'s `expected_pid`/`expected_port`
+  check, `248fa35`/#603) with its own TDD suite
+  (`tests/unit/test_session_daemon_metadata_ownership.py`). `symbol-timeout` = the #390 "9 remaining
+  warm-daemon command handlers" gap (defs/impact/refs/callers/blast_radius/file_importers/
+  blast_radius_render/blast_radius_plan/context all dispatched with no default deadline), closed by
+  `81b2148`/#203/#652 and refined by `#205`/#658/#669 — `session_store.py` now computes
+  `deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS` on every one of those
+  branches (verified live, e.g. `session_store.py` around the defs/impact/refs/callers/blast_radius
+  dispatch blocks). `lru_cache` flip = `@lru_cache(maxsize=1)` on `runtime_paths._expected_tg_version`
+  (`e575075`/#604), with `cache_clear()` wired into the `tests/unit/test_runtime_paths.py` fixture.
+  `#140`'s `--` sentinel = the CWE-88/MCP-276 argv-sentinel sweep confirmed **PASS** by the
+  2026-07-26 enterprise-readiness scorecard (`docs/plans/2026-07-26-enterprise-readiness-scorecard.md`
+  row A6: "`--` sentinel work landed via #140/#143"); `rg_passthrough.rs`'s
+  `ripgrep_operand_args`/`execute_ripgrep_search` and `agent_capsule.py`'s GPU-evidence positional
+  both sentinel-guard user paths today. Note: **#862** is a separate, still-open sentinel nit
+  (`agent_capsule.py` GPU `evidence_path`, see above) — do not conflate the two when re-triaging.
+- **#155** — **CLOSED** (2026-08-01 reconcile). Both named nits on `#152`'s sys.path.insert import
+  fix were closed by the SAME commit that closed #143's `lru_cache` item, `e575075`/#604 ("fix dead
+  import-provenance tag in tg importers"): the dead reverse-tag block was
+  `repo_map.py::_python_module_match_details` computing a `"sys-path-insert"` provenance tag that
+  `_python_module_matches_definition` (its sole caller) discarded down to a bare bool — now threaded
+  through as a separate `path_provenance` field (`repo_map.py:7370-7391`, docstring cites "#155 fix:
+  that tag was computed but provably unreachable... before this change"), covered by
+  `tests/unit/test_file_deps.py::test_build_file_importers_finds_sys_path_insert_hacked_importer`
+  (asserts `provenance == "parser-backed"` + `path_provenance == "sys-path-insert"`) and a companion
+  negative test asserting `"path_provenance" not in edge` for a normal (non-hacked) edge, closing the
+  payload-bloat/ordering nit in the same diff.
 - **Dead-code (partial, see reconciliation note above):** `sidecar.py::_classify_lines` — **DONE**
   (2026-08-01 backlog campaign, PR-D). Remaining: `rust_core/src/backend_cpu.rs::replace_in_place`
   if confirmed zero-caller; light Opus parity review for the Rust deletion (`cpu_backend` is a
