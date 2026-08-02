@@ -127,6 +127,65 @@ vocabulary carrying a remediability verdict, and contract-level scope enforced b
 — the protocol `tg mcp` itself rides on — has no standardized equivalent field in its current
 stable spec.
 
+## Language Coverage
+
+Competitor language counts are large: Gortex publishes 256 languages, Serena advertises 40+. `tg`
+registers ten. The honest comparison needs the tier structure on both sides, because "supports
+language X" spans everything from resolved call edges to a filename glob.
+
+`tg`'s ten languages split into two tiers with different guarantees, and the split is about what an
+agent can safely do with an answer:
+
+| Tier | Languages | What an agent can do with the answer |
+| --- | --- | --- |
+| Parser-backed refs/callers | Go, JavaScript, Python, Rust, TypeScript | `tg refs` / `tg callers` / `tg blast-radius` return AST-verified reference and call sites. A complete-scan "no callers found" here is evidence for a rename or a deletion. |
+| Foundational defs/imports only | C, C++, C#, Java, PHP | `tg defs` / `tg imports` are parser-backed and fail closed (an unparseable file becomes a named `resolution_gaps` entry, never a silent skip). But `tg refs` / `tg callers` / `tg blast-radius` fall through to a text heuristic: hits are candidate sites to read, not resolved call edges, and "no callers found" is not evidence of anything. |
+
+Each refs/callers entry in a JSON payload also carries its own per-file `provenance` field, so a
+consumer can branch on how a specific answer was produced instead of memorizing this table.
+
+**Where other tools are ahead, stated plainly.** Gortex's own docs publish the same kind of tiered
+breakdown — ~30 bespoke tree-sitter languages with resolved call edges, ~60 regex, ~165
+signature-only — and its deep tier covers all ten of `tg`'s languages plus roughly twenty more
+(2026-08-01 survey, `docs/positioning/2026-08-01-policy-layer-moat.md`, each claim carrying a dated
+URL). On the apples-to-apples deep tier the count is roughly 5 vs 30, in Gortex's favor. Serena's
+40+ comes from wrapping LSP servers. Tiered language disclosure itself is normal industry practice
+(Semgrep's maturity levels, Sourcegraph's precise/syntactic/search-based navigation, Zed's
+LSP-vs-highlighting split, nvim-treesitter's per-grammar tiers), so this table is table stakes, not
+a differentiator. No shared-corpus benchmark comparing resolved-edge quality across these tools
+existed as of that survey, so any depth claim in either direction is an architectural statement,
+not a measured one.
+
+**Why publish the deep tier at all, then.** Because the tier decides which failure mode a caller is
+exposed to. The job `tg` is built for — an agent editing code it did not write — is exactly the job
+where a text-heuristic "no callers" acted on in good faith deletes working code. For five languages
+`tg` gives the verified answer; for the other five it still answers, but it labels the mechanism,
+and this document says so before a competitor does.
+
+**Re-derive this table; do not trust it.** Both tier lists are computed live from the language
+registry and stamped into every repo-map JSON payload — this section is a transcription, and the
+payload wins if they ever disagree. Rerunnable receipt, from this repo against `tg 1.101.31`:
+
+```bash
+tg defs src/tensor_grep/cli/lang_registry.py register_language --json
+```
+
+The payload's `coverage` block, verbatim:
+
+```json
+{
+  "language_scope": "c-cpp-csharp-go-java-javascript-php-python-rust-typescript",
+  "symbol_navigation": "parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-java-php",
+  "test_matching": "filename+import+graph-heuristic"
+}
+```
+
+`symbol_navigation` is the two-tier split; `language_scope` is the ten-language registry. Both are
+derived from `lang_registry.LANGUAGE_REGISTRY` at call time (grep `_symbol_navigation_descriptor`
+in `src/tensor_grep/cli/repo_map.py`), so a newly onboarded language lands in the correct bucket
+without anyone editing this file. A hardcoded ancestor of that field once under-reported coverage
+for an entire language-onboarding campaign; the derivation exists because prose counts rot.
+
 ## Where `tensor-grep` Is Stronger
 
 - One-call edit readiness (`tg prepare`) and the contract-level incompleteness disclosure surface described above
@@ -142,6 +201,7 @@ stable spec.
 - `ripgrep` still owns the cold generic text-search baseline on the current release line
 - `Semgrep` still has the stronger policy and security scanning ecosystem
 - `Zoekt` is still the external baseline for indexed search at repository scale
+- Gortex leads on language coverage at every tier: ~30 deep-tier languages with resolved call edges against `tg`'s 5, and 256 total against 10 (see "Language Coverage" above)
 - Minimal standalone footprint still favors pure single-purpose tools such as `rg`
 - Default cold text search on the current Windows host still favors `rg`; the latest large-file row is effectively tied between `rg` and default `tg search`, not a general cold-search win.
 
