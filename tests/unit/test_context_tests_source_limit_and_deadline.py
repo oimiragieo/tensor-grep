@@ -80,6 +80,23 @@ tests then assert the shape this suite ALREADY uses for exactly this purpose --
 Nothing else scans test candidates, so that assertion CANNOT be satisfied by any of the other 24
 clock readers -- which is what makes it able to fail, and what the `partial` assertion never was.
 
+IMPLEMENTATION MAP (verified 2026-08-02 by two independent methods -- `tg callers` and an AST walk
+-- which AGREE; that matters, because two methods sharing an assumption are one method run twice).
+The counts must thread THREE levels, not two:
+
+    build_symbol_{impact,refs,callers}_from_map   (3 entry points; each calls the next)
+      -> build_context_pack_from_map              (public wrapper)
+        -> _build_context_pack_from_map           (exactly ONE caller -- narrow, safe to widen)
+          -> _context_tests                       (the loop; set total=len(tests), count iterations)
+
+Payload assembly is ONE site per entry point -- each currently writes the bare
+`payload["deadline_limit"] = {"deadline_exceeded": True}`; the new pair joins that dict there.
+
+So: 1 new counter class + 3 signature widenings (optional kwarg, default None -- no existing caller
+breaks) + 1 loop change + 3 payload assemblies, plus the `docs/CONTRACTS.md` entry. Mechanical, but
+it edits core `repo_map.py` at 8 sites and wants the FULL affected suite rather than this one file,
+so it belongs on a clean checkout.
+
 BLAST RADIUS CHECKED 2026-08-02 -- carry the counts on a DEDICATED object, not the shared flag.
 `tg callers src _DeadlineBreakFlag` reports **23 consumers across 6 modules** (`agent_capsule.py`,
 `codemap.py`, `docs_coverage.py`, `inventory.py`, `main.py`, `repo_map.py`). That object is the
