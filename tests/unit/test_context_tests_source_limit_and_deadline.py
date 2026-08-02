@@ -80,9 +80,16 @@ tests then assert the shape this suite ALREADY uses for exactly this purpose --
 Nothing else scans test candidates, so that assertion CANNOT be satisfied by any of the other 24
 clock readers -- which is what makes it able to fail, and what the `partial` assertion never was.
 
-Check before shipping: `docs/CONTRACTS.md` states `deadline_limit` carries its fields ADDITIVELY, so
-a new key fits the documented contract -- but confirm whether the payload governance tests pin the
-key set, because a contract change needs its validator test updated in the same PR.
+GOVERNANCE CHECKED 2026-08-02 -- the new key is ADDITIVELY SAFE, no existing test breaks:
+* 26 test files reference `deadline_limit`. **None** asserts an exclusive key set (no
+  `set(deadline_limit)`, `.keys() ==`, or `sorted(deadline_limit)`), and the grep that found none is
+  trustworthy because 24 files in the same suite DO use exact-set assertions -- so the pattern is
+  real and findable, and its absence here is a measured negative rather than an unresolved one.
+* `tests/unit/test_disclosure_covers_every_incompleteness_emitter.py` names `deadline_limit` as a
+  CONTAINER, not per-key, so a new sub-key needs no registration in that census.
+* `tests/unit/test_enterprise_docs_governance.py` asserts `"deadline_limit.files_scanned" in
+  contracts` -- i.e. counter keys are expected to be DOCUMENTED. Add the new pair to
+  `docs/CONTRACTS.md` in the same PR; that is a doc obligation, not a blocking pin.
 
 The other three that pass pre-fix -- `..._test_source_limit_none_is_noop`,
 `test_tight_bound_would_have_changed_consumed_output`,
