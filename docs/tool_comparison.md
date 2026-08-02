@@ -77,7 +77,7 @@ four things an agent otherwise assembles from a multi-step orient -> search -> a
 2. a callers/blast-radius floor with graph-trust provenance,
 3. detected validation commands (each carrying its own detection and confidence fields, so an
    unverified suggestion is distinguishable from a detected one),
-4. a machine-branchable `ask_user_before_editing` escalation flag.
+4. a machine-branchable `ask_user_before_editing` flag that hands the decision back to a human.
 
 ```bash
 tg prepare src/ "task description" --out capsule.json --json
@@ -107,7 +107,7 @@ command, enforced by CI ratchets (`tests/unit/test_silent_loss_census_ratchet.py
   | truncated | `tg prepare src "budget_remediable" --json --deadline 0.1` | `2` | `partial: true`, `partial_reason: "deadline"`, `confidence.overall` downgraded `0.9 -> 0.72` with three named reasons, `ask_user_before_editing.required: true` |
 
   A truncated scan does not merely append a flag — it lowers the confidence number the agent is
-  supposed to gate on, and flips the escalation flag.
+  supposed to gate on, and flips `ask_user_before_editing`.
 
 - **A closed reason-class vocabulary with a remediability verdict.** `budget_remediable()` in
   `src/tensor_grep/cli/incompleteness.py` is a fail-closed allow-list answering "would a bigger
