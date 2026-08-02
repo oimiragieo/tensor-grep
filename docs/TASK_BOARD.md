@@ -186,9 +186,18 @@ review, each verified against the real code (a finding without a `file:line` was
   numbers (grepai 97% input-token cut, CodeGraph ~70% fewer tool calls, GitNexus 88%, Gortex 3–50×).
   tg's own measured **7.5× fewer tokens than grep** is the same metric family. Publication is
   **CEO-gated (#72)** — not an AI-doable item, listed so it is not forgotten.
-- [ ] **Language coverage gap, stated honestly — NUMBERS CONFIRMED, ARGUMENT WEAKER THAN ASSUMED (2026-08-01).** The 10 registered / 5 parser-backed figure is CORRECT, re-derived from `repo_map._symbol_navigation_descriptor()` rather than hand-counted. But depth-vs-breadth does NOT win the argument: Gortex already publishes tiers, and its bespoke tree-sitter tier is ~30 languages WITH resolved call edges vs our 5 -- so reframing to depth relocates the gap into the tier we would rather be measured on. Tiered disclosure is also industry-normal (Semgrep maturity levels, Sourcegraph precise/syntactic/search-based), so honesty here is table stakes, not a differentiator. ORIGINAL TEXT FOLLOWS — tg: 10 registered / 5 parser-backed caller graph.
-  Gortex claims 257 languages, Serena 40+. tg's are *deeper* (resolved edges vs shape matching), so
-  the honest frame is depth-vs-breadth — but the breadth number will be used against it.
+- [x] **Language coverage gap, stated honestly -- SHIPPED #902 (2026-08-02).** Closed by the
+  premise check, not by new work: `docs/tool_comparison.md` on `main` already carries the
+  two-tier table (both tiers computed live from the language registry, with a "re-derive this
+  table; do not trust it" note), the competitor breadth numbers, AND the harder 2026-08-01
+  revision this entry was updated to demand -- a **"Where other tools are ahead, stated
+  plainly"** section conceding roughly **5 vs 30 on the deep tier, in Gortex's favor**, and the
+  explicit framing that tiered disclosure is *table stakes, not a differentiator*. Nothing was
+  left to dispatch. 18th stale entry this session; found by running Step 0 of
+  `verify-plan-against-code` (is the work still needed?) before dispatching an agent at it.
+  NOTE for whoever next touches that doc: this entry said Gortex publishes **257** languages,
+  the shipped doc says **256**. The doc cites its source URL; the board did not. Unresolved by
+  one -- verify against the cited URL before either number is quoted anywhere new.
 
 - [x] **`tg prepare` is invisible** -- **CLOSED 2026-08-02, PR #899.** Measured before and after: README `tg prepare` 0 -> 6; `tool_comparison.md` `prepare` 0 -> 5, `incomplete` 0 -> 8 (control: `ripgrep` 6, unchanged). Added the real one-call invocation with a verified payload, plus two new sections. All 15 speed/parity rows left intact -- they are true. ORIGINAL TEXT FOLLOWS --  The capability the board calls the moat appears **zero times in `README.md`** (control: `tg agent` appears 3x) and sits in no mkdocs-nav'd page except `CONTRACTS.md`. `docs/tool_comparison.md`'s 15 data rows are ALL speed or parity: `grep -ci prepare` -> 0, `grep -ci incomplete` -> 0 (control: `ripgrep` -> 6). Surface the product before repositioning around it -- rewriting a comparison table for something nobody can see is the wrong order. Found 2026-08-01, `docs/positioning/2026-08-01-policy-layer-moat.md`.
 
