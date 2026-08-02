@@ -434,8 +434,25 @@ def test_impact_context_tests_deadline_folds_into_partial(
     payload = repo_map.build_symbol_impact_from_map(
         relevance_repo_map, "widget", deadline_monotonic=base + 0.5
     )
+    # DISCRIMINATING ASSERTION -- see the module docstring. `partial` /
+    # `deadline_exceeded` are SHARED booleans any of the module's 24 time.monotonic
+    # readers can set, so asserting them cannot say WHICH stage stopped. Nothing
+    # else scans test candidates, so this pair can only be produced by the
+    # `_context_tests` threading under test. Same shape as
+    # tests/unit/test_repo_map_deadline.py's files_scanned < files_total.
+    deadline_limit = payload.get("deadline_limit", {})
     assert payload.get("partial") is True
-    assert payload.get("deadline_limit", {}).get("deadline_exceeded") is True
+    assert deadline_limit.get("deadline_exceeded") is True
+    # `.get` + an explicit assert, NOT `deadline_limit["..."]` -- a subscript raises KeyError,
+    # which is an ERROR rather than a failed assertion and tells the reader nothing about what the
+    # payload DID contain. This file already carries 11 arms that fail that way; do not add a 12th.
+    scanned = deadline_limit.get("test_candidates_scanned")
+    total = deadline_limit.get("test_candidates_total")
+    assert scanned is not None and total is not None, (
+        "_context_tests must contribute its own scanned/total pair to deadline_limit; "
+        f"present keys were {sorted(deadline_limit)}"
+    )
+    assert 0 < scanned < total, f"expected some-but-not-all, got {scanned}/{total}"
 
 
 def test_refs_context_tests_deadline_folds_into_partial(
@@ -446,8 +463,25 @@ def test_refs_context_tests_deadline_folds_into_partial(
     payload = repo_map.build_symbol_refs_from_map(
         relevance_repo_map, "widget", deadline_monotonic=base + 0.5
     )
+    # DISCRIMINATING ASSERTION -- see the module docstring. `partial` /
+    # `deadline_exceeded` are SHARED booleans any of the module's 24 time.monotonic
+    # readers can set, so asserting them cannot say WHICH stage stopped. Nothing
+    # else scans test candidates, so this pair can only be produced by the
+    # `_context_tests` threading under test. Same shape as
+    # tests/unit/test_repo_map_deadline.py's files_scanned < files_total.
+    deadline_limit = payload.get("deadline_limit", {})
     assert payload.get("partial") is True
-    assert payload.get("deadline_limit", {}).get("deadline_exceeded") is True
+    assert deadline_limit.get("deadline_exceeded") is True
+    # `.get` + an explicit assert, NOT `deadline_limit["..."]` -- a subscript raises KeyError,
+    # which is an ERROR rather than a failed assertion and tells the reader nothing about what the
+    # payload DID contain. This file already carries 11 arms that fail that way; do not add a 12th.
+    scanned = deadline_limit.get("test_candidates_scanned")
+    total = deadline_limit.get("test_candidates_total")
+    assert scanned is not None and total is not None, (
+        "_context_tests must contribute its own scanned/total pair to deadline_limit; "
+        f"present keys were {sorted(deadline_limit)}"
+    )
+    assert 0 < scanned < total, f"expected some-but-not-all, got {scanned}/{total}"
 
 
 def test_callers_context_tests_deadline_folds_into_partial(
@@ -458,8 +492,25 @@ def test_callers_context_tests_deadline_folds_into_partial(
     payload = repo_map.build_symbol_callers_from_map(
         relevance_repo_map, "widget", deadline_monotonic=base + 0.5
     )
+    # DISCRIMINATING ASSERTION -- see the module docstring. `partial` /
+    # `deadline_exceeded` are SHARED booleans any of the module's 24 time.monotonic
+    # readers can set, so asserting them cannot say WHICH stage stopped. Nothing
+    # else scans test candidates, so this pair can only be produced by the
+    # `_context_tests` threading under test. Same shape as
+    # tests/unit/test_repo_map_deadline.py's files_scanned < files_total.
+    deadline_limit = payload.get("deadline_limit", {})
     assert payload.get("partial") is True
-    assert payload.get("deadline_limit", {}).get("deadline_exceeded") is True
+    assert deadline_limit.get("deadline_exceeded") is True
+    # `.get` + an explicit assert, NOT `deadline_limit["..."]` -- a subscript raises KeyError,
+    # which is an ERROR rather than a failed assertion and tells the reader nothing about what the
+    # payload DID contain. This file already carries 11 arms that fail that way; do not add a 12th.
+    scanned = deadline_limit.get("test_candidates_scanned")
+    total = deadline_limit.get("test_candidates_total")
+    assert scanned is not None and total is not None, (
+        "_context_tests must contribute its own scanned/total pair to deadline_limit; "
+        f"present keys were {sorted(deadline_limit)}"
+    )
+    assert 0 < scanned < total, f"expected some-but-not-all, got {scanned}/{total}"
 
 
 # ======================================================================================================
