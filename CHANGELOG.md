@@ -1,6 +1,1358 @@
 # CHANGELOG
 
 
+## v1.102.1 (2026-08-02)
+
+### Documentation
+
+- Audit all 27 skills, fix 4 drifts, and close the CLAUDE.md capture gap
+  ([#903](https://github.com/oimiragieo/tensor-grep/pull/903),
+  [`d47938c`](https://github.com/oimiragieo/tensor-grep/commit/d47938ca41f68c0ee6a5ecb6cddf8fbb22f1ebc8))
+
+* docs: audit all 27 skills, fix 4 drifts, and close the CLAUDE.md capture gap
+
+A 9-agent workflow audited every skill in the library against the real tree. 3 of 5 slices came back
+  CLEAN; the 4 findings below are fixed here. All three new-skill candidates came back FOLD or
+  ALREADY_COVERED, so the library stays at 27 folders and neither census gate changes.
+
+THE FOUR DRIFTS
+
+- benchmark-and-proof-toolkit shipped a fact AND its refutation, 150 lines apart: a citation
+  corrected in the GPU section was never applied to its
+
+duplicate in Provenance, which still pointed at CONTRACTS.md:80-82 -- really a
+  --column/-c/--count-matches flag list. Eighth instance of the self-contradicting-document class;
+  no gate we own compares a doc to itself. - enterprise-agent cited BACKLOG.md:850 for the #578 WSL
+  debunk at four sites. That anchor was re-stamped :603 -> :850 on 2026-08-01 and was already wrong
+  the next day (real: 977/978/1158). Re-stamping IS the failure mode, so the line numbers are gone
+  entirely -- the grep is what survives. - build-and-env stamped the test corpus at 291/21/16 under
+  a sentence reading "do NOT stamp a number here". Wrong a fourth consecutive time (266 -> 282 ->
+  291 -> 327). Now 327/22/16 via git ls-files, not a bare glob that would count untracked scratch;
+  both methods agreed, which is the only reason it is trusted. - backlog-campaign's frontmatter said
+  "26-skill library" while its own body counted 27, twice.
+
+CLAUDE.md -- zero commits this session while AGENTS.md took eight
+
+AGENTS.md carries 10 oracle forms and 29 dated instrument laws over 2668 lines, and CLAUDE.md -- the
+  file that AUTO-LOADS -- indexed none of it. Added that index as a DERIVATION (two greps) rather
+  than counts, so it cannot rot and does not become a third place the two-file oracle-count gate has
+  to police. Also added: no gate compares a doc to itself; the re-stamp receipt; the language tier
+  split with its descriptor call (wrong four times, once inside a skill); that **27 skills** is
+  verified correct so nobody "fixes" it; release class is part of the fix (a chore:-titled security
+  fix never publishes); and that git stash is unsafe once parallel worktrees exist.
+
+THE ONE FOLD
+
+verify-plan-against-code (global) gains Step 0, the PREMISE check: seam verification proves anchors
+  are real and cannot tell you the work is already DONE -- a plan against a fixed bug has perfectly
+  resolving citations. Receipt: 17 of ~24 board items were already shipped, refuted, or by-design,
+  and an agent was dispatched at finished work. backlog-campaign now routes through it.
+
+NOT VERIFIED, AND LABELLED AS SUCH
+
+The workspace-dogfood row claiming bare `search --json` carries path_was_defaulted/scope_note did
+  not reproduce on the installed v1.102.0. It is NOT refuted either -- one probe completed in a
+  small root, the other hit the unscoped-scan refusal, and neither established which emitter it
+  reached. Left standing with the condition and the reason the probe could not discriminate.
+
+Three of my own probes were wrong before any of the above was written: I counted `maxsim` in `find
+  --help` and read the DE-advertisement as the defect (this session's own law, one turn after it
+  landed), truncated a grep with head -5 and read it as absence, and redirected a refusal body to a
+  file that was never created. Each fell to a control, none to re-reading.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs: teach the skill-audit workflow to check a doc against ITSELF
+
+The workflow re-derived every claim against the TREE and never compared a file to itself -- which is
+  exactly how the 8th self-contradiction in this repo shipped. Two checks added to the auditor
+  prompt:
+
+- SELF-CONTRADICTION: does this file assert a claim AND its refutation? The tell is a correction
+  applied at one site while a duplicate 100+ lines away keeps the refuted version. Both then confirm
+  themselves on a local read. - RE-STAMP SMELL: "was :X, now :Y" is the anti-pattern, not a fix.
+  Verify Y, and if it is wrong recommend DELETING the number rather than stamping Z.
+
+Also fixes a fifth drift, found by verifying a claim rather than trusting it: backlog-campaign said
+  skill_rules.json "seeds only 12 of the 26" and named them in prose. Wrong three ways -- the real
+  count is 14, and it listed tensor-grep-large-repo-scale-campaign as having zero rule when it had
+  since gained one. The prose enumeration is replaced by the command that derives the unseeded set,
+  which is verified to run.
+
+* docs: close the language-coverage item -- #902 already shipped all of it
+
+Found by running Step 0 of verify-plan-against-code (is the work still needed?) before dispatching
+  an agent at it. docs/tool_comparison.md on main already carries every element this entry asked
+  for, including the harder 2026-08-01 revision the entry was updated to demand:
+
+- the two-tier table, both tiers computed live from the language registry, with an explicit
+  "re-derive this table; do not trust it" note - the competitor breadth numbers - a "Where other
+  tools are ahead, stated plainly" section conceding roughly 5 vs 30 on the deep tier, in Gortex's
+  favor - the framing that tiered disclosure is table stakes, not a differentiator
+
+18th stale entry this session. This is the check paying for itself in the same turn it landed --
+  without it the dispatch would have gone out.
+
+Carries forward one unresolved discrepancy rather than papering over it: the board said Gortex
+  publishes 257 languages, the shipped doc says 256. The doc cites its source URL; the board did
+  not. Flagged in the closed entry so the number is verified before it is quoted anywhere new.
+
+* docs: resolve the Gortex count -- their own docs contradict each other
+
+The board said 257, our shipped comparison said 256, and I closed the entry with a "verify before
+  quoting" note. Verified it instead (Exa, 2026-08-02).
+
+BOTH numbers are correctly sourced. Gortex's docs/languages.md says "currently indexes 256
+  languages" and its per-category table totals 256; the README, docs/features.md, and gortex.dev all
+  say 257. The discrepancy is theirs, not ours -- the same self-contradicting-document class this
+  session spent its time fixing in our own skills, which is worth knowing is not unique to us.
+
+docs/tool_comparison.md now cites the RANGE and names the contradiction at both sites rather than
+  picking a side. Quoting a competitor's number more precisely than the competitor does is how a
+  comparison loses credibility, and the distinction changes no conclusion in the doc.
+
+Re-verified the neighbouring claim while there: Gortex's bespoke tree-sitter tier does contain all
+  ten of tg's registered languages (Go, TypeScript, JavaScript, Python, Rust, Java, C#, PHP, C,
+  C++), so "its deep tier covers all ten of tg's languages plus roughly twenty more" is correct as
+  written, and the ~30 deep-tier figure matches their own docs.
+
+Rebased onto cebb170 first: this branch was one commit behind and did not contain #902, so its CI
+  had been green against a tree without the section this commit edits.
+
+* docs: route to the two global evidence skills nothing here pointed at
+
+A census found `detect-the-false-green` (680 lines) and `author-a-probe-that-cannot-lie` (250 lines)
+  referenced in ZERO tracked files, while `verify-plan-against-code` had 23 -- the positive control
+  proving the search worked. Both skills exist, both are squarely about this repo's dominant failure
+  mode, and nothing routed to them.
+
+Wired into the two places a reader actually passes through:
+
+- CLAUDE.md gains an "Evidence discipline" bullet ahead of build/release discipline, because the
+  trigger is earlier: load one BEFORE trusting a green signal or acting on a measured number. -
+  tensor-grep-validation-and-qa Part 0 names them as the general form of the oracle family, with the
+  note that a POINTER is not the two-file edit a new Form is -- those skills own their content and
+  must not be copied in here.
+
+The shared-server constraint makes the probe skill's pollution-window section load-bearing rather
+  than optional, so that is called out at both sites.
+
+Also records that verify-plan-against-code's Step 0 is the premise check, so the CLAUDE.md mention
+  carries what it is for rather than just its name.
+
+Oracle-form count unchanged at ten in both mirrored files; drift and index gates green (9 passed).
+
+* docs: write the PR-completion gate into change-control, not just a lesson file
+
+Part 7 already corrected the MAIN-branch gate (query one run by id, never a windowed list). The PR
+  side is a DIFFERENT gate and I got it wrong today.
+
+Deciding "is this PR's suite finished" by breaking on "nothing pending in gh pr checks" is a false
+  green: the rollup is a list still being BUILT, so early in a run every check present can be
+  terminal while most of the suite does not exist yet. Measured on #903 -- 11 checks against 48 on
+  the comparable docs PR #901, with Formatting & Linting, all six test-python, all six
+  test-rust-core, native-build-smoke and search-golden-parity among the 37 absent. The run then
+  reported jobs dispatched=3, and minutes later 30. A monitor keyed on "no pending" would have
+  printed TERMINAL failures=0 and merged a PR whose tests never ran.
+
+Correct gate, same shape as the main-branch one: capture the ci.yml run id for the head SHA, poll
+  THAT id until status==completed, and carry a job-count floor so a run concluding with a handful of
+  jobs reads as not-having-run rather than green. Plus the cheap population check -- compare the
+  count against a recently merged comparable PR; 11-vs-48 was the entire tell and is invisible
+  without the sibling.
+
+Written into the gate's own definition rather than only into a memory file because that memory
+  ALREADY said "queried BY RUN ID" and "guard the total-check count", in one sentence, in an index
+  loaded at session start -- and the monitor violating both got built anyway. Third instance this
+  session of a rule being documented and then not firing. A documented rule does not fire on its
+  own; only a structural gate does.
+
+* docs: record three unshipped artifacts a worktree sweep found invisible
+
+`git merge-base --is-ancestor <branch> main` is the repo's documented decidable proof that a branch
+  is safe to delete. It is decidable about COMMITTED work and silent about everything else -- and
+  that gap hid 519 lines.
+
+`perf/context-tests-limit-deadline` reported ANCESTOR of main, so the branch read as a husk. Its
+  worktree held two modified files and an untracked 452-line test. `git worktree remove` refused it;
+  my own sweep script then printed "removed" anyway, because the `&& echo` chained off `tail`'s exit
+  code rather than git's -- the same shape as the `pytest -q | tail && git commit` receipt that
+  committed on red. Reading the refusal instead of the echo is what surfaced the work.
+
+Recorded, not merged: - perf/context-tests-limit-deadline (519 lines, now committed + pushed) -- an
+  unbounded O(len(tests) * len(source_files)) scan on the refs/callers/impact paths whose result is
+  then discarded except test_matches[:1]. Core file, #713-era base, unverified. Needs a rebase and
+  an observed red arm. - probe/classifier-feasibility (1059 insertions, 34 files, never a PR) -- the
+  rrf_centrality arm + centrality golden slice for #189 Item-2, the one CPU lever that survived when
+  the other three died on real data. Needs a verdict recorded either way; a dead lever nobody wrote
+  down gets re-chased. - rescue/lazy-wave-stash-2026-08-01 -- the stash-collision receipt, v1.64.2
+  base.
+
+All three pushed to origin so none is disk-only. Two genuine husks were deleted in the same sweep
+  (fix-scanner-symlink-disclosure, fix-anonymous-overlap-noop): both were already on main via merged
+  PRs #847 and #845 with their tests present, so the premise check stopped two PRs for work that had
+  already shipped.
+
+* docs: close the centrality probe -- the verdict existed, the INSTRUMENT was the gap
+
+The probe reached its verdict on 2026-07-17 and it is in memory: the real-query arm OVERTURNED the
+  synthetic oracle ceiling. Synthetic golden (4 hubs TIED at 19.0) said a perfect-classifier gate
+  was worth +0.256 ndcg@10 and leaf-regression-free by construction -- "worth PROTOTYPING a real
+  classifier". On REAL queries the perfect-classifier ceiling itself goes NEGATIVE. #189 Item-2 is
+  DEAD, not conditionally alive. All three #189 CPU levers are dead as specified.
+
+The risk was never the conclusion. `find_realquery_golden.jsonl` -- the 26-query instrument that
+  produced the negative -- existed ONLY as an untracked file in one worktree. `git log --all`
+  returned 0 commits for it across every ref; its synthetic sibling returned 1 (positive control).
+  One `worktree remove --force` and a settled verdict would have survived as a sentence nobody could
+  re-derive, with the flattering synthetic arm still runnable -- which is exactly how a dead lever
+  gets re-chased. Preserved as 939f133 and pushed.
+
+A negative is only durable if the instrument that produced it survives. Same reason the MaxSim and
+  cAST negatives are kept indexed rather than deleted.
+
+* docs: measure the perf branch's red arm -- 12 fail / 6 pass, and the shape matters
+
+Discharged the "unverified" half of the rescued opt10 work without merging it. The main checkout
+  carries repo_map.py WITHOUT the fix, so running the branch's 452-line test file here IS the
+  pre-fix baseline -- no revert needed.
+
+Asserted the instrument before the result: the import resolves to src/tensor_grep (not a stale
+  venv), and the fix's absence was confirmed by an AST keyword walk over build_symbol_refs_from_map
+  rather than a substring scan, because a substring would also match the docstring describing the
+  fix.
+
+Result: 12 failed / 6 passed -- and "it failed" is NOT the same as "the red arm
+
+is good". The 12 split 14 AttributeError lines against 2 AssertionError lines: most failures are
+  just the module lacking _CONTEXT_TESTS_SOURCE_FILE_CEILING, which is an error, not evidence the
+  property is broken. Only the deadline test fails behaviourally (deadline_monotonic is None; the
+  kwargs dict is {'raw_query': 'widget'}).
+
+The 6 that PASS pre-fix are recorded by name and need individual verdicts -- a sweep would delete
+  real regression coverage, and the three *_context_tests_deadline_folds_into_partial are the ones
+  to explain first: if the deadline never threads pre-fix, what are they observing?
+
+Two of my own instruments were wrong getting here and both are worth the note: addopts carries -x,
+  so the first run reported 1 failure and hid 11; and my grep -c over a pipe returned 0 for both
+  error shapes I had just seen on screen, until I captured to a file and counted there.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Bump the board stamp to v1.102.0 -- main is red and this is the fix
+  ([#898](https://github.com/oimiragieo/tensor-grep/pull/898),
+  [`a0363b1`](https://github.com/oimiragieo/tensor-grep/commit/a0363b1149fcbf86de5b5a816c868b7be60a8f36))
+
+MAIN WENT RED AT #895 (the board reconcile), not at #897 as the tip suggested. Isolated by comparing
+  run conclusions across commits: 584da5c success, 080df0a FAILURE, c2d3ca0 failure. The reconcile
+  bumped the stamp to v1.101.28; v1.102.0 then shipped, and tests/unit/test_task_board_freshness.py
+  -- the gate I added this session -- fails closed whenever major.minor differ, because patch
+  numbers reset and their difference stops being a distance.
+
+Measured: `git tag` shows exactly FOUR releases between the stamp and shipped (.29, .30, .31,
+  v1.102.0). The tolerance is 5. The board is genuinely WITHIN tolerance; the gate fires only
+  because the cross-minor distance is uncomputable from two version strings.
+
+MY FIRST FIX WAS WORSE THAN THE BUG, and that is the part worth recording. I changed the cross-minor
+  branch to return `shipped[2]` when exactly one minor behind -- reasoning that being early in a new
+  line means only a few releases passed. It made the suite green. Then I injected the REAL
+  13-release incident (stamp v1.101.9 vs shipped v1.102.0) and it PASSED. My fix had disabled the
+  gate for the exact case it exists to catch: one minor behind with patch 0 returns 0, however
+  ancient the stamp. I nearly shipped a check that cannot fail as a hotfix for a red build.
+
+Caught only because I asked the follow-up question -- "did I break its ability to fire?" -- rather
+  than stopping at a green suite. A green suite after a gate change is the least trustworthy green
+  there is.
+
+So: fail-closed on a minor bump is CORRECT and stays. Minor releases are rare here (v1.101 ran to 31
+  patches) and a minor release is exactly when a reconcile is warranted, so the rule is not
+  over-eager. The honest fix is to do what the gate asks.
+
+Stamp bumped only after confirming the CONTENT is current: 13 open items from the #895 reconcile,
+  and `git log --name-only` shows ZERO TASK_BOARD edits since. Bumping a stamp on an unreconciled
+  board is the one failure this gate cannot catch, and the reason it exists.
+
+Re-proved bidirectionally after the bump: stamp rewound to v1.101.9 -> FAILED; correct stamp -> 7
+  passed.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Close the policy-layer item -- its ask shipped; the residual is a decision
+  ([#901](https://github.com/oimiragieo/tensor-grep/pull/901),
+  [`3a72c09`](https://github.com/oimiragieo/tensor-grep/commit/3a72c099c32d536180971ec87c63112212d0f01b))
+
+11 -> 10 open. Reconciled in the same turn the evidence landed.
+
+The item's ACTUAL ask, read from its own text rather than its title, was: "docs/tool_comparison.md
+  still positions tg mostly as a search comparator. Reframe around one-call edit readiness." PR #899
+  delivered exactly that -- an axis split up front, "One Call To Edit Readiness", "What The Answer
+  Says When It Could Not Finish", and README edit-readiness 0 -> 4.
+
+Verified the three falsified claims stayed OUT: "market consensus" 0 occurrences "escalat" 0
+  occurrences semantic fusion not claimed #900 removed even the HONEST `ask_user_before_editing`
+  "escalation flag" usage -- accurate English, but our own research says the word invites a
+  ten-minute rebuttal, and a public comparison doc is where that costs most.
+
+RESIDUAL IS A CEO DECISION, NOT WORK: build an escalation layer, or leave the word dropped. That
+  belongs on the gated list. An item whose only remaining step is a decision is not an eligible work
+  item, and leaving it open is precisely how an agent gets dispatched at finished work -- which
+  happened once this session (#58) before the verify-before-dispatch rule existed.
+
+Reading the item body rather than its headline is what made this closable: the title still says
+  "articulate the moat", which sounds open forever; the body names a concrete deliverable that
+  shipped.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Close the rescued stash -- both halves already shipped, verified
+  ([#909](https://github.com/oimiragieo/tensor-grep/pull/909),
+  [`be6b16f`](https://github.com/oimiragieo/tensor-grep/commit/be6b16fbc728011ebe93b4b87521ef25d17335cc))
+
+I twice called this "a temp-verify-preexisting-flake hack on a v1.64.2 base, almost certainly
+  discardable". That was reading the commit SUBJECT, not the diff. The content is a real lazy-import
+  perf change (task #94 PR-2) with a measured rationale -- defer tensor_grep.backends.base off every
+  other tg command's hot import path, ~5ms on that box, plus a lazy test_command.
+
+Had I acted on my own description I would have deleted a branch believing it held a throwaway. A
+  `temp-verify-*` subject on a stash entry describes the WIP it was taken FROM, not the change it
+  carries.
+
+Verified already on origin/main, both halves, and checked by INDENTATION rather than presence -- a
+  module-level import would look identical to a grep: BackendExecutionError function-local at
+  main.py:4782 and :7471 ast_workflows function-local at main.py:14949 Positive control: the same
+  blob yields 6 top-level tensor_grep imports, so the search works and the zero is measured.
+
+Nothing in the branch is unshipped. Kept on origin as the receipt for the parallel-worktree stash
+  collision (git branch <name> stash@{0} is the non-destructive rescue), but it is no longer open
+  work.
+
+Board 11 -> 10 open; freshness gate green.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Close the two items #899 delivered, and drop a word our own research warned about
+  ([#900](https://github.com/oimiragieo/tensor-grep/pull/900),
+  [`f7a0efd`](https://github.com/oimiragieo/tensor-grep/commit/f7a0efd883c934bb9bb9b96b1d395fc521b50952))
+
+RECONCILED IN THE SAME TURN as the merge, not next cycle. 13 -> 11 open.
+
+`tg prepare` is invisible CLOSED -- README 0 -> 6, tool_comparison prepare 0 -> 5 / incomplete 0 ->
+  8 (control: ripgrep 6, unchanged) incompleteness-honesty CLOSED at the NARROW width, with GitHub's
+  incomplete_results and LSP's isIncomplete NAMED as prior art rather than denied
+
+WORD DROPPED: #899 described `ask_user_before_editing` as an "escalation flag". That is accurate
+  English -- the field genuinely escalates to a human, and it is NOT the falsified "escalation
+  layer" claim. But our own positioning research says tg ships no escalation (2 occurrences in
+  tracked code, both unrelated; control `fallback` = 725) and concluded "fix the product or drop the
+  word". Using it in the PUBLIC comparison doc, inside a differentiators section, is exactly where a
+  reader would conflate the two.
+
+Reworded to "hands the decision back to a human" and to name the field directly. Same meaning, no
+  contested term: `escalat` 0 occurrences, `ask_user_before_editing` 3 (control -- the field is
+  still described, it just is not labelled with a word we cannot defend at the layer level).
+
+I found this only because a grep returned 2 where I expected 0, and I READ the matches instead of
+  trusting the count. Both were honest usages. The change is not a correction of an error -- it is
+  removing an ambiguity our own research predicted someone would exploit.
+
+Gates: freshness 7 passed; docs-governance clean; pinned ruff clean.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- File the v1.101.31 external dogfood, and correct two mis-classified asks
+  ([#897](https://github.com/oimiragieo/tensor-grep/pull/897),
+  [`e034c47`](https://github.com/oimiragieo/tensor-grep/commit/e034c47fc6a3607154ad721fc78c6d7ec6d8ee40))
+
+* docs: file the v1.101.31 external dogfood, and correct two mis-classified asks
+
+A real user ran the published wheel on a live repo. Verdict: works -- symbol ladder, blast+mermaid,
+  orient/map/docs, agent scoped+lexical+root (conf 0.9, ~55s non-partial), truncation hard-stop
+  (0.72 + ask.required + exit 2), prepare --out/--claim, route-test, ledger Slice 1+2, evidence
+  emit/verify, find BM25 fallback, parent refuse, bare --json in-band disclosure, GPU honesty.
+
+Filed all 11 findings CLASSIFIED, not queued, because two collide with decisions this repo made
+  deliberately -- and one of those collisions is FALSE.
+
+F1 -- "bare search exits 1, not 2" is a CONTRACT QUESTION, not a defect. Reproduced on the wheel:
+  bare and explicit-path zero-match BOTH exit 1, with path_was_defaulted+scope_note present in-band
+  (#871 landed). The user's concern is exact: an agent reading only the exit code cannot tell
+  "searched the right place, found nothing" from "searched a scope nobody chose, found nothing." But
+  the requested fix contradicts the 0/1/2 contract -- exit 2 means INCOMPLETE and a defaulted-scope
+  search RAN TO COMPLETION. This is the SAME question as #22, so TWO independent findings now point
+  at one unresolved decision: does exit 2 mean "did not finish" or "do not trust this at face
+  value"? Filed with three concrete options rather than a preference.
+
+F2 -- "anonymous --claim still allowed" is NOT covered by its retirement, and this is the correction
+  worth the most. The audit killed AUTO-DERIVING an agent id (two zero-config agents sharing a
+  derived id would silently drop each other's overlaps, reproducing #845). It never considered
+  REFUSING an anonymous claim. Derive and refuse are different options; the receipt argues against
+  one of them.
+
+That is the same shape as the TASK_BOARD freshness gate, where two rejections were aimed at STRICT
+  EQUALITY and a TOLERANCE was never considered. A rejection is aimed at the form it names --
+  re-read a retirement before letting it close a neighbouring option. Second receipt for that law in
+  two days.
+
+Also filed: edit-ready + verify-edit (the two strongest bets -- they compose shipped primitives and
+  close the loop `prepare` opens), caller-graph parity for the 5 foundational languages (the honest
+  content of the P3 coverage item, and it relocates the gap into the tier competitors are measured
+  on), federated prepare, ledger->CI overlap gate, and ship-or-delete MaxSim.
+
+The user's own skill fixes independently confirm #871 landed and that the stale "stderr-only PATH
+  note" was the artifact, not the product.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs: stop the operator runbook advertising MaxSim the help disowns
+
+The dogfood asked us to "ship or delete MaxSim -- keep it gone from ALL docs". The user fixed their
+  skills; I never checked OURS. Two of our files still sold it as part of what `tg find` delivers.
+
+Fixed here: tensor-grep-run-and-operate's `tg find` row described the pipeline as "BM25 [+ CPU dense
+  [+ MaxSim]]" -- presenting MaxSim as a stage a user can get. No documented path reaches it.
+
+The live help is the oracle and it is already explicit:
+
+MAXSIM LATE RERANK IS NOT REACHABLE BY A DOCUMENTED PATH, and this docstring used to advertise it as
+  though it were ("[+ optional MaxSim late rerank]").
+
+The bracketed phrase the help DISOWNS is the exact shape the runbook still carried. Removed; the two
+  now agree.
+
+CLASSIFIED rather than swept -- the other MaxSim mentions are CORRECT and were deliberately left:
+  failure-archaeology (9) records it as a retired negative, do-not-re-chase workspace-dogfood (2)
+  says "MaxSim NOT advertised" / "de-advertised" code-search-reference domain theory + the
+  regression finding PAPER / CHANGELOG / BACKLOG / the eval harness -- historical record
+
+Recording a retirement is not advertising a capability. A blanket grep-and-purge would have
+  destroyed the receipts that stop the next session re-chasing it.
+
+AGENTS.md:282 carries the same stale promise and is fixed on #896's branch, which already owns that
+  file this session -- splitting it avoids a guaranteed semantic conflict between two open PRs
+  editing one file.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Investigate #98 -- the consolidation already shipped, and the board says otherwise
+  ([#894](https://github.com/oimiragieo/tensor-grep/pull/894),
+  [`c2d3ca0`](https://github.com/oimiragieo/tensor-grep/commit/c2d3ca080281365895a5b3fba3a9a1836e1d0de5))
+
+ANALYSIS + DESIGN only. Nothing consolidated, no code touched.
+
+Recommendation: KILL #98 as written; re-file as three items (a small contract-disclosure fix that
+  should ship now, a parked Phase-2 default flip with named un-park triggers, and an undefined
+  sub-item that should be dropped).
+
+The board's #98 line is wrong in four ways that compound into "not started":
+
+- "45 tools" was true for two days (2026-07-09) and has been stale for three weeks. Derived from the
+  FastMCP registry, the real number is 58 today and was 48 immediately before the consolidation
+  landed. - "TG_MCP_TOOL_SURFACE=lean" names an env var that does not exist anywhere in the repo
+  except that backlog line. The shipped knob is TG_MCP_LEGACY_TOOLS and it takes off-tokens, not the
+  value "lean". - The item reads as unbuilt. Phase-1 SHIPPED in PR 643 / 6d8a23e / v1.81.0 on
+  2026-07-17 -- 10 task-shaped meta-tools, the flag, a contract bump to 1.4.0, harness_api.md
+  coverage, and subprocess-isolated flag tests. The board's own reconcile prose names 643; the live
+  bullet was never updated to match. - "non-breaking" is true of the shipped half and definitionally
+  false of the only half left: flipping the default removes 46 names from the wire.
+
+Derivation is controlled in both directions -- declared-minus-advertised and
+  advertised-minus-declared are both empty, a known-present singleton is asserted, and the flag-OFF
+  arm returns 12 rather than 58, so the probe is observing the thing under study rather than merely
+  enumerating something.
+
+Real defect found along the way, worth fixing whatever happens to 98: the MCP contract version
+  cannot distinguish the two surfaces. 58 tools and 12 tools both report mcp_contract_version 1.7.0,
+  and the capabilities payload carries no tool_surface field and no per-tool deprecation marker.
+  That is precisely the condition the file's own 1.2.0-to-1.3.0 note says bumps exist to prevent --
+  "two different tool sets would both report 1.2.0 and a pinning client would not re-fetch tools[]".
+  An environment variable is a wire surface here, and the contract version does not track it.
+
+Two of my own probes returned clean, plausible, wrong numbers and are recorded as such: a
+  parameter-forwarding walk reported 5 dropped max_tokens params that are in fact passed by ** splat
+  (ast.keyword arg is None for a splat), and a call-site walk reported 4 legacy tools as dead that
+  live one level down in _tg_query_dispatch. True answers: 0 dropped, 46/46 invoked. Neither fell to
+  re-reading the source; both fell to reading the specific matches flagged.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Publish the two-tier language coverage story, derived from the product
+  ([#902](https://github.com/oimiragieo/tensor-grep/pull/902),
+  [`cebb170`](https://github.com/oimiragieo/tensor-grep/commit/cebb170ab495d7ad6984157d242ea2a1cb0d74fd))
+
+* docs: publish the two-tier language coverage story, derived from the product
+
+A buyer comparing tools sees Gortex's 256 languages and Serena's 40+, and nothing from us:
+  "parser-backed" and "language" both appeared zero times in docs/tool_comparison.md (control:
+  "ripgrep" -> 6).
+
+New "Language Coverage" section in docs/tool_comparison.md:
+
+- The two tiers stated as what an agent can DO with an answer: AST-verified refs/callers (Go,
+  JavaScript, Python, Rust, TypeScript) vs parser-backed defs/imports with heuristic refs/callers
+  (C, C++, C#, Java, PHP), and why the heuristic tier's "no callers found" is not evidence of
+  anything. - Where we are behind, named without euphemism: Gortex's bespoke tree-sitter tier is ~30
+  languages with resolved call edges against our 5 and covers all ten of ours; tiered disclosure is
+  industry-normal (Semgrep, Sourcegraph, Zed, nvim-treesitter), so the table is table stakes, not a
+  differentiator. Also added as a bullet under "Where Other Tools Still Lead". - No
+  depth-beats-breadth claim: no shared-corpus benchmark exists, so any depth claim is labeled an
+  architectural statement, not a measured one. - A rerunnable derivation instead of a frozen count:
+  the tier lists are transcribed from the coverage block that every repo-map JSON payload stamps
+  (receipt run against tg 1.101.31 on this repo; the worktree src at f7a0efd returns the identical
+  descriptor), computed live from lang_registry.LANGUAGE_REGISTRY -- grep
+  _symbol_navigation_descriptor in src/tensor_grep/cli/repo_map.py. The section states that the
+  payload wins if the prose ever disagrees. This number has been hand-counted wrong four times in
+  this repo; the doc now tells the reader how to re-derive it rather than trusting a count that
+  rots.
+
+README.md: one bullet under Symbol intelligence pointing at the section, plus the docs-table row
+  mention. No existing content removed or weakened; the 15 speed/parity rows are untouched.
+
+Gates: tests/unit/test_public_docs_governance.py + tests/unit/test_enterprise_docs_governance.py ->
+  63 passed; ruff 0.15.20 check + format --check --preview clean on both files.
+
+* docs: retire the "Python-first" callers claim -- it contradicted the new tier table
+
+Found by the agent that wrote the tier table; it flagged rather than edited, saying re-verification
+  needed a real TS-repo dogfood. It was right to be cautious and right to surface it -- but the
+  claim is decidable WITHOUT a dogfood, because it conflates two different things.
+
+README said `tg callers` is "Python-first: call-site resolution is strongest against Python ASTs and
+  can under-match on large TypeScript/JS repos" -- forty lines from a new table listing
+  go/javascript/python/rust/typescript as co-equal parser-backed. The product's own descriptor
+  settles the MECHANISM:
+
+parser-backed-refs-callers:go-javascript-python-rust-typescript
+
+typescript and javascript are tier 1 today. "Python-first" is false as a mechanism claim, and this
+  is the self-contradicting-document class -- a doc holding a claim and its refutation, which this
+  campaign has now closed seven times.
+
+WHAT I DID NOT CLAIM: that TS resolution is now as good in practice. There is no dogfood evidence
+  either way. The performance caveat is preserved and re-scoped honestly -- large repos of ANY
+  language can take minutes, which is a scale property bounded by --deadline, not a language
+  property. Tier membership is mechanism; observed quality is a separate question that stays open.
+
+Also dated my own instrument: I tried to date the TS/JS extractors from their lang_*.py creation
+  commits and got an empty result. There ARE no such modules -- only c/cpp/csharp/go/php exist;
+  TS/JS are handled elsewhere. The empty result was my probe being wrong, not evidence of absence,
+  and a control (listing the real lang_* files) is what showed it.
+
+And on verifying the fix: `grep -c "Python-first"` still returns 1 afterwards -- that hit is THIS
+  bullet's own sentence retiring the phrase. A count alone reads as "still broken". Same trap as the
+  cast/classifier greps earlier today.
+
+Governance: 63 passed. Pinned ruff clean.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Reconcile the board entry for the rescued perf work -> PR #904
+  ([#907](https://github.com/oimiragieo/tensor-grep/pull/907),
+  [`23f9fb0`](https://github.com/oimiragieo/tensor-grep/commit/23f9fb00d9e6515801a61da458150274d1b73558))
+
+The entry still described it as an unshipped artifact found by a worktree sweep. It is now a gated
+  PR with three fixed findings, so the board was a cycle behind reality -- the staleness that
+  accrues one deferral at a time.
+
+Records what the first adversarial gate caught, because my own verification had reported ZERO
+  regressions across 41 derived files and I would have merged:
+
+- HIGH: two _context_tests call sites, one uncounted, so a budget expiring there reported scanned ==
+  total -- the attribution exonerating the stage that actually stopped. - MEDIUM: the impact call
+  site's "cannot change any output" comment, falsified by measurement (association.confidence
+  strong->weak). - MEDIUM: dissolved by the second fix.
+
+And the root cause of all three surviving my review: every parity arm ran a 32-file fixture where
+  the 2000 ceiling is UNREACHABLE -- the one population where the bound cannot fail. That is now
+  covered by a boundary test.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Reconcile the four items this session's fan-out completed
+  ([#895](https://github.com/oimiragieo/tensor-grep/pull/895),
+  [`080df0a`](https://github.com/oimiragieo/tensor-grep/commit/080df0a0de297fe49c416c33a417b6912fe06dd6))
+
+17 -> 13 open. Every closure carries its receipt, and the original text is preserved under each --
+  deleting the claim destroys the evidence for anyone auditing whether the closure was right.
+
+#98 KILLED AS WRITTEN, re-filed as three (PR #894) #141 investigated (#890) + both defects FIXED
+  (#892) #160 four sub-features already shipped, one real gap closed (#893) #143/#155 both already
+  closed, six sub-items each traced to its commit (#891)
+
+RECONCILED IMMEDIATELY, not "next cycle". The previous update said the reconcile could wait an hour
+  -- but the board going stale between finishing work and recording it is THE defect this campaign
+  has been chasing. Deferring the record by one cycle is how a board acquires 17 stale entries one
+  entry at a time, and an agent was already dispatched once (#58) against work that was finished.
+
+#98 is the sharpest example of why the wording matters, not just the checkbox: it read as unstarted
+  while Phase-1 had shipped three weeks earlier, its headline number was never correct after filing,
+  and it documented an env var (`TG_MCP_TOOL_SURFACE`) whose ONLY occurrence in this repo is that
+  backlog line. An item can be wrong in four independent ways at once and still look actionable.
+
+The freshness gate (tests/unit/test_task_board_freshness.py) stays green through this change and
+  could not have caught any of it -- it proves the stamp is RECENT, never that the content is TRUE.
+  That limitation was documented when the gate shipped; this commit is its first live demonstration.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Retain six laws from the 2026-08-02 fan-out
+  ([#896](https://github.com/oimiragieo/tensor-grep/pull/896),
+  [`18558f1`](https://github.com/oimiragieo/tensor-grep/commit/18558f18e50d3a5e0e176e93e933e47667f2c035))
+
+* docs: retain six laws from the 2026-08-02 fan-out
+
+Six AGENTS.md sections + four bullets in tensor-grep-validation-and-qa. Appended as unnumbered
+  bullets, NOT new oracle Forms -- the Forms table is mirrored and its count is pinned, so adding
+  one is a separate two-file edit.
+
+1. A LIST WRITTEN AT DISPATCH TIME IS STALE BY DEFINITION. Three instances in one session -- a
+  monitoring cron (orphaned a PR opened later), an eligibility filter reading only FIRST LINES
+  (marked a CEO-GATED item ELIGIBLE because the gate sat on line 3 of 4), and a merge drain
+  (orphaned two PRs). The THIRD was authored AFTER the first two were written down. Knowing the rule
+  does not prevent it; only deriving the set at USE time does.
+
+2. A CONSTRAINT'S REASON DEFINES ITS SCOPE, NOT ITS WORDING. The WIP cap exists because
+  RELEASE-BEARING PRs drain one-per-publish; applying it to non-releasing docs/test PRs throttled a
+  five-item fan-out to one per hour. Third receipt for this law in three weeks.
+
+3. BRIEFING A MECHANISM IS ASSERTING A HYPOTHESIS. Three dispatches where I stated the mechanism as
+  fact and the agent disproved it -- an escalation grep contaminated by gitignored checkpoint
+  snapshots, a sibling fallback branch that does not do what I claimed, and a metavar trigger that
+  was already safe. Brief the SYMPTOM; require re-derivation. When corrected, fix the ARTIFACT.
+
+4. AFTER A FIX, A GREP HIT IS OFTEN THE FIX'S OWN DOCUMENTATION -- the census-satisfied-by-a-comment
+  trap mirrored onto the success side. Two live cases, and then a self-demonstration ONE TURN after
+  writing the law: a dogfood probe of the published v1.101.31 wheel tested `TARGET in
+  ast.unparse(fn)`, which includes the DOCSTRING, and printed VERDICT: REGRESSION on a correct
+  artifact. Count AST nodes. A verification probe deserves MORE scrutiny than its subject when it is
+  about to certify a ship.
+
+5. `git stash` IS UNSAFE ONCE PARALLEL WORKTREES EXIST -- they share .git's stash refs, so an
+  agent's pop took another agent's stash. Use `git checkout -- <file>`; rescue an orphaned stash
+  with `git branch <name> stash@{0}`.
+
+6. COMMITTED IS NOT SHIPPED. A 27KB investigation sat unpushed while its findings were reported and
+  acted on. A subagent's "committed, not pushed" is an OBLIGATION. Corollary: reconcile the board AT
+  completion, never next cycle -- 17 stale entries accrued one deferral at a time.
+
+Verified: 68 docs-governance tests pass; the skill-library drift gate (which pins every citation and
+  stated count) stays green at 9 passed.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs: format the AST-probe example fence with the locked ruff
+
+CI's `ruff format --check --preview .` formats Python fences inside Markdown. The example added in
+  the previous commit -- the one demonstrating how to count AST nodes instead of grepping -- was
+  itself unformatted.
+
+Caught by checking the COMMITTED BLOB rather than the working copy. My first check said "2 files
+  would be reformatted" and the reflex was to dismiss it as the known Windows CRLF false alarm,
+  which it was for one of the two. Testing each blob separately separated the artifact from the real
+  red: SKILL.md clean, AGENTS.md genuinely unformatted.
+
+The discriminator stays the same and is worth restating: reproduce against what CI sees (`git show
+  HEAD:<path>`), not against your working copy -- and test the files SEPARATELY, because one true
+  artifact in a pair will mask one real defect.
+
+Verified clean under BOTH the CI-pinned 0.15.20 and the local 0.16.0, so it is forward-compatible
+  rather than pinned to today's resolver.
+
+* docs: stop AGENTS.md advertising MaxSim as part of the shipped find pipeline
+
+Second half of the dogfood's "ship or delete MaxSim -- keep it gone from ALL docs" (the first half
+  is on the dogfood branch, for the operator runbook).
+
+AGENTS.md described the tg find response as "BM25 + local CPU dense embeddings -> weighted RRF ->
+  optional MaxSim -> budget-fitted". No documented path reaches MaxSim. The live help is the oracle
+  and already says so outright:
+
+MAXSIM LATE RERANK IS NOT REACHABLE BY A DOCUMENTED PATH, and this docstring used to advertise it as
+  though it were ("[+ optional MaxSim late rerank]").
+
+Split across two branches deliberately: #896 already owns AGENTS.md this session and the dogfood PR
+  owns the skill, so editing one file from two open PRs would be the semantic-collision shape (a
+  clean git merge is not a clean semantic merge -- Oracle Form 10).
+
+The one remaining AGENTS.md mention (:2036) is KEPT: it records the measured regression as "a
+  harness gap, not a verdict on MaxSim". Recording a retirement is not advertising a capability, and
+  a blanket purge would destroy the receipt that stops the next session re-chasing it.
+
+Format note: `ruff format --check` flags the working copy here, but the COMMITTED blob is "already
+  formatted" -- the CRLF artifact, not a real red. Checked the blob rather than the working copy,
+  per this file's own law.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Retain three laws this cycle paid for ([#906](https://github.com/oimiragieo/tensor-grep/pull/906),
+  [`708297c`](https://github.com/oimiragieo/tensor-grep/commit/708297c25849d7ac547844892370509beaccc3ae))
+
+* docs: retain three laws this cycle paid for
+
+All three cost a wrong conclusion or a wrong fix before they were written down.
+
+1. SCOPING THE PATCH SITE DOES NOT SCOPE THE OBSERVABLE (#904). Three tests passed on a baseline
+  where the parameter they were named for did not exist. The obvious fix -- re-scope the rig onto a
+  helper an AST walk proves is called from exactly one place -- was implemented, mutation asserted
+  applied, and all three STILL passed, because the clock is global and `partial` is a shared boolean
+  any of 24 readers can set. Enumerate the WRITERS of the value you assert, not the callers of the
+  function you patch.
+
+2. A MISSING OPTIONAL DEP MAKES A SUITE MISLEADING IN BOTH DIRECTIONS (#905). Without the
+  tree-sitter extra, 5 tests failed with messages that read like product bugs and several PASSED
+  VACUOUSLY -- their claim is that a parse did not happen, which nothing can falsify when nothing
+  can parse. Gate the module, not the loud failures; the quiet half is the dangerous one. Includes
+  the dogfood that refuted a product-defect reading: the helper returns [] with no parser, but the
+  real CLI still finds the references.
+
+3. A POPULATION FLOOR MUST BE CALIBRATED ON THE SAME POPULATION. My own merge monitor's ">= 40 jobs"
+  floor fired on a complete run: it came from 48 CHECKS in a PR rollup and was applied to 39 JOBS in
+  one ci.yml run. Name the population in the threshold, and note that `rerun --failed` legitimately
+  yields fewer jobs.
+
+Oracle-form count unchanged at ten; drift and index gates green.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs: fix a WRONG release-class claim I shipped yesterday in #903
+
+CLAUDE.md listed `refactor` among the non-releasing PR types. The validator disagrees:
+  scripts/validate_pr_title_semver.py has "refactor": "patch".
+
+A `refactor:`-titled PR PUBLISHES. Anyone trusting that line would have shipped a release believing
+  they had not -- the exact mirror of the chore:-security-fix trap already recorded in AGENTS.md,
+  where a fix that SHOULD publish silently does not. Both directions of that error are now live
+  receipts in this repo.
+
+The sharp part, added to AGENTS.md as its own law: the tensor-grep-release-and-positioning skill
+  ALREADY carries the row
+
+`refactor:` | patch | Not listed in AGENTS.md's prose table, but the validator script treats it as
+  patch -- trust the script over the prose
+
+and I wrote a fresh summary from memory hours later and reproduced precisely the drift it warns
+  about. A warning is not a guard. The corrected line now ships the derivation instead of the
+  answer:
+
+grep -A12 _RELEASE_INTENTS scripts/validate_pr_title_semver.py
+
+Found only because a routine "what should Semantic Release decide for this merge?" check printed the
+  real dict beside my recollection. Print the authority next to the belief; the disagreement is
+  invisible when you print only one.
+
+Gates green (9 passed); ruff format clean; oracle-form count untouched.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Surface tg prepare, and stop mkdocs publishing internal analysis publicly
+  ([#899](https://github.com/oimiragieo/tensor-grep/pull/899),
+  [`85ab924`](https://github.com/oimiragieo/tensor-grep/commit/85ab924f208a93d4addd493fe2a75c29ae14aa57))
+
+* docs: surface tg prepare -- the one-call edit-readiness moat -- in README, tool_comparison, and
+  the site home
+
+The measured problem (re-derived, with controls): "tg prepare" appeared 0 times in README.md
+  (control: "tg agent" 3, "ripgrep" 7), "prepare" and "incomplete" 0 times in
+  docs/tool_comparison.md (control: "ripgrep" 6), and prepare was mentioned in no mkdocs-nav'd page
+  except docs/CONTRACTS.md. Meanwhile every one of tool_comparison's data rows was speed or parity
+  -- positioning a slower grep while the differentiator went unmentioned.
+
+What this adds, at the width the 2026-08-01 positioning research
+  (docs/positioning/2026-08-01-policy-layer-moat.md) found defensible:
+
+- README: tg prepare in the top quick block, a lead bullet under "AI-agent context" with the real
+  invocation (tg prepare PATH "task" --out capsule.json --json) and an abridged real-field payload,
+  the budget-honesty story, and prepare added to the install-note's agent-native edge list and the
+  Quick start. - docs/tool_comparison.md: an axis-split paragraph up front, plus two new sections --
+  "One Call To Edit Readiness" (the four-element bundle; survey-attributed competitor coverage) and
+  "What The Answer Says When It Could Not Finish" (the incompleteness contract at its narrow width:
+  exit code agreeing with payload, budget_remediable's fail-closed allow-list, contract-level scope
+  with CI ratchets; GitHub incomplete_results and LSP isIncomplete named as the prior art fragments;
+  MCP has no standardized equivalent). All 15 speed/parity rows kept unchanged. - docs/index.md: one
+  Product Positioning bullet for the prepare surface. - mkdocs.yml: unchanged -- both touched docs
+  pages are already nav'd.
+
+Receipts re-derived on this worktree, not copied from the brief: the two-arm exit contract was rerun
+  live against tg 1.101.31 (complete arm exit 0 / confidence 0.9 / no partial key; truncated arm
+  --deadline 0.1 exit 2 / partial=true / partial_reason=deadline / confidence downgraded 0.9 -> 0.72
+  with three named reasons / ask_user_before_editing.required=true). Deliberately NOT claimed, per
+  the research: no market-consensus appeal, no escalation layer, no semantic fusion in prepare, no
+  "no competitor documents incompleteness" absolute, no CEO-gated token benchmark, no MaxSim.
+
+Gates: tests/unit/test_public_docs_governance.py + test_enterprise_docs_governance.py (63 passed),
+  release-asset/stamp/skill-index/skill-drift suites (161 passed), pinned ruff 0.15.20 format
+  --check --preview + check on all three files (clean), and mkdocs build --strict (exit 0 in an
+  isolated pinned env; the repo venv's Python 3.14 pygments/pymdownx pair crashes on UNMODIFIED HEAD
+  content too -- pre-existing environment breakage, controlled for).
+
+* docs: stop mkdocs publishing internal analysis to a PUBLIC site
+
+Found while surfacing tg prepare: mkdocs builds EVERYTHING under docs_dir into the site -- nav'd or
+  not -- and `publish-docs` runs `mkdocs gh-deploy --force` UNCONDITIONALLY on release, into a
+  PUBLIC repo.
+
+docs/positioning/ holds competitive analysis that discusses the CEO-GATED #72 benchmark.
+  docs/audits/, investigations/ and superpowers/ are likewise internal.
+
+NOT CURRENTLY EXPOSED -- verified rather than assumed, with a control: gh-pages `positioning/` ->
+  404 gh-pages branch root -> 14 entries (so the 404 is real, not an API artifact) gh-pages last
+  built -> 2026-03-01 #889 (added the doc) merged -> 2026-08-02 The branch predates the file by five
+  months, so the docs job has not published since. The risk is LATENT: the next successful
+  publish-docs run would expose it.
+
+I nearly reported this as a live disclosure. The site root and the doc URL both 404, the repo is
+  public, and a gh-pages branch exists -- enough to sound alarming. Checking the branch CONTENTS and
+  its build DATE is what separated "already public" from "would become public". An alarming-looking
+  configuration is not a breach; verify the artifact before escalating.
+
+Fix verified by building: 0 positioning pages in the output, 72 index.html pages still produced --
+  the exclusion works AND did not gut the site. mkdocs 1.6.1 supports exclude_docs; a version too
+  old would have ignored the key silently, which is why the build check matters more than the config
+  diff.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Performance Improvements
+
+- Attribute the _context_tests deadline stop, and bound its discarded source list
+  ([#904](https://github.com/oimiragieo/tensor-grep/pull/904),
+  [`8fc51f8`](https://github.com/oimiragieo/tensor-grep/commit/8fc51f8448cae6261235d30e3164843ee088d460))
+
+* perf(repo-map): WIP -- bound the discarded _context_tests copy + add its --deadline gate
+
+COMMITTED FOR PRESERVATION, NOT SHIPPED. Found uncommitted in worktree agent-acfacf27a6d3630cc
+  during a 2026-08-02 worktree sweep, on a branch whose committed HEAD was already an ancestor of
+  main -- so the branch read as a husk while carrying 519 lines of unshipped work. One stray `git
+  checkout` from gone.
+
+Content (another agent's opt10 campaign #3): - repo_map.py +61: thread _test_source_limit through
+  build_symbol_impact_from_map / build_symbol_refs_from_map / build_symbol_callers_from_map, which
+  fed ranked_files to _context_tests UNBOUNDED -- O(len(tests) * len(source_files)) via
+  _test_graph_score rebuilding an aliases-by-file dict per test -- while refs/callers consume only
+  test_matches[:1] and discard the rest. -
+  tests/unit/test_context_tests_source_limit_and_deadline.py +452 (new) -
+  tests/unit/test_repo_map_graph.py +6
+
+NOT VERIFIED BY ME: not run, not reviewed, not rebased onto current main (base is #713-era).
+  repo_map.py is core and this needs a real TDD gate plus a red arm before it goes near a PR.
+  Recorded on docs/TASK_BOARD.md so it is visible rather than rediscovered by the next sweep.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs(test): record the measured pre-fix baseline in the file it judges
+
+Docstring only, behaviour-neutral: 18 tests collected before and after, matching the 12 failed + 6
+  passed measured against unpatched main.
+
+Three findings the next person needs BEFORE trusting this file's red:
+
+1. 11 of the 12 failures are AttributeError on a missing _CONTEXT_TESTS_SOURCE_FILE_CEILING -- an
+  error while evaluating the assertion, not evidence the property is broken. Only
+  test_callers_relevant_tests_for_symbol_call_site_receives_deadline fails behaviourally
+  (deadline_monotonic is None; observed kwargs {'raw_query': 'widget'}).
+
+2. The three *_context_tests_deadline_folds_into_partial tests are vacuous FOR THEIR NAME. Decisive
+  proof: pre-fix, _context_tests does not accept a deadline_monotonic parameter at all -- and they
+  pass anyway. They cannot be observing a parameter that does not exist. What they observe is the
+  PRE-EXISTING file-scoring deadline folding into partial, because _rig_deadline_via_score_file_path
+  patches _score_file_path globally and that helper has five call sites, so the budget is blown
+  upstream before _context_tests is reached. Fix: scope the rig to _test_graph_score.
+
+3. The other three pre-fix passers are deliberately NOT swept. A "none is a no-op" test SHOULD pass
+  in both arms -- that is its job. Classify individually; this repo has a receipt for a sweep
+  deleting real coverage.
+
+My first explanation of (2) was wrong and an AST walk caught it: I asserted _context_tests never
+  calls _score_file_path. It does -- it is one of the five call sites. The conclusion held, the
+  mechanism did not, which is why the note records the parameter-absence proof rather than my
+  original story.
+
+* docs(test): the obvious fix for the vacuous deadline arms was tried and FAILED
+
+Recording a measured negative so nobody re-attempts it, including me.
+
+The prior commit said: scope the rig to _test_graph_score, which an AST walk confirms is called from
+  _context_tests and nowhere else, so the only way partial could be set would be the new threading.
+  That reasoning is wrong, and it took a run to find out.
+
+Implemented it, asserted the mutation applied (3 scoped call sites, 0 global), ran against the
+  pre-fix baseline: all three tests STILL PASS. 12 failed / 6 passed, byte-identical counts to
+  before.
+
+Cause: 24 functions in repo_map.py read time.monotonic. Advancing the clock ANYWHERE trips the next
+  downstream pre-existing deadline check, which sets partial by itself. Scoping the PATCH SITE does
+  not scope the OBSERVABLE -- and partial/deadline_exceeded are shared booleans any of those 24
+  readers can set.
+
+So the real gap is in the FIX's observable surface, not the test: discriminating needs an
+  attribution naming _context_tests as the stage that stopped. That is now written down as the open
+  design question on this branch instead of being rediscovered.
+
+The change itself is reverted; only the finding ships. A scoped rig that still passes in both arms
+  would add code without adding a check, and would read to the next person as "fixed".
+
+* docs(test): the discriminating assertion needs no new convention -- it already exists
+
+Closes the design question the prior commit opened, with a key census rather than a guess.
+
+deadline_limit ALREADY carries five per-stage scanned/total counter pairs: files_*, caller_files_*,
+  reference_files_*, importer_candidates_*, and source_candidates_examined/_total. There is NO
+  test-candidate pair, and that absence is exactly the gap -- enumerated by walking every string
+  constant in the module ending _scanned/_total/_examined, so it is a key census and not a grep.
+
+So the fix should emit test_candidates_scanned / test_candidates_total from _context_tests,
+  following the convention already in the payload instead of inventing a stage field. The three
+  vacuous tests then assert the shape this suite already uses for the same purpose --
+  tests/unit/test_repo_map_deadline.py has `assert 0 < deadline_limit["files_scanned"] <
+  deadline_limit["files_total"]` with the comment "some but not all".
+
+That assertion is able to FAIL, which is the whole point: nothing else scans test candidates, so
+  none of the 24 clock readers can satisfy it, whereas every one of them can set the `partial`
+  boolean the current tests assert.
+
+Flagged for whoever implements it: CONTRACTS.md says deadline_limit carries its fields additively,
+  so a new key fits the documented contract -- but confirm whether the payload governance tests pin
+  the key set, because a contract change needs its validator test updated in the same PR.
+
+* docs(test): the new counter key is additively safe -- governance measured
+
+Closes the last open question before implementation, so nobody re-derives it.
+
+26 test files reference deadline_limit. None asserts an exclusive key set -- no set(deadline_limit),
+  no .keys() ==, no sorted(deadline_limit). That zero is trustworthy rather than unresolved because
+  24 files elsewhere in the same suite DO use exact-set assertions, so the pattern is real and my
+  grep can find it.
+
+test_disclosure_covers_every_incompleteness_emitter.py names deadline_limit as a container, not
+  per-key, so a new sub-key needs no registration in that census.
+
+test_enterprise_docs_governance.py asserts "deadline_limit.files_scanned" in contracts -- counter
+  keys are expected to be documented, so the new pair goes into docs/CONTRACTS.md in the same PR. A
+  doc obligation, not a blocking pin.
+
+Net: test_candidates_scanned/_total can be added without breaking a test, and the implementation now
+  has no unanswered design or governance question.
+
+* test(repo-map): make the 3 vacuous deadline arms discriminate -- RED arm observed
+
+TDD red half for the design settled in 304a38e. Test-only; no src touched.
+
+The three *_context_tests_deadline_folds_into_partial tests asserted `partial` and
+  `deadline_exceeded` -- shared booleans that any of this module's 24 time.monotonic readers can
+  set, which is why they passed on a baseline where _context_tests did not accept deadline_monotonic
+  at all.
+
+They now assert the pair only _context_tests can produce:
+
+scanned = deadline_limit.get("test_candidates_scanned") total =
+  deadline_limit.get("test_candidates_total") assert scanned is not None and total is not None, ...
+  assert 0 < scanned < total
+
+Same shape tests/unit/test_repo_map_deadline.py already uses for files_scanned < files_total.
+  Nothing else scans test candidates, so no other clock reader can satisfy it.
+
+RED ARM OBSERVED against unpatched main, mutation asserted applied (4 occurrences of the new key in
+  the file actually executed): the three moved from PASSED to FAILED, 12 failed/6 passed -> 15
+  failed/3 passed.
+
+My first cut of this was the very defect I had just criticised. Subscripting
+  deadline_limit["test_candidates_scanned"] raised KeyError -- an error, not a failed assertion --
+  which is the same error-shaped weakness the 11 AttributeError arms have, and it would have been a
+  12th. Rewritten to .get() plus an explicit assert, so the failure now reads:
+
+AssertionError: _context_tests must contribute its own scanned/total pair to deadline_limit; present
+  keys were ['deadline_exceeded']
+
+which also confirms the payload carries no counters on this path at all.
+
+GREEN half still owed: emit test_candidates_scanned/_total from _context_tests and document the pair
+  in docs/CONTRACTS.md. Deferred only because it edits core repo_map.py and the checkout is pinned
+  to the #903 branch while its CI runs.
+
+* docs(test): blast radius says use a dedicated counter, not the shared flag
+
+Ran the house read-before-write rule on the obvious carrier and it changed the design. `tg callers
+  src _DeadlineBreakFlag` reports 23 consumers across six modules: agent_capsule.py, codemap.py,
+  docs_coverage.py, inventory.py, main.py, repo_map.py.
+
+That object is the module's general-purpose mutable out-signal -- the natural place to hang
+  test_candidates_scanned/_total, and the wrong one. Doing so would widen a 23-consumer shared
+  symbol to serve exactly one caller.
+
+Use a small dedicated counter object passed to _context_tests and read in the three build_symbol_*
+  call sites: same out-signal idiom, blast radius of one.
+
+The fork was invisible until the callers query ran. Dogfooding tg for navigation found it, which is
+  the whole argument for the read-before-write rule on shared symbols rather than reading the class
+  and assuming.
+
+* docs(test): map the exact 8 implementation sites -- the green half is now mechanical
+
+Verified the threading chain with two INDEPENDENT methods, tg callers and an AST walk, which agree.
+  That agreement is the point: two methods sharing an assumption are one method run twice, and these
+  do not share one.
+
+The counts thread three levels, not two:
+
+build_symbol_{impact,refs,callers}_from_map (3 entry points) -> build_context_pack_from_map (public
+  wrapper) -> _build_context_pack_from_map (exactly ONE caller -- safe to widen) -> _context_tests
+  (the loop)
+
+Payload assembly is one site per entry point; each writes the bare payload["deadline_limit"] =
+  {"deadline_exceeded": True} today, and the new pair joins that dict there.
+
+Total: 1 counter class + 3 signature widenings (optional kwarg default None, so no existing caller
+  breaks) + 1 loop change + 3 payload assemblies + the CONTRACTS.md entry. Every site named.
+
+Not implemented in this commit: it edits core repo_map.py at 8 sites and wants the full affected
+  suite rather than the single file I can run by copy-in while this checkout is pinned to the #903
+  branch. Tracked as task #16 with that trigger; nothing here is left to prose.
+
+* perf(repo-map): attribute the _context_tests deadline stop -- GREEN arm observed
+
+Implements the design settled in 304a38e and closes the red arm from 8d1b124.
+
+WHAT: _context_tests now reports test_candidates_scanned / test_candidates_total into
+  deadline_limit, joining the five sibling scanned/total pairs already there (files_*,
+  caller_files_*, reference_files_*, importer_candidates_*, source_candidates_*). Threaded
+  build_symbol_{impact,refs,callers}_from_map -> build_context_pack_from_map ->
+  _build_context_pack_from_map -> _context_tests as an optional kwarg defaulting to None, so no
+  existing caller changes behaviour.
+
+WHY NOT THE SHARED FLAG: the counts ride a dedicated _TestScanCounts, not _DeadlineBreakFlag. tg
+  callers reports 23 consumers of that object across six modules; widening it for one caller would
+  be a 23-consumer change serving a 3-consumer need.
+
+BIDIRECTIONAL PROOF, revert asserted applied: with the change 18 passed without it 15 failed / 3
+  passed (grep: 0 occurrences of _TestScanCounts) main checkout restored byte-identical to HEAD
+  after each arm.
+
+TWO CORRECTIONS THE RUN FORCED, both recorded rather than papered over:
+
+1. My assertion was over-specified. `0 < scanned < total` failed on a CORRECT implementation
+  reporting 0/2 -- the rig blows the budget upstream, so _context_tests is reached and breaks before
+  its first item. That is still an attribution: `total` is stamped BEFORE the loop precisely so this
+  reports an honest 0/N rather than a 0/0 that reads as "never ran". Now asserts total > 0 and
+  scanned < total. I fixed the test, not the code, because the code was right.
+
+2. My committed implementation map was WRONG about the payload sites. It said each entry point
+  writes a bare {"deadline_exceeded": True}; only impact does. refs and callers write three-key
+  dicts carrying their own scanned/total pairs. Found because an AST filter for single-key dicts
+  returned nothing for refs -- the assertion caught it instead of a blind edit mangling the file.
+
+Also widened the test_repo_map_graph spy to accept the new kwarg, exactly as the WIP had already
+  done for deadline_monotonic/deadline_hit. That failure was real, not a mixing artifact: it passes
+  on unmodified main, and the matched worktree pair is 16 passed.
+
+Still owed before this leaves draft: the docs/CONTRACTS.md entry for the new key pair (governance
+  expects counter keys documented), and the full affected suite.
+
+* docs(contracts): document the deadline_limit scanned/total pairs and what a zero means
+
+Governance expects counter keys documented (test_enterprise_docs_governance asserts
+  "deadline_limit.files_scanned" in contracts), and the new test_candidates_* pair had no entry.
+  Rather than add one line for one key, the entry states the rule the whole family follows:
+
+- deadline_exceeded is a single SHARED boolean and several stages read the same clock, so it says
+  THAT the budget expired, never WHICH stage. Each bounded stage contributes its own scanned/total
+  pair, emitted additively and only when that stage ran. All six are enumerated. - A pair's ABSENCE
+  means the stage did not run -- not that it completed. - scanned may legitimately be 0 against a
+  non-zero total: the stage was reached and stopped before its first item, which is still an
+  attribution. total is stamped before the loop so this reports 0/N instead of a 0/0 that would read
+  as "never ran". Reason about a MISSING pair, not a zero scanned.
+
+That last point is written down because it cost a wrong assertion during this change: a test
+  demanding 0 < scanned < total failed on a correct implementation reporting 0/2, and the tempting
+  fix was to change the code.
+
+Verified: the 20 docs-governance tests still pass with this text (they pin the neighbouring
+  scan_limit-vs-deadline_limit paragraph, so an edit here could have broken them); ruff format
+  clean.
+
+* fix(repo-map): count the SECOND _context_tests scan -- the gate's HIGH finding
+
+The adversarial gate on #904 falsified this PR's own headline claim. Confirmed independently by AST
+  before accepting it:
+
+_relevant_tests_for_symbol @4280: counted=False _build_context_pack_from_map @9485: counted=True
+
+`build_symbol_callers_from_map` reaches BOTH -- this PR's own
+  test_callers_relevant_tests_for_symbol_call_site_receives_deadline asserts len(captured_calls) ==
+  2. So a budget expiring in the uncounted scan still reported scanned == total: the attribution
+  exonerating the stage that actually stopped, which is the failure the pair exists to prevent. That
+  scan is also the likelier to trip, because _test_source_limit is deliberately not applied to it.
+
+FIX: thread the counter into _relevant_tests_for_symbol (optional kwarg, default None;
+  build_symbol_defs_from_map keeps None and emits no pair).
+
+The gate's suggested remedy needed correcting. "Accumulate into the same object" breaks the
+  fraction: a completed first scan (8/8) plus a stopped second (4/8) would report scanned=12 against
+  total=8. `total` now accumulates too, so scanned <= total is an invariant and scanned < total
+  still signals any early stop. Assigning instead would let a completed scan overwrite a stopped one
+  and hide it.
+
+REGRESSION GUARD, structural on purpose: it asserts every scan is INSTRUMENTED rather than that a
+  timing produces a fraction -- a clock-rigged arm proves more and flakes more, and this fails
+  immediately if a future call site is added without the counter, which is the defect that occurred.
+
+Its own precondition earned its place. The first draft used the caller-less fixture, where the path
+  reaches _context_tests ONCE, and the `len(seen) >= 2` assertion failed loudly instead of passing
+  vacuously. It now uses _build_caller_fixture, the same one the two-call test uses.
+
+BIDIRECTIONAL: guard passes with the threading; removing that single line (the replace was
+  assertion-guarded at exactly 1 site) turns it RED. 93 passed across the context/graph/deadline
+  suites; ruff 0.15.20 clean.
+
+Two MEDIUM findings from the same gate remain open (task #18): the impact call-site comment
+  falsified by measurement, and the borrowed ceiling that truncates without the disclosure every
+  sibling use stamps. #904 stays DRAFT.
+
+* fix(repo-map): stop bounding impact's test-source list -- it changed the payload
+
+Closes the gate's two MEDIUM findings on #904. Both verified independently before acting, with a
+  same-ceiling CONTROL proving each builder deterministic:
+
+impact control=True CHANGED_by_bound=True <- the defect refs control=True CHANGED_by_bound=False
+  callers control=True CHANGED_by_bound=False
+
+unbounded score=23 reasons=[path, filename, test-graph, graph-centrality] conf=strong ceiling=1
+  score= 2 reasons=[path] conf=weak
+
+The original comment claimed impact keys its lookup off `related_tests`, "a SEPARATE,
+  independently-computed list", so a tighter source list "cannot change any output impact actually
+  returns". `related_tests` selects WHICH rows appear; it does not make their VALUES independent.
+  `test_matches_by_path` is built FROM the context pack's `test_matches` and supplies the
+  score/reasons/provenance/ association this payload returns -- so the bound silently downgraded
+  `association.confidence` on any repo past the ceiling, on a patch RELEASE.
+
+FIX: drop `_test_source_limit` at the impact call site only. refs and callers keep it -- measured
+  unchanged even at ceiling 1, because they really do read just `test_matches[:1]`. Impact stays
+  bounded by --deadline, which is honest because it stamps `partial`. That also dissolves the third
+  finding: the only call site whose output the bound could alter no longer applies it, so there is
+  no silent truncation left to disclose.
+
+BOUNDARY TEST, the thing that was missing. Every existing parity arm runs a 32-file fixture where
+  the 2000 ceiling is UNREACHABLE -- the one population where the bound cannot fail, which is
+  exactly how this shipped. The new parametrized test forces the ceiling to 1 and pins that no entry
+  point's payload moves. Restoring the old line turns ONLY the impact arm red; refs and callers
+  still pass, so it discriminates rather than just failing.
+
+Its same-ceiling control is load-bearing: without it, a comparison that always matched would be
+  indistinguishable from a nondeterministic builder whose diff the test could never see.
+
+test_impact_threads_test_source_limit is INVERTED, not deleted -- a removed test is silent, and the
+  next person optimising this path will find the same tempting `_test_source_limit=` at the
+  refs/callers sites and assume impact was an oversight. It now asserts the absence, with the
+  reason.
+
+119 passed across context/graph/deadline/partial-propagation/docs-governance; ruff 0.15.20 format +
+  check clean.
+
+* test(repo-map): pin the += invariant the whole fix rests on -- re-gate must-fix
+
+The re-gate confirmed the HIGH dead and MEDIUM #2 resolved, and found that the one character
+  carrying both had ZERO coverage.
+
+N1, THE MUST-FIX. Changing `+=` to `=` at the counter (one character) keeps all 38 sibling tests
+  GREEN while restoring the exact defect this PR exists to prevent -- `6/6` for a stage that stopped
+  -- and adding a nonsense `9/6` on top. Now pinned:
+
+completed scan -> (10, 10) + already-expired scan -> (10, 20) under `=` -> (10, 10) <- the revert,
+  caught
+
+Measured: 1 failed / 38 passed under the perturbation, so the new test is the ONLY thing that sees
+  it. Reverted, file byte-identical.
+
+It also falsified my own justification. The structural guard's docstring said a fraction test "would
+  prove more and would be timing-fragile". The fraction needs no clock at all -- one completed scan
+  plus one already-expired scan is fully deterministic. I argued for the weaker test on a premise
+  that was simply untrue.
+
+N2. Section 2 called itself "THE load-bearing ranking-parity gate". The re-gate PROVED its three
+  tests cannot fail: they compare ceiling None against the SHIPPED 2000 on a 31-file fixture, so
+  both arms are identical by construction -- the same "population where the bound cannot fail" that
+  let a real output change ship unnoticed. Receipt: under a perturbation re-adding impact's bound,
+  the impact test there stayed GREEN while the real guards went red. Re-labelled as a smoke check
+  that names the real gate (test_source_ceiling_changes_no_payload_at_the_BOUNDARY) and says plainly
+  that a green here is not evidence the bound is safe.
+
+N3. CONTRACTS.md now discloses that test_candidates_* SUMS ACROSS SCANS: callers reaches the scorer
+  twice, so a 6-test repo reports total 12, and `6/12` means the first scan completed and the second
+  never started -- not 50% coverage. A consumer reading the previous text would have mis-scaled it.
+
+59 passed across context/graph/docs-governance; ruff 0.15.20 clean.
+
+* test: drop a tautological assert I added inside the can't-fail-check fix
+
+Narrow gate on 780e5a8 returned SHIP with two nits. This closes both.
+
+NIT 1, and it is the embarrassing one. I wrote
+
+assert counts.scanned <= counts.total, "scanned > total is a nonsense fraction"
+
+inside the very test added to fix a can't-fail-check finding. It cannot fail: the state is (10, 20)
+  under `+=` and (10, 10) under `=`, so it holds in BOTH arms. And under a correct `+=` the relation
+  is arithmetically guaranteed -- `scanned` only increments inside a loop whose full length was
+  already added to `total` -- so asserting it is the `assert 0.0 <= rate <= 1.0` antipattern this
+  repo already has a receipt for.
+
+Replaced with a comment carrying that reasoning, because deleting it silently invites the next
+  reader to add it back as the "obvious missing guard".
+
+Re-verified after removal: the mutation `+=` -> `=` still turns this test RED and nothing else (1
+  failed / 22 passed), src restored byte-identical. The equality assertions are what discriminate;
+  the tautology was never load-bearing.
+
+NIT 2. CONTRACTS.md said `tg callers` "reaches the scorer twice", full stop. The second scan sits
+  behind an `if caller_files:` guard, so a symbol with NO callers reaches it once and reports 6, and
+  the gate observed a run reading 0/12 when the budget died before the second scan started. Now
+  stated as conditional, with impact and refs named as single-scan. The operative instruction --
+  never read the pair as a count of distinct test files -- was already safe either way.
+
+43 passed across the counter suite + enterprise docs governance; ruff 0.15.20 check and format
+  --preview clean.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Testing
+
+- Add a requires_grammar marker and apply it to test_lang_c
+  ([#908](https://github.com/oimiragieo/tensor-grep/pull/908),
+  [`d7c4438`](https://github.com/oimiragieo/tensor-grep/commit/d7c4438df8d6a272a590ee0c6d942b069ccb7bda))
+
+* test: add a requires_grammar marker and apply it to test_lang_c
+
+First slice of the 113-test population measured in this session. Establishes the mechanism; the
+  other 8 files reuse it unchanged.
+
+WHY A MARKER, NOT A MODULE GATE. #905 module-gated test_parse_product_cache.py because that file's
+  SUBJECT was the parse-product cache -- no parser, no subject. That does NOT generalise: every lang
+  file MIXES grammar-dependent tests with parser-independent ones (static registry metadata,
+  missing-file and wrong-suffix short-circuits) AND with a deliberate `*_grammar_absent_*` family
+  that must keep running in BOTH environments. A module gate here would have skipped ~338
+  legitimately-passing tests across the population.
+
+WHY 24 AND NOT 21. Gating the failures alone is necessary but not sufficient. Three tests PASS
+  vacuously in the same environment because they assert EXCLUSION -- nothing can parse, so nothing
+  is found, so the exclusion "holds": test_declarator_shape_4_function_pointer_variable_is_excluded
+  and the two defs_excludes_* tests. Their positive siblings (declarator shapes 1,2,3,5,6,7) FAIL
+  here, so no live machinery backs their negative. That is the discriminator: an emptiness-only
+  assertion is vacuous ONLY IF no positively-asserting sibling proves the machinery works in the
+  same environment. By that same rule test_js_ts_advanced_resolution needs NO gate -- its 10
+  positive tests pass parser-free, so its 3 emptiness tests are genuine.
+
+BIDIRECTIONAL PROOF: real gate, parser absent -> 11 passed, 24 skipped, 0 failed (was 21f/14p) gate
+  on an importable mod -> 21 failed, 14 passed (does NOT fire) The second arm is what shows this is
+  a CONDITION and not a blanket skip. And 14 -> 11 passing is exactly the 3 vacuous passers now
+  skipped instead of green.
+
+NOT A COVERAGE REDUCTION: ci.yml installs `.[dev]` at three sites and pyproject's [dev] extra
+  contains tree-sitter (verified against the manifest, not the comment claiming it; control: [dev]
+  also contains pytest). All 24 run in CI.
+
+Marker registered in pyproject because --strict-markers is in addopts, so an unregistered marker is
+  an error rather than a silent no-op.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* test: gate the remaining 8 parser-dependent files on the same marker
+
+Completes the 113-test population measured this session. Mechanism unchanged from the test_lang_c
+  slice; this applies it to test_lang_cpp (33), test_lang_go (17), test_lang_csharp (11),
+  test_lang_php (11), test_lang_java (8), test_lang_registry (5), test_typed_ref_kinds (5),
+  test_repo_map_spans (2).
+
+BIDIRECTIONAL, whole population: real gate 335 passed, 116 skipped, 0 failed (was 113 failed / 338
+  passed) importable 113 failed, 116 passed -- the gate does NOT fire
+
+The arithmetic pins that exactly the intended set moved: 116 skipped = the 113 failures + the 3
+  vacuous passers found in test_lang_c, and 338 - 3 = 335 still passing. 451 tests before and after.
+
+MY OWN CLASSIFIER OVER-SELECTED, and reading caught it. An emptiness-only heuristic flagged 6
+  vacuity candidates in test_lang_cpp; all 6 were FALSE POSITIVES --
+  `test_c_suffix_is_not_claimed_by_cpp` asserts registry metadata and touches no parser, and
+  `..._missing_file_returns_empty` / `..._non_cpp_suffix_returns_empty` short-circuit BEFORE any
+  parse, as does the deliberate `*_grammar_absent_*` family. So the discriminator needs a third
+  condition beyond "emptiness-only" and "positive siblings are dead":
+
+the test must actually REACH the parse path -- a real, parseable fixture -- not a
+  missing-file/wrong-suffix short-circuit or an explicit grammar-absent contract.
+
+That is why only test_lang_c contributed vacuous passers: its declarator-shape and defs_excludes
+  tests write a real .c file and expect the parser to run and find nothing. The other 8 files'
+  emptiness tests never reach a parser at all. Automated classification is unsafe for that half; the
+  failures are safe to derive mechanically because they demonstrably need the grammar.
+
+CI unaffected -- ci.yml installs `.[dev]`, which contains tree-sitter.
+
+* style: sort the import block ruff flagged in test_lang_go
+
+I committed the previous change with `[*] 1 fixable` still on screen -- the `import pytest`
+  insertion landed above `import sys`, tripping I001. Caught by re-reading my own command output
+  rather than by CI.
+
+Verified after: ruff check clean across tests/unit + conftest, format clean, and test_lang_go still
+  17 skipped / 11 passed.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Gate the parse-product cache suite on the optional tree-sitter extra
+  ([#905](https://github.com/oimiragieo/tensor-grep/pull/905),
+  [`7e25375`](https://github.com/oimiragieo/tensor-grep/commit/7e25375d0d45ffe707ac960b8463def6006f5d3d))
+
+Without a tree-sitter grammar this file is misleading in BOTH directions, which is why the fix is a
+  skip rather than a tolerance.
+
+`tree-sitter` lives in [project.optional-dependencies] `ast`, so a plain `pip install tensor-grep`
+  has no parser. Measured in exactly that env:
+
+5 tests FAIL with messages that read like product bugs -- "expected at least one reference to
+  computeWidgetTotal" invites a hunt for a broken emitter. Several others PASS VACUOUSLY, and those
+  are the worse half. Their whole claim is that a parse did NOT happen:
+
+assert calls["n"] == 0, "a file with neither the literal symbol nor an alias must not parse"
+
+With nothing able to parse, that assertion cannot tell a correct early-exit from an absent grammar.
+
+MODULE-level on purpose. The subject of the file IS the parse-product cache, so with no parser there
+  is no subject. Gating only the 5 loud failures would have left the quiet vacuous passes exactly as
+  they were.
+
+NOT a coverage reduction: CI installs the `ast` extra, so all 14 still run there. Matches the
+  existing convention (pytest.importorskip("tree_sitter") in tests/unit/test_lsp_hygiene.py).
+
+BIDIRECTIONAL PROOF that the gate is a real condition and not a blanket skip: gate on tree_sitter
+  (absent here) -> 1 skipped, 0 failed gate on json (importable) -> 5 failed, 9 passed -- it does
+  NOT fire
+
+I nearly filed this as a product defect first. `_js_ts_references_and_calls` returns [], [] when
+  `_parsed_source_and_tree` is None, which looks like the silent-empty class this repo treats as a
+  contract violation. Dogfooding the real CLI refuted it: `tg refs` on a .js file in this
+  parser-less venv still finds the references (result_incomplete: false, exit 0), because the
+  reference pipeline has another route. The product is fine; only the unit tests needed the gate.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.102.0 (2026-08-02)
 
 ### Features
