@@ -34,6 +34,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 from tensor_grep.cli import agent_capsule, lang_c, lang_registry, repo_map
 
 # ---------------------------------------------------------------------------
@@ -122,6 +124,7 @@ def test_header_suffix_is_claimed_by_cpp_not_c() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_defs_finds_enum_union_struct_as_class_kind(tmp_path: Path) -> None:
     _write_c_fixture(tmp_path)
 
@@ -132,6 +135,7 @@ def test_defs_finds_enum_union_struct_as_class_kind(tmp_path: Path) -> None:
         assert payload["definitions"][0]["provenance"] == "tree-sitter"
 
 
+@pytest.mark.requires_grammar
 def test_defs_finds_struct_tag_and_typedef_alias_sharing_a_name(tmp_path: Path) -> None:
     """`typedef struct Point {...} Point;` -- the struct TAG and the typedef ALIAS occupy
     different C namespaces even though they share text; both are legitimate, separate defs."""
@@ -145,6 +149,7 @@ def test_defs_finds_struct_tag_and_typedef_alias_sharing_a_name(tmp_path: Path) 
     assert "type" in kinds
 
 
+@pytest.mark.requires_grammar
 def test_defs_finds_prototype_and_definition_as_two_function_records(tmp_path: Path) -> None:
     _write_c_fixture(tmp_path)
 
@@ -157,6 +162,7 @@ def test_defs_finds_prototype_and_definition_as_two_function_records(tmp_path: P
     assert lines[0] != lines[1]
 
 
+@pytest.mark.requires_grammar
 def test_defs_finds_definition_only_function(tmp_path: Path) -> None:
     _write_c_fixture(tmp_path)
 
@@ -167,6 +173,7 @@ def test_defs_finds_definition_only_function(tmp_path: Path) -> None:
     assert payload["definitions"][0]["kind"] == "function"
 
 
+@pytest.mark.requires_grammar
 def test_defs_excludes_body_less_forward_declaration(tmp_path: Path) -> None:
     root = tmp_path
     (root / "fwd.c").write_text(
@@ -179,6 +186,7 @@ def test_defs_excludes_body_less_forward_declaration(tmp_path: Path) -> None:
     assert payload.get("no_match") is True
 
 
+@pytest.mark.requires_grammar
 def test_defs_excludes_plain_and_extern_variable_declarations(tmp_path: Path) -> None:
     root = tmp_path
     (root / "globals.c").write_text(
@@ -239,6 +247,7 @@ def _write_declarator_shapes_fixture(root: Path) -> Path:
     return shapes_c
 
 
+@pytest.mark.requires_grammar
 def test_declarator_shape_1_prototype_is_kind_function(tmp_path: Path) -> None:
     _write_declarator_shapes_fixture(tmp_path)
 
@@ -248,6 +257,7 @@ def test_declarator_shape_1_prototype_is_kind_function(tmp_path: Path) -> None:
     assert payload["definitions"][0]["kind"] == "function"
 
 
+@pytest.mark.requires_grammar
 def test_declarator_shape_2_definition_is_kind_function(tmp_path: Path) -> None:
     _write_declarator_shapes_fixture(tmp_path)
 
@@ -257,6 +267,7 @@ def test_declarator_shape_2_definition_is_kind_function(tmp_path: Path) -> None:
     assert payload["definitions"][0]["kind"] == "function"
 
 
+@pytest.mark.requires_grammar
 def test_declarator_shape_3_function_returning_pointer_is_kind_function(tmp_path: Path) -> None:
     """The trap: `int *make_ptr(void);` -- the return-type `pointer_declarator` is outermost,
     wrapping `function_declarator` whose own `declarator` field is a bare identifier. A real
@@ -269,6 +280,7 @@ def test_declarator_shape_3_function_returning_pointer_is_kind_function(tmp_path
     assert payload["definitions"][0]["kind"] == "function"
 
 
+@pytest.mark.requires_grammar
 def test_declarator_shape_4_function_pointer_variable_is_excluded(tmp_path: Path) -> None:
     """The bug: `void (*handler)(int);` is a file-scope function-pointer VARIABLE, not a
     function -- `function_declarator` is outermost, but ITS OWN `declarator` field is a
@@ -285,6 +297,7 @@ def test_declarator_shape_4_function_pointer_variable_is_excluded(tmp_path: Path
     assert payload.get("no_match") is True
 
 
+@pytest.mark.requires_grammar
 def test_declarator_shape_5_function_pointer_typedef_is_kind_type(tmp_path: Path) -> None:
     """Unchanged by the shape-4 fix: a function-pointer TYPEDEF goes through the separate
     `type_definition` branch, which always emits kind "type" regardless of
@@ -297,6 +310,7 @@ def test_declarator_shape_5_function_pointer_typedef_is_kind_type(tmp_path: Path
     assert payload["definitions"][0]["kind"] == "type"
 
 
+@pytest.mark.requires_grammar
 def test_declarator_shape_6_struct_is_kind_class(tmp_path: Path) -> None:
     _write_declarator_shapes_fixture(tmp_path)
 
@@ -306,6 +320,7 @@ def test_declarator_shape_6_struct_is_kind_class(tmp_path: Path) -> None:
     assert payload["definitions"][0]["kind"] == "class"
 
 
+@pytest.mark.requires_grammar
 def test_declarator_shape_7_redundant_paren_prototype_is_kind_function(tmp_path: Path) -> None:
     """Opus-gate-caught regression on the first cut of this fix: `int (foo)(void);` is a REAL
     function prototype with meaningless redundant parens around the name -- its
@@ -323,6 +338,7 @@ def test_declarator_shape_7_redundant_paren_prototype_is_kind_function(tmp_path:
     assert payload["definitions"][0]["kind"] == "function"
 
 
+@pytest.mark.requires_grammar
 def test_declarator_function_returning_function_pointer_is_kind_function(tmp_path: Path) -> None:
     """Bonus real-world guard (not in the required 6-shape matrix, but live-verified against a
     real parse): a function that RETURNS a function pointer -- e.g.
@@ -348,6 +364,7 @@ def test_declarator_function_returning_function_pointer_is_kind_function(tmp_pat
     assert payload["definitions"][0]["kind"] == "function"
 
 
+@pytest.mark.requires_grammar
 def test_declarator_full_signal_prototype_with_function_pointer_parameter_is_kind_function(
     tmp_path: Path,
 ) -> None:
@@ -377,6 +394,7 @@ def test_declarator_full_signal_prototype_with_function_pointer_parameter_is_kin
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_source_returns_full_function_body(tmp_path: Path) -> None:
     _write_c_fixture(tmp_path)
 
@@ -389,6 +407,7 @@ def test_source_returns_full_function_body(tmp_path: Path) -> None:
     assert "return value * 2;" in source_text
 
 
+@pytest.mark.requires_grammar
 def test_source_for_prototype_plus_definition_returns_both_blocks(tmp_path: Path) -> None:
     c_file = _write_c_fixture(tmp_path)
 
@@ -404,6 +423,7 @@ def test_source_for_prototype_plus_definition_returns_both_blocks(tmp_path: Path
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_c_imports_and_symbols_extracts_include_targets(tmp_path: Path) -> None:
     source = '#include <stdio.h>\n#include "local.h"\n\nint main(void) {\n    return 0;\n}\n'
     c_file = tmp_path / "main.c"
@@ -416,6 +436,7 @@ def test_c_imports_and_symbols_extracts_include_targets(tmp_path: Path) -> None:
     assert any(s["name"] == "main" and s["kind"] == "function" for s in symbols)
 
 
+@pytest.mark.requires_grammar
 def test_build_repo_map_surfaces_c_imports_and_symbols(tmp_path: Path) -> None:
     _write_c_fixture(tmp_path)
 
@@ -448,6 +469,7 @@ def test_build_repo_map_surfaces_c_imports_and_symbols(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_c_imports_with_lines_extracts_includes_with_lines(tmp_path: Path) -> None:
     c_file = _write_c_fixture(tmp_path)
 
@@ -475,6 +497,7 @@ def test_c_imports_with_lines_grammar_absent_returns_empty(tmp_path: Path, monke
     assert lang_c.c_imports_with_lines(c_file) == []
 
 
+@pytest.mark.requires_grammar
 def test_file_imports_returns_c_include_directives_with_lines(tmp_path: Path) -> None:
     c_file = _write_c_fixture(tmp_path)
 
@@ -494,6 +517,7 @@ def test_file_imports_returns_c_include_directives_with_lines(tmp_path: Path) ->
     assert all(entry["external"] is False for entry in payload["imports"])
 
 
+@pytest.mark.requires_grammar
 def test_c_include_target_text_handles_macro_and_call_forms(tmp_path: Path) -> None:
     """`#include MACRO_HEADER` (macro-expanded) and `#include COMBINE(a, b)` (macro-combined)
     both parse as real preproc_include nodes (tree-sitter-c never runs a preprocessor) -- the
@@ -514,6 +538,7 @@ def test_c_include_target_text_handles_macro_and_call_forms(tmp_path: Path) -> N
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_grammar
 def test_refs_grammar_present_still_reports_import_resolution_gap(tmp_path: Path) -> None:
     _write_c_fixture(tmp_path)
 
@@ -603,6 +628,7 @@ def _deep_nested_c_source(depth: int) -> str:
     return "int target(void)\n{\n    return " + ("(" * depth) + "1" + (")" * depth) + ";\n}\n"
 
 
+@pytest.mark.requires_grammar
 def test_c_walkers_survive_pathologically_deep_ast_without_recursion_error(
     tmp_path: Path,
 ) -> None:
