@@ -288,6 +288,8 @@ the worktree, which is exactly how 519 lines hid behind an "ANCESTOR of main" ve
   is the near-miss: a commit subject is not a diff.** A `temp-verify-*` subject on a stash entry
   described the WIP it was taken from, not the change it carried.
 
+## BLOCKED — environment (not CEO-gated, just needs hardware)
+
 - [ ] **#89** WSL `/mnt/c` absolute-path resolution in the native backend
 - [ ] **#90** `tg scan` ast-grep Linux/WSL portability + doctor false-"available" exit-127
 - [ ] **#109** CUDA GPU implicit-walk ceiling
