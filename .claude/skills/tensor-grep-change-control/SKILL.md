@@ -464,6 +464,19 @@ is self-attestation, not anti-replay evidence.
 paragraph/invariant. Preserve severity and final-vendor validation. A no-verdict seat is recorded as
 failed and replaced; it is never inferred as `SHIP` and need not stall all progress indefinitely.
 
+**RED and CI evidence must discriminate (2026-08-03, AGENTS A61–A68).** Behavioral RED pins the exact
+expected reason — crash, import, panic, and setup errors are not RED. Route/start evidence comes from
+the actual producer/constructor and test-owned OS/raw proof, never a hardcoded bool or a production
+hook that self-attests before start. Containment authenticates writer/client provenance and proves
+alive-before → dead-after plus cleanup; Event/EOF/PID text alone is insufficient. Crypto negatives use
+a valid API operation, an exact refusal class, and an exportable/trusted positive control. Security
+grammar validates full sections/types/flags/effective authority and rejects unknown and inherit-only
+forms; substring principals are not acceptance. Resource-owning protocols name close primitives and
+prove exact-once reverse cleanup on success, `BaseException`, and cleanup failure while preserving the
+primary error. RED scaffolds cannot enable partial public behavior or unbounded work before the guard.
+Immutable-SHA CI clearance needs a real run, expected per-node outcomes, raw artifacts, and the exact
+population — no run is no clearance.
+
 **Search twins and respect public boundaries.** After retiring a defect shape, grep sibling adapters and
 helpers for the same pattern; a zero-retry fix in `RustCoreBackend` did not protect two copies in
 `CPUBackend`. Separately, zero in-repo callers cannot authorize deleting an exported Rust `rlib` method.

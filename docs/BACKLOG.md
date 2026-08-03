@@ -7,17 +7,21 @@
 > nonfinancial decision-gated, financial/spend-gated, demand/research-gated, and mixed/terminal
 > corrections—not merely SHIPPING or P0/P1. Update whenever a PR opens/merges or the queue changes.
 > Task-store IDs (`#NNN`) are cross-referenced.
-> **Current closed-world CEO snapshot: 2026-08-03, release `v1.102.1`, merged main `8024125`, one
-> open PR (#911), one open GitHub issue (#48).** The complete live disposition list is the canonical index
-> in `docs/TASK_BOARD.md`; `docs/audits/2026-08-02-backlog-reconciliation.md` is its dated evidence
-> packet, and `docs/audits/2026-08-03-ceo-backlog-update.md` is the current dumbed-down closed-world
-> update. Task 2 is reconciled; the amended #89/#90 path-domain program plus
-> Tasks 3–15 are the current execution queue. Historical sections below remain append-only evidence
-> and may describe old status.
-> New local-environment finding: `ENV-VENV-DRIFT` — the campaign worktree's no-sync CLI reports
-> 1.102.0 against source/release 1.102.1, editable warmup timed out compiling after 240 seconds, and the
-> no-sync venv lacks PyYAML for `validate_release_assets.py`. Reconcile the real main venv before using
-> local CLI-version/release-validator output as proof; 93 docs/skill governance tests still pass.
+> **Current closed-world CEO snapshot: 2026-08-03 continuation, release `v1.102.1`, merged main
+> `8024125`, one open PR (#911), one open GitHub issue (#48).** Product healthy; planning PR
+> merge-ready on last observed exact head; backlog not done; Task 2A correctly blocked. The complete
+> live disposition list is the canonical index in `docs/TASK_BOARD.md` (28 rows / 23 unfinished =
+> 10 READY, 5 CEO_GATED, 8 DEMAND_GATED); `docs/audits/2026-08-02-backlog-reconciliation.md` is its
+> dated evidence packet, and `docs/audits/2026-08-03-ceo-backlog-update.md` is the current dumbed-down
+> closed-world update. Task 2 is reconciled; the amended #89/#90 path-domain program plus Tasks 3–15
+> are the current execution queue. Historical sections below remain append-only evidence and may
+> describe old status.
+> Recovered local-environment incident (historical): `ENV-VENV-DRIFT` occurred when a WSL `uv`
+> probe replaced the canonical Windows `.venv`. The incompatible environment was moved aside and
+> Windows `uv sync --frozen` rebuilt and verified the canonical environment; this is not an active
+> backlog row or blocker. A60 is the prevention rule: never point WSL `uv` at the Windows checkout,
+> and treat worktree-local no-sync output as a hypothesis until it is replayed in the real main venv
+> or CI. Current validation belongs in the dated audit/session handoff, not this historical ledger.
 > Round-18 thinktank findings are retained as plan-owned work, not lost review prose: prerequisite
 > prepare-service extraction before edit verification; behavior-specific Python/native/evidence REDs;
 > a fully typed workspace-prepare schema; handle-relative first-use claims-fence creation plus
@@ -25,20 +29,25 @@
 > transitions; and new canonical demand row `RUST-REPLACE-SYMLINK` for the public Rust direct-file
 > leaf-symlink compatibility/security decision. See the dated CEO audit and Tasks 2–15 for owners,
 > triggers, and closure tests. None has been implemented merely by amending the plan.
-> The prior status-stamped plan pair was approved, but that approval expired when #89/#90 changed the
-> load-bearing premise. PR #911's old committed head is green but does not prove newer local bytes.
-> Round 60 is now exact-hash approved after Cursor Auto closed three stale contradictions, independent
-> TDD returned `SHIP`, Sol returned substantive `SHIP`, and Sol confirmed the final raw hashes design
-> `31D8E071...3D862B` / implementation `AA64D0BA...0826B3`. No product code has
-> started; push/re-run PR #911, then continue with Task 2A before Task 3.
+> Round 60 remains exact-hash approved (`31D8E071...3D862B` / `AA64D0BA...0826B3`). At last external
+> observation, PR #911 head `01f276fa7c0d3d0e04fdb5feae78c29c1b194773` was CLEAN/MERGEABLE with CI
+> `30842604458`, security `30842604251`, CodeQL success — derive the live head before merge; do not
+> embed a commit’s own green verdict inside itself. Task 2A RED is local only at
+> `6367614960327b1a4e00301c8bfdb9b2e4bb453e` (unpushed, no Actions run, Sol `FIX-FIRST` / 10 HIGH).
+> No authorized GREEN phase has started; Sol found accidental public behavior inside the RED scaffold,
+> which must be removed. Human may merge #911, then repair RED → Sol `SHIP` → real Windows CI
+> before Task 3. Research recommendations (#48/#72/#77/#131/DD-004/F10) are not silent reclassification.
+> No question is asked for nonfinancial gates; #169 remains the only mandatory financial stop.
 >
 
-## Current canonical closeout queue — status index `2026-08-03.1`
+## Current canonical closeout queue — status index `2026-08-03.2`
 
 `docs/TASK_BOARD.md` owns the machine-parsed rows. This is the human-readable mirror; older sections
 below are historical evidence and do not override these dispositions.
 
-### Task 2A plan gate — nine blockers owned by #89/#90
+### Task 2A plan gate — nine Round-60 blockers owned by #89/#90; current RED is FIX-FIRST
+
+Round-60 plan blockers (still required by the approved plan):
 
 - protected, fixed ProgramData installer-state authority with a bound non-exportable CNG signature;
   PATH and install-command digests never authorize a receipt;
@@ -57,7 +66,11 @@ below are historical evidence and do not override these dispositions.
   from receipt JSON; and
 - JUnit plus stable-Rust node-census cross-checks bound to that same current-run tuple.
 
-These are plan-gate subfindings, not separate shipped features or extra canonical top-level rows.
+Current local RED artifact `6367614960327b1a4e00301c8bfdb9b2e4bb453e` is Sol `FIX-FIRST` with ten HIGH
+scaffold/oracle blockers (immutable-SHA CI absent; crash-as-RED; hardcoded PCRE2 oracle; forgeable
+Job heartbeat; unproven Job cleanup; weak SDDL; invalid CNG export; TxR close ownership; producer
+self-attest; `-f`/`--file` unbounded pre-ledger read). Not merge-ready. These are plan-gate /
+RED-scaffold findings, not separate shipped features or extra canonical top-level rows.
 
 ### Active / buildable
 
@@ -84,17 +97,26 @@ real PR number; only a separate post-merge closure change may mark it `SHIPPED`.
 
 ### CEO-gated — exactly five
 
-- **#48** native-front-door startup architecture.
-- **#72** public benchmark claim.
-- **#77** / F9 ledger enforcement scope.
-- **#131** GPU-flavor native-asset publication.
-- **#169** physical GPU proof environment or spend.
+- **#48** native-front-door startup architecture. Recommendation only: accept shipped hybrid native
+  managed front door + Python sidecar; retire larger rewrite unless pip/uv parity is prioritized.
+  Status stays `CEO_GATED`; no question asked under the current instruction.
+- **#72** public benchmark claim. Recommendation only: HOLD public 7.5x (conflicts with later 6.4x;
+  no committed current harness); allow only a zero-spend fresh six-repo/180-task quality-gated
+  benchmark, and public wording still needs approval. Status stays `CEO_GATED`.
+- **#77** / F9 ledger enforcement scope. Recommendation only: local opt-in advisory only; no auth/CI
+  blocking. Status stays `CEO_GATED`.
+- **#131** GPU-flavor native-asset publication. Recommendation only: optional experimental NVIDIA
+  asset with CPU default/fallback and no speed claim; physical proof/spend stays under #169. Status
+  stays `CEO_GATED`.
+- **#169** physical GPU proof environment or spend — the only mandatory financial stop.
 
 ### Demand/research-gated — exactly eight
 
 - **#255** many-pattern dedup/compression/native investment selection.
-- **F10** MaxSim supported-path activation or retirement.
-- **DD-004** stable typed backend-error boundary.
+- **F10** MaxSim supported-path activation or retirement. Recommendation only: caller/installability
+  census, then retire if unreachable. Status stays `DEMAND_GATED` until that census closes it.
+- **DD-004** stable typed backend-error boundary. Recommendation only: likely retire as standalone and
+  bank the typed-boundary rule. Status stays `DEMAND_GATED` until an explicit retirement receipt.
 - **DD-006** concurrent daemon load/DoS evidence.
 - **AST-DSL-PARITY** full structural DSL/preprocessor-aware parity.
 - **MCP-LEAN-DEFAULT** client demand and compatibility proof before a default flip.

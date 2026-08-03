@@ -12,42 +12,47 @@ release_docs_current_tag: v1.102.1
 
 ## Current Backlog Closeout
 
-Canonical status index version: 2026-08-03.1
+Canonical status index version: 2026-08-03.2
 
 - `origin/main` at the campaign rebase point: `8024125612d5fb42481acde34d94ad39bbaa3c3e`.
 - PR #910 is merged. Its exact PR run `30777042942` completed 39 jobs with zero failure/unfinished
   jobs; the focused board test passed 7/7 on the merged artifact.
-- Open PRs at the snapshot: PR #911 only. It is CLEAN/mergeable; previous CI-proven head
-  `bd07475092ec23187c45b65aa2fb8d3f2d2bfee8` passed exact run `30836698168`. Derive the current head
-  from GitHub and require its own exact run after any docs update. Open GitHub issues: #48 only.
-- Tracker reconciliation is complete. The prior exact-hash approval expired when Task 2 reproduced
-  #89/#90 and changed the premise. Local Round-60 plan amendments are newer than PR #911's committed
-  bytes. Architecture returned `SHIP` on the transaction/receipt shape; adversarial security returned
-  eight `FIX-FIRST` findings and independent TDD returned one combined-counter/off-by-one finding.
-  Cursor Auto then closed three stale contradictions; TDD returned `SHIP`, Sol returned substantive
-  `SHIP`, and Sol `CONFIRMED` the final raw hashes design `31D8E071...3D862B` /
-  implementation `AA64D0BA...0826B3`. PR #911 is pushed; only an externally observed successful run
-  for its current exact head proves it green. Task 2A RED work started in the
-  isolated WSL Cursor worktree, but commits `4efcad9` and `8df269d` were rejected by exact-byte Sol
-  review for surrogate routes, unsafe/impossible Windows fixtures, and self-attested CI evidence.
-  GREEN implementation remains blocked until the RED itself receives Sol `SHIP`.
+- Open PRs at the snapshot: PR #911 only. At last external observation, head
+  `01f276fa7c0d3d0e04fdb5feae78c29c1b194773` was CLEAN/MERGEABLE with CI `30842604458`, security
+  `30842604251`, CodeQL success. Derive the live head from GitHub before merge; do not embed a
+  commit’s own green verdict inside that commit. Open GitHub issues: #48 only. Human may merge #911.
+- Product healthy at `v1.102.1`; planning PR merge-ready on last observed exact head; backlog not done
+  (23 unfinished: 10 READY, 5 CEO_GATED, 8 DEMAND_GATED); Task 2A correctly blocked.
+- Round-60 plan approval stands on hashes design `31D8E071...3D862B` / implementation
+  `AA64D0BA...0826B3`. Task 2A RED is local only at exact SHA
+  `6367614960327b1a4e00301c8bfdb9b2e4bb453e` (branch/HEAD match, unpushed, no Actions run, no GREEN).
+  Sol exact-byte verdict is `FIX-FIRST` with 10 HIGH blockers. Older rejects `4efcad9` / `8df269d`
+  are historical only. Do not call Task 2A merge-ready.
 - Task 2 reproduced both cross-domain items in WSL. Search returned `path_not_found` for an existing
   `/mnt/c/...` root (#89). Scan passed that Linux spelling to Windows ast-grep, warned it was
   unreadable, but emitted a clear zero-match exit-0 payload; the translated-path control found six
-  matches (#90). Both are `READY`. Amend and re-certify one typed-path TDD program before continuing
-  Tasks 3–15 in `docs/plans/2026-08-02-backlog-closeout-implementation-plan.md`.
-- The closeout campaign remains Tasks 2–15. Its amended Task 2A slice is approved but unimplemented;
-  Task 2 was the reconciliation checkpoint rather than a product build.
+  matches (#90). Both are `READY`.
+- The closeout campaign remains Tasks 2–15. Task 2 is the reconciliation checkpoint, Task 2A is
+  plan-approved but RED-blocked, and Tasks 3–15 remain the ordered follow-on program.
 - The current closed-world CEO report is `docs/audits/2026-08-03-ceo-backlog-update.md`; it lists all
-  23 unfinished rows, research, the nine Task-2A plan blockers, and 14 retained lessons.
+  23 unfinished rows, terminal five, research recommendations (not reclassifications), the Task 2A
+  FIX-FIRST blockers, and retained lessons including A61–A68.
 - Latest exact `main` CI run: `30793797849`, completed successfully on `8024125`. Public PyPI and
-  GitHub Release remain `v1.102.1`; no spend was incurred or authorized.
+  GitHub Release remain `v1.102.1`; no spend was incurred or authorized. No question is asked for
+  nonfinancial CEO gates; #169 remains the only mandatory financial stop.
+- Next action: human may merge #911; after merged-base proof, Cursor repairs the ten RED blockers, Sol
+  repeats until `SHIP`, then push draft and obtain real Windows CI.
 - Durable machine/session resume state is in `MEMORY.md`; do not reconstruct the queue from this file's
   historical release ledger.
 - Cross-OS environment receipt: a WSL `uv --project /mnt/c/...` probe replaced the Windows `.venv`.
   The incompatible shell was moved to `%LOCALAPPDATA%\Temp\tensor-grep-venv-wsl-incompatible-20260803`;
   Windows `uv sync --frozen` rebuilt and verified the canonical environment. Never point WSL `uv` at
   the Windows project venv (AGENTS.md A60).
+- New retained laws A61–A68: behavioral RED pins exact reason; route/start evidence from real
+  producer/OS; containment authenticates provenance + alive→dead cleanup; crypto negatives need valid
+  API + positive control; security grammar rejects unknown/inherit-only; resource protocols name close
+  ownership; RED scaffolds cannot enable partial public/unbounded pre-guard work; immutable-SHA CI
+  needs a real run (no run = no clearance).
 
 ## Historical Milestones
 

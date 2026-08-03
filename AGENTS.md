@@ -362,6 +362,30 @@ concrete failure observed this session.
   venv (or CI); Windows verification runs from PowerShell in the canonical Windows checkout. Never cross
   those environment roots. If this happens, move the incompatible venv aside, recreate it from Windows
   with `uv sync --frozen`, verify imports/version, and only then resume gates.
+- **A61 — Behavioral RED pins the exact expected reason (2026-08-03).** A RED that accepts crash,
+  import failure, panic, or setup error as success is not behavioral proof. Pin the exact expected
+  refusal/reason class and reject any arm that dies before exercising the contract.
+- **A62 — Route/start evidence comes from the real producer (2026-08-03).** Hardcoded bools and
+  production hooks that self-attest before actual start are forgeable. Route/start proof comes from the
+  actual producer/constructor plus test-owned OS or raw evidence.
+- **A63 — Containment proof authenticates provenance and lifecycle (2026-08-03).** Event signals,
+  EOF, or PID text alone are not containment. Authenticate writer/client provenance, prove
+  alive-before → dead-after, and prove cleanup independently of parent-forgeable heartbeats.
+- **A64 — Crypto negative proof needs a valid operation and positive control (2026-08-03).** A
+  negative crypto test must use a valid API operation, assert an exact refusal class, and carry an
+  exportable/trusted positive control. Invalid flags that accept “any error” prove nothing.
+- **A65 — Security grammar validates full authority, not substrings (2026-08-03).** SDDL and similar
+  grammars must validate full sections, types, flags, and effective authority. Unknown, inherit-only,
+  and garbage forms fail closed; substring principal matches are not acceptance.
+- **A66 — Resource-owning protocols name exact close ownership (2026-08-03).** Every protocol that
+  acquires a resource names its close primitives and proves exact-once reverse cleanup on success,
+  `BaseException`, and cleanup failure while preserving the primary error.
+- **A67 — RED scaffolds cannot enable partial public behavior (2026-08-03).** A test or temporary
+  public flag must not unlock unbounded work or a GREEN path before the guard/ledger is active.
+  Accidental public `-f`/`--file` reads before the resource ledger are fail-closed defects.
+- **A68 — Immutable-SHA CI clearance needs a real run (2026-08-03).** Clearance requires a real CI
+  run on the immutable SHA, expected per-node outcomes, raw artifacts, and the exact population.
+  No run is no clearance; a local RED replay is not Windows CI proof.
 
 ## Current Handoff
 
@@ -369,13 +393,18 @@ release_docs_current_tag: v1.102.1
 
 As of 2026-08-02, the current tagged release state is `v1.102.1`, and the latest complete public PyPI/release-asset distribution is also `v1.102.1`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.102.1` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
 
-**2026-08-03 CEO/backlog addendum.** Public release remains `v1.102.1`; exact main run
-`30793797849` completed successfully on `8024125`. PR #911 is the sole open PR and its old committed
-head is green, but it does not prove newer local Round-60 plan bytes. The closed-world queue has 23
-unfinished rows (10 READY, 5 CEO_GATED, 8 DEMAND_GATED). The nine Task 2A/#89/#90 findings in
-`docs/audits/2026-08-03-ceo-backlog-update.md` are exact-hash approved (Cursor Auto contradiction loop,
-TDD `SHIP`, Sol `SHIP` plus status-hash `CONFIRMED`); push/re-run PR #911, then begin Task 2A's RED. No
-product code has started and no spend is authorized.
+**2026-08-03 CEO/backlog continuation.** Public product remains healthy at `v1.102.1` on
+`origin/main` `8024125612d5fb42481acde34d94ad39bbaa3c3e`. Planning PR #911 is merge-ready on its last
+observed exact head `01f276fa7c0d3d0e04fdb5feae78c29c1b194773` (CLEAN/MERGEABLE; CI `30842604458`,
+security `30842604251`, CodeQL success) — derive the live head before merge; do not embed a commit’s
+own green verdict inside itself. Backlog is not done: 28 canonical rows / 23 unfinished (10 READY,
+5 CEO_GATED, 8 DEMAND_GATED). Task 2A is correctly blocked: local RED SHA
+`6367614960327b1a4e00301c8bfdb9b2e4bb453e` is unpushed, has no Actions run, and Sol returned
+`FIX-FIRST` with 10 HIGH blockers; do not call it merge-ready. Research recommendations for
+#48/#72/#77/#131/DD-004/F10 are recommendations only. No spend; no question for nonfinancial gates;
+#169 remains the only mandatory financial stop. Next: human may merge #911; after merged-base proof,
+Cursor repairs the ten RED blockers, Sol repeats until `SHIP`, then push draft and obtain real
+Windows CI. Detail: `docs/audits/2026-08-03-ceo-backlog-update.md`. New laws: A61–A68.
 
 **2026-08-02 backlog-closeout handoff.** PR #910 merged as `8024125` after exact-run CI (39 jobs,
 0 failed/unfinished), independent prose/metadata review, and a 7/7 merged-artifact board test. The

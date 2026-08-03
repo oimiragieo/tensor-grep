@@ -20,7 +20,7 @@
 
 ## Canonical status index
 
-Canonical status index version: 2026-08-03.1
+Canonical status index version: 2026-08-03.2
 - [x] **#22** — Status: RETIRED; PR: none; Trigger: exit 0 is complete with matches; exit 1 is complete with no match; exit 2 is incomplete; gpu_request_unhonoured stays in-band and does not independently force exit 2
 - [x] **F2** — Status: RETIRED; PR: none; Trigger: legacy anonymous-agent compatibility deliberately retains the sentinel; reopen only with a caller-supplied stable identity contract and migration plan
 - [x] **#36** — Status: SHIPPED; PR: PR #903; Trigger: all 27 topic skills audited and drift corrections merged; reopen on a new failing skill-drift receipt
@@ -52,18 +52,23 @@ Canonical status index version: 2026-08-03.1
 
 ## Live campaign snapshot
 
-Last reconciled: **2026-08-03** (PR #910 merged and post-merge verified; PR #911 open), post-**v1.102.1** (PyPI verified via a clean `uvx` install, not inferred
-from a tag — `tag == PyPI` cannot tell *released* from *not started* from *died*).
+Last reconciled: **2026-08-03 continuation** (PR #910 merged; PR #911 open and last observed exact
+head green; Task 2A RED local-only FIX-FIRST), post-**v1.102.1** (PyPI verified via a clean `uvx`
+install, not inferred from a tag — `tag == PyPI` cannot tell *released* from *not started* from
+*died*).
 
 **Current closed-world status:** this canonical index plus
-`docs/audits/2026-08-03-ceo-backlog-update.md`. Task 2 is complete as the reconciliation checkpoint;
-Task 2A implementation is not. Its bounded WSL
-treatment/control arms reproduced both #89 search-path failure and #90 scan false-clear behavior.
-Task 2A's Round-60 plan folds eight security `FIX-FIRST` findings and one independent TDD boundary
-finding into the canonical pair. Cursor Auto closed three stale contradictions; independent TDD and Sol
-returned `SHIP`, and Sol confirmed final raw hashes design `31D8E071...3D862B` / implementation
-`AA64D0BA...0826B3`. PR #911's old green head did not approve these bytes; push and re-run its exact CI
-before treating the planning change as PR-green. Product implementation still begins with Task 2A's RED.
+`docs/audits/2026-08-03-ceo-backlog-update.md`. Product healthy at `v1.102.1`; planning PR #911 is
+merge-ready on its last observed exact head; backlog not done; Task 2A correctly blocked.
+Task 2 is complete as the reconciliation checkpoint; Task 2A implementation is not. Round-60 plan
+approval stands on named
+hashes `31D8E071...3D862B` / `AA64D0BA...0826B3`. At last external observation, PR #911 head
+`01f276fa7c0d3d0e04fdb5feae78c29c1b194773` was CLEAN/MERGEABLE with CI `30842604458`, security
+`30842604251`, CodeQL success — derive the live head before merge; do not embed a commit’s own green
+verdict inside itself. Task 2A RED is local only at
+`6367614960327b1a4e00301c8bfdb9b2e4bb453e` (unpushed, no Actions run, Sol `FIX-FIRST` with 10 HIGH
+blockers). Canonical rows stay 28 / 23 unfinished (10 READY, 5 CEO_GATED, 8 DEMAND_GATED);
+research recommendations are not silent reclassification.
 
 **This has now gone stale THREE times in the same way, so the pattern is the finding.** The stamp
 once read "2026-07-28, post-v1.101.9" while PyPI had moved 13 releases on; then "2026-07-31,
@@ -106,23 +111,24 @@ be rare; neither holds here.
 
 | PR | Title | Type | State |
 |---|---|---|---|
-| #911 | `test: pin live backlog truth and approved closeout plan` | non-release tracker/plan | local Round-60 amendments approved; push/checks pending for the new head |
+| #911 | `test: pin live backlog truth and approved closeout plan` | non-release tracker/plan | last observed exact head CLEAN/MERGEABLE + green (CI/security/CodeQL); human may merge; derive live head before merge |
 
 *(#872, #871 and #868 all MERGED — #871 on 2026-07-31, #872 and #868 on 2026-08-01. They sat in
 this table as "CI running" / "BLOCKED — do not merge" after landing, which is the exact failure mode
 described above: a board that says BLOCKED about shipped code will eventually stop someone from
 merging something correct.)*
 
-### Task 2A plan gate (owned by #89/#90; not shipped)
+### Task 2A plan gate (owned by #89/#90; not shipped / not merge-ready)
 
-The exact amended plan received `SHIP` on all nine blockers; implementation must now prove them:
-protected CNG-backed installer receipt authority outside PATH; TxR registry mutation with no fallback;
-opened-directory identity for PATH aliases; Microsoft-root policy plus production thumbprints and exact
-offline WinTrust flags; Job containment with both breakaway modes denied; one no-refund search ledger at
-every bootstrap/full/native/rg/sidecar door; combined inclusive pattern/ignore counters with independent
-cap−1/cap/cap+1 REDs; live Actions/environment re-derivation for CI receipts; and JUnit/Rust census
-cross-checking. #89/#90 remain `READY` until the Task 2A implementation PR exists; approval alone is
-not implementation.
+Round-60 plan approval stands. Local RED at `6367614...` is Sol `FIX-FIRST` (10 HIGH): no real
+immutable-SHA Windows CI; runners treat crash/setup as behavioral RED; hardcoded PCRE2 construction
+oracle outside census; parent-forgeable Job heartbeat + multiline ambiguity; default Job cleanup not
+independently proven; SDDL accepts unknown/inherit-only/garbage; CNG export invalid flag without
+exportable positive control; TxR omits exact close ownership; Python producer self-attests before
+start; public `-f`/`--file` GREEN unbounded read before ledger. Retained: Counter/census/job/vector/
+Cargo binding; foreign-chain/catalog fixtures; scoped rg/sidecar overrides; discoverable close
+ownership. After #911 merges and base proof lands, repair those ten blockers → Sol `SHIP` → push draft
+→ real Windows CI. #89/#90 remain `READY`; approval and a blocked RED are not implementation.
 
 ---
 

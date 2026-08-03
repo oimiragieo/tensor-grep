@@ -89,6 +89,15 @@ Claude Code guidance for the **tensor-grep** repository.
   worktree campaign this file tells you to run. Keep WSL and Windows venv roots disjoint: never run
   WSL `uv --project /mnt/c/...` against the canonical checkout, because `uv` may replace the Windows
   `.venv` with an incompatible Linux environment (AGENTS.md A60).
+  **RED/CI evidence laws (A61–A68, 2026-08-03):** behavioral RED pins the exact expected reason
+  (crash/import/panic/setup ≠ RED); route/start evidence comes from the real producer plus test-owned
+  OS/raw proof, never a hardcoded bool or production self-attest; containment authenticates
+  writer/client provenance and proves alive-before→dead-after plus cleanup; crypto negatives need a
+  valid API operation, exact refusal class, and exportable positive control; security grammar
+  validates full sections/types/flags/effective authority and rejects unknown/inherit-only; resource
+  protocols name close primitives and prove exact-once reverse cleanup; RED scaffolds cannot enable
+  partial public or unbounded pre-guard work; immutable-SHA CI clearance needs a real run with
+  expected per-node outcomes and raw artifacts (no run = no clearance).
 - **Campaign Orchestration Disciplines (2026-07-08, extended 2026-07-16, 2026-07-22)** — running a
   multi-PR drain+build campaign so fixes *land*: the WIP cap, the self-firing drain-cron (beats a
   long-lived background drain), the mandatory adversarial security gate before merge,

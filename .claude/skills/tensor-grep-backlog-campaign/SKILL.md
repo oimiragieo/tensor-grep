@@ -120,6 +120,18 @@ has told you to ask only about money.
     no-verdict seat is failed, not approval and not an infinite wait. Cursor/other economical model work
     remains a hypothesis until Sol validates the exact resulting bytes/prompt.
 
+    **RED/CI evidence rider (2026-08-03, AGENTS A61–A68):** behavioral RED pins the exact expected
+    reason — crash/import/panic/setup errors are not RED. Route/start evidence comes from the actual
+    producer/constructor and test-owned OS/raw proof, never a hardcoded bool or production self-attest
+    hook. Containment authenticates writer/client provenance and proves alive-before → dead-after plus
+    cleanup (not Event/EOF/PID text). Crypto negatives need a valid API operation, exact refusal class,
+    and an exportable/trusted positive control. Security grammar validates full sections/types/flags/
+    effective authority and rejects unknown/inherit-only forms. Resource-owning protocols name close
+    primitives and prove exact-once reverse cleanup on success, BaseException, and cleanup failure while
+    preserving the primary error. RED scaffolds cannot enable partial public behavior or unbounded work
+    before the guard. Immutable-SHA CI clearance needs a real run, expected per-node outcomes, raw
+    artifacts, and the exact population — no run is no clearance.
+
 12. **Order the drain by RELEASE impact, not PR number (2026-07-26 receipt).** Only `fix:`/`feat:` trigger semantic-release. `docs:`/`test:`/`bench:`/`chore:` complete without publishing, so they create no publish to race — their gate is just "the newest main run completed" (~6 min) versus a full release cycle (~30–60 min, longer under runner scarcity). Landing the non-releasing PRs first took a 12-deep queue to 7 in about an hour that would otherwise have bought two merges. **One-per-publish protects an in-flight PUBLISH; it is not a per-PR serialisation.** Two riders: check for file collisions first (two PRs both editing `docs/CONTRACTS.md` will conflict once either lands), and re-poll `mergeable` after each merge — GitHub returns `UNKNOWN` for a few seconds while it recomputes, and `UNKNOWN` is not `CLEAN`.
 13. **The gate is "newest main run COMPLETED", not "completed GREEN" (2026-07-26 receipt).** When `main` is red, the fix FOR that red must still be mergeable — requiring green before merging the thing that makes it green is a deadlock. Merge the hotfix, then confirm `main` actually recovered on a later run; that recovery is the evidence the fix worked, not the merge itself. Everything else stays parked while red: merging onto a broken `main` compounds it and obscures which commit owns the failure.
 14. **A concurrent agent's PR gets an INDEPENDENT gate, and the verdict goes on the PR (2026-07-26, #786).** A PR arriving from another session/worktree is not self-gated by definition, so gate it — then post the verdict as a PR comment with its evidence (what was probed, what the control arm showed). A gate that lives only in your transcript is lost work: the next session re-runs it or reaches a different conclusion, and the author cannot un-draft without waiting on you. Cost: one `gh pr comment`.
