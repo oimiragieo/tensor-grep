@@ -106,23 +106,32 @@ Re-run the section-count assertions against the merged `origin/main`, not merely
 - Modify: `docs/TASK_BOARD.md`
 - Modify: `docs/BACKLOG.md`
 - Modify: `docs/SESSION_HANDOFF.md`
+- Modify: `docs/CONTRACTS.md`
+- Modify: `src/tensor_grep/cli/main.py` only to correct the stale nonbehavioral explicit-GPU exit comment
 - Modify if process law changed: `AGENTS.md`
-- Test/receipt input: `docs/audits/2026-08-01-backlog-verification-receipts.md`
+- Modify: `docs/audits/2026-08-01-backlog-verification-receipts.md` by appending a correction to the false #859 class-ratchet receipt; never rewrite its historical claim silently
 - Create: `docs/audits/2026-08-02-backlog-reconciliation.md`
 
 **Step 1: write deterministic document-invariant tests**
 
-Add `tests/unit/test_backlog_tracker_truth.py` with assertions that:
+Add `tests/unit/test_backlog_tracker_truth.py` and one documented `## Canonical status index` block near the top of `docs/TASK_BOARD.md`. Its first nonblank line has the exact unique grammar `Canonical status index version: YYYY-MM-DD.N`; `docs/SESSION_HANDOFF.md` carries the same exact metadata line once. Historical narrative elsewhere is deliberately outside this parser. Each canonical row has exactly this grammar: `- [ ] **ID** — Status: TOKEN; PR: VALUE; Trigger: TEXT` or the checked equivalent, where `TOKEN` is exactly one of `IN_FLIGHT|READY|BLOCKED|CEO_GATED|DEMAND_GATED|SHIPPED|RETIRED`; `VALUE` is exactly `PR #NNN` for `SHIPPED`/`IN_FLIGHT` and `none` otherwise; and `TEXT` is nonempty (`none` only for terminal `SHIPPED`/`RETIRED`). The checkbox is checked if and only if status is `SHIPPED` or `RETIRED`. The parser rejects missing/duplicate/malformed version metadata, duplicate IDs, duplicate/missing canonical sections, malformed/multiline rows, unknown tokens, checkbox/status disagreement, missing/multiple PRs, and ambiguous PR-field `#NNN` values that are not prefixed by `PR`. Composite prose such as #131/#169 is represented as separate canonical IDs even when its historical narrative remains combined.
 
-- every shipping entry has exactly one parseable PR reference and one status token from the documented closed vocabulary;
-- F1/#22 matches `docs/CONTRACTS.md` exit semantics;
-- F2 matches `ledger_store.resolve_agent_id`'s documented legacy decision;
-- #90/#109/#36/#37 have shipped receipts and are not active;
-- #859 is present as an actionable class-level writer-ratchet task;
-- every CEO-gated ID is under exactly one CEO-gated heading;
-- `SESSION_HANDOFF` current version equals the tracker handoff version.
+At Task 2 completion the closed-world canonical ID set is exactly `#22`, `F2`, `#36`, `#37`, `#48`, `#72`, `#77`, `#89`, `#90`, `#109`, `#131`, `#169`, `#255`, `#859`, `F10`, `DD-004`, `DD-006`, `AST-DSL-PARITY`, `MCP-LEAN-DEFAULT`, and `CONTINUOUS-REFRESH`. The last six IDs plus `#255` are the complete demand-gated population from the design. Any later task that adds/removes a canonical ID must update this exact-set assertion in the same commit; an unowned extra or missing row fails closed.
 
-The test must parse headings and entries rather than assert one raw full-file snapshot. Include positive controls using a minimal valid synthetic document and malformed-heading/duplicate-section negative controls. It must not call GitHub or claim that a static fixture proves a PR is still open.
+Assert that:
+
+- every canonical row has one status token, every `SHIPPED`/`IN_FLIGHT` row has exactly one literal `PR #NNN`, and no historical prose is accidentally parsed;
+- F1/#22 is `RETIRED` and agrees with `docs/CONTRACTS.md` plus executable behavior: exit 0 complete, exit 1 complete no-match, exit 2 incomplete; an unhonored explicit GPU request remains an in-band `gpu_request_unhonoured` disclosure and does not independently force exit 2;
+- F2 is `RETIRED` and agrees with `ledger_store.resolve_agent_id`'s documented legacy compatibility decision;
+- #109/#36/#37 are `SHIPPED` with PR #605/#903/#908 and are absent from active/hardware sections;
+- #90 is terminal but not falsely wholly shipped: the canonical record is `RETIRED`, cites the doctor-half PR #571 in its trigger/evidence narrative, and records the bounded WSL half as non-reproducing/non-defect;
+- #859 is `READY` as an actionable class-level AST writer-ratchet task, and the August 1 audit contains an appended correction stating that its codemap-only test did not satisfy the class-level population contract;
+- the exact CEO-owned IDs `#48`, `#72`, `#77`, `#131`, and `#169` each occur once as `CEO_GATED`, and the exact demand-gated IDs `#255`, `F10`, `DD-004`, `DD-006`, `AST-DSL-PARITY`, `MCP-LEAN-DEFAULT`, and `CONTINUOUS-REFRESH` each occur once as `DEMAND_GATED`; none also appears in an active canonical status;
+- `SESSION_HANDOFF` current version equals the canonical tracker handoff version and its current/next-work prose contains no obsolete v1.45/v1.9.1-era direction.
+
+The test must parse the canonical heading, metadata, and rows rather than assert one raw full-file snapshot. Include a minimal valid synthetic document and individually named negative controls for missing/duplicate/malformed version metadata, missing/duplicate canonical sections, duplicate IDs, malformed/multiline rows, checkbox/status mismatch, missing/multiple/nonliteral PR values, unknown status, empty trigger, CEO/demand duplication, closed-world population drift, and historical-prose false positives. It must not call GitHub or claim that a static fixture proves a PR is still open.
+
+TDD sequencing is semantic, not merely “the file is absent.” First add a valid canonical skeleton that preserves the reviewed base's stale statuses, so parser controls are green. Then add and run each exact invariant node independently—`test_exit_contract_retirement`, `test_legacy_agent_id_retirement`, `test_shipped_receipts`, `test_mixed_90_retirement`, `test_859_is_ready_with_audit_correction`, `test_ceo_and_demand_ownership`, and `test_handoff_version_and_current_prose`—and record its expected pre-reconciliation failure. A canonical-section absence must not be the common reason all semantic nodes fail.
 
 Run:
 
@@ -130,11 +139,13 @@ Run:
 uv run --no-sync pytest tests/unit/test_backlog_tracker_truth.py -q --timeout=15
 ```
 
-Expected: fail on the known cross-document status/version and malformed-section invariants.
+Expected: parser controls green; each named semantic invariant fails independently for its stated stale fact.
 
 **Step 2: record one-shot GitHub truth separately from CI**
 
 ```powershell
+git fetch origin main
+git rev-parse origin/main
 gh pr list --state open --limit 100 --json number,title,isDraft,headRefOid,statusCheckRollup
 gh issue list --state open --limit 100 --json number,title,labels,state
 gh run list --branch main --workflow ci.yml --limit 3 --json databaseId,status,conclusion,headSha,updatedAt
@@ -145,7 +156,17 @@ Copy the raw JSON/text output with timestamp and commands into `docs/audits/2026
 
 **Step 3: update tracker truth**
 
-Record source/PR/release receipts for every retirement. Preserve historical narrative but clearly mark it historical. Add a re-open trigger for every parked item.
+Fetch `origin/main` first and record its exact remote SHA separately because a semantic-release commit may not have its own `main` workflow run. Record source/PR/release receipts for every retirement. Preserve historical narrative but clearly mark it historical. Add a re-open trigger for every parked item. Remove stale PR #882 from the live board table after confirming GitHub state.
+
+Reconcile the named decisions rather than only moving version tokens:
+
+- retire F1/#22 across `BACKLOG`, the contradictory `CONTRACTS` GPU bullet, and the stale explanatory `main.py` comment without changing executable behavior;
+- retire F2 against `ledger_store.resolve_agent_id` and its existing anonymous-claim tests;
+- close #109/#36/#37 with PR #605/#903/#908 receipts;
+- close #90 as a mixed outcome (PR #571 doctor fix plus bounded WSL non-defect retirement);
+- append the #859 audit correction and register the class-level ratchet as `READY` for Task 3;
+- remove duplicate #72 ownership outside the CEO index, freeze separate CEO records for #48/#72/#77/#131/#169, and keep #255 solely demand-gated;
+- refresh the substantive current-state and next-work sections of `SESSION_HANDOFF`; a release-number-only edit is insufficient.
 
 For #89, run only a bounded WSL probe if WSL is available; never restart/shutdown WSL:
 
@@ -156,7 +177,7 @@ print(json.load(open("/tmp/tg-89.json"))["result_incomplete"])
 PY'
 ```
 
-If unavailable or non-reproducible, document the raw result and close/reclassify; do not invent a fix.
+Freeze the outcome table: unavailable or missing prerequisites → remain `BLOCKED` with the exact environment trigger; a bounded clean reproduction → `RETIRED` with the raw receipt and environment fingerprint; a reproduced failure → `READY` when locally actionable or `BLOCKED` when the failing environment is still required. “Unavailable” is never retirement evidence, and no outcome may invent a fix.
 
 **Step 4: make the test pass**
 
@@ -169,7 +190,7 @@ uv run --no-sync ruff format --check --preview tests/unit/test_backlog_tracker_t
 **Step 5: commit as non-release documentation/test work**
 
 ```powershell
-git add AGENTS.md docs/TASK_BOARD.md docs/BACKLOG.md docs/SESSION_HANDOFF.md docs/audits/2026-08-02-backlog-reconciliation.md tests/unit/test_backlog_tracker_truth.py
+git add AGENTS.md docs/TASK_BOARD.md docs/BACKLOG.md docs/SESSION_HANDOFF.md docs/CONTRACTS.md src/tensor_grep/cli/main.py docs/audits/2026-08-01-backlog-verification-receipts.md docs/audits/2026-08-02-backlog-reconciliation.md tests/unit/test_backlog_tracker_truth.py
 git commit -m "test: pin live backlog truth"
 ```
 
@@ -178,13 +199,18 @@ git commit -m "test: pin live backlog truth"
 **Files:**
 
 - Create: `tests/unit/test_cli_atomic_writer_ratchet.py`
-- Modify only if census finds a bypass: the named file under `src/tensor_grep/cli/`
+- Create unmodified historical fixture: `tests/fixtures/audits/codemap_pre_859.py`
+- Modify: `src/tensor_grep/cli/main.py`
+- Test changed writers in: `tests/unit/test_mcp_server.py`
+- Test changed CLI/scaffold writers in: `tests/unit/test_cli_modes.py` and the existing focused command test files discovered by the census
 - Modify: `docs/TASK_BOARD.md`
 - Modify: `docs/BACKLOG.md`
+- Modify: `tests/unit/test_backlog_tracker_truth.py`
+- Modify: `docs/audits/2026-08-01-backlog-verification-receipts.md`
 
 **Step 1: build the AST detector and historical positive controls**
 
-The test parses Python under `src/tensor_grep/cli/`, resolves imports plus simple assignment aliases, and classifies functions that:
+The test parses Python under `src/tensor_grep/cli/`, resolves module and function-local imports plus assignment aliases with lexical-scope-aware rebinding/shadowing, and discovers every generated-Python execution root from production subprocess/spawn callsites rather than from a fixed helper-name list. Every statically resolvable payload is parsed as a separate synthetic source unit with a stable identity that includes its outer module, outer function or `<module>`, resolved callsite fingerprint, and generated `<module>`/function identity; any dynamic or unparseable payload fails closed. It then classifies functions/source units that:
 
 - write directly to a caller-selected destination through `open(..., write-mode)`, `Path.open(..., write-mode)`, `Path.write_text`, or `Path.write_bytes`;
 - create/write a temporary file and then publish it through `os.replace`, `os.rename`, `Path.replace`, `Path.rename`, `shutil.move`, `shutil.copy`, `shutil.copyfile`, or `shutil.copy2`;
@@ -192,15 +218,15 @@ The test parses Python under `src/tensor_grep/cli/`, resolves imports plus simpl
 - publish through `replace_with_retry`, including imported/renamed aliases;
 - perform a separately sanctioned runtime/directory swap.
 
-Create `tests/fixtures/audits/codemap_pre_859.py` from the actual pre-fix codemap blob that preceded #869 and record its source commit plus SHA-256 in the fixture header. Require the historical `_atomic_write_text` symbol to be classified as a violation while the current fixed `codemap.py` classifies cleanly. Add positive controls for renamed `os.replace`, renamed `shutil.move`, renamed `shutil.copy`/`copy2`, an imported/assignment-aliased `replace_with_retry`, direct writers bound under another name, variable write modes, `io.open`, `os.open`, `Path.open`, `Path.write_text`, `Path.write_bytes`, and tempfile-to-publish flows. Add safe negative controls for writes confined to a caller-created temporary fixture. Build an independently derived candidate inventory from imports/calls and raw sink-name syntax; every candidate must resolve to `sanctioned`, `helper-backed`, or `violating`, and every unresolved call fails the test instead of disappearing from the population.
+Create `tests/fixtures/audits/codemap_pre_859.py` as the byte-exact `codemap.py` blob from commit `0c46863cd038efa438fe6af2fc533109af257dc7`, SHA-256 `dd16398dc3278efd66d46ab63170cd71cf4e3c9512234f340ef292dff5f2fe76`; keep provenance constants in the test rather than modifying the fixture with a header. Require historical `_atomic_write_text` to classify as violating while current `codemap.py` classifies helper-backed. Add individually red controls for renamed `os.replace`, renamed `shutil.move`, renamed `shutil.copy`/`copy2`, an imported/assignment-aliased `replace_with_retry`, local imports, shadowing/rebinding, direct writers bound under another name, variable write modes, `io.open`, `os.open` flag propagation, `Path.open`, `Path.write_text`, `Path.write_bytes`, and tempfile-to-publish flows. Safe negative controls must create their temporary directory/file inside the analyzed function; a caller-supplied “temp” path requires an explicit sanction because confinement is not statically decidable. Build an independently derived lexical/raw-call candidate inventory from production spawn and write callsites that also surfaces `shutil.copyfileobj`, `urllib.request.urlretrieve`, archive extraction, `os.write`, and generated-source sinks; every candidate must resolve to `sanctioned`, `helper-backed`, or `violating`, and every unresolved call fails instead of disappearing from the population. Sanctions are exact fingerprints of `module:outer-function:resolved-callsite:operation:destination-provenance`, never whole-function exemptions. Mutation controls add a third generated `python -c` helper and an unsafe sink inside an otherwise sanctioned outer function; both must increase the discovered population and violation count.
 
-Pin the complete current population by `module:function:classification`, not by line number.
+Pin the complete current population by stable source/function/fingerprint/classification identity, not by line number.
 
 ```powershell
 uv run --no-sync pytest tests/unit/test_cli_atomic_writer_ratchet.py -q --timeout=15
 ```
 
-First add a behaviorless detector shell so collection/import is green. Then make each positive/negative control red independently; the first required red is the renamed-`os.replace` assertion returning no sink, not an absent module. Implement resolution one sink family at a time. Historical-fixture controls remain green permanently by expecting the known violation; a mutation test injects the same unsafe writer shape into a copy of the current production tree and proves the production census changes from zero violations to nonzero. The final current-tree census must be green with zero unresolved/violating candidates. A failure caused only by a missing expected-population list is not an acceptable red arm.
+First add a behaviorless detector shell so collection/import is green. Then make each positive/negative control red independently; the first required red is the renamed-`os.replace` assertion returning no sink, not an absent module. Implement resolution one sink family at a time. Historical-fixture controls remain green permanently by expecting the known violation. Pin the complete current population while explicitly expecting the three live violations below; that inventory test is green. Then add `test_no_violation_write_json_refuse_symlink`, `test_no_violation_write_ast_project_scaffold`, and `test_no_violation_new`, and run each exact node separately before fixing its corresponding symbol; never combine them under global `-x` and infer that all three were observed red. Mutation tests inject both an ordinary unsafe writer and a third generated helper into copies of the final current tree and prove the population and violation count each increase by exactly one. The final census is green with zero unresolved/violating candidates.
 
 **Step 2: inspect every reported production site**
 
@@ -213,9 +239,19 @@ Expected direct `os.replace` sites initially include:
 
 Classify artifact writers separately from launcher/native-runtime/directory swaps. Do not force runtime swaps through `atomic_write_bytes`.
 
+The initial exact violating symbols are:
+
+- `main:_write_json_refuse_symlink` (`main.py:6222-6264` on the reviewed base), including production callers that currently call `Path.resolve()` before the helper and erase original leaf-symlink identity;
+- `main:_write_ast_project_scaffold` (`main.py:14961-14990`), whose three caller-selected YAML artifacts use direct `write_text`;
+- `main:new` (`main.py:14995-15074`), whose caller-selected YAML artifact follows a dangling destination symlink.
+
 **Step 3: fix real bypasses, if any**
 
-Route user-facing byte/text/JSON artifact publishing through `src/tensor_grep/cli/_index_lock.py::atomic_write_bytes` or its JSON wrapper. Add a behavior test that pre-existing and dangling symlink destinations are refused before resolution.
+First characterize each symbol's current publication semantics. Ruleset/artifact refresh outputs retain create-or-overwrite behavior. `new`'s destination and the project scaffold's `sgconfig.yml` retain create-if-absent behavior even when a competitor creates the leaf after the initial existence check; route them through a shared atomic no-clobber variant rather than an overwrite-capable helper. The no-clobber result is a visible refusal and leaves the competing bytes untouched.
+
+Route the user-facing byte/text/JSON artifact publishers through shared anchored writers in `src/tensor_grep/cli/_index_lock.py`. Confinement/expansion occurs before publication without resolving away the destination leaf. Publication is anchored to an opened, no-follow, identity-verified parent handle for its entire lifetime: POSIX creates and publishes relative to an `O_DIRECTORY|O_NOFOLLOW` directory fd (using a same-directory link/rename no-replace primitive for no-clobber); Windows opens the parent with `FILE_FLAG_OPEN_REPARSE_POINT`, creates the temporary child relative to that handle, and publishes with handle-relative `FileRenameInfoEx`/equivalent semantics, with replace disabled for no-clobber. A path-based recheck followed by a path-based rename is not sufficient on either platform. Add separately named ordinary create/overwrite, create-if-absent/no-clobber, live-symlink, dangling-symlink, existing-directory, failure-before-publication/no-temp-leak, and CLI/MCP production-order tests. Add Event-gated late-leaf-symlink and parent-directory-swap/junction races on Unix and Windows; every external artifact must remain byte-identical and no external same-name artifact may be created. If an overwrite writer safely replaces the leaf symlink directory entry rather than refusing it, name and document that exact contract instead of claiming late refusal.
+
+Tracker lifecycle is exact: Task 2 lands #859 as `READY`; Task 3 keeps it `READY` until the implementation PR number exists, then changes it to `IN_FLIGHT` with that exact `PR #NNN`; only the merged-artifact verification changes it to checked `SHIPPED` with the same PR. Update `test_backlog_tracker_truth.py` with each transition and append the final closure receipt to the August 1 audit rather than leaving its correction as the last word.
 
 **Step 4: verify the class contract**
 
@@ -227,7 +263,7 @@ uv run --no-sync ruff format --check --preview tests/unit/test_cli_atomic_writer
 
 **Step 5: mandatory independent security gate**
 
-The reviewer must attempt a symlink bypass, a dangling-symlink bypass, an existing-directory destination, and a precheck-to-replace race against any changed writer. Verdict must be `SHIP` before merge.
+The reviewer must attempt a live/dangling symlink bypass, existing-directory destination, leaf precheck-to-replace race, parent-directory swap/junction race, and create-if-absent clobber race against every changed writer semantic. Verdict must be `SHIP` before merge.
 
 ## Task 4: disclose the MCP tool surface and bump contract 1.7.0 → 1.8.0
 
@@ -280,12 +316,14 @@ uv run --no-sync mypy src/tensor_grep/cli/mcp_server.py
 
 Probe default/on/off/nonsense values in fresh subprocesses, inspect real `tools/list`, and confirm old tool calls still work. Publish the verdict as a PR comment before merge.
 
-## Task 5: retain and harden the public `CPUBackend.replace_in_place` API
+## Task 5: retain/harden public Rust `CpuBackend.replace_in_place` and fix the Python adapter twin
 
 **Files:**
 
 - Inspect/possibly modify: `rust_core/src/backend_cpu.rs`
 - Inspect/possibly modify: `rust_core/tests/test_replace.rs`
+- Modify: `src/tensor_grep/backends/cpu_backend.py`
+- Modify: `tests/unit/test_cpu_backend.py`
 - Modify: `docs/BACKLOG.md`
 - Create: `docs/investigations/2026-08-02-replace-in-place-surface.md`
 
@@ -298,17 +336,23 @@ rg -n -w "replace_in_place" rust_core src tests docs
 rg -n "replace_in_place|PyO3|pymethods|pub use|extern.*C|match.*replace" rust_core/src src
 ```
 
-**Step 2: write red public-API error tests**
+**Step 2: write red Rust public-API error tests**
 
-The public `backend_cpu` module, public `CpuBackend`, public method, and crate `rlib` mean an in-repo zero-caller result cannot authorize deletion. Preserve the exact public `anyhow::Result<()>` signature. Introduce narrow injectable test seams for directory-entry iteration and per-file replacement/write, then add hostile arms proving the seam fired. On the pre-fix implementation both hostile arms return `Ok(())`; after the fix they return `Err(...)` with stable context substrings naming the operation and path. Also retain successful zero-match and successful replacement controls. Do not rely on OS permission bits, which can pass vacuously under CI identities.
+The public `backend_cpu` module, public `CpuBackend`, public method, and crate `rlib` mean an in-repo zero-caller result cannot authorize deletion. Preserve the exact public `anyhow::Result<()>` signature and streaming traversal. Add an external compile-time assertion equivalent to `const _: fn(&CpuBackend, &str, &str, &str, bool, bool) -> anyhow::Result<()> = CpuBackend::replace_in_place;` so a return-type or argument-shape change fails even when `.unwrap()` callers would still compile. First characterize public success/direct-file-failure/directory behavior green. Then refactor without behavior change so the public method unconditionally delegates to the same private injectable core and rerun the characterization green; a disconnected test-only seam is forbidden. Put narrow private injectable seams plus their fault tests inside `rust_core/src/backend_cpu.rs`; external integration tests cannot access a private seam. Add and run independently red directory-mode arms for walk failure, literal child replacement/write failure, and regex child replacement/write failure, each proving its seam fired through that delegated core and requiring `Err(...)` with stable operation/path context. Do not claim the direct-file arm is red—its errors already propagate. Retain external successful zero-match, direct-file failure, and successful replacement controls in `rust_core/tests/test_replace.rs`. Do not rely on OS permission bits, collect the directory before processing, or silently change nonexistent-path/direct-leaf-symlink behavior; those two compatibility/security decisions remain documented follow-ups.
 
-**Step 3: implement typed propagation**
+**Step 3: write and fix the Python A27 twin REDs**
+
+In `tests/unit/test_cpu_backend.py`, inject a fake native module whose `search` records argv and raises an internal `TypeError`. Add `test_simple_fixed_inverted_internal_typeerror_fails_closed` for the inline adapter and `test_word_regexp_inverted_internal_typeerror_fails_closed` for `_rust_match_set`; run each exact node independently on base and prove two calls occurred with the second call missing `invert_match`. The fixed contract is one native call with `invert_match=True`, then `BackendExecutionError` preserving the failure—never a retry with dropped semantics and never a fixed-string Python fallback. Add an AST population ratchet requiring exactly one native import/instantiation adapter and zero `except TypeError` compatibility arms in `cpu_backend.py`.
+
+Replace the inline adapter at the reviewed base's `cpu_backend.py:427-444` with `self._rust_match_set(...)`, then remove `_rust_match_set`'s reviewed-base `except TypeError` retry at `:830-849`, leaving one exact-signature call. Map a native-call `TypeError` to `BackendExecutionError` inside the helper, and re-raise `BackendExecutionError` before the simple path's generic fixed-string fallback so the native fault cannot be masked. Preserve genuine native-absence behavior only through its explicit `ImportError`/`ModuleNotFoundError` arm. Retain `CPUBackend`, `RustCoreBackend`, and the PyO3 class; do not route through `RustCoreBackend` because that would create a circular dependency and alter fallback/ReDoS contracts.
+
+**Step 4: implement Rust typed propagation**
 
 Propagate errors through the existing `anyhow::Result<()>` with stable contextual messages at the public method boundary. Do not introduce a new public error type, remove, or rename the method. Any future removal requires an explicit breaking-API decision, a deprecation release, downstream migration guidance, and a major-version compatibility plan.
 
-**Step 4: use CI for Rust verification**
+**Step 5: verify and use CI for Rust verification**
 
-Run `cargo fmt --check` locally only if Rust changes. Push the branch and use GitHub Actions for Cargo tests/checks under the shared-machine rule.
+Run each exact Python RED/green node separately, then the zero-retry AST census and focused `test_cpu_backend.py` group locally under the timeout protocol. Run `cargo fmt --check` locally only if Rust changes. Push the branch and use GitHub Actions for Cargo tests/checks under the shared-machine rule. Require an independent backend/security review to attempt fixed/non-fixed native-internal `TypeError` masking, dropped inversion, directory-walk failure, literal/regex child failure, and accidental public-API removal before merge.
 
 ## Task 6: create the versioned pure edit-verification service
 
@@ -835,11 +879,13 @@ uvx --from "tensor-grep@$tgPublishedVersion" tg --version
 
 For non-wheel-visible internal contracts, record separately labeled source-tree CI receipts tied to the exact merged SHA; never attribute them to the wheel:
 
-- writer-census historical control, injected unsafe-writer mutation control, aliased-sink controls, and current-tree zero-violation census;
+- canonical tracker parser/version controls, each Task 2 semantic reconciliation node, and #859's exact `READY` → `IN_FLIGHT` → `SHIPPED` post-merge transition;
+- writer-census historical control, ordinary and generated unsafe-writer mutation controls, aliased-sink controls, each of the three exact production RED/green nodes, and current-tree zero-violation census;
 - SHA-1/SHA-256 repository and index-object round trips;
 - exact baseline/path/prepare/receipt-component/result/ticket schema key sets, cross-field invariants, exhaustive reason-to-verdict/status/exit partition, and malformed-input envelopes;
 - claims `WRITE` publication versus `NO_WRITE` preservation, including absent-index no-state and existing-index/no-match byte/inode/mtime stability;
-- `CPUBackend.replace_in_place` walk-fault and replacement-fault tests;
+- Rust `CpuBackend.replace_in_place` exact public-signature assertion plus separate walk, literal-child, and regex-child fault tests;
+- Python CPU adapter's separate simple-fixed-inverted and word-regexp-inverted internal-`TypeError` tests plus the zero-retry AST census;
 - platform-specific Windows opened-handle and claims-fence process tests when the published-wheel environment is not that platform.
 
 Create `docs/audits/2026-08-02-backlog-closeout-dogfood.md` with one row per shipped contract. Wheel rows record the exact published version; internal rows record the exact merged commit SHA and CI run. Every row also records command/test ID, expected fields/order, expected verdict/status/exit where applicable, raw artifact/log path, attribution (`published-wheel` or `merged-source-ci`), and PASS/FAIL. A category-level summary row cannot substitute for the individual cases above.

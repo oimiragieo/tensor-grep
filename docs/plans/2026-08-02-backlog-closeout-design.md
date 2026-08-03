@@ -1,6 +1,6 @@
 # 2026-08-02 Backlog Closeout Campaign Design
 
-**Status:** approved by architecture, security, and TDD/evaluation thinktank seats
+**Status:** Task 2 live-truth amendment pending thinktank re-review
 **Branch:** `campaign/backlog-closeout-2026-08-02`
 **Scope:** every AI-actionable backlog item, open bug, and tracker contradiction; CEO-, hardware-, publication-, and spend-gated items become explicit decision records and are not autonomously executed.
 
@@ -123,17 +123,20 @@ Known reconciliation decisions:
 
 - F1/#22: retire as settled by `docs/CONTRACTS.md`; exit 2 means incomplete, not “complete but interpret carefully.”
 - F2: retire the claim that outright anonymous refusal was never considered. `ledger_store.resolve_agent_id` records that it was considered and rejected for the legacy surface.
-- #90 and #109: mark shipped/closed from later receipts; do not dispatch.
-- #89: run a bounded current WSL reproduction. Close if the historical 9p condition does not reproduce; retain only with raw failing output and exact environment.
+- #90: split the mixed historical item honestly—its doctor exit-127 half shipped in PR #571, while the bounded WSL portability arm was a non-reproducing/non-defect retirement. Close the combined task without calling both halves shipped.
+- #109: mark shipped by PR #605 and remove it from the hardware-blocked queue.
+- #89: run a bounded current WSL reproduction. An unavailable environment remains `BLOCKED`; only a bounded clean reproduction with raw output may retire the historical 9p condition, while a reproduced failure becomes `READY` or remains environment-blocked with the exact trigger.
 - #36 and #37: mark shipped by #903 and #908.
 - #859: reopen the original class-level atomic-writer ratchet; the codemap-specific test did not satisfy it.
-- F10/MaxSim, DD-004, DD-006, full AST DSL parity, MCP lean-default, and continuous refresh: record as demand-gated with explicit triggers.
+- F10/MaxSim, DD-004, DD-006, full AST DSL parity, MCP lean-default, and continuous refresh: assign stable canonical IDs and record them, together with #255, as the complete demand-gated population with explicit triggers. The canonical block has a unique machine-parsed handoff-version line and an exact closed-world ID/status set shared with `SESSION_HANDOFF.md`.
 
 ### Program 1 — concrete security and MCP residue
 
 #### Atomic CLI writer ratchet
 
-Create an AST-based census test for CLI functions that publish user-facing artifacts. The census detects direct write-to-temporary-then-publish patterns and direct destination writes, proves the detector on an embedded pre-fix codemap-shaped positive control, and pins the complete production population. Approved shared atomic helpers are the normal route. Installer/runtime directory swaps remain separately enumerated because their replacement and rollback contract is not equivalent to a JSON/text artifact writer.
+Create an AST-based census test for CLI functions that publish user-facing artifacts. The census detects direct write-to-temporary-then-publish patterns and direct destination writes, proves the detector on the exact unmodified pre-#869 codemap blob, discovers every generated-Python execution root from production spawn callsites, fails closed on dynamic/unparseable payloads, and pins the complete production population through a lexical-scope-aware resolver plus an independent raw-call inventory. Generated source and sanctions use exact source/callsite/operation/destination-provenance fingerprints; a whole-function exemption is forbidden. Approved shared atomic helpers are the normal route. The live deep-dive found three production violations to drive genuine REDs: `_write_json_refuse_symlink` (including caller-side pre-resolution that erases leaf identity), `_write_ast_project_scaffold`, and `new`.
+
+Route their caller-selected JSON/YAML artifacts through shared parent-handle-anchored writers and preserve each site's existing semantics: refresh/ruleset artifacts may overwrite, while `new` and scaffold `sgconfig.yml` remain atomic create-if-absent/no-clobber. POSIX publication is directory-fd-relative; Windows uses an opened no-reparse parent plus handle-relative create/rename operations. A path recheck followed by a path rename is not sufficient. Installer/runtime directory swaps remain separately enumerated because their replacement and rollback contract is not equivalent to a JSON/text artifact writer. Pre-existing and dangling symlinks must be refused. Event-gated late-leaf and parent-directory swap/junction tests must prove no external artifact changes; an overwrite writer may safely replace a leaf symlink entry only when it never follows the link and the contract says so explicitly.
 
 #### MCP tool-surface disclosure
 
@@ -141,7 +144,9 @@ Add `tool_surface` derived from the same import-time `TG_MCP_LEGACY_TOOLS` decis
 
 #### Backend surface decision
 
-`CPUBackend.replace_in_place` is already a public Rust API: the public `backend_cpu` module is built into the crate's `rlib`, and both the type and method are public. Retain its `anyhow::Result<()>` signature and propagate currently suppressed walk/replacement errors with stable contextual messages. An in-repository caller census still documents observed use, but cannot prove absence of downstream Rust consumers. Removal is outside this campaign unless separately approved as a breaking API change with deprecation and migration plans.
+Rust `CpuBackend.replace_in_place` is already a public API: the public `backend_cpu` module is built into the crate's `rlib`, and both the type and method are public. Retain its exact `fn(&CpuBackend, &str, &str, &str, bool, bool) -> anyhow::Result<()>` signature with a compile-time external assertion, retain streaming traversal, and propagate directory-walk/literal/regex child errors with stable contextual messages. The public method must unconditionally delegate through the same private injectable core used by fault tests, so a disconnected test seam cannot create false evidence. Direct-file errors already propagate; nonexistent-path and direct-leaf-symlink semantics remain unchanged because they require a separate compatibility/security decision. An in-repository caller census still documents observed use, but cannot prove absence of downstream Rust consumers. Removal is outside this campaign unless separately approved as a breaking API change with deprecation and migration plans.
+
+The Python `CPUBackend` has a separate A27 twin defect: two raw PyO3 search adapters retry without `invert_match` after any `TypeError`, unlike `RustCoreBackend`, which already retired that unsafe compatibility pattern. Route the inline simple path through `_rust_match_set`, reduce that helper to one exact-signature native call, and map an internal native `TypeError` to `BackendExecutionError` without a second call, dropped inversion, or fixed-string Python fallback. Genuine native absence retains its explicit import-error fallback. Retain `CPUBackend`, `RustCoreBackend`, and the PyO3 class; their contracts differ and consolidating the public classes would create a dependency cycle.
 
 ### Program 2 — deterministic edit verification
 
@@ -496,3 +501,6 @@ This section is updated after each independent review round.
 - Round 7 security: `FIX-FIRST` — handle-relative no-clobber proof and evidence-subject provenance were incomplete. The plan now mandates Unix `openat`/`linkat` and Windows root-handle-relative publication, single-capture receipt subjects, producer-version preservation, and binding of the exact verification-result digest.
 - Round 8 architecture: `FIX-FIRST` — the file-only verify-to-evidence handoff changed the dirty digest and made a normal round trip reject itself. The plan now freezes bounded `--edit-verification -` stdin ingestion and proves signed/keyless round trips with separately checked producer and consumer exits.
 - Round 9 security: `FIX-FIRST` — a 0→0-only round trip could claim to prove pipe-status safety without exercising a failing producer. The plan now pins 0→0, 1→0, valid 2→0, and invalid-input consumer-2 arms and explicitly disallows unchecked shell-pipeline status masking.
+- Round 10 post-approval live deep-dive: `FIX-FIRST` — Task 2's global “shipping entry” parser had no canonical grammar, #90 was incorrectly treated as wholly shipped, required contract/comment/#859-receipt files were omitted, the CEO set was not frozen, and a version-token-only handoff refresh could preserve obsolete content. Program 0 and Task 2 now define one canonical live-status index, exact source decisions and file scope, mixed #90 handling, unique CEO/demand ownership, and substantive handoff reconciliation before implementation.
+- Round 11 backend/writer deep-dive: `FIX-FIRST` — the writer population had three live violations plus generated-source/scope-resolution blind spots; Rust hardening overstated direct-file failures and placed private fault seams in an external test; and Python `CPUBackend` retained two unsafe `TypeError` compatibility retries already retired in its `RustCoreBackend` twin. Programs 1 and Tasks 3/5 now pin the exact populations, genuine production REDs, private Rust seam placement, unchanged public semantics, and one-call Python adapter contract.
+- Round 12 amendment thinktank: `FIX-FIRST` — the tracker lacked a parseable version and complete demand population, #89/#859 transitions were ambiguous, the writer plan remained vulnerable to parent swaps and no-clobber races, generated helpers/sanctions were not closed-world, the Rust public type was not mechanically pinned, and fixed-string fallback could still mask native `TypeError`. The design and Tasks 2/3/5/15 now freeze those contracts and require independent per-node RED/green receipts before the next review.
