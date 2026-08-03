@@ -20,7 +20,7 @@
 
 ## Canonical status index
 
-Canonical status index version: 2026-08-02.3
+Canonical status index version: 2026-08-03.1
 - [x] **#22** — Status: RETIRED; PR: none; Trigger: exit 0 is complete with matches; exit 1 is complete with no match; exit 2 is incomplete; gpu_request_unhonoured stays in-band and does not independently force exit 2
 - [x] **F2** — Status: RETIRED; PR: none; Trigger: legacy anonymous-agent compatibility deliberately retains the sentinel; reopen only with a caller-supplied stable identity contract and migration plan
 - [x] **#36** — Status: SHIPPED; PR: PR #903; Trigger: all 27 topic skills audited and drift corrections merged; reopen on a new failing skill-drift receipt
@@ -52,14 +52,18 @@ Canonical status index version: 2026-08-02.3
 
 ## Live campaign snapshot
 
-Last reconciled: **2026-08-02** (PR #910 merged and post-merge verified), post-**v1.102.1** (PyPI verified via a clean `uvx` install, not inferred
+Last reconciled: **2026-08-03** (PR #910 merged and post-merge verified; PR #911 open), post-**v1.102.1** (PyPI verified via a clean `uvx` install, not inferred
 from a tag — `tag == PyPI` cannot tell *released* from *not started* from *died*).
 
 **Current closed-world status:** this canonical index plus
-`docs/audits/2026-08-02-backlog-reconciliation.md`. Task 2 is complete. Its bounded WSL treatment and
-control arms reproduced both #89 search-path failure and #90 scan false-clear behavior, so final
-closeout is paused while one amended cross-domain TDD program is re-reviewed. Do not dispatch from
-the stale historical rows below or from the interim CEO audit.
+`docs/audits/2026-08-03-ceo-backlog-update.md`. Task 2 is complete as the reconciliation checkpoint;
+Task 2A implementation is not. Its bounded WSL
+treatment/control arms reproduced both #89 search-path failure and #90 scan false-clear behavior.
+Task 2A's Round-60 plan folds eight security `FIX-FIRST` findings and one independent TDD boundary
+finding into the canonical pair. Cursor Auto closed three stale contradictions; independent TDD and Sol
+returned `SHIP`, and Sol confirmed final raw hashes design `31D8E071...3D862B` / implementation
+`AA64D0BA...0826B3`. PR #911's old green head did not approve these bytes; push and re-run its exact CI
+before treating the planning change as PR-green. Product implementation still begins with Task 2A's RED.
 
 **This has now gone stale THREE times in the same way, so the pattern is the finding.** The stamp
 once read "2026-07-28, post-v1.101.9" while PyPI had moved 13 releases on; then "2026-07-31,
@@ -98,16 +102,27 @@ be rare; neither holds here.
 
 ---
 
-## IN FLIGHT (PRs open right now — derived from `gh pr list`, 2026-08-02)
+## IN FLIGHT (PRs open right now — derived from `gh pr list`, 2026-08-03)
 
 | PR | Title | Type | State |
 |---|---|---|---|
-| — | None | — | 0 open PRs at the snapshot |
+| #911 | `test: pin live backlog truth and approved closeout plan` | non-release tracker/plan | local Round-60 amendments approved; push/checks pending for the new head |
 
 *(#872, #871 and #868 all MERGED — #871 on 2026-07-31, #872 and #868 on 2026-08-01. They sat in
 this table as "CI running" / "BLOCKED — do not merge" after landing, which is the exact failure mode
 described above: a board that says BLOCKED about shipped code will eventually stop someone from
 merging something correct.)*
+
+### Task 2A plan gate (owned by #89/#90; not shipped)
+
+The exact amended plan received `SHIP` on all nine blockers; implementation must now prove them:
+protected CNG-backed installer receipt authority outside PATH; TxR registry mutation with no fallback;
+opened-directory identity for PATH aliases; Microsoft-root policy plus production thumbprints and exact
+offline WinTrust flags; Job containment with both breakaway modes denied; one no-refund search ledger at
+every bootstrap/full/native/rg/sidecar door; combined inclusive pattern/ignore counters with independent
+cap−1/cap/cap+1 REDs; live Actions/environment re-derivation for CI receipts; and JUnit/Rust census
+cross-checking. #89/#90 remain `READY` until the Task 2A implementation PR exists; approval alone is
+not implementation.
 
 ---
 

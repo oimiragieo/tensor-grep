@@ -7,11 +7,11 @@
 > nonfinancial decision-gated, financial/spend-gated, demand/research-gated, and mixed/terminal
 > corrections—not merely SHIPPING or P0/P1. Update whenever a PR opens/merges or the queue changes.
 > Task-store IDs (`#NNN`) are cross-referenced.
-> **Current closed-world CEO snapshot: 2026-08-02, release `v1.102.1`, merged main `8024125`, zero
-> open PRs, one open GitHub issue (#48).** The complete live disposition list is the canonical index
+> **Current closed-world CEO snapshot: 2026-08-03, release `v1.102.1`, merged main `8024125`, one
+> open PR (#911), one open GitHub issue (#48).** The complete live disposition list is the canonical index
 > in `docs/TASK_BOARD.md`; `docs/audits/2026-08-02-backlog-reconciliation.md` is its dated evidence
-> packet, and the CEO update is an interim narrative with a
-> Task-2 correction notice. Task 2 is reconciled; the amended #89/#90 path-domain program plus
+> packet, and `docs/audits/2026-08-03-ceo-backlog-update.md` is the current dumbed-down closed-world
+> update. Task 2 is reconciled; the amended #89/#90 path-domain program plus
 > Tasks 3–15 are the current execution queue. Historical sections below remain append-only evidence
 > and may describe old status.
 > New local-environment finding: `ENV-VENV-DRIFT` — the campaign worktree's no-sync CLI reports
@@ -25,15 +25,39 @@
 > transitions; and new canonical demand row `RUST-REPLACE-SYMLINK` for the public Rust direct-file
 > leaf-symlink compatibility/security decision. See the dated CEO audit and Tasks 2–15 for owners,
 > triggers, and closure tests. None has been implemented merely by amending the plan.
-> The final status-stamped plan pair is approved: design `F627B23F...E4C994`, implementation
-> `E30DCCCD...8216B`; architecture/security/TDD verdicts are all `SHIP`. Task 2 is reconciled; amend
-> and re-certify a bounded #89/#90 TDD program before final closeout, then continue with Task 3.
+> The prior status-stamped plan pair was approved, but that approval expired when #89/#90 changed the
+> load-bearing premise. PR #911's old committed head is green but does not prove newer local bytes.
+> Round 60 is now exact-hash approved after Cursor Auto closed three stale contradictions, independent
+> TDD returned `SHIP`, Sol returned substantive `SHIP`, and Sol confirmed the final raw hashes design
+> `31D8E071...3D862B` / implementation `AA64D0BA...0826B3`. No product code has
+> started; push/re-run PR #911, then continue with Task 2A before Task 3.
 >
 
-## Current canonical closeout queue — status index `2026-08-02.3`
+## Current canonical closeout queue — status index `2026-08-03.1`
 
 `docs/TASK_BOARD.md` owns the machine-parsed rows. This is the human-readable mirror; older sections
 below are historical evidence and do not override these dispositions.
+
+### Task 2A plan gate — nine blockers owned by #89/#90
+
+- protected, fixed ProgramData installer-state authority with a bound non-exportable CNG signature;
+  PATH and install-command digests never authorize a receipt;
+- transacted-registry PATH mutation (`CreateTransaction` plus transacted open/write/commit) or
+  fail closed, with no abstract lock/CAS fallback;
+- opened directory volume/file identity before removing case, 8.3, extended-path, separator, or
+  junction PATH aliases;
+- exact offline WinTrust flags, Microsoft-root chain policy with test roots disabled, and a maintained
+  production-root thumbprint allowlist; same-Organization foreign roots must fail;
+- kill-on-close Job containment with both breakaway flags and `CREATE_BREAKAWAY_FROM_JOB` absent;
+- one no-refund search-input ledger installed before every bootstrap/full/native/rg/sidecar route,
+  including fail-closed uninstrumented PCRE2;
+- independent inclusive cap−1/cap/cap+1 REDs for per-file and combined pattern/ignore budgets so
+  split counters and off-by-one rejection cannot survive;
+- `NativeCiReceiptV1` identity re-derived from the live Actions/artifact context rather than trusted
+  from receipt JSON; and
+- JUnit plus stable-Rust node-census cross-checks bound to that same current-run tuple.
+
+These are plan-gate subfindings, not separate shipped features or extra canonical top-level rows.
 
 ### Active / buildable
 

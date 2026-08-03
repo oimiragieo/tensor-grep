@@ -1,6 +1,6 @@
 # tensor-grep Session Handoff
 
-Last updated: 2026-08-02
+Last updated: 2026-08-03
 
 ## Current Release State
 
@@ -12,25 +12,31 @@ release_docs_current_tag: v1.102.1
 
 ## Current Backlog Closeout
 
-Canonical status index version: 2026-08-02.3
+Canonical status index version: 2026-08-03.1
 
 - `origin/main` at the campaign rebase point: `8024125612d5fb42481acde34d94ad39bbaa3c3e`.
 - PR #910 is merged. Its exact PR run `30777042942` completed 39 jobs with zero failure/unfinished
   jobs; the focused board test passed 7/7 on the merged artifact.
-- Open PRs at the snapshot: 0. Open GitHub issues: #48 only.
-- Tracker reconciliation is complete. Exact-hash rounds 16–18 caught task-order, workspace-schema,
-  claims-fence first-use/locking, project-config confinement, tracker-lifecycle, deferred Rust-symlink,
-  and tests-after defects. Architecture, security, and TDD all returned `SHIP` on final status-stamped
-  hashes design `F627B23F...E4C994` and implementation `E30DCCCD...8216B`.
+- Open PRs at the snapshot: PR #911 only. It is CLEAN/mergeable and its exact committed head
+  `d12b4779439fb133fff134d89883a0678941a897` passed all dispatched checks. Open GitHub issues: #48 only.
+- Tracker reconciliation is complete. The prior exact-hash approval expired when Task 2 reproduced
+  #89/#90 and changed the premise. Local Round-60 plan amendments are newer than PR #911's committed
+  bytes. Architecture returned `SHIP` on the transaction/receipt shape; adversarial security returned
+  eight `FIX-FIRST` findings and independent TDD returned one combined-counter/off-by-one finding.
+  Cursor Auto then closed three stale contradictions; TDD returned `SHIP`, Sol returned substantive
+  `SHIP`, and Sol `CONFIRMED` the final raw hashes design `31D8E071...3D862B` /
+  implementation `AA64D0BA...0826B3`. Push/re-run PR #911, then Task 2A may start with its RED.
 - Task 2 reproduced both cross-domain items in WSL. Search returned `path_not_found` for an existing
   `/mnt/c/...` root (#89). Scan passed that Linux spelling to Windows ast-grep, warned it was
   unreadable, but emitted a clear zero-match exit-0 payload; the translated-path control found six
   matches (#90). Both are `READY`. Amend and re-certify one typed-path TDD program before continuing
   Tasks 3–15 in `docs/plans/2026-08-02-backlog-closeout-implementation-plan.md`.
-- The approved closeout plan remains Tasks 2–15; Task 2 is this reconciliation checkpoint rather than
-  a product build.
-- The canonical current receipts are in `docs/audits/2026-08-02-backlog-reconciliation.md`; the
-  plain-English CEO report is retained as an interim snapshot with a Task-2 correction notice.
+- The closeout campaign remains Tasks 2–15. Its amended Task 2A slice is approved but unimplemented;
+  Task 2 was the reconciliation checkpoint rather than a product build.
+- The current closed-world CEO report is `docs/audits/2026-08-03-ceo-backlog-update.md`; it lists all
+  23 unfinished rows, research, the nine Task-2A plan blockers, and 14 retained lessons.
+- Latest exact `main` CI run: `30793797849`, completed successfully on `8024125`. Public PyPI and
+  GitHub Release remain `v1.102.1`; no spend was incurred or authorized.
 - Durable machine/session resume state is in `MEMORY.md`; do not reconstruct the queue from this file's
   historical release ledger.
 

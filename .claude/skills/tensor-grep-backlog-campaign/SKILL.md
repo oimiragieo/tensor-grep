@@ -37,6 +37,10 @@ demand/research-gated; and terminal corrections that stale trackers still show. 
 stable ID/alias, owner/decision maker, and reopen/start trigger. Preserve mixed outcomes instead of
 flattening them into “shipped.”
 
+Also separate **artifact states**. A green PR head, newer uncommitted worktree bytes, an approved plan
+hash, a merge SHA, and a published wheel are five different claims. The CEO update names which one each
+receipt proves and never lets a green older artifact imply approval of a newer one.
+
 ---
 
 ## Phase 0 — Investigate, rank, and SPEC/TDD plan
@@ -55,6 +59,10 @@ Load **`using-superpowers`** first. brainstorming→prompt-engineering; writing-
 | `gh` CLI | PRs, release CI status |
 | `claude-in-chrome` | docs site / install UX if deployed |
 | Gmail/Calendar/Drive | **CEO approval only** |
+
+If a required provider is not visible in the initial tool list, search the deferred callable-tool
+catalog before declaring it unavailable. Exa can be exposed there. Record a genuine provider failure,
+but do not silently substitute stale model memory for required recency research.
 
 ### Investigate (parallel tracks)
 
@@ -106,6 +114,11 @@ has told you to ask only about money.
 9. **Draft-PR-only autonomy** — endpoint is a draft PR a human merges. Never auto-merge.
 10. **WIP CAP (2026-07-08 receipt)** — do NOT dispatch a new BUILD while **>5 PRs are undrained** OR the **main gate is red**. Generating fixes faster than the ~40–66 min/publish drain empties the queue produces "churning, not completing" (backlog stays constant-size while PRs pile up). Design fork: complete-then-start, not start-then-hope. A red main gate is a drop-everything hotfix that jumps the queue ahead of any new build. Check `gh pr list` count and `gh run list --branch main` conclusion before authorizing a new fan-out. **Build-vs-merge decoupling:** the WIP cap and one-merge-per-tick both gate *merge* timing, not when work may *start* -- a PR sequenced "after vX publishes" purely for a CODE-COLLISION reason (it touches the same file, or wants vX's already-merged code as its base) may branch and build off the just-merged `main` in parallel with an in-flight release; only the final merge stays gated. This saves ~40 min/PR across a campaign. See `tensor-grep-change-control` Part 7 for the full pattern (named after merge-queue/speculative-CI, release-train, and build-once-promote-everywhere). **Batch-merge exception (C-batch, v1.93.0/#703-706):** several INDEPENDENTLY already-CI-green PRs may land ~15-20s apart in one tight window and still produce ONE combined, fully-published release — this is not a WIP-cap or one-merge-per-tick violation, provided the operator watches the LAST run in the sequence to full completion (intermediate `cancelled`/rejected-push runs are benign). Do not confuse a monitored rapid batch with an accidental push-race collision (the v1.17.23/#318/#319 incident) — the discipline is watching the final run through, not merging blind. Full mechanism + the v1.93.0 receipt: `tensor-grep-change-control` Part 7 (C-batch).
 11. **Mandatory adversarial security gate before merge** — every security-class PR (`apply_policy` / `mcp_server` / `cpu_backend` / `index_lock`/`session_daemon` / auth / money / migration / **native asset, installer, or doctor-probe construction**) gets an adversarial "try-to-BREAK-it, cite `file:line`, default FIX-FIRST-if-uncertain" review **before merge**, in addition to (not instead of) the mandatory `codex` gate below. This is not a rubber stamp: on the 2026-07-08 session it returned SHIP on 3 PRs and caught real issues on 2 — a symlink-follow RCE bypass (`.resolve()` followed the symlink; fixed with `os.path.abspath`) and a lock-release TOCTOU (accepted-as-documented after proving a heartbeat thread makes it unreachable). The native-asset/installer/doctor-probe addition is the v1.75.2/v1.75.3 GPU Phase-0 precedent -- PR #596 (P0-5, loud nvidia-to-cpu installer downgrade) was held in draft with an explicit "Opus gate pending before merge" per its council-reviewed plan, because a silent wrong-flavor install or a misleading `doctor` probe status is a security-relevant integrity failure, not a UX nit. `codex` is the nominal 2nd-vendor tool but its WSL path is unreliable on this box — an Opus **Agent** subagent (`model: opus`) is the reliable substitute when `codex` is dead, not a reason to skip the gate. Verdict shape: `SHIP` | `FIX-FIRST(+file:line+repro+minimal-fix)`.
+
+    **Review-economy rider (2026-08-03):** if a broad model/council prompt times out, retry the exact
+    disputed paragraph and invariant rather than weakening the gate or replaying the whole corpus. A
+    no-verdict seat is failed, not approval and not an infinite wait. Cursor/other economical model work
+    remains a hypothesis until Sol validates the exact resulting bytes/prompt.
 
 12. **Order the drain by RELEASE impact, not PR number (2026-07-26 receipt).** Only `fix:`/`feat:` trigger semantic-release. `docs:`/`test:`/`bench:`/`chore:` complete without publishing, so they create no publish to race — their gate is just "the newest main run completed" (~6 min) versus a full release cycle (~30–60 min, longer under runner scarcity). Landing the non-releasing PRs first took a 12-deep queue to 7 in about an hour that would otherwise have bought two merges. **One-per-publish protects an in-flight PUBLISH; it is not a per-PR serialisation.** Two riders: check for file collisions first (two PRs both editing `docs/CONTRACTS.md` will conflict once either lands), and re-poll `mergeable` after each merge — GitHub returns `UNKNOWN` for a few seconds while it recomputes, and `UNKNOWN` is not `CLEAN`.
 13. **The gate is "newest main run COMPLETED", not "completed GREEN" (2026-07-26 receipt).** When `main` is red, the fix FOR that red must still be mergeable — requiring green before merging the thing that makes it green is a deadlock. Merge the hotfix, then confirm `main` actually recovered on a later run; that recovery is the evidence the fix worked, not the merge itself. Everything else stays parked while red: merging onto a broken `main` compounds it and obscures which commit owns the failure.

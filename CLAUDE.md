@@ -34,7 +34,17 @@ Claude Code guidance for the **tensor-grep** repository.
   (the `tg find` whitespace classifier passed a synthetic literal-golden slice but mis-boosted 5/6 real
   identifiers when dogfooded).
 - **Verify AI-Drafted Plans Against the Real Code** — cite `file:line` for every seam claim before
-  building.
+  building. Approval is exact-artifact-specific: a green PR does not clear newer worktree bytes, and
+  architecture `SHIP` does not replace adversarial-security `SHIP`. Cursor/cheaper-model output is a
+  hypothesis until Sol validates the exact resulting bytes.
+- **Security plans name real primitives** — PATH never discovers installer authority; path spelling is
+  not opened object identity; “CAS”/“trusted signer”/“kill descendants” must name the platform API,
+  exact flags, protected authority root, failure behavior, and adversarial RED. Resource ledgers begin
+  before every bootstrap/full/native/delegation route, with mixed inclusive cap tests.
+- **Static manifests are not live receipts** — committed manifests define required nodes without live
+  run IDs; verifiers re-derive the Actions/artifact tuple and cross-check Python JUnit plus Rust census.
+  A broad review timeout should be retried on the exact paragraph; a no-verdict seat is failed, not
+  approval or an infinite wait. Search deferred tools before declaring Exa unavailable.
 - **Backend Fail-Closed Contract** — raise `BackendExecutionError` on failure; never return an empty
   result or silently swap engines for a contract flag (e.g. `--pcre2`).
 - **AST Native/Wrapper Two-Engine Divergence (task #141)** — the ast-grep wrapper and native

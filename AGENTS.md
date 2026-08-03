@@ -320,12 +320,55 @@ concrete failure observed this session.
   unchanged after its draft PR exists permits duplicate dispatch and false CEO status. Open the draft on
   an independently failing RED, immediately commit `IN_FLIGHT` with the real PR number and ordered PR
   history, and keep the separate post-merge closure PR for `SHIPPED`.
+- **A51 — Green and approval are artifact-specific (2026-08-03).** PR #911's committed head was green
+  while newer Round-60 plan bytes existed only in its worktree. A run or verdict clears exactly the named
+  SHA/hash it inspected—never later local edits, a sibling worktree, or “the same plan” by description.
+  Record PR head, local plan hashes, review hashes, and merge SHA separately.
+- **A52 — Architecture `SHIP` is not security clearance (2026-08-03).** The Round-59 transaction shape
+  was coherent enough for architecture `SHIP` and still had forgeable signer/receipt authority,
+  unenforceable PATH atomicity, and breakaway containment gaps. Security-class work needs its own
+  adversarial `SHIP` on the same bytes; a different lens's approval cannot substitute.
+- **A53 — Security plans name enforceable primitives (2026-08-03).** “Atomic CAS,” “trusted signer,”
+  “owned PATH entry,” and “kill descendants” are goals, not Windows contracts. Name the concrete API,
+  flags, authority root, identity comparison, failure behavior, and adversarial control. If the platform
+  primitive is unavailable, fail closed instead of inventing a weaker fallback.
+- **A54 — Authority is never discovered from an untrusted search path (2026-08-03).** PATH, an adjacent
+  binary directory, an environment variable, a caller-supplied path, or an install-command digest cannot
+  establish installer ownership. Start from a fixed protected state root, retain its identity, verify its
+  cryptographic binding, and treat path strings only as hints to objects whose opened identities match.
+- **A55 — Containment includes escape denial (2026-08-03).** `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` is
+  incomplete if either Job breakaway flag or `CREATE_BREAKAWAY_FROM_JOB` is permitted. Pin all three
+  absences and run a real descendant-breakaway RED; “primary process died” is not process-tree proof.
+- **A56 — A resource cap must fire at every door (2026-08-03).** Bootstrap, full CLI, direct native,
+  native→rg, native→sidecar, and every matcher engine must join the same no-refund ledger before route
+  selection or child creation. Independently test the inclusive cap and mixed-source aggregate; separate
+  counters and an uninstrumented PCRE2 route are fail-closed defects, not implementation details.
+- **A57 — Static manifests and live receipts have different authority (2026-08-03).** A committed
+  manifest defines the exact nodes/jobs that must run and therefore contains no live run ID. A live
+  receipt proves this execution only after a verifier independently re-derives the Actions/artifact
+  tuple and cross-checks Python JUnit plus Rust node census. Self-attested JSON is not anti-replay proof.
+- **A58 — Retry review by narrowing, not by weakening (2026-08-03).** A broad Cursor/council prompt can
+  time out while exact-paragraph reviews converge quickly. Retry the disputed paragraph and invariant,
+  preserve the original severity, and send the resulting work to Sol. A no-verdict seat is recorded as
+  failed and replaced; it is neither approval nor an infinite blocker.
+- **A59 — Discover deferred capabilities before declaring a required tool absent (2026-08-03).** Exa
+  was available through the deferred tool catalog after appearing absent from the initial surface.
+  Search the callable-tool catalog first, then record genuine provider failure and use an approved
+  fallback. Also select the newest canonical worktree before review; never promote an older dirty copy.
 
 ## Current Handoff
 
 release_docs_current_tag: v1.102.1
 
 As of 2026-08-02, the current tagged release state is `v1.102.1`, and the latest complete public PyPI/release-asset distribution is also `v1.102.1`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.102.1` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
+
+**2026-08-03 CEO/backlog addendum.** Public release remains `v1.102.1`; exact main run
+`30793797849` completed successfully on `8024125`. PR #911 is the sole open PR and its old committed
+head is green, but it does not prove newer local Round-60 plan bytes. The closed-world queue has 23
+unfinished rows (10 READY, 5 CEO_GATED, 8 DEMAND_GATED). The nine Task 2A/#89/#90 findings in
+`docs/audits/2026-08-03-ceo-backlog-update.md` are exact-hash approved (Cursor Auto contradiction loop,
+TDD `SHIP`, Sol `SHIP` plus status-hash `CONFIRMED`); push/re-run PR #911, then begin Task 2A's RED. No
+product code has started and no spend is authorized.
 
 **2026-08-02 backlog-closeout handoff.** PR #910 merged as `8024125` after exact-run CI (39 jobs,
 0 failed/unfinished), independent prose/metadata review, and a 7/7 merged-artifact board test. The

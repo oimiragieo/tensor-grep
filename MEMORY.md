@@ -1,17 +1,25 @@
 # tensor-grep durable campaign memory
 
-Last updated: 2026-08-02
+Last updated: 2026-08-03
 
 ## Resume here
 
-1. Final approved canonical campaign-plan hashes are design
-   `F627B23F5881C63AE525FC7226A4FF51C1EA249DB43DB1BD8B57EDDEA4E4C994`; implementation
-   `E30DCCCDC62459D28AA272CB5E251CDB92FBFC6D0BA23A312BA524AF9ED8216B`; architecture, security,
-   and TDD all returned `SHIP` on this exact status-stamped pair.
-2. Task 2 reconciled the tracker and reproduced #89 search plus #90 scan cross-domain WSL defects.
-   Amend and re-certify one typed-path TDD program before final closeout; then execute Tasks 3–15 with worktree isolation,
-   TDD, real-venv verification, independent review, PR drain discipline, merged-artifact checks, and
-   published-wheel dogfood.
+1. Work only in `.claude/worktrees/task2-tracker-truth`, branch `campaign/task2-tracker-truth`, PR
+   #911. The root checkout contains unrelated staged/unstaged user work. PR #911's committed head is
+   `d12b4779439fb133fff134d89883a0678941a897`; its green checks do not cover the newer local plan bytes.
+2. Round 60 is approved. Final canonical-worktree raw SHA-256 is design
+   `31D8E071F1778A59888890445A0620000548AB270EFBE11F5F2E01A70E3D862B`, implementation
+   `AA64D0BA88BF98F07809065BD0E813B320C1CA7089804CDC1CD17FBB0B0826B3`. Cursor Auto found and
+   closed three stale contradictions, independent TDD returned `SHIP`, Sol returned substantive `SHIP`,
+   then `CONFIRMED` the status-only final hashes. Push PR #911, then start Task 2A's independent RED.
+3. The nine Task-2A blockers are: protected CNG-backed receipt authority outside PATH; TxR registry
+   mutation with no fallback; opened-directory identity for PATH aliases; Microsoft-root policy plus
+   production thumbprints and exact offline WinTrust flags; non-breakaway Job containment; one
+   no-refund ledger at every bootstrap/full/native/rg/sidecar door; inclusive combined pattern/ignore
+   boundary REDs; live Actions/artifact identity re-derivation; and JUnit/Rust census cross-checking.
+4. After exact-hash approval, Task 2A starts with independently failing REDs in a fresh worktree. Then
+   execute Tasks 2B–15 with TDD, real-venv verification, independent review, PR drain discipline,
+   merged-artifact checks, and published-wheel dogfood.
 
 ## External state at the snapshot
 
@@ -19,9 +27,9 @@ Last updated: 2026-08-02
 - `origin/main`: `8024125612d5fb42481acde34d94ad39bbaa3c3e`.
 - PR #910: merged; exact PR CI run `30777042942`, 39 completed jobs, 0 failed/unfinished; merged-board
   test 7/7 passed.
-- Open PRs: 0.
+- Open PRs: PR #911 only; CLEAN/mergeable and exact committed checks green at the snapshot.
 - Open GitHub issues: #48 only.
-- Main CI run `30778356638` for merge `8024125` completed successfully with 39/39 jobs; re-query the
+- Main CI run `30793797849` for merge `8024125` completed successfully; re-query the
   newest exact main run before any next merge.
 - Financial spend: none incurred or authorized.
 - Local validation: docs/skill governance 93 passed; all three changed skills validate. Agent readiness
@@ -47,8 +55,9 @@ Last updated: 2026-08-02
   accuracy, classify provider/cache UX, cross-OS ast-grep, LSP proof-mode.
 
 Full closed-world status and receipts:
-`docs/TASK_BOARD.md` plus `docs/audits/2026-08-02-backlog-reconciliation.md`; the CEO update is an
-interim narrative with a correction notice.
+`docs/TASK_BOARD.md`, `docs/audits/2026-08-02-backlog-reconciliation.md`, and
+`docs/audits/2026-08-03-ceo-backlog-update.md`. There are exactly 23 unfinished canonical rows:
+10 `READY`, 5 `CEO_GATED` (four nonfinancial plus #169 financial), and 8 `DEMAND_GATED`.
 
 ## Retained laws from this campaign
 
@@ -67,5 +76,14 @@ interim narrative with a correction notice.
 - Anchor lock creation, protected-index RMW, and bounded config reads to verified directory handles.
 - Give every deferred security/compatibility behavior a stable ID, owner, threat boundary, and trigger.
 - Transition `READY` to `IN_FLIGHT` inside the real numbered draft PR; close `SHIPPED` separately.
+- Green status and approval are artifact-specific: a PR head never clears newer uncommitted bytes.
+- Architecture `SHIP` does not substitute for an adversarial-security `SHIP`.
+- Security plans name enforceable OS/API primitives; abstract CAS, ownership, or containment labels fail.
+- PATH never discovers installer authority; spelling never substitutes for opened directory identity.
+- Kill-on-close containment also denies both breakaway modes and breakaway creation flags.
+- Resource accounting must be installed before every front door/delegation and tested at inclusive mixed caps.
+- Static manifests define required population; live receipts re-derived from CI context prove execution.
+- Retry oversized review prompts on exact paragraphs; a no-verdict seat is failed, not an infinite wait.
+- Discover deferred connector tools before reporting a required research provider unavailable.
 
-Canonical detail: AGENTS.md A34–A50.
+Canonical detail: AGENTS.md A34–A59.

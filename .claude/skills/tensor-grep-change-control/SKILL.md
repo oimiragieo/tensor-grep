@@ -434,6 +434,36 @@ to a Git-blob or normalized-text hash from another. Also validate the cross-task
 service, public registration, and producer must exist before the first consumer or behavioral RED. A
 missing-command/import failure cannot stand in for the behavior the test claims to exercise.
 
+**A green artifact cannot clear a different artifact (2026-08-03).** Record the PR head, canonical
+worktree plan hashes, review hashes, merge SHA, and published version separately. A green PR at commit A
+does not approve uncommitted plan B; an architecture `SHIP` does not substitute for adversarial-security
+`SHIP`. When using Cursor or another economical builder/reviewer, send the exact resulting bytes and
+prompt to Sol before treating the result as cleared.
+
+**Security vocabulary must compile to an enforceable primitive.** “Atomic CAS,” “trusted signer,”
+“owned PATH token,” and “kill descendants” are not implementation contracts. A plan names the concrete
+OS/API call, flags, protected authority root, opened identity, failure behavior, and RED that breaks the
+weak form. On Windows this means, for example, transacted-registry calls or fail-closed (not a process
+lock dressed up as CAS); exact offline WinTrust/root-policy flags rather than Organization text;
+directory volume/file identity rather than PATH spelling; and kill-on-close plus breakaway denial.
+PATH, adjacency, environment, and a caller/install-command digest never discover installer authority.
+
+**Resource ledgers begin before route selection and cross every front door.** Test bootstrap, full CLI,
+direct native, rg/sidecar delegation, and every matcher engine independently. An engine that cannot
+charge construction and inner-loop work is refused before child creation. For each limit, observe
+cap−1/cap/cap+1 and mixed-source totals; accepting only separate counters or rejecting the inclusive cap
+must fail unchanged tests.
+
+**Static manifest ≠ live execution receipt.** The committed manifest defines exact required nodes/jobs
+and contains no live run identity. The verifier independently derives repository/commit/run/attempt/job/
+runner/artifact namespace from the current Actions context, then cross-checks receipt fields, Python
+JUnit population, and stable-Rust node census. A JSON record that merely repeats its own identity fields
+is self-attestation, not anti-replay evidence.
+
+**Review failures are handled narrowly.** If a broad review prompt times out, retry the exact disputed
+paragraph/invariant. Preserve severity and final-vendor validation. A no-verdict seat is recorded as
+failed and replaced; it is never inferred as `SHIP` and need not stall all progress indefinitely.
+
 **Search twins and respect public boundaries.** After retiring a defect shape, grep sibling adapters and
 helpers for the same pattern; a zero-retry fix in `RustCoreBackend` did not protect two copies in
 `CPUBackend`. Separately, zero in-repo callers cannot authorize deleting an exported Rust `rlib` method.

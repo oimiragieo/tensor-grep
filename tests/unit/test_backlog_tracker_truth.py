@@ -29,6 +29,7 @@ CONTRACTS_PATH = ROOT / "docs" / "CONTRACTS.md"
 MAIN_PATH = ROOT / "src" / "tensor_grep" / "cli" / "main.py"
 LEDGER_STORE_PATH = ROOT / "src" / "tensor_grep" / "cli" / "ledger_store.py"
 AUDIT_859_PATH = ROOT / "docs" / "audits" / "2026-08-01-backlog-verification-receipts.md"
+CEO_AUDIT_PATH = ROOT / "docs" / "audits" / "2026-08-03-ceo-backlog-update.md"
 
 STATUS_HEADING = "## Canonical status index"
 VERSION_PREFIX = "Canonical status index version:"
@@ -718,4 +719,10 @@ def test_handoff_version_and_current_prose() -> None:
     live = board.split("## Live campaign snapshot", 1)[1].split("\n## ", 1)[0]
     assert "Task 2 is complete" in live
     assert "canonical index" in live
-    assert "interim CEO audit" in live
+    assert CEO_AUDIT_PATH.name in live
+    ceo_audit = CEO_AUDIT_PATH.read_text(encoding="utf-8")
+    assert "Every unfinished canonical backlog item (23)" in ceo_audit
+    assert "Ready to build after its own gates (10)" in ceo_audit
+    assert "CEO decision-gated, nonfinancial (4)" in ceo_audit
+    assert "Financial approval required (1)" in ceo_audit
+    assert "Demand/research-gated (8)" in ceo_audit
