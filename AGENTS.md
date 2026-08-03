@@ -2610,8 +2610,7 @@ document's STRUCTURE.
   of rotting. The violated property is DIFF-LEVEL -- *an edit intending to change one item must not
   remove a header* -- and a test reads the file, not the intent.
 - **The real fix is upstream:** anchor a string replacement on the text being REPLACED, not on a
-  scan for the next sibling. `s.find("
-- [", i)` ends at the next ITEM, and a header between two
+  scan for the next sibling. `s.find("\n- [", i)` ends at the next ITEM, and a header between two
   items is inside that span.
 
 ## `ast.walk` Inside `ast.walk` Counts Every Call Once Per Enclosing Scope (2026-08-02)
