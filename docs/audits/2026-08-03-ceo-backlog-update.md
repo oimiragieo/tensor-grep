@@ -12,9 +12,10 @@ not prove the newer local Round-60 bytes. Those plan bytes are now approved: Cur
 closed three stale contradictions, independent TDD returned `SHIP`, Sol returned substantive `SHIP`,
 and Sol confirmed final raw hashes design
 `31D8E071F1778A59888890445A0620000548AB270EFBE11F5F2E01A70E3D862B` / implementation
-`AA64D0BA88BF98F07809065BD0E813B320C1CA7089804CDC1CD17FBB0B0826B3`. PR #911 head
-`bd07475092ec23187c45b65aa2fb8d3f2d2bfee8` passed exact CI run `30836698168`. Task 2A RED design is
-active, but exact-byte Sol rejected `4efcad9` and `8df269d`; no GREEN product implementation has started.
+`AA64D0BA88BF98F07809065BD0E813B320C1CA7089804CDC1CD17FBB0B0826B3`. PR #911's previous
+CI-proven head `bd07475092ec23187c45b65aa2fb8d3f2d2bfee8` passed run `30836698168`; later docs updates
+require their own exact-head run. Task 2A RED design is active, but exact-byte Sol rejected `4efcad9`
+and `8df269d`; no GREEN product implementation has started.
 
 ## What worked
 

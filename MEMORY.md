@@ -5,8 +5,10 @@ Last updated: 2026-08-03
 ## Resume here
 
 1. Work only in `.claude/worktrees/task2-tracker-truth`, branch `campaign/task2-tracker-truth`, PR
-   #911. The root checkout contains unrelated staged/unstaged user work. PR #911's committed head is
-   `bd07475092ec23187c45b65aa2fb8d3f2d2bfee8`; exact CI run `30836698168` completed successfully.
+   #911. The root checkout contains unrelated staged/unstaged user work. PR #911's previous CI-proven
+   head `bd07475092ec23187c45b65aa2fb8d3f2d2bfee8` passed run `30836698168`; derive the current head
+   with `gh pr view 911 --json headRefOid` because recording a commit's own SHA in that commit is
+   self-referential. Require a new exact-head run after every docs update.
 2. Round 60 is approved. Final canonical-worktree raw SHA-256 is design
    `31D8E071F1778A59888890445A0620000548AB270EFBE11F5F2E01A70E3D862B`, implementation
    `AA64D0BA88BF98F07809065BD0E813B320C1CA7089804CDC1CD17FBB0B0826B3`. Cursor Auto found and

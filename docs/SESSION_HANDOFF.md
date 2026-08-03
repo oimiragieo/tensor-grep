@@ -17,9 +17,9 @@ Canonical status index version: 2026-08-03.1
 - `origin/main` at the campaign rebase point: `8024125612d5fb42481acde34d94ad39bbaa3c3e`.
 - PR #910 is merged. Its exact PR run `30777042942` completed 39 jobs with zero failure/unfinished
   jobs; the focused board test passed 7/7 on the merged artifact.
-- Open PRs at the snapshot: PR #911 only. It is CLEAN/mergeable and exact committed head
-  `bd07475092ec23187c45b65aa2fb8d3f2d2bfee8` passed exact CI run `30836698168`. Open GitHub issues:
-  #48 only.
+- Open PRs at the snapshot: PR #911 only. It is CLEAN/mergeable; previous CI-proven head
+  `bd07475092ec23187c45b65aa2fb8d3f2d2bfee8` passed exact run `30836698168`. Derive the current head
+  from GitHub and require its own exact run after any docs update. Open GitHub issues: #48 only.
 - Tracker reconciliation is complete. The prior exact-hash approval expired when Task 2 reproduced
   #89/#90 and changed the premise. Local Round-60 plan amendments are newer than PR #911's committed
   bytes. Architecture returned `SHIP` on the transaction/receipt shape; adversarial security returned
