@@ -17,15 +17,19 @@ Canonical status index version: 2026-08-03.1
 - `origin/main` at the campaign rebase point: `8024125612d5fb42481acde34d94ad39bbaa3c3e`.
 - PR #910 is merged. Its exact PR run `30777042942` completed 39 jobs with zero failure/unfinished
   jobs; the focused board test passed 7/7 on the merged artifact.
-- Open PRs at the snapshot: PR #911 only. It is CLEAN/mergeable and its exact committed head
-  `d12b4779439fb133fff134d89883a0678941a897` passed all dispatched checks. Open GitHub issues: #48 only.
+- Open PRs at the snapshot: PR #911 only. It is CLEAN/mergeable and exact committed head
+  `bd07475092ec23187c45b65aa2fb8d3f2d2bfee8` passed exact CI run `30836698168`. Open GitHub issues:
+  #48 only.
 - Tracker reconciliation is complete. The prior exact-hash approval expired when Task 2 reproduced
   #89/#90 and changed the premise. Local Round-60 plan amendments are newer than PR #911's committed
   bytes. Architecture returned `SHIP` on the transaction/receipt shape; adversarial security returned
   eight `FIX-FIRST` findings and independent TDD returned one combined-counter/off-by-one finding.
   Cursor Auto then closed three stale contradictions; TDD returned `SHIP`, Sol returned substantive
   `SHIP`, and Sol `CONFIRMED` the final raw hashes design `31D8E071...3D862B` /
-  implementation `AA64D0BA...0826B3`. Push/re-run PR #911, then Task 2A may start with its RED.
+  implementation `AA64D0BA...0826B3`. PR #911 is pushed and green. Task 2A RED work started in the
+  isolated WSL Cursor worktree, but commits `4efcad9` and `8df269d` were rejected by exact-byte Sol
+  review for surrogate routes, unsafe/impossible Windows fixtures, and self-attested CI evidence.
+  GREEN implementation remains blocked until the RED itself receives Sol `SHIP`.
 - Task 2 reproduced both cross-domain items in WSL. Search returned `path_not_found` for an existing
   `/mnt/c/...` root (#89). Scan passed that Linux spelling to Windows ast-grep, warned it was
   unreadable, but emitted a clear zero-match exit-0 payload; the translated-path control found six
@@ -39,6 +43,10 @@ Canonical status index version: 2026-08-03.1
   GitHub Release remain `v1.102.1`; no spend was incurred or authorized.
 - Durable machine/session resume state is in `MEMORY.md`; do not reconstruct the queue from this file's
   historical release ledger.
+- Cross-OS environment receipt: a WSL `uv --project /mnt/c/...` probe replaced the Windows `.venv`.
+  The incompatible shell was moved to `%LOCALAPPDATA%\Temp\tensor-grep-venv-wsl-incompatible-20260803`;
+  Windows `uv sync --frozen` rebuilt and verified the canonical environment. Never point WSL `uv` at
+  the Windows project venv (AGENTS.md A60).
 
 ## Historical Milestones
 

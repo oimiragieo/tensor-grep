@@ -12,8 +12,9 @@ not prove the newer local Round-60 bytes. Those plan bytes are now approved: Cur
 closed three stale contradictions, independent TDD returned `SHIP`, Sol returned substantive `SHIP`,
 and Sol confirmed final raw hashes design
 `31D8E071F1778A59888890445A0620000548AB270EFBE11F5F2E01A70E3D862B` / implementation
-`AA64D0BA88BF98F07809065BD0E813B320C1CA7089804CDC1CD17FBB0B0826B3`. They still need a push and
-exact PR CI. No Task 2A product code has started.
+`AA64D0BA88BF98F07809065BD0E813B320C1CA7089804CDC1CD17FBB0B0826B3`. PR #911 head
+`bd07475092ec23187c45b65aa2fb8d3f2d2bfee8` passed exact CI run `30836698168`. Task 2A RED design is
+active, but exact-byte Sol rejected `4efcad9` and `8df269d`; no GREEN product implementation has started.
 
 ## What worked
 
@@ -187,9 +188,11 @@ These findings remain owned by #89/#90 rather than becoming flattering top-level
     catalog even though it was not in the first visible list.
 14. **The newest canonical worktree wins.** Hash and review one named artifact; never promote an older
     dirty root copy because it is convenient.
+15. **Virtual environments have an OS owner.** WSL `uv --project /mnt/c/...` can replace the Windows
+    `.venv`; keep WSL worktree and canonical Windows verification environments physically separate.
 
 ## Next action
 
-Push the approved docs to PR #911 and require exact-head CI. Then start product implementation with an
-independently failing Task 2A RED in a new isolated worktree. PR #911 itself is not product code and does
-not authorize its own merge; #89 stays `READY` until the real implementation PR exists.
+PR #911 is pushed and exact-head CI is green. Repair the isolated Task 2A RED until Sol returns exact-byte
+`SHIP`; only then start GREEN product implementation. PR #911 itself is not product code and does not
+authorize its own merge; #89 stays `READY` until the real implementation PR exists.

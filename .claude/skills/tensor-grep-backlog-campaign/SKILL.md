@@ -384,6 +384,11 @@ gh pr merge "$pr" --squash --delete-branch
 
 Worktrees have no built `.venv` — agent "tests pass" is a hypothesis.
 
+The real venv is OS-owned. From WSL, never pass the Windows checkout (`/mnt/c/...`) as `uv --project`:
+`uv` can delete/replace the incompatible Windows `.venv` with a Linux one. Use the WSL worktree's own
+venv for RED iteration, then run the canonical gate from PowerShell in the Windows checkout. If crossed,
+move the bad venv aside and rebuild from Windows with `uv sync --frozen` before trusting any receipt.
+
 ```powershell
 uv run --no-sync ruff check .
 uv run --no-sync ruff format --check --preview .

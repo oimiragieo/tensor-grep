@@ -6,7 +6,7 @@ Last updated: 2026-08-03
 
 1. Work only in `.claude/worktrees/task2-tracker-truth`, branch `campaign/task2-tracker-truth`, PR
    #911. The root checkout contains unrelated staged/unstaged user work. PR #911's committed head is
-   `d12b4779439fb133fff134d89883a0678941a897`; its green checks do not cover the newer local plan bytes.
+   `bd07475092ec23187c45b65aa2fb8d3f2d2bfee8`; exact CI run `30836698168` completed successfully.
 2. Round 60 is approved. Final canonical-worktree raw SHA-256 is design
    `31D8E071F1778A59888890445A0620000548AB270EFBE11F5F2E01A70E3D862B`, implementation
    `AA64D0BA88BF98F07809065BD0E813B320C1CA7089804CDC1CD17FBB0B0826B3`. Cursor Auto found and
@@ -17,8 +17,11 @@ Last updated: 2026-08-03
    production thumbprints and exact offline WinTrust flags; non-breakaway Job containment; one
    no-refund ledger at every bootstrap/full/native/rg/sidecar door; inclusive combined pattern/ignore
    boundary REDs; live Actions/artifact identity re-derivation; and JUnit/Rust census cross-checking.
-4. After exact-hash approval, Task 2A starts with independently failing REDs in a fresh worktree. Then
-   execute Tasks 2B–15 with TDD, real-venv verification, independent review, PR drain discipline,
+4. Task 2A RED work is isolated at `/home/james/.cursor/worktrees/tensor-grep/task2a-round60-red`.
+   Commits `4efcad9` and `8df269d` were correctly rejected by Sol because they still used surrogate
+   routes, fake/final-verdict security adapters, impossible Windows assertions, or self-attested CI
+   evidence. Do not start GREEN until the amended RED receives exact-byte Sol `SHIP`. Then execute
+   Tasks 2B–15 with TDD, real-venv verification, independent review, PR drain discipline,
    merged-artifact checks, and published-wheel dogfood.
 
 ## External state at the snapshot
@@ -35,6 +38,11 @@ Last updated: 2026-08-03
 - Local validation: docs/skill governance 93 passed; all three changed skills validate. Agent readiness
   passed 11/13, with environment-only failures: editable warmup timed out at 240s and the no-sync
   worktree CLI reported 1.102.0. The no-sync venv also lacks PyYAML for the release-asset validator.
+- Cross-OS venv recovery: a WSL `uv --project /mnt/c/dev/projects/tensor-grep` probe replaced the
+  Windows `.venv`. The incompatible shell was moved to
+  `%LOCALAPPDATA%\Temp\tensor-grep-venv-wsl-incompatible-20260803`; Windows `uv sync --frozen`
+  rebuilt the canonical venv and verified `click 8.4.2` / `tensor-grep 1.102.0`. Never point WSL `uv`
+  at the Windows checkout again (AGENTS.md A60).
 
 ## Queue
 
@@ -85,5 +93,6 @@ Full closed-world status and receipts:
 - Static manifests define required population; live receipts re-derived from CI context prove execution.
 - Retry oversized review prompts on exact paragraphs; a no-verdict seat is failed, not an infinite wait.
 - Discover deferred connector tools before reporting a required research provider unavailable.
+- Keep WSL and Windows venv roots disjoint; `uv --project /mnt/c/...` can replace the Windows `.venv`.
 
-Canonical detail: AGENTS.md A34–A59.
+Canonical detail: AGENTS.md A34–A60.

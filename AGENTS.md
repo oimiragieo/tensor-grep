@@ -355,6 +355,13 @@ concrete failure observed this session.
   was available through the deferred tool catalog after appearing absent from the initial surface.
   Search the callable-tool catalog first, then record genuine provider failure and use an approved
   fallback. Also select the newest canonical worktree before review; never promote an older dirty copy.
+- **A60 — Never point WSL `uv` at the Windows checkout's `.venv` (2026-08-03).** A WSL
+  `uv run --no-sync --project /mnt/c/...` probe treated the Windows virtual environment as incompatible,
+  removed it, and created an empty Linux venv in the same path. That turned a dependency check into
+  shared-environment mutation and forced a locked Windows rebuild. WSL/Cursor worktrees use a WSL-local
+  venv (or CI); Windows verification runs from PowerShell in the canonical Windows checkout. Never cross
+  those environment roots. If this happens, move the incompatible venv aside, recreate it from Windows
+  with `uv sync --frozen`, verify imports/version, and only then resume gates.
 
 ## Current Handoff
 

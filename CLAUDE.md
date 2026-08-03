@@ -86,7 +86,9 @@ Claude Code guidance for the **tensor-grep** repository.
   agents reach into ONE drawer; a red-arm revert took a different agent's stash on 2026-08-02. Revert
   with `git checkout -- <file>` or a patch file. Rescue an orphaned stash non-destructively with
   `git branch <name> stash@{0}` (a permanent ref, no checkout, no pop). This applies to every
-  worktree campaign this file tells you to run.
+  worktree campaign this file tells you to run. Keep WSL and Windows venv roots disjoint: never run
+  WSL `uv --project /mnt/c/...` against the canonical checkout, because `uv` may replace the Windows
+  `.venv` with an incompatible Linux environment (AGENTS.md A60).
 - **Campaign Orchestration Disciplines (2026-07-08, extended 2026-07-16, 2026-07-22)** — running a
   multi-PR drain+build campaign so fixes *land*: the WIP cap, the self-firing drain-cron (beats a
   long-lived background drain), the mandatory adversarial security gate before merge,

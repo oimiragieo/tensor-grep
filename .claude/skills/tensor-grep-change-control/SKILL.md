@@ -719,6 +719,8 @@ uv export --format requirements.txt --all-extras --no-emit-project --locked
 - [ ] Any defect noticed in passing, regardless of authorship/CI-visibility/scope → fixed now or filed as a concrete tracked blocker, never waved past (Part 1 Rule 7).
 - [ ] Local gate green: `ruff check` + `ruff format --check --preview` + `mypy src/tensor_grep` + `pytest -q`.
 - [ ] Subagent claims **re-run in the real venv** — none trusted as-reported.
+- [ ] WSL and Windows venv roots stayed disjoint — no WSL `uv --project /mnt/c/...` touched the
+  canonical Windows `.venv`; canonical verification ran from PowerShell.
 - [ ] PR title matches intended release bump; **squash-merge** for release-bearing.
 - [ ] PR body/comments/examples/count denominators re-reviewed against the final head commit.
 - [ ] Merging: prior release **fully published** (its `chore(release)` on `main` + PyPI shows it) before this merge — **one-merge-per-tick**.
