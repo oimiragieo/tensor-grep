@@ -194,6 +194,8 @@ These findings remain owned by #89/#90 rather than becoming flattering top-level
 
 ## Next action
 
-PR #911 is pushed and exact-head CI is green. Repair the isolated Task 2A RED until Sol returns exact-byte
-`SHIP`; only then start GREEN product implementation. PR #911 itself is not product code and does not
-authorize its own merge; #89 stays `READY` until the real implementation PR exists.
+PR #911 is pushed. Treat it as green only after an externally observed run completes successfully for its
+current exact head; never encode the mutable head's own green verdict inside that head. Repair the isolated
+Task 2A RED until Sol returns exact-byte `SHIP`; only then start GREEN product implementation. PR #911
+itself is not product code and does not authorize its own merge; #89 stays `READY` until the real
+implementation PR exists.

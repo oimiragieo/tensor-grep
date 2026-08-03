@@ -26,7 +26,8 @@ Canonical status index version: 2026-08-03.1
   eight `FIX-FIRST` findings and independent TDD returned one combined-counter/off-by-one finding.
   Cursor Auto then closed three stale contradictions; TDD returned `SHIP`, Sol returned substantive
   `SHIP`, and Sol `CONFIRMED` the final raw hashes design `31D8E071...3D862B` /
-  implementation `AA64D0BA...0826B3`. PR #911 is pushed and green. Task 2A RED work started in the
+  implementation `AA64D0BA...0826B3`. PR #911 is pushed; only an externally observed successful run
+  for its current exact head proves it green. Task 2A RED work started in the
   isolated WSL Cursor worktree, but commits `4efcad9` and `8df269d` were rejected by exact-byte Sol
   review for surrogate routes, unsafe/impossible Windows fixtures, and self-attested CI evidence.
   GREEN implementation remains blocked until the RED itself receives Sol `SHIP`.
