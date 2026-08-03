@@ -464,7 +464,7 @@ is self-attestation, not anti-replay evidence.
 paragraph/invariant. Preserve severity and final-vendor validation. A no-verdict seat is recorded as
 failed and replaced; it is never inferred as `SHIP` and need not stall all progress indefinitely.
 
-**RED and CI evidence must discriminate (2026-08-03, AGENTS A61–A68).** Behavioral RED pins the exact
+**RED and CI evidence must discriminate (2026-08-03, AGENTS A61–A69).** Behavioral RED pins the exact
 expected reason — crash, import, panic, and setup errors are not RED. Route/start evidence comes from
 the actual producer/constructor and test-owned OS/raw proof, never a hardcoded bool or a production
 hook that self-attests before start. Containment authenticates writer/client provenance and proves
@@ -475,7 +475,9 @@ forms; substring principals are not acceptance. Resource-owning protocols name c
 prove exact-once reverse cleanup on success, `BaseException`, and cleanup failure while preserving the
 primary error. RED scaffolds cannot enable partial public behavior or unbounded work before the guard.
 Immutable-SHA CI clearance needs a real run, expected per-node outcomes, raw artifacts, and the exact
-population — no run is no clearance.
+population — no run is no clearance. Security green is point-in-time: a fresh fixable advisory blocks
+merge and is upgraded across every live direct/constraint floor, the lock, validator tests, and user
+remediation text before a new exact-head audit; never ignore a vulnerability with a fixed release.
 
 **Search twins and respect public boundaries.** After retiring a defect shape, grep sibling adapters and
 helpers for the same pattern; a zero-retry fix in `RustCoreBackend` did not protect two copies in

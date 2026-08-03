@@ -3409,8 +3409,8 @@ def validate_uv_security_constraints(*, pyproject_content: str) -> list[str]:
         return ["pyproject.toml [tool.uv].constraint-dependencies must be a list"]
 
     expected_constraints = {
-        "aiohttp>=3.14.1",
-        "cryptography>=48.0.1",
+        "aiohttp>=3.14.3",
+        "cryptography>=50.0.0",
         "pyjwt>=2.13.0",
         "pygments>=2.20.0",
         "python-multipart>=0.0.31",
@@ -3426,6 +3426,19 @@ def validate_uv_security_constraints(*, pyproject_content: str) -> list[str]:
         errors.append(
             "pyproject.toml [tool.uv].constraint-dependencies missing security floor entries: "
             + ", ".join(missing_constraints)
+        )
+
+    project_config = pyproject_data.get("project", {})
+    if not isinstance(project_config, dict):
+        project_config = {}
+    project_dependencies = project_config.get("dependencies", [])
+    required_direct_dependency = "cryptography>=50.0.0"
+    if not isinstance(project_dependencies, list) or required_direct_dependency not in {
+        str(entry) for entry in project_dependencies
+    }:
+        errors.append(
+            "pyproject.toml [project].dependencies missing direct security floor: "
+            + required_direct_dependency
         )
     return errors
 

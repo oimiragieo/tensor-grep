@@ -1001,11 +1001,11 @@ def test_should_require_uv_security_floor_constraints_for_audited_transitive_dep
     """
     errors = module.validate_uv_security_constraints(pyproject_content=textwrap.dedent(pyproject))
     joined_errors = "\n".join(errors)
-    assert "cryptography>=48.0.1" in joined_errors
+    assert "cryptography>=50.0.0" in joined_errors
     assert "pygments>=2.20.0" in joined_errors
     assert "python-multipart>=0.0.31" in joined_errors
     assert "python-dotenv>=1.2.2" in joined_errors
-    assert "aiohttp>=3.14.1" in joined_errors
+    assert "aiohttp>=3.14.3" in joined_errors
     assert "pyjwt>=2.13.0" in joined_errors
     assert "starlette>=1.3.1" in joined_errors
     assert "pydantic-settings>=2.14.2" in joined_errors
@@ -1024,15 +1024,16 @@ def test_should_accept_uv_security_floor_constraints_when_all_required_entries_p
     [project]
     name = "tensor-grep"
     version = "1.3.2"
+    dependencies = ["cryptography>=50.0.0"]
 
     [tool.uv]
     constraint-dependencies = [
-      "cryptography>=48.0.1",
+      "cryptography>=50.0.0",
       "pygments>=2.20.0",
       "python-multipart>=0.0.31",
       "python-dotenv>=1.2.2",
       "requests>=2.33.0",
-      "aiohttp>=3.14.1",
+      "aiohttp>=3.14.3",
       "pyjwt>=2.13.0",
       "starlette>=1.3.1",
       "pydantic-settings>=2.14.2",
@@ -1040,6 +1041,40 @@ def test_should_accept_uv_security_floor_constraints_when_all_required_entries_p
     """
     errors = module.validate_uv_security_constraints(pyproject_content=textwrap.dedent(pyproject))
     assert errors == []
+
+
+def test_should_reject_stale_direct_cryptography_floor_when_uv_constraint_is_secure():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    pyproject = """
+    [project]
+    name = "tensor-grep"
+    version = "1.3.2"
+    dependencies = ["cryptography>=48.0.1"]
+
+    [tool.uv]
+    constraint-dependencies = [
+      "cryptography>=50.0.0",
+      "pygments>=2.20.0",
+      "python-multipart>=0.0.31",
+      "python-dotenv>=1.2.2",
+      "requests>=2.33.0",
+      "aiohttp>=3.14.3",
+      "pyjwt>=2.13.0",
+      "starlette>=1.3.1",
+      "pydantic-settings>=2.14.2",
+    ]
+    """
+    errors = module.validate_uv_security_constraints(pyproject_content=textwrap.dedent(pyproject))
+    assert errors == [
+        "pyproject.toml [project].dependencies missing direct security floor: cryptography>=50.0.0"
+    ]
 
 
 def test_should_require_dev_tooling_security_floors_for_ci_format_parity():

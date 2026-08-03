@@ -20,7 +20,7 @@
 
 ## Canonical status index
 
-Canonical status index version: 2026-08-03.2
+Canonical status index version: 2026-08-03.3
 - [x] **#22** — Status: RETIRED; PR: none; Trigger: exit 0 is complete with matches; exit 1 is complete with no match; exit 2 is incomplete; gpu_request_unhonoured stays in-band and does not independently force exit 2
 - [x] **F2** — Status: RETIRED; PR: none; Trigger: legacy anonymous-agent compatibility deliberately retains the sentinel; reopen only with a caller-supplied stable identity contract and migration plan
 - [x] **#36** — Status: SHIPPED; PR: PR #903; Trigger: all 27 topic skills audited and drift corrections merged; reopen on a new failing skill-drift receipt
@@ -52,20 +52,23 @@ Canonical status index version: 2026-08-03.2
 
 ## Live campaign snapshot
 
-Last reconciled: **2026-08-03 continuation** (PR #910 merged; PR #911 open and last observed exact
-head green; Task 2A RED local-only FIX-FIRST), post-**v1.102.1** (PyPI verified via a clean `uvx`
+Last reconciled: **2026-08-03 continuation** (PR #910 merged; PR #911 open and blocked on fresh
+exact-head security re-clearance; Task 2A RED local-only FIX-FIRST), post-**v1.102.1** (PyPI verified via a clean `uvx`
 install, not inferred from a tag — `tag == PyPI` cannot tell *released* from *not started* from
 *died*).
 
 **Current closed-world status:** this canonical index plus
 `docs/audits/2026-08-03-ceo-backlog-update.md`. Product healthy at `v1.102.1`; planning PR #911 is
-merge-ready on its last observed exact head; backlog not done; Task 2A correctly blocked.
+not merge-ready until its advisory-floor successor earns exact-head CI/security/CodeQL; backlog not
+done; Task 2A correctly blocked.
 Task 2 is complete as the reconciliation checkpoint; Task 2A implementation is not. Round-60 plan
 approval stands on named
-hashes `31D8E071...3D862B` / `AA64D0BA...0826B3`. At last external observation, PR #911 head
-`01f276fa7c0d3d0e04fdb5feae78c29c1b194773` was CLEAN/MERGEABLE with CI `30842604458`, security
-`30842604251`, CodeQL success — derive the live head before merge; do not embed a commit’s own green
-verdict inside itself. Task 2A RED is local only at
+hashes `31D8E071...3D862B` / `AA64D0BA...0826B3`. Older PR #911 head
+`01f276fa7c0d3d0e04fdb5feae78c29c1b194773` was green; docs head
+`fb99d2bce4ba722b724212282158bf6616b1ade2` passed CodeQL `30857839262` but security
+`30857841901` found fixable `aiohttp`/`cryptography` advisories. The successor carries floors
+`aiohttp>=3.14.3` / `cryptography>=50.0.0` plus a regenerated lock and requires new exact-head
+clearance. Task 2A RED is local only at
 `6367614960327b1a4e00301c8bfdb9b2e4bb453e` (unpushed, no Actions run, Sol `FIX-FIRST` with 10 HIGH
 blockers). Canonical rows stay 28 / 23 unfinished (10 READY, 5 CEO_GATED, 8 DEMAND_GATED);
 research recommendations are not silent reclassification.

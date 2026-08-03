@@ -7,14 +7,18 @@ Last updated: 2026-08-03 (continuation)
 1. Work only in `.claude/worktrees/task2-tracker-truth`, branch `campaign/task2-tracker-truth`, PR
    #911. The root checkout contains unrelated staged/unstaged user work. At last external observation,
    PR #911 head `01f276fa7c0d3d0e04fdb5feae78c29c1b194773` was CLEAN/MERGEABLE with CI
-   `30842604458`, security `30842604251`, CodeQL success. Derive the live head with
-   `gh pr view 911 --json headRefOid` — do not embed a commit’s own green verdict inside that commit.
-   Human may merge once the head being merged has exact completed green evidence.
+   `30842604458`, security `30842604251`, CodeQL success. That clearance expired: docs head
+   `fb99d2bce4ba722b724212282158bf6616b1ade2` passed CodeQL `30857839262` but security
+   `30857841901` found fixable `aiohttp`/`cryptography` advisories. The successor carries floors
+   `aiohttp>=3.14.3` / `cryptography>=50.0.0`, a regenerated lock, and validator coverage for both
+   the resolver constraint and published direct metadata (the first draft checked only the former).
+   Derive the live head with
+   `gh pr view 911 --json headRefOid`; human may merge only after that exact head completes green.
 2. Round 60 remains approved. Final canonical-worktree raw SHA-256 is design
    `31D8E071F1778A59888890445A0620000548AB270EFBE11F5F2E01A70E3D862B`, implementation
    `AA64D0BA88BF98F07809065BD0E813B320C1CA7089804CDC1CD17FBB0B0826B3`.
-3. Product healthy at `v1.102.1`; planning PR merge-ready on last observed exact head; backlog not
-   done; Task 2A correctly blocked. Closed world: 28 rows / 23 unfinished = 10 READY, 5 CEO_GATED,
+3. Product healthy at `v1.102.1`; planning PR blocked on fresh exact-head security re-clearance;
+   backlog not done; Task 2A correctly blocked. Closed world: 28 rows / 23 unfinished = 10 READY, 5 CEO_GATED,
    8 DEMAND_GATED. Research recommendations are not silent reclassification. No question for
    nonfinancial gates; #169 is the only mandatory financial stop. No spend.
 4. Task 2A RED is isolated local-only at exact SHA `6367614960327b1a4e00301c8bfdb9b2e4bb453e`
@@ -29,7 +33,8 @@ Last updated: 2026-08-03 (continuation)
 - `origin/main`: `8024125612d5fb42481acde34d94ad39bbaa3c3e`.
 - PR #910: merged; exact PR CI run `30777042942`, 39 completed jobs, 0 failed/unfinished; merged-board
   test 7/7 passed.
-- Open PRs: PR #911 only; last observed exact head CLEAN/MERGEABLE + green (CI/security/CodeQL).
+- Open PRs: PR #911 only; exact head `fb99d2b` lost security clearance in run `30857841901`; its
+  advisory-floor successor needs new exact-head CI/security/CodeQL before merge.
 - Open GitHub issues: #48 only.
 - Main CI run `30793797849` for merge `8024125` completed successfully; re-query the
   newest exact main run before any next merge.
@@ -103,5 +108,8 @@ Full closed-world status and receipts:
 - **A67** RED scaffolds cannot enable partial public behavior or unbounded work before the guard.
 - **A68** Immutable-SHA CI clearance needs a real run, expected per-node outcomes, raw artifacts, and
   exact population; no run is no clearance.
+- **A69** Security green is point-in-time. A fresh fixable advisory blocks merge; raise every live
+  direct/constraint floor, regenerate the lock, update validators/remediation text, replay the
+  affected feature, and obtain a new exact-head audit. Never ignore a vulnerability with a fix.
 
-Canonical detail: AGENTS.md A34–A68.
+Canonical detail: AGENTS.md A34–A69.

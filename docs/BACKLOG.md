@@ -9,7 +9,7 @@
 > Task-store IDs (`#NNN`) are cross-referenced.
 > **Current closed-world CEO snapshot: 2026-08-03 continuation, release `v1.102.1`, merged main
 > `8024125`, one open PR (#911), one open GitHub issue (#48).** Product healthy; planning PR
-> merge-ready on last observed exact head; backlog not done; Task 2A correctly blocked. The complete
+> blocked on fresh exact-head security re-clearance; backlog not done; Task 2A correctly blocked. The complete
 > live disposition list is the canonical index in `docs/TASK_BOARD.md` (28 rows / 23 unfinished =
 > 10 READY, 5 CEO_GATED, 8 DEMAND_GATED); `docs/audits/2026-08-02-backlog-reconciliation.md` is its
 > dated evidence packet, and `docs/audits/2026-08-03-ceo-backlog-update.md` is the current dumbed-down
@@ -29,18 +29,20 @@
 > transitions; and new canonical demand row `RUST-REPLACE-SYMLINK` for the public Rust direct-file
 > leaf-symlink compatibility/security decision. See the dated CEO audit and Tasks 2–15 for owners,
 > triggers, and closure tests. None has been implemented merely by amending the plan.
-> Round 60 remains exact-hash approved (`31D8E071...3D862B` / `AA64D0BA...0826B3`). At last external
-> observation, PR #911 head `01f276fa7c0d3d0e04fdb5feae78c29c1b194773` was CLEAN/MERGEABLE with CI
-> `30842604458`, security `30842604251`, CodeQL success — derive the live head before merge; do not
-> embed a commit’s own green verdict inside itself. Task 2A RED is local only at
+> Round 60 remains exact-hash approved (`31D8E071...3D862B` / `AA64D0BA...0826B3`). Older PR #911
+> head `01f276fa7c0d3d0e04fdb5feae78c29c1b194773` was green, but docs head
+> `fb99d2bce4ba722b724212282158bf6616b1ade2` lost clearance when security run `30857841901`
+> found four fixable `aiohttp`/`cryptography` advisories (CodeQL `30857839262` passed). The successor
+> raises floors to `aiohttp>=3.14.3` / `cryptography>=50.0.0` and regenerates the lock; require new
+> exact-head CI/security/CodeQL before merge. Task 2A RED is local only at
 > `6367614960327b1a4e00301c8bfdb9b2e4bb453e` (unpushed, no Actions run, Sol `FIX-FIRST` / 10 HIGH).
 > No authorized GREEN phase has started; Sol found accidental public behavior inside the RED scaffold,
-> which must be removed. Human may merge #911, then repair RED → Sol `SHIP` → real Windows CI
+> which must be removed. Pause #911 at merge only after re-clearance, then repair RED → Sol `SHIP` → real Windows CI
 > before Task 3. Research recommendations (#48/#72/#77/#131/DD-004/F10) are not silent reclassification.
 > No question is asked for nonfinancial gates; #169 remains the only mandatory financial stop.
 >
 
-## Current canonical closeout queue — status index `2026-08-03.2`
+## Current canonical closeout queue — status index `2026-08-03.3`
 
 `docs/TASK_BOARD.md` owns the machine-parsed rows. This is the human-readable mirror; older sections
 below are historical evidence and do not override these dispositions.

@@ -386,6 +386,11 @@ concrete failure observed this session.
 - **A68 — Immutable-SHA CI clearance needs a real run (2026-08-03).** Clearance requires a real CI
   run on the immutable SHA, expected per-node outcomes, raw artifacts, and the exact population.
   No run is no clearance; a local RED replay is not Windows CI proof.
+- **A69 — Security green is point-in-time, not durable clearance (2026-08-03).** A fresh advisory-
+  database finding on the current head blocks merge even when an older head was green. Fix every
+  fixable advisory by raising every live direct/constraint floor and regenerating the lock; update
+  pinned validator tests and user remediation strings, replay the affected feature, and obtain a
+  new exact-head audit. Never add an ignore for a vulnerability that has a fixed release.
 
 ## Current Handoff
 
@@ -394,17 +399,21 @@ release_docs_current_tag: v1.102.1
 As of 2026-08-02, the current tagged release state is `v1.102.1`, and the latest complete public PyPI/release-asset distribution is also `v1.102.1`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.102.1` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
 
 **2026-08-03 CEO/backlog continuation.** Public product remains healthy at `v1.102.1` on
-`origin/main` `8024125612d5fb42481acde34d94ad39bbaa3c3e`. Planning PR #911 is merge-ready on its last
-observed exact head `01f276fa7c0d3d0e04fdb5feae78c29c1b194773` (CLEAN/MERGEABLE; CI `30842604458`,
-security `30842604251`, CodeQL success) — derive the live head before merge; do not embed a commit’s
-own green verdict inside itself. Backlog is not done: 28 canonical rows / 23 unfinished (10 READY,
+`origin/main` `8024125612d5fb42481acde34d94ad39bbaa3c3e`. Planning PR #911 was merge-ready on exact
+head `01f276fa7c0d3d0e04fdb5feae78c29c1b194773`, but pushed docs head
+`fb99d2bce4ba722b724212282158bf6616b1ade2` correctly lost clearance: security run `30857841901`
+found fixable `aiohttp`/`cryptography` advisories while CodeQL `30857839262` passed. The successor
+raises the live floors to `aiohttp>=3.14.3` / `cryptography>=50.0.0`, regenerates `uv.lock`, and
+must earn new exact-head CI/security/CodeQL evidence before merge; no future green is claimed here.
+Backlog is not done: 28 canonical rows / 23 unfinished (10 READY,
 5 CEO_GATED, 8 DEMAND_GATED). Task 2A is correctly blocked: local RED SHA
 `6367614960327b1a4e00301c8bfdb9b2e4bb453e` is unpushed, has no Actions run, and Sol returned
 `FIX-FIRST` with 10 HIGH blockers; do not call it merge-ready. Research recommendations for
 #48/#72/#77/#131/DD-004/F10 are recommendations only. No spend; no question for nonfinancial gates;
-#169 remains the only mandatory financial stop. Next: human may merge #911; after merged-base proof,
-Cursor repairs the ten RED blockers, Sol repeats until `SHIP`, then push draft and obtain real
-Windows CI. Detail: `docs/audits/2026-08-03-ceo-backlog-update.md`. New laws: A61–A68.
+#169 remains the only mandatory financial stop. Next: re-run #911 on its exact successor head; human
+may merge only after green. After merged-base proof, Cursor repairs the ten RED blockers, Sol repeats
+until `SHIP`, then push draft and obtain real Windows CI. Detail:
+`docs/audits/2026-08-03-ceo-backlog-update.md`. New laws: A61–A69.
 
 **2026-08-02 backlog-closeout handoff.** PR #910 merged as `8024125` after exact-run CI (39 jobs,
 0 failed/unfinished), independent prose/metadata review, and a 7/7 merged-artifact board test. The

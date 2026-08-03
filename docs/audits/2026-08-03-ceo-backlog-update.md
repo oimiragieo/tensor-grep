@@ -2,19 +2,19 @@
 
 ## Bottom line
 
-The public product is healthy. Planning PR #911 is merge-ready on its last observed exact head.
-The backlog is not done. Task 2A is correctly blocked — not merge-ready.
+The public product is healthy. Planning PR #911 is not merge-ready yet: a fresh security audit found
+fixable dependencies after the earlier head had been green. The backlog is not done. Task 2A is
+correctly blocked — not merge-ready.
 
 Public release stays `v1.102.1` on PyPI and GitHub. `origin/main` is
 `8024125612d5fb42481acde34d94ad39bbaa3c3e`. There is one open issue (`#48`), one open PR (`#911`),
 and no spend.
 
-At the last external observation, PR #911 head
-`01f276fa7c0d3d0e04fdb5feae78c29c1b194773` was CLEAN/MERGEABLE with CI run `30842604458`,
-security run `30842604251`, and CodeQL success. Do not encode a commit’s own green verdict inside
-that same commit: derive the live head with `gh pr view 911 --json headRefOid`, and require an
-exact-head completed run for whatever head a human actually merges. Newer docs bytes need their own
-exact-head proof.
+PR #911 head `01f276fa7c0d3d0e04fdb5feae78c29c1b194773` was green. Newer docs head
+`fb99d2bce4ba722b724212282158bf6616b1ade2` passed CodeQL `30857839262`, but security run
+`30857841901` found four fixable advisories in `aiohttp 3.14.1` and `cryptography 49.0.0`. The
+successor raises floors to `aiohttp>=3.14.3` and `cryptography>=50.0.0`, regenerates `uv.lock`, and
+must earn a new exact-head run before merge. No future green is claimed inside this commit.
 
 Task 2A RED is local only at exact SHA `6367614960327b1a4e00301c8bfdb9b2e4bb453e` (branch and HEAD
 match, unpushed, no Actions run, no GREEN). Sol’s exact-byte verdict is `FIX-FIRST` with ten HIGH
@@ -29,7 +29,11 @@ not silently reclassify any row.
 
 - Public packaging and release health remain clean at `v1.102.1`.
 - PR #910’s closed-world status index remains the live machine-parsed contract.
-- PR #911’s last observed exact head cleared CI, security, and CodeQL while staying CLEAN/MERGEABLE.
+- The exact-head security gate did its job: it invalidated stale green evidence when its advisory
+  database found new fixable releases instead of allowing an old verdict to carry forward.
+- Sol's exact-commit re-gate then caught a second packaging hole: the validator enforced only the
+  resolver constraint, so published `[project].dependencies` could regress independently. The new
+  negative/positive contract requires `cryptography>=50.0.0` in both places.
 - Round-60 plan approval still stands on the named hashes; the authorized GREEN phase has not
   started. Sol found accidental public behavior inside the RED scaffold, and it must be removed.
 - Task 2A RED made real progress Sol retained: full Counter/census/job/vector/Cargo executable
@@ -189,6 +193,17 @@ Current exact-commit / primary-source receipts (additions for this continuation)
   push-race / drain gate mechanics.
 - [NVIDIA CUDA compatibility](https://docs.nvidia.com/deploy/cuda-compatibility/latest/index.html) — #131/#169
   asset vs physical-proof separation.
+- aiohttp upstream advisories
+  [GHSA-mq44-7p77-q5h7](https://github.com/aio-libs/aiohttp/security/advisories/GHSA-mq44-7p77-q5h7),
+  [GHSA-mfx4-hv73-q22v](https://github.com/aio-libs/aiohttp/security/advisories/GHSA-mfx4-hv73-q22v), and
+  [GHSA-cq5v-8q36-5273](https://github.com/aio-libs/aiohttp/security/advisories/GHSA-cq5v-8q36-5273),
+  plus the [3.14.x changelog](https://docs.aiohttp.org/en/stable/changes.html) — `3.14.3` closes the
+  full current patch-level set; one upstream patched-version label appears mistyped, so the lock and
+  live audit, not that label alone, are the acceptance proof.
+- cryptography upstream
+  [GHSA-g6cj-pr64-35w5](https://github.com/pyca/cryptography/security/advisories/GHSA-g6cj-pr64-35w5)
+  and [50.0.0 changelog](https://cryptography.io/en/stable/changelog/) — `50.0.0` fixes the reported
+  PKCS7 oracle; tensor-grep's Ed25519-only surface does not use the deprecated finite-field DH APIs.
 - [ColBERT](https://github.com/stanford-futuredata/ColBERT),
   [Zoekt](https://github.com/sourcegraph/zoekt), and Rust
   [`fs`](https://docs.rs/rustc-std-workspace-std/latest/std/fs/index.html) /
@@ -238,6 +253,10 @@ Prior 2026-08-03 lessons A51–A60 still hold. New retained laws from the Task 2
 7. **A67 — RED scaffolds cannot enable partial public behavior** or unbounded work before the guard.
 8. **A68 — Immutable-SHA CI clearance needs a real run**, expected per-node outcomes, raw artifacts,
    and the exact population; no run is no clearance.
+9. **A69 — Security green is point-in-time, not durable clearance.** A fresh fixable advisory blocks
+   merge. Raise all live direct/constraint floors, regenerate the lock, update validator tests and
+   remediation strings, replay the affected feature, and obtain a new exact-head audit; never add an
+   ignore when a fixed release exists.
 
 Also retained from earlier in this campaign: green is artifact-specific; architecture `SHIP` ≠
 security clearance; name real OS primitives; PATH never discovers authority; containment denies
@@ -246,7 +265,7 @@ deferred tools; keep WSL/Windows venv roots disjoint.
 
 ## Next action
 
-Human may merge PR #911 when the head being merged has exact completed green evidence. After
+Finish the new exact-head CI/security/CodeQL for PR #911, then pause at merge. After human merge and
 merged-base proof, Cursor repairs the ten Task 2A RED blockers; Sol repeats until exact-byte
 `SHIP`; then push the draft and obtain real Windows CI. Do not call Task 2A merge-ready. #89/#90
 stay `READY` until the real implementation PR exists. No spend. #169 remains the only mandatory
