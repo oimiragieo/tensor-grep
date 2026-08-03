@@ -226,30 +226,17 @@ All three are now pushed to origin, so none is disk-only. `git merge-base --is-a
 "landed" for a branch whose COMMITTED head is on main -- it says nothing about uncommitted files in
 the worktree, which is exactly how 519 lines hid behind an "ANCESTOR of main" verdict.
 
-- [ ] **`perf/context-tests-limit-deadline` -> now PR #904, DRAFT, adversarially gated once and
-  re-gated.** Rescued from 519 uncommitted lines a worktree sweep nearly deleted. `_context_tests`
-  emits `test_candidates_scanned`/`_total` into `deadline_limit` via a dedicated `_TestScanCounts`
-  (not the 23-consumer `_DeadlineBreakFlag`).
+- [x] **`perf/context-tests-limit-deadline` -> SHIPPED as PR #904, merged 2026-08-02 (`8fc51f8`).**
+  Rescued from 519 uncommitted lines a worktree sweep nearly deleted; `_context_tests` now emits
+  `test_candidates_scanned`/`_total` into `deadline_limit` via a dedicated `_TestScanCounts`.
+  Verified on the merged artifact by an AST walk (2/2 call sites carry the counter; impact free of
+  `_test_source_limit`), not a substring scan.
 
-  **The first gate returned FIX-FIRST and was right on all three counts** -- worth recording,
-  because my own verification had reported zero regressions across 41 files and I would have merged:
-  - **HIGH:** `_context_tests` has TWO call sites and only one was counted, so a budget expiring in
-    the uncounted scan reported `scanned == total` -- the attribution exonerating the stage that
-    stopped, i.e. the exact failure the pair exists to prevent. Fixed `438dba5`; the gate's own
-    suggested remedy needed correcting (naive accumulation yields `scanned=12` vs `total=8`).
-  - **MEDIUM:** the impact call site's comment claimed a tighter source list "cannot change any
-    output impact actually returns". Measured false with a determinism control: score 23->2,
-    `association.confidence` **strong->weak**. Bound dropped there; refs/callers keep it, measured
-    unchanged even at ceiling 1. Fixed `ce4b89c`.
-  - **MEDIUM:** dissolved by the above -- no silently-truncating call site remains.
-
-  **Root cause of all three being missed: every parity arm ran a 32-file fixture where the 2000
-  ceiling is UNREACHABLE** -- the one population where the bound cannot fail. A boundary test now
-  forces the ceiling to 1; restoring the old line reddens ONLY the impact arm.
-
-  Status: 119 local tests pass, ruff 0.15.20 clean, CI green-tracking. Stays DRAFT until the
-  re-gate returns, because "I fixed the gate's findings" is the self-report a gate exists to
-  distrust.
+  **THREE independent gates found FOUR defects my own verification missed** -- it had reported zero
+  regressions across 41 derived files. Root cause of the first three in one sentence: every parity
+  arm ran a 32-file fixture where the 2000-file ceiling is UNREACHABLE, the one population where the
+  bound cannot fail. Full receipts in `AGENTS.md`, "Three Independent Gates Found Four Defects I Did
+  Not".
 
 - [x] **`probe/classifier-feasibility` -- VERDICT ALREADY EXISTED; the INSTRUMENT was the gap.**
   Resolved 2026-08-02 without new measurement. The probe DID reach a verdict and it is recorded in
@@ -287,6 +274,8 @@ the worktree, which is exactly how 519 lines hid behind an "ANCESTOR of main" ve
   (`git branch <name> stash@{0}` is the non-destructive rescue); no longer open work. **The lesson
   is the near-miss: a commit subject is not a diff.** A `temp-verify-*` subject on a stash entry
   described the WIP it was taken from, not the change it carried.
+
+## BLOCKED — environment (not CEO-gated, just needs hardware)
 
 - [ ] **#89** WSL `/mnt/c` absolute-path resolution in the native backend
 - [ ] **#90** `tg scan` ast-grep Linux/WSL portability + doctor false-"available" exit-127

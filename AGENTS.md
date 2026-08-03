@@ -2566,6 +2566,63 @@ should publish silently does not.
   the real dict beside my recollection. **Print the authority next to the belief** -- the disagreement
   is invisible if you only print one.
 
+## Three Independent Gates Found Four Defects I Did Not (2026-08-02, #904)
+
+The strongest single receipt in this repo for the mandatory adversarial gate. My own verification
+reported **zero regressions across 41 derived files** on a `perf:` change that was carrying a HIGH
+defect. Every one of the four was found by an outside reader:
+
+1. **HIGH** -- `_context_tests` has TWO call sites; only one carried the counter, so a budget
+   expiring in the uncounted scan reported `scanned == total`, the attribution exonerating the very
+   stage that stopped.
+2. **MEDIUM** -- the impact call site's comment ("a tighter source list cannot change any output
+   impact actually returns") was FALSIFIED by measurement: `association.confidence` strong->weak.
+3. **MEDIUM** -- the invariant the whole fix rested on (`+=`) had ZERO coverage; a one-character
+   revert kept all 38 sibling tests green.
+4. **NIT** -- I then added `assert scanned <= total` INSIDE the fix for a can't-fail-check finding.
+   It is true in both arms.
+
+**The root cause of 1-3 is a single sentence: every parity arm ran a 32-file fixture where the
+2000-file ceiling is UNREACHABLE** -- the one population where the bound cannot fail. I tested the
+bound where it was a no-op and called it parity.
+
+- **A gate's verdict is also a hypothesis.** Its suggested remedy for the HIGH was wrong: naive
+  accumulation reports `scanned=12` against `total=8` when a completed scan meets a stopped one.
+  Accumulating BOTH keeps `scanned <= total` an invariant.
+- **Re-derive the blocking finding yourself before accepting it**, and re-gate after fixing --
+  "I fixed the gate's findings" is exactly the self-report a gate exists to distrust.
+
+## A Board Can Be Perfectly FRESH And Structurally WRONG (2026-08-02, #909/#910)
+
+A docs edit deleted `## BLOCKED — environment` from `docs/TASK_BOARD.md` and merged. The three
+items did not vanish -- they were **silently refiled under the preceding section**, which is worse
+than losing them: a dispatcher reading the new heading could pick up hardware-blocked work as
+actionable.
+
+`test_task_board_freshness` passed throughout. It checks the reconcile stamp's RECENCY, never the
+document's STRUCTURE.
+
+- **What caught it was a COUNT printed beside its expected value** in the hourly update:
+  `UNSHIPPED ARTIFACTS = 4` where it should be 1, and `1 + 3 = 4` named the swallowed header.
+- **No gate was built, and the retirement is the finding.** Measured: an orphaned-item check reads 0
+  both before and after (the items kept *a* header); a duplicate-name check is unrelated; a pinned
+  SET of expected headers is a list written at authoring time, which this session has four receipts
+  of rotting. The violated property is DIFF-LEVEL -- *an edit intending to change one item must not
+  remove a header* -- and a test reads the file, not the intent.
+- **The real fix is upstream:** anchor a string replacement on the text being REPLACED, not on a
+  scan for the next sibling. `s.find("\n- [", i)` ends at the next ITEM, and a header between two
+  items is inside that span.
+
+## `ast.walk` Inside `ast.walk` Counts Every Call Once Per Enclosing Scope (2026-08-02)
+
+Verifying the merged #904 artifact, `for fn in ast.walk(tree) for n in ast.walk(fn)` reported **10**
+call sites where the truth was **2** -- each call re-counted once per scope containing it. I made
+this exact mistake twice in one session, and the second time it was in the probe certifying that a
+release had landed correctly.
+
+Walk the tree ONCE and filter. An AST probe is code, and it deserves the scrutiny of the thing it
+is about to certify -- more, when it is the last check before a release claim.
+
 ## Scoping The PATCH SITE Does Not Scope The OBSERVABLE (2026-08-02, #904)
 
 Three tests named `*_context_tests_deadline_folds_into_partial` passed on a baseline where
