@@ -16,10 +16,13 @@ The repo should be treated as a benchmark-governed, contract-heavy codebase. Do 
 
 ## Backlog & working process
 
-The canonical prioritized work list lives in **[docs/BACKLOG.md](docs/BACKLOG.md)** — read it for what to
-work next and how. It is kept in sync with the CLI task store; GitHub (`gh pr list`) is the source of truth
-for PRs. **Subagents:** treat each backlog item's description + files + status as your brief. **CEO status** =
-summarize its SHIPPING + P0/P1 sections.
+The canonical prioritized/historical work ledger lives in **[docs/BACKLOG.md](docs/BACKLOG.md)**. GitHub
+(`gh pr list`) is the source of truth for PRs. The machine-parsed canonical status index in
+`docs/TASK_BOARD.md` is the live-state view once Task 2 creates it; until then, use the latest dated
+closed-world reconciliation audit referenced at the top of BACKLOG. **Subagents:** treat each live item's
+description + files + status as your brief. **CEO status** must enumerate every live disposition—active,
+environment-blocked, nonfinancial decision-gated, financial/spend-gated, demand/research-gated, and
+mixed/terminal corrections—not merely SHIPPING or P0/P1 highlights.
 
 The standing multi-model pipeline for any substantive item: deep-dive → **Fable audit** (find + fix-idea,
 cite `file:line`) → **Exa** recency + competitive research (you are trained on stale data — verify current
@@ -296,6 +299,27 @@ concrete failure observed this session.
   Separate active/buildable, environment-blocked, CEO/financial-gated, demand/research-gated, and
   terminal corrections. Give every live item one stable ID/owner/trigger and assert that the canonical
   set has no unowned extras or omissions. Update `MEMORY.md` and the handoff in the same change.
+- **A46 — Hash the canonical artifact, and state the hash method (2026-08-02).** Two clean Windows
+  worktrees held clean-filter-equivalent plan content but different raw mixed-line-ending bytes. A bare
+  “SHA-256” can therefore disagree without a semantic change. For plan gates, hash the designated
+  canonical worktree bytes (or canonical Git blob), record which, and make every seat verify that same
+  method/path before auditing.
+- **A47 — Validate the task dependency graph, not only each task (2026-08-02).** Round 16 found Task 6
+  importing a service not created until Task 8 and demanding a subprocess command not registered until
+  Task 7. Before approval, prove every required producer/service/registration exists before its first
+  consumer/test. A test that fails only at command discovery is not a behavioral RED.
+- **A48 — Directory-handle anchoring covers locks, state, and configuration reads (2026-08-02).** Leaf
+  no-follow flags do not stop an intermediate parent swap. Create/open a stable fence, read/publish its
+  protected index, and read repository-controlled configs relative to verified confined handles; bound
+  file/count/aggregate bytes and Event-test swaps before create, after lock, and before publish/read.
+- **A49 — Every deferred security behavior needs a canonical owner (2026-08-02).** The Rust direct-file
+  symlink behavior was called a follow-up but had no ID, owner, or closeout state. A known security/
+  compatibility choice cannot disappear inside a broader shipped row: assign a stable ID, disposition,
+  threat boundary, owner, and reopen trigger.
+- **A50 — The implementation PR owns its live tracker transition (2026-08-02).** A `READY` row left
+  unchanged after its draft PR exists permits duplicate dispatch and false CEO status. Open the draft on
+  an independently failing RED, immediately commit `IN_FLIGHT` with the real PR number and ordered PR
+  history, and keep the separate post-merge closure PR for `SHIPPED`.
 
 ## Current Handoff
 
@@ -305,12 +329,12 @@ As of 2026-08-02, the current tagged release state is `v1.102.1`, and the latest
 
 **2026-08-02 backlog-closeout handoff.** PR #910 merged as `8024125` after exact-run CI (39 jobs,
 0 failed/unfinished), independent prose/metadata review, and a 7/7 merged-artifact board test. The
-implementation campaign finished its plan-approval loop after fourteen corrective rounds: live-code
-review found and the plan closed tracker, generated-writer, parent-swap/no-clobber, public-Rust-API,
-Python-backend-twin, status-lifecycle, and closure-PR gaps. Architecture/security/TDD all returned
-`SHIP` on final exact hashes; no build has started, so resume at Task 2.
+implementation campaign completed its round-18 plan loop: exact-hash re-reviews caught task-order,
+workspace-schema, claims-fence parent-swap, project-config confinement, tracker-lifecycle, and deferred
+Rust-symlink ownership plus tests-after gaps. Architecture/security/TDD all returned `SHIP` on final
+status-stamped hashes `F627B23F...E4C994` / `E30DCCCD...8216B`; no build has started, so resume Task 2.
 The closed-world CEO snapshot, every active/blocked/gated/research item, current evidence, and the new
-A34-A45 lessons are in `docs/audits/2026-08-02-ceo-backlog-update.md`; durable resume state is in
+A34-A50 lessons are in `docs/audits/2026-08-02-ceo-backlog-update.md`; durable resume state is in
 `MEMORY.md`.
 
 **2026-07-14 Current-Handoff addendum -- GPU Phase-0 hardening wave (v1.75.1-v1.75.4, audit #171).** Four

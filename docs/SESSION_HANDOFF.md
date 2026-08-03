@@ -16,9 +16,10 @@ release_docs_current_tag: v1.102.1
 - PR #910 is merged. Its exact PR run `30777042942` completed 39 jobs with zero failure/unfinished
   jobs; the focused board test passed 7/7 on the merged artifact.
 - Open PRs at the snapshot: 0. Open GitHub issues: #48 only.
-- The closeout build has not started. After fourteen corrective rounds, architecture, adversarial
-  security, and TDD seats all returned `SHIP` on exact final hashes design `72A0C4A8...B1D7E1` and
-  implementation `1B4F801C...AC6071`.
+- The closeout build has not started. Exact-hash rounds 16–18 caught task-order, workspace-schema,
+  claims-fence first-use/locking, project-config confinement, tracker-lifecycle, deferred Rust-symlink,
+  and tests-after defects. Architecture, security, and TDD all returned `SHIP` on final status-stamped
+  hashes design `F627B23F...E4C994` and implementation `E30DCCCD...8216B`.
 - Resume at Task 2, then execute Tasks 2–15 in
   `docs/plans/2026-08-02-backlog-closeout-implementation-plan.md`.
 - The full plain-English CEO status, all active/environment/CEO/demand backlog, research ledger, and

@@ -428,6 +428,12 @@ and implementation plan for every council round. If the live-code deep dive chan
 population, API visibility, fallback model, file scope, or any other load-bearing premise, the old SHIP
 verdict no longer applies: amend, re-hash, and re-review before dispatching a build.
 
+Name the canonical hash artifact and method. On Windows, two clean-filter-equivalent worktrees can have
+different raw bytes because of mixed line endings; do not compare an on-disk worktree hash from one seat
+to a Git-blob or normalized-text hash from another. Also validate the cross-task dependency graph: every
+service, public registration, and producer must exist before the first consumer or behavioral RED. A
+missing-command/import failure cannot stand in for the behavior the test claims to exercise.
+
 **Search twins and respect public boundaries.** After retiring a defect shape, grep sibling adapters and
 helpers for the same pattern; a zero-retry fix in `RustCoreBackend` did not protect two copies in
 `CPUBackend`. Separately, zero in-repo callers cannot authorize deleting an exported Rust `rlib` method.
@@ -439,6 +445,11 @@ leaf before an approved writer as a violation because it erases symlink identity
 publication alone is also insufficient when missing directories are created path-wise: anchor directory
 creation, temporary creation, and publication to opened identity-verified parents, then Event-test leaf
 and parent/junction swaps on Unix and Windows.
+
+The same anchoring rule covers stable lock/fence creation, reads and publication of the protected index,
+and repository-controlled configuration reads. Bound config file/count/aggregate bytes, reject mappings
+outside the workspace before reading targets, and Event-test intermediate-parent swaps. Every deferred
+security/compatibility behavior gets a stable tracker ID, owner, threat boundary, and reopen trigger.
 
 ---
 
@@ -666,6 +677,12 @@ uv export --format requirements.txt --all-extras --no-emit-project --locked
   ordinary/generated mutation controls; sanctions are exact callsite fingerprints.
 - [ ] Caller-selected writer touched → raw leaf identity preserved; directory creation and publication
   parent-handle anchored; Event-gated leaf and parent/junction swaps green on affected platforms.
+- [ ] Plan gate → one canonical hash method used by every seat; producer/service/registration exists
+  before each consumer and behavioral RED.
+- [ ] Lock/config reader touched → fence plus protected RMW/read share one verified directory handle;
+  config file/count/aggregate caps and out-of-workspace/swap tests are green.
+- [ ] Deferred security behavior → stable canonical ID, owner, threat boundary, and reopen trigger.
+- [ ] Draft implementation PR exists → owning tracker row is `IN_FLIGHT` with its real PR number.
 - [ ] Class fix → sibling/twin shapes searched; public API retained unless a deliberate breaking plan
   authorizes removal.
 - [ ] A "DRY, extract the shared helper" refactor → checked that neither call site is a generated string later written to disk / `exec`'d / run standalone (Part 6).

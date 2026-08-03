@@ -8,10 +8,10 @@ The released product works, the release pipeline is healthy, and the queue is no
 - PR #910 repaired the live task-board structure, passed its exact 39-job CI run, merged as
   `8024125612d5fb42481acde34d94ad39bbaa3c3e`, and passed the focused merged-artifact tests (7/7).
 - GitHub had zero open PRs and one open issue (#48) at this snapshot.
-- The closeout implementation has not started. The thinktank correctly stopped it repeatedly after
-  finding security, test-design, lifecycle, and tracker-truth holes; after fourteen corrective rounds,
-  architecture, security, and TDD seats unanimously approved the final exact plan hashes. Task 2 is
-  now ready to dispatch.
+- The closeout implementation has not started. Required exact-hash re-reviews correctly rejected prior
+  plan revisions after finding task-order, schema, parent-swap, config-confinement, tracker-lifecycle,
+  deferred-security ownership, and tests-after gaps. After 18 rounds, architecture, security, and TDD
+  all returned `SHIP` on the same final status-stamped hashes. Task 2 may now resume.
 - No financial spend was incurred or authorized.
 - Docs/skill governance passed 93/93 and all three changed skills passed `quick_validate.py` under
   UTF-8 mode. The broader agent-readiness run passed 11/13; its two failures were local-environment
@@ -36,8 +36,10 @@ The released product works, the release pipeline is healthy, and the queue is no
 
 ## All live backlog
 
-This is the closed-world work list for this campaign snapshot. The much longer `docs/BACKLOG.md` is an
-append-only historical ledger; old shipped narrative is not repeated here as live work.
+This is the interim closed-world work list for this campaign snapshot, reconciled from the canonical
+prioritized/historical `docs/BACKLOG.md`, the current board/handoff, and GitHub. Task 2 will make the
+`docs/TASK_BOARD.md` canonical status index the machine-parsed live-state view. Old shipped narrative
+is not repeated here as live work.
 
 ### Active and buildable under the approved plan
 
@@ -74,17 +76,24 @@ append-only historical ledger; old shipped narrative is not repeated here as liv
     says SHIP; lint/format/typecheck/full CI; one-release-at-a-time drain; merged-source and published-
     wheel dogfood with raw receipts.
 
+Ownership is the numbered Task for every row above. A row starts when the preceding dependency has
+merged and the exact main gate is complete; it reopens after shipping only when its named contract test
+or receipt fails. Task 15 owns the final cross-program audit and disposition pass.
+
 ### Environment-blocked
 
-- **#89:** reproduce WSL `/mnt/c` absolute-path behavior on an available WSL/Linux environment. If the
+- **#89** (owner: Task 2; trigger: an available WSL/Linux environment): reproduce WSL `/mnt/c` absolute-path behavior on an available WSL/Linux environment. If the
   environment is unavailable it remains blocked; unavailability is not retirement evidence.
-- **ENV-VENV-DRIFT:** the campaign worktree's `uv run --no-sync tg doctor` resolves a stale 1.102.0
+- **ENV-VENV-DRIFT** (owner: campaign steward; trigger: a trusted main venv): the campaign worktree's `uv run --no-sync tg doctor` resolves a stale 1.102.0
   executable; `uv run tg --version` attempted an editable Rust rebuild and timed out after 240 seconds.
   Reconcile the real main venv before using local CLI version probes as campaign evidence. The same
   no-sync environment lacks PyYAML, so `scripts/validate_release_assets.py` could not start locally;
   PR/main CI remains the release-asset oracle until the venv is repaired.
 
-### CEO-gated / potentially financial
+### Nonfinancial decision-gated
+
+Under the current instruction these do not cause a user question. Task 14 owns the evidence-backed
+decision; each item reopens if its named evidence gate changes.
 
 - **#48:** scope the remaining public-shim startup-overhead problem. The “beat rg by widening the same
   native walk” route is already a measured negative.
@@ -94,25 +103,33 @@ append-only historical ledger; old shipped narrative is not repeated here as liv
   coordination and any CI/review-bundle overlap gate.
 - **#131:** decide whether to publish the already-built GPU-flavor native assets. This publishes assets;
   it does not prove or promote a speed crossover.
-- **#169:** decide whether to fund/attach the physical GPU proof environment. No hardware/cloud spend
-  is authorized by this snapshot.
+
+### Financial approval required
+
+- **#169** (decision maker: CEO; trigger: priced hardware/cloud proposal): decide whether to fund/attach
+  the physical GPU proof environment. No hardware/cloud spend is authorized by this snapshot.
 
 ### Demand-gated / research before build
 
-- **#255:** many-pattern dedup/parity experiment and choice among multi-day cross-language moat work;
+- **#255** (owner: Task 14; trigger: bounded no-spend parity design): many-pattern dedup/parity experiment and choice among multi-day cross-language moat work;
   no GPU/cloud spend without approval.
-- **F10:** MaxSim caller/config/public-contract census, then either create a supported install path or
+- **F10** (owner: Task 14; trigger: current caller/config census): MaxSim caller/config/public-contract census, then either create a supported install path or
   remove the unreachable surface.
-- **DD-004:** locate a stable typed error boundary before replacing raw CPU-backend `RuntimeError`.
-- **DD-006:** measure concurrent daemon load/DoS behavior before adding a worker semaphore.
-- **AST-DSL-PARITY:** full DSL parity remains demand-gated; C++ macro/preprocessor shapes need an honest
+- **DD-004** (owner: Task 14; trigger: stable typed-boundary proof): locate a stable typed error boundary before replacing raw CPU-backend `RuntimeError`.
+- **DD-006** (owner: Task 14; trigger: bounded concurrency measurement): measure concurrent daemon load/DoS behavior before adding a worker semaphore.
+- **AST-DSL-PARITY** (owner: Task 14; trigger: demonstrated DSL demand): full DSL parity remains demand-gated; C++ macro/preprocessor shapes need an honest
   oracle before changing the documented ceiling.
-- **MCP-LEAN-DEFAULT:** keep default `full` until client demand and compatibility evidence justify a
+- **MCP-LEAN-DEFAULT** (owner: Task 14; trigger: client-demand and compatibility proof): keep default `full` until client demand and compatibility evidence justify a
   breaking default flip; surface disclosure itself is active Task 4.
-- **CONTINUOUS-REFRESH:** measure a real warm-session/search-index design before building a daemonized
+- **CONTINUOUS-REFRESH** (owner: Task 14; trigger: measured warm-session need): measure a real warm-session/search-index design before building a daemonized
   refresh path.
-- **Product research tail:** context/session latency, token economy, call-site evidence, target-selection
-  accuracy, classify provider/cache UX, managed cross-OS ast-grep, and LSP proof-mode.
+- **RUST-REPLACE-SYMLINK** (owner: Task 14; trigger: concrete untrusted-destination threat model or
+  downstream compatibility decision): decide the public Rust direct-file leaf-symlink contract under a
+  separately reviewed no-follow/API plan; do not hide it inside `CPU-BACKEND`.
+- **Research themes owned by existing IDs:** context/session latency (`CONTINUOUS-REFRESH`), token
+  economy (`#72`), call-site evidence and target-selection accuracy (`REF-CALL-REGISTRY`/`F7`),
+  classify provider/cache UX (`F5`), and managed cross-OS ast-grep plus LSP proof-mode
+  (`AST-DSL-PARITY`). Their start/reopen triggers are the corresponding canonical rows above.
 
 ## Corrections that are not live backlog
 
@@ -147,6 +164,7 @@ append-only historical ledger; old shipped narrative is not repeated here as liv
 8. Native/Python error-boundary census for DD-004.
 9. Live grammar fixtures and project-config semantics for each language wave.
 10. Continuous-refresh architecture and warm-session latency measurement.
+11. Rust direct-leaf-symlink downstream compatibility and untrusted-destination threat-model evidence.
 
 ## Lessons retained from this campaign
 
@@ -169,6 +187,16 @@ append-only historical ledger; old shipped narrative is not repeated here as liv
     or failing jobs; a growing PR check rollup is not completion evidence.
 12. Remote `main`, the main CI head, and a semantic-release skip-CI commit can be different SHAs; record
     each claim against the artifact it actually proves.
+13. Hash reviews need one named canonical artifact and method; clean-filter-equivalent Windows
+    worktrees can have different raw mixed-line-ending hashes.
+14. Validate the cross-task dependency graph. A service or CLI cannot be tested before it exists, and
+    a command-discovery failure is not a behavioral RED.
+15. Parent anchoring applies to lock creation, protected-index RMW, and bounded project-config reads,
+    not just final artifact publication.
+16. Every deferred security/compatibility behavior needs its own stable ID, owner, threat boundary, and
+    reopen trigger; otherwise closeout silently loses it.
+17. Once a numbered draft PR exists, its canonical tracker row must move to `IN_FLIGHT` in that PR;
+    a separate post-merge change certifies `SHIPPED`.
 
 ## Evidence snapshot
 
@@ -178,12 +206,12 @@ append-only historical ledger; old shipped narrative is not repeated here as liv
 - PR #910 merged-artifact test: `tests/unit/test_task_board_freshness.py`, 7 passed.
 - Latest public release: `v1.102.1`; clean `uvx` reported `tensor-grep 1.102.1`.
 - Open PRs: 0. Open GitHub issues: #48 only.
-- New main CI from the docs merge: run `30778356638` was still `in_progress` at the last check (30 jobs
-  visible, 1 unfinished); do not treat that line as a completion claim or a stable final population.
-- Final approved plan hashes: design
-  `72A0C4A8EB82EEC6DC0121C44D1EF142CCB974C23CC7ED990D7BC15484B1D7E1`; implementation
-  `1B4F801C7CB2D1A1952F8E5279C4501C84A465D7892C08C352249ADB21AC6071`; architecture/security/TDD
-  verdicts all `SHIP`.
+- New main CI from the docs merge: run `30778356638`, exact head `8024125612d5fb42481acde34d94ad39bbaa3c3e`,
+  completed successfully with 39/39 jobs.
+- Final approved campaign-plan hashes: design
+  `F627B23F5881C63AE525FC7226A4FF51C1EA249DB43DB1BD8B57EDDEA4E4C994`; implementation
+  `E30DCCCDC62459D28AA272CB5E251CDB92FBFC6D0BA23A312BA524AF9ED8216B`; architecture/security/TDD
+  verdicts all `SHIP` on this exact status-stamped pair.
 - Local docs/skill gate: 93 tests passed; all three changed skills validated. Agent readiness: 11
   passed, 2 environment failures (`repo-cli-build-warmup` timeout; `repo-doctor` 1.102.0/1.102.1
   mismatch). `validate_release_assets.py` was blocked before execution by missing `yaml` in the

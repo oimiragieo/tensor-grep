@@ -1,8 +1,12 @@
 # tensor-grep — Project Backlog & PR Tracker
 
-> **Canonical prioritized work list.** Kept in sync with the CLI task store (`TaskUpdate`) and
-> GitHub (`gh pr list` is the source of truth for PRs). **CEO status** = summarize SHIPPING + P0/P1.
-> Update whenever a PR opens/merges or the queue changes. Task-store IDs (`#NNN`) cross-referenced.
+> **Canonical prioritized/historical work ledger.** Kept in sync with the CLI task store (`TaskUpdate`);
+> GitHub (`gh pr list`) is the source of truth for PRs. The machine-parsed canonical status index in
+> `docs/TASK_BOARD.md` becomes the live-state view when Task 2 lands it; until then use the dated
+> closed-world audit linked below. **CEO status** enumerates every live disposition—active, blocked,
+> nonfinancial decision-gated, financial/spend-gated, demand/research-gated, and mixed/terminal
+> corrections—not merely SHIPPING or P0/P1. Update whenever a PR opens/merges or the queue changes.
+> Task-store IDs (`#NNN`) are cross-referenced.
 > **Current closed-world CEO snapshot: 2026-08-02, release `v1.102.1`, merged main `8024125`, zero
 > open PRs, one open GitHub issue (#48).** The complete active/environment/CEO/demand/research list is
 > `docs/audits/2026-08-02-ceo-backlog-update.md`. Tasks 2–15 of the closeout plan are the current
@@ -11,6 +15,15 @@
 > 1.102.0 against source/release 1.102.1, editable warmup timed out compiling after 240 seconds, and the
 > no-sync venv lacks PyYAML for `validate_release_assets.py`. Reconcile the real main venv before using
 > local CLI-version/release-validator output as proof; 93 docs/skill governance tests still pass.
+> Round-18 thinktank findings are retained as plan-owned work, not lost review prose: prerequisite
+> prepare-service extraction before edit verification; behavior-specific Python/native/evidence REDs;
+> a fully typed workspace-prepare schema; handle-relative first-use claims-fence creation plus
+> `flock`/`LockFileEx` held across RMW; bounded/confined project-config readers; real-PR tracker
+> transitions; and new canonical demand row `RUST-REPLACE-SYMLINK` for the public Rust direct-file
+> leaf-symlink compatibility/security decision. See the dated CEO audit and Tasks 2–15 for owners,
+> triggers, and closure tests. None has been implemented merely by amending the plan.
+> The final status-stamped plan pair is approved: design `F627B23F...E4C994`, implementation
+> `E30DCCCD...8216B`; architecture/security/TDD verdicts are all `SHIP`. Resume Task 2.
 >
 > **Prior refresh 2026-07-29 (enterprise deep audit, live tip **v1.101.18**).** Spec:
 > `docs/plans/2026-07-29-enterprise-deep-audit-design.md` (also mirrored under gitignored

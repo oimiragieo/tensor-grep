@@ -4,11 +4,11 @@ Last updated: 2026-08-02
 
 ## Resume here
 
-1. Plan approval is complete. Final approved hashes: design
-   `72A0C4A8EB82EEC6DC0121C44D1EF142CCB974C23CC7ED990D7BC15484B1D7E1`; implementation
-   `1B4F801C7CB2D1A1952F8E5279C4501C84A465D7892C08C352249ADB21AC6071`; architecture, security,
-   and TDD seats all returned `SHIP`.
-2. Execute Tasks 2–15 with worktree isolation, TDD, real-venv verification, independent review,
+1. Final approved canonical campaign-plan hashes are design
+   `F627B23F5881C63AE525FC7226A4FF51C1EA249DB43DB1BD8B57EDDEA4E4C994`; implementation
+   `E30DCCCDC62459D28AA272CB5E251CDB92FBFC6D0BA23A312BA524AF9ED8216B`; architecture, security,
+   and TDD all returned `SHIP` on this exact status-stamped pair.
+2. Resume Task 2, then execute Tasks 2–15 with worktree isolation, TDD, real-venv verification, independent review,
    PR drain discipline, merged-artifact checks, and published-wheel dogfood.
 
 ## External state at the snapshot
@@ -19,8 +19,8 @@ Last updated: 2026-08-02
   test 7/7 passed.
 - Open PRs: 0.
 - Open GitHub issues: #48 only.
-- Main CI run `30778356638` for merge `8024125` was still in progress at the last check (30 jobs
-  visible, 1 unfinished); re-query the exact run before any next merge.
+- Main CI run `30778356638` for merge `8024125` completed successfully with 39/39 jobs; re-query the
+  newest exact main run before any next merge.
 - Financial spend: none incurred or authorized.
 - Local validation: docs/skill governance 93 passed; all three changed skills validate. Agent readiness
   passed 11/13, with environment-only failures: editable warmup timed out at 240s and the no-sync
@@ -28,14 +28,16 @@ Last updated: 2026-08-02
 
 ## Queue
 
-- P0: plan convergence; tracker truth; #859 secure writer census/fixes; MCP surface disclosure; Rust
+- P0: tracker truth; #859 secure writer census/fixes; MCP surface disclosure; Rust
   and Python CPU-backend twin hardening.
 - P1: edit verification; `verify-edit`; strict `edit-ready`; registry-driven refs/callers; five in-file
   language waves; six cross-file resolution waves; federated prepare service/CLI/MCP.
 - Blocked: #89 requires an available WSL/Linux environment; `ENV-VENV-DRIFT` requires main-venv
   reconciliation before local CLI-version/release-validator receipts are trusted.
-- CEO/financial: #48, #72, #77/F9, #131, #169.
+- Nonfinancial decision-gated (continue without asking under the current instruction): #48, #72,
+  #77/F9, #131. Financial approval required before spend: #169 and any paid #255 experiment.
 - Demand/research: #255, F10, DD-004, DD-006, AST DSL/C++ macro ceiling, MCP lean-default,
+  RUST-REPLACE-SYMLINK,
   continuous refresh, context/session latency, token economy, call-site evidence, target-selection
   accuracy, classify provider/cache UX, cross-OS ast-grep, LSP proof-mode.
 
@@ -54,5 +56,10 @@ Full closed-world status and receipts:
 - Producer/consumer dogfood records both exits and must not dirty the subject under verification.
 - Exact CI proof includes run ID, head SHA, stable job population, and zero unfinished/failing jobs.
 - Attribute PR head, squash merge, main CI head, and release commit separately.
+- Hash one named canonical plan artifact/method; clean-filter-equivalent worktrees can have different raw bytes.
+- Validate cross-task producer/consumer order; command discovery is not a behavioral RED.
+- Anchor lock creation, protected-index RMW, and bounded config reads to verified directory handles.
+- Give every deferred security/compatibility behavior a stable ID, owner, threat boundary, and trigger.
+- Transition `READY` to `IN_FLIGHT` inside the real numbered draft PR; close `SHIPPED` separately.
 
-Canonical detail: AGENTS.md A34–A45.
+Canonical detail: AGENTS.md A34–A50.

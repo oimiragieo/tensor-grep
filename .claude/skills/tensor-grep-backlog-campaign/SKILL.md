@@ -32,9 +32,10 @@ You have stale training data. **Never act on memory alone** for external facts, 
 **Chat short and business-focused; depth in files.** Plan-only mode ("investigate," "what next," "write a spec") stops after Phase 0 plan docs — **no code** unless CEO explicitly asks to implement.
 
 For “list all backlog,” produce a **closed-world** snapshot, not a highlight reel. Separate:
-active/buildable; environment-blocked; CEO/financial-gated; demand/research-gated; and terminal
-corrections that stale trackers still show. Every live row gets one stable ID/alias, owner/decision maker,
-and reopen trigger. Preserve mixed outcomes instead of flattening them into “shipped.”
+active/buildable; environment-blocked; nonfinancial decision-gated; financial/spend-gated;
+demand/research-gated; and terminal corrections that stale trackers still show. Every live row gets one
+stable ID/alias, owner/decision maker, and reopen/start trigger. Preserve mixed outcomes instead of
+flattening them into “shipped.”
 
 ---
 
@@ -85,7 +86,10 @@ needed · spend/financial gates · lessons since the prior update · evidence ·
 Write the detailed snapshot to a dated audit file and update `MEMORY.md`, `docs/SESSION_HANDOFF.md`, and
 the canonical tracker in the same change. A CEO chat summary is not durable state.
 
-**CEO approval before:** merge during in-flight release, public PyPI claim comms, irreversible contract changes without pinned test updates.
+**CEO approval before:** financially consequential spend or procurement unless the user has already
+granted that authority. For nonfinancial publication, claim, contract, and merge decisions, follow the
+current user's explicit authority and the repository gates; do not manufacture a question when the user
+has told you to ask only about money.
 
 ---
 
@@ -164,8 +168,13 @@ Its silence on a topic is not evidence a skill doesn't apply; the table above st
 
 ## Backlog + session continuity
 
-- **`docs/BACKLOG.md`** — canonical task ledger: id, P0–P3, status, agent, description, linked PR.
-  **Create it on session 0 if absent** (seed from memory anchor + `gh pr list` + session task store, then discard session store as SoT).
+- **`docs/BACKLOG.md`** — canonical prioritized/historical task ledger: id, P0–P3, description, receipts,
+  and shipped history. **Create it on session 0 if absent** (seed from memory anchor + `gh pr list` +
+  session task store, then discard session store as SoT).
+- **`docs/TASK_BOARD.md` canonical status index** — the machine-parseable live state for the closed-world
+  canonical ID set. Historical prose in either document is not a live-status oracle. Until this index
+  exists, a dated reconciliation audit must derive live state from BACKLOG + SESSION_HANDOFF + GitHub and
+  say that it is an interim snapshot.
 - **GitHub (`gh pr list`)** — PR source of truth for open/merged work.
 - **Memory anchor** — on every backlog change, update via `MEMORY.md` / `~/.claude/projects/<slug>/memory/feedback_tensor_grep_backlog.md` with: P0 queue, in-flight PRs, last shipped tag, push-race waiter state, "resume here".
 - **Restart order:** memory anchor → `docs/BACKLOG.md` → `docs/SESSION_HANDOFF.md` → `AGENTS.md` → GitHub. Never use the ephemeral session task store as source of truth.
@@ -174,6 +183,11 @@ Its silence on a topic is not evidence a skill doesn't apply; the table above st
 - **Artifact attribution** — store PR head, squash merge, main-CI head/run, release commit/tag, and PyPI
   proof separately. They may be different SHAs. Exact CI proof includes run ID, head SHA, stable job
   population, and zero unfinished/failing jobs.
+- **Plan artifact identity** — choose one canonical worktree/blob and one SHA-256 method for every
+  thinktank seat. Mixed line endings can make clean-filter-equivalent Windows worktrees hash differently.
+- **Dependency/lifecycle gate** — prove each service/registration/producer precedes its consumer/test;
+  when a numbered draft PR exists, its owning row must be `IN_FLIGHT` in that PR. Every deferred
+  security behavior needs a canonical ID, owner, threat boundary, and reopen trigger.
 
 **Steward cron (this repo):** the backlog-steward tick is **session-scoped** — it re-arms with a NEW id and
 schedule every session, so any recorded id goes stale immediately. Do NOT trust a previously-recorded id
@@ -252,8 +266,9 @@ Adversarial seam verification (`file:line`). BLOCK build until clean.
 the anchors are real; it cannot tell you the item is already CLOSED — a plan against a fixed bug has
 citations that resolve perfectly. Reproduce the defect or find the fixing commit before dispatching.
 Receipt: the 2026-08-01/02 reconcile found **17 of ~24** open items already shipped, refuted, or
-by-design, and one agent was dispatched at finished work (#58). `docs/TASK_BOARD.md` is the live
-queue; `docs/BACKLOG.md` is a historical ledger, not a to-do list.
+by-design, and one agent was dispatched at finished work (#58). The machine-parsed canonical status
+index in `docs/TASK_BOARD.md` is the live-status view; `docs/BACKLOG.md` remains the canonical
+prioritized/historical ledger. GitHub remains the PR-state oracle.
 
 ### 6 — Implement
 
