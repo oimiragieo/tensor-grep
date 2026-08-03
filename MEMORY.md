@@ -8,8 +8,8 @@ Last updated: 2026-08-02
    `F627B23F5881C63AE525FC7226A4FF51C1EA249DB43DB1BD8B57EDDEA4E4C994`; implementation
    `E30DCCCDC62459D28AA272CB5E251CDB92FBFC6D0BA23A312BA524AF9ED8216B`; architecture, security,
    and TDD all returned `SHIP` on this exact status-stamped pair.
-2. Task 2 reconciled the tracker and reproduced #89's cross-domain WSL path defect. Amend and
-   re-certify the #89 TDD slice before final closeout; then execute Tasks 3–15 with worktree isolation,
+2. Task 2 reconciled the tracker and reproduced #89 search plus #90 scan cross-domain WSL defects.
+   Amend and re-certify one typed-path TDD program before final closeout; then execute Tasks 3–15 with worktree isolation,
    TDD, real-venv verification, independent review, PR drain discipline, merged-artifact checks, and
    published-wheel dogfood.
 
@@ -34,10 +34,11 @@ Last updated: 2026-08-02
   and Python CPU-backend twin hardening.
 - P1: edit verification; `verify-edit`; strict `edit-ready`; registry-driven refs/callers; five in-file
   language waves; six cross-file resolution waves; federated prepare service/CLI/MCP.
-- Ready: #89 is locally reproduced — WSL's Linux front door delegates a valid `/mnt/c/...` path to
-  the Windows native executable and receives `path_not_found`. Amend/review its TDD slice before build.
+- Ready: #89 search receives `path_not_found` for a valid `/mnt/c/...` root; #90 scan emits a false
+  clear after Windows ast-grep rejects that spelling, while the translated control finds six matches.
+  Amend/review their shared typed-path program before build.
 - Environment finding: `ENV-VENV-DRIFT` requires main-venv reconciliation before local CLI-version/
-  release-validator receipts are trusted; it does not block #89.
+  release-validator receipts are trusted; it does not block #89/#90.
 - Nonfinancial decision-gated (continue without asking under the current instruction): #48, #72,
   #77/F9, #131. Financial approval required before spend: #169 and any paid #255 experiment.
 - Demand/research: #255, F10, DD-004, DD-006, AST DSL/C++ macro ceiling, MCP lean-default,
@@ -46,7 +47,8 @@ Last updated: 2026-08-02
   accuracy, classify provider/cache UX, cross-OS ast-grep, LSP proof-mode.
 
 Full closed-world status and receipts:
-`docs/audits/2026-08-02-ceo-backlog-update.md`.
+`docs/TASK_BOARD.md` plus `docs/audits/2026-08-02-backlog-reconciliation.md`; the CEO update is an
+interim narrative with a correction notice.
 
 ## Retained laws from this campaign
 

@@ -8,13 +8,18 @@ unambiguous, and consistent with source-controlled contracts.
 from __future__ import annotations
 
 import dataclasses
+import json
 import re
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
+from typer.testing import CliRunner
 
+from tensor_grep.cli import main as cli_main
 from tensor_grep.cli.formatters.json_fmt import gpu_request_unhonoured
-from tensor_grep.core.result import SearchResult
+from tensor_grep.cli.main import app
+from tensor_grep.core.result import MatchLine, SearchResult
 
 ROOT = Path(__file__).resolve().parents[2]
 BOARD_PATH = ROOT / "docs" / "TASK_BOARD.md"
@@ -93,6 +98,13 @@ PROGRAM_OWNERS = {
     "F7": "Tasks 10-11",
     "F8": "Tasks 12-13",
 }
+LIFECYCLE_IDS = set(PROGRAM_OWNERS) | {"#89", "#90", "#859"}
+IMPLEMENTATION_PRS_RE = re.compile(
+    r"(?:^|; )Implementation PRs: (?P<prs>PR #[1-9]\d*(?:, PR #[1-9]\d*)*)(?:;|$)"
+)
+CLOSURE_PR_RE = re.compile(r"(?:^|; )Closure PR: (?P<pr>PR #[1-9]\d*)(?:;|$)")
+MERGED_SHA_RE = re.compile(r"(?:^|; )Merged SHA: (?P<sha>[0-9a-f]{40})(?:;|$)")
+WINDOWS_ACCOUNT_PATH_RE = re.compile(r"[A-Za-z]:[\\/]+Users[\\/]+(?!<)[^\\/\s]+", re.IGNORECASE)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -122,6 +134,7 @@ def _parse_status_index(
     text: str,
     *,
     expected_ids: set[str] | None = None,
+    lifecycle_ids: set[str] | None = None,
 ) -> StatusIndex:
     metadata_candidates = [line for line in text.splitlines() if line.startswith(VERSION_PREFIX)]
     if len(metadata_candidates) != 1:
@@ -152,7 +165,7 @@ def _parse_status_index(
             raise AssertionError(f"checkbox/status disagreement for {item_id}")
         pr = match.group("pr")
         if status in PR_STATUSES:
-            if re.fullmatch(r"PR #\d+", pr) is None:
+            if re.fullmatch(r"PR #[1-9]\d*", pr) is None:
                 raise AssertionError(f"{item_id} requires one literal PR #NNN field")
         elif pr != "none":
             raise AssertionError(f"{item_id} must use PR: none for status {status}")
@@ -161,6 +174,37 @@ def _parse_status_index(
             raise AssertionError(f"empty trigger for {item_id}")
         if trigger == "none" and status not in TERMINAL:
             raise AssertionError(f"nonterminal {item_id} requires a reopen trigger")
+        if lifecycle_ids is not None and item_id in lifecycle_ids:
+            implementation_matches = list(IMPLEMENTATION_PRS_RE.finditer(trigger))
+            closure_matches = list(CLOSURE_PR_RE.finditer(trigger))
+            merged_sha_matches = list(MERGED_SHA_RE.finditer(trigger))
+            if status in {"IN_FLIGHT", "SHIPPED"}:
+                if len(implementation_matches) != 1 or trigger.count("Implementation PRs:") != 1:
+                    raise AssertionError(f"{item_id} requires an ordered implementation-PR list")
+                implementation_match = implementation_matches[0]
+                implementation_prs = implementation_match.group("prs").split(", ")
+                if len(implementation_prs) != len(set(implementation_prs)):
+                    raise AssertionError(f"{item_id} repeats an implementation PR")
+                if implementation_prs[-1] != pr:
+                    raise AssertionError(f"{item_id} final implementation PR must equal PR field")
+            elif implementation_matches or "Implementation PRs:" in trigger:
+                raise AssertionError(f"{item_id} cannot carry implementation PRs before IN_FLIGHT")
+            if status == "SHIPPED" and (
+                len(closure_matches) != 1 or trigger.count("Closure PR:") != 1
+            ):
+                raise AssertionError(f"{item_id} requires one closure PR")
+            if status == "SHIPPED" and closure_matches[0].group("pr") in implementation_prs:
+                raise AssertionError(
+                    f"{item_id} closure PR must be separate from implementation PRs"
+                )
+            if status != "SHIPPED" and (closure_matches or "Closure PR:" in trigger):
+                raise AssertionError(f"{item_id} cannot carry a closure PR before SHIPPED")
+            if status == "SHIPPED" and (
+                len(merged_sha_matches) != 1 or trigger.count("Merged SHA:") != 1
+            ):
+                raise AssertionError(f"{item_id} requires one merged implementation SHA")
+            if status != "SHIPPED" and (merged_sha_matches or "Merged SHA:" in trigger):
+                raise AssertionError(f"{item_id} cannot carry a merged SHA before SHIPPED")
         rows[item_id] = StatusRow(item_id, status, pr, trigger, checked)
 
     if not rows:
@@ -173,7 +217,11 @@ def _parse_status_index(
 
 
 def _board_index() -> StatusIndex:
-    return _parse_status_index(BOARD_PATH.read_text(encoding="utf-8"), expected_ids=EXPECTED_IDS)
+    return _parse_status_index(
+        BOARD_PATH.read_text(encoding="utf-8"),
+        expected_ids=EXPECTED_IDS,
+        lifecycle_ids=LIFECYCLE_IDS,
+    )
 
 
 def _replace_once(text: str, old: str, new: str) -> str:
@@ -288,6 +336,83 @@ def test_nonliteral_pr_value_is_rejected() -> None:
         _parse_status_index(text)
 
 
+def test_in_flight_lifecycle_requires_ordered_implementation_prs() -> None:
+    text = _valid_document().replace(
+        "Status: READY; PR: none; Trigger: first implementation PR",
+        "Status: IN_FLIGHT; PR: PR #9; Trigger: receipt deliberately omitted",
+    )
+    with pytest.raises(AssertionError, match="ordered implementation-PR list"):
+        _parse_status_index(text, lifecycle_ids={"X"})
+
+
+def test_in_flight_lifecycle_final_pr_must_match_pr_field() -> None:
+    text = _valid_document().replace(
+        "Status: READY; PR: none; Trigger: first implementation PR",
+        "Status: IN_FLIGHT; PR: PR #9; Trigger: Implementation PRs: PR #7, PR #8",
+    )
+    with pytest.raises(AssertionError, match="must equal PR field"):
+        _parse_status_index(text, lifecycle_ids={"X"})
+
+
+def test_in_flight_lifecycle_rejects_duplicate_prs() -> None:
+    text = _valid_document().replace(
+        "Status: READY; PR: none; Trigger: first implementation PR",
+        "Status: IN_FLIGHT; PR: PR #9; Trigger: Implementation PRs: PR #9, PR #9",
+    )
+    with pytest.raises(AssertionError, match="repeats an implementation PR"):
+        _parse_status_index(text, lifecycle_ids={"X"})
+
+
+def test_in_flight_lifecycle_rejects_leading_zero_pr_alias() -> None:
+    text = _valid_document().replace(
+        "Status: READY; PR: none; Trigger: first implementation PR",
+        "Status: IN_FLIGHT; PR: PR #9; Trigger: Implementation PRs: PR #09, PR #9",
+    )
+    with pytest.raises(AssertionError, match="ordered implementation-PR list"):
+        _parse_status_index(text, lifecycle_ids={"X"})
+
+
+def test_shipped_lifecycle_requires_separate_closure_pr() -> None:
+    text = _valid_document().replace(
+        "- [ ] **X** — Status: READY; PR: none; Trigger: first implementation PR",
+        "- [x] **X** — Status: SHIPPED; PR: PR #9; Trigger: Implementation PRs: PR #7, PR #9",
+    )
+    with pytest.raises(AssertionError, match="requires one closure PR"):
+        _parse_status_index(text, lifecycle_ids={"X"})
+
+
+def test_shipped_lifecycle_preserves_ordered_implementation_and_closure_prs() -> None:
+    text = _valid_document().replace(
+        "- [ ] **X** — Status: READY; PR: none; Trigger: first implementation PR",
+        "- [x] **X** — Status: SHIPPED; PR: PR #9; "
+        "Trigger: Implementation PRs: PR #7, PR #9; Closure PR: PR #10; "
+        "Merged SHA: 0123456789abcdef0123456789abcdef01234567; treatment green",
+    )
+    index = _parse_status_index(text, lifecycle_ids={"X"})
+    assert index.rows["X"].pr == "PR #9"
+
+
+def test_shipped_lifecycle_rejects_closure_pr_reused_as_implementation_pr() -> None:
+    text = _valid_document().replace(
+        "- [ ] **X** — Status: READY; PR: none; Trigger: first implementation PR",
+        "- [x] **X** — Status: SHIPPED; PR: PR #9; "
+        "Trigger: Implementation PRs: PR #7, PR #9; Closure PR: PR #9; "
+        "Merged SHA: 0123456789abcdef0123456789abcdef01234567",
+    )
+    with pytest.raises(AssertionError, match="closure PR must be separate"):
+        _parse_status_index(text, lifecycle_ids={"X"})
+
+
+def test_shipped_lifecycle_requires_merged_implementation_sha() -> None:
+    text = _valid_document().replace(
+        "- [ ] **X** — Status: READY; PR: none; Trigger: first implementation PR",
+        "- [x] **X** — Status: SHIPPED; PR: PR #9; "
+        "Trigger: Implementation PRs: PR #7, PR #9; Closure PR: PR #10",
+    )
+    with pytest.raises(AssertionError, match="requires one merged implementation SHA"):
+        _parse_status_index(text, lifecycle_ids={"X"})
+
+
 def test_unknown_status_is_rejected() -> None:
     text = _valid_document().replace("Status: READY", "Status: WAITING")
     with pytest.raises(AssertionError, match="unknown canonical status"):
@@ -343,6 +468,144 @@ def test_exit_contract_retirement() -> None:
     assert result.result_incomplete is False
 
 
+def test_exit_contract_executes_match_no_match_and_incomplete(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from tensor_grep.cli import bootstrap
+
+    monkeypatch.setattr(cli_main, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: None)
+    (tmp_path / "sample.txt").write_text("needle\n", encoding="utf-8")
+    runner = CliRunner()
+
+    matched = runner.invoke(app, ["search", "needle", str(tmp_path), "--cpu"])
+    no_match = runner.invoke(app, ["search", "absent", str(tmp_path), "--cpu"])
+
+    class IncompleteBackend:
+        def search(self, file_path: str, pattern: str, config: object = None) -> SearchResult:
+            del pattern, config
+            return SearchResult(
+                matches=[MatchLine(line_number=1, text="needle", file=file_path)],
+                matched_file_paths=[file_path],
+                match_counts_by_file={file_path: 1},
+                total_files=1,
+                total_matches=1,
+                result_incomplete=True,
+                incomplete_reason="bounded test scan stopped before full coverage",
+            )
+
+    class IncompletePipeline:
+        def __init__(self, force_cpu: bool = False, config: object = None) -> None:
+            del force_cpu, config
+
+        def get_backend(self) -> IncompleteBackend:
+            return IncompleteBackend()
+
+    class OneFileScanner:
+        scan_truncated = False
+        scan_truncation_cause = None
+        unreadable_path_count = 0
+        unreadable_path_sample: ClassVar[list[str]] = []
+        max_scan_entries = 200_000
+
+        def __init__(self, config: object = None) -> None:
+            del config
+
+        def walk(self, path: str) -> list[str]:
+            return [str(Path(path) / "sample.txt")]
+
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", IncompletePipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", OneFileScanner)
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.is_available",
+        lambda self: False,
+    )
+    incomplete = runner.invoke(app, ["search", "needle", str(tmp_path), "--cpu", "--json"])
+
+    assert matched.exit_code == 0, matched.output
+    assert no_match.exit_code == 1, no_match.output
+    assert incomplete.exit_code == 2, incomplete.output
+    assert '"result_incomplete": true' in incomplete.stdout.lower()
+
+
+def test_unhonoured_explicit_gpu_request_executes_with_complete_exit_codes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from tensor_grep.cli import bootstrap
+
+    class CpuFallbackBackend:
+        def search(self, file_path: str, pattern: str, config: object = None) -> SearchResult:
+            del config
+            matches = (
+                [MatchLine(line_number=1, text="needle", file=file_path)]
+                if pattern == "needle"
+                else []
+            )
+            return SearchResult(
+                matches=matches,
+                matched_file_paths=[file_path] if matches else [],
+                match_counts_by_file={file_path: 1} if matches else {},
+                total_files=1 if matches else 0,
+                total_matches=len(matches),
+                routing_backend="CPUBackend",
+                routing_reason="gpu-explicit-request-cpu-fallback",
+            )
+
+    class CpuFallbackPipeline:
+        selected_backend_name = "CPUBackend"
+        selected_backend_reason = "gpu-explicit-request-cpu-fallback"
+        selected_gpu_device_ids: ClassVar[list[int]] = []
+        selected_gpu_chunk_plan_mb: ClassVar[list[tuple[int, int]]] = []
+
+        def __init__(self, force_cpu: bool = False, config: object = None) -> None:
+            del force_cpu, config
+
+        def get_backend(self) -> CpuFallbackBackend:
+            return CpuFallbackBackend()
+
+    class OneFileScanner:
+        scan_truncated = False
+        scan_truncation_cause = None
+        unreadable_path_count = 0
+        unreadable_path_sample: ClassVar[list[str]] = []
+        max_scan_entries = 200_000
+
+        def __init__(self, config: object = None) -> None:
+            del config
+
+        def walk(self, path: str) -> list[str]:
+            return [str(Path(path) / "sample.txt")]
+
+    monkeypatch.setattr(cli_main, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", CpuFallbackPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", OneFileScanner)
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.is_available",
+        lambda self: False,
+    )
+    (tmp_path / "sample.txt").write_text("needle\n", encoding="utf-8")
+    runner = CliRunner()
+
+    matched = runner.invoke(
+        app,
+        ["search", "needle", str(tmp_path), "--gpu-device-ids", "0", "--json"],
+    )
+    no_match = runner.invoke(
+        app,
+        ["search", "absent", str(tmp_path), "--gpu-device-ids", "0", "--json"],
+    )
+
+    assert matched.exit_code == 0, matched.output
+    assert no_match.exit_code == 1, no_match.output
+    for result in (matched, no_match):
+        payload = json.loads(result.stdout)
+        assert payload["gpu_evidence_status"] == "unsupported"
+        assert payload["gpu_proof"] is False
+        assert payload["native_gpu_unavailable"] is True
+        assert payload.get("result_incomplete", False) is False
+
+
 def test_legacy_agent_id_retirement() -> None:
     row = _board_index().rows["F2"]
     assert row.status == "RETIRED"
@@ -363,12 +626,20 @@ def test_shipped_receipts() -> None:
         assert re.search(rf"^- \[ \] \*\*{re.escape(item_id)}\*\*", hardware, re.MULTILINE) is None
 
 
-def test_mixed_90_retirement() -> None:
+def test_mixed_90_reproduction_is_ready() -> None:
     row = _board_index().rows["#90"]
-    assert row.status == "RETIRED"
+    assert row.status == "READY"
     assert "PR #571" in row.trigger
-    assert "non-reproducing" in row.trigger
-    assert "non-defect" in row.trigger
+    assert "matched_rules=0" in row.trigger
+    assert "total_matches=6" in row.trigger
+    assert "amended" in row.trigger
+    audit = (ROOT / "docs" / "audits" / "2026-08-02-backlog-reconciliation.md").read_text(
+        encoding="utf-8"
+    )
+    assert "RAW_SCAN_RC=0" in audit
+    assert "TRANSLATED_SCAN_RC=0" in audit
+    assert '"matched_rules":1' in audit and '"total_matches":6' in audit
+    assert "skipped unreadable paths during ast scan" in audit
     blocked = (
         BOARD_PATH
         .read_text(encoding="utf-8")
@@ -387,7 +658,23 @@ def test_89_reproduced_path_domain_defect_is_ready() -> None:
     )
     assert '"error":"path_not_found"' in audit
     assert "ls -ld /mnt/c/dev/projects/tensor-grep/src" in audit
-    assert "RUST_BINARY=/mnt/c/Users/oimir/bin/tg" in audit
+    assert "RUST_BINARY=<windows-user>/bin/tg" in audit
+    assert re.search(r"Linux DESKTOP-[^\s]+", audit) is None
+    assert re.search(r"/home/(?!<)[^/\s]+", audit) is None
+    assert re.search(r"/mnt/c/Users/(?!<)[^/\s]+", audit, re.IGNORECASE) is None
+    assert WINDOWS_ACCOUNT_PATH_RE.search(audit) is None
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        r"C:\Users\alice\bin\tg.exe",
+        r'"path":"C:\\Users\\alice\\bin\\tg.exe"',
+        "C:/Users/alice/bin/tg.exe",
+    ],
+)
+def test_windows_account_path_privacy_guard_positive_controls(candidate: str) -> None:
+    assert WINDOWS_ACCOUNT_PATH_RE.search(candidate) is not None
 
 
 def test_859_is_ready_with_audit_correction() -> None:
@@ -426,4 +713,9 @@ def test_handoff_version_and_current_prose() -> None:
     current = handoff.split("## Current Backlog Closeout", 1)[1].split("\n## ", 1)[0]
     assert "v1.45" not in current
     assert "v1.9.1" not in current
-    assert "Tasks 2\u201315" in current
+    assert "Tasks 3\u201315" in current
+    board = BOARD_PATH.read_text(encoding="utf-8")
+    live = board.split("## Live campaign snapshot", 1)[1].split("\n## ", 1)[0]
+    assert "Task 2 is complete" in live
+    assert "canonical index" in live
+    assert "interim CEO audit" in live

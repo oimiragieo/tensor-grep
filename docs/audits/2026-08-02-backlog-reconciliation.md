@@ -1,19 +1,20 @@
 # Backlog reconciliation receipts — 2026-08-02
 
-This is the Task 2 evidence packet for canonical status index `2026-08-02.2`. It records the live
+This is the Task 2 evidence packet for canonical status index `2026-08-02.3`. It records the live
 external snapshot separately from the deterministic repository tests: pytest validates the checked-in
 facts and grammar, but it never calls GitHub, PyPI, or WSL.
 
 ## One-shot external snapshot
 
-Captured at `2026-08-02T23:33:11.2487493-04:00`. Commands were read-only.
+Captured at `2026-08-02T23:44:28.0949170-04:00`. Commands were read-only and match the approved
+Task-2 command population exactly.
 
 ```powershell
 git fetch origin main
 git rev-parse origin/main
-gh pr list --state open --json number,title,headRefName,baseRefName
-gh issue list --state open --limit 100 --json number,title,labels
-gh run list --workflow ci.yml --branch main --limit 3 --json databaseId,status,conclusion,headSha,updatedAt
+gh pr list --state open --limit 100 --json number,title,isDraft,headRefOid,statusCheckRollup
+gh issue list --state open --limit 100 --json number,title,labels,state
+gh run list --branch main --workflow ci.yml --limit 3 --json databaseId,status,conclusion,headSha,updatedAt
 gh release list --limit 3
 ```
 
@@ -59,48 +60,180 @@ in the same one-shot pass:
 
 PR state and merged commit, not release chronology, are the proof used for `SHIPPED`.
 
-## #89 WSL path-domain reproduction
+## WSL environment summary (privacy-redacted)
 
-This was a bounded diagnostic only. WSL was not restarted or shut down.
+These were bounded diagnostics only. WSL was not restarted or shut down. Hostname, account names,
+home paths, and account-scoped Windows paths are replaced with explicit angle-bracket placeholders;
+the command results and non-account repository paths are otherwise preserved.
 
 ```text
-Linux DESKTOP-IFLG1HL 6.6.87.2-microsoft-standard-WSL2 #1 SMP PREEMPT_DYNAMIC Thu Jun  5 18:30:46 UTC 2025 x86_64 GNU/Linux
-TG_PATH=/home/james/.local/bin/tg
+Linux <redacted-host> 6.6.87.2-microsoft-standard-WSL2 x86_64 GNU/Linux
+TG_PATH=<wsl-user-home>/.local/bin/tg
 tensor-grep 1.102.0
-RUST_BINARY=/mnt/c/Users/oimir/bin/tg
+RUST_BINARY=<windows-user>/bin/tg
+doctor.platform=linux
+doctor.native_tg_binary=<windows-user>/bin/tg
+doctor.native_tg_binary_kind=standalone-executable
+doctor.search_acceleration_backend=standalone-native-tg
+doctor.rust_binary_version="tg 1.102.0"
+doctor.rust_binary_version_matches=true
+doctor.ast_grep.available=true
+doctor.ast_grep.binary=<windows-user>/AppData/Roaming/npm/ast-grep
 ```
 
-Command and exit receipt:
+The summary came from `timeout 30 tg --version` and `timeout 30 tg doctor --json`. Both exited 0;
+the selected doctor fields above are a privacy-redacted projection of the raw JSON, not inferred
+from filenames.
+
+## #89 search path-domain reproduction
+
+Treatment command and exit receipt:
 
 ```bash
-tg search tensor_grep /mnt/c/dev/projects/tensor-grep/src --json >/tmp/tg-89.json
-SEARCH_RC=2
+timeout 30 tg doctor --json >/tmp/tg-doctor.json
+DOCTOR_RC=$?
+printf 'DOCTOR_RC=%s\n' "$DOCTOR_RC"
+RUST_BINARY="$(python3 -c \
+  'import json; print(json.load(open("/tmp/tg-doctor.json"))["native_tg_binary"])')"
+timeout 60 tg search -F --json -- _run_native_tg_search \
+  /mnt/c/dev/projects/tensor-grep/src/tensor_grep/cli/bootstrap.py >/tmp/tg-89.json
+WSL_FRONTDOOR_RC=$?
+printf 'WSL_FRONTDOOR_RC=%s\n' "$WSL_FRONTDOOR_RC"
 cat /tmp/tg-89.json
+timeout 60 "$RUST_BINARY" search -F --force-cpu --json -- _run_native_tg_search \
+  /mnt/c/dev/projects/tensor-grep/src/tensor_grep/cli/bootstrap.py >/tmp/tg-89-native-raw.json
+NATIVE_RAW_RC=$?
+printf 'NATIVE_RAW_RC=%s\n' "$NATIVE_RAW_RC"
+cat /tmp/tg-89-native-raw.json
 ```
+
+Recorded exits were `DOCTOR_RC=0`, `WSL_FRONTDOOR_RC=2`, and `NATIVE_RAW_RC=2`; both raw-path search
+arms emitted the JSON below. The direct-native arm makes the translated control a one-variable pair.
 
 Raw JSON:
 
 ```json
-{"detail":"search path does not exist: /mnt/c/dev/projects/tensor-grep/src","error":"path_not_found","ok":false,"version":1}
+{"detail":"search path does not exist: /mnt/c/dev/projects/tensor-grep/src/tensor_grep/cli/bootstrap.py","error":"path_not_found","ok":false,"version":1}
 ```
 
 Control arm proving the Linux path exists:
 
 ```bash
-ls -ld /mnt/c/dev/projects/tensor-grep/src
+ls -ld /mnt/c/dev/projects/tensor-grep/src/tensor_grep/cli/bootstrap.py
 ```
 
 ```text
-drwxrwxrwx 1 james james 4096 May 24 23:14 /mnt/c/dev/projects/tensor-grep/src
+-rwxrwxrwx 1 <redacted-user> <redacted-user> 75128 Jul 31 19:04 /mnt/c/dev/projects/tensor-grep/src/tensor_grep/cli/bootstrap.py
 ```
 
-`tg doctor --json` reported the WSL Python front door as Linux while selecting the standalone native
-binary at `/mnt/c/Users/oimir/bin/tg`, a Windows executable. Therefore the actionable inference is a
+Translated-path control:
+
+```bash
+WIN_PATH="$(wslpath -w -- /mnt/c/dev/projects/tensor-grep/src/tensor_grep/cli/bootstrap.py)"
+timeout 60 "$RUST_BINARY" search -F --force-cpu --json -- _run_native_tg_search "$WIN_PATH" \
+  >/tmp/tg-89-native-win.json
+TRANSLATED_RC=$?
+printf 'TRANSLATED_RC=%s\n' "$TRANSLATED_RC"
+cat /tmp/tg-89-native-win.json
+```
+
+Recorded exit: `TRANSLATED_RC=0`.
+
+```json
+{"version":1,"routing_backend":"NativeCpuBackend","routing_reason":"force_cpu","path":"C:\\dev\\projects\\tensor-grep\\src\\tensor_grep\\cli\\bootstrap.py","total_files":1,"total_matches":2}
+```
+
+`tg doctor --json` reported the WSL front door as Linux while selecting a standalone Windows native
+binary. Therefore the actionable inference is a
 path-domain bridge defect: a valid Linux `/mnt/c/...` search root is delegated unchanged to the Windows
 native process, which rejects it as missing. The WSL front door and native binary both reported
 `1.102.0`; source/PyPI was one patch newer (`1.102.1`), but the paired components agreed with each other
 and the failure shape exactly matches #89. The implementation plan must be amended and re-reviewed with
 a red control that exercises this cross-domain route before final closeout.
+
+## #90 scan false-clear reproduction
+
+The Task-2 implementation initially repeated an old “non-reproducing” conclusion without a durable
+receipt. The independent audit rejected it. A fresh bounded treatment/control pair then disproved the
+premise and moved #90 to `READY`.
+
+The inline rule was exactly:
+
+```yaml
+id: import-rule
+language: python
+rule:
+  pattern: import $A
+```
+
+Treatment:
+
+```bash
+RULE="$(printf '%s\n' 'id: import-rule' 'language: python' 'rule:' '  pattern: import $A')"
+timeout 60 "$RUST_BINARY" scan --inline-rules "$RULE" \
+  --path /mnt/c/dev/projects/tensor-grep/src/tensor_grep/cli/bootstrap.py --json \
+  >/tmp/tg90-inline-raw.json 2>/tmp/tg90-inline-raw.err
+RAW_SCAN_RC=$?
+printf 'RAW_SCAN_RC=%s\n' "$RAW_SCAN_RC"
+```
+
+Recorded exit: `RAW_SCAN_RC=0`.
+
+Raw treatment JSON (whitespace collapsed only):
+
+```json
+{"version":1,"schema_version":1,"routing_backend":"AstBackend","routing_reason":"ast-inline-rules-scan","sidecar_used":false,"config_path":"inline-rules","path":"C:\\mnt\\c\\dev\\projects\\tensor-grep\\src\\tensor_grep\\cli\\bootstrap.py","ruleset":null,"language":"python","rule_count":1,"matched_rules":0,"total_matches":0,"backends":["AstGrepWrapperBackend"],"findings":[{"rule_id":"import-rule","language":"python","severity":null,"message":null,"fingerprint":"fc173fa6e962ee930e6fa6f6c3678a8b61ac5b7cbf8331a95addd88e91f3d53b","matches":0,"files":[],"evidence":[],"status":"clear"}]}
+```
+
+Stderr contradicted that confidence:
+
+```text
+tg: warning: skipped unreadable paths during ast scan: ERROR: C:\mnt\c\dev\projects\tensor-grep\src\tensor_grep\cli\bootstrap.py: The system cannot find the path specified. (os error 3)
+```
+
+Control, using the same installed Windows native binary and only translating the filesystem operand:
+
+```bash
+WIN_PATH="$(wslpath -w -- /mnt/c/dev/projects/tensor-grep/src/tensor_grep/cli/bootstrap.py)"
+timeout 60 "$RUST_BINARY" scan --inline-rules "$RULE" --path "$WIN_PATH" --json \
+  >/tmp/tg90-inline-win.json 2>/tmp/tg90-inline-win.err
+TRANSLATED_SCAN_RC=$?
+printf 'TRANSLATED_SCAN_RC=%s\n' "$TRANSLATED_SCAN_RC"
+```
+
+Recorded exit: `TRANSLATED_SCAN_RC=0`.
+
+The control emitted no stderr. Raw control JSON (whitespace collapsed only):
+
+```json
+{"version":1,"schema_version":1,"routing_backend":"AstBackend","routing_reason":"ast-inline-rules-scan","sidecar_used":false,"config_path":"inline-rules","path":"C:\\dev\\projects\\tensor-grep\\src\\tensor_grep\\cli\\bootstrap.py","ruleset":null,"language":"python","rule_count":1,"matched_rules":1,"total_matches":6,"backends":["AstGrepWrapperBackend"],"findings":[{"rule_id":"import-rule","language":"python","severity":null,"message":null,"fingerprint":"35218bcc5ae7a8e39c19eec5b20ed511600aee291edfcdb347647d166c865daa","matches":6,"files":["C:\\dev\\projects\\tensor-grep\\src\\tensor_grep\\cli\\bootstrap.py"],"evidence":[{"file":"C:\\dev\\projects\\tensor-grep\\src\\tensor_grep\\cli\\bootstrap.py","match_count":6}],"status":"new"}]}
+```
+
+This is both a path-domain routing defect and an honesty defect:
+the treatment claimed a clear result over a file its selected backend did not read. PR #571 remains
+valid proof for the separate doctor exit-127 half; it does not close this scan half.
+
+## Semantic RED-phase matrix
+
+The canonical skeleton and 19 parser/negative controls passed before any semantic reconciliation.
+Each approved semantic node was then run independently against that valid stale skeleton:
+
+| Node | Stale fact | Observed RED |
+|---|---|---|
+| `test_exit_contract_retirement` | #22 `BLOCKED`, required `RETIRED` | `assert 'BLOCKED' == 'RETIRED'` |
+| `test_legacy_agent_id_retirement` | F2 `BLOCKED`, required `RETIRED` | `assert 'BLOCKED' == 'RETIRED'` |
+| `test_shipped_receipts` | #109 `BLOCKED`, required PR #605 `SHIPPED` | `assert ('BLOCKED' == 'SHIPPED')` |
+| `test_mixed_90_retirement` | #90 `BLOCKED`, plan then expected mixed retirement | `assert 'BLOCKED' == 'RETIRED'` |
+| `test_859_is_ready_with_audit_correction` | #859 `BLOCKED`, required `READY` | `assert 'BLOCKED' == 'READY'` |
+| `test_program_ownership_and_ready_statuses` | first owner `MCP-SURFACE` `BLOCKED` | `assert 'BLOCKED' == 'READY'` |
+| `test_ceo_and_demand_ownership` | #255 absent from exact demand set | set diff reported missing `'#255'` |
+| `test_handoff_version_and_current_prose` | handoff `2026-08-01.1`, board `2026-08-02.2` | version equality failed |
+| `test_89_reproduced_path_domain_defect_is_ready` | #89 remained `BLOCKED` after the live failure | `assert 'BLOCKED' == 'READY'` |
+| `test_mixed_90_reproduction_is_ready` | first reconciliation marked #90 `RETIRED`; the current treatment/control requires `READY` | `assert 'RETIRED' == 'READY'` |
+
+The later #89 and #90 WSL treatment/control receipts supersede only the initial dispositions, not the
+first eight REDs. The last two rows are the independent amendment REDs observed before this
+correction went green.
 
 ## Reconciled dispositions
 
@@ -111,7 +244,7 @@ a red control that exercises this cross-domain route before final closeout.
 | #36 | `SHIPPED` | PR #903. |
 | #37 | `SHIPPED` | PR #908. |
 | #89 | `READY` | Reproduced above; requires an amended and independently re-reviewed TDD task. |
-| #90 | `RETIRED` | Mixed result preserved: doctor honesty shipped in PR #571; the bounded portability half was non-reproducing. |
+| #90 | `READY` | Doctor honesty shipped in PR #571; current raw-vs-translated scan control proves the portability/false-clear half is a live defect owned by the amended cross-domain task. |
 | #109 | `SHIPPED` | PR #605. |
 | #859 | `READY` | The original receipt covered one codemap site, not the secure-writer class population; see the appended correction in the 2026-08-01 audit. |
 | RUST-REPLACE-SYMLINK | `DEMAND_GATED` | Public direct-file leaf-symlink behavior needs a concrete threat model or compatibility decision before change. |
@@ -125,5 +258,6 @@ rows elsewhere are retained as evidence and do not override it.
   documentation-only reconciliation before it is merged.
 - GitHub release `v1.102.1` and PyPI `1.102.1` are publication facts, not proof for an individual
   backlog disposition.
-- The WSL receipt establishes actionability, not a fix. #89 cannot become `SHIPPED` until its amended
-  task follows red test, implementation, independent gate, merge, and merged-artifact verification.
+- The WSL receipts establish actionability, not fixes. #89/#90 cannot become `SHIPPED` until their
+  amended task follows red test, implementation, independent gate, merge, and merged-artifact
+  verification.

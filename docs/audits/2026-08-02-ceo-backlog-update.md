@@ -1,5 +1,13 @@
 # CEO backlog update — 2026-08-02
 
+> **Interim snapshot, superseded for execution.** Task 2 completed after this narrative was written.
+> The machine-readable current source is canonical status index `2026-08-02.3` in
+> `docs/TASK_BOARD.md`, backed by `2026-08-02-backlog-reconciliation.md`. Its bounded treatment and
+> control arms reproduced #89 search and #90 scan path-domain defects; both are `READY`, and one
+> amended/re-reviewed typed-path program must precede the remaining plan. Historical wording below
+> that says “Task 2 may resume,” “Task 2 will,” #89 is environment-blocked, or #90 is retired is
+> retained only as the pre-reconciliation CEO snapshot and must not drive dispatch.
+
 ## Plain-English status
 
 The released product works, the release pipeline is healthy, and the queue is not empty.
@@ -46,33 +54,38 @@ is not repeated here as live work.
 1. **Tracker truth (Task 2):** replace stale prose-derived status with a machine-parsed canonical
    status index; retire F1/#22 and F2; record #90 honestly as mixed; close #109/#36/#37 with receipts;
    refresh `SESSION_HANDOFF`; correct the old #859 audit claim.
-2. **#859 atomic-writer class fix (Task 3):** census every CLI artifact writer, including generated
+   **Completed, with its final disposition corrected by the superseding notice above.**
+2. **#89/#90 typed cross-domain paths (amendment required):** bridge only typed filesystem operands
+   when a WSL caller delegates to a Windows process; never rewrite patterns/globs/arbitrary argv;
+   search must not return `path_not_found` for an existing root and scan must not turn unreadable
+   files into a false clear result.
+3. **#859 atomic-writer class fix (Task 3):** census every CLI artifact writer, including generated
    Python and aliased calls; fix the three live violations; preserve per-command overwrite versus
    create-if-absent behavior; defeat leaf and parent symlink/junction races.
-3. **MCP surface disclosure (Task 4):** disclose `full` versus `lean` from the same frozen registry
+4. **MCP surface disclosure (Task 4):** disclose `full` versus `lean` from the same frozen registry
    decision and move contract `1.7.0` to `1.8.0`.
-4. **CPU backend twins (Task 5):** keep and harden public Rust `CpuBackend.replace_in_place`; propagate
+5. **CPU backend twins (Task 5):** keep and harden public Rust `CpuBackend.replace_in_place`; propagate
    directory child failures; remove both Python `TypeError` compatibility retries without losing
    `invert_match` or falling open to Python regex.
-5. **Pure edit verification (Task 6):** add a versioned, bounded, deterministic verification service
+6. **Pure edit verification (Task 6):** add a versioned, bounded, deterministic verification service
    and evidence-ingestion contract.
-6. **Public `tg verify-edit` (Task 7):** expose the verification service through Python and compiled
+7. **Public `tg verify-edit` (Task 7):** expose the verification service through Python and compiled
    native front doors with exact JSON, exit-code, cap, path, and help parity.
-7. **Strict `tg edit-ready` (Task 8):** combine prepare, named claims, baselines, validation, and
+8. **Strict `tg edit-ready` (Task 8):** combine prepare, named claims, baselines, validation, and
    fail-closed claim fencing without changing legacy prepare/ledger behavior.
-8. **Registry-driven refs/callers (Task 9):** remove dispatch duplication without changing output.
-9. **Parser-backed in-file depth (Task 10):** separate Java, C#, PHP, C, and C++ reference/caller waves,
+9. **Registry-driven refs/callers (Task 9):** remove dispatch duplication without changing output.
+10. **Parser-backed in-file depth (Task 10):** separate Java, C#, PHP, C, and C++ reference/caller waves,
    each with real AST-shape fixtures, same-name decoys, and grammar-missing honesty.
-10. **Truthful cross-file resolution (Task 11):** separate Java source roots, Go modules, PHP Composer
+11. **Truthful cross-file resolution (Task 11):** separate Java source roots, Go modules, PHP Composer
     PSR-4, C# projects, C compile databases, and C++ compile databases; never guess from a same-named
     file.
-11. **Federated multi-root prepare (Task 12):** internal service plus CLI/native parity for bounded
+12. **Federated multi-root prepare (Task 12):** internal service plus CLI/native parity for bounded
     sibling-repository preparation.
-12. **MCP multi-root prepare (Task 13):** confined `tg_workspace_prepare`, contract `1.9.0`, full/lean
+13. **MCP multi-root prepare (Task 13):** confined `tg_workspace_prepare`, contract `1.9.0`, full/lean
     registry parity, and real stdio tests.
-13. **Known-item dispositions (Task 14):** decide, retire, or retain DD-004, DD-006, F10, the C++ macro
+14. **Known-item dispositions (Task 14):** decide, retire, or retain DD-004, DD-006, F10, the C++ macro
     ceiling, #255, and the CEO-owned items with explicit owners and triggers.
-14. **Closeout (Task 15):** independent specification/security/test/API/docs audits until every seat
+15. **Closeout (Task 15):** independent specification/security/test/API/docs audits until every seat
     says SHIP; lint/format/typecheck/full CI; one-release-at-a-time drain; merged-source and published-
     wheel dogfood with raw receipts.
 
@@ -80,7 +93,7 @@ Ownership is the numbered Task for every row above. A row starts when the preced
 merged and the exact main gate is complete; it reopens after shipping only when its named contract test
 or receipt fails. Task 15 owns the final cross-program audit and disposition pass.
 
-### Environment-blocked
+### Environment-blocked at the interim snapshot
 
 - **#89** (owner: Task 2; trigger: an available WSL/Linux environment): reproduce WSL `/mnt/c` absolute-path behavior on an available WSL/Linux environment. If the
   environment is unavailable it remains blocked; unavailability is not retirement evidence.
@@ -136,8 +149,9 @@ decision; each item reopens if its named evidence gate changes.
 - **F1/#22:** retire under the current 0/1/2 contract; complete no-match is exit 1, incomplete is exit
   2, and an unhonored GPU request is disclosed in-band.
 - **F2:** retire; legacy anonymous-agent compatibility was explicitly considered and retained.
-- **#90:** mixed terminal outcome—doctor false-available behavior shipped in PR #571; the bounded WSL
-  arm did not reproduce as a product defect. Do not call the whole item shipped.
+- **#90 (superseded by Task-2 treatment/control):** this interim report called the WSL half a
+  non-defect. The current receipt disproves that premise; only the PR #571 doctor half is shipped and
+  the scan portability half is `READY`.
 - **#109:** shipped in PR #605.
 - **#36/#37:** shipped in PR #903/#908.
 - **#858:** the historical codemap writer is now helper-backed; #859 remains the broader class-level

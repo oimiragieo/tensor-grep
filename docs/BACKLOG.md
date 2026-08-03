@@ -8,8 +8,10 @@
 > corrections—not merely SHIPPING or P0/P1. Update whenever a PR opens/merges or the queue changes.
 > Task-store IDs (`#NNN`) are cross-referenced.
 > **Current closed-world CEO snapshot: 2026-08-02, release `v1.102.1`, merged main `8024125`, zero
-> open PRs, one open GitHub issue (#48).** The complete active/environment/CEO/demand/research list is
-> `docs/audits/2026-08-02-ceo-backlog-update.md`. Task 2 is reconciled; the amended #89 slice plus
+> open PRs, one open GitHub issue (#48).** The complete live disposition list is the canonical index
+> in `docs/TASK_BOARD.md`; `docs/audits/2026-08-02-backlog-reconciliation.md` is its dated evidence
+> packet, and the CEO update is an interim narrative with a
+> Task-2 correction notice. Task 2 is reconciled; the amended #89/#90 path-domain program plus
 > Tasks 3–15 are the current execution queue. Historical sections below remain append-only evidence
 > and may describe old status.
 > New local-environment finding: `ENV-VENV-DRIFT` — the campaign worktree's no-sync CLI reports
@@ -25,10 +27,10 @@
 > triggers, and closure tests. None has been implemented merely by amending the plan.
 > The final status-stamped plan pair is approved: design `F627B23F...E4C994`, implementation
 > `E30DCCCD...8216B`; architecture/security/TDD verdicts are all `SHIP`. Task 2 is reconciled; amend
-> and re-certify a bounded #89 TDD slice before final closeout, then continue with Task 3.
+> and re-certify a bounded #89/#90 TDD program before final closeout, then continue with Task 3.
 >
 
-## Current canonical closeout queue — status index `2026-08-02.2`
+## Current canonical closeout queue — status index `2026-08-02.3`
 
 `docs/TASK_BOARD.md` owns the machine-parsed rows. This is the human-readable mirror; older sections
 below are historical evidence and do not override these dispositions.
@@ -39,6 +41,10 @@ below are historical evidence and do not override these dispositions.
   bounded 2026-08-02 run proved a Linux `/mnt/c/...` directory exists while the delegated Windows
   native executable returned `path_not_found`. Owner: a new amended/re-reviewed TDD task; final
   closeout cannot pass until that task follows the implementation-PR/closure-PR lifecycle.
+- **#90** — the doctor false-available half remains shipped in PR #571, but the WSL scan portability
+  half is now reproducibly broken and `READY`: a raw `/mnt/c/...` file produced an unreadable-path
+  warning plus false clear/zero matches, while the translated Windows-path control found six matches.
+  Owner: the same amended typed-path program as #89, with scan-specific false-clear tests.
 - **#859** — class-level atomic-writer census/fix, Task 3. A codemap-only regression is not a class
   ratchet.
 - **MCP-SURFACE** — MCP surface disclosure, Task 4.
@@ -77,8 +83,6 @@ real PR number; only a separate post-merge closure change may mark it `SHIPPED`.
 - **#22/F1** `RETIRED`: exit `0` complete match, exit `1` complete no-match, exit `2` incomplete;
   unhonoured GPU routing stays an in-band disclosure and does not independently change the code.
 - **F2** `RETIRED`: legacy anonymous-agent compatibility deliberately retains the sentinel.
-- **#90** `RETIRED` as a mixed outcome: doctor honesty shipped in PR #571; the bounded WSL portability
-  arm was non-reproducing/non-defect.
 - **#109/#36/#37** `SHIPPED` in PR #605/#903/#908.
 
 There are no environment-blocked canonical rows at this snapshot. The raw GitHub/CI/release and WSL
@@ -1455,12 +1459,13 @@ for the next audit rather than re-opened as active work):**
   reopen the retirement reasoning above — it neutralizes the one token tg's OWN code appends,
   which the retirement's "operator-authored" premise never covered.
 
-### Historical Linux/WSL block — superseded by status index `2026-08-02.2`
+### Historical Linux/WSL block — superseded by status index `2026-08-02.3`
 
 - **#89** is no longer environment-blocked: the 2026-08-02 bounded WSL run reproduced the
   WSL-to-Windows path-domain failure and moved it to `READY` pending an amended TDD plan.
-- **#90** is a mixed `RETIRED` outcome. The doctor-honesty half shipped in PR #571; the earlier
-  bounded WSL portability arm did not reproduce a defect.
+- **#90** is `READY`. The doctor-honesty half shipped in PR #571; the 2026-08-02 treatment/control
+  disproved the earlier non-defect premise by showing a raw-path false clear versus six translated-
+  path matches.
 - **#109** shipped in PR #605.
 
 ### CEO-gated (full framing in CEO-FACING below)

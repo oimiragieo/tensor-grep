@@ -12,7 +12,7 @@ release_docs_current_tag: v1.102.1
 
 ## Current Backlog Closeout
 
-Canonical status index version: 2026-08-02.2
+Canonical status index version: 2026-08-02.3
 
 - `origin/main` at the campaign rebase point: `8024125612d5fb42481acde34d94ad39bbaa3c3e`.
 - PR #910 is merged. Its exact PR run `30777042942` completed 39 jobs with zero failure/unfinished
@@ -22,14 +22,15 @@ Canonical status index version: 2026-08-02.2
   claims-fence first-use/locking, project-config confinement, tracker-lifecycle, deferred Rust-symlink,
   and tests-after defects. Architecture, security, and TDD all returned `SHIP` on final status-stamped
   hashes design `F627B23F...E4C994` and implementation `E30DCCCD...8216B`.
-- Task 2 reproduced #89 in WSL: the Linux Python front door delegated a valid `/mnt/c/...` path to the
-  Windows native executable, which returned `path_not_found`. #89 is therefore `READY`, not
-  environment-blocked. Amend and re-certify the #89 TDD slice before final closeout; then execute
+- Task 2 reproduced both cross-domain items in WSL. Search returned `path_not_found` for an existing
+  `/mnt/c/...` root (#89). Scan passed that Linux spelling to Windows ast-grep, warned it was
+  unreadable, but emitted a clear zero-match exit-0 payload; the translated-path control found six
+  matches (#90). Both are `READY`. Amend and re-certify one typed-path TDD program before continuing
   Tasks 3–15 in `docs/plans/2026-08-02-backlog-closeout-implementation-plan.md`.
 - The approved closeout plan remains Tasks 2–15; Task 2 is this reconciliation checkpoint rather than
   a product build.
-- The full plain-English CEO status, all active/environment/CEO/demand backlog, research ledger, and
-  lessons are recorded in `docs/audits/2026-08-02-ceo-backlog-update.md`.
+- The canonical current receipts are in `docs/audits/2026-08-02-backlog-reconciliation.md`; the
+  plain-English CEO report is retained as an interim snapshot with a Task-2 correction notice.
 - Durable machine/session resume state is in `MEMORY.md`; do not reconstruct the queue from this file's
   historical release ledger.
 

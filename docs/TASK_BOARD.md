@@ -20,7 +20,7 @@
 
 ## Canonical status index
 
-Canonical status index version: 2026-08-02.2
+Canonical status index version: 2026-08-02.3
 - [x] **#22** — Status: RETIRED; PR: none; Trigger: exit 0 is complete with matches; exit 1 is complete with no match; exit 2 is incomplete; gpu_request_unhonoured stays in-band and does not independently force exit 2
 - [x] **F2** — Status: RETIRED; PR: none; Trigger: legacy anonymous-agent compatibility deliberately retains the sentinel; reopen only with a caller-supplied stable identity contract and migration plan
 - [x] **#36** — Status: SHIPPED; PR: PR #903; Trigger: all 27 topic skills audited and drift corrections merged; reopen on a new failing skill-drift receipt
@@ -29,7 +29,7 @@ Canonical status index version: 2026-08-02.2
 - [ ] **#72** — Status: CEO_GATED; PR: none; Trigger: CEO approval for a fresh public benchmark claim
 - [ ] **#77** — Status: CEO_GATED; PR: none; Trigger: CEO decision on the #77/F9 ledger-enforcement scope
 - [ ] **#89** — Status: READY; PR: none; Trigger: 2026-08-02 WSL-to-Windows path-domain reproduction returned path_not_found for an existing /mnt/c path; owner is an amended and re-reviewed TDD task before final closeout
-- [x] **#90** — Status: RETIRED; PR: none; Trigger: doctor false-available half shipped in PR #571; bounded WSL portability half was non-reproducing and a non-defect; reopen only with a current failing fixture
+- [ ] **#90** — Status: READY; PR: none; Trigger: doctor false-available half shipped in PR #571; current WSL raw-path scan reported matched_rules=0 while the translated-path control reported total_matches=6; owner is the amended and re-reviewed cross-domain TDD task before final closeout
 - [x] **#109** — Status: SHIPPED; PR: PR #605; Trigger: CUDA implicit-walk ceiling merged; reopen on a current parity regression
 - [ ] **#131** — Status: CEO_GATED; PR: none; Trigger: CEO decision on publishing GPU-flavor native assets
 - [ ] **#169** — Status: CEO_GATED; PR: none; Trigger: CEO approval for physical GPU proof or spend
@@ -55,10 +55,11 @@ Canonical status index version: 2026-08-02.2
 Last reconciled: **2026-08-02** (PR #910 merged and post-merge verified), post-**v1.102.1** (PyPI verified via a clean `uvx` install, not inferred
 from a tag — `tag == PyPI` cannot tell *released* from *not started* from *died*).
 
-**Current closed-world status:** `docs/audits/2026-08-02-ceo-backlog-update.md`. A live-code deep dive
-proved that several unchecked historical rows below need terminal/mixed reconciliation (#90/#109) and
-that #859 remains a class-level task. Do not dispatch from those stale rows; execute the approved
-Tasks 2–15 plan and let its canonical parser update them with receipts.
+**Current closed-world status:** this canonical index plus
+`docs/audits/2026-08-02-backlog-reconciliation.md`. Task 2 is complete. Its bounded WSL treatment and
+control arms reproduced both #89 search-path failure and #90 scan false-clear behavior, so final
+closeout is paused while one amended cross-domain TDD program is re-reviewed. Do not dispatch from
+the stale historical rows below or from the interim CEO audit.
 
 **This has now gone stale THREE times in the same way, so the pattern is the finding.** The stamp
 once read "2026-07-28, post-v1.101.9" while PyPI had moved 13 releases on; then "2026-07-31,
@@ -325,11 +326,15 @@ the worktree, which is exactly how 519 lines hid behind an "ANCESTOR of main" ve
   executable, which reports `path_not_found` although WSL can stat the directory. The bounded
   2026-08-02 receipt is in `docs/audits/2026-08-02-backlog-reconciliation.md`. Per the approved
   outcome table, final closeout pauses until an amended, re-reviewed TDD task owns this fix.
+- [ ] **#90** WSL `tg scan` passes the same Linux spelling to Windows ast-grep, reports the path
+  unreadable, yet emits a clear/zero-match exit-0 payload. The translated Windows-path control finds
+  six matches. The amended cross-domain task must preserve typed scan argument roles and incomplete
+  honesty; PR #571 remains the shipped doctor-probe half only.
 
 ## BLOCKED — environment (not CEO-gated, just needs hardware)
 
-None at this snapshot. Historical #90 is a mixed retirement (doctor half shipped in PR #571; WSL
-half non-defect), and #109 shipped in PR #605. Do not restore either as an unchecked hardware row.
+None at this snapshot. #89 and #90 are locally reproduced `READY` items, not hardware-blocked rows;
+#109 shipped in PR #605.
 
 ## CEO-GATED (do not start without an explicit go)
 
