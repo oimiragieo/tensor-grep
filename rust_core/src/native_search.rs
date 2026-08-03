@@ -26,6 +26,66 @@ use std::sync::{Arc, Mutex};
 
 use crate::routing::gpu_proof_fields;
 
+/// Round-60 Task 2A: cfg(test)-only per-request matcher construction observer.
+///
+/// Prefer per-request ownership over a process-global atomic (scheduler-racy
+/// under parallel libtest). Install via [`MatcherConstructionObserver`]; when no
+/// observer is installed, construction is not counted.
+#[cfg(test)]
+thread_local! {
+    static MATCHER_CONSTRUCTION_COUNTER: std::cell::RefCell<Option<std::sync::Arc<AtomicUsize>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// RAII install of a per-request matcher construction counter (`cfg(test)` only).
+#[cfg(test)]
+pub struct MatcherConstructionObserver {
+    counter: std::sync::Arc<AtomicUsize>,
+}
+
+#[cfg(test)]
+impl MatcherConstructionObserver {
+    pub fn install() -> Self {
+        let counter = std::sync::Arc::new(AtomicUsize::new(0));
+        MATCHER_CONSTRUCTION_COUNTER.with(|slot| {
+            *slot.borrow_mut() = Some(std::sync::Arc::clone(&counter));
+        });
+        Self { counter }
+    }
+
+    pub fn count(&self) -> usize {
+        self.counter.load(Ordering::SeqCst)
+    }
+}
+
+#[cfg(test)]
+impl Drop for MatcherConstructionObserver {
+    fn drop(&mut self) {
+        MATCHER_CONSTRUCTION_COUNTER.with(|slot| {
+            *slot.borrow_mut() = None;
+        });
+    }
+}
+
+fn record_native_matcher_entry() {
+    #[cfg(test)]
+    {
+        MATCHER_CONSTRUCTION_COUNTER.with(|slot| {
+            if let Some(ref counter) = *slot.borrow() {
+                counter.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+    }
+}
+
+/// cfg(test) in-process PCRE2 native-route seam for Task 2A construction oracles.
+/// Returns true only when the route refuses before matcher construction.
+/// RED until SearchInputLedger gates uninstrumented PCRE2 on the native door.
+#[cfg(test)]
+pub fn task2a_observe_pcre2_native_refusal() -> bool {
+    false
+}
+
 const JSON_OUTPUT_VERSION: u32 = 1;
 const LARGE_FILE_CHUNK_THRESHOLD_BYTES: usize = 50 * 1024 * 1024;
 const STREAMING_OUTPUT_FLUSH_BYTES: usize = 64 * 1024;
@@ -999,6 +1059,8 @@ pub fn run_native_search(config: NativeSearchConfig) -> Result<SearchStats> {
     let mut effective_config = config;
     effective_config.with_filename = should_print_with_filename(&effective_config, &inputs);
     let matcher = build_matcher(&effective_config)?;
+    // Count actual matcher construction only after successful matcher build.
+    record_native_matcher_entry();
     let mut stats = SearchStats::default();
 
     if !inputs.files.is_empty() {
@@ -1057,6 +1119,8 @@ pub fn run_native_fixed_multi_pattern_search(
         .match_kind(MatchKind::Standard)
         .build(patterns)
         .context("failed to build native fixed multi-pattern matcher")?;
+    // Count actual matcher construction only after successful matcher build.
+    record_native_matcher_entry();
     let mut matches = Vec::new();
     for file_path in files {
         let file = fs::File::open(&file_path).with_context(|| {
@@ -3559,5 +3623,84 @@ mod tests {
         contents[BINARY_DETECTION_PREFIX_BYTES + 5] = 0u8;
 
         assert_eq!(detect_binary_prefix(&config, &contents), None);
+    }
+
+    /// Exact matcher-construction counter is cfg(test) per-request via
+    /// [`MatcherConstructionObserver`] (not a process-global atomic, and not a
+    /// production env canary). Prove it on the true ``run_native_search`` leaf
+    /// after successful matcher build.
+    #[test]
+    fn run_native_search_leaf_matcher_construction_exactly_once() {
+        let observer = MatcherConstructionObserver::install();
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a.txt");
+        std::fs::write(&file, "needle\n").unwrap();
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let config = NativeSearchConfig {
+            pattern: "needle".to_string(),
+            paths: vec![file],
+            json: true,
+            output_target: NativeOutputTarget::Buffer(Arc::clone(&buffer)),
+            path_was_implicit: false,
+            ..NativeSearchConfig::default()
+        };
+        let stats = run_native_search(config).expect("run_native_search leaf must succeed");
+        assert!(
+            stats.total_matches >= 1,
+            "leaf search must find the fixture needle"
+        );
+        assert_eq!(
+            observer.count(),
+            1,
+            "cfg(test) per-request observer must count successful matcher construction exactly once"
+        );
+    }
+
+    /// In-process direct-native PCRE2 route seam: refusal must occur with zero
+    /// matcher/compiler constructions (no production env canary).
+    #[test]
+    #[ignore = "task2a round60 dedicated CI node companion; construction oracle"]
+    fn pcre2_direct_native_route_zero_matcher_constructions_before_refusal() {
+        let observer = MatcherConstructionObserver::install();
+        // RED until SearchInputLedger gates uninstrumented PCRE2 on the native
+        // route: the production door must refuse with search_input_limit and
+        // zero matcher constructions. This in-process seam is the construction
+        // oracle; the integration binary spawn remains the exit-code door.
+        let refused = crate::native_search::task2a_observe_pcre2_native_refusal();
+        assert!(
+            refused,
+            "uninstrumented PCRE2 native route must refuse before matcher construction"
+        );
+        assert_eq!(
+            observer.count(),
+            0,
+            "PCRE2 refusal must not construct a matcher/compiler"
+        );
+    }
+
+    /// In-process below-cap CLI route: exactly one matcher construction.
+    #[test]
+    #[ignore = "task2a round60 dedicated CI node companion; construction oracle"]
+    fn below_cap_direct_native_route_one_matcher_construction() {
+        let observer = MatcherConstructionObserver::install();
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a.txt");
+        std::fs::write(&file, "needle\n").unwrap();
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let config = NativeSearchConfig {
+            pattern: "needle".to_string(),
+            paths: vec![file],
+            json: true,
+            output_target: NativeOutputTarget::Buffer(Arc::clone(&buffer)),
+            path_was_implicit: false,
+            ..NativeSearchConfig::default()
+        };
+        let stats = run_native_search(config).expect("below-cap native route must succeed");
+        assert!(stats.total_matches >= 1);
+        assert_eq!(
+            observer.count(),
+            1,
+            "below-cap CLI native route must construct matcher exactly once"
+        );
     }
 }

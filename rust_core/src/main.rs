@@ -690,8 +690,20 @@ pub struct SearchArgs {
     #[arg(short = 'e', long = "regexp", allow_hyphen_values = true)]
     pub regexp: Vec<String>,
 
+    /// Read search patterns from one or more files (rg-compatible `-f/--file`).
+    /// Round-60: clap accepts the flag so the direct-native door owns the typed
+    /// pattern-file operand; SearchInputLedger admission stays GREEN-deferred.
+    #[arg(short = 'f', long = "file", value_name = "PATTERN_FILE")]
+    pub pattern_file: Vec<String>,
+
     /// The search pattern (regex or string)
-    #[arg(required_unless_present_any = ["regexp", "pcre2_version", "type_list", "version"])]
+    #[arg(required_unless_present_any = [
+        "regexp",
+        "pattern_file",
+        "pcre2_version",
+        "type_list",
+        "version"
+    ])]
     pub pattern: Option<String>,
 
     /// Paths to search
@@ -1332,8 +1344,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn main_inner() -> anyhow::Result<()> {
-    let raw_args: Vec<OsString> = std::env::args_os().collect();
-
+    let raw_args = std::env::args_os().collect();
     if raw_args.len() <= 1 {
         if let Some(exit_code) = try_public_help_passthrough(&raw_args)? {
             if exit_code != 0 {
@@ -2342,6 +2353,7 @@ fn search_args_allow_plain_text_native(args: &SearchArgs) -> bool {
         verbose: _,
         // QUERY-DEFINING -- cardinality is enforced by the predicate's pattern_count/path_count.
         regexp: _,
+        pattern_file: _,
         pattern: _,
         path: _,
         // EXCLUDED -- every one of these must be at its default for the request to stay eligible.
@@ -3538,6 +3550,7 @@ mod tests {
             ndjson: _,         // HONORED
             verbose: _,        // HONORED
             regexp: _,         // HONORED (folds into `request.patterns` -> `params.patterns`)
+            pattern_file: _,   // HONORED (Round-60 `-f/--file` folds into request.patterns)
             pattern: _,        // HONORED (ditto)
             path: _,           // HONORED (-> params.path / params.path_was_implicit)
             pcre2: _,          // MOOT-OR-UNREACHABLE (rg available -> routes to
@@ -6869,7 +6882,9 @@ mod tests {
         assert!(!walk_was_incomplete(Some(0)));
         assert!(walk_was_incomplete(Some(1)));
     }
-}
+
+    // Round-60 Task 2A direct-native process-level doors moved to
+    // rust_core/tests/task2a_direct_native_round60.rs so CARGO_BIN_EXE_tg is valid.
 
 fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
     match cli.command {
@@ -7540,8 +7555,20 @@ fn resolve_search_request_with_stdin(
     stdin_searches_implicit_path: bool,
 ) -> anyhow::Result<ResolvedSearchRequest> {
     let mut patterns = args.regexp.clone();
+    for pattern_file in &args.pattern_file {
+        let text = std::fs::read_to_string(pattern_file).with_context(|| {
+            format!("failed to read pattern file {}", pattern_file)
+        })?;
+        for line in text.lines() {
+            // ripgrep `-f` includes every non-empty line; empty lines are skipped.
+            if !line.is_empty() {
+                patterns.push(line.to_string());
+            }
+        }
+    }
     let mut path_was_implicit = false;
-    let paths = if args.regexp.is_empty() {
+    let has_explicit_patterns = !args.regexp.is_empty() || !args.pattern_file.is_empty();
+    let paths = if !has_explicit_patterns {
         if let Some(pattern) = args.pattern.as_ref() {
             patterns.push(pattern.clone());
         }
@@ -7574,7 +7601,9 @@ fn resolve_search_request_with_stdin(
     };
 
     if patterns.is_empty() {
-        anyhow::bail!("search requires a pattern or at least one -e/--regexp pattern");
+        anyhow::bail!(
+            "search requires a pattern or at least one -e/--regexp / -f/--file pattern"
+        );
     }
 
     Ok(ResolvedSearchRequest {
@@ -7678,6 +7707,7 @@ fn index_flag_violations(args: &SearchArgs, request: &ResolvedSearchRequest) -> 
         ndjson: _,  // Honor.
         verbose: _, // Honor: emit_verbose_metadata is called from run_index_query.
         regexp: _,  // Honor: cardinality enforced via request.patterns.len() below.
+        pattern_file: _, // Honor: `-f/--file` folds into request.patterns (Round-60).
         pattern: _, // Honor: the query itself.
         path: _,    // Honor: cardinality enforced by handle_index_search's paths.len()!=1 bail.
         pcre2,

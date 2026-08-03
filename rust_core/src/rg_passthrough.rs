@@ -6,6 +6,10 @@ use ignore::WalkBuilder;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(test)]
+use std::sync::Mutex;
 use std::sync::OnceLock;
 
 const WINDOWS_RG_DIRNAME: &str = "ripgrep-14.1.0-x86_64-pc-windows-msvc";
@@ -13,6 +17,82 @@ const TG_RG_PATH_ENV: &str = "TG_RG_PATH";
 const LEGACY_TG_RG_BINARY_ENV: &str = "TG_RG_BINARY";
 const TG_DISABLE_RG_ENV: &str = "TG_DISABLE_RG";
 static RG_BINARY_CACHE: OnceLock<Option<PathBuf>> = OnceLock::new();
+
+/// Test-only injectable rg resolver override. Compiled only under cfg(test) so
+/// production binaries never carry a process-global override Mutex race hazard.
+#[cfg(test)]
+static TEST_RG_BINARY_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+#[cfg(test)]
+pub fn set_test_rg_binary_override(path: Option<PathBuf>) {
+    if let Ok(mut guard) = TEST_RG_BINARY_OVERRIDE.lock() {
+        *guard = path;
+    }
+}
+
+/// Scoped RAII guard for the rg binary override. Restores the previous value on
+/// Drop (including panic unwind).
+#[cfg(test)]
+pub struct TestRgBinaryOverrideGuard {
+    previous: Option<PathBuf>,
+}
+
+#[cfg(test)]
+impl TestRgBinaryOverrideGuard {
+    pub fn set(path: PathBuf) -> Self {
+        let previous = TEST_RG_BINARY_OVERRIDE
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone());
+        set_test_rg_binary_override(Some(path));
+        Self { previous }
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestRgBinaryOverrideGuard {
+    fn drop(&mut self) {
+        set_test_rg_binary_override(self.previous.take());
+    }
+}
+
+/// Round-60 Task 2A: cfg(test)-only spawn observation seam.
+#[cfg(test)]
+pub static RG_SPAWN_STARTS: AtomicUsize = AtomicUsize::new(0);
+
+/// Last incomplete_reason_class observed at the rg-passthrough leaf (cfg(test) only).
+#[cfg(test)]
+pub static LAST_SEARCH_INPUT_LIMIT_REASON: Mutex<Option<&'static str>> = Mutex::new(None);
+
+#[cfg(test)]
+pub fn reset_rg_spawn_starts() {
+    RG_SPAWN_STARTS.store(0, Ordering::SeqCst);
+    if let Ok(mut guard) = LAST_SEARCH_INPUT_LIMIT_REASON.lock() {
+        *guard = None;
+    }
+}
+
+#[cfg(test)]
+pub fn rg_spawn_starts() -> usize {
+    RG_SPAWN_STARTS.load(Ordering::SeqCst)
+}
+
+#[cfg(test)]
+pub fn last_search_input_limit_reason() -> Option<&'static str> {
+    LAST_SEARCH_INPUT_LIMIT_REASON
+        .lock()
+        .ok()
+        .and_then(|guard| *guard)
+}
+
+#[cfg(test)]
+fn record_rg_spawn_start() {
+    RG_SPAWN_STARTS.fetch_add(1, Ordering::SeqCst);
+}
+
+#[cfg(not(test))]
+fn record_rg_spawn_start() {}
+
 
 #[derive(Debug, Clone, Default)]
 pub struct RipgrepSearchArgs {
@@ -571,6 +651,8 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
         command.arg(operand);
     }
 
+    // Round-60 observation seam: cfg(test)-only count before the OS spawn.
+    record_rg_spawn_start();
     let status = command.status().context("failed to execute ripgrep")?;
     Ok(status.code().unwrap_or(1))
 }
@@ -737,6 +819,14 @@ fn command_for_executable(program: &Path) -> Command {
 }
 
 fn resolve_ripgrep_binary() -> Option<PathBuf> {
+    #[cfg(test)]
+    {
+        if let Ok(guard) = TEST_RG_BINARY_OVERRIDE.lock() {
+            if let Some(path) = guard.as_ref() {
+                return Some(path.clone());
+            }
+        }
+    }
     resolve_ripgrep_binary_with_cache(&RG_BINARY_CACHE, resolve_ripgrep_binary_uncached)
 }
 
@@ -1225,5 +1315,112 @@ mod tests {
         assert!(!is_unbounded_implicit_search_walk_refusal(
             "native search path does not exist: /nope"
         ));
+    }
+
+    // --- Round-60 Task 2A: SearchInputLedger on native→rg door ----------------------------
+
+    fn write_rg_canary(dir: &std::path::Path) -> (PathBuf, PathBuf) {
+        let marker = dir.join("rg-started");
+        let canary = dir.join(if cfg!(windows) { "rg-canary.cmd" } else { "rg-canary" });
+        #[cfg(windows)]
+        {
+            std::fs::write(
+                &canary,
+                format!(
+                    "@echo off\r\necho started > \"{}\"\r\nexit /b 0\r\n",
+                    marker.display()
+                ),
+            )
+            .unwrap();
+        }
+        #[cfg(not(windows))]
+        {
+            std::fs::write(
+                &canary,
+                format!("#!/bin/sh\necho started > '{}'\nexit 0\n", marker.display()),
+            )
+            .unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&canary).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&canary, perms).unwrap();
+        }
+        (canary, marker)
+    }
+
+    /// Dedicated closed-world CI node.
+    #[test]
+    #[ignore = "task2a round60 dedicated CI node; run via --exact --include-ignored"]
+    fn execute_ripgrep_search_pcre2_search_input_limit() {
+        // Uninstrumented PCRE2 must refuse with exit 2 + literal search_input_limit
+        // before any rg spawn. RED until SearchInputLedger gates this door.
+        let dir = tempfile::tempdir().unwrap();
+        let (canary, marker) = write_rg_canary(dir.path());
+        let _rg_override = TestRgBinaryOverrideGuard::set(canary);
+        reset_rg_spawn_starts();
+        let root = dir.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.txt"), "needle\n").unwrap();
+        let args = RipgrepSearchArgs {
+            patterns: vec!["needle".to_string()],
+            paths: vec![root.to_string_lossy().into_owned()],
+            pcre2: true,
+            path_was_implicit: false,
+            ..RipgrepSearchArgs::default()
+        };
+        let result = execute_ripgrep_search(&args);
+        // Require an intentional exit-2 refusal — do not treat arbitrary Err as success.
+        let code = result.expect(
+            "PCRE2 search_input_limit refusal must return Ok(exit_code), not an Err",
+        );
+        assert_eq!(code, 2, "PCRE2 refusal must exit 2");
+        assert_eq!(
+            rg_spawn_starts(),
+            0,
+            "uninstrumented PCRE2 must not start rg (spawn counter)"
+        );
+        assert!(
+            !marker.exists(),
+            "uninstrumented PCRE2 must not start the rg canary executable"
+        );
+        assert_eq!(
+            last_search_input_limit_reason(),
+            Some("search_input_limit"),
+            "native→rg PCRE2 refusal must record literal search_input_limit"
+        );
+    }
+
+    /// Dedicated closed-world CI node.
+    #[test]
+    #[ignore = "task2a round60 dedicated CI node; run via --exact --include-ignored"]
+    fn execute_ripgrep_search_below_cap_non_pcre2_starts_rg_once() {
+        // Below-cap normal positive: non-PCRE2 must start rg exactly once.
+        // A reject-all ledger must fail this control.
+        let dir = tempfile::tempdir().unwrap();
+        let (canary, marker) = write_rg_canary(dir.path());
+        let _rg_override = TestRgBinaryOverrideGuard::set(canary);
+        reset_rg_spawn_starts();
+        let root = dir.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.txt"), "needle\n").unwrap();
+        let args = RipgrepSearchArgs {
+            patterns: vec!["needle".to_string()],
+            paths: vec![root.to_string_lossy().into_owned()],
+            pcre2: false,
+            path_was_implicit: false,
+            ..RipgrepSearchArgs::default()
+        };
+        let result = execute_ripgrep_search(&args);
+        let code = result.expect("below-cap non-PCRE2 must return Ok(exit_code), not Err");
+        assert!(
+            code == 0 || code == 1,
+            "below-cap non-PCRE2 must exit 0 or 1 (non-incomplete), got {code}"
+        );
+        assert_ne!(
+            code, 2,
+            "below-cap non-PCRE2 must not return search_input_limit exit 2"
+        );
+        assert_eq!(rg_spawn_starts(), 1, "rg must start exactly once");
+        assert!(marker.exists(), "rg canary must have been executed");
     }
 }

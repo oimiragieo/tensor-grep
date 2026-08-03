@@ -1,0 +1,2309 @@
+{
+  "version": 1,
+  "schema": "task2a_windows_node_manifest",
+  "note": "Static manifest only. NativeCiReceiptV1 owns current-run binding; this file must not embed live run/attempt IDs. command_digest is SHA-256 of canonical JSON command_vector. Windows nodes are mandatory non-skipped required entries. Ownership is independently enforced by tests/helpers/task2a_ownership.py markers+registry. Full Task 2A census: every concrete Python node across the four family files plus Rust integration/lib leaves. Cargo package/lib target is tensor_grep_rs via rust_core/Cargo.toml. Direct-native process-level doors live in rust_core/tests/task2a_direct_native_round60.rs (CARGO_BIN_EXE_tg). Lib doors use --exact --include-ignored; matcher construction leaf is manifest-owned.",
+  "digest_algorithm": "sha256",
+  "digest_canonicalization": "json.dumps(command_vector, separators=(',', ':'), ensure_ascii=False).encode('utf-8')",
+  "nodes": [
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_parser_accepts_valid_receipt_positive_control",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_parser_accepts_valid_receipt_positive_control",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "1c7d357235b7a4906131c3683c80930a4428f6d5c3a6101df5be80de7eb7dc99",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[bool_version]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[bool_version]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "6ce230762960a45f36a119ec3b203837dda5f5269c9d5529b9672ad5cb6e7f95",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[string_version]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[string_version]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "871e033caf05276b57e1df6723ac802bd2c585b775405858e79bb8d8b04c6a39",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[arbitrary_schema]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[arbitrary_schema]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "40018ab2f6146461fdfb489ac2bbb484e2426642aaf549925dff4523ad27a022",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[digest_alphabet]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[digest_alphabet]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "a84a232bea617c6d51ac912a2e8dc207c1ff6ee0a282cfb903b8a989e325ab49",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[digest_length]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[digest_length]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "c2d1224886a72c974fe464e673e0b080117a06c8ff38f874d3a87b89e3e78efc",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[list_identity]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[list_identity]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "b3f773f76a4839e60443a98eb647b91a8b005139d24142f7c73eda4da39e6c0a",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[dict_identity]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[dict_identity]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "eabcbcffc8c9657794c2c296804e00e7e169db2585e42618773593ee4c4eb372",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[bool_identity]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[bool_identity]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "6b637bec22153c81110d16530da50d5d714ea88745327bd6e3d2ca7694df7f10",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_parser_refuses_corrupt_duplicate_unknown_oversized_deep",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_parser_refuses_corrupt_duplicate_unknown_oversized_deep",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "a81dfaf8291851299e07615b29e82eabe32cbde5beb9e87fa708c274fdd6ff7b",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_parser_refuses_install_command_digest_only_receipt",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_parser_refuses_install_command_digest_only_receipt",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "0ada679ce9a8f9ea951adc1ffe23718425b8d990c3f9a73e3f54145454b7331b",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_no_ambient_discover_magic_without_protected_state",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_no_ambient_discover_magic_without_protected_state",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "f6844a7a8c27b82a44c1e30f3ce65b1335c2a99db5ae590e0fd24d51e0fe3f5b",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_protected_state_injection_is_sole_positive_authority",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_protected_state_injection_is_sole_positive_authority",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "470a27c98a37467cd53e5526f1abac96be039e1f0ec9b8d41e087cfa59751adb",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_cng_binding_negative_and_positive_via_primitives",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_cng_binding_negative_and_positive_via_primitives",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "4307e7f5c30b7631f2954a58710d64cf58c8b54206f9b0d759eefbd59e84a581",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_opened_directory_same_identity_aliases_positive",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_opened_directory_same_identity_aliases_positive",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "aedda2357e0f0cad8d06570bc949280fef54bebd5d7ea2a776f5f094ec3ac35d",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_junction_reparse_and_wrong_identity_negative",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_junction_reparse_and_wrong_identity_negative",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "af4956cda0d0ff963a2bb48cebe999020470a4d7647591571f8d905819ab53c1",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_txr_happy_path_sequence_create_open_write_commit",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_txr_happy_path_sequence_create_open_write_commit",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "f97ec5e69701fe77920fea34fe833c490b7385fa1f2251b505c865d1df53088d",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_txr_failure_arms_rollback_without_fallback[unsupported]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_txr_failure_arms_rollback_without_fallback[unsupported]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "83c78cdd90bafe7dda1cb9e14222c073c73f808a4912d0476032b2cc528a7872",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_txr_failure_arms_rollback_without_fallback[race]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_txr_failure_arms_rollback_without_fallback[race]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "883c17a5d3174aca79623f995101dbfcf41269f4fb7177792bab80b1ddc36d3e",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_txr_failure_arms_rollback_without_fallback[commit]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_txr_failure_arms_rollback_without_fallback[commit]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "3b35e42eba24d6e735c2318edbde59d3ecfbe1c62c34619885cc64af0af78d6c",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_install_ps1_path_mutation_is_txr_only_no_cas_fallback",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_install_ps1_path_mutation_is_txr_only_no_cas_fallback",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "446bd3e81b7d89e7bb1af929caf8c38e103295e44da18bbc97c8c7a5e5c1c419",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_windows_programdata_protected_root_integration",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_windows_programdata_protected_root_integration",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "9e2f01aaaf99973bdf4e754b9bb530dfa6e26dcc991eb09a8cea116939413d77",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_programdata_sddl_dacl_parser_platform_neutral_vectors",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_programdata_sddl_dacl_parser_platform_neutral_vectors",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "acd1971d97dcbfa372f68f2727d16787d9d1b2ddc1c34b0b0ebcfbc92cf601f4",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_protected_root_open_close_ownership_without_acl_bool",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_protected_root_open_close_ownership_without_acl_bool",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "d634bc7001b1ffbfc27222a14e93bf9715e3e4bf5ea368dafbc1526f8772f900",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_discover_closes_protected_root_on_success_handoff",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_discover_closes_protected_root_on_success_handoff",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "b9270f7645485f0dda83c0b96371604b60d1a29f69c1a25f4247e2b7dc2d5098",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_discover_closes_protected_root_on_exception",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_discover_closes_protected_root_on_exception",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "97a0a859edb5e30ef687125192047a95adac38434942bd9203ecf60b32b6c030",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_discover_closes_protected_root_on_base_exception",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_discover_closes_protected_root_on_base_exception",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "ffce4d9d4e322539345f50fb63ec97aeabfd674ff4ea1207008e1b9b450ff09c",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_discover_closes_protected_root_cleanup_failure_preserves_original",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_discover_closes_protected_root_cleanup_failure_preserves_original",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "2edb2aaa4f66db2a95274169f7fe13607e54e149d63b6ee59ffe02cfc8258dec",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_discover_closes_protected_root_cleanup_failure_on_success",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_discover_closes_protected_root_cleanup_failure_on_success",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "752ccd628d705d7048009f093fabb378599e41ef79c266a8253f95095da10303",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_discover_closes_protected_root_idempotent",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_discover_closes_protected_root_idempotent",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "52e918473866fbc75ba5fc0136b1bbadfd3c834c07f16f78f6eb388b746d97d2",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_no_production_global_txr_fault_hook",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_no_production_global_txr_fault_hook",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "cea03e0b52f2748d64e5d5b0256bfebc934c81097f8f6af5586c8cc206e666cd",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_txr_per_call_fault_isolation_event_gated",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_txr_per_call_fault_isolation_event_gated",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "c08fce93a98955a1093394ce1858337ea7f87e71e804300ca48ca25ef9e01c5d",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_windows_cng_sign_verify_integration",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_windows_cng_sign_verify_integration",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "be1600a77ae540eb5efd5616fa91bc547f6cf9fad644095e2e1d33800ea59c15",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_windows_nofollow_leaf_directory_integration",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_windows_nofollow_leaf_directory_integration",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "d533e82646544288745040feb5a40dfba9568eccfbc1598de8d32341c320a85e",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_windows_txr_registry_integration",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_windows_txr_registry_integration",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "9030b5c788a61fe64adee333adf83d2b98570d16db19b766301ec1f9e1792f84",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_fixture_pins_round60_caps",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_fixture_pins_round60_caps",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "46ad29975b114bb4de36021be544b09226c804f982a872cfdd530cfa1f101861",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_ledger_installed_before_bootstrap_door",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_ledger_installed_before_bootstrap_door",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "fac1483f33ecaab125f11aece03bf0ca01b234cc57159c12bbd26c05b1de055b",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_ledger_installed_before_full_cli_door",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_ledger_installed_before_full_cli_door",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "bb77ddc9886a1e0959cd84194f347084ad80b4b95ce270f6082c4d1a402df671",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_per_file_bytes_inclusive_cap[per_file_cap_minus_1]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_per_file_bytes_inclusive_cap[per_file_cap_minus_1]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "4e249f238eaacbcb431a5ca64977d68fceb1282661fd48473ad01d3022868f66",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_per_file_bytes_inclusive_cap[per_file_cap]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_per_file_bytes_inclusive_cap[per_file_cap]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "58f0999db107bbc3193d669700d3a38766c715cafc4f14ae462d495b6c204b97",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_per_file_bytes_inclusive_cap[per_file_cap_plus_1]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_per_file_bytes_inclusive_cap[per_file_cap_plus_1]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "f72011b4a7da199ee38bae72ff3826182f1fa8a98060b831e149dda2f03027e4",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_combined_file_count_inclusive_cap[files_cap_minus_1]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_combined_file_count_inclusive_cap[files_cap_minus_1]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "3f5b6037f236171f145f3e2a994255753850dbbf2f51a322c605ad4a94495b19",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_combined_file_count_inclusive_cap[files_cap]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_combined_file_count_inclusive_cap[files_cap]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "d728548cf01d7fe5886c692f0e3cd3170884aa7bd2ee130b6955534ab213b263",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_combined_file_count_inclusive_cap[files_cap_plus_1]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_combined_file_count_inclusive_cap[files_cap_plus_1]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "8c015d8558f149eb0845e8c3cb9f737691ff9ed0959df930d156efc7e40497e7",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_combined_decoded_bytes_inclusive_cap[agg_bytes_cap_minus_1]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_combined_decoded_bytes_inclusive_cap[agg_bytes_cap_minus_1]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "4202e9329b6c39a1dfef559f7dd257c564b890df23fa758e585d8e43c9cb77e9",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_combined_decoded_bytes_inclusive_cap[agg_bytes_cap]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_combined_decoded_bytes_inclusive_cap[agg_bytes_cap]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "ff790d400f6b9f04e8302a8b8dcb111ee0c14253c742d79f27f8533df7dc624f",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_combined_decoded_bytes_inclusive_cap[agg_bytes_cap_plus_1]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_combined_decoded_bytes_inclusive_cap[agg_bytes_cap_plus_1]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "48a99b407abb5037173f80f65ca50fd531fc19802e8c677a6171bce2cb6253f6",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_per_rule_bytes_inclusive_cap[rule_bytes_cap_minus_1]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_per_rule_bytes_inclusive_cap[rule_bytes_cap_minus_1]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "f0bd70b7a6646d4e9193ff3efd7e4b1dcb1e897a0e76d04bf55a9a43420abe13",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_per_rule_bytes_inclusive_cap[rule_bytes_cap]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_per_rule_bytes_inclusive_cap[rule_bytes_cap]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "159b20c677abc72b963a141865e8b345dfcc2b305c3c0af6bd326133f7052cd0",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_per_rule_bytes_inclusive_cap[rule_bytes_cap_plus_1]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_per_rule_bytes_inclusive_cap[rule_bytes_cap_plus_1]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "23bbac231203b8b59158adeca6e42ce5698526cb8960511a204e78726a145223",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_pattern_total_inclusive_cap[patterns_cap_minus_1]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_pattern_total_inclusive_cap[patterns_cap_minus_1]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "4ee1e32e222fa03c19bddd97e3f52925ffc842d4460557b635330882a8691e09",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_pattern_total_inclusive_cap[patterns_cap]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_pattern_total_inclusive_cap[patterns_cap]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "bb9aae9659715d37c70cb4dbac41edb7914349424e7a688dd53e57fdecb970d9",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_pattern_total_inclusive_cap[patterns_cap_plus_1]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_pattern_total_inclusive_cap[patterns_cap_plus_1]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "35fce5942332eb2692b4d3e2eaff75d9a49ae4df408e89a9e26bed257e10c4f2",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_ignore_total_inclusive_cap[ignores_cap_minus_1]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_ignore_total_inclusive_cap[ignores_cap_minus_1]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "330fa027309d13967a420f61b989e5a78e9dc9edbfca73fb6bd964daf7fea324",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_ignore_total_inclusive_cap[ignores_cap]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_ignore_total_inclusive_cap[ignores_cap]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "1c9bcee06eeca23edc5e43301e3332a1ed31162568658f97228468e7ec8494d8",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_ignore_total_inclusive_cap[ignores_cap_plus_1]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_ignore_total_inclusive_cap[ignores_cap_plus_1]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "78e8ca6a7de978228909d0f836b95fcb373d30f959ecc660164469a8fc9ab580",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_split_counter_patterns_and_ignores_are_independent",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_split_counter_patterns_and_ignores_are_independent",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "db8fc7b18464582e32ebc05c972b3f8a4c91c7898426855b9ba8aaac21211b66",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_compiled_live_memory_inclusive_cap[compiled_mem_cap_minus_1]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_compiled_live_memory_inclusive_cap[compiled_mem_cap_minus_1]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "4d580541cc797d5c4d1e69bdbe0e6609428fb64751b617cd59479c6c9480a3ff",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_compiled_live_memory_inclusive_cap[compiled_mem_cap]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_compiled_live_memory_inclusive_cap[compiled_mem_cap]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "db0ebd53c03553eea0e53d425fdaaa2f68d437f0c910f2287ff3c2fb837f81c8",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_compiled_live_memory_inclusive_cap[compiled_mem_cap_plus_1]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_compiled_live_memory_inclusive_cap[compiled_mem_cap_plus_1]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "6da8a79ed8efb43171da0038c1aa6d74d5ff887ce134486528439e59aec17d6b",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_matcher_transitions_inclusive_cap[transitions_cap_minus_1]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_matcher_transitions_inclusive_cap[transitions_cap_minus_1]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "d04085e0e39d6705c57e1b9b1111838cf99e2cc8ef517b41db2d31d36593384d",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_matcher_transitions_inclusive_cap[transitions_cap]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_matcher_transitions_inclusive_cap[transitions_cap]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "b743af2b3fd3a9c3825f8ba01138c634ede69bcc234ca9256a25ea38741907d7",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_matcher_transitions_inclusive_cap[transitions_cap_plus_1]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_matcher_transitions_inclusive_cap[transitions_cap_plus_1]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "5f46de422420560cab22924545e642fc512e72bc9d8f2f040c586c5f9a3a17a1",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_deadline_inclusive_cap[deadline_cap_minus_1]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_deadline_inclusive_cap[deadline_cap_minus_1]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "559c73c13f492aa32afa542f6f5a52612fa1a96d812967d67d4f43322959a51a",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_deadline_inclusive_cap[deadline_cap]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_deadline_inclusive_cap[deadline_cap]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "4e6f53d6764194785426f12e93e1b43e499ec171b528660689942225096a737d",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_deadline_inclusive_cap[deadline_cap_plus_1]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_deadline_inclusive_cap[deadline_cap_plus_1]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "d97792894d89b2d84a4b82b0fdee90ea9e1555404e0ea1da3e84ccaf5466dc7f",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_uninstrumented_pcre2_refused_on_bootstrap",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_uninstrumented_pcre2_refused_on_bootstrap",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "4b633f9c9736a55850bacedd0df7bc947e2fb41ce80e2ca3b275bc2cea04bd4b",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_uninstrumented_pcre2_refused_on_full_cli",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_uninstrumented_pcre2_refused_on_full_cli",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "0c63b5557bdc8ebc7994f0ffb6b6c735934676894719d9b8b89e7daa5744aa5f",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_below_cap_non_pcre2_bootstrap_starts_producer_once",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_below_cap_non_pcre2_bootstrap_starts_producer_once",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "2b22befba0261b73d3c85ad248fd479e6fa9fba63c0eaa6e6040b3f5d5ef9c63",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_below_cap_non_pcre2_full_cli_starts_producer_once",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_below_cap_non_pcre2_full_cli_starts_producer_once",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "9b0e8d7a1d9b6d7be90943a9f0af9255d1dce7ce0be82668306914112db0f53a",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_offline_wintrust_flags_and_microsoft_root_policy",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_offline_wintrust_flags_and_microsoft_root_policy",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "0945b441ad51dd098072de837c03d6cf2089080dd96705b833fea7a4a9046181",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_job_is_kill_on_close_and_non_breakaway",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_job_is_kill_on_close_and_non_breakaway",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "bbd45d470d57d8c8a7ba1491189d8b2179c6a7381849df854850414cd0b8a08b",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_linux_must_not_fabricate_system32_handles",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_linux_must_not_fabricate_system32_handles",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "bdec631177394e90c8301a81ed0d39db0f2b8987e50baec06d00464944e2de42",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_system32_identity_rejects_systemroot_poison",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_system32_identity_rejects_systemroot_poison",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "01b34117cf62b7202765f03cd030bea16767f72875b6650e17fb2562fef00d17",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_held_file_embedded_and_catalog_controls",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_held_file_embedded_and_catalog_controls",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "32cb91592cd3546747737a179f04b272ca9e462f436b1e9e7ded27c703a6556f",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_offline_network_canary_blocks_online_retrieval",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_offline_network_canary_blocks_online_retrieval",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "e4a231cebb6ce80643ee97038fc4002494267d7c7d0c7f5a932aeaa82074aade",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_same_organization_foreign_chain_is_not_trust",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_same_organization_foreign_chain_is_not_trust",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "dbe7060177af0ea3d97d287b696db00d5da388539d26d6a9681a1ce5f7a406cd",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_untrusted_catalog_reason_exact",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_untrusted_catalog_reason_exact",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "c70ac267719285ca4b66ccd67184204196b6aa64fcaf08dfed17ae3f3b39af23",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_catalog_member_hash_mismatch_reason_exact",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_catalog_member_hash_mismatch_reason_exact",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "4f0c01fcf2a2a2827ba8c62b36c43b207afacb8cf5f9a6af750804316d69b0fb",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_parent_and_leaf_identity_swaps_fail_closed",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_parent_and_leaf_identity_swaps_fail_closed",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "d32fbcdaf9d685ed2cac44163fa82c1d327bfc188a467f8b89841ecf8f58c1b4",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_suspended_job_descendant_breakaway_orchestration",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_suspended_job_descendant_breakaway_orchestration",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "1dbfc404f371c6e01aed16ded4d735049345a38e3e8f5cca0774b8d355c1c4bc",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_suspended_job_descendant_breakaway_windows_integration",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_suspended_job_descendant_breakaway_windows_integration",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "908170e5157b53a3810d9e4b4db0e49039977dd19dd8bb61cc2f29a5eb835c9f",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_suspended_job_fault_after_job_assignment",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_suspended_job_fault_after_job_assignment",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "0af3d6487f399db259aa3507ccfdb5036c49898209c7fbae5f3037fd19e56a62",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_suspended_job_fault_after_resume",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_suspended_job_fault_after_resume",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "691d443f61b5feb8c2b965f4e9336eec3dd6b7a6789427eba076f3649aaf5451",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_suspended_job_fault_after_image_query",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_suspended_job_fault_after_image_query",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "8d8fb09a8b40f8aa7a4ecf339cd077b1c56b4eb4ba047cb068d2e363979433df",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_suspended_job_fault_after_pipe_worker_setup",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_suspended_job_fault_after_pipe_worker_setup",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "8dc580944e3ef73c656dc2595d237fd577253c8637212e574a4488f8eb09c0ae",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_suspended_job_fault_after_default_factory[job_assignment]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_suspended_job_fault_after_default_factory[job_assignment]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "2f815586815fa98c4bdc0a298ed6702d278ace1a40ac5e6211400e80a86d4977",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_suspended_job_fault_after_default_factory[resume]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_suspended_job_fault_after_default_factory[resume]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "9272b84476a50abef76dc145f0f9d19ce3edbe2c30b9cc5b84c71507ee6aee71",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_suspended_job_fault_after_default_factory[image_query]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_suspended_job_fault_after_default_factory[image_query]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "40e179d0f3be2ef9cf24ee2f7e8a1c9832c2b694976077b807e1cee33a919be6",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_suspended_job_fault_after_default_factory[pipe_worker_setup]",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_suspended_job_fault_after_default_factory[pipe_worker_setup]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "9421232af47f2d7c44e3c370f2168ef49e461355ba6f62b466f5b240e2b590c9",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_resolve_system32_identity_closes_on_success",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_resolve_system32_identity_closes_on_success",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "b99119d08477652791d83e08dff12ea6fae20c6c068f868148ccf0ba8becb824",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_resolve_system32_identity_closes_on_partial_leaf_failure",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_resolve_system32_identity_closes_on_partial_leaf_failure",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "fefda9072bffca13a431d58a96f90a34a44b1ac6183a1cf877d0ed1c2856a1ce",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_resolve_system32_identity_closes_on_partial_identity_failure",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_resolve_system32_identity_closes_on_partial_identity_failure",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "2be2db915462c334d00810a2fbc0fe6a664716dd1d1876e01f5ac840aacd3849",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_suspended_job_fixture_close_ownership_idempotent",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_suspended_job_fixture_close_ownership_idempotent",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "50d0b0c6ca475c79e19ff9e59f20efd24409373120cb5bd155619c3d401c8960",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_retained_close_state_excluded_from_equality_and_hash",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_retained_close_state_excluded_from_equality_and_hash",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "968bece0382d5f4fd4b1871d436aad3725190889ce7bb5f89ad7fadd72d2248f",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_manifest_command_digests_recompute_and_closed_world_nodes",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_manifest_command_digests_recompute_and_closed_world_nodes",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "aad33dd7666256f2bc15393e43b30acd89e84f4bb9587d5b03b87ffcf123fdfb",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_manifest_is_static_without_live_run_ids",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_manifest_is_static_without_live_run_ids",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "f37ba90ad37818a764f7a4d54901cf1d71aa55720fa33710a651dde19881ae0b",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_parser_accepts_valid_receipt_positive_control",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_parser_accepts_valid_receipt_positive_control",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "bc1f5964e5df787df1efa307f95b76a78b8b5a50cfa8012c4e6ce5db348f3a0a",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[bool_version]",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[bool_version]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "403cea658437c76a2b6f83108dcef9dd82eb2fab2b5989f1865cb2816ca5bcd4",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[string_version]",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[string_version]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "77b516a3c3efd29378bcc85c81158445a6c84bf1d93c7f3a7dc7349047f6aa51",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[arbitrary_schema]",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[arbitrary_schema]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "c7c9a41b084c07d51b74803e161a898016605f460674f117f47ed88c17a7a2a6",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[digest_alphabet]",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[digest_alphabet]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "a0471c54c67f3c4f7d793b9874e203901766d67981c9c34df39cfa304b8747f6",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[digest_uppercase]",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[digest_uppercase]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "81cf54058f852e124eb891d38f069d15f13e1171dc4f3d37b7d5c1c812dac3df",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[digest_length]",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[digest_length]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "492777ea8f3a133dd295865dbbda5dafcf579e878c3f656f10ad8436194c58c8",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[duplicate_nodes]",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[duplicate_nodes]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "d7384a06d331ce2fcf76cbe0857fd73e33baaea4fb35418fae4f092a8aa63014",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[list_field]",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[list_field]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "77bd5962659938017584e6a3befaacd727a1e51d5796a70c9ce5537f4a442b44",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[dict_field]",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[dict_field]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "34ff5daa99eb773919d3184194a60a150dcf3d5c772e8e8810c971a7d6627377",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[bool_field]",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_parser_refuses_schema_type_value_length_negatives[bool_field]",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "e64f5ea1334982486d277dce7f59169535016eebbf18f1571c2d62ed9317cfaa",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_parser_refuses_duplicate_unknown_oversized",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_parser_refuses_duplicate_unknown_oversized",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "a50943152b157d8f1cd86eaa227e5546454fadc9788b5d772ad7e0677b852b33",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_derive_live_actions_tuple_from_environ",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_derive_live_actions_tuple_from_environ",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "58c2af83eba1c0b5f31747746baf662686f78b5fd1bfd25e6a5ace46bd431b1f",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_runner_owned_nonrecursive_leaf",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_runner_owned_nonrecursive_leaf",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "c12af4bcf5b1c09f5e3956a4271945b40067612819bb9c7c97129fff05e551e2",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_exact_current_run_positive_receipt",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_exact_current_run_positive_receipt",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "a93beb4f18ac8cdb986c87f1cd08eff1167c0f5fb39332fafb3fff12ccb18e69",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_seeded_current_run_directory_rejected",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_seeded_current_run_directory_rejected",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "e30a3d906aace06753677121e7ac007ea2fda02cd8ec463010b5c62d5dd92200",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_caller_supplied_claims_refused",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_caller_supplied_claims_refused",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "887eccdd460434aca81d00ce3bcf1999b9e3568a0758ea404ea0700880a2bb24",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_cross_attempt_rejected",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_cross_attempt_rejected",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "1bfdf7109e58937803dcbf98313b3277668970c7e2428e0e271028d93730126d",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_manifest_drift_rejected",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_manifest_drift_rejected",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "9fe3a964bb17bc8cb3fc582dd94aa9d69fb59639754eb91732c15424c5aa9348",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_binary_drift_rejected",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_binary_drift_rejected",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "beee3caea887770cd8eaf96bbbfef310056ab73a82d47ab989154f8d6b02842d",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_source_tree_attribution_cannot_satisfy_wheel_or_installer_proof",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_source_tree_attribution_cannot_satisfy_wheel_or_installer_proof",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "b39c727c875a118f6dd2fa5cded3b5935ba4bf8aceaecff058eadd4f8e706db4",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_wheel_attribution_without_raw_wheel_artifact_is_false",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_wheel_attribution_without_raw_wheel_artifact_is_false",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "9c8a832ca173fc0fd056c9356bce51a2126d727db5931f96979364021e211244",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_installer_attribution_without_raw_installer_artifact_is_false",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_installer_attribution_without_raw_installer_artifact_is_false",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "60b957186b15ab2040384d9bff19f30c0a2eb09e9837926dce4c549c93b88b09",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_wheel_attribution_with_source_created_bytes_is_not_publication",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_wheel_attribution_with_source_created_bytes_is_not_publication",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "546a5698b056ba2ef0bcee0ae0b63957434ef0a0fb0d6624c2c82b2b2bc5af38",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_wheel_attribution_digest_mismatch_is_false",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_wheel_attribution_digest_mismatch_is_false",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "ab5bcc86269400ebd2b4946a821434707c3a1b4b05540e007c35b6b40347c365",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_installer_attribution_with_source_created_bytes_is_not_publication",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_installer_attribution_with_source_created_bytes_is_not_publication",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "b843749c5594cfe7133f7366f2c6237993a331386b53e11318aee1b1f2b20bc3",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_installer_attribution_digest_mismatch_is_false",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_installer_attribution_digest_mismatch_is_false",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "198c7d86cd48e561e1e5dcabb010d2a086f357a7cb5c132eeb62c2e48c2a191a",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_source_tree_mismatch_against_wheel_expected_is_false",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_source_tree_mismatch_against_wheel_expected_is_false",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "181ce6af7c28f8580355acc42abe465408338588fe106347396be845a36d55eb",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_census_skipped_rejected",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_census_skipped_rejected",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "b6f3e1bb6995a4f45b3e0ef4fe8e1b49d437430f3383eb0563487f21021f4d94",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_census_extra_rejected",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_census_extra_rejected",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "f6e811b26b0d0410c20711b73578d6a9afcc551d03c59f434110abb16da741b6",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_census_duplicate_rejected",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_census_duplicate_rejected",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "662156d035f17be043decbbeb5c3ff8525f8f943a14a192e0c01846dc5c35126",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_junit_drift_rejected",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_junit_drift_rejected",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "b69949f70521209da26ca97090f2b53f1b8cacc16b6ddfc74a6c513be8aae28f",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_rust_list_drift_rejected",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_rust_list_drift_rejected",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "27594fdd8636ca0c9a12fa4bbdc27f0446cf3a631702c9c9069a69bf0ff421cf",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_argv_drift_rejected",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_argv_drift_rejected",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "94281b27fab1bf18c6dc0dbf72a885bcb45011dd14d3dd6853095e5128a60df7",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_stdout_drift_rejected",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_stdout_drift_rejected",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "f79a25a80752fc185087825245c9dba6c69e9352a3193e18494b17b5975f8a91",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_stderr_drift_rejected",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_stderr_drift_rejected",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "8d27c763c888800414e6da1a1d92f6d21e682e55249f8122ac77ff2d40ecf61e",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_exit_drift_rejected",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_exit_drift_rejected",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "5223ab99354df0b83795e1c651342d28e2eb85e71daf654e1e314017d3b7e524",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_run_attempt_mismatch_isolated_predicate",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_run_attempt_mismatch_isolated_predicate",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "1258d6b5a71c0f97255122e9475b1e61602d5cf06eb33a40bf216ea4ea0c7509",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_artifact_namespace_drift_rejected",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_artifact_namespace_drift_rejected",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "92fcdc5278e4e9047591a0816b35544f1718dd34b1f83d65c0016adef7872ed4",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_wrong_job_rejected",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_wrong_job_rejected",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "5fe2b549cf4887fe9e0433d5f781dcffc9ead6003a1773274268573a8f6efafc",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_binary_pre_drift_rejected",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_binary_pre_drift_rejected",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "03c0c2bf6a67fdfb1189fa181d1388db9ac8d4b30d967e27b2a904bbe5f06e7d",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_binary_post_drift_rejected",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_binary_post_drift_rejected",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "b32d72d9b9ff16f8f0d40a941e7691bb261af52495ee35dd7620c62c86fef4ef",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_workflow_run_id_drift_rejected",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_workflow_run_id_drift_rejected",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "20df12d88124f77b7265db0d4db9f58d242262c0add5cbe3462400c19608cdb3",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_runner_identity_drift_rejected",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_runner_identity_drift_rejected",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "4adb7770d2aeafb4e422aa6bc659e1899c93932ee9fe8340670e3474d7158a31",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_command_digest_drift_rejected",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_command_digest_drift_rejected",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "a86abcc6cecf92ab6cb56e12be3637eb6ea40792e8a07d6affea1ce5623f0050",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_attribution_drift_rejected",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_attribution_drift_rejected",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "72e54a4f6c03456311cd5b1e0719027be31a25983d0296214734ac259ed46b6d",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_scripts_fail_closed_until_live_binding",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_scripts_fail_closed_until_live_binding",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "9580b186f51a93600cb8cef9ba5aa0454464e4ec519b706f29f88e0cf4d82d5e",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_cargo_selected_binary_exact_target_and_executable",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_cargo_selected_binary_exact_target_and_executable",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "9b7891265b3b4b793e38fbe4ac6944c04ffdb8e7888be9247a5be6ef2bc2b6d1",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_cargo_selected_binary_missing_duplicate_wrong_executable",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_cargo_selected_binary_missing_duplicate_wrong_executable",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "53f0339c0762c6f8a2de833495fae88856c9a41814b672c55e557b4c4c37735c",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_python_runner_refuses_unowned_node",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_python_runner_refuses_unowned_node",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "ebbf51efd8aec1c3008cc319f376680a2dc04ec3e18854b60344651ef8afcc47",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_rust_runner_requires_manifest_ownership_before_list",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_rust_runner_requires_manifest_ownership_before_list",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "e06e248a64946ad164eba9bd86e4a14ec069c8221afb8a8021c4d567671bf501",
+      "required_non_skip": true
+    },
+    {
+      "id": "rust::task2a_direct_native_round60::pattern_file_search_input_limit_direct_native",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "rust_core/Cargo.toml",
+        "-p",
+        "tensor_grep_rs",
+        "--test",
+        "task2a_direct_native_round60",
+        "pattern_file_search_input_limit_direct_native",
+        "--",
+        "--exact",
+        "--include-ignored",
+        "--nocapture"
+      ],
+      "required_non_skip": true,
+      "rust_test_target": "pattern_file_search_input_limit_direct_native",
+      "binary": "task2a_direct_native_round60",
+      "rust_kind": "test",
+      "command_digest": "9630e3c4dba68fde6a22dc23efebb87ebc1a245b9ecd057b8bc0d7f0910ef37c"
+    },
+    {
+      "id": "rust::task2a_direct_native_round60::pattern_file_below_cap_native_json_success",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "rust_core/Cargo.toml",
+        "-p",
+        "tensor_grep_rs",
+        "--test",
+        "task2a_direct_native_round60",
+        "pattern_file_below_cap_native_json_success",
+        "--",
+        "--exact",
+        "--include-ignored",
+        "--nocapture"
+      ],
+      "required_non_skip": true,
+      "rust_test_target": "pattern_file_below_cap_native_json_success",
+      "binary": "task2a_direct_native_round60",
+      "rust_kind": "test",
+      "command_digest": "12d62187469fe9620aa2df537cfacafe215b6b2702d97e71e0bf29a7d60ebd7c"
+    },
+    {
+      "id": "rust::task2a_direct_native_round60::pcre2_search_input_limit_direct_native",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "rust_core/Cargo.toml",
+        "-p",
+        "tensor_grep_rs",
+        "--test",
+        "task2a_direct_native_round60",
+        "pcre2_search_input_limit_direct_native",
+        "--",
+        "--exact",
+        "--include-ignored",
+        "--nocapture"
+      ],
+      "required_non_skip": true,
+      "rust_test_target": "pcre2_search_input_limit_direct_native",
+      "binary": "task2a_direct_native_round60",
+      "rust_kind": "test",
+      "command_digest": "0dfdf12f19f8f6adf3ce67a75d91a0252e942109febd6ad7a60b8bbbf9a6d659"
+    },
+    {
+      "id": "rust::task2a_direct_native_round60::below_cap_non_pcre2_direct_native_json_success",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "rust_core/Cargo.toml",
+        "-p",
+        "tensor_grep_rs",
+        "--test",
+        "task2a_direct_native_round60",
+        "below_cap_non_pcre2_direct_native_json_success",
+        "--",
+        "--exact",
+        "--include-ignored",
+        "--nocapture"
+      ],
+      "required_non_skip": true,
+      "rust_test_target": "below_cap_non_pcre2_direct_native_json_success",
+      "binary": "task2a_direct_native_round60",
+      "rust_kind": "test",
+      "command_digest": "6c2291a83c951a9b44b5059795cfdb7d4bd7eeb5e91e797f490602dd970f4971"
+    },
+    {
+      "id": "rust::rg_passthrough::tests::execute_ripgrep_search_pcre2_search_input_limit",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "rust_core/Cargo.toml",
+        "-p",
+        "tensor_grep_rs",
+        "--lib",
+        "rg_passthrough::tests::execute_ripgrep_search_pcre2_search_input_limit",
+        "--",
+        "--exact",
+        "--include-ignored",
+        "--nocapture"
+      ],
+      "required_non_skip": true,
+      "rust_test_target": "rg_passthrough::tests::execute_ripgrep_search_pcre2_search_input_limit",
+      "binary": "tensor_grep_rs",
+      "rust_kind": "lib",
+      "command_digest": "3e78a6273fa490a453a6026f37c522a29445aa52a1b13fd54fe64503f30b16e4"
+    },
+    {
+      "id": "rust::rg_passthrough::tests::execute_ripgrep_search_below_cap_non_pcre2_starts_rg_once",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "rust_core/Cargo.toml",
+        "-p",
+        "tensor_grep_rs",
+        "--lib",
+        "rg_passthrough::tests::execute_ripgrep_search_below_cap_non_pcre2_starts_rg_once",
+        "--",
+        "--exact",
+        "--include-ignored",
+        "--nocapture"
+      ],
+      "required_non_skip": true,
+      "rust_test_target": "rg_passthrough::tests::execute_ripgrep_search_below_cap_non_pcre2_starts_rg_once",
+      "binary": "tensor_grep_rs",
+      "rust_kind": "lib",
+      "command_digest": "47272e97b58253b56d52d849282852ece65dfadcd73e7c7319e088ebe7606cc8"
+    },
+    {
+      "id": "rust::python_sidecar::tests::early_passthrough_pcre2_format_json_search_input_limit",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "rust_core/Cargo.toml",
+        "-p",
+        "tensor_grep_rs",
+        "--lib",
+        "python_sidecar::tests::early_passthrough_pcre2_format_json_search_input_limit",
+        "--",
+        "--exact",
+        "--include-ignored",
+        "--nocapture"
+      ],
+      "required_non_skip": true,
+      "rust_test_target": "python_sidecar::tests::early_passthrough_pcre2_format_json_search_input_limit",
+      "binary": "tensor_grep_rs",
+      "rust_kind": "lib",
+      "command_digest": "5ecaec43a768cfaa598892720c3305c62c58b0d924164a5669362a28e325daa7"
+    },
+    {
+      "id": "rust::python_sidecar::tests::early_passthrough_below_cap_non_pcre2_starts_sidecar_once",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "rust_core/Cargo.toml",
+        "-p",
+        "tensor_grep_rs",
+        "--lib",
+        "python_sidecar::tests::early_passthrough_below_cap_non_pcre2_starts_sidecar_once",
+        "--",
+        "--exact",
+        "--include-ignored",
+        "--nocapture"
+      ],
+      "required_non_skip": true,
+      "rust_test_target": "python_sidecar::tests::early_passthrough_below_cap_non_pcre2_starts_sidecar_once",
+      "binary": "tensor_grep_rs",
+      "rust_kind": "lib",
+      "command_digest": "4de35188806ff078d936d07056960981bc747917b1ab43533ee7c1f80a628ade"
+    },
+    {
+      "id": "rust::native_search::tests::run_native_search_leaf_matcher_construction_exactly_once",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "rust_core/Cargo.toml",
+        "-p",
+        "tensor_grep_rs",
+        "--lib",
+        "native_search::tests::run_native_search_leaf_matcher_construction_exactly_once",
+        "--",
+        "--exact",
+        "--nocapture"
+      ],
+      "required_non_skip": true,
+      "rust_test_target": "native_search::tests::run_native_search_leaf_matcher_construction_exactly_once",
+      "binary": "tensor_grep_rs",
+      "rust_kind": "lib",
+      "command_digest": "dc592f3302e3d669c21abf222e3ccb0ce2ea03b07501026e7e6b06cf8efa85e6"
+    }
+  ]
+}

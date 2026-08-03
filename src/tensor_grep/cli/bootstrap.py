@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import time
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from tensor_grep.cli.commands import KNOWN_COMMANDS as _KNOWN_COMMANDS
@@ -15,6 +16,17 @@ from tensor_grep.cli.runtime_paths import (
     resolve_ripgrep_binary,
 )
 from tensor_grep.cli.subprocess_policy import run_subprocess as run_subprocess
+
+# Round-60 Task 2A: narrow child-start observation seam (tests inject; production leaves None).
+# kind is one of: "rg" | "native" | "sidecar" | "compiler" | "matcher"
+_CHILD_START_HOOK: Callable[[str, list[str]], None] | None = None
+
+
+def _emit_child_start(kind: str, argv: Sequence[str]) -> None:
+    hook = _CHILD_START_HOOK
+    if hook is not None:
+        hook(kind, list(argv))
+
 
 # perf/#48: `tensor_grep.io.directory_scanner` is deliberately NOT imported at module level.
 # bootstrap.py only needs its 4 constants (BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD,
@@ -1327,11 +1339,14 @@ def _streaming_passthrough_returncode(
 
 
 def _run_native_tg_search(binary_name: str, search_args: list[str]) -> int:
-    return _streaming_passthrough_returncode([binary_name, "search", *search_args])
+    argv = [binary_name, "search", *search_args]
+    _emit_child_start("native", argv)
+    return _streaming_passthrough_returncode(argv)
 
 
 def _run_native_tg_command(binary_name: str, argv: list[str]) -> int:
-    return _streaming_passthrough_returncode([binary_name, *argv])
+    _emit_child_start("native", argv)
+    return _streaming_passthrough_returncode(argv)
 
 
 def _run_rg_passthrough(binary_name: str, search_args: list[str]) -> int:
@@ -1369,9 +1384,9 @@ def _run_rg_passthrough(binary_name: str, search_args: list[str]) -> int:
         no_ignore_dot="--no-ignore-dot" in search_args,
         unrestricted=int(_search_args_request_unrestricted(search_args)),
     )
-    return _streaming_passthrough_returncode(
-        [binary_name, *ignore_file_ops, *search_args], timeout_env_var="TG_RG_TIMEOUT_SECONDS"
-    )
+    argv = [binary_name, *ignore_file_ops, *search_args]
+    _emit_child_start("rg", argv)
+    return _streaming_passthrough_returncode(argv, timeout_env_var="TG_RG_TIMEOUT_SECONDS")
 
 
 def _run_full_cli() -> None:

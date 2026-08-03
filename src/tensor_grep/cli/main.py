@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -3952,6 +3952,16 @@ def _build_native_tg_search_command(
     return command
 
 
+# Round-60 Task 2A: narrow child-start observation seam for full-CLI native delegation.
+_CHILD_START_HOOK: Callable[[str, list[str]], None] | None = None
+
+
+def _emit_child_start(kind: str, argv: Sequence[str]) -> None:
+    hook = _CHILD_START_HOOK
+    if hook is not None:
+        hook(kind, list(argv))
+
+
 def _delegate_to_native_tg_search(
     native_binary: Path,
     *,
@@ -3967,6 +3977,7 @@ def _delegate_to_native_tg_search(
         config=config,
         ndjson=ndjson,
     )
+    _emit_child_start("native", command)
     completed = subprocess.run(command, check=False)
     return int(completed.returncode)
 
@@ -8117,6 +8128,12 @@ def search_command(
     from tensor_grep.core.pipeline import ConfigurationError, Pipeline
     from tensor_grep.core.result import SearchResult, merge_runtime_routing
 
+    # Round-60 Task 2A: narrow observation seam for the in-process full-CLI producer
+    # (CPU/Pipeline path). No-op unless tests install `_CHILD_START_HOOK`.
+    _emit_child_start(
+        "cpu",
+        ["pipeline", pattern, *[str(p) for p in paths_to_search]],
+    )
     try:
         pipeline = Pipeline(force_cpu=effective_force_cpu, config=config)
     except ConfigurationError as exc:

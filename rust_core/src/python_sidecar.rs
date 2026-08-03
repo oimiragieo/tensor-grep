@@ -9,8 +9,86 @@ use std::io::{self, Read, Write};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(test)]
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
+
+/// Test-only injectable Python resolver override. Compiled only under cfg(test) so
+/// production binaries never carry a process-global override Mutex race hazard.
+#[cfg(test)]
+static TEST_PYTHON_COMMAND_OVERRIDE: Mutex<Option<OsString>> = Mutex::new(None);
+
+#[cfg(test)]
+pub fn set_test_python_command_override(path: Option<OsString>) {
+    if let Ok(mut guard) = TEST_PYTHON_COMMAND_OVERRIDE.lock() {
+        *guard = path;
+    }
+}
+
+/// Scoped RAII guard for the sidecar Python override. Restores the previous
+/// value on Drop (including panic unwind).
+#[cfg(test)]
+pub struct TestPythonCommandOverrideGuard {
+    previous: Option<OsString>,
+}
+
+#[cfg(test)]
+impl TestPythonCommandOverrideGuard {
+    pub fn set(path: OsString) -> Self {
+        let previous = TEST_PYTHON_COMMAND_OVERRIDE
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone());
+        set_test_python_command_override(Some(path));
+        Self { previous }
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestPythonCommandOverrideGuard {
+    fn drop(&mut self) {
+        set_test_python_command_override(self.previous.take());
+    }
+}
+
+/// Round-60 Task 2A: cfg(test)-only sidecar spawn observation seam.
+#[cfg(test)]
+pub static SIDECAR_SPAWN_STARTS: AtomicUsize = AtomicUsize::new(0);
+#[cfg(test)]
+pub static LAST_SIDECAR_SEARCH_INPUT_LIMIT_REASON: Mutex<Option<&'static str>> = Mutex::new(None);
+
+#[cfg(test)]
+pub fn reset_sidecar_spawn_starts() {
+    SIDECAR_SPAWN_STARTS.store(0, Ordering::SeqCst);
+    if let Ok(mut guard) = LAST_SIDECAR_SEARCH_INPUT_LIMIT_REASON.lock() {
+        *guard = None;
+    }
+}
+
+#[cfg(test)]
+pub fn sidecar_spawn_starts() -> usize {
+    SIDECAR_SPAWN_STARTS.load(Ordering::SeqCst)
+}
+
+#[cfg(test)]
+pub fn last_sidecar_search_input_limit_reason() -> Option<&'static str> {
+    LAST_SIDECAR_SEARCH_INPUT_LIMIT_REASON
+        .lock()
+        .ok()
+        .and_then(|guard| *guard)
+}
+
+#[cfg(test)]
+fn record_sidecar_spawn_start() {
+    SIDECAR_SPAWN_STARTS.fetch_add(1, Ordering::SeqCst);
+}
+
+#[cfg(not(test))]
+fn record_sidecar_spawn_start() {}
+
 
 const DEFAULT_SIDECAR_MODULE: &str = "tensor_grep.sidecar";
 const DEFAULT_TENSOR_GREP_MODULE: &str = "tensor_grep";
@@ -190,6 +268,8 @@ fn execute_python_passthrough_command_inner(
         }
     }
 
+    // Round-60 observation seam: cfg(test)-only count before OS spawn.
+    record_sidecar_spawn_start();
     let mut child = child
         .spawn()
         .map_err(|err| map_python_spawn_error(&python, err))?;
@@ -746,6 +826,14 @@ fn merge_stderr(process_stderr: &str, response_stderr: &str) -> String {
 }
 
 fn resolve_python_command() -> OsString {
+    #[cfg(test)]
+    {
+        if let Ok(guard) = TEST_PYTHON_COMMAND_OVERRIDE.lock() {
+            if let Some(path) = guard.as_ref() {
+                return path.clone();
+            }
+        }
+    }
     if let Some(explicit) = resolve_explicit_file_override(TG_SIDECAR_PYTHON_ENV) {
         return explicit.into_os_string();
     }
@@ -1495,5 +1583,113 @@ mod tests {
             &["create".to_string()]
         ));
         assert!(!is_long_running_passthrough_command("upgrade", &[]));
+    }
+
+    // --- Round-60 Task 2A: SearchInputLedger on native→Python-sidecar door ---------------
+
+    fn write_sidecar_canary(dir: &std::path::Path) -> (PathBuf, PathBuf) {
+        let marker = dir.join("sidecar-started");
+        let canary = dir.join(if cfg!(windows) {
+            "python-canary.cmd"
+        } else {
+            "python-canary"
+        });
+        #[cfg(windows)]
+        {
+            std::fs::write(
+                &canary,
+                format!(
+                    "@echo off\r\necho started > \"{}\"\r\nexit /b 0\r\n",
+                    marker.display()
+                ),
+            )
+            .unwrap();
+        }
+        #[cfg(not(windows))]
+        {
+            std::fs::write(
+                &canary,
+                format!("#!/bin/sh\necho started > '{}'\nexit 0\n", marker.display()),
+            )
+            .unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&canary).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&canary, perms).unwrap();
+        }
+        (canary, marker)
+    }
+
+    /// Dedicated closed-world CI node.
+    #[test]
+    #[ignore = "task2a round60 dedicated CI node; run via --exact --include-ignored"]
+    fn early_passthrough_pcre2_format_json_search_input_limit() {
+        // Exact argv: search --pcre2 --format=json needle PATH
+        // Must refuse with exit 2 + literal search_input_limit before sidecar spawn.
+        reset_sidecar_spawn_starts();
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.txt"), "needle\n").unwrap();
+        let args = vec![
+            "--pcre2".to_string(),
+            "--format=json".to_string(),
+            "needle".to_string(),
+            root.to_string_lossy().into_owned(),
+        ];
+        let result = execute_python_passthrough_command("search", args);
+        // Require an intentional Ok(2) refusal — do not treat arbitrary SidecarError as success.
+        let code = match result {
+            Ok(c) => c,
+            Err(err) => panic!(
+                "PCRE2 search_input_limit refusal must return Ok(2), not Err({err:?})"
+            ),
+        };
+        assert_eq!(code, 2, "sidecar PCRE2 refusal must exit 2");
+        assert_eq!(
+            sidecar_spawn_starts(),
+            0,
+            "uninstrumented PCRE2 must not start the Python sidecar"
+        );
+        assert_eq!(
+            last_sidecar_search_input_limit_reason(),
+            Some("search_input_limit"),
+            "native→sidecar PCRE2 refusal must record literal search_input_limit"
+        );
+    }
+
+    /// Dedicated closed-world CI node.
+    #[test]
+    #[ignore = "task2a round60 dedicated CI node; run via --exact --include-ignored"]
+    fn early_passthrough_below_cap_non_pcre2_starts_sidecar_once() {
+        reset_sidecar_spawn_starts();
+        let dir = tempfile::tempdir().unwrap();
+        let (canary, marker) = write_sidecar_canary(dir.path());
+        let _py_override = TestPythonCommandOverrideGuard::set(canary.into_os_string());
+        let root = dir.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.txt"), "needle\n").unwrap();
+        let args = vec![
+            "--format=json".to_string(),
+            "needle".to_string(),
+            root.to_string_lossy().into_owned(),
+        ];
+        let result = execute_python_passthrough_command("search", args);
+        let code = result.expect("below-cap non-PCRE2 must return Ok(exit_code), not Err");
+        assert!(
+            code == 0 || code == 1,
+            "below-cap non-PCRE2 must exit 0 or 1 (non-incomplete), got {code}"
+        );
+        assert_eq!(
+            sidecar_spawn_starts(),
+            1,
+            "below-cap non-PCRE2 must start the Python sidecar exactly once"
+        );
+        assert!(marker.exists(), "sidecar canary must have been executed");
+        assert_ne!(
+            last_sidecar_search_input_limit_reason(),
+            Some("search_input_limit"),
+            "below-cap must not be classified as search_input_limit"
+        );
     }
 }

@@ -445,6 +445,105 @@ jobs:
         # job rather than repeating the claim as settled.
         run: uv run pytest tests -v --tb=short -m "not eval"
 
+      - name: Task 2A Round-60 Python runner discovery (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f tests/fixtures/task2a_windows_node_manifest.json
+          test -f scripts/run_task2a_pytest_nodes.py
+          test -f scripts/verify_task2a_windows_nodes.py
+          ART="artifacts/task2a-native-ci/${GITHUB_RUN_ID:-local}/${GITHUB_RUN_ATTEMPT:-1}"
+          mkdir -p "$ART"
+          export ART
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          art = Path(os.environ['ART'])
+          man = Path('tests/fixtures/task2a_windows_node_manifest.json')
+          payload = json.loads(man.read_text(encoding='utf-8'))
+          nodes = [n for n in payload['nodes'] if n['id'].startswith('python::') and n.get('job') == 'test-python']
+          assert nodes, 'no test-python python nodes in Task 2A manifest'
+          print(f'task2a_python_nodes={len(nodes)}')
+          print(f'GITHUB_JOB={os.environ.get("GITHUB_JOB")}')
+          print(f'GITHUB_RUN_ID={os.environ.get("GITHUB_RUN_ID")}')
+          print(f'runner={os.environ.get("RUNNER_OS")}')
+          if not os.environ.get('GITHUB_JOB'):
+              raise SystemExit('GITHUB_JOB missing from Actions environment')
+          (art / 'python-node-ids.txt').write_text('\n'.join(n['id'] for n in nodes) + '\n', encoding='utf-8')
+          PY
+          SETUP_FAILED=0
+          CENSUS_EXECUTED=0
+          RECEIPT_SEEN=0
+          while IFS= read -r NODE_ID || [ -n "$NODE_ID" ]; do
+            [ -n "$NODE_ID" ] || continue
+            SLUG="$(NODE_ID="$NODE_ID" python - <<'PY'
+          import hashlib, os
+          print(hashlib.sha256(os.environ['NODE_ID'].encode()).hexdigest()[:16])
+          PY
+          )"
+            NODE_DIR="$ART/python/$SLUG"
+            mkdir -p "$NODE_DIR"
+            printf '%s\n' "$NODE_ID" > "$NODE_DIR/node-id.txt"
+            set +e
+            uv run python scripts/run_task2a_pytest_nodes.py \
+              --manifest tests/fixtures/task2a_windows_node_manifest.json \
+              --junitxml "$NODE_DIR/junit.xml" \
+              --receipt-out "$NODE_DIR/receipt.json" \
+              --node-id "$NODE_ID" \
+              --stdout-out "$NODE_DIR/stdout.txt" \
+              --stderr-out "$NODE_DIR/stderr.txt" \
+              --exit-out "$NODE_DIR/exit.txt" \
+              --argv-out "$NODE_DIR/argv.json" \
+              --observation-out "$NODE_DIR/observation.json"
+            rc=$?
+            set -e
+            echo "$rc" > "$NODE_DIR/runner-exit.txt"
+            if [ -f "$NODE_DIR/receipt.json" ]; then
+              RECEIPT_SEEN=1
+            fi
+            PHASE="$(NODE_DIR="$NODE_DIR" python - <<'PY'
+          import json, os
+          from pathlib import Path
+          p = Path(os.environ['NODE_DIR']) / 'observation.json'
+          if not p.is_file():
+              print('missing_observation')
+          else:
+              print(json.loads(p.read_text(encoding='utf-8')).get('phase', 'unknown'))
+          PY
+          )"
+            if [ "$PHASE" != "executed_refused_receipt" ]; then
+              echo "task2a python setup/census failure for $NODE_ID phase=$PHASE rc=$rc" >&2
+              SETUP_FAILED=1
+            else
+              CENSUS_EXECUTED=$((CENSUS_EXECUTED + 1))
+            fi
+          done < "$ART/python-node-ids.txt"
+          EXPECTED="$(wc -l < "$ART/python-node-ids.txt" | tr -d ' ')"
+          echo "task2a_python_census executed=$CENSUS_EXECUTED expected=$EXPECTED setup_failed=$SETUP_FAILED" >&2
+          if [ "$SETUP_FAILED" -ne 0 ]; then
+            echo "task2a python SETUP/CENSUS FAILURE (distinguishable from product RED)" >&2
+            exit 1
+          fi
+          if [ "$CENSUS_EXECUTED" -ne "$EXPECTED" ]; then
+            echo "task2a python census incomplete: $CENSUS_EXECUTED != $EXPECTED" >&2
+            exit 1
+          fi
+          if [ "$RECEIPT_SEEN" -ne 0 ]; then
+            echo "task2a unexpected NativeCiReceipt emit during RED phase" >&2
+            exit 1
+          fi
+          echo "task2a RED: NativeCiReceipt emit and verifier not implemented after full python census; refusing green CI" >&2
+          exit 1
+
+      - name: Upload Task 2A Python raw artifacts (Windows)
+        if: runner.os == 'Windows' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: task2a-python-${{ matrix.os }}-py${{ matrix.python-version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/task2a-native-ci/
+          if-no-files-found: warn
+
   test-rust-core:
     name: test-rust-core (${{ matrix.os }}, ${{ matrix.rust_channel }})
     needs: smoke
@@ -743,6 +842,164 @@ jobs:
           PYEOF
           python -m pip install --disable-pip-version-check -r "${RUNNER_TEMP:-/tmp}/tg-runtime-deps.txt"
           python -m pytest tests/e2e/test_native_*.py -v --tb=short -p no:cacheprovider
+
+      - name: Task 2A Round-60 native-build-smoke node census (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f tests/fixtures/task2a_windows_node_manifest.json
+          test -f scripts/run_task2a_pytest_nodes.py
+          test -f scripts/run_task2a_rust_node.py
+          test -f scripts/verify_task2a_windows_nodes.py
+          test -f rust_core/Cargo.toml
+          ART="artifacts/task2a-native-ci/${GITHUB_RUN_ID:-local}/${GITHUB_RUN_ATTEMPT:-1}"
+          mkdir -p "$ART"
+          export ART
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          art = Path(os.environ['ART'])
+          payload = json.loads(Path('tests/fixtures/task2a_windows_node_manifest.json').read_text(encoding='utf-8'))
+          py_nodes = [n for n in payload['nodes'] if n['id'].startswith('python::') and n.get('job') == 'native-build-smoke']
+          rust = [n for n in payload['nodes'] if n['id'].startswith('rust::') and n.get('job') == 'native-build-smoke']
+          assert py_nodes, 'no native-build-smoke python nodes'
+          assert len(rust) == 9, len(rust)
+          for n in rust:
+              assert n.get('binary') in {'tg', 'tensor_grep_rs', 'task2a_direct_native_round60'}
+              assert 'tensor_grep_rs' in n['command_vector']
+              assert '--manifest-path' in n['command_vector']
+          print(f'task2a_native_python_nodes={len(py_nodes)}')
+          print(f'task2a_rust_nodes={len(rust)}')
+          print(f'GITHUB_JOB={os.environ.get("GITHUB_JOB")}')
+          print(f'GITHUB_RUN_ID={os.environ.get("GITHUB_RUN_ID")}')
+          print(f'runner={os.environ.get("RUNNER_OS")}')
+          if not os.environ.get('GITHUB_JOB'):
+              raise SystemExit('GITHUB_JOB missing from Actions environment')
+          (art / 'native-python-node-ids.txt').write_text('\n'.join(n['id'] for n in py_nodes) + '\n', encoding='utf-8')
+          (art / 'rust-node-ids.txt').write_text('\n'.join(n['id'] for n in rust) + '\n', encoding='utf-8')
+          PY
+          # Real stable Cargo JSON build messages once; fail immediately on setup/compile failure.
+          set +e
+          cargo test --manifest-path rust_core/Cargo.toml -p tensor_grep_rs --all-targets --no-run --message-format=json > "$ART/cargo-messages.jsonl"
+          cargo_rc=$?
+          set -e
+          if [ "$cargo_rc" -ne 0 ]; then
+            echo "task2a cargo message generation SETUP FAILURE (exit $cargo_rc); raw messages preserved" >&2
+            exit 1
+          fi
+          if [ ! -s "$ART/cargo-messages.jsonl" ]; then
+            echo "task2a cargo-messages.jsonl empty after cargo --message-format=json; SETUP FAILURE" >&2
+            exit 1
+          fi
+          SETUP_FAILED=0
+          PY_EXECUTED=0
+          RUST_EXECUTED=0
+          RECEIPT_SEEN=0
+          while IFS= read -r NODE_ID || [ -n "$NODE_ID" ]; do
+            [ -n "$NODE_ID" ] || continue
+            SLUG="$(NODE_ID="$NODE_ID" python - <<'PY'
+          import hashlib, os
+          print(hashlib.sha256(os.environ['NODE_ID'].encode()).hexdigest()[:16])
+          PY
+          )"
+            NODE_DIR="$ART/python/$SLUG"
+            mkdir -p "$NODE_DIR"
+            printf '%s\n' "$NODE_ID" > "$NODE_DIR/node-id.txt"
+            set +e
+            python scripts/run_task2a_pytest_nodes.py \
+              --manifest tests/fixtures/task2a_windows_node_manifest.json \
+              --junitxml "$NODE_DIR/junit.xml" \
+              --receipt-out "$NODE_DIR/receipt.json" \
+              --node-id "$NODE_ID" \
+              --stdout-out "$NODE_DIR/stdout.txt" \
+              --stderr-out "$NODE_DIR/stderr.txt" \
+              --exit-out "$NODE_DIR/exit.txt" \
+              --argv-out "$NODE_DIR/argv.json" \
+              --observation-out "$NODE_DIR/observation.json"
+            rc=$?
+            set -e
+            echo "$rc" > "$NODE_DIR/runner-exit.txt"
+            if [ -f "$NODE_DIR/receipt.json" ]; then RECEIPT_SEEN=1; fi
+            PHASE="$(NODE_DIR="$NODE_DIR" python - <<'PY'
+          import json, os
+          from pathlib import Path
+          p = Path(os.environ['NODE_DIR']) / 'observation.json'
+          print('missing_observation' if not p.is_file() else json.loads(p.read_text(encoding='utf-8')).get('phase', 'unknown'))
+          PY
+          )"
+            if [ "$PHASE" != "executed_refused_receipt" ]; then
+              echo "task2a native python setup/census failure for $NODE_ID phase=$PHASE rc=$rc" >&2
+              SETUP_FAILED=1
+            else
+              PY_EXECUTED=$((PY_EXECUTED + 1))
+            fi
+          done < "$ART/native-python-node-ids.txt"
+          while IFS= read -r NODE_ID || [ -n "$NODE_ID" ]; do
+            [ -n "$NODE_ID" ] || continue
+            SLUG="$(NODE_ID="$NODE_ID" python - <<'PY'
+          import hashlib, os
+          print(hashlib.sha256(os.environ['NODE_ID'].encode()).hexdigest()[:16])
+          PY
+          )"
+            NODE_DIR="$ART/rust/$SLUG"
+            mkdir -p "$NODE_DIR"
+            printf '%s\n' "$NODE_ID" > "$NODE_DIR/node-id.txt"
+            set +e
+            python scripts/run_task2a_rust_node.py \
+              --manifest tests/fixtures/task2a_windows_node_manifest.json \
+              --receipt-out "$NODE_DIR/receipt.json" \
+              --node-id "$NODE_ID" \
+              --cargo-json-messages "$ART/cargo-messages.jsonl" \
+              --rust-list-out "$NODE_DIR/rust-list.txt" \
+              --rust-stdout-out "$NODE_DIR/stdout.txt" \
+              --rust-stderr-out "$NODE_DIR/stderr.txt" \
+              --rust-status-out "$NODE_DIR/status.txt" \
+              --argv-out "$NODE_DIR/argv.json" \
+              --observation-out "$NODE_DIR/observation.json"
+            rc=$?
+            set -e
+            echo "$rc" > "$NODE_DIR/runner-exit.txt"
+            if [ -f "$NODE_DIR/receipt.json" ]; then RECEIPT_SEEN=1; fi
+            PHASE="$(NODE_DIR="$NODE_DIR" python - <<'PY'
+          import json, os
+          from pathlib import Path
+          p = Path(os.environ['NODE_DIR']) / 'observation.json'
+          print('missing_observation' if not p.is_file() else json.loads(p.read_text(encoding='utf-8')).get('phase', 'unknown'))
+          PY
+          )"
+            if [ "$PHASE" != "executed_refused_receipt" ]; then
+              echo "task2a rust setup/census failure for $NODE_ID phase=$PHASE rc=$rc" >&2
+              SETUP_FAILED=1
+            else
+              RUST_EXECUTED=$((RUST_EXECUTED + 1))
+            fi
+          done < "$ART/rust-node-ids.txt"
+          PY_EXPECTED="$(wc -l < "$ART/native-python-node-ids.txt" | tr -d ' ')"
+          RUST_EXPECTED="$(wc -l < "$ART/rust-node-ids.txt" | tr -d ' ')"
+          echo "task2a_native_census py=$PY_EXECUTED/$PY_EXPECTED rust=$RUST_EXECUTED/$RUST_EXPECTED setup_failed=$SETUP_FAILED" >&2
+          if [ "$SETUP_FAILED" -ne 0 ]; then
+            echo "task2a native SETUP/CENSUS FAILURE (distinguishable from product RED)" >&2
+            exit 1
+          fi
+          if [ "$PY_EXECUTED" -ne "$PY_EXPECTED" ] || [ "$RUST_EXECUTED" -ne "$RUST_EXPECTED" ]; then
+            echo "task2a native census incomplete" >&2
+            exit 1
+          fi
+          if [ "$RECEIPT_SEEN" -ne 0 ]; then
+            echo "task2a unexpected NativeCiReceipt emit during RED phase" >&2
+            exit 1
+          fi
+          echo "task2a RED: NativeCiReceipt emit and verifier not implemented after full native census; refusing green CI" >&2
+          exit 1
+
+      - name: Upload Task 2A native raw artifacts (Windows)
+        if: runner.os == 'Windows' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: task2a-rust-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/task2a-native-ci/
+          if-no-files-found: warn
 
   test-gpu-linux:
     name: test-gpu-nvidia (ubuntu-latest, cuDF)
