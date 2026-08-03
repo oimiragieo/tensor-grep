@@ -124,6 +124,13 @@ release ago. Doc-to-doc pinning is correct for *wording*; source-pinning is requ
 
 This is what caught (and was itself the root cause of 4 wasted CI cycles in) the June-2026 README-rewrite incident — see `tensor-grep-failure-archaeology` for the full story; the operational lesson for docs work specifically is: **decode the structured failing check first**. `docs-claim-check` failing tells you a *version or fragment* problem; it does not by itself tell you *which* pytest in Layer B also broke — run Layer B directly (Part 4) rather than theorizing from the readiness JSON alone.
 
+**Green governance tests do not validate examples or PR metadata (2026-08-02, #910).** A docs PR passed
+its focused tests and full CI while a Markdown/Python example contained a literal line break in the
+wrong place and the PR body reported stale counts. Treat examples as code: extract/compile/run them when
+possible, or add a tiny syntax/shape assertion. Treat titles, bodies, comments, and counts as the same
+reviewed artifact as the diff; after a scope-changing push, re-read them against the final head. Every
+count names its population/denominator (`0/2 unchecked`, not merely `0`).
+
 ### Layer D — The published mkdocs site (a separate universe)
 
 `mkdocs.yml` defines a **subset** of `docs/*.md` as the published site nav (currently: `index.md`, `installation.md`, `CI_PIPELINE.md`, `SUPPORT_MATRIX.md`, `CONTRACTS.md`, `enterprise_review_bundle_ci.md`, `EXPERIMENTAL.md`, `RELEASE_CHECKLIST.md`, `HOTFIX_PROCEDURE.md`, `package_manager_publish.md`, `architecture.md`, `multi_agent_context_plane.md`, `benchmarks.md`, `tool_comparison.md` — verify with `grep -A2 '^nav:' mkdocs.yml`). CI's `release-readiness` job (`.github/workflows/ci.yml:98-101`) runs `mkdocs build --strict` (`:116`), which **fails the build on any broken internal link or nav reference**, not just missing content. `docs/SESSION_HANDOFF.md`, `docs/CONTINUATION_PLAN.md`, `docs/PAPER.md`, `docs/gpu_crossover.md`, `docs/routing_policy.md`, `docs/world_class_plan.md` are **repo-internal only** — they are pytest-governed (Layer B) but are NOT part of the published site and don't need mkdocs nav entries. Before editing a file that IS in the nav, run the strict build locally:
@@ -260,6 +267,9 @@ Required fields, per `grep -n "Maintain a per-slice evidence ledger" AGENTS.md` 
 - [ ] No hand-edit of an auto-stamped fragment (Part 2 Layer A) — ran `python scripts/stamp_release_assets.py` instead if a stamp looked wrong.
 - [ ] Edited via a script rather than the interactive editor → confirmed binary-mode read/write preserved CRLF (`git diff --stat` shows only the intended lines changed, not the whole file — Part 4 step 6).
 - [ ] New governed doc → all 5 registration sites in Part 5 confirmed present.
+- [ ] Code/config/shell example → extracted and syntax/behavior checked where feasible; no malformed
+  literal line breaks hidden by Markdown rendering.
+- [ ] PR title/body/comments/counts re-read against final head; every count states its population.
 - [ ] `README.md` touched → confirmed no per-release ledger content reintroduced (Part 6).
 - [ ] `SKILL.md` touched → confirmed **which** of the three `SKILL.md` files (Part 3) was actually intended.
 - [ ] `CLAUDE.md` touched → change is a short pointer bullet, not duplicated AGENTS.md prose.

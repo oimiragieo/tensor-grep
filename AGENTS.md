@@ -246,11 +246,72 @@ concrete failure observed this session.
   a new run whose concurrency group CANCELS the tail, leaving a tag with no PyPI artifact — the
   version-soup state #47 exists to detect. Wait for PyPI to actually serve the new version.
 
+- **A34 — Prose and PR metadata are part of the artifact (2026-08-02).** PR #910 was code/test green,
+  but an independent read found a malformed Markdown/Python example and counts whose denominator was
+  unstated. Gate titles, bodies, comments, examples, and status counts against the final commit just as
+  you gate code. After scope changes, refresh and re-review PR metadata; “0 unchecked” and “0 total” are
+  different claims.
+- **A35 — Plan approval expires when a premise changes (2026-08-02).** A unanimous plan review did not
+  survive the live-code deep dive: the writer population was incomplete, a Rust method was public, and
+  a Python backend twin still carried the retired fallback. Any material premise change invalidates the
+  old verdict. Amend the plan, hash the exact new artifact, and re-run the thinktank before build.
+- **A36 — A site regression is not a class census (2026-08-02, #859).** The codemap-specific fix/test
+  was recorded as satisfying a class-level writer ratchet, while three production writers and generated
+  helper source remained outside the population. A class claim needs an independently derived closed-
+  world population, mutation controls, and a zero-violation assertion; a single fixed site proves only
+  that site.
+- **A37 — Census the defect surface, including generated interpreters (2026-08-02).** Discover writers
+  from production write/spawn roots, then resolve aliases, local imports, rebinding/shadowing, generated
+  `python -c` source, and raw candidate calls. Fail closed on dynamic/unparseable generated payloads.
+  Sanction an exact callsite/operation/destination-provenance fingerprint, never a whole function.
+- **A38 — Leaf resolution order and parent anchoring are separate security contracts (2026-08-02).**
+  Calling `.resolve()`/`realpath()` before a no-follow writer erases leaf-symlink identity. Even with a
+  safe leaf check, an attacker can swap a parent or junction before mkdir/publication. Preserve the raw
+  leaf identity; anchor directory creation, temp creation, and publication to opened identity-verified
+  parent handles; Event-gate both leaf and parent swaps on Unix and Windows.
+- **A39 — Class fixes cross to twins (2026-08-02, extends A27).** `RustCoreBackend` removed an unsafe
+  `TypeError` signature-compatibility retry while `CPUBackend` kept two copies that dropped
+  `invert_match`. After a class fix, grep sibling adapters/helpers for the retired shape and add a
+  population ratchet; otherwise the twin re-fires the same defect.
+- **A40 — No in-repo caller does not authorize public-API deletion (2026-08-02).** Rust
+  `CpuBackend.replace_in_place` is exported in an `rlib`; downstream callers are not visible to an
+  in-repository census. Retain and harden public signatures unless a deliberate breaking/deprecation/
+  migration decision authorizes removal. Pin the exact public function type at compile time.
+- **A41 — Preserve mixed dispositions (2026-08-02).** #90's doctor half shipped while its bounded WSL
+  half was retired as non-reproducing/non-defect. Do not flatten `shipped + retired`, `fixed + blocked`,
+  or `implemented + demand-gated` into one flattering word. Track each sub-outcome and close the parent
+  honestly.
+- **A42 — Producer→consumer dogfood must not change what it verifies (2026-08-02).** Materializing a
+  verification result inside the repository can dirty the very state the consumer is meant to attest.
+  Prefer bounded stdin/captured stdout, keep producer and consumer exits separately, and pin the full
+  matrix: `0→0`, `1→0`, valid `2→0`, malformed consumer `2` with no receipt.
+- **A43 — Exact CI completion includes the job population (2026-08-02).** A PR check rollup can grow
+  while jobs are still being created. Capture the exact workflow run ID and head SHA, require the run
+  `completed`, record its job-count floor, and prove zero unfinished/failing jobs. Do not infer
+  completion from a momentary rollup list.
+- **A44 — Attribute each SHA to what it proves (2026-08-02).** `origin/main`, the newest main-CI head,
+  a PR head, a squash merge, and a semantic-release `[skip ci]` commit can all differ. Record each claim
+  against the exact artifact and run that proves it; never cite the newest convenient SHA for all arms.
+- **A45 — Durable CEO status is a closed-world snapshot, not a hand-picked top five (2026-08-02).**
+  Separate active/buildable, environment-blocked, CEO/financial-gated, demand/research-gated, and
+  terminal corrections. Give every live item one stable ID/owner/trigger and assert that the canonical
+  set has no unowned extras or omissions. Update `MEMORY.md` and the handoff in the same change.
+
 ## Current Handoff
 
 release_docs_current_tag: v1.102.1
 
-As of 2026-06-26, the current tagged release state is `v1.102.1`, and the latest complete public PyPI/release-asset distribution is also `v1.102.1`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.102.1` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
+As of 2026-08-02, the current tagged release state is `v1.102.1`, and the latest complete public PyPI/release-asset distribution is also `v1.102.1`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.102.1` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
+
+**2026-08-02 backlog-closeout handoff.** PR #910 merged as `8024125` after exact-run CI (39 jobs,
+0 failed/unfinished), independent prose/metadata review, and a 7/7 merged-artifact board test. The
+implementation campaign finished its plan-approval loop after fourteen corrective rounds: live-code
+review found and the plan closed tracker, generated-writer, parent-swap/no-clobber, public-Rust-API,
+Python-backend-twin, status-lifecycle, and closure-PR gaps. Architecture/security/TDD all returned
+`SHIP` on final exact hashes; no build has started, so resume at Task 2.
+The closed-world CEO snapshot, every active/blocked/gated/research item, current evidence, and the new
+A34-A45 lessons are in `docs/audits/2026-08-02-ceo-backlog-update.md`; durable resume state is in
+`MEMORY.md`.
 
 **2026-07-14 Current-Handoff addendum -- GPU Phase-0 hardening wave (v1.75.1-v1.75.4, audit #171).** Four
 PRs closed audit #171's P0-1 through P0-5 GPU findings, each behind the mandatory Opus adversarial gate

@@ -1,6 +1,10 @@
 ---
 name: tensor-grep-backlog-campaign
-description: Use when asked to deep-dive, audit, fix, or drain tensor-grep backlog — OR investigate/rank next work and produce SPEC/TDD plans (docs/plans/requirements|design|tasks-*.md) without implementing. Triggers: "work the backlog", "what next", "investigate and plan", backlog-completion campaign. META-ORCHESTRATOR — 27-skill library. Semantic-search flagship: tensor-grep-semantic-search-campaign. Scale/hang campaign: tensor-grep-large-repo-scale-campaign. Load tensor-grep-change-control before edit.
+description: >-
+  Use when asked to deep-dive, audit, fix, or drain the tensor-grep backlog, or to investigate and
+  rank next work and produce SPEC/TDD plans without implementing. Triggers include "work the
+  backlog", "what next", "investigate and plan", and backlog-completion campaigns. This is the
+  meta-orchestrator for the repo skill library; load tensor-grep-change-control before editing.
 ---
 
 # tensor-grep backlog campaign
@@ -26,6 +30,11 @@ You have stale training data. **Never act on memory alone** for external facts, 
 ## CEO communication
 
 **Chat short and business-focused; depth in files.** Plan-only mode ("investigate," "what next," "write a spec") stops after Phase 0 plan docs — **no code** unless CEO explicitly asks to implement.
+
+For “list all backlog,” produce a **closed-world** snapshot, not a highlight reel. Separate:
+active/buildable; environment-blocked; CEO/financial-gated; demand/research-gated; and terminal
+corrections that stale trackers still show. Every live row gets one stable ID/alias, owner/decision maker,
+and reopen trigger. Preserve mixed outcomes instead of flattening them into “shipped.”
 
 ---
 
@@ -70,7 +79,11 @@ Before CEO summary: `verify-plan-against-code` on all seams; Phase 0f checklist;
 
 ### CEO response format
 
-Executive summary · evidence · skills used · tools (gaps only) · plan pointers · research · next action.
+Executive summary · what worked · **all backlog by disposition** · research already done · research still
+needed · spend/financial gates · lessons since the prior update · evidence · next action.
+
+Write the detailed snapshot to a dated audit file and update `MEMORY.md`, `docs/SESSION_HANDOFF.md`, and
+the canonical tracker in the same change. A CEO chat summary is not durable state.
 
 **CEO approval before:** merge during in-flight release, public PyPI claim comms, irreversible contract changes without pinned test updates.
 
@@ -156,7 +169,11 @@ Its silence on a topic is not evidence a skill doesn't apply; the table above st
 - **GitHub (`gh pr list`)** — PR source of truth for open/merged work.
 - **Memory anchor** — on every backlog change, update via `MEMORY.md` / `~/.claude/projects/<slug>/memory/feedback_tensor_grep_backlog.md` with: P0 queue, in-flight PRs, last shipped tag, push-race waiter state, "resume here".
 - **Restart order:** memory anchor → `docs/BACKLOG.md` → `docs/SESSION_HANDOFF.md` → `AGENTS.md` → GitHub. Never use the ephemeral session task store as source of truth.
-- **CEO status** = BACKLOG top items + blockers + spend + next 3 actions.
+- **CEO status** = closed-world live backlog + blockers + research + spend + next 3 actions; do not omit
+  demand-gated or mixed-terminal rows merely because they are not immediately buildable.
+- **Artifact attribution** — store PR head, squash merge, main-CI head/run, release commit/tag, and PyPI
+  proof separately. They may be different SHAs. Exact CI proof includes run ID, head SHA, stable job
+  population, and zero unfinished/failing jobs.
 
 **Steward cron (this repo):** the backlog-steward tick is **session-scoped** — it re-arms with a NEW id and
 schedule every session, so any recorded id goes stale immediately. Do NOT trust a previously-recorded id

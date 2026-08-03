@@ -3,7 +3,16 @@
 > **Canonical prioritized work list.** Kept in sync with the CLI task store (`TaskUpdate`) and
 > GitHub (`gh pr list` is the source of truth for PRs). **CEO status** = summarize SHIPPING + P0/P1.
 > Update whenever a PR opens/merges or the queue changes. Task-store IDs (`#NNN`) cross-referenced.
-> **Last refreshed 2026-07-29 (enterprise deep audit, live tip **v1.101.18**).** Spec:
+> **Current closed-world CEO snapshot: 2026-08-02, release `v1.102.1`, merged main `8024125`, zero
+> open PRs, one open GitHub issue (#48).** The complete active/environment/CEO/demand/research list is
+> `docs/audits/2026-08-02-ceo-backlog-update.md`. Tasks 2–15 of the closeout plan are the current
+> execution queue; historical sections below remain append-only evidence and may describe old status.
+> New local-environment finding: `ENV-VENV-DRIFT` — the campaign worktree's no-sync CLI reports
+> 1.102.0 against source/release 1.102.1, editable warmup timed out compiling after 240 seconds, and the
+> no-sync venv lacks PyYAML for `validate_release_assets.py`. Reconcile the real main venv before using
+> local CLI-version/release-validator output as proof; 93 docs/skill governance tests still pass.
+>
+> **Prior refresh 2026-07-29 (enterprise deep audit, live tip **v1.101.18**).** Spec:
 > `docs/plans/2026-07-29-enterprise-deep-audit-design.md` (also mirrored under gitignored
 > `docs/superpowers/specs/`). Headline corrections over the
 > 2026-07-27b note below: (1) the text-disclosure **helper + leading banners are largely WIRED**

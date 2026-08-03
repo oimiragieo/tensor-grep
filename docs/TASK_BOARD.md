@@ -18,8 +18,13 @@
 >    `tag == PyPI` cannot distinguish *released* from *not started* from *died* and cost a release
 >    on 2026-07-28.
 
-Last reconciled: **2026-08-01** (backlog campaign: 7 stale-open items closed), post-**v1.102.0** (PyPI verified via the JSON API, not inferred
+Last reconciled: **2026-08-02** (PR #910 merged and post-merge verified), post-**v1.102.1** (PyPI verified via a clean `uvx` install, not inferred
 from a tag — `tag == PyPI` cannot tell *released* from *not started* from *died*).
+
+**Current closed-world status:** `docs/audits/2026-08-02-ceo-backlog-update.md`. A live-code deep dive
+proved that several unchecked historical rows below need terminal/mixed reconciliation (#90/#109) and
+that #859 remains a class-level task. Do not dispatch from those stale rows; execute the approved
+Tasks 2–15 plan and let its canonical parser update them with receipts.
 
 **This has now gone stale THREE times in the same way, so the pattern is the finding.** The stamp
 once read "2026-07-28, post-v1.101.9" while PyPI had moved 13 releases on; then "2026-07-31,
@@ -58,11 +63,11 @@ be rare; neither holds here.
 
 ---
 
-## IN FLIGHT (PRs open right now — derived from `gh pr list`, 2026-08-01)
+## IN FLIGHT (PRs open right now — derived from `gh pr list`, 2026-08-02)
 
 | PR | Title | Type | State |
 |---|---|---|---|
-| #882 | `test`: gate skill-library citation + stated-count drift, and fix the oracle-form miscount | non-releasing (`test:`) | CI green; carries the drift gate, `/tg-skill-audit`, and 6 skill/doc repairs |
+| — | None | — | 0 open PRs at the snapshot |
 
 *(#872, #871 and #868 all MERGED — #871 on 2026-07-31, #872 and #868 on 2026-08-01. They sat in
 this table as "CI running" / "BLOCKED — do not merge" after landing, which is the exact failure mode

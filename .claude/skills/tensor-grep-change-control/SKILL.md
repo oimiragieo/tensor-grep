@@ -260,6 +260,13 @@ the *shape of the output* (every place this exact artifact gets constructed), ne
 implementation mechanism -- a sibling that reaches the same artifact by a different path is exactly the
 member a mechanism-keyed search cannot see.
 
+**Generated code is a second interpreter and must join the population.** Discover every production
+spawn/exec root, parse every statically resolvable payload as its own source unit, and fail closed on
+dynamic/unparseable payloads. Resolve local imports, aliases, rebinding, and shadowing. Sanction exact
+`source:callsite:operation:destination-provenance` fingerprints, not whole functions. Prove the census
+with ordinary and generated-source mutation controls. Receipt: #859's codemap-only ratchet missed three
+live writers plus generated helper sinks.
+
 ### A shared builder's flag belongs to its consumers, not its neighbors (#876, fixed #880)
 
 **Rule:** before adding a flag/param to a SHARED builder, enumerate every consumer of what it builds and
@@ -416,6 +423,23 @@ accepting the plan's header. A planning agent stated one commit as its base whil
 matched a different one, and `origin/main` was 15 minutes ahead of both -- its Item 1 "warned" about a
 trap that was already live on `main`, and two of its items were already shipped.
 
+**Plan approval is scoped to exact bytes and expires on a changed premise (2026-08-02).** Hash the design
+and implementation plan for every council round. If the live-code deep dive changes the writer
+population, API visibility, fallback model, file scope, or any other load-bearing premise, the old SHIP
+verdict no longer applies: amend, re-hash, and re-review before dispatching a build.
+
+**Search twins and respect public boundaries.** After retiring a defect shape, grep sibling adapters and
+helpers for the same pattern; a zero-retry fix in `RustCoreBackend` did not protect two copies in
+`CPUBackend`. Separately, zero in-repo callers cannot authorize deleting an exported Rust `rlib` method.
+Pin exact public function types and require an explicit breaking/deprecation/migration decision for
+removal.
+
+**No-follow safety begins before the helper call.** Treat `.resolve()`/`realpath()` on a caller-selected
+leaf before an approved writer as a violation because it erases symlink identity. Handle-relative
+publication alone is also insufficient when missing directories are created path-wise: anchor directory
+creation, temporary creation, and publication to opened identity-verified parents, then Event-test leaf
+and parent/junction swaps on Unix and Windows.
+
 ---
 
 ## Part 7 — Push discipline & the push-race (one-merge-per-tick)
@@ -539,6 +563,10 @@ CI infers the semantic-release bump from the **PR title** (which becomes the squ
 - Use **Squash and merge** for release-bearing PRs so the validated title becomes the `main` subject.
 - **Do not manually create release tags** while semantic-release is active.
 - A release-bearing fix is **not complete** after only a branch push / open PR / green PR checks. The final report must name: PR, merge commit, main CI run, CodeQL run, released tag, PyPI publish status, and any public installer dogfood result (`AGENTS.md:862`).
+- **PR metadata is part of the reviewed artifact.** Re-read the title, body, comments, examples, and
+  counts after every scope-changing push. State each count's population/denominator. PR #910 was green
+  while its Markdown/Python example was malformed and its status counts were stale; independent prose
+  review, not CI, caught both.
 
 ---
 
@@ -634,11 +662,18 @@ uv export --format requirements.txt --all-extras --no-emit-project --locked
 - [ ] Contract/CI/docs change → **validator-backed test updated**.
 - [ ] Multiple PRs touch the SAME shared file (e.g. a registry test, `uv.lock`) → drained sequentially, each rebased onto the prior with a **UNIONED** assertion, test suite **re-run after every rebase** (Part 7, C4).
 - [ ] Relying on a census/coverage list (registration sites, argv-sentinel guards) → each member **CALLED** (guard deleted, suite re-run red) not reasoned as covered, and keyed on the **artifact**, not a shared mechanism (Part 3).
+- [ ] Census includes generated interpreters, aliases/shadowing, independent raw candidates, and
+  ordinary/generated mutation controls; sanctions are exact callsite fingerprints.
+- [ ] Caller-selected writer touched → raw leaf identity preserved; directory creation and publication
+  parent-handle anchored; Event-gated leaf and parent/junction swaps green on affected platforms.
+- [ ] Class fix → sibling/twin shapes searched; public API retained unless a deliberate breaking plan
+  authorizes removal.
 - [ ] A "DRY, extract the shared helper" refactor → checked that neither call site is a generated string later written to disk / `exec`'d / run standalone (Part 6).
 - [ ] Any defect noticed in passing, regardless of authorship/CI-visibility/scope → fixed now or filed as a concrete tracked blocker, never waved past (Part 1 Rule 7).
 - [ ] Local gate green: `ruff check` + `ruff format --check --preview` + `mypy src/tensor_grep` + `pytest -q`.
 - [ ] Subagent claims **re-run in the real venv** — none trusted as-reported.
 - [ ] PR title matches intended release bump; **squash-merge** for release-bearing.
+- [ ] PR body/comments/examples/count denominators re-reviewed against the final head commit.
 - [ ] Merging: prior release **fully published** (its `chore(release)` on `main` + PyPI shows it) before this merge — **one-merge-per-tick**.
 - [ ] Autonomous work stops at a **draft PR** — no auto/admin-merge.
 
