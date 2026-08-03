@@ -18,6 +18,40 @@
 >    `tag == PyPI` cannot distinguish *released* from *not started* from *died* and cost a release
 >    on 2026-07-28.
 
+## Canonical status index
+
+Canonical status index version: 2026-08-02.2
+- [x] **#22** — Status: RETIRED; PR: none; Trigger: exit 0 is complete with matches; exit 1 is complete with no match; exit 2 is incomplete; gpu_request_unhonoured stays in-band and does not independently force exit 2
+- [x] **F2** — Status: RETIRED; PR: none; Trigger: legacy anonymous-agent compatibility deliberately retains the sentinel; reopen only with a caller-supplied stable identity contract and migration plan
+- [x] **#36** — Status: SHIPPED; PR: PR #903; Trigger: all 27 topic skills audited and drift corrections merged; reopen on a new failing skill-drift receipt
+- [x] **#37** — Status: SHIPPED; PR: PR #908; Trigger: grammar-dependent Windows test marked and merged; reopen on a current supported-environment failure
+- [ ] **#48** — Status: CEO_GATED; PR: none; Trigger: CEO decision on native-front-door startup architecture
+- [ ] **#72** — Status: CEO_GATED; PR: none; Trigger: CEO approval for a fresh public benchmark claim
+- [ ] **#77** — Status: CEO_GATED; PR: none; Trigger: CEO decision on the #77/F9 ledger-enforcement scope
+- [ ] **#89** — Status: READY; PR: none; Trigger: 2026-08-02 WSL-to-Windows path-domain reproduction returned path_not_found for an existing /mnt/c path; owner is an amended and re-reviewed TDD task before final closeout
+- [x] **#90** — Status: RETIRED; PR: none; Trigger: doctor false-available half shipped in PR #571; bounded WSL portability half was non-reproducing and a non-defect; reopen only with a current failing fixture
+- [x] **#109** — Status: SHIPPED; PR: PR #605; Trigger: CUDA implicit-walk ceiling merged; reopen on a current parity regression
+- [ ] **#131** — Status: CEO_GATED; PR: none; Trigger: CEO decision on publishing GPU-flavor native assets
+- [ ] **#169** — Status: CEO_GATED; PR: none; Trigger: CEO approval for physical GPU proof or spend
+- [ ] **#255** — Status: DEMAND_GATED; PR: none; Trigger: demand for a bounded many-pattern dedup parity experiment or approved compression/native investment
+- [ ] **#859** — Status: READY; PR: none; Trigger: Task 3 class-level AST writer census and anchored publication fix; first implementation PR moves this row to IN_FLIGHT
+- [ ] **F5** — Status: READY; PR: none; Trigger: Task 8 edit-ready and claims-fence program; first implementation PR moves this row to IN_FLIGHT
+- [ ] **F6** — Status: READY; PR: none; Trigger: Tasks 6-7 edit-verification service and public CLI; first implementation PR moves this row to IN_FLIGHT
+- [ ] **F7** — Status: READY; PR: none; Trigger: Tasks 10-11 language-registry and cross-file resolution program; first implementation PR moves this row to IN_FLIGHT
+- [ ] **F8** — Status: READY; PR: none; Trigger: Tasks 12-13 workspace service and CLI program; first implementation PR moves this row to IN_FLIGHT
+- [ ] **MCP-SURFACE** — Status: READY; PR: none; Trigger: Task 4 MCP surface disclosure; first implementation PR moves this row to IN_FLIGHT
+- [ ] **CPU-BACKEND** — Status: READY; PR: none; Trigger: Task 5 Rust and Python backend hardening; first implementation PR moves this row to IN_FLIGHT
+- [ ] **REF-CALL-REGISTRY** — Status: READY; PR: none; Trigger: Task 9 prepare-service extraction; first implementation PR moves this row to IN_FLIGHT
+- [ ] **F10** — Status: DEMAND_GATED; PR: none; Trigger: demand for a reviewed MaxSim activation or retirement plan
+- [ ] **DD-004** — Status: DEMAND_GATED; PR: none; Trigger: evidence of a stable typed backend error boundary
+- [ ] **DD-006** — Status: DEMAND_GATED; PR: none; Trigger: measured concurrent daemon load or denial-of-service evidence
+- [ ] **AST-DSL-PARITY** — Status: DEMAND_GATED; PR: none; Trigger: demand for full structural DSL parity and a preprocessor-aware oracle
+- [ ] **MCP-LEAN-DEFAULT** — Status: DEMAND_GATED; PR: none; Trigger: client demand and compatibility evidence for changing the default surface
+- [ ] **CONTINUOUS-REFRESH** — Status: DEMAND_GATED; PR: none; Trigger: measured warm-session demand and an approved search-index service design
+- [ ] **RUST-REPLACE-SYMLINK** — Status: DEMAND_GATED; PR: none; Trigger: concrete untrusted-destination threat model or downstream compatibility decision
+
+## Live campaign snapshot
+
 Last reconciled: **2026-08-02** (PR #910 merged and post-merge verified), post-**v1.102.1** (PyPI verified via a clean `uvx` install, not inferred
 from a tag — `tag == PyPI` cannot tell *released* from *not started* from *died*).
 
@@ -108,7 +142,11 @@ merging something correct.)*
   `normalize_gpu_sidecar_json` builds the document by hand with `serde_json::json!()`, so a census
   keyed on `#[derive(Serialize)]` reported "4 of 4 covered" and was wrong by one. **Enumerate
   EMITTERS, not the mechanism they happen to use.** PR #871.
-- [ ] **GPU exit-2 calibration — BLOCKED, twice over.** *Task #22.* (1) The CAUSE of #868's CI
+- [x] **GPU exit-2 calibration — RETIRED 2026-08-02.** The canonical ruling is: exit `0` is a
+  complete result with matches, exit `1` is a complete no-match, and exit `2` means incomplete.
+  An unhonoured GPU request remains disclosed in-band and does not independently force exit `2`.
+  The stale investigation is retained below as historical context, not active work. ORIGINAL TEXT
+  FOLLOWS — **BLOCKED, twice over.** *Task #22.* (1) The CAUSE of #868's CI
   failure is still unknown. A two-arm control proved that IF `resolve_native_tg_binary()` returns a
   path, `main.py:7877` `sys.exit`s ~530 lines before #868's rule at `main.py:8408`, reproducing CI
   byte-for-byte — but `.github/workflows/ci.yml:688` says `test-python` never builds that binary, so
@@ -187,10 +225,11 @@ review, each verified against the real code (a finding without a `file:line` was
   *"a surface that cannot finish must say so, in a machine-branchable field, with the exit code
   agreeing."* agentmako's freshness labels (live/fresh_indexed/stale/contradicted/unknown) are the
   nearest analogue and are weaker. This is a real moat and it is currently invisible outside the repo.
-- [ ] **Token-economics is the category's scoring metric.** Competitors publish token-reduction
+- [x] **Token-economics is the category's scoring metric — RESEARCH COMPLETE, publication decision
+  owned only by canonical #72.** Competitors publish token-reduction
   numbers (grepai 97% input-token cut, CodeGraph ~70% fewer tool calls, GitNexus 88%, Gortex 3–50×).
   tg's own measured **7.5× fewer tokens than grep** is the same metric family. Publication is
-  **CEO-gated (#72)** — not an AI-doable item, listed so it is not forgotten.
+  The publication decision is not duplicated here; see the canonical status index.
 - [x] **Language coverage gap, stated honestly -- SHIPPED #902 (2026-08-02).** Closed by the
   premise check, not by new work: `docs/tool_comparison.md` on `main` already carries the
   two-tier table (both tiers computed live from the language registry, with a "re-derive this
@@ -280,11 +319,17 @@ the worktree, which is exactly how 519 lines hid behind an "ANCESTOR of main" ve
   is the near-miss: a commit subject is not a diff.** A `temp-verify-*` subject on a stash entry
   described the WIP it was taken from, not the change it carried.
 
+## READY — reproduced during Task 2
+
+- [ ] **#89** WSL-to-Windows native delegation passes a Linux `/mnt/c/...` path to a Windows
+  executable, which reports `path_not_found` although WSL can stat the directory. The bounded
+  2026-08-02 receipt is in `docs/audits/2026-08-02-backlog-reconciliation.md`. Per the approved
+  outcome table, final closeout pauses until an amended, re-reviewed TDD task owns this fix.
+
 ## BLOCKED — environment (not CEO-gated, just needs hardware)
 
-- [ ] **#89** WSL `/mnt/c` absolute-path resolution in the native backend
-- [ ] **#90** `tg scan` ast-grep Linux/WSL portability + doctor false-"available" exit-127
-- [ ] **#109** CUDA GPU implicit-walk ceiling
+None at this snapshot. Historical #90 is a mixed retirement (doctor half shipped in PR #571; WSL
+half non-defect), and #109 shipped in PR #605. Do not restore either as an unchecked hardware row.
 
 ## CEO-GATED (do not start without an explicit go)
 

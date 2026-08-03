@@ -179,3 +179,11 @@ Recorded because in this repo the probe is wrong more often than the subject.
    the venv carries ruff **0.16.0** while `pyproject.toml:632` pins **`ruff==0.15.20`** (confirmed in
    `uv.lock`). CI's `uv run` syncs to the lock. Reformatting to satisfy the local binary would redden
    main. Second occurrence of this trap in this workspace.
+
+## APPENDED CORRECTION — #859 (2026-08-02)
+
+The codemap-only test did not satisfy the class-level population contract. The original receipt above
+proved one concrete output site, not every site that builds the secure-writer record class. Treat that
+receipt as historical evidence for the tested site only. Backlog #859 is `READY`: Task 3 must census and
+pin all constructors, aliases, generated-source sites, shadow implementations, and mutation paths before
+changing production code.

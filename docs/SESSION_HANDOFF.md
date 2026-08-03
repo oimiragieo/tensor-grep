@@ -12,22 +12,30 @@ release_docs_current_tag: v1.102.1
 
 ## Current Backlog Closeout
 
+Canonical status index version: 2026-08-02.2
+
 - `origin/main` at the campaign rebase point: `8024125612d5fb42481acde34d94ad39bbaa3c3e`.
 - PR #910 is merged. Its exact PR run `30777042942` completed 39 jobs with zero failure/unfinished
   jobs; the focused board test passed 7/7 on the merged artifact.
 - Open PRs at the snapshot: 0. Open GitHub issues: #48 only.
-- The closeout build has not started. Exact-hash rounds 16–18 caught task-order, workspace-schema,
+- Tracker reconciliation is complete. Exact-hash rounds 16–18 caught task-order, workspace-schema,
   claims-fence first-use/locking, project-config confinement, tracker-lifecycle, deferred Rust-symlink,
   and tests-after defects. Architecture, security, and TDD all returned `SHIP` on final status-stamped
   hashes design `F627B23F...E4C994` and implementation `E30DCCCD...8216B`.
-- Resume at Task 2, then execute Tasks 2–15 in
-  `docs/plans/2026-08-02-backlog-closeout-implementation-plan.md`.
+- Task 2 reproduced #89 in WSL: the Linux Python front door delegated a valid `/mnt/c/...` path to the
+  Windows native executable, which returned `path_not_found`. #89 is therefore `READY`, not
+  environment-blocked. Amend and re-certify the #89 TDD slice before final closeout; then execute
+  Tasks 3–15 in `docs/plans/2026-08-02-backlog-closeout-implementation-plan.md`.
+- The approved closeout plan remains Tasks 2–15; Task 2 is this reconciliation checkpoint rather than
+  a product build.
 - The full plain-English CEO status, all active/environment/CEO/demand backlog, research ledger, and
   lessons are recorded in `docs/audits/2026-08-02-ceo-backlog-update.md`.
 - Durable machine/session resume state is in `MEMORY.md`; do not reconstruct the queue from this file's
   historical release ledger.
 
-**Recent shipped milestones (the v1.45.x line — 2026-07-07):** a correctness + agent-trust cluster from a multi-model (Fable-designed, Sonnet-built, verified-in-real-venv) audit blitz. `tg callers --provider lsp` now unions native and LSP callers instead of masking one behind the other (H1); the `tg agent` confidence signal reflects graph corroboration (T2) and the flagship command honors the exit-2-on-scan-truncation contract, so a `--max-repo-files`-capped scan can no longer emit a confident capsule at exit 0 (1D); StringZilla honors `--invert-match` and `--max-count` (H5/H6); an apply-policy phantom-rollback fix plus a self-healing index-lock and atomic-write/retention hardening (reliability H8/H9/M6/M8); the MCP surface received the same walk-deadline and refusal guards as the CLI (H3/H4); the Rust bridge passes ripgrep args by keyword to prevent silent flag-scrambling (R1); `merge_runtime_routing` surfaces mixed-backend routing instead of reporting only the last engine used (M9); and `tg search --count` / `-l` recover partial results on a subprocess timeout instead of hard-crashing (L7). The number-one product-latency fix landed as a parse-product cache: one tree-sitter parse per (path, mtime) shared across the symbol, reference, and caller extractors, golden-parity-locked (the oracle suites pass byte-identical) and measured at roughly -25% cold render / -45% parse time on this repo, larger on TypeScript-heavy trees (PERF). A 2026-07-07 competitive analysis (codanna, Gortex, Serena, Sourcegraph) plus a dogfood of the cross-tool caller-graph edge cases confirmed tensor-grep's name-based `tg callers` has stronger recall than resolved-edge rivals (it catches module-alias and virtual-dispatch call sites they miss and would otherwise mark as dead code) while carrying the mirror precision gap (a same-named local function's calls can be over-attributed to the queried symbol); the recall-preserving three-tier resolution-confidence fix is designed and queued (C-EDGE-1).
+## Historical Milestones
+
+**Historical shipped milestones (the v1.45.x line — 2026-07-07):** a correctness + agent-trust cluster from a multi-model (Fable-designed, Sonnet-built, verified-in-real-venv) audit blitz. `tg callers --provider lsp` now unions native and LSP callers instead of masking one behind the other (H1); the `tg agent` confidence signal reflects graph corroboration (T2) and the flagship command honors the exit-2-on-scan-truncation contract, so a `--max-repo-files`-capped scan can no longer emit a confident capsule at exit 0 (1D); StringZilla honors `--invert-match` and `--max-count` (H5/H6); an apply-policy phantom-rollback fix plus a self-healing index-lock and atomic-write/retention hardening (reliability H8/H9/M6/M8); the MCP surface received the same walk-deadline and refusal guards as the CLI (H3/H4); the Rust bridge passes ripgrep args by keyword to prevent silent flag-scrambling (R1); `merge_runtime_routing` surfaces mixed-backend routing instead of reporting only the last engine used (M9); and `tg search --count` / `-l` recover partial results on a subprocess timeout instead of hard-crashing (L7). The number-one product-latency fix landed as a parse-product cache: one tree-sitter parse per (path, mtime) shared across the symbol, reference, and caller extractors, golden-parity-locked (the oracle suites pass byte-identical) and measured at roughly -25% cold render / -45% parse time on this repo, larger on TypeScript-heavy trees (PERF). A 2026-07-07 competitive analysis (codanna, Gortex, Serena, Sourcegraph) plus a dogfood of the cross-tool caller-graph edge cases confirmed tensor-grep's name-based `tg callers` has stronger recall than resolved-edge rivals (it catches module-alias and virtual-dispatch call sites they miss and would otherwise mark as dead code) while carrying the mirror precision gap (a same-named local function's calls can be over-attributed to the queried symbol); the recall-preserving three-tier resolution-confidence fix is designed and queued (C-EDGE-1).
 
 **Recent shipped milestones (round-4, through the v1.19.x line — 2026-07-03):** the rg-parse correctness moat (non-UTF-8 `lines.bytes` decode, `-u`/`-uu`/`-uuu` forwarding, `--vimgrep`/`--column` per-occurrence byte columns, and rg exit-2 partial-results with rg-parity exit codes); the `tg inventory` walk-only repository manifest; a roughly 4.8x `tg blast-radius` speedup from memoizing the pure `_module_aliases_for_path` (the reported cross-version latency delta was separately confirmed to be measurement noise, not a code regression); the native-delegation deny-by-default guard so `--rank`/`--sort-files` no longer silently drop through delegation to the native front door; a `MatchLine` hashability fix; and `tg blast-radius --mermaid`. `tg diff-docs` was prototyped and deliberately deferred pending a precision rebuild — naive doc-drift detection floods false positives (documented follow-up).
 
@@ -100,7 +108,7 @@ release_docs_current_tag: v1.102.1
 - Fast agent-readiness dogfood before PR #72: `python scripts/agent_readiness.py --output artifacts/agent_readiness_launcher_observability.json` passed all checks, including public version probes, `public-windows-launcher-quoted-patterns`, repo doctor, context consistency, deterministic rg parity edges, generated-root guardrails, AST smoke, MCP context-render smoke, and docs claim hygiene.
 - Repo-dev dogfood: stale in-tree standalone binaries remain skipped unless explicitly pinned with `TG_NATIVE_TG_BINARY` or `TG_MCP_TG_BINARY`.
 
-## Current Post-v1.11.3 Scope
+## Historical Post-v1.11.3 Scope
 
 Current release branch is publication-complete for `v1.12.14`: PR #143 `fix: collect capsule call-site evidence` was squash-merged as `21e5437`, release commit `3be6879 chore(release): v1.12.14 [skip ci]` exists, main CI run `25951521056` passed tests/assets, GitHub asset upload, PyPI publish, and `publish-success-gate`, and CodeQL run `25951813292` passed. Public dogfood verified PyPI, release assets, `uvx`, launcher resolution, bounded capsule call-site evidence, Windows subprocess bridge ranking hardening, agent output-budget hygiene, AST CLI contract hygiene, accepted native/dev CLI flag alignment, root cold rg-shaped routing, `tg run --pattern`, bounded map/context output, `tg new --base-dir`, edit-plan budget flags, explicit rg JSON Lines routing, JSON/NDJSON schema positioning, and rg flag-contract aliases. The `v1.10.10` Windows subprocess launcher repair remains the historical public launcher repair baseline; keep foreign launcher handling opt-in and auditable rather than deleting unrelated tools.
 

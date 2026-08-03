@@ -2,15 +2,16 @@
 
 > **Canonical prioritized/historical work ledger.** Kept in sync with the CLI task store (`TaskUpdate`);
 > GitHub (`gh pr list`) is the source of truth for PRs. The machine-parsed canonical status index in
-> `docs/TASK_BOARD.md` becomes the live-state view when Task 2 lands it; until then use the dated
+> `docs/TASK_BOARD.md` is the live-state view; use the dated
 > closed-world audit linked below. **CEO status** enumerates every live disposition—active, blocked,
 > nonfinancial decision-gated, financial/spend-gated, demand/research-gated, and mixed/terminal
 > corrections—not merely SHIPPING or P0/P1. Update whenever a PR opens/merges or the queue changes.
 > Task-store IDs (`#NNN`) are cross-referenced.
 > **Current closed-world CEO snapshot: 2026-08-02, release `v1.102.1`, merged main `8024125`, zero
 > open PRs, one open GitHub issue (#48).** The complete active/environment/CEO/demand/research list is
-> `docs/audits/2026-08-02-ceo-backlog-update.md`. Tasks 2–15 of the closeout plan are the current
-> execution queue; historical sections below remain append-only evidence and may describe old status.
+> `docs/audits/2026-08-02-ceo-backlog-update.md`. Task 2 is reconciled; the amended #89 slice plus
+> Tasks 3–15 are the current execution queue. Historical sections below remain append-only evidence
+> and may describe old status.
 > New local-environment finding: `ENV-VENV-DRIFT` — the campaign worktree's no-sync CLI reports
 > 1.102.0 against source/release 1.102.1, editable warmup timed out compiling after 240 seconds, and the
 > no-sync venv lacks PyYAML for `validate_release_assets.py`. Reconcile the real main venv before using
@@ -23,8 +24,66 @@
 > leaf-symlink compatibility/security decision. See the dated CEO audit and Tasks 2–15 for owners,
 > triggers, and closure tests. None has been implemented merely by amending the plan.
 > The final status-stamped plan pair is approved: design `F627B23F...E4C994`, implementation
-> `E30DCCCD...8216B`; architecture/security/TDD verdicts are all `SHIP`. Resume Task 2.
+> `E30DCCCD...8216B`; architecture/security/TDD verdicts are all `SHIP`. Task 2 is reconciled; amend
+> and re-certify a bounded #89 TDD slice before final closeout, then continue with Task 3.
 >
+
+## Current canonical closeout queue — status index `2026-08-02.2`
+
+`docs/TASK_BOARD.md` owns the machine-parsed rows. This is the human-readable mirror; older sections
+below are historical evidence and do not override these dispositions.
+
+### Active / buildable
+
+- **#89** — reproduced WSL-to-Windows path-domain defect; now `READY`, not environment-blocked. The
+  bounded 2026-08-02 run proved a Linux `/mnt/c/...` directory exists while the delegated Windows
+  native executable returned `path_not_found`. Owner: a new amended/re-reviewed TDD task; final
+  closeout cannot pass until that task follows the implementation-PR/closure-PR lifecycle.
+- **#859** — class-level atomic-writer census/fix, Task 3. A codemap-only regression is not a class
+  ratchet.
+- **MCP-SURFACE** — MCP surface disclosure, Task 4.
+- **CPU-BACKEND** — Rust/Python backend error propagation, Task 5.
+- **F6** — edit-verification service and public CLI, Tasks 6–7.
+- **F5** — edit-ready plus claims fence, Task 8.
+- **REF-CALL-REGISTRY** — prepare-service extraction, Task 9.
+- **F7** — language registry and cross-file resolution, Tasks 10–11.
+- **F8** — workspace service and CLI, Tasks 12–13.
+
+Every row above starts `READY`. Its first draft implementation PR moves it to `IN_FLIGHT` with the
+real PR number; only a separate post-merge closure change may mark it `SHIPPED`.
+
+### CEO-gated — exactly five
+
+- **#48** native-front-door startup architecture.
+- **#72** public benchmark claim.
+- **#77** / F9 ledger enforcement scope.
+- **#131** GPU-flavor native-asset publication.
+- **#169** physical GPU proof environment or spend.
+
+### Demand/research-gated — exactly eight
+
+- **#255** many-pattern dedup/compression/native investment selection.
+- **F10** MaxSim supported-path activation or retirement.
+- **DD-004** stable typed backend-error boundary.
+- **DD-006** concurrent daemon load/DoS evidence.
+- **AST-DSL-PARITY** full structural DSL/preprocessor-aware parity.
+- **MCP-LEAN-DEFAULT** client demand and compatibility proof before a default flip.
+- **CONTINUOUS-REFRESH** measured warm-session demand plus an approved search-index service design.
+- **RUST-REPLACE-SYMLINK** public Rust direct-file leaf-symlink compatibility/security decision;
+  reopen on a concrete untrusted-destination threat model or downstream compatibility decision.
+
+### Terminal corrections from stale trackers
+
+- **#22/F1** `RETIRED`: exit `0` complete match, exit `1` complete no-match, exit `2` incomplete;
+  unhonoured GPU routing stays an in-band disclosure and does not independently change the code.
+- **F2** `RETIRED`: legacy anonymous-agent compatibility deliberately retains the sentinel.
+- **#90** `RETIRED` as a mixed outcome: doctor honesty shipped in PR #571; the bounded WSL portability
+  arm was non-reproducing/non-defect.
+- **#109/#36/#37** `SHIPPED` in PR #605/#903/#908.
+
+There are no environment-blocked canonical rows at this snapshot. The raw GitHub/CI/release and WSL
+receipts are in `docs/audits/2026-08-02-backlog-reconciliation.md`.
+
 > **Prior refresh 2026-07-29 (enterprise deep audit, live tip **v1.101.18**).** Spec:
 > `docs/plans/2026-07-29-enterprise-deep-audit-design.md` (also mirrored under gitignored
 > `docs/superpowers/specs/`). Headline corrections over the
@@ -628,10 +687,10 @@ still contains the claimed symbol. That limitation is stated in the test's own d
 doc indices, because "there's a citation gate now" is precisely the claim that would stop the
 reading which catches real drift.
 
-**Open:** 20 of 28 skills unaudited (task #36 — every audited one had drift, so assume these do
-too). Task #37: `test_lang_go`'s fallback test fails deterministically on the Windows dev box while
-green on 6/6 CI combos — environmental, root cause unknown; **do not relax the assertion** to match
-one box.
+**Historical status at the time, superseded by shipped receipts:** 20 of 28 skills were unaudited
+(task #36); PR #903 completed the full 27-topic-skill audit. Task #37 recorded a deterministic local
+grammar-dependent test failure; PR #908 added the explicit grammar requirement. Reopen either only
+with a current failing receipt; do not relax assertions to match one box.
 
 **Method note worth keeping:** building the gate produced three wrong readings before the truth
 (100% broken → 60% → 100% ambiguous → 0 broken), and four separate greps returned false numbers
@@ -1396,13 +1455,13 @@ for the next audit rather than re-opened as active work):**
   reopen the retirement reasoning above — it neutralizes the one token tg's OWN code appends,
   which the retirement's "operator-authored" premise never covered.
 
-### Blocked on a Linux/WSL box (env-blocked, not CEO-gated)
-- **#89** WSL `/mnt/c` absolute-path resolution in the native backend.
-- **#90** `tg scan` ast-grep Linux/WSL portability + doctor false-"available" exit-127. The
-  doctor-honesty half already shipped (**#90b**/`fb3291b`, v1.70.2 — `tg doctor` no longer reports
-  `available:true` for a non-runnable ast-grep shim); the Linux/WSL ast-grep portability piece itself
-  is still open and unverifiable without a Linux/WSL box.
-- **#109** cuda GPU implicit-walk ceiling.
+### Historical Linux/WSL block — superseded by status index `2026-08-02.2`
+
+- **#89** is no longer environment-blocked: the 2026-08-02 bounded WSL run reproduced the
+  WSL-to-Windows path-domain failure and moved it to `READY` pending an amended TDD plan.
+- **#90** is a mixed `RETIRED` outcome. The doctor-honesty half shipped in PR #571; the earlier
+  bounded WSL portability arm did not reproduce a defect.
+- **#109** shipped in PR #605.
 
 ### CEO-gated (full framing in CEO-FACING below)
 - **#72** benchmark proof-point publish.

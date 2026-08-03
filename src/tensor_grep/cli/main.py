@@ -2052,7 +2052,7 @@ _SEARCH_COMMAND_TAIL_EXIT_CODE_POLICIES: tuple[_TailExitCodePolicy, ...] = (
         trigger_fields=frozenset({"gpu_device_ids"}),
         route_specific_reason=(
             "RETIRED as an exit-code rule, 2026-08-01 (backlog #22 / PR #868). An unhonoured "
-            "explicit --gpu-device-ids request does NOT flip the exit code, so there is no "
+            "explicit --gpu-device-ids request does NOT independently force exit 2, so there is no "
             "tail-only exit policy here to mirror. docs/CONTRACTS.md section 4 defines `2` as "
             "INCOMPLETE -- a TRUNCATED SCAN -- and that search runs to completion over every file "
             "it was asked about, returning correct results computed on the CPU. Which processor "

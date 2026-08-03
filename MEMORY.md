@@ -8,8 +8,10 @@ Last updated: 2026-08-02
    `F627B23F5881C63AE525FC7226A4FF51C1EA249DB43DB1BD8B57EDDEA4E4C994`; implementation
    `E30DCCCDC62459D28AA272CB5E251CDB92FBFC6D0BA23A312BA524AF9ED8216B`; architecture, security,
    and TDD all returned `SHIP` on this exact status-stamped pair.
-2. Resume Task 2, then execute Tasks 2–15 with worktree isolation, TDD, real-venv verification, independent review,
-   PR drain discipline, merged-artifact checks, and published-wheel dogfood.
+2. Task 2 reconciled the tracker and reproduced #89's cross-domain WSL path defect. Amend and
+   re-certify the #89 TDD slice before final closeout; then execute Tasks 3–15 with worktree isolation,
+   TDD, real-venv verification, independent review, PR drain discipline, merged-artifact checks, and
+   published-wheel dogfood.
 
 ## External state at the snapshot
 
@@ -32,8 +34,10 @@ Last updated: 2026-08-02
   and Python CPU-backend twin hardening.
 - P1: edit verification; `verify-edit`; strict `edit-ready`; registry-driven refs/callers; five in-file
   language waves; six cross-file resolution waves; federated prepare service/CLI/MCP.
-- Blocked: #89 requires an available WSL/Linux environment; `ENV-VENV-DRIFT` requires main-venv
-  reconciliation before local CLI-version/release-validator receipts are trusted.
+- Ready: #89 is locally reproduced — WSL's Linux front door delegates a valid `/mnt/c/...` path to
+  the Windows native executable and receives `path_not_found`. Amend/review its TDD slice before build.
+- Environment finding: `ENV-VENV-DRIFT` requires main-venv reconciliation before local CLI-version/
+  release-validator receipts are trusted; it does not block #89.
 - Nonfinancial decision-gated (continue without asking under the current instruction): #48, #72,
   #77/F9, #131. Financial approval required before spend: #169 and any paid #255 experiment.
 - Demand/research: #255, F10, DD-004, DD-006, AST DSL/C++ macro ceiling, MCP lean-default,
