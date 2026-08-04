@@ -39,7 +39,7 @@ useful to humans for the same reasons. It layers three tiers on one command surf
 
   ```bash
   python -c "import sys;sys.path.insert(0,'src');from tensor_grep.cli import repo_map as r;print(r._symbol_navigation_descriptor())"
-  # parser-backed-refs-callers:c-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:cpp
+  # parser-backed-refs-callers:c-cpp-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:
   ```
 
   That instruction is not decoration -- this line has been wrong THREE times. It once said 4/10

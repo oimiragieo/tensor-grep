@@ -698,8 +698,14 @@ the mandatory adversarial Opus gate, not by tests or CI.
 
 tg's deep symbol-graph tier covers all 10 of the top-10 languages (Python, JS, TS,
 Java, C#, Go, Rust, PHP, C, C++ — priority per TIOBE Jul-2026 + Stack Overflow 2025
-+ GitHub Octoverse 2025 consensus; C and C++ both landed foundational-tier only —
-defs/source/imports/agent, caller-graph deferred, see `lang_c.py`/`lang_cpp.py`).
++ GitHub Octoverse 2025 consensus). As of Task 10E (C++, the final wave of the
+top-10 language-support campaign), all 10 registered languages carry in-file
+parser-backed refs/callers — the foundational-tier (defs/source/imports/agent
+only, no `references_and_calls`) is now EMPTY; ask
+`repo_map._symbol_navigation_descriptor()` rather than trust this sentence, since
+it has been wrong before (see `lang_c.py`/`lang_cpp.py` for the C/C++ landing
+history — C shipped foundational-only first, C++ followed the same path, both
+were promoted to parser-backed later in the same campaign).
 Adding one is a **registration-completeness**
 problem (see the universal bug class above): the CURRENT pattern is
 `lang_registry.register_language(LanguageSpec(...))` plus a self-contained

@@ -1011,3 +1011,307 @@ def test_cpp_imports_and_symbols_non_cpp_suffix_returns_empty(tmp_path: Path) ->
     imports, symbols = lang_cpp.cpp_imports_and_symbols(other)
     assert imports == []
     assert symbols == []
+
+
+# ---------------------------------------------------------------------------
+# Task 10E GREEN: cpp_references_and_calls behaviour. See lang_cpp.py's "TASK 10E CALL/ACCESS
+# NODE SHAPES" / "RESOLUTION CONFIDENCE / PROVENANCE" docstring block for the full design and
+# the reasoning behind every confirm/demote judgment call.
+# ---------------------------------------------------------------------------
+
+
+def _cpp_parser_or_skip() -> None:
+    if lang_cpp._cpp_parser() is None:  # pragma: no cover - grammar always installed in this venv
+        pytest.skip("tree_sitter_cpp grammar not installed")
+
+
+def _write_cpp_refcalls_fixture(root: Path, source: str) -> Path:
+    widget_cpp = root / "widget.cpp"
+    widget_cpp.write_text(source, encoding="utf-8")
+    return widget_cpp
+
+
+@pytest.mark.requires_grammar
+def test_cpp_references_and_calls_confirms_free_function_call(tmp_path: Path) -> None:
+    """A bare-identifier call to a free function with a real in-file prototype/definition is
+    CONFIRMED (0.9, provenance ``cpp-infile-function-declared``) -- same shape as C's own
+    ``add`` confirmation test."""
+    _cpp_parser_or_skip()
+    source = (
+        "int add(int a, int b);\n"
+        "int add(int a, int b) { return a + b; }\n"
+        "\n"
+        "int main() {\n"
+        "    int r = add(1, 2);\n"
+        "    return r;\n"
+        "}\n"
+    )
+    widget_cpp = _write_cpp_refcalls_fixture(tmp_path, source)
+
+    references, calls = lang_cpp.cpp_references_and_calls(widget_cpp, "add")
+
+    assert [(r["ref_kind"], r["line"], r["resolution_confidence"]) for r in references] == [
+        ("call", 5, 0.9)
+    ]
+    assert [c["resolution_provenance"] for c in calls] == [["cpp-infile-function-declared"]]
+    # The symbol's own declaration/definition sites (lines 1-2) never surface as references.
+    assert all(r["line"] not in (1, 2) for r in references)
+
+
+@pytest.mark.requires_grammar
+def test_cpp_references_and_calls_confirms_unqualified_implicit_member_call(
+    tmp_path: Path,
+) -> None:
+    """C++ gives an unqualified in-class call (reached via the implicit ``this``) the SAME node
+    shape as a free-function call -- ``method(5)`` inside ``callBase()`` confirms via the same
+    bare-identifier evidence, because this module cannot and does not try to tell the two shapes
+    apart (see the module docstring)."""
+    _cpp_parser_or_skip()
+    source = (
+        "class Widget {\n"
+        "public:\n"
+        "    void method(int x);\n"
+        "    void callBase() {\n"
+        "        method(5);\n"
+        "    }\n"
+        "};\n"
+    )
+    widget_cpp = _write_cpp_refcalls_fixture(tmp_path, source)
+
+    references, calls = lang_cpp.cpp_references_and_calls(widget_cpp, "method")
+
+    assert [(r["ref_kind"], r["line"], r["resolution_confidence"]) for r in references] == [
+        ("call", 5, 0.9)
+    ]
+    assert calls[0]["resolution_provenance"] == ["cpp-infile-function-declared"]
+
+
+@pytest.mark.requires_grammar
+def test_cpp_references_and_calls_confirms_qualified_out_of_class_call(tmp_path: Path) -> None:
+    """A qualified call (``Widget::staticMethod()``) resolves through its terminal bare name via
+    the shared ``_cpp_declarator_name_node`` descent and confirms on the same "a real declaration
+    of this name exists in-file" evidence -- the qualifier itself is not separately verified."""
+    _cpp_parser_or_skip()
+    source = (
+        "class Widget {\n"
+        "public:\n"
+        "    static void staticMethod();\n"
+        "};\n"
+        "\n"
+        "void caller() {\n"
+        "    Widget::staticMethod();\n"
+        "}\n"
+    )
+    widget_cpp = _write_cpp_refcalls_fixture(tmp_path, source)
+
+    references, calls = lang_cpp.cpp_references_and_calls(widget_cpp, "staticMethod")
+
+    assert [(r["ref_kind"], r["line"], r["resolution_confidence"]) for r in references] == [
+        ("call", 7, 0.9)
+    ]
+    assert calls[0]["resolution_provenance"] == ["cpp-infile-function-declared"]
+
+
+@pytest.mark.requires_grammar
+def test_cpp_references_and_calls_confirms_explicit_this_arrow_call(tmp_path: Path) -> None:
+    """``this->method(...)`` is the ONE receiver-typed call shape this module confirms --
+    ``this``'s type is syntactically fixed to the enclosing class, unlike an arbitrary local
+    variable's receiver type (see the sibling demotion test below)."""
+    _cpp_parser_or_skip()
+    source = (
+        "class Widget {\n"
+        "public:\n"
+        "    void method(int x);\n"
+        "    void callBase() {\n"
+        "        this->method(6);\n"
+        "    }\n"
+        "};\n"
+    )
+    widget_cpp = _write_cpp_refcalls_fixture(tmp_path, source)
+
+    references, calls = lang_cpp.cpp_references_and_calls(widget_cpp, "method")
+
+    assert [(r["ref_kind"], r["line"], r["resolution_confidence"]) for r in references] == [
+        ("call", 5, 0.9)
+    ]
+    assert calls[0]["resolution_provenance"] == ["cpp-infile-function-declared"]
+
+
+@pytest.mark.requires_grammar
+def test_cpp_references_and_calls_receiver_typed_member_call_never_confirms(
+    tmp_path: Path,
+) -> None:
+    """A call through a NON-``this`` receiver (``w.method(1)``, ``p->method(2)``) ALWAYS stays
+    demoted, even though the receiver's declared type (``Widget``) is resolvable in this file --
+    a deliberate, disclosed narrowing vs. Java/C#/PHP's receiver-type confirmation: C++'s real
+    inheritance and ``auto`` make a general receiver-type walk unsound for the common case (see
+    the module docstring's RESOLUTION CONFIDENCE section for the full reasoning)."""
+    _cpp_parser_or_skip()
+    source = (
+        "class Widget {\n"
+        "public:\n"
+        "    void method(int x);\n"
+        "};\n"
+        "\n"
+        "void caller() {\n"
+        "    Widget w;\n"
+        "    w.method(1);\n"
+        "    Widget *p = &w;\n"
+        "    p->method(2);\n"
+        "}\n"
+    )
+    widget_cpp = _write_cpp_refcalls_fixture(tmp_path, source)
+
+    references, calls = lang_cpp.cpp_references_and_calls(widget_cpp, "method")
+
+    assert [(r["ref_kind"], r["line"], r["resolution_confidence"]) for r in references] == [
+        ("call", 8, 0.6),
+        ("call", 10, 0.6),
+    ]
+    assert all(c["resolution_confidence"] == 0.6 for c in calls)
+    assert all(c["resolution_provenance"] == ["cpp-name-heuristic"] for c in calls)
+
+
+@pytest.mark.requires_grammar
+def test_cpp_references_and_calls_macro_looking_call_stays_demoted_no_name_pattern_heuristic(
+    tmp_path: Path,
+) -> None:
+    """A function-like-macro invocation stays demoted purely because no in-file declaration named
+    "ADD_MACRO" exists -- never an ALL_CAPS name-pattern guess (mirrors C's identical test)."""
+    _cpp_parser_or_skip()
+    source = "void caller() {\n    int v = ADD_MACRO(1, 2);\n}\n"
+    widget_cpp = _write_cpp_refcalls_fixture(tmp_path, source)
+
+    references, calls = lang_cpp.cpp_references_and_calls(widget_cpp, "ADD_MACRO")
+
+    assert [(r["ref_kind"], r["line"], r["resolution_confidence"]) for r in references] == [
+        ("call", 2, 0.6)
+    ]
+    assert calls[0]["resolution_provenance"] == ["cpp-name-heuristic"]
+
+
+@pytest.mark.requires_grammar
+def test_cpp_references_and_calls_new_expression_is_ref_kind_constructor_never_confirmed(
+    tmp_path: Path,
+) -> None:
+    """``new Widget()`` resolves ``ref_kind="constructor"`` in BOTH buckets, always demoted --
+    no in-file receiver exists to confirm a constructor call against, matching Java/C#/PHP's
+    identical ``object_creation_expression`` handling. The declaration-site type usage on the
+    same line (``Widget *p = ...``) resolves separately as ``ref_kind="type"``."""
+    _cpp_parser_or_skip()
+    source = (
+        "class Widget {\n"
+        "public:\n"
+        "    Widget();\n"
+        "};\n"
+        "\n"
+        "void caller() {\n"
+        "    Widget *p = new Widget();\n"
+        "}\n"
+    )
+    widget_cpp = _write_cpp_refcalls_fixture(tmp_path, source)
+
+    references, calls = lang_cpp.cpp_references_and_calls(widget_cpp, "Widget")
+
+    constructor_refs = [r for r in references if r["ref_kind"] == "constructor"]
+    assert [(r["line"], r["resolution_confidence"]) for r in constructor_refs] == [(7, 0.6)]
+    assert all(c["ref_kind"] == "constructor" and c["resolution_confidence"] == 0.6 for c in calls)
+    type_refs = [r for r in references if r["ref_kind"] == "type"]
+    assert [(r["line"], r["resolution_confidence"]) for r in type_refs] == [(7, 0.6)]
+    # The class definition (line 1) and the in-class constructor prototype (line 3) are both
+    # definition sites and never surface as references.
+    assert all(r["line"] not in (1, 3) for r in references)
+
+
+def test_cpp_references_and_calls_returns_empty_for_non_cpp_suffix(tmp_path: Path) -> None:
+    other = tmp_path / "widget.rs"
+    other.write_text("int add(int a, int b) { return a + b; }\n", encoding="utf-8")
+
+    references, calls = lang_cpp.cpp_references_and_calls(other, "add")
+
+    assert references == []
+    assert calls == []
+
+
+def test_cpp_references_and_calls_grammar_absent_returns_empty_not_crash(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = "int add(int a, int b) { return a + b; }\nint r = add(1, 2);\n"
+    widget_cpp = _write_cpp_refcalls_fixture(tmp_path, source)
+    monkeypatch.setattr(lang_cpp, "_cpp_parser", lambda: None)
+
+    references, calls = lang_cpp.cpp_references_and_calls(widget_cpp, "add")
+
+    assert references == []
+    assert calls == []
+
+
+@pytest.mark.requires_grammar
+def test_cpp_references_and_calls_defeats_regex_fallback(tmp_path: Path) -> None:
+    """Wired through the registry (``_references_and_calls_for_path``), C++ must reach
+    ``lang_cpp.cpp_references_and_calls`` -- never the generic ``_regex_references_and_calls``
+    text fallback, which knows nothing about C++ and would return ``([], [])`` for any ``.cpp``
+    file."""
+    _cpp_parser_or_skip()
+    source = "int add(int a, int b) { return a + b; }\nint r = add(1, 2);\n"
+    widget_cpp = _write_cpp_refcalls_fixture(tmp_path, source)
+
+    references, calls = repo_map._references_and_calls_for_path(widget_cpp, "add", tmp_path)
+
+    assert references, "expected the tree-sitter extractor to find `add` references, not [] "
+    assert calls, "expected the tree-sitter extractor to find `add` calls, not [] "
+
+
+# Task 10E pre-fix RED arms: promote C++ from the foundational tier to parser-backed
+# refs/callers. This is the LAST wave -- after it the descriptor's foundational half is
+# empty, so these two nodes are the final gate on "all ten registered languages carry a
+# real caller graph".
+#
+# Neither carries @pytest.mark.requires_grammar: both assert on the registry and the
+# product's derived descriptor, neither of which builds a parser. Marking them would let a
+# grammar-less environment SKIP the assertions that define this wave, and a skip reads green.
+
+
+def test_cpp_references_and_calls_is_registered_non_none() -> None:
+    """Task 10E RED: C++ must register a real ``references_and_calls`` extractor.
+
+    Pre-fix this is ``None``, so ``_references_and_calls_for_path`` falls through to
+    ``_regex_references_and_calls``, which returns ``([], [])`` for any suffix outside
+    ``_JS_TS_SUFFIXES | _RUST_SUFFIXES``. C++'s "regex fallback" is therefore not a text
+    heuristic over C++ source; it is an unconditional empty result.
+    """
+    spec = lang_registry.LANGUAGE_REGISTRY["cpp"]
+    assert spec.references_and_calls is not None
+
+
+def test_cpp_moves_into_the_parser_backed_tier_descriptor() -> None:
+    """Task 10E RED: the derived descriptor must list cpp as parser-backed.
+
+    Token-exact rather than substring: ``cpp`` does not collide today, but ``c`` is a
+    substring of both ``cpp`` and ``csharp``, and the sibling C wave's assertion had to be
+    written this way to avoid passing against an unfixed product. Keeping the same shape
+    here means the two tests cannot drift into disagreeing about what "is in the tier"
+    means.
+    """
+    descriptor = repo_map._symbol_navigation_descriptor()
+    parser_backed, _, foundational = descriptor.partition("+")
+    backed_tokens = parser_backed.split(":", 1)[1].split("-")
+    found_tokens = [t for t in foundational.split(":", 1)[1].split("-") if t]
+    assert "cpp" in backed_tokens, descriptor
+    assert "cpp" not in found_tokens, descriptor
+
+
+def test_every_registered_language_is_parser_backed_after_the_final_wave() -> None:
+    """Task 10E RED: the foundational tier must be EMPTY once all ten languages are promoted.
+
+    This is the wave's real acceptance criterion and is deliberately stated over the
+    REGISTRY rather than the descriptor string, so it cannot be satisfied by formatting.
+    It also fails loudly if a future language registers with ``references_and_calls=None``
+    -- the tier claim is then no longer true and this test says so.
+    """
+    unpromoted = sorted(
+        language_id
+        for language_id, spec in lang_registry.LANGUAGE_REGISTRY.items()
+        if spec.references_and_calls is None
+    )
+    assert unpromoted == [], f"languages still without a caller graph: {unpromoted}"

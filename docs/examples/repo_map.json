@@ -38,7 +38,7 @@
   ],
   "coverage": {
     "language_scope": "c-cpp-csharp-go-java-javascript-php-python-rust-typescript",
-    "symbol_navigation": "parser-backed-refs-callers:c-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:cpp",
+    "symbol_navigation": "parser-backed-refs-callers:c-cpp-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:",
     "test_matching": "filename+import+graph-heuristic"
   }
 }

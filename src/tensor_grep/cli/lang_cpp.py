@@ -817,8 +817,417 @@ def cpp_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
     return sources
 
 
+# ---------------------------------------------------------------------------
+# Task 10E: references + calls (in-file AST extraction, no cross-file resolution). Extends
+# lang_c.py's TASK 10D shape with C++-only call forms -- see this module's own additions below
+# for the full derivation of what C++ adds over C (qualified calls, `this->`, `new`) and what it
+# deliberately still demotes (receiver-typed member calls, overloads, templates, `auto`).
+#
+# TASK 10E CALL/ACCESS NODE SHAPES (live-verified against a real ``tree_sitter_cpp`` 0.23.4
+# parse of a fixture covering every shape below -- free/method/static/qualified/nested-qualified/
+# templated-scope calls, `this->`, inherited-unqualified calls, `new`, and a dependent-type
+# template-body call):
+#
+# - ``call_expression`` whose ``function`` field is a bare ``identifier``: a free-function call
+#   (``add(1, 2)``), an UNQUALIFIED call to a method of the enclosing class reached via the
+#   implicit ``this`` (``method(5)`` inside a member function body -- live-verified: C++ gives
+#   this the SAME node shape as a free-function call, no syntactic tell distinguishes them), or a
+#   function-like-macro invocation -- structurally identical to C's own bare-identifier call, and
+#   handled the same way (see below).
+# - ``call_expression`` whose ``function`` field is a ``qualified_identifier``
+#   (``Foo::bar()``, ``app::Widget::staticMethod()``, ``Box<T>::get()``): resolved to its
+#   terminal bare name via ``_cpp_declarator_name_node`` (the SAME descent this module's def
+#   extraction already uses -- reused rather than re-derived, see ``_cpp_call_target_name_node``).
+#   A ``qualified_identifier`` whose terminal is a ``template_function`` (``std::make_unique<Widget>()``)
+#   resolves to ``None`` here (``template_function`` has 2 named children, so the shared
+#   ``_cpp_declarator_name_node`` fallback cannot pick one) -- an accepted, documented gap; the
+#   bare ``identifier`` inside it still surfaces via the generic identifier walk below, just
+#   under ``ref_kind="value"`` rather than ``"call"``.
+# - ``call_expression`` whose ``function`` field is a ``field_expression``: a receiver-typed
+#   member call. Two sub-shapes, given DIFFERENT treatment (see RESOLUTION CONFIDENCE below):
+#   ``argument`` field is the literal keyword node ``this`` (``this->method(6)``) vs. anything
+#   else (``w.method(1)``, ``p->method(2)``, ``q->method(3)``).
+# - ``new_expression``: field ``type`` is either a bare ``type_identifier`` (``new Widget()``) or
+#   a ``template_type`` whose first ``type_identifier`` child is the base type
+#   (``new Box<T>()`` -> base type is ``Box``) -- mirrors
+#   ``lang_java._java_object_creation_type_identifier``'s identical shape/precedent. A symbol
+#   match on that base type identifier is ``ref_kind="constructor"`` (both buckets, like
+#   Java/C#/PHP's own constructor handling) -- there is no in-file receiver to confirm a
+#   constructor call against, same reasoning those three languages already give.
+# - ``field_expression`` (not already claimed by the call branch above -- a non-call member
+#   access like ``w.x``): field ``field`` is ``ref_kind="field"``, always demoted.
+# - ``identifier`` / ``type_identifier`` / ``field_identifier``: reused across value/type/
+#   declaration-name roles, same as C. A symbol-matching ``identifier``/``type_identifier`` not
+#   already claimed above and not itself a definition site is ``ref_kind="type"`` (when
+#   ``type_identifier``) else ``ref_kind="value"``.
+#
+# RESOLUTION CONFIDENCE / PROVENANCE (extends C's two-band shape; C++-specific mechanism):
+#
+# - ``_CPP_DEMOTED_CONFIDENCE`` (0.6) / ``_CPP_DEMOTED_PROVENANCE`` (``"cpp-name-heuristic"``):
+#   the default band -- an AST-confirmed real reference/call site this module cannot
+#   independently confirm from THIS file's AST.
+# - ``_CPP_CONFIRMED_CONFIDENCE`` (0.9) / ``_CPP_CONFIRMED_PROVENANCE``
+#   (``"cpp-infile-function-declared"``): fires for THREE call shapes, all gated on the SAME
+#   single boolean (``_cpp_symbol_has_infile_function`` -- does *symbol* name a real
+#   ``function_definition``/``declaration``/``field_declaration`` function-shaped declarator
+#   ANYWHERE in this file, reusing the #736/#737-safe ``_cpp_declarator_name_node`` walk):
+#     1. A bare-identifier call (free function OR the implicit-``this`` unqualified-member-call
+#        shape -- C++ gives these the same node shape, so this module cannot and does not try to
+#        tell them apart; both get the SAME evidence a real function/method of that name exists
+#        somewhere in this file).
+#     2. A qualified call (``Foo::bar()``) whose terminal bare name resolves and matches -- the
+#        qualifier itself (``Foo``) is NOT verified against the terminal name's actual owner (this
+#        module has no symbol table to check "does Foo really declare bar"); this is the SAME
+#        "a real declaration with this name exists in-file" evidence as the bare-identifier case,
+#        not a stronger claim earned by the qualifier being present.
+#     3. An explicit ``this->method(...)`` call -- chosen for confirmation (unlike arbitrary
+#        receiver calls, see below) because ``this``'s type is NOT a local-declaration lookup: it
+#        is syntactically fixed to be the enclosing class, with zero aliasing/casting/``auto``
+#        ambiguity. That still only proves "some function/method named *symbol* exists in this
+#        file" (the same weak signal as 1/2), not that it is declared on the SPECIFIC enclosing
+#        class or its bases -- deliberately not made stronger than the evidence actually supports.
+#
+#   Not 1.0, matching C/Java/C#/PHP's identical rationale: real evidence, not proof of soundness.
+#   OVERLOADS are the sharpest caveat this band accepts and does not resolve: C++ routinely
+#   declares several functions/methods sharing one name with different signatures, and this
+#   module's confirmation is arity- and type-blind -- a symbol match against ANY in-file
+#   declaration of that name confirms, even if the call site actually resolves (by overload
+#   resolution this module does not implement) to a DIFFERENT declaration of the same name. This
+#   is the same caveat C already accepts (a `static` name-shadow, or a same-named macro) --
+#   overload resolution is strictly harder than either, so the caveat is at least as real here.
+#
+#   DELIBERATELY NOT CONFIRMED (the honest narrowing this module chooses, matching the "narrower
+#   band beats a plausible-but-unsound wider one" precedent C's own struct-member decision set):
+#   - A call through a NON-``this`` receiver (``w.method(1)``, ``p->method(2)``, ``q->method(3)``)
+#     ALWAYS stays demoted, even though C++ has a real static type system unlike C. A sound
+#     confirmation here would need to: (a) resolve the receiver's DECLARED type from a local
+#     declaration -- impossible for `auto` (``auto q = std::make_unique<Widget>();`` has no
+#     syntactic type at the use site at all), unreliable across pointer/reference/smart-pointer
+#     wrapping; (b) look up that type's ``class_specifier``/``struct_specifier`` body in THIS
+#     file for a directly-declared member -- but C++ has real single/multiple INHERITANCE, so a
+#     method reached through a base-class pointer (``Widget *p = &derived; p->method();``) may be
+#     declared only in a base class whose own definition might not even be visible in this file
+#     (only ``#include``d); and a TEMPLATE-typed receiver (``t.method(7)`` where ``t: T`` inside a
+#     ``template_declaration``) has no concrete type to resolve AT ALL -- ``T`` is a dependent
+#     name. Implementing the direct-member-only subset (no inheritance walk) would be sound but
+#     silently confirm only a narrow slice of real code while doing nothing for the common
+#     inherited/`auto`/templated cases -- an implicit promise this module chooses not to make.
+#     Every one of these stays honestly demoted instead.
+#   - `new Widget()` / `new Box<T>()`: always demoted (``ref_kind="constructor"``), matching
+#     Java/C#/PHP's identical "no receiver to confirm a constructor against" reasoning.
+#   - Non-call field access (``w.x``) and every type/value reference stay demoted for the same
+#     reason C's own generic identifier walk never confirms these either.
+#   - An OPERATOR OVERLOAD call site (``a += b``) is never claimed by any branch here: it has no
+#     ``call_expression``/``operator_name`` textual identifier shape this walk matches (consistent
+#     with this module's def-extraction side, which already excludes operator overloads from the
+#     symbol table entirely -- see the module docstring's OPERATOR OVERLOADS section).
+# ---------------------------------------------------------------------------
+
+_CPP_DEMOTED_CONFIDENCE = 0.6
+_CPP_DEMOTED_PROVENANCE = "cpp-name-heuristic"
+_CPP_CONFIRMED_CONFIDENCE = 0.9
+_CPP_CONFIRMED_PROVENANCE = "cpp-infile-function-declared"
+
+# Node types whose "declarator" field (possibly wrapped, resolved via
+# _cpp_declarator_name_node) names a DEFINITION site -- excluded from the reference/call walk, the
+# same rule C's own module already follows, extended with `field_declaration` (C++'s in-class
+# prototype sibling of `declaration`, see the module docstring).
+_CPP_DECLARATOR_DEFINING_NODE_TYPES = frozenset({
+    "function_definition",
+    "declaration",
+    "field_declaration",
+    "type_definition",
+    "parameter_declaration",
+})
+
+
+def _cpp_symbol_has_infile_function(root: Any, source_bytes: bytes, symbol: str) -> bool:
+    """True iff *symbol* names a REAL function or method in this file -- a ``function_definition``,
+    or a ``declaration``/``field_declaration`` whose declarator chain
+    ``_cpp_declarator_name_node`` resolves with ``seen_function=True``. The ONLY confirmation
+    signal Task 10E uses (see the module's TASK 10E docstring block above) -- reusing the SAME
+    #736/#737-safe declarator walk ``cpp_imports_and_symbols`` already uses for def extraction."""
+
+    def node_text(node: Any) -> str:
+        return _tree_sitter_node_text(source_bytes, node)
+
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        node_type = node.type
+        if node_type == "function_definition":
+            for declarator in node.children_by_field_name("declarator"):
+                name_node, _seen_function = _cpp_declarator_name_node(declarator)
+                if name_node is not None and node_text(name_node) == symbol:
+                    return True
+        elif node_type in ("declaration", "field_declaration"):
+            for declarator in node.children_by_field_name("declarator"):
+                name_node, is_function = _cpp_declarator_name_node(declarator)
+                if is_function and name_node is not None and node_text(name_node) == symbol:
+                    return True
+        stack.extend(node.children)
+    return False
+
+
+def _cpp_definition_site_positions(root: Any) -> set[tuple[int, int]]:
+    """Collect the byte-span of every DEFINITION-site name node in this file -- extends
+    ``lang_c._c_definition_site_positions``'s shape with C++'s class/namespace/type-alias
+    definition sites (see ``cpp_imports_and_symbols`` for the matching def-extraction logic this
+    mirrors)."""
+    positions: set[tuple[int, int]] = set()
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        node_type = node.type
+        if node_type in _CPP_DECLARATOR_DEFINING_NODE_TYPES:
+            for declarator in node.children_by_field_name("declarator"):
+                name_node, _seen_function = _cpp_declarator_name_node(declarator)
+                if name_node is not None:
+                    positions.add((name_node.start_byte, name_node.end_byte))
+        elif node_type in _CPP_CLASS_LIKE_KINDS:
+            body_field = node.child_by_field_name("body")
+            name_field = node.child_by_field_name("name")
+            if body_field is not None and name_field is not None:
+                positions.add((name_field.start_byte, name_field.end_byte))
+        elif node_type == "namespace_definition":
+            name_field = node.child_by_field_name("name")
+            if name_field is not None:
+                positions.add((name_field.start_byte, name_field.end_byte))
+        elif node_type == "alias_declaration":
+            name_field = node.child_by_field_name("name")
+            if name_field is not None:
+                positions.add((name_field.start_byte, name_field.end_byte))
+        elif node_type == "enumerator":
+            name_field = node.child_by_field_name("name")
+            if name_field is not None:
+                positions.add((name_field.start_byte, name_field.end_byte))
+        stack.extend(node.children)
+    return positions
+
+
+def _cpp_call_target_name_node(function_field: Any) -> Any | None:
+    """The terminal bare-name node for a ``call_expression``'s ``function`` field, when that
+    field is a bare ``identifier`` or a ``qualified_identifier`` (``Foo::bar``) -- reuses
+    ``_cpp_declarator_name_node``'s existing "follow 'name', never 'scope'" descent (the SAME
+    walk this module's def extraction already trusts) rather than re-deriving qualified-name
+    resolution a second time. Returns ``None`` for any other function-field shape (``field_
+    expression``, handled separately by the caller; ``template_function``, an accepted gap -- see
+    the module's TASK 10E docstring block)."""
+    if function_field is None:
+        return None
+    if function_field.type == "identifier":
+        return function_field
+    if function_field.type == "qualified_identifier":
+        name_node, _seen_function = _cpp_declarator_name_node(function_field)
+        return name_node
+    return None
+
+
+def _cpp_new_expression_type_identifier(node: Any) -> Any | None:
+    """The base ``type_identifier`` node for a ``new_expression``'s ``type`` field -- direct if
+    the field IS a ``type_identifier`` (``new Widget()``), or the first ``type_identifier`` child
+    of a ``template_type`` field (``new Box<T>()`` -> base type is ``Box``, not ``T``). Mirrors
+    ``lang_java._java_object_creation_type_identifier``'s identical shape/precedent."""
+    type_field = node.child_by_field_name("type")
+    if type_field is None:
+        return None
+    if type_field.type == "type_identifier":
+        return type_field
+    if type_field.type == "template_type":
+        for child in type_field.children:
+            if child.type == "type_identifier":
+                return child
+    return None
+
+
+def cpp_references_and_calls(
+    path: Path, symbol: str
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """In-file AST reference/call rows for *symbol* in *path* -- see the module's TASK 10E
+    docstring block above for the full AST-shape mapping and the confirmed/demoted band
+    rationale. Scope: single-file only, no cross-file resolution (mirrors
+    ``lang_c.c_references_and_calls`` exactly). Owns its own parser factory (``_cpp_parser()``,
+    defined above), matching ``lang_c.py``'s/``lang_csharp.py``'s/``lang_php.py``'s shape rather
+    than ``lang_java.py``'s externally-built-parser shape -- C++ already had its own
+    grammar-probing factory before Task 10E (needed by ``cpp_imports_and_symbols``), so a second
+    factory here would create two sources of truth for "is the C++ grammar installed"."""
+    if path.suffix not in _CPP_SUFFIXES:
+        return [], []
+
+    parser = _cpp_parser()
+    if parser is None:
+        return [], []
+
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return [], []
+
+    source_bytes = source.encode("utf-8")
+    tree = parser.parse(source_bytes)
+    # Split strictly on "\n" (tree-sitter's own row semantics), stripping a trailing "\r" so
+    # CRLF-terminated files still read cleanly -- see lang_c.c_references_and_calls's identical
+    # comment (F26 fix, audit #63) for why `str.splitlines()` is NOT safe here.
+    lines = [line.rstrip("\r") for line in source.split("\n")]
+    references: list[dict[str, Any]] = []
+    calls: list[dict[str, Any]] = []
+
+    def _node_text(node: Any) -> str:
+        return _tree_sitter_node_text(source_bytes, node)
+
+    def _line_text(node: Any) -> str:
+        line_index = node.start_point[0]
+        return lines[line_index] if 0 <= line_index < len(lines) else ""
+
+    definition_positions = _cpp_definition_site_positions(tree.root_node)
+    function_confirmed = _cpp_symbol_has_infile_function(tree.root_node, source_bytes, symbol)
+
+    def _is_definition_site(node: Any) -> bool:
+        return (node.start_byte, node.end_byte) in definition_positions
+
+    def _emit(
+        bucket: list[dict[str, Any]], node: Any, *, kind: str, ref_kind: str, confirmed: bool
+    ) -> None:
+        if confirmed:
+            confidence = _CPP_CONFIRMED_CONFIDENCE
+            provenance = _CPP_CONFIRMED_PROVENANCE
+        else:
+            confidence = _CPP_DEMOTED_CONFIDENCE
+            provenance = _CPP_DEMOTED_PROVENANCE
+        bucket.append({
+            "name": symbol,
+            "kind": kind,
+            "ref_kind": ref_kind,
+            "file": str(path),
+            "line": node.start_point[0] + 1,
+            "text": _line_text(node),
+            # PER-MATCH honesty band -- see the module's TASK 10E docstring block above.
+            "resolution_confidence": confidence,
+            "resolution_provenance": [provenance],
+        })
+
+    # Nodes already claimed by a special-case branch below are tracked here so the generic
+    # identifier/type_identifier/field_identifier walk never double-emits them. Keyed on
+    # (start_byte, end_byte), NOT Python `id()` -- see lang_c.py's/lang_java.py's identical
+    # comment for why (tree_sitter mints a fresh wrapper object on every `.children`/
+    # `.child_by_field_name` access to the same underlying node).
+    claimed_node_ids: set[tuple[int, int]] = set()
+
+    def _walk_calls(root: Any) -> None:
+        # Explicit-stack DFS (not recursion) -- matches every other language extractor in this
+        # registry; avoids a RecursionError on a pathologically deep real-world AST.
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            node_type = node.type
+            if node_type == "call_expression":
+                function_field = node.child_by_field_name("function")
+                if function_field is not None and function_field.type == "field_expression":
+                    field_child = function_field.child_by_field_name("field")
+                    argument_field = function_field.child_by_field_name("argument")
+                    if field_child is not None and _node_text(field_child) == symbol:
+                        claimed_node_ids.add((field_child.start_byte, field_child.end_byte))
+                        # `this->method(...)` is the ONE receiver-typed call shape this module
+                        # confirms -- `this`'s type is syntactically fixed (no local-declaration
+                        # lookup, no `auto`, no aliasing). Every other receiver stays demoted --
+                        # see the module's TASK 10E docstring block for the full inheritance/
+                        # auto/template reasoning.
+                        confirmed = (
+                            function_confirmed
+                            and argument_field is not None
+                            and argument_field.type == "this"
+                        )
+                        _emit(
+                            references,
+                            field_child,
+                            kind="reference",
+                            ref_kind="call",
+                            confirmed=confirmed,
+                        )
+                        _emit(calls, field_child, kind="call", ref_kind="call", confirmed=confirmed)
+                else:
+                    name_node = _cpp_call_target_name_node(function_field)
+                    if name_node is not None and _node_text(name_node) == symbol:
+                        claimed_node_ids.add((name_node.start_byte, name_node.end_byte))
+                        _emit(
+                            references,
+                            name_node,
+                            kind="reference",
+                            ref_kind="call",
+                            confirmed=function_confirmed,
+                        )
+                        _emit(
+                            calls,
+                            name_node,
+                            kind="call",
+                            ref_kind="call",
+                            confirmed=function_confirmed,
+                        )
+            elif node_type == "new_expression":
+                type_identifier = _cpp_new_expression_type_identifier(node)
+                if type_identifier is not None and _node_text(type_identifier) == symbol:
+                    claimed_node_ids.add((type_identifier.start_byte, type_identifier.end_byte))
+                    # No in-file receiver to confirm a constructor call against -- matches
+                    # Java/C#/PHP's identical `object_creation_expression` handling.
+                    _emit(
+                        references,
+                        type_identifier,
+                        kind="reference",
+                        ref_kind="constructor",
+                        confirmed=False,
+                    )
+                    _emit(
+                        calls,
+                        type_identifier,
+                        kind="call",
+                        ref_kind="constructor",
+                        confirmed=False,
+                    )
+            stack.extend(reversed(node.children))
+
+    def _walk_generic_identifiers(root: Any) -> None:
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            node_type = node.type
+            claim_key = (node.start_byte, node.end_byte)
+            if claim_key not in claimed_node_ids and not _is_definition_site(node):
+                if node_type == "field_expression":
+                    field_child = node.child_by_field_name("field")
+                    if (
+                        field_child is not None
+                        and _node_text(field_child) == symbol
+                        and (field_child.start_byte, field_child.end_byte) not in claimed_node_ids
+                    ):
+                        claimed_node_ids.add((field_child.start_byte, field_child.end_byte))
+                        _emit(
+                            references,
+                            field_child,
+                            kind="reference",
+                            ref_kind="field",
+                            confirmed=False,
+                        )
+                elif node_type == "type_identifier" and _node_text(node) == symbol:
+                    _emit(references, node, kind="reference", ref_kind="type", confirmed=False)
+                elif (
+                    node_type == "identifier"
+                    and _node_text(node) == symbol
+                    and claim_key not in claimed_node_ids
+                ):
+                    _emit(references, node, kind="reference", ref_kind="value", confirmed=False)
+            stack.extend(reversed(node.children))
+
+    _walk_calls(tree.root_node)
+    _walk_generic_identifiers(tree.root_node)
+
+    references.sort(key=lambda item: (item["file"], item["line"], item["text"]))
+    calls.sort(key=lambda item: (item["file"], item["line"], item["text"]))
+    return references, calls
+
+
 __all__ = [
     "cpp_imports_and_symbols",
     "cpp_imports_with_lines",
     "cpp_parser_symbol_sources",
+    "cpp_references_and_calls",
 ]
