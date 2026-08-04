@@ -26,6 +26,7 @@ import click
 import typer
 from typer.core import TyperGroup
 
+from tensor_grep.cli._index_lock import atomic_write_bytes_anchored
 from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.runtime_paths import (
     _native_tg_version,
@@ -6220,46 +6221,18 @@ def _suppression_entry_matches(
 
 
 def _write_json_refuse_symlink(write_path: Path, data: object) -> None:
-    """Write JSON to ``write_path`` refusing to follow a symlink at the final component.
+    """Write JSON through the shared anchored atomic helper.
 
-    Round-5 security: closes the check->write symlink-swap race for the two in-process
-    ruleset-scan writers (baseline/suppressions). O_TRUNC (not O_EXCL) preserves the
-    documented create-or-overwrite semantics -- a re-run must still succeed and refresh
-    the file.
+    Shared hardened path for in-process ruleset writers (`baseline` / `suppressions`) that:
 
-    Two layers, because ``os.O_NOFOLLOW`` is unavailable on Windows (mirrors cpython's
-    own tempfile module: ``getattr(os, "O_NOFOLLOW", 0)``, not a hard import-time
-    dependency):
-      1. An explicit ``is_symlink()`` pre-check -- works without elevated privileges
-         (only *creating* a Windows symlink needs privilege; checking for one does not).
-         On Windows this is a best-effort narrowing, NOT an atomic guard: ``O_NOFOLLOW``
-         is a no-op there (see step 2), so a symlink swapped into ``write_path`` between
-         this check and the ``os.open()`` call below would still be followed -- a narrow,
-         same-process TOCTOU window. That residual window is consciously accepted rather
-         than papered over with fragile ctypes/CreateFileW handle-reopen tricks: it is a
-         single-digit-microsecond gap inside one process (not the cross-process window a
-         planted symlink usually needs), the caller has already confined ``write_path``
-         to a validated directory before this function runs, and creating a *new* Windows
-         symlink at that exact instant still requires the attacker to hold
-         symlink-creation privilege (Developer Mode or elevation). Audit #110 closed the
-         cross-process analog of this race (a symlink planted between a separate
-         confinement check and a *later* write, e.g. across a Rust subprocess boundary)
-         in the Rust audit-manifest writer via ``O_NOFOLLOW`` / Windows
-         ``FILE_FLAG_OPEN_REPARSE_POINT`` -- see ``write_bytes_refuse_symlink`` in
-         ``rust_core/src/main.rs``.
-      2. ``O_NOFOLLOW`` on the actual open -- the authoritative, atomic guard on POSIX,
-         closing the narrow race between step 1's check and the open() call.
+    - preserves overwrite semantics on repeated writes,
+    - refuses caller-selected symlinks and live/dangling/reparse destinations,
+    - fsyncs temp contents before publish, and
+    - keeps path-confinement callers responsible for anchoring their roots.
     """
-    if write_path.is_symlink():
-        raise ValueError(f"Refusing to write through symlink at {write_path}")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    payload = json.dumps(data, indent=2).encode()
     try:
-        fd = os.open(str(write_path), flags, 0o600)
-    except OSError as exc:
-        raise ValueError(f"Refusing to write {write_path}: {exc}") from exc
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(json.dumps(data, indent=2))
+        atomic_write_bytes_anchored(write_path, payload, mode=0o600, replace=True)
     except OSError as exc:
         raise ValueError(f"Refusing to write {write_path}: {exc}") from exc
 
@@ -6306,7 +6279,7 @@ def _apply_ruleset_baseline(
             else:
                 finding["status"] = "new"
     if write_baseline_path is not None:
-        write_path = Path(write_baseline_path).expanduser().resolve()
+        write_path = Path(write_baseline_path).expanduser()
         baseline_payload = {
             "version": _json_output_version(),
             "schema_version": _json_output_version(),
@@ -6433,7 +6406,7 @@ def _apply_ruleset_baseline(
     if write_suppressions_path is not None:
         if not isinstance(suppression_justification, str) or not suppression_justification.strip():
             raise ValueError("--write-suppressions requires a non-empty --justification value.")
-        write_path = Path(write_suppressions_path).expanduser().resolve()
+        write_path = Path(write_suppressions_path).expanduser()
         suppressions_payload = {
             "version": _json_output_version(),
             "schema_version": _json_output_version(),
@@ -14973,20 +14946,26 @@ def _write_ast_project_scaffold(base_dir: Path, lang: str) -> Path:
     }
 
     base_dir.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(yaml.dump(config_data), encoding="utf-8")
+    atomic_write_bytes_anchored(
+        config_path, yaml.dump(config_data).encode("utf-8"), mode=0o644, replace=False
+    )
 
     rules_dir = base_dir / "rules"
     tests_dir = base_dir / "tests"
     rules_dir.mkdir(exist_ok=True)
     tests_dir.mkdir(exist_ok=True)
-    (rules_dir / "sample-rule.yml").write_text(
-        f"id: sample-rule\nlanguage: {lang}\nrule:\n  pattern: 'print($$$ARGS)'\n",
-        encoding="utf-8",
+    atomic_write_bytes_anchored(
+        rules_dir / "sample-rule.yml",
+        f"id: sample-rule\nlanguage: {lang}\nrule:\n  pattern: 'print($$$ARGS)'\n".encode(),
+        mode=0o644,
+        replace=False,
     )
-    (tests_dir / "sample-test.yml").write_text(
-        'id: sample-test\nruleId: sample-rule\nvalid:\n  - "pass"\ninvalid:\n'
-        '  - "print(\\"hello\\")"\n',
-        encoding="utf-8",
+    atomic_write_bytes_anchored(
+        tests_dir / "sample-test.yml",
+        b'id: sample-test\nruleId: sample-rule\nvalid:\n  - "pass"\ninvalid:\n'
+        b'  - "print(\\"hello\\")"\n',
+        mode=0o644,
+        replace=False,
     )
     return config_path
 
@@ -15066,8 +15045,10 @@ def new(
         if target_path.exists():
             raise FileExistsError(f"Scaffold target already exists: {target_path}")
         target_dir.mkdir(parents=True, exist_ok=True)
-        target_path.write_text(contents, encoding="utf-8")
-    except (FileExistsError, ValueError) as exc:
+        atomic_write_bytes_anchored(
+            target_path, contents.encode("utf-8"), mode=0o644, replace=False
+        )
+    except (FileExistsError, ValueError, OSError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
