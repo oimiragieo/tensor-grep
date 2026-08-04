@@ -6371,6 +6371,23 @@ def _java_references_and_calls_for_registry(
     return lang_java.java_references_and_calls(path, symbol, parser=_java_parser())
 
 
+def _csharp_references_and_calls_for_registry(
+    path: Path,
+    symbol: str,
+    repo_root: Path | str | None = None,
+    *,
+    definition_dirs: frozenset[str] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    # Task 10B: in-file AST extraction only -- no cross-file import resolution yet, so
+    # repo_root/definition_dirs are part of the uniform registry adapter signature (Go F25) but
+    # unused here, same as java's own adapter above. Unlike java_references_and_calls (which takes
+    # an externally-built parser to avoid a second grammar-presence source of truth --
+    # lang_java.py has no parser factory of its own), lang_csharp.py already owns its whole
+    # extraction pipeline including `_csharp_parser()` (matching lang_go.py/lang_php.py's shape),
+    # so this adapter forwards path/symbol only.
+    return lang_csharp.csharp_references_and_calls(path, symbol)
+
+
 def _references_and_calls_for_path(
     path: Path,
     symbol: str,
@@ -6609,17 +6626,21 @@ lang_registry.register_language(
 )
 
 # PATH A Stage 1 (second expansion, alongside Go): C# gets its own module (lang_csharp.py) for
-# the same no-import-cycle reason as Go. FOUNDATIONAL scope only -- defs/source/imports/agent
-# via `extract_imports_and_symbols`-shaped extraction, wired at the `_imports_and_symbols_for_path`
-# / `build_symbol_source_from_map` dispatch sites below. The cross-file caller-graph
-# (references_and_calls / file_imports_symbol_from_definition / import_update_target / repo-root
-# context priming for a future .csproj/namespace resolver) is DEFERRED to a follow-up -- all four
-# stay None here, same shape as Go's own `import_update_target=None` gap, so `tg refs`/`tg
-# callers`/`tg blast-radius` on a C# symbol fall through to the generic
-# `_regex_references_and_calls` text-heuristic path instead of crashing or fabricating an
-# AST-verified match. provenance_when_missing="grammar-missing" (NOT "regex-heuristic") is what
-# makes a grammar-absent C# file a genuine `resolution_gaps` entry instead of a silent empty
-# result (C# has no regex fallback, unlike JS/TS/Rust).
+# the same no-import-cycle reason as Go. defs/source/imports/agent via
+# `extract_imports_and_symbols`-shaped extraction, wired at the `_imports_and_symbols_for_path` /
+# `build_symbol_source_from_map` dispatch sites below. references_and_calls now points at
+# lang_csharp.csharp_references_and_calls (Task 10B: IN-FILE AST reference/call extraction,
+# promoting C# from the foundational tier to the parser-backed-refs-callers tier, mirroring
+# Task 10A's Java landing) via the registry adapter above. The remaining cross-file caller-graph
+# fields (file_imports_symbol_from_definition / import_update_target / repo-root context priming
+# for a future .csproj/namespace resolver) stay None, deferred to a follow-up -- same shape as
+# Java's own Task 11A gap, so `tg refs`/`tg callers`/`tg blast-radius` on a C# symbol still fall
+# through to the honest `resolution_gaps` reverse-import disclosure (never a crash, never a
+# fabricated cross-file match) rather than the generic `_regex_references_and_calls` text
+# heuristic, which C# never reached anyway (no regex fallback -- see below).
+# provenance_when_missing="grammar-missing" (NOT "regex-heuristic") is what makes a
+# grammar-absent C# file a genuine `resolution_gaps` entry instead of a silent empty result (C#
+# has no regex fallback, unlike JS/TS/Rust).
 lang_registry.register_language(
     lang_registry.LanguageSpec(
         language_id="csharp",
@@ -6639,7 +6660,7 @@ lang_registry.register_language(
             "constructor_declaration",
         ),
         extract_imports_and_symbols=None,
-        references_and_calls=None,
+        references_and_calls=_csharp_references_and_calls_for_registry,
         provider_alias_calls=None,
         file_imports_symbol_from_definition=None,
         import_update_target=None,
