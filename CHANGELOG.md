@@ -1,6 +1,147 @@
 # CHANGELOG
 
 
+## v1.102.5 (2026-08-04)
+
+### Bug Fixes
+
+- Repin the ratchet's -c site census by function identity, not line number (main was red)
+  ([#922](https://github.com/oimiragieo/tensor-grep/pull/922),
+  [`c334e7a`](https://github.com/oimiragieo/tensor-grep/commit/c334e7a06d6d7fb62cd5c0d8100b35a253d5a008))
+
+MAIN WAS RED. `test_generated_source_c_sites_are_surfaced` pinned the `python -c` execution roots as
+  `[("main.py", 521), ("main.py", 1779), ("main.py", 15979)]` -- raw line numbers. PR #916 added
+  comment lines to main.py, every later lineno shifted, and the assertion failed on `f9724a93`.
+
+THE TEXTBOOK SEMANTIC-MERGE COLLISION: #913 (the ratchet) was green alone, #916 (a docs/comment
+  repair) was green alone, and only the MERGED tree was red. Neither PR's checks could have caught
+  it -- #916's base had no ratchet, and #913's base had no comment edit. A clean git merge is not a
+  clean semantic merge.
+
+IT ALSO VIOLATED THE FILE'S OWN STATED RULE, 11 lines above the offending assertion: "pinned by
+  STABLE (module, outer_function, operation) identity -- never a raw line number, which drifts on
+  unrelated edits". The population census obeyed that; this one census did not. The plan's Task 3
+  says the same thing. I reviewed the seat's output against its other claims and did not check this
+  one against the rule the same file states.
+
+FIX: `_real_subprocess_dash_c_sites` now resolves each call's ENCLOSING FUNCTION via a
+
+parent map and returns `(module, outer_function)`:
+
+("main.py", "_schedule_windows_native_frontdoor_refresh") ("main.py",
+  "_schedule_windows_self_upgrade") ("main.py", "_verify_target_python_tensor_grep_version")
+
+PROVEN, not assumed: inserting 7 comment lines near the top of main.py -- exactly the shape of edit
+  that reddened main -- leaves this test PASSING, where the old pin would fail. main.py restored
+  byte-identical afterwards (git diff --stat empty).
+
+SWEPT THE WHOLE FILE for the same defect class rather than fixing the one assertion: three further
+  `main.py:<lineno>` citations in the module docstring and the test docstring are replaced with the
+  same function identities. Final grep for `main.py:[0-9]+` in this file returns 0. The first sweep
+  MISSED one -- the module-level docstring at line 61 -- and was caught only because I re-grepped
+  instead of trusting the "clean" label I had just printed.
+
+The detector's behaviour is unchanged; it identifies the same three sites. Only their NAMES are now
+  stable.
+
+36 passed. ruff check + ruff format --preview --check clean.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Repair three artifacts that still contradict the retired #22 exit-code rule
+  ([#916](https://github.com/oimiragieo/tensor-grep/pull/916),
+  [`f9724a9`](https://github.com/oimiragieo/tensor-grep/commit/f9724a93cddebe7d909baa2bef141c342f60fa5c))
+
+All three verified still-live on main by grep BEFORE writing, per the premise-check rule. A fourth
+  candidate was checked and deliberately NOT touched (below).
+
+1. src/tensor_grep/cli/main.py -- the exit-2 comment said an unhonoured explicit --gpu-device-ids
+  request "takes the same exit". False: `exit_incomplete` reads `result_incomplete` and nothing
+  else, and backlog #22 was RETIRED as an exit-code rule on 2026-08-01 (PR #868). PR #911 corrected
+  docs/CONTRACTS.md but not this comment, which RELOCATED the contradiction rather than removing it
+  -- the repo then stated the correct rule in the doc and the opposite one in the code that doc
+  describes, and each reads confidently in isolation.
+
+2. scripts/diagnose_gpu_delegation_route.py -- its NEGATIVE CONTROL required `exit_code == 2` for
+  that same retired rule. Left alone it aborts with "the fixture mocks are wrong", i.e. a stale
+  instrument blaming the SUBJECT for a change in the CONTRACT -- a confident false negative. The
+  control's real property is ZERO delegation calls; that is kept, and the exit assertion is inverted
+  to pin the retirement (an exit 2 here now means the retired rule was reintroduced). The companion
+  "exits 2 exactly as the unit test expects" summary line is corrected too, so the script cannot
+  report a stale claim on the PASS path either.
+
+3. docs/CONTRACTS.md section 9 said `overlaps` lists live claims "from OTHER agent_ids". False for
+  the sentinel: the default agent_id is the literal "anonymous", the ABSENCE of an identity, so
+  `_find_overlaps` deliberately does NOT self-suppress it and two zero-config agents DO see each
+  other. Reworded to the actual `agent_id != _DEFAULT_AGENT_ID` gate, naming the pinning test.
+
+ALSO ADDED -- the agent branch rule, which was missing entirely (`path_was_defaulted` appeared 0
+  times in CONTRACTS.md). Exit 1 does not mean "absent"; it means "absent from the scope actually
+  searched", which may not be the one the caller named. Agents must branch on `path_was_defaulted`,
+  not the exit code, before concluding absence. Records why this is NOT a new exit code, and states
+  the two real gaps (no disclosure on the FOUND path; suppressed when the request was
+  scope-filtered) so callers code around them instead of over-trusting the field.
+
+CHECKED AND DELIBERATELY NOT CHANGED: docs/TASK_BOARD.md still contains the string
+  "contract-contested", but reading the WHOLE record shows #911 already labelled that block "stale
+  investigation retained as historical context, not active work. ORIGINAL TEXT FOLLOWS". A
+  line-based match would have "fixed" correctly-handled text.
+
+184 passed (contracts / docs-governance / gpu-explicit-request / tail-exit-policy / anonymous /
+  diagnose). ruff check + format clean. Comment/doc/diagnostic-only: zero product behaviour change,
+  so `docs:` (no release) is the honest class.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Refactoring
+
+- Make reference/caller dispatch registry-driven (REF-CALL-REGISTRY)
+  ([#915](https://github.com/oimiragieo/tensor-grep/pull/915),
+  [`3faf500`](https://github.com/oimiragieo/tensor-grep/commit/3faf500f9e4ac4945cdef647a5ad7785e8111bf7))
+
+`LanguageSpec.references_and_calls` existed but nothing read it -- lang_registry.py's own docstring
+  said so: "no dispatch seam reads this field yet" (Stage 0). Meanwhile TWO hardcoded per-language
+  if/elif chains in repo_map.py hand-dispatched the identical decision, at the refs+calls site and
+  the calls-only site.
+
+Both sites now resolve the extractor through one seam, `_references_and_calls_for_path`, backed by
+  `spec_for_path` / `LANGUAGE_REGISTRY`. The five extractors are normalised behind one adapter
+  signature, so the seam contains NO `language_id` branching -- relocating the if-chain would have
+  been a failed outcome.
+
+Languages with `references_and_calls is None` (c, cpp, csharp, java, php) still fall through to
+  `_regex_references_and_calls` via an explicit, documented branch, never a silent implicit one.
+
+`classify_ref_kind` and the T1 emission sites are deliberately UNTOUCHED -- lang_registry.py warns
+  that rewiring them regresses shipped T1 work.
+
+BEHAVIOUR-PRESERVING, PROVEN NOT ASSERTED.
+
+The decisive arm: both arms run in the SAME working directory against a probe file the refactor does
+  not touch (bootstrap.py), so neither path strings nor line shifts can confound it. `tg callers`
+  and `tg refs` are both BYTE-IDENTICAL, with a positive control (5 real file entries, not an
+  empty/error payload). Re-verified byte-identical AFTER `ruff format`.
+
+Two earlier arms and why they are NOT counterexamples, recorded so nobody re-derives them as
+  regressions: - The python arms probed repo_map.py ITSELF, which this commit edits (188+/118-), so
+  reported line numbers shift. Everything except line numbers compares IDENTICAL, and the shifts
+  {62,70,79} track the commit's own hunks. A probe whose input is the thing under change measures
+  the change, not the behaviour. - A cross-directory arm differed only in absolute path strings and
+  in `token_budget.estimated_tokens` (1695 vs 1590) -- an estimate that is a function of path string
+  length, which that arm altered. - js/ts/rust arms (4) were byte-identical throughout.
+
+601 passed (repo_map / lang_ / registry / callers / refs). ruff check + format clean.
+
+Implemented by cursor-agent under an EDIT-ONLY brief (no uv, no tests, no git) after an earlier run
+  violated AGENTS.md A60 by running WSL `uv` against the canonical checkout and replaced the Windows
+  .venv with a Linux one. Its report was treated as a hypothesis; every claim here is re-verified on
+  Windows.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.102.4 (2026-08-04)
 
 ### Bug Fixes
