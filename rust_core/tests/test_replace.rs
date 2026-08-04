@@ -4,6 +4,13 @@ use std::path::Path;
 use tempfile::tempdir;
 use tensor_grep_rs::backend_cpu::CpuBackend;
 
+// Compile-time public-API signature guard (Task 5, Step 2.1): pins `replace_in_place`'s exact
+// argument shape and return type. A future change to either -- e.g. widening the return type to
+// something `.unwrap()` callers would still accept -- fails the BUILD here rather than silently
+// changing behavior for downstream `rlib` consumers this crate cannot see.
+const _: fn(&CpuBackend, &str, &str, &str, bool, bool) -> anyhow::Result<()> =
+    CpuBackend::replace_in_place;
+
 fn read_file(path: &Path) -> String {
     let mut content = String::new();
     File::open(path)
@@ -269,4 +276,100 @@ fn test_rust_replace_in_place_handles_single_byte_files() {
         .unwrap();
 
     assert_eq!(read_file(&file_path), "b");
+}
+
+// --- Characterization controls (Task 5, Step 2.2) ----------------------------------------
+//
+// These pin the PUBLIC contract's current behavior before/after the directory-mode refactor:
+// direct-file failure already propagates via `?` (this was true on the pre-refactor code and
+// must stay true), and directory mode -- both literal and regex -- succeeds end-to-end on a
+// real multi-file tree with no error swallowed. None of these were previously exercised.
+
+// Nonexistent-path behavior is an explicit out-of-scope follow-up (RUST-REPLACE-NONEXISTENT_PATH,
+// see docs/investigations/2026-08-02-replace-in-place-surface.md): `path_obj.is_file()` and
+// `path_obj.is_dir()` are both false for a missing path, so `replace_in_place` falls through to
+// `Ok(())` without touching the filesystem. This test PINS that current behavior (it is not
+// endorsing it) so a future accidental change to this task's error-propagation work does not
+// silently flip it.
+#[test]
+fn test_rust_replace_in_place_direct_file_nonexistent_path_is_currently_a_silent_no_op() {
+    let dir = tempdir().unwrap();
+    let missing_path = dir.path().join("does-not-exist.txt");
+
+    let backend = CpuBackend::new();
+    let result = backend.replace_in_place("a", "b", missing_path.to_str().unwrap(), false, true);
+    assert!(
+        result.is_ok(),
+        "documented follow-up: a nonexistent direct-file path is currently a silent Ok(()) no-op, not an Err"
+    );
+
+    let result = backend.replace_in_place("a", "b", missing_path.to_str().unwrap(), false, false);
+    assert!(
+        result.is_ok(),
+        "documented follow-up: a nonexistent direct-file path is currently a silent Ok(()) no-op, not an Err (regex arm)"
+    );
+}
+
+// This is an arm that DOES already propagate via `?` today, deterministically and without
+// relying on OS permission bits: an invalid regex pattern fails `RegexBuilder::build()?` before
+// `replace_in_place` even inspects the path. It runs against a real existing file to isolate the
+// failure to the regex build step rather than the path-existence branch characterized above.
+#[test]
+fn test_rust_replace_in_place_direct_file_invalid_regex_returns_err() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("invalid-regex-target.txt");
+    write!(File::create(&file_path).unwrap(), "content").unwrap();
+
+    let backend = CpuBackend::new();
+    let result = backend.replace_in_place(
+        "(unterminated",
+        "b",
+        file_path.to_str().unwrap(),
+        false,
+        false, // regex path, not fixed_strings
+    );
+    assert!(
+        result.is_err(),
+        "direct-file mode already propagates a regex build failure via `?`"
+    );
+}
+
+#[test]
+fn test_rust_replace_in_place_directory_mode_literal_succeeds_across_files() {
+    let dir = tempdir().unwrap();
+    let file_a = dir.path().join("a.txt");
+    let file_b = dir.path().join("b.txt");
+    write!(File::create(&file_a).unwrap(), "needle one").unwrap();
+    write!(File::create(&file_b).unwrap(), "needle two").unwrap();
+
+    let backend = CpuBackend::new();
+    backend
+        .replace_in_place("needle", "found", dir.path().to_str().unwrap(), false, true)
+        .unwrap();
+
+    assert_eq!(read_file(&file_a), "found one");
+    assert_eq!(read_file(&file_b), "found two");
+}
+
+#[test]
+fn test_rust_replace_in_place_directory_mode_regex_succeeds_across_files() {
+    let dir = tempdir().unwrap();
+    let file_a = dir.path().join("a.txt");
+    let file_b = dir.path().join("b.txt");
+    write!(File::create(&file_a).unwrap(), "id:1").unwrap();
+    write!(File::create(&file_b).unwrap(), "id:2").unwrap();
+
+    let backend = CpuBackend::new();
+    backend
+        .replace_in_place(
+            r"id:(\d+)",
+            "ID#$1",
+            dir.path().to_str().unwrap(),
+            false,
+            false,
+        )
+        .unwrap();
+
+    assert_eq!(read_file(&file_a), "ID#1");
+    assert_eq!(read_file(&file_b), "ID#2");
 }

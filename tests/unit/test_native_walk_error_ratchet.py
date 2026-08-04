@@ -44,7 +44,14 @@ _DISCARD_PATTERN = re.compile(r"\.filter_map\(\s*(?:\|e\|\s*e\.ok\(\)|Result::ok
 # file name -> number of error-discarding walks currently present.
 KNOWN_DISCARD_SITES: dict[str, int] = {
     "backend_ast_workflow.rs": 3,
-    "backend_cpu.rs": 6,
+    # 6 -> 4: this PR's `replace_in_place` hardening removed two error-discarding walks in
+    # directory mode (the `WalkDir::new(...).filter_map(|e| e.ok())` plus the `let _ = ...`
+    # per-child replace), so walk failures and per-child write failures now propagate as
+    # `Err(...)` instead of letting a partial rewrite report success. Lowered here in the SAME
+    # PR that fixed them: the ratchet's own failure message is explicit that leaving the number
+    # high "would let a future regression slip back in unnoticed" -- a ratchet that is not
+    # re-tightened after a fix has no teeth for the sites that remain.
+    "backend_cpu.rs": 4,
     "index.rs": 1,
 }
 

@@ -1408,8 +1408,15 @@ signed consumable tg outputs.
   (the thin unused wrapper around `_classify_lines_with_metadata`) is now **DELETED** (2026-08-01
   backlog campaign, PR-D, `chore:`) — re-verified zero callers via `tg callers`/`tg refs`/tracked-file
   grep before removal, positive control 4 callers/3 files on the sibling. `rust_core/src/backend_cpu.rs::replace_in_place`
-  (`backend_cpu.rs:212`, still `pub fn`) is a SEPARATE item, still NOT confirmed deleted — kept as the
-  remaining LOW item below.
+  is **RETAINED, NOT DELETED** (Task 5 Rust half, 2026-08-02 backlog closeout, branch
+  `fix/rust-replace-in-place-hardening`): the in-repo zero-caller census was correct (still zero
+  Rust callers) but does not authorize deletion of a `pub fn` on a public struct in a public
+  `rlib` module — external/FFI consumers this repo cannot see may depend on it. Hardened instead:
+  a compile-time public-signature guard, directory-walk errors and per-child literal/regex
+  replace errors now propagate as `Err(...)` with path/operation context (previously discarded via
+  `let _ = ...`), and 3 new `#[cfg(test)]`-gated fault-injection unit tests inside `backend_cpu.rs`
+  prove each arm independently. See
+  `docs/investigations/2026-08-02-replace-in-place-surface.md`.
 - **#171** GPU Phase-0 program (de-risking toward a possible Phase-1 `cuda-check` CI gate) -> SHIPPED:
   P0-1 WSL probe path-domain bridging + `cargo check --features cuda` anti-bit-rot CI gate (`7f8de84`/
   #594, v1.75.1) | P0-2/P0-3 doctor probe failure-taxonomy + honest device-id validation (`7350d77`/
@@ -1545,9 +1552,13 @@ for the next audit rather than re-opened as active work):**
   negative test asserting `"path_provenance" not in edge` for a normal (non-hacked) edge, closing the
   payload-bloat/ordering nit in the same diff.
 - **Dead-code (partial, see reconciliation note above):** `sidecar.py::_classify_lines` — **DONE**
-  (2026-08-01 backlog campaign, PR-D). Remaining: `rust_core/src/backend_cpu.rs::replace_in_place`
-  if confirmed zero-caller; light Opus parity review for the Rust deletion (`cpu_backend` is a
-  mandatory-gate surface).
+  (2026-08-01 backlog campaign, PR-D). `rust_core/src/backend_cpu.rs::replace_in_place` — **DONE,
+  RETAINED (not deleted)** (Task 5 Rust half, 2026-08-02 backlog closeout): confirmed zero in-repo
+  Rust callers, but retained per the public-`rlib`-API rule and hardened (see the reconciliation
+  note above and `docs/investigations/2026-08-02-replace-in-place-surface.md`). Two follow-ups
+  deliberately left out of scope: `RUST-REPLACE-NONEXISTENT_PATH` (a nonexistent direct-file path
+  is currently a silent `Ok(())` no-op) and `RUST-REPLACE-SYMLINK=DEMAND_GATED` (direct-leaf-symlink
+  follow behavior unchanged).
 - **apply_policy argv-sentinel — RETIRED, not fixed (2026-08-01 backlog campaign, PR-D).** The
   `argv = [str(resolved_path), *argv[1:]]` site at `apply_policy.py:707` (mirrored in
   `rust_core/src/main.rs`'s `Command::new(program)` construction) does NOT get a `--` separator.
