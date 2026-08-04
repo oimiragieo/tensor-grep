@@ -714,6 +714,7 @@ def _release_result(
     remaining: list[dict[str, Any]],
     *,
     listed_scope: str,
+    anonymous_symbol_release: bool = False,
 ) -> dict[str, Any]:
     """Shared shape for ``release_claim``'s two return points (the default-inert fast path and
     the normal RMW path). ``released``/``released_count`` are the pre-fix contract, UNCHANGED in
@@ -737,7 +738,19 @@ def _release_result(
             "live_claims_elsewhere_truncated": False,
         }
     total_elsewhere = len(remaining)
-    if total_elsewhere == 0:
+    if anonymous_symbol_release:
+        # Label the zero at the point of reporting. Without this the caller gets the generic
+        # "nothing matched" reason, which is true but hides WHY: --symbol release is scoped by
+        # agent_id, and an anonymous caller has no identity to scope BY, so it deliberately
+        # matches nothing rather than releasing some other anonymous agent's claim.
+        reason = (
+            "Anonymous --symbol release matches nothing by design: symbol release is scoped to "
+            "the calling agent's own claims, and the default agent id "
+            f"({_DEFAULT_AGENT_ID!r}) is the absence of an identity, so it cannot identify an "
+            "owner. Release by --claim-id (the opaque id is the authorization), or set "
+            "TG_LEDGER_AGENT_ID / pass --agent-id to claim and release under a real identity."
+        )
+    elif total_elsewhere == 0:
         reason = "No live claims exist for this repository."
     else:
         reason = (
@@ -784,6 +797,15 @@ def release_claim(
     ``agent_id``'s OWN live claims only, so a common/guessable symbol name can never release
     another agent's claim by accident).
 
+    ANONYMOUS CALLERS CANNOT RELEASE BY ``symbol``. Symbol scoping is expressed as ``agent_id``
+    equality, and ``_DEFAULT_AGENT_ID`` is the ABSENCE of an identity, not one -- so without an
+    explicit guard two zero-config agents both satisfy the equality and either can release the
+    other's claim, which is exactly what the paragraph above promises cannot happen. An anonymous
+    ``symbol`` release therefore matches NOTHING and returns a specific ``unmatched_reason``
+    naming ``--claim-id`` and ``TG_LEDGER_AGENT_ID`` as the two real routes. ``claim_id`` release
+    is unaffected -- it is deliberately identity-independent, and it is the anonymous caller's
+    supported path.
+
     Releasing zero matching claims (already released, already expired, or never existed) is
     NOT an error -- always returns normally with ``released == []``; see ``_release_result``
     for the additive ``unmatched_reason``/``live_claims_elsewhere`` honesty fields that
@@ -824,8 +846,18 @@ def release_claim(
         released: list[dict[str, Any]] = []
         for entry in live:
             matches_id = claim_id is not None and entry.get("claim_id") == claim_id
+            # `resolved_agent_id != _DEFAULT_AGENT_ID` is the SAME sentinel guard `_find_overlaps`
+            # carries, for the same reason: symbol scoping uses agent_id equality AS identity, and
+            # `_DEFAULT_AGENT_ID` is the ABSENCE of an identity, not one. Without this conjunct two
+            # zero-config agents both resolve to the sentinel, the equality holds, and agent B's
+            # `release --symbol foo` silently releases agent A's claim -- breaking the guarantee
+            # this function's own docstring states ("a common/guessable symbol name can never
+            # release another agent's claim by accident"). The claim path was fixed for this in the
+            # #845 work; this mirror was missed. An anonymous caller releases via `claim_id`, which
+            # is deliberately identity-independent (the opaque id IS the authorization).
             matches_symbol = (
                 symbol is not None
+                and resolved_agent_id != _DEFAULT_AGENT_ID
                 and entry.get("agent_id") == resolved_agent_id
                 and symbol in (entry.get("symbols") or [])
             )
@@ -836,7 +868,16 @@ def release_claim(
         if len(remaining) != len(existing):
             _write_index(root, remaining)
 
-    return _release_result(released, remaining, listed_scope=listed_scope)
+    return _release_result(
+        released,
+        remaining,
+        listed_scope=listed_scope,
+        # Only when a --symbol release was actually ATTEMPTED anonymously and matched nothing.
+        # A --claim-id release is identity-independent, so it must keep the generic reason.
+        anonymous_symbol_release=(
+            not released and symbol is not None and resolved_agent_id == _DEFAULT_AGENT_ID
+        ),
+    )
 
 
 def list_claims(
