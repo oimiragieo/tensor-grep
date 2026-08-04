@@ -1,6 +1,150 @@
 # CHANGELOG
 
 
+## v1.102.2 (2026-08-04)
+
+### Bug Fixes
+
+- Raise vulnerable dependency floors and retain backlog truth
+  ([#911](https://github.com/oimiragieo/tensor-grep/pull/911),
+  [`a88790d`](https://github.com/oimiragieo/tensor-grep/commit/a88790d4979fb2b72b5825191b14782aa89902b2))
+
+* docs: plan evidence-first backlog closeout
+
+* docs: harden backlog closeout plan
+
+* docs: retain backlog closeout lessons
+
+* docs: harden backlog closeout plan and retention
+
+* test: pin live backlog truth
+
+* test: harden backlog truth receipts
+
+* docs(plan): approve amended backlog closeout campaign
+
+* docs: approve round-60 backlog execution plan
+
+* docs: retain cross-os venv boundary
+
+* docs: avoid self-referential pr head state
+
+* docs: make PR status externally provable
+
+* docs: retain Task 2A audit lessons
+
+* fix: raise vulnerable dependency floors
+
+* fix: publish the aiohttp security floor so it reaches PyPI installers
+
+Codex FIX-FIRST blocker on this PR, verified independently before acting.
+
+A `[tool.uv] constraint-dependencies` entry governs THIS repo's local resolution only. It is not
+  published metadata, so it does nothing for a user running `pip install tensor-grep[nlp]`. The
+  `nlp` extra declared only `tritonclient[http]`, whose own metadata permits `aiohttp>=3.8.1,<4` --
+  so the advisory floor was unreachable and the published extra could still resolve an affected
+  aiohttp. Per AGENTS.md A69 a fixable advisory is upgraded across BOTH the direct and the
+  constraint floor; only the constraint half had landed.
+
+Proof the fix reaches published metadata (uv.lock delta):
+
++ { name = "aiohttp" }, + { name = "aiohttp", marker = "extra == 'nlp'", specifier = ">=3.14.3" },
+
+Red/green receipts, validator restored byte-identical between arms (diff -q IDENTICAL):
+
+pre-fix validator + new test: FAILED
+  test_should_reject_lock_only_aiohttp_floor_absent_from_the_published_nlp_extra AssertionError:
+  assert [] == ['...missing published security floor...'] i.e. the old validator emitted NO error
+  for the exact shape that shipped green fixed validator + new test: passes
+
+The validator now checks published-extra floors via a `required_extra_floors` mapping rather than a
+  one-off aiohttp branch, so the next such floor is a data edit, not a new code path.
+
+Full file: 147 passed. ruff check clean; ruff format --preview --check clean.
+
+KNOWN, NOT FIXED HERE (filed, measured): 7 of the 9 security floors are lock-only and transitively
+  reachable from PUBLISHED dependencies, so the same defect class remains for pyjwt /
+  python-multipart / starlette / pydantic-settings / python-dotenv (all via mcp, a CORE dep) and
+  pygments (via rich, CORE). `requests>=2.33.0` is absent from uv.lock entirely and constrains
+  nothing. Those need a per-floor decision (declare directly vs raise the direct parent's floor) and
+  resolution checks across the supported Python range; doing it blind in this PR could break user
+  installs.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Restore blocked tracker section and record #904 closure
+  ([#910](https://github.com/oimiragieo/tensor-grep/pull/910),
+  [`8024125`](https://github.com/oimiragieo/tensor-grep/commit/8024125612d5fb42481acde34d94ad39bbaa3c3e))
+
+* docs: restore the BLOCKED section header my own #909 edit deleted
+
+#909's slice arithmetic overran the entry it was replacing and removed two lines: a blank and `##
+  BLOCKED — environment (not CEO-gated, just needs hardware)`. It merged that way.
+
+The three items survived; they were SILENTLY REFILED under UNSHIPPED ARTIFACTS, which is worse than
+  losing them. A reader scanning for env-blocked work would have found an empty category, and a
+  dispatcher reading "UNSHIPPED ARTIFACTS" could have picked up #89/#90/#109 as actionable when they
+  need hardware.
+
+Caught by the section census in the hourly update, not by any gate: the count read `UNSHIPPED
+  ARTIFACTS = 4` where it should be 1, and 1 + 3 = 4 pointed straight at a swallowed header. The
+  freshness gate passed the whole time -- it checks the reconcile stamp's recency, never the
+  document's structure.
+
+Restored and verified against the pre-#909 blob: section counts now match exactly (artifacts 1,
+  blocked 3, CEO-gated 4, P1 1, P3 1) and the header block is byte-identical to 23f9fb0's.
+
+The lesson is about the EDIT, not the board: a python string slice bounded by `s.find("\n- [", i)`
+  ends at the next ITEM, and a section header sitting between two items is inside that span. Anchor
+  a replacement on the text being replaced, not on a scan for the next sibling.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs: close #904 on the board and retain the three laws this session ended on
+
+Folded onto this branch rather than opened as a fourth PR: both changes edit docs/TASK_BOARD.md, and
+  two branches touching the same file is how a conflict gets manufactured for no reason.
+
+BOARD: #904 closed -- merged as 8fc51f8, verified on the MERGED artifact by an AST walk (2/2
+  _context_tests call sites carry the counter; impact free of _test_source_limit), not a substring
+  scan. Board 10 -> 9 open.
+
+AGENTS.md, three laws:
+
+1. THREE INDEPENDENT GATES FOUND FOUR DEFECTS I DID NOT. My own verification reported zero
+  regressions across 41 derived files on a perf: change carrying a HIGH defect. Root cause of three
+  of the four in one sentence: every parity arm ran a 32-file fixture where the 2000-file ceiling is
+  UNREACHABLE -- the one population where the bound cannot fail. Also: a gate's verdict is a
+  hypothesis too. Its suggested remedy for the HIGH was wrong, and re-gating after fixing is
+  required because "I fixed the gate's findings" is exactly the self-report a gate exists to
+  distrust.
+
+2. A BOARD CAN BE PERFECTLY FRESH AND STRUCTURALLY WRONG. My own #909 edit deleted a section header
+  and merged; the items were silently REFILED, which is worse than lost. The freshness gate checks
+  the stamp's recency, never the document's structure. No gate was built and the retirement is the
+  finding -- measured: orphan-check reads 0 in both arms, duplicate-name is unrelated, and a pinned
+  header SET is a list written at authoring time (four receipts of that rotting this session). What
+  caught it was a COUNT printed beside its expected value.
+
+3. ast.walk INSIDE ast.walk counts every call once per enclosing scope -- it reported 10 call sites
+  where the truth was 2, in the probe certifying that a release had landed. Walk once and filter.
+
+Oracle-form count unchanged at ten; drift, index and freshness gates green (12 passed); ruff 0.15.20
+  format clean.
+
+* docs: repair blocked-section example
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.102.1 (2026-08-02)
 
 ### Documentation
