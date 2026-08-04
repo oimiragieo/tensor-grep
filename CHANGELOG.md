@@ -1,6 +1,149 @@
 # CHANGELOG
 
 
+## v1.103.0 (2026-08-04)
+
+### Features
+
+- **lang-java**: Promote Java to parser-backed refs/callers with two honest confidence bands
+  ([#927](https://github.com/oimiragieo/tensor-grep/pull/927),
+  [`2e7fc5a`](https://github.com/oimiragieo/tensor-grep/commit/2e7fc5af4d903ace3b4493a3b6a1f5b2ea05594f))
+
+* feat(lang-java): promote Java to parser-backed refs/callers with two honest confidence bands
+
+Plan Task 10A, first of five language waves (board row F7). Unblocked by PR #915, which made
+  reference/caller dispatch registry-driven -- before that this needed edits to two hardcoded
+  if-chains; now it is one module plus a registration.
+
+WHAT SHIPS - New `src/tensor_grep/cli/lang_java.py` with `java_references_and_calls`, mirroring
+  `lang_go.py`'s module shape rather than growing `repo_map.py`. - Java's
+  `LanguageSpec.references_and_calls` flipped from `None` to the new extractor. - AST coverage:
+  method_invocation, object_creation_expression, qualified/member calls, constructor/type
+  references, field access, same-name-declaration exclusion, string and comment exclusion, honest
+  degradation when the grammar is absent.
+
+TWO BANDS, AND THEY GENUINELY DIVERGE. Per the add-language skill's B3, an unconfirmed match is
+  DEMOTED, never dropped and never presented as certain: 0.9 "java-infile-type-confirmation" -- the
+  receiver's declared type is readable in the SAME file AND that type declares a matching member
+  there. Two AST facts joined. 0.6 "java-name-heuristic" -- everything else: cross-file, or a
+  receiver whose type cannot be resolved. Deliberately BELOW Go's 0.7 receiver-heuristic, because
+  Go's demoted case at least attempts package-alias resolution and Java's attempts none.
+
+Verified on a fixture the build seat never saw, in one file so the confirmed path is reachable:
+  w.doWork() where `Widget w` is declared in-file and Widget declares doWork -> 0.9 m.doWork() where
+  `Mystery m`'s type is unresolvable -> 0.6 Distinct bands, so the confirmed tier is not decorative.
+
+VERIFIED EXTERNALLY, not from the seat's self-report (the skill is explicit: confirm against the
+  registry dict and a real symbol-command run): registry: java references_and_calls WIRED,
+  provenance_when_missing = grammar-missing descriptor, DERIVED from the product:
+  parser-backed-refs-callers:go-java-javascript-python-rust-typescript
+  +foundational-defs-imports-only:c-cpp-csharp-php
+
+A CLAIM I CHECKED AND DISPROVED. The seat reported that wiring the extractor "incidentally
+  activated" Java's literal-text caller prefilter, surfacing cross-file candidates. Baselined
+  against origin/main: cross-file Java callers ALREADY existed there with the identical key set.
+  This PR did not introduce them. I nearly recorded a pre-existing gap as a regression caused here.
+
+PROCESS NOTE, because it nearly shipped a broken file. An earlier attempt at this commit was made
+  while the build seat was STILL WRITING this worktree; `git add -A` captured a mix whose field
+  names were mine and whose constant definitions were the seat's, producing a committed module that
+  used names it did not define. Every gate passed because they ran against a working tree the seat
+  then overwrote. Recovered by resetting the branch (no PR existed) and re-doing it on a clean base
+  with explicit paths and a staged-file self-consistency assertion. The seat's two-band design is
+  also better than the single band I had written.
+
+Cross-file resolution (Java package/source-root, import_update_target, prime_repo_context) stays
+  None -- Task 11A, not touched.
+
+62 passed (lang_java + lang_registry + task-board freshness); 170 passed across
+  go/php/csharp/c/cpp/repo_map_graph with no regression to the other foundational languages. ruff
+  clean; mypy clean on 90 source files.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs: propagate Java's tier change, and make the doc gate DERIVE the tiers instead of restating
+  them
+
+CI caught 20 artifacts still claiming Java is foundational-tier after PR #927 promoted it. Fixed the
+  SET, not the one file the test named.
+
+THE DURABLE PART. `tests/unit/test_harness_api_docs.py` hard-coded the tier string:
+
+"parser-backed-refs-callers:go-javascript-python-rust-typescript"
+  "+foundational-defs-imports-only:c-cpp-csharp-java-php"
+
+That literal went stale the instant a language changed tier. This repo's own rule is "never
+  hand-count the language tiers -- ask the product", and that number has been wrong FOUR times, once
+  inside a skill. A test restating the tiers is simply a fifth place for them to drift. It now
+  asserts `repo_map._symbol_navigation_descriptor() in doc`, so the gate still requires the DOC to
+  match the REGISTRY but can never itself need a re-stamp.
+
+MUTATION-VERIFIED, because a derived assertion could easily assert nothing: corrupting the
+  descriptor in `docs/harness_api.md` takes the file from 1 failure to 2. The derived check bites.
+
+UPDATED (live claims): docs/harness_api.md, docs/harness_cookbook.md, docs/ENGINEER_ONBOARDING.md,
+  .claude/skills/code-search-and-retrieval-reference/SKILL.md,
+  .claude/skills/tensor-grep-enterprise-agent/SKILL.md, and 14 docs/examples/*.json artifacts --
+  every value written from the live descriptor, never retyped.
+
+DELIBERATELY NOT UPDATED: CHANGELOG.md and docs/positioning/2026-08-01-policy-layer-moat.md. Both
+  are dated historical records of what a probe printed at the time -- the positioning memo even
+  embeds a captured terminal block with its own MODULE/REGISTRY_COUNT lines. Rewriting them to
+  today's value would falsify the record rather than correct a claim. The residual grep for the
+  stale form is therefore non-empty ON PURPOSE, and scoped to exactly those two files.
+
+306 passed (lang_java / lang_registry / harness_api / skill-index / skill-library / docs-governance
+  / go / php / csharp / c / cpp / repo_map_graph). ruff clean; mypy clean on 90 source files.
+
+* test: derive the tier descriptor in tests instead of pinning literals
+
+Promoting Java to parser-backed changes _symbol_navigation_descriptor() from 5/5 to 6/4, which broke
+  10 hardcoded tier strings across three test files plus rust_core.
+
+Python tests now DERIVE the value (repo_map._symbol_navigation_descriptor()) rather than restating
+  it, so a future tier change cannot break them. Mutation-verified: corrupting the doc turns 1
+  failure into 2, so the assertion still discriminates.
+
+rust_core cannot import the Python product, so its two literals stay literal but now carry the
+  derivation command in a comment above them.
+
+Baselined against origin/main: the 4 remaining test_mcp_server failures are identical on both arms
+  and are all *_without_native_binary / *_when_native_binary_missing -- this worktree has no
+  compiled native binary. Zero regressions from this change.
+
+* docs: propagate the Java tier promotion, and stop editing a dated receipt
+
+Promoting Java changes _symbol_navigation_descriptor() from 5 parser-backed / 5 foundational to 6/4,
+  which falsifies every doc that states the split.
+
+Updated the current-state claims: CLAUDE.md, README.md, docs/BACKLOG.md's F7 row (Java drops out of
+  the remaining-work list), three skills, and a repo_map.py docstring that still listed java under
+  the `references_and_calls is None` fallback branch.
+
+Deliberately NOT updated, because they are dated records of what was true on a date rather than
+  claims about now: CHANGELOG.md, docs/positioning/, AGENTS.md's miscount receipt, docs/BACKLOG.md's
+  dated audit findings, and the plan's "five parser-backed language waves" heading (which counts the
+  five wave PRs -- Java, C#, PHP, C, C++ -- not tier membership).
+
+The real defect this PR introduced and now fixes: an earlier commit here overwrote the quoted output
+  inside a DATED "Re-verified live 2026-08-01" receipt in tensor-grep-enterprise-agent, replacing it
+  with today's value while leaving the surrounding "still 5 parser-backed + 5 foundational" prose
+  untouched -- a sentence contradicting itself, and a destroyed historical record. A receipt's whole
+  value is what the command printed ON A DATE. Restored the true 2026-08-01 quote and appended a
+  separate SUPERSEDED 2026-08-04 entry instead.
+
+That cell was then still half-stale: it led with CALLER-GRAPH 5/10 and listed java as foundational
+  while quoting the new descriptor lower down. Realigned those three claims, with controls asserting
+  the dated receipt still carries the OLD value and CRLF line count is unchanged.
+
+Gates: ruff, ruff format --preview, mypy (90 files), and the three skill/doc drift gates (17
+  passed).
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.102.8 (2026-08-04)
 
 ### Bug Fixes
