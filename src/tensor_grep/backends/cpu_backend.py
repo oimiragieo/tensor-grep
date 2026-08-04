@@ -883,13 +883,18 @@ class CPUBackend(ComputeBackend):
         from tensor_grep.rust_core import RustBackend
 
         rust_backend = RustBackend()
-        return rust_backend.search(
+        # Bind to an annotated local before returning: the PyO3 extension is untyped, so returning
+        # its result directly trips mypy's `no-any-return` against this method's declared
+        # `list[tuple[int, str]]`. The sibling adapter in `backends/rust_backend.py` avoids it the
+        # same way (it binds `results` and iterates rather than returning the call).
+        results: list[tuple[int, str]] = rust_backend.search(
             pattern=rust_pattern,
             path=file_path,
             ignore_case=ignore_case,
             fixed_strings=fixed_strings,
             invert_match=invert_match,
         )
+        return results
 
     def _search_word_line_context_via_rust(
         self, path: Path, file_path: str, pattern: str, config: SearchConfig
