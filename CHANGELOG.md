@@ -1,6 +1,148 @@
 # CHANGELOG
 
 
+## v1.102.3 (2026-08-04)
+
+### Bug Fixes
+
+- Route scaffold + ruleset writers through the anchored atomic writer (#859)
+  ([#913](https://github.com/oimiragieo/tensor-grep/pull/913),
+  [`211d850`](https://github.com/oimiragieo/tensor-grep/commit/211d850c7484f6e18d74e2d8ac712f118f3b82cf))
+
+* fix: route scaffold + ruleset writers through the anchored atomic writer (#859)
+
+Restores the class-level atomic-writer ratchet from #859. The scaffold writers (tg new project / tg
+  new rule) and the two in-process ruleset-scan JSON writers (baseline / suppressions) now share one
+  hardened helper, _index_lock.atomic_write_bytes_anchored, instead of each re-deriving its own open
+  flags.
+
+Security defect closed (red arm measured, not assumed): pre-fix, tg new rule FOLLOWED a dangling
+  symlink at the destination and wrote through it, exiting 0. Both scaffold arms now refuse with
+  exit 1.
+
+Red/green receipts, same worktree, source restored byte-identical between arms (git diff --stat
+  empty):
+
+pre-fix source + new tests: FAILED test_new_project_scaffold_refuses_symlinked_sgconfig FAILED
+  test_new_rule_scaffold_refuses_symlinked_destination (assert exit_code == 1; actual 0 -- wrote
+  through the symlink) fixed source + new tests: 3 passed
+
+Honest labelling: test_new_scaffold_refuses_existing_file_when_no_replace PASSES on both arms. It is
+  a regression guard for existing no-clobber behaviour, not evidence for this fix, and is not
+  counted as such.
+
+The helper preserves create-or-overwrite semantics for repeat runs, refuses caller-selected symlinks
+  and live/dangling/reparse destinations, and fsyncs temp contents before publish; path confinement
+  remains the caller's responsibility.
+
+Focused suite: 550 passed, 2 skipped (test_index_lock.py + test_cli_modes.py). ruff check + ruff
+  format --preview --check clean on all four files.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* test: add the #859 class-level atomic-writer ratchet and its historical control
+
+PR #913 shipped the INSTANCE fix (route scaffold + ruleset writers through
+  `_index_lock.atomic_write_bytes_anchored`). This is the CLASS half: an AST detector that stops a
+  NEW unsafe writer being added tomorrow. Both halves belong to #859.
+
+`tests/fixtures/audits/codemap_pre_859.py` is committed alongside because the test imports it. It
+  had been sitting UNTRACKED in the working tree since 2026-08-03, so the test would have collected
+  fine locally and died on a clean clone -- the untracked-dependency-closure trap. SHA-256
+  dd16398dc3278efd66d46ab63170cd71cf4e3c9512234f340ef29 2dff5f2fe76, byte-exact per the plan; no
+  header added, provenance constants live in the test.
+
+BIDIRECTIONAL CONTROL (the load-bearing one -- if both arms classified the same way the detector
+  could not discriminate and would be decorative): historical codemap_pre_859.py::_atomic_write_text
+  -> violating current codemap.py::_atomic_write_text -> helper-backed
+
+GENUINE RED BEFORE GREEN, four independently observed on the first full engine run: - rebound `open`
+  name must not resolve to the builtin write sink - direct writer bound under another name -> assert
+  ([]), alias never resolved - os.open flag-via-variable propagation -> assert ([]), not traced -
+  Path.open("w") inside a `with` -> assert ([]), and this one exposed a REAL walker gap: the generic
+  fallback recursed only into ast.stmt/ast.expr, so `ast.withitem` -- every with-context expression
+  in the tree -- was structurally invisible. A detector that cannot see `with` would have reported a
+  clean census over a blind spot. Fixed by recursing into any ast.AST child.
+
+POPULATION: 0 unresolved, 6 helper-backed, 10 sanctioned, 4 violating. Every candidate resolves; an
+  unresolved call FAILS rather than dropping silently out of the population.
+
+THE 4TH VIOLATION IS A REAL FINDING, NOT AN OFF-BY-ONE. The plan expected three. The detector also
+  flagged `urllib.request.urlretrieve` in `_download_native_frontdoor_asset` (main.py:674), which
+  writes a downloaded NATIVE BINARY to a caller-supplied destination with a byte cap and socket
+  timeout but NO symlink refusal or O_EXCL. Verified by hand in the real source; a sibling at
+  main.py:1681 writes to `temp_path` the same way. It sits one hop upstream of the two expected
+  violations in the same unaudited release-native-frontdoor download/install path. The count was NOT
+  forced to match the brief.
+
+SCOPE AND KNOWN GAPS, stated rather than hidden -- each is pinned by a test asserting the current
+  conservative behaviour, so none can be mistaken for "clean": 1. Census scoped to main.py /
+  _index_lock.py / codemap.py (the plan's Task 3 file list), not all 46 files under
+  src/tensor_grep/cli/. A full census needs per-module sanction review (checkpoint_store,
+  lsp_provider_setup, session_daemon each have legitimate direct-writer patterns) and is a separate
+  audit. 2. Generated-source `python -c` payloads are SURFACED but not recursively classified. Two
+  real sites (main.py:1779, main.py:15979) spawn a detached self-upgrade helper whose embedded
+  string likely carries the same unaudited-writer shape.
+  `test_generated_source_c_sites_are_surfaced` cites this gap explicitly. 3. A variable
+  (non-literal) write mode to open()/io.open() is not classified write-shaped;
+  `test_variable_write_mode_is_detected` pins that as a known gap.
+
+36 passed. Each population/mutation/bidirectional node was also run individually, never under a
+  shared -x (which would let one observation pass for several). ruff check + ruff format --preview
+  --check clean.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Close F2 as a non-issue and record the measured dep-floor reach finding
+  ([#917](https://github.com/oimiragieo/tensor-grep/pull/917),
+  [`8acb23c`](https://github.com/oimiragieo/tensor-grep/commit/8acb23c9a2e52782b74fb9d919736f8145e43312))
+
+Reconciling the board AT completion, not "next cycle".
+
+F2 (anonymous `--claim`) — CLOSED, no design call needed. The entry reasoned from `_find_overlaps`'s
+  suppression condition and concluded two zero-config agents would drop each other's overlaps. The
+  first conjunct says otherwise: `_DEFAULT_AGENT_ID == "anonymous"`, so for an anonymous claimant
+  `new.agent_id != _DEFAULT_AGENT_ID` is False, suppression is SKIPPED, and two anonymous agents DO
+  see each other. That guard IS the #845 fix, and it is what REFUSE was hoping to buy, at zero UX
+  cost. Verified by three independent seats (opus council seat, codex sol xhigh seat, direct source
+  read) and pinned by tests/unit/test_anonymous_claims_are_not_one_agent.py.
+
+REFUSE is rejected on its own merits rather than by inheriting the DERIVE retirement — the entry was
+  right that a rejection is aimed at the form it names, so it is argued separately: the ledger is
+  advisory (a claim with overlaps still exits 0 and never blocks an edit), and REFUSE would break
+  `tg prepare --claim`, which has no --agent-id flag of its own.
+
+One REAL defect fell out of that review, on the mirror path: `release_claim` used the same
+  sentinel-as-identity comparison, so an anonymous agent could release another anonymous agent's
+  claim by symbol. Fixed in PR #914.
+
+DEP-FLOOR-REACH — recorded because the MECHANISM is durable even though 6 of 7 instances are NOT
+  actionable. A `[tool.uv]` constraint is lock-only and never reaches `pip install`. aiohttp was
+  real and is fixed (PR #911): our lock held 3.14.1, pip-audit failed on 3 live CVEs, and
+  tritonclient permits aiohttp>=3.8.1,<4.
+
+The other six were measured, not assumed, and deliberately NOT changed: - raising the direct
+  parent's floor cannot fix them (mcp 2.0.0 permits pyjwt>=2.10.1, python-multipart>=0.0.9,
+  starlette>=0.27 — all BELOW our floors; pydantic-settings is not an mcp dependency at all) -
+  actual exposure is ZERO: a fresh resolve takes latest, and latest satisfies every floor today.
+  Floors a fresh install would violate: none. Declaring six more direct deps in published metadata
+  would take real resolution risk (an unsatisfiable floor silently downgrades the whole install on a
+  newer Python) for zero measured benefit.
+
+This corrects an overstatement in my own earlier reporting, which described the mechanism correctly
+  but implied an urgency the measurement does not support.
+
+`requests>=2.33.0` is vestigial — absent from uv.lock entirely, constraining nothing.
+
+104 passed (backlog / tracker-truth / docs-governance).
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.102.2 (2026-08-04)
 
 ### Bug Fixes
