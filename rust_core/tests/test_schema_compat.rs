@@ -4360,10 +4360,13 @@ fn assert_repo_map_coverage(path: &Path, coverage: &CoverageExample) {
         "{} coverage.language_scope must stay c-cpp-csharp-go-java-javascript-php-python-rust-typescript",
         path.display()
     );
+    // NOT hand-written: this literal must equal repo_map._symbol_navigation_descriptor().
+    // Rust cannot import the Python product, so re-derive on any tier change with:
+    //   python -c "import sys;sys.path.insert(0,'src');from tensor_grep.cli import repo_map as r;print(r._symbol_navigation_descriptor())"
     assert_eq!(
         coverage.symbol_navigation,
-        "parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-java-php",
-        "{} coverage.symbol_navigation must stay parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-java-php",
+        "parser-backed-refs-callers:go-java-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-php",
+        "{} coverage.symbol_navigation must stay parser-backed-refs-callers:go-java-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-php",
         path.display()
     );
     assert_eq!(

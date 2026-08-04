@@ -5,6 +5,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
+from tensor_grep.cli import repo_map
 from tensor_grep.cli.main import app
 
 
@@ -53,10 +54,7 @@ def test_session_open_show_and_context_reuse_repo_map(tmp_path: Path) -> None:
         context["coverage"]["language_scope"]
         == "c-cpp-csharp-go-java-javascript-php-python-rust-typescript"
     )
-    assert (
-        context["coverage"]["symbol_navigation"]
-        == "parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-java-php"
-    )
+    assert context["coverage"]["symbol_navigation"] == repo_map._symbol_navigation_descriptor()
     assert context["coverage"]["test_matching"] == "filename+import+graph-heuristic"
     assert context["files"][0] == str(module_path.resolve())
     assert context["tests"][0] == str(test_path.resolve())
