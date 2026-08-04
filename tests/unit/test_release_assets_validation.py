@@ -1026,6 +1026,9 @@ def test_should_accept_uv_security_floor_constraints_when_all_required_entries_p
     version = "1.3.2"
     dependencies = ["cryptography>=50.0.0"]
 
+    [project.optional-dependencies]
+    nlp = ["tritonclient[http]", "aiohttp>=3.14.3"]
+
     [tool.uv]
     constraint-dependencies = [
       "cryptography>=50.0.0",
@@ -1058,6 +1061,9 @@ def test_should_reject_stale_direct_cryptography_floor_when_uv_constraint_is_sec
     version = "1.3.2"
     dependencies = ["cryptography>=48.0.1"]
 
+    [project.optional-dependencies]
+    nlp = ["tritonclient[http]", "aiohttp>=3.14.3"]
+
     [tool.uv]
     constraint-dependencies = [
       "cryptography>=50.0.0",
@@ -1074,6 +1080,52 @@ def test_should_reject_stale_direct_cryptography_floor_when_uv_constraint_is_sec
     errors = module.validate_uv_security_constraints(pyproject_content=textwrap.dedent(pyproject))
     assert errors == [
         "pyproject.toml [project].dependencies missing direct security floor: cryptography>=50.0.0"
+    ]
+
+
+def test_should_reject_lock_only_aiohttp_floor_absent_from_the_published_nlp_extra():
+    """A `[tool.uv]` constraint is lock-only; it never reaches `pip install tensor-grep[nlp]`.
+
+    This is the exact shape that shipped green before 2026-08-03: every constraint entry present,
+    `cryptography` correctly declared directly, and the aiohttp advisory floor STILL unreachable by
+    a PyPI installer because `nlp` only declares `tritonclient[http]` (which itself permits
+    `aiohttp>=3.8.1,<4`). Both audit gates passed on that state, so the validator is the only thing
+    that can tell the two apart.
+    """
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    pyproject = """
+    [project]
+    name = "tensor-grep"
+    version = "1.3.2"
+    dependencies = ["cryptography>=50.0.0"]
+
+    [project.optional-dependencies]
+    nlp = ["tritonclient[http]"]
+
+    [tool.uv]
+    constraint-dependencies = [
+      "cryptography>=50.0.0",
+      "pygments>=2.20.0",
+      "python-multipart>=0.0.31",
+      "python-dotenv>=1.2.2",
+      "requests>=2.33.0",
+      "aiohttp>=3.14.3",
+      "pyjwt>=2.13.0",
+      "starlette>=1.3.1",
+      "pydantic-settings>=2.14.2",
+    ]
+    """
+    errors = module.validate_uv_security_constraints(pyproject_content=textwrap.dedent(pyproject))
+    assert errors == [
+        "pyproject.toml [project.optional-dependencies].nlp missing published security floor: "
+        "aiohttp>=3.14.3 (a [tool.uv] constraint is lock-only and does not reach a PyPI installer)"
     ]
 
 

@@ -4193,6 +4193,7 @@ gpu-win = [
     { name = "torch" },
 ]
 nlp = [
+    { name = "aiohttp" },
     { name = "transformers" },
     { name = "tritonclient", extra = ["http"] },
 ]
@@ -4209,6 +4210,7 @@ semantic = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", marker = "extra == 'nlp'", specifier = ">=3.14.3" },
     { name = "cryptography", specifier = ">=50.0.0" },
     { name = "cudf-cu12", marker = "extra == 'gpu'" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.100" },
