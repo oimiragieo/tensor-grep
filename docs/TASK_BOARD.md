@@ -34,14 +34,14 @@ Canonical status index version: 2026-08-03.3
 - [ ] **#131** — Status: CEO_GATED; PR: none; Trigger: CEO decision on publishing GPU-flavor native assets
 - [ ] **#169** — Status: CEO_GATED; PR: none; Trigger: CEO approval for physical GPU proof or spend
 - [ ] **#255** — Status: DEMAND_GATED; PR: none; Trigger: demand for a bounded many-pattern dedup parity experiment or approved compression/native investment
-- [ ] **#859** — Status: READY; PR: none; Trigger: Task 3 class-level AST writer census and anchored publication fix; first implementation PR moves this row to IN_FLIGHT
+- [x] **#859** — Status: SHIPPED; PR: PR #913; Trigger: Task 3 class-level AST writer census and anchored publication fix; instance fix and class-level ratchet both merged, and the census found a 4th violation beyond the expected 3 (fixed in PR #918); Implementation PRs: PR #913; Closure PR: PR #920; Merged SHA: 211d850c7484f6e18d74e2d8ac712f118f3b82cf
 - [ ] **F5** — Status: READY; PR: none; Trigger: Task 8 edit-ready and claims-fence program; first implementation PR moves this row to IN_FLIGHT
 - [ ] **F6** — Status: READY; PR: none; Trigger: Tasks 6-7 edit-verification service and public CLI; first implementation PR moves this row to IN_FLIGHT
 - [ ] **F7** — Status: READY; PR: none; Trigger: Tasks 10-11 language-registry and cross-file resolution program; first implementation PR moves this row to IN_FLIGHT
 - [ ] **F8** — Status: READY; PR: none; Trigger: Tasks 12-13 workspace service and CLI program; first implementation PR moves this row to IN_FLIGHT
 - [ ] **MCP-SURFACE** — Status: READY; PR: none; Trigger: Task 4 MCP surface disclosure; first implementation PR moves this row to IN_FLIGHT
 - [ ] **CPU-BACKEND** — Status: READY; PR: none; Trigger: Task 5 Rust and Python backend hardening; first implementation PR moves this row to IN_FLIGHT
-- [ ] **REF-CALL-REGISTRY** — Status: READY; PR: none; Trigger: Task 9 prepare-service extraction; first implementation PR moves this row to IN_FLIGHT
+- [ ] **REF-CALL-REGISTRY** — Status: IN_FLIGHT; PR: PR #915; Trigger: Task 9 prepare-service extraction; both hardcoded per-language reference and caller chains now resolve through one registry-backed seam, with byte-identical output proven in a same-directory arm against an untouched probe file; row closes when the implementation PR merges; Implementation PRs: PR #915
 - [ ] **F10** — Status: DEMAND_GATED; PR: none; Trigger: demand for a reviewed MaxSim activation or retirement plan
 - [ ] **DD-004** — Status: DEMAND_GATED; PR: none; Trigger: evidence of a stable typed backend error boundary
 - [ ] **DD-006** — Status: DEMAND_GATED; PR: none; Trigger: measured concurrent daemon load or denial-of-service evidence

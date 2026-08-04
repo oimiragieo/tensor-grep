@@ -678,9 +678,19 @@ def test_windows_account_path_privacy_guard_positive_controls(candidate: str) ->
     assert WINDOWS_ACCOUNT_PATH_RE.search(candidate) is not None
 
 
-def test_859_is_ready_with_audit_correction() -> None:
+def test_859_is_shipped_with_audit_correction_retained() -> None:
+    """#859 is SHIPPED, and the audit correction that shaped it must survive that.
+
+    Renamed from `test_859_is_ready_with_audit_correction`: the READY pin was correct until the
+    work landed (instance fix plus the class-level ratchet, merged as 211d850) and would otherwise
+    have blocked its own reconciliation. The audit assertions below are NOT relaxed -- they are the
+    load-bearing half. That correction records that a codemap-only test did NOT satisfy the
+    class-level population contract, which is precisely why the shipped ratchet censuses every
+    write callsite and FAILS on an unresolved candidate instead of letting it drop out of the
+    population. Losing that text would let the same undersized test be re-proposed as sufficient.
+    """
     row = _board_index().rows["#859"]
-    assert row.status == "READY"
+    assert row.status == "SHIPPED"
     assert "Task 3" in row.trigger
     audit = AUDIT_859_PATH.read_text(encoding="utf-8")
     assert "APPENDED CORRECTION — #859" in audit
@@ -688,12 +698,35 @@ def test_859_is_ready_with_audit_correction() -> None:
 
 
 def test_program_ownership_and_ready_statuses() -> None:
+    """A program row keeps its owning task forever, and may LAWFULLY progress past READY.
+
+    This previously asserted `row.status == "READY"` unconditionally, which forbade the exact
+    transition every one of these rows documents in its own trigger ("first implementation PR moves
+    this row to IN_FLIGHT"). The board could therefore never be reconciled after a program's first
+    PR without editing this test -- so the board went stale instead, which is the failure mode the
+    whole tracker exists to prevent.
+
+    This is NOT a relaxation. Every PROGRAM_OWNERS id is in LIFECYCLE_IDS (see its definition), so
+    the moment a row leaves READY it comes under the STRICTER lifecycle contract enforced in
+    `_parse_status_index`: exactly one ordered `Implementation PRs:` list whose final entry equals
+    the `PR:` field, plus -- for SHIPPED -- exactly one `Closure PR:` that is NOT one of the
+    implementation PRs, and exactly one 40-hex `Merged SHA:`. A row that moves without those fails
+    there. What is dropped here is only the blanket freeze; what replaces it is a stricter gate.
+    """
     rows = _board_index().rows
     for item_id, task_text in PROGRAM_OWNERS.items():
         row = rows[item_id]
-        assert row.status == "READY"
-        assert task_text in row.trigger
-        assert "first implementation PR" in row.trigger
+        # Ownership is invariant across the whole lifecycle: a program row never changes hands.
+        assert task_text in row.trigger, f"{item_id} lost its owning task text"
+        if row.status == "READY":
+            assert "first implementation PR" in row.trigger, (
+                f"{item_id} is READY but does not say what moves it"
+            )
+        else:
+            assert row.status in {"IN_FLIGHT", "SHIPPED"}, (
+                f"{item_id} left READY into an unlawful status {row.status!r}; a program row may "
+                "only progress to IN_FLIGHT or SHIPPED"
+            )
 
 
 def test_ceo_and_demand_ownership() -> None:
