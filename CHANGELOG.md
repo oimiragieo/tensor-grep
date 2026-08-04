@@ -1,6 +1,139 @@
 # CHANGELOG
 
 
+## v1.102.8 (2026-08-04)
+
+### Bug Fixes
+
+- Harden the public Rust replace_in_place API surface (Task 5 Rust half)
+  ([#925](https://github.com/oimiragieo/tensor-grep/pull/925),
+  [`f29c948`](https://github.com/oimiragieo/tensor-grep/commit/f29c948440d8039aceb12cd32a4d539730b0161d))
+
+* fix: harden the public Rust replace_in_place API surface (Task 5 Rust half)
+
+CpuBackend::replace_in_place is a pub fn on a pub struct in the rlib crate's public backend_cpu
+  module -- an in-repo zero-caller census does not authorize deleting or narrowing it, since
+  downstream rlib consumers this repo cannot see may depend on it. Retained the exact public
+  signature (pinned with a compile-time assertion) and hardened directory-mode error handling
+  instead:
+
+- Directory-walk failures and per-child literal/regex replace failures were previously silently
+  discarded via `let _ = self.replace_file_literal(...)` inside a `filter_map(|e| e.ok())` walk
+  loop. The public method always returned Ok(()) regardless of what actually happened. - The
+  directory walk now collects entries up front (`.collect::<Result<Vec<_>, _>>()`) instead of
+  processing while walking, so a walk failure is caught distinctly from a per-child failure. - Both
+  failure classes now propagate as Err(...) with stable path/operation context, through the same
+  delegated core (`replace_directory_literal` / `replace_directory_regex` /
+  `walk_directory_entries`) both fixed-string and regex directory-mode replace go through. - 3 new
+  #[cfg(test)]-gated fault-injection unit tests inside backend_cpu.rs (walk failure, literal-child
+  failure, regex-child failure) prove each arm independently: RED against the pre-fix discarding
+  behavior, GREEN after the fix, and that the seam fires through the real public entry point (not a
+  shadow/parallel path). These seams compile away entirely from the normal rlib build linked by
+  external integration tests and every downstream consumer.
+
+Two follow-ups deliberately left out of scope, documented in
+  docs/investigations/2026-08-02-replace-in-place-surface.md: RUST-REPLACE-NONEXISTENT_PATH (a
+  nonexistent direct-file path stays a silent Ok(()) no-op) and RUST-REPLACE-SYMLINK=DEMAND_GATED
+  (direct-leaf symlink follow behavior unchanged).
+
+Does not touch the Python cpu_backend.py adapter (Task 5's Step 3, PR #923, already shipped).
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* test: lower the walk-error discard ratchet 6 -> 4 for the sites this PR fixed
+
+CI caught this, not the local run: all 7 `test-python` jobs failed with
+
+sites were FIXED but the ratchet was not lowered (actual, recorded): {'backend_cpu.rs': (4, 6)}
+
+`test_known_discard_sites_never_grow` is a two-directional ratchet -- it fails when the count GROWS
+  (a new unaudited `.filter_map(|e| e.ok())`) and equally when the count DROPS without the recorded
+  number being re-tightened. Its own message says why: leaving it high "would let a future
+  regression slip back in unnoticed". A ratchet not re-tightened after a fix has no teeth for the
+  sites that remain.
+
+This PR's hardening removed exactly two error-discarding walks in `replace_in_place`'s directory
+  mode -- the `WalkDir::new(...).filter_map(|e| e.ok())` and the `let _ = ...` per-child replace --
+  so walk failures and per-child write failures now propagate as `Err(...)` instead of letting a
+  partial rewrite report success.
+
+I re-ran the census myself rather than trusting the number in the failure text, using the ratchet
+  module's own `_census()`:
+
+recorded: {'backend_ast_workflow.rs': 3, 'backend_cpu.rs': 6, 'index.rs': 1} actual :
+  {'backend_ast_workflow.rs': 3, 'backend_cpu.rs': 4, 'index.rs': 1}
+
+That is also an INDEPENDENT confirmation the Rust fix is real: the discard count dropped because two
+  discards genuinely disappeared, measured by a checker that predates this work and knows nothing
+  about it.
+
+The remote build seat reported "648 passed, 3 pre-existing failures" and never saw this -- it ran
+  the Rust suite, and this ratchet is a PYTHON test that reads the Rust source. CI is the merge
+  arbiter, exactly as recorded before dispatch.
+
+3 passed. ruff check + ruff format --preview --check clean.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Move CPU-BACKEND to IN_FLIGHT -- the Python half shipped, the Rust half has not
+  ([#924](https://github.com/oimiragieo/tensor-grep/pull/924),
+  [`3768db9`](https://github.com/oimiragieo/tensor-grep/commit/3768db9502870b7732d507c5df75fcec356eec15))
+
+Reconciling AT completion. The row still read "PR: none" while PR #923 had merged (0481e97), and the
+  row's own trigger says the first implementation PR moves it to IN_FLIGHT.
+
+DELIBERATELY **NOT** MARKED SHIPPED. Plan Task 5 has two halves and only one is done: DONE (PR #923)
+  the Python adapter: the `except TypeError` retry that silently dropped `invert_match` and returned
+  the OPPOSITE result set on `tg search -v` is gone. Verified on main by AST: 1 native adapter, 0
+  TypeError retries. NOT DONE the Rust half -- `replace_in_place` public-API hardening in
+  `rust_core/src/backend_cpu.rs` plus `rust_core/tests/test_replace.rs`. It needs cargo, which is
+  forbidden on this shared dev box; the plan itself says "Do not run cold Cargo locally". It routes
+  to CI or a cloud seat.
+
+Marking the row SHIPPED on the Python half alone would be the exact dishonesty this campaign kept
+  catching elsewhere -- a tracker reading "done" for work that has not landed. The row closes when
+  both halves do.
+
+41 passed (backlog tracker-truth governance).
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Re-stamp the board to v1.102.7 -- main was red on its own freshness gate
+  ([#926](https://github.com/oimiragieo/tensor-grep/pull/926),
+  [`6518264`](https://github.com/oimiragieo/tensor-grep/commit/651826453d9e71bb14adbf5650cf4f6bf9f5d03d))
+
+MAIN WAS RED. `test_task_board_reconcile_stamp_is_not_many_releases_stale` failed on 3768db9:
+
+docs/TASK_BOARD.md's reconcile stamp is v1.102.1 while pyproject ships v1.102.7 -- 6 releases behind
+  (tolerance 5)
+
+The gate is correct and I am the cause: I shipped SEVEN releases in this session's drain and never
+  re-stamped the board. That is precisely the failure the board's own prose describes -- "this has
+  now gone stale THREE times in the same way" -- and the reason a tolerance-based gate exists at
+  all.
+
+Note what the tolerance buys, because it is the interesting part of the design: an exact-match gate
+  would fire after EVERY release, forcing a board edit into every unrelated PR, which the board
+  itself rejected as "an over-eager rule is worse than no rule". A tolerance of 5 stays silent
+  through normal churn and bites only when the board has genuinely lost touch. It stayed silent for
+  six merges and fired on the seventh.
+
+Both numbers DERIVED, never retyped -- pyproject.toml says 1.102.7, PyPI serves 1.102.7. Swept the
+  whole file for other stale `v1.102.[0-6]` claims afterwards rather than fixing only the line the
+  gate named: zero remain.
+
+The stamp now records the actual drain (13 merged PRs, #925 in flight) and that v1.102.7 was
+  dogfooded end-to-end on the published wheel, not merely tagged.
+
+48 passed (task-board freshness + backlog tracker-truth).
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.102.7 (2026-08-04)
 
 ### Bug Fixes
