@@ -199,19 +199,22 @@ class TestCPUBackend:
         assert result.routing_reason == "cpu_rust_regex"
 
     def test_simple_fixed_inverted_internal_typeerror_fails_closed(self, tmp_path):
-        """Plan Task 5 Step 3 (silent wrong-answer defect): the inline Rust adapter on the
-        primary ("simple", -F/-v, no -C/-A/-B/-w/-x) search path used to catch ANY `TypeError`
-        from `rust_backend.search(..., invert_match=...)` and retry WITHOUT `invert_match` --
-        a retry justified in comments as "older rust_core builds without the kwarg", but
-        `except TypeError` cannot actually tell that apart from a TypeError raised for an
-        unrelated internal reason on a CURRENT build. When that happens with `invert_match=True`
-        (`tg search -v`), the retry silently returns the MATCHING set instead of the NON-matching
-        set -- the exact opposite of what the user asked for, returned as a successful result.
+        """Plan Task 5 Step 3: the inline Rust adapter on the primary ("simple", -F/-v, no
+        -C/-A/-B/-w/-x) search path used to catch ANY `TypeError` from
+        `rust_backend.search(..., invert_match=...)` and retry WITHOUT `invert_match`, justified
+        as "older rust_core builds without the kwarg".
 
-        The fake backend below raises TypeError whenever `invert_match` is supplied (standing in
-        for "some internal TypeError, unrelated to kwarg support, happened this call") and
-        returns a result on any OTHER call, so the pre-fix retry silently "succeeds" with the
-        wrong answer.
+        BE PRECISE ABOUT REACHABILITY (an earlier draft of this docstring was wrong): on a
+        CURRENT build the retry cannot silently succeed, because `invert_match` is a REQUIRED
+        positional in `rust_core/src/lib.rs` -- the retry raises `TypeError` again. The silent
+        wrong answer was reachable only under VERSION SKEW, against an OLD extension lacking the
+        parameter, where the retry was CORRECT for `invert_match=False` and WRONG for `-v`,
+        returning the MATCHING set instead of the NON-matching one as a successful result.
+
+        The fake backend below models exactly that skew: it raises TypeError whenever
+        `invert_match` is supplied and returns a result on any other call, so the pre-fix retry
+        silently "succeeds" with the wrong answer. It is a stand-in for the old build, NOT for an
+        unrelated internal fault on a current one.
 
         Pre-fix: two calls, the second missing `invert_match` (the retry).
         Post-fix: exactly one call (carrying `invert_match`), and `BackendExecutionError` raised.
