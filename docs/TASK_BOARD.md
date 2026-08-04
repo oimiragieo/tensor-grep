@@ -52,13 +52,14 @@ Canonical status index version: 2026-08-03.3
 
 ## Live campaign snapshot
 
-Last reconciled: **2026-08-03 continuation** (PR #910 merged; PR #911 open and blocked on fresh
-exact-head security re-clearance; Task 2A RED local-only FIX-FIRST), post-**v1.102.1** (PyPI verified via a clean `uvx`
-install, not inferred from a tag — `tag == PyPI` cannot tell *released* from *not started* from
-*died*).
+Last reconciled: **2026-08-04** (a 14-PR drain: #911 #913 #914 #915 #916 #917 #918 #919 #920 #921
+#922 #923 #924 merged; #925 in flight), post-**v1.102.7** (PyPI verified via a clean `uvx` install
+of that exact version, not inferred from a tag — `tag == PyPI` cannot tell *released* from *not
+started* from *died*; v1.102.7 was additionally dogfooded end-to-end: `tg search -v beta` returns
+the NON-matching lines with a control proving normal search still matches).
 
 **Current closed-world status:** this canonical index plus
-`docs/audits/2026-08-03-ceo-backlog-update.md`. Product healthy at `v1.102.1`; planning PR #911 is
+`docs/audits/2026-08-03-ceo-backlog-update.md`. Product healthy at `v1.102.7`; planning PR #911 is
 not merge-ready until its advisory-floor successor earns exact-head CI/security/CodeQL; backlog not
 done; Task 2A correctly blocked.
 Task 2 is complete as the reconciliation checkpoint; Task 2A implementation is not. Round-60 plan
