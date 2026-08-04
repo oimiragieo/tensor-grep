@@ -1,6 +1,268 @@
 # CHANGELOG
 
 
+## v1.102.7 (2026-08-04)
+
+### Bug Fixes
+
+- A TypeError retry silently dropped invert_match and returned the opposite result set
+  ([#923](https://github.com/oimiragieo/tensor-grep/pull/923),
+  [`0481e97`](https://github.com/oimiragieo/tensor-grep/commit/0481e97543caa89cf53a5d3582460e901ac92ce4))
+
+* fix: a TypeError retry silently dropped invert_match and returned the opposite result set
+
+Plan Task 5 Step 3 (board row CPU-BACKEND).
+
+THE DEFECT. `cpu_backend.py` had TWO `except TypeError:` blocks that re-called the native
+  `rust_backend.search(...)`. The primary call at each site passed
+  `invert_match=config.invert_match`; NEITHER retry did -- verified by AST on origin/main, both
+  sites, kwargs `[pattern, path, ignore_case, fixed_strings]`.
+
+The retry's comment claims it covers "older rust_core builds without the invert_match kwarg". But
+  `except TypeError` catches ANY TypeError, including one raised INSIDE a current native search for
+  an unrelated internal reason. When that happened with `invert_match=True` (`tg search -v`), the
+  retry returned MATCHING lines instead of NON-matching lines -- the exact opposite of what was
+  asked, handed back silently as a successful result. A wrong answer that looks like a right one.
+
+THE FIX. One native call site carrying `invert_match`, then `BackendExecutionError` preserving the
+  original failure -- the repo's Backend Fail-Closed Contract. The primary "simple" path now
+  delegates to `_rust_match_set` rather than duplicating its own call+retry, so there is exactly one
+  adapter. The new `except TypeError` is placed BEFORE the generic `except Exception` so this class
+  can never fall through to the fixed_strings Python fallback.
+
+Population, counted by AST (not substring -- after a fix a grep hit is usually the fix's own
+  comment): before: 2 native adapters, 2 TypeError retries after : 1 native adapter, 0 TypeError
+  retries, and that one call carries invert_match
+
+RED/GREEN, each new node observed independently, never under a shared -x:
+  test_simple_fixed_inverted_internal_typeerror_fails_closed -> DID NOT RAISE BackendExecutionError
+  test_word_regexp_inverted_internal_typeerror_fails_closed -> DID NOT RAISE BackendExecutionError
+  test_cpu_backend_has_one_native_adapter_and_zero_typeerror_retries -> assert (2,2) == (1,0) All
+  three pass after. Source restored byte-identical between arms.
+
+THE COMPATIBILITY TRADE, stated rather than buried. The removed retry was ALREADY WRONG for the case
+  it claimed to serve: a genuinely old build lacking the kwarg hits the same TypeError, retries
+  without `invert_match`, and returns the non-inverted set -- which IS this defect, not a working
+  fallback. So no real compatibility path is lost for inverted searches; such a build now fails
+  closed with an actionable message instead of silently answering the opposite question. That is a
+  deliberate trade of a silent wrong answer for an explicit refusal.
+
+WORKTREE LIMITATION, disclosed. 13 tests in this file drive the real native extension or a bare
+  `subprocess.run([sys.executable, "-c", ...])`. Inside a git worktree those resolve `tensor_grep`
+  to the MAIN checkout's `src/` -- verified directly: a bare subprocess here prints
+  `C:\dev\projects\tensor-grep\src`. They therefore cannot observe this change at all and hang/fail
+  identically with or without it. CI runs a single checkout and will exercise them properly; CI is
+  the merge arbiter, not this local run.
+
+ruff check + ruff format --preview --check clean.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* fix: correct this PR's own justification, and scope the TypeError guard to the native call
+
+Adversarial review returned FIX-FIRST. The CODE was correct; the EXPLANATION was wrong in three
+  artifacts plus the PR body. Per this repo's law -- a correction that does not reach the artifact
+  is not a correction, and a PR body ships your wrong explanation as the project's permanent record
+  -- that is a pre-merge fix, not a follow-up.
+
+WHAT I GOT WRONG. I wrote that an unrelated internal TypeError on a CURRENT build would make the old
+  retry silently return the MATCHING set. It cannot. `invert_match` is a REQUIRED positional in
+  `rust_core/src/lib.rs::search` with no `#[pyo3(signature=...)]` default, so on a current build the
+  retry raises TypeError AGAIN and lands in the generic handler. Verified against the shipped
+  extension:
+
+no-invert -> TypeError: RustBackend.search() missing 1 required positional argument control with
+  invert_match -> 160 results
+
+The silent wrong answer was reachable ONLY under version skew -- an OLD extension lacking the
+  parameter. And there the retry was CORRECT for `invert_match=False` (the common, non-`-v` path)
+  and WRONG only for `-v`. So my claim that "the retry was already wrong for the case it claimed to
+  serve" holds for `-v` alone, not generally. This change does trade a working stale-build path for
+  refusing to answer the opposite question, and that trade is now stated instead of hidden behind a
+  mechanism that does not exist.
+
+THE REAL JUSTIFICATION WAS ALREADY BANKED IN THIS REPO and I reinvented a wrong one:
+  `backends/rust_backend.py` removed the identical 4-arg fallback (R7a) with the honest reason --
+  "the old 4-arg fallback targeted a checkpoint that no longer exists". This is that same fix
+  applied to the CPU adapter's twin. Corrected in the handler comment, the `_rust_match_set`
+  docstring, and the test docstring; the PR body is updated to match.
+
+ALSO FIXED (review finding 6a, a real behaviour issue). The new `except TypeError` wrapped the
+  ENTIRE try body, so a TypeError from `Path.read_text`, the `max_count` slice, or
+  `MatchLine`/`SearchResult` construction would have raised a message blaming the native engine --
+  false -- and, for `fixed_strings`, converted a recoverable Python fallback into a hard refusal.
+  The guard is now scoped to the native call via an inner try and a `_NativeAdapterTypeError`
+  marker. The marker is deliberately NOT a TypeError subclass, so the scope cannot silently widen
+  again the next time someone moves the handler.
+
+Population unchanged and re-verified by AST: 1 native adapter, 0 TypeError retries.
+
+RED ARM RE-RUN AFTER THE REWORK -- and my first attempt at it was BROKEN: `git checkout --` restores
+  from the INDEX, and the fix was already committed, so I "verified" against the fixed file and got
+  3 passed. Redone with `git checkout origin/main -- <file>`, with the baseline asserted to carry 2
+  retries before trusting it: all three tests fail pre-fix, source restored byte-identical after.
+
+* fix: bind the native search result to an annotated local (mypy no-any-return)
+
+CI's "Formatting & Linting" job runs `uv run mypy src/tensor_grep` in addition to ruff. My local
+  gate ran ruff only, so this reached CI:
+
+src/tensor_grep/backends/cpu_backend.py:886: error: Returning Any from function declared to return
+  "list[tuple[int, str]]" [no-any-return]
+
+The PyO3 extension is untyped, so returning `rust_backend.search(...)` straight out of a method
+  annotated `list[tuple[int, str]]` is an Any-return. Bound to an annotated local instead, which is
+  exactly how the sibling adapter in `backends/rust_backend.py` avoids the same problem (it binds
+  `results` and iterates rather than returning the call).
+
+AND I BROKE IT MID-FIX, then caught it by reading the result instead of assuming: replacing `return
+  rust_backend.search(...)` with `results: ... = rust_backend.search(...)` removed the `return`
+  statement, so `_rust_match_set` fell through and returned None. An AST check (`Return` nodes in
+  that function: 1) confirms the restored return, rather than eyeballing the diff -- a silent None
+  here would have been far worse than the mypy error it replaced.
+
+Local gate widened to CI parity for the rest of this campaign: ruff check + ruff format --preview
+  --check + mypy over src/tensor_grep + the focused tests. mypy now passes on all 89 source files.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Correct the refactor release class in all three artifacts that state it
+  ([#921](https://github.com/oimiragieo/tensor-grep/pull/921),
+  [`14632a4`](https://github.com/oimiragieo/tensor-grep/commit/14632a4e3b44a28ca5ad836b515241e3985ae0fe))
+
+MEASURED, in the release engine's own words. PR #915 was a `refactor:` PR, merged as 3faf500. Its
+  Semantic Release job (91931688850) logged:
+
+No release will be made, 1.102.4 has already been released!
+
+`publish-pypi` was SKIPPED, no tag was cut, PyPI stayed at 1.102.4.
+
+THREE ARTIFACTS SAID THE OPPOSITE, and one of them is a narrative ABOUT getting this field wrong:
+  CLAUDE.md "**`refactor:` RELEASES a patch**" AGENTS.md "**A `refactor:`-titled PR PUBLISHES.**"
+  skills/tensor-grep-release-and-positioning "| `refactor:` | patch | ... trust the script over the
+  prose"
+
+THE ROOT CAUSE IS THAT THERE ARE TWO AUTHORITIES AND EVERY PRIOR CORRECTION USED ONE: -
+  scripts/validate_pr_title_semver.py::_RELEASE_INTENTS maps refactor -> patch. It gates what the PR
+  TITLE may be. It publishes nothing. - [tool.semantic_release] in pyproject.toml is the publisher,
+  and it sets NO commit_parser / allowed_tags / patch_tags -- so python-semantic-release uses its
+  DEFAULT angular parser, whose patch types are `fix` and `perf` ONLY.
+
+So the title gate ACCEPTS a patch-intent `refactor:` title and the engine then makes no release.
+  AGENTS.md's own lesson from the previous round was "print the authority next to the belief" --
+  correct advice that still produced a wrong answer, because it printed ONE authority and the wrong
+  one. The lesson is amended to ask WHICH artifact performs the action first, and to name the
+  decisive check: read the merge's Semantic Release job log, which states its decision outright.
+
+SEVERITY, not overstated: the code is not lost. An unreleased `refactor:` publishes with the next
+  `fix:`/`feat:` merge. What is real is a refactor-ONLY window, where `main` sits unpublished while
+  every tracker reads "shipped" -- and where this doc actively told you to expect a patch.
+
+NOT SILENTLY RESOLVED: whether `refactor` SHOULD publish is a real fork (add it to the engine's
+  patch tags to honour the intent the title gate already encodes, vs map it to `none` in the title
+  gate to match the engine). That decision is filed, not made here; this commit only makes the three
+  artifacts state the MEASURED behaviour.
+
+Swept the whole artifact set afterwards rather than fixing one file: the single surviving grep hit
+  is this commit's own text quoting the old claim.
+
+341 passed (skill-library / skill-index / docs-governance / release). `docs:` -> no release, which
+  is correct and, given the subject, worth stating explicitly.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Reconcile #859 to SHIPPED and REF-CALL-REGISTRY to IN_FLIGHT
+  ([#920](https://github.com/oimiragieo/tensor-grep/pull/920),
+  [`5a7fcbb`](https://github.com/oimiragieo/tensor-grep/commit/5a7fcbbb9154817c998c23681b4b0ba954a03ee4))
+
+Reconciling AT completion rather than "next cycle" -- the board still read "PR: none" for #859
+  (merged 211d850) and for REF-CALL-REGISTRY (PR #915 open and CLEAN).
+
+THE GATE FORBADE THE TRANSITION ITS OWN DATA DOCUMENTS. Every PROGRAM_OWNERS row's trigger says
+  "first implementation PR moves this row to IN_FLIGHT", but
+  `test_program_ownership_and_ready_statuses` asserted `row.status == "READY"` unconditionally, and
+  `test_859_is_ready_with_audit_correction` pinned #859 READY by name. So neither row could EVER be
+  reconciled without editing those tests, and the board went stale instead -- the exact failure the
+  tracker exists to prevent. That is a defect in the gate, not in the board.
+
+NOT A RELAXATION, and I verified the mechanism before touching it rather than assuming:
+  `LIFECYCLE_IDS = set(PROGRAM_OWNERS) | {"#89", "#90", "#859"}`, so every one of these ids is
+  ALREADY under the stricter lifecycle contract the moment it leaves READY -- one ordered
+  `Implementation PRs:` list whose final entry equals the `PR:` field, plus for SHIPPED exactly one
+  `Closure PR:` that is NOT an implementation PR and one 40-hex `Merged SHA:`. A blanket freeze is
+  removed; a tighter gate takes over.
+
+MUTATION-VERIFIED both directions, because a gate I just edited is exactly the thing not to take on
+  trust: strip `Implementation PRs: PR #915` from the IN_FLIGHT row -> 41 passed becomes 11 failed
+  strip `Merged SHA: ...` from the SHIPPED row -> 41 passed becomes 11 failed restore -> 41 passed
+
+The new ownership-invariance assertion earned its place immediately by catching MY OWN regression:
+  my first rewrite of the REF-CALL-REGISTRY row dropped its "Task 9" owning-task text, and `assert
+  task_text in row.trigger` failed on it. Ownership is now pinned across the whole lifecycle instead
+  of only while READY.
+
+`test_859_is_ready_with_audit_correction` is renamed to
+  `test_859_is_shipped_with_audit_correction_retained`. Its audit assertions are NOT relaxed -- they
+  are the load-bearing half. That correction records that a codemap-only test did NOT satisfy the
+  class-level population contract, which is exactly why the shipped ratchet censuses every write
+  callsite and FAILS on an unresolved candidate rather than letting it drop out of the population.
+  Losing that text would let the same undersized test be re-proposed as sufficient.
+
+#859's closure PR is stamped with this PR's REAL number (#920), obtained after opening it, not
+  guessed -- its contract requires the closure PR to be separate from its implementation PRs, so the
+  row can only be closed BY a closure PR.
+
+111 passed (backlog / tracker-truth / task-board / docs-governance). ruff clean.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Testing
+
+- Make the tg-run help assertion render-independent (rich vs plain Click)
+  ([#919](https://github.com/oimiragieo/tensor-grep/pull/919),
+  [`aa87add`](https://github.com/oimiragieo/tensor-grep/commit/aa87adddf1e9e154dc66d97b49cf80fe058eb8e1))
+
+ROOT-CAUSED, not worked around. `test_tg_search_help_should_not_claim_tg_run_ast_grep_ parity`
+  failed under some pytest selections and passed under others. It was NOT test-ordering pollution:
+  collecting all of tests/unit/ and running ONLY this test (6404 deselected, nothing else executes)
+  still failed.
+
+MEASURED CAUSE -- the two arms differ in exactly one thing:
+
+arm rich in sys.modules typer.rich_utils help bytes node-id True True 30001 sibling + -k False False
+  16379
+
+`app.rich_markup_mode` is "markdown" in BOTH, so the app always WANTS rich. The help body is a
+  markdown string; with rich loaded Typer consumes the backticks as formatting and emits `tg run:
+  Run a validated AST slice`. With rich absent Typer falls back to plain Click, which emits the RAW
+  markdown -- backticks intact -- so the identical, correct help text stopped matching a
+  backtick-free substring. The command was never unregistered: that help is a static literal in the
+  @app.command(help=...) decorator and cannot disappear.
+
+Whether `rich` gets imported is decided by collection/import order, which is a TEST-ONLY artifact.
+  `rich` is a CORE dependency, so the shipped CLI always renders rich -- no user was ever affected,
+  and CI (which runs unfiltered, so every test executes) never saw it. That is why this sat latent
+  while main stayed green.
+
+FIX: normalize backticks as well as whitespace, so the assertion pins the INVARIANT (the
+  cross-reference is present) rather than one renderer's exact bytes.
+
+STILL DISCRIMINATES -- verified by mutation, because an assertion that cannot fail is worse than the
+  flake it replaced. Removing the `tg run` cross-reference from main.py's help makes this test FAIL
+  in BOTH renderers: rich renderer (node id) -> FAILED plain-Click renderer (-k arm) -> FAILED
+  Source restored byte-identical afterwards (git diff --stat empty).
+
+Arms after the fix: previously-failing condition 1 passed; original node-id condition 1 passed; the
+  full original repro `-k "ledger or anonymous or claim"` 198 passed (was 1 failed). ruff check +
+  format clean.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.102.6 (2026-08-04)
 
 ### Bug Fixes
