@@ -52,6 +52,11 @@ def _tree_sitter_node_text(source_bytes: bytes, node: Any) -> str:
 # per-language special case just to invoke the callable.
 # ---------------------------------------------------------------------------
 
+# Minimum shared shape is (path, symbol, repo_root). Registry wrappers additionally
+# accept kw-only definition_dirs (Go F25 package-ownership confirmation); non-Go
+# wrappers ignore it. The refs/callers dispatch seam
+# (repo_map._references_and_calls_for_path) always passes definition_dirs so it
+# never needs a language_id branch just to invoke the callable.
 ReferencesAndCalls = Callable[
     [Path, str, "Path | str | None"], tuple[list[dict[str, Any]], list[dict[str, Any]]]
 ]
@@ -96,6 +101,9 @@ class LanguageSpec:
     # introspects the registry has a place to look without re-deriving it from source.
     def_node_kinds: tuple[str, ...] = ()
     extract_imports_and_symbols: ExtractImportsAndSymbols | None = None
+    # Wired by repo_map._references_and_calls_for_path (the refs/callers dispatch seam).
+    # None means foundational-tier / deferred caller-graph: the seam's EXPLICIT fallback is
+    # ``_regex_references_and_calls`` (never an implicit empty).
     references_and_calls: ReferencesAndCalls | None = None
     provider_alias_calls: ProviderAliasCalls | None = None
     file_imports_symbol_from_definition: FileImportsSymbolFromDefinition | None = None
