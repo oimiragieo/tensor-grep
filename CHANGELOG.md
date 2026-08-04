@@ -1,6 +1,56 @@
 # CHANGELOG
 
 
+## v1.102.4 (2026-08-04)
+
+### Bug Fixes
+
+- An anonymous agent could release another anonymous agent's claim by symbol
+  ([#914](https://github.com/oimiragieo/tensor-grep/pull/914),
+  [`7a3a621`](https://github.com/oimiragieo/tensor-grep/commit/7a3a62131781c40fbe8c6280b3661fa69c4cc9a4))
+
+`release_claim` scoped symbol matching with `entry["agent_id"] == resolved_agent_id`, using agent_id
+  equality AS identity. The default id is the literal sentinel `_DEFAULT_AGENT_ID == "anonymous"` --
+  the ABSENCE of an identity, not one. Two zero-config agents both resolve to it, the equality
+  holds, and agent B's `release --symbol foo` silently released agent A's claim.
+
+That is precisely the guarantee the function's own docstring states cannot happen: "scoped to the
+  resolved agent_id's OWN live claims only, so a common/guessable symbol name can never release
+  another agent's claim by accident". A stated guarantee that is false is worse than an absent one,
+  because callers rely on it.
+
+Same sentinel-as-identity confusion `_find_overlaps` was fixed for in the #845 work. That fix landed
+  on the CLAIM path; this MIRROR on the RELEASE path was missed. One defect class, fixed at one of
+  its two sites.
+
+Red arm, measured (not assumed) -- agent B's release took agent A's exact claim:
+
+assert 'claim-20260804032236022993-bbc40eb5' not in ['claim-20260804032236022993-bbc40eb5']
+
+Three control arms passed on the SAME pre-fix source, so the mechanism was never broken -- only the
+  sentinel defeated it: - a named agent still releases its own claim by symbol - a named agent still
+  cannot take another named agent's claim - an anonymous agent can still release by claim_id
+
+Labelling the zero, not just refusing: an anonymous `--symbol` release now returns a specific
+  `unmatched_reason` naming `--claim-id` and `TG_LEDGER_AGENT_ID`, instead of the generic "nothing
+  matched" -- which is true but hides WHY, so an agent would read a deliberate refusal as "already
+  released". A control arm pins that named agents keep the generic reason, so the new text cannot be
+  emitted unconditionally (the passes-in-both-arms shape).
+
+`claim_id` release is deliberately untouched: the opaque id IS the authorization, and it is the
+  anonymous caller's supported route.
+
+Blast radius is bounded by the ledger's advisory contract -- a cross-release drops a coordination
+  signal, it never loses an edit. Correctness/honesty fix, not a security fix.
+
+144 passed across all ledger + anonymous suites. ruff check + format clean.
+
+Found by an adversarial design-council seat asked whether anonymous claims were already safe. The
+  claim path was; this mirror was not.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.102.3 (2026-08-04)
 
 ### Bug Fixes
