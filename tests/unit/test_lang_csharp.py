@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -483,3 +484,511 @@ def test_csharp_imports_and_symbols_non_cs_suffix_returns_empty(tmp_path: Path) 
     imports, symbols = lang_csharp.csharp_imports_and_symbols(other)
     assert imports == []
     assert symbols == []
+
+
+# Task 10B pre-fix RED arms: promote C# from the foundational tier to parser-backed
+# refs/callers, mirroring Task 10A's Java landing (lang_java.java_references_and_calls).
+#
+# Both nodes below MUST fail before any Task 10B implementation lands, and each must fail
+# for a BEHAVIOUR-SPECIFIC reason -- not an ImportError or a NameError, which would be a
+# false red proving only that a symbol is missing. The first asserts the registry seam; the
+# second asserts the product's own derived descriptor, which is the thing every doc and the
+# rust_core schema test key on.
+
+
+def test_csharp_references_and_calls_is_registered_non_none() -> None:
+    """Task 10B RED: C# must register a real ``references_and_calls`` extractor.
+
+    Pre-fix this is ``None``, so ``_references_and_calls_for_path`` falls through to
+    ``_regex_references_and_calls``, which itself returns ``([], [])`` for any suffix outside
+    ``_JS_TS_SUFFIXES | _RUST_SUFFIXES`` -- including ``.cs``. So C#'s "regex fallback" is not
+    a text heuristic over C# source at all; it is an unconditional empty result.
+    """
+    spec = lang_registry.LANGUAGE_REGISTRY["csharp"]
+    assert spec.references_and_calls is not None
+
+
+def test_csharp_moves_into_the_parser_backed_tier_descriptor() -> None:
+    """Task 10B RED: the product's derived tier descriptor must list csharp as parser-backed.
+
+    Asserted against the descriptor rather than a hardcoded string, so this node cannot go
+    green by editing a doc. ``_symbol_navigation_descriptor`` partitions every registered
+    LanguageSpec by exactly one boolean (``references_and_calls is not None``), so csharp
+    lands in exactly one of the two halves -- never both, never neither.
+    """
+    descriptor = repo_map._symbol_navigation_descriptor()
+    parser_backed, _, foundational = descriptor.partition("+")
+    assert "csharp" in parser_backed, descriptor
+    assert "csharp" not in foundational, descriptor
+
+
+# ---------------------------------------------------------------------------
+# Task 10B: csharp_references_and_calls AST-shape coverage (mirrors test_lang_java.py's own
+# references_and_calls section, adapted to C#'s own grammar shapes -- see lang_csharp.py's
+# module docstring "TASK 10B" section for the exact node-shape differences from Java: C#'s
+# ``invocation_expression`` has a single ``function`` field that is EITHER a bare ``identifier``
+# (unqualified call) OR a ``member_access_expression`` (qualified call), and C# reuses
+# ``member_access_expression`` for both a call's qualifier and a plain field/property read).
+# ---------------------------------------------------------------------------
+
+
+def _csharp_parser_or_skip() -> Any:
+    parser = lang_csharp._csharp_parser()
+    if parser is None:  # pragma: no cover - grammar always installed in this venv
+        pytest.skip("tree_sitter_c_sharp grammar not installed")
+    return parser
+
+
+@pytest.mark.requires_grammar
+def test_csharp_references_and_calls_provenance_is_parser_backed(tmp_path: Path) -> None:
+    _write_csharp_fixture(tmp_path)
+
+    references, calls = repo_map._references_and_calls_for_path(
+        tmp_path / "Widget.cs", "_name", tmp_path
+    )
+
+    assert references, "expected the tree-sitter extractor to find `_name` references"
+    assert {r["ref_kind"] for r in references} == {"value"}
+    assert calls == []
+    assert repo_map._symbol_navigation_provenance_for_path(str(tmp_path / "Widget.cs")) == (
+        "tree-sitter"
+    )
+
+
+@pytest.mark.requires_grammar
+def test_csharp_references_and_calls_unqualified_call(tmp_path: Path) -> None:
+    cs_file = tmp_path / "Plain.cs"
+    cs_file.write_text(
+        "public class Plain\n{\n    public void Run()\n    {\n        DoWork();\n    }\n}\n",
+        encoding="utf-8",
+    )
+    _csharp_parser_or_skip()
+
+    references, calls = lang_csharp.csharp_references_and_calls(cs_file, "DoWork")
+
+    assert [(r["kind"], r["ref_kind"], r["line"]) for r in references] == [("reference", "call", 5)]
+    assert [(c["kind"], c["ref_kind"], c["line"]) for c in calls] == [("call", "call", 5)]
+
+
+@pytest.mark.requires_grammar
+def test_csharp_references_and_calls_object_creation_expression_constructor(
+    tmp_path: Path,
+) -> None:
+    cs_file = tmp_path / "Ctor.cs"
+    cs_file.write_text(
+        "public class Ctor\n"
+        "{\n"
+        "    public void Run()\n"
+        "    {\n"
+        "        Helper h = new Helper();\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    _csharp_parser_or_skip()
+
+    references, calls = lang_csharp.csharp_references_and_calls(cs_file, "Helper")
+
+    # "Helper" appears twice: the declared local-variable TYPE (ref_kind "type") and the
+    # `new Helper()` constructor call (ref_kind "constructor").
+    assert sorted(r["ref_kind"] for r in references) == ["constructor", "type"]
+    assert [c["ref_kind"] for c in calls] == ["constructor"]
+
+
+@pytest.mark.requires_grammar
+def test_csharp_references_and_calls_qualified_member_call(tmp_path: Path) -> None:
+    cs_file = tmp_path / "Qualified.cs"
+    cs_file.write_text(
+        "public class Qualified\n"
+        "{\n"
+        "    public void Run()\n"
+        "    {\n"
+        "        object h = null;\n"
+        "        h.Helper();\n"
+        "        Utility.Helper();\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    _csharp_parser_or_skip()
+
+    references, calls = lang_csharp.csharp_references_and_calls(cs_file, "Helper")
+
+    # Both `h.Helper()` (instance-qualified) and `Utility.Helper()` (class-qualified) resolve the
+    # same way at the AST level: both are invocation_expression.function.member_access_expression
+    # name matches -> ref_kind "call", one row per call site. (Deliberately a DIFFERENT qualifier
+    # name than the queried symbol -- `Utility` vs `Helper` -- so the qualifier identifier itself
+    # never coincidentally also matches the query and pollutes this fixture's reference count.)
+    assert [(r["kind"], r["ref_kind"], r["line"]) for r in references] == [
+        ("reference", "call", 6),
+        ("reference", "call", 7),
+    ]
+    assert len(calls) == 2
+
+
+@pytest.mark.requires_grammar
+def test_csharp_references_and_calls_this_qualified_call(tmp_path: Path) -> None:
+    cs_file = tmp_path / "ThisCall.cs"
+    cs_file.write_text(
+        "public class ThisCall\n"
+        "{\n"
+        "    public void DoWork() {}\n"
+        "    public void Run()\n"
+        "    {\n"
+        "        this.DoWork();\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    _csharp_parser_or_skip()
+
+    _, calls = lang_csharp.csharp_references_and_calls(cs_file, "DoWork")
+
+    assert [(c["kind"], c["ref_kind"], c["line"]) for c in calls] == [("call", "call", 6)]
+
+
+@pytest.mark.requires_grammar
+def test_csharp_references_and_calls_field_access_non_call_member(tmp_path: Path) -> None:
+    cs_file = tmp_path / "FieldAccess.cs"
+    cs_file.write_text(
+        "public class FieldAccess\n"
+        "{\n"
+        "    public void Run()\n"
+        "    {\n"
+        "        Widget w = null;\n"
+        "        int y = w.Count;\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    _csharp_parser_or_skip()
+
+    references, calls = lang_csharp.csharp_references_and_calls(cs_file, "Count")
+
+    assert [(r["kind"], r["ref_kind"], r["line"]) for r in references] == [
+        ("reference", "field", 6)
+    ]
+    assert calls == []
+
+
+@pytest.mark.requires_grammar
+def test_csharp_references_and_calls_type_reference(tmp_path: Path) -> None:
+    cs_file = tmp_path / "TypeRef.cs"
+    cs_file.write_text(
+        "public class TypeRef : Foo\n{\n    private Foo field;\n}\n",
+        encoding="utf-8",
+    )
+    _csharp_parser_or_skip()
+
+    references, calls = lang_csharp.csharp_references_and_calls(cs_file, "Foo")
+
+    assert [(r["kind"], r["ref_kind"], r["line"]) for r in references] == [
+        ("reference", "type", 1),
+        ("reference", "type", 3),
+    ]
+    assert calls == []
+
+
+@pytest.mark.requires_grammar
+def test_csharp_references_and_calls_excludes_same_name_declaration(tmp_path: Path) -> None:
+    cs_file = tmp_path / "Decl.cs"
+    cs_file.write_text(
+        "public class Decl\n"
+        "{\n"
+        "    private int count;\n"
+        "    public int Read()\n"
+        "    {\n"
+        "        return count;\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    _csharp_parser_or_skip()
+
+    references, calls = lang_csharp.csharp_references_and_calls(cs_file, "count")
+
+    # `private int count;` (line 3) is the DECLARATION -- must not appear. `return count;`
+    # (line 6) is the one real reference.
+    assert [(r["kind"], r["ref_kind"], r["line"]) for r in references] == [
+        ("reference", "value", 6)
+    ]
+    assert calls == []
+
+
+@pytest.mark.requires_grammar
+def test_csharp_references_and_calls_ignores_string_literal_and_comment_occurrences(
+    tmp_path: Path,
+) -> None:
+    cs_file = tmp_path / "Noise.cs"
+    cs_file.write_text(
+        "public class Noise\n"
+        "{\n"
+        "    public void Run()\n"
+        "    {\n"
+        '        string s = "Helper";\n'
+        "        // Helper mentioned only in a comment\n"
+        "        Helper h = null;\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    _csharp_parser_or_skip()
+
+    references, calls = lang_csharp.csharp_references_and_calls(cs_file, "Helper")
+
+    # Only the REAL type reference on line 7 counts -- the string literal (line 5) and the
+    # comment (line 6) must never match; a text/regex scan could not make this distinction.
+    assert [(r["kind"], r["ref_kind"], r["line"]) for r in references] == [("reference", "type", 7)]
+    assert calls == []
+
+
+@pytest.mark.requires_grammar
+def test_csharp_references_and_calls_defeats_regex_fallback(tmp_path: Path) -> None:
+    """AST-only distinction the regex fallback provably cannot satisfy: for a REAL call site,
+    ``_regex_references_and_calls`` (C#'s pre-Task-10B fallback) finds nothing at all, while the
+    AST extractor finds the real call precisely."""
+    cs_file = tmp_path / "Defeats.cs"
+    cs_file.write_text(
+        "public class Defeats\n{\n    public void Run()\n    {\n        DoWork();\n    }\n}\n",
+        encoding="utf-8",
+    )
+    _csharp_parser_or_skip()
+
+    regex_references, regex_calls = repo_map._regex_references_and_calls(cs_file, "DoWork")
+    ast_references, ast_calls = lang_csharp.csharp_references_and_calls(cs_file, "DoWork")
+
+    assert regex_references == []
+    assert regex_calls == []
+    assert ast_references and ast_references[0]["ref_kind"] == "call"
+    assert ast_calls and ast_calls[0]["ref_kind"] == "call"
+
+
+def test_csharp_references_and_calls_grammar_absent_returns_empty_not_crash(
+    tmp_path: Path, monkeypatch
+) -> None:
+    cs_file = tmp_path / "NoGrammar.cs"
+    cs_file.write_text(
+        "public class NoGrammar\n{\n    public void Run()\n    {\n        DoWork();\n    }\n}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(lang_csharp, "_csharp_parser", lambda: None)
+
+    references, calls = lang_csharp.csharp_references_and_calls(cs_file, "DoWork")
+
+    assert references == []
+    assert calls == []
+
+
+def test_csharp_references_and_calls_returns_empty_for_non_cs_suffix(tmp_path: Path) -> None:
+    not_cs = tmp_path / "Widget.txt"
+    not_cs.write_text("public class Widget {}\n", encoding="utf-8")
+
+    references, calls = lang_csharp.csharp_references_and_calls(not_cs, "Widget")
+
+    assert references == []
+    assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# The honest-confidence requirement: the two bands must actually DISCRIMINATE (different
+# confidence, different provenance string) on a fixture with one confirmable call site and one
+# unconfirmable one -- a control that never crosses the boundary between "unresolved receiver"
+# and "in-file-confirmed receiver" would prove nothing (mirrors
+# test_java_references_and_calls_infile_receiver_type_confirms_higher_band exactly, adapted to
+# C#'s own grammar/provenance strings).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.requires_grammar
+def test_csharp_references_and_calls_unconfirmed_receiver_is_demoted(tmp_path: Path) -> None:
+    """`h.Helper()`'s receiver `h` is declared `object` in this file, and no type in this file
+    declares a method named `Helper` -- there is nothing to confirm against, so every bucket
+    entry must carry the DEMOTED band."""
+    cs_file = tmp_path / "Unresolved.cs"
+    cs_file.write_text(
+        "public class Unresolved\n"
+        "{\n"
+        "    public void Run()\n"
+        "    {\n"
+        "        object h = null;\n"
+        "        h.Helper();\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    _csharp_parser_or_skip()
+
+    references, calls = lang_csharp.csharp_references_and_calls(cs_file, "Helper")
+
+    assert len(calls) == 1
+    assert len(references) == 1
+    for entry in (*references, *calls):
+        assert entry["resolution_provenance"] == ["csharp-name-heuristic"]
+        assert entry["resolution_confidence"] == pytest.approx(0.6)
+
+
+@pytest.mark.requires_grammar
+def test_csharp_references_and_calls_infile_receiver_type_confirms_higher_band(
+    tmp_path: Path,
+) -> None:
+    """`t.DoWork()`'s receiver `t` is declared `Target` in THIS file, and `Target` (also declared
+    in this file) directly declares a `DoWork` method -- both facts readable from the same AST,
+    so this call confirms at the HIGHER band with a DIFFERENT provenance string. `o.DoWork()`
+    (receiver type `object`) is the discriminating CONTROL in the same file/query shape: it must
+    land in the demoted band, proving the two bands actually diverge rather than both landing on
+    one value by construction -- the load-bearing fixture for this task.
+    """
+    cs_file = tmp_path / "Confirmed.cs"
+    cs_file.write_text(
+        "public class Target\n"
+        "{\n"
+        "    public void DoWork() {}\n"
+        "}\n"
+        "public class Caller\n"
+        "{\n"
+        "    public void Run()\n"
+        "    {\n"
+        "        Target t = new Target();\n"
+        "        object o = null;\n"
+        "        t.DoWork();\n"
+        "        o.DoWork();\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    _csharp_parser_or_skip()
+
+    references, calls = lang_csharp.csharp_references_and_calls(cs_file, "DoWork")
+
+    confirmed_calls = [c for c in calls if c["line"] == 11]
+    demoted_calls = [c for c in calls if c["line"] == 12]
+    assert len(confirmed_calls) == 1
+    assert len(demoted_calls) == 1
+    confirmed = confirmed_calls[0]
+    demoted = demoted_calls[0]
+
+    assert confirmed["resolution_provenance"] == ["csharp-infile-type-confirmation"]
+    assert confirmed["resolution_confidence"] == pytest.approx(0.9)
+    assert demoted["resolution_provenance"] == ["csharp-name-heuristic"]
+    assert demoted["resolution_confidence"] == pytest.approx(0.6)
+
+    # The discriminating control itself: confirmed must be STRICTLY higher, with a DIFFERENT
+    # provenance string -- both arms must actually diverge, not merely both be present. This is
+    # the "honest-confidence" fixture: a single-band implementation wearing two names would fail
+    # this exact assertion (both bands would read identically).
+    assert confirmed["resolution_confidence"] > demoted["resolution_confidence"]
+    assert confirmed["resolution_provenance"] != demoted["resolution_provenance"]
+
+    confirmed_refs = [r for r in references if r["line"] == 11]
+    assert confirmed_refs[0]["resolution_provenance"] == ["csharp-infile-type-confirmation"]
+    assert confirmed_refs[0]["resolution_confidence"] == pytest.approx(0.9)
+
+
+@pytest.mark.requires_grammar
+def test_csharp_references_and_calls_this_receiver_confirms_higher_band(tmp_path: Path) -> None:
+    """`this.DoWork()` inside the SAME class that declares `DoWork` must also confirm -- the
+    enclosing type IS the receiver's static type by definition, no variable declaration needed.
+    """
+    cs_file = tmp_path / "ThisConfirmed.cs"
+    cs_file.write_text(
+        "public class Target\n"
+        "{\n"
+        "    public void DoWork() {}\n"
+        "    public void Run()\n"
+        "    {\n"
+        "        this.DoWork();\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    _csharp_parser_or_skip()
+
+    _, calls = lang_csharp.csharp_references_and_calls(cs_file, "DoWork")
+
+    this_call = next(c for c in calls if c["line"] == 6)
+    assert this_call["resolution_provenance"] == ["csharp-infile-type-confirmation"]
+    assert this_call["resolution_confidence"] == pytest.approx(0.9)
+
+
+@pytest.mark.requires_grammar
+def test_csharp_references_and_calls_unqualified_call_confirms_via_enclosing_type(
+    tmp_path: Path,
+) -> None:
+    """An UNQUALIFIED call (`DoWork()`, no explicit receiver) has an implicit `this` -- C#
+    permits omitting the qualifier entirely, unlike Java's `method_invocation` (which always has
+    an explicit or absent `object` field the walker can inspect directly). Confirmed only because
+    the ENCLOSING type itself declares `DoWork`."""
+    cs_file = tmp_path / "Implicit.cs"
+    cs_file.write_text(
+        "public class Target\n"
+        "{\n"
+        "    public void DoWork() {}\n"
+        "    public void Run()\n"
+        "    {\n"
+        "        DoWork();\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    _csharp_parser_or_skip()
+
+    _, calls = lang_csharp.csharp_references_and_calls(cs_file, "DoWork")
+
+    unqualified_call = next(c for c in calls if c["line"] == 6)
+    assert unqualified_call["resolution_provenance"] == ["csharp-infile-type-confirmation"]
+    assert unqualified_call["resolution_confidence"] == pytest.approx(0.9)
+
+
+@pytest.mark.requires_grammar
+def test_csharp_references_and_calls_property_access_confirms_higher_band(
+    tmp_path: Path,
+) -> None:
+    """C#'s idiomatic member access is usually a PROPERTY, not a raw field -- the grammar does
+    not distinguish a property read from a field read at the reference site (both are
+    ``member_access_expression``), so a property declared in this file must confirm exactly like
+    a field does."""
+    cs_file = tmp_path / "PropConfirmed.cs"
+    cs_file.write_text(
+        "public class Target\n"
+        "{\n"
+        "    public int Count { get; set; }\n"
+        "}\n"
+        "public class Caller\n"
+        "{\n"
+        "    public void Run()\n"
+        "    {\n"
+        "        Target t = new Target();\n"
+        "        int x = t.Count;\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    _csharp_parser_or_skip()
+
+    references, _ = lang_csharp.csharp_references_and_calls(cs_file, "Count")
+
+    prop_ref = next(r for r in references if r["line"] == 10)
+    assert prop_ref["ref_kind"] == "field"
+    assert prop_ref["resolution_provenance"] == ["csharp-infile-type-confirmation"]
+    assert prop_ref["resolution_confidence"] == pytest.approx(0.9)
+
+
+@pytest.mark.requires_grammar
+def test_csharp_walkers_survive_pathologically_deep_ast_without_recursion_error_refs(
+    tmp_path: Path,
+) -> None:
+    """F26-class regression guard for csharp_references_and_calls specifically (the sibling defs/
+    imports walkers are already covered by
+    test_csharp_walkers_survive_pathologically_deep_ast_without_recursion_error above)."""
+    depth = sys.getrecursionlimit() + 500
+    deep_cs = tmp_path / "DeepRefs.cs"
+    deep_cs.write_text(_deep_nested_csharp_source(depth), encoding="utf-8")
+    _csharp_parser_or_skip()
+
+    # "Target" here names the deeply-nested method itself (its own definition site, excluded by
+    # design) -- the point of this guard is that the walk COMPLETES without RecursionError, not
+    # that it finds a hit.
+    references, calls = lang_csharp.csharp_references_and_calls(deep_cs, "Target")
+
+    assert references == []
+    assert calls == []
