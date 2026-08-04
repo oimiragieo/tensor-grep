@@ -295,23 +295,30 @@ call-graph seams are deliberately unwired.
    extraction handles this by name-dedup; a cross-file graph has to pick a canonical site, and that
    decision is still unmade.
 
-**Honest framing of the coverage number — CORRECTED 2026-08-01, do not re-invent a third tier.** "10/10
-languages" is REGISTRY membership, not caller-graph parity, but the product's OWN canonical split is a
-strict BINARY, not a hand-counted "4 full + 1 partial + 5 foundational" list. `_symbol_navigation_descriptor()`
-(`grep -n "_symbol_navigation_descriptor" src/tensor_grep/cli/repo_map.py`, currently `:562`) partitions
-`LANGUAGE_REGISTRY` on exactly one field — `LanguageSpec.references_and_calls is not None` — into
-**parser-backed** (go, javascript, python, rust, typescript — 5) vs **foundational** (c, cpp, csharp,
-java, php — 5). Go belongs in the parser-backed five: the descriptor's own docstring says so explicitly
-("this tier currently also includes go, which several PR-comment summaries lump in with the
-foundational-only languages below -- that undercounts it. Go's own dedicated
-`lang_go.go_references_and_calls` is a full tree-sitter extractor ... so it belongs here"). An earlier
-revision of this section demoted go to a separate "partial" tier based on which of go's OTHER hooks are
-`None` — exactly the "invented a tier from a field's absence" mistake the descriptor's docstring was
-written to pre-empt (verified live: go's `LanguageSpec` wires `references_and_calls` +
-`file_imports_symbol_from_definition` + `prime_repo_context`, leaves `provider_alias_calls` /
-`import_update_target` / `classify_ref_kind` as `None`; python/javascript/typescript/rust wire all six
-except python's own `prime_repo_context`, also `None`). That is a real, citable WITHIN-tier capability
-gap — cite it as exactly that, never as a separate coverage tier — see `tensor-grep-enterprise-agent` for
+**Honest framing of the coverage number -- CORRECTED 2026-08-01, do not re-invent a third tier;
+counts UPDATED 2026-08-04 by PR #927 (Java promoted foundational -> parser-backed, Task 10A).**
+"10/10 languages" is REGISTRY membership, not caller-graph parity, but the product's OWN canonical
+split is a strict BINARY, not a hand-counted list. `_symbol_navigation_descriptor()`
+(`grep -n "_symbol_navigation_descriptor" src/tensor_grep/cli/repo_map.py` -- was `:562`, now `:570`) partitions
+`LANGUAGE_REGISTRY` on exactly one field -- `LanguageSpec.references_and_calls is not None` -- into
+**parser-backed** (go, java, javascript, python, rust, typescript -- 6) vs **foundational** (c, cpp,
+csharp, php -- 4). Java's refs/callers are AST-verified only in-file so far; cross-file caller
+confirmation still falls back to the text prefilter pending a package/source-root resolver, so it
+belongs in the parser-backed tier without yet having full cross-file parity within it -- a real,
+citable WITHIN-tier gap, same shape as go's. Go belongs in the parser-backed tier: the descriptor's
+own docstring says so explicitly ("this tier currently also includes go, which several PR-comment
+summaries lump in with the foundational-only languages below -- that undercounts it. Go's own
+dedicated `lang_go.go_references_and_calls` is a full tree-sitter extractor ... so it belongs
+here"). An earlier revision of this section demoted go to a separate "partial" tier based on which
+of go's OTHER hooks are `None` -- exactly the "invented a tier from a field's absence" mistake the
+descriptor's docstring was written to pre-empt (verified live: go's `LanguageSpec` wires
+`references_and_calls` + `file_imports_symbol_from_definition` + `prime_repo_context`, leaves
+`provider_alias_calls` / `import_update_target` / `classify_ref_kind` as `None`;
+python/javascript/typescript/rust wire all six except python's own `prime_repo_context`, also
+`None`). Do not re-derive these counts by hand -- run the product's own one-liner and quote it
+verbatim: `python -c "import sys;sys.path.insert(0,'src');from tensor_grep.cli import repo_map as
+r;print(r._symbol_navigation_descriptor())"`. Cite within-tier gaps as exactly that, never as a
+separate coverage tier -- see `tensor-grep-enterprise-agent` for
 the same split.
 
 **You have a result when (falsifiable):** for a representative multi-file C/C++ fixture, `tg callers`

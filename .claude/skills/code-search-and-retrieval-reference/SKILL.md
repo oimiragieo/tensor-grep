@@ -223,18 +223,22 @@ cross-checked against `grep -c "lang_registry.register_language(" src/tensor_gre
 which returns **10**. **All 10 of the top-10 languages** by TIOBE-Jul-2026/Stack-Overflow-2025/
 GitHub-Octoverse-2025 consensus ranking (Python, JavaScript, TypeScript, Java, C#, C++, C, Go,
 Rust, PHP) are registered — there is no unregistered language on this list and nothing deliberately
-deferred. **There is also no third tier.** The 10 split exactly in half: **five parser-backed**
-languages with full refs/callers support (go, javascript, python, rust, typescript) and **five
-foundational** languages with defs+imports only (c, cpp, csharp, java, php). The cpp registration's
-own in-repo comment says this outright: *"C++ joins the symbol graph as a FOUNDATIONAL-TIER
-language, closing the top-10 language-support campaign to 10/10."* The real open backlog item here
-is **upgrading the five foundational languages to parser-backed refs/callers** — not registering a
-new language; c/cpp/java/php/csharp are already on the symbol graph, just at the shallower tier. A
-language's callables live either as older helpers defined directly in `repo_map.py` (python needs
-no external grammar at all — it parses with the stdlib `ast` module; rust's `_rust_*` helpers and
-java's `_java_*` helpers predate/mirror that inline style) or in a newer, self-contained
+deferred. **There is also no third tier.** The 10 split unevenly since PR #927 (Task 10A): **six
+parser-backed** languages with refs/callers support (go, java, javascript, python, rust, typescript;
+Java's is in-file only -- cross-file caller confirmation still falls back to the text prefilter
+pending a package/source-root resolver) and **four foundational** languages with defs+imports only
+(c, cpp, csharp, php). The cpp registration's own in-repo comment says this outright: *"C++ joins
+the symbol graph as a FOUNDATIONAL-TIER language, closing the top-10 language-support campaign to
+10/10."* The real open backlog item here is **upgrading the four remaining foundational languages
+to parser-backed refs/callers** -- not registering a new language; c/cpp/php/csharp are already on
+the symbol graph, just at the shallower tier. A language's callables live either as older helpers
+defined directly in `repo_map.py` (python needs no external grammar at all -- it parses with the
+stdlib `ast` module; rust's `_rust_*` helpers predate/mirror that inline style; java's `_java_*`
+helpers still hold its defs/imports extraction inline, but its references-and-calls extraction
+moved to `lang_java.py`, mirroring the module-shaped languages below) or in a newer, self-contained
 per-language module mirroring `lang_go.py` (`lang_go.py`, `lang_php.py`, `lang_csharp.py`,
-`lang_c.py`, `lang_cpp.py` — each importing nothing from `repo_map.py`, to avoid an import cycle).
+`lang_c.py`, `lang_cpp.py`, `lang_java.py` -- each importing nothing from `repo_map.py`, to avoid an
+import cycle).
 `LanguageSpec` does not care which shape a language's callables take, only that they exist, so both
 are equally contract-consistent — do not assume "inline" means "old" or "module" means "new" from
 the shape alone; check the registration date.
@@ -276,7 +280,7 @@ downstream signal invisibly.
 passthrough, no tg-side language awareness at all); **structural scan/rewrite = 26 languages**
 (`tg run`/`tg scan`, via the ast-grep CLI this section describes — `_SUPPORTED_AST_LANGUAGES`,
 `ast_backend.py:76-103`, `get_supported_languages()` at `:128`); **deep symbol-graph = 10
-languages, split across two tiers** (this subsection — 5 parser-backed refs/callers + 5
+languages, split across two tiers** (this subsection -- 6 parser-backed refs/callers + 4
 foundational defs/imports-only, per the `_symbol_navigation_descriptor()` derivation above). tg is
 `rg` (text) + ast-grep (structural) + a symbol/retrieval/capsule LAYER on top of that — not "a
 faster grep," and the three tiers do NOT share a language-support number, so check which tier a
@@ -635,7 +639,7 @@ router, not just `tg find`.
 | `--` argv sentinel (MCP) | `mcp_server.py`, grep `command.extend\(\["--", pattern, path\]\)` (was `:1306`, now `:1375`) | blocks flag injection; list-argv alone only blocks shell injection |
 | `--` argv sentinel (native rg passthrough) | `rg_passthrough.rs`, grep `fn ripgrep_operand_args` (was `:581-600`, now `:584-603`) | FIXED — `ripgrep_operand_args` inserts `--` before paths; 3 tests, no longer contiguous — grep `operand_args_insert_end_of_options_sentinel_before_paths` / `operand_args_no_sentinel_when_no_paths` / `operand_args_files_mode_omits_patterns_but_keeps_sentinel` (was `:788-826`, now `:1034`/`:1056`/`:1065`) |
 | AST native vs sidecar | `main.py`, grep `def _select_ast_backend_for_pattern` (was `:6655`, then hedged `:6737`, now `:6915`); `ast_backend.py:505` (`is_available`, still current) | ast-grep WRAPPER is preferred whenever installed; native tree-sitter is a fallback-only path with no GPU gate anymore |
-| Symbol-graph language registry | `lang_registry.py`, `repo_map.py` -- `grep -c "lang_registry.register_language(" src/tensor_grep/cli/repo_map.py` (was `:6004-6222` claiming 8 calls, now returns **10**) | 10/10 top-10 languages, split 5 parser-backed refs/callers + 5 foundational defs/imports-only (`_symbol_navigation_descriptor()`); grammar-missing fails closed to `resolution_gaps`, never a silent empty result — see §2a |
+| Symbol-graph language registry | `lang_registry.py`, `repo_map.py` -- `grep -c "lang_registry.register_language(" src/tensor_grep/cli/repo_map.py` (was `:6004-6222` claiming 8 calls, now returns **10**) | 10/10 top-10 languages, split 6 parser-backed refs/callers + 4 foundational defs/imports-only as of PR #927 (`_symbol_navigation_descriptor()` -- re-run it, do not trust this number); grammar-missing fails closed to `resolution_gaps`, never a silent empty result -- see section 2a |
 | BM25 (real IDF) | `retrieval_bm25.py`, `reranker.py` | backs `tg search --rank`/`--bm25` only |
 | Flat scorer (no IDF) | `repo_map.py`, grep `def _score_text_terms` (was `:7433`, now `:7929`) | backs `tg orient`/`tg agent` symbol ranking — known weak point |
 | Personalized PageRank | `repo_map.py`, grep `def _personalized_reverse_import_pagerank` (was `:8418`, now `:8914`) | alpha=0.85, seeded, answers "relevant to this query" |

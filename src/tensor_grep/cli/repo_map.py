@@ -6386,8 +6386,11 @@ def _references_and_calls_for_path(
     for Go F25, ignored elsewhere) so this seam never branches on ``language_id``.
 
     EXPLICIT fallback: when the path has no registered extractor (``spec is None`` or
-    ``spec.references_and_calls is None`` -- foundational-tier c/cpp/csharp/java/php, plus
-    unregistered suffixes), call ``_regex_references_and_calls``. That fallback is
+    ``spec.references_and_calls is None`` -- foundational-tier c/cpp/csharp/php, plus
+    unregistered suffixes), call ``_regex_references_and_calls``. Java shipped an in-file
+    ``references_and_calls`` extractor (Task 10A) so it no longer falls into this branch;
+    its cross-file caller confirmation still uses the same text-prefilter mechanism as the
+    languages listed here, just reached through a different seam. That fallback is
     deliberate and documented, never an implicit empty result.
 
     Secondary degrade paths that used to live inside the per-language_id if/elif chains

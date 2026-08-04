@@ -81,10 +81,10 @@ It ships as a native CLI on Windows, macOS, and Linux — no server required for
 - **`tg defs`** — find definitions.
 - **`tg source`** — show source for a symbol.
 - **`tg refs`** — find references. Recommended for TypeScript/JS symbol navigation: dogfooding (v1.19.3) found `tg refs` returned 14 reference sites on a TS-heavy repo where `tg callers` returned 1 for the same symbol.
-- **`tg callers`** — who calls a function. Resolution is parser-backed for all five tier-1 languages (see [Language Coverage](docs/tool_comparison.md#language-coverage)); the "Python-first" framing this bullet used to carry described a state that predates the current tier and contradicted that table. Large repos of any language can still take minutes — that is a scale property, not a language one, and `--deadline` bounds it. See [docs/harness_api.md](docs/harness_api.md) for the exact contract note.
-- **`tg impact`** — what a symbol affects.
-- **`tg blast-radius`** / **`tg blast-radius-render`** / **`tg blast-radius-plan`** — ranked impact graph with rendered and plan-ready output.
-- Language coverage is two-tiered: AST-verified refs/callers for Go, JavaScript, Python, Rust, and TypeScript; parser-backed defs/imports (with heuristic refs/callers) for C, C++, C#, Java, and PHP. The split is derived live from the language registry and stamped into every repo-map JSON payload (`coverage.symbol_navigation`); the honest comparison — including where competitors are ahead — is in [docs/tool_comparison.md](docs/tool_comparison.md#language-coverage).
+- **`tg callers`** -- who calls a function. Resolution is parser-backed for all six tier-1 languages (see [Language Coverage](docs/tool_comparison.md#language-coverage)); the "Python-first" framing this bullet used to carry described a state that predates the current tier and contradicted that table. Large repos of any language can still take minutes -- that is a scale property, not a language one, and `--deadline` bounds it. See [docs/harness_api.md](docs/harness_api.md) for the exact contract note.
+- **`tg impact`** -- what a symbol affects.
+- **`tg blast-radius`** / **`tg blast-radius-render`** / **`tg blast-radius-plan`** -- ranked impact graph with rendered and plan-ready output.
+- Language coverage is two-tiered: AST-verified refs/callers for Go, Java, JavaScript, Python, Rust, and TypeScript (Java's cross-file caller resolution still falls back to the text prefilter); parser-backed defs/imports (with heuristic refs/callers) for C, C++, C#, and PHP. The split is derived live from the language registry and stamped into every repo-map JSON payload (`coverage.symbol_navigation`); the honest comparison -- including where competitors are ahead -- is in [docs/tool_comparison.md](docs/tool_comparison.md#language-coverage).
 
 ### Security & compliance
 - **`tg rulesets`** — built-in security and compliance AST rule packs.
