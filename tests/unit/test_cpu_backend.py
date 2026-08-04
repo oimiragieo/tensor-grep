@@ -3,6 +3,7 @@ import sys
 import time
 import types
 import warnings
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -196,6 +197,148 @@ class TestCPUBackend:
         assert result.matches[0].text == "FROM_RUST"
         assert result.routing_backend == "CPUBackend"
         assert result.routing_reason == "cpu_rust_regex"
+
+    def test_simple_fixed_inverted_internal_typeerror_fails_closed(self, tmp_path):
+        """Plan Task 5 Step 3 (silent wrong-answer defect): the inline Rust adapter on the
+        primary ("simple", -F/-v, no -C/-A/-B/-w/-x) search path used to catch ANY `TypeError`
+        from `rust_backend.search(..., invert_match=...)` and retry WITHOUT `invert_match` --
+        a retry justified in comments as "older rust_core builds without the kwarg", but
+        `except TypeError` cannot actually tell that apart from a TypeError raised for an
+        unrelated internal reason on a CURRENT build. When that happens with `invert_match=True`
+        (`tg search -v`), the retry silently returns the MATCHING set instead of the NON-matching
+        set -- the exact opposite of what the user asked for, returned as a successful result.
+
+        The fake backend below raises TypeError whenever `invert_match` is supplied (standing in
+        for "some internal TypeError, unrelated to kwarg support, happened this call") and
+        returns a result on any OTHER call, so the pre-fix retry silently "succeeds" with the
+        wrong answer.
+
+        Pre-fix: two calls, the second missing `invert_match` (the retry).
+        Post-fix: exactly one call (carrying `invert_match`), and `BackendExecutionError` raised.
+        """
+        log = tmp_path / "invert_typeerror.log"
+        log.write_text("apple\nbanana\n", encoding="utf-8")
+
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+        calls = []
+
+        class FakeRustBackend:
+            def search(self, **kwargs):
+                calls.append(kwargs)
+                if "invert_match" in kwargs:
+                    raise TypeError("simulated internal TypeError unrelated to invert_match")
+                # The retry "succeeds" -- but this is the MATCHING set, not the inverted set.
+                return [(1, "apple")]
+
+        rust_mod.RustBackend = FakeRustBackend
+
+        backend = CPUBackend()
+        config = SearchConfig(fixed_strings=True, invert_match=True)
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            with pytest.raises(BackendExecutionError):
+                backend.search(str(log), "apple", config=config)
+
+        assert len(calls) == 1, (
+            "expected exactly one native call carrying invert_match, no dropped-semantics retry; "
+            f"got {len(calls)} calls: {calls}"
+        )
+        assert calls[0].get("invert_match") is True
+
+    def test_word_regexp_inverted_internal_typeerror_fails_closed(self, tmp_path):
+        """Same defect, sibling site: `_rust_match_set` (used by the -w/-x/-C/-A/-B path via
+        `_search_word_line_context_via_rust`) had its own `except TypeError:` retry that dropped
+        `invert_match`. `_search_word_line_context_via_rust` already fails closed on ANY
+        exception from `_rust_match_set` -- so removing the retry there (letting TypeError
+        propagate) is sufficient to fix this site; no new BackendExecutionError call needed at
+        this site specifically, it inherits the existing wrapper.
+        """
+        log = tmp_path / "word_invert_typeerror.log"
+        log.write_text("cat\nconcatenate\nscatter cat here\n", encoding="utf-8")
+
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+        calls = []
+
+        class FakeRustBackend:
+            def search(self, **kwargs):
+                calls.append(kwargs)
+                if "invert_match" in kwargs:
+                    raise TypeError("simulated internal TypeError unrelated to invert_match")
+                # The retry "succeeds" -- but this is the MATCHING set, not the inverted set.
+                return [(1, "cat")]
+
+        rust_mod.RustBackend = FakeRustBackend
+
+        backend = CPUBackend()
+        config = SearchConfig(word_regexp=True, invert_match=True)
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            with pytest.raises(BackendExecutionError):
+                backend.search(str(log), "cat", config=config)
+
+        assert len(calls) == 1, (
+            "expected exactly one native call carrying invert_match, no dropped-semantics retry; "
+            f"got {len(calls)} calls: {calls}"
+        )
+        assert calls[0].get("invert_match") is True
+
+    def test_cpu_backend_has_one_native_adapter_and_zero_typeerror_retries(self):
+        """Population check for the fix above, derived by walking the AST of
+        `cpu_backend.py` -- NOT by substring-counting (after a fix, a grep hit is usually the
+        fix's own comment/docstring, not a real occurrence). Pinned by AST shape, never by line
+        number.
+
+        "Native adapter" = a `<expr>.search(...)` call whose keyword arguments include
+        `invert_match` (the actual call into the Rust engine).
+
+        "TypeError compatibility retry" = an `except TypeError:` handler whose body itself
+        contains a `.search(...)` call -- i.e. one that CALLS THE NATIVE ENGINE AGAIN, dropping
+        semantics along the way. This deliberately does NOT count a `TypeError` handler that
+        instead fails closed (raises `BackendExecutionError` with no further native call) --
+        that is the fix, not the defect: the defect is retrying, not catching.
+
+        Pre-fix baseline (verified against origin/main): (2, 2) -- the inline adapter on the
+        primary path and `_rust_match_set` each make their own native call and each retry (call
+        `.search(...)` a second time) on `TypeError`. Post-fix: (1, 0) -- both sites are
+        consolidated onto the single native call inside `_rust_match_set`, which never retries;
+        a `TypeError` there propagates to a caller-side handler that raises
+        `BackendExecutionError` without ever calling `.search(...)` again.
+        """
+        import ast
+
+        import tensor_grep.backends.cpu_backend as cpu_backend_module
+
+        source_path = Path(cpu_backend_module.__file__)
+        tree = ast.parse(source_path.read_text(encoding="utf-8"))
+
+        native_adapter_calls = 0
+        typeerror_retries = 0
+
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "search"
+                and any(keyword.arg == "invert_match" for keyword in node.keywords)
+            ):
+                native_adapter_calls += 1
+            if (
+                isinstance(node, ast.ExceptHandler)
+                and isinstance(node.type, ast.Name)
+                and node.type.id == "TypeError"
+            ):
+                handler_calls_search_again = any(
+                    isinstance(inner, ast.Call)
+                    and isinstance(inner.func, ast.Attribute)
+                    and inner.func.attr == "search"
+                    for inner in ast.walk(node)
+                )
+                if handler_calls_search_again:
+                    typeerror_retries += 1
+
+        assert (native_adapter_calls, typeerror_retries) == (1, 0), (
+            "expected exactly one native adapter carrying invert_match and zero TypeError "
+            f"compatibility retries; got native_adapter_calls={native_adapter_calls}, "
+            f"typeerror_retries={typeerror_retries}"
+        )
 
     def test_rejects_stale_pre_fix_persistent_literal_index(self, tmp_path, monkeypatch):
         """task #262 BLOCKING finding #2: the persisted literal-prefilter index payload used
