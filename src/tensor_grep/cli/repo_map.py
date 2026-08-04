@@ -6388,6 +6388,22 @@ def _csharp_references_and_calls_for_registry(
     return lang_csharp.csharp_references_and_calls(path, symbol)
 
 
+def _php_references_and_calls_for_registry(
+    path: Path,
+    symbol: str,
+    repo_root: Path | str | None = None,
+    *,
+    definition_dirs: frozenset[str] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    # Task 10C: in-file AST extraction only -- no cross-file import resolution yet, so
+    # repo_root/definition_dirs are part of the uniform registry adapter signature (Go F25) but
+    # unused here, same as java's/csharp's own adapters above. lang_php.py already owns its whole
+    # extraction pipeline including `_php_parser()` (matching lang_go.py's/lang_csharp.py's
+    # shape -- PHP's parser factory predates Task 10C, built for php_imports_and_symbols), so this
+    # adapter forwards path/symbol only.
+    return lang_php.php_references_and_calls(path, symbol)
+
+
 def _references_and_calls_for_path(
     path: Path,
     symbol: str,
@@ -6403,11 +6419,11 @@ def _references_and_calls_for_path(
     for Go F25, ignored elsewhere) so this seam never branches on ``language_id``.
 
     EXPLICIT fallback: when the path has no registered extractor (``spec is None`` or
-    ``spec.references_and_calls is None`` -- foundational-tier c/cpp/csharp/php, plus
-    unregistered suffixes), call ``_regex_references_and_calls``. Java shipped an in-file
-    ``references_and_calls`` extractor (Task 10A) so it no longer falls into this branch;
-    its cross-file caller confirmation still uses the same text-prefilter mechanism as the
-    languages listed here, just reached through a different seam. That fallback is
+    ``spec.references_and_calls is None`` -- foundational-tier c/cpp, plus unregistered
+    suffixes), call ``_regex_references_and_calls``. Java/C#/PHP shipped in-file
+    ``references_and_calls`` extractors (Tasks 10A/10B/10C) so none of them fall into this
+    branch; their cross-file caller confirmation still uses the same text-prefilter mechanism
+    as the languages listed here, just reached through a different seam. That fallback is
     deliberate and documented, never an implicit empty result.
 
     Secondary degrade paths that used to live inside the per-language_id if/elif chains
@@ -6589,13 +6605,22 @@ lang_registry.register_language(
 )
 
 # PATH A Stage 1 (second language expansion beyond Go): PHP's own module (lang_php.py), same
-# no-import-cycle rationale as lang_go.py. NARROWER than Go's landing -- this registration ships
-# defs + imports only; the cross-file caller-graph (references_and_calls and the other three
-# callables below) is explicitly deferred to a follow-up, so all four are None here. That is a
-# strict subset of an already-handled shape: _language_coverage_gaps_for_universe already treats
-# import_update_target=None as an honest resolution_gaps entry (see the "audit #81 #4" comment on
-# that function, and lang_go.py's own import_update_target=None precedent), so `tg callers`/
-# `tg blast-radius` stay honest about PHP instead of silently reading as a proven zero.
+# no-import-cycle rationale as lang_go.py. defs/source/imports/agent via `extract_imports_and_
+# symbols`-shaped extraction, wired at the `_imports_and_symbols_for_path` /
+# `build_symbol_source_from_map` dispatch sites below. references_and_calls now points at
+# lang_php.php_references_and_calls (Task 10C: IN-FILE AST reference/call extraction, promoting
+# PHP from the foundational tier to the parser-backed-refs-callers tier, mirroring Task 10A's Java
+# landing and Task 10B's C# landing) via the registry adapter above. The remaining cross-file
+# caller-graph fields (file_imports_symbol_from_definition / import_update_target / repo-root
+# context priming for a future PSR-4/composer.json resolver) stay None, deferred to a follow-up --
+# same shape as Java's/C#'s own gap, so `tg refs`/`tg callers`/`tg blast-radius` on a PHP symbol
+# still fall through to the honest `resolution_gaps` reverse-import disclosure (never a crash,
+# never a fabricated cross-file match) rather than the generic `_regex_references_and_calls` text
+# heuristic, which PHP never reached anyway (no regex fallback -- see below).
+# _language_coverage_gaps_for_universe already treats import_update_target=None as an honest
+# resolution_gaps entry (see the "audit #81 #4" comment on that function, and lang_go.py's own
+# import_update_target=None precedent), so `tg callers`/`tg blast-radius` stay honest about PHP's
+# remaining reverse-import gap instead of silently reading as a proven zero.
 # provenance_when_missing="grammar-missing" (NOT "regex-heuristic") for the same fail-closed
 # reason as Go: PHP has no regex-heuristic fallback.
 lang_registry.register_language(
@@ -6616,7 +6641,7 @@ lang_registry.register_language(
             "method_declaration",
         ),
         extract_imports_and_symbols=None,
-        references_and_calls=None,
+        references_and_calls=_php_references_and_calls_for_registry,
         provider_alias_calls=None,
         file_imports_symbol_from_definition=None,
         import_update_target=None,
