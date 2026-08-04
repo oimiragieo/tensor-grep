@@ -1274,6 +1274,25 @@ Net: 0 real defects, and the ratchet now discriminates. Had these shipped as fin
 been 9 false P0s — worse than the gap the ratchet exists to close.
 
 
+## OPEN FINDINGS -- 2026-08-04 waves 10A/10B (Java + C# caller-graph promotion)
+
+Recorded per the CEO's "document any new issues, bugs or findings in backlog.md". Every item
+below is an INSTRUMENT defect -- a check, probe, or git command that returned a believable
+answer and was wrong. None was found by re-reading code; each fell to a control.
+
+| # | sev | finding | status |
+|---|---|---|---|
+| G1 | HIGH | **A dated receipt was overwritten in place.** #927 rewrote the quoted command output inside a `Re-verified live 2026-08-01` receipt in `tensor-grep-enterprise-agent` to today's value, leaving the surrounding "still 5 parser-backed + 5 foundational" prose intact -- a self-contradicting sentence and a destroyed historical record. A receipt's value IS what the command printed on a date. | FIXED in #927: original quote restored, `SUPERSEDED` entry appended instead. #928 appends a second one rather than editing either. |
+| G2 | HIGH | **I censused history from a branch carrying my own change**, then accused a past author of fabricating that receipt. On `origin/main` (positive control: file readable, 1 hit for the descriptor discussion) the 2026-08-01 quote is CORRECT for its date. The contamination pointed straight at a false conclusion because the branch/main diff was exactly the thing under investigation. | FIXED -- law recorded; run historical censuses against a checked-out `origin/main` worktree. |
+| G3 | HIGH | **A `needs:`-gated CI job is ABSENT, not pending.** 13 jobs in `ci.yml` carry `needs: smoke`, so they have no check-run until smoke finishes. A settle gate of `all(bucket != 'pending')` is VACUOUSLY TRUE over the 11-check pre-smoke view, which structurally cannot contain any test lane. My own monitor had this defect and would have merged #927 on a view with zero tests executed. | FIXED -- gate now requires the heavy lanes to be PRESENT. Proven by the transition it was built to catch: 11 -> 39 check-runs the instant smoke finished. |
+| G4 | MEDIUM | **A shallow clone manufactures a false "diverged history".** `git rev-list --left-right --count main...origin/main` read `2673 24`, `git merge-base` returned EMPTY, and `git pull --ff-only` said "Not possible to fast-forward". All four were artifacts of `.git/shallow`. After `git fetch --unshallow`: `origin/main` reachable 24 -> 2698, merge-base resolves to local main's own tip, and `main` IS an ancestor -- it was 25 commits behind, nothing more. Acting on the first reading means a force-push or a re-clone. | FIXED -- repo unshallowed; local main fast-forwarded to 2e7fc5a. |
+| G5 | MEDIUM | **An `ast.walk`-based import check counts function-local imports as module-level.** Verifying "is `repo_map` imported?" in `test_session_cli.py` passed while the test still raised `NameError`, because `ast.walk` descends into function bodies and the file's three `repo_map` imports were all inside functions. The preceding `grep -c` was worse -- it matched the TEST NAME `..._reuse_repo_map`. | FIXED in #927 -- scope such checks to `tree.body`. |
+| G6 | LOW | **A forbidden `git stash` was run by a build seat** in a repo with 11 live worktrees, which share one stash drawer. Recovered by popping the newly-created stash by index; the other agent's `perf/main-import-lazy-wave` stash was verified still present afterwards. No loss, but the prohibition is only as good as the replacement being named at the moment of temptation. | VERIFIED no loss; brief for future seats already forbids it explicitly. |
+
+**Cross-slice note (union law).** #928 was authored on #927's pre-doc-repair base, so its skill/doc
+edits would have silently reverted G1's repair on merge. Caught by rebasing onto the repaired head
+BEFORE opening the PR and running the union; neither branch's own CI could have seen it.
+
 ## SHIPPING — open PRs (drain one-per-publish) — task #117
 
 **Queue empty -- 0 open PRs (verified 2026-07-24 via `gh pr list --state open`).** Since the prior
