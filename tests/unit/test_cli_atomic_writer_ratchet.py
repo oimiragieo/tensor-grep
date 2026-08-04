@@ -58,7 +58,8 @@ Known gaps (stated plainly, not papered over):
   reviewed set of real subprocess ``-c`` call sites in the scanned files -- but their PAYLOAD
   strings are NOT recursively parsed and classified by this first cut of the ratchet. Two of the
   three surfaced sites in ``main.py`` (``_install_release_native_frontdoor``'s detached-upgrade
-  helper scripts, `main.py:1779` and `main.py:15979`) embed their OWN ``os.replace`` /
+  helper scripts in `_schedule_windows_native_frontdoor_refresh` and
+  `_schedule_windows_self_upgrade`) embed their OWN ``os.replace`` /
   ``write_text`` / ``shutil.copy2`` calls for the SAME native-binary-install flow that produced
   this task's three pinned violations -- so those two generated scripts almost certainly carry
   the identical unaudited-writer defect and are NOT yet covered by this ratchet. This is recorded
@@ -1163,14 +1164,30 @@ def test_caller_supplied_temp_path_requires_explicit_sanction() -> None:
 # ---------------------------------------------------------------------------------------------
 
 
-def _real_subprocess_dash_c_sites(source: str, module: str) -> list[tuple[str, int]]:
+def _real_subprocess_dash_c_sites(source: str, module: str) -> list[tuple[str, str]]:
     """Every `subprocess.run(...)`/`subprocess.Popen(...)`/`subprocess.call(...)` (etc.) call
     whose argv LIST contains the literal string ``"-c"`` -- i.e. an actual generated-Python
     execution root, never a same-spelling CLI short flag like Typer's ``-c/--config`` or ripgrep's
     ``-c/--count`` passthrough (those appear as bare string literals OUTSIDE a subprocess-spawn
     argv list, so they never match this check)."""
     tree = ast.parse(source, filename=module)
-    hits: list[tuple[str, int]] = []
+    # Resolve each call's ENCLOSING FUNCTION. The identity must be stable across unrelated edits:
+    # this pin previously used `node.lineno` and reddened main when PR #916 added comment lines to
+    # main.py, shifting every number. Both PRs were green alone; only the merged tree was red.
+    parents: dict[ast.AST, ast.AST] = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[child] = parent
+
+    def _outer_function(node: ast.AST) -> str:
+        current = parents.get(node)
+        while current is not None:
+            if isinstance(current, ast.FunctionDef | ast.AsyncFunctionDef):
+                return current.name
+            current = parents.get(current)
+        return "<module>"
+
+    hits: list[tuple[str, str]] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -1186,8 +1203,8 @@ def _real_subprocess_dash_c_sites(source: str, module: str) -> list[tuple[str, i
             if isinstance(arg, ast.List):
                 for elt in arg.elts:
                     if isinstance(elt, ast.Constant) and elt.value == "-c":
-                        hits.append((module, node.lineno))
-    return sorted(hits, key=lambda item: item[1])
+                        hits.append((module, _outer_function(node)))
+    return sorted(set(hits))
 
 
 def test_generated_source_c_sites_are_surfaced() -> None:
@@ -1197,7 +1214,8 @@ def test_generated_source_c_sites_are_surfaced() -> None:
     moves/disappears), this test fails LOUDLY rather than the population count quietly staying
     the same while a new unaudited execution root is added.
 
-    KNOWN GAP, stated plainly: `main.py:1779` and `main.py:15979` each spawn a detached
+    KNOWN GAP, stated plainly: `_schedule_windows_native_frontdoor_refresh` and
+    `_schedule_windows_self_upgrade` each spawn a detached
     self-upgrade helper script (`helper_code = textwrap.dedent(<triple-quoted literal>)`) that embeds its OWN
     `os.replace(temp_path, native_path)`, `metadata_path.write_text(...)`, and
     `shutil.copy2(native_path, bridge_path)` calls for the SAME native-binary-install flow that
@@ -1205,7 +1223,8 @@ def test_generated_source_c_sites_are_surfaced() -> None:
     `_write_native_frontdoor_metadata` / `_download_native_frontdoor_asset`. Those two generated
     scripts are NOT recursively parsed by this first cut of the ratchet and their writers are
     therefore NOT yet counted in the `violating` total below -- they almost certainly carry the
-    identical defect. `main.py:521` spawns a version-check probe with no write calls at all
+    identical defect. `_verify_target_python_tensor_grep_version` spawns a version-check probe
+    with no write calls at all
     (`import importlib.metadata as m; ...; print(m.version('tensor-grep'))`) and is lower risk.
     Recursing this detector into generated-source payloads is left as an explicit follow-up, not
     silently declared clean.
@@ -1213,9 +1232,9 @@ def test_generated_source_c_sites_are_surfaced() -> None:
     source = _read(_CLI_SRC / "main.py")
     sites = _real_subprocess_dash_c_sites(source, "main.py")
     assert sites == [
-        ("main.py", 521),
-        ("main.py", 1779),
-        ("main.py", 15979),
+        ("main.py", "_schedule_windows_native_frontdoor_refresh"),
+        ("main.py", "_schedule_windows_self_upgrade"),
+        ("main.py", "_verify_target_python_tensor_grep_version"),
     ], (
         f"the set of real subprocess '-c' execution roots in main.py changed: {sites}. If this "
         "is a genuine new site, add it here AND assess whether its payload writes files (update "
