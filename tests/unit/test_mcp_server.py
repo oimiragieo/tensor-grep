@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tensor_grep.cli import repo_map
 from tensor_grep.core.hardware.device_detect import DeviceInfo
 from tensor_grep.core.hardware.device_inventory import DeviceInventory
 from tensor_grep.core.result import MatchLine, SearchResult
@@ -4607,10 +4608,7 @@ def test_tg_session_mcp_tools_wrap_session_store(tmp_path, monkeypatch):
         context["coverage"]["language_scope"]
         == "c-cpp-csharp-go-java-javascript-php-python-rust-typescript"
     )
-    assert (
-        context["coverage"]["symbol_navigation"]
-        == "parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-java-php"
-    )
+    assert context["coverage"]["symbol_navigation"] == repo_map._symbol_navigation_descriptor()
     assert context["coverage"]["test_matching"] == "filename+import+graph-heuristic"
     assert context["files"] == [str((src_dir / "sample.py").resolve())]
 
@@ -5566,10 +5564,7 @@ def test_tg_context_pack_returns_ranked_inventory(tmp_path, monkeypatch):
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "context-pack"
     assert payload["sidecar_used"] is False
-    assert (
-        payload["coverage"]["symbol_navigation"]
-        == "parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-java-php"
-    )
+    assert payload["coverage"]["symbol_navigation"] == repo_map._symbol_navigation_descriptor()
     assert payload["query"] == "invoice payment"
     assert payload["path"] == str(project.resolve())
     assert payload["files"][0] == str(module_path.resolve())
@@ -6336,10 +6331,7 @@ def test_tg_symbol_impact_returns_related_files_and_tests(tmp_path, monkeypatch)
 
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "symbol-impact"
-    assert (
-        payload["coverage"]["symbol_navigation"]
-        == "parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-java-php"
-    )
+    assert payload["coverage"]["symbol_navigation"] == repo_map._symbol_navigation_descriptor()
     assert payload["symbol"] == "create_invoice"
     assert payload["files"][0] == str(module_path.resolve())
     assert str(other_path.resolve()) in payload["files"]
@@ -6539,10 +6531,7 @@ def test_tg_symbol_refs_returns_python_reference_sites(tmp_path, monkeypatch):
 
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "symbol-refs"
-    assert (
-        payload["coverage"]["symbol_navigation"]
-        == "parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-java-php"
-    )
+    assert payload["coverage"]["symbol_navigation"] == repo_map._symbol_navigation_descriptor()
     assert payload["graph_completeness"] == "moderate"
     assert any(ref["provenance"] == "python-ast" for ref in payload["references"])
     assert any(ref["file"] == str(other_path.resolve()) for ref in payload["references"])
@@ -6582,10 +6571,7 @@ def test_tg_symbol_refs_and_callers_include_typescript_and_rust_heuristics(tmp_p
     rust_refs = json.loads(mcp_server.tg_symbol_refs("issue_invoice", str(project)))
     rust_callers = json.loads(mcp_server.tg_symbol_callers("issue_invoice", str(project)))
 
-    assert (
-        ts_refs["coverage"]["symbol_navigation"]
-        == "parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-java-php"
-    )
+    assert ts_refs["coverage"]["symbol_navigation"] == repo_map._symbol_navigation_descriptor()
     assert any(ref["file"] == str(ts_path.resolve()) for ref in ts_refs["references"])
     assert any(
         ref["provenance"] in {"tree-sitter", "regex-heuristic"} for ref in ts_refs["references"]
@@ -6630,10 +6616,7 @@ def test_tg_symbol_callers_returns_python_call_sites(tmp_path, monkeypatch):
 
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "symbol-callers"
-    assert (
-        payload["coverage"]["symbol_navigation"]
-        == "parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-java-php"
-    )
+    assert payload["coverage"]["symbol_navigation"] == repo_map._symbol_navigation_descriptor()
     assert payload["coverage"]["test_matching"] == "filename+import+graph-heuristic"
     assert any(caller["file"] == str(other_path.resolve()) for caller in payload["callers"])
     assert payload["tests"][0] == str(test_path.resolve())
@@ -6719,10 +6702,7 @@ def test_tg_symbol_blast_radius_returns_transitive_call_tree(tmp_path, monkeypat
 
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "symbol-blast-radius"
-    assert (
-        payload["coverage"]["symbol_navigation"]
-        == "parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-java-php"
-    )
+    assert payload["coverage"]["symbol_navigation"] == repo_map._symbol_navigation_descriptor()
     assert payload["symbol"] == "create_invoice"
     assert payload["max_depth"] == 2
     assert payload["definitions"][0]["file"] == str(module_path.resolve())

@@ -20,7 +20,15 @@ from pathlib import Path
 from typing import Any, Literal, NamedTuple, TypeVar, cast
 from urllib.parse import unquote, urlparse
 
-from tensor_grep.cli import lang_c, lang_cpp, lang_csharp, lang_go, lang_php, lang_registry
+from tensor_grep.cli import (
+    lang_c,
+    lang_cpp,
+    lang_csharp,
+    lang_go,
+    lang_java,
+    lang_php,
+    lang_registry,
+)
 from tensor_grep.cli.incompleteness import budget_remediable
 from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager, LSPTransportError
 from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
@@ -6348,6 +6356,21 @@ def _go_references_and_calls_for_registry(
     return lang_go.go_references_and_calls(path, symbol, repo_root, definition_dirs=definition_dirs)
 
 
+def _java_references_and_calls_for_registry(
+    path: Path,
+    symbol: str,
+    repo_root: Path | str | None = None,
+    *,
+    definition_dirs: frozenset[str] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    # Task 10A: in-file AST extraction only -- no cross-file import resolution yet (that's Task
+    # 11A), so repo_root/definition_dirs are part of the uniform registry adapter signature (Go
+    # F25) but unused here, same as python/js/ts/rust's own adapters above. `_java_parser()` is
+    # called HERE (not duplicated inside lang_java.py) so grammar-presence has exactly one source
+    # of truth -- see lang_java.py's module docstring for why a second factory would be unsafe.
+    return lang_java.java_references_and_calls(path, symbol, parser=_java_parser())
+
+
 def _references_and_calls_for_path(
     path: Path,
     symbol: str,
@@ -6363,8 +6386,11 @@ def _references_and_calls_for_path(
     for Go F25, ignored elsewhere) so this seam never branches on ``language_id``.
 
     EXPLICIT fallback: when the path has no registered extractor (``spec is None`` or
-    ``spec.references_and_calls is None`` -- foundational-tier c/cpp/csharp/java/php, plus
-    unregistered suffixes), call ``_regex_references_and_calls``. That fallback is
+    ``spec.references_and_calls is None`` -- foundational-tier c/cpp/csharp/php, plus
+    unregistered suffixes), call ``_regex_references_and_calls``. Java shipped an in-file
+    ``references_and_calls`` extractor (Task 10A) so it no longer falls into this branch;
+    its cross-file caller confirmation still uses the same text-prefilter mechanism as the
+    languages listed here, just reached through a different seam. That fallback is
     deliberate and documented, never an implicit empty result.
 
     Secondary degrade paths that used to live inside the per-language_id if/elif chains
@@ -6506,16 +6532,18 @@ lang_registry.register_language(
     )
 )
 
-# PATH A Stage 2: Java joins the symbol graph as a FOUNDATIONAL-TIER language -- symbols
-# (classes/interfaces/enums/records/methods/constructors) and raw import declarations flow into
-# build_repo_map / `tg defs` / `tg source` / `tg imports` / `tg agent` via
-# _java_imports_and_symbols / _java_parser_symbol_sources / _java_imports_with_lines. The deep
-# caller-graph tier (references_and_calls, provider_alias_calls,
+# PATH A Stage 2 (Task 10A): Java's symbols (classes/interfaces/enums/records/methods/
+# constructors) and raw import declarations flow into build_repo_map / `tg defs` / `tg source` /
+# `tg imports` / `tg agent` via _java_imports_and_symbols / _java_parser_symbol_sources /
+# _java_imports_with_lines (still inline in this file -- see lang_java.py's module docstring for
+# why the move was deliberately scoped OUT of Task 10A). references_and_calls now points at
+# lang_java.java_references_and_calls (Task 10A: IN-FILE AST reference/call extraction,
+# promoting Java to the parser-backed-refs-callers tier) via the registry adapter above. The
+# remaining cross-file caller-graph fields (provider_alias_calls,
 # file_imports_symbol_from_definition, import_update_target, prime_repo_context,
-# classify_ref_kind -- cross-file method-call resolution powering `tg callers`/
-# `tg blast-radius`) is intentionally left None here, deferred to a follow-up PR (see the
-# feat/java-symbol-intelligence PR body). provenance_when_missing="grammar-missing" (NOT
-# "regex-heuristic"): Java has no regex fallback, mirroring Go's fail-closed contract.
+# classify_ref_kind -- package/source-root import resolution powering a confirmed `tg callers`/
+# `tg blast-radius`) stay None, deferred to Task 11A. provenance_when_missing="grammar-missing"
+# (NOT "regex-heuristic"): Java has no regex fallback, mirroring Go's fail-closed contract.
 lang_registry.register_language(
     lang_registry.LanguageSpec(
         language_id="java",
@@ -6534,7 +6562,7 @@ lang_registry.register_language(
             "constructor_declaration",
         ),
         extract_imports_and_symbols=_java_imports_and_symbols,
-        references_and_calls=None,
+        references_and_calls=_java_references_and_calls_for_registry,
         provider_alias_calls=None,
         file_imports_symbol_from_definition=None,
         import_update_target=None,

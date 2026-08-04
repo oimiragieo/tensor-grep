@@ -28,7 +28,15 @@ from pathlib import Path
 
 import pytest
 
-from tensor_grep.cli import lang_c, lang_cpp, lang_csharp, lang_go, lang_registry, repo_map
+from tensor_grep.cli import (
+    lang_c,
+    lang_cpp,
+    lang_csharp,
+    lang_go,
+    lang_java,
+    lang_registry,
+    repo_map,
+)
 
 # ---------------------------------------------------------------------------
 # spec_for_path / graph_suffixes
@@ -260,6 +268,64 @@ def test_grammar_absent_monkeypatch_cpp_provenance_flips_to_grammar_missing(monk
 
     assert provenance == "grammar-missing"
     assert provenance != ""
+
+
+# ---------------------------------------------------------------------------
+# Task 10A: Java's references_and_calls dispatch registration.
+#
+# Java's own AST-shape coverage lives in tests/unit/test_lang_java.py; this file (the shared
+# dispatch-registry seam) only needs the registry-dispatch-routing shape: the SAME pattern this
+# module already exercises for every other language's provenance flip, adapted to prove
+# `_references_and_calls_for_path` actually reaches the registered extractor instead of silently
+# falling through to `_regex_references_and_calls`.
+# ---------------------------------------------------------------------------
+
+
+def test_java_references_and_calls_dispatches_through_registered_extractor(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Registry-dispatch spy: `_references_and_calls_for_path` must invoke the REGISTERED Java
+    extractor (`lang_java.java_references_and_calls`, reached via
+    `_java_references_and_calls_for_registry`), never the explicit `_regex_references_and_calls`
+    fallback -- proving the dispatch routes on `spec.references_and_calls is not None`, not on a
+    hardcoded `language_id == "java"` branch."""
+    java_path = tmp_path / "Widget.java"
+    java_path.write_text("class Widget {}\n", encoding="utf-8")
+    calls: list[tuple[Path, str]] = []
+
+    def _spy(path: Path, symbol: str, *, parser=None):
+        calls.append((path, symbol))
+        return [{"name": symbol, "kind": "reference", "ref_kind": "call", "file": str(path)}], []
+
+    monkeypatch.setattr(lang_java, "java_references_and_calls", _spy)
+
+    references, _ = repo_map._references_and_calls_for_path(java_path, "Widget", tmp_path)
+
+    assert calls == [(java_path, "Widget")]
+    assert references and references[0]["name"] == "Widget"
+
+
+def test_grammar_absent_monkeypatch_java_references_and_calls_returns_empty(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Fail-closed contract for the dispatch seam itself (complements the direct
+    `lang_java.java_references_and_calls(..., parser=None)` unit test in test_lang_java.py):
+    when the Java grammar is absent, the SAME single source of truth
+    (`repo_map._java_parser`) that flips `_symbol_navigation_provenance_for_path` to
+    "grammar-missing" also makes the registry-dispatched extractor return an honest empty
+    result -- never a crash, never a stale/fabricated non-empty result from a second,
+    independently-cached parser."""
+    java_path = tmp_path / "Widget.java"
+    java_path.write_text(
+        "class Widget {\n    void run() {\n        doWork();\n    }\n}\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(repo_map, "_java_parser", lambda: None)
+
+    references, calls = repo_map._references_and_calls_for_path(java_path, "doWork", tmp_path)
+
+    assert references == []
+    assert calls == []
+    assert repo_map._symbol_navigation_provenance_for_path(str(java_path)) == "grammar-missing"
 
 
 # ---------------------------------------------------------------------------

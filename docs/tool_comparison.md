@@ -143,8 +143,8 @@ agent can safely do with an answer:
 
 | Tier | Languages | What an agent can do with the answer |
 | --- | --- | --- |
-| Parser-backed refs/callers | Go, JavaScript, Python, Rust, TypeScript | `tg refs` / `tg callers` / `tg blast-radius` return AST-verified reference and call sites. A complete-scan "no callers found" here is evidence for a rename or a deletion. |
-| Foundational defs/imports only | C, C++, C#, Java, PHP | `tg defs` / `tg imports` are parser-backed and fail closed (an unparseable file becomes a named `resolution_gaps` entry, never a silent skip). But `tg refs` / `tg callers` / `tg blast-radius` fall through to a text heuristic: hits are candidate sites to read, not resolved call edges, and "no callers found" is not evidence of anything. |
+| Parser-backed refs/callers | Go, Java, JavaScript, Python, Rust, TypeScript | `tg refs` / `tg callers` / `tg blast-radius` return AST-verified reference and call sites. A complete-scan "no callers found" here is evidence for a rename or a deletion. Java joined this tier IN-FILE only (Task 10A): a same-file reference/call is AST-verified, but cross-file caller confirmation still relies on the same literal-text prefilter every language uses when it has no import resolver, because Java's own package/source-root resolver (import_update_target) has not shipped yet -- a resolution_gaps entry still names that gap. |
+| Foundational defs/imports only | C, C++, C#, PHP | `tg defs` / `tg imports` are parser-backed and fail closed (an unparseable file becomes a named `resolution_gaps` entry, never a silent skip). But `tg refs` / `tg callers` / `tg blast-radius` fall through to a text heuristic: hits are candidate sites to read, not resolved call edges, and "no callers found" is not evidence of anything. |
 
 Each refs/callers entry in a JSON payload also carries its own per-file `provenance` field, so a
 consumer can branch on how a specific answer was produced instead of memorizing this table.
@@ -153,7 +153,8 @@ consumer can branch on how a specific answer was produced instead of memorizing 
 breakdown — ~30 bespoke tree-sitter languages with resolved call edges, ~60 regex, ~165
 signature-only — and its deep tier covers all ten of `tg`'s languages plus roughly twenty more
 (2026-08-01 survey, `docs/positioning/2026-08-01-policy-layer-moat.md`, each claim carrying a dated
-URL). On the apples-to-apples deep tier the count is roughly 5 vs 30, in Gortex's favor. Serena's
+URL). On the apples-to-apples deep tier the count is roughly 6 vs 30, in Gortex's favor (Java
+joined `tg`'s deep tier in-file only, Task 10A -- see the caveat in the table above). Serena's
 40+ comes from wrapping LSP servers. Tiered language disclosure itself is normal industry practice
 (Semgrep's maturity levels, Sourcegraph's precise/syntactic/search-based navigation, Zed's
 LSP-vs-highlighting split, nvim-treesitter's per-grammar tiers), so this table is table stakes, not
@@ -163,8 +164,9 @@ not a measured one.
 
 **Why publish the deep tier at all, then.** Because the tier decides which failure mode a caller is
 exposed to. The job `tg` is built for — an agent editing code it did not write — is exactly the job
-where a text-heuristic "no callers" acted on in good faith deletes working code. For five languages
-`tg` gives the verified answer; for the other five it still answers, but it labels the mechanism,
+where a text-heuristic "no callers" acted on in good faith deletes working code. For six languages
+`tg` gives the verified answer (for one of those six, Java, only within a single file so far --
+see the table caveat); for the other four it still answers, but it labels the mechanism,
 and this document says so before a competitor does.
 
 **Re-derive this table; do not trust it.** Both tier lists are computed live from the language
@@ -180,7 +182,7 @@ The payload's `coverage` block, verbatim:
 ```json
 {
   "language_scope": "c-cpp-csharp-go-java-javascript-php-python-rust-typescript",
-  "symbol_navigation": "parser-backed-refs-callers:go-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-java-php",
+  "symbol_navigation": "parser-backed-refs-callers:go-java-javascript-python-rust-typescript+foundational-defs-imports-only:c-cpp-csharp-php",
   "test_matching": "filename+import+graph-heuristic"
 }
 ```
