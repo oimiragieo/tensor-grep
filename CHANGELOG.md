@@ -1,6 +1,86 @@
 # CHANGELOG
 
 
+## v1.104.0 (2026-08-04)
+
+### Documentation
+
+- Reconcile the task board to v1.103.0 and green main
+  ([#931](https://github.com/oimiragieo/tensor-grep/pull/931),
+  [`d3726c8`](https://github.com/oimiragieo/tensor-grep/commit/d3726c88a721e4f9118067e2acc78aa98b96f1f8))
+
+main is RED. `test_task_board_reconcile_stamp_is_not_many_releases_stale` failed on every
+  test-python lane of run 30952799876: the board stamp read v1.102.7 while pyproject ships v1.103.0
+  -- 6 behind, tolerance 5.
+
+WHY #928's OWN CI COULD NOT SEE THIS. #928 was rebased onto 2e7fc5a and its 48 checks ran against
+  that base, where the version was still 1.102.8 and the stamp was inside tolerance. v1.103.0
+  released BETWEEN that CI run and the merge, which pushed the stamp out of range. A
+  version-dependent semantic merge collision -- the base moved under a green PR, and no per-PR run
+  can observe it by construction.
+
+Reconciled the CONTENT before bumping the stamp, as the gate's own failure message demands ("Do not
+  just bump the stamp"). Both numbers derived, not retyped:
+
+gh pr list --state open -> #929, #930 (the IN FLIGHT table) PyPI info.version -> 1.103.0 (not a tag;
+  `tag == PyPI` cannot tell released from not-started from died)
+
+The header previously said "#925 in flight" and predated #926/#927/#928 entirely.
+
+Scope note: this reconciles the header stamp and the IN FLIGHT set. It does not re-audit every item
+  further down the board -- a green run here means the stamp is RECENT, not that the content is
+  correct, and the gate says so in as many words.
+
+Gates: 7 passed test_task_board_freshness (behind now 0), plus the backlog tracker, public-docs
+  governance, docs coverage, and both skill-drift gates.
+
+### Features
+
+- **lang-csharp**: Promote C# to parser-backed refs/callers with two honest confidence bands
+  ([#928](https://github.com/oimiragieo/tensor-grep/pull/928),
+  [`f579363`](https://github.com/oimiragieo/tensor-grep/commit/f579363505af32a86286b8e6b750576796f6a4e8))
+
+Wave 10B of F7. _symbol_navigation_descriptor() moves csharp out of the foundational half:
+
+before: parser-backed-refs-callers:go-java-javascript-python-rust-typescript
+
++foundational-defs-imports-only:c-cpp-csharp-php after:
+  parser-backed-refs-callers:csharp-go-java-javascript-python-rust-typescript
+
++foundational-defs-imports-only:c-cpp-php
+
+Both red arms were recorded failing behaviour-specifically before any implementation -- "assert None
+  is not None" on the registry seam, and the descriptor showing csharp in the foundational half.
+  Neither was an ImportError, which would have proved only that a symbol was missing.
+
+C#'s grammar was re-derived rather than copied from Java: invocation_expression carries one
+  `function` field that is either a bare identifier (unqualified) or a member_access_expression
+  (qualified), where Java's method_invocation always has an explicit-or-absent `object`. C# also
+  reuses member_access_expression for a call qualifier AND a plain field/property read, so
+  claimed-node tracking by (start_byte, end_byte) is required or a qualified call double-emits as
+  both `call` and `field`.
+
+Two bands, mirroring Java, demoted never dropped: 0.9 csharp-infile-type-confirmation -- receiver's
+  declared type is in-file and declares the member 0.6 csharp-name-heuristic -- not confirmable
+
+MUTATION-VERIFIED that the bands discriminate rather than merely existing: collapsing CONFIRMED to
+  0.6 turns the divergence test RED; reverting restores 41/41 with lang_csharp.py byte-identical. A
+  single-band implementation wearing two names is the defect this shape exists to prevent.
+
+C#-specific coverage beyond Java: an unqualified call confirms via the enclosing type, and a
+  property access confirms exactly like a field, since the grammar cannot distinguish them at the
+  reference site.
+
+Gates: 41/41 test_lang_csharp, ruff, ruff format --preview, mypy (90 files). The 4 test_mcp_server
+  failures are *_without_native_binary and reproduce identically on a clean origin/main worktree --
+  not regressions.
+
+KNOWN, deliberately left for the rebase: this branch is based on 10A's dfd8aaa, which predates the
+  10A doc-repair commit. Its skill/doc edits must be reconciled against that repair -- in particular
+  the enterprise-agent cell, whose dated 2026-08-01 receipt is repaired on the 10A head but still
+  corrupted in this base.
+
+
 ## v1.103.0 (2026-08-04)
 
 ### Features
