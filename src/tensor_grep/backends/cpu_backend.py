@@ -57,6 +57,16 @@ class InvalidRegexError(ValueError):
     """Raised when regex syntax is invalid and fixed-string fallback was not requested."""
 
 
+class _NativeAdapterTypeError(RuntimeError):
+    """A `TypeError` raised by the NATIVE search call specifically.
+
+    Deliberately NOT a `TypeError` subclass: it exists so the fail-closed handler can be scoped to
+    the native adapter alone. If it were a `TypeError`, widening would creep back the first time
+    someone moved the handler, and a `TypeError` from `MatchLine`/`SearchResult` construction
+    would again be reported as a native-engine failure.
+    """
+
+
 class _RustUtf8DecodeMismatch(RuntimeError):
     """Internal signal: Rust returned no matches on a non-UTF-8 file; retry via Python decode.
 
@@ -422,26 +432,28 @@ class CPUBackend(ComputeBackend):
 
         # Every request reaching this point is the "simple" pattern case (no -C/-A/-B/-w/-x --
         # those already returned above via `_search_word_line_context_via_rust`, and --ltl
-        # returned even earlier); always attempt the linear-time Rust engine first.
+        # returned even earlier); always attempt the linear-time Rust engine first. Routed
+        # through `_rust_match_set` -- the SOLE native-adapter call site in this class -- so
+        # there is exactly one place in the file that calls `rust_backend.search(...)` with
+        # `invert_match`. See that method's docstring and the `except TypeError` handler below
+        # for why this must never silently retry without `invert_match`.
         try:
-            from tensor_grep.rust_core import RustBackend
-
-            rust_backend = RustBackend()
+            # Inner try scopes the TypeError guard to the NATIVE CALL ONLY. Widening it over the
+            # whole body would let a TypeError from `Path.read_text`, the `max_count` slice, or
+            # `MatchLine`/`SearchResult` construction below raise a message blaming the native
+            # engine -- which would be false -- and would convert a recoverable `fixed_strings`
+            # Python fallback into a hard refusal. Re-raised as-is so the existing handlers below
+            # classify it exactly as they did before this change.
             try:
-                rust_results = rust_backend.search(
-                    pattern=pattern,
-                    path=file_path,
-                    ignore_case=config.ignore_case or (config.smart_case and pattern.islower()),
-                    fixed_strings=config.fixed_strings,
-                    invert_match=config.invert_match,
+                rust_results = self._rust_match_set(
+                    file_path,
+                    pattern,
+                    config.ignore_case or (config.smart_case and pattern.islower()),
+                    config.fixed_strings,
+                    config.invert_match,
                 )
-            except TypeError:
-                rust_results = rust_backend.search(
-                    pattern=pattern,
-                    path=file_path,
-                    ignore_case=config.ignore_case or (config.smart_case and pattern.islower()),
-                    fixed_strings=config.fixed_strings,
-                )
+            except TypeError as exc:
+                raise _NativeAdapterTypeError(str(exc)) from exc
 
             # If Rust returns no matches on a file that is not valid UTF-8, fall back to Python
             # decoding path (latin-1/replace) for compatibility.
@@ -505,6 +517,34 @@ class CPUBackend(ComputeBackend):
             # Native extension genuinely absent: Python `re` is the ONLY available engine.
             # Availability over ReDoS-strictness for this environment condition (expected).
             logger.debug("rust_core unavailable for %s, using Python regex: %s", file_path, exc)
+        except _NativeAdapterTypeError as exc:
+            # Plan Task 5 Step 3. The removed retry (`.search(...)` again WITHOUT `invert_match`)
+            # targeted a checkpoint THAT NO LONGER EXISTS: `invert_match` is a REQUIRED positional
+            # on the extension (`rust_core/src/lib.rs`, no `#[pyo3(signature=...)]` default) and
+            # has been since before this adapter shipped. `backends/rust_backend.py` already
+            # deleted the identical 4-arg fallback (R7a) for exactly this reason -- this is the
+            # same fix applied to the CPU adapter's twin.
+            #
+            # Be precise about what the old retry could and could not do, because the obvious
+            # story is wrong: on a CURRENT build the retry raises `TypeError` again (the argument
+            # is required), so it never silently succeeds. The silent wrong answer was reachable
+            # only under version skew -- an OLD extension lacking the parameter -- and there the
+            # retry was CORRECT for `invert_match=False` and WRONG for `-v`, where it returned the
+            # MATCHING set instead of the inverted one and presented it as success.
+            #
+            # So this trades a working `invert_match=False` path on a stale build for refusing to
+            # answer the opposite question on `-v`. That is the right trade: dropping
+            # `invert_match` changes what the result MEANS, not merely how it was computed, and
+            # the caller cannot tell from the exception which case they are in. It must also not
+            # fall through to the `fixed_strings` Python fallback below, which would recompute
+            # correctly only by accident of this exception's cause.
+            raise BackendExecutionError(
+                "cannot safely evaluate this pattern through CPUBackend: a TypeError reached the "
+                f"native-search adapter ({exc}). Retrying without invert_match is not safe -- on "
+                "a stale extension it returns the MATCHING set instead of the inverted set when "
+                "-v is set. Install ripgrep, or rebuild rust_core so its search() signature "
+                "matches this adapter"
+            ) from exc
         except Exception as exc:
             # Lazy import avoids a circular import (rust_backend imports InvalidRegexError from
             # this module); by call time both modules are fully loaded. Single source of truth.
@@ -823,30 +863,37 @@ class CPUBackend(ComputeBackend):
         """Run ONE pattern through the linear-time Rust engine and return its raw
         ``(line_number, text)`` matches (Rust applies ``invert_match`` itself, so the returned
         set is already the correct one either way). Raises on ANY failure (Rust genuinely
-        absent, syntax rejection, or a runtime fault) -- callers decide the fail-closed
-        response; this helper never falls open to Python `re` itself (that is exactly the
-        audit #6/#16 hazard).
+        absent, syntax rejection, a runtime fault, or a `TypeError` from the call itself) --
+        callers decide the fail-closed response; this helper never falls open to Python `re`
+        itself (that is exactly the audit #6/#16 hazard), and it never retries.
+
+        Plan Task 5 Step 3. This used to catch `TypeError` and retry WITHOUT `invert_match`,
+        for "an older rust_core build lacking the kwarg". That checkpoint no longer exists:
+        `invert_match` is a REQUIRED positional in `rust_core/src/lib.rs` with no
+        `#[pyo3(signature=...)]` default, so on a current build the retry simply raises again.
+        `backends/rust_backend.py` already removed the identical 4-arg fallback (R7a) on the same
+        grounds. The silent wrong answer was reachable only under version skew (an OLD extension),
+        where the retry was CORRECT for `invert_match=False` but returned the MATCHING set instead
+        of the inverted one for `-v` -- presenting the opposite of the requested answer as success.
+        Refusing is the right trade, because dropping `invert_match` changes what the result MEANS.
+        This is the SOLE call site in the class that invokes
+        `rust_backend.search(...)` -- the primary "simple" search path routes through here too --
+        so there is exactly one native adapter and zero TypeError compatibility retries.
         """
         from tensor_grep.rust_core import RustBackend
 
         rust_backend = RustBackend()
-        try:
-            results: list[tuple[int, str]] = rust_backend.search(
-                pattern=rust_pattern,
-                path=file_path,
-                ignore_case=ignore_case,
-                fixed_strings=fixed_strings,
-                invert_match=invert_match,
-            )
-        except TypeError:
-            # Older rust_core builds without the `invert_match` kwarg (matches the same
-            # defensive fallback the primary Rust-attempt block above uses).
-            results = rust_backend.search(
-                pattern=rust_pattern,
-                path=file_path,
-                ignore_case=ignore_case,
-                fixed_strings=fixed_strings,
-            )
+        # Bind to an annotated local before returning: the PyO3 extension is untyped, so returning
+        # its result directly trips mypy's `no-any-return` against this method's declared
+        # `list[tuple[int, str]]`. The sibling adapter in `backends/rust_backend.py` avoids it the
+        # same way (it binds `results` and iterates rather than returning the call).
+        results: list[tuple[int, str]] = rust_backend.search(
+            pattern=rust_pattern,
+            path=file_path,
+            ignore_case=ignore_case,
+            fixed_strings=fixed_strings,
+            invert_match=invert_match,
+        )
         return results
 
     def _search_word_line_context_via_rust(
