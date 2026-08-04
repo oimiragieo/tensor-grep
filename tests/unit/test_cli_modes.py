@@ -10436,7 +10436,21 @@ def test_tg_search_help_should_not_claim_tg_run_ast_grep_parity():
 
     assert result.exit_code == 0
     help_text = _strip_ansi(result.stdout)
-    normalized_help = re.sub(r"\s+", " ", help_text)
+    # Normalize BOTH whitespace and markdown backticks before asserting.
+    #
+    # The help body is a markdown string and `app.rich_markup_mode == "markdown"`, so when rich is
+    # loaded Typer renders the cross-reference as `tg run: Run a validated AST slice` with the
+    # backticks consumed as formatting. When rich is NOT in sys.modules Typer falls back to plain
+    # Click, which emits the RAW markdown -- backticks intact -- and the identical, correct help
+    # text stops matching a backtick-free substring.
+    #
+    # That is reachable in tests purely through collection/import order: measured, `rich` was in
+    # sys.modules for a node-id run (help 30001 chars) and ABSENT when a sibling test module was
+    # collected alongside (help 16379 chars), with `rich_markup_mode` identical in both. It is not
+    # reachable for users -- `rich` is a CORE dependency, so the shipped CLI always renders rich.
+    # Asserting the INVARIANT (the cross-reference is present) rather than one renderer's exact
+    # bytes is what makes this test honest about what it protects.
+    normalized_help = re.sub(r"\s+", " ", help_text).replace("`", "")
     assert "tg run: Run a validated AST slice" in normalized_help
     assert "ast-grep parity" not in help_text
 
