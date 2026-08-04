@@ -606,21 +606,80 @@ Options a decision should choose between: (a) keep exit 1, document that agents 
 `path_was_defaulted`; (b) add a distinct exit 3 for "completed but scope/result is not what you
 asked for"; (c) widen exit 2's meaning and accept the blast radius.
 
-### F2 — anonymous `--claim` still allowed (THE RETIREMENT DOES NOT COVER THIS)
+### F2 — anonymous `--claim` — CLOSED as a non-issue, 2026-08-03 (the guard already shipped)
 
-The board records anonymous `--claim` as RESOLVED. **It is not the same question.** The adversarial
-audit killed **auto-deriving** an agent id, with a receipt: `_find_overlaps` suppresses when
-`new.agent_id != _DEFAULT_AGENT_ID and entry.agent_id == new.agent_id`, so two zero-config agents
-sharing a derived id would silently drop each other's overlaps — reproducing #845 by a new mechanism.
+**RESOLVED. No design call is needed, and the "default-refuse vs default-allow" framing below was
+answered by reading the code.** Three independent seats (an opus design council seat, a codex
+`gpt-5.6-sol` xhigh seat, and a direct source read) each verified the same thing.
 
-**That kills DERIVE. It never considered REFUSE.** Refusing an anonymous claim outright (fail-closed,
-with the env var named in the error) is a third option the retirement does not touch and does not
-argue against.
+The original entry reasoned from this suppression condition:
 
-Same shape as the TASK_BOARD freshness gate, where two rejections were aimed at *strict equality* and
-a *tolerance* was never considered. **A rejection is aimed at the form it names.** Re-read retirements
-before treating them as closing a neighbouring option. **OPEN, actionable, needs a design call on
-default-refuse vs default-allow.**
+```
+new.agent_id != _DEFAULT_AGENT_ID and entry.agent_id == new.agent_id
+```
+
+and concluded two zero-config agents would drop each other's overlaps. **Read the first conjunct
+again.** `_DEFAULT_AGENT_ID == "anonymous"`, so for an anonymous claimant `new.agent_id !=
+_DEFAULT_AGENT_ID` is **False**, the suppression is **skipped**, and two anonymous agents **do** see
+each other's overlaps. That guard *is* the #845 fix, and it is exactly what REFUSE was hoping to buy
+— at zero UX cost. Pinned by `tests/unit/test_anonymous_claims_are_not_one_agent.py` (three arms,
+including a premise test asserting the sentinel's literal value so a rename cannot silently un-fix
+it).
+
+**Why REFUSE is rejected on its own merits, not by inheriting the DERIVE retirement** (the entry was
+right that a rejection is aimed at the form it names, so this is argued separately): the ledger is
+explicitly **advisory** — a claim carrying overlaps still exits `0` and never blocks an edit — so a
+wrong anonymous claim costs one coordination hint and nothing else. REFUSE would remove the
+documented zero-config path and break `tg prepare --claim`, which has **no `--agent-id` flag of its
+own**, i.e. it would ship a gate before its consumer could satisfy it.
+
+**One REAL defect did fall out of this review, on the mirror path.** `release_claim` scoped `--symbol`
+matching with `entry["agent_id"] == resolved_agent_id` — the same sentinel-as-identity confusion,
+fixed on the CLAIM path and missed on the RELEASE path. Two anonymous agents both satisfied the
+equality, so agent B's `release --symbol foo` silently released agent A's claim, contradicting that
+function's own docstring guarantee. Fixed in **PR #914** with a measured red arm; an anonymous
+`--symbol` release now matches nothing and returns a specific `unmatched_reason` naming `--claim-id`
+and `TG_LEDGER_AGENT_ID`.
+
+**Doc corrected alongside:** `docs/CONTRACTS.md` section 9 said `overlaps` lists claims "from OTHER
+agent_ids", which is false for the deliberately-equal sentinel (PR #916).
+
+### DEP-FLOOR-REACH — a `[tool.uv]` constraint is LOCK-ONLY (measured 2026-08-03, mostly NOT actionable)
+
+**Recorded because the MECHANISM is durable even though 6 of the 7 instances are not actionable.**
+Keeping this so the next advisory is handled correctly instead of re-derived under time pressure.
+
+`[tool.uv].constraint-dependencies` governs **this repo's local resolution only**. It is not
+published metadata, so it does nothing for `pip install tensor-grep[...]`. Published floors come from
+`[project.dependencies]` / `[project.optional-dependencies]`.
+
+Of 9 security floors, only `cryptography` was declared directly. The rest were lock-only:
+
+| floor | reachable via | disposition |
+|---|---|---|
+| `aiohttp>=3.14.3` | `tritonclient[http]` ← `extra:nlp` | **FIXED, PR #911** — real: our lock held 3.14.1 and pip-audit failed on 3 live CVEs, and tritonclient permits `aiohttp>=3.8.1,<4` |
+| `pyjwt`, `python-multipart`, `starlette`, `pydantic-settings` | `mcp` ← **core** | not actionable (see measurement) |
+| `python-dotenv` | `pydantic-settings` ← `mcp` ← core | not actionable |
+| `pygments` | `rich` ← **core** | not actionable |
+| `requests>=2.33.0` | — | **vestigial**: absent from `uv.lock` entirely, constrains nothing. Drop it or wire it to something real. |
+
+**Two decisive tests, both run — this is why the other six were NOT changed:**
+
+1. *Can raising the direct parent's floor fix them?* **No.** `mcp` 2.0.0's own metadata permits
+   `pyjwt[crypto]>=2.10.1`, `python-multipart>=0.0.9`, `starlette>=0.27`/`>=0.48.0` — all **below**
+   our floors — and `pydantic-settings` is not a direct `mcp` dependency at all.
+2. *What is the actual exposure?* **Zero, today.** A fresh resolve takes **latest**, and latest
+   satisfies every floor: pyjwt 2.13.0, starlette 1.3.1, python-multipart 0.0.32, pydantic-settings
+   2.14.2, python-dotenv 1.2.2, pygments 2.20.0, requests 2.34.2. Floors a fresh install would
+   violate: **none**.
+
+So declaring six more direct dependencies in published metadata would take real resolution risk — an
+unsatisfiable floor can silently downgrade the whole install on a newer Python — for **zero measured
+benefit**. Deliberately not done.
+
+**If this recurs**, the mechanism is already in place: `scripts/validate_release_assets.py`'s
+`required_extra_floors` mapping (added in #911) makes declaring a published floor a **data edit**,
+not a new code path, and it ships with a red-arm test pinning the exact error text.
 
 ### F3-F4 — GPU non-accelerative / `calibrate` exit 2 · no `edit-ready`/`verify-edit`
 
