@@ -668,6 +668,25 @@ def _download_native_frontdoor_asset(url: str, destination: Path) -> None:
                 f"(possible oversized or malicious response): {url}"
             )
 
+    # Claim the temp name ATOMICALLY as a regular file before urlretrieve touches it.
+    #
+    # `urlretrieve` opens its target with a plain 'wb', which FOLLOWS a symlink -- and the payload
+    # here is a native EXECUTABLE the front door later runs. O_EXCL fails if ANYTHING already
+    # exists at the path (symlink, hard link, or regular file) instead of writing through it, so
+    # urlretrieve's later 'wb' can only land on the regular file we just created.
+    #
+    # This is defence-in-depth, not a wide-open hole: callers pass a `{name}.{uuid4().hex}` temp
+    # path, so an attacker cannot pre-plant a symlink at a name they can predict. What it closes is
+    # the RACE on a world-writable parent, where an attacker watching for creation could land a
+    # symlink between name selection and open. Mode is passed to os.open rather than chmod-ed
+    # afterwards, so there is no window where the file exists with wider permissions.
+    #
+    # A collision on a uuid4 name is not expected; refusing (rather than truncating) is the honest
+    # response, and it keeps the guard from degrading into "symlinks only", which a hard link would
+    # sidestep. Found by the #859 atomic-writer ratchet.
+    fd = os.open(destination, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    os.close(fd)
+
     previous_timeout = socket.getdefaulttimeout()
     socket.setdefaulttimeout(60)
     try:
@@ -1678,6 +1697,11 @@ def _schedule_windows_native_frontdoor_refresh(
                             if block_num * block_size > 512 * 1024 * 1024:
                                 raise RuntimeError("native asset download exceeded 512MB")
 
+                        # O_EXCL claims the temp name as a regular file first; urlretrieve's 'wb'
+                        # FOLLOWS a symlink and the payload is an executable. Full rationale in
+                        # _download_native_frontdoor_asset (found by the #859 ratchet).
+                        _fd = os.open(temp_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                        os.close(_fd)
                         urllib.request.urlretrieve(url, temp_path, reporthook=_cap)
                     except Exception as exc:
                         errors.append(f"{flavor} asset unavailable: {exc}")
@@ -15781,6 +15805,11 @@ def upgrade() -> None:
                                         if block_num * block_size > 512 * 1024 * 1024:
                                             raise RuntimeError("native asset download exceeded 512MB")
 
+                                    # O_EXCL claims the temp name as a regular file first; urlretrieve's 'wb'
+                                    # FOLLOWS a symlink and the payload is an executable. Full rationale in
+                                    # _download_native_frontdoor_asset (found by the #859 ratchet).
+                                    _fd = os.open(temp_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                                    os.close(_fd)
                                     urllib.request.urlretrieve(url, temp_path, reporthook=_cap)
                                 except Exception as exc:
                                     errors.append(f"{flavor} asset unavailable: {exc}")
