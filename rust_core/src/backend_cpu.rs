@@ -273,7 +273,27 @@ fn search_contents_regex_maybe_parallel(
     scan_lines_regex(contents, re, invert_match, 1, path)
 }
 
-pub struct CpuBackend;
+/// Test-only fault-injection knobs for `replace_in_place`'s directory-mode fault tests (Task 5).
+/// Gated on `#[cfg(test)]` so this struct, its field, and every check against it compile away
+/// entirely from the normal `rlib` build that `rust_core/tests/*.rs` integration tests and every
+/// downstream consumer link against -- an external test cannot reach this seam even by name,
+/// only the `#[cfg(test)] mod tests` unit tests inside this file can, because they are compiled
+/// as part of the SAME crate build that has `--cfg test` enabled.
+#[cfg(test)]
+#[derive(Default)]
+struct ReplaceFaultInjection {
+    /// Force the directory-walk collection step to fail before any child file is touched.
+    force_walk_failure: bool,
+    /// Force the next literal-mode child-file replace/write to fail.
+    force_literal_child_failure: bool,
+    /// Force the next regex-mode child-file replace/write to fail.
+    force_regex_child_failure: bool,
+}
+
+pub struct CpuBackend {
+    #[cfg(test)]
+    replace_fault_injection: std::sync::Mutex<ReplaceFaultInjection>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CpuMatch {
@@ -296,7 +316,10 @@ impl Default for CpuBackend {
 
 impl CpuBackend {
     pub fn new() -> Self {
-        Self
+        Self {
+            #[cfg(test)]
+            replace_fault_injection: std::sync::Mutex::new(ReplaceFaultInjection::default()),
+        }
     }
 
     pub fn search_with_paths(
@@ -432,15 +455,11 @@ impl CpuBackend {
                     &path_obj.to_path_buf(),
                 )?;
             } else if path_obj.is_dir() {
-                for entry in WalkDir::new(path_obj).into_iter().filter_map(|e| e.ok()) {
-                    if entry.file_type().is_file() {
-                        let _ = self.replace_file_literal(
-                            pattern.as_bytes(),
-                            replacement.as_bytes(),
-                            &entry.path().to_path_buf(),
-                        );
-                    }
-                }
+                self.replace_directory_literal(
+                    path_obj,
+                    pattern.as_bytes(),
+                    replacement.as_bytes(),
+                )?;
             }
 
             return Ok(());
@@ -459,11 +478,91 @@ impl CpuBackend {
         if path_obj.is_file() {
             self.replace_file_regex(&re, replacement, &path_obj.to_path_buf())?;
         } else if path_obj.is_dir() {
-            for entry in WalkDir::new(path_obj).into_iter().filter_map(|e| e.ok()) {
-                if entry.file_type().is_file() {
-                    let _ = self.replace_file_regex(&re, replacement, &entry.path().to_path_buf());
-                }
+            self.replace_directory_regex(path_obj, &re, replacement)?;
+        }
+
+        Ok(())
+    }
+
+    /// Collect the directory's file entries up front (never process while walking) so a
+    /// walk-level failure is caught distinctly from a per-child replace failure, and so that,
+    /// once collected, the exact set of files processed cannot change under us mid-walk. This is
+    /// the single directory-mode entry point both `replace_directory_literal` and
+    /// `replace_directory_regex` delegate through -- the same core the walk-failure fault test
+    /// exercises via the public `replace_in_place`.
+    fn walk_directory_entries(&self, path_obj: &Path) -> anyhow::Result<Vec<walkdir::DirEntry>> {
+        #[cfg(test)]
+        if self
+            .replace_fault_injection
+            .lock()
+            .unwrap()
+            .force_walk_failure
+        {
+            anyhow::bail!(
+                "replace_in_place: directory walk failed for {}: injected test fault",
+                path_obj.display()
+            );
+        }
+
+        WalkDir::new(path_obj)
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| {
+                anyhow::anyhow!(
+                    "replace_in_place: directory walk failed for {}: {}",
+                    path_obj.display(),
+                    err
+                )
+            })
+    }
+
+    fn replace_directory_literal(
+        &self,
+        path_obj: &Path,
+        pattern: &[u8],
+        replacement: &[u8],
+    ) -> anyhow::Result<()> {
+        let entries = self.walk_directory_entries(path_obj)?;
+
+        for entry in entries {
+            if !entry.file_type().is_file() {
+                continue;
             }
+            let child_path = entry.path().to_path_buf();
+            self.replace_file_literal(pattern, replacement, &child_path)
+                .map_err(|err| {
+                    anyhow::anyhow!(
+                        "replace_in_place: literal replace failed for {}: {}",
+                        child_path.display(),
+                        err
+                    )
+                })?;
+        }
+
+        Ok(())
+    }
+
+    fn replace_directory_regex(
+        &self,
+        path_obj: &Path,
+        re: &regex::bytes::Regex,
+        replacement: &str,
+    ) -> anyhow::Result<()> {
+        let entries = self.walk_directory_entries(path_obj)?;
+
+        for entry in entries {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let child_path = entry.path().to_path_buf();
+            self.replace_file_regex(re, replacement, &child_path)
+                .map_err(|err| {
+                    anyhow::anyhow!(
+                        "replace_in_place: regex replace failed for {}: {}",
+                        child_path.display(),
+                        err
+                    )
+                })?;
         }
 
         Ok(())
@@ -475,6 +574,19 @@ impl CpuBackend {
         replacement: &[u8],
         path: &PathBuf,
     ) -> anyhow::Result<()> {
+        #[cfg(test)]
+        if self
+            .replace_fault_injection
+            .lock()
+            .unwrap()
+            .force_literal_child_failure
+        {
+            anyhow::bail!(
+                "literal replace failed for {}: injected test fault",
+                path.display()
+            );
+        }
+
         let file = OpenOptions::new().read(true).write(true).open(path)?;
 
         let source = unsafe { MmapOptions::new().map(&file)? };
@@ -519,6 +631,19 @@ impl CpuBackend {
         replacement: &str,
         path: &PathBuf,
     ) -> anyhow::Result<()> {
+        #[cfg(test)]
+        if self
+            .replace_fault_injection
+            .lock()
+            .unwrap()
+            .force_regex_child_failure
+        {
+            anyhow::bail!(
+                "regex replace failed for {}: injected test fault",
+                path.display()
+            );
+        }
+
         let file = OpenOptions::new().read(true).write(true).open(path)?;
 
         let source = unsafe { MmapOptions::new().map(&file)? };
@@ -1188,5 +1313,123 @@ mod tests {
 
         assert_eq!(actual, expected);
         assert_eq!(actual.len(), needle_line_numbers.len());
+    }
+
+    // --- replace_in_place directory-mode fault injection (Task 5) --------------------------
+    //
+    // These reach a PRIVATE seam (`replace_fault_injection`) that `rust_core/tests/test_replace.rs`
+    // cannot see: that file links against the normal (non-`--cfg test`) build of this crate, where
+    // the field and every check against it compile away entirely. Only these in-file unit tests,
+    // compiled as part of the SAME `--cfg test` crate build, can set it. Each test drives the
+    // fault through the PUBLIC `replace_in_place` entry point -- not a parallel/shadow helper --
+    // proving the injected seam actually fired through the real delegated core
+    // (`walk_directory_entries` / `replace_directory_literal` / `replace_directory_regex`).
+
+    fn write_fixture_file(path: &Path, contents: &str) {
+        std::fs::write(path, contents).unwrap();
+    }
+
+    #[test]
+    fn test_replace_in_place_directory_walk_failure_propagates_as_err_with_path_context() {
+        let dir = tempfile::tempdir().unwrap();
+        write_fixture_file(&dir.path().join("a.txt"), "needle");
+
+        let backend = CpuBackend::new();
+        backend
+            .replace_fault_injection
+            .lock()
+            .unwrap()
+            .force_walk_failure = true;
+
+        let result =
+            backend.replace_in_place("needle", "found", dir.path().to_str().unwrap(), false, true);
+
+        let err = result.expect_err(
+            "a walk failure must surface as Err through the public replace_in_place, not be swallowed",
+        );
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("directory walk failed"),
+            "error should name the walk operation that failed, got: {message}"
+        );
+        assert!(
+            message.contains(dir.path().to_str().unwrap()),
+            "error should carry the directory path, got: {message}"
+        );
+
+        // Prove the seam fired through the real core, not a shadow path: the child file was
+        // never touched because the walk failed before any file was processed.
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+            "needle",
+            "no child file should be modified when the walk itself fails"
+        );
+    }
+
+    #[test]
+    fn test_replace_in_place_directory_literal_child_failure_propagates_as_err_with_path_context() {
+        let dir = tempfile::tempdir().unwrap();
+        let child = dir.path().join("a.txt");
+        write_fixture_file(&child, "needle");
+
+        let backend = CpuBackend::new();
+        backend
+            .replace_fault_injection
+            .lock()
+            .unwrap()
+            .force_literal_child_failure = true;
+
+        let result =
+            backend.replace_in_place("needle", "found", dir.path().to_str().unwrap(), false, true);
+
+        let err = result.expect_err(
+            "a literal-mode child replace failure must surface as Err through the public \
+             replace_in_place, not be swallowed by a discarded `let _ = ...`",
+        );
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("literal replace failed"),
+            "error should name the literal-replace operation that failed, got: {message}"
+        );
+        assert!(
+            message.contains(child.to_str().unwrap()),
+            "error should carry the failing child path, got: {message}"
+        );
+    }
+
+    #[test]
+    fn test_replace_in_place_directory_regex_child_failure_propagates_as_err_with_path_context() {
+        let dir = tempfile::tempdir().unwrap();
+        let child = dir.path().join("a.txt");
+        write_fixture_file(&child, "id:1");
+
+        let backend = CpuBackend::new();
+        backend
+            .replace_fault_injection
+            .lock()
+            .unwrap()
+            .force_regex_child_failure = true;
+
+        let result = backend.replace_in_place(
+            r"id:(\d+)",
+            "ID#$1",
+            dir.path().to_str().unwrap(),
+            false,
+            false,
+        );
+
+        let err = result.expect_err(
+            "a regex-mode child replace failure must surface as Err through the public \
+             replace_in_place, not be swallowed by a discarded `let _ = ...`",
+        );
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("regex replace failed"),
+            "error should name the regex-replace operation that failed, got: {message}"
+        );
+        assert!(
+            message.contains(child.to_str().unwrap()),
+            "error should carry the failing child path, got: {message}"
+        );
     }
 }
