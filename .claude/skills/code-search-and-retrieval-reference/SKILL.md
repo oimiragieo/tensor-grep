@@ -215,8 +215,8 @@ run it rather than trust any number written here:
 
 ```bash
 python -c "import sys;sys.path.insert(0,'src');from tensor_grep.cli import repo_map as r;print(r._symbol_navigation_descriptor())"
-# -> parser-backed-refs-callers:go-javascript-python-rust-typescript
-#    +foundational-defs-imports-only:c-cpp-csharp-java-php
+# -> parser-backed-refs-callers:go-java-javascript-python-rust-typescript
+#    +foundational-defs-imports-only:c-cpp-csharp-php
 ```
 
 cross-checked against `grep -c "lang_registry.register_language(" src/tensor_grep/cli/repo_map.py`,
@@ -796,8 +796,8 @@ grep -n "Content-Length\|_MAX_LSP_MESSAGE_BYTES" C:/dev/projects/tensor-grep/src
 # run the product's own descriptor and cross-check the registration count:
 python -c "import sys;sys.path.insert(0,'src');from tensor_grep.cli import repo_map as r;print(r._symbol_navigation_descriptor())"
 grep -c "lang_registry.register_language(" C:/dev/projects/tensor-grep/src/tensor_grep/cli/repo_map.py
-# Expect: 10 registrations, split parser-backed-refs-callers:go-javascript-python-rust-typescript
-# + foundational-defs-imports-only:c-cpp-csharp-java-php -- and confirm the MOST-FORGOTTEN seam is
+# Expect: 10 registrations, split parser-backed-refs-callers:go-java-javascript-python-rust-typescript
+# + foundational-defs-imports-only:c-cpp-csharp-php -- and confirm the MOST-FORGOTTEN seam is
 # still wired for every one of the 10:
 grep -n 'register_language(\|language_id="' C:/dev/projects/tensor-grep/src/tensor_grep/cli/repo_map.py
 grep -n "_target_language_for_path\|_SUPPORTED_FILE_DEPENDENCY_LANGUAGES\|_language_coverage_gaps_for_universe" C:/dev/projects/tensor-grep/src/tensor_grep/cli/repo_map.py

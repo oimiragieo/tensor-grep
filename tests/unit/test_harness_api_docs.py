@@ -128,10 +128,16 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "version" in doc
     assert "coverage" in doc
     assert "c-cpp-csharp-go-java-javascript-php-python-rust-typescript" in doc
-    assert (
-        "parser-backed-refs-callers:go-javascript-python-rust-typescript"
-        "+foundational-defs-imports-only:c-cpp-csharp-java-php" in doc
-    )
+    # DERIVE the expected tier descriptor from the product; never hard-code it here.
+    # This literal was `...go-javascript-python-rust-typescript+...c-cpp-csharp-java-php` and went
+    # stale the moment Java was promoted to parser-backed. The repo's own rule is "never hand-count
+    # the language tiers -- ask the product" (that number has been wrong four times, once inside a
+    # skill), and a test that restates the tiers is just a fifth place for them to drift. Asking
+    # `_symbol_navigation_descriptor()` means this assertion keeps its teeth -- the doc must match
+    # the REGISTRY -- while never needing a re-stamp when a language changes tier.
+    from tensor_grep.cli import repo_map
+
+    assert repo_map._symbol_navigation_descriptor() in doc
     assert "filename+import+graph-heuristic" in doc
     assert "tg_repo_map" in doc
     assert "tg_context_pack" in doc
