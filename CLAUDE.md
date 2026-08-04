@@ -69,9 +69,19 @@ Claude Code guidance for the **tensor-grep** repository.
 
   **RELEASE CLASS IS PART OF THE FIX.** `scripts/validate_pr_title_semver.py` maps `feat`→minor,
   `fix`/`perf`/**`refactor`**→patch, and `chore`/`docs`/`test`/`ci`/`build`/`bench`→**none**.
-  **`refactor:` RELEASES a patch** — it is the one people get wrong, and this file got it wrong
-  too until 2026-08-02. Derive rather than trust this line:
-  `grep -A12 _RELEASE_INTENTS scripts/validate_pr_title_semver.py`. The repo
+  **`refactor:` DOES NOT PUBLISH, and this file asserted the opposite until 2026-08-04.** There are
+  TWO release-class systems and they DISAGREE — deriving from only one is how this line was wrong
+  twice. `scripts/validate_pr_title_semver.py`'s `_RELEASE_INTENTS` maps `refactor`→`patch`, but that
+  script only gates the PR TITLE; it does not publish anything. The publisher is
+  `[tool.semantic_release]` in `pyproject.toml`, which configures **no** `commit_parser` /
+  `allowed_tags` / `patch_tags`, so python-semantic-release falls back to its DEFAULT angular parser
+  whose patch types are `fix` and `perf` ONLY. Measured on PR #915 (`refactor:`, merged `3faf500`):
+  Semantic Release logged *"No release will be made, 1.102.4 has already been released!"*,
+  `publish-pypi` was SKIPPED, no tag, PyPI unchanged.
+  So ask BOTH: `grep -A12 _RELEASE_INTENTS scripts/validate_pr_title_semver.py` for what the title
+  gate will ACCEPT, and the `[tool.semantic_release]` block for what will actually SHIP.
+  The code is not lost — an unreleased `refactor:` publishes with the next `fix:`/`feat:` merge — but
+  a refactor-ONLY run leaves `main` unpublished while every tracker reads "shipped". The repo
   squash-merges, so the PR TITLE *is* the release semantic. A CWE-88 security fix was scoped as a
   `chore:` PR on 2026-08-01 — it would have merged, closed the ticket, and **never published**, with
   every tracker reading "shipped". Ask what the title does to the release BEFORE merging.

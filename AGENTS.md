@@ -2726,15 +2726,33 @@ which discredits every honest gate beside it.
 > it as patch -- trust the script over the prose**
 
 Hours later I wrote a fresh release-class summary into `CLAUDE.md` and listed `refactor` among the
-non-releasing types. Ground truth, `scripts/validate_pr_title_semver.py`: `"refactor": "patch"`. **A
-`refactor:`-titled PR PUBLISHES.** Anyone trusting that line would have shipped a release believing
-they had not -- the mirror of the `chore:`-security-fix trap already recorded here, where a fix that
-should publish silently does not.
+non-releasing types. I "corrected" it against `scripts/validate_pr_title_semver.py`
+(`"refactor": "patch"`) and wrote **"a `refactor:`-titled PR PUBLISHES."**
+
+**That correction was ALSO wrong, and it was wrong for the same reason as the original: I derived
+from ONE authority when there are TWO.** Measured 2026-08-04 on PR #915 (a `refactor:` PR, merged
+`3faf500`): the Semantic Release job logged *"No release will be made, 1.102.4 has already been
+released!"*, `publish-pypi` was SKIPPED, no tag was cut, PyPI stayed at 1.102.4.
+
+The two authorities, and what each actually governs:
+
+- `scripts/validate_pr_title_semver.py::_RELEASE_INTENTS` maps `refactor`→`patch`. It gates what the
+  PR TITLE may be. **It publishes nothing.**
+- `[tool.semantic_release]` in `pyproject.toml` is the publisher, and it configures **no**
+  `commit_parser`, `allowed_tags`, or `patch_tags` — so python-semantic-release uses its DEFAULT
+  angular parser, whose patch types are `fix` and `perf` ONLY. `refactor` is not among them.
+
+So the title gate ACCEPTS `refactor:` as a patch-intent title and the engine then makes no release.
+The code is not lost — an unreleased `refactor:` ships with the next `fix:`/`feat:` merge — but a
+refactor-ONLY run leaves `main` unpublished while every tracker reads "shipped".
 
 - **The skill had already diagnosed this exact field as a prose-vs-script drift risk, named the
   remedy, and I still re-derived the wrong value from memory.** A warning is not a guard.
-- **Never summarise a mapping; derive it.** That line now ships the command instead of the answer:
-  `grep -A12 _RELEASE_INTENTS scripts/validate_pr_title_semver.py`.
+- **Never summarise a mapping; derive it -- and first ask WHICH artifact actually performs the
+  action.** Deriving faithfully from a real file is still wrong if that file does not do the thing.
+  Ask both: `grep -A12 _RELEASE_INTENTS scripts/validate_pr_title_semver.py` for what the title gate
+  ACCEPTS, and the `[tool.semantic_release]` block for what actually SHIPS. **The decisive check is
+  neither: read the Semantic Release job log for the merge and see what it decided.**
 - Found only because a routine "what should Semantic Release decide for this merge?" check printed
   the real dict beside my recollection. **Print the authority next to the belief** -- the disagreement
   is invisible if you only print one.

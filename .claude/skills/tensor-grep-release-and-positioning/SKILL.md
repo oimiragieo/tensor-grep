@@ -98,9 +98,9 @@ optional `(scope)` and an optional `!`:
 |---|---|---|
 | `feat:` | minor | |
 | `fix:` / `perf:` | patch | |
-| `refactor:` | patch | **Not listed in `AGENTS.md`'s prose table, but the validator script treats it as patch** — trust the script over the prose if they ever disagree. |
+| `refactor:` | **none (measured)** | The title validator maps it to `patch`, but that script only gates the TITLE. The publisher, `[tool.semantic_release]`, sets no `commit_parser`/`patch_tags`, so the DEFAULT angular parser applies and its patch types are `fix`/`perf` only. Measured on PR #915 (merged `3faf500`): *"No release will be made, 1.102.4 has already been released!"*, `publish-pypi` skipped. An unreleased `refactor:` ships with the next `fix:`/`feat:`. |
 | `feat!:` / `fix!:` (any type + `!`) | major | |
-| `docs:` / `test:` / `build:` / `ci:` / `chore:` / `bench:` | none | no release; `bench:` is likewise absent from `AGENTS.md`'s prose table (same gap as `refactor:` above) — the script is ground truth. |
+| `docs:` / `test:` / `build:` / `ci:` / `chore:` / `bench:` | none | no release. **The title script is NOT ground truth for what SHIPS** — it gates titles. For publishing behaviour read `[tool.semantic_release]`, and for a specific merge read that merge's Semantic Release job log, which states its decision outright. |
 
 Anything that doesn't match the pattern fails PR CI outright (`validate_pr_title_semver.py:86-94`).
 Squash-merge release-bearing PRs — the PR title becomes the `main` commit subject that
