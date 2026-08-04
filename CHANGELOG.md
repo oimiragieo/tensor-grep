@@ -1,6 +1,135 @@
 # CHANGELOG
 
 
+## v1.102.6 (2026-08-04)
+
+### Bug Fixes
+
+- Claim native-download temp paths with O_EXCL so urlretrieve cannot follow a symlink
+  ([#918](https://github.com/oimiragieo/tensor-grep/pull/918),
+  [`8489255`](https://github.com/oimiragieo/tensor-grep/commit/8489255179d291abfa7eb578941fa9aeef2fa0a0))
+
+* fix: claim native-download temp paths with O_EXCL so urlretrieve cannot follow a symlink
+
+`urllib.request.urlretrieve` opens its target with a plain 'wb', which FOLLOWS a symlink -- and the
+  payload at all three call sites is a native EXECUTABLE the front door later runs. Each site now
+  claims its temp name atomically first:
+
+fd = os.open(temp_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600) os.close(fd)
+
+O_EXCL fails if ANYTHING already exists at the path -- symlink, hard link, or regular file -- so
+  urlretrieve's later open can only land on the regular file we just created. Mode is passed to
+  os.open rather than chmod-ed afterwards, so there is no window where the file exists with wider
+  permissions. This is the house pattern named in CLAUDE.md's Round-3 sweep ("atomic-write
+  permission window").
+
+HONEST SEVERITY -- this is defence-in-depth, NOT a wide-open hole, and my own first write-up of it
+  overstated the risk before I had read the call sites. Already correct and unchanged here:
+  CHECKSUMS.txt is fetched BEFORE the download and the install REFUSES if it cannot be fetched; the
+  temp target is `{name}.{uuid4().hex}` so an attacker cannot pre-plant a symlink at a predictable
+  name; the checksum is verified on the temp file BEFORE os.replace publishes it, with a version
+  smoke test and rollback. What remains is a RACE on a world-writable parent, where an attacker
+  watching for creation could land a symlink between name selection and open. That race is what this
+  closes.
+
+POPULATION -- three sites, not the two I first counted. My initial census used `grep | head -3` and
+  truncated itself; the third site (the second upgrade path) was invisible to it. All three are now
+  guarded: guards == urlretrieve calls == 3.
+
+A second census bug was caught by an assertion rather than by review: the 24-space replacement
+  pattern is a SUBSTRING of the 36-space one, so a naive `str.count` reported 2 matches for 1 real
+  site. The abort guard fired and the sites were patched by exact line anchor instead.
+
+Red/green receipts: pre-fix: FAILED test_download_refuses_to_write_through_a_symlinked_temp_path
+  FAILED test_download_refuses_when_a_regular_file_already_occupies_the_temp_path ("DID NOT RAISE")
+  -- the fake urlretrieve wrote THROUGH the planted symlink post-fix: 3 passed
+
+The third test is a CONTROL that passes in BOTH arms by design: an ordinary download on a fresh temp
+  path must keep working, or the "fix" could be "always raise".
+
+Regression: 126 passed (frontdoor / native_asset / upgrade / download). ruff check + ruff format
+  --preview --check clean.
+
+Found by the #859 class-level atomic-writer ratchet, which flagged urlretrieve as an unguarded raw
+  writer -- the ratchet was right about the writer; reading the call sites is what right-sized the
+  severity.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* fix: repin the ratchet's -c site census by function identity, not line number (main was red)
+
+MAIN WAS RED. `test_generated_source_c_sites_are_surfaced` pinned the `python -c` execution roots as
+  `[("main.py", 521), ("main.py", 1779), ("main.py", 15979)]` -- raw line numbers. PR #916 added
+  comment lines to main.py, every later lineno shifted, and the assertion failed on `f9724a93`.
+
+THE TEXTBOOK SEMANTIC-MERGE COLLISION: #913 (the ratchet) was green alone, #916 (a docs/comment
+  repair) was green alone, and only the MERGED tree was red. Neither PR's checks could have caught
+  it -- #916's base had no ratchet, and #913's base had no comment edit. A clean git merge is not a
+  clean semantic merge.
+
+IT ALSO VIOLATED THE FILE'S OWN STATED RULE, 11 lines above the offending assertion: "pinned by
+  STABLE (module, outer_function, operation) identity -- never a raw line number, which drifts on
+  unrelated edits". The population census obeyed that; this one census did not. The plan's Task 3
+  says the same thing. I reviewed the seat's output against its other claims and did not check this
+  one against the rule the same file states.
+
+FIX: `_real_subprocess_dash_c_sites` now resolves each call's ENCLOSING FUNCTION via a
+
+parent map and returns `(module, outer_function)`:
+
+("main.py", "_schedule_windows_native_frontdoor_refresh") ("main.py",
+  "_schedule_windows_self_upgrade") ("main.py", "_verify_target_python_tensor_grep_version")
+
+PROVEN, not assumed: inserting 7 comment lines near the top of main.py -- exactly the shape of edit
+  that reddened main -- leaves this test PASSING, where the old pin would fail. main.py restored
+  byte-identical afterwards (git diff --stat empty).
+
+SWEPT THE WHOLE FILE for the same defect class rather than fixing the one assertion: three further
+  `main.py:<lineno>` citations in the module docstring and the test docstring are replaced with the
+  same function identities. Final grep for `main.py:[0-9]+` in this file returns 0. The first sweep
+  MISSED one -- the module-level docstring at line 61 -- and was caught only because I re-grepped
+  instead of trusting the "clean" label I had just printed.
+
+The detector's behaviour is unchanged; it identifies the same three sites. Only their NAMES are now
+  stable.
+
+36 passed. ruff check + ruff format --preview --check clean.
+
+* test: sanction the O_EXCL guard this PR adds, so the ratchet census stays exact
+
+CAUGHT BEFORE MERGE, not by CI on main. #918 adds an `os.open(O_CREAT|O_EXCL|O_WRONLY)` call to
+  `_download_native_frontdoor_asset`, and that is a write callsite the #859 ratchet censuses.
+  Merging #918 as-is would have reddened main a SECOND time, the same way #916 already did -- both
+  PRs green alone, red only in the union.
+
+I found it by asking what #918 changes about the population the ratchet pins, then building the
+  union in a throwaway worktree (#918 + main + the #922 repin) and running the ratchet against it.
+  Union-before-push is the only place this class is visible.
+
+The detector is CORRECT to flag it: an unsanctioned direct writer appeared. The right answer is an
+  exact fingerprint with a citation, never a whole-function exemption:
+
+("main.py", "_download_native_frontdoor_asset", "os.open")
+
+NOT a payload write. It is the exclusivity CLAIM: O_CREAT|O_EXCL|O_WRONLY at mode 0o600, zero bytes
+  written, fd closed immediately. The actual bytes arrive from urlretrieve into the regular file
+  this call guarantees exists -- which is the whole point, since urlretrieve's plain 'wb' would
+  otherwise follow a planted symlink. Refusing rather than truncating on a pre-existing path is
+  deliberate. The downloaded artifact is still checksum-verified before os.replace publishes it.
+
+The entry had to be added in TWO places -- `_SANCTIONED_SITES` (the fingerprint table with its
+  rationale) and `_EXPECTED_SANCTIONED` (the pinned population). That is the ratchet working as
+  designed: a new sanctioned writer cannot be slipped in by editing one list. The first edit moved
+  the failure from "violating population drifted" to "sanctioned population drifted", which is
+  exactly the signal that the sanction registered but the census had not.
+
+Union green: 39 passed (ratchet 36 + the O_EXCL red/green trio). ruff clean.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.102.5 (2026-08-04)
 
 ### Bug Fixes
