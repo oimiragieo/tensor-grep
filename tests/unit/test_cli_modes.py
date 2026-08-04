@@ -118,6 +118,13 @@ class _FakePipeline:
         return self.backend
 
 
+def _symlink_or_skip(link_path: Path, target: Path) -> None:
+    try:
+        link_path.symlink_to(target)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"cannot create a symlink on this host: {exc}")
+
+
 def _canonical_manifest_bytes(manifest: dict[str, object]) -> bytes:
     canonical = dict(manifest)
     canonical.pop("manifest_sha256", None)
@@ -1794,6 +1801,60 @@ def test_new_project_name_with_base_dir_should_scaffold_under_named_directory(
     assert (tmp_path / "demo" / "rules" / "sample-rule.yml").exists()
     assert (tmp_path / "demo" / "tests" / "sample-test.yml").exists()
     assert not (tmp_path / "sgconfig.yml").exists()
+
+
+def test_new_project_scaffold_refuses_symlinked_sgconfig(tmp_path: Path) -> None:
+    runner = CliRunner()
+    project_dir = tmp_path / "demo"
+    project_dir.mkdir()
+
+    real_target = tmp_path / "outside-missing-sgconfig.yml"
+    symlink_path = project_dir / "sgconfig.yml"
+    _symlink_or_skip(symlink_path, real_target)
+
+    result = runner.invoke(app, ["new", "project", "demo", "--base-dir", str(tmp_path)])
+
+    assert result.exit_code == 1, result.output
+    assert "Refusing to write through a symlink" in (result.stdout + result.stderr)
+    assert symlink_path.is_symlink()
+    assert not real_target.exists()
+    assert not (project_dir / "rules" / "sample-rule.yml").exists()
+    assert not (project_dir / "tests" / "sample-test.yml").exists()
+
+
+def test_new_rule_scaffold_refuses_symlinked_destination(tmp_path: Path) -> None:
+    runner = CliRunner()
+    target_dir = tmp_path / "rules"
+    target_dir.mkdir()
+    symlink_target = tmp_path / "outside-missing-rule.yml"
+
+    symlink_path = target_dir / "sample.yml"
+    _symlink_or_skip(symlink_path, symlink_target)
+
+    result = runner.invoke(
+        app, ["new", "rule", "sample", "--lang", "python", "--base-dir", str(tmp_path)]
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "Refusing to write through a symlink" in (result.stdout + result.stderr)
+    assert symlink_path.is_symlink()
+    assert not symlink_target.exists()
+
+
+def test_new_scaffold_refuses_existing_file_when_no_replace(
+    tmp_path: Path,
+) -> None:
+    runner = CliRunner()
+    target = tmp_path / "rules" / "sample.yml"
+    target.parent.mkdir(exist_ok=True)
+    target.write_text("id: existing\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app, ["new", "rule", "sample", "--lang", "python", "--base-dir", str(tmp_path)]
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "already exists" in (result.stdout + result.stderr).lower()
 
 
 def test_new_unknown_scaffold_kind_should_reject_before_writing(tmp_path: Path) -> None:

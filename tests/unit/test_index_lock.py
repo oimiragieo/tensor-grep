@@ -315,6 +315,35 @@ def test_atomic_write_bytes_refuses_to_write_through_a_symlink(tmp_path: Path) -
     assert real_target.read_bytes() == b"do-not-touch-me"
 
 
+def test_atomic_write_bytes_anchored_without_replace_refuses_regular_symlink(
+    tmp_path: Path,
+) -> None:
+    real_target = tmp_path / "real.bin"
+    real_target.write_bytes(b"do-not-touch-me")
+    link_path = tmp_path / "link.bin"
+    _symlink_or_skip(link_path, real_target)
+
+    with pytest.raises(OSError, match="symlink"):
+        _index_lock.atomic_write_bytes_anchored(link_path, b"attacker", replace=False)
+
+    assert link_path.is_symlink()
+    assert real_target.read_bytes() == b"do-not-touch-me"
+    assert list(tmp_path.glob(".*.tmp")) == []
+
+
+def test_atomic_write_bytes_anchored_without_replace_does_not_clobber_existing_file(
+    tmp_path: Path,
+) -> None:
+    dest = tmp_path / "already-present.bin"
+    dest.write_bytes(b"existing")
+
+    with pytest.raises(OSError):
+        _index_lock.atomic_write_bytes_anchored(dest, b"replacement", replace=False)
+
+    assert dest.read_bytes() == b"existing"
+    assert list(tmp_path.glob(".*.tmp")) == []
+
+
 def test_atomic_write_bytes_normal_write_succeeds_and_leaves_no_temp_behind(
     tmp_path: Path,
 ) -> None:

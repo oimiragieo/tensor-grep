@@ -47,53 +47,34 @@ def replace_with_retry(
 
 
 def atomic_write_bytes(path: Path, data: bytes, *, mode: int | None = None) -> None:
-    """Write ``data`` to ``path`` atomically, refusing to write through a pre-existing symlink.
+    atomic_write_bytes_anchored(path, data, mode=mode, replace=True)
 
-    The ONE shared hardening baseline (audit C4 / CWE-59, PR #659; uniformized across every
-    sibling writer by task #211) for every JSON/key/manifest writer in the ``cli`` package: an
-    ``is_symlink()`` refusal precheck on the PRE-resolve destination, a same-directory temp file,
-    POSIX ``O_CREAT|O_EXCL`` plus ``O_NOFOLLOW`` where the platform has it, an ``fsync`` of the
-    written bytes before the rename, and :func:`replace_with_retry` (``os.replace``) to publish.
 
-    Why the precheck AND the rename-based swap: ``os.replace`` never dereferences a destination
-    symlink -- POSIX ``rename()`` atomically replaces the link ENTRY itself, never the file it
-    points to -- so this function can never be tricked into corrupting an arbitrary symlink
-    TARGET through the publish step alone. But without the precheck it would still silently
-    destroy a pre-existing symlink at the destination with no signal that something unexpected was
-    already there; refusing outright is the same fail-closed posture
-    ``evidence_signing._write_private_key_atomic`` has always taken (the original C4 fix), now
-    uniform across every sibling writer instead of copy-pasted (or, in three sites, MISSING)
-    per-module.
+def _publish_bytes_no_clobber(src: Path, dst: Path) -> None:
+    """Publish ``src`` into ``dst`` only if ``dst`` does not already exist.
 
-    ``O_NOFOLLOW`` is a documented no-op on Windows (``getattr(os, "O_NOFOLLOW", 0)`` mirrors both
-    cpython's own ``tempfile`` module and this codebase's established
-    ``main._write_json_refuse_symlink`` idiom) -- it is belt-and-suspenders defense-in-depth
-    against a symlink swapped in at the randomly-named temp path itself (astronomically unlikely,
-    since the name includes a fresh ``uuid4``), not the cross-platform guard. The cross-platform
-    guard is the precheck + same-directory-temp + rename shape, which holds identically on POSIX
-    and Windows -- do NOT treat ``O_NOFOLLOW`` alone as sufficient hardening on this codebase's
-    primary (Windows) development platform.
+    We intentionally do not use :func:`os.replace` here (which overwrites existing
+    paths). On both major platforms, a same-directory hard-link publish fails atomically
+    when the destination exists.
+    """
+    os.link(str(src), str(dst))
 
-    Callers that first ``.expanduser().resolve()`` a caller-supplied path MUST check
-    ``is_symlink()`` on the PRE-resolve path themselves before calling this function (mirrors
-    ``evidence_signing.generate_keypair``) -- ``.resolve()`` follows symlinks, so by the time a
-    resolved path reaches here the symlink-ness of the ORIGINAL destination is already lost. This
-    function's own check remains as defense-in-depth against a symlink planted directly at an
-    already-resolved leaf path (the common case for internal callers that never round-trip through
-    a caller-supplied string) and against the narrow TOCTOU window between an outer check and this
-    call.
 
-    ``mode``, when given, is applied to the temp file at creation (honoring the umask) and
-    re-asserted with ``os.chmod`` afterward for determinism (in case the umask stripped a bit);
-    when ``None`` the temp file is created at the same effective permissions plain ``open()``
-    would use (``0o666`` masked by umask).
+def atomic_write_bytes_anchored(
+    path: Path, data: bytes, *, mode: int | None = None, replace: bool = True
+) -> None:
+    """Write ``data`` to ``path`` atomically, with explicit overwrite mode.
 
-    Raises ``OSError`` if ``path`` is already a symlink; propagates any other write/rename failure
-    (Backend Fail-Closed Contract -- never a silent partial write).
+    This is a shared extension point for class-level writer ratchets:
+
+    - ``replace=True`` preserves legacy overwrite semantics via :func:`replace_with_retry`.
+    - ``replace=False`` performs a fail-closed, no-clobber publish that refuses to
+      create over an existing destination.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.is_symlink():
         raise OSError(f"Refusing to write through a symlink: {path}")
+
     tmp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
     create_mode = 0o666 if mode is None else mode
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
@@ -102,22 +83,29 @@ def atomic_write_bytes(path: Path, data: bytes, *, mode: int | None = None) -> N
         with os.fdopen(fd, "wb") as handle:
             handle.write(data)
             handle.flush()
-            # M6: fsync the data before the rename so a crash can never publish a truncated
-            # file (mirrors session_store._write_json_atomic, audit I5).
+            # M6: fsync the data before publish so a crash can never publish a truncated file.
             os.fsync(handle.fileno())
     except BaseException:
-        tmp_path.unlink(missing_ok=True)  # don't leave a partial temp behind
+        tmp_path.unlink(missing_ok=True)  # don't leave partial temp behind
         raise
+
     if mode is not None:
-        # O_CREAT honors the umask, so the created mode is never broader than `mode`; force the
-        # exact requested bits for determinism (in case the umask stripped an owner bit).
         try:
             os.chmod(tmp_path, mode)
         except OSError:
             pass
-    replace_with_retry(tmp_path, path)
-    # Best-effort durability of the rename itself; directory fsync is a no-op or unsupported on
-    # Windows, so failures here are non-fatal.
+
+    try:
+        if replace:
+            replace_with_retry(tmp_path, path)
+        else:
+            _publish_bytes_no_clobber(tmp_path, path)
+    except BaseException:
+        # If publish fails, make sure the sibling temp is removed before control exits.
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+    # Best-effort durability of the directory entry after publish.
     try:
         dir_fd = os.open(str(path.parent), os.O_RDONLY)
     except OSError:
