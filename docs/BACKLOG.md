@@ -1,9 +1,142 @@
 # tensor-grep — Project Backlog & PR Tracker
 
-> **Canonical prioritized work list.** Kept in sync with the CLI task store (`TaskUpdate`) and
-> GitHub (`gh pr list` is the source of truth for PRs). **CEO status** = summarize SHIPPING + P0/P1.
-> Update whenever a PR opens/merges or the queue changes. Task-store IDs (`#NNN`) cross-referenced.
-> **Last refreshed 2026-07-29 (enterprise deep audit, live tip **v1.101.18**).** Spec:
+> **Canonical prioritized/historical work ledger.** Kept in sync with the CLI task store (`TaskUpdate`);
+> GitHub (`gh pr list`) is the source of truth for PRs. The machine-parsed canonical status index in
+> `docs/TASK_BOARD.md` is the live-state view; use the dated
+> closed-world audit linked below. **CEO status** enumerates every live disposition—active, blocked,
+> nonfinancial decision-gated, financial/spend-gated, demand/research-gated, and mixed/terminal
+> corrections—not merely SHIPPING or P0/P1. Update whenever a PR opens/merges or the queue changes.
+> Task-store IDs (`#NNN`) are cross-referenced.
+> **Current closed-world CEO snapshot: 2026-08-03 continuation, release `v1.102.1`, merged main
+> `8024125`, one open PR (#911), one open GitHub issue (#48).** Product healthy; planning PR
+> blocked on fresh exact-head security re-clearance; backlog not done; Task 2A correctly blocked. The complete
+> live disposition list is the canonical index in `docs/TASK_BOARD.md` (28 rows / 23 unfinished =
+> 10 READY, 5 CEO_GATED, 8 DEMAND_GATED); `docs/audits/2026-08-02-backlog-reconciliation.md` is its
+> dated evidence packet, and `docs/audits/2026-08-03-ceo-backlog-update.md` is the current dumbed-down
+> closed-world update. Task 2 is reconciled; the amended #89/#90 path-domain program plus Tasks 3–15
+> are the current execution queue. Historical sections below remain append-only evidence and may
+> describe old status.
+> Recovered local-environment incident (historical): `ENV-VENV-DRIFT` occurred when a WSL `uv`
+> probe replaced the canonical Windows `.venv`. The incompatible environment was moved aside and
+> Windows `uv sync --frozen` rebuilt and verified the canonical environment; this is not an active
+> backlog row or blocker. A60 is the prevention rule: never point WSL `uv` at the Windows checkout,
+> and treat worktree-local no-sync output as a hypothesis until it is replayed in the real main venv
+> or CI. Current validation belongs in the dated audit/session handoff, not this historical ledger.
+> Round-18 thinktank findings are retained as plan-owned work, not lost review prose: prerequisite
+> prepare-service extraction before edit verification; behavior-specific Python/native/evidence REDs;
+> a fully typed workspace-prepare schema; handle-relative first-use claims-fence creation plus
+> `flock`/`LockFileEx` held across RMW; bounded/confined project-config readers; real-PR tracker
+> transitions; and new canonical demand row `RUST-REPLACE-SYMLINK` for the public Rust direct-file
+> leaf-symlink compatibility/security decision. See the dated CEO audit and Tasks 2–15 for owners,
+> triggers, and closure tests. None has been implemented merely by amending the plan.
+> Round 60 remains exact-hash approved (`31D8E071...3D862B` / `AA64D0BA...0826B3`). Older PR #911
+> head `01f276fa7c0d3d0e04fdb5feae78c29c1b194773` was green, but docs head
+> `fb99d2bce4ba722b724212282158bf6616b1ade2` lost clearance when security run `30857841901`
+> found four fixable `aiohttp`/`cryptography` advisories (CodeQL `30857839262` passed). The successor
+> raises floors to `aiohttp>=3.14.3` / `cryptography>=50.0.0` and regenerates the lock; require new
+> exact-head CI/security/CodeQL before merge. Task 2A RED is local only at
+> `6367614960327b1a4e00301c8bfdb9b2e4bb453e` (unpushed, no Actions run, Sol `FIX-FIRST` / 10 HIGH).
+> No authorized GREEN phase has started; Sol found accidental public behavior inside the RED scaffold,
+> which must be removed. Pause #911 at merge only after re-clearance, then repair RED → Sol `SHIP` → real Windows CI
+> before Task 3. Research recommendations (#48/#72/#77/#131/DD-004/F10) are not silent reclassification.
+> No question is asked for nonfinancial gates; #169 remains the only mandatory financial stop.
+>
+
+## Current canonical closeout queue — status index `2026-08-03.3`
+
+`docs/TASK_BOARD.md` owns the machine-parsed rows. This is the human-readable mirror; older sections
+below are historical evidence and do not override these dispositions.
+
+### Task 2A plan gate — nine Round-60 blockers owned by #89/#90; current RED is FIX-FIRST
+
+Round-60 plan blockers (still required by the approved plan):
+
+- protected, fixed ProgramData installer-state authority with a bound non-exportable CNG signature;
+  PATH and install-command digests never authorize a receipt;
+- transacted-registry PATH mutation (`CreateTransaction` plus transacted open/write/commit) or
+  fail closed, with no abstract lock/CAS fallback;
+- opened directory volume/file identity before removing case, 8.3, extended-path, separator, or
+  junction PATH aliases;
+- exact offline WinTrust flags, Microsoft-root chain policy with test roots disabled, and a maintained
+  production-root thumbprint allowlist; same-Organization foreign roots must fail;
+- kill-on-close Job containment with both breakaway flags and `CREATE_BREAKAWAY_FROM_JOB` absent;
+- one no-refund search-input ledger installed before every bootstrap/full/native/rg/sidecar route,
+  including fail-closed uninstrumented PCRE2;
+- independent inclusive cap−1/cap/cap+1 REDs for per-file and combined pattern/ignore budgets so
+  split counters and off-by-one rejection cannot survive;
+- `NativeCiReceiptV1` identity re-derived from the live Actions/artifact context rather than trusted
+  from receipt JSON; and
+- JUnit plus stable-Rust node-census cross-checks bound to that same current-run tuple.
+
+Current local RED artifact `6367614960327b1a4e00301c8bfdb9b2e4bb453e` is Sol `FIX-FIRST` with ten HIGH
+scaffold/oracle blockers (immutable-SHA CI absent; crash-as-RED; hardcoded PCRE2 oracle; forgeable
+Job heartbeat; unproven Job cleanup; weak SDDL; invalid CNG export; TxR close ownership; producer
+self-attest; `-f`/`--file` unbounded pre-ledger read). Not merge-ready. These are plan-gate /
+RED-scaffold findings, not separate shipped features or extra canonical top-level rows.
+
+### Active / buildable
+
+- **#89** — reproduced WSL-to-Windows path-domain defect; now `READY`, not environment-blocked. The
+  bounded 2026-08-02 run proved a Linux `/mnt/c/...` directory exists while the delegated Windows
+  native executable returned `path_not_found`. Owner: a new amended/re-reviewed TDD task; final
+  closeout cannot pass until that task follows the implementation-PR/closure-PR lifecycle.
+- **#90** — the doctor false-available half remains shipped in PR #571, but the WSL scan portability
+  half is now reproducibly broken and `READY`: a raw `/mnt/c/...` file produced an unreadable-path
+  warning plus false clear/zero matches, while the translated Windows-path control found six matches.
+  Owner: the same amended typed-path program as #89, with scan-specific false-clear tests.
+- **#859** — class-level atomic-writer census/fix, Task 3. A codemap-only regression is not a class
+  ratchet.
+- **MCP-SURFACE** — MCP surface disclosure, Task 4.
+- **CPU-BACKEND** — Rust/Python backend error propagation, Task 5.
+- **F6** — edit-verification service and public CLI, Tasks 6–7.
+- **F5** — edit-ready plus claims fence, Task 8.
+- **REF-CALL-REGISTRY** — prepare-service extraction, Task 9.
+- **F7** — language registry and cross-file resolution, Tasks 10–11.
+- **F8** — workspace service and CLI, Tasks 12–13.
+
+Every row above starts `READY`. Its first draft implementation PR moves it to `IN_FLIGHT` with the
+real PR number; only a separate post-merge closure change may mark it `SHIPPED`.
+
+### CEO-gated — exactly five
+
+- **#48** native-front-door startup architecture. Recommendation only: accept shipped hybrid native
+  managed front door + Python sidecar; retire larger rewrite unless pip/uv parity is prioritized.
+  Status stays `CEO_GATED`; no question asked under the current instruction.
+- **#72** public benchmark claim. Recommendation only: HOLD public 7.5x (conflicts with later 6.4x;
+  no committed current harness); allow only a zero-spend fresh six-repo/180-task quality-gated
+  benchmark, and public wording still needs approval. Status stays `CEO_GATED`.
+- **#77** / F9 ledger enforcement scope. Recommendation only: local opt-in advisory only; no auth/CI
+  blocking. Status stays `CEO_GATED`.
+- **#131** GPU-flavor native-asset publication. Recommendation only: optional experimental NVIDIA
+  asset with CPU default/fallback and no speed claim; physical proof/spend stays under #169. Status
+  stays `CEO_GATED`.
+- **#169** physical GPU proof environment or spend — the only mandatory financial stop.
+
+### Demand/research-gated — exactly eight
+
+- **#255** many-pattern dedup/compression/native investment selection.
+- **F10** MaxSim supported-path activation or retirement. Recommendation only: caller/installability
+  census, then retire if unreachable. Status stays `DEMAND_GATED` until that census closes it.
+- **DD-004** stable typed backend-error boundary. Recommendation only: likely retire as standalone and
+  bank the typed-boundary rule. Status stays `DEMAND_GATED` until an explicit retirement receipt.
+- **DD-006** concurrent daemon load/DoS evidence.
+- **AST-DSL-PARITY** full structural DSL/preprocessor-aware parity.
+- **MCP-LEAN-DEFAULT** client demand and compatibility proof before a default flip.
+- **CONTINUOUS-REFRESH** measured warm-session demand plus an approved search-index service design.
+- **RUST-REPLACE-SYMLINK** public Rust direct-file leaf-symlink compatibility/security decision;
+  reopen on a concrete untrusted-destination threat model or downstream compatibility decision.
+
+### Terminal corrections from stale trackers
+
+- **#22/F1** `RETIRED`: exit `0` complete match, exit `1` complete no-match, exit `2` incomplete;
+  unhonoured GPU routing stays an in-band disclosure and does not independently change the code.
+- **F2** `RETIRED`: legacy anonymous-agent compatibility deliberately retains the sentinel.
+- **#109/#36/#37** `SHIPPED` in PR #605/#903/#908.
+
+There are no environment-blocked canonical rows at this snapshot. The raw GitHub/CI/release and WSL
+receipts are in `docs/audits/2026-08-02-backlog-reconciliation.md`.
+
+> **Prior refresh 2026-07-29 (enterprise deep audit, live tip **v1.101.18**).** Spec:
 > `docs/plans/2026-07-29-enterprise-deep-audit-design.md` (also mirrored under gitignored
 > `docs/superpowers/specs/`). Headline corrections over the
 > 2026-07-27b note below: (1) the text-disclosure **helper + leading banners are largely WIRED**
@@ -606,10 +739,10 @@ still contains the claimed symbol. That limitation is stated in the test's own d
 doc indices, because "there's a citation gate now" is precisely the claim that would stop the
 reading which catches real drift.
 
-**Open:** 20 of 28 skills unaudited (task #36 — every audited one had drift, so assume these do
-too). Task #37: `test_lang_go`'s fallback test fails deterministically on the Windows dev box while
-green on 6/6 CI combos — environmental, root cause unknown; **do not relax the assertion** to match
-one box.
+**Historical status at the time, superseded by shipped receipts:** 20 of 28 skills were unaudited
+(task #36); PR #903 completed the full 27-topic-skill audit. Task #37 recorded a deterministic local
+grammar-dependent test failure; PR #908 added the explicit grammar requirement. Reopen either only
+with a current failing receipt; do not relax assertions to match one box.
 
 **Method note worth keeping:** building the gate produced three wrong readings before the truth
 (100% broken → 60% → 100% ambiguous → 0 broken), and four separate greps returned false numbers
@@ -1374,13 +1507,14 @@ for the next audit rather than re-opened as active work):**
   reopen the retirement reasoning above — it neutralizes the one token tg's OWN code appends,
   which the retirement's "operator-authored" premise never covered.
 
-### Blocked on a Linux/WSL box (env-blocked, not CEO-gated)
-- **#89** WSL `/mnt/c` absolute-path resolution in the native backend.
-- **#90** `tg scan` ast-grep Linux/WSL portability + doctor false-"available" exit-127. The
-  doctor-honesty half already shipped (**#90b**/`fb3291b`, v1.70.2 — `tg doctor` no longer reports
-  `available:true` for a non-runnable ast-grep shim); the Linux/WSL ast-grep portability piece itself
-  is still open and unverifiable without a Linux/WSL box.
-- **#109** cuda GPU implicit-walk ceiling.
+### Historical Linux/WSL block — superseded by status index `2026-08-02.3`
+
+- **#89** is no longer environment-blocked: the 2026-08-02 bounded WSL run reproduced the
+  WSL-to-Windows path-domain failure and moved it to `READY` pending an amended TDD plan.
+- **#90** is `READY`. The doctor-honesty half shipped in PR #571; the 2026-08-02 treatment/control
+  disproved the earlier non-defect premise by showing a raw-path false clear versus six translated-
+  path matches.
+- **#109** shipped in PR #605.
 
 ### CEO-gated (full framing in CEO-FACING below)
 - **#72** benchmark proof-point publish.

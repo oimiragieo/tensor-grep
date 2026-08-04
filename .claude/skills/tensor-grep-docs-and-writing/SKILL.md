@@ -46,7 +46,7 @@ Every governed doc has one job. Do not duplicate another doc's job into it — t
 | `docs/SESSION_HANDOFF.md` | **Live** handoff: current release state, weak spots, per-slice PR/dogfood evidence ledger | yes | `test_public_docs_governance.py` (heavy) |
 | `docs/CONTINUATION_PLAN.md` | Historical workstream map; secondary to `SESSION_HANDOFF.md` for "what's current" | yes | `test_public_docs_governance.py` |
 | `docs/CONTRACTS.md` | API/CLI/data backward-compatibility guarantees, validated compatibility set | yes | `test_public_docs_governance.py` + `test_enterprise_docs_governance.py` |
-| `docs/BACKLOG.md` | **The canonical prioritized work list** — task-store-synced, CEO-status source, per-release ledger (SHIPPING/SHIPPED/CEO-FACING sections). A major, actively-maintained doc of record, but **deliberately NOT pytest-pinned** — it changes too fast (multiple times per session during an active campaign) for content-pinning to be worth the churn; its accuracy discipline is "keep it in sync as work lands" (AGENTS.md "Backlog & working process"), not a governance test. Do not add a pinning test for it without a specific reason — the fast-changing nature is the point, not a gap to close. | no | none — see the note above |
+| `docs/BACKLOG.md` | **The canonical prioritized/historical work ledger** — task-store-synced descriptions, priorities, receipts, and per-release history (SHIPPING/SHIPPED/CEO-FACING sections). After Task 2 lands it, the machine-parsed `## Canonical status index` in `docs/TASK_BOARD.md` becomes the live-status view and `test_backlog_tracker_truth.py` pins its grammar/population. Until then, use the latest dated closed-world reconciliation audit referenced by BACKLOG and reconcile it with GitHub PR truth. BACKLOG is deliberately not content-pinned wholesale because it changes repeatedly during a campaign. | no | Current interim: dated audit + existing board freshness tests; after Task 2: `test_backlog_tracker_truth.py` |
 | `docs/PAPER.md` | Optimization/benchmark history, **including rejected/failed attempts** — append dated notes, never delete history | GPU dogfood `post-\`vX\`` labels only | `test_public_docs_governance.py` (GPU-story tests) |
 | `docs/benchmarks.md` | Accepted benchmark artifacts, frozen comparator sets/scenario packs | GPU dogfood labels | heavy pins across both governance files |
 | `docs/gpu_crossover.md` | GPU crossover story / promotion gates | GPU dogfood labels | pinned |
@@ -123,6 +123,13 @@ plain `assert "phrase" in doc` has only one arm and passes for a claim that stop
 release ago. Doc-to-doc pinning is correct for *wording*; source-pinning is required for *behaviour*.
 
 This is what caught (and was itself the root cause of 4 wasted CI cycles in) the June-2026 README-rewrite incident — see `tensor-grep-failure-archaeology` for the full story; the operational lesson for docs work specifically is: **decode the structured failing check first**. `docs-claim-check` failing tells you a *version or fragment* problem; it does not by itself tell you *which* pytest in Layer B also broke — run Layer B directly (Part 4) rather than theorizing from the readiness JSON alone.
+
+**Green governance tests do not validate examples or PR metadata (2026-08-02, #910).** A docs PR passed
+its focused tests and full CI while a Markdown/Python example contained a literal line break in the
+wrong place and the PR body reported stale counts. Treat examples as code: extract/compile/run them when
+possible, or add a tiny syntax/shape assertion. Treat titles, bodies, comments, and counts as the same
+reviewed artifact as the diff; after a scope-changing push, re-read them against the final head. Every
+count names its population/denominator (`0/2 unchecked`, not merely `0`).
 
 ### Layer D — The published mkdocs site (a separate universe)
 
@@ -260,6 +267,9 @@ Required fields, per `grep -n "Maintain a per-slice evidence ledger" AGENTS.md` 
 - [ ] No hand-edit of an auto-stamped fragment (Part 2 Layer A) — ran `python scripts/stamp_release_assets.py` instead if a stamp looked wrong.
 - [ ] Edited via a script rather than the interactive editor → confirmed binary-mode read/write preserved CRLF (`git diff --stat` shows only the intended lines changed, not the whole file — Part 4 step 6).
 - [ ] New governed doc → all 5 registration sites in Part 5 confirmed present.
+- [ ] Code/config/shell example → extracted and syntax/behavior checked where feasible; no malformed
+  literal line breaks hidden by Markdown rendering.
+- [ ] PR title/body/comments/counts re-read against final head; every count states its population.
 - [ ] `README.md` touched → confirmed no per-release ledger content reintroduced (Part 6).
 - [ ] `SKILL.md` touched → confirmed **which** of the three `SKILL.md` files (Part 3) was actually intended.
 - [ ] `CLAUDE.md` touched → change is a short pointer bullet, not duplicated AGENTS.md prose.
@@ -313,7 +323,7 @@ anything below before relying on it — a wrong runbook is worse than none.
 | `build_command`'s `git add` list stays in sync with the doc-path groups above | `grep -n "build_command" pyproject.toml` |
 | Root `SKILL.md` pytest variable name | `grep -n "SKILL_DOC_PATH" tests/unit/test_public_docs_governance.py` |
 | The one test pinning `.claude/skills/tensor-grep/SKILL.md` | `grep -n "skills/tensor-grep" tests/unit/test_benchmark_scripts.py` |
-| No test pins the PROSE of an individual `.claude/skills/<topic>/SKILL.md`; `test_skill_index_sync.py` DOES pin the folder set against both indices | `grep -rln "\.claude/skills" tests/` (expect 5 files as of 2026-07-29) |
+| No test pins the PROSE of an individual `.claude/skills/<topic>/SKILL.md`; `test_skill_index_sync.py` DOES pin the folder set against both indices | `grep -rln "\.claude/skills" tests/` (expect 7 files as of 2026-08-02; derive again rather than trusting this count) |
 | Banned marketing fragments | `grep -n "banned_fragments" -A10 tests/unit/test_public_docs_governance.py` |
 | README ledger-regrowth negative guard | `grep -n "Latest complete public release" tests/unit/test_public_docs_governance.py` |
 | Enterprise doc set | `sed -n '1,20p' tests/unit/test_enterprise_docs_governance.py` |

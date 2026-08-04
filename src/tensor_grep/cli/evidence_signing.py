@@ -87,7 +87,7 @@ def _require_cryptography() -> None:
         raise EvidenceSigningError(
             "The `cryptography` package is required for EvidenceReceipt signing but is "
             f"unavailable ({_CRYPTOGRAPHY_IMPORT_ERROR}). Reinstall tensor-grep or run "
-            "`pip install cryptography>=48.0.1`."
+            "`pip install cryptography>=50.0.0`."
         )
 
 

@@ -260,6 +260,13 @@ the *shape of the output* (every place this exact artifact gets constructed), ne
 implementation mechanism -- a sibling that reaches the same artifact by a different path is exactly the
 member a mechanism-keyed search cannot see.
 
+**Generated code is a second interpreter and must join the population.** Discover every production
+spawn/exec root, parse every statically resolvable payload as its own source unit, and fail closed on
+dynamic/unparseable payloads. Resolve local imports, aliases, rebinding, and shadowing. Sanction exact
+`source:callsite:operation:destination-provenance` fingerprints, not whole functions. Prove the census
+with ordinary and generated-source mutation controls. Receipt: #859's codemap-only ratchet missed three
+live writers plus generated helper sinks.
+
 ### A shared builder's flag belongs to its consumers, not its neighbors (#876, fixed #880)
 
 **Rule:** before adding a flag/param to a SHARED builder, enumerate every consumer of what it builds and
@@ -416,6 +423,79 @@ accepting the plan's header. A planning agent stated one commit as its base whil
 matched a different one, and `origin/main` was 15 minutes ahead of both -- its Item 1 "warned" about a
 trap that was already live on `main`, and two of its items were already shipped.
 
+**Plan approval is scoped to exact bytes and expires on a changed premise (2026-08-02).** Hash the design
+and implementation plan for every council round. If the live-code deep dive changes the writer
+population, API visibility, fallback model, file scope, or any other load-bearing premise, the old SHIP
+verdict no longer applies: amend, re-hash, and re-review before dispatching a build.
+
+Name the canonical hash artifact and method. On Windows, two clean-filter-equivalent worktrees can have
+different raw bytes because of mixed line endings; do not compare an on-disk worktree hash from one seat
+to a Git-blob or normalized-text hash from another. Also validate the cross-task dependency graph: every
+service, public registration, and producer must exist before the first consumer or behavioral RED. A
+missing-command/import failure cannot stand in for the behavior the test claims to exercise.
+
+**A green artifact cannot clear a different artifact (2026-08-03).** Record the PR head, canonical
+worktree plan hashes, review hashes, merge SHA, and published version separately. A green PR at commit A
+does not approve uncommitted plan B; an architecture `SHIP` does not substitute for adversarial-security
+`SHIP`. When using Cursor or another economical builder/reviewer, send the exact resulting bytes and
+prompt to Sol before treating the result as cleared.
+
+**Security vocabulary must compile to an enforceable primitive.** “Atomic CAS,” “trusted signer,”
+“owned PATH token,” and “kill descendants” are not implementation contracts. A plan names the concrete
+OS/API call, flags, protected authority root, opened identity, failure behavior, and RED that breaks the
+weak form. On Windows this means, for example, transacted-registry calls or fail-closed (not a process
+lock dressed up as CAS); exact offline WinTrust/root-policy flags rather than Organization text;
+directory volume/file identity rather than PATH spelling; and kill-on-close plus breakaway denial.
+PATH, adjacency, environment, and a caller/install-command digest never discover installer authority.
+
+**Resource ledgers begin before route selection and cross every front door.** Test bootstrap, full CLI,
+direct native, rg/sidecar delegation, and every matcher engine independently. An engine that cannot
+charge construction and inner-loop work is refused before child creation. For each limit, observe
+cap−1/cap/cap+1 and mixed-source totals; accepting only separate counters or rejecting the inclusive cap
+must fail unchanged tests.
+
+**Static manifest ≠ live execution receipt.** The committed manifest defines exact required nodes/jobs
+and contains no live run identity. The verifier independently derives repository/commit/run/attempt/job/
+runner/artifact namespace from the current Actions context, then cross-checks receipt fields, Python
+JUnit population, and stable-Rust node census. A JSON record that merely repeats its own identity fields
+is self-attestation, not anti-replay evidence.
+
+**Review failures are handled narrowly.** If a broad review prompt times out, retry the exact disputed
+paragraph/invariant. Preserve severity and final-vendor validation. A no-verdict seat is recorded as
+failed and replaced; it is never inferred as `SHIP` and need not stall all progress indefinitely.
+
+**RED and CI evidence must discriminate (2026-08-03, AGENTS A61–A69).** Behavioral RED pins the exact
+expected reason — crash, import, panic, and setup errors are not RED. Route/start evidence comes from
+the actual producer/constructor and test-owned OS/raw proof, never a hardcoded bool or a production
+hook that self-attests before start. Containment authenticates writer/client provenance and proves
+alive-before → dead-after plus cleanup; Event/EOF/PID text alone is insufficient. Crypto negatives use
+a valid API operation, an exact refusal class, and an exportable/trusted positive control. Security
+grammar validates full sections/types/flags/effective authority and rejects unknown and inherit-only
+forms; substring principals are not acceptance. Resource-owning protocols name close primitives and
+prove exact-once reverse cleanup on success, `BaseException`, and cleanup failure while preserving the
+primary error. RED scaffolds cannot enable partial public behavior or unbounded work before the guard.
+Immutable-SHA CI clearance needs a real run, expected per-node outcomes, raw artifacts, and the exact
+population — no run is no clearance. Security green is point-in-time: a fresh fixable advisory blocks
+merge and is upgraded across every live direct/constraint floor, the lock, validator tests, and user
+remediation text before a new exact-head audit; never ignore a vulnerability with a fixed release.
+
+**Search twins and respect public boundaries.** After retiring a defect shape, grep sibling adapters and
+helpers for the same pattern; a zero-retry fix in `RustCoreBackend` did not protect two copies in
+`CPUBackend`. Separately, zero in-repo callers cannot authorize deleting an exported Rust `rlib` method.
+Pin exact public function types and require an explicit breaking/deprecation/migration decision for
+removal.
+
+**No-follow safety begins before the helper call.** Treat `.resolve()`/`realpath()` on a caller-selected
+leaf before an approved writer as a violation because it erases symlink identity. Handle-relative
+publication alone is also insufficient when missing directories are created path-wise: anchor directory
+creation, temporary creation, and publication to opened identity-verified parents, then Event-test leaf
+and parent/junction swaps on Unix and Windows.
+
+The same anchoring rule covers stable lock/fence creation, reads and publication of the protected index,
+and repository-controlled configuration reads. Bound config file/count/aggregate bytes, reject mappings
+outside the workspace before reading targets, and Event-test intermediate-parent swaps. Every deferred
+security/compatibility behavior gets a stable tracker ID, owner, threat boundary, and reopen trigger.
+
 ---
 
 ## Part 7 — Push discipline & the push-race (one-merge-per-tick)
@@ -539,6 +619,10 @@ CI infers the semantic-release bump from the **PR title** (which becomes the squ
 - Use **Squash and merge** for release-bearing PRs so the validated title becomes the `main` subject.
 - **Do not manually create release tags** while semantic-release is active.
 - A release-bearing fix is **not complete** after only a branch push / open PR / green PR checks. The final report must name: PR, merge commit, main CI run, CodeQL run, released tag, PyPI publish status, and any public installer dogfood result (`AGENTS.md:862`).
+- **PR metadata is part of the reviewed artifact.** Re-read the title, body, comments, examples, and
+  counts after every scope-changing push. State each count's population/denominator. PR #910 was green
+  while its Markdown/Python example was malformed and its status counts were stale; independent prose
+  review, not CI, caught both.
 
 ---
 
@@ -634,11 +718,26 @@ uv export --format requirements.txt --all-extras --no-emit-project --locked
 - [ ] Contract/CI/docs change → **validator-backed test updated**.
 - [ ] Multiple PRs touch the SAME shared file (e.g. a registry test, `uv.lock`) → drained sequentially, each rebased onto the prior with a **UNIONED** assertion, test suite **re-run after every rebase** (Part 7, C4).
 - [ ] Relying on a census/coverage list (registration sites, argv-sentinel guards) → each member **CALLED** (guard deleted, suite re-run red) not reasoned as covered, and keyed on the **artifact**, not a shared mechanism (Part 3).
+- [ ] Census includes generated interpreters, aliases/shadowing, independent raw candidates, and
+  ordinary/generated mutation controls; sanctions are exact callsite fingerprints.
+- [ ] Caller-selected writer touched → raw leaf identity preserved; directory creation and publication
+  parent-handle anchored; Event-gated leaf and parent/junction swaps green on affected platforms.
+- [ ] Plan gate → one canonical hash method used by every seat; producer/service/registration exists
+  before each consumer and behavioral RED.
+- [ ] Lock/config reader touched → fence plus protected RMW/read share one verified directory handle;
+  config file/count/aggregate caps and out-of-workspace/swap tests are green.
+- [ ] Deferred security behavior → stable canonical ID, owner, threat boundary, and reopen trigger.
+- [ ] Draft implementation PR exists → owning tracker row is `IN_FLIGHT` with its real PR number.
+- [ ] Class fix → sibling/twin shapes searched; public API retained unless a deliberate breaking plan
+  authorizes removal.
 - [ ] A "DRY, extract the shared helper" refactor → checked that neither call site is a generated string later written to disk / `exec`'d / run standalone (Part 6).
 - [ ] Any defect noticed in passing, regardless of authorship/CI-visibility/scope → fixed now or filed as a concrete tracked blocker, never waved past (Part 1 Rule 7).
 - [ ] Local gate green: `ruff check` + `ruff format --check --preview` + `mypy src/tensor_grep` + `pytest -q`.
 - [ ] Subagent claims **re-run in the real venv** — none trusted as-reported.
+- [ ] WSL and Windows venv roots stayed disjoint — no WSL `uv --project /mnt/c/...` touched the
+  canonical Windows `.venv`; canonical verification ran from PowerShell.
 - [ ] PR title matches intended release bump; **squash-merge** for release-bearing.
+- [ ] PR body/comments/examples/count denominators re-reviewed against the final head commit.
 - [ ] Merging: prior release **fully published** (its `chore(release)` on `main` + PyPI shows it) before this merge — **one-merge-per-tick**.
 - [ ] Autonomous work stops at a **draft PR** — no auto/admin-merge.
 

@@ -16,10 +16,13 @@ The repo should be treated as a benchmark-governed, contract-heavy codebase. Do 
 
 ## Backlog & working process
 
-The canonical prioritized work list lives in **[docs/BACKLOG.md](docs/BACKLOG.md)** — read it for what to
-work next and how. It is kept in sync with the CLI task store; GitHub (`gh pr list`) is the source of truth
-for PRs. **Subagents:** treat each backlog item's description + files + status as your brief. **CEO status** =
-summarize its SHIPPING + P0/P1 sections.
+The canonical prioritized/historical work ledger lives in **[docs/BACKLOG.md](docs/BACKLOG.md)**. GitHub
+(`gh pr list`) is the source of truth for PRs. The machine-parsed canonical status index in
+`docs/TASK_BOARD.md` is the live-state view once Task 2 creates it; until then, use the latest dated
+closed-world reconciliation audit referenced at the top of BACKLOG. **Subagents:** treat each live item's
+description + files + status as your brief. **CEO status** must enumerate every live disposition—active,
+environment-blocked, nonfinancial decision-gated, financial/spend-gated, demand/research-gated, and
+mixed/terminal corrections—not merely SHIPPING or P0/P1 highlights.
 
 The standing multi-model pipeline for any substantive item: deep-dive → **Fable audit** (find + fix-idea,
 cite `file:line`) → **Exa** recency + competitive research (you are trained on stale data — verify current
@@ -246,11 +249,181 @@ concrete failure observed this session.
   a new run whose concurrency group CANCELS the tail, leaving a tag with no PyPI artifact — the
   version-soup state #47 exists to detect. Wait for PyPI to actually serve the new version.
 
+- **A34 — Prose and PR metadata are part of the artifact (2026-08-02).** PR #910 was code/test green,
+  but an independent read found a malformed Markdown/Python example and counts whose denominator was
+  unstated. Gate titles, bodies, comments, examples, and status counts against the final commit just as
+  you gate code. After scope changes, refresh and re-review PR metadata; “0 unchecked” and “0 total” are
+  different claims.
+- **A35 — Plan approval expires when a premise changes (2026-08-02).** A unanimous plan review did not
+  survive the live-code deep dive: the writer population was incomplete, a Rust method was public, and
+  a Python backend twin still carried the retired fallback. Any material premise change invalidates the
+  old verdict. Amend the plan, hash the exact new artifact, and re-run the thinktank before build.
+- **A36 — A site regression is not a class census (2026-08-02, #859).** The codemap-specific fix/test
+  was recorded as satisfying a class-level writer ratchet, while three production writers and generated
+  helper source remained outside the population. A class claim needs an independently derived closed-
+  world population, mutation controls, and a zero-violation assertion; a single fixed site proves only
+  that site.
+- **A37 — Census the defect surface, including generated interpreters (2026-08-02).** Discover writers
+  from production write/spawn roots, then resolve aliases, local imports, rebinding/shadowing, generated
+  `python -c` source, and raw candidate calls. Fail closed on dynamic/unparseable generated payloads.
+  Sanction an exact callsite/operation/destination-provenance fingerprint, never a whole function.
+- **A38 — Leaf resolution order and parent anchoring are separate security contracts (2026-08-02).**
+  Calling `.resolve()`/`realpath()` before a no-follow writer erases leaf-symlink identity. Even with a
+  safe leaf check, an attacker can swap a parent or junction before mkdir/publication. Preserve the raw
+  leaf identity; anchor directory creation, temp creation, and publication to opened identity-verified
+  parent handles; Event-gate both leaf and parent swaps on Unix and Windows.
+- **A39 — Class fixes cross to twins (2026-08-02, extends A27).** `RustCoreBackend` removed an unsafe
+  `TypeError` signature-compatibility retry while `CPUBackend` kept two copies that dropped
+  `invert_match`. After a class fix, grep sibling adapters/helpers for the retired shape and add a
+  population ratchet; otherwise the twin re-fires the same defect.
+- **A40 — No in-repo caller does not authorize public-API deletion (2026-08-02).** Rust
+  `CpuBackend.replace_in_place` is exported in an `rlib`; downstream callers are not visible to an
+  in-repository census. Retain and harden public signatures unless a deliberate breaking/deprecation/
+  migration decision authorizes removal. Pin the exact public function type at compile time.
+- **A41 — Preserve mixed dispositions (2026-08-02).** #90's doctor half shipped while its bounded WSL
+  half was retired as non-reproducing/non-defect. Do not flatten `shipped + retired`, `fixed + blocked`,
+  or `implemented + demand-gated` into one flattering word. Track each sub-outcome and close the parent
+  honestly.
+- **A42 — Producer→consumer dogfood must not change what it verifies (2026-08-02).** Materializing a
+  verification result inside the repository can dirty the very state the consumer is meant to attest.
+  Prefer bounded stdin/captured stdout, keep producer and consumer exits separately, and pin the full
+  matrix: `0→0`, `1→0`, valid `2→0`, malformed consumer `2` with no receipt.
+- **A43 — Exact CI completion includes the job population (2026-08-02).** A PR check rollup can grow
+  while jobs are still being created. Capture the exact workflow run ID and head SHA, require the run
+  `completed`, record its job-count floor, and prove zero unfinished/failing jobs. Do not infer
+  completion from a momentary rollup list.
+- **A44 — Attribute each SHA to what it proves (2026-08-02).** `origin/main`, the newest main-CI head,
+  a PR head, a squash merge, and a semantic-release `[skip ci]` commit can all differ. Record each claim
+  against the exact artifact and run that proves it; never cite the newest convenient SHA for all arms.
+- **A45 — Durable CEO status is a closed-world snapshot, not a hand-picked top five (2026-08-02).**
+  Separate active/buildable, environment-blocked, CEO/financial-gated, demand/research-gated, and
+  terminal corrections. Give every live item one stable ID/owner/trigger and assert that the canonical
+  set has no unowned extras or omissions. Update `MEMORY.md` and the handoff in the same change.
+- **A46 — Hash the canonical artifact, and state the hash method (2026-08-02).** Two clean Windows
+  worktrees held clean-filter-equivalent plan content but different raw mixed-line-ending bytes. A bare
+  “SHA-256” can therefore disagree without a semantic change. For plan gates, hash the designated
+  canonical worktree bytes (or canonical Git blob), record which, and make every seat verify that same
+  method/path before auditing.
+- **A47 — Validate the task dependency graph, not only each task (2026-08-02).** Round 16 found Task 6
+  importing a service not created until Task 8 and demanding a subprocess command not registered until
+  Task 7. Before approval, prove every required producer/service/registration exists before its first
+  consumer/test. A test that fails only at command discovery is not a behavioral RED.
+- **A48 — Directory-handle anchoring covers locks, state, and configuration reads (2026-08-02).** Leaf
+  no-follow flags do not stop an intermediate parent swap. Create/open a stable fence, read/publish its
+  protected index, and read repository-controlled configs relative to verified confined handles; bound
+  file/count/aggregate bytes and Event-test swaps before create, after lock, and before publish/read.
+- **A49 — Every deferred security behavior needs a canonical owner (2026-08-02).** The Rust direct-file
+  symlink behavior was called a follow-up but had no ID, owner, or closeout state. A known security/
+  compatibility choice cannot disappear inside a broader shipped row: assign a stable ID, disposition,
+  threat boundary, owner, and reopen trigger.
+- **A50 — The implementation PR owns its live tracker transition (2026-08-02).** A `READY` row left
+  unchanged after its draft PR exists permits duplicate dispatch and false CEO status. Open the draft on
+  an independently failing RED, immediately commit `IN_FLIGHT` with the real PR number and ordered PR
+  history, and keep the separate post-merge closure PR for `SHIPPED`.
+- **A51 — Green and approval are artifact-specific (2026-08-03).** PR #911's committed head was green
+  while newer Round-60 plan bytes existed only in its worktree. A run or verdict clears exactly the named
+  SHA/hash it inspected—never later local edits, a sibling worktree, or “the same plan” by description.
+  Record PR head, local plan hashes, review hashes, and merge SHA separately.
+- **A52 — Architecture `SHIP` is not security clearance (2026-08-03).** The Round-59 transaction shape
+  was coherent enough for architecture `SHIP` and still had forgeable signer/receipt authority,
+  unenforceable PATH atomicity, and breakaway containment gaps. Security-class work needs its own
+  adversarial `SHIP` on the same bytes; a different lens's approval cannot substitute.
+- **A53 — Security plans name enforceable primitives (2026-08-03).** “Atomic CAS,” “trusted signer,”
+  “owned PATH entry,” and “kill descendants” are goals, not Windows contracts. Name the concrete API,
+  flags, authority root, identity comparison, failure behavior, and adversarial control. If the platform
+  primitive is unavailable, fail closed instead of inventing a weaker fallback.
+- **A54 — Authority is never discovered from an untrusted search path (2026-08-03).** PATH, an adjacent
+  binary directory, an environment variable, a caller-supplied path, or an install-command digest cannot
+  establish installer ownership. Start from a fixed protected state root, retain its identity, verify its
+  cryptographic binding, and treat path strings only as hints to objects whose opened identities match.
+- **A55 — Containment includes escape denial (2026-08-03).** `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` is
+  incomplete if either Job breakaway flag or `CREATE_BREAKAWAY_FROM_JOB` is permitted. Pin all three
+  absences and run a real descendant-breakaway RED; “primary process died” is not process-tree proof.
+- **A56 — A resource cap must fire at every door (2026-08-03).** Bootstrap, full CLI, direct native,
+  native→rg, native→sidecar, and every matcher engine must join the same no-refund ledger before route
+  selection or child creation. Independently test the inclusive cap and mixed-source aggregate; separate
+  counters and an uninstrumented PCRE2 route are fail-closed defects, not implementation details.
+- **A57 — Static manifests and live receipts have different authority (2026-08-03).** A committed
+  manifest defines the exact nodes/jobs that must run and therefore contains no live run ID. A live
+  receipt proves this execution only after a verifier independently re-derives the Actions/artifact
+  tuple and cross-checks Python JUnit plus Rust node census. Self-attested JSON is not anti-replay proof.
+- **A58 — Retry review by narrowing, not by weakening (2026-08-03).** A broad Cursor/council prompt can
+  time out while exact-paragraph reviews converge quickly. Retry the disputed paragraph and invariant,
+  preserve the original severity, and send the resulting work to Sol. A no-verdict seat is recorded as
+  failed and replaced; it is neither approval nor an infinite blocker.
+- **A59 — Discover deferred capabilities before declaring a required tool absent (2026-08-03).** Exa
+  was available through the deferred tool catalog after appearing absent from the initial surface.
+  Search the callable-tool catalog first, then record genuine provider failure and use an approved
+  fallback. Also select the newest canonical worktree before review; never promote an older dirty copy.
+- **A60 — Never point WSL `uv` at the Windows checkout's `.venv` (2026-08-03).** A WSL
+  `uv run --no-sync --project /mnt/c/...` probe treated the Windows virtual environment as incompatible,
+  removed it, and created an empty Linux venv in the same path. That turned a dependency check into
+  shared-environment mutation and forced a locked Windows rebuild. WSL/Cursor worktrees use a WSL-local
+  venv (or CI); Windows verification runs from PowerShell in the canonical Windows checkout. Never cross
+  those environment roots. If this happens, move the incompatible venv aside, recreate it from Windows
+  with `uv sync --frozen`, verify imports/version, and only then resume gates.
+- **A61 — Behavioral RED pins the exact expected reason (2026-08-03).** A RED that accepts crash,
+  import failure, panic, or setup error as success is not behavioral proof. Pin the exact expected
+  refusal/reason class and reject any arm that dies before exercising the contract.
+- **A62 — Route/start evidence comes from the real producer (2026-08-03).** Hardcoded bools and
+  production hooks that self-attest before actual start are forgeable. Route/start proof comes from the
+  actual producer/constructor plus test-owned OS or raw evidence.
+- **A63 — Containment proof authenticates provenance and lifecycle (2026-08-03).** Event signals,
+  EOF, or PID text alone are not containment. Authenticate writer/client provenance, prove
+  alive-before → dead-after, and prove cleanup independently of parent-forgeable heartbeats.
+- **A64 — Crypto negative proof needs a valid operation and positive control (2026-08-03).** A
+  negative crypto test must use a valid API operation, assert an exact refusal class, and carry an
+  exportable/trusted positive control. Invalid flags that accept “any error” prove nothing.
+- **A65 — Security grammar validates full authority, not substrings (2026-08-03).** SDDL and similar
+  grammars must validate full sections, types, flags, and effective authority. Unknown, inherit-only,
+  and garbage forms fail closed; substring principal matches are not acceptance.
+- **A66 — Resource-owning protocols name exact close ownership (2026-08-03).** Every protocol that
+  acquires a resource names its close primitives and proves exact-once reverse cleanup on success,
+  `BaseException`, and cleanup failure while preserving the primary error.
+- **A67 — RED scaffolds cannot enable partial public behavior (2026-08-03).** A test or temporary
+  public flag must not unlock unbounded work or a GREEN path before the guard/ledger is active.
+  Accidental public `-f`/`--file` reads before the resource ledger are fail-closed defects.
+- **A68 — Immutable-SHA CI clearance needs a real run (2026-08-03).** Clearance requires a real CI
+  run on the immutable SHA, expected per-node outcomes, raw artifacts, and the exact population.
+  No run is no clearance; a local RED replay is not Windows CI proof.
+- **A69 — Security green is point-in-time, not durable clearance (2026-08-03).** A fresh advisory-
+  database finding on the current head blocks merge even when an older head was green. Fix every
+  fixable advisory by raising every live direct/constraint floor and regenerating the lock; update
+  pinned validator tests and user remediation strings, replay the affected feature, and obtain a
+  new exact-head audit. Never add an ignore for a vulnerability that has a fixed release.
+
 ## Current Handoff
 
 release_docs_current_tag: v1.102.1
 
-As of 2026-06-26, the current tagged release state is `v1.102.1`, and the latest complete public PyPI/release-asset distribution is also `v1.102.1`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.102.1` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
+As of 2026-08-02, the current tagged release state is `v1.102.1`, and the latest complete public PyPI/release-asset distribution is also `v1.102.1`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.102.1` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
+
+**2026-08-03 CEO/backlog continuation.** Public product remains healthy at `v1.102.1` on
+`origin/main` `8024125612d5fb42481acde34d94ad39bbaa3c3e`. Planning PR #911 was merge-ready on exact
+head `01f276fa7c0d3d0e04fdb5feae78c29c1b194773`, but pushed docs head
+`fb99d2bce4ba722b724212282158bf6616b1ade2` correctly lost clearance: security run `30857841901`
+found fixable `aiohttp`/`cryptography` advisories while CodeQL `30857839262` passed. The successor
+raises the live floors to `aiohttp>=3.14.3` / `cryptography>=50.0.0`, regenerates `uv.lock`, and
+must earn new exact-head CI/security/CodeQL evidence before merge; no future green is claimed here.
+Backlog is not done: 28 canonical rows / 23 unfinished (10 READY,
+5 CEO_GATED, 8 DEMAND_GATED). Task 2A is correctly blocked: local RED SHA
+`6367614960327b1a4e00301c8bfdb9b2e4bb453e` is unpushed, has no Actions run, and Sol returned
+`FIX-FIRST` with 10 HIGH blockers; do not call it merge-ready. Research recommendations for
+#48/#72/#77/#131/DD-004/F10 are recommendations only. No spend; no question for nonfinancial gates;
+#169 remains the only mandatory financial stop. Next: re-run #911 on its exact successor head; human
+may merge only after green. After merged-base proof, Cursor repairs the ten RED blockers, Sol repeats
+until `SHIP`, then push draft and obtain real Windows CI. Detail:
+`docs/audits/2026-08-03-ceo-backlog-update.md`. New laws: A61–A69.
+
+**2026-08-02 backlog-closeout handoff.** PR #910 merged as `8024125` after exact-run CI (39 jobs,
+0 failed/unfinished), independent prose/metadata review, and a 7/7 merged-artifact board test. The
+implementation campaign completed its round-18 plan loop: exact-hash re-reviews caught task-order,
+workspace-schema, claims-fence parent-swap, project-config confinement, tracker-lifecycle, and deferred
+Rust-symlink ownership plus tests-after gaps. Architecture/security/TDD all returned `SHIP` on final
+status-stamped hashes `F627B23F...E4C994` / `E30DCCCD...8216B`; no build has started, so resume Task 2.
+The closed-world CEO snapshot, every active/blocked/gated/research item, current evidence, and the new
+A34-A50 lessons are in `docs/audits/2026-08-02-ceo-backlog-update.md`; durable resume state is in
+`MEMORY.md`.
 
 **2026-07-14 Current-Handoff addendum -- GPU Phase-0 hardening wave (v1.75.1-v1.75.4, audit #171).** Four
 PRs closed audit #171's P0-1 through P0-5 GPU findings, each behind the mandatory Opus adversarial gate

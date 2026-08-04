@@ -34,7 +34,17 @@ Claude Code guidance for the **tensor-grep** repository.
   (the `tg find` whitespace classifier passed a synthetic literal-golden slice but mis-boosted 5/6 real
   identifiers when dogfooded).
 - **Verify AI-Drafted Plans Against the Real Code** — cite `file:line` for every seam claim before
-  building.
+  building. Approval is exact-artifact-specific: a green PR does not clear newer worktree bytes, and
+  architecture `SHIP` does not replace adversarial-security `SHIP`. Cursor/cheaper-model output is a
+  hypothesis until Sol validates the exact resulting bytes.
+- **Security plans name real primitives** — PATH never discovers installer authority; path spelling is
+  not opened object identity; “CAS”/“trusted signer”/“kill descendants” must name the platform API,
+  exact flags, protected authority root, failure behavior, and adversarial RED. Resource ledgers begin
+  before every bootstrap/full/native/delegation route, with mixed inclusive cap tests.
+- **Static manifests are not live receipts** — committed manifests define required nodes without live
+  run IDs; verifiers re-derive the Actions/artifact tuple and cross-check Python JUnit plus Rust census.
+  A broad review timeout should be retried on the exact paragraph; a no-verdict seat is failed, not
+  approval or an infinite wait. Search deferred tools before declaring Exa unavailable.
 - **Backend Fail-Closed Contract** — raise `BackendExecutionError` on failure; never return an empty
   result or silently swap engines for a contract flag (e.g. `--pcre2`).
 - **AST Native/Wrapper Two-Engine Divergence (task #141)** — the ast-grep wrapper and native
@@ -76,7 +86,20 @@ Claude Code guidance for the **tensor-grep** repository.
   agents reach into ONE drawer; a red-arm revert took a different agent's stash on 2026-08-02. Revert
   with `git checkout -- <file>` or a patch file. Rescue an orphaned stash non-destructively with
   `git branch <name> stash@{0}` (a permanent ref, no checkout, no pop). This applies to every
-  worktree campaign this file tells you to run.
+  worktree campaign this file tells you to run. Keep WSL and Windows venv roots disjoint: never run
+  WSL `uv --project /mnt/c/...` against the canonical checkout, because `uv` may replace the Windows
+  `.venv` with an incompatible Linux environment (AGENTS.md A60).
+  **RED/CI evidence laws (A61–A69, 2026-08-03):** behavioral RED pins the exact expected reason
+  (crash/import/panic/setup ≠ RED); route/start evidence comes from the real producer plus test-owned
+  OS/raw proof, never a hardcoded bool or production self-attest; containment authenticates
+  writer/client provenance and proves alive-before→dead-after plus cleanup; crypto negatives need a
+  valid API operation, exact refusal class, and exportable positive control; security grammar
+  validates full sections/types/flags/effective authority and rejects unknown/inherit-only; resource
+  protocols name close primitives and prove exact-once reverse cleanup; RED scaffolds cannot enable
+  partial public or unbounded pre-guard work; immutable-SHA CI clearance needs a real run with
+  expected per-node outcomes and raw artifacts (no run = no clearance); security green is point-in-
+  time, so a fresh fixable advisory blocks merge and is upgraded across direct/constraint floors,
+  lock, validators, and remediation text before a new exact-head audit — never ignored.
 - **Campaign Orchestration Disciplines (2026-07-08, extended 2026-07-16, 2026-07-22)** — running a
   multi-PR drain+build campaign so fixes *land*: the WIP cap, the self-firing drain-cron (beats a
   long-lived background drain), the mandatory adversarial security gate before merge,

@@ -1,6 +1,10 @@
 ---
 name: tensor-grep-backlog-campaign
-description: Use when asked to deep-dive, audit, fix, or drain tensor-grep backlog — OR investigate/rank next work and produce SPEC/TDD plans (docs/plans/requirements|design|tasks-*.md) without implementing. Triggers: "work the backlog", "what next", "investigate and plan", backlog-completion campaign. META-ORCHESTRATOR — 27-skill library. Semantic-search flagship: tensor-grep-semantic-search-campaign. Scale/hang campaign: tensor-grep-large-repo-scale-campaign. Load tensor-grep-change-control before edit.
+description: >-
+  Use when asked to deep-dive, audit, fix, or drain the tensor-grep backlog, or to investigate and
+  rank next work and produce SPEC/TDD plans without implementing. Triggers include "work the
+  backlog", "what next", "investigate and plan", and backlog-completion campaigns. This is the
+  meta-orchestrator for the repo skill library; load tensor-grep-change-control before editing.
 ---
 
 # tensor-grep backlog campaign
@@ -27,6 +31,16 @@ You have stale training data. **Never act on memory alone** for external facts, 
 
 **Chat short and business-focused; depth in files.** Plan-only mode ("investigate," "what next," "write a spec") stops after Phase 0 plan docs — **no code** unless CEO explicitly asks to implement.
 
+For “list all backlog,” produce a **closed-world** snapshot, not a highlight reel. Separate:
+active/buildable; environment-blocked; nonfinancial decision-gated; financial/spend-gated;
+demand/research-gated; and terminal corrections that stale trackers still show. Every live row gets one
+stable ID/alias, owner/decision maker, and reopen/start trigger. Preserve mixed outcomes instead of
+flattening them into “shipped.”
+
+Also separate **artifact states**. A green PR head, newer uncommitted worktree bytes, an approved plan
+hash, a merge SHA, and a published wheel are five different claims. The CEO update names which one each
+receipt proves and never lets a green older artifact imply approval of a newer one.
+
 ---
 
 ## Phase 0 — Investigate, rank, and SPEC/TDD plan
@@ -45,6 +59,10 @@ Load **`using-superpowers`** first. brainstorming→prompt-engineering; writing-
 | `gh` CLI | PRs, release CI status |
 | `claude-in-chrome` | docs site / install UX if deployed |
 | Gmail/Calendar/Drive | **CEO approval only** |
+
+If a required provider is not visible in the initial tool list, search the deferred callable-tool
+catalog before declaring it unavailable. Exa can be exposed there. Record a genuine provider failure,
+but do not silently substitute stale model memory for required recency research.
 
 ### Investigate (parallel tracks)
 
@@ -70,9 +88,16 @@ Before CEO summary: `verify-plan-against-code` on all seams; Phase 0f checklist;
 
 ### CEO response format
 
-Executive summary · evidence · skills used · tools (gaps only) · plan pointers · research · next action.
+Executive summary · what worked · **all backlog by disposition** · research already done · research still
+needed · spend/financial gates · lessons since the prior update · evidence · next action.
 
-**CEO approval before:** merge during in-flight release, public PyPI claim comms, irreversible contract changes without pinned test updates.
+Write the detailed snapshot to a dated audit file and update `MEMORY.md`, `docs/SESSION_HANDOFF.md`, and
+the canonical tracker in the same change. A CEO chat summary is not durable state.
+
+**CEO approval before:** financially consequential spend or procurement unless the user has already
+granted that authority. For nonfinancial publication, claim, contract, and merge decisions, follow the
+current user's explicit authority and the repository gates; do not manufacture a question when the user
+has told you to ask only about money.
 
 ---
 
@@ -89,6 +114,25 @@ Executive summary · evidence · skills used · tools (gaps only) · plan pointe
 9. **Draft-PR-only autonomy** — endpoint is a draft PR a human merges. Never auto-merge.
 10. **WIP CAP (2026-07-08 receipt)** — do NOT dispatch a new BUILD while **>5 PRs are undrained** OR the **main gate is red**. Generating fixes faster than the ~40–66 min/publish drain empties the queue produces "churning, not completing" (backlog stays constant-size while PRs pile up). Design fork: complete-then-start, not start-then-hope. A red main gate is a drop-everything hotfix that jumps the queue ahead of any new build. Check `gh pr list` count and `gh run list --branch main` conclusion before authorizing a new fan-out. **Build-vs-merge decoupling:** the WIP cap and one-merge-per-tick both gate *merge* timing, not when work may *start* -- a PR sequenced "after vX publishes" purely for a CODE-COLLISION reason (it touches the same file, or wants vX's already-merged code as its base) may branch and build off the just-merged `main` in parallel with an in-flight release; only the final merge stays gated. This saves ~40 min/PR across a campaign. See `tensor-grep-change-control` Part 7 for the full pattern (named after merge-queue/speculative-CI, release-train, and build-once-promote-everywhere). **Batch-merge exception (C-batch, v1.93.0/#703-706):** several INDEPENDENTLY already-CI-green PRs may land ~15-20s apart in one tight window and still produce ONE combined, fully-published release — this is not a WIP-cap or one-merge-per-tick violation, provided the operator watches the LAST run in the sequence to full completion (intermediate `cancelled`/rejected-push runs are benign). Do not confuse a monitored rapid batch with an accidental push-race collision (the v1.17.23/#318/#319 incident) — the discipline is watching the final run through, not merging blind. Full mechanism + the v1.93.0 receipt: `tensor-grep-change-control` Part 7 (C-batch).
 11. **Mandatory adversarial security gate before merge** — every security-class PR (`apply_policy` / `mcp_server` / `cpu_backend` / `index_lock`/`session_daemon` / auth / money / migration / **native asset, installer, or doctor-probe construction**) gets an adversarial "try-to-BREAK-it, cite `file:line`, default FIX-FIRST-if-uncertain" review **before merge**, in addition to (not instead of) the mandatory `codex` gate below. This is not a rubber stamp: on the 2026-07-08 session it returned SHIP on 3 PRs and caught real issues on 2 — a symlink-follow RCE bypass (`.resolve()` followed the symlink; fixed with `os.path.abspath`) and a lock-release TOCTOU (accepted-as-documented after proving a heartbeat thread makes it unreachable). The native-asset/installer/doctor-probe addition is the v1.75.2/v1.75.3 GPU Phase-0 precedent -- PR #596 (P0-5, loud nvidia-to-cpu installer downgrade) was held in draft with an explicit "Opus gate pending before merge" per its council-reviewed plan, because a silent wrong-flavor install or a misleading `doctor` probe status is a security-relevant integrity failure, not a UX nit. `codex` is the nominal 2nd-vendor tool but its WSL path is unreliable on this box — an Opus **Agent** subagent (`model: opus`) is the reliable substitute when `codex` is dead, not a reason to skip the gate. Verdict shape: `SHIP` | `FIX-FIRST(+file:line+repro+minimal-fix)`.
+
+    **Review-economy rider (2026-08-03):** if a broad model/council prompt times out, retry the exact
+    disputed paragraph and invariant rather than weakening the gate or replaying the whole corpus. A
+    no-verdict seat is failed, not approval and not an infinite wait. Cursor/other economical model work
+    remains a hypothesis until Sol validates the exact resulting bytes/prompt.
+
+    **RED/CI evidence rider (2026-08-03, AGENTS A61–A69):** behavioral RED pins the exact expected
+    reason — crash/import/panic/setup errors are not RED. Route/start evidence comes from the actual
+    producer/constructor and test-owned OS/raw proof, never a hardcoded bool or production self-attest
+    hook. Containment authenticates writer/client provenance and proves alive-before → dead-after plus
+    cleanup (not Event/EOF/PID text). Crypto negatives need a valid API operation, exact refusal class,
+    and an exportable/trusted positive control. Security grammar validates full sections/types/flags/
+    effective authority and rejects unknown/inherit-only forms. Resource-owning protocols name close
+    primitives and prove exact-once reverse cleanup on success, BaseException, and cleanup failure while
+    preserving the primary error. RED scaffolds cannot enable partial public behavior or unbounded work
+    before the guard. Immutable-SHA CI clearance needs a real run, expected per-node outcomes, raw
+    artifacts, and the exact population — no run is no clearance. Security green is point-in-time:
+    a fresh fixable advisory blocks merge and is upgraded across all live floors, the lock, validators,
+    and remediation text before a new exact-head audit; never ignore a vulnerability with a fix.
 
 12. **Order the drain by RELEASE impact, not PR number (2026-07-26 receipt).** Only `fix:`/`feat:` trigger semantic-release. `docs:`/`test:`/`bench:`/`chore:` complete without publishing, so they create no publish to race — their gate is just "the newest main run completed" (~6 min) versus a full release cycle (~30–60 min, longer under runner scarcity). Landing the non-releasing PRs first took a 12-deep queue to 7 in about an hour that would otherwise have bought two merges. **One-per-publish protects an in-flight PUBLISH; it is not a per-PR serialisation.** Two riders: check for file collisions first (two PRs both editing `docs/CONTRACTS.md` will conflict once either lands), and re-poll `mergeable` after each merge — GitHub returns `UNKNOWN` for a few seconds while it recomputes, and `UNKNOWN` is not `CLEAN`.
 13. **The gate is "newest main run COMPLETED", not "completed GREEN" (2026-07-26 receipt).** When `main` is red, the fix FOR that red must still be mergeable — requiring green before merging the thing that makes it green is a deadlock. Merge the hotfix, then confirm `main` actually recovered on a later run; that recovery is the evidence the fix worked, not the merge itself. Everything else stays parked while red: merging onto a broken `main` compounds it and obscures which commit owns the failure.
@@ -151,12 +195,26 @@ Its silence on a topic is not evidence a skill doesn't apply; the table above st
 
 ## Backlog + session continuity
 
-- **`docs/BACKLOG.md`** — canonical task ledger: id, P0–P3, status, agent, description, linked PR.
-  **Create it on session 0 if absent** (seed from memory anchor + `gh pr list` + session task store, then discard session store as SoT).
+- **`docs/BACKLOG.md`** — canonical prioritized/historical task ledger: id, P0–P3, description, receipts,
+  and shipped history. **Create it on session 0 if absent** (seed from memory anchor + `gh pr list` +
+  session task store, then discard session store as SoT).
+- **`docs/TASK_BOARD.md` canonical status index** — the machine-parseable live state for the closed-world
+  canonical ID set. Historical prose in either document is not a live-status oracle. Until this index
+  exists, a dated reconciliation audit must derive live state from BACKLOG + SESSION_HANDOFF + GitHub and
+  say that it is an interim snapshot.
 - **GitHub (`gh pr list`)** — PR source of truth for open/merged work.
 - **Memory anchor** — on every backlog change, update via `MEMORY.md` / `~/.claude/projects/<slug>/memory/feedback_tensor_grep_backlog.md` with: P0 queue, in-flight PRs, last shipped tag, push-race waiter state, "resume here".
 - **Restart order:** memory anchor → `docs/BACKLOG.md` → `docs/SESSION_HANDOFF.md` → `AGENTS.md` → GitHub. Never use the ephemeral session task store as source of truth.
-- **CEO status** = BACKLOG top items + blockers + spend + next 3 actions.
+- **CEO status** = closed-world live backlog + blockers + research + spend + next 3 actions; do not omit
+  demand-gated or mixed-terminal rows merely because they are not immediately buildable.
+- **Artifact attribution** — store PR head, squash merge, main-CI head/run, release commit/tag, and PyPI
+  proof separately. They may be different SHAs. Exact CI proof includes run ID, head SHA, stable job
+  population, and zero unfinished/failing jobs.
+- **Plan artifact identity** — choose one canonical worktree/blob and one SHA-256 method for every
+  thinktank seat. Mixed line endings can make clean-filter-equivalent Windows worktrees hash differently.
+- **Dependency/lifecycle gate** — prove each service/registration/producer precedes its consumer/test;
+  when a numbered draft PR exists, its owning row must be `IN_FLIGHT` in that PR. Every deferred
+  security behavior needs a canonical ID, owner, threat boundary, and reopen trigger.
 
 **Steward cron (this repo):** the backlog-steward tick is **session-scoped** — it re-arms with a NEW id and
 schedule every session, so any recorded id goes stale immediately. Do NOT trust a previously-recorded id
@@ -235,8 +293,9 @@ Adversarial seam verification (`file:line`). BLOCK build until clean.
 the anchors are real; it cannot tell you the item is already CLOSED — a plan against a fixed bug has
 citations that resolve perfectly. Reproduce the defect or find the fixing commit before dispatching.
 Receipt: the 2026-08-01/02 reconcile found **17 of ~24** open items already shipped, refuted, or
-by-design, and one agent was dispatched at finished work (#58). `docs/TASK_BOARD.md` is the live
-queue; `docs/BACKLOG.md` is a historical ledger, not a to-do list.
+by-design, and one agent was dispatched at finished work (#58). The machine-parsed canonical status
+index in `docs/TASK_BOARD.md` is the live-status view; `docs/BACKLOG.md` remains the canonical
+prioritized/historical ledger. GitHub remains the PR-state oracle.
 
 ### 6 — Implement
 
@@ -338,6 +397,11 @@ gh pr merge "$pr" --squash --delete-branch
 ### Verify in the REAL venv
 
 Worktrees have no built `.venv` — agent "tests pass" is a hypothesis.
+
+The real venv is OS-owned. From WSL, never pass the Windows checkout (`/mnt/c/...`) as `uv --project`:
+`uv` can delete/replace the incompatible Windows `.venv` with a Linux one. Use the WSL worktree's own
+venv for RED iteration, then run the canonical gate from PowerShell in the Windows checkout. If crossed,
+move the bad venv aside and rebuild from Windows with `uv sync --frozen` before trusting any receipt.
 
 ```powershell
 uv run --no-sync ruff check .
