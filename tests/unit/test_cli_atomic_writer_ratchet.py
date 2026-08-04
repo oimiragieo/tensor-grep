@@ -648,6 +648,15 @@ def scan_file(path: Path, module: str) -> list[Candidate]:
 # (module, outer_function, operation) identity so a pure line-number drift from an unrelated
 # edit fails loudly rather than silently reclassifying a moved line as a fresh violation.
 _SANCTIONED_SITES: dict[tuple[str, str, str], str] = {
+    ("main.py", "_download_native_frontdoor_asset", "os.open"): (
+        "NOT a payload write: this is the O_EXCL EXCLUSIVITY CLAIM added so urlretrieve's plain "
+        "'wb' cannot follow a symlink planted at the temp path. It opens with "
+        "O_CREAT|O_EXCL|O_WRONLY and mode 0o600, writes ZERO bytes, and closes the fd "
+        "immediately; the actual bytes arrive from urlretrieve into the regular file this call "
+        "guarantees exists. Refusing rather than truncating on a pre-existing path is the point. "
+        "The destination is the caller's uuid4-suffixed temp path, and the downloaded artifact is "
+        "still checksum-verified before os.replace publishes it."
+    ),
     ("_index_lock.py", "atomic_write_bytes_anchored", "os.open"): (
         "Defines the shared helper's OWN temp-file creation (O_CREAT|O_EXCL|O_NOFOLLOW, "
         "same-directory temp) -- this IS the primitive other callers are required to route "
@@ -1292,6 +1301,8 @@ _EXPECTED_HELPER_BACKED = {
 # The complete sanctioned population, by (module, outer_function, operation) identity -- see
 # `_SANCTIONED_SITES` above for the per-entry rationale.
 _EXPECTED_SANCTIONED = {
+    # O_EXCL exclusivity claim guarding urlretrieve's symlink-following 'wb'; writes zero bytes.
+    ("main.py", "_download_native_frontdoor_asset", "os.open"),
     ("_index_lock.py", "replace_with_retry", "os.replace"),
     ("_index_lock.py", "atomic_write_bytes_anchored", "os.open"),
     ("_index_lock.py", "index_lock", "os.open"),
