@@ -8603,8 +8603,14 @@ def search_command(
     _emit_stats()
     if exit_incomplete:
         # rg-parity: partial results (rg exit 2, soft per-file error) exit 2 after a formatted
-        # success, not 0 — so a caller/agent sees the same incompleteness rg would signal. An
-        # unhonoured explicit --gpu-device-ids request (backlog #22) takes the same exit.
+        # success, not 0 — so a caller/agent sees the same incompleteness rg would signal.
+        #
+        # An unhonoured explicit --gpu-device-ids request does NOT reach here: `exit_incomplete`
+        # above reads `result_incomplete` and nothing else. Backlog #22 was RETIRED as an
+        # exit-code rule on 2026-08-01 (PR #868) — see the `gpu_request_unhonoured`
+        # `_TailExitCodePolicy` entry for the reasoning, and docs/CONTRACTS.md section 4, which
+        # PR #911 corrected to match. This comment previously claimed the opposite ("takes the
+        # same exit"), so the file contradicted both that ruling and its own contract doc.
         sys.exit(2)
 
 

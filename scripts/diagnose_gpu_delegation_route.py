@@ -328,20 +328,32 @@ def main() -> int:
         resolve_native_override=None,
     )
     _log("forced-Python control", _summarize(control_forced_python))
-    if control_forced_python["delegation_calls"] or control_forced_python["exit_code"] != 2:
+    # This control asserts ZERO delegation calls -- that is the property it exists to test.
+    #
+    # It used to ALSO require `exit_code == 2`, on the since-retired rule that an unhonoured
+    # explicit --gpu-device-ids request forced exit 2. Backlog #22 was RETIRED as an exit-code
+    # rule on 2026-08-01 (PR #868): the request is disclosed IN-BAND
+    # (gpu_evidence_status / native_gpu_unavailable / not_gpu_proof_reason) and does NOT
+    # independently change the exit code, which stays the ordinary complete/not-found 0/1.
+    #
+    # Left as-is, this control aborted with "the fixture mocks are wrong" -- blaming the SUBJECT
+    # for a change in the CONTRACT, which is the exact shape of a stale instrument reporting a
+    # confident false negative. It now asserts the retirement instead: exit 2 must NOT appear.
+    if control_forced_python["delegation_calls"] or control_forced_python["exit_code"] == 2:
         print(
             "NEGATIVE-CONTROL FAILURE: resolve_native_tg_binary() forced to None still shows a "
-            f"delegation attempt and/or the wrong exit code ({_summarize(control_forced_python)})"
-            " -- expected exit_code == 2 (gpu_request_unhonoured, since the FakeBackend never "
-            "claims NativeGpuBackend) and zero delegation_calls. Either the fixture mocks are "
-            "wrong or the override is not taking effect. Aborting."
+            f"delegation attempt and/or a retired exit code ({_summarize(control_forced_python)})"
+            " -- expected zero delegation_calls and the ordinary 0/1 exit. An exit of 2 here would"
+            " mean the retired gpu_request_unhonoured exit-code rule (backlog #22 / PR #868) has"
+            " been reintroduced. Either the override is not taking effect or that rule is back."
         )
         return 1
 
     _log(
         "both controls",
         "PASS -- forcing a real path triggers an observed delegation attempt, forcing None "
-        "reaches the mocked Python tail and exits 2 exactly as the unit test expects.",
+        "reaches the mocked Python tail with zero delegation calls and does NOT exit 2 "
+        "(the gpu_request_unhonoured exit-code rule was retired: backlog #22 / PR #868).",
     )
 
     _log_section(
