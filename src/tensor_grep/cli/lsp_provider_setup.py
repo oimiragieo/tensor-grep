@@ -345,14 +345,26 @@ def _remove_stale_staging_path(path: Path) -> None:
     skip a broken link that `move` would still happily resolve against. Test `is_symlink()` first
     and unlink unconditionally.
     """
-    if path.is_symlink():
-        path.unlink(missing_ok=True)
+    # UNLINK FIRST, rmtree only as the fallback. Order is load-bearing and is NOT arbitrary:
+    #   * `is_dir()` FOLLOWS links, so testing it first would route a directory symlink into
+    #     rmtree and reintroduce the very bug this function exists to fix.
+    #   * `is_symlink()` is FALSE for a Windows directory JUNCTION while `is_dir()` is True, and
+    #     `shutil.rmtree` refuses junctions exactly as it refuses symlinks. An is_symlink()-first
+    #     fix therefore still lets a junction survive -- measured on Windows: junction survived,
+    #     and the following shutil.move deposited the payload in the junction target. Any
+    #     unprivileged user can create a junction (a symlink needs SeCreateSymbolicLinkPrivilege),
+    #     so the junction case is the MORE reachable one, not the exotic one.
+    # `unlink()` succeeds on a symlink, a junction, and a plain file, and removes the LINK rather
+    # than recursing into its target. A real directory raises, which is the fallback signal.
+    try:
+        path.unlink()
         return
-    if path.is_dir():
-        shutil.rmtree(path, ignore_errors=True)
+    except FileNotFoundError:
         return
-    # a plain file squatting on the staging name would also break the later rename
-    path.unlink(missing_ok=True)
+    except OSError:
+        # a real directory (PermissionError on Windows, IsADirectoryError on POSIX)
+        pass
+    shutil.rmtree(path, ignore_errors=True)
 
 
 def _ensure_node_runtime(root: Path) -> Path:
@@ -389,13 +401,12 @@ def _ensure_node_runtime(root: Path) -> Path:
             raise RuntimeError(f"Managed Node runtime install failed: missing {node_executable}")
     except Exception:
         # Restore the previous working runtime on any failure of the swap/verify.
-        if runtime_dir.exists():
-            shutil.rmtree(runtime_dir, ignore_errors=True)
+        _remove_stale_staging_path(runtime_dir)
         if had_previous:
             os.replace(str(backup_dir), str(runtime_dir))
         raise
     if had_previous:
-        shutil.rmtree(backup_dir, ignore_errors=True)
+        _remove_stale_staging_path(backup_dir)
     return runtime_dir
 
 

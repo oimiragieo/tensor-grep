@@ -15,7 +15,9 @@ the target directory beside an untouched canary.
 
 from __future__ import annotations
 
+import os
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -72,12 +74,16 @@ def test_the_move_after_cleanup_cannot_reach_the_link_target(tmp_path: Path) -> 
     _remove_stale_staging_path(staged)
     shutil.move(str(extracted), str(staged))
 
-    assert (staged / "node.exe").is_file(), "the payload should land at the staging path itself"
+    # ESCAPE ASSERTIONS FIRST. An adversarial review caught that this test previously led with
+    # `(staged/"node.exe").is_file()`, so in the red arm it failed on "payload did not land at
+    # staging" and the assertions naming the actual security consequence NEVER EXECUTED. The test
+    # discriminated, but not on the claim it is named for.
     assert not (target / "node.exe").exists(), "payload escaped into the link target"
     assert not (target / "extracted").exists(), "payload escaped into the link target"
     assert sorted(p.name for p in target.iterdir()) == ["canary.txt"], (
         f"link target was modified: {sorted(p.name for p in target.iterdir())}"
     )
+    assert (staged / "node.exe").is_file(), "the payload should land at the staging path itself"
 
 
 def test_a_dangling_symlink_is_also_removed(tmp_path: Path) -> None:
@@ -110,3 +116,61 @@ def test_an_ordinary_stale_directory_is_still_removed(tmp_path: Path) -> None:
 def test_a_missing_path_is_a_no_op(tmp_path: Path) -> None:
     """CONTROL: cleanup runs unconditionally now, so absence must not raise."""
     _remove_stale_staging_path(tmp_path / "never_existed")
+
+
+def _junction_or_skip(link: Path, target: Path) -> None:
+    """Windows directory junction. Unlike a symlink this needs NO privilege to create."""
+    if os.name != "nt":  # pragma: no cover - platform dependent
+        pytest.skip("junctions are Windows-only")
+    result = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:  # pragma: no cover - platform dependent
+        pytest.skip(f"mklink unavailable: {result.stderr.strip()}")
+
+
+def test_a_windows_junction_staging_path_is_removed(tmp_path: Path) -> None:
+    """The case an is_symlink()-first fix MISSES, and the more reachable one on Windows.
+
+    `Path.is_symlink()` is False for a junction while `is_dir()` is True, and `shutil.rmtree`
+    refuses junctions exactly as it refuses symlinks. So the first cut of this fix left a junction
+    in place and the subsequent move still escaped into its target -- measured, not theorised.
+
+    Creating a symlink on Windows needs SeCreateSymbolicLinkPrivilege; creating a junction needs
+    nothing. On the one platform where the attacker is plausibly unprivileged, this is THE case.
+    """
+    target = tmp_path / "attacker_target"
+    target.mkdir()
+    (target / "canary.txt").write_text("original", encoding="utf-8")
+    junction = tmp_path / "staging"
+    _junction_or_skip(junction, target)
+
+    _remove_stale_staging_path(junction)
+
+    assert not junction.exists(), "the junction survived cleanup"
+    assert target.is_dir() and (target / "canary.txt").exists(), (
+        "cleanup must remove the JUNCTION, never recurse into and destroy its target"
+    )
+
+
+def test_the_move_after_cleanup_cannot_reach_a_junction_target(tmp_path: Path) -> None:
+    """End-to-end junction equivalent of the symlink escape test."""
+    target = tmp_path / "attacker_target"
+    target.mkdir()
+    (target / "canary.txt").write_text("original", encoding="utf-8")
+    staged = tmp_path / "staging"
+    _junction_or_skip(staged, target)
+
+    extracted = tmp_path / "extracted"
+    extracted.mkdir()
+    (extracted / "node.exe").write_text("payload", encoding="utf-8")
+
+    _remove_stale_staging_path(staged)
+    shutil.move(str(extracted), str(staged))
+
+    assert sorted(p.name for p in target.iterdir()) == ["canary.txt"], (
+        f"payload escaped into the junction target: {sorted(p.name for p in target.iterdir())}"
+    )
+    assert (staged / "node.exe").is_file()
