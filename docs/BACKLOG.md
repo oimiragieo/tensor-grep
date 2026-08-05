@@ -1362,6 +1362,41 @@ So the true start-now set is currently EMPTY: everything waits on #939 or needs 
 real state, not a stall -- recorded so the next session does not start F5, write code against a
 module not yet on main, and discover the ordering afterwards.
 
+## H2 CLOSED 2026-08-05 -- writer-site classification complete, one residual RETIRED
+
+The atomic-writer class is done. Measured from the ratchet's own scanner on main:
+
+| | before (#937) | after |
+|---|---|---|
+| violating | 16 | **1** |
+| helper-backed | 15 | 24 |
+| sanctioned | 26 | 30 |
+
+PR #945 classified all 16 individually -- 11 routed, 3 sanctioned with in-code reasons, 2
+deferred. PR #946 then closed the first deferral: `_download_native_frontdoor_asset` claimed its
+destination with `O_EXCL` and then RELEASED the claim before `urlretrieve` reopened the path BY
+NAME. It now streams through the held fd. That path installs a downloaded executable.
+
+**The last residual is RETIRED, not open.** `_ensure_node_runtime`'s `shutil.move` stays classified
+violating, and that classification is correct -- but the item is retired rather than carried,
+because the work it implies is not worth doing:
+
+- The symlink+junction-aware `_remove_stale_staging_path` (shipped in #942) already runs at
+  `lsp_provider_setup.py:404`, immediately before the move at `:411`. The residual window is the
+  handful of statements between them.
+- Reaching that window needs write access to `managed_provider_root` -- `~/.tensor-grep/providers`
+  by default, user-owned. An attacker with that access has a SHORTER, TOTAL win already: drop a
+  malicious `node-runtime/bin/node` and `_ensure_node_runtime` returns at `:361` without
+  downloading anything. Nothing verifies a pre-existing runtime dir.
+- `shutil.move` was chosen deliberately for cross-filesystem fallback; `os.replace` would silently
+  break that, and no directory-safe atomic-publish primitive exists in the helper family.
+
+So closing it would mean building a new primitive to shrink a window that grants no capability an
+attacker does not already hold. **Reopen only on a concrete threat model** where
+`TENSOR_GREP_LSP_PROVIDER_HOME` points under a world-writable parent (container volume, shared CI
+cache) -- that configuration is neither the default nor documented, and `mkdir(..., exist_ok=True)`
+would reuse an attacker-pre-created directory there.
+
 ## OPEN FINDINGS -- 2026-08-05, surfaced while widening the atomic-writer census (PR #937)
 
 Both were found BY the #859 fix, neither was in its scope, and neither is fixed. Recorded per the
