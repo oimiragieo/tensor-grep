@@ -1,6 +1,66 @@
 # CHANGELOG
 
 
+## v1.107.0 (2026-08-05)
+
+### Features
+
+- **lang-cpp**: Promote C++ to parser-backed refs/callers -- the foundational tier is now empty
+  ([#934](https://github.com/oimiragieo/tensor-grep/pull/934),
+  [`4285503`](https://github.com/oimiragieo/tensor-grep/commit/4285503a1927dd50355065b7716d46bca812bf83))
+
+Wave 10E, the LAST of F7. All ten registered languages now carry a real caller graph.
+
+before: ...:c-csharp-go-java-javascript-php-python-rust-typescript+...:cpp
+
+after: ...:c-cpp-csharp-go-java-javascript-php-python-rust-typescript+...:
+
+Three red arms recorded failing behaviour-specifically first. The third is the wave's real
+  acceptance criterion and is stated over the REGISTRY rather than the descriptor string, so it
+  cannot be satisfied by formatting:
+
+AssertionError: languages still without a caller graph: ['cpp']
+
+It also fails loudly if a FUTURE language registers with references_and_calls=None, so the
+  campaign's headline claim cannot quietly become false later.
+
+PRODUCT CHANGE, deliberate: _symbol_navigation_descriptor now always emits the foundational segment
+  even when empty. Without it the trailing "+foundational-defs-imports-only:" would vanish and every
+  consumer that splits on "+" would IndexError on the first all-promoted release. The rust_core
+  literal AND its assertion message (test_schema_compat.rs:4368-4369) both carry the trailing colon;
+  verified byte-equal against the live descriptor rather than by eye -- the message string starts
+  with "{}" so a naive grep for the literal misses it.
+
+C++ IS THE EASIEST OF THE FIVE TO BE OVERCONFIDENT IN, because unlike C it genuinely has methods and
+  receiver types. Confirmed (0.9, cpp-infile-function-declared) covers exactly three shapes: -
+  bare-identifier calls (a free function and an implicit-this member call are GRAMMATICALLY
+  IDENTICAL -- C++ gives no syntactic tell, so both rest on the same "name declared in-file"
+  evidence) - qualified Foo::bar() resolved to its terminal bare name; the qualifier itself is never
+  verified, so this is the same weak evidence, not stronger - explicit this->method(), the ONLY
+  receiver-typed shape confirmed, because `this`'s type is syntactically fixed
+
+Demoted, each for a stated reason rather than by omission: overloads (a name match cannot identify
+  WHICH overload -- arity is available, types are not), dependent template types, `auto` receivers
+  with no syntactic type at the use site, and member calls through an arbitrary receiver -- a
+  base-class method may live only in a header not visible in-file. A sound receiver walk would have
+  worked on a narrow slice and silently done nothing for the common inherited/auto/template cases;
+  that is an implicit promise not worth making. new Widget() resolves ref_kind="constructor" and
+  stays demoted, matching Java/C#/PHP.
+
+MUTATION-VERIFIED independently of the implementing seat: collapsing _CPP_CONFIRMED_CONFIDENCE to
+  the demoted value turns 4 tests RED; reverting restores 63/63 with lang_cpp.py byte-identical (sha
+  b367707cd1a1b316).
+
+Accepted ceiling untouched: `class MACRO Name` misparses. .h stays mapped to "cpp" in both
+  _target_language_for_path and _provider_language_for_path.
+
+Tier PROSE was rewritten, not renumbered: "defs+imports are real there, while refs/callers fall
+  through to the regex heuristic" is now false for every language.
+
+Gates: 63/63 test_lang_cpp, 84 across the MCP-contract/doc/skill-drift pins, 202 across the language
+  union, ruff, ruff format --preview, mypy (90 files).
+
+
 ## v1.106.0 (2026-08-05)
 
 ### Features
