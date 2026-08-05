@@ -1464,6 +1464,29 @@ for the next audit rather than re-opened as active work):**
   either shipped or intentionally dropped.
 
 ### Ready to build (no mandatory-gate blocker)
+
+**PREMISE RECONCILE 2026-08-05 -- 4 of 5 checked items were ALREADY SHIPPED.** Verified against
+`origin/main` before any work, per verify-plan-against-code Step 0. Same pattern the board has hit
+before (one pass found 9 of 24 already done): a plan written against a fixed defect has perfectly
+resolving citations, so anchor-checking cannot catch it -- only reproducing the defect can.
+
+| item | claim | measured | disposition |
+|---|---|---|---|
+| **#58** | `tg route-test` is hidden, promote to public | registered at `main.py:10597` via `@app.command(name="route-test")`; the live app reports it in the public command list and it is NOT in the hidden set | **CLOSE -- already shipped** |
+| **#865** | `--ltl` missing from rust_core, would clap-reject | present in `SEARCH_PYTHON_PASSTHROUGH_FLAGS` at `rust_core/src/main.rs:322` with an explaining comment at `:319` AND a parity test `search_format_python_passthrough_args_routes_ltl_flag_to_python` at `:4484`. The item's stated evidence ("rust_core has zero matches") is simply false -- 6 matches | **CLOSE -- already shipped** |
+| **#858** | codemap hand-rolls `_atomic_write_text`, skipping the symlink refusal | the function survives at `codemap.py:799` but AST-walked its body is 4 statements calling only `atomic_write_bytes`/`encode`/`mkdir`, with ZERO residual write primitives (`os.replace`, `write_text`, `mkstemp`, `NamedTemporaryFile`). All three call sites (`:1242`, `:1300`, `:1307`) route through it | **CLOSE -- routed; the surviving name is a thin wrapper, not a hand-rolled writer** |
+| **#859** | no AST ratchet over `replace_with_retry`/`os.replace` publish sites | `tests/unit/test_cli_atomic_writer_ratchet.py` exists with 36 tests | **CLOSE -- shipped** |
+| **#864** | CWE-88: no `--` sentinel before a relative `$file` in `apply_policy` | **CONFIRMED REAL.** `apply_policy.py` builds subprocess argv and contains ZERO `"--"` sentinels. `$file`/`{file}` is substituted into the command STRING at `:563` BEFORE argv splitting; `_policy_quote_arg` (`:371`) neutralises shell metacharacters but NOT a leading `-`, which survives quoting as a token the invoked tool parses as an option | **OPEN -- see the note below** |
+
+**#864, sharpened by the premise check.** The item proposes inserting `--` before `$file`. That is
+hard to do correctly: the command is a USER-AUTHORED template and there is no general way to know
+where the positional section begins. The item's own parenthetical names the better fix -- *"Rust
+already absolute"*. An absolute path cannot begin with `-`, so passing the file absolutely (as the
+Rust side already does) removes the injection vector without editing an arbitrary template. Ship
+whichever survives review, but do NOT implement the `--` insertion without first establishing that
+the template's positional boundary is knowable. Security surface -> mandatory adversarial gate
+before merge; codex is unavailable until 2026-08-10, so route to opus.
+
 - **#858** (2026-07-29 audit S1) route `tg codemap` writes through `_index_lock.atomic_write_bytes`
   — retire hand-rolled `codemap._atomic_write_text` (`codemap.py:801-812`). Explicitly deferred out of
   #665/#211 as "doc-generation". Bidirectional probe 2026-07-29: baseline refuses symlink dest;
