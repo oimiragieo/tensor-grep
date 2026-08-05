@@ -30,12 +30,21 @@ labels above; a call whose target identity cannot be statically determined (a dy
 an un-parseable payload) is NEVER silently dropped from the population -- it fails the run
 closed (see ``_UNRESOLVED`` handling below and ``test_population_has_zero_unresolved``).
 
-SCOPE (a deliberate, documented narrowing -- see "Known gaps" below): the production source set
-scanned by the population/inventory tests is ``main.py``, ``_index_lock.py``, and ``codemap.py``
-under ``src/tensor_grep/cli/`` -- the modules the #859 backlog-closeout plan names for this task,
-plus the module containing the historical bidirectional control. The detector ENGINE itself is
+SCOPE: the production source set scanned by the population/inventory tests is DISCOVERED, not
+enumerated -- ``_discover_scanned_production_files()`` walks every ``*.py`` module directly under
+``src/tensor_grep/cli/`` (41 as of this task; ``test_scanned_population_floor`` guards against a
+truncated/empty walk silently reading as "no violations"). This module's first cut (the original
+form of task #859's class fix) scoped the scan to a hardcoded 3-file tuple -- ``main.py``,
+``_index_lock.py``, ``codemap.py`` -- named directly by the backlog-closeout plan, plus the module
+containing the historical bidirectional control; that hardcoding meant a new cli module joining
+the package was silently never scanned by it (see AGENTS.md "a list written at dispatch time is
+stale by definition"). Walking the directory closes that gap. The detector ENGINE itself remains
 general (callers can point it at any file), and the individually-red controls below exercise it
-against small synthetic sources, independent of this production scope.
+against small synthetic sources, independent of this production scope. Subdirectories of
+``src/tensor_grep/cli/`` (e.g. ``formatters/``) are NOT walked -- a non-recursive glob, matching
+what "41 modules" has always meant in this task's own measurements; recursing into subpackages is
+a deliberate, undone follow-up, not a silent gap (nothing under ``formatters/`` writes files as of
+this task, confirmed by manual review, not by this detector).
 
 Known gaps (stated plainly, not papered over):
 
@@ -83,7 +92,28 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _CLI_SRC = _REPO_ROOT / "src" / "tensor_grep" / "cli"
 
-_SCANNED_PRODUCTION_FILES = ("main.py", "_index_lock.py", "codemap.py")
+
+def _discover_scanned_production_files() -> tuple[str, ...]:
+    """The population the census scans -- DISCOVERED from ``_CLI_SRC``, not a hand-maintained
+    list. Task #859's instance fix (commit a41c86f) closed three sites in ``main.py``; this
+    module's FIRST cut then closed the class only up to a hardcoded 3-file
+    ``_SCANNED_PRODUCTION_FILES = ("main.py", "_index_lock.py", "codemap.py")`` tuple -- a new cli
+    module joining the package was silently never scanned by it (a list written once, stale by
+    definition -- see AGENTS.md "a list written at dispatch time is stale by definition"). Walking
+    the directory instead means a new ``src/tensor_grep/cli/<x>.py`` module is covered by
+    construction: no second edit required to add it to the population. See
+    ``test_scanned_population_floor`` for the guard against a truncated/empty walk silently
+    reading as "no violations"."""
+    return tuple(sorted(p.name for p in _CLI_SRC.glob("*.py")))
+
+
+_SCANNED_PRODUCTION_FILES = _discover_scanned_production_files()
+
+# A truncated/empty walk must never silently read as "no violations" (AGENTS.md's "a zero means
+# two things" law) -- 41 modules exist as of this task; 30 is a real floor with headroom for
+# ordinary churn while still catching a walk that resolved the wrong directory, hit a glob typo,
+# or ran against an empty/partial checkout.
+_MINIMUM_SCANNED_MODULE_COUNT = 30
 
 _FIXTURE_PATH = _REPO_ROOT / "tests" / "fixtures" / "audits" / "codemap_pre_859.py"
 # Provenance kept HERE, not as a header baked into the fixture (the fixture must stay a
@@ -572,6 +602,22 @@ def scan_function(
     found: list[Candidate] = []
     scope = base_scope.clone()
 
+    # Seed path_vars from Path-annotated parameters -- the module docstring's dataflow-tracker
+    # description ("a Path-annotated parameter") already promised this, but it was dead: nothing
+    # ever called `_annotation_is_path` against a function's `args`. Confirmed via a synthetic
+    # probe against the pre-fix engine: `def publish(destination: Path, content): destination.
+    # open("wb")...` scanned to `[]` -- zero candidates -- for a call that is write-shaped by any
+    # reasonable reading. Wiring this in surfaced 3 previously-invisible real sites in
+    # lsp_provider_setup.py (`_download`, `_extract_rust_analyzer_exe_from_zip`,
+    # `_download_rust_analyzer`, all `Path.open` in write mode on a `destination: Path` parameter)
+    # with zero regressions (no candidate the old engine found was lost -- verified by diffing the
+    # full 41-file population before/after).
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        all_params = list(node.args.posonlyargs) + list(node.args.args) + list(node.args.kwonlyargs)
+        for param in all_params:
+            if _annotation_is_path(param.annotation):
+                scope.path_vars.add(param.arg)
+
     def on_call(call: ast.Call, live_scope: _Scope) -> None:
         candidate = _classify_call(call, live_scope, module, outer_function)
         if candidate is not None:
@@ -708,10 +754,82 @@ _SANCTIONED_SITES: dict[tuple[str, str, str], str] = {
         "foreign launcher -- again relocating trusted on-disk bytes, not publishing new "
         "externally-sourced content."
     ),
-    ("checkpoint_store.py", "*", "shutil.copy2"): (
-        "OUT OF SCANNED SCOPE for the population test (checkpoint_store.py is not one of the "
-        "three scanned files) -- listed here for completeness only: these copies already pass "
-        "`follow_symlinks=False` per audit HIGH (symlink disclosure), reviewed separately."
+    # --- Added when the census widened from the original 3-file scope to the full _CLI_SRC walk
+    # (task #859 class ratchet) -- each entry below was individually reviewed against the real
+    # source, not force-fit to make the population test pass. ---
+    ("agent_capsule.py", "_agent_gpu_evidence", "Path.write_text"): (
+        "`probe_dir` is created from a `TemporaryDirectory(prefix='tg-agent-gpu-probe-')` opened "
+        "in THIS SAME function -- the identical self-contained-temp-artifact shape as "
+        "`main.py::_doctor_gpu_search_runtime_probe` above (same probe.log sentinel pattern), "
+        "never published outside the function's own scope."
+    ),
+    ("audit_manifest.py", "verify_review_bundle", "Path.write_text"): (
+        "`tmp_manifest` is created from a `TemporaryDirectory(prefix='tg_bundle_verify_')` opened "
+        "in THIS SAME function to stage an embedded manifest for signature re-verification -- a "
+        "self-contained temp artifact, never published outside the function's own scope."
+    ),
+    ("checkpoint_store.py", "create_checkpoint", "shutil.copy2"): (
+        "Snapshot copy explicitly passes `follow_symlinks=False` (audit HIGH -- symlink "
+        "disclosure): a symlinked entry is stored AS a link, never resolved and copied through, "
+        "so this call carries the same destination-identity guarantee os.replace does. Was "
+        'previously listed under a `("checkpoint_store.py", "*", ...)` wildcard key that the '
+        "matcher (keyed on the exact (module, outer_function, operation) triple) never actually "
+        "matched -- the module was simply outside the old 3-file scan scope, so the wildcard was "
+        "dead. Fixed to real per-function entries now that the census walks this file."
+    ),
+    ("checkpoint_store.py", "undo_checkpoint", "shutil.copy2"): (
+        "Same `follow_symlinks=False` guarantee as the `create_checkpoint` entry above, at both "
+        "the stage-to-temp copy and the commit-phase copy-into-working-tree in this function "
+        "(two call sites sharing this one function-level fingerprint, same pattern as the "
+        "`_repair_windows_python_subprocess_launcher` entry above)."
+    ),
+    ("lsp_provider_setup.py", "_ensure_node_runtime", "os.replace"): (
+        "Three `os.replace` calls share this fingerprint, and NOT all three are the same shape -- "
+        "recorded honestly rather than as a single blanket claim. Line `runtime_dir -> backup_dir` "
+        "(backup-aside) and line `backup_dir -> runtime_dir` (failure rollback) both relocate the "
+        "EXISTING, previously-installed runtime -- the same native-runtime-swap-of-trusted-bytes "
+        "exemption as `_repair_windows_python_subprocess_launcher` above. The middle call, "
+        "`staged_dir -> runtime_dir`, DOES publish freshly-downloaded content (staged_dir holds "
+        "the just-extracted Node archive) -- structurally the same shape as `_install_release_"
+        "native_frontdoor`'s os.replace (VIOLATING, pinned below), except this one operates on a "
+        "DIRECTORY TREE, which `atomic_write_bytes`/`atomic_write_bytes_anchored` cannot write at "
+        "all (they publish a single file's bytes). `os.replace` is the correct atomic primitive "
+        "for a directory-level install: POSIX/Windows rename() replaces the destination directory "
+        "entry without ever dereferencing it, so it carries no destination-symlink-follow risk "
+        "either way. Sanctioned as a structural gap (no directory-level equivalent of the shared "
+        "helper exists to route through), not a rubber stamp -- the archive itself is checksum-"
+        "verified (`_verify_node_archive`) before this swap. Contrast with the `shutil.move` call "
+        "at the TOP of this same function (line ~356, staging `extracted_dir` into `staged_dir`), "
+        "which is NOT sanctioned: `shutil.move` CAN follow an existing destination symlink when "
+        "the target looks like a directory, unlike `os.replace` -- a real, cited, un-fixed gap "
+        "(see `_EXPECTED_VIOLATING`)."
+    ),
+    ("lsp_provider_setup.py", "_safe_extract_tar", "archive.extractall"): (
+        "Preceded by an explicit zip-slip guard in the SAME function (audit S6, CVE-2007-4559 "
+        "class): every member path AND every symlink/hardlink target is resolved and checked "
+        "against the destination root before `extractall` runs, with `filter='data'` hardening on "
+        "Python 3.12+. Its one caller (`_extract_archive`, itself called only from "
+        "`_ensure_node_runtime`) always passes a `TemporaryDirectory()`-derived destination."
+    ),
+    ("lsp_provider_setup.py", "_safe_extract_zip", "archive.extractall"): (
+        "Same zip-slip guard shape as `_safe_extract_tar` above (member-path containment check "
+        "before extractall), same caller chain into a `TemporaryDirectory()`-derived destination."
+    ),
+    ("lsp_provider_setup.py", "_write_package_json", "Path.write_text"): (
+        'Fixed-content package.json manifest (a hardcoded `{"name": ..., "private": True}` '
+        "dict), no externally-sourced bytes, guarded by `if package_json.exists(): return` so an "
+        "existing file is never overwritten -- same fixed-content-marker shape as `main.py::_"
+        "write_windows_exe_bridge_marker` above."
+    ),
+    ("session_daemon.py", "_try_acquire_daemon_start_lock", "os.open"): (
+        "Lock-file acquisition at a fixed, internally-derived path (`_daemon_start_lock_path(root)`"
+        " = `_sessions_dir(root) / _DAEMON_START_LOCK_FILE`, never a caller-selected artifact "
+        "destination) with `O_CREAT|O_EXCL` -- the exact same shape as the already-sanctioned "
+        "`_index_lock.py::index_lock` entry above."
+    ),
+    ("session_daemon.py", "_try_acquire_daemon_start_lock", "os.write"): (
+        "Writes only the acquiring pid into the just-opened, already-confined lock fd from the "
+        "same acquisition -- same pattern as `_index_lock.py::index_lock`'s os.write entry above."
     ),
 }
 
@@ -1251,7 +1369,12 @@ def test_generated_source_c_sites_are_surfaced() -> None:
         "recurse into it rather than just re-pinning this list)."
     )
 
-    for fname in ("_index_lock.py", "codemap.py"):
+    # Widened alongside the population census (task #859 class ratchet): every OTHER discovered
+    # module, not just the original 3-file scope, must have zero surfaced '-c' sites -- verified
+    # against the full walk so a new module can never quietly grow one unnoticed.
+    for fname in _SCANNED_PRODUCTION_FILES:
+        if fname == "main.py":
+            continue
         other_sites = _real_subprocess_dash_c_sites(_read(_CLI_SRC / fname), fname)
         assert other_sites == [], f"unexpected new '-c' execution root(s) in {fname}: {other_sites}"
 
@@ -1271,6 +1394,22 @@ def _scan_all_scoped_files() -> list[Candidate]:
     return classify_with_sanctions(all_candidates)
 
 
+def test_scanned_population_floor() -> None:
+    """The census must DISCOVER its population by walking `_CLI_SRC`, not enumerate a hand-
+    maintained list -- see `_discover_scanned_production_files`. This is the guard against the
+    walk silently resolving zero/few files (wrong directory, glob typo, partial checkout) and
+    that truncation reading as a clean "no violations" -- exactly the false-green shape AGENTS.md
+    warns about: an empty scan and a genuinely clean codebase are indistinguishable without this
+    floor. 41 modules exist as of this task; asserting only a FLOOR (not an exact count) means
+    ordinary future module additions don't require touching this line."""
+    assert len(_SCANNED_PRODUCTION_FILES) >= _MINIMUM_SCANNED_MODULE_COUNT, (
+        f"the discovered population walk found only {len(_SCANNED_PRODUCTION_FILES)} module(s) "
+        f"under {_CLI_SRC} -- expected at least {_MINIMUM_SCANNED_MODULE_COUNT}. This usually "
+        "means the walk silently resolved the wrong directory or an (nearly-)empty checkout, "
+        "which would make every other population test in this module pass for the wrong reason."
+    )
+
+
 def test_population_has_zero_unresolved() -> None:
     candidates = _scan_all_scoped_files()
     unresolved = [c for c in candidates if c.classification == UNRESOLVED]
@@ -1281,7 +1420,9 @@ def test_population_has_zero_unresolved() -> None:
 
 
 # The three functions #859's instance fix (commit a41c86f) routed through
-# `atomic_write_bytes_anchored` -- pinned green permanently as the regression guard for that fix.
+# `atomic_write_bytes_anchored` -- pinned green permanently as the regression guard for that fix,
+# plus every OTHER helper-backed writer surfaced once the census widened from the original 3-file
+# scope (main.py/_index_lock.py/codemap.py) to the full `_CLI_SRC` walk.
 _EXPECTED_HELPER_BACKED = {
     (
         "main.py",
@@ -1296,6 +1437,28 @@ _EXPECTED_HELPER_BACKED = {
     ("main.py", "new", "tensor_grep.cli._index_lock.atomic_write_bytes_anchored"),
     # The bidirectional control's "current" arm (also asserted directly above).
     ("codemap.py", "_atomic_write_text", "tensor_grep.cli._index_lock.atomic_write_bytes"),
+    # --- Newly discovered once the census walked the full _CLI_SRC directory ---
+    (
+        "audit_manifest.py",
+        "_write_history_index",
+        "tensor_grep.cli._index_lock.atomic_write_json",
+    ),
+    (
+        "checkpoint_store.py",
+        "_write_json_atomic",
+        "tensor_grep.cli._index_lock.atomic_write_json",
+    ),
+    ("dogfood.py", "_write_json_atomic", "tensor_grep.cli._index_lock.atomic_write_bytes"),
+    (
+        "evidence_signing.py",
+        "_write_private_key_atomic",
+        "tensor_grep.cli._index_lock.atomic_write_bytes",
+    ),
+    ("evidence_signing.py", "generate_keypair", "tensor_grep.cli._index_lock.atomic_write_bytes"),
+    ("ledger_store.py", "_write_findings_index", "tensor_grep.cli._index_lock.atomic_write_json"),
+    ("ledger_store.py", "_write_index", "tensor_grep.cli._index_lock.atomic_write_json"),
+    ("ledger_store.py", "record_finding", "tensor_grep.cli._index_lock.atomic_write_json"),
+    ("session_store.py", "_write_json_atomic", "tensor_grep.cli._index_lock.atomic_write_json"),
 }
 
 # The complete sanctioned population, by (module, outer_function, operation) identity -- see
@@ -1313,6 +1476,17 @@ _EXPECTED_SANCTIONED = {
     ("main.py", "_remove_windows_stale_tensor_grep_python_launchers", "os.replace"),
     ("main.py", "_repair_windows_python_subprocess_launcher", "os.replace"),
     ("main.py", "_repair_windows_python_subprocess_launcher", "shutil.copy2"),
+    # --- Newly discovered once the census walked the full _CLI_SRC directory ---
+    ("agent_capsule.py", "_agent_gpu_evidence", "Path.write_text"),
+    ("audit_manifest.py", "verify_review_bundle", "Path.write_text"),
+    ("checkpoint_store.py", "create_checkpoint", "shutil.copy2"),
+    ("checkpoint_store.py", "undo_checkpoint", "shutil.copy2"),
+    ("lsp_provider_setup.py", "_ensure_node_runtime", "os.replace"),
+    ("lsp_provider_setup.py", "_safe_extract_tar", "archive.extractall"),
+    ("lsp_provider_setup.py", "_safe_extract_zip", "archive.extractall"),
+    ("lsp_provider_setup.py", "_write_package_json", "Path.write_text"),
+    ("session_daemon.py", "_try_acquire_daemon_start_lock", "os.open"),
+    ("session_daemon.py", "_try_acquire_daemon_start_lock", "os.write"),
 }
 
 # The three live violations named by the #859 backlog-closeout plan's Task 3 brief turned out,
@@ -1323,13 +1497,57 @@ _EXPECTED_SANCTIONED = {
 # `os.replace`/`write_bytes` violations already expected. All four sit in the SAME
 # release-native-frontdoor download-and-install feature and share the SAME root cause: this
 # feature was never routed through the #859 shared-helper hardening pass. Recorded here as a
-# real, cited finding -- not force-fit down to match the brief's estimate. See the task report
-# for the full explanation.
+# real, cited finding -- not force-fit down to match the brief's estimate.
+#
+# Below the four are TWELVE MORE, surfaced once the census widened from the original 3-file scope
+# to the full `_CLI_SRC` walk -- again NOT fixed by this task (scope is the ratchet mechanism, not
+# a repo-wide remediation sweep; see the module docstring). Each was individually reviewed, not
+# swept: `ast_workflows.py`'s two `write_text` sites take a temp path as a PARAMETER rather than
+# creating it inside the function (`test_caller_supplied_temp_path_requires_explicit_sanction`'s
+# "no implicit leniency" rule -- confinement is not statically provable from a parameter alone).
+# `checkpoint_store.py::undo_checkpoint`'s `write_bytes` rollback restores previously-captured
+# bytes to a pre-existing (not function-created) path -- `write_bytes` always follows a
+# destination symlink and writes through it (unlike `os.replace`/`shutil.copy2(follow_symlinks=
+# False)`, which are destination-symlink-safe by construction), so a rollback-restore rationale
+# alone does not sanction it -- the exact same reasoning already applied to the pre-existing
+# `_install_release_native_frontdoor` `Path.write_bytes` rollback below. `lsp_provider_setup.py`
+# carries the bulk: `_download`, `_download_rust_analyzer`, and `_extract_rust_analyzer_exe_from_
+# zip` all write downloaded/extracted bytes straight to a caller-supplied destination via `Path.
+# open("wb")`/`shutil.copyfileobj` with no anchored-helper routing and no destination-symlink
+# guard; `_copy_binary_to_managed` calls `shutil.copy2` WITHOUT `follow_symlinks=False` (contrast
+# with the sanctioned `checkpoint_store.py` copies, which do pass it); and `_ensure_node_runtime`'s
+# `shutil.move` (staging the extracted archive into place) is not sanctioned alongside its sibling
+# `os.replace` calls in the same function -- `shutil.move` CAN follow an existing destination
+# symlink when the target looks like a directory, unlike `os.replace`'s non-dereferencing rename,
+# so it does not share that call's safety argument. `session_daemon.py::_write_daemon_metadata_
+# windows` is a deliberately-designed, audited (#211) HAND-ROLLED re-derivation of the shared
+# atomic-write pattern (create-temp/ACL-lock/write/fsync/replace) -- needed because the Windows ACL
+# lockdown must run strictly between temp-file creation and the token write, which the shared
+# helper does not support -- but per this detector's own `test_tempfile_to_publish_flow_is_
+# detected` control, a hand-rolled re-derivation that superficially resembles the approved helper's
+# internals is NOT the approved helper, and is VIOLATING even when well-motivated and reviewed.
 _EXPECTED_VIOLATING = {
     ("main.py", "_download_native_frontdoor_asset", "urllib.request.urlretrieve"),
     ("main.py", "_write_native_frontdoor_metadata", "Path.write_text"),
     ("main.py", "_install_release_native_frontdoor", "os.replace"),
     ("main.py", "_install_release_native_frontdoor", "Path.write_bytes"),
+    # --- Newly discovered once the census walked the full _CLI_SRC directory ---
+    ("ast_workflows.py", "_batch_search_snippets", "Path.write_text"),
+    ("ast_workflows.py", "test_command", "Path.write_text"),
+    ("checkpoint_store.py", "undo_checkpoint", "Path.write_bytes"),
+    ("lsp_provider_setup.py", "_copy_binary_to_managed", "shutil.copy2"),
+    ("lsp_provider_setup.py", "_download", "Path.open"),
+    ("lsp_provider_setup.py", "_download_rust_analyzer", "Path.open"),
+    ("lsp_provider_setup.py", "_download_rust_analyzer", "shutil.copyfileobj"),
+    ("lsp_provider_setup.py", "_ensure_node_runtime", "shutil.move"),
+    ("lsp_provider_setup.py", "_extract_rust_analyzer_exe_from_zip", "Path.open"),
+    ("lsp_provider_setup.py", "_extract_rust_analyzer_exe_from_zip", "shutil.copyfileobj"),
+    ("session_daemon.py", "_write_daemon_metadata_windows", "os.open"),
+    (
+        "session_daemon.py",
+        "_write_daemon_metadata_windows",
+        "tensor_grep.cli._index_lock.replace_with_retry",
+    ),
 }
 
 
@@ -1460,4 +1678,21 @@ def test_mutation_control_reverted_is_byte_identical_and_green() -> None:
     found = _identity_set(candidates, VIOLATING)
     assert found == _EXPECTED_VIOLATING, (
         "the real on-disk population must be unaffected by the in-memory mutation probes above"
+    )
+
+
+def test_population_includes_previously_unscanned_checkpoint_store_write_bytes() -> None:
+    """RED-before-fix regression guard (task #859 class ratchet): the population census used to
+    be scoped to a hardcoded 3-file ``_SCANNED_PRODUCTION_FILES`` tuple, so a real unsafe writer
+    living in any OTHER cli module -- here, ``checkpoint_store.py``'s rollback ``write_bytes`` in
+    ``undo_checkpoint`` -- was invisible to it: a new module joining the package was silently
+    never scanned. This targets the DISCOVERED population (``_scan_all_scoped_files()``), not the
+    hardcoded tuple, so it fails on the pre-fix code with a plain "site not found" assertion (not
+    an ImportError/NameError -- a missing-module red proves nothing) and passes once the census
+    walks the whole ``_CLI_SRC`` directory."""
+    candidates = _scan_all_scoped_files()
+    identities = {(c.module, c.outer_function, c.operation) for c in candidates}
+    assert ("checkpoint_store.py", "undo_checkpoint", "Path.write_bytes") in identities, (
+        f"checkpoint_store.py's undo_checkpoint write_bytes site is missing from the census -- "
+        f"the population walk is still scoped to a hardcoded file list. identities={identities}"
     )
