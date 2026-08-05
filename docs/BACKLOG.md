@@ -1274,6 +1274,38 @@ Net: 0 real defects, and the ratchet now discriminates. Had these shipped as fin
 been 9 false P0s — worse than the gap the ratchet exists to close.
 
 
+## RESEARCH ANSWERED -- F7 Task 11 (cross-file caller resolution) is worth building (2026-08-05)
+
+The open question was whether cross-file resolution earns its cost, and the stated cheapest
+decisive test was: measure how often the blast floor falls short on a REAL multi-file repo BEFORE
+designing a resolver. Ran it.
+
+**Corpus:** `omega-fusion/source/lucebox-hub-main/server`, 269 real C++/header files (not a
+fixture, not synthetic -- a synthetic corpus manufactures whatever ratio its generator encodes).
+
+| measure | value |
+|---|---|
+| function-like definitions | 1114 |
+| symbols with >= 1 CROSS-FILE call site | **511 / 1114 (46%)** |
+| call sites in-file | 2731 |
+| call sites cross-file | **4664** |
+| share an IN-FILE-ONLY extractor cannot see | **63.1%** |
+
+**What this number is NOT.** Ground truth is a regex (`sym\s*\(`), so it also matches
+prototypes, declarations, comments, strings, and same-named methods on unrelated classes. 63.1% is
+an UPPER BOUND with known inflation, from ONE corpus in ONE language. Do not quote it as a product
+claim.
+
+**What it does establish.** The direction is not close. Cross-file call sites OUTNUMBER in-file ones
+roughly 1.7:1, and nearly half of all defined symbols have at least one caller in another file.
+Even halving the figure for regex inflation leaves cross-file as a large minority-to-majority of
+real call sites. An in-file-only caller graph is therefore structurally incomplete on real C++,
+not merely imprecise -- which is exactly what the `blast_radius_floor` consumers key on.
+
+**Disposition:** F7 Task 11 is JUSTIFIED. Before building, tighten the ground truth (parse call
+sites rather than regex them) so the design is sized against a defensible number, and repeat on one
+Java and one C# corpus -- a single-language, single-corpus measurement is a direction, not a size.
+
 ## DEPENDENCY MAP -- what 'Active / buildable' actually means (measured 2026-08-05)
 
 The canonical queue lists ten rows as `READY`. Premise-checking them shows the genuinely
