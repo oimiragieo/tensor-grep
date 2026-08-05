@@ -7,9 +7,23 @@ without growing `main.py` further. No behavior changes -- the function bodies be
 byte-identical to their prior location in `main.py`. This module must never import
 `tensor_grep.cli.main` back (that would reintroduce the cycle this extraction exists to avoid);
 `main.py` imports these two names from here instead of defining them.
+
+Task 8 Step 2 (docs/plans/2026-08-02-backlog-closeout-implementation-plan.md, Python-only slice,
+2026-08-05): this session adds ONLY the strict typed composition API named in that step --
+`PrepareSnapshotV1` / `build_prepare_snapshot` below -- as a pure, additive wrapper over the
+existing `_build_prepare_payload`. It changes ZERO legacy behavior: `tg prepare`'s Typer adapter
+in `main.py` still calls `_build_prepare_payload` directly and is untouched by this addition, so
+its output stays byte-identical by construction (nothing on that call path changed). The full
+`tg edit-ready` command (frozen argv, `EditReadyTicketV1`, the claims-only OS fence, atomic
+no-clobber baseline publication, and the native/Rust half) is explicitly OUT OF SCOPE for this
+slice -- see the PR description for the scope-down rationale. `build_prepare_snapshot` exists so
+a *future* edit-ready composition can consume a stable typed projection of the same data this
+module already produces, without that future work needing to re-parse `_build_prepare_payload`'s
+untyped dict shape by hand.
 """
 
 import time
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -440,3 +454,61 @@ def _build_prepare_payload(
             "blast_radius_floor": floor_deadline_partial,
         }
     return result
+
+
+@dataclass(frozen=True)
+class PrepareSnapshotV1:
+    """Strict typed projection of a `_build_prepare_payload` result (Task 8 Step 2).
+
+    Additive-only: every field here is read from the existing untyped payload dict via
+    `.get(...)`, never computed independently, so this type can never disagree with what
+    `tg prepare` itself returns for the same call. `raw` retains the complete untyped payload
+    for any caller that needs a field not yet promoted to a named attribute -- promoting a new
+    field later is a pure addition to this dataclass, not a behavior change to `raw` or to
+    `_build_prepare_payload`.
+
+    This type has no CLI/MCP consumer yet (Task 8's `tg edit-ready` command is out of scope for
+    this slice) -- it exists so that future composition work has a typed contract to build
+    against instead of re-deriving field names from the dict shape by hand.
+    """
+
+    version: int
+    path: str
+    query: str
+    primary_target: dict[str, Any]
+    confidence: dict[str, Any]
+    blast_radius_floor: dict[str, Any]
+    coordination: dict[str, Any]
+    partial: bool
+    partial_reason: str | None
+    raw: dict[str, Any] = field(repr=False)
+
+
+def build_prepare_snapshot(
+    *,
+    path: str,
+    query: str,
+    claim: bool = False,
+    deadline_monotonic: float | None = None,
+) -> PrepareSnapshotV1:
+    """Build a `PrepareSnapshotV1` by calling the existing `_build_prepare_payload` and
+    projecting its result onto typed fields. Delegates every computation to that function --
+    this wrapper performs no scanning, ranking, or I/O of its own, so it carries none of
+    `_build_prepare_payload`'s side effects beyond what that function already does (including,
+    when `claim=True`, the same advisory ledger claim submission `_build_prepare_payload`
+    already performs)."""
+    payload = _build_prepare_payload(
+        path=path, query=query, claim=claim, deadline_monotonic=deadline_monotonic
+    )
+    return PrepareSnapshotV1(
+        version=int(payload.get("version") or 1),
+        path=str(payload.get("path") or path),
+        query=str(payload.get("query") or query),
+        primary_target=dict(payload.get("primary_target") or {}),
+        confidence=dict(payload.get("confidence") or {}),
+        blast_radius_floor=dict(payload.get("blast_radius_floor") or {}),
+        coordination=dict(payload.get("coordination") or {}),
+        partial=bool(payload.get("partial", False)),
+        partial_reason=payload.get("partial_reason"),
+        raw=payload,
+    )
