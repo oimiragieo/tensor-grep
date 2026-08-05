@@ -80,19 +80,37 @@ def test_download_still_succeeds_on_an_ordinary_fresh_temp_path(
 
     Without this arm the fix could be "always raise", which would pass the test above for entirely
     the wrong reason -- the classic check that cannot fail.
+
+    frontdoor-download-held-fd task: the download no longer calls `urlretrieve` (that reopen-by-
+    name was the remaining TOCTOU gap this module's own docstring flags -- see the module
+    docstring's "HONEST SCOPE" note, now closed by a follow-up); it streams through `urlopen` and
+    the SAME held fd the O_EXCL claim below opens, so the fake swaps to `urlopen`.
     """
     from tensor_grep.cli import main as cli_main
 
     temp_path = tmp_path / "fresh.tmp"
 
-    def _fake_urlretrieve(url: str, filename: Any, reporthook: Any = None) -> Any:
-        with open(filename, "wb") as handle:
-            handle.write(b"REAL-ASSET-BYTES")
-        return (str(filename), None)
+    class _FakeResponse:
+        def __init__(self, payload: bytes) -> None:
+            self._chunks = [payload]
+
+        def read(self, _size: int = -1) -> bytes:
+            if not self._chunks:
+                return b""
+            return self._chunks.pop(0)
+
+        def __enter__(self) -> _FakeResponse:
+            return self
+
+        def __exit__(self, *_exc_info: Any) -> bool:
+            return False
+
+    def _fake_urlopen(url: str, timeout: Any = None) -> Any:
+        return _FakeResponse(b"REAL-ASSET-BYTES")
 
     import urllib.request
 
-    monkeypatch.setattr(urllib.request, "urlretrieve", _fake_urlretrieve)
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
 
     cli_main._download_native_frontdoor_asset("https://example.invalid/tg", temp_path)
 
