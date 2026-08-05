@@ -1476,16 +1476,17 @@ resolving citations, so anchor-checking cannot catch it -- only reproducing the 
 | **#865** | `--ltl` missing from rust_core, would clap-reject | present in `SEARCH_PYTHON_PASSTHROUGH_FLAGS` at `rust_core/src/main.rs:322` with an explaining comment at `:319` AND a parity test `search_format_python_passthrough_args_routes_ltl_flag_to_python` at `:4484`. The item's stated evidence ("rust_core has zero matches") is simply false -- 6 matches | **CLOSE -- already shipped** |
 | **#858** | codemap hand-rolls `_atomic_write_text`, skipping the symlink refusal | the function survives at `codemap.py:799` but AST-walked its body is 4 statements calling only `atomic_write_bytes`/`encode`/`mkdir`, with ZERO residual write primitives (`os.replace`, `write_text`, `mkstemp`, `NamedTemporaryFile`). All three call sites (`:1242`, `:1300`, `:1307`) route through it | **CLOSE -- routed; the surviving name is a thin wrapper, not a hand-rolled writer** |
 | **#859** | no AST ratchet over `replace_with_retry`/`os.replace` publish sites | `tests/unit/test_cli_atomic_writer_ratchet.py` exists with 36 tests | **CLOSE -- shipped** |
-| **#864** | CWE-88: no `--` sentinel before a relative `$file` in `apply_policy` | **CONFIRMED REAL.** `apply_policy.py` builds subprocess argv and contains ZERO `"--"` sentinels. `$file`/`{file}` is substituted into the command STRING at `:563` BEFORE argv splitting; `_policy_quote_arg` (`:371`) neutralises shell metacharacters but NOT a leading `-`, which survives quoting as a token the invoked tool parses as an option | **OPEN -- see the note below** |
+| **#864** | CWE-88: no `--` sentinel before a relative `$file` in `apply_policy` | **ALREADY FIXED -- and my first check got this WRONG.** I counted `"--"` sentinels (zero) and called the vector open. The guard is a DIFFERENT mechanism: `_policy_file_arg` (`apply_policy.py:506`) returns `f"./{relative}"` when the name starts with `-`, which makes it unambiguously a path for every argv reader on both platforms. Measured: `-cevil.ini` -> `'./-cevil.ini'`, control `normal.py` -> `'normal.py'` unchanged. The comment at `:497-505` also states the `--` omission in `_run_policy_command` is DELIBERATE -- it concerns OPERATOR-authored tokens, which that function never touches | **CLOSE -- shipped 2026-08-01 (campaign PR-D)** |
 
-**#864, sharpened by the premise check.** The item proposes inserting `--` before `$file`. That is
-hard to do correctly: the command is a USER-AUTHORED template and there is no general way to know
-where the positional section begins. The item's own parenthetical names the better fix -- *"Rust
-already absolute"*. An absolute path cannot begin with `-`, so passing the file absolutely (as the
-Rust side already does) removes the injection vector without editing an arbitrary template. Ship
-whichever survives review, but do NOT implement the `--` insertion without first establishing that
-the template's positional boundary is knowable. Security surface -> mandatory adversarial gate
-before merge; codex is unavailable until 2026-08-10, so route to opus.
+**#864 -- and the correction is the finding.** My premise check searched for ONE implementation of
+a fix (a `--` sentinel), found none, and reported the vector open. The guard exists as a `./`
+prefix instead. That is the SAME defect as the backlog item I was auditing: looking for a
+particular fix rather than for the BEHAVIOUR. A guard can be absent, or it can be present in a
+shape you did not think to grep for, and a zero cannot tell those apart.
+
+So the sweep is **5 of 5 already shipped**, not 4 of 5. Every one of the five was refuted only by
+executing or AST-walking the real code; not one fell to reading the item and grepping for its
+stated symptom.
 
 - **#858** (2026-07-29 audit S1) route `tg codemap` writes through `_index_lock.atomic_write_bytes`
   — retire hand-rolled `codemap._atomic_write_text` (`codemap.py:801-812`). Explicitly deferred out of
