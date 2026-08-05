@@ -18,8 +18,7 @@ from typing import Any
 
 import pytest
 
-from tensor_grep.cli import lang_registry
-from tensor_grep.cli import repo_map
+from tensor_grep.cli import lang_registry, repo_map
 
 _SYNTHETIC_SUFFIX = ".tgsynthetic"
 _SYNTHETIC_ID = "tgsynthetic"
@@ -62,15 +61,21 @@ def synthetic_language() -> Any:
         import_markers=(),
         references_and_calls=_spy,
     )
+    registry_snapshot = dict(lang_registry.LANGUAGE_REGISTRY)
+    suffix_snapshot = dict(lang_registry._SPEC_BY_SUFFIX)
     lang_registry.register_language(spec)
     try:
         yield calls
     finally:
-        lang_registry.LANGUAGE_REGISTRY.pop(_SYNTHETIC_ID, None)
-        lang_registry.register_language  # keep the symbol referenced for readers
-        # re-derive the suffix map so the throwaway suffix cannot leak into a later test
-        for registered in list(lang_registry.LANGUAGE_REGISTRY.values()):
-            lang_registry.register_language(registered)
+        # Restore BOTH maps. register_language writes LANGUAGE_REGISTRY *and* the derived
+        # _SPEC_BY_SUFFIX; popping only the first leaves `.tgsynthetic -> spec` behind, and the
+        # leak is invisible here -- it surfaces in test_lang_registry's suffix-union pin, a
+        # DIFFERENT file. That is exactly what happened while writing this test, in the fixture
+        # whose own docstring warned about shared mutable state.
+        lang_registry.LANGUAGE_REGISTRY.clear()
+        lang_registry.LANGUAGE_REGISTRY.update(registry_snapshot)
+        lang_registry._SPEC_BY_SUFFIX.clear()
+        lang_registry._SPEC_BY_SUFFIX.update(suffix_snapshot)
 
 
 def test_dispatch_invokes_the_registered_extractor_not_the_regex_fallback(
