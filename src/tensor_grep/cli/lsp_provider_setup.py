@@ -15,6 +15,8 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from tensor_grep.cli._index_lock import atomic_write_bytes_anchored
+
 _MANAGED_PROVIDER_HOME_ENV_VAR = "TENSOR_GREP_LSP_PROVIDER_HOME"
 _NODE_VERSION = "22.14.0"
 _NODE_PACKAGE_SPECS = (
@@ -210,19 +212,36 @@ def _node_archive_name() -> str:
 
 
 def _download(url: str, destination: Path) -> None:
+    # H2 (#859 class ratchet): `destination` is a caller-supplied PARAMETER (every current caller
+    # happens to pass a path inside its own TemporaryDirectory, but that confinement is not
+    # statically provable from the signature alone -- same "no implicit leniency" reasoning as
+    # ast_workflows._batch_search_snippets). A plain `destination.open("wb")` follows a
+    # pre-existing destination symlink; `atomic_write_bytes_anchored` requires the full payload
+    # in memory (unsuited to a size-capped streaming download), so this claims the destination
+    # name exclusively FIRST -- O_CREAT|O_EXCL|O_NOFOLLOW, mirroring the reviewed
+    # `_download_native_frontdoor_asset` (main.py) pattern -- and then writes through that SAME
+    # held fd for the whole streamed transfer, which is strictly tighter than that precedent: no
+    # close-then-reopen gap exists here for a symlink to be swapped in between the claim and the
+    # first byte written.
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(destination, flags, 0o644)
     total = 0
-    with urllib.request.urlopen(url, timeout=60) as response, destination.open("wb") as output:
-        while True:
-            chunk = response.read(1024 * 1024)
-            if not chunk:
-                break
-            total += len(chunk)
-            if total > _MAX_TOOLCHAIN_DOWNLOAD_BYTES:
-                raise RuntimeError(
-                    f"Toolchain download exceeded {_MAX_TOOLCHAIN_DOWNLOAD_BYTES} bytes "
-                    f"(possible oversized or malicious response): {url}"
-                )
-            output.write(chunk)
+    try:
+        with urllib.request.urlopen(url, timeout=60) as response, os.fdopen(fd, "wb") as output:
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > _MAX_TOOLCHAIN_DOWNLOAD_BYTES:
+                    raise RuntimeError(
+                        f"Toolchain download exceeded {_MAX_TOOLCHAIN_DOWNLOAD_BYTES} bytes "
+                        f"(possible oversized or malicious response): {url}"
+                    )
+                output.write(chunk)
+    except BaseException:
+        destination.unlink(missing_ok=True)  # don't leave a partial/unsafe temp behind
+        raise
 
 
 def _allow_unverified_toolchain() -> bool:
@@ -613,8 +632,13 @@ def _verify_rust_analyzer_checksum(archive_path: Path) -> None:
 
 
 def _copy_binary_to_managed(binary: str, destination: Path) -> Path:
+    # H2 (#859 class ratchet): `destination` is the fixed, predictable managed-provider install
+    # path (`_managed_bin_binary(root, ...)`), not a randomized temp name -- a real pre-planted-
+    # symlink target, unlike the checkpoint_store snapshot copies (which pass
+    # `follow_symlinks=False` and are exempted for that reason). Plain `shutil.copy2` follows a
+    # destination symlink. Route through the anchored helper instead.
     destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(binary, destination)
+    atomic_write_bytes_anchored(destination, Path(binary).read_bytes())
     if not is_windows():
         _mark_executable(destination)
     return destination
@@ -649,8 +673,14 @@ def _extract_rust_analyzer_exe_from_zip(archive_path: Path, destination: Path) -
         if not exe_members:
             raise RuntimeError(f"rust-analyzer archive {archive_path.name} has no .exe member")
         destination.parent.mkdir(parents=True, exist_ok=True)
-        with bundle.open(exe_members[0]) as source, destination.open("wb") as output:
-            shutil.copyfileobj(source, output)
+        # H2 (#859 class ratchet): `destination` is the fixed managed rust-analyzer.exe path.
+        # The archive is already checksum-verified (`_verify_rust_analyzer_checksum`, called by
+        # this function's one caller) before this member is extracted, so the payload is trusted
+        # -- the gap was the raw `Path.open("wb")` following a pre-planted destination symlink.
+        # Route through the anchored helper instead of streaming to a plain reopen.
+        with bundle.open(exe_members[0]) as source:
+            data = source.read()
+        atomic_write_bytes_anchored(destination, data)
 
 
 def _download_rust_analyzer(destination: Path) -> None:
@@ -665,8 +695,14 @@ def _download_rust_analyzer(destination: Path) -> None:
         if artifact.endswith(".zip"):
             _extract_rust_analyzer_exe_from_zip(archive_path, destination)
         else:
-            with gzip.open(archive_path, "rb") as compressed, destination.open("wb") as output:
-                shutil.copyfileobj(compressed, output)
+            # H2 (#859 class ratchet): same fix as _extract_rust_analyzer_exe_from_zip above --
+            # the archive is already checksum-verified at this point, so decompress fully and
+            # publish through the anchored helper instead of streaming to a plain reopen of the
+            # fixed `destination` path.
+            with gzip.open(archive_path, "rb") as compressed:
+                data = compressed.read()
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_bytes_anchored(destination, data)
     if not is_windows():
         _mark_executable(destination)
 
