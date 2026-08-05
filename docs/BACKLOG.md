@@ -1306,6 +1306,30 @@ not merely imprecise -- which is exactly what the `blast_radius_floor` consumers
 sites rather than regex them) so the design is sized against a defensible number, and repeat on one
 Java and one C# corpus -- a single-language, single-corpus measurement is a direction, not a size.
 
+## MEASURED 2026-08-05: `refactor:` CUTS NO RELEASE -- the title gate and the publisher disagree
+
+CLAUDE.md warns that `scripts/validate_pr_title_semver.py` (the PR-title gate) and
+`[tool.semantic_release]` (the actual publisher) disagree about `refactor`, and that this file has
+had it wrong before. Now measured end to end rather than read:
+
+| | verdict |
+|---|---|
+| `_RELEASE_INTENTS` in the title gate | `refactor` -> **patch** |
+| `[tool.semantic_release]` in pyproject | no `patch_tags`/`minor_tags`/`commit_parser` override at all, so python-semantic-release DEFAULTS apply: `feat` -> minor, `fix`/`perf` -> patch. **`refactor` is not in either list.** |
+| what actually happened | PR #939 merged as `refactor:` at 14:35Z. Run 31015992191 completed **success**. Main head stayed `77d21f9` with **no `chore(release)` commit**, and PyPI stayed at **1.107.0**. |
+
+So a `refactor:` PR passes the title gate as a releasing change and then **ships nothing**. The
+practical consequences, both of which have bitten this repo:
+
+- A fix scoped as `refactor:` MERGES, closes its ticket, and never reaches users -- while every
+  tracker reads "shipped". Committed is not shipped; merged is not released.
+- Waiting for a `refactor:` merge to publish before the next merge is waiting for something that
+  will never happen. The push-race gate must key on the PUBLISHER's tags, not the title gate's.
+
+Derive rather than trust this table: `grep -A12 _RELEASE_INTENTS scripts/validate_pr_title_semver.py`
+for the title gate, and `grep -A14 '\[tool.semantic_release' pyproject.toml` for the publisher --
+an EMPTY result there means defaults, which is exactly the case that surprises people.
+
 ## DEPENDENCY MAP -- what 'Active / buildable' actually means (measured 2026-08-05)
 
 The canonical queue lists ten rows as `READY`. Premise-checking them shows the genuinely
