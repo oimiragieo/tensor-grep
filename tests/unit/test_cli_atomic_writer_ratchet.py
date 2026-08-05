@@ -695,13 +695,15 @@ def scan_file(path: Path, module: str) -> list[Candidate]:
 # edit fails loudly rather than silently reclassifying a moved line as a fresh violation.
 _SANCTIONED_SITES: dict[tuple[str, str, str], str] = {
     ("main.py", "_download_native_frontdoor_asset", "os.open"): (
-        "NOT a payload write: this is the O_EXCL EXCLUSIVITY CLAIM added so urlretrieve's plain "
-        "'wb' cannot follow a symlink planted at the temp path. It opens with "
-        "O_CREAT|O_EXCL|O_WRONLY and mode 0o600, writes ZERO bytes, and closes the fd "
-        "immediately; the actual bytes arrive from urlretrieve into the regular file this call "
-        "guarantees exists. Refusing rather than truncating on a pre-existing path is the point. "
-        "The destination is the caller's uuid4-suffixed temp path, and the downloaded artifact is "
-        "still checksum-verified before os.replace publishes it."
+        "TOCTOU fix (H2 deferral closed): claims `destination` exclusively via "
+        "O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW BEFORE the streamed download starts, then writes "
+        "through that SAME held fd (os.fdopen) for the whole transfer -- urllib.request.urlretrieve "
+        "is no longer called, so there is no close-then-reopen-by-name gap for a symlink swap to "
+        "win. Same technique as `lsp_provider_setup.py::_download`'s os.open entry below (that one "
+        "was the H2 precedent this call now mirrors, rather than the other way around). Refusing "
+        "rather than truncating on a pre-existing path is the point. The destination is the "
+        "caller's uuid4-suffixed temp path, and the downloaded artifact is still checksum-verified "
+        "before os.replace publishes it."
     ),
     ("_index_lock.py", "atomic_write_bytes_anchored", "os.open"): (
         "Defines the shared helper's OWN temp-file creation (O_CREAT|O_EXCL|O_NOFOLLOW, "
@@ -848,13 +850,13 @@ _SANCTIONED_SITES: dict[tuple[str, str, str], str] = {
     ("lsp_provider_setup.py", "_download", "os.open"): (
         "H2 fix: claims `destination` exclusively via O_CREAT|O_EXCL|O_NOFOLLOW BEFORE the "
         "streamed download starts, then writes through that SAME held fd for the whole transfer -- "
-        "the same technique already sanctioned above for `main.py::_download_native_frontdoor_"
-        "asset`'s os.open entry, except tighter: that precedent closes the fd and lets urlretrieve "
-        "reopen the path by name (a narrow reopen-gap, see the DEFER note in _EXPECTED_VIOLATING "
-        "below), whereas this call never closes or reopens -- there is no window between the claim "
-        "and the first byte written for a symlink to be swapped in. `atomic_write_bytes` requires "
-        "the whole payload in memory up front, which is unsuited to a size-capped streaming "
-        "download, so this is the correct alternative primitive rather than a gap left unrouted."
+        "the technique later mirrored by `main.py::_download_native_frontdoor_asset`'s os.open "
+        "entry above (that call used to close the fd and let urlretrieve reopen the path by name, "
+        "a narrow reopen-gap; a follow-up closed it by adopting this same held-fd streaming "
+        "approach). This call never closes or reopens -- there is no window between the claim and "
+        "the first byte written for a symlink to be swapped in. `atomic_write_bytes` requires the "
+        "whole payload in memory up front, which is unsuited to a size-capped streaming download, "
+        "so this is the correct alternative primitive rather than a gap left unrouted."
     ),
     ("session_daemon.py", "_write_daemon_metadata_windows", "os.open"): (
         "Audited (#211, #81, #13), documented hand-rolled re-derivation of the shared atomic-write "
@@ -1608,7 +1610,16 @@ _EXPECTED_SANCTIONED = {
 # up front), and both halves of `session_daemon.py::_write_daemon_metadata_windows`'s audited
 # (#211/#81/#13) hand-rolled ACL-lockdown-between-create-and-write sequence.
 #
-# The TWO remaining below are DEFERRED, each for a reason too large/risky for this PR to carry:
+# One of H2's original two deferrals is now CLOSED: `main.py::_download_native_frontdoor_asset`
+# no longer calls `urllib.request.urlretrieve` at all. A follow-up (the frontdoor-download-held-fd
+# task) replaced it with the same `urlopen` + chunked-write-through-the-held-fd technique this
+# task applied to `lsp_provider_setup.py::_download` (sanctioned above) -- the O_EXCL|O_NOFOLLOW
+# claim and the transfer now share one fd, closing the reopen-by-name TOCTOU window this comment
+# used to describe. That identity has moved to `_SANCTIONED_SITES` (`os.open`, updated rationale
+# above); `urllib.request.urlretrieve` no longer appears in the source, so it is no longer a
+# candidate this detector can find at all -- there is nothing left to pin here for that half.
+#
+# The ONE remaining below is DEFERRED, for a reason too large/risky for a targeted PR to carry:
 #
 # - `lsp_provider_setup.py::_ensure_node_runtime`'s `shutil.move` (staging the extracted archive
 #   into place): `shutil.move` CAN follow an existing destination symlink when the target looks
@@ -1622,21 +1633,7 @@ _EXPECTED_SANCTIONED = {
 #   download+extract duration between that pre-clear and this move, not the whole function -- real,
 #   but narrowing it further needs either a new directory-safe primitive or giving up cross-fs
 #   support, both bigger than this PR.
-# - `main.py::_download_native_frontdoor_asset`'s `urllib.request.urlretrieve`: the immediately
-#   preceding, already-sanctioned `os.open` O_EXCL claim guarantees `destination` is a fresh
-#   regular file at the moment of that claim, but `urlretrieve` itself re-opens the path by name
-#   with a plain `'wb'` rather than writing through the fd this function already holds -- a narrow
-#   TOCTOU window between the claim's `close(fd)` and urlretrieve's reopen, where an attacker who
-#   can unlink-and-replant at the (uuid4-named, so unpredictable in advance) path could still win a
-#   race. Closing this fully means either buffering the whole download into memory and routing
-#   through `atomic_write_bytes` (loses `urlretrieve`'s streaming byte-cap enforcement mid-transfer,
-#   the exact protection `_enforce_byte_cap` exists for) or replacing `urlretrieve` with a hand-
-#   rolled `urlopen` + chunked-write-through-the-held-fd loop (the technique this task DID apply to
-#   `lsp_provider_setup.py::_download`, sanctioned above) -- a real, scoped, but separately-
-#   reviewable rewrite of this function's download mechanism, left for a follow-up rather than
-#   folded into an already-large H2 diff.
 _EXPECTED_VIOLATING = {
-    ("main.py", "_download_native_frontdoor_asset", "urllib.request.urlretrieve"),
     ("lsp_provider_setup.py", "_ensure_node_runtime", "shutil.move"),
 }
 

@@ -11025,6 +11025,30 @@ def _allow_native_frontdoor_checksum(monkeypatch):
     )
 
 
+class _FakeUrlopenResponse:
+    """Stand-in for the context-managed object urlopen() returns, used to fake
+    `_download_native_frontdoor_asset`'s streamed transfer in these upgrade tests
+    (frontdoor-download-held-fd task: the download reads via `urlopen` + a chunked read loop
+    into its already-claimed fd, replacing the old `urlretrieve(..., reporthook=...)` call --
+    `.read(n)` yields the whole payload on the first call, then empty bytes (EOF), matching a
+    real short response)."""
+
+    def __init__(self, payload: bytes) -> None:
+        self._payload: bytes | None = payload
+
+    def read(self, _size: int = -1) -> bytes:
+        if self._payload is None:
+            return b""
+        payload, self._payload = self._payload, None
+        return payload
+
+    def __enter__(self) -> "_FakeUrlopenResponse":
+        return self
+
+    def __exit__(self, *_exc_info: object) -> bool:
+        return False
+
+
 def test_upgrade_falls_back_to_cpu_native_asset_when_nvidia_asset_is_unavailable(
     monkeypatch, tmp_path
 ):
@@ -11052,12 +11076,11 @@ def test_upgrade_falls_back_to_cpu_native_asset_when_nvidia_asset_is_unavailable
             return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.33.0\n", stderr="")
         raise AssertionError(f"unexpected command: {command}")
 
-    def _fake_urlretrieve(url, filename, *args, **kwargs):
+    def _fake_urlopen(url, timeout=None):
         downloads.append(str(url))
         if str(url).endswith("tg-windows-amd64-nvidia.exe"):
             raise OSError("404 Not Found")
-        Path(filename).write_text("new native", encoding="utf-8")
-        return filename, None
+        return _FakeUrlopenResponse(b"new native")
 
     monkeypatch.setattr("sys.executable", str(python_executable))
     monkeypatch.setattr(sys, "platform", "win32")
@@ -11065,7 +11088,7 @@ def test_upgrade_falls_back_to_cpu_native_asset_when_nvidia_asset_is_unavailable
     monkeypatch.setenv("TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR", "nvidia")
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.32.0")
     monkeypatch.setattr("subprocess.run", _fake_run)
-    monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
+    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
     _allow_native_frontdoor_checksum(monkeypatch)
     monkeypatch.setattr(
         "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
@@ -11110,7 +11133,6 @@ def test_upgrade_falls_back_to_cpu_native_asset_when_nvidia_asset_smoke_fails(
     python_executable.write_text("", encoding="utf-8")
     native_binary.write_text("old native", encoding="utf-8")
     downloads: list[str] = []
-    temp_versions: dict[str, str] = {}
 
     def _fake_run(cmd, capture_output=True, text=True, check=True, timeout=None):
         command = [str(part) for part in cmd]
@@ -11124,24 +11146,20 @@ def test_upgrade_falls_back_to_cpu_native_asset_when_nvidia_asset_smoke_fails(
             )
             return subprocess.CompletedProcess(cmd, 0, stdout=f"tg {version}\n", stderr="")
         if command[0].endswith(".tmp"):
-            return subprocess.CompletedProcess(
-                cmd,
-                0,
-                stdout=f"tg {temp_versions.get(command[0], '0.33.0')}\n",
-                stderr="",
-            )
+            # frontdoor-download-held-fd task: the fake urlopen below writes the real bytes to
+            # this temp path via the download's own streaming loop, so the reported version can
+            # be derived from the actual on-disk content instead of a side-channel dict keyed by
+            # a temp path this fake no longer sees (urlopen only receives `url` + `timeout`).
+            content = Path(command[0]).read_text(encoding="utf-8")
+            version = "0.33.0" if content == "new native" else "0.32.0"
+            return subprocess.CompletedProcess(cmd, 0, stdout=f"tg {version}\n", stderr="")
         raise AssertionError(f"unexpected command: {command}")
 
-    def _fake_urlretrieve(url, filename, *args, **kwargs):
+    def _fake_urlopen(url, timeout=None):
         downloads.append(str(url))
-        path = Path(filename)
         if str(url).endswith("tg-windows-amd64-nvidia.exe"):
-            path.write_text("wrong native", encoding="utf-8")
-            temp_versions[str(path)] = "0.32.0"
-        else:
-            path.write_text("new native", encoding="utf-8")
-            temp_versions[str(path)] = "0.33.0"
-        return filename, None
+            return _FakeUrlopenResponse(b"wrong native")
+        return _FakeUrlopenResponse(b"new native")
 
     monkeypatch.setattr("sys.executable", str(python_executable))
     monkeypatch.setattr(sys, "platform", "win32")
@@ -11149,7 +11167,7 @@ def test_upgrade_falls_back_to_cpu_native_asset_when_nvidia_asset_smoke_fails(
     monkeypatch.setenv("TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR", "nvidia")
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.32.0")
     monkeypatch.setattr("subprocess.run", _fake_run)
-    monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
+    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
     _allow_native_frontdoor_checksum(monkeypatch)
     monkeypatch.setattr(
         "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
@@ -11201,10 +11219,9 @@ def test_upgrade_restores_previous_native_binary_when_install_verification_fails
             return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.33.0\n", stderr="")
         raise AssertionError(f"unexpected command: {command}")
 
-    def _fake_urlretrieve(url, filename, *args, **kwargs):
+    def _fake_urlopen(url, timeout=None):
         downloads.append(str(url))
-        Path(filename).write_text("bad installed native", encoding="utf-8")
-        return filename, None
+        return _FakeUrlopenResponse(b"bad installed native")
 
     monkeypatch.setattr("sys.executable", str(python_executable))
     monkeypatch.setattr(sys, "platform", "win32")
@@ -11212,7 +11229,7 @@ def test_upgrade_restores_previous_native_binary_when_install_verification_fails
     monkeypatch.setenv("TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR", "cpu")
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.32.0")
     monkeypatch.setattr("subprocess.run", _fake_run)
-    monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
+    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
     _allow_native_frontdoor_checksum(monkeypatch)
     monkeypatch.setattr(
         "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
@@ -11260,10 +11277,9 @@ def test_upgrade_refreshes_managed_native_frontdoor_after_package_upgrade(monkey
             return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.33.0\n", stderr="")
         raise AssertionError(f"unexpected command: {command}")
 
-    def _fake_urlretrieve(url, filename, *args, **kwargs):
+    def _fake_urlopen(url, timeout=None):
         downloads.append(str(url))
-        Path(filename).write_text("new native", encoding="utf-8")
-        return filename, None
+        return _FakeUrlopenResponse(b"new native")
 
     monkeypatch.setattr("sys.executable", str(python_executable))
     monkeypatch.setattr(sys, "platform", "win32")
@@ -11272,7 +11288,7 @@ def test_upgrade_refreshes_managed_native_frontdoor_after_package_upgrade(monkey
     monkeypatch.setenv("TG_NATIVE_TG_BINARY", str(unrelated_native_env))
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.32.0")
     monkeypatch.setattr("subprocess.run", _fake_run)
-    monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
+    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
     _allow_native_frontdoor_checksum(monkeypatch)
     monkeypatch.setattr(
         "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
@@ -12273,9 +12289,8 @@ def test_upgrade_refreshes_stale_tensor_grep_com_bridge_after_native_update(monk
             return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.33.0\n", stderr="")
         raise AssertionError(f"unexpected command: {command}")
 
-    def _fake_urlretrieve(url, filename, *args, **kwargs):
-        Path(filename).write_text("new native", encoding="utf-8")
-        return filename, None
+    def _fake_urlopen(url, timeout=None):
+        return _FakeUrlopenResponse(b"new native")
 
     monkeypatch.setattr("sys.executable", str(python_executable))
     monkeypatch.setattr(sys, "platform", "win32")
@@ -12286,7 +12301,7 @@ def test_upgrade_refreshes_stale_tensor_grep_com_bridge_after_native_update(monk
     monkeypatch.setattr("platform.machine", lambda: "AMD64")
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.32.0")
     monkeypatch.setattr("subprocess.run", _fake_run)
-    monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
+    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
     _allow_native_frontdoor_checksum(monkeypatch)
     monkeypatch.setattr(
         "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
@@ -12452,17 +12467,16 @@ def test_upgrade_refreshes_stale_com_bridge_when_native_frontdoor_is_current(mon
             return subprocess.CompletedProcess(cmd, 0, stdout=f"tg {version}\n", stderr="")
         raise AssertionError(f"unexpected command: {command}")
 
-    def _fake_urlretrieve(url, filename, *args, **kwargs):
+    def _fake_urlopen(url, timeout=None):
         downloads.append(str(url))
-        Path(filename).write_text("new native", encoding="utf-8")
-        return filename, None
+        return _FakeUrlopenResponse(b"new native")
 
     monkeypatch.setattr("sys.executable", str(python_executable))
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setenv("PATH", str(bridge_tg.parent))
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.33.0")
     monkeypatch.setattr("subprocess.run", _fake_run)
-    monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
+    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
     _allow_native_frontdoor_checksum(monkeypatch)
     monkeypatch.setattr(
         "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
@@ -12513,10 +12527,9 @@ def test_upgrade_refreshes_stale_native_frontdoor_when_python_package_is_latest(
             return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.33.0\n", stderr="")
         raise AssertionError(f"unexpected command: {command}")
 
-    def _fake_urlretrieve(url, filename, *args, **kwargs):
+    def _fake_urlopen(url, timeout=None):
         downloads.append(str(url))
-        Path(filename).write_text("new native", encoding="utf-8")
-        return filename, None
+        return _FakeUrlopenResponse(b"new native")
 
     monkeypatch.setattr("sys.executable", str(python_executable))
     monkeypatch.setattr(sys, "platform", "win32")
@@ -12524,7 +12537,7 @@ def test_upgrade_refreshes_stale_native_frontdoor_when_python_package_is_latest(
     monkeypatch.setenv("TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR", "cpu")
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.33.0")
     monkeypatch.setattr("subprocess.run", _fake_run)
-    monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
+    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
     _allow_native_frontdoor_checksum(monkeypatch)
     monkeypatch.setattr(
         "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
@@ -12574,9 +12587,8 @@ def test_upgrade_schedules_native_frontdoor_refresh_when_windows_exe_is_locked(
             return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.33.0\n", stderr="")
         raise AssertionError(f"unexpected command: {command}")
 
-    def _fake_urlretrieve(url, filename, *args, **kwargs):
-        Path(filename).write_text("new native", encoding="utf-8")
-        return filename, None
+    def _fake_urlopen(url, timeout=None):
+        return _FakeUrlopenResponse(b"new native")
 
     def _fake_replace(src, dst):
         if Path(dst) == native_binary:
@@ -12603,7 +12615,7 @@ def test_upgrade_schedules_native_frontdoor_refresh_when_windows_exe_is_locked(
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.33.0")
     monkeypatch.setattr("subprocess.run", _fake_run)
     monkeypatch.setattr("subprocess.Popen", _FakePopen)
-    monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
+    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
     _allow_native_frontdoor_checksum(monkeypatch)
     monkeypatch.setattr("tensor_grep.cli.main.os.replace", _fake_replace)
     monkeypatch.setattr(
@@ -13207,10 +13219,13 @@ def test_upgrade_schedules_windows_self_upgrade_fails_closed_when_checksums_unav
 
 def test_native_frontdoor_download_helpers_use_timeouts(monkeypatch, tmp_path):
     # Reliability: the native front-door asset + CHECKSUMS downloads must be time-bounded, or a
-    # stalled CDN read hangs install/upgrade indefinitely. urlretrieve has NO timeout param, so the
-    # asset download is bounded by a process socket timeout instead.
-    import socket
-
+    # stalled CDN read hangs install/upgrade indefinitely. Both now bound their request via
+    # urlopen(..., timeout=...) directly (frontdoor-download-held-fd task: the asset download used
+    # to have no timeout param on `urlretrieve` and instead wrapped the call in a process-global
+    # `socket.setdefaulttimeout(60)` / restore pair; replacing `urlretrieve` with a held-fd
+    # `urlopen` + chunked-read loop let that global-state workaround be dropped in favor of
+    # `urlopen`'s own `timeout=` argument, matching the CHECKSUMS fetch below and removing the
+    # only call in this module that relied on the process-global socket default being set).
     import tensor_grep.cli.main as m
 
     # CHECKSUMS fetch uses urlopen(timeout=...).
@@ -13226,26 +13241,24 @@ def test_native_frontdoor_download_helpers_use_timeouts(monkeypatch, tmp_path):
         def read(self):
             return b"deadbeef  tg-x.exe\n"
 
-    def _fake_urlopen(url, timeout=None, *args, **kwargs):
+    def _fake_checksum_urlopen(url, timeout=None, *args, **kwargs):
         checksum_timeouts.append(timeout)
         return _Resp()
 
-    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
+    monkeypatch.setattr("urllib.request.urlopen", _fake_checksum_urlopen)
     assert m._fetch_native_frontdoor_checksums("9.9.9") is not None
     assert checksum_timeouts and all(t is not None and t > 0 for t in checksum_timeouts)
 
-    # Asset download bounds urlretrieve with a socket timeout and restores the prior default.
+    # Asset download now bounds its own urlopen() call with timeout=60 directly.
     seen_timeout: list = []
 
-    def _fake_urlretrieve(url, dest, *args, **kwargs):
-        seen_timeout.append(socket.getdefaulttimeout())
-        Path(dest).write_bytes(b"x")
+    def _fake_asset_urlopen(url, timeout=None, *args, **kwargs):
+        seen_timeout.append(timeout)
+        return _FakeUrlopenResponse(b"x")
 
-    monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
-    before = socket.getdefaulttimeout()
+    monkeypatch.setattr("urllib.request.urlopen", _fake_asset_urlopen)
     m._download_native_frontdoor_asset("https://example.test/tg-x.exe", tmp_path / "tg.exe")
-    assert seen_timeout == [60.0], f"download did not set a socket timeout: {seen_timeout}"
-    assert socket.getdefaulttimeout() == before, "socket default timeout leaked after download"
+    assert seen_timeout == [60], f"download did not pass a urlopen timeout: {seen_timeout}"
 
 
 def test_upgrade_schedules_windows_helper_for_realworld_uv_pip_ensurepip_lock(

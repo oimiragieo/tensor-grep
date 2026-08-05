@@ -656,46 +656,69 @@ _MAX_NATIVE_ASSET_DOWNLOAD_BYTES = 512 * 1024 * 1024
 
 
 def _download_native_frontdoor_asset(url: str, destination: Path) -> None:
-    import socket
     import urllib.request
 
-    # urlretrieve has NO timeout param -> bound it with a process socket timeout so a stalled CDN
-    # read can't hang install/upgrade. A reporthook enforces a BYTE CAP on the ACTUAL bytes read
-    # (block_number * read_size) so an oversized/malicious response can't exhaust disk before the
-    # checksum is verified (audit #5) -- Content-Length/total_size is attacker-controlled, so we
-    # count real blocks. Restore the prior default timeout afterward (don't leak a global timeout).
-    def _enforce_byte_cap(block_number: int, read_size: int, total_size: int) -> None:
-        if block_number * read_size > _MAX_NATIVE_ASSET_DOWNLOAD_BYTES:
-            raise RuntimeError(
-                f"Native asset download exceeded {_MAX_NATIVE_ASSET_DOWNLOAD_BYTES} bytes "
-                f"(possible oversized or malicious response): {url}"
-            )
-
-    # Claim the temp name ATOMICALLY as a regular file before urlretrieve touches it.
+    # Claim the temp name ATOMICALLY as a regular file, then stream the WHOLE transfer through
+    # that SAME held fd -- mirroring lsp_provider_setup._download, which documents why: `urlretrieve`
+    # (the prior implementation here) opens its target with a plain 'wb' AFTER the O_EXCL claim's fd
+    # is closed, reopening the path BY NAME. The O_EXCL claim only guarantees a fresh regular file at
+    # claim time; between that close and urlretrieve's later by-name reopen, the destination can be
+    # replaced with a symlink, and urlretrieve then writes THROUGH it. The payload here is a native
+    # EXECUTABLE the front door later runs, so that close-then-reopen gap is a real hole, not
+    # defence-in-depth. Streaming through the held fd (os.fdopen, never destination.open()/a second
+    # os.open()) removes the reopen entirely -- there is no name lookup after the O_EXCL claim, so no
+    # window for a symlink swap to matter.
     #
-    # `urlretrieve` opens its target with a plain 'wb', which FOLLOWS a symlink -- and the payload
-    # here is a native EXECUTABLE the front door later runs. O_EXCL fails if ANYTHING already
-    # exists at the path (symlink, hard link, or regular file) instead of writing through it, so
-    # urlretrieve's later 'wb' can only land on the regular file we just created.
-    #
-    # This is defence-in-depth, not a wide-open hole: callers pass a `{name}.{uuid4().hex}` temp
-    # path, so an attacker cannot pre-plant a symlink at a name they can predict. What it closes is
-    # the RACE on a world-writable parent, where an attacker watching for creation could land a
-    # symlink between name selection and open. Mode is passed to os.open rather than chmod-ed
-    # afterwards, so there is no window where the file exists with wider permissions.
+    # O_EXCL fails if ANYTHING already exists at the path (symlink, hard link, or regular file)
+    # instead of writing through it. Callers pass a `{name}.{uuid4().hex}` temp path, so an attacker
+    # cannot pre-plant a symlink at a name they can predict; O_NOFOLLOW additionally refuses to open
+    # through a symlink even in the (unexpected) case of a name collision. Mode is passed to os.open
+    # rather than chmod-ed afterwards, so there is no window where the file exists with wider
+    # permissions.
     #
     # A collision on a uuid4 name is not expected; refusing (rather than truncating) is the honest
     # response, and it keeps the guard from degrading into "symlinks only", which a hard link would
-    # sidestep. Found by the #859 atomic-writer ratchet.
-    fd = os.open(destination, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    os.close(fd)
+    # sidestep. Found by the #859 atomic-writer ratchet; TOCTOU close-then-reopen gap closed as one
+    # of that ratchet's two H2 deferrals.
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(destination, flags, 0o600)
+    # Wrap the fd in a file object IMMEDIATELY, before anything that can raise (urlopen included)
+    # -- `os.fdopen` itself essentially cannot fail here (a fresh, valid fd), so this keeps `fd`
+    # from ever being a bare, unclosed integer if a later step (network open, cap check) raises.
+    # An earlier draft evaluated `urlopen(...)` as part of the SAME `with A() as a, B() as b:`
+    # statement as `os.fdopen(fd, ...)`; when `urlopen` raised during that expression's own
+    # evaluation, `os.fdopen(fd, ...)` was never reached, leaking `fd` -- and the except handler's
+    # `destination.unlink()` then hit a real second bug on Windows, which opens files without
+    # `FILE_SHARE_DELETE` by default: unlinking a path with a live, unclosed fd against it raises
+    # `PermissionError: [WinError 32] ... used by another process`, masking the original error
+    # instead of cleaning up. Opening `output` first and nesting `with output:` around the urlopen
+    # call means ANY failure inside -- including urlopen's own call -- closes `output` (and so
+    # `fd`) via normal `with`-block unwinding before the outer `except` ever runs, so the unlink
+    # below always sees a released fd.
+    output = os.fdopen(fd, "wb")
 
-    previous_timeout = socket.getdefaulttimeout()
-    socket.setdefaulttimeout(60)
+    # urlopen's timeout param replaces the previous process-global socket.setdefaulttimeout(60):
+    # equivalent 60s bound on the request, and this function is the only caller that touched the
+    # global default, so there is nothing left relying on it being set.
+    total = 0
     try:
-        urllib.request.urlretrieve(url, destination, reporthook=_enforce_byte_cap)
-    finally:
-        socket.setdefaulttimeout(previous_timeout)
+        with output, urllib.request.urlopen(url, timeout=60) as response:
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                # Byte cap enforced on ACTUAL bytes read, same as the prior reporthook-based check
+                # (audit #5) -- Content-Length is attacker-controlled, so we count real bytes.
+                if total > _MAX_NATIVE_ASSET_DOWNLOAD_BYTES:
+                    raise RuntimeError(
+                        f"Native asset download exceeded {_MAX_NATIVE_ASSET_DOWNLOAD_BYTES} bytes "
+                        f"(possible oversized or malicious response): {url}"
+                    )
+                output.write(chunk)
+    except BaseException:
+        destination.unlink(missing_ok=True)  # don't leave a partial/unsafe temp behind
+        raise
 
 
 def _native_frontdoor_checksums_url(version: str) -> str:
