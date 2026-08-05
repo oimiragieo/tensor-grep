@@ -52,13 +52,40 @@ Canonical status index version: 2026-08-03.3
 
 ## Live campaign snapshot
 
-Last reconciled: **2026-08-05** (F7 CAMPAIGN COMPLETE -- the symbol-graph caller tier went
+Last reconciled: **2026-08-05** (F7 Task 10 COMPLETE -- the symbol-graph caller tier went
 5/5 -> **10/0** in five waves: #927 Java, #928 C#, #930 PHP, #932 C, #934 C++. Also merged: #929
-findings G1-G7, #931 board reconcile, #933 the board-gate root-cause fix. IN FLIGHT: **#935**
-premise sweep). post-**v1.106.0** (PyPI verified via a clean `uvx` install
-of that exact version, not inferred from a tag — `tag == PyPI` cannot tell *released* from *not
-started* from *died*; v1.102.7 was additionally dogfooded end-to-end: `tg search -v beta` returns
-the NON-matching lines with a control proving normal search still matches).
+findings G1-G7, #931 board reconcile, #933 the board-gate root-cause fix, #935 premise sweep.
+
+**Shipped since the previous post-v1.106.0 stamp** (this reconcile): #936 instrument laws, #937
+atomic-writer census 3 -> 41 modules, #938/#941 findings + a dependency-claim correction, #939
+`prepare_service.py` extracted byte-identical, #940 the reference/caller seam pinned as
+registry-driven, #942 the symlink/junction staging fix (H1), #943 `PrepareSnapshotV1`, #944 the
+release-class measurement, #945 all 16 violating writer identities classified, #946 the
+native-frontdoor download TOCTOU closed, #947 H2 closed with the last deferral RETIRED, #948 the
+canonical queue reconciled, #949 the F7 Task 11 design (council-corrected 8/8).
+
+**F7 Task 11 is now the only genuinely active row.** Wave 1 (Java) = PR #950, in CI. Wave 2 (C#) is
+building, sized by a parsed re-measure (PR #951): 46% of C# methods have a cross-file caller,
+cross:in 2.17:1, 68.4% of call sites invisible to an in-file-only graph -- and parsing came in
+HIGHER than the regex bound it replaced, not lower.
+
+**Why this stamp moved:** it sat exactly AT the tolerance (5 releases behind, margin 0), so the next
+`feat:`/`fix:` publish would have reddened main on the freshness gate. Auto-stamping at release time
+was considered and REJECTED -- it would make `behind` identically 0 on every commit, and a
+permanently-green freshness check reads to every future session as evidence the board IS reconciled.
+The gate is supposed to force a real reconcile, which is what this is.
+
+post-**v1.108.2**, PyPI-verified 2026-08-05 by the **version endpoint**, WITH a negative control:
+`https://pypi.org/pypi/tensor-grep/1.108.2/json` -> **HTTP 200**, and a bogus `1.999.999` -> **404**,
+so a 200 distinguishes released from absent rather than reflecting a always-200 endpoint. Not
+inferred from a tag — `tag == PyPI` cannot tell *released* from *not started* from *died*.
+
+**Scope of that claim, stated deliberately:** this is an INDEX check, not an install. The previous
+stamp claimed a clean `uvx` install of its exact version; that stronger check was NOT re-run here
+and is not being carried forward as if it had been. (v1.102.7 remains the last version dogfooded
+end-to-end: `tg search -v beta` returned the NON-matching lines with a control proving normal
+search still matched.) A verification sentence must say which command produced it — copying a
+prior stamp's wording onto a new version is how a receipt comes to quote a value nothing returned.
 
 **Current closed-world status:** this canonical index plus
 `docs/audits/2026-08-03-ceo-backlog-update.md`. Product healthy at `v1.102.7`; planning PR #911 is
