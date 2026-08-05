@@ -1,6 +1,173 @@
 # CHANGELOG
 
 
+## v1.105.0 (2026-08-05)
+
+### Documentation
+
+- Record the six instrument findings from the 10A/10B language waves
+  ([#929](https://github.com/oimiragieo/tensor-grep/pull/929),
+  [`bcfc4d0`](https://github.com/oimiragieo/tensor-grep/commit/bcfc4d06eac9c37867015708ba385c4636078425))
+
+* docs: record the six instrument findings from the 10A/10B language waves
+
+Per the CEO's standing "document any new issues, bugs or findings in backlog.md". All six are
+  INSTRUMENT defects -- a check, probe, or git command that returned a believable answer and was
+  wrong. None was found by re-reading code; each fell to a control.
+
+G1 HIGH a dated "Re-verified live 2026-08-01" receipt had its quoted command output overwritten in
+  place, leaving the surrounding prose stale -- a self-contradicting sentence and a destroyed record
+  G2 HIGH I censused history from a branch carrying my own change and accused a past author; on
+  origin/main the receipt is correct for its date G3 HIGH a `needs:`-gated CI job is ABSENT, not
+  pending -- 13 jobs gate on smoke, so "all non-pending" is vacuously true over an 11-check view
+  containing zero test lanes G4 MEDIUM a shallow clone manufactured a false diverged history (empty
+  merge-base, "cannot fast-forward"); unshallowing showed main was simply 25 commits behind G5
+  MEDIUM an ast.walk import check counted function-local imports as module-level, passing while the
+  test still raised NameError G6 LOW a build seat ran the forbidden `git stash` in a repo with 11
+  live worktrees sharing one stash drawer; recovered, other agent's stash verified intact
+
+Also records the cross-slice note: #928 was authored on #927's pre-doc-repair base and would have
+  silently reverted G1's fix on merge. Caught by rebasing onto the repaired head and running the
+  union before opening the PR -- neither branch's own CI could have seen it.
+
+Gates: 147 passed across test_backlog_tracker_truth, public/enterprise docs governance, docs
+  coverage, and the two skill-drift gates.
+
+* docs: add G7 -- a release landing mid-review reds every open PR
+
+Found while draining this queue, and it explains three separate red signals that each looked like a
+  different problem.
+
+test_task_board_reconcile_stamp_is_not_many_releases_stale compares docs/TASK_BOARD.md's stamp to
+  pyproject's version. A PR tests against a base PREDATING the release, where the stamp is inside
+  tolerance. The release then ships, and that same commit is out of tolerance the moment it merges.
+
+Receipts, all today: 21:06Z v1.103.0 published 21:32Z #928 merged on a green PR -> run 30952799876
+  REDDENED main 22:14Z #930 showed 7 "failures" -- one gate, 6331 passed / 1 failed, NOT a PHP
+  defect -- #929 read MERGE-READY on a green that predated the release
+
+No per-PR run can observe this by construction. It is the semantic-merge collision law with TIME as
+  the second slice rather than content, so the union-testing discipline that catches content
+  collisions does not catch it.
+
+Main greened by #931; #929/#930/#932 rebased onto it. The structural fix is open as task #20 and
+  deliberately NOT patched reflexively: this board records a stamp==pyproject CI gate being REJECTED
+  on 2026-08-01 as over-eager (it would fire after every release and force a board edit into every
+  unrelated PR). That reasoning still holds, so the likely answer is the release job bumping the
+  stamp inside its own chore(release) commit -- a board cannot lag a release it caused.
+
+Gates: 125 passed across board freshness, backlog-tracker truth, public-docs governance, and docs
+  coverage.
+
+### Features
+
+- **lang-php**: Promote PHP to parser-backed refs/callers with two honest confidence bands
+  ([#930](https://github.com/oimiragieo/tensor-grep/pull/930),
+  [`56d5066`](https://github.com/oimiragieo/tensor-grep/commit/56d5066c53f759cad41acc734f841c2b1deb2e1b))
+
+Wave 10C of F7, after Java (#927) and C# (#928).
+
+before: ...:csharp-go-java-javascript-python-rust-typescript+...:c-cpp-php
+
+after: ...:csharp-go-java-javascript-php-python-rust-typescript+...:c-cpp
+
+8 parser-backed / 2 foundational. Both values measured from the product.
+
+Both red arms were recorded failing behaviour-specifically before any implementation -- "assert None
+  is not None" on the registry seam, and the descriptor showing php in the foundational half.
+
+PHP's grammar was AST-dumped rather than assumed: function_call_expression, member_call_expression,
+  scoped_call_expression (Foo::bar(), whose scope is a bare name or a relative_scope for
+  self/static/parent), object_creation_expression (the type sits UN-FIELDED between `new` and
+  `arguments`), and scoped_property_access_expression (whose `name` field is a variable_name, not a
+  bare name).
+
+Parser shape mirrors lang_csharp, not lang_java: PHP already owned a grammar-probing _php_parser()
+  factory needed by php_imports_and_symbols, so adopting Java's externally-built-parser shape would
+  have created a SECOND source of truth for "is the grammar installed".
+
+Two bands, demoted never dropped: 0.9 php-infile-type-confirmation 0.6 php-name-heuristic
+
+Confirmation fires for a typed receiver (property/parameter type-hint or $this) whose type declares
+  the member in-file; for Foo::bar() against an in-file class (PHP-specific, stronger than the
+  instance case -- no variable tracking needed); and for self::/static:: via the enclosing type.
+  `parent::` is an honest, tested gap that stays DEMOTED rather than guessing up the hierarchy. A
+  bare helper() confirms only when `function helper()` exists in-file; strlen() stays demoted as the
+  control.
+
+MUTATION-VERIFIED independently of the implementing seat: collapsing _PHP_CONFIRMED_CONFIDENCE to
+  0.6 turns 5 tests RED; reverting restores 41/41 with lang_php.py byte-identical (sha256
+  edfd1c68f3726cf9 in both arms).
+
+Bug the new tests caught before shipping: the generic identifier walk double-emitted a bare "value"
+  reference when a `name` node's parent was variable_name (Foo::$staticProp's inner name, a property
+  declaration's $count), because the inner node escaped the definition-exclusion check that covered
+  the outer variable_name.
+
+Gates: 41/41 test_lang_php, 185 across the registry/java/csharp/skill-drift/ doc/session union,
+  ruff, ruff format --preview, mypy (90 files).
+
+Dated receipts in tensor-grep-enterprise-agent got an appended SUPERSEDED entry; no quoted command
+  output was rewritten.
+
+### Testing
+
+- Measure board staleness as ordinal distance, not patch subtraction
+  ([#933](https://github.com/oimiragieo/tensor-grep/pull/933),
+  [`c46301a`](https://github.com/oimiragieo/tensor-grep/commit/c46301abd0fe70444bc54d11d5e1ae26e654f9b8))
+
+Closes the defect that reddened main on 2026-08-04 and made three separate PRs look broken.
+
+WHAT ACTUALLY HAPPENED. _releases_behind returned `_MAX_RELEASES_BEHIND + 1` whenever the
+  major.minor lines differed. v1.103.0 was a MINOR bump (#927 had a `feat:` title), so every board
+  stamp on the v1.102 line became unboundedly stale the instant it published -- including one that
+  was ONE release behind.
+
+21:06Z v1.103.0 published 21:32Z #928 merged on 48 green checks -> run 30952799876 reddened main
+  22:14Z #930 showed 7 failing lanes: 6331 passed, 1 failed, all one gate -- #929 read MERGE-READY
+  on a green that predated the release
+
+NO TOLERANCE VALUE WOULD HAVE PREVENTED THIS. The sentinel IS `_MAX_RELEASES_BEHIND + 1` and the
+  assertion is `behind <= _MAX_RELEASES_BEHIND`, so a minor mismatch fails for every constant.
+  Widening it is not a weak fix, it is a no-op -- worth stating because the obvious next move is to
+  try it, watch it fail, and conclude the diagnosis was wrong.
+
+THE FIX. Releases are totally ordered and this repo writes that order to disk: semantic-release
+  rewrites CHANGELOG.md in the SAME commit as pyproject.toml's version, so the two cannot disagree
+  about what shipped. Distance is now the ordinal gap between the two headings. Still zero-network,
+  zero-clock, zero-environment -- the three properties this module's header sells. A minor bump
+  becomes worth exactly one release, which is what it is.
+
+TWO-ARM PROOF, run against the real gate rather than the helper: stamp v1.102.7 / shipped v1.103.0
+  (THE INCIDENT, distance 2) -> GREEN stamp v1.102.3 / shipped v1.103.0 (genuinely stale, distance
+  6) -> FIRES restore -> 11 passed, TASK_BOARD.md byte-identical (sha cb4f67b906630ad6) The old
+  implementation scored 6 for BOTH of those -- indistinguishable, which is the whole defect. Arm 2
+  is the one that matters: it proves the fix did not buy quietness by blinding the gate to minor
+  bumps.
+
+WHY NOT AUTO-STAMP AT RELEASE. scripts/stamp_release_assets.py already runs inside build_command and
+  git-adds a doc list, so adding TASK_BOARD.md there is ~3 lines and would make the symptom vanish
+  forever. Rejected: stamp and pyproject would then be written by the same script in the same
+  commit, so `behind` would be identically 0 on every commit that reaches CI. That is not a weakened
+  gate, it is `assert 0 <= 5` -- and worse than deleting it, because a permanently-green freshness
+  gate reads to every future session as evidence the board IS reconciled.
+
+The parametrized cases now cross a minor boundary in BOTH directions. They previously tested that
+  axis only as "minor bump -- unbounded, MUST fire", so the suite could not fail on the axis where
+  the outage lived. Also: one case used v1.100.27, which has never been released -- an unknown
+  version now raises UnknownRelease rather than silently scoring a distance, because a typo'd stamp
+  is a COULD-NOT-MEASURE, not a freshness verdict.
+
+Added a positive control on the instrument itself: the parse asserts >=100 headings and that
+  pyproject's version is the NEWEST entry. A renamed heading or moved file yields few entries, every
+  distance collapses toward 0, and the gate reports FRESH -- scan-never-ran wearing a green badge.
+
+Scope: tests/unit/ only, hence `test:` (no release).
+
+Gates: 11 passed here, 129 across the board/backlog/docs-governance suites, ruff, ruff format
+  --preview, mypy (90 files).
+
+
 ## v1.104.0 (2026-08-04)
 
 ### Documentation
