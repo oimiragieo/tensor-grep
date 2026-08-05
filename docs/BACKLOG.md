@@ -1464,6 +1464,31 @@ for the next audit rather than re-opened as active work):**
   either shipped or intentionally dropped.
 
 ### Ready to build (no mandatory-gate blocker)
+
+**PREMISE RECONCILE 2026-08-05 -- 4 of 5 checked items were ALREADY SHIPPED.** Verified against
+`origin/main` before any work, per verify-plan-against-code Step 0. Same pattern the board has hit
+before (one pass found 9 of 24 already done): a plan written against a fixed defect has perfectly
+resolving citations, so anchor-checking cannot catch it -- only reproducing the defect can.
+
+| item | claim | measured | disposition |
+|---|---|---|---|
+| **#58** | `tg route-test` is hidden, promote to public | registered at `main.py:10597` via `@app.command(name="route-test")`; the live app reports it in the public command list and it is NOT in the hidden set | **CLOSE -- already shipped** |
+| **#865** | `--ltl` missing from rust_core, would clap-reject | present in `SEARCH_PYTHON_PASSTHROUGH_FLAGS` at `rust_core/src/main.rs:322` with an explaining comment at `:319` AND a parity test `search_format_python_passthrough_args_routes_ltl_flag_to_python` at `:4484`. The item's stated evidence ("rust_core has zero matches") is simply false -- 6 matches | **CLOSE -- already shipped** |
+| **#858** | codemap hand-rolls `_atomic_write_text`, skipping the symlink refusal | the function survives at `codemap.py:799` but AST-walked its body is 4 statements calling only `atomic_write_bytes`/`encode`/`mkdir`, with ZERO residual write primitives (`os.replace`, `write_text`, `mkstemp`, `NamedTemporaryFile`). All three call sites (`:1242`, `:1300`, `:1307`) route through it | **CLOSE -- routed; the surviving name is a thin wrapper, not a hand-rolled writer** |
+| **#859** | no AST ratchet over `replace_with_retry`/`os.replace` publish sites | `tests/unit/test_cli_atomic_writer_ratchet.py` exists with 36 tests | **CLOSE -- shipped** |
+| **#864** | CWE-88: no `--` sentinel before a relative `$file` in `apply_policy` | **ALREADY FIXED -- and my first check got this WRONG.** I counted `"--"` sentinels (zero) and called the vector open. The guard is a DIFFERENT mechanism: `_policy_file_arg` (`apply_policy.py:506`) returns `f"./{relative}"` when the name starts with `-`, which makes it unambiguously a path for every argv reader on both platforms. Measured: `-cevil.ini` -> `'./-cevil.ini'`, control `normal.py` -> `'normal.py'` unchanged. The comment at `:497-505` also states the `--` omission in `_run_policy_command` is DELIBERATE -- it concerns OPERATOR-authored tokens, which that function never touches | **CLOSE -- shipped 2026-08-01 (campaign PR-D)** |
+| **#862** | add a `--` sentinel before the `agent_capsule` GPU `evidence_path` positional | **ALREADY FIXED.** `agent_capsule.py` appends `"--"` immediately before the positional (`evidence_command.append("--")` then `.append(evidence_path)`, AST-verified in that order inside `_agent_gpu_evidence`), plus a second sentinel at `:1651`. The comment beside it records that the CONDITIONAL form (emit `--` only when the path starts with `-`) was considered and REJECTED because it "leaves the silent case exposed" | **CLOSE -- shipped** |
+
+**#864 -- and the correction is the finding.** My premise check searched for ONE implementation of
+a fix (a `--` sentinel), found none, and reported the vector open. The guard exists as a `./`
+prefix instead. That is the SAME defect as the backlog item I was auditing: looking for a
+particular fix rather than for the BEHAVIOUR. A guard can be absent, or it can be present in a
+shape you did not think to grep for, and a zero cannot tell those apart.
+
+So the sweep is **6 of 6 already shipped** -- every queued item checked, including a second CWE-88 entry (#862) whose sentinel is not only present but UNCONDITIONAL by explicit design. Every one of the five was refuted only by
+executing or AST-walking the real code; not one fell to reading the item and grepping for its
+stated symptom.
+
 - **#858** (2026-07-29 audit S1) route `tg codemap` writes through `_index_lock.atomic_write_bytes`
   — retire hand-rolled `codemap._atomic_write_text` (`codemap.py:801-812`). Explicitly deferred out of
   #665/#211 as "doc-generation". Bidirectional probe 2026-07-29: baseline refuses symlink dest;

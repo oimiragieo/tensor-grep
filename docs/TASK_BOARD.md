@@ -52,9 +52,10 @@ Canonical status index version: 2026-08-03.3
 
 ## Live campaign snapshot
 
-Last reconciled: **2026-08-04** (second pass, same day: #924 #925 #926 merged, then the F7
-language waves -- #927 Java and #928 C#. IN FLIGHT: **#929** findings, **#930** PHP; waves 10D/10E
-(C, C++) not yet opened). post-**v1.103.0** (PyPI verified via a clean `uvx` install
+Last reconciled: **2026-08-05** (F7 CAMPAIGN COMPLETE -- the symbol-graph caller tier went
+5/5 -> **10/0** in five waves: #927 Java, #928 C#, #930 PHP, #932 C, #934 C++. Also merged: #929
+findings G1-G7, #931 board reconcile, #933 the board-gate root-cause fix. IN FLIGHT: **#935**
+premise sweep). post-**v1.106.0** (PyPI verified via a clean `uvx` install
 of that exact version, not inferred from a tag — `tag == PyPI` cannot tell *released* from *not
 started* from *died*; v1.102.7 was additionally dogfooded end-to-end: `tg search -v beta` returns
 the NON-matching lines with a control proving normal search still matches).
