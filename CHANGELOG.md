@@ -1,6 +1,63 @@
 # CHANGELOG
 
 
+## v1.108.1 (2026-08-05)
+
+### Bug Fixes
+
+- Classify all 16 violating atomic-writer identities -- 11 routed, 3 sanctioned, 2 deferred (H2)
+  ([#945](https://github.com/oimiragieo/tensor-grep/pull/945),
+  [`bbb02de`](https://github.com/oimiragieo/tensor-grep/commit/bbb02de61c4c1d45bff42f910b266b76134534ea))
+
+Backlog item H2, surfaced by #937's census widening and recorded there as pinned-but-unfixed.
+  Classified individually, NOT swept -- that was the whole task, because the same primitive carries
+  opposite meanings here.
+
+Measured before/after via the ratchet's own scanner: violating 16 -> 2 helper-backed 15 -> 24
+  sanctioned 26 -> 30
+
+COUNT CORRECTION: I briefed "17 sites". The ratchet pins by (module, outer_function, operation)
+  IDENTITY, not line, and checkpoint_store::undo_checkpoint's write_bytes fires at two lines sharing
+  one identity. The identity population is 16. Anyone "fixing" the pinned set to 17 entries would be
+  wrong.
+
+ROUTED (11), each a genuine unguarded publish: ast_workflows::_batch_search_snippets temp_dir_path
+  is CALLER-SUPPLIED, not created in-function checkpoint_store::undo_checkpoint (x2) rollback
+  restore; write_bytes always follows a destination symlink
+  lsp_provider_setup::_copy_binary_to_managed fixed managed-install path, and copy2 here omits
+  follow_symlinks=False lsp_provider_setup::_download_rust_analyzer (x2)
+  lsp_provider_setup::_extract_rust_analyzer_exe_from_zip (x2)
+  main::_install_release_native_frontdoor (x2) hand-rolled duplicate of the helper's own
+  create-temp/replace flow main::_write_native_frontdoor_metadata predictable install-derived path
+
+SANCTIONED (3), each with the reason IN CODE, not a bare entry: ast_workflows::test_command
+  TemporaryDirectory opened in the SAME function -- contrasted explicitly against its now-routed
+  sibling lsp_provider_setup::_download rewritten to claim via O_CREAT|O_EXCL| O_NOFOLLOW then write
+  through the HELD fd -- tighter than the main.py precedent, which has a close/reopen gap
+  session_daemon::_write_daemon_metadata_windows (x2) audited ACL lockdown that must run between
+  temp creation and the secret write, a hook point the shared helper does not expose
+
+DEFERRED (2), left violating with stated reasons rather than force-fixed:
+  lsp_provider_setup::_ensure_node_runtime shutil.move -- no directory-safe atomic-publish primitive
+  exists, and shutil.move was chosen for cross-filesystem fallback; switching to os.replace would
+  silently break it main::_download_native_frontdoor_asset urlretrieve -- the adjacent O_EXCL claim
+  guarantees a fresh regular file, but urlretrieve REOPENS BY NAME, leaving a narrow TOCTOU window;
+  closing it needs the write-through-held-fd rewrite applied to _download, scoped separately
+
+RED/GREEN proof per shape family, against real symlinks with the real production functions:
+  write_text RED followed symlink -> GREEN "Refusing to write through a symlink" write_bytes RED
+  followed symlink -> GREEN refused copy2 RED followed symlink -> GREEN refused install-rollback RED
+  followed symlink -> GREEN refused All four source files sha256-identical before and after the
+  probe, proving the probe never mutated production code.
+
+VERIFIED INDEPENDENTLY of the seat: checksum verification still PRECEDES every routed write --
+  _verify_rust_analyzer_checksum at :694 before the write at :705, _verify_node_archive at :409
+  before the move at :411. Routing a download path must not reorder verification, and it did not.
+
+Gates, foreground, exit codes read directly: ratchet 38 passed exit 0; ruff 0; ruff format --preview
+  0; mypy 0 (91 files).
+
+
 ## v1.108.0 (2026-08-05)
 
 ### Documentation
