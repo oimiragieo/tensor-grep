@@ -1274,6 +1274,24 @@ Net: 0 real defects, and the ratchet now discriminates. Had these shipped as fin
 been 9 false P0s — worse than the gap the ratchet exists to close.
 
 
+## OPEN FINDINGS -- 2026-08-05, surfaced while widening the atomic-writer census (PR #937)
+
+Both were found BY the #859 fix, neither was in its scope, and neither is fixed. Recorded per the
+CEO's standing instruction to document new findings with a receipt.
+
+| # | sev | finding | status |
+|---|---|---|---|
+| H1 | MEDIUM | **`shutil.move` at `lsp_provider_setup.py:356` is an unsanctioned publish site.** Unlike `os.replace` it CAN follow a destination symlink. It moves an extracted archive into `staged_dir` before the atomic swap-in at `:363`. Now censused (the ratchet maps `shutil.move`) and PINNED as violating -- deliberately not swept, because the surrounding `:361`/`:371` pair is a legitimate move-aside/rollback dance and a blanket rewrite would break the rollback. | OPEN -- pinned, not fixed |
+| H2 | LOW | **16 pinned VIOLATING identities as a set.** Widening the census 3 -> 41 modules took violating identities 4 -> 16. Whether they warrant a fix wave is a scope decision, not a defect: `main.py`'s original 4 were pinned rather than fixed on the same reasoning. Each needs individual classification -- `session_daemon.py::_write_daemon_metadata_windows`, for instance, is a well-motivated hand-rolled re-derivation for Windows ACL reasons, violating only because a re-derivation is not the canonical helper. | OPEN -- needs a scope decision, not a sweep |
+
+**Fixed in passing by #937, recorded because the shape recurs:** `_annotation_is_path()` was defined
+and documented ("a Path-annotated parameter") but **never wired into `scan_function`**. A synthetic
+probe of exactly the shape it describes -- `def publish(destination: Path, content):
+destination.open("wb")` -- scanned to ZERO candidates. A documented-but-unreachable helper is a check
+that cannot fail, and it was sitting inside the suite whose purpose is catching checks that cannot
+fail. Wiring it in surfaced 3 previously-invisible sites in `lsp_provider_setup.py`, with the full
+population diffed before/after to prove no regressions.
+
 ## OPEN FINDINGS -- 2026-08-04 waves 10A/10B (Java + C# caller-graph promotion)
 
 Recorded per the CEO's "document any new issues, bugs or findings in backlog.md". Every item
