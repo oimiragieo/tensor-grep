@@ -1,6 +1,60 @@
 # CHANGELOG
 
 
+## v1.108.2 (2026-08-05)
+
+### Bug Fixes
+
+- Hold the fd across the native-frontdoor download, closing the TOCTOU (H2 deferral 1 of 2)
+  ([#946](https://github.com/oimiragieo/tensor-grep/pull/946),
+  [`4741e15`](https://github.com/oimiragieo/tensor-grep/commit/4741e1545074d40a2a2614802011265acdfa4908))
+
+_download_native_frontdoor_asset claimed its destination with O_EXCL and then threw the claim away:
+
+fd = os.open(destination, O_CREAT|O_EXCL|O_WRONLY, 0o600) os.close(fd) # claim RELEASED
+  urllib.request.urlretrieve(url, destination, ...) # REOPENS BY NAME
+
+Between those, the destination can be replaced with a symlink and urlretrieve writes through it.
+  This path installs a DOWNLOADED EXECUTABLE, which is why it outranked the other H2 deferral.
+
+Now claims with O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW and streams the whole transfer through that SAME
+  held fd -- mirroring lsp_provider_setup._download, so a reader meets one pattern rather than two.
+  The byte cap moves from urlretrieve's reporthook onto real bytes read in the loop, same limit and
+  same failure behaviour; urlopen(timeout=60) replaces the socket.setdefaulttimeout pair.
+
+A REAL BUG FOUND WHILE BUILDING IT, and only by running the perturbation: the first draft wrote
+  `with os.fdopen(fd) as out, urlopen(url) as resp:`. When urlopen raises -- evaluated second --
+  os.fdopen never runs, the raw fd leaks, and the cleanup `destination.unlink()` then hits
+  PermissionError WinError 32 because Windows opens without FILE_SHARE_DELETE. The masked error
+  would have looked like a permissions problem and left a partial artifact. Fixed by opening the fd
+  unconditionally before the try, so normal unwinding always releases it before unlink.
+
+THE TEST'S FIRST VERSION HAD ZERO DISCRIMINATION. It tracked only os.open -- but real urlretrieve
+  reopens through the BUILTIN open(), so the pre-fix code passed it. Caught by running the
+  perturbation, not by review. It now tracks both and asserts exactly one by-name open: [("os.open",
+  destination)].
+
+Two alternatives rejected with reasons, both recorded in the test: - a live symlink-swap race: on
+  Windows the fix's own held fd blocks the swap (WinError 32), so it cannot discriminate here --
+  confirmed by running a draft, not assumed - `"urlretrieve" not in inspect.getsource(...)`: a
+  rewrite could reopen via a differently-named API and still pass
+
+Perturbation proof, injection hash-verified before any verdict was read: fixed bb764cbadd65734b 1
+  passed pre-fix 39cad11dfe2f58f5 FAILED on the intended assertion restored bb764cbadd65734b 1
+  passed
+
+Ratchet: the identity leaves the violating set (the call no longer exists, so the detector finds no
+  candidate), leaving ONE deferral -- _ensure_node_runtime's shutil.move. Violating 2 -> 1.
+
+NOT A REGRESSION, verified like-for-like: three test_cli_modes help tests fail in a 4-file run on
+  BOTH this branch and its parent (3 failed / 570 passed, identical), and pass alone (530).
+  Pre-existing ordering pollution -- the known rich-absent/Typer-falls-back-to-Click flake. My first
+  comparison ran the file ALONE on the parent and COMBINED on the branch, which would have blamed
+  this change; the unequal shape was the error.
+
+Gates: ratchet 38 passed exit 0; ruff 0; ruff format --preview 0; mypy 0.
+
+
 ## v1.108.1 (2026-08-05)
 
 ### Bug Fixes
