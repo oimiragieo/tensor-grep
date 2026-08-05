@@ -1,6 +1,57 @@
 # CHANGELOG
 
 
+## v1.106.0 (2026-08-05)
+
+### Features
+
+- **lang-c**: Promote C to parser-backed refs/callers, with a deliberately narrow confirmed band
+  ([#932](https://github.com/oimiragieo/tensor-grep/pull/932),
+  [`91e7095`](https://github.com/oimiragieo/tensor-grep/commit/91e7095a696b7f52f16d211319e3a2c4202a6e5d))
+
+Wave 10D of F7, after Java (#927), C# (#928), and PHP (#930).
+
+before: ...:csharp-go-java-javascript-php-python-rust-typescript+...:c-cpp
+
+after: ...:c-csharp-go-java-javascript-php-python-rust-typescript+...:cpp
+
+9 parser-backed / 1 foundational. Both measured from the product.
+
+Both red arms recorded failing behaviour-specifically first. They deliberately omit
+  @pytest.mark.requires_grammar (#908): they assert on the registry and the derived descriptor,
+  neither of which needs a parser, and a skip would read as green. The descriptor assertion splits
+  on delimiters rather than using `in`, because "c" is a substring of both "csharp" and "cpp" -- a
+  membership check would have passed against the UNFIXED product.
+
+C HAS NO RECEIVER-TYPE ANALOGUE. Java/C#/PHP confirm by resolving a receiver's declared type
+  in-file; C has no methods. The confirmed band is therefore ONE signal only: a call_expression
+  whose function field is a bare identifier matching a real in-file function_definition or prototype
+  declaration -> 0.9 c-infile-function-declared. Everything else is demoted to 0.6 c-name-heuristic.
+
+Struct-member calls (w.handler(), p->handler()) COULD have been confirmed by mirroring PHP's
+  receiver walk through a declared_types map. That was evaluated and REJECTED: C's typedef aliasing,
+  void* casts, and opaque forward-declared pointers give no sound basis for it. A narrower honest
+  band beats a plausible-but-unsound one, and the smaller confirmable population is a documented
+  choice rather than an oversight.
+
+#736 HAZARD (a file-scope function-POINTER variable mis-kinded as a function) cannot recur here: the
+  confirmation path reuses the SAME _c_declarator_name_node walk that c_imports_and_symbols already
+  uses, so there is one source of truth for declarator shape rather than a second naive walk.
+  Verified live in one file: handler(5) -> demoted 0.6 while real_handler(5) -> confirmed 0.9.
+  ADD_MACRO(1,2) parses as a structurally identical call_expression and stays demoted purely because
+  no matching in-file declaration exists -- no ALL_CAPS name heuristic is used.
+
+MUTATION-VERIFIED independently of the implementing seat: collapsing _C_CONFIRMED_CONFIDENCE to 0.6
+  turns the confirmation test RED; reverting restores 48/48 with lang_c.py byte-identical (sha256
+  d079508fa68b1381 in both arms).
+
+.h stays mapped to "cpp" in both _target_language_for_path and _provider_language_for_path --
+  confirmed they agree and deliberately NOT changed as a side effect of this wave.
+
+Gates: 48/48 test_lang_c, 204 across the registry/java/csharp/php/cpp/ skill-drift/doc union, ruff,
+  ruff format --preview, mypy (90 files).
+
+
 ## v1.105.0 (2026-08-05)
 
 ### Documentation
