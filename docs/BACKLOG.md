@@ -1328,6 +1328,50 @@ not merely imprecise -- which is exactly what the `blast_radius_floor` consumers
 sites rather than regex them) so the design is sized against a defensible number, and repeat on one
 Java and one C# corpus -- a single-language, single-corpus measurement is a direction, not a size.
 
+### FOLLOW-UP MEASURED 2026-08-05: the parsed C# re-measure (the council's wave-2/3 sizing ask)
+
+Both halves of that disposition, run. Call sites are now **parsed** by the product's own extractors
+(`lang_csharp.csharp_imports_and_symbols` for definitions, `LanguageSpec.references_and_calls` for
+call sites), so prototypes, comments and strings are excluded by construction rather than by caveat.
+
+**Corpus:** `reveng-main/external/ga_sources/winsw/src`, 70 real C# files across four projects
+(WinSW, WinSW.Core, WinSW.Plugins, WinSW.Tests). 0 parse failures.
+
+| measure | C# (parsed) | C++ (regex, above) |
+|---|---|---|
+| distinct method definitions | 289 | 1114 |
+| symbols with >= 1 CROSS-FILE call site | **134 / 289 (46%)** | 511 / 1114 (46%) |
+| call sites in-file / cross-file | 235 / **509** | 2731 / 4664 |
+| share invisible to an in-file-only extractor | **68.4%** | 63.1% |
+| cross:in ratio | **2.17:1** | ~1.7:1 |
+
+**The finding that matters: parsing did not shrink the number.** The C++ figure was labelled an
+UPPER BOUND with known regex inflation, and the honest expectation was that a parsed re-measure
+would come in materially lower. It came in **higher** (68.4% vs 63.1%), on a different language and
+an unrelated codebase, with the 46% symbol share reproducing to the percentage point. Regex
+inflation was therefore not what was carrying the C++ result, and the design's premise survives the
+tightening it was conditioned on. Wave 2 (C#) is sized and justified.
+
+**Java is NOT measured, and this is a gap rather than a result.** No adequate Java corpus exists in
+this workspace -- the largest is `repowise-main/tests/fixtures/sample_repo/java_pkg` at **3 files**.
+A 3-file corpus cannot measure cross-file call-site share; running it anyway would reproduce the
+trap where the probe's INPUT carries the property being measured. Wave 1 (Java, PR #950) therefore
+ships on the C++/C# direction plus the language's own import semantics, and a Java sizing number
+remains OPEN pending a real corpus.
+
+**Four instrument failures produced believable zeros before any of the above was true**, each
+caught by a control rather than by re-reading the probe:
+
+| the zero | cause |
+|---|---|
+| 0 definitions over 70 files | `except Exception: continue` swallowed 70 identical `TypeError`s -- C#'s `extract_imports_and_symbols` is `None`; symbols come from `lang_csharp` directly |
+| `KeyError: 'csharp'` | `LANGUAGE_REGISTRY` is empty without `import repo_map`; registration happens there |
+| 1 definition over 70 files | the name key is `name`, not `symbol` -- 392 functions collapsed into one `None`-keyed entry |
+| `pending: 0` on 17 running CI lanes | `gh` reports an unfinished check's conclusion as `""`, not `null`; the filter tested `== null` |
+
+The positive control that stopped it (`assert len(defs) > 100`) is the reason a number was reported
+at all instead of a fourth confident zero.
+
 ## MEASURED 2026-08-05: `refactor:` CUTS NO RELEASE -- the title gate and the publisher disagree
 
 CLAUDE.md warns that `scripts/validate_pr_title_semver.py` (the PR-title gate) and
