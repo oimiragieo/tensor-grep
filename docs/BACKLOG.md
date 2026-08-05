@@ -1274,6 +1274,24 @@ Net: 0 real defects, and the ratchet now discriminates. Had these shipped as fin
 been 9 false P0s — worse than the gap the ratchet exists to close.
 
 
+## DEPENDENCY MAP -- what 'Active / buildable' actually means (measured 2026-08-05)
+
+The canonical queue lists ten rows as `READY`. Premise-checking them shows the genuinely
+start-now set is SMALLER, for reasons that are not defects but ARE blockers. Recorded because a
+row reading `READY` invites a session to start it and discover the blocker after writing code.
+
+| row | blocker | measured |
+|---|---|---|
+| **MCP-SURFACE** (Task 4) | depends on **Task 2C** | Task 4 is titled "bump contract 1.8.0 -> 1.9.0" but the live value is **1.7.0** (`mcp_server.py:138`, `_TG_MCP_SERVER_CONTRACT_VERSION`). Task 2C performs 1.7.0 -> 1.8.0. Building Task 4 first would bump from a version that does not exist. |
+| **Task 2C** (and 2B) | needs CI or a cloud seat | modifies `rust_core/src/main.rs`; verifying it requires `cargo`, which AGENTS.md forbids on this shared dev box. Also needs a real WSL host for the `/mnt/c/...` path-domain arms. |
+| **#89 / #90** | same as 2B/2C | the reproduced path-domain defect is owned by that typed-path program. |
+| **Task 3** (#859) | PARTIALLY DONE | the CLASS census gap is closed (PR #937, census 3 -> 41 modules). The plan's Task 3 also lists `src/tensor_grep/cli/main.py` as modified -- i.e. fixing the pinned VIOLATING sites. That half is open and is H2 above. |
+
+Unblocked and genuinely start-now: **F5** (Task 8), **F6** (Tasks 6-7), **REF-CALL-REGISTRY**
+(Task 9), **F7 Task 11** (cross-file resolution), **F8** (Tasks 12-13) -- all pure-Python. F7
+Task 11 should not start before its demand question is answered (see the research bucket): measure
+how often `blast_radius_floor` falls short on a real multi-file repo BEFORE designing a resolver.
+
 ## OPEN FINDINGS -- 2026-08-05, surfaced while widening the atomic-writer census (PR #937)
 
 Both were found BY the #859 fix, neither was in its scope, and neither is fixed. Recorded per the
