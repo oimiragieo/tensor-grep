@@ -82,7 +82,7 @@ Recommended consumer behavior:
 Current coverage values describe the limits of this surface:
 
 - `"language_scope": "c-cpp-csharp-go-java-javascript-php-python-rust-typescript"` -- every language with a registered symbol-graph `LanguageSpec`, derived live from `lang_registry.LANGUAGE_REGISTRY` (10 languages as of this writing).
-- `"symbol_navigation": "parser-backed-refs-callers:c-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:cpp"` -- honest about tiers: `tg refs`/`tg callers`/`tg blast-radius` are AST/tree-sitter-verified only for the first group; the second group has parser-backed defs/imports but refs/callers fall back to a regex-heuristic text match.
+- `"symbol_navigation": "parser-backed-refs-callers:c-cpp-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:"` -- honest about tiers: `tg refs`/`tg callers`/`tg blast-radius` are AST/tree-sitter-verified for every registered language. The `foundational-defs-imports-only:` segment (languages with parser-backed defs/imports but refs/callers falling back to a regex-heuristic text match) is currently EMPTY -- C++ was the last language in that tier (Task 10E) -- but the segment is always emitted so the descriptor's shape never changes.
 - `"test_matching": "filename+import+graph-heuristic"`
 
 ## Context Pack Flow

@@ -215,8 +215,11 @@ run it rather than trust any number written here:
 
 ```bash
 python -c "import sys;sys.path.insert(0,'src');from tensor_grep.cli import repo_map as r;print(r._symbol_navigation_descriptor())"
-# -> parser-backed-refs-callers:c-csharp-go-java-javascript-php-python-rust-typescript
-#    +foundational-defs-imports-only:cpp
+# -> parser-backed-refs-callers:c-cpp-csharp-go-java-javascript-php-python-rust-typescript
+#    +foundational-defs-imports-only:
+# (as of Task 10E, the final wave of the top-10 language-support campaign: every registered
+# language is parser-backed, the foundational-defs-imports-only segment is EMPTY -- it is still
+# always emitted, never omitted, so the descriptor's shape never changes)
 ```
 
 cross-checked against `grep -c "lang_registry.register_language(" src/tensor_grep/cli/repo_map.py`,
@@ -816,9 +819,9 @@ grep -n "Content-Length\|_MAX_LSP_MESSAGE_BYTES" C:/dev/projects/tensor-grep/src
 # run the product's own descriptor and cross-check the registration count:
 python -c "import sys;sys.path.insert(0,'src');from tensor_grep.cli import repo_map as r;print(r._symbol_navigation_descriptor())"
 grep -c "lang_registry.register_language(" C:/dev/projects/tensor-grep/src/tensor_grep/cli/repo_map.py
-# Expect: 10 registrations, split parser-backed-refs-callers:c-csharp-go-java-javascript-php-python-rust-typescript
-# + foundational-defs-imports-only:cpp -- and confirm the MOST-FORGOTTEN seam is
-# still wired for every one of the 10:
+# Expect: 10 registrations, split parser-backed-refs-callers:c-cpp-csharp-go-java-javascript-php-python-rust-typescript
+# + foundational-defs-imports-only: (empty -- Task 10E, the final wave, promoted cpp too) --
+# and confirm the MOST-FORGOTTEN seam is still wired for every one of the 10:
 grep -n 'register_language(\|language_id="' C:/dev/projects/tensor-grep/src/tensor_grep/cli/repo_map.py
 grep -n "_target_language_for_path\|_SUPPORTED_FILE_DEPENDENCY_LANGUAGES\|_language_coverage_gaps_for_universe" C:/dev/projects/tensor-grep/src/tensor_grep/cli/repo_map.py
 

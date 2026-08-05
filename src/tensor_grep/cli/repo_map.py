@@ -587,7 +587,14 @@ def _symbol_navigation_descriptor() -> str:
       honest ``resolution_gaps`` entry), but ``tg refs``/``tg callers``/``tg blast-radius``
       fall through to the generic ``_regex_references_and_calls`` text heuristic instead of an
       AST-verified match -- these languages' own registration comments in this module
-      self-label "FOUNDATIONAL-TIER" for exactly this reason.
+      self-label "FOUNDATIONAL-TIER" for exactly this reason. As of Task 10E (C++, the final
+      wave of the top-10 language-support campaign) this tier is EMPTY -- every registered
+      language carries a real ``references_and_calls`` extractor (see
+      ``test_every_registered_language_is_parser_backed_after_the_final_wave``). The segment is
+      still ALWAYS emitted (never omitted when empty, unlike an earlier version of this function)
+      so a consumer can rely on the descriptor always containing exactly one ``"+"`` and both
+      prefixes -- ``test_cpp_moves_into_the_parser_backed_tier_descriptor`` partitions on that
+      literal shape.
 
     Both groups are derived live from ``LANGUAGE_REGISTRY`` and sorted, so a newly onboarded
     language lands in the correct bucket automatically the moment its ``LanguageSpec`` is
@@ -603,9 +610,10 @@ def _symbol_navigation_descriptor() -> str:
         for language_id, spec in lang_registry.LANGUAGE_REGISTRY.items()
         if spec.references_and_calls is None
     )
-    parts = [f"parser-backed-refs-callers:{'-'.join(parser_backed)}"]
-    if foundational:
-        parts.append(f"foundational-defs-imports-only:{'-'.join(foundational)}")
+    parts = [
+        f"parser-backed-refs-callers:{'-'.join(parser_backed)}",
+        f"foundational-defs-imports-only:{'-'.join(foundational)}",
+    ]
     return "+".join(parts)
 
 
@@ -6420,6 +6428,22 @@ def _c_references_and_calls_for_registry(
     return lang_c.c_references_and_calls(path, symbol)
 
 
+def _cpp_references_and_calls_for_registry(
+    path: Path,
+    symbol: str,
+    repo_root: Path | str | None = None,
+    *,
+    definition_dirs: frozenset[str] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    # Task 10E: in-file AST extraction only -- no cross-file import resolution yet, so
+    # repo_root/definition_dirs are part of the uniform registry adapter signature (Go F25) but
+    # unused here, same as csharp's/php's/c's own adapters above. lang_cpp.py already owns its
+    # whole extraction pipeline including `_cpp_parser()` (matching lang_c.py's shape -- C++'s
+    # parser factory predates Task 10E, built for cpp_imports_and_symbols), so this adapter
+    # forwards path/symbol only.
+    return lang_cpp.cpp_references_and_calls(path, symbol)
+
+
 def _references_and_calls_for_path(
     path: Path,
     symbol: str,
@@ -6434,13 +6458,17 @@ def _references_and_calls_for_path(
     reached through a thin adapter with this SAME signature (``definition_dirs`` forwarded
     for Go F25, ignored elsewhere) so this seam never branches on ``language_id``.
 
-    EXPLICIT fallback: when the path has no registered extractor (``spec is None`` or
-    ``spec.references_and_calls is None`` -- foundational-tier cpp (C's own last foundational
-    sibling as of Task 10D), plus unregistered suffixes), call ``_regex_references_and_calls``.
-    Java/C#/PHP/C shipped in-file ``references_and_calls`` extractors (Tasks 10A/10B/10C/10D) so
-    none of them fall into this branch; their cross-file caller confirmation still uses the same
-    text-prefilter mechanism as the languages listed here, just reached through a different seam.
-    That fallback is deliberate and documented, never an implicit empty result.
+    EXPLICIT fallback: when the path has no registered extractor (``spec is None``, or an
+    unregistered suffix), call ``_regex_references_and_calls``. As of Task 10E (C++, the final
+    wave of the top-10 language-support campaign) every REGISTERED language carries a real
+    ``references_and_calls`` extractor -- ``spec.references_and_calls is None`` can no longer
+    happen for any language in ``LANGUAGE_REGISTRY`` (see
+    ``test_every_registered_language_is_parser_backed_after_the_final_wave``), so this branch is
+    now reached only by a path whose suffix has no registered ``LanguageSpec`` at all. Java/C#/
+    PHP/C/C++ shipped in-file ``references_and_calls`` extractors (Tasks 10A/10B/10C/10D/10E);
+    their cross-file caller confirmation still uses the same text-prefilter mechanism as every
+    other language, just reached through a different seam. That fallback is deliberate and
+    documented, never an implicit empty result.
 
     Secondary degrade paths that used to live inside the per-language_id if/elif chains
     (provider-alias then regex for JS/TS/Rust; fail-closed empty for Go/python) stay at the
@@ -6763,19 +6791,25 @@ lang_registry.register_language(
     )
 )
 
-# PATH A Stage 3 (Phase 2 of C/C++): C++ joins the symbol graph as a FOUNDATIONAL-TIER language,
-# closing the top-10 language-support campaign to 10/10. Own module (lang_cpp.py) for the same
-# no-import-cycle reason as C/Go/PHP/C# -- a SEPARATE LanguageSpec + grammar package
-# (tree-sitter-cpp) from C's, mirroring the shipped JS/TS "two specs, not one mode flag"
-# precedent (``_SPEC_BY_SUFFIX`` is a flat suffix->ONE-spec dict, so ".h" cannot belong to both).
-# FOUNDATIONAL scope only -- defs/source/imports/agent via `extract_imports_and_symbols`-shaped
-# extraction, wired at the `_imports_and_symbols_for_path` / `build_symbol_source_from_map`
-# dispatch sites below. The cross-file caller-graph (references_and_calls /
-# file_imports_symbol_from_definition / import_update_target / repo-root context priming for a
-# future `#include`-path resolver) is DEFERRED to a follow-up -- all four stay None here, same
-# shape as C/Go/PHP/C#'s own `import_update_target=None` gap, so `tg refs`/`tg callers`/`tg
-# blast-radius` on a C++ symbol fall through to the generic `_regex_references_and_calls`
-# text-heuristic path instead of crashing or fabricating an AST-verified match.
+# PATH A Stage 3 (Phase 2 of C/C++, Task 10E): C++ joins the symbol graph as a PARSER-BACKED
+# refs/callers language, closing the top-10 language-support campaign to 10/10 AND emptying the
+# foundational tier entirely (see `_symbol_navigation_descriptor`'s docstring / the "Task 10E RED"
+# tests in test_lang_cpp.py). Own module (lang_cpp.py) for the same no-import-cycle reason as
+# C/Go/PHP/C# -- a SEPARATE LanguageSpec + grammar package (tree-sitter-cpp) from C's, mirroring
+# the shipped JS/TS "two specs, not one mode flag" precedent (``_SPEC_BY_SUFFIX`` is a flat
+# suffix->ONE-spec dict, so ".h" cannot belong to both). references_and_calls now points at
+# lang_cpp.cpp_references_and_calls (Task 10E: IN-FILE AST reference/call extraction, mirroring
+# Task 10D's C landing plus THREE C++-only call shapes -- qualified calls (`Foo::bar()`),
+# `this->method()`, and `new Widget()` constructor references -- via the registry adapter above).
+# defs/source/imports/agent still go through `extract_imports_and_symbols`-shaped extraction,
+# wired at the `_imports_and_symbols_for_path` / `build_symbol_source_from_map` dispatch sites
+# below. The remaining cross-file caller-graph fields (file_imports_symbol_from_definition /
+# import_update_target / repo-root context priming for a future `#include`-path resolver) stay
+# None, deferred to a follow-up -- same shape as every other parser-backed language's own gap, so
+# `tg refs`/`tg callers`/`tg blast-radius` on a C++ symbol still fall through to the honest
+# `resolution_gaps` reverse-import disclosure (never a crash, never a fabricated cross-file match)
+# rather than the generic `_regex_references_and_calls` text heuristic, which C++ never reaches
+# for its OWN suffixes any more (no regex fallback either way -- see below).
 # provenance_when_missing="grammar-missing" (NOT "regex-heuristic") is what makes a
 # grammar-absent C++ file a genuine `resolution_gaps` entry instead of a silent empty result
 # (C++ has no regex fallback, unlike JS/TS/Rust).
@@ -6808,7 +6842,7 @@ lang_registry.register_language(
             "alias_declaration",
         ),
         extract_imports_and_symbols=None,
-        references_and_calls=None,
+        references_and_calls=_cpp_references_and_calls_for_registry,
         provider_alias_calls=None,
         file_imports_symbol_from_definition=None,
         import_update_target=None,
@@ -17194,9 +17228,9 @@ def build_symbol_refs_from_map(
         current_provenance = _symbol_navigation_provenance_for_path(str(current))
         current_spec = lang_registry.spec_for_path(current)
         # Registry-driven extractor dispatch (replaces the prior per-language_id if/elif
-        # chain). Languages with references_and_calls is None (c/cpp/csharp/java/php) and
-        # unregistered suffixes hit the EXPLICIT `_regex_references_and_calls` fallback
-        # inside `_references_and_calls_for_path`.
+        # chain). As of Task 10E (C++, the final wave) no registered language has
+        # references_and_calls is None any more -- only an UNREGISTERED suffix hits the
+        # EXPLICIT `_regex_references_and_calls` fallback inside `_references_and_calls_for_path`.
         current_refs, current_calls = _references_and_calls_for_path(
             current, symbol, repo_root, definition_dirs=go_definition_dirs
         )

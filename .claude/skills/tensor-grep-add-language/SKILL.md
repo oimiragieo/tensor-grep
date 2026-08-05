@@ -44,6 +44,19 @@ see B5's declarator-shape addendum below before writing similar C/C++ declarator
 logic. **Re-run the grep above before trusting any "N of top-10" count** — it is a snapshot,
 not a promise; this count has changed on every pass of this skill so far.
 
+**SUPERSEDED 2026-08-04 by Task 10E (C++, the final wave of the top-10 language-support
+campaign):** the "foundational tier" claim two sentences up is now STALE for every language
+named in it. Java (10A), C# (10B), PHP (10C), C (10D), and now C++ (10E) all carry a real
+`references_and_calls` extractor; `repo_map._symbol_navigation_descriptor()` reports
+**10 parser-backed / 0 foundational** — the foundational tier is EMPTY. `lang_cpp.py`'s new
+`cpp_references_and_calls` extends C's bare-identifier-call confirmation with three C++-only
+shapes (qualified calls `Foo::bar()`, explicit `this->method()`, and `new Widget()` as a
+`ref_kind="constructor"` reference) but DELIBERATELY does not attempt Java/C#/PHP-style
+general receiver-type confirmation (`w.method()`, `p->method()`) — C++'s real inheritance and
+`auto` make that walk unsound for the common case; see `lang_cpp.py`'s own "TASK 10E CALL/
+ACCESS NODE SHAPES" / "RESOLUTION CONFIDENCE" docstring block for the full reasoning. Re-run
+the one-liner rather than trust this paragraph either.
+
 The tiered language model (unchanged shape, re-verify the coverage numbers):
 
 | Tier | Scope | Mechanism | Coverage |
