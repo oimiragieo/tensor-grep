@@ -39,7 +39,8 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 import tensor_grep.cli.repo_map as repo_map
-from tensor_grep.cli.main import _build_prepare_blast_radius_floor, app
+from tensor_grep.cli.main import app
+from tensor_grep.cli.prepare_service import _build_prepare_blast_radius_floor
 
 
 def _skipped_not_requested_evidence() -> dict[str, object]:

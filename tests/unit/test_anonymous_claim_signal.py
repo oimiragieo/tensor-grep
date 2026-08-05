@@ -91,12 +91,23 @@ def test_the_hint_says_what_is_LOST_not_just_what_to_set() -> None:
     Pinned by source at the emission site -- reaching it needs a full `prepare` run against a real
     repo. The assertion is about CONTENT, not existence: "set TG_LEDGER_AGENT_ID for a stable
     identity" is a suggestion; "this claim is NOT attributable to you" is a consequence.
+
+    SEARCHES BOTH MODULES ON PURPOSE. A source-substring check pins a string's LOCATION, not the
+    product's behaviour, so a pure refactor breaks it while the shipped output is byte-identical.
+    That happened: Task 6 Step 0 moved `_build_prepare_payload` -- which owns this emission site --
+    out of `main.py` into `prepare_service.py`, and this test failed on a change that altered no
+    behaviour at all (`tg prepare` stdout hashed identical across both trees). Reading the union
+    means the guard follows the code instead of pinning where it used to live.
     """
     import inspect
 
     from tensor_grep.cli import main as cli_main
+    from tensor_grep.cli import prepare_service
 
-    source = inspect.getsource(cli_main)
+    source = chr(10).join((
+        inspect.getsource(cli_main),
+        inspect.getsource(prepare_service),
+    ))
     marker = 'claim_hook["agent_id_hint"]'
     assert marker in source, "the anonymous-claim hint was removed"
 
