@@ -296,13 +296,14 @@ call-graph seams are deliberately unwired.
    decision is still unmade.
 
 **Honest framing of the coverage number -- CORRECTED 2026-08-01, do not re-invent a third tier;
-counts UPDATED 2026-08-04 by PR #927 (Java promoted foundational -> parser-backed, Task 10A).**
+counts UPDATED 2026-08-04 by PR #927 (Java promoted foundational -> parser-backed, Task 10A), then
+again the same day by the Task 10B C# wave and the Task 10C PHP wave.**
 "10/10 languages" is REGISTRY membership, not caller-graph parity, but the product's OWN canonical
 split is a strict BINARY, not a hand-counted list. `_symbol_navigation_descriptor()`
 (`grep -n "_symbol_navigation_descriptor" src/tensor_grep/cli/repo_map.py` -- was `:562`, now `:570`) partitions
 `LANGUAGE_REGISTRY` on exactly one field -- `LanguageSpec.references_and_calls is not None` -- into
-**parser-backed** (go, java, javascript, python, rust, typescript -- 6) vs **foundational** (c, cpp,
-csharp, php -- 4). Java's refs/callers are AST-verified only in-file so far; cross-file caller
+**parser-backed** (csharp, go, java, javascript, php, python, rust, typescript -- 8) vs
+**foundational** (c, cpp -- 2). Java's/C#'s/PHP's refs/callers are AST-verified only in-file so far; cross-file caller
 confirmation still falls back to the text prefilter pending a package/source-root resolver, so it
 belongs in the parser-backed tier without yet having full cross-file parity within it -- a real,
 citable WITHIN-tier gap, same shape as go's. Go belongs in the parser-backed tier: the descriptor's

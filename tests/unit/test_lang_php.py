@@ -14,9 +14,10 @@ method) + a top-level ``function`` -- used to verify:
   including the case where two distinct declarations share a name (the interface's abstract
   ``greet`` stub and the class's concrete ``greet`` implementation).
 - Registration + provenance: PHP's ``LanguageSpec`` reports "tree-sitter" when parsed,
-  "grammar-missing" (never a silent regex/heuristic swap) when the grammar is absent, and the
-  four cross-file caller-graph callables (``references_and_calls`` and friends) are explicitly
-  ``None`` -- this is DEFERRED scope, not an oversight (see ``lang_php.py``'s module docstring).
+  "grammar-missing" (never a silent regex/heuristic swap) when the grammar is absent. Task 10C
+  wired ``references_and_calls`` (in-file AST reference/call extraction); the remaining
+  cross-file caller-graph callables stay explicitly ``None`` -- DEFERRED scope, not an oversight
+  (see ``lang_php.py``'s module docstring).
 - ``_target_language_for_path`` agrees with the registry (the "MOST-FORGOTTEN seam" ``lang_go.py``
   and ``test_lang_registry.py`` warn about -- miss it and the agent capsule's
   query-language-vs-target-language confidence cap silently misfires on PHP targets).
@@ -30,6 +31,7 @@ method) + a top-level ``function`` -- used to verify:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -110,10 +112,11 @@ def test_php_is_registered_with_tree_sitter_provenance() -> None:
     # fallback when the grammar is missing.
     assert spec.provenance_when_missing == "grammar-missing"
     assert spec.parser_for_path is not None
-    # DEFERRED scope (see lang_php.py's module docstring): the cross-file caller-graph is a
-    # follow-up, not shipped here. Pin this explicitly so a future PR that wires one of these in
-    # must consciously update this test rather than silently drift.
-    assert spec.references_and_calls is None
+    # Task 10C wired in-file references_and_calls (lang_php.php_references_and_calls). The
+    # remaining cross-file caller-graph fields stay DEFERRED (see lang_php.py's module
+    # docstring) -- pin this explicitly so a future PR that wires one of these in must
+    # consciously update this test rather than silently drift.
+    assert spec.references_and_calls is not None
     assert spec.provider_alias_calls is None
     assert spec.file_imports_symbol_from_definition is None
     assert spec.import_update_target is None
@@ -378,3 +381,460 @@ def test_grammar_present_still_flags_import_resolution_only_gap(tmp_path: Path) 
     assert php_gaps[0]["files_affected"] >= 1
     assert "reverse-import" in php_gaps[0]["reason"]
     assert "fail-closed" not in php_gaps[0]["reason"]
+
+
+# Task 10C pre-fix RED arms: promote PHP from the foundational tier to parser-backed
+# refs/callers, following Java (Task 10A, PR #927) and C# (Task 10B, PR #928).
+#
+# Both nodes MUST fail before any implementation, and each must fail for a BEHAVIOUR-SPECIFIC
+# reason. An ImportError or NameError here would be a false red -- it proves a symbol is
+# missing, not that the behaviour is absent.
+
+
+def test_php_references_and_calls_is_registered_non_none() -> None:
+    """Task 10C RED: PHP must register a real ``references_and_calls`` extractor.
+
+    Pre-fix this is ``None``, so ``_references_and_calls_for_path`` falls through to
+    ``_regex_references_and_calls``, which returns ``([], [])`` for any suffix outside
+    ``_JS_TS_SUFFIXES | _RUST_SUFFIXES`` -- including ``.php``. PHP's "regex fallback" is
+    therefore not a text heuristic over PHP source; it is an unconditional empty result.
+    """
+    spec = lang_registry.LANGUAGE_REGISTRY["php"]
+    assert spec.references_and_calls is not None
+
+
+def test_php_moves_into_the_parser_backed_tier_descriptor() -> None:
+    """Task 10C RED: the product's derived tier descriptor must list php as parser-backed.
+
+    Asserted against the descriptor rather than a hardcoded string, so this node cannot be
+    turned green by editing a doc. ``_symbol_navigation_descriptor`` partitions every
+    registered LanguageSpec by exactly one boolean (``references_and_calls is not None``),
+    so php lands in exactly one half -- never both, never neither.
+    """
+    descriptor = repo_map._symbol_navigation_descriptor()
+    parser_backed, _, foundational = descriptor.partition("+")
+    assert "php" in parser_backed, descriptor
+    assert "php" not in foundational, descriptor
+
+
+# ---------------------------------------------------------------------------
+# Task 10C: php_references_and_calls AST-shape coverage (mirrors test_lang_java.py's /
+# test_lang_csharp.py's own references_and_calls sections, adapted to PHP's own grammar shapes --
+# see lang_php.py's module docstring "TASK 10C" section for the exact node-shape catalog: PHP has
+# FIVE distinct call/access node types -- function_call_expression, member_call_expression,
+# scoped_call_expression (Foo::bar() / self::/static::/parent::), object_creation_expression, and
+# member_access_expression / scoped_property_access_expression for non-call member reads).
+# ---------------------------------------------------------------------------
+
+
+def _php_parser_or_skip() -> Any:
+    parser = lang_php._php_parser()
+    if parser is None:  # pragma: no cover - grammar always installed in this venv
+        pytest.skip("tree_sitter_php grammar not installed")
+    return parser
+
+
+@pytest.mark.requires_grammar
+def test_php_references_and_calls_provenance_is_parser_backed(tmp_path: Path) -> None:
+    _write_php_fixture(tmp_path)
+
+    references, calls = repo_map._references_and_calls_for_path(
+        tmp_path / "Widget.php", "Named", tmp_path
+    )
+
+    assert references, "expected the tree-sitter extractor to find `Named` references"
+    assert calls == []
+    assert repo_map._symbol_navigation_provenance_for_path(str(tmp_path / "Widget.php")) == (
+        "tree-sitter"
+    )
+
+
+@pytest.mark.requires_grammar
+def test_php_references_and_calls_function_call_expression(tmp_path: Path) -> None:
+    php_file = tmp_path / "Plain.php"
+    php_file.write_text(
+        "<?php\nfunction helper() {\n    return 1;\n}\nhelper();\n",
+        encoding="utf-8",
+    )
+    _php_parser_or_skip()
+
+    references, calls = lang_php.php_references_and_calls(php_file, "helper")
+
+    assert [(r["kind"], r["ref_kind"], r["line"]) for r in references] == [("reference", "call", 5)]
+    assert [(c["kind"], c["ref_kind"], c["line"]) for c in calls] == [("call", "call", 5)]
+
+
+@pytest.mark.requires_grammar
+def test_php_references_and_calls_object_creation_expression_constructor(
+    tmp_path: Path,
+) -> None:
+    php_file = tmp_path / "Ctor.php"
+    php_file.write_text(
+        "<?php\nclass Foo {}\n$f = new Foo();\n",
+        encoding="utf-8",
+    )
+    _php_parser_or_skip()
+
+    references, calls = lang_php.php_references_and_calls(php_file, "Foo")
+
+    # "Foo" appears twice: the class DECLARATION (excluded, own name) and the `new Foo()`
+    # constructor call (ref_kind "constructor").
+    assert [(r["kind"], r["ref_kind"], r["line"]) for r in references] == [
+        ("reference", "constructor", 3)
+    ]
+    assert [c["ref_kind"] for c in calls] == ["constructor"]
+
+
+@pytest.mark.requires_grammar
+def test_php_references_and_calls_member_call_expression(tmp_path: Path) -> None:
+    php_file = tmp_path / "MemberCall.php"
+    php_file.write_text(
+        "<?php\n$foo = new Foo();\n$foo->bar();\n",
+        encoding="utf-8",
+    )
+    _php_parser_or_skip()
+
+    references, calls = lang_php.php_references_and_calls(php_file, "bar")
+
+    assert [(r["kind"], r["ref_kind"], r["line"]) for r in references] == [("reference", "call", 3)]
+    assert [(c["kind"], c["ref_kind"], c["line"]) for c in calls] == [("call", "call", 3)]
+
+
+@pytest.mark.requires_grammar
+def test_php_references_and_calls_scoped_call_expression(tmp_path: Path) -> None:
+    php_file = tmp_path / "ScopedCall.php"
+    php_file.write_text(
+        "<?php\nclass Foo {\n    public static function bar() {}\n}\nFoo::bar();\n",
+        encoding="utf-8",
+    )
+    _php_parser_or_skip()
+
+    _references, calls = lang_php.php_references_and_calls(php_file, "bar")
+
+    scoped_call = [c for c in calls if c["line"] == 5]
+    assert len(scoped_call) == 1
+    assert scoped_call[0]["ref_kind"] == "call"
+
+
+@pytest.mark.requires_grammar
+def test_php_references_and_calls_member_access_expression_non_call(tmp_path: Path) -> None:
+    php_file = tmp_path / "FieldAccess.php"
+    php_file.write_text(
+        "<?php\n$foo = new Foo();\n$y = $foo->baz;\n",
+        encoding="utf-8",
+    )
+    _php_parser_or_skip()
+
+    references, calls = lang_php.php_references_and_calls(php_file, "baz")
+
+    assert [(r["kind"], r["ref_kind"], r["line"]) for r in references] == [
+        ("reference", "field", 3)
+    ]
+    assert calls == []
+
+
+@pytest.mark.requires_grammar
+def test_php_references_and_calls_scoped_property_access_expression(tmp_path: Path) -> None:
+    php_file = tmp_path / "StaticProp.php"
+    php_file.write_text(
+        "<?php\nclass Foo {\n    public static $staticProp;\n}\necho Foo::$staticProp;\n",
+        encoding="utf-8",
+    )
+    _php_parser_or_skip()
+
+    references, calls = lang_php.php_references_and_calls(php_file, "staticProp")
+
+    static_refs = [r for r in references if r["line"] == 5]
+    assert len(static_refs) == 1
+    assert static_refs[0]["ref_kind"] == "field"
+    assert calls == []
+
+
+@pytest.mark.requires_grammar
+def test_php_references_and_calls_type_reference(tmp_path: Path) -> None:
+    php_file = tmp_path / "TypeRef.php"
+    php_file.write_text(
+        "<?php\nclass TypeRef extends Foo {\n    private Foo $field;\n}\n",
+        encoding="utf-8",
+    )
+    _php_parser_or_skip()
+
+    references, calls = lang_php.php_references_and_calls(php_file, "Foo")
+
+    assert [(r["kind"], r["ref_kind"], r["line"]) for r in references] == [
+        ("reference", "type", 2),
+        ("reference", "type", 3),
+    ]
+    assert calls == []
+
+
+@pytest.mark.requires_grammar
+def test_php_references_and_calls_excludes_same_name_declaration(tmp_path: Path) -> None:
+    php_file = tmp_path / "Decl.php"
+    php_file.write_text(
+        "<?php\nclass Decl {\n    private $count;\n    public function read() {\n"
+        "        return $this->count;\n    }\n}\n",
+        encoding="utf-8",
+    )
+    _php_parser_or_skip()
+
+    references, calls = lang_php.php_references_and_calls(php_file, "count")
+
+    # `private $count;` (line 3) is the DECLARATION -- must not appear. `$this->count` (line 5)
+    # is the one real reference.
+    assert [(r["kind"], r["ref_kind"], r["line"]) for r in references] == [
+        ("reference", "field", 5)
+    ]
+    assert calls == []
+
+
+@pytest.mark.requires_grammar
+def test_php_references_and_calls_ignores_string_literal_and_comment_occurrences(
+    tmp_path: Path,
+) -> None:
+    php_file = tmp_path / "Noise.php"
+    php_file.write_text(
+        '<?php\n$s = "Helper";\n// Helper mentioned only in a comment\nclass C extends Helper {}\n',
+        encoding="utf-8",
+    )
+    _php_parser_or_skip()
+
+    references, calls = lang_php.php_references_and_calls(php_file, "Helper")
+
+    # Only the REAL type reference on line 4 counts -- the string literal (line 2) and the
+    # comment (line 3) must never match; a text/regex scan could not make this distinction.
+    assert [(r["kind"], r["ref_kind"], r["line"]) for r in references] == [("reference", "type", 4)]
+    assert calls == []
+
+
+@pytest.mark.requires_grammar
+def test_php_references_and_calls_defeats_regex_fallback(tmp_path: Path) -> None:
+    """AST-only distinction the regex fallback provably cannot satisfy: for a REAL call site,
+    ``_regex_references_and_calls`` (PHP's pre-Task-10C fallback) finds nothing at all, while the
+    AST extractor finds the real call precisely."""
+    php_file = tmp_path / "Defeats.php"
+    php_file.write_text(
+        "<?php\nfunction doWork() {}\ndoWork();\n",
+        encoding="utf-8",
+    )
+    _php_parser_or_skip()
+
+    regex_references, regex_calls = repo_map._regex_references_and_calls(php_file, "doWork")
+    ast_references, ast_calls = lang_php.php_references_and_calls(php_file, "doWork")
+
+    assert regex_references == []
+    assert regex_calls == []
+    assert ast_references and ast_references[0]["ref_kind"] == "call"
+    assert ast_calls and ast_calls[0]["ref_kind"] == "call"
+
+
+def test_php_references_and_calls_grammar_absent_returns_empty_not_crash(
+    tmp_path: Path, monkeypatch
+) -> None:
+    php_file = tmp_path / "NoGrammar.php"
+    php_file.write_text("<?php\nfunction doWork() {}\ndoWork();\n", encoding="utf-8")
+    monkeypatch.setattr(lang_php, "_php_parser", lambda: None)
+
+    references, calls = lang_php.php_references_and_calls(php_file, "doWork")
+
+    assert references == []
+    assert calls == []
+
+
+def test_php_references_and_calls_returns_empty_for_non_php_suffix(tmp_path: Path) -> None:
+    not_php = tmp_path / "Widget.txt"
+    not_php.write_text("class Widget {}\n", encoding="utf-8")
+
+    references, calls = lang_php.php_references_and_calls(not_php, "Widget")
+
+    assert references == []
+    assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# The honest-confidence requirement: the two bands must actually DISCRIMINATE (different
+# confidence, different provenance string) on a fixture with one confirmable call site and one
+# unconfirmable one -- a control that never crosses the boundary between "unresolved receiver"
+# and "in-file-confirmed receiver" would prove nothing (mirrors
+# test_csharp_references_and_calls_infile_receiver_type_confirms_higher_band exactly, adapted to
+# PHP's own grammar/provenance strings). See lang_php.py's module docstring for why PHP's
+# confirmable population is honestly SMALLER than Java's/C#'s (dynamic typing): an untyped
+# receiver can never confirm.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.requires_grammar
+def test_php_references_and_calls_unconfirmed_receiver_is_demoted(tmp_path: Path) -> None:
+    """``$h->helper()``'s receiver ``$h`` has NO type hint anywhere in this file, and no class in
+    this file declares a method named ``helper`` -- there is nothing to confirm against, so every
+    bucket entry must carry the DEMOTED band."""
+    php_file = tmp_path / "Unresolved.php"
+    php_file.write_text(
+        "<?php\nclass Unresolved {\n    public function run($h) {\n        $h->helper();\n"
+        "    }\n}\n",
+        encoding="utf-8",
+    )
+    _php_parser_or_skip()
+
+    references, calls = lang_php.php_references_and_calls(php_file, "helper")
+
+    assert len(calls) == 1
+    assert len(references) == 1
+    for entry in (*references, *calls):
+        assert entry["resolution_provenance"] == ["php-name-heuristic"]
+        assert entry["resolution_confidence"] == pytest.approx(0.6)
+
+
+@pytest.mark.requires_grammar
+def test_php_references_and_calls_infile_receiver_type_confirms_higher_band(
+    tmp_path: Path,
+) -> None:
+    """``$t->doWork()``'s receiver ``$t`` is TYPE-HINTED as ``Target`` in THIS file, and
+    ``Target`` (also declared in this file) directly declares a ``doWork`` method -- both facts
+    readable from the same AST, so this call confirms at the HIGHER band with a DIFFERENT
+    provenance string. ``$u->doWork()`` (an UNTYPED parameter -- PHP's honest default) is the
+    discriminating CONTROL in the same file/query shape: it must land in the demoted band,
+    proving the two bands actually diverge rather than both landing on one value by construction
+    -- the load-bearing fixture for this task.
+    """
+    php_file = tmp_path / "Confirmed.php"
+    php_file.write_text(
+        "<?php\n"
+        "class Target {\n"
+        "    public function doWork() {}\n"
+        "}\n"
+        "class Caller {\n"
+        "    public function run(Target $t, $u) {\n"
+        "        $t->doWork();\n"
+        "        $u->doWork();\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    _php_parser_or_skip()
+
+    references, calls = lang_php.php_references_and_calls(php_file, "doWork")
+
+    confirmed_calls = [c for c in calls if c["line"] == 7]
+    demoted_calls = [c for c in calls if c["line"] == 8]
+    assert len(confirmed_calls) == 1
+    assert len(demoted_calls) == 1
+    confirmed = confirmed_calls[0]
+    demoted = demoted_calls[0]
+
+    assert confirmed["resolution_provenance"] == ["php-infile-type-confirmation"]
+    assert confirmed["resolution_confidence"] == pytest.approx(0.9)
+    assert demoted["resolution_provenance"] == ["php-name-heuristic"]
+    assert demoted["resolution_confidence"] == pytest.approx(0.6)
+
+    # The discriminating control itself: confirmed must be STRICTLY higher, with a DIFFERENT
+    # provenance string -- both arms must actually diverge, not merely both be present. This is
+    # the "honest-confidence" fixture: a single-band implementation wearing two names would fail
+    # this exact assertion (both bands would read identically).
+    assert confirmed["resolution_confidence"] > demoted["resolution_confidence"]
+    assert confirmed["resolution_provenance"] != demoted["resolution_provenance"]
+
+    confirmed_refs = [r for r in references if r["line"] == 7]
+    assert confirmed_refs[0]["resolution_provenance"] == ["php-infile-type-confirmation"]
+    assert confirmed_refs[0]["resolution_confidence"] == pytest.approx(0.9)
+
+
+@pytest.mark.requires_grammar
+def test_php_references_and_calls_this_receiver_confirms_higher_band(tmp_path: Path) -> None:
+    """``$this->doWork()`` inside the SAME class that declares ``doWork`` must also confirm --
+    the enclosing type IS the receiver's static type by definition, no variable declaration
+    needed."""
+    php_file = tmp_path / "ThisConfirmed.php"
+    php_file.write_text(
+        "<?php\nclass Target {\n    public function doWork() {}\n"
+        "    public function run() {\n        $this->doWork();\n    }\n}\n",
+        encoding="utf-8",
+    )
+    _php_parser_or_skip()
+
+    _, calls = lang_php.php_references_and_calls(php_file, "doWork")
+
+    this_call = next(c for c in calls if c["line"] == 5)
+    assert this_call["resolution_provenance"] == ["php-infile-type-confirmation"]
+    assert this_call["resolution_confidence"] == pytest.approx(0.9)
+
+
+@pytest.mark.requires_grammar
+def test_php_references_and_calls_scoped_call_confirms_via_literal_class_name(
+    tmp_path: Path,
+) -> None:
+    """``Foo::bar()`` (a literal scoped call) confirms directly against a class declared in this
+    file -- PHP-specific and stronger than the instance case: no variable type-tracking needed,
+    the class name is given literally."""
+    php_file = tmp_path / "ScopedConfirmed.php"
+    php_file.write_text(
+        "<?php\nclass Foo {\n    public static function bar() {}\n}\nFoo::bar();\n",
+        encoding="utf-8",
+    )
+    _php_parser_or_skip()
+
+    _, calls = lang_php.php_references_and_calls(php_file, "bar")
+
+    scoped_call = next(c for c in calls if c["line"] == 5)
+    assert scoped_call["resolution_provenance"] == ["php-infile-type-confirmation"]
+    assert scoped_call["resolution_confidence"] == pytest.approx(0.9)
+
+
+@pytest.mark.requires_grammar
+def test_php_references_and_calls_self_and_static_scope_confirm_but_parent_stays_demoted(
+    tmp_path: Path,
+) -> None:
+    """``self::bar()``/``static::bar()`` resolve via the enclosing type and confirm; ``parent::
+    bar()`` can never confirm in-file (the parent class is not guaranteed present in this file) --
+    the honest, documented gap from the module docstring's RESOLUTION CONFIDENCE section."""
+    php_file = tmp_path / "RelativeScope.php"
+    php_file.write_text(
+        "<?php\n"
+        "class Foo {\n"
+        "    public static function bar() {}\n"
+        "    public function selfCall() { self::bar(); }\n"
+        "    public function staticCall() { static::bar(); }\n"
+        "    public function parentCall() { parent::bar(); }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    _php_parser_or_skip()
+
+    _, calls = lang_php.php_references_and_calls(php_file, "bar")
+
+    self_call = next(c for c in calls if c["line"] == 4)
+    static_call = next(c for c in calls if c["line"] == 5)
+    parent_call = next(c for c in calls if c["line"] == 6)
+
+    assert self_call["resolution_provenance"] == ["php-infile-type-confirmation"]
+    assert self_call["resolution_confidence"] == pytest.approx(0.9)
+    assert static_call["resolution_provenance"] == ["php-infile-type-confirmation"]
+    assert static_call["resolution_confidence"] == pytest.approx(0.9)
+    # The honest gap: parent:: never confirms, even though self::/static:: (same file, same
+    # syntactic shape) do -- proves the demoted band is not simply "anything with ::".
+    assert parent_call["resolution_provenance"] == ["php-name-heuristic"]
+    assert parent_call["resolution_confidence"] == pytest.approx(0.6)
+
+
+@pytest.mark.requires_grammar
+def test_php_references_and_calls_global_function_confirms_via_infile_declaration(
+    tmp_path: Path,
+) -> None:
+    """A bare ``helper()`` call confirms only because ``function helper()`` is ALSO declared in
+    this file -- the PHP-specific confirmation path with no Java/C# equivalent (neither language
+    has a bare top-level function). ``strlen()`` (a PHP builtin, never declared in-file) is the
+    discriminating control: it must stay demoted."""
+    php_file = tmp_path / "GlobalFn.php"
+    php_file.write_text(
+        "<?php\nfunction helper() {\n    return 1;\n}\nhelper();\nstrlen('x');\n",
+        encoding="utf-8",
+    )
+    _php_parser_or_skip()
+
+    _, helper_calls = lang_php.php_references_and_calls(php_file, "helper")
+    _, strlen_calls = lang_php.php_references_and_calls(php_file, "strlen")
+
+    assert helper_calls[0]["resolution_provenance"] == ["php-infile-type-confirmation"]
+    assert helper_calls[0]["resolution_confidence"] == pytest.approx(0.9)
+    assert strlen_calls[0]["resolution_provenance"] == ["php-name-heuristic"]
+    assert strlen_calls[0]["resolution_confidence"] == pytest.approx(0.6)
