@@ -1274,6 +1274,74 @@ Net: 0 real defects, and the ratchet now discriminates. Had these shipped as fin
 been 9 false P0s — worse than the gap the ratchet exists to close.
 
 
+## RESEARCH ANSWERED -- F7 Task 11 (cross-file caller resolution) is worth building (2026-08-05)
+
+The open question was whether cross-file resolution earns its cost, and the stated cheapest
+decisive test was: measure how often the blast floor falls short on a REAL multi-file repo BEFORE
+designing a resolver. Ran it.
+
+**Corpus:** `omega-fusion/source/lucebox-hub-main/server`, 269 real C++/header files (not a
+fixture, not synthetic -- a synthetic corpus manufactures whatever ratio its generator encodes).
+
+| measure | value |
+|---|---|
+| function-like definitions | 1114 |
+| symbols with >= 1 CROSS-FILE call site | **511 / 1114 (46%)** |
+| call sites in-file | 2731 |
+| call sites cross-file | **4664** |
+| share an IN-FILE-ONLY extractor cannot see | **63.1%** |
+
+**What this number is NOT.** Ground truth is a regex (`sym\s*\(`), so it also matches
+prototypes, declarations, comments, strings, and same-named methods on unrelated classes. 63.1% is
+an UPPER BOUND with known inflation, from ONE corpus in ONE language. Do not quote it as a product
+claim.
+
+**What it does establish.** The direction is not close. Cross-file call sites OUTNUMBER in-file ones
+roughly 1.7:1, and nearly half of all defined symbols have at least one caller in another file.
+Even halving the figure for regex inflation leaves cross-file as a large minority-to-majority of
+real call sites. An in-file-only caller graph is therefore structurally incomplete on real C++,
+not merely imprecise -- which is exactly what the `blast_radius_floor` consumers key on.
+
+**Disposition:** F7 Task 11 is JUSTIFIED. Before building, tighten the ground truth (parse call
+sites rather than regex them) so the design is sized against a defensible number, and repeat on one
+Java and one C# corpus -- a single-language, single-corpus measurement is a direction, not a size.
+
+## DEPENDENCY MAP -- what 'Active / buildable' actually means (measured 2026-08-05)
+
+The canonical queue lists ten rows as `READY`. Premise-checking them shows the genuinely
+start-now set is SMALLER, for reasons that are not defects but ARE blockers. Recorded because a
+row reading `READY` invites a session to start it and discover the blocker after writing code.
+
+| row | blocker | measured |
+|---|---|---|
+| **MCP-SURFACE** (Task 4) | depends on **Task 2C** | Task 4 is titled "bump contract 1.8.0 -> 1.9.0" but the live value is **1.7.0** (`mcp_server.py:138`, `_TG_MCP_SERVER_CONTRACT_VERSION`). Task 2C performs 1.7.0 -> 1.8.0. Building Task 4 first would bump from a version that does not exist. |
+| **Task 2C** (and 2B) | needs CI or a cloud seat | modifies `rust_core/src/main.rs`; verifying it requires `cargo`, which AGENTS.md forbids on this shared dev box. Also needs a real WSL host for the `/mnt/c/...` path-domain arms. |
+| **#89 / #90** | same as 2B/2C | the reproduced path-domain defect is owned by that typed-path program. |
+| **Task 3** (#859) | PARTIALLY DONE | the CLASS census gap is closed (PR #937, census 3 -> 41 modules). The plan's Task 3 also lists `src/tensor_grep/cli/main.py` as modified -- i.e. fixing the pinned VIOLATING sites. That half is open and is H2 above. |
+
+Unblocked and genuinely start-now: **F5** (Task 8), **F6** (Tasks 6-7), **REF-CALL-REGISTRY**
+(Task 9), **F7 Task 11** (cross-file resolution), **F8** (Tasks 12-13) -- all pure-Python. F7
+Task 11 should not start before its demand question is answered (see the research bucket): measure
+how often `blast_radius_floor` falls short on a real multi-file repo BEFORE designing a resolver.
+
+## OPEN FINDINGS -- 2026-08-05, surfaced while widening the atomic-writer census (PR #937)
+
+Both were found BY the #859 fix, neither was in its scope, and neither is fixed. Recorded per the
+CEO's standing instruction to document new findings with a receipt.
+
+| # | sev | finding | status |
+|---|---|---|---|
+| H1 | MEDIUM | **`shutil.move` at `lsp_provider_setup.py:356` is an unsanctioned publish site.** Unlike `os.replace` it CAN follow a destination symlink. It moves an extracted archive into `staged_dir` before the atomic swap-in at `:363`. Now censused (the ratchet maps `shutil.move`) and PINNED as violating -- deliberately not swept, because the surrounding `:361`/`:371` pair is a legitimate move-aside/rollback dance and a blanket rewrite would break the rollback. | OPEN -- pinned, not fixed |
+| H2 | LOW | **16 pinned VIOLATING identities as a set.** Widening the census 3 -> 41 modules took violating identities 4 -> 16. Whether they warrant a fix wave is a scope decision, not a defect: `main.py`'s original 4 were pinned rather than fixed on the same reasoning. Each needs individual classification -- `session_daemon.py::_write_daemon_metadata_windows`, for instance, is a well-motivated hand-rolled re-derivation for Windows ACL reasons, violating only because a re-derivation is not the canonical helper. | OPEN -- needs a scope decision, not a sweep |
+
+**Fixed in passing by #937, recorded because the shape recurs:** `_annotation_is_path()` was defined
+and documented ("a Path-annotated parameter") but **never wired into `scan_function`**. A synthetic
+probe of exactly the shape it describes -- `def publish(destination: Path, content):
+destination.open("wb")` -- scanned to ZERO candidates. A documented-but-unreachable helper is a check
+that cannot fail, and it was sitting inside the suite whose purpose is catching checks that cannot
+fail. Wiring it in surfaced 3 previously-invisible sites in `lsp_provider_setup.py`, with the full
+population diffed before/after to prove no regressions.
+
 ## OPEN FINDINGS -- 2026-08-04 waves 10A/10B (Java + C# caller-graph promotion)
 
 Recorded per the CEO's "document any new issues, bugs or findings in backlog.md". Every item
