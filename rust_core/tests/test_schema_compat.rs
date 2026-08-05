@@ -4365,8 +4365,8 @@ fn assert_repo_map_coverage(path: &Path, coverage: &CoverageExample) {
     //   python -c "import sys;sys.path.insert(0,'src');from tensor_grep.cli import repo_map as r;print(r._symbol_navigation_descriptor())"
     assert_eq!(
         coverage.symbol_navigation,
-        "parser-backed-refs-callers:csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:c-cpp",
-        "{} coverage.symbol_navigation must stay parser-backed-refs-callers:csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:c-cpp",
+        "parser-backed-refs-callers:c-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:cpp",
+        "{} coverage.symbol_navigation must stay parser-backed-refs-callers:c-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:cpp",
         path.display()
     );
     assert_eq!(

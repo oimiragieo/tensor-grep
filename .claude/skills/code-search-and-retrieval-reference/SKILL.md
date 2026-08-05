@@ -215,8 +215,8 @@ run it rather than trust any number written here:
 
 ```bash
 python -c "import sys;sys.path.insert(0,'src');from tensor_grep.cli import repo_map as r;print(r._symbol_navigation_descriptor())"
-# -> parser-backed-refs-callers:csharp-go-java-javascript-php-python-rust-typescript
-#    +foundational-defs-imports-only:c-cpp
+# -> parser-backed-refs-callers:c-csharp-go-java-javascript-php-python-rust-typescript
+#    +foundational-defs-imports-only:cpp
 ```
 
 cross-checked against `grep -c "lang_registry.register_language(" src/tensor_grep/cli/repo_map.py`,
@@ -224,15 +224,15 @@ which returns **10**. **All 10 of the top-10 languages** by TIOBE-Jul-2026/Stack
 GitHub-Octoverse-2025 consensus ranking (Python, JavaScript, TypeScript, Java, C#, C++, C, Go,
 Rust, PHP) are registered — there is no unregistered language on this list and nothing deliberately
 deferred. **There is also no third tier.** The 10 split unevenly since PR #927 (Task 10A), the
-Task 10B C# wave, and the Task 10C PHP wave: **eight parser-backed** languages with refs/callers
-support (csharp, go, java, javascript, php, python, rust, typescript; java/csharp/php are in-file
-only -- cross-file caller confirmation still falls back to the text prefilter pending a
-package/source-root resolver) and **two foundational** languages with defs+imports only (c, cpp).
-The cpp registration's own in-repo comment says this outright: *"C++ joins the symbol graph as a
-FOUNDATIONAL-TIER language, closing the top-10 language-support campaign to 10/10."* The real open
-backlog item here is **upgrading the two remaining foundational languages to parser-backed
-refs/callers** -- not registering a new language; c/cpp are already on the symbol graph, just at
-the shallower tier. A language's callables live either as older helpers
+Task 10B C# wave, the Task 10C PHP wave, and the Task 10D C wave: **nine parser-backed** languages
+with refs/callers support (c, csharp, go, java, javascript, php, python, rust, typescript;
+java/csharp/php/c are in-file only -- cross-file caller confirmation still falls back to the text
+prefilter pending a package/source-root resolver) and **one foundational** language with
+defs+imports only (cpp). The cpp registration's own in-repo comment says this outright: *"C++
+joins the symbol graph as a FOUNDATIONAL-TIER language, closing the top-10 language-support
+campaign to 10/10."* The real open backlog item here is **upgrading the one remaining foundational
+language to parser-backed refs/callers** -- not registering a new language; cpp is already on the
+symbol graph, just at the shallower tier. A language's callables live either as older helpers
 defined directly in `repo_map.py` (python needs no external grammar at all -- it parses with the
 stdlib `ast` module; rust's `_rust_*` helpers predate/mirror that inline style; java's `_java_*`
 helpers still hold its defs/imports extraction inline, but its references-and-calls extraction
@@ -281,7 +281,7 @@ downstream signal invisibly.
 passthrough, no tg-side language awareness at all); **structural scan/rewrite = 26 languages**
 (`tg run`/`tg scan`, via the ast-grep CLI this section describes — `_SUPPORTED_AST_LANGUAGES`,
 `ast_backend.py:76-103`, `get_supported_languages()` at `:128`); **deep symbol-graph = 10
-languages, split across two tiers** (this subsection -- 8 parser-backed refs/callers + 2
+languages, split across two tiers** (this subsection -- 9 parser-backed refs/callers + 1
 foundational defs/imports-only, per the `_symbol_navigation_descriptor()` derivation above). tg is
 `rg` (text) + ast-grep (structural) + a symbol/retrieval/capsule LAYER on top of that — not "a
 faster grep," and the three tiers do NOT share a language-support number, so check which tier a
@@ -789,6 +789,13 @@ php, python, rust, typescript) + **2 foundational** defs/imports-only (c, cpp) -
 one-liner below rather than trust either this line or the "5 parser-backed + 5 foundational" line
 above; both are dated snapshots.
 
+**SUPERSEDED AGAIN (append-only, do not edit either paragraph above) -- 2026-08-04, Task 10D.** C
+moved from foundational to parser-backed (in-file refs/callers only, same shape as Java/C#/PHP's
+own Task 10A/10B/10C landings). `_symbol_navigation_descriptor()` now returns **9 parser-backed**
+(c, csharp, go, java, javascript, php, python, rust, typescript) + **1 foundational**
+defs/imports-only (cpp) -- re-run the one-liner below rather than trust any of the three dated
+snapshots above.
+
 Re-verification commands:
 
 ```bash
@@ -809,8 +816,8 @@ grep -n "Content-Length\|_MAX_LSP_MESSAGE_BYTES" C:/dev/projects/tensor-grep/src
 # run the product's own descriptor and cross-check the registration count:
 python -c "import sys;sys.path.insert(0,'src');from tensor_grep.cli import repo_map as r;print(r._symbol_navigation_descriptor())"
 grep -c "lang_registry.register_language(" C:/dev/projects/tensor-grep/src/tensor_grep/cli/repo_map.py
-# Expect: 10 registrations, split parser-backed-refs-callers:csharp-go-java-javascript-php-python-rust-typescript
-# + foundational-defs-imports-only:c-cpp -- and confirm the MOST-FORGOTTEN seam is
+# Expect: 10 registrations, split parser-backed-refs-callers:c-csharp-go-java-javascript-php-python-rust-typescript
+# + foundational-defs-imports-only:cpp -- and confirm the MOST-FORGOTTEN seam is
 # still wired for every one of the 10:
 grep -n 'register_language(\|language_id="' C:/dev/projects/tensor-grep/src/tensor_grep/cli/repo_map.py
 grep -n "_target_language_for_path\|_SUPPORTED_FILE_DEPENDENCY_LANGUAGES\|_language_coverage_gaps_for_universe" C:/dev/projects/tensor-grep/src/tensor_grep/cli/repo_map.py

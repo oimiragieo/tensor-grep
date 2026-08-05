@@ -32,14 +32,14 @@ useful to humans for the same reasons. It layers three tiers on one command surf
 
   | tier | languages | what you actually get |
   |---|---|---|
-  | **Parser-backed (7)** | C#, Go, Java, JavaScript, Python, Rust, TypeScript | `defs` / `refs` / `callers` / `blast-radius` resolved from a real parse |
-  | **Foundational (3)** | C, C++, PHP | `defs` + `imports` are real; **`refs` / `callers` / `blast-radius` fall back to a REGEX heuristic** |
+  | **Parser-backed (9)** | C, C#, Go, Java, JavaScript, PHP, Python, Rust, TypeScript | `defs` / `refs` / `callers` / `blast-radius` resolved from a real parse |
+  | **Foundational (1)** | C++ | `defs` + `imports` are real; **`refs` / `callers` / `blast-radius` fall back to a REGEX heuristic** |
 
   **NEVER HAND-COUNT THIS. Ask the product:**
 
   ```bash
   python -c "import sys;sys.path.insert(0,'src');from tensor_grep.cli import repo_map as r;print(r._symbol_navigation_descriptor())"
-  # parser-backed-refs-callers:csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:c-cpp
+  # parser-backed-refs-callers:c-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:cpp
   ```
 
   That instruction is not decoration -- this line has been wrong THREE times. It once said 4/10

@@ -42,7 +42,7 @@
     ],
     "coverage": {
         "language_scope": "c-cpp-csharp-go-java-javascript-php-python-rust-typescript",
-        "symbol_navigation": "parser-backed-refs-callers:csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:c-cpp",
+        "symbol_navigation": "parser-backed-refs-callers:c-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:cpp",
         "test_matching": "filename+import+graph-heuristic"
     },
     "provider_agreement": {

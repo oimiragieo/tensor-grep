@@ -7,17 +7,31 @@ into the ``lang_registry`` seam Stage 0 built (see ``lang_registry.py`` + the
 ``lang_registry.register_language(...)`` calls near the bottom of ``repo_map.py``) -- C gets its
 OWN ``LanguageSpec`` entry, registered from ``repo_map.py``.
 
-FOUNDATIONAL SCOPE (same tier Java/PHP/C#/Go landed at): this module lights up
-``defs``/``source``/``imports``/``agent`` for ``.c`` files -- function definitions AND
-prototypes (kind "function"), struct/union/enum definitions (kind "class", per the fail-closed
-struct/union/enum -> "class" mapping this campaign's other languages already use), and typedefs
-(kind "type", mirroring Go's ``type_spec`` -> "type" kind). The cross-file caller-graph
-(``references_and_calls``/``file_imports_symbol_from_definition``/``import_update_target``/
-``prime_repo_context``) is DEFERRED to a follow-up -- this module registers all four of those
-``LanguageSpec`` fields as ``None``, exactly like PHP's own precedent. ``tg refs``/``tg
-callers``/``tg blast-radius`` on a C symbol fall through to the generic
-``_regex_references_and_calls`` text-heuristic path in repo_map.py (never a crash, never a
-fabricated AST-verified match) -- unaffected by this module.
+FOUNDATIONAL SCOPE (same tier Java/PHP/C#/Go landed at, EXTENDED by Task 10D -- see below): this
+module lights up ``defs``/``source``/``imports``/``agent`` for ``.c`` files -- function
+definitions AND prototypes (kind "function"), struct/union/enum definitions (kind "class", per
+the fail-closed struct/union/enum -> "class" mapping this campaign's other languages already
+use), and typedefs (kind "type", mirroring Go's ``type_spec`` -> "type" kind). The remaining
+cross-file caller-graph fields (``file_imports_symbol_from_definition``/``import_update_target``/
+``prime_repo_context``) stay ``None``, deferred to a follow-up -- same shape as Go/Java/C#/PHP's
+own gap, so ``tg refs``/``tg callers``/``tg blast-radius`` on a C symbol still fall through to the
+honest ``resolution_gaps`` reverse-import disclosure (never a crash, never a fabricated cross-file
+match) for the reverse-import leg specifically.
+
+TASK 10D: ``c_references_and_calls`` promotes C from the foundational (defs/imports-only) tier to
+the parser-backed refs/callers tier, mirroring Task 10A's Java landing / 10B's C# landing / 10C's
+PHP landing -- IN-FILE AST reference/call extraction only, no cross-file import resolution. Owns
+its own parser factory (``_c_parser()``, already defined below for ``c_imports_and_symbols`` --
+this module predates Task 10D), matching ``lang_csharp.py``'s/``lang_php.py``'s shape rather than
+``lang_java.py``'s externally-built-parser shape, for the same reason PHP gives: a second factory
+here would create two sources of truth for "is the C grammar installed".
+
+C IS GENUINELY DIFFERENT FROM JAVA/C#/PHP, and this is deliberate, not an oversight: C has no
+methods and no receiver types, so the "receiver's declared type is in-file and declares the
+member" confirmation those three languages use has NO C analogue, and this module does not fake
+one (see "RESOLUTION CONFIDENCE / PROVENANCE" below for what C offers instead, and what stays
+honestly demoted). See ``c_references_and_calls``'s own docstring for the full node-shape mapping
+(live-verified against a real ``tree_sitter_c`` 0.24.2 parse, not guessed).
 
 ``.h`` is DELIBERATELY NOT claimed by this module. ``_provider_language_for_path`` (the LSP
 provider dispatch, repo_map.py) already assigns every C/C++ header suffix (``.h``, ``.hh``,
@@ -81,6 +95,80 @@ A ``struct_specifier``/``union_specifier``/``enum_specifier`` is similarly ambig
 alone -- ``struct Foo;`` (forward declaration) and ``struct Foo *p`` (usage as a type) both parse
 as the SAME node type with no ``body`` field, indistinguishable from a real definition except by
 checking for a ``body`` field's presence -- only a body-bearing specifier is emitted.
+
+TASK 10D CALL/ACCESS NODE SHAPES (live-verified against a real ``tree_sitter_c`` 0.24.2 parse, not
+guessed): C has exactly TWO call/access node shapes, far narrower than PHP's five -- there is no
+``new``, no method, no scoped/static access:
+
+- ``call_expression``: field ``function`` (EITHER a bare ``identifier`` for ``add(1, 2)`` /
+  ``fp(3)`` / ``ADD_MACRO(1,2)`` -- a real function call, a function-pointer-VARIABLE call, and a
+  function-like-macro invocation are ALL THE SAME NODE SHAPE, indistinguishable by grammar alone;
+  OR a ``field_expression`` for ``w.handler(4)`` / ``p->handler(5)`` -- calling a function pointer
+  reached through a struct/union member), field ``arguments``. A symbol match on a bare
+  ``identifier`` function field is a **call** (``ref_kind="call"``, both buckets); so is a symbol
+  match on a ``field_expression`` function field's ``field`` child.
+- ``field_expression`` (``w.x`` / ``p->x``, NOT a call): fields ``argument`` (the receiver,
+  typically an ``identifier``), ``operator`` (``.`` or ``->`` -- text-identical either way, so this
+  module does not distinguish value vs pointer access), ``field`` (a ``field_identifier``). A
+  symbol match on ``field`` (when not already claimed by the ``call_expression`` branch above) is
+  ``ref_kind="field"``.
+- ``identifier`` / ``type_identifier`` / ``field_identifier``: reused across value/type/
+  declaration-name roles, mirroring every other language extractor in this registry. Every
+  symbol-matching ``identifier``/``type_identifier`` not already claimed by one of the special
+  cases above, and not itself a declaration/definition site (a function name, a variable/parameter/
+  field declarator name, a struct/union/enum tag's own defining ``name`` field, an ``enumerator``'s
+  own ``name`` field), is ``ref_kind="type"`` when it is a ``type_identifier`` (a struct/union/enum
+  tag or a typedef alias used as a type, e.g. ``struct Widget w;``'s or ``Point p;``'s type name),
+  else ``ref_kind="value"`` (a plain variable/enum-constant/function-pointer-as-value use).
+- ``string_literal`` / ``comment``: never walked as any of the above node types, so a symbol name
+  appearing inside a string literal or a comment is structurally excluded.
+
+RESOLUTION CONFIDENCE / PROVENANCE (the two-band honesty shape Java/C#/PHP already ship,
+C-specific mechanism and numbers -- and an HONEST, DELIBERATE NARROWING vs those three languages'
+receiver-type confirmation, not an oversight):
+
+- ``_C_DEMOTED_CONFIDENCE`` (0.6) / ``_C_DEMOTED_PROVENANCE`` (``"c-name-heuristic"``): the DEFAULT
+  band for every entry -- an AST-confirmed node (a real call/field-access/type/value site, never a
+  string literal or comment) that this module cannot independently confirm from THIS file's AST.
+- ``_C_CONFIRMED_CONFIDENCE`` (0.9) / ``_C_CONFIRMED_PROVENANCE``
+  (``"c-infile-function-declared"``): fires in exactly ONE shape -- a ``call_expression`` whose
+  ``function`` field is a bare ``identifier`` matching *symbol*, where *symbol* also names a REAL
+  function in THIS file: either a ``function_definition``, or a ``declaration`` whose declarator
+  chain ``_c_declarator_name_node`` resolves with ``seen_function=True`` (a genuine prototype, not
+  a function-pointer variable -- reusing the SAME #736-safe declarator walk ``c_imports_and_symbols``
+  already uses for def extraction, so this confirmation signal inherits that fix rather than
+  re-deriving declarator-shape logic a second time). This is what naturally, structurally
+  discriminates a real function call from a function-pointer-variable call (``fp(3)`` where
+  ``fp`` is declared ``void (*fp)(int);`` -- ``_c_declarator_name_node`` resolves its declaration
+  with ``seen_function=False``, so ``fp`` never confirms) and from a function-like macro call
+  (``ADD_MACRO(1,2)`` where no ``function_definition``/prototype named ``ADD_MACRO`` exists in this
+  file) WITHOUT any name-pattern heuristic (no "is it ALL_CAPS" guess) -- both stay honestly
+  demoted because neither has a matching in-file function declaration, exactly like an unresolved
+  call to a function declared only in another translation unit (a standard-library call like
+  ``printf()``, or an ``extern``-declared function with no local prototype).
+
+  Not 1.0: a translation unit can contain a ``static`` function whose name shadows a symbol with
+  external linkage elsewhere, or (rarer) a macro that happens to share a real function's name and
+  is itself invoked at this call site instead of the function -- 0.9 reflects "real evidence, not
+  proof of soundness", matching Java's/C#'s/PHP's identical 0.9 rationale.
+
+  DELIBERATELY NOT CONFIRMED (the honest narrowing this module's docstring promised above):
+  - A call through a struct/union member (``w.handler(4)`` / ``p->handler(5)``) ALWAYS stays
+    demoted. C's field-pointer confirmation would need to resolve the receiver's declared struct
+    type from a local declaration, then check that type's body for a member named *symbol* -- the
+    exact PHP/Java/C# shape -- but C structs commonly alias through ``typedef``, get reached via
+    ``void *``/generic-container casts, or live behind an opaque forward-declared pointer with no
+    body in this file at all (a common C idiom); attempting the PHP-style receiver-type walk here
+    would silently overclaim confidence on exactly the cases where C's type system gives the LEAST
+    guarantee. This module chooses honest demotion over a plausible-looking but unsound confirmation.
+  - Non-call field access (``w.x``, ``p->x``) and every type/value reference stay demoted for the
+    same reason every other language in this registry demotes its own non-call type/value
+    references (Java/C#/PHP's own generic-identifier walks never confirm these either -- only a
+    call/member-call gets the confirmation attempt in any of these modules).
+  - A call to a function that IS declared/defined in this file, but under a DIFFERENT name reached
+    through a macro/typedef alias for the function pointer type, is not specially detected -- an
+    accepted, documented gap (this module never fabricates a resolution it cannot derive from a
+    direct AST match).
 """
 
 from __future__ import annotations
@@ -550,8 +638,260 @@ def c_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
     return sources
 
 
+# ---------------------------------------------------------------------------
+# Task 10D: references + calls (in-file AST extraction, no cross-file resolution).
+# See the module docstring's "TASK 10D CALL/ACCESS NODE SHAPES" / "RESOLUTION CONFIDENCE /
+# PROVENANCE" sections for the full derivation of the two honesty bands and C's narrower
+# confirmable population vs Java/C#/PHP.
+# ---------------------------------------------------------------------------
+
+_C_DEMOTED_CONFIDENCE = 0.6
+_C_DEMOTED_PROVENANCE = "c-name-heuristic"
+_C_CONFIRMED_CONFIDENCE = 0.9
+_C_CONFIRMED_PROVENANCE = "c-infile-function-declared"
+
+# Node types whose "declarator" field (possibly wrapped, resolved via
+# _c_declarator_name_node) names a DEFINITION site -- excluded from the reference/call walk (a
+# symbol's own declaration site is not a reference to itself, the same rule every other language
+# in this registry follows).
+_C_DECLARATOR_DEFINING_NODE_TYPES = frozenset({
+    "function_definition",
+    "declaration",
+    "type_definition",
+    "parameter_declaration",
+    "field_declaration",
+})
+
+
+def _c_symbol_has_infile_function(root: Any, source_bytes: bytes, symbol: str) -> bool:
+    """True iff *symbol* names a REAL function in this file -- a ``function_definition``, or a
+    ``declaration`` whose declarator chain ``_c_declarator_name_node`` resolves with
+    ``seen_function=True`` (a genuine prototype, never a function-pointer variable). This is the
+    ONLY confirmation signal Task 10D uses (see the module docstring's RESOLUTION CONFIDENCE
+    section) -- reusing the SAME #736-safe declarator walk ``c_imports_and_symbols`` already uses
+    for def extraction, so a function-pointer variable sharing this query's name can never
+    falsely confirm a call to it (the exact declarator-shape hazard PR #736 fixed).
+    """
+
+    def node_text(node: Any) -> str:
+        return _tree_sitter_node_text(source_bytes, node)
+
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        node_type = node.type
+        if node_type == "function_definition":
+            for declarator in node.children_by_field_name("declarator"):
+                name_node, _seen_function = _c_declarator_name_node(declarator)
+                if name_node is not None and node_text(name_node) == symbol:
+                    return True
+        elif node_type == "declaration":
+            for declarator in node.children_by_field_name("declarator"):
+                name_node, is_function = _c_declarator_name_node(declarator)
+                if is_function and name_node is not None and node_text(name_node) == symbol:
+                    return True
+        stack.extend(node.children)
+    return False
+
+
+def _c_definition_site_positions(root: Any) -> set[tuple[int, int]]:
+    """Collect the byte-span of every DEFINITION-site name node in this file -- a function name, a
+    variable/parameter/struct-field declarator name, a struct/union/enum tag's own defining
+    ``name`` field (only when a ``body`` is present -- a body-less usage like ``struct Foo *p`` is
+    a REFERENCE, not a definition), and an ``enumerator``'s own ``name`` field. Reuses
+    ``_c_declarator_name_node`` for every declarator-shaped case so a pointer/array/function-
+    pointer-wrapped declarator name resolves exactly like ``c_imports_and_symbols``'s own
+    extraction does (same #736-safe walk, single source of truth)."""
+    positions: set[tuple[int, int]] = set()
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        node_type = node.type
+        if node_type in _C_DECLARATOR_DEFINING_NODE_TYPES:
+            # `children_by_field_name` (plural) uniformly for every node type here -- a
+            # `field_declaration`/`declaration` can carry MULTIPLE "declarator" fields for a
+            # multi-name statement (`int x, y;`); it degrades gracefully to zero-or-one item for
+            # `parameter_declaration`/`function_definition`/`type_definition`, which never do.
+            for declarator in node.children_by_field_name("declarator"):
+                name_node, _seen_function = _c_declarator_name_node(declarator)
+                if name_node is not None:
+                    positions.add((name_node.start_byte, name_node.end_byte))
+        elif node_type in _C_CLASS_LIKE_KINDS:
+            body_field = node.child_by_field_name("body")
+            name_field = node.child_by_field_name("name")
+            if body_field is not None and name_field is not None:
+                positions.add((name_field.start_byte, name_field.end_byte))
+        elif node_type == "enumerator":
+            name_field = node.child_by_field_name("name")
+            if name_field is not None:
+                positions.add((name_field.start_byte, name_field.end_byte))
+        stack.extend(node.children)
+    return positions
+
+
+def c_references_and_calls(
+    path: Path, symbol: str
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """In-file AST reference/call rows for *symbol* in *path* -- see the module docstring's
+    "TASK 10D CALL/ACCESS NODE SHAPES" section for the full AST-shape mapping. Scope: single-file
+    only, no cross-file resolution (mirrors ``lang_java.java_references_and_calls``/
+    ``lang_csharp.csharp_references_and_calls``/``lang_php.php_references_and_calls`` exactly).
+    Owns its own parser factory (``_c_parser()``, defined above), matching ``lang_csharp.py``'s/
+    ``lang_php.py``'s shape rather than ``lang_java.py``'s externally-built-parser shape -- C
+    already had its own grammar-probing factory before Task 10D (needed by
+    ``c_imports_and_symbols``), so a second factory here would create two sources of truth for
+    "is the C grammar installed"; this function reuses the SAME ``_c_parser()`` every other
+    function in this module already calls.
+    """
+    if path.suffix != ".c":
+        return [], []
+
+    parser = _c_parser()
+    if parser is None:
+        return [], []
+
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return [], []
+
+    source_bytes = source.encode("utf-8")
+    tree = parser.parse(source_bytes)
+    # Split strictly on "\n" (tree-sitter's own row semantics), stripping a trailing "\r" so
+    # CRLF-terminated files still read cleanly -- see lang_go.go_references_and_calls's identical
+    # comment (F26 fix, audit #63) for why `str.splitlines()` is NOT safe here.
+    lines = [line.rstrip("\r") for line in source.split("\n")]
+    references: list[dict[str, Any]] = []
+    calls: list[dict[str, Any]] = []
+
+    def _node_text(node: Any) -> str:
+        return _tree_sitter_node_text(source_bytes, node)
+
+    def _line_text(node: Any) -> str:
+        line_index = node.start_point[0]
+        return lines[line_index] if 0 <= line_index < len(lines) else ""
+
+    definition_positions = _c_definition_site_positions(tree.root_node)
+    function_confirmed = _c_symbol_has_infile_function(tree.root_node, source_bytes, symbol)
+
+    def _is_definition_site(node: Any) -> bool:
+        return (node.start_byte, node.end_byte) in definition_positions
+
+    def _emit(
+        bucket: list[dict[str, Any]], node: Any, *, kind: str, ref_kind: str, confirmed: bool
+    ) -> None:
+        if confirmed:
+            confidence = _C_CONFIRMED_CONFIDENCE
+            provenance = _C_CONFIRMED_PROVENANCE
+        else:
+            confidence = _C_DEMOTED_CONFIDENCE
+            provenance = _C_DEMOTED_PROVENANCE
+        bucket.append({
+            "name": symbol,
+            "kind": kind,
+            "ref_kind": ref_kind,
+            "file": str(path),
+            "line": node.start_point[0] + 1,
+            "text": _line_text(node),
+            # PER-MATCH honesty band -- see the module docstring's RESOLUTION CONFIDENCE /
+            # PROVENANCE section for the full derivation.
+            "resolution_confidence": confidence,
+            "resolution_provenance": [provenance],
+        })
+
+    # Nodes already claimed by the call_expression special case below are tracked here so the
+    # generic identifier/type_identifier/field_identifier walk never double-emits them. Keyed on
+    # (start_byte, end_byte), NOT Python `id()` -- see lang_java.py's/lang_csharp.py's/
+    # lang_php.py's identical comment for why (tree_sitter mints a fresh wrapper object on every
+    # `.children`/`.child_by_field_name` access to the same underlying node).
+    claimed_node_ids: set[tuple[int, int]] = set()
+
+    def _walk_calls(root: Any) -> None:
+        # Explicit-stack DFS (not recursion) -- matches every other language extractor in this
+        # registry; avoids a RecursionError on a pathologically deep real-world AST.
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            if node.type == "call_expression":
+                function_field = node.child_by_field_name("function")
+                if function_field is not None and function_field.type == "identifier":
+                    if _node_text(function_field) == symbol:
+                        claimed_node_ids.add((function_field.start_byte, function_field.end_byte))
+                        _emit(
+                            references,
+                            function_field,
+                            kind="reference",
+                            ref_kind="call",
+                            confirmed=function_confirmed,
+                        )
+                        _emit(
+                            calls,
+                            function_field,
+                            kind="call",
+                            ref_kind="call",
+                            confirmed=function_confirmed,
+                        )
+                elif function_field is not None and function_field.type == "field_expression":
+                    field_child = function_field.child_by_field_name("field")
+                    if field_child is not None and _node_text(field_child) == symbol:
+                        claimed_node_ids.add((field_child.start_byte, field_child.end_byte))
+                        # A call reached through a struct/union member (`w.handler(4)` /
+                        # `p->handler(5)`) ALWAYS stays demoted -- see the module docstring's
+                        # RESOLUTION CONFIDENCE section for why C deliberately does not attempt a
+                        # PHP/Java/C#-style receiver-type confirmation here.
+                        _emit(
+                            references,
+                            field_child,
+                            kind="reference",
+                            ref_kind="call",
+                            confirmed=False,
+                        )
+                        _emit(calls, field_child, kind="call", ref_kind="call", confirmed=False)
+            stack.extend(reversed(node.children))
+
+    def _walk_generic_identifiers(root: Any) -> None:
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            node_type = node.type
+            claim_key = (node.start_byte, node.end_byte)
+            if claim_key not in claimed_node_ids and not _is_definition_site(node):
+                if node_type == "field_expression":
+                    field_child = node.child_by_field_name("field")
+                    if (
+                        field_child is not None
+                        and _node_text(field_child) == symbol
+                        and (field_child.start_byte, field_child.end_byte) not in claimed_node_ids
+                    ):
+                        claimed_node_ids.add((field_child.start_byte, field_child.end_byte))
+                        _emit(
+                            references,
+                            field_child,
+                            kind="reference",
+                            ref_kind="field",
+                            confirmed=False,
+                        )
+                elif node_type == "type_identifier" and _node_text(node) == symbol:
+                    _emit(references, node, kind="reference", ref_kind="type", confirmed=False)
+                elif (
+                    node_type == "identifier"
+                    and _node_text(node) == symbol
+                    and claim_key not in claimed_node_ids
+                ):
+                    _emit(references, node, kind="reference", ref_kind="value", confirmed=False)
+            stack.extend(reversed(node.children))
+
+    _walk_calls(tree.root_node)
+    _walk_generic_identifiers(tree.root_node)
+
+    references.sort(key=lambda item: (item["file"], item["line"], item["text"]))
+    calls.sort(key=lambda item: (item["file"], item["line"], item["text"]))
+    return references, calls
+
+
 __all__ = [
     "c_imports_and_symbols",
     "c_imports_with_lines",
     "c_parser_symbol_sources",
+    "c_references_and_calls",
 ]

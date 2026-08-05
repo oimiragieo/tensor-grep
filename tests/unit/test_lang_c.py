@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -686,3 +687,263 @@ def test_c_imports_and_symbols_non_c_suffix_returns_empty(tmp_path: Path) -> Non
     imports, symbols = lang_c.c_imports_and_symbols(other)
     assert imports == []
     assert symbols == []
+
+
+# Task 10D pre-fix RED arms: promote C from the foundational tier to parser-backed
+# refs/callers, after Java (#927), C# (#928), and PHP (#930).
+#
+# Neither node carries @pytest.mark.requires_grammar (added in #908): both assert on the
+# REGISTRY and on the product's derived descriptor, neither of which touches a tree-sitter
+# parser. Marking them would let a grammar-less environment SKIP the very assertions that
+# define this wave -- a skip reads as green.
+#
+# Both must fail behaviour-specifically before implementation. An ImportError or NameError
+# would be a false red: it proves a symbol is missing, not that the behaviour is absent.
+
+
+def test_c_references_and_calls_is_registered_non_none() -> None:
+    """Task 10D RED: C must register a real ``references_and_calls`` extractor.
+
+    Pre-fix this is ``None``, so ``_references_and_calls_for_path`` falls through to
+    ``_regex_references_and_calls``, which returns ``([], [])`` for any suffix outside
+    ``_JS_TS_SUFFIXES | _RUST_SUFFIXES`` -- including ``.c``/``.h``. C's "regex fallback" is
+    therefore not a text heuristic over C source; it is an unconditional empty result.
+    """
+    spec = lang_registry.LANGUAGE_REGISTRY["c"]
+    assert spec.references_and_calls is not None
+
+
+def test_c_moves_into_the_parser_backed_tier_descriptor() -> None:
+    """Task 10D RED: the product's derived tier descriptor must list c as parser-backed.
+
+    Asserted against the descriptor rather than a hardcoded string, so this node cannot be
+    turned green by editing a doc. Note the substring hazard: "c" occurs inside "csharp" and
+    "cpp", so this splits the descriptor on its delimiters and matches tokens exactly rather
+    than using ``in``.
+    """
+    descriptor = repo_map._symbol_navigation_descriptor()
+    parser_backed, _, foundational = descriptor.partition("+")
+    backed_tokens = parser_backed.split(":", 1)[1].split("-")
+    found_tokens = foundational.split(":", 1)[1].split("-")
+    assert "c" in backed_tokens, descriptor
+    assert "c" not in found_tokens, descriptor
+
+
+# ---------------------------------------------------------------------------
+# Task 10D GREEN: c_references_and_calls behaviour. See lang_c.py's module docstring's "TASK 10D
+# CALL/ACCESS NODE SHAPES" / "RESOLUTION CONFIDENCE / PROVENANCE" sections for the full design.
+# ---------------------------------------------------------------------------
+
+
+def _c_parser_or_skip() -> Any:
+    parser = lang_c._c_parser()
+    if parser is None:  # pragma: no cover - grammar always installed in this venv
+        pytest.skip("tree_sitter_c grammar not installed")
+    return parser
+
+
+_REFCALLS_SOURCE = (
+    "struct Widget {\n"
+    "    int (*handler)(int);\n"
+    "    int x;\n"
+    "};\n"
+    "\n"
+    "void real_handler(int x) {}\n"
+    "\n"
+    "int add(int a, int b);\n"
+    "int add(int a, int b) { return a + b; }\n"
+    "\n"
+    "int main(void) {\n"
+    "    void (*handler)(int) = real_handler;\n"
+    "    handler(5);\n"
+    "    real_handler(5);\n"
+    "    int r = add(1, 2);\n"
+    "    struct Widget w;\n"
+    "    w.handler(4);\n"
+    "    int y = w.x;\n"
+    "    int v = ADD_MACRO(1, 2);\n"
+    "    return r;\n"
+    "}\n"
+)
+
+
+def _write_refcalls_fixture(root: Path) -> Path:
+    widget_c = root / "widget.c"
+    widget_c.write_text(_REFCALLS_SOURCE, encoding="utf-8")
+    return widget_c
+
+
+@pytest.mark.requires_grammar
+def test_c_references_and_calls_confirms_a_genuine_infile_function_call(
+    tmp_path: Path,
+) -> None:
+    """A call to a function with a real ``function_definition``/prototype in this file (``add``,
+    ``real_handler``) is CONFIRMED (0.9, provenance ``c-infile-function-declared``)."""
+    _c_parser_or_skip()
+    widget_c = _write_refcalls_fixture(tmp_path)
+
+    references, calls = lang_c.c_references_and_calls(widget_c, "add")
+
+    assert [(r["ref_kind"], r["line"], r["resolution_confidence"]) for r in references] == [
+        ("call", 15, 0.9)
+    ]
+    assert [c["resolution_provenance"] for c in calls] == [["c-infile-function-declared"]]
+
+
+@pytest.mark.requires_grammar
+def test_c_references_and_calls_declarator_shape_hazard_function_pointer_variable_call_stays_demoted(
+    tmp_path: Path,
+) -> None:
+    """#736 REGRESSION GUARD, new code path: a call through a file-scope function-POINTER
+    VARIABLE (``handler``, declared ``void (*handler)(int) = real_handler;``) must NEVER
+    falsely confirm just because its declarator chain is ``function_declarator``-outermost --
+    the same declarator-shape hazard PR #736 fixed for ``c_imports_and_symbols``'s def
+    extraction. ``handler(5)`` stays DEMOTED (0.6) because ``_c_declarator_name_node`` resolves
+    the variable's own declaration with ``seen_function=False`` (no in-file ``function_definition``
+    or real prototype is named "handler"), while a genuine function call (``real_handler(5)``,
+    covered by the sibling CONFIRMED test) resolves 0.9 for the exact same file. A call through a
+    struct member also named "handler" (``w.handler(4)``) stays demoted for a DIFFERENT, honest
+    reason (no receiver-type confirmation attempted for C struct member calls at all)."""
+    _c_parser_or_skip()
+    widget_c = _write_refcalls_fixture(tmp_path)
+
+    references, calls = lang_c.c_references_and_calls(widget_c, "handler")
+
+    assert [(r["ref_kind"], r["line"], r["resolution_confidence"]) for r in references] == [
+        ("call", 13, 0.6),
+        ("call", 17, 0.6),
+    ]
+    assert all(c["resolution_confidence"] == 0.6 for c in calls)
+    assert all(c["resolution_provenance"] == ["c-name-heuristic"] for c in calls)
+
+
+@pytest.mark.requires_grammar
+def test_c_references_and_calls_macro_looking_call_stays_demoted_no_name_pattern_heuristic(
+    tmp_path: Path,
+) -> None:
+    """A function-like-macro invocation (``ADD_MACRO(1, 2)``) parses as an ordinary
+    ``call_expression`` with a bare ``identifier`` function field -- structurally IDENTICAL to a
+    real function call. It stays demoted purely because no ``function_definition``/prototype named
+    "ADD_MACRO" exists in this file -- never an ALL_CAPS name-pattern guess (this fixture's macro
+    name is deliberately ALL_CAPS to prove the demotion is NOT keyed on casing)."""
+    _c_parser_or_skip()
+    widget_c = _write_refcalls_fixture(tmp_path)
+
+    references, calls = lang_c.c_references_and_calls(widget_c, "ADD_MACRO")
+
+    assert [(r["ref_kind"], r["line"], r["resolution_confidence"]) for r in references] == [
+        ("call", 19, 0.6)
+    ]
+    assert calls[0]["resolution_provenance"] == ["c-name-heuristic"]
+
+
+@pytest.mark.requires_grammar
+def test_c_references_and_calls_struct_member_call_never_confirms(tmp_path: Path) -> None:
+    """A call reached through a struct member (``w.handler(4)``) NEVER confirms -- C's struct
+    type system (typedef aliasing, opaque forward-declared pointers, void*/generic-container
+    casts) gives no sound basis for the PHP/Java/C#-style receiver-type walk, so this module
+    honestly demotes every struct-member call rather than fake a confirmation."""
+    _c_parser_or_skip()
+    widget_c = _write_refcalls_fixture(tmp_path)
+
+    references, _calls = lang_c.c_references_and_calls(widget_c, "handler")
+
+    member_call = next(r for r in references if r["line"] == 17)
+    assert member_call["resolution_confidence"] == 0.6
+    assert member_call["ref_kind"] == "call"
+
+
+@pytest.mark.requires_grammar
+def test_c_references_and_calls_non_call_field_access_is_ref_kind_field(tmp_path: Path) -> None:
+    """A non-call struct member access (``w.x``) resolves ``ref_kind="field"``, always demoted."""
+    _c_parser_or_skip()
+    widget_c = _write_refcalls_fixture(tmp_path)
+
+    references, calls = lang_c.c_references_and_calls(widget_c, "x")
+
+    assert [(r["ref_kind"], r["line"], r["resolution_confidence"]) for r in references] == [
+        ("field", 18, 0.6)
+    ]
+    assert calls == []
+
+
+@pytest.mark.requires_grammar
+def test_c_references_and_calls_type_identifier_usage_is_ref_kind_type(tmp_path: Path) -> None:
+    """A struct tag used as a type (``struct Widget w;``) resolves ``ref_kind="type"``; the
+    struct's own DEFINITION-site tag name (line 1) is excluded, only the usage (line 16)
+    surfaces."""
+    _c_parser_or_skip()
+    widget_c = _write_refcalls_fixture(tmp_path)
+
+    references, calls = lang_c.c_references_and_calls(widget_c, "Widget")
+
+    assert [(r["ref_kind"], r["line"], r["resolution_confidence"]) for r in references] == [
+        ("type", 16, 0.6)
+    ]
+    assert calls == []
+
+
+@pytest.mark.requires_grammar
+def test_c_references_and_calls_plain_value_usage_is_ref_kind_value(tmp_path: Path) -> None:
+    """A plain (non-call, non-field, non-type) identifier use (``w`` as an argument-free local
+    variable reference) resolves ``ref_kind="value"``, always demoted; the declaration site
+    itself (line 16) is excluded from the walk."""
+    _c_parser_or_skip()
+    widget_c = _write_refcalls_fixture(tmp_path)
+
+    references, calls = lang_c.c_references_and_calls(widget_c, "w")
+
+    assert [(r["ref_kind"], r["line"]) for r in references] == [
+        ("value", 17),
+        ("value", 18),
+    ]
+    assert all(r["resolution_confidence"] == 0.6 for r in references)
+    assert calls == []
+
+
+@pytest.mark.requires_grammar
+def test_c_references_and_calls_excludes_same_name_declaration(tmp_path: Path) -> None:
+    """A symbol's own declaration/definition site is never emitted as a reference to itself --
+    querying "real_handler" must not surface line 6 (its ``function_definition``)."""
+    _c_parser_or_skip()
+    widget_c = _write_refcalls_fixture(tmp_path)
+
+    references, _calls = lang_c.c_references_and_calls(widget_c, "real_handler")
+
+    assert all(r["line"] != 6 for r in references)
+
+
+def test_c_references_and_calls_returns_empty_for_non_c_suffix(tmp_path: Path) -> None:
+    other = tmp_path / "widget.txt"
+    other.write_text(_REFCALLS_SOURCE, encoding="utf-8")
+
+    references, calls = lang_c.c_references_and_calls(other, "add")
+
+    assert references == []
+    assert calls == []
+
+
+def test_c_references_and_calls_grammar_absent_returns_empty_not_crash(
+    tmp_path: Path, monkeypatch
+) -> None:
+    widget_c = _write_refcalls_fixture(tmp_path)
+    monkeypatch.setattr(lang_c, "_c_parser", lambda: None)
+
+    references, calls = lang_c.c_references_and_calls(widget_c, "add")
+
+    assert references == []
+    assert calls == []
+
+
+@pytest.mark.requires_grammar
+def test_c_references_and_calls_defeats_regex_fallback(tmp_path: Path) -> None:
+    """Wired through the registry (``_references_and_calls_for_path``), C must reach
+    ``lang_c.c_references_and_calls`` -- never the generic ``_regex_references_and_calls`` text
+    fallback, which knows nothing about C and would return ``([], [])`` for any ``.c`` file."""
+    _c_parser_or_skip()
+    widget_c = _write_refcalls_fixture(tmp_path)
+
+    references, calls = repo_map._references_and_calls_for_path(widget_c, "add", tmp_path)
+
+    assert references, "expected the tree-sitter extractor to find `add` references, not [] "
+    assert calls, "expected the tree-sitter extractor to find `add` calls, not [] "
