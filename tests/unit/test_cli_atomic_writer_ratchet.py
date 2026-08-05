@@ -831,6 +831,56 @@ _SANCTIONED_SITES: dict[tuple[str, str, str], str] = {
         "Writes only the acquiring pid into the just-opened, already-confined lock fd from the "
         "same acquisition -- same pattern as `_index_lock.py::index_lock`'s os.write entry above."
     ),
+    # --- H2 (backlog closeout, docs/BACKLOG.md): individually reviewed against the real source,
+    # classifying the 17-line-item / 16-identity population the task named. ---
+    ("ast_workflows.py", "test_command", "Path.write_text"): (
+        "`temp_name` (the snippet fallback-path write) is written inside `with TemporaryDirectory"
+        "(prefix='.tg_test_session_', dir=project_cfg['root_dir']) as session_temp:` opened in "
+        "THIS SAME function two-hundred-odd lines above -- `session_temp_path = Path(session_temp)"
+        ".resolve()` -- the identical self-contained-temp-artifact shape as `main.py::_doctor_gpu_"
+        "search_runtime_probe` above, never published outside the function's own scope. Contrast "
+        "with `_batch_search_snippets` below (now routed, not sanctioned): that function receives "
+        "the same `session_temp_path` only as a caller-supplied PARAMETER, so confinement cannot "
+        "be proven from its own signature -- the boundary this table draws is whether the "
+        "TemporaryDirectory is opened in the SAME function as the write, not merely whether the "
+        "actual runtime value happens to be confined today."
+    ),
+    ("lsp_provider_setup.py", "_download", "os.open"): (
+        "H2 fix: claims `destination` exclusively via O_CREAT|O_EXCL|O_NOFOLLOW BEFORE the "
+        "streamed download starts, then writes through that SAME held fd for the whole transfer -- "
+        "the same technique already sanctioned above for `main.py::_download_native_frontdoor_"
+        "asset`'s os.open entry, except tighter: that precedent closes the fd and lets urlretrieve "
+        "reopen the path by name (a narrow reopen-gap, see the DEFER note in _EXPECTED_VIOLATING "
+        "below), whereas this call never closes or reopens -- there is no window between the claim "
+        "and the first byte written for a symlink to be swapped in. `atomic_write_bytes` requires "
+        "the whole payload in memory up front, which is unsuited to a size-capped streaming "
+        "download, so this is the correct alternative primitive rather than a gap left unrouted."
+    ),
+    ("session_daemon.py", "_write_daemon_metadata_windows", "os.open"): (
+        "Audited (#211, #81, #13), documented hand-rolled re-derivation of the shared atomic-write "
+        "pattern, needed because the Windows ACL lockdown (`_restrict_windows_file_to_current_"
+        "user`) must run strictly BETWEEN temp-file creation and the secret-token write -- a hook "
+        "point `atomic_write_bytes_anchored` does not expose (it writes immediately after opening "
+        "the temp fd). This os.open call already carries the same O_CREAT|O_EXCL flag as the "
+        "shared helper's own temp creation, plus its own `path.is_symlink()` precheck on the "
+        "published path (added specifically because this function does NOT get that check for "
+        "free by calling the helper) -- see the docstring at this function's definition. A "
+        "well-motivated hand-rolled re-derivation is still not literally 'the helper', per this "
+        "detector's own `test_tempfile_to_publish_flow_is_detected` control, so it is sanctioned "
+        "here explicitly rather than silently passing as helper-backed."
+    ),
+    (
+        "session_daemon.py",
+        "_write_daemon_metadata_windows",
+        "tensor_grep.cli._index_lock.replace_with_retry",
+    ): (
+        "The publish step of the SAME hand-rolled sequence as the os.open entry directly above -- "
+        "reuses the shared `replace_with_retry` primitive for the actual atomic rename (identical "
+        "safety property to every other sanctioned `os.replace`/`replace_with_retry` entry in this "
+        "table), but the function AROUND it is a bespoke re-derivation, not a call INTO "
+        "`atomic_write_bytes_anchored`, so the detector correctly does not credit it as helper-"
+        "backed. Same rationale as the os.open entry above; sanctioned together."
+    ),
 }
 
 
@@ -1459,6 +1509,42 @@ _EXPECTED_HELPER_BACKED = {
     ("ledger_store.py", "_write_index", "tensor_grep.cli._index_lock.atomic_write_json"),
     ("ledger_store.py", "record_finding", "tensor_grep.cli._index_lock.atomic_write_json"),
     ("session_store.py", "_write_json_atomic", "tensor_grep.cli._index_lock.atomic_write_json"),
+    # --- H2 (backlog closeout): routed through the shared helper family in this task ---
+    (
+        "ast_workflows.py",
+        "_batch_search_snippets",
+        "tensor_grep.cli._index_lock.atomic_write_bytes",
+    ),
+    (
+        "checkpoint_store.py",
+        "undo_checkpoint",
+        "tensor_grep.cli._index_lock.atomic_write_bytes",
+    ),
+    (
+        "lsp_provider_setup.py",
+        "_copy_binary_to_managed",
+        "tensor_grep.cli._index_lock.atomic_write_bytes_anchored",
+    ),
+    (
+        "lsp_provider_setup.py",
+        "_extract_rust_analyzer_exe_from_zip",
+        "tensor_grep.cli._index_lock.atomic_write_bytes_anchored",
+    ),
+    (
+        "lsp_provider_setup.py",
+        "_download_rust_analyzer",
+        "tensor_grep.cli._index_lock.atomic_write_bytes_anchored",
+    ),
+    (
+        "main.py",
+        "_write_native_frontdoor_metadata",
+        "tensor_grep.cli._index_lock.atomic_write_bytes_anchored",
+    ),
+    (
+        "main.py",
+        "_install_release_native_frontdoor",
+        "tensor_grep.cli._index_lock.atomic_write_bytes_anchored",
+    ),
 }
 
 # The complete sanctioned population, by (module, outer_function, operation) identity -- see
@@ -1487,67 +1573,71 @@ _EXPECTED_SANCTIONED = {
     ("lsp_provider_setup.py", "_write_package_json", "Path.write_text"),
     ("session_daemon.py", "_try_acquire_daemon_start_lock", "os.open"),
     ("session_daemon.py", "_try_acquire_daemon_start_lock", "os.write"),
-}
-
-# The three live violations named by the #859 backlog-closeout plan's Task 3 brief turned out,
-# on actual detector output (not the brief's hand-derived guess), to be FOUR: the detector found
-# a genuine fourth site the manual review that produced the brief's "three" estimate missed --
-# `urllib.request.urlretrieve` writing the downloaded asset to a CALLER-SUPPLIED temp path (no
-# O_EXCL, no symlink guard) inside `_download_native_frontdoor_asset`, one hop upstream of the
-# `os.replace`/`write_bytes` violations already expected. All four sit in the SAME
-# release-native-frontdoor download-and-install feature and share the SAME root cause: this
-# feature was never routed through the #859 shared-helper hardening pass. Recorded here as a
-# real, cited finding -- not force-fit down to match the brief's estimate.
-#
-# Below the four are TWELVE MORE, surfaced once the census widened from the original 3-file scope
-# to the full `_CLI_SRC` walk -- again NOT fixed by this task (scope is the ratchet mechanism, not
-# a repo-wide remediation sweep; see the module docstring). Each was individually reviewed, not
-# swept: `ast_workflows.py`'s two `write_text` sites take a temp path as a PARAMETER rather than
-# creating it inside the function (`test_caller_supplied_temp_path_requires_explicit_sanction`'s
-# "no implicit leniency" rule -- confinement is not statically provable from a parameter alone).
-# `checkpoint_store.py::undo_checkpoint`'s `write_bytes` rollback restores previously-captured
-# bytes to a pre-existing (not function-created) path -- `write_bytes` always follows a
-# destination symlink and writes through it (unlike `os.replace`/`shutil.copy2(follow_symlinks=
-# False)`, which are destination-symlink-safe by construction), so a rollback-restore rationale
-# alone does not sanction it -- the exact same reasoning already applied to the pre-existing
-# `_install_release_native_frontdoor` `Path.write_bytes` rollback below. `lsp_provider_setup.py`
-# carries the bulk: `_download`, `_download_rust_analyzer`, and `_extract_rust_analyzer_exe_from_
-# zip` all write downloaded/extracted bytes straight to a caller-supplied destination via `Path.
-# open("wb")`/`shutil.copyfileobj` with no anchored-helper routing and no destination-symlink
-# guard; `_copy_binary_to_managed` calls `shutil.copy2` WITHOUT `follow_symlinks=False` (contrast
-# with the sanctioned `checkpoint_store.py` copies, which do pass it); and `_ensure_node_runtime`'s
-# `shutil.move` (staging the extracted archive into place) is not sanctioned alongside its sibling
-# `os.replace` calls in the same function -- `shutil.move` CAN follow an existing destination
-# symlink when the target looks like a directory, unlike `os.replace`'s non-dereferencing rename,
-# so it does not share that call's safety argument. `session_daemon.py::_write_daemon_metadata_
-# windows` is a deliberately-designed, audited (#211) HAND-ROLLED re-derivation of the shared
-# atomic-write pattern (create-temp/ACL-lock/write/fsync/replace) -- needed because the Windows ACL
-# lockdown must run strictly between temp-file creation and the token write, which the shared
-# helper does not support -- but per this detector's own `test_tempfile_to_publish_flow_is_
-# detected` control, a hand-rolled re-derivation that superficially resembles the approved helper's
-# internals is NOT the approved helper, and is VIOLATING even when well-motivated and reviewed.
-_EXPECTED_VIOLATING = {
-    ("main.py", "_download_native_frontdoor_asset", "urllib.request.urlretrieve"),
-    ("main.py", "_write_native_frontdoor_metadata", "Path.write_text"),
-    ("main.py", "_install_release_native_frontdoor", "os.replace"),
-    ("main.py", "_install_release_native_frontdoor", "Path.write_bytes"),
-    # --- Newly discovered once the census walked the full _CLI_SRC directory ---
-    ("ast_workflows.py", "_batch_search_snippets", "Path.write_text"),
+    # --- H2 (backlog closeout) ---
     ("ast_workflows.py", "test_command", "Path.write_text"),
-    ("checkpoint_store.py", "undo_checkpoint", "Path.write_bytes"),
-    ("lsp_provider_setup.py", "_copy_binary_to_managed", "shutil.copy2"),
-    ("lsp_provider_setup.py", "_download", "Path.open"),
-    ("lsp_provider_setup.py", "_download_rust_analyzer", "Path.open"),
-    ("lsp_provider_setup.py", "_download_rust_analyzer", "shutil.copyfileobj"),
-    ("lsp_provider_setup.py", "_ensure_node_runtime", "shutil.move"),
-    ("lsp_provider_setup.py", "_extract_rust_analyzer_exe_from_zip", "Path.open"),
-    ("lsp_provider_setup.py", "_extract_rust_analyzer_exe_from_zip", "shutil.copyfileobj"),
+    ("lsp_provider_setup.py", "_download", "os.open"),
     ("session_daemon.py", "_write_daemon_metadata_windows", "os.open"),
     (
         "session_daemon.py",
         "_write_daemon_metadata_windows",
         "tensor_grep.cli._index_lock.replace_with_retry",
     ),
+}
+
+# H2 (docs/BACKLOG.md backlog closeout) classified and, where warranted, fixed all 16
+# (module, outer_function, operation) identities this set used to carry (the task's brief named
+# "17 sites" by counting individual call-site LINES; `checkpoint_store.py::undo_checkpoint`'s
+# `Path.write_bytes` rollback fires at two lines that share one identity, so the brief's own line
+# count does not equal the identity count this set is keyed on -- worth recording since a future
+# reader may otherwise "fix" this set to 17 entries and be wrong).
+#
+# ELEVEN identities were ROUTED (moved to `_EXPECTED_HELPER_BACKED` above): the three
+# `_install_release_native_frontdoor` family sites in `main.py` (the highest-priority group per
+# the task brief -- a native EXECUTABLE install to a fixed, predictable path), both
+# `checkpoint_store.py::undo_checkpoint` `write_bytes` call sites, `ast_workflows.py::_batch_
+# search_snippets`'s `write_text`, and six `lsp_provider_setup.py` sites (`_copy_binary_to_
+# managed`, `_extract_rust_analyzer_exe_from_zip`'s `Path.open`+`shutil.copyfileobj` pair, and
+# `_download_rust_analyzer`'s gzip-branch `Path.open`+`shutil.copyfileobj` pair). FOUR more were
+# individually reviewed and SANCTIONED with a stated reason each (see `_SANCTIONED_SITES` above):
+# `ast_workflows.py::test_command`'s `write_text` (a genuinely self-contained TemporaryDirectory,
+# unlike its `_batch_search_snippets` sibling which only receives that same directory as a
+# parameter -- the exact "no implicit leniency" boundary this table has always drawn), `lsp_
+# provider_setup.py::_download`'s new O_EXCL|O_NOFOLLOW-claim-then-write-through-the-held-fd
+# technique (a genuine H2 fix, just not literally a call into `atomic_write_bytes`, since a
+# size-capped streaming download cannot use a helper that requires the whole payload in memory
+# up front), and both halves of `session_daemon.py::_write_daemon_metadata_windows`'s audited
+# (#211/#81/#13) hand-rolled ACL-lockdown-between-create-and-write sequence.
+#
+# The TWO remaining below are DEFERRED, each for a reason too large/risky for this PR to carry:
+#
+# - `lsp_provider_setup.py::_ensure_node_runtime`'s `shutil.move` (staging the extracted archive
+#   into place): `shutil.move` CAN follow an existing destination symlink when the target looks
+#   like a directory, unlike its sibling `os.replace` calls in the same function (non-dereferencing
+#   rename, sanctioned above) -- and unlike those, there is no directory-tree-safe atomic-publish
+#   primitive to route through. The docstring at that call site notes `shutil.move` was chosen
+#   specifically for its cross-filesystem fallback (the extracted archive lives under the OS temp
+#   root, which may not share a filesystem with the install root); switching to `os.replace` would
+#   silently break that cross-fs case rather than close the gap. `_remove_stale_staging_path` does
+#   pre-clear this exact path earlier in the same function, so the residual window is the
+#   download+extract duration between that pre-clear and this move, not the whole function -- real,
+#   but narrowing it further needs either a new directory-safe primitive or giving up cross-fs
+#   support, both bigger than this PR.
+# - `main.py::_download_native_frontdoor_asset`'s `urllib.request.urlretrieve`: the immediately
+#   preceding, already-sanctioned `os.open` O_EXCL claim guarantees `destination` is a fresh
+#   regular file at the moment of that claim, but `urlretrieve` itself re-opens the path by name
+#   with a plain `'wb'` rather than writing through the fd this function already holds -- a narrow
+#   TOCTOU window between the claim's `close(fd)` and urlretrieve's reopen, where an attacker who
+#   can unlink-and-replant at the (uuid4-named, so unpredictable in advance) path could still win a
+#   race. Closing this fully means either buffering the whole download into memory and routing
+#   through `atomic_write_bytes` (loses `urlretrieve`'s streaming byte-cap enforcement mid-transfer,
+#   the exact protection `_enforce_byte_cap` exists for) or replacing `urlretrieve` with a hand-
+#   rolled `urlopen` + chunked-write-through-the-held-fd loop (the technique this task DID apply to
+#   `lsp_provider_setup.py::_download`, sanctioned above) -- a real, scoped, but separately-
+#   reviewable rewrite of this function's download mechanism, left for a follow-up rather than
+#   folded into an already-large H2 diff.
+_EXPECTED_VIOLATING = {
+    ("main.py", "_download_native_frontdoor_asset", "urllib.request.urlretrieve"),
+    ("lsp_provider_setup.py", "_ensure_node_runtime", "shutil.move"),
 }
 
 
@@ -1689,10 +1779,20 @@ def test_population_includes_previously_unscanned_checkpoint_store_write_bytes()
     never scanned. This targets the DISCOVERED population (``_scan_all_scoped_files()``), not the
     hardcoded tuple, so it fails on the pre-fix code with a plain "site not found" assertion (not
     an ImportError/NameError -- a missing-module red proves nothing) and passes once the census
-    walks the whole ``_CLI_SRC`` directory."""
+    walks the whole ``_CLI_SRC`` directory.
+
+    H2 (backlog closeout) routed this exact site through ``atomic_write_bytes`` (see
+    ``_EXPECTED_HELPER_BACKED`` above), so the identity this test asserts changed from
+    ``Path.write_bytes`` to the helper-backed operation string -- updated here rather than
+    deleted, since the test's REAL purpose (prove `checkpoint_store.py` is walked by the
+    directory-wide census, not a hardcoded file list) still holds and is still worth guarding."""
     candidates = _scan_all_scoped_files()
     identities = {(c.module, c.outer_function, c.operation) for c in candidates}
-    assert ("checkpoint_store.py", "undo_checkpoint", "Path.write_bytes") in identities, (
+    assert (
+        "checkpoint_store.py",
+        "undo_checkpoint",
+        "tensor_grep.cli._index_lock.atomic_write_bytes",
+    ) in identities, (
         f"checkpoint_store.py's undo_checkpoint write_bytes site is missing from the census -- "
         f"the population walk is still scoped to a hardcoded file list. identities={identities}"
     )

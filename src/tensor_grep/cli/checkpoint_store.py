@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from tensor_grep.cli._index_lock import atomic_write_json, index_lock
+from tensor_grep.cli._index_lock import atomic_write_bytes, atomic_write_json, index_lock
 from tensor_grep.cli.subprocess_policy import configured_git_timeout_seconds, run_subprocess
 
 _CHECKPOINT_VERSION = 1
@@ -1448,9 +1448,20 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
 
         except Exception:
             # Best-effort revert: undo any working-tree mutations already committed.
+            #
+            # H2 (#859 class ratchet): both restores below used to call `Path.write_bytes`
+            # directly, which ALWAYS follows a destination symlink (unlike the `shutil.copy2(...,
+            # follow_symlinks=False)` used for the forward copies above, or `os.replace`'s
+            # non-dereferencing rename). `target`/`removed_path` were containment-checked against
+            # `root` during pre-flight, but that check is not re-proven at revert time, so a
+            # symlink planted at either path between pre-flight and this best-effort revert would
+            # have been written through. `atomic_write_bytes` refuses a symlinked destination and
+            # publishes via a same-directory O_EXCL temp + `os.replace`; any refusal is caught by
+            # the existing `except OSError: pass` below, preserving the prior best-effort
+            # semantics (a failed restore was already silently swallowed).
             for path_to_restore, prior_bytes in reversed(committed_overwrites):
                 try:
-                    path_to_restore.write_bytes(prior_bytes)
+                    atomic_write_bytes(path_to_restore, prior_bytes)
                 except OSError:
                     pass
             for removed_path, removed_bytes in reversed(committed_removes):
@@ -1458,7 +1469,7 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
                 # bytes snapshotted before their unlink, so a partial commit does not lose data.
                 try:
                     removed_path.parent.mkdir(parents=True, exist_ok=True)
-                    removed_path.write_bytes(removed_bytes)
+                    atomic_write_bytes(removed_path, removed_bytes)
                 except OSError:
                     pass
             raise

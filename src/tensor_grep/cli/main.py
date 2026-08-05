@@ -801,9 +801,14 @@ def _write_native_frontdoor_metadata(
         "requested_asset_flavor": _requested_native_frontdoor_flavor(),
         "version": version,
     }
-    native_frontdoor_metadata_path(destination).write_text(
-        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    # H2 (#859 class ratchet): route through the shared anchored helper rather than a raw
+    # write_text -- the metadata sidecar path is derived from `destination`, a fixed/predictable
+    # install location (unlike the uuid4-suffixed temp paths elsewhere in this module), so a
+    # pre-planted symlink there is a real target. atomic_write_bytes_anchored refuses to write
+    # through a symlinked destination and publishes via a same-directory O_EXCL temp + os.replace.
+    atomic_write_bytes_anchored(
+        native_frontdoor_metadata_path(destination),
+        (json.dumps(metadata, indent=2, sort_keys=True) + "\n").encode("utf-8"),
     )
 
 
@@ -851,11 +856,21 @@ def _install_release_native_frontdoor(
                 )
                 continue
             previous_bytes = destination.read_bytes() if destination.exists() else None
-            os.replace(temp_path, destination)
+            # H2 (#859 class ratchet): the raw os.replace/write_bytes pair here was a hand-rolled
+            # duplicate of atomic_write_bytes_anchored's own create-temp/replace flow, operating
+            # on a SINGLE FILE (unlike lsp_provider_setup._ensure_node_runtime's directory-tree
+            # swap, which has no shared-helper equivalent to route through). temp_path itself was
+            # already claimed via the O_EXCL guard in _download_native_frontdoor_asset, so reading
+            # its bytes here and publishing through the shared helper closes the destination-
+            # symlink gap the raw os.replace left open (os.replace alone is non-dereferencing, but
+            # routing through the helper keeps this call site consistent with the reviewed pattern
+            # and gives the destination its own explicit symlink-refusal check).
+            install_mode = None if sys.platform.startswith("win") else 0o755
+            atomic_write_bytes_anchored(destination, temp_path.read_bytes(), mode=install_mode)
             installed_version = _native_tg_version(destination)
             if not _native_tg_version_matches(version, installed_version):
                 if previous_bytes is not None:
-                    destination.write_bytes(previous_bytes)
+                    atomic_write_bytes_anchored(destination, previous_bytes, mode=install_mode)
                 else:
                     destination.unlink(missing_ok=True)
                 download_errors.append(

@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from tensor_grep.backends.ast_backend import is_native_ast_language, normalize_ast_language
 from tensor_grep.backends.base import BackendExecutionError
+from tensor_grep.cli._index_lock import atomic_write_bytes
 from tensor_grep.cli.scan_guardrails import BroadScanRefusedError, ensure_scan_not_broad
 
 if TYPE_CHECKING:
@@ -451,9 +452,14 @@ def _batch_search_snippets(
             snippet_paths.append(snippet_cache[cache_key])
             continue
 
-        # Write unique snippet with uuid for maximum collision robustness
+        # Write unique snippet with uuid for maximum collision robustness.
+        # H2 (#859 class ratchet): `temp_dir_path` is a caller-supplied PARAMETER, not created
+        # inside this function -- unlike the sanctioned self-contained-temp-artifact shape
+        # elsewhere in this codebase, confinement cannot be statically proven from a parameter
+        # alone, so this must route through the anchored helper rather than a raw write_text
+        # (which follows a destination symlink).
         snippet_path = temp_dir_path / f"snip_{uuid4().hex}{suffix}"
-        snippet_path.write_text(snippet, encoding="utf-8")
+        atomic_write_bytes(snippet_path, snippet.encode("utf-8"))
         path_str = str(snippet_path)
         snippet_cache[cache_key] = path_str
         snippet_paths.append(path_str)
