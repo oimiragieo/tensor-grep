@@ -1319,10 +1319,24 @@ row reading `READY` invites a session to start it and discover the blocker after
 | **#89 / #90** | same as 2B/2C | the reproduced path-domain defect is owned by that typed-path program. |
 | **Task 3** (#859) | PARTIALLY DONE | the CLASS census gap is closed (PR #937, census 3 -> 41 modules). The plan's Task 3 also lists `src/tensor_grep/cli/main.py` as modified -- i.e. fixing the pinned VIOLATING sites. That half is open and is H2 above. |
 
-Unblocked and genuinely start-now: **F5** (Task 8), **F6** (Tasks 6-7), **REF-CALL-REGISTRY**
-(Task 9), **F7 Task 11** (cross-file resolution), **F8** (Tasks 12-13) -- all pure-Python. F7
-Task 11 should not start before its demand question is answered (see the research bucket): measure
-how often `blast_radius_floor` falls short on a real multi-file repo BEFORE designing a resolver.
+**CORRECTED 2026-08-05 (same day).** The paragraph this replaces called F5 and F8 "unblocked and
+genuinely start-now". That was wrong, and reading the plan's own file lists is what showed it:
+
+- **F5 (Task 8)** and **F8 (Task 12)** both list `src/tensor_grep/cli/prepare_service.py` as
+  MODIFIED. That module did not exist until PR #939 created it (Task 6 Step 0), and the plan says
+  explicitly that Task 8 "must modify, not create, it". Both are gated on #939 merging.
+- **F8 (Task 12)** additionally modifies `rust_core/src/main.rs` and `rust_core/src/path_domain.rs`
+  and touches `tests/e2e/test_routing_parity.py` -- cargo and the e2e routing suite are both
+  forbidden on this shared dev box, so its verification must run in CI or on a cloud seat.
+- **REF-CALL-REGISTRY (Task 9)** is DONE in substance: `_references_and_calls_for_path` is four
+  statements with zero language branching (the F7 campaign removed the ladders as a side effect).
+  Its Step 2 guard was never written; PR #940 adds it. NOTE the canonical row MISLABELS Task 9 as
+  "prepare-service extraction" -- the plan's Task 9 is the reference/caller dispatch registry; the
+  prepare-service extraction is Task 6 Step 0.
+
+So the true start-now set is currently EMPTY: everything waits on #939 or needs CI/cloud. That is a
+real state, not a stall -- recorded so the next session does not start F5, write code against a
+module not yet on main, and discover the ordering afterwards.
 
 ## OPEN FINDINGS -- 2026-08-05, surfaced while widening the atomic-writer census (PR #937)
 
