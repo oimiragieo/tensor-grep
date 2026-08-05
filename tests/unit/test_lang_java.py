@@ -1,15 +1,12 @@
-"""PATH A STAGE 2 -- Java symbol graph (FOUNDATIONAL TIER) tests.
+"""PATH A STAGE 2 -- Java symbol graph tests (in-file refs/callers + Task 11A package resolver).
 
 Java joins the symbol graph the same way Go did (own ``LanguageSpec``, tree-sitter-backed,
-fail-closed with no regex fallback), but SCOPED to the foundational tier only: symbols
-(classes/interfaces/enums/records/methods/constructors) and raw import declarations flow into
-``build_repo_map`` / `tg defs` / `tg source` / `tg imports` / `tg agent`. The deep caller-graph
-(cross-file method-call resolution powering `tg callers` / `tg blast-radius`) is intentionally
-NOT implemented here -- ``LanguageSpec.references_and_calls`` /
-``file_imports_symbol_from_definition`` / ``import_update_target`` / ``prime_repo_context`` /
-``classify_ref_kind`` are all ``None``, deferred to a follow-up PR. See the last section below
-for the honesty-floor coverage of that deferral (never a crash, always a labeled
-``resolution_gaps`` entry).
+fail-closed with no regex fallback). Task 10A wired in-file ``references_and_calls``; Task 11A
+/ F7 wave 1 wires ``file_imports_symbol_from_definition`` (package/source-root). Remaining
+cross-file fields (``import_update_target`` / ``prime_repo_context`` / ``classify_ref_kind``)
+stay ``None``. Flat no-package fixtures still demote -- see
+``test_java_cross_file_call_site_found_via_literal_prefilter_but_unconfirmed``. Maven/package
+cross-file confirmation lives in ``tests/unit/test_java_cross_file_callers.py``.
 
 Covered here:
 - Registration + provenance (``tree-sitter`` when the grammar is installed, ``grammar-missing``
@@ -106,12 +103,14 @@ def test_java_is_registered_with_tree_sitter_provenance() -> None:
     # no plain-text fallback when the grammar is missing.
     assert spec.provenance_when_missing == "grammar-missing"
     assert spec.parser_for_path is not None
-    # Task 10A: in-file AST references_and_calls is now wired (parser-backed-refs-callers
-    # tier). The CROSS-FILE caller-graph fields (package/source-root import resolution, Task
-    # 11A) are still explicitly deferred.
+    # Task 10A: in-file AST references_and_calls is wired (parser-backed-refs-callers
+    # tier). Task 11A / F7 wave 1: file_imports_symbol_from_definition is the Java
+    # package/source-root resolver. Remaining cross-file fields stay deferred.
     assert spec.references_and_calls is not None
     assert spec.provider_alias_calls is None
-    assert spec.file_imports_symbol_from_definition is None
+    assert spec.file_imports_symbol_from_definition is (
+        lang_java.java_file_imports_symbol_from_definition
+    )
     assert spec.import_update_target is None
     assert spec.prime_repo_context is None
     assert spec.classify_ref_kind is None

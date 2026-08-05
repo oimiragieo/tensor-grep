@@ -37,13 +37,13 @@ FAIL-CLOSED CONTRACT: Java has NO regex-heuristic fallback (mirrors Go/PHP/C#/C/
 simulate that), ``java_references_and_calls`` returns ``([], [])`` -- never a crash, never a
 partial or fabricated result.
 
-SCOPE (Task 10A only, in-file AST extraction -- no cross-file resolution): this extractor reports
-every AST-visible reference/call to *symbol* WITHIN the given file. It does NOT attempt Java
-package/source-root import resolution (Task 11A, a separate follow-up) -- see the RESOLUTION
-CONFIDENCE / PROVENANCE section below for the two-band honesty disclosure this module emits
-instead. A qualifier like ``Helper.staticWork()`` or ``h.doWork()`` is classified purely from
-local AST shape; only the narrow in-file receiver-type check described below ever confirms one
-of these above the default demoted band, and it never reaches outside this file to do so.
+SCOPE: in-file AST extraction (Task 10A) plus cross-file package/source-root confirmation
+(Task 11A / F7 wave 1). ``java_file_imports_symbol_from_definition`` answers whether a file can
+see a definition via same-package or import under an established source root; when that mapping
+cannot be established it returns False (DEMOTE, never guess). ``java_references_and_calls`` still
+classifies nodes from local AST shape; the confirmed band now also fires when a receiver's
+declared type resolves through package/import into a supplied ``definition_dirs`` set (the
+selected definition's package directory).
 
 AST NODE SHAPES (verified against the real ``tree_sitter_java`` grammar, not guessed):
 
@@ -97,24 +97,14 @@ own mechanism and numbers, since Java has no import/type resolver (Task 11A, sti
 - ``_JAVA_CONFIRMED_CONFIDENCE`` (0.9) / ``_JAVA_CONFIRMED_PROVENANCE``
   (``["java-infile-type-confirmation"]``): a ``method_invocation``/``field_access`` node whose
   receiver (an ``identifier`` or the ``this`` keyword) has a static type DIRECTLY readable from a
-  declaration node in this SAME file (a ``local_variable_declaration``/``field_declaration``'s
-  ``variable_declarator``, a ``formal_parameter``, or a ``catch_formal_parameter`` -- or, for
-  ``this``, the nearest enclosing type declaration), AND that exact type ALSO directly declares a
-  member named *symbol* in its own body (a ``method_declaration`` for a call, a
-  ``field_declaration``'s ``variable_declarator`` for a field access) -- two independently-checked
-  AST facts joined with no cross-file assumption. Not 1.0/not Go's 0.95: Java allows inheritance,
-  overloading, and shadowing, so a declared-type match one step removed (the member is inherited
-  rather than declared directly on the exact type, or an unrelated field shadows the receiver name
-  in a narrower scope this file-wide best-effort walk does not model) is not fully ruled out --
-  0.9 reflects "real evidence, not proof of soundness". This case is the ONLY place a receiver
-  reference/call rises above the demoted band; it cannot fire for a symbol whose only declaring
-  member lives in ANOTHER file (see ``test_java_cross_file_call_site_found_via_literal_prefilter_
-  but_unconfirmed`` in ``tests/unit/test_lang_java.py`` -- the receiver's local declaration is
-  in-file, but the method it calls is declared in a different file, so it stays demoted).
-
-Cross-file caller confirmation (package/source-root import resolution, matching Go's
-``go-import-resolution`` band) is still NOT implemented -- that is Task 11A. A cross-file caller
-today always lands in the demoted band, honestly labeled.
+  declaration node in this SAME file, AND that exact type ALSO directly declares a member named
+  *symbol* in its own body -- two independently-checked AST facts with no cross-file assumption.
+- ``_JAVA_CONFIRMED_CONFIDENCE`` (0.9) / ``_JAVA_CROSS_FILE_CONFIRMED_PROVENANCE``
+  (``["java-package-type-confirmation"]``): same confidence, different provenance -- the receiver's
+  declared type (or a bare type qualifier) resolves through same-package / import evidence into a
+  package directory in ``definition_dirs`` (supplied by ``repo_map`` from the selected definition).
+  Flat files with no establishable package/source-root mapping stay demoted
+  (``test_java_cross_file_call_site_found_via_literal_prefilter_but_unconfirmed``).
 """
 
 from __future__ import annotations
@@ -152,6 +142,20 @@ _JAVA_DEMOTED_CONFIDENCE = 0.6
 _JAVA_DEMOTED_PROVENANCE = "java-name-heuristic"
 _JAVA_CONFIRMED_CONFIDENCE = 0.9
 _JAVA_CONFIRMED_PROVENANCE = "java-infile-type-confirmation"
+_JAVA_CROSS_FILE_CONFIRMED_PROVENANCE = "java-package-type-confirmation"
+
+# Conventional Maven/Gradle Java source roots (Task 11A). Package-path alignment without these
+# markers is also accepted when the on-disk path suffix matches the package declaration.
+_JAVA_SOURCE_ROOT_MARKERS: tuple[tuple[str, ...], ...] = (
+    ("src", "main", "java"),
+    ("src", "test", "java"),
+)
+
+_JAVA_PACKAGE_RE = re.compile(r"^\s*package\s+([A-Za-z_][\w.]*)\s*;", re.MULTILINE)
+_JAVA_IMPORT_RE = re.compile(
+    r"^\s*import\s+(static\s+)?([A-Za-z_][\w.]*(?:\.\*)?)\s*;",
+    re.MULTILINE,
+)
 
 # Declaration node types (see ``_java_declared_types_for_names``) whose "type"/"name" field pair
 # gives a receiver identifier's declared static type, all readable from THIS file alone.
@@ -176,6 +180,172 @@ _JAVA_NAME_DEFINING_PARENT_TYPES = {
     "catch_formal_parameter",
     "enum_constant",
 }
+
+
+def _java_package_declaration(source: str) -> str | None:
+    match = _JAVA_PACKAGE_RE.search(source)
+    return match.group(1) if match else None
+
+
+def _java_import_specs(source: str) -> list[tuple[bool, str]]:
+    """Return ``(is_static, import_name)`` pairs from *source* (regex; no second parser)."""
+    return [(bool(match.group(1)), match.group(2)) for match in _JAVA_IMPORT_RE.finditer(source)]
+
+
+def _java_source_root_for_path(path: Path, package: str | None) -> Path | None:
+    """Return the Java source root for *path*, or None when package/path mapping is unestablishable.
+
+    Fail closed: a ``package`` declaration whose path does not sit under a conventional
+    ``src/main/java`` / ``src/test/java`` root (or a package-path-aligned root) yields None --
+    never a guessed parent.
+    """
+    try:
+        resolved = path.expanduser().resolve()
+    except OSError:
+        return None
+    parts = resolved.parts
+    name = resolved.name
+
+    for marker in _JAVA_SOURCE_ROOT_MARKERS:
+        marker_len = len(marker)
+        for index in range(len(parts) - marker_len):
+            if parts[index : index + marker_len] != marker:
+                continue
+            root = Path(*parts[: index + marker_len])
+            if package:
+                expected = root.joinpath(*package.split("."), name)
+            else:
+                expected = root / name
+            if expected == resolved:
+                return root
+
+    if package:
+        pkg_parts = tuple(package.split("."))
+        parent_parts = resolved.parent.parts
+        if len(parent_parts) >= len(pkg_parts) and parent_parts[-len(pkg_parts) :] == pkg_parts:
+            root = resolved.parent
+            for _ in pkg_parts:
+                root = root.parent
+            return root
+    return None
+
+
+def _java_definition_fqn(definition_path: Path, definition_source: str) -> str | None:
+    """FQN of the public top-level type in *definition_path*, or None if mapping fails."""
+    package = _java_package_declaration(definition_source)
+    if package is None:
+        return None
+    if _java_source_root_for_path(definition_path, package) is None:
+        return None
+    return f"{package}.{definition_path.stem}"
+
+
+def _java_type_fqns_visible_in_file(source: str, type_name: str, file_path: Path) -> set[str]:
+    """FQNs *type_name* could denote in *source* via type import, wildcard, or same-package."""
+    if not type_name or not _is_clean_symbol_name(type_name):
+        return set()
+    fqns: set[str] = set()
+    package = _java_package_declaration(source)
+    for is_static, name in _java_import_specs(source):
+        if is_static:
+            continue
+        if name.endswith(".*"):
+            fqns.add(f"{name[:-2]}.{type_name}")
+        elif name == type_name or name.endswith(f".{type_name}"):
+            fqns.add(name)
+    if package is not None and _java_source_root_for_path(file_path, package) is not None:
+        fqns.add(f"{package}.{type_name}")
+    return fqns
+
+
+def _java_fqn_package_dir_matches(fqn: str, definition_dir: Path) -> bool:
+    parts = fqn.split(".")
+    if len(parts) < 2:
+        return False
+    pkg_parts = tuple(parts[:-1])
+    dir_parts = definition_dir.parts
+    return len(dir_parts) >= len(pkg_parts) and dir_parts[-len(pkg_parts) :] == pkg_parts
+
+
+def _java_type_resolves_into_definition_dirs(
+    type_name: str,
+    source: str,
+    file_path: Path,
+    definition_dirs: frozenset[str],
+) -> bool:
+    if not definition_dirs:
+        return False
+    fqns = _java_type_fqns_visible_in_file(source, type_name, file_path)
+    if not fqns:
+        return False
+    for fqn in fqns:
+        if fqn.rsplit(".", 1)[-1] != type_name:
+            continue
+        for directory in definition_dirs:
+            try:
+                resolved_dir = Path(directory).expanduser().resolve()
+            except OSError:
+                continue
+            if _java_fqn_package_dir_matches(fqn, resolved_dir):
+                return True
+    return False
+
+
+def java_file_imports_symbol_from_definition(
+    file_path: Path,
+    source: str,
+    symbol: str,
+    definition_path: str,
+    repo_root: Path | str | None = None,
+) -> bool:
+    """True iff *file_path* can see *symbol*'s definition via Java package/import evidence.
+
+    Requires an establishable package/source-root mapping for the definition file. Same-package
+    visibility also requires an establishable mapping for the importer. A flat or mismatched tree
+    returns False -- demote, never guess. *repo_root* is accepted for LanguageSpec signature
+    parity with Go; resolution is path/package local and does not scan the repo.
+    """
+    del repo_root  # signature parity; unused by design
+    del symbol  # Java visibility is type/package scoped; member name is not part of import proof
+    try:
+        definition = Path(definition_path).expanduser().resolve()
+        importer = file_path.expanduser().resolve()
+    except OSError:
+        return False
+    try:
+        definition_source = definition.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+
+    definition_fqn = _java_definition_fqn(definition, definition_source)
+    if definition_fqn is None:
+        return False
+    definition_package = definition_fqn.rsplit(".", 1)[0]
+    definition_type = definition_fqn.rsplit(".", 1)[1]
+
+    importer_package = _java_package_declaration(source)
+    if (
+        importer_package is not None
+        and importer_package == definition_package
+        and _java_source_root_for_path(importer, importer_package) is not None
+    ):
+        return True
+
+    for is_static, name in _java_import_specs(source):
+        if not is_static:
+            if name == definition_fqn or name == f"{definition_package}.*":
+                return True
+            continue
+        # static import of the type's members (or a specific member) also proves the file
+        # references this definition's type.
+        if name == f"{definition_fqn}.*" or name.startswith(f"{definition_fqn}."):
+            return True
+        if name == definition_fqn:
+            return True
+    # A non-static import of the simple type under another package must not match by stem alone;
+    # only FQN / same-package / wildcard of the definition package qualify.
+    _ = definition_type
+    return False
 
 
 def _java_object_creation_type_identifier(node: Any) -> Any | None:
@@ -305,11 +475,18 @@ def _java_enclosing_type_name(node: Any, source_bytes: bytes) -> str | None:
 def java_references_and_calls(
     path: Path,
     symbol: str,
+    repo_root: Path | str | None = None,
     *,
     parser: Any | None = None,
+    definition_dirs: frozenset[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """In-file AST reference/call rows for *symbol* in *path* -- see the module docstring for the
-    full AST-shape mapping. Task 10A scope: single-file only, no cross-file resolution."""
+    """In-file AST reference/call rows for *symbol* in *path*.
+
+    When *definition_dirs* is supplied (repo_map always supplies it from preferred definitions),
+    a receiver whose declared type resolves through package/import into those directories earns the
+    cross-file confirmed band. *repo_root* is accepted for registry-adapter signature parity.
+    """
+    del repo_root  # signature parity with Go adapter; unused by the Java package resolver
     if path.suffix != ".java":
         return [], []
     if parser is None:
@@ -348,12 +525,8 @@ def java_references_and_calls(
     )
 
     def _receiver_confirmation(object_node: Any | None, owner_types: set[str]) -> bool:
-        """True only when *object_node* (a ``method_invocation``/``field_access``'s ``object``
-        field) has a static type readable from THIS file (a local var/field/param declaration,
-        or -- for a bare ``this`` -- the enclosing type) that is ALSO one of *owner_types* (the
-        types this file itself saw declare a member named *symbol*). See the module docstring's
-        RESOLUTION CONFIDENCE / PROVENANCE section for why this, and only this, earns the
-        confirmed band.
+        """True only when *object_node* has a static type readable from THIS file that is ALSO
+        one of *owner_types* (types this file itself saw declare a member named *symbol*).
         """
         if object_node is None or not owner_types:
             return False
@@ -365,12 +538,36 @@ def java_references_and_calls(
             return enclosing is not None and enclosing in owner_types
         return False
 
+    def _cross_file_receiver_confirmation(object_node: Any | None) -> bool:
+        if object_node is None or not definition_dirs:
+            return False
+        candidate_types: set[str] = set()
+        if object_node.type == "identifier":
+            name = _node_text(object_node)
+            candidate_types.update(declared_types.get(name, set()))
+            # Bare type qualifier (``Foo.getCount()``) -- not a local variable.
+            candidate_types.add(name)
+        elif object_node.type == "this":
+            return False
+        for type_name in candidate_types:
+            if _java_type_resolves_into_definition_dirs(type_name, source, path, definition_dirs):
+                return True
+        return False
+
     def _emit(
-        bucket: list[dict[str, Any]], node: Any, *, kind: str, ref_kind: str, confirmed: bool
+        bucket: list[dict[str, Any]],
+        node: Any,
+        *,
+        kind: str,
+        ref_kind: str,
+        confirmed: bool,
+        cross_file: bool = False,
     ) -> None:
         if confirmed:
             confidence = _JAVA_CONFIRMED_CONFIDENCE
-            provenance = _JAVA_CONFIRMED_PROVENANCE
+            provenance = (
+                _JAVA_CROSS_FILE_CONFIRMED_PROVENANCE if cross_file else _JAVA_CONFIRMED_PROVENANCE
+            )
         else:
             confidence = _JAVA_DEMOTED_CONFIDENCE
             provenance = _JAVA_DEMOTED_PROVENANCE
@@ -381,12 +578,6 @@ def java_references_and_calls(
             "file": str(path),
             "line": node.start_point[0] + 1,
             "text": _line_text(node),
-            # PER-MATCH honesty band -- see the module docstring's RESOLUTION CONFIDENCE /
-            # PROVENANCE section for the full derivation of both bands and why only a
-            # method_invocation/field_access with an in-file-confirmed receiver type ever rises
-            # above the default demoted band. The module-level `resolution_gaps` entry stays: it
-            # discloses the missing resolver per LANGUAGE. This field discloses it per ROW, which
-            # is what a consumer ranking or filtering individual callers actually needs.
             "resolution_confidence": confidence,
             "resolution_provenance": [provenance],
         })
@@ -400,6 +591,15 @@ def java_references_and_calls(
     # shipping this (a real, easy-to-miss bug: it would have made every "claimed" node ALSO
     # double-emit through the generic walk below).
     claimed_node_ids: set[tuple[int, int]] = set()
+
+    def _confirmation_for_member(
+        object_node: Any | None, owner_types: set[str]
+    ) -> tuple[bool, bool]:
+        if _receiver_confirmation(object_node, owner_types):
+            return True, False
+        if _cross_file_receiver_confirmation(object_node):
+            return True, True
+        return False, False
 
     def _walk(root: Any) -> None:
         # Explicit-stack DFS (not recursion) -- matches every other language extractor in this
@@ -415,7 +615,7 @@ def java_references_and_calls(
                 name_field = node.child_by_field_name("name")
                 if name_field is not None and _node_text(name_field) == symbol:
                     claimed_node_ids.add((name_field.start_byte, name_field.end_byte))
-                    confirmed = _receiver_confirmation(
+                    confirmed, cross_file = _confirmation_for_member(
                         node.child_by_field_name("object"), method_owner_types
                     )
                     _emit(
@@ -424,8 +624,16 @@ def java_references_and_calls(
                         kind="reference",
                         ref_kind="call",
                         confirmed=confirmed,
+                        cross_file=cross_file,
                     )
-                    _emit(calls, name_field, kind="call", ref_kind="call", confirmed=confirmed)
+                    _emit(
+                        calls,
+                        name_field,
+                        kind="call",
+                        ref_kind="call",
+                        confirmed=confirmed,
+                        cross_file=cross_file,
+                    )
             elif node_type == "object_creation_expression":
                 type_identifier = _java_object_creation_type_identifier(node)
                 if type_identifier is not None and _node_text(type_identifier) == symbol:
@@ -448,7 +656,7 @@ def java_references_and_calls(
                 field_field = node.child_by_field_name("field")
                 if field_field is not None and _node_text(field_field) == symbol:
                     claimed_node_ids.add((field_field.start_byte, field_field.end_byte))
-                    confirmed = _receiver_confirmation(
+                    confirmed, cross_file = _confirmation_for_member(
                         node.child_by_field_name("object"), field_owner_types
                     )
                     _emit(
@@ -457,6 +665,7 @@ def java_references_and_calls(
                         kind="reference",
                         ref_kind="field",
                         confirmed=confirmed,
+                        cross_file=cross_file,
                     )
 
             stack.extend(reversed(node.children))
@@ -485,4 +694,7 @@ def java_references_and_calls(
     return references, calls
 
 
-__all__ = ["java_references_and_calls"]
+__all__ = [
+    "java_file_imports_symbol_from_definition",
+    "java_references_and_calls",
+]

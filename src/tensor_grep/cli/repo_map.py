@@ -6371,12 +6371,18 @@ def _java_references_and_calls_for_registry(
     *,
     definition_dirs: frozenset[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    # Task 10A: in-file AST extraction only -- no cross-file import resolution yet (that's Task
-    # 11A), so repo_root/definition_dirs are part of the uniform registry adapter signature (Go
-    # F25) but unused here, same as python/js/ts/rust's own adapters above. `_java_parser()` is
-    # called HERE (not duplicated inside lang_java.py) so grammar-presence has exactly one source
-    # of truth -- see lang_java.py's module docstring for why a second factory would be unsafe.
-    return lang_java.java_references_and_calls(path, symbol, parser=_java_parser())
+    # Task 11A / F7 wave 1: forward definition_dirs so a Java receiver whose type resolves
+    # through package/import into a selected definition's package directory earns the
+    # cross-file confirmed band. `_java_parser()` is called HERE (not duplicated inside
+    # lang_java.py) so grammar-presence has exactly one source of truth -- see lang_java.py's
+    # module docstring for why a second factory would be unsafe.
+    return lang_java.java_references_and_calls(
+        path,
+        symbol,
+        repo_root,
+        parser=_java_parser(),
+        definition_dirs=definition_dirs,
+    )
 
 
 def _csharp_references_and_calls_for_registry(
@@ -6609,18 +6615,18 @@ lang_registry.register_language(
     )
 )
 
-# PATH A Stage 2 (Task 10A): Java's symbols (classes/interfaces/enums/records/methods/
-# constructors) and raw import declarations flow into build_repo_map / `tg defs` / `tg source` /
-# `tg imports` / `tg agent` via _java_imports_and_symbols / _java_parser_symbol_sources /
-# _java_imports_with_lines (still inline in this file -- see lang_java.py's module docstring for
-# why the move was deliberately scoped OUT of Task 10A). references_and_calls now points at
-# lang_java.java_references_and_calls (Task 10A: IN-FILE AST reference/call extraction,
-# promoting Java to the parser-backed-refs-callers tier) via the registry adapter above. The
-# remaining cross-file caller-graph fields (provider_alias_calls,
-# file_imports_symbol_from_definition, import_update_target, prime_repo_context,
-# classify_ref_kind -- package/source-root import resolution powering a confirmed `tg callers`/
-# `tg blast-radius`) stay None, deferred to Task 11A. provenance_when_missing="grammar-missing"
-# (NOT "regex-heuristic"): Java has no regex fallback, mirroring Go's fail-closed contract.
+# PATH A Stage 2 (Task 10A + Task 11A / F7 wave 1): Java's symbols (classes/interfaces/enums/
+# records/methods/constructors) and raw import declarations flow into build_repo_map / `tg defs`
+# / `tg source` / `tg imports` / `tg agent` via _java_imports_and_symbols /
+# _java_parser_symbol_sources / _java_imports_with_lines (still inline in this file -- see
+# lang_java.py's module docstring for why the defs/imports move was deliberately scoped OUT of
+# Task 10A). references_and_calls points at lang_java.java_references_and_calls (in-file AST
+# plus package/source-root confirmation when definition_dirs is supplied).
+# file_imports_symbol_from_definition is wired to
+# lang_java.java_file_imports_symbol_from_definition (Task 11A). Remaining cross-file fields
+# (provider_alias_calls, import_update_target, prime_repo_context, classify_ref_kind) stay None.
+# provenance_when_missing="grammar-missing" (NOT "regex-heuristic"): Java has no regex fallback,
+# mirroring Go's fail-closed contract.
 lang_registry.register_language(
     lang_registry.LanguageSpec(
         language_id="java",
@@ -6641,7 +6647,7 @@ lang_registry.register_language(
         extract_imports_and_symbols=_java_imports_and_symbols,
         references_and_calls=_java_references_and_calls_for_registry,
         provider_alias_calls=None,
-        file_imports_symbol_from_definition=None,
+        file_imports_symbol_from_definition=lang_java.java_file_imports_symbol_from_definition,
         import_update_target=None,
         prime_repo_context=None,
         classify_ref_kind=None,

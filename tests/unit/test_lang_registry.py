@@ -288,20 +288,36 @@ def test_java_references_and_calls_dispatches_through_registered_extractor(
     extractor (`lang_java.java_references_and_calls`, reached via
     `_java_references_and_calls_for_registry`), never the explicit `_regex_references_and_calls`
     fallback -- proving the dispatch routes on `spec.references_and_calls is not None`, not on a
-    hardcoded `language_id == "java"` branch."""
+    hardcoded `language_id == "java"` branch.
+
+    Task 11A / F7 wave 1: the registered extractor's contract grew a positional `repo_root` and
+    a `definition_dirs` keyword (mirroring Go's F25 adapter, `lang_go.go_references_and_calls`)
+    so a Java receiver's declared type can be confirmed against the selected definition's
+    package directory. The spy below spells every parameter the real adapter forwards --
+    `_java_references_and_calls_for_registry` (repo_map.py) always calls
+    `lang_java.java_references_and_calls(path, symbol, repo_root, parser=..., definition_dirs=...)`
+    -- so a future signature drift breaks this test loudly instead of being silently absorbed by
+    a permissive `**kwargs` spy."""
     java_path = tmp_path / "Widget.java"
     java_path.write_text("class Widget {}\n", encoding="utf-8")
-    calls: list[tuple[Path, str]] = []
+    calls: list[tuple[Path, str, Path | str | None]] = []
 
-    def _spy(path: Path, symbol: str, *, parser=None):
-        calls.append((path, symbol))
+    def _spy(
+        path: Path,
+        symbol: str,
+        repo_root: Path | str | None = None,
+        *,
+        parser=None,
+        definition_dirs=None,
+    ):
+        calls.append((path, symbol, repo_root))
         return [{"name": symbol, "kind": "reference", "ref_kind": "call", "file": str(path)}], []
 
     monkeypatch.setattr(lang_java, "java_references_and_calls", _spy)
 
     references, _ = repo_map._references_and_calls_for_path(java_path, "Widget", tmp_path)
 
-    assert calls == [(java_path, "Widget")]
+    assert calls == [(java_path, "Widget", tmp_path)]
     assert references and references[0]["name"] == "Widget"
 
 
