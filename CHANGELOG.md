@@ -1,6 +1,86 @@
 # CHANGELOG
 
 
+## v1.108.0 (2026-08-05)
+
+### Documentation
+
+- Measure the refactor release-class disagreement end to end
+  ([#944](https://github.com/oimiragieo/tensor-grep/pull/944),
+  [`ca55a6b`](https://github.com/oimiragieo/tensor-grep/commit/ca55a6b97254bfa5c956ab000dfcda626a02ccc3))
+
+CLAUDE.md warns that the PR-title gate and the actual publisher disagree about `refactor`, and that
+  this file has had it wrong before. Now MEASURED rather than read:
+
+title gate _RELEASE_INTENTS: refactor -> patch publisher [tool.semantic_release] has NO
+  patch_tags/minor_tags/ commit_parser override, so python-semantic-release defaults apply: feat ->
+  minor, fix/perf -> patch. refactor is in NEITHER list. reality PR #939 merged as `refactor:` at
+  14:35Z. Run 31015992191 completed SUCCESS. Main head stayed 77d21f9 with NO chore(release) commit.
+  PyPI stayed at 1.107.0.
+
+So a `refactor:` PR passes the title gate as a releasing change and then ships nothing. Two
+  consequences this repo has already been bitten by:
+
+- a fix scoped as `refactor:` merges, closes its ticket, and never reaches users while every tracker
+  reads "shipped" - waiting for a `refactor:` merge to publish before the next merge is waiting for
+  something that will never happen; the push-race gate must key on the PUBLISHER's tags, not the
+  title gate's
+
+I hit the second one this cycle: I held #942 and #943 waiting for #939's release, and there was
+  never going to be one. The monitor timed out on a condition that could not occur.
+
+Derivation commands are in the section so the next reader checks rather than trusts -- including the
+  note that an EMPTY result under [tool.semantic_release] means DEFAULTS, which is exactly the case
+  that surprises people.
+
+Gates: 118 passed, exit 0.
+
+### Features
+
+- **prepare-service**: Add the strict typed composition API (Task 8 Step 2 only)
+  ([#943](https://github.com/oimiragieo/tensor-grep/pull/943),
+  [`b800e29`](https://github.com/oimiragieo/tensor-grep/commit/b800e2991994e4e98b393d48ebb64d1990f29a7d))
+
+DELIBERATELY SCOPED DOWN, and the scoping is the decision worth recording. Task 8's full spec --
+  OS-level openat/linkat/NtCreateFile claims fencing, EditReadyTicketV1, the `tg edit-ready` CLI
+  across four registration sites, ledger claim-overlap detection, cross-process Event tests -- is a
+  multi-week build even restricted to Python. Implementing handle-relative atomic-publish primitives
+  safely on Windows carries roughly the risk of touching native code. A large half-wired branch that
+  cannot merge is worse than a small one that can.
+
+So this is Step 2 alone: PrepareSnapshotV1 (frozen dataclass) plus build_prepare_snapshot(), a pure
+  additive wrapper that calls the existing _build_prepare_payload and projects its dict onto typed
+  fields, with `raw` retaining the full untyped payload. 72 insertions, 0 deletions.
+
+ZERO legacy behaviour change, verified two independent ways rather than asserted: - the seat
+  captured `tg prepare` from a detached origin/main worktree and from this tree: identical
+  stdout/stderr sha256, exit 0 both - I re-ran it myself on a different fixture: sha
+  6e334c9582bb6561ab3d20f1 identical across both trees `main.py` is untouched, so this is expected
+  -- but expected is not measured, and the whole point of a byte-identical claim is that it was
+  checked.
+
+resolve_agent_id(None) and the shared IndexLock contract are trivially preserved: ledger_store.py
+  and _index_lock.py have ZERO diff against origin/main. Their suites were run anyway.
+
+Red arm, behaviour-specific rather than an ImportError: AttributeError: module
+  'tensor_grep.cli.prepare_service' has no attribute 'build_prepare_snapshot' The module import
+  succeeds first and the failure lands on the call, so it is not a bare registration false-red.
+  Post-fix: 2 passed.
+
+NOTHING consumes PrepareSnapshotV1 outside its own test yet. That is honest rather than unfortunate
+  -- the consumer is the `tg edit-ready` command, whose registration spans main.py, commands.py and
+  two native sites, and whose native half needs CI or a cloud seat (rust_core + tests/e2e are
+  forbidden on this shared box).
+
+Left for the full build: Steps 3-5 -- the CLI surface, EditReadyTicketV1, the claims-only OS fence,
+  ledger overlap wiring, the integration test, rust_core, tests/e2e, and the CONTRACTS/harness_api
+  updates (deferred deliberately: there is no shipped contract yet to document).
+
+Gates, pytest's own exit codes: 39 passed / 2 skipped across edit-ready, index-lock,
+  ledger-concurrency and the prepare one-shot CUJ; ruff 0; ruff format --preview 0; mypy 0 (91
+  files).
+
+
 ## v1.107.1 (2026-08-05)
 
 ### Bug Fixes
