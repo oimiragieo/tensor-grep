@@ -106,8 +106,11 @@ demand evidence. That is a measured state, not a stall.
   half is now reproducibly broken and `READY`: a raw `/mnt/c/...` file produced an unreadable-path
   warning plus false clear/zero matches, while the translated Windows-path control found six matches.
   Owner: the same amended typed-path program as #89, with scan-specific false-clear tests.
-- **#859** — class-level atomic-writer census/fix, Task 3. A codemap-only regression is not a class
-  ratchet.
+- ~~**#859** — class-level atomic-writer census/fix, Task 3.~~ **SHIPPED 2026-08-05, removed from
+  this queue** — see the receipt row above (`#937` widened the census 3 -> 41 modules, `#945`
+  classified all 16 violating identities, `#946` closed the download TOCTOU, `#947` retired the
+  residual; all four MERGED). This row contradicted its own receipt row 24 lines above it for a full
+  day. Left struck through rather than deleted so the contradiction is legible.
 - **MCP-SURFACE** — MCP surface disclosure, Task 4.
 - **CPU-BACKEND** — Rust/Python backend error propagation, Task 5.
 - **F6** — edit-verification service and public CLI, Tasks 6–7.
@@ -1216,7 +1219,7 @@ Full register: `docs/audits/2026-07-31-tensor-grep-deep-dive.md`. Remediation:
 | # | sev | finding | wave2 | status |
 |---|---|---|---|---|
 | #858 | LOW | `codemap._atomic_write_text` replaces symlink dest (integrity, not RCE) | VERIFIED (sev↓) | Ready-to-build |
-| #859 | MED | Form-1 writer ratchet missing | VERIFIED | Ready (with #858) |
+| #859 | MED | Form-1 writer ratchet missing | VERIFIED | **SHIPPED 2026-08-05** (#937/#945/#946/#947) |
 | #861 | INFO | Position bugs already fixed; shared-banner unify cosmetic | WEAKENED→INFO | Fold into #860; close as product gap |
 | #860 | LOW | Disclosure docstring lie + tip stamp lag + Slice-2 CONTRACTS lie (DD-003) | VERIFIED | Ready docs |
 | DD-001/#864 | LOW | Python relative `$file` can be dash-named; Rust absolute OK; MCP default-OFF | WEAKENED (sev↓) | LOW / Ready optional |
@@ -1406,8 +1409,8 @@ row reading `READY` invites a session to start it and discover the blocker after
 |---|---|---|
 | **MCP-SURFACE** (Task 4) | depends on **Task 2C** | Task 4 is titled "bump contract 1.8.0 -> 1.9.0" but the live value is **1.7.0** (`mcp_server.py:138`, `_TG_MCP_SERVER_CONTRACT_VERSION`). Task 2C performs 1.7.0 -> 1.8.0. Building Task 4 first would bump from a version that does not exist. |
 | **Task 2C** (and 2B) | needs CI or a cloud seat | modifies `rust_core/src/main.rs`; verifying it requires `cargo`, which AGENTS.md forbids on this shared dev box. Also needs a real WSL host for the `/mnt/c/...` path-domain arms. |
-| **#89 / #90** | same as 2B/2C | the reproduced path-domain defect is owned by that typed-path program. |
-| **Task 3** (#859) | PARTIALLY DONE | the CLASS census gap is closed (PR #937, census 3 -> 41 modules). The plan's Task 3 also lists `src/tensor_grep/cli/main.py` as modified -- i.e. fixing the pinned VIOLATING sites. That half is open and is H2 above. |
+| **#89 / #90** | **CONTRADICTS the "Active / buildable" section — unresolved as of 2026-08-05** | this row files them as blocked "same as 2B/2C" (needs `cargo`/a real WSL host), while the Active/buildable rows call #89 "now `READY`, **not** environment-blocked". Both cannot be true. The distinction that likely reconciles them: REPRODUCING the defect needs a WSL host, but the FIX may be pure-Python path-domain handling on the Python side of the boundary — which would be buildable here. A build task dispatched 2026-08-05 carries a premise check as step 0 and is instructed to stop and report if the fix genuinely requires the Rust half. Its answer settles this row; do not act on either reading until then. |
+| **Task 3** (#859) | ~~PARTIALLY DONE~~ **DONE 2026-08-05** | the CLASS census gap closed in PR #937 (3 -> 41 modules); the VIOLATING-sites half this row called open closed too -- #945 classified all 16 identities, #946 closed the download TOCTOU, #947 retired the last deferral. H2 is closed. |
 
 **CORRECTED 2026-08-05 (same day).** The paragraph this replaces called F5 and F8 "unblocked and
 genuinely start-now". That was wrong, and reading the plan's own file lists is what showed it:
