@@ -1023,6 +1023,11 @@ suite for assertions about the shape you are changing — **the file you are edi
 boundary of the blast radius.** #836 did correctly update the identical assertion in
 `test_leading_truncation_banner.py`, and missed its twin in a file that PR never opened.
 
+The 2026-08-04 session added the TIME variant: the colliding slice can LAND AFTER your union run
+(a release publishing mid-review put a still-green #928 out of tolerance at merge), so a union is
+only current as of its own timestamp -- see "Seven Instruments, One Empty Queue, And A Release That
+Reddened Every Open PR" below for the merge-time gate.
+
 ### Form 1, applied to GUARDS: run every new ratchet against the PRE-FIX revision
 
 Not an eleventh form — Form 1 (*what would this check show if the thing were BROKEN?*) pointed at the
@@ -2981,6 +2986,57 @@ a completion.** Land it in the same turn you consume its findings, or it is invi
 Corollary, from the same session: **reconcile the board at completion, not "next cycle."** A board
 goes stale in the gap between finishing work and recording it; 17 stale entries accumulated exactly
 one deferral at a time, and one of them cost a dispatched agent (#58, already finished).
+
+## Seven Instruments, One Empty Queue, And A Release That Reddened Every Open PR (2026-08-04)
+
+The language-promotion campaign (Java/C#/PHP/C/C++ waves, #927-#935) plus the v1.103.0 release
+window. Cost: main red twice, three false "ships broken" verdicts against a correct published wheel,
+a false live-CWE-88 report against a guarded file, and one committed module using constants it did
+not define. As always, most rows are the instrument, not the subject.
+
+| instrument | the believable answer | the truth, and what caught it |
+|---|---|---|
+| `_releases_behind` in `tests/unit/test_task_board_freshness.py` | "the stamp exhausted its tolerance" | the helper returned the SENTINEL (`_MAX_RELEASES_BEHIND + 1`) on ANY major.minor mismatch, so v1.103.0 -- a MINOR bump -- made a stamp ONE release behind red main. NO tolerance value could fix it: the sentinel is tolerance+1 by construction and the assert is `<= tolerance`. Fixed by ordinal distance in CHANGELOG.md, which semantic-release rewrites in the SAME commit as the version stamp (#933; the test's own docstring carries the receipt) |
+| grep for `"--"` argv sentinels in `apply_policy.py` | zero hits -> "live CWE-88 vector" | the guard exists in a shape the grep never named: `_policy_file_arg` returns `f"./{relative}"` for dash-led names, which neutralizes flag injection without any `--`. Re-derive: `grep -n 'f"./' src/tensor_grep/cli/apply_policy.py`. Symmetrically, a HIT can be the fix's leftover NAME: `codemap.py`'s `_atomic_write_text` survives as a thin wrapper DELEGATING to `atomic_write_bytes` |
+| a settle probe: `all(bucket != "pending")` over a PR's check-runs | "every lane ran; none pending" | jobs gated `needs: smoke` (`grep -c 'needs: smoke' .github/workflows/ci.yml` -> 12, plus `release` naming smoke in its needs list) have NO check-run at all until smoke finishes -- ABSENT, not pending. The assertion was VACUOUSLY TRUE over the 11-check pre-smoke view, which structurally cannot contain a test lane. Proof: 11 -> 39 check-runs the instant smoke ended |
+| per-PR CI, green at merge time | "safe to merge" | v1.103.0 published 21:06Z; #928 merged green 21:32Z and reddened main (run 30952799876) -- its checks ran against a base predating the release, so the identical commit was out of tolerance at merge. Form 10 with TIME as the second slice: union-testing cannot catch it, because the colliding slice did not exist when the union ran |
+| dogfood of the published wheel | "the feature ships broken", three separate times | (1) the bare wheel lacks the `ast` extra, so the grammar was absent; (2) the control script read an empty `LANGUAGE_REGISTRY` because registration happens on `repo_map` IMPORT, which the probe never performed; (3) the probe omitted the keyword-only `parser=` argument the product itself passes. Three clean, believable zeros, all in my probe |
+| a C++ "unseen base class" fixture | "defect: it confirmed a call it could not see" | the fixture declared `struct Base` IN THE SAME FILE -- the probe's INPUT carried the property under test, so the confirmation was correct. Re-run with a genuinely invisible base: zero confirmed, as designed |
+| `git merge-base --is-ancestor <branch> main` as a branch-status probe | "seven language branches still active" | a squash-merged branch is NEVER an ancestor of main, so is-ancestor reads every merged branch as live. All seven were merged. (A30 uses the same check safely -- as a PRUNING proof, where the false "active" is the conservative direction; as a STATUS oracle it is wrong on every squash-merge) |
+
+The rules, each priced by a row above:
+
+- **A sentinel is not a threshold, and the wrong diagnosis discredits the right fix.** "Tolerance
+  exhausted" licenses raising the tolerance -- which cannot work when the failing value IS
+  tolerance+1 -- and that fix's failure then argues against the correct ordinal-distance diagnosis.
+  Before tuning any knob, confirm the failing value is a MEASUREMENT and not a sentinel.
+- **Grep for the guard's PURPOSE, not one spelling of it.** A zero cannot separate ABSENT from
+  PRESENT-IN-ANOTHER-SHAPE; a hit can be the fix's own name or docstring (the 2026-08-02 grep-hit
+  law is this rule's mirror). Check behaviour; count AST nodes, never substrings.
+- **A merge/settle gate must require the heavy lanes to be PRESENT by name or count**, never
+  "nothing pending" -- a `needs:`-gated job is invisible, not pending, before its gate completes.
+- **After any release lands, every open PR's green is STALE.** Before merging, check whether a
+  release published since the PR's last CI run (CHANGELOG.md head vs the run's timestamp); if so,
+  re-run or rebase first. Per-PR CI cannot see this by construction. And read the FAILURE COUNT,
+  not the red-row count: #930's "7 failing lanes" were ONE gate (6331 passed, 1 failed).
+- **Dogfood through the adapter the product uses, and assert the optional deps are present FIRST.**
+  Install the same extras, import the module that performs registration, call the exact signature
+  the product calls -- or the zero you measure is your environment.
+- **Premise-check the queue: SIX of six ready-to-build items were already shipped** (#58, #858,
+  #859, #862, #864, #865; recorded in docs/BACKLOG.md, PR #935). A plan written against a fixed
+  defect has perfectly resolving citations, so anchor-checking cannot catch it -- only reproducing
+  the defect can. The 2026-07-27 "Check Whether It Already Shipped" law, now measured at a 100%
+  rate on one queue.
+- **A branch's status oracle is its PR state** (`gh pr list --head <branch> --state all`), never
+  `--is-ancestor` or `--merged`. And skip any worktree with uncommitted files even when its PR is
+  merged -- another agent's WIP can live there.
+- **Never edit a worktree a live agent owns, and never `git add -A` in a shared tree.** A
+  "completed" notification is not proof the agent stopped writing -- probe file mtimes first.
+  Committing a concurrently-rewritten file produced a module using constants it did not define.
+- **Correct the ARTIFACT chain, and never rewrite a dated receipt.** A wrong claim, once falsified,
+  gets fixed in the doc, the PR title AND body, and the memory file -- a wrong record re-teaches
+  the wrong lesson. A dated receipt's quoted output is never edited in place: append a SUPERSEDED
+  entry (the live chain: `tensor-grep-enterprise-agent`'s language-coverage row).
 
 ## Bottom Line
 

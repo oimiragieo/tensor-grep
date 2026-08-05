@@ -603,6 +603,25 @@ So: **~23-44 min before the version-bump commit is even on `main`**, and **~40-6
 
 ---
 
+### Two merge-gate blind spots (2026-08-04)
+
+- **A release landing mid-review invalidates every open PR's green, and per-PR CI cannot see it by
+  construction.** A PR's checks run against a base predating the release; the release ships; the
+  identical commit is out of tolerance at merge. Receipt: v1.103.0 published 21:06Z, #928 merged
+  green 21:32Z and reddened main (run 30952799876). This is the Form 10 semantic-merge law with TIME
+  rather than content as the second slice, so rebase-and-run-the-union does not cover it -- the
+  colliding slice did not exist when the union ran. **Gate: before clicking merge, check whether a
+  release published since the PR's last CI run** (compare the CHANGELOG.md head / latest
+  `chore(release)` commit timestamp against the PR run's timestamp; if a release landed, re-run the
+  PR's CI or rebase first). And read the FAILURE COUNT, not the red-row count: #930 showed "7
+  failing lanes" that were ONE gate (6331 passed, 1 failed).
+- **A `needs:`-gated job is ABSENT, not pending, until its gate finishes.** Twelve jobs carry
+  `needs: smoke` (re-derive: `grep -c 'needs: smoke' .github/workflows/ci.yml`) plus `release`
+  naming smoke in its needs list, so pre-smoke a PR exposes only the ungated check-runs and a settle
+  probe of `all(bucket != "pending")` is VACUOUSLY TRUE over a view that structurally cannot contain
+  a test lane (observed: 11 -> 39 check-runs the instant smoke ended). **A merge or settle gate must
+  assert the heavy lanes are PRESENT by name or count**, never "nothing is pending".
+
 ## Part 8 — PR title drives release intent
 
 CI infers the semantic-release bump from the **PR title** (which becomes the squash-merge commit subject). Use conventional titles (`CONTRIBUTING.md:46-51`, `AGENTS.md:880-889`):
