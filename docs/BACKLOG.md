@@ -74,6 +74,28 @@ Job heartbeat; unproven Job cleanup; weak SDDL; invalid CNG export; TxR close ow
 self-attest; `-f`/`--file` unbounded pre-ledger read). Not merge-ready. These are plan-gate /
 RED-scaffold findings, not separate shipped features or extra canonical top-level rows.
 
+### RECONCILED 2026-08-05 -- what actually shipped, per row
+
+The list below this block still reads `READY` for rows that shipped today. Reconciling AT
+completion, per the standing rule, rather than letting a stale READY invite a session to rebuild
+finished work -- which is exactly how six queued items were found already-shipped this morning.
+
+| row | true state | receipt |
+|---|---|---|
+| **#859** class-level atomic-writer census | **SHIPPED** | #937 widened the census 3 -> 41 modules; #945 classified all 16 violating identities; #946 closed the download TOCTOU; #947 retired the residual. Violating 16 -> 1, and that one is retired with a reopen condition. |
+| **F7** language registry (Task 10) | **SHIPPED** | five waves: #927 Java, #928 C#, #930 PHP, #932 C, #934 C++. `_symbol_navigation_descriptor()` now reports 10 parser-backed / 0 foundational. Verified on the published wheels. |
+| **F7** cross-file resolution (Task 11) | **OPEN, justified** | measured on a real 269-file C++ repo: cross-file call sites outnumber in-file ~1.7:1 and 46% of defined symbols have a caller in another file. Tighten ground truth (parse, do not regex) and repeat on Java/C# before sizing. |
+| **REF-CALL-REGISTRY** (Task 9) | **SHIPPED** | the dispatch ladders were removed as a side effect of the F7 campaign; `_references_and_calls_for_path` is four statements with zero language branching. Its missing Step 2 guard shipped in #940. NOTE: this row's description mislabels Task 9 as "prepare-service extraction" -- that is Task 6 Step 0. |
+| **CPU-BACKEND** (Task 5) | **SHIPPED** | #925 (Rust `replace_in_place` discarded directory-mode failures and reported success) plus the CPU-backend TypeError retry that silently dropped `invert_match` and inverted results. |
+| **F6** edit-verification (Tasks 6-7) | **Step 0 SHIPPED, rest multi-week** | #939 extracted `prepare_service.py` byte-identical. The remainder is ~10 versioned schemas, WSL path-domain extension, evidence signing and a 5 MiB bounded reader. |
+| **F5** edit-ready (Task 8) | **Step 2 SHIPPED, rest BLOCKED** | #943 added `PrepareSnapshotV1` + `build_prepare_snapshot`. Steps 3-5 modify `rust_core/**` and `tests/e2e/**` -- cargo and the e2e routing suite are forbidden on this shared box, so they need CI or a cloud seat. |
+| **F8** workspace (Tasks 12-13) | **BLOCKED** | modifies `rust_core/src/main.rs`, `path_domain.rs` and `tests/e2e/test_routing_parity.py`. Same constraint. |
+| **MCP-SURFACE** (Task 4) | **BLOCKED on Task 2C** | Task 4 is titled "bump contract 1.8.0 -> 1.9.0"; the live value is **1.7.0** (`mcp_server.py`, `_TG_MCP_SERVER_CONTRACT_VERSION`). Task 2C performs 1.7.0 -> 1.8.0. Building Task 4 first bumps from a version that does not exist. |
+| **#89 / #90** WSL path-domain | **BLOCKED** | owned by the Task 2B/2C typed-path program, which modifies `rust_core` and needs a real WSL host. |
+
+**Start-now set after this reconcile: EMPTY.** Everything remaining needs CI/cloud, a CEO gate, or
+demand evidence. That is a measured state, not a stall.
+
 ### Active / buildable
 
 - **#89** — reproduced WSL-to-Windows path-domain defect; now `READY`, not environment-blocked. The
