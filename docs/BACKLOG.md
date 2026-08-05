@@ -601,6 +601,34 @@ wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while 
 
 ---
 
+## ⭐ EXTERNAL DOGFOOD — v1.108.2 on gotcontext-saddle (2026-08-05)
+
+Second external run on the same host, seven releases on from the 2026-08-02 one below. **Verdict:
+CUJ stable across a big version jump (1.101.31 -> 1.108.2); the core agent contract is unchanged.**
+Artifact: `/tmp/tg-dogfood-11082.json` on that host. Skills stamped 1.108.2.
+
+Confirmed working: symbol ladder / blast (1.0 + mermaid) / imports / importers; orient / map / docs;
+`agent` scoped + lexical + root `--deadline 90` (conf 0.9, root ~58s non-partial); truncation
+hard-stop (conf 0.72 + `ask.required` + exit 2); `prepare --out/--claim` (~10s); `route-test`
+agreement details; ledger Slice 1 + Slice 2; `evidence emit/verify` (`checks.digest_valid`); bare
+`--json` search re-verifying `path_was_defaulted` + `scope_note`; GPU honesty; doctor autostart.
+
+### Triage — what is NEW versus already-decided
+
+| reported | disposition | receipt |
+|---|---|---|
+| **Parent-refuse class is generic `scan_limit`** — wants `workspace_root_refused` so agents do not confuse a refusal with file-cap truncation | **NEW, REAL, AI-doable** | four classes exist today (`deadline`, `scan_limit`, `timeout`, `unreadable_path`); a refusal to scan a workspace root and a cap-truncated scan are genuinely different consumer outcomes and currently share one class. The code already carries a comment requiring an `incomplete_reason_class` mapping decision before a new cause ships. Task created. |
+| **Caller-graph parity for Java/C#/C/C++/PHP** | **ALREADY IN FLIGHT** — independent confirmation of F7 Task 11 | Java shipped as **PR #950** (merged 2026-08-05). C# and PHP building; C/C++ queued. Sized by the parsed C# re-measure in PR #951. |
+| **Ship or forever-drop MaxSim** | **DROP is the measured answer; needs an explicit retirement receipt** | the MaxSim late-rerank bet was measured a DECISIVE NEGATIVE and is banked as such. F10 is `DEMAND_GATED` pending exactly this: a caller/installability census, then retire if unreachable. The reporter observing "no install path" from outside is evidence for retiring rather than shipping. Task created. |
+| Bare search exits 1, not 2 | **BY DESIGN — already retired as #22** | contract: exit 0 = complete with matches, exit 1 = complete with NO match, exit 2 = incomplete. The request (exit 2 + `missing_explicit_path`) is a CONTRACT CHANGE, not a bug fix — it would make "searched correctly, found nothing" indistinguishable from "could not search". Reopening needs an argument against that collapse. |
+| Anonymous `--claim` still allowed (hint only) | **BY DESIGN — already retired as F2** | legacy anonymous-agent compatibility deliberately retains the sentinel; reopen only with a caller-supplied stable identity contract and migration plan. |
+| GPU non-accelerative; `calibrate` exit 2 | **CEO-GATED (#169)** | the only mandatory financial stop; physical GPU proof environment or spend. |
+| No fail-closed `edit-ready` / `verify-edit` / `workspace` | **BLOCKED, not missed** | F5 Steps 3-5 and F8 Tasks 12-13 modify `rust_core/**` and `tests/e2e/**`; cargo and the e2e routing suite are forbidden on this shared box. Needs CI or a cloud seat. |
+
+**Two of seven "new features" were already built or already answered**, which is the value of running
+the triage rather than queueing the report verbatim: caller-graph parity is mid-campaign, and MaxSim
+has a measured negative sitting behind it. Queueing all seven would have re-litigated settled work.
+
 ## ⭐ EXTERNAL DOGFOOD — v1.101.31 on gotcontext-saddle (2026-08-02)
 
 A real user ran the published wheel against a live repo. **Verdict: works.** Symbol ladder, blast
