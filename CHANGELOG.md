@@ -1,6 +1,557 @@
 # CHANGELOG
 
 
+## v1.107.1 (2026-08-05)
+
+### Bug Fixes
+
+- Clear a symlinked/junctioned staging path before staging a downloaded Node runtime (H1)
+  ([#942](https://github.com/oimiragieo/tensor-grep/pull/942),
+  [`5b1f4f3`](https://github.com/oimiragieo/tensor-grep/commit/5b1f4f38dac7be707f115597f6f533cc71c5c800))
+
+* fix: clear a SYMLINKED staging path before staging a downloaded Node runtime (H1)
+
+_ensure_node_runtime stages a downloaded Node runtime at a predictable sibling path and clears any
+  leftover first:
+
+if stale.exists(): shutil.rmtree(stale, ignore_errors=True)
+
+shutil.rmtree REFUSES a symlink, and ignore_errors=True silences the refusal. So that guard was a
+  no-op against exactly the input it most needed to clear, and the following
+  `shutil.move(extracted_dir, staged_dir)` resolves the surviving link and deposits the downloaded
+  runtime INSIDE the link target.
+
+MEASURED, not theorised, before writing the fix: rmtree left the link in place, and the move landed
+  the payload in the attacker-controlled target directory beside an untouched canary file.
+
+Second defect in the same line: `exists()` FOLLOWS symlinks and returns False for a DANGLING one, so
+  the old guard skipped a broken link entirely -- while shutil.move would still resolve it. A fix
+  that merely swapped rmtree for `if exists(): unlink()` would still get that case wrong.
+
+_remove_stale_staging_path now tests is_symlink() FIRST and unlinks unconditionally, falls back to
+  rmtree for a real directory, and unlinks a plain file squatting on the staging name (which would
+  break the later rename).
+
+DISCRIMINATION PROOF -- the tests were run against the PRE-FIX semantics, injected and hash-verified
+  rather than assumed:
+
+pre-fix f68e9a7f1bf5e1ec -> daff14b6615821a6 3 failed, 2 passed fixed restored to f68e9a7f1bf5e1ec 5
+  passed
+
+The three that fail pre-fix are the vector tests; the two that pass in BOTH arms are deliberate
+  controls (ordinary stale directory, missing path) proving the fix does not trade one break for
+  another.
+
+This is H1 from docs/BACKLOG.md, surfaced by #937's census widening and recorded there as
+  pinned-but-unfixed. The ratchet described it as "shutil.move can follow a destination symlink";
+  the sharper mechanism is that the CLEANUP silently fails on symlinks, which is what makes the move
+  reachable at all.
+
+Security-adjacent surface -> adversarial review requested before merge. Gates, exit codes read
+  individually: ruff 0, ruff format --preview 0, mypy 0 (90 files), pytest 0 (43 passed incl. the
+  atomic-writer ratchet).
+
+* fix: close the Windows JUNCTION gap the adversarial review found (H1, round 2)
+
+An opus review attacked the first cut and found it incomplete on the platform that matters most.
+  Verified independently before acting on it:
+
+Path.is_symlink() -> False for a Windows directory junction Path.is_dir() -> True shutil.rmtree ->
+  refuses junctions exactly as it refuses symlinks
+
+So an is_symlink()-first fix left a junction in place, and the following shutil.move deposited the
+  payload in the junction target -- the exact escape this PR exists to close, unmodified. Measured:
+  target listed ['canary.txt', 'extracted'] after the move.
+
+This is the MORE reachable case, not the exotic one. Creating a symlink on Windows needs
+  SeCreateSymbolicLinkPrivilege; creating a junction needs nothing. On the one platform where the
+  attacker is plausibly unprivileged, the first cut did not fire at all.
+
+_remove_stale_staging_path now UNLINKS FIRST and falls back to rmtree. unlink() succeeds on a
+  symlink, a junction, and a plain file, and removes the LINK rather than recursing into its target
+  (verified: target survived intact); a real directory raises, which is the fallback signal. The
+  ordering is documented in the code because it looks arbitrary and is not -- is_dir() FOLLOWS
+  links, so testing it first reintroduces the original bug.
+
+Two same-shape sites the review found in the same function, both now routed through the helper: the
+  rollback rmtree and the backup cleanup. Left as they were, a runtime_dir that was itself a symlink
+  would be renamed to backup_dir by os.replace and then silently fail to clean up, accumulating
+  stale links.
+
+Test 2's assertions were REORDERED. It previously led with "payload landed at staging", so in the
+  red arm it failed there and the assertions naming the actual security consequence never executed.
+  It discriminated -- but not on the claim it is named for.
+
+Added junction coverage, which is what let the incomplete fix ship unnoticed. Red arm against the
+  previous cut: 2 failed (both junction tests), 5 passed. Hardened: 7 passed. Note the repo's
+  addopts carries -x, so proving this needs --maxfail=99 or the second failure stays hidden.
+
+Gates, exit codes read individually: ruff 0, format 0, mypy 0, pytest 0.
+
+### Documentation
+
+- Correct the F5/F8 dependency claim I merged in #938
+  ([#941](https://github.com/oimiragieo/tensor-grep/pull/941),
+  [`a26784b`](https://github.com/oimiragieo/tensor-grep/commit/a26784b9bff339d99dfa7f3c6a93d2a5e4fd2e33))
+
+The dependency map merged hours ago called F5 and F8 "unblocked and genuinely start-now". Wrong.
+  Reading the plan's own file lists shows:
+
+F5 (Task 8) and F8 (Task 12) both list prepare_service.py as MODIFIED. That module did not exist
+  until PR #939 created it (Task 6 Step 0), and the plan says Task 8 "must modify, not create, it".
+  Both gate on #939 merging.
+
+F8 (Task 12) also modifies rust_core/src/main.rs and path_domain.rs and touches
+  tests/e2e/test_routing_parity.py -- cargo and the e2e routing suite are both forbidden on this
+  shared box, so it needs CI or a cloud seat.
+
+REF-CALL-REGISTRY (Task 9) is DONE in substance -- the F7 campaign removed the dispatch ladders as a
+  side effect; only its Step 2 guard was missing, added in PR #940. The canonical row also MISLABELS
+  Task 9 as "prepare-service extraction"; the plan's Task 9 is the reference/caller dispatch
+  registry, and the extraction is Task 6 Step 0.
+
+The true start-now set is currently EMPTY. Recorded so the next session does not start F5, write
+  code against a module not yet on main, and discover the ordering afterwards -- which is the same
+  failure the dependency map was written to prevent, one level deeper.
+
+Two process notes from making this edit: the first attempt died on a paragraph-break search for
+  "\n\n" in a CRLF file, and the gate I ran immediately after passed 118 tests against an UNCHANGED
+  file -- a green that described the wrong state. The rewrite asserts the content hash changed
+  before believing any gate.
+
+Gates (run after the edit landed): 118 passed, exit 0.
+
+- Premise-check the ready-to-build queue -- all 6 were already shipped
+  ([#935](https://github.com/oimiragieo/tensor-grep/pull/935),
+  [`0e50013`](https://github.com/oimiragieo/tensor-grep/commit/0e500139d7f5990371aef5f3cac50870cad49367))
+
+* docs: premise-check the ready-to-build queue -- 4 of 5 were already shipped
+
+Ran verify-plan-against-code Step 0 against origin/main before doing any of the work. Same pattern
+  this board has hit before (one pass found 9 of 24 already done): a plan written against a fixed
+  defect has perfectly resolving citations, so anchor-checking cannot catch it. Only reproducing the
+  defect can.
+
+CLOSED as already shipped, each with the measurement that refuted it:
+
+#58 route-test "hidden" -> registered at main.py:10597, present in the live public command list,
+  absent from the hidden set #865 --ltl "zero matches in -> present at rust_core/src/main.rs:322
+  with rust_core" an explaining comment at :319 AND a parity test at :4484. The stated evidence was
+  false: 6 matches, not zero #858 codemap hand-rolls a -> the name survives at codemap.py:799 but
+  writer its AST-walked body is 4 statements calling only atomic_write_bytes/encode/ mkdir, with
+  ZERO residual write primitives. All 3 call sites route through it #859 no AST ratchet ->
+  test_cli_atomic_writer_ratchet.py exists with 36 tests
+
+#858 is the interesting one: a substring grep for `_atomic_write_text` finds the name and reads as
+  "still hand-rolled". Counting AST call nodes inside the function body shows it is a thin
+  delegating wrapper. Grep found the fix's own leftover name, not a defect.
+
+#864 CONFIRMED REAL and left open: apply_policy.py builds subprocess argv with zero "--" sentinels;
+  $file is substituted into the command STRING at :563 before argv splitting, and _policy_quote_arg
+  at :371 neutralises shell metacharacters but NOT a leading "-", which survives quoting as a token
+  the invoked tool parses as an option.
+
+Sharpened while checking: the item proposes inserting "--" before $file, but the command is a
+  USER-AUTHORED template with no general way to locate the positional boundary. The item's own
+  parenthetical names the better fix -- "Rust already absolute". An absolute path cannot begin with
+  "-", removing the vector without editing an arbitrary template. Recorded so the next session does
+  not build the harder, weaker fix.
+
+Gates: 129 passed across backlog-tracker truth, board freshness, public-docs governance, and docs
+  coverage.
+
+* docs: correct #864 -- it is already fixed, and my check looked for the wrong shape
+
+Self-correction to the commit before this one. The sweep is 5 of 5 already shipped, not 4 of 5.
+
+I reported #864 (CWE-88 flag injection via $file) as CONFIRMED REAL on the evidence that
+  apply_policy.py contains ZERO "--" sentinels. That is true and it is not the question. The guard
+  exists as a DIFFERENT mechanism:
+
+_policy_file_arg (apply_policy.py:506) return f"./{relative}" if relative.startswith("-") else
+  relative
+
+A "./" prefix makes the token unambiguously a path for every argv reader on both platforms.
+  Measured, bidirectionally, before writing this:
+
+"-cevil.ini" -> "./-cevil.ini" leading dash neutralised "normal.py" -> "normal.py" control
+  unchanged, guard does not over-fire
+
+The comment at :497-505 also states that the "--" omission in _run_policy_command is DELIBERATE: it
+  concerns OPERATOR-authored tokens, which that function never touches. So the absence I measured
+  was the documented design, not a gap.
+
+THE CORRECTION IS THE FINDING. My check searched for ONE implementation of a fix, found none, and
+  reported the vector open -- the same defect as the backlog item I was auditing. A guard can be
+  absent, or present in a shape you did not think to grep for, and a zero cannot tell those apart.
+  This is the third time today a substring-shaped check produced a confident wrong answer (the
+  others: grep matching a test NAME rather than an import, and grep matching a fix's own leftover
+  wrapper name in codemap.py).
+
+Not one of the five items fell to reading the item and grepping for its stated symptom. Every
+  refutation required executing or AST-walking the real code.
+
+Gates: 118 passed across backlog-tracker truth, public-docs governance, and docs coverage.
+
+* docs: add #862 to the sweep -- 6 of 6 queued items were already shipped
+
+#862 asked for a `--` sentinel before the agent_capsule GPU evidence_path positional. It is already
+  there, and stronger than the item describes:
+
+evidence_command.append("--") evidence_command.append(evidence_path)
+
+AST-verified in that order inside _agent_gpu_evidence, with a second sentinel at
+  agent_capsule.py:1651. The comment beside it records that the CONDITIONAL form -- emit `--` only
+  when the path starts with `-` -- was considered and REJECTED because it "leaves the silent case
+  exposed": the evidence probe would query a scope nobody chose and still report ok.
+
+That is a better guard than the backlog item asked for, and the second CWE-88 entry in this sweep
+  (with #864) where the fix was present in a shape the item did not anticipate.
+
+Every queued item checked is now closed. Not one was refuted by reading the item and grepping its
+  stated symptom; every refutation required executing or AST-walking the real code.
+
+Gates: 129 passed across backlog-tracker truth, public-docs governance, docs coverage, and board
+  freshness.
+
+* docs: reconcile the board at completion -- F7 campaign done, tier is 10/0
+
+STEP 4's "reconcile AT completion, never next cycle". The board still said waves 10D/10E were "not
+  yet opened"; both have since merged.
+
+The symbol-graph caller tier went 5/5 -> 10/0 in five waves in one session: #927 Java, #928 C#, #930
+  PHP, #932 C, #934 C++. Measured from the product on main, not asserted:
+
+parser-backed (10): c, cpp, csharp, go, java, javascript, php, python, rust, typescript foundational
+  (0): EMPTY without a caller graph: NONE
+
+Stamp moved v1.103.0 -> v1.106.0 (behind: 0). Verified on the PUBLISHED v1.106.0 wheel from
+  site-packages, not from src/, with the grammar present asserted first so an empty result could not
+  be misread as a clean pass:
+
+real_handler(5) genuine in-file function -> 0.9 confirmed handler(5) function-POINTER call (#736) ->
+  0.6, zero confirmed ADD_MACRO(1,2) macro, identical call_expression -> 0.6, zero confirmed
+
+That last pair is the point: a macro and a function-pointer call parse identically to a real call,
+  and neither is falsely confirmed on the shipped artifact.
+
+Gates: 129 passed across board freshness, backlog-tracker truth, public-docs governance, docs
+  coverage.
+
+- Record the two findings #937 surfaced but did not fix
+  ([#938](https://github.com/oimiragieo/tensor-grep/pull/938),
+  [`fec3ba6`](https://github.com/oimiragieo/tensor-grep/commit/fec3ba6930677a323415d7e0336c6bd87239ca3e))
+
+* docs: record the two findings #937 surfaced but did not fix
+
+STEP 4's "record every new bug, finding, or deferred item with a receipt". Both were found BY the
+  atomic-writer census widening and neither was in its scope, so neither is fixed.
+
+H1 MEDIUM shutil.move at lsp_provider_setup.py:356 is an unsanctioned publish site. Unlike
+  os.replace it CAN follow a destination symlink. Now censused and PINNED as violating --
+  deliberately not swept, because the surrounding :361/:371 pair is a legitimate move-aside/rollback
+  dance and a blanket rewrite would break the rollback.
+
+H2 LOW the 16 pinned VIOLATING identities as a set. Widening the census 3 -> 41 modules took
+  violating identities 4 -> 16. Whether they warrant a fix wave is a SCOPE DECISION, not a defect --
+  main.py's original 4 were pinned rather than fixed on the same reasoning, and each needs
+  individual classification. session_daemon.py:: _write_daemon_metadata_windows, for instance, is a
+  well-motivated hand-rolled re-derivation for Windows ACL reasons, violating only because a
+  re-derivation is not the canonical helper.
+
+Also recorded (fixed by #937, kept because the shape recurs): _annotation_is_path() was defined and
+  documented but never wired into scan_function. A probe of exactly the shape it describes scanned
+  to ZERO candidates. A documented-but-unreachable helper is a check that cannot fail -- sitting
+  inside the suite whose purpose is catching checks that cannot fail.
+
+Gates: 129 passed across backlog-tracker truth, public-docs governance, docs coverage, board
+  freshness.
+
+* docs: map what "Active / buildable" actually means -- two rows are blocked
+
+I reported the buildable bucket to the CEO larger than it is. Premise-checking the ten READY rows:
+
+MCP-SURFACE (Task 4) blocked on Task 2C. Task 4 is titled "bump contract 1.8.0 -> 1.9.0"; the live
+  value is 1.7.0 (mcp_server.py:138). Task 2C does 1.7.0 -> 1.8.0. Building Task 4 first bumps from
+  a version that does not exist. Task 2C (and 2B) modifies rust_core/src/main.rs -- verifying needs
+  cargo, which AGENTS.md forbids on this shared dev box. Route to CI or a cloud seat. Also needs a
+  real WSL host for the /mnt/c/... arms. #89 / #90 same owner as 2B/2C. Task 3 (#859) PARTIALLY
+  done: the class census gap closed in #937, but the plan also lists main.py -- fixing the pinned
+  VIOLATING sites, which is H2 and still open.
+
+Genuinely start-now and pure-Python: F5, F6, REF-CALL-REGISTRY, F7 Task 11, F8. F7 Task 11 should
+  not start before its demand question is answered -- measure how often blast_radius_floor falls
+  short on a real multi-file repo BEFORE designing a resolver.
+
+Recorded because a row reading READY invites a session to start it and discover the blocker after
+  writing code.
+
+Gates: 129 passed across backlog-tracker truth, public-docs governance, docs coverage.
+
+* docs: answer the F7 Task 11 research question by measuring, not estimating
+
+The open question was whether cross-file caller resolution earns its cost. The stated cheapest
+  decisive test was to measure how often the blast floor falls short on a REAL multi-file repo
+  BEFORE designing a resolver. Ran it.
+
+Corpus: omega-fusion/source/lucebox-hub-main/server -- 269 real C++/header files. Not a fixture and
+  not synthetic; a synthetic corpus manufactures whatever ratio its generator encodes.
+
+function-like definitions 1114 symbols with >=1 CROSS-FILE call site 511 / 1114 (46%) call sites
+  in-file 2731 call sites cross-file 4664 share an in-file-only extractor misses 63.1%
+
+WHAT THE NUMBER IS NOT: ground truth is a regex, so it also matches prototypes, declarations,
+  comments, strings, and same-named methods on unrelated classes. 63.1% is an UPPER BOUND with known
+  inflation, from one corpus in one language. Not a product claim.
+
+WHAT IT ESTABLISHES: the direction is not close. Cross-file call sites outnumber in-file ones ~1.7:1
+  and nearly half of defined symbols have a caller in another file. Even halved for inflation, an
+  in-file-only caller graph is structurally incomplete on real C++ rather than merely imprecise --
+  which is what blast_radius_floor consumers key on.
+
+Disposition: F7 Task 11 JUSTIFIED. Before building, tighten ground truth (parse call sites rather
+  than regex them) and repeat on one Java and one C# corpus -- a single-language single-corpus
+  measurement is a direction, not a size.
+
+- Retain the ten instrument laws the 2026-08-04/05 session paid for
+  ([#936](https://github.com/oimiragieo/tensor-grep/pull/936),
+  [`5eed392`](https://github.com/oimiragieo/tensor-grep/commit/5eed392697e75e2b78c3bc4fd358816132c6bf3e))
+
+Every failure that session was in an INSTRUMENT, not the product -- and three of them reported false
+  REDS rather than false greens, which is the inverse of what this repo has trained everyone to
+  watch for.
+
+AGENTS.md gains one dated section in the established shape (thesis, receipts table, rules),
+  covering:
+
+- a SENTINEL is not a THRESHOLD: _releases_behind returned tolerance+1 on any minor mismatch, so a
+  stamp ONE release behind reddened main and NO tolerance value could have fixed it - a guard can be
+  PRESENT IN A SHAPE YOU DID NOT GREP FOR: counting "--" sentinels found zero and reported a live
+  CWE-88 vector in code guarded by a "./" prefix - a `needs:`-gated CI job is ABSENT, not pending --
+  "all non-pending" was vacuously true over an 11-check view with zero test lanes (proof: 11 -> 39
+  the instant smoke ended) - a RELEASE landing mid-review reds every open PR, and per-PR CI cannot
+  see it by construction - verify on the PUBLISHED artifact with optional deps asserted present
+  first: my wheel probe said "broken" three times before it was right - a probe's INPUT can carry
+  the property you are measuring - squash-merge breaks `--is-ancestor` as a merged-status oracle
+
+Form 10 gains a 4-line pointer to the TIME variant rather than a duplicate of it -- this repo has
+  shipped a corrected fact and its refuted twin 150 lines apart in one file.
+
+tensor-grep-change-control gains "Two merge-gate blind spots" covering the release-mid-review and
+  needs-gated-absence gates, with receipts.
+
+NO Form was added to the verification-oracle family: the release-mid-review law is Form 10 with time
+  rather than content as the second slice, not a new shape of non-verification. Both docs still
+  state ten and test_skill_library_drift.py agrees.
+
+Count corrected during review: I briefed "thirteen jobs need smoke". `grep -c 'needs: smoke'`
+  returns 12; the 13th is `release`, which names smoke inside a `needs: [...]` array (ci.yml:1083).
+  Total 13, written up as "12 + release's needs list" with the derive command so it cannot drift.
+
+Skipped as already documented rather than duplicated: push-race and release-class (Part 7/8 of
+  change-control), the grep-hit-is-the-fix's-own-docstring law (2026-08-02), and
+  check-whether-it-already-shipped (2026-07-27) -- each cross-referenced instead.
+
+Gates: 447 passed / 1 xfailed across the doc-governance sweep; skill drift and index sync 9 passed;
+  CRLF preserved in both files; zero non-ASCII in added lines.
+
+### Refactoring
+
+- Extract prepare_service.py from main.py, byte-identical (Task 6 Step 0)
+  ([#939](https://github.com/oimiragieo/tensor-grep/pull/939),
+  [`77d21f9`](https://github.com/oimiragieo/tensor-grep/commit/77d21f95cb97097c832223ee030e1fcdcf231118))
+
+* refactor: extract prepare_service.py from main.py, byte-identical (Task 6 Step 0)
+
+Plan Task 6 Step 0 -- the prerequisite Tasks 6-8 consume. Refactoring only; the plan states this
+  extraction cannot claim an edit-verification RED, and that a later task must MODIFY
+  prepare_service.py rather than create it.
+
+Moved _build_prepare_payload and _build_prepare_blast_radius_floor verbatim out of main.py into a
+  new src/tensor_grep/cli/prepare_service.py. The new module does NOT import main.py back --
+  verified by importing it standalone in a fresh interpreter and confirming tensor_grep.cli.main
+  never enters sys.modules.
+
+BYTE-IDENTICAL, verified two independent ways rather than one: - the implementing seat captured a
+  baseline BEFORE editing (stdout for --json and --text, --help, the --out capsule file, exit code,
+  stderr) and re-ran it after; - I re-ran `tg prepare` from a detached origin/main worktree and from
+  this tree on the same fixture: identical stdout sha256 (ee2d0543a944ed59...), exit 0, empty stderr
+  in both arms. Capturing the baseline before the edit is the load-bearing part -- re-pinning by
+  running the post-change code against itself proves nothing, which is the exact class of defect
+  this repo's laws call out.
+
+Also proved the extraction is not a no-op, by AST rather than grep (a grep hit can be a leftover
+  name in a docstring): post-change main.py has zero top-level FunctionDefs for either symbol,
+  prepare_service.py has exactly those two, and main.py references them only through the ImportFrom
+  plus one call site in prepare().
+
+The seat's first cut kept _build_prepare_blast_radius_floor imported into main.py behind `# noqa:
+  F401`, purely so an existing test could keep importing it from main. An AST sweep found exactly
+  ONE such importer. A noqa'd re-export is a lie-shaped construct -- it declares the import unused
+  AND asks you to keep it, so a future cleanup removing it breaks a test confusingly. Repointed the
+  test at the real home and dropped the re-export.
+
+Gates: 17 passed (the repointed test + the prepare one-shot CUJ), 260 passed across the
+  prepare/capsule selection, ruff, ruff format --preview, mypy (91 source files).
+
+* test: let the anonymous-claim guard follow the code it guards
+
+CI caught what my byte-identical proof could not. #939's extraction moved _build_prepare_payload --
+  which owns the anonymous-claim emission site -- out of main.py into prepare_service.py. `tg
+  prepare` stdout hashed IDENTICAL across both trees, and this test still failed:
+
+test_the_hint_says_what_is_LOST_not_just_what_to_set AssertionError: the anonymous-claim hint was
+  removed
+
+because it does `inspect.getsource(cli_main)` and asserts a SUBSTRING. A source-substring check pins
+  a string's LOCATION, not the product's behaviour, so a pure refactor breaks it while nothing
+  observable changed. Verified both directions: the test passes on origin/main and failed on the
+  branch.
+
+The guard now reads the UNION of main.py and prepare_service.py, so it follows the code instead of
+  pinning where it used to live. Its own docstring records why, with this incident as the receipt.
+
+DISCRIMINATION RE-PROVEN (exit codes read from pytest, not from a `tail` in a pipeline -- that
+  mistake reported a passing exit twice today):
+
+as shipped exit 0 4 passed hint renamed in prepare_service.py exit 1 1 failed (mutation
+  hash-verified b6da9181 -> ac38543c, then restored) restored exit 0 4 passed
+
+Worth naming: my byte-identical proof covered `tg prepare`'s OUTPUT and was sound for what it
+  measured. It could not cover a test that inspects module SOURCE. A proof of one surface is not a
+  proof of another, and the gap is invisible until something else asserts on the surface you did not
+  pin.
+
+Gates, exit codes read individually: ruff 0, ruff format --preview 0, mypy 0, pytest 0.
+
+### Testing
+
+- Discover the atomic-writer census population instead of hardcoding it (#859)
+  ([#937](https://github.com/oimiragieo/tensor-grep/pull/937),
+  [`040d5ca`](https://github.com/oimiragieo/tensor-grep/commit/040d5cadb8c8605a22beae6696fe3e412a8adc5d))
+
+The "class-level" ratchet was not class-level. It scoped its census to
+
+_SCANNED_PRODUCTION_FILES = ("main.py", "_index_lock.py", "codemap.py")
+
+3 of 41 src/tensor_grep/cli/*.py modules. _CLI_SRC was computed and never walked, so a new module
+  joined the package and was silently never scanned -- the repo's own "a list written at dispatch
+  time is stale by definition" law, living inside the guard that enforces it.
+
+Now walks _CLI_SRC, so a new cli module is covered by construction with no second edit. Census went
+  3 -> 41 modules; identities 4/11/4 -> 13 helper-backed / 21 sanctioned / 16 violating, 0
+  unresolved.
+
+RED ARM, behaviour-specific rather than an ImportError:
+
+AssertionError: checkpoint_store.py's undo_checkpoint write_bytes site is missing from the census --
+  the population walk is still scoped to a hardcoded file list. identities={...19 items, no
+  checkpoint_store...}
+
+PERTURBATION PROOF: injecting an unsanctioned publish into subprocess_policy.py failed 3 tests, each
+  naming ('subprocess_policy.py', '_mutation_probe_unsafe_publish', 'Path.write_text') exactly;
+  reverting restored green with the file byte-identical (sha256
+  61a8f1c8274b8f4dfab0cd4497a9e933594d0ddb623b98e0b13fa726fa540cb5 both arms).
+
+A FLOOR is asserted (>= 30 modules) so a truncated or empty walk can never read as "no violations"
+  -- scan-never-ran wearing a green badge.
+
+TWO FINDINGS THE WIDENING SURFACED, neither in the original scope:
+
+1. _annotation_is_path() was defined and documented ("a Path-annotated parameter") but NEVER WIRED
+  INTO scan_function. A synthetic probe -- `def publish(destination: Path, content):
+  destination.open("wb")` -- scanned to ZERO candidates despite being obviously write-shaped. Wiring
+  it in surfaced 3 previously-invisible sites in lsp_provider_setup.py, with the full population
+  diffed before/after to prove no regressions. A documented-but-unreachable helper is a check that
+  cannot fail.
+
+2. shutil.move at lsp_provider_setup.py:356 is a real unsanctioned site the brief never named:
+  unlike os.replace it can follow a destination symlink. Left PINNED as violating rather than swept
+  or sanctioned.
+
+Sites were classified individually, not swept. The os.replace pair at :361/:371 is a
+  move-aside/roll-back dance -- the atomic primitive doing its job; rewriting it would break the
+  rollback. The middle one at :363 publishes freshly-downloaded content and is sanctioned on the
+  narrower honest ground that a directory-tree swap has no equivalent in the byte-level helper
+  family, not on "it is all one dance" (my brief was wrong about that and the seat corrected it).
+  session_daemon.py::_write_daemon_metadata_windows is a well-motivated hand-rolled re-derivation of
+  the pattern for Windows ACL reasons -- classified VIOLATING per the file's own existing control,
+  because a re-derivation that is not the canonical helper is still not the helper.
+
+Test-only; no production source changed. This closes the CLASS census gap, not the 16 pinned
+  violating sites -- same disposition the original main.py violations already had.
+
+Gates: 38 passed here (was 36); 287 passed / 3 skipped across the
+  atomic/writer/ratchet/index_lock/codemap selection; ruff; ruff format --preview; mypy clean on src
+  (90 files) and on this test file.
+
+- Pin the reference/caller seam as registry-driven (Task 9 Step 2)
+  ([#940](https://github.com/oimiragieo/tensor-grep/pull/940),
+  [`3dbe85b`](https://github.com/oimiragieo/tensor-grep/commit/3dbe85b127003ee0464ac3cbe1ba6831bd49fdcc))
+
+* test: pin the reference/caller seam as registry-driven (Task 9 Step 2)
+
+Plan Task 9's refactor already happened -- but as a SIDE EFFECT of the F7 language campaign, and
+  nothing pinned it. _references_and_calls_for_path is now four statements with zero language
+  branching:
+
+spec = lang_registry.spec_for_path(path) if spec is not None and spec.references_and_calls is not
+  None: return spec.references_and_calls(path, symbol, repo_root, definition_dirs=definition_dirs)
+  return _regex_references_and_calls(path, symbol)
+
+A refactor with no guard is a state, not a contract: a future change could restore a ladder and
+  every existing test would stay green. Task 9 Step 2 asked for this test; it was never written.
+
+Three tests: a spy-backed synthetic language proving the REGISTERED extractor is invoked AND its
+  rows returned (asserting the sentinel row, not merely a call count -- a seam that called the
+  extractor then discarded its result would pass a count-only check); a control proving an
+  unregistered suffix still falls back without raising; and a structural AST guard.
+
+TWO SELF-INFLICTED FAILURES, both kept in the file as comments because they are the point:
+
+1. The first guard looked for registered language_id literals. Injecting a ladder did NOT fire it --
+  because the injected branch compared a SUFFIX (`path.suffix == ".py"`), not a language id. A guard
+  that enumerates one vocabulary misses every other spelling of the same defect. Rewritten to assert
+  STRUCTURE: zero ast.Compare nodes against any string constant. The legitimate registry lookup
+  compares only against None, which is untouched.
+
+2. The first mutation arm reported "3 passed" while the injection had never applied -- its anchor
+  did not match and it asserted before writing. A control that never crossed the threshold. Redone
+  with the hash change asserted BEFORE reading any verdict.
+
+MUTATION PROOF (injection confirmed by hash, not assumed): inject suffix ladder ef0e9ccd06d51234 ->
+  32a0bf2f299e6416 guard FIRES revert back to ef0e9ccd06d51234 3 passed
+
+The spy's signature spells every parameter rather than taking **kwargs: a kwargs-only spy silently
+  accepts a CHANGED contract and keeps passing after the adapter grows or drops an argument.
+  Discovered by running the test against the product, which is how I learned the real call shape.
+
+Test-only. Gates: 3 passed here, plus the registry and repo-map-graph suites; ruff; ruff format
+  --preview.
+
+* test: fix the registry leak and lint this test shipped red with
+
+Correcting my own previous commit on this branch, which I pushed while ruff reported 2 errors and
+  pytest reported 1 failed. My gate line was `ruff check ... && echo OK` -- the `&&` gated only the
+  echo, so the commit ran regardless. That is the "commit on red" receipt this repo already carries,
+  and I committed it anyway. Exit codes are now checked explicitly.
+
+THE REAL DEFECT: the fixture leaked. register_language writes BOTH LANGUAGE_REGISTRY and the derived
+  _SPEC_BY_SUFFIX; my teardown popped only the first, leaving `.tgsynthetic -> spec` behind. The
+  leak is invisible in this file -- it surfaced in test_lang_registry's suffix-union pin, a
+  DIFFERENT file, as a failure that looks unrelated to the change that caused it.
+
+Teardown now snapshots and restores both maps. Written up in the fixture, because the previous
+  version's docstring already warned about shared mutable state and still got it wrong: naming a
+  trap is not avoiding it.
+
+Guard re-proven after the rewrite, injection hash-verified before reading any verdict: inject a
+  suffix ladder -> FIRES; revert -> byte-identical, 3 passed.
+
+Gates, exit codes read individually: ruff 0, ruff format --preview 0, pytest 0 (42 passed across
+  this file, test_lang_registry, and test_repo_map_graph).
+
+
 ## v1.107.0 (2026-08-05)
 
 ### Features
