@@ -330,6 +330,31 @@ def _extract_archive(archive_path: Path, destination: Path) -> Path:
     return extracted_children[0]
 
 
+def _remove_stale_staging_path(path: Path) -> None:
+    """Remove a leftover staging/backup path, INCLUDING when it is a symlink.
+
+    `shutil.rmtree` REFUSES a symlink, and `ignore_errors=True` makes that refusal silent, so the
+    previous `if path.exists(): shutil.rmtree(path, ignore_errors=True)` was a no-op against
+    exactly the input it most needed to clear. The subsequent `shutil.move(extracted, staged_dir)`
+    then follows the surviving link and writes the downloaded runtime INTO the link target.
+
+    Measured before this fix, not theorised: rmtree left the link in place, and the move deposited
+    the payload inside the target directory alongside an untouched canary file.
+
+    `exists()` also follows symlinks and returns False for a DANGLING one, so the old guard could
+    skip a broken link that `move` would still happily resolve against. Test `is_symlink()` first
+    and unlink unconditionally.
+    """
+    if path.is_symlink():
+        path.unlink(missing_ok=True)
+        return
+    if path.is_dir():
+        shutil.rmtree(path, ignore_errors=True)
+        return
+    # a plain file squatting on the staging name would also break the later rename
+    path.unlink(missing_ok=True)
+
+
 def _ensure_node_runtime(root: Path) -> Path:
     runtime_dir = _node_runtime_dir(root)
     node_executable = _node_executable(root)
@@ -345,8 +370,7 @@ def _ensure_node_runtime(root: Path) -> Path:
     staged_dir = runtime_dir.with_name(f".{runtime_dir.name}.staging-{os.getpid()}")
     backup_dir = runtime_dir.with_name(f".{runtime_dir.name}.backup-{os.getpid()}")
     for stale in (staged_dir, backup_dir):
-        if stale.exists():
-            shutil.rmtree(stale, ignore_errors=True)
+        _remove_stale_staging_path(stale)
     with tempfile.TemporaryDirectory(prefix="tg-node-") as temp_dir_raw:
         temp_dir = Path(temp_dir_raw)
         archive_path = temp_dir / archive_name
