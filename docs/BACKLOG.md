@@ -111,16 +111,29 @@ demand evidence. That is a measured state, not a stall.
   classified all 16 violating identities, `#946` closed the download TOCTOU, `#947` retired the
   residual; all four MERGED). This row contradicted its own receipt row 24 lines above it for a full
   day. Left struck through rather than deleted so the contradiction is legible.
-- **MCP-SURFACE** — MCP surface disclosure, Task 4.
-- **CPU-BACKEND** — Rust/Python backend error propagation, Task 5.
-- **F6** — edit-verification service and public CLI, Tasks 6–7.
-- **F5** — edit-ready plus claims fence, Task 8.
-- **REF-CALL-REGISTRY** — prepare-service extraction, Task 9.
-- **F7** — language registry and cross-file resolution, Tasks 10–11.
-- **F8** — workspace service and CLI, Tasks 12–13.
+- **F7** — cross-file resolution, **Task 11 only**. Task 10 (language registry) SHIPPED in five
+  waves. Task 11 is IN_FLIGHT: wave 1 Java = PR #950, wave 2 C# dispatched, waves for C/C++ follow.
+- ~~**MCP-SURFACE** — Task 4.~~ **BLOCKED on Task 2C**, not buildable: Task 4 bumps the MCP contract
+  `1.8.0 -> 1.9.0` and the live value is `1.7.0`. Building it first bumps from a version that does
+  not exist.
+- ~~**CPU-BACKEND** — Task 5.~~ **SHIPPED** (#925 plus the `invert_match` retry fix) — see receipt row.
+- ~~**REF-CALL-REGISTRY** — Task 9.~~ **SHIPPED** — the dispatch ladders fell out of the F7 campaign;
+  the Step 2 guard shipped in #940.
+- ~~**F6** — Tasks 6–7.~~ **Step 0 SHIPPED (#939); the rest is multi-week**, not a ready row.
+- ~~**F5** — Task 8.~~ **Step 2 SHIPPED (#943); Steps 3-5 BLOCKED** on `rust_core/**` + `tests/e2e/**`.
+- ~~**F8** — Tasks 12–13.~~ **BLOCKED** on `rust_core/src/main.rs` + the e2e routing suite.
+- **#89 / #90** — path-domain defect. **State disputed inside this file**; see the dependency-map row.
+  A premise-checked build task was dispatched 2026-08-05 to settle it.
 
-Every row above starts `READY`. Its first draft implementation PR moves it to `IN_FLIGHT` with the
-real PR number; only a separate post-merge closure change may mark it `SHIPPED`.
+**CORRECTED 2026-08-05.** This list previously presented all ten rows as `READY`, while the
+reconcile table 20 lines above recorded six of them SHIPPED or BLOCKED. Two rows — CPU-BACKEND and
+REF-CALL-REGISTRY — were listed as buildable work with their own completion receipts in the same
+document. A session trusting this list would have rebuilt finished code. Struck through rather than
+deleted so the drift stays legible.
+
+A row here is `READY` only if the reconcile table does not record it SHIPPED or BLOCKED. Its first
+draft implementation PR moves it to `IN_FLIGHT` with the real PR number; only a separate post-merge
+closure change may mark it `SHIPPED`.
 
 ### CEO-gated — exactly five
 
