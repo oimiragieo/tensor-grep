@@ -37,7 +37,7 @@ Canonical status index version: 2026-08-05.1
 - [x] **#859** — Status: SHIPPED; PR: PR #913; Trigger: Task 3 class-level AST writer census and anchored publication fix; instance fix and class-level ratchet both merged, and the census found a 4th violation beyond the expected 3 (fixed in PR #918); Implementation PRs: PR #913; Closure PR: PR #920; Merged SHA: 211d850c7484f6e18d74e2d8ac712f118f3b82cf
 - [ ] **F5** — Status: READY; PR: none; Trigger: Task 8 edit-ready and claims-fence program; first implementation PR moves this row to IN_FLIGHT
 - [ ] **F6** — Status: READY; PR: none; Trigger: Tasks 6-7 edit-verification service and public CLI; first implementation PR moves this row to IN_FLIGHT
-- [ ] **F7** — Status: IN_FLIGHT; PR: PR #955; Trigger: Tasks 10-11 language-registry and cross-file resolution; Task 10 complete (Java/C#/PHP/C/C++ in-file refs); Task 11 wave 1 Java #950, wave 2 PHP #952 + C# #955 merged; wave 3 C/C++ open as #957; Implementation PRs: PR #950, PR #952, PR #955
+- [ ] **F7** — Status: IN_FLIGHT; PR: PR #957; Trigger: Tasks 10-11 language-registry and cross-file resolution; Task 10 complete (Java/C#/PHP/C/C++ in-file refs); Task 11 waves 1-2 shipped (Java #950, PHP #952, C# #955); wave 3 C/C++ in flight as #957; Implementation PRs: PR #950, PR #952, PR #955, PR #957
 - [ ] **F8** — Status: READY; PR: none; Trigger: Tasks 12-13 workspace service and CLI program; first implementation PR moves this row to IN_FLIGHT
 - [ ] **MCP-SURFACE** — Status: READY; PR: none; Trigger: Task 4 MCP surface disclosure; first implementation PR moves this row to IN_FLIGHT
 - [ ] **CPU-BACKEND** — Status: IN_FLIGHT; PR: PR #923; Trigger: Task 5 Rust and Python backend hardening; the PYTHON half shipped -- the TypeError retry that silently dropped invert_match and returned the opposite result set is gone, leaving one native adapter and zero compatibility retries; the RUST half (replace_in_place public-API hardening in rust_core) is NOT done and needs cargo, which is forbidden on the shared dev box, so it routes to CI or a cloud seat; row closes only when both halves land; Implementation PRs: PR #923
@@ -65,8 +65,13 @@ Last reconciled: **2026-08-06** (Phase 0+1 launch receipt — see `docs/BACKLOG.
 
 **F7 Task 11 status:** waves 1–2 shipped (Java/PHP/C#). Wave 3 (C/C++) is open as **PR #957**.
 Hard stops honored: no #169, no Task 2A GREEN, no local `rust_core` cargo, no CEO-gate flips.
+**Phase 2 still unavailable** for launch claims: edit-ready / verify-edit / workspace (F5 Steps
+3–5, F6 remainder, F8) — `rust_core` + e2e routing. No `world_class_readiness` claim without a
+fresh evidence packet.
 
-**Also open (not this launch):** draft #960 (broader board reconcile), draft #958 (enterprise CUJ).
+**Also open (not Phase 0+1 code):** draft #958 (enterprise CUJ); this docs Packet F as #961.
+Draft #960 (broader READY→SHIPPED reconcile) was **CLOSED** 2026-08-06 — superseded by #961;
+not undrafted.
 
 post-**v1.109.0**, PyPI-verified 2026-08-06 by the **version endpoint**, WITH a negative control:
 `https://pypi.org/pypi/tensor-grep/1.109.0/json` -> **HTTP 200**, and a bogus `1.999.999` -> **404**.
@@ -78,8 +83,8 @@ in the 2026-08-05 stamp; plus #950 Java wave 1; plus the Phase 0+1 set above.
 
 **Current closed-world status:** this canonical index plus
 `docs/audits/2026-08-03-ceo-backlog-update.md`. Product healthy at PyPI `v1.109.0`; Phase 0+1
-merged on main awaiting publish; planning PR #911 is not merge-ready until its advisory-floor
-successor earns exact-head CI/security/CodeQL; backlog not done; Task 2A correctly blocked.
+merged on main awaiting publish; #911 already MERGED 2026-08-04 (advisory-floor successor landed);
+backlog not done; Task 2A correctly blocked.
 Task 2 is complete as the reconciliation checkpoint; Task 2A implementation is not. Round-60 plan
 approval stands on named
 hashes `31D8E071...3D862B` / `AA64D0BA...0826B3`. Older PR #911 head
@@ -149,14 +154,11 @@ be rare; neither holds here.
 |---|---|---|---|
 | #957 | `feat(lang-c,lang-cpp): cross-file caller resolution via include-path engine (F7 Task 11 wave 3)` | feat | OPEN |
 | #958 | `test: lock prepare→evidence→review-bundle enterprise CUJ chain` | test | DRAFT |
-| #960 | `docs: reconcile task board to post-v1.108.x measured truth` | docs | DRAFT |
+| #961 | `docs: Phase 0+1 launch receipt + TASK_BOARD reconcile` | docs | OPEN |
 
-*(Phase 0+1 launch PRs #951/#952/#953/#955/#956 all MERGED 2026-08-06. Derive live `gh pr list`
-before treating this table as current.)*
-
-| PR | Title | Type | State |
-|---|---|---|---|
-| #911 | `test: pin live backlog truth and approved closeout plan` | non-release tracker/plan | last observed exact head CLEAN/MERGEABLE + green (CI/security/CodeQL); human may merge; derive live head before merge |
+*(Phase 0+1 launch PRs #951/#952/#953/#955/#956 all MERGED 2026-08-06. #911 MERGED 2026-08-04.
+#960 CLOSED 2026-08-06 — superseded by #961. Derive live `gh pr list` before treating this table
+as current.)*
 
 *(#872, #871 and #868 all MERGED — #871 on 2026-07-31, #872 and #868 on 2026-08-01. They sat in
 this table as "CI running" / "BLOCKED — do not merge" after landing, which is the exact failure mode

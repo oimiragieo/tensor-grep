@@ -74,10 +74,12 @@ Job heartbeat; unproven Job cleanup; weak SDDL; invalid CNG export; TxR close ow
 self-attest; `-f`/`--file` unbounded pre-ledger read). Not merge-ready. These are plan-gate /
 RED-scaffold findings, not separate shipped features or extra canonical top-level rows.
 
-### PHASE 0+1 LAUNCH RECEIPT — 2026-08-06
+### EXTERNAL / Phase 0+1 launch receipt — 2026-08-06 (Packet F)
 
-Executed end-to-end (parent shell broken; execution agent owned git/gh/pytest). Hard stops held:
-no #169, no Task 2A GREEN, no local `rust_core` cargo, no CEO-gate flips.
+Docs-class reconcile after merges **#953** (F10/DD-004), **#952** (PHP), **#955** (C#),
+**#956** (`workspace_root_refused`) on `main`. Hard stops held: no #169, no Task 2A GREEN, no
+local `rust_core` cargo, **no CEO-gate flips**, no `world_class_readiness` claim (no fresh
+evidence packet for that label).
 
 | packet | PR | result |
 |---|---|---|
@@ -86,15 +88,46 @@ no #169, no Task 2A GREEN, no local `rust_core` cargo, no CEO-gate flips.
 | C F7 wave 2 C# | [#955](https://github.com/oimiragieo/tensor-grep/pull/955) | MERGED — namespace/`using` confirmation + blast_radius_floor |
 | D workspace_root_refused | [#956](https://github.com/oimiragieo/tensor-grep/pull/956) | MERGED — class/code params on `_emit_broad_scan_refusal` |
 | E F10 + DD-004 DROP | [#953](https://github.com/oimiragieo/tensor-grep/pull/953) | MERGED — RETIRED with receipts |
-| F board reconcile + dogfood | this entry + TASK_BOARD snapshot | dogfood: `tg search needle C:\dev\projects --json` against main → exit 2, `incomplete_reason_class=workspace_root_refused`, `error.code=workspace_root_refused` |
+| F board reconcile + dogfood | this entry + TASK_BOARD + #961 | dogfood: `tg search needle C:\dev\projects --json` against main → exit 2, `incomplete_reason_class=workspace_root_refused`, `error.code=workspace_root_refused` |
+
+**What shipped (honest claims only):**
+- F7 Task 11 waves 1–2: Java (#950), PHP (#952), C# (#955) cross-file caller confirmation on
+  `main`. Wave 3 C/C++ is **#957** (open / in flight — not claimed shipped).
+- Multi-project parent refuse now names itself: `incomplete_reason_class` /
+  `error.code` = `workspace_root_refused` (#956). Dogfood is against **main source**, not the
+  published wheel (see PyPI note).
+- F10 MaxSim and DD-004 typed-boundary rows are **RETIRED** with dated receipts (#953) — not
+  "fixed", not "still planned".
+
+**What did not ship / still unavailable (Phase 2):**
+- **edit-ready** (F5 Task 8 Steps 3–5), **verify-edit** (F6 Tasks 6–7 beyond Step 0), and
+  **workspace** (F8 Tasks 12–13) remain **unavailable** for launch claims. They still need
+  `rust_core/**` / `tests/e2e/**` work (cargo + e2e routing suite forbidden on the shared box →
+  CI/cloud). Do not advertise them as ready product surfaces.
+- CEO gates **#48 / #72 / #77 / #131 / #169** are untouched — recommendations only (short packets
+  below); status stays `CEO_GATED`.
 
 **PyPI / local:** live PyPI **v1.109.0** (index 200 + bogus 404 control). Phase 0+1 code is on
 `main` and awaits the next `feat:`/`fix:` publish; installed wheel remains pre-#956 until then
 (control: installed path still emitted `scan_limit`/`broad_scan_refused`; main source emits
-`workspace_root_refused`).
+`workspace_root_refused`). Index check ≠ install.
 
-**Next:** F7 Task 11 wave 3 = open PR #957 (C/C++). Draft #960 is a broader board reconcile that
-may supersede some READY→SHIPPED flips not in this launch's scope.
+**Next:** F7 Task 11 wave 3 = open PR #957 (C/C++). Broader READY→SHIPPED board flips that lived
+in draft #960 were **not** absorbed here; #960 was **CLOSED** (superseded by this Packet F
+reconcile #961) rather than undrafted.
+
+#### Packet F — CEO recommendation packets (still CEO_GATED; do not implement)
+
+Recommendations only. No silent reclassification. No question asked for the non-financial gates.
+
+| id | topic | recommendation | status |
+|---|---|---|---|
+| **#48** | native front-door startup | Accept the shipped hybrid (native managed front door + Python sidecar). Retire a larger rewrite unless pip/uv parity is explicitly prioritized. | `CEO_GATED` |
+| **#72** | public benchmark claim | HOLD public 7.5× (conflicts with later 6.4×; no committed current harness). Only a zero-spend fresh six-repo/180-task quality-gated re-run is in scope, and public wording still needs approval. | `CEO_GATED` |
+| **#77** / F9 | ledger enforcement scope | Local opt-in advisory only; no auth/CI blocking. | `CEO_GATED` |
+| **#131** | GPU-flavor native assets | Optional experimental NVIDIA asset with CPU default/fallback and **no** speed claim. Physical proof/spend stays under **#169**. | `CEO_GATED` |
+
+**#169** remains the only mandatory financial stop (physical GPU proof environment or spend).
 
 ### RECONCILED 2026-08-05 -- what actually shipped, per row
 
@@ -134,7 +167,8 @@ demand evidence. That is a measured state, not a stall.
   residual; all four MERGED). This row contradicted its own receipt row 24 lines above it for a full
   day. Left struck through rather than deleted so the contradiction is legible.
 - **F7** — cross-file resolution, **Task 11 only**. Task 10 (language registry) SHIPPED in five
-  waves. Task 11 is IN_FLIGHT: wave 1 Java = PR #950, wave 2 C# dispatched, waves for C/C++ follow.
+  waves. Task 11 is IN_FLIGHT: waves 1–2 shipped (Java #950, PHP #952, C# #955); wave 3 C/C++ =
+  open PR #957.
 - ~~**MCP-SURFACE** — Task 4.~~ **BLOCKED on Task 2C**, not buildable: Task 4 bumps the MCP contract
   `1.8.0 -> 1.9.0` and the live value is `1.7.0`. Building it first bumps from a version that does
   not exist.
