@@ -7,15 +7,14 @@
 > nonfinancial decision-gated, financial/spend-gated, demand/research-gated, and mixed/terminal
 > corrections—not merely SHIPPING or P0/P1. Update whenever a PR opens/merges or the queue changes.
 > Task-store IDs (`#NNN`) are cross-referenced.
-> **Current closed-world CEO snapshot: 2026-08-03 continuation, release `v1.102.1`, merged main
-> `8024125`, one open PR (#911), one open GitHub issue (#48).** Product healthy; planning PR
-> blocked on fresh exact-head security re-clearance; backlog not done; Task 2A correctly blocked. The complete
-> live disposition list is the canonical index in `docs/TASK_BOARD.md` (28 rows / 20 unfinished =
-> 7 READY, 2 IN_FLIGHT, 5 CEO_GATED, 6 DEMAND_GATED after F10+DD-004 RETIRED 2026-08-05); `docs/audits/2026-08-02-backlog-reconciliation.md` is its
-> dated evidence packet, and `docs/audits/2026-08-03-ceo-backlog-update.md` is the current dumbed-down
-> closed-world update. Task 2 is reconciled; the amended #89/#90 path-domain program plus Tasks 3–15
-> are the current execution queue. Historical sections below remain append-only evidence and may
-> describe old status.
+> **Current closed-world CEO snapshot: 2026-08-05.2 board reconcile, release `v1.109.0` on PyPI
+> (HTTP 200) with negative control `1.999.999` → 404.** Live
+> disposition list is the canonical index in `docs/TASK_BOARD.md` (28 rows / 18 unfinished =
+> 0 READY, 3 IN_FLIGHT, 4 BLOCKED, 5 CEO_GATED, 6 DEMAND_GATED); `docs/audits/2026-08-05-closed-world-census.md`
+> is the dated evidence packet for this stamp. `docs/audits/2026-08-03-ceo-backlog-update.md` remains
+> the prior closed-world packet (historical counts). Task 2 is reconciled; #89/#90 are BLOCKED on
+> Task 2B/2C; Tasks 3–15 continue with measured start-now EMPTY. Historical sections below remain
+> append-only evidence and may describe old status.
 > Recovered local-environment incident (historical): `ENV-VENV-DRIFT` occurred when a WSL `uv`
 > probe replaced the canonical Windows `.venv`. The incompatible environment was moved aside and
 > Windows `uv sync --frozen` rebuilt and verified the canonical environment; this is not an active
@@ -42,7 +41,7 @@
 > No question is asked for nonfinancial gates; #169 remains the only mandatory financial stop.
 >
 
-## Current canonical closeout queue — status index `2026-08-03.3`
+## Current canonical closeout queue — status index `2026-08-05.2`
 
 `docs/TASK_BOARD.md` owns the machine-parsed rows. This is the human-readable mirror; older sections
 below are historical evidence and do not override these dispositions.
@@ -98,41 +97,34 @@ demand evidence. That is a measured state, not a stall.
 
 ### Active / buildable
 
-- **#89** — reproduced WSL-to-Windows path-domain defect; now `READY`, not environment-blocked. The
-  bounded 2026-08-02 run proved a Linux `/mnt/c/...` directory exists while the delegated Windows
-  native executable returned `path_not_found`. Owner: a new amended/re-reviewed TDD task; final
-  closeout cannot pass until that task follows the implementation-PR/closure-PR lifecycle.
-- **#90** — the doctor false-available half remains shipped in PR #571, but the WSL scan portability
-  half is now reproducibly broken and `READY`: a raw `/mnt/c/...` file produced an unreadable-path
-  warning plus false clear/zero matches, while the translated Windows-path control found six matches.
-  Owner: the same amended typed-path program as #89, with scan-specific false-clear tests.
+- ~~**#89** — reproduced WSL-to-Windows path-domain defect.~~ **BLOCKED** on Task 2B/2C typed-path
+  (`rust_core` + real WSL host) — see reconcile table. Reproduction is real; start-now READY is not.
+- ~~**#90** — WSL scan portability half reproducibly broken.~~ **BLOCKED** on the same Task 2B/2C
+  program as #89. PR #571 remains the shipped doctor-probe half only.
 - ~~**#859** — class-level atomic-writer census/fix, Task 3.~~ **SHIPPED 2026-08-05, removed from
   this queue** — see the receipt row above (`#937` widened the census 3 -> 41 modules, `#945`
   classified all 16 violating identities, `#946` closed the download TOCTOU, `#947` retired the
   residual; all four MERGED). This row contradicted its own receipt row 24 lines above it for a full
   day. Left struck through rather than deleted so the contradiction is legible.
-- **F7** — cross-file resolution, **Task 11 only**. Task 10 (language registry) SHIPPED in five
-  waves. Task 11 is IN_FLIGHT: wave 1 Java = PR #950, wave 2 C# dispatched, waves for C/C++ follow.
+- **F7** — cross-file resolution, **Task 11 only** (IN_FLIGHT). Task 10 (language registry) SHIPPED
+  in five waves. Wave 1 Java = PR #950 merged; further language waves open — derive from `gh pr list`.
 - ~~**MCP-SURFACE** — Task 4.~~ **BLOCKED on Task 2C**, not buildable: Task 4 bumps the MCP contract
   `1.8.0 -> 1.9.0` and the live value is `1.7.0`. Building it first bumps from a version that does
   not exist.
-- ~~**CPU-BACKEND** — Task 5.~~ **SHIPPED** (#925 plus the `invert_match` retry fix) — see receipt row.
+- ~~**CPU-BACKEND** — Task 5.~~ **SHIPPED** (#925 plus the `invert_match` retry fix) — see receipt row;
+  board closure stamped via PR #948.
 - ~~**REF-CALL-REGISTRY** — Task 9.~~ **SHIPPED** — the dispatch ladders fell out of the F7 campaign;
-  the Step 2 guard shipped in #940.
-- ~~**F6** — Tasks 6–7.~~ **Step 0 SHIPPED (#939); the rest is multi-week**, not a ready row.
-- ~~**F5** — Task 8.~~ **Step 2 SHIPPED (#943); Steps 3-5 BLOCKED** on `rust_core/**` + `tests/e2e/**`.
+  the Step 2 guard shipped in #940; board closure stamped via PR #948.
+- ~~**F6** — Tasks 6–7.~~ **Step 0 SHIPPED (#939); the rest is multi-week**, not a ready row
+  (board: IN_FLIGHT).
+- ~~**F5** — Task 8.~~ **Step 2 SHIPPED (#943); Steps 3-5 BLOCKED** on `rust_core/**` + `tests/e2e/**`
+  (board: IN_FLIGHT).
 - ~~**F8** — Tasks 12–13.~~ **BLOCKED** on `rust_core/src/main.rs` + the e2e routing suite.
-- **#89 / #90** — path-domain defect. **State disputed inside this file**; see the dependency-map row.
-  A premise-checked build task was dispatched 2026-08-05 to settle it.
 
-**CORRECTED 2026-08-05.** This list previously presented all ten rows as `READY`, while the
-reconcile table 20 lines above recorded six of them SHIPPED or BLOCKED. Two rows — CPU-BACKEND and
-REF-CALL-REGISTRY — were listed as buildable work with their own completion receipts in the same
-document. A session trusting this list would have rebuilt finished code. Struck through rather than
-deleted so the drift stays legible.
-
-A row here is `READY` only if the reconcile table does not record it SHIPPED or BLOCKED. Its first
-draft implementation PR moves it to `IN_FLIGHT` with the real PR number; only a separate post-merge
+**CORRECTED 2026-08-05.2.** The Active list no longer offers #89/#90 as READY while the reconcile
+table records them BLOCKED. F7 remains the sole non-struck offered row (Task 11 IN_FLIGHT). A row
+here is `READY` only if the reconcile table does not record it SHIPPED or BLOCKED. Its first draft
+implementation PR moves it to `IN_FLIGHT` with the real PR number; only a separate post-merge
 closure change may mark it `SHIPPED`.
 
 ### CEO-gated — exactly five
@@ -172,8 +164,9 @@ closure change may mark it `SHIPPED`.
   hygiene (INFO/WEAKENED), not a empty-success defect; see dated receipt below.
 - **#109/#36/#37** `SHIPPED` in PR #605/#903/#908.
 
-There are no environment-blocked canonical rows at this snapshot. The raw GitHub/CI/release and WSL
-receipts are in `docs/audits/2026-08-02-backlog-reconciliation.md`.
+There are four environment/prerequisite-blocked canonical rows at this snapshot (#89, #90, F8,
+MCP-SURFACE). The raw GitHub/CI/release and WSL receipts are in
+`docs/audits/2026-08-02-backlog-reconciliation.md` and `docs/audits/2026-08-05-closed-world-census.md`.
 
 > **Prior refresh 2026-07-29 (enterprise deep audit, live tip **v1.101.18**).** Spec:
 > `docs/plans/2026-07-29-enterprise-deep-audit-design.md` (also mirrored under gitignored
@@ -1581,7 +1574,7 @@ row reading `READY` invites a session to start it and discover the blocker after
 |---|---|---|
 | **MCP-SURFACE** (Task 4) | depends on **Task 2C** | Task 4 is titled "bump contract 1.8.0 -> 1.9.0" but the live value is **1.7.0** (`mcp_server.py:138`, `_TG_MCP_SERVER_CONTRACT_VERSION`). Task 2C performs 1.7.0 -> 1.8.0. Building Task 4 first would bump from a version that does not exist. |
 | **Task 2C** (and 2B) | needs CI or a cloud seat | modifies `rust_core/src/main.rs`; verifying it requires `cargo`, which AGENTS.md forbids on this shared dev box. Also needs a real WSL host for the `/mnt/c/...` path-domain arms. |
-| **#89 / #90** | **CONTRADICTS the "Active / buildable" section — unresolved as of 2026-08-05** | this row files them as blocked "same as 2B/2C" (needs `cargo`/a real WSL host), while the Active/buildable rows call #89 "now `READY`, **not** environment-blocked". Both cannot be true. The distinction that likely reconciles them: REPRODUCING the defect needs a WSL host, but the FIX may be pure-Python path-domain handling on the Python side of the boundary — which would be buildable here. A build task dispatched 2026-08-05 carries a premise check as step 0 and is instructed to stop and report if the fix genuinely requires the Rust half. Its answer settles this row; do not act on either reading until then. |
+| **#89 / #90** | **RESOLVED as BLOCKED 2026-08-05.2** | reconcile table + board index now agree: owned by Task 2B/2C typed-path (`rust_core` + real WSL host). Reproduction remains real; start-now READY is false. Not a CEO decision — measured prerequisite. |
 | **Task 3** (#859) | ~~PARTIALLY DONE~~ **DONE 2026-08-05** | the CLASS census gap closed in PR #937 (3 -> 41 modules); the VIOLATING-sites half this row called open closed too -- #945 classified all 16 identities, #946 closed the download TOCTOU, #947 retired the last deferral. H2 is closed. |
 
 **CORRECTED 2026-08-05 (same day).** The paragraph this replaces called F5 and F8 "unblocked and

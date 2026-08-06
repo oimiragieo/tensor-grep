@@ -20,7 +20,7 @@
 
 ## Canonical status index
 
-Canonical status index version: 2026-08-05.1
+Canonical status index version: 2026-08-05.2
 - [x] **#22** — Status: RETIRED; PR: none; Trigger: exit 0 is complete with matches; exit 1 is complete with no match; exit 2 is incomplete; gpu_request_unhonoured stays in-band and does not independently force exit 2
 - [x] **F2** — Status: RETIRED; PR: none; Trigger: legacy anonymous-agent compatibility deliberately retains the sentinel; reopen only with a caller-supplied stable identity contract and migration plan
 - [x] **#36** — Status: SHIPPED; PR: PR #903; Trigger: all 27 topic skills audited and drift corrections merged; reopen on a new failing skill-drift receipt
@@ -28,20 +28,20 @@ Canonical status index version: 2026-08-05.1
 - [ ] **#48** — Status: CEO_GATED; PR: none; Trigger: CEO decision on native-front-door startup architecture
 - [ ] **#72** — Status: CEO_GATED; PR: none; Trigger: CEO approval for a fresh public benchmark claim
 - [ ] **#77** — Status: CEO_GATED; PR: none; Trigger: CEO decision on the #77/F9 ledger-enforcement scope
-- [ ] **#89** — Status: READY; PR: none; Trigger: 2026-08-02 WSL-to-Windows path-domain reproduction returned path_not_found for an existing /mnt/c path; owner is an amended and re-reviewed TDD task before final closeout
-- [ ] **#90** — Status: READY; PR: none; Trigger: doctor false-available half shipped in PR #571; current WSL raw-path scan reported matched_rules=0 while the translated-path control reported total_matches=6; owner is the amended and re-reviewed cross-domain TDD task before final closeout
+- [ ] **#89** — Status: BLOCKED; PR: none; Trigger: 2026-08-02 WSL-to-Windows path-domain reproduction returned path_not_found for an existing /mnt/c path; owned by Task 2B/2C typed-path program (rust_core + real WSL host); reopen when that program lands an amended TDD implementation PR
+- [ ] **#90** — Status: BLOCKED; PR: none; Trigger: doctor false-available half shipped in PR #571; current WSL raw-path scan reported matched_rules=0 while the translated-path control reported total_matches=6; owned by the same Task 2B/2C typed-path program as #89; reopen when that program lands scan-specific false-clear tests
 - [x] **#109** — Status: SHIPPED; PR: PR #605; Trigger: CUDA implicit-walk ceiling merged; reopen on a current parity regression
 - [ ] **#131** — Status: CEO_GATED; PR: none; Trigger: CEO decision on publishing GPU-flavor native assets
 - [ ] **#169** — Status: CEO_GATED; PR: none; Trigger: CEO approval for physical GPU proof or spend
 - [ ] **#255** — Status: DEMAND_GATED; PR: none; Trigger: demand for a bounded many-pattern dedup parity experiment or approved compression/native investment
 - [x] **#859** — Status: SHIPPED; PR: PR #913; Trigger: Task 3 class-level AST writer census and anchored publication fix; instance fix and class-level ratchet both merged, and the census found a 4th violation beyond the expected 3 (fixed in PR #918); Implementation PRs: PR #913; Closure PR: PR #920; Merged SHA: 211d850c7484f6e18d74e2d8ac712f118f3b82cf
-- [ ] **F5** — Status: READY; PR: none; Trigger: Task 8 edit-ready and claims-fence program; first implementation PR moves this row to IN_FLIGHT
-- [ ] **F6** — Status: READY; PR: none; Trigger: Tasks 6-7 edit-verification service and public CLI; first implementation PR moves this row to IN_FLIGHT
-- [ ] **F7** — Status: READY; PR: none; Trigger: Tasks 10-11 language-registry and cross-file resolution program; first implementation PR moves this row to IN_FLIGHT
-- [ ] **F8** — Status: READY; PR: none; Trigger: Tasks 12-13 workspace service and CLI program; first implementation PR moves this row to IN_FLIGHT
-- [ ] **MCP-SURFACE** — Status: READY; PR: none; Trigger: Task 4 MCP surface disclosure; first implementation PR moves this row to IN_FLIGHT
-- [ ] **CPU-BACKEND** — Status: IN_FLIGHT; PR: PR #923; Trigger: Task 5 Rust and Python backend hardening; the PYTHON half shipped -- the TypeError retry that silently dropped invert_match and returned the opposite result set is gone, leaving one native adapter and zero compatibility retries; the RUST half (replace_in_place public-API hardening in rust_core) is NOT done and needs cargo, which is forbidden on the shared dev box, so it routes to CI or a cloud seat; row closes only when both halves land; Implementation PRs: PR #923
-- [ ] **REF-CALL-REGISTRY** — Status: IN_FLIGHT; PR: PR #915; Trigger: Task 9 prepare-service extraction; both hardcoded per-language reference and caller chains now resolve through one registry-backed seam, with byte-identical output proven in a same-directory arm against an untouched probe file; row closes when the implementation PR merges; Implementation PRs: PR #915
+- [ ] **F5** — Status: IN_FLIGHT; PR: PR #943; Trigger: Task 8 edit-ready and claims-fence program; Step 2 shipped PrepareSnapshotV1 + build_prepare_snapshot; Steps 3-5 blocked on rust_core/** + tests/e2e/** (CI/cloud); Implementation PRs: PR #943
+- [ ] **F6** — Status: IN_FLIGHT; PR: PR #939; Trigger: Tasks 6-7 edit-verification service and public CLI; Step 0 shipped prepare_service.py extraction (byte-identical); remainder is multi-week (~10 versioned schemas, WSL path-domain, evidence signing, 5 MiB bounded reader); Implementation PRs: PR #939
+- [ ] **F7** — Status: IN_FLIGHT; PR: PR #950; Trigger: Tasks 10-11 language-registry and cross-file resolution program; Task 10 SHIPPED (10 parser-backed / 0 foundational via #927-#934); Task 11 cross-file IN_FLIGHT (wave 1 Java merged as PR #950; further language waves open); Implementation PRs: PR #950
+- [ ] **F8** — Status: BLOCKED; PR: none; Trigger: Tasks 12-13 workspace service and CLI program; blocked on rust_core/src/main.rs + path_domain.rs + tests/e2e/test_routing_parity.py (CI/cloud required); reopen when those surfaces can be edited off the shared desktop
+- [ ] **MCP-SURFACE** — Status: BLOCKED; PR: none; Trigger: Task 4 MCP surface disclosure; blocked on Task 2C — live _TG_MCP_SERVER_CONTRACT_VERSION is 1.7.0 and Task 4 would bump 1.8.0->1.9.0 from a version that does not exist; reopen after Task 2C lands 1.7.0->1.8.0
+- [x] **CPU-BACKEND** — Status: SHIPPED; PR: PR #925; Trigger: Task 5 Rust and Python backend hardening; Python TypeError retry that silently dropped invert_match is gone (PR #923); Rust replace_in_place public-API hardening landed (PR #925); Implementation PRs: PR #923, PR #925; Closure PR: PR #948; Merged SHA: f29c948440d8039aceb12cd32a4d539730b0161d
+- [x] **REF-CALL-REGISTRY** — Status: SHIPPED; PR: PR #940; Trigger: Task 9 registry-backed reference and caller dispatch (not prepare-service extraction — that is Task 6 Step 0); dispatch ladders removed; Step 2 registry-driven seam pinned; Implementation PRs: PR #915, PR #940; Closure PR: PR #948; Merged SHA: 3dbe85b127003ee0464ac3cbe1ba6831bd49fdcc
 - [x] **F10** — Status: RETIRED; PR: none; Trigger: 2026-08-05 caller/installability census (docs/BACKLOG.md dated entry) found MaxSim reachable only via an undocumented `TG_LATE_RERANK=1` env var + a manual `python -m tensor_grep.core.retrieval_late --fetch` (no `tg` command provisions it) AND decisively negative on the golden set even after the role-aware encoding fix (ndcg@10 0.068 vs 0.305 RRF, root cause model capacity); reopen only on both a `tg`-command install path and a stronger encoder clearing the golden-set gate
 - [x] **DD-004** — Status: RETIRED; PR: none; Trigger: 2026-08-05 retirement receipt (docs/BACKLOG.md dated entry) — INFO/WEAKENED loud `RuntimeError` re-raise at `cpu_backend.py:811` is not empty-success; typed boundary already banked in AGENTS.md Backend Fail-Closed Contract; reopen only if a backend path returns clean empty success on real failure or a consumer requires uniform `BackendExecutionError` typing across that site
 - [ ] **DD-006** — Status: DEMAND_GATED; PR: none; Trigger: measured concurrent daemon load or denial-of-service evidence
@@ -52,56 +52,34 @@ Canonical status index version: 2026-08-05.1
 
 ## Live campaign snapshot
 
-Last reconciled: **2026-08-05** (F7 Task 10 COMPLETE -- the symbol-graph caller tier went
-5/5 -> **10/0** in five waves: #927 Java, #928 C#, #930 PHP, #932 C, #934 C++. Also merged: #929
-findings G1-G7, #931 board reconcile, #933 the board-gate root-cause fix, #935 premise sweep.
+Last reconciled: **2026-08-05.2** — board index flipped to measured BACKLOG reconcile truth
+(`docs/BACKLOG.md` RECONCILED 2026-08-05 + `docs/audits/2026-08-05-closed-world-census.md`).
+Canonical READY-vs-SHIPPED contradictions cleared. No CEO decisions invented.
 
-**Shipped since the previous post-v1.106.0 stamp** (this reconcile): #936 instrument laws, #937
-atomic-writer census 3 -> 41 modules, #938/#941 findings + a dependency-claim correction, #939
-`prepare_service.py` extracted byte-identical, #940 the reference/caller seam pinned as
-registry-driven, #942 the symlink/junction staging fix (H1), #943 `PrepareSnapshotV1`, #944 the
-release-class measurement, #945 all 16 violating writer identities classified, #946 the
-native-frontdoor download TOCTOU closed, #947 H2 closed with the last deferral RETIRED, #948 the
-canonical queue reconciled, #949 the F7 Task 11 design (council-corrected 8/8).
+**Status flips this stamp (evidence in the census):** CPU-BACKEND + REF-CALL-REGISTRY → SHIPPED
+(closure PR #948); F5/F6/F7 → IN_FLIGHT (#943/#939/#950); F8 + MCP-SURFACE + #89/#90 → BLOCKED;
+F10 + DD-004 already RETIRED on 2026-08-05.1 (#953). **Start-now READY set: EMPTY.**
 
-**F7 Task 11 is now the only genuinely active row.** Wave 1 (Java) = PR #950, in CI. Wave 2 (C#) is
-building, sized by a parsed re-measure (PR #951): 46% of C# methods have a cross-file caller,
-cross:in 2.17:1, 68.4% of call sites invisible to an in-file-only graph -- and parsing came in
-HIGHER than the regex bound it replaced, not lower.
+**F7 Task 11 remains the only active buildable program row** (IN_FLIGHT). Wave 1 Java = PR #950
+merged `5ca7d47`. Further language waves and open PRs are derived from `gh pr list` below, not
+memorized.
 
-**Why this stamp moved:** it sat exactly AT the tolerance (5 releases behind, margin 0), so the next
-`feat:`/`fix:` publish would have reddened main on the freshness gate. Auto-stamping at release time
-was considered and REJECTED -- it would make `behind` identically 0 on every commit, and a
-permanently-green freshness check reads to every future session as evidence the board IS reconciled.
-The gate is supposed to force a real reconcile, which is what this is.
+post-**v1.109.0**, PyPI-reverified 2026-08-05 by the **version endpoint**, WITH a negative control:
+`https://pypi.org/pypi/tensor-grep/1.109.0/json` -> **HTTP 200**, and a bogus `1.999.999` -> **404**.
+Prior complete distribution `1.108.2` remains HTTP 200. GitHub release `v1.109.0` is published.
+Main run `31056776260` was the publish vehicle for that cut — re-check `gh run view` before
+merging any docs PR onto an in-flight *newer* release push. Not inferred from a tag alone —
+`tag == PyPI` cannot tell *released* from *not started* from *died*.
 
-post-**v1.108.2**, PyPI-verified 2026-08-05 by the **version endpoint**, WITH a negative control:
-`https://pypi.org/pypi/tensor-grep/1.108.2/json` -> **HTTP 200**, and a bogus `1.999.999` -> **404**,
-so a 200 distinguishes released from absent rather than reflecting a always-200 endpoint. Not
-inferred from a tag — `tag == PyPI` cannot tell *released* from *not started* from *died*.
-
-**Scope of that claim, stated deliberately:** this is an INDEX check, not an install. The previous
-stamp claimed a clean `uvx` install of its exact version; that stronger check was NOT re-run here
-and is not being carried forward as if it had been. (v1.102.7 remains the last version dogfooded
-end-to-end: `tg search -v beta` returned the NON-matching lines with a control proving normal
-search still matched.) A verification sentence must say which command produced it — copying a
-prior stamp's wording onto a new version is how a receipt comes to quote a value nothing returned.
+**Scope of that claim, stated deliberately:** this is an INDEX check, not an install. A verification
+sentence must say which command produced it.
 
 **Current closed-world status:** this canonical index plus
-`docs/audits/2026-08-03-ceo-backlog-update.md`. Product healthy at `v1.102.7`; planning PR #911 is
-not merge-ready until its advisory-floor successor earns exact-head CI/security/CodeQL; backlog not
-done; Task 2A correctly blocked.
-Task 2 is complete as the reconciliation checkpoint; Task 2A implementation is not. Round-60 plan
-approval stands on named
-hashes `31D8E071...3D862B` / `AA64D0BA...0826B3`. Older PR #911 head
-`01f276fa7c0d3d0e04fdb5feae78c29c1b194773` was green; docs head
-`fb99d2bce4ba722b724212282158bf6616b1ade2` passed CodeQL `30857839262` but security
-`30857841901` found fixable `aiohttp`/`cryptography` advisories. The successor carries floors
-`aiohttp>=3.14.3` / `cryptography>=50.0.0` plus a regenerated lock and requires new exact-head
-clearance. Task 2A RED is local only at
-`6367614960327b1a4e00301c8bfdb9b2e4bb453e` (unpushed, no Actions run, Sol `FIX-FIRST` with 10 HIGH
-blockers). Canonical rows stay 28 / 20 unfinished (7 READY, 2 IN_FLIGHT, 5 CEO_GATED, 6 DEMAND_GATED)
-after F10 + DD-004 RETIRED 2026-08-05; research recommendations are not silent reclassification.
+`docs/audits/2026-08-05-closed-world-census.md` (derived from BACKLOG reconcile + `gh`). Historical
+CEO packet: `docs/audits/2026-08-03-ceo-backlog-update.md` (dated; counts there are the 2026-08-03
+snapshot). Task 2A remains correctly blocked (local RED `6367614…`, Sol FIX-FIRST ×10 HIGH).
+Canonical rows: **28 / 18 unfinished** (0 READY, 3 IN_FLIGHT, 4 BLOCKED, 5 CEO_GATED, 6 DEMAND_GATED);
+10 terminal (SHIPPED+RETIRED). Research/CEO recommendations are not silent reclassification.
 
 **This has now gone stale THREE times in the same way, so the pattern is the finding.** The stamp
 once read "2026-07-28, post-v1.101.9" while PyPI had moved 13 releases on; then "2026-07-31,
@@ -140,28 +118,28 @@ be rare; neither holds here.
 
 ---
 
-## IN FLIGHT (PRs open right now — derived from `gh pr list`, 2026-08-03)
+## IN FLIGHT (PRs open right now — derived from `gh pr list`, 2026-08-05)
 
 | PR | Title | Type | State |
 |---|---|---|---|
-| #911 | `test: pin live backlog truth and approved closeout plan` | non-release tracker/plan | last observed exact head CLEAN/MERGEABLE + green (CI/security/CodeQL); human may merge; derive live head before merge |
+| #959 | `docs: refresh TASK_BOARD IN FLIGHT after #953/#954/#958` | no-release (`docs:`) | draft; sibling IN FLIGHT refresh |
+| #958 | `test: lock prepare→evidence→review-bundle enterprise CUJ chain` | no-release (`test:`) | W2.b CUJ lock; draft |
+| #957 | `feat(lang-c,lang-cpp): cross-file caller resolution via include-path engine (F7 Task 11 wave 3)` | release-bearing | F7 Task 11 |
+| #956 | `fix(cli): workspace-root refuse uses workspace_root_refused` | release-bearing | open |
+| #955 | `feat(lang-csharp): cross-file caller resolution (F7 Task 11 wave 2)` | release-bearing | F7 Task 11 |
+| #952 | `feat(lang-php): cross-file caller resolution (F7 Task 11 wave 2)` | release-bearing | F7 Task 11 |
 
-*(#872, #871 and #868 all MERGED — #871 on 2026-07-31, #872 and #868 on 2026-08-01. They sat in
-this table as "CI running" / "BLOCKED — do not merge" after landing, which is the exact failure mode
-described above: a board that says BLOCKED about shipped code will eventually stop someone from
-merging something correct.)*
+Dropped from this table: **#954** (closed as duplicate of #956), **#953** (merged — F10/DD-004
+RETIRED). Re-derive before acting: `gh pr list --state open --json number,title`. Do not merge
+release-bearing PRs while a main release publish is in flight (push-race + publish-tail cancel).
+`v1.109.0` is on PyPI (HTTP 200); still gate merges on the newest main run completing.
 
 ### Task 2A plan gate (owned by #89/#90; not shipped / not merge-ready)
 
-Round-60 plan approval stands. Local RED at `6367614...` is Sol `FIX-FIRST` (10 HIGH): no real
-immutable-SHA Windows CI; runners treat crash/setup as behavioral RED; hardcoded PCRE2 construction
-oracle outside census; parent-forgeable Job heartbeat + multiline ambiguity; default Job cleanup not
-independently proven; SDDL accepts unknown/inherit-only/garbage; CNG export invalid flag without
-exportable positive control; TxR omits exact close ownership; Python producer self-attests before
-start; public `-f`/`--file` GREEN unbounded read before ledger. Retained: Counter/census/job/vector/
-Cargo binding; foreign-chain/catalog fixtures; scoped rg/sidecar overrides; discoverable close
-ownership. After #911 merges and base proof lands, repair those ten blockers → Sol `SHIP` → push draft
-→ real Windows CI. #89/#90 remain `READY`; approval and a blocked RED are not implementation.
+Round-60 plan approval stands. Local RED at `6367614...` is Sol `FIX-FIRST` (10 HIGH). #89/#90 are
+canonical `BLOCKED` on the Task 2B/2C typed-path program (`rust_core` + real WSL host) — reproduction
+is real; the fix is not start-now READY on this shared box. Approval and a blocked RED are not
+implementation.
 
 ---
 
@@ -374,21 +352,23 @@ the worktree, which is exactly how 519 lines hid behind an "ANCESTOR of main" ve
   is the near-miss: a commit subject is not a diff.** A `temp-verify-*` subject on a stash entry
   described the WIP it was taken from, not the change it carried.
 
-## READY — reproduced during Task 2
+## READY — start-now buildable
+
+None at this snapshot. The 2026-08-05 reconcile measured an empty start-now set: remaining work is
+IN_FLIGHT (F5/F6/F7), BLOCKED (F8/MCP-SURFACE/#89/#90), CEO_GATED, or DEMAND_GATED.
+
+## BLOCKED — environment / prerequisite (not CEO-gated)
 
 - [ ] **#89** WSL-to-Windows native delegation passes a Linux `/mnt/c/...` path to a Windows
-  executable, which reports `path_not_found` although WSL can stat the directory. The bounded
-  2026-08-02 receipt is in `docs/audits/2026-08-02-backlog-reconciliation.md`. Per the approved
-  outcome table, final closeout pauses until an amended, re-reviewed TDD task owns this fix.
+  executable, which reports `path_not_found` although WSL can stat the directory. Reproduced
+  2026-08-02 (`docs/audits/2026-08-02-backlog-reconciliation.md`). Blocked on Task 2B/2C typed-path
+  (`rust_core` + real WSL host), not a missing reproduction.
 - [ ] **#90** WSL `tg scan` passes the same Linux spelling to Windows ast-grep, reports the path
-  unreadable, yet emits a clear/zero-match exit-0 payload. The translated Windows-path control finds
-  six matches. The amended cross-domain task must preserve typed scan argument roles and incomplete
-  honesty; PR #571 remains the shipped doctor-probe half only.
-
-## BLOCKED — environment (not CEO-gated, just needs hardware)
-
-None at this snapshot. #89 and #90 are locally reproduced `READY` items, not hardware-blocked rows;
-#109 shipped in PR #605.
+  unreadable, yet emits a clear/zero-match exit-0 payload. Translated-path control finds six matches.
+  Same Task 2B/2C owner as #89; PR #571 remains the shipped doctor-probe half only.
+- [ ] **F8** workspace Tasks 12–13 — blocked on `rust_core` + e2e routing suite (CI/cloud).
+- [ ] **MCP-SURFACE** Task 4 — blocked on Task 2C contract ladder (live MCP contract `1.7.0`).
+- #109 shipped in PR #605 (not blocked).
 
 ## CEO-GATED (do not start without an explicit go)
 

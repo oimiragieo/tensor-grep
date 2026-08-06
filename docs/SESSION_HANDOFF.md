@@ -1,68 +1,42 @@
 # tensor-grep Session Handoff
 
-Last updated: 2026-08-03
+Last updated: 2026-08-05
 
 ## Current Release State
 
 release_docs_current_tag: v1.109.0
 
 - Latest tagged version: `v1.109.0`
-- Latest complete PyPI version: `v1.109.0`
+- Latest complete PyPI version: `v1.109.0` — measured 2026-08-05: `…/1.109.0/json` → HTTP **200**, bogus `1.999.999` → **404** (positive control); prior `1.108.2` still HTTP 200
 - GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.109.0>
 
 ## Current Backlog Closeout
 
-Canonical status index version: 2026-08-05.1
+Canonical status index version: 2026-08-05.2
 
-- `origin/main` at the campaign rebase point: `8024125612d5fb42481acde34d94ad39bbaa3c3e`.
-- PR #910 is merged. Its exact PR run `30777042942` completed 39 jobs with zero failure/unfinished
-  jobs; the focused board test passed 7/7 on the merged artifact.
-- Open PRs at the snapshot: PR #911 only. Head `01f276fa7c0d3d0e04fdb5feae78c29c1b194773`
-  was green, but that clearance expired. Pushed docs head
-  `fb99d2bce4ba722b724212282158bf6616b1ade2` passed CodeQL `30857839262` and failed security
-  `30857841901` on fresh fixable `aiohttp`/`cryptography` advisories. Its successor raises floors to
-  `aiohttp>=3.14.3` / `cryptography>=50.0.0` and regenerates `uv.lock`; derive the live head and
-  requires the cryptography floor in published `[project].dependencies` as well as the resolver
-  constraint (Sol caught the original validator blind spot). Derive the live head and require new
-  exact-head CI/security/CodeQL before merge. Open GitHub issues: #48 only.
-- Product healthy at `v1.102.1`; planning PR blocked on fresh exact-head security re-clearance;
-  backlog not done (20 unfinished: 7 READY, 2 IN_FLIGHT, 5 CEO_GATED, 6 DEMAND_GATED after F10 +
-  DD-004 RETIRED 2026-08-05); Task 2A correctly blocked.
-- Round-60 plan approval stands on hashes design `31D8E071...3D862B` / implementation
-  `AA64D0BA...0826B3`. Task 2A RED is local only at exact SHA
-  `6367614960327b1a4e00301c8bfdb9b2e4bb453e` (branch/HEAD match, unpushed, no Actions run, no GREEN).
-  Sol exact-byte verdict is `FIX-FIRST` with 10 HIGH blockers. Older rejects `4efcad9` / `8df269d`
-  are historical only. Do not call Task 2A merge-ready.
-- Task 2 reproduced both cross-domain items in WSL. Search returned `path_not_found` for an existing
-  `/mnt/c/...` root (#89). Scan passed that Linux spelling to Windows ast-grep, warned it was
-  unreadable, but emitted a clear zero-match exit-0 payload; the translated-path control found six
-  matches (#90). Both are `READY`.
-- The closeout campaign remains Tasks 2–15. Task 2 is the reconciliation checkpoint, Task 2A is
-  plan-approved but RED-blocked, and Tasks 3–15 remain the ordered follow-on program.
-- The current closed-world CEO report is `docs/audits/2026-08-03-ceo-backlog-update.md`; it lists all
-  23 unfinished rows as of that dated snapshot (live index is now 20 unfinished after F10 + DD-004
-  RETIRED), terminal five-at-the-time, research recommendations (not reclassifications), the Task 2A
-  FIX-FIRST blockers, and retained lessons including A61–A69.
-- Latest exact `main` CI run: `30793797849`, completed successfully on `8024125`. Public PyPI and
-  GitHub Release remain `v1.102.1`; no spend was incurred or authorized. No question is asked for
-  nonfinancial CEO gates; #169 remains the only mandatory financial stop.
-- Next action: finish exact-head CI/security/CodeQL for #911 and pause at merge. After human merge and
-  merged-base proof, Cursor repairs the ten RED blockers, Sol repeats until `SHIP`, then push draft
-  and obtain real Windows CI.
-- Durable machine/session resume state is in `MEMORY.md`; do not reconstruct the queue from this file's
-  historical release ledger.
-- Cross-OS environment receipt: a WSL `uv --project /mnt/c/...` probe replaced the Windows `.venv`.
-  The incompatible shell was moved to `%LOCALAPPDATA%\Temp\tensor-grep-venv-wsl-incompatible-20260803`;
-  Windows `uv sync --frozen` rebuilt and verified the canonical environment. Never point WSL `uv` at
-  the Windows project venv (AGENTS.md A60).
-- New retained laws A61–A69: behavioral RED pins exact reason; route/start evidence from real
-  producer/OS; containment authenticates provenance + alive→dead cleanup; crypto negatives need valid
-  API + positive control; security grammar rejects unknown/inherit-only; resource protocols name close
-  ownership; RED scaffolds cannot enable partial public/unbounded pre-guard work; immutable-SHA CI
-  needs a real run (no run = no clearance); fresh fixable advisories invalidate old security green
-  and must be upgraded across floors/lock/validators before a new exact-head audit.
+- Board + BACKLOG reconciled to measured truth after the 2026-08-05 shipping wave
+  (`docs/audits/2026-08-05-closed-world-census.md`). READY-vs-SHIPPED contradictions cleared.
+- Live tallies: **28 rows / 18 unfinished** (0 READY, 3 IN_FLIGHT, 4 BLOCKED, 5 CEO_GATED,
+  6 DEMAND_GATED). Start-now READY set is EMPTY.
+- Status flips this stamp: CPU-BACKEND + REF-CALL-REGISTRY → SHIPPED (closure #948); F5/F6/F7 →
+  IN_FLIGHT; F8 + MCP-SURFACE + #89/#90 → BLOCKED; F10 + DD-004 already RETIRED (#953).
+- Task 2 reproduced both cross-domain items in WSL (#89 path_not_found; #90 false clear). Both are
+  canonical `BLOCKED` on Task 2B/2C typed-path (`rust_core` + real WSL host) — not start-now READY.
+- Task 2A RED remains local-only at `6367614960327b1a4e00301c8bfdb9b2e4bb453e` (Sol FIX-FIRST ×10
+  HIGH). Do not call it merge-ready. No CEO decision invented for #48/#72/#77/#131/#169.
+- The dated 2026-08-03 CEO packet (`docs/audits/2026-08-03-ceo-backlog-update.md`) retains historical
+  counts from that snapshot; live index is this file's version line + `docs/TASK_BOARD.md`.
+- Next action: board-reconcile docs PR can merge after confirming no newer main publish is in flight
+  PR; continue F7 Task 11 waves via CI; keep CEO/demand gates closed unless the operator decides.
+- Durable machine/session resume state is in `MEMORY.md`; do not reconstruct the queue from this
+  file's historical release ledger alone.
+- Cross-OS environment receipt: never point WSL `uv` at the Windows project venv (AGENTS.md A60).
+- Retained laws A61–A69 remain in force (behavioral RED, route/start provenance, containment,
+  crypto positives, security grammar, resource close ownership, RED scaffolds, immutable-SHA CI,
+  advisory floor upgrades).
 
 ## Historical Milestones
+
 
 **Historical shipped milestones (the v1.45.x line — 2026-07-07):** a correctness + agent-trust cluster from a multi-model (Fable-designed, Sonnet-built, verified-in-real-venv) audit blitz. `tg callers --provider lsp` now unions native and LSP callers instead of masking one behind the other (H1); the `tg agent` confidence signal reflects graph corroboration (T2) and the flagship command honors the exit-2-on-scan-truncation contract, so a `--max-repo-files`-capped scan can no longer emit a confident capsule at exit 0 (1D); StringZilla honors `--invert-match` and `--max-count` (H5/H6); an apply-policy phantom-rollback fix plus a self-healing index-lock and atomic-write/retention hardening (reliability H8/H9/M6/M8); the MCP surface received the same walk-deadline and refusal guards as the CLI (H3/H4); the Rust bridge passes ripgrep args by keyword to prevent silent flag-scrambling (R1); `merge_runtime_routing` surfaces mixed-backend routing instead of reporting only the last engine used (M9); and `tg search --count` / `-l` recover partial results on a subprocess timeout instead of hard-crashing (L7). The number-one product-latency fix landed as a parse-product cache: one tree-sitter parse per (path, mtime) shared across the symbol, reference, and caller extractors, golden-parity-locked (the oracle suites pass byte-identical) and measured at roughly -25% cold render / -45% parse time on this repo, larger on TypeScript-heavy trees (PERF). A 2026-07-07 competitive analysis (codanna, Gortex, Serena, Sourcegraph) plus a dogfood of the cross-tool caller-graph edge cases confirmed tensor-grep's name-based `tg callers` has stronger recall than resolved-edge rivals (it catches module-alias and virtual-dispatch call sites they miss and would otherwise mark as dead code) while carrying the mirror precision gap (a same-named local function's calls can be over-attributed to the queried symbol); the recall-preserving three-tier resolution-confidence fix is designed and queued (C-EDGE-1).
 

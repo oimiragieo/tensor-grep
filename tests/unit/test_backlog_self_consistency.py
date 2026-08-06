@@ -121,3 +121,38 @@ def test_shipped_items_are_not_also_offered_as_buildable() -> None:
         "(strike it through with ~~...~~ to keep it legible), do not delete the "
         "receipt."
     )
+
+
+_BOARD = Path(__file__).resolve().parents[2] / "docs" / "TASK_BOARD.md"
+_BOARD_READY_RE = re.compile(
+    r"^- \[ \] \*\*(?P<id>[#A-Z0-9-]+)\*\* — Status: READY;",
+    re.MULTILINE,
+)
+
+
+def _board_ready_ids() -> set[str]:
+    return {m.group("id").upper() for m in _BOARD_READY_RE.finditer(_BOARD.read_text(encoding="utf-8"))}
+
+
+def test_board_ready_rows_do_not_contradict_backlog_shipped_receipts() -> None:
+    """A board READY row must not also be a fully-SHIPPED reconcile receipt.
+
+    The 2026-08-05 wave left TASK_BOARD saying READY while BACKLOG's reconcile table already
+    recorded SHIPPED — the dispatch hazard the enterprise readiness census named. This gate
+    compares the two committed artifacts with no network.
+    """
+    assert _BOARD.is_file(), f"{_BOARD} is missing"
+    ready = _board_ready_ids()
+    shipped = _shipped_items(_read())
+    board_text = _BOARD.read_text(encoding="utf-8")
+    assert "Status: READY;" in board_text or "Start-now READY set: EMPTY" in board_text, (
+        "board has neither a READY row nor an explicit empty-READY stamp — the READY scanner "
+        "cannot be validated"
+    )
+    assert shipped, "reconcile table parsed zero SHIPPED rows — cross-doc gate is inert"
+    contradictions = ready & shipped
+    assert not contradictions, (
+        "docs/TASK_BOARD.md marks READY while docs/BACKLOG.md reconcile marks SHIPPED: "
+        f"{sorted(contradictions)}. Flip the board row (or strike the false SHIPPED receipt)."
+    )
+

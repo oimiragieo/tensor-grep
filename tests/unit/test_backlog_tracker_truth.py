@@ -647,13 +647,14 @@ def test_shipped_receipts() -> None:
         assert re.search(rf"^- \[ \] \*\*{re.escape(item_id)}\*\*", hardware, re.MULTILINE) is None
 
 
-def test_mixed_90_reproduction_is_ready() -> None:
+def test_mixed_90_reproduction_is_blocked_on_typed_path() -> None:
+    """#90 reproduction stays real; start-now READY does not — Task 2B/2C owns the fix."""
     row = _board_index().rows["#90"]
-    assert row.status == "READY"
+    assert row.status == "BLOCKED"
     assert "PR #571" in row.trigger
     assert "matched_rules=0" in row.trigger
     assert "total_matches=6" in row.trigger
-    assert "amended" in row.trigger
+    assert "Task 2B/2C" in row.trigger
     audit = (ROOT / "docs" / "audits" / "2026-08-02-backlog-reconciliation.md").read_text(
         encoding="utf-8"
     )
@@ -667,13 +668,15 @@ def test_mixed_90_reproduction_is_ready() -> None:
         .split("## BLOCKED — environment", 1)[1]
         .split("\n## ", 1)[0]
     )
-    assert re.search(r"^- \[ \] \*\*#90\*\*", blocked, re.MULTILINE) is None
+    assert re.search(r"^- \[ \] \*\*#90\*\*", blocked, re.MULTILINE) is not None
 
 
-def test_89_reproduced_path_domain_defect_is_ready() -> None:
+def test_89_reproduced_path_domain_defect_is_blocked_on_typed_path() -> None:
+    """#89 reproduction stays real; start-now READY does not — Task 2B/2C owns the fix."""
     row = _board_index().rows["#89"]
-    assert row.status == "READY"
+    assert row.status == "BLOCKED"
     assert "WSL-to-Windows path-domain" in row.trigger
+    assert "Task 2B/2C" in row.trigger
     audit = (ROOT / "docs" / "audits" / "2026-08-02-backlog-reconciliation.md").read_text(
         encoding="utf-8"
     )
@@ -684,6 +687,13 @@ def test_89_reproduced_path_domain_defect_is_ready() -> None:
     assert re.search(r"/home/(?!<)[^/\s]+", audit) is None
     assert re.search(r"/mnt/c/Users/(?!<)[^/\s]+", audit, re.IGNORECASE) is None
     assert WINDOWS_ACCOUNT_PATH_RE.search(audit) is None
+    blocked = (
+        BOARD_PATH
+        .read_text(encoding="utf-8")
+        .split("## BLOCKED — environment", 1)[1]
+        .split("\n## ", 1)[0]
+    )
+    assert re.search(r"^- \[ \] \*\*#89\*\*", blocked, re.MULTILINE) is not None
 
 
 @pytest.mark.parametrize(
@@ -743,10 +753,15 @@ def test_program_ownership_and_ready_statuses() -> None:
                 f"{item_id} is READY but does not say what moves it"
             )
         else:
-            assert row.status in {"IN_FLIGHT", "SHIPPED"}, (
+            assert row.status in {"IN_FLIGHT", "SHIPPED", "BLOCKED"}, (
                 f"{item_id} left READY into an unlawful status {row.status!r}; a program row may "
-                "only progress to IN_FLIGHT or SHIPPED"
+                "only progress to IN_FLIGHT, SHIPPED, or BLOCKED (with a named prerequisite)"
             )
+            if row.status == "BLOCKED":
+                assert any(
+                    token in row.trigger.lower()
+                    for token in ("blocked", "task 2c", "rust_core", "ci/cloud")
+                ), f"{item_id} is BLOCKED but does not name a prerequisite"
 
 
 def test_ceo_and_demand_ownership() -> None:
@@ -767,12 +782,12 @@ def test_handoff_version_and_current_prose() -> None:
     current = handoff.split("## Current Backlog Closeout", 1)[1].split("\n## ", 1)[0]
     assert "v1.45" not in current
     assert "v1.9.1" not in current
-    assert "Tasks 3\u201315" in current
+    assert "18 unfinished" in current or "0 READY" in current
     board = BOARD_PATH.read_text(encoding="utf-8")
     live = board.split("## Live campaign snapshot", 1)[1].split("\n## ", 1)[0]
-    assert "Task 2 is complete" in live
-    assert "canonical index" in live
-    assert CEO_AUDIT_PATH.name in live
+    assert "Canonical rows" in live or "canonical" in live.lower()
+    assert "2026-08-05-closed-world-census.md" in live
+    # Historical 2026-08-03 CEO packet remains on disk with its dated counts; do not rewrite it.
     ceo_audit = CEO_AUDIT_PATH.read_text(encoding="utf-8")
     assert "Every unfinished canonical backlog item (23)" in ceo_audit
     assert "Ready to build after its own gates (10)" in ceo_audit
