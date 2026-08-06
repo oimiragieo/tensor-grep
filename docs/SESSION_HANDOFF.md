@@ -22,6 +22,8 @@ Canonical status index version: 2026-08-06.1
 - Enterprise CUJ locked (#958) and dogfooded on published wheel (#962).
 - New agent laws A70–A76 (ambient signing-key pollution; canonical-index free-form ban; tracker
   closeout debt; bare-wheel find; quota substitute SHIP; premise-check queue; ordinal freshness).
+- The closeout campaign remains **Tasks 3–15** (edit/verify/workspace/MCP disclosure and gated
+  follow-ons); Task 2A security RED stays blocked ahead of #89/#90 product GREEN.
 
 ## Historical Milestones
 
