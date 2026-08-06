@@ -864,7 +864,7 @@ jobs:
           py_nodes = [n for n in payload['nodes'] if n['id'].startswith('python::') and n.get('job') == 'native-build-smoke']
           rust = [n for n in payload['nodes'] if n['id'].startswith('rust::') and n.get('job') == 'native-build-smoke']
           assert py_nodes, 'no native-build-smoke python nodes'
-          assert len(rust) == 9, len(rust)
+          assert len(rust) == 11, len(rust)
           for n in rust:
               assert n.get('binary') in {'tg', 'tensor_grep_rs', 'task2a_direct_native_round60'}
               assert 'tensor_grep_rs' in n['command_vector']

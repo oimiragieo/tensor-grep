@@ -41,6 +41,7 @@ def _live_environ() -> dict[str, str]:
         "GITHUB_SHA": "deadbeef" * 5,
         "GITHUB_RUN_ID": "30793797849",
         "GITHUB_RUN_ATTEMPT": "1",
+        "GITHUB_WORKFLOW": "CI",
         "GITHUB_JOB": "native-build-smoke",
         "RUNNER_NAME": "GitHub Actions 100000",
         "ACTIONS_RUNTIME_URL": "https://example.invalid/actions/",
@@ -261,7 +262,7 @@ def test_manifest_is_static_without_live_run_ids() -> None:
     ]
     assert len(ledger_py) == 2
     rust_routes = [n for n in payload["nodes"] if n["id"].startswith("rust::")]
-    assert len(rust_routes) == 9
+    assert len(rust_routes) == 11
     expected_rust_targets = {
         "pattern_file_search_input_limit_direct_native",
         "pattern_file_below_cap_native_json_success",
@@ -272,6 +273,8 @@ def test_manifest_is_static_without_live_run_ids() -> None:
         "python_sidecar::tests::early_passthrough_pcre2_format_json_search_input_limit",
         "python_sidecar::tests::early_passthrough_below_cap_non_pcre2_starts_sidecar_once",
         "native_search::tests::run_native_search_leaf_matcher_construction_exactly_once",
+        "native_search::tests::pcre2_direct_native_route_zero_matcher_constructions_before_refusal",
+        "native_search::tests::below_cap_direct_native_route_one_matcher_construction",
     }
     assert {n["rust_test_target"] for n in rust_routes} == expected_rust_targets
     for node in rust_routes:
@@ -661,6 +664,38 @@ def test_caller_supplied_claims_refused() -> None:
     )
     assert verdict.get("ok") is False
     assert verdict.get("reason") == "caller_supplied_claims_refused"
+
+
+@task2a_owned
+def test_clearance_refuses_without_live_immutable_sha_actions_run(tmp_path: Path) -> None:
+    """A68 / HIGH#1: no live Actions immutable-SHA tuple ⇒ clearance never ok=True.
+
+    Receipt JSON carrying commit_sha / workflow_run_id alone must not satisfy
+    clearance. Absent/empty GITHUB_SHA + GITHUB_RUN_ID + GITHUB_RUN_ATTEMPT +
+    GITHUB_WORKFLOW + GITHUB_JOB refuse with an exact reason class.
+    """
+    current = tmp_path / "run"
+    current.mkdir()
+    receipt = _receipt_obj()  # caller-shaped SHA/run fields present in JSON
+    for environ in (None, {}, {k: "" for k in (
+        "GITHUB_SHA",
+        "GITHUB_RUN_ID",
+        "GITHUB_RUN_ATTEMPT",
+        "GITHUB_WORKFLOW",
+        "GITHUB_JOB",
+    )}):
+        source = receipt_mod.ArtifactSource(
+            current_run_dir=current,
+            manifest_path=MANIFEST,
+            environ=environ,
+            expected_attribution="source-tree",
+        )
+        verdict = receipt_mod.verify_native_ci_receipt(receipt, artifact_source=source)
+        assert verdict.get("ok") is False, f"environ={environ!r} must refuse clearance"
+        assert verdict.get("reason") in {
+            "live_actions_tuple_missing",
+            "no_immutable_sha_run",
+        }, f"unexpected reason for environ={environ!r}: {verdict!r}"
 
 
 @task2a_owned

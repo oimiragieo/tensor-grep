@@ -68,7 +68,7 @@ def test_task2a_ci_enumerates_all_owned_nodes_no_first_node_shortcut() -> None:
     ]
     assert len(test_python_ids) >= 1
     assert len(native_py_ids) >= 1
-    assert len(rust_ids) == 9
+    assert len(rust_ids) == 11
 
     py_steps = _task2a_steps("test-python")
     assert len(py_steps) == 1
@@ -85,7 +85,7 @@ def test_task2a_ci_enumerates_all_owned_nodes_no_first_node_shortcut() -> None:
     assert "native-python-node-ids.txt" in native_run
     assert "rust-node-ids.txt" in native_run
     assert "break" not in native_run
-    assert "len(rust) == 9" in native_run
+    assert "len(rust) == 11" in native_run
 
 
 def test_task2a_ci_generates_real_cargo_json_messages() -> None:
@@ -140,3 +140,104 @@ def test_task2a_ci_workflow_yaml_still_parses() -> None:
     assert "native-build-smoke" in doc["jobs"]
     assert _task2a_steps("test-python")
     assert _task2a_steps("native-build-smoke")
+
+
+def test_runners_do_not_classify_crash_or_setup_as_behavioral_red(tmp_path: Path) -> None:
+    """A61 / HIGH#2: crash/setup/import/panic are not behavioral RED phases."""
+    import importlib.util
+    import sys
+
+    def _load(name: str, path: Path):
+        spec = importlib.util.spec_from_file_location(name, path)
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[name] = mod
+        spec.loader.exec_module(mod)
+        return mod
+
+    py_runner = _load("run_task2a_pytest_nodes", REPO_ROOT / "scripts" / "run_task2a_pytest_nodes.py")
+    rust_runner = _load("run_task2a_rust_node", REPO_ROOT / "scripts" / "run_task2a_rust_node.py")
+
+    junit = tmp_path / "crash.xml"
+    junit.write_text(
+        """<?xml version="1.0" encoding="utf-8"?>
+<testsuite tests="1" errors="1" failures="0" skipped="0">
+  <testcase classname="tests.unit.test_x" name="test_leaf" file="tests/unit/test_x.py">
+    <error message="ImportError">ImportError: boom</error>
+  </testcase>
+</testsuite>
+""",
+        encoding="utf-8",
+    )
+    crash_phase = py_runner.classify_pytest_node_phase(
+        junit_path=junit,
+        pytest_nodeid="tests/unit/test_x.py::test_leaf",
+        exit_code=1,
+    )
+    assert crash_phase != "executed_refused_receipt"
+    assert crash_phase in {"crash_or_setup", "non_behavioral"}
+
+    fail_junit = tmp_path / "fail.xml"
+    fail_junit.write_text(
+        """<?xml version="1.0" encoding="utf-8"?>
+<testsuite tests="1" errors="0" failures="1" skipped="0">
+  <testcase classname="tests.unit.test_x" name="test_leaf" file="tests/unit/test_x.py">
+    <failure message="AssertionError">AssertionError: expected reason</failure>
+  </testcase>
+</testsuite>
+""",
+        encoding="utf-8",
+    )
+    fail_phase = py_runner.classify_pytest_node_phase(
+        junit_path=fail_junit,
+        pytest_nodeid="tests/unit/test_x.py::test_leaf",
+        exit_code=1,
+    )
+    assert fail_phase == "executed_refused_receipt"
+
+    panic_phase = rust_runner.classify_rust_node_phase(
+        exit_code=101,
+        stdout="",
+        stderr="thread 'tests::leaf' panicked at src/x.rs:1:1:\nbom",
+    )
+    assert panic_phase != "executed_refused_receipt"
+    assert panic_phase in {"crash_or_setup", "non_behavioral"}
+
+    assert (
+        rust_runner.classify_rust_node_phase(
+            exit_code=101,
+            stdout="test leaf ... FAILED\n",
+            stderr="assertion `left == right` failed",
+        )
+        == "executed_refused_receipt"
+    )
+
+
+def test_pcre2_construction_oracles_are_inside_closed_world_census() -> None:
+    """HIGH#3: PCRE2 matcher-construction oracles must be owned census nodes (not ignored companions)."""
+    import json
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT / "tests"))
+    from helpers import task2a_ownership as ownership
+
+    required = {
+        "rust::native_search::tests::pcre2_direct_native_route_zero_matcher_constructions_before_refusal",
+        "rust::native_search::tests::below_cap_direct_native_route_one_matcher_construction",
+    }
+    registry = set(ownership.TASK2A_OWNED_RUST_NODE_IDS)
+    manifest_ids = set(ownership.load_manifest_node_ids())
+    missing_reg = sorted(required - registry)
+    missing_man = sorted(required - manifest_ids)
+    assert not missing_reg, f"construction oracles missing from rust registry: {missing_reg}"
+    assert not missing_man, f"construction oracles missing from manifest: {missing_man}"
+
+    payload = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    rust = [n for n in payload["nodes"] if n["id"].startswith("rust::")]
+    assert len(rust) == 11, f"expected 11 rust census nodes after construction oracles, got {len(rust)}"
+    for node_id in required:
+        node = next(n for n in rust if n["id"] == node_id)
+        vector = node["command_vector"]
+        assert "--include-ignored" in vector, f"{node_id} must run via --include-ignored"
+        assert "--lib" in vector
+        assert node.get("rust_test_target") in node_id

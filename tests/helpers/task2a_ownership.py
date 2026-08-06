@@ -155,6 +155,7 @@ TASK2A_OWNED_PYTHON_NODE_IDS: tuple[str, ...] = (
     "python::tests/unit/test_native_ci_receipt_v1.py::test_exact_current_run_positive_receipt",
     "python::tests/unit/test_native_ci_receipt_v1.py::test_seeded_current_run_directory_rejected",
     "python::tests/unit/test_native_ci_receipt_v1.py::test_caller_supplied_claims_refused",
+    "python::tests/unit/test_native_ci_receipt_v1.py::test_clearance_refuses_without_live_immutable_sha_actions_run",
     "python::tests/unit/test_native_ci_receipt_v1.py::test_cross_attempt_rejected",
     "python::tests/unit/test_native_ci_receipt_v1.py::test_manifest_drift_rejected",
     "python::tests/unit/test_native_ci_receipt_v1.py::test_binary_drift_rejected",
@@ -206,6 +207,9 @@ TASK2A_OWNED_RUST_NODE_IDS: tuple[str, ...] = (
     "rust::python_sidecar::tests::early_passthrough_below_cap_non_pcre2_starts_sidecar_once",
     # Matcher-construction leaf (exact count after successful build).
     "rust::native_search::tests::run_native_search_leaf_matcher_construction_exactly_once",
+    # PCRE2 / below-cap construction oracles (HIGH#3 — must stay inside the census).
+    "rust::native_search::tests::pcre2_direct_native_route_zero_matcher_constructions_before_refusal",
+    "rust::native_search::tests::below_cap_direct_native_route_one_matcher_construction",
 )
 
 

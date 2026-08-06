@@ -41,6 +41,15 @@ _REQUIRED_KEYS = frozenset({
     "artifact_namespace",
     "attribution",
 })
+# A68: immutable-SHA clearance requires a live Actions run tuple — receipt JSON alone
+# (caller-shaped commit_sha / workflow_run_id) is never clearance.
+_LIVE_IMMUTABLE_SHA_ACTIONS_KEYS = (
+    "GITHUB_SHA",
+    "GITHUB_RUN_ID",
+    "GITHUB_RUN_ATTEMPT",
+    "GITHUB_WORKFLOW",
+    "GITHUB_JOB",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +140,13 @@ def derive_live_actions_tuple(environ: Mapping[str, str]) -> LiveActionsTuple:
     )
 
 
+def live_immutable_sha_actions_tuple_present(environ: Mapping[str, str] | None) -> bool:
+    """True only when the live Actions immutable-SHA clearance tuple is fully present."""
+    if environ is None:
+        return False
+    return all(str(environ.get(key) or "").strip() for key in _LIVE_IMMUTABLE_SHA_ACTIONS_KEYS)
+
+
 def require_empty_current_run_directory(path: Path) -> bool:
     """Receipts may be created only in a freshly empty current-run directory.
 
@@ -192,6 +208,10 @@ def verify_native_ci_receipt(
         return {"ok": False, "reason": "caller_supplied_claims_refused"}
     if artifact_source is None:
         return {"ok": False, "reason": "artifact_source_required"}
+    # A68 / HIGH#1: clearance refuses without a live immutable-SHA Actions run.
+    # Receipt-embedded commit_sha / workflow_run_id alone never clears.
+    if not live_immutable_sha_actions_tuple_present(artifact_source.environ):
+        return {"ok": False, "reason": "live_actions_tuple_missing"}
     _ = receipt, environ, current_run_dir, expected_attribution
     # Behaviorless: do not derive / do not accept.
     raise NotImplementedError(

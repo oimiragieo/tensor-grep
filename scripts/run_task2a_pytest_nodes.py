@@ -182,6 +182,36 @@ def verify_junit_node_executed_non_skipped(*, junit_path: Path, pytest_nodeid: s
         raise ValueError(f"junit testcase for {pytest_nodeid!r} was skipped (required_non_skip)")
 
 
+def classify_pytest_node_phase(
+    *,
+    junit_path: Path,
+    pytest_nodeid: str,
+    exit_code: int,
+) -> str:
+    """A61 / HIGH#2: crash/setup/import errors are never behavioral RED.
+
+    ``executed_refused_receipt`` is reserved for arms that exercised the contract
+    (pass or assertion ``<failure>``). JUnit ``<error>``, negative exit (signal),
+    and pytest internal/usage exits are ``crash_or_setup``.
+    """
+    if exit_code < 0 or exit_code in {3, 4}:
+        return "crash_or_setup"
+    case = _junit_testcase_for_nodeid(junit_path, pytest_nodeid)
+    if case is None and junit_path.is_file():
+        try:
+            root = ET.parse(junit_path).getroot()
+        except ET.ParseError:
+            return "crash_or_setup"
+        cases = list(root.iter("testcase"))
+        if len(cases) == 1:
+            leaf = pytest_nodeid.split("::")[-1]
+            if str(cases[0].attrib.get("name") or "") == leaf:
+                case = cases[0]
+    if case is not None and case.find("error") is not None:
+        return "crash_or_setup"
+    return "executed_refused_receipt"
+
+
 def _emit_observation(
     path: Path | None,
     *,
@@ -324,6 +354,29 @@ def main(argv: list[str] | None = None) -> int:
             stdout=proc.stdout,
             stderr=proc.stderr,
             detail=f"junit execution evidence refused: {err}",
+        )
+        return 2
+
+    phase = classify_pytest_node_phase(
+        junit_path=args.junitxml,
+        pytest_nodeid=pytest_nodeid,
+        exit_code=proc.returncode,
+    )
+    if phase != "executed_refused_receipt":
+        print(
+            f"run_task2a_pytest_nodes: non-behavioral outcome phase={phase}; "
+            "crash/setup is not behavioral RED",
+            file=sys.stderr,
+        )
+        _emit_observation(
+            args.observation_out,
+            node_id=args.node_id,
+            phase=phase,
+            argv=cmd,
+            exit_code=2,
+            stdout=proc.stdout,
+            stderr=proc.stderr,
+            detail=f"non-behavioral phase={phase} (A61)",
         )
         return 2
 

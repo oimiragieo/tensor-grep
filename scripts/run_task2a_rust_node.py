@@ -313,6 +313,32 @@ def _emit_observation(
     _write_json(path, payload)
 
 
+def classify_rust_node_phase(*, exit_code: int, stdout: str, stderr: str) -> str:
+    """A61 / HIGH#2: panic/abort/crash are not behavioral RED.
+
+    Assertion failures that exercise the contract remain ``executed_refused_receipt``.
+    """
+    if exit_code < 0:
+        return "crash_or_setup"
+    blob = f"{stdout}\n{stderr}"
+    panic_markers = (
+        "panicked at",
+        "fatal runtime error",
+        "stack backtrace:",
+        "SIGSEGV",
+        "SIGABRT",
+    )
+    if any(marker in blob for marker in panic_markers):
+        # Distinguish assertion-failure paths that also print a backtrace: those
+        # still include libtest "assertion `left == right`" / "FAILED" without a
+        # true panic-at frame as the primary signal. Prefer panic language.
+        if "panicked at" in blob or "fatal runtime error" in blob:
+            return "crash_or_setup"
+        if "SIGSEGV" in blob or "SIGABRT" in blob:
+            return "crash_or_setup"
+    return "executed_refused_receipt"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, required=True)
@@ -484,6 +510,30 @@ def main(argv: list[str] | None = None) -> int:
         args.rust_status_out,
         f"list_exit=0\nexact_exit={exact.returncode}\nselected={selected}\nleaf={exact_leaf}\n",
     )
+    phase = classify_rust_node_phase(
+        exit_code=exact.returncode,
+        stdout=exact.stdout,
+        stderr=exact.stderr,
+    )
+    if phase != "executed_refused_receipt":
+        print(
+            f"run_task2a_rust_node: non-behavioral outcome phase={phase}; "
+            "crash/panic is not behavioral RED",
+            file=sys.stderr,
+        )
+        _emit_observation(
+            args.observation_out,
+            node_id=args.node_id,
+            phase=phase,
+            argv=exact_argv,
+            exit_code=2,
+            stdout=exact.stdout,
+            stderr=exact.stderr,
+            detail=f"non-behavioral phase={phase} (A61)",
+            selected_executable=str(selected),
+        )
+        return 2
+
     _ = (args.receipt_out, args.artifact_source)
     print(
         "run_task2a_rust_node: stable-Rust live Actions binding not implemented; "

@@ -1602,6 +1602,20 @@
       "required_non_skip": true
     },
     {
+      "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_clearance_refuses_without_live_immutable_sha_actions_run",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_native_ci_receipt_v1.py::test_clearance_refuses_without_live_immutable_sha_actions_run",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "8f756f9d1b5666f6d1ee1c11effec4d4091a0e130d68b35d55c568bfd64db521",
+      "required_non_skip": true
+    },
+    {
       "id": "python::tests/unit/test_native_ci_receipt_v1.py::test_cross_attempt_rejected",
       "workflow": "ci.yml",
       "job": "native-build-smoke",
@@ -2304,6 +2318,56 @@
       "binary": "tensor_grep_rs",
       "rust_kind": "lib",
       "command_digest": "dc592f3302e3d669c21abf222e3ccb0ce2ea03b07501026e7e6b06cf8efa85e6"
+    },
+    {
+      "id": "rust::native_search::tests::pcre2_direct_native_route_zero_matcher_constructions_before_refusal",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "rust_core/Cargo.toml",
+        "-p",
+        "tensor_grep_rs",
+        "--lib",
+        "native_search::tests::pcre2_direct_native_route_zero_matcher_constructions_before_refusal",
+        "--",
+        "--exact",
+        "--include-ignored",
+        "--nocapture"
+      ],
+      "required_non_skip": true,
+      "rust_test_target": "native_search::tests::pcre2_direct_native_route_zero_matcher_constructions_before_refusal",
+      "binary": "tensor_grep_rs",
+      "rust_kind": "lib",
+      "command_digest": "49a72681967498bd1c0604cb22a3bea12ca5771e7d415708bc33790b3c15dca7"
+    },
+    {
+      "id": "rust::native_search::tests::below_cap_direct_native_route_one_matcher_construction",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "rust_core/Cargo.toml",
+        "-p",
+        "tensor_grep_rs",
+        "--lib",
+        "native_search::tests::below_cap_direct_native_route_one_matcher_construction",
+        "--",
+        "--exact",
+        "--include-ignored",
+        "--nocapture"
+      ],
+      "required_non_skip": true,
+      "rust_test_target": "native_search::tests::below_cap_direct_native_route_one_matcher_construction",
+      "binary": "tensor_grep_rs",
+      "rust_kind": "lib",
+      "command_digest": "2fc51e76fe78ab5bf9d844515e0f72730075d166f3bfc87c44a38534cea0ef13"
     }
   ]
 }
