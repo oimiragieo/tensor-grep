@@ -6427,13 +6427,12 @@ def _c_references_and_calls_for_registry(
     *,
     definition_dirs: frozenset[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    # Task 10D: in-file AST extraction only -- no cross-file import resolution yet, so
-    # repo_root/definition_dirs are part of the uniform registry adapter signature (Go F25) but
-    # unused here, same as java's/csharp's/php's own adapters above. lang_c.py already owns its
-    # whole extraction pipeline including `_c_parser()` (matching lang_csharp.py's/lang_php.py's
-    # shape -- C's parser factory predates Task 10D, built for c_imports_and_symbols), so this
-    # adapter forwards path/symbol only.
-    return lang_c.c_references_and_calls(path, symbol)
+    # Task 11 / F7 wave 3: forward repo_root + definition_dirs so a bare C call whose file
+    # `#include`-resolves into the selected definition's directory earns the include-path
+    # confirmed band (mirrors Java Task 11A / Go F25).
+    return lang_c.c_references_and_calls(
+        path, symbol, repo_root, definition_dirs=definition_dirs
+    )
 
 
 def _cpp_references_and_calls_for_registry(
@@ -6443,13 +6442,12 @@ def _cpp_references_and_calls_for_registry(
     *,
     definition_dirs: frozenset[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    # Task 10E: in-file AST extraction only -- no cross-file import resolution yet, so
-    # repo_root/definition_dirs are part of the uniform registry adapter signature (Go F25) but
-    # unused here, same as csharp's/php's/c's own adapters above. lang_cpp.py already owns its
-    # whole extraction pipeline including `_cpp_parser()` (matching lang_c.py's shape -- C++'s
-    # parser factory predates Task 10E, built for cpp_imports_and_symbols), so this adapter
-    # forwards path/symbol only.
-    return lang_cpp.cpp_references_and_calls(path, symbol)
+    # Task 11 / F7 wave 3: forward repo_root + definition_dirs so a bare/qualified C++ call
+    # whose file `#include`-resolves into the selected definition's directory earns the
+    # include-path confirmed band (mirrors C / Java Task 11A / Go F25).
+    return lang_cpp.cpp_references_and_calls(
+        path, symbol, repo_root, definition_dirs=definition_dirs
+    )
 
 
 def _references_and_calls_for_path(
@@ -6756,19 +6754,15 @@ lang_registry.register_language(
 # dispatch sites below. references_and_calls now points at lang_c.c_references_and_calls (Task
 # 10D: IN-FILE AST reference/call extraction, promoting C from the foundational tier to the
 # parser-backed-refs-callers tier, mirroring Task 10A's Java landing / 10B's C# landing / 10C's
-# PHP landing) via the registry adapter above. The remaining cross-file caller-graph fields
-# (file_imports_symbol_from_definition / import_update_target / repo-root context priming for a
-# future `#include`-path resolver) stay None, deferred to a follow-up -- same shape as
-# Go/Java/C#/PHP's own gap, so `tg refs`/`tg callers`/`tg blast-radius` on a C symbol still fall
-# through to the honest `resolution_gaps` reverse-import disclosure (never a crash, never a
-# fabricated cross-file match) rather than the generic `_regex_references_and_calls` text
-# heuristic, which C never reached anyway (no regex fallback -- see below).
-# `_language_coverage_gaps_for_universe` already treats `import_update_target is None` as an
-# honest `resolution_gaps` entry (see the "audit #81 #4" comment on that function), so `tg
-# callers`/`tg blast-radius` stay honest about C's remaining reverse-import gap instead of
-# silently reading as a proven zero. provenance_when_missing="grammar-missing" (NOT
-# "regex-heuristic") is what makes a grammar-absent C file a genuine `resolution_gaps` entry
-# instead of a silent empty result (C has no regex fallback, unlike JS/TS/Rust).
+# PHP landing) via the registry adapter above. Task 11 / F7 wave 3 wires
+# file_imports_symbol_from_definition to lang_c.c_file_imports_symbol_from_definition (shared
+# include-path engine with C++). Remaining cross-file fields (import_update_target /
+# prime_repo_context) stay None. `_language_coverage_gaps_for_universe` already treats
+# `import_update_target is None` as an honest `resolution_gaps` entry (see the "audit #81 #4"
+# comment on that function), so `tg callers`/`tg blast-radius` stay honest about C's remaining
+# reverse-import-update gap. provenance_when_missing="grammar-missing" (NOT "regex-heuristic")
+# is what makes a grammar-absent C file a genuine `resolution_gaps` entry instead of a silent
+# empty result (C has no regex fallback, unlike JS/TS/Rust).
 #
 # ".h" is deliberately NOT in suffixes -- `_provider_language_for_path` (below) already assigns
 # every C/C++ header suffix to "cpp" (tree-sitter-cpp is a strict grammar superset of C), so a
@@ -6795,7 +6789,7 @@ lang_registry.register_language(
         extract_imports_and_symbols=None,
         references_and_calls=_c_references_and_calls_for_registry,
         provider_alias_calls=None,
-        file_imports_symbol_from_definition=None,
+        file_imports_symbol_from_definition=lang_c.c_file_imports_symbol_from_definition,
         import_update_target=None,
         prime_repo_context=None,
         classify_ref_kind=None,
@@ -6814,13 +6808,9 @@ lang_registry.register_language(
 # `this->method()`, and `new Widget()` constructor references -- via the registry adapter above).
 # defs/source/imports/agent still go through `extract_imports_and_symbols`-shaped extraction,
 # wired at the `_imports_and_symbols_for_path` / `build_symbol_source_from_map` dispatch sites
-# below. The remaining cross-file caller-graph fields (file_imports_symbol_from_definition /
-# import_update_target / repo-root context priming for a future `#include`-path resolver) stay
-# None, deferred to a follow-up -- same shape as every other parser-backed language's own gap, so
-# `tg refs`/`tg callers`/`tg blast-radius` on a C++ symbol still fall through to the honest
-# `resolution_gaps` reverse-import disclosure (never a crash, never a fabricated cross-file match)
-# rather than the generic `_regex_references_and_calls` text heuristic, which C++ never reaches
-# for its OWN suffixes any more (no regex fallback either way -- see below).
+# below. Task 11 / F7 wave 3 wires file_imports_symbol_from_definition to
+# lang_cpp.cpp_file_imports_symbol_from_definition (shared include-path engine with C).
+# Remaining cross-file fields (import_update_target / prime_repo_context) stay None.
 # provenance_when_missing="grammar-missing" (NOT "regex-heuristic") is what makes a
 # grammar-absent C++ file a genuine `resolution_gaps` entry instead of a silent empty result
 # (C++ has no regex fallback, unlike JS/TS/Rust).
@@ -6855,7 +6845,7 @@ lang_registry.register_language(
         extract_imports_and_symbols=None,
         references_and_calls=_cpp_references_and_calls_for_registry,
         provider_alias_calls=None,
-        file_imports_symbol_from_definition=None,
+        file_imports_symbol_from_definition=lang_cpp.cpp_file_imports_symbol_from_definition,
         import_update_target=None,
         prime_repo_context=None,
         classify_ref_kind=None,

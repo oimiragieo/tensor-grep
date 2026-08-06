@@ -172,6 +172,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from tensor_grep.cli import lang_c_cpp_include
+
 # ---------------------------------------------------------------------------
 # Duplicated tiny helpers -- see the module docstring: no import from repo_map.py, to avoid an
 # import cycle (repo_map.py imports THIS module). Keep byte-identical to repo_map.py's twins
@@ -927,6 +929,7 @@ _CPP_DEMOTED_CONFIDENCE = 0.6
 _CPP_DEMOTED_PROVENANCE = "cpp-name-heuristic"
 _CPP_CONFIRMED_CONFIDENCE = 0.9
 _CPP_CONFIRMED_PROVENANCE = "cpp-infile-function-declared"
+_CPP_CROSS_FILE_CONFIRMED_PROVENANCE = "cpp-include-path-confirmation"
 
 # Node types whose "declarator" field (possibly wrapped, resolved via
 # _cpp_declarator_name_node) names a DEFINITION site -- excluded from the reference/call walk, the
@@ -1040,17 +1043,39 @@ def _cpp_new_expression_type_identifier(node: Any) -> Any | None:
     return None
 
 
+def cpp_file_imports_symbol_from_definition(
+    file_path: Path,
+    source: str,
+    symbol: str,
+    definition_path: str,
+    repo_root: Path | str | None = None,
+) -> bool:
+    """True iff *file_path* can see *symbol*'s definition via ``#include`` path evidence.
+
+    Delegates to the shared C/C++ include-path engine. *symbol* is accepted for LanguageSpec
+    signature parity; C++ include visibility is file-scoped, not symbol-scoped.
+    """
+    del symbol  # include proof is path-scoped; member name is not part of the import edge
+    return lang_c_cpp_include.file_includes_definition(
+        file_path, source, definition_path, repo_root
+    )
+
+
 def cpp_references_and_calls(
-    path: Path, symbol: str
+    path: Path,
+    symbol: str,
+    repo_root: Path | str | None = None,
+    *,
+    definition_dirs: frozenset[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """In-file AST reference/call rows for *symbol* in *path* -- see the module's TASK 10E
-    docstring block above for the full AST-shape mapping and the confirmed/demoted band
-    rationale. Scope: single-file only, no cross-file resolution (mirrors
-    ``lang_c.c_references_and_calls`` exactly). Owns its own parser factory (``_cpp_parser()``,
-    defined above), matching ``lang_c.py``'s/``lang_csharp.py``'s/``lang_php.py``'s shape rather
-    than ``lang_java.py``'s externally-built-parser shape -- C++ already had its own
-    grammar-probing factory before Task 10E (needed by ``cpp_imports_and_symbols``), so a second
-    factory here would create two sources of truth for "is the C++ grammar installed"."""
+    """AST reference/call rows for *symbol* in *path*.
+
+    In-file confirmation (``cpp-infile-function-declared``) still fires when *symbol* names a
+    real function/method in THIS file. When *definition_dirs* is supplied (repo_map always
+    supplies it from preferred definitions), a bare/qualified call whose file ``#include``-
+    resolves into those directories earns the cross-file confirmed band
+    (``cpp-include-path-confirmation``).
+    """
     if path.suffix not in _CPP_SUFFIXES:
         return [], []
 
@@ -1081,16 +1106,30 @@ def cpp_references_and_calls(
 
     definition_positions = _cpp_definition_site_positions(tree.root_node)
     function_confirmed = _cpp_symbol_has_infile_function(tree.root_node, source_bytes, symbol)
+    include_confirmed = bool(
+        definition_dirs
+        and lang_c_cpp_include.include_resolves_into_definition_dirs(
+            path, source, definition_dirs, repo_root
+        )
+    )
 
     def _is_definition_site(node: Any) -> bool:
         return (node.start_byte, node.end_byte) in definition_positions
 
     def _emit(
-        bucket: list[dict[str, Any]], node: Any, *, kind: str, ref_kind: str, confirmed: bool
+        bucket: list[dict[str, Any]],
+        node: Any,
+        *,
+        kind: str,
+        ref_kind: str,
+        confirmed: bool,
+        cross_file: bool = False,
     ) -> None:
         if confirmed:
             confidence = _CPP_CONFIRMED_CONFIDENCE
-            provenance = _CPP_CONFIRMED_PROVENANCE
+            provenance = (
+                _CPP_CROSS_FILE_CONFIRMED_PROVENANCE if cross_file else _CPP_CONFIRMED_PROVENANCE
+            )
         else:
             confidence = _CPP_DEMOTED_CONFIDENCE
             provenance = _CPP_DEMOTED_PROVENANCE
@@ -1131,7 +1170,8 @@ def cpp_references_and_calls(
                         # confirms -- `this`'s type is syntactically fixed (no local-declaration
                         # lookup, no `auto`, no aliasing). Every other receiver stays demoted --
                         # see the module's TASK 10E docstring block for the full inheritance/
-                        # auto/template reasoning.
+                        # auto/template reasoning. Include-path confirmation does NOT apply to
+                        # member calls (same honest narrowing as C).
                         confirmed = (
                             function_confirmed
                             and argument_field is not None
@@ -1149,19 +1189,27 @@ def cpp_references_and_calls(
                     name_node = _cpp_call_target_name_node(function_field)
                     if name_node is not None and _node_text(name_node) == symbol:
                         claimed_node_ids.add((name_node.start_byte, name_node.end_byte))
+                        if function_confirmed:
+                            confirmed, cross_file = True, False
+                        elif include_confirmed:
+                            confirmed, cross_file = True, True
+                        else:
+                            confirmed, cross_file = False, False
                         _emit(
                             references,
                             name_node,
                             kind="reference",
                             ref_kind="call",
-                            confirmed=function_confirmed,
+                            confirmed=confirmed,
+                            cross_file=cross_file,
                         )
                         _emit(
                             calls,
                             name_node,
                             kind="call",
                             ref_kind="call",
-                            confirmed=function_confirmed,
+                            confirmed=confirmed,
+                            cross_file=cross_file,
                         )
             elif node_type == "new_expression":
                 type_identifier = _cpp_new_expression_type_identifier(node)
@@ -1226,6 +1274,7 @@ def cpp_references_and_calls(
 
 
 __all__ = [
+    "cpp_file_imports_symbol_from_definition",
     "cpp_imports_and_symbols",
     "cpp_imports_with_lines",
     "cpp_parser_symbol_sources",
