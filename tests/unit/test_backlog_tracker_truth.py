@@ -647,13 +647,18 @@ def test_shipped_receipts() -> None:
         assert re.search(rf"^- \[ \] \*\*{re.escape(item_id)}\*\*", hardware, re.MULTILINE) is None
 
 
-def test_mixed_90_reproduction_is_ready() -> None:
+def test_mixed_90_reproduction_is_blocked_on_task2_program() -> None:
+    """#90 stays reproduced, but READY was a false build license (BACKLOG reconcile).
+
+    Renamed from `test_mixed_90_reproduction_is_ready`: the reproduction facts remain load-bearing;
+    the status pin must match the Task 2A→2B/2C ownership gate, not invite a premature product GREEN.
+    """
     row = _board_index().rows["#90"]
-    assert row.status == "READY"
+    assert row.status == "BLOCKED"
     assert "PR #571" in row.trigger
     assert "matched_rules=0" in row.trigger
     assert "total_matches=6" in row.trigger
-    assert "amended" in row.trigger
+    assert "Task 2A" in row.trigger
     audit = (ROOT / "docs" / "audits" / "2026-08-02-backlog-reconciliation.md").read_text(
         encoding="utf-8"
     )
@@ -661,19 +666,27 @@ def test_mixed_90_reproduction_is_ready() -> None:
     assert "TRANSLATED_SCAN_RC=0" in audit
     assert '"matched_rules":1' in audit and '"total_matches":6' in audit
     assert "skipped unreadable paths during ast scan" in audit
-    blocked = (
+    hardware = (
         BOARD_PATH
         .read_text(encoding="utf-8")
         .split("## BLOCKED — environment", 1)[1]
         .split("\n## ", 1)[0]
     )
-    assert re.search(r"^- \[ \] \*\*#90\*\*", blocked, re.MULTILINE) is None
+    assert re.search(r"^- \[ \] \*\*#90\*\*", hardware, re.MULTILINE) is None
+    program = (
+        BOARD_PATH
+        .read_text(encoding="utf-8")
+        .split("## BLOCKED — program", 1)[1]
+        .split("\n## ", 1)[0]
+    )
+    assert re.search(r"^- \[ \] \*\*#90\*\*", program, re.MULTILINE) is not None
 
 
-def test_89_reproduced_path_domain_defect_is_ready() -> None:
+def test_89_reproduced_path_domain_defect_is_blocked_on_task2_program() -> None:
     row = _board_index().rows["#89"]
-    assert row.status == "READY"
+    assert row.status == "BLOCKED"
     assert "WSL-to-Windows path-domain" in row.trigger
+    assert "Task 2A" in row.trigger
     audit = (ROOT / "docs" / "audits" / "2026-08-02-backlog-reconciliation.md").read_text(
         encoding="utf-8"
     )
@@ -742,10 +755,16 @@ def test_program_ownership_and_ready_statuses() -> None:
             assert "first implementation PR" in row.trigger, (
                 f"{item_id} is READY but does not say what moves it"
             )
+        elif row.status == "BLOCKED":
+            # Lawful when the row is owned but not buildable on this desktop (rust/e2e ban,
+            # Task 2C ladder, etc.). READY would be a false build license (A71/A76).
+            assert "blocked" in row.trigger.lower() or "BLOCKED" in row.trigger, (
+                f"{item_id} is BLOCKED but trigger does not name the blocker"
+            )
         else:
             assert row.status in {"IN_FLIGHT", "SHIPPED"}, (
                 f"{item_id} left READY into an unlawful status {row.status!r}; a program row may "
-                "only progress to IN_FLIGHT or SHIPPED"
+                "progress to BLOCKED, IN_FLIGHT, or SHIPPED"
             )
 
 
