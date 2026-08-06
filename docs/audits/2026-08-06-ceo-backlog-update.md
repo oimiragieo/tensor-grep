@@ -142,3 +142,11 @@ Codified as **A70–A76** in `AGENTS.md`; mirrored into skills + `MEMORY.md`.
 4. Optional: re-run Sol on #958 CUJ when quota restores (orchestrator SHIP already posted).
 
 No spend requested. No nonfinancial CEO question.
+
+## SUPERSEDED — board stamp 2026-08-06.2 (do not rewrite the counts above)
+
+The closed-world line **6 READY** above was true at write time. PR #964 stamped the six false-READY
+rows (**#89**, **#90**, **F5**, **F6**, **F8**, **MCP-SURFACE**) to **BLOCKED** under program ownership
+(Task 2A / Tasks 4–13). Live unfinished disposition after that stamp: **0 READY** + **6 BLOCKED** +
+**5 CEO_GATED** + **6 DEMAND_GATED** (still **17 unfinished** / **28 rows**). This appendix is the
+correction; the dated counts above stay as the receipt.
