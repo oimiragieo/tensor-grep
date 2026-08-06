@@ -1,6 +1,200 @@
 # CHANGELOG
 
 
+## v1.109.0 (2026-08-06)
+
+### Documentation
+
+- Close H2 and RETIRE the last writer-site deferral rather than carry it
+  ([#947](https://github.com/oimiragieo/tensor-grep/pull/947),
+  [`aad7f3e`](https://github.com/oimiragieo/tensor-grep/commit/aad7f3edecdb73d0218e9db46c53915f438f399b))
+
+The atomic-writer class is done. Measured from the ratchet's own scanner on main, not asserted:
+
+violating 16 -> 1 helper-backed 15 -> 24 sanctioned 26 -> 30
+
+#945 classified all 16 individually (11 routed, 3 sanctioned with in-code reasons, 2 deferred). #946
+  closed the first deferral: the native-frontdoor download claimed its destination with O_EXCL then
+  RELEASED the claim before urlretrieve reopened the path BY NAME. That path installs a downloaded
+  executable.
+
+THE LAST RESIDUAL IS RETIRED, NOT OPEN. _ensure_node_runtime's shutil.move stays classified
+  violating and that classification is correct -- but carrying it as an open item implies work worth
+  doing, and it is not:
+
+- the symlink+junction-aware _remove_stale_staging_path (shipped #942) already runs at :404,
+  immediately before the move at :411; the residual window is the statements between them - reaching
+  it needs write access to managed_provider_root (~/.tensor-grep/providers, user-owned). An attacker
+  with that access has a SHORTER total win: drop a malicious node-runtime/bin/node and
+  _ensure_node_runtime returns at :361 without downloading anything - shutil.move was chosen for
+  cross-filesystem fallback; os.replace would silently break it, and no directory-safe
+  atomic-publish primitive exists
+
+Closing it would mean building a new primitive to shrink a window granting no capability an attacker
+  does not already hold. Reopen only on a concrete threat model where TENSOR_GREP_LSP_PROVIDER_HOME
+  points under a world-writable parent -- not the default, not documented.
+
+Recorded so a future session does not read "1 violating" as unfinished work and build the primitive
+  anyway.
+
+Gates: 129 passed, exit 0.
+
+- F7 Task 11 design, corrected by an 8/8 council against my wrong seam
+  ([#949](https://github.com/oimiragieo/tensor-grep/pull/949),
+  [`512fdad`](https://github.com/oimiragieo/tensor-grep/commit/512fdad50b6856a525ef016434609809126c55b5))
+
+* docs: reconcile the canonical queue AT completion -- 5 rows shipped today
+
+The Active/buildable list still read READY for rows that shipped in this session. Reconciling now
+  rather than next cycle, because a stale READY invites a session to rebuild finished work -- which
+  is exactly how six queued items were found already-shipped this morning.
+
+SHIPPED, with receipts: #859 atomic-writer census #937 (3 -> 41 modules), #945 (16 classified), #946
+  (download TOCTOU), #947 (residual retired); violating 16 -> 1 F7 Task 10 five waves
+  #927/#928/#930/#932/#934; the descriptor now reports 10 parser-backed / 0 foundational, verified
+  on published wheels REF-CALL-REGISTRY Task 9 ladders removed as an F7 side effect; the missing
+  Step 2 guard shipped in #940 CPU-BACKEND Task 5 #925 plus the TypeError retry that silently
+  dropped invert_match F6 Task 6 Step 0 #939, prepare_service.py extracted byte-identical F5 Task 8
+  Step 2 #943, PrepareSnapshotV1 + build_prepare_snapshot
+
+STILL OPEN, with the reason each is not startable here: F7 Task 11 justified by measurement
+  (cross-file call sites outnumber in-file ~1.7:1 on a real 269-file C++ repo) but the ground truth
+  is a regex and needs tightening before sizing F5 Steps 3-5, F8, #89/#90, Task 2B/2C all modify
+  rust_core/** or tests/e2e/** -- cargo and the e2e routing suite are forbidden on this shared box
+  MCP-SURFACE blocked on Task 2C: Task 4 bumps "1.8.0 -> 1.9.0" and the live contract is 1.7.0
+
+Also corrected in place: this row's own description mislabels Task 9 as "prepare-service
+  extraction". The plan's Task 9 is the reference/caller dispatch registry; the extraction is Task 6
+  Step 0.
+
+Start-now set after this reconcile is EMPTY -- a measured state, not a stall.
+
+Gates: 129 passed, exit 0.
+
+* docs: F7 Task 11 design, corrected by an 8/8 council against my wrong seam
+
+Council 2026-08-05, all 8 seats returned verdicts, unanimous PROCEED_B_WITH_CHANGES. Spine seat:
+  claude (fable-5). Verified deltas folded from droid_glm, cursor, codex. (Spec also mirrored to the
+  gitignored docs/superpowers/specs/ per the brainstorming skill's default.)
+
+THE CORRECTION THAT JUSTIFIES THE DOCUMENT. I designed against _confirm_import_edges
+  (repo_map.py:17726) as the gate to widen. Wrong seam:
+
+- _confirm_import_edges serves `tg importers` ONLY (repo_map.py:17995) - blast_radius_floor keys on
+  LanguageSpec.file_imports_symbol_from_definition plus call-site-to-definition confirmation in
+  build_symbol_callers_from_map (repo_map.py:18128) - that field is None for all five targets
+  (:6643/:6690/:6734/:6787/:6847) and the code ALREADY NAMES THIS WORK: "Task 11A" at :6619-6622
+
+Building my version would have shipped five green waves while blast_radius_floor consumers observed
+  ZERO change -- a check that cannot fail, at campaign scale.
+
+My stated reason for rejecting approach A was also wrong: confirm never consumes `resolved`. A bare
+  allow-list widen is still wrong, but because it MISROUTES non-Python files into
+  _python_module_matches_definition (:17750-17760).
+
+Second independent gap (codex): the caller loop admits files by literal-name match WITHOUT import
+  proof and appends their in-file calls without binding them to the selected definition
+  (:18192-18207, :18233-18260). Resolving the import is necessary and not sufficient -- the
+  criterion is symbol BINDING.
+
+CHANGES ADOPTED: - five waves collapse to three, grouped by RESOLUTION MECHANISM: Java
+  (source-root/package); PHP+C# (manifest plumbing shared, but C# needs namespace-to-symbol-index
+  because NO manifest maps namespaces to files); C+C++ (one include-path engine, two adapters) - Go
+  added as an explicit deferred sixth wave; my list omitted it entirely and three seats caught that
+  - per-wave exit criterion is a PRODUCT OBSERVABLE: a cross-file caller must appear in
+  blast_radius_floor and be BOUND to the selected definition -- not merely that the resolver ran -
+  re-measure precondition resolved: each wave carries its own parsed resolvability measurement AS
+  its test oracle, and a parsed Java+C# corpus measurement runs in PARALLEL with wave 1 rather than
+  serially freezing the campaign. The justifying number is regex ground truth on one C++ repo, and
+  C++ is the least representative of the five.
+
+Gates: 118 passed across public-docs governance, docs coverage, and backlog-tracker truth. No
+  placeholders.
+
+- Reconcile the canonical queue AT completion -- 5 rows shipped today
+  ([#948](https://github.com/oimiragieo/tensor-grep/pull/948),
+  [`58342a3`](https://github.com/oimiragieo/tensor-grep/commit/58342a334eedadf0fa908ac7846f1888b7796fd3))
+
+The Active/buildable list still read READY for rows that shipped in this session. Reconciling now
+  rather than next cycle, because a stale READY invites a session to rebuild finished work -- which
+  is exactly how six queued items were found already-shipped this morning.
+
+SHIPPED, with receipts: #859 atomic-writer census #937 (3 -> 41 modules), #945 (16 classified), #946
+  (download TOCTOU), #947 (residual retired); violating 16 -> 1 F7 Task 10 five waves
+  #927/#928/#930/#932/#934; the descriptor now reports 10 parser-backed / 0 foundational, verified
+  on published wheels REF-CALL-REGISTRY Task 9 ladders removed as an F7 side effect; the missing
+  Step 2 guard shipped in #940 CPU-BACKEND Task 5 #925 plus the TypeError retry that silently
+  dropped invert_match F6 Task 6 Step 0 #939, prepare_service.py extracted byte-identical F5 Task 8
+  Step 2 #943, PrepareSnapshotV1 + build_prepare_snapshot
+
+STILL OPEN, with the reason each is not startable here: F7 Task 11 justified by measurement
+  (cross-file call sites outnumber in-file ~1.7:1 on a real 269-file C++ repo) but the ground truth
+  is a regex and needs tightening before sizing F5 Steps 3-5, F8, #89/#90, Task 2B/2C all modify
+  rust_core/** or tests/e2e/** -- cargo and the e2e routing suite are forbidden on this shared box
+  MCP-SURFACE blocked on Task 2C: Task 4 bumps "1.8.0 -> 1.9.0" and the live contract is 1.7.0
+
+Also corrected in place: this row's own description mislabels Task 9 as "prepare-service
+  extraction". The plan's Task 9 is the reference/caller dispatch registry; the extraction is Task 6
+  Step 0.
+
+Start-now set after this reconcile is EMPTY -- a measured state, not a stall.
+
+Gates: 129 passed, exit 0.
+
+### Features
+
+- **lang-java**: Cross-file caller resolution via file_imports_symbol_from_definition (F7 Task 11
+  wave 1) ([#950](https://github.com/oimiragieo/tensor-grep/pull/950),
+  [`5ca7d47`](https://github.com/oimiragieo/tensor-grep/commit/5ca7d476f61b55b78fabd6dfa7ea13062d4f2e34))
+
+Design approved by an 8/8 council (#949). Built by cursor-agent in WSL (edit-only -- shell approval
+  deliberately withheld, since running `uv` against /mnt/c destroyed this repo's Windows .venv
+  earlier today), audited and fixed by a sonnet seat, verified by me.
+
+THE SEAM, per the council's correction: LanguageSpec.file_imports_symbol_from_definition, which was
+  None for java and which the code already labelled "Task 11A" (repo_map.py:6619-6622). NOT
+  _confirm_import_edges, which serves `tg importers` only (:17995) -- aiming there would have
+  shipped green waves that moved nothing.
+
+PRODUCT OBSERVABLE, verified on a real Maven-style fixture rather than inferred from passing units:
+  Caller.java cross-file, bound to its own package's Widget 0.9 DecoyCaller.java same-name decoy,
+  bound to the DECOY's own def 0.9 UnrelatedCaller.java bare-name mention, no import relationship
+  0.6 demoted The decoy is the load-bearing arm: it proves binding is to the SELECTED definition,
+  not a literal-name match, and the unrelated caller proves the resolver fails closed rather than
+  guessing.
+
+THE AUDIT'S BEST CATCH -- the mutation proof could not fail. The test asserted
+  row["resolution_confidence"] == lang_java._JAVA_CONFIRMED_CONFIDENCE i.e. it compared the mutated
+  constant TO ITSELF, so both documented mutations passed green. "The check and the bug agreed",
+  inside the proof whose whole job is validating the confidence bands. Fixed by pinning assertions
+  to literals (0.9 / "java-package-type-confirmation") and rewriting the module's MUTATION-PROOF
+  docstring to a mutation that actually discriminates.
+
+Re-verified independently: mutating _JAVA_CONFIRMED_CONFIDENCE 0.9 -> 0.6 now turns 2 tests RED
+  (e3f8d4f67480 -> 852788fc0c8e); restoring returns 5/5 GREEN byte-identical. Under the old
+  self-referential assertions the same mutation stayed green.
+
+SIGNATURE CHANGE JUDGED, NOT PAPERED OVER. The registry-dispatch guard added this morning failed
+  with `_spy() got an unexpected keyword argument 'definition_dirs'` -- by design, because it spells
+  every parameter instead of taking **kwargs. The audit confirmed the new signature MATCHES the
+  established uniform adapter contract (`_go_references_and_calls_for_registry` at
+  repo_map.py:6355-6364; the dispatcher docstring at :6485-6493 states every extractor is reached
+  through a thin adapter with the SAME signature), so the TEST was updated to the moved contract
+  with its comment explaining why. Loosening it to **kwargs would have destroyed the guard.
+
+Also fixed in passing: trailing whitespace (W291) and an unused variable (F841) from the generated
+  code, plus formatter normalization the generator did not do.
+
+KNOWN, pre-existing, outside this diff: _build_prepare_blast_radius_floor does not filter
+  build_symbol_blast_radius_from_map by target["file"], so "binding to the selected definition" is
+  enforced per-caller rather than by scoping the floor to one definition. Consistent with how
+  _preferred_definition_files already worked; every tested case resolved correctly. Recorded because
+  the selection is implicit rather than an explicit filter.
+
+Gates, exit codes read individually: pytest 0 (76 passed), ruff 0, ruff format --preview 0, mypy 0
+  (91 files).
+
+
 ## v1.108.2 (2026-08-05)
 
 ### Bug Fixes
