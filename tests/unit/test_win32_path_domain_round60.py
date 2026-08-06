@@ -879,7 +879,10 @@ def test_suspended_job_descendant_breakaway_orchestration() -> None:
     canary_event.set()
     r_fd, w_fd = os.pipe()
     try:
-        with pytest.raises(NotImplementedError, match=r"Job factory|process/Job|windows_job"):
+        with pytest.raises(
+            NotImplementedError,
+            match=r"Job factory|process/Job|windows_job|CreateJobObject|DefaultJobFactory",
+        ):
             win32.create_suspended_job_with_descendant_breakaway(
                 canary_event=canary_event,
                 canary_pipe_write_fd=w_fd,
@@ -1060,9 +1063,9 @@ def test_default_job_cleanup_independently_proven(
 ) -> None:
     """HIGH#5 / A63: default-factory cleanup via production ``close_handle``.
 
-    Observes module ``close_handle`` independently — not a factory-private list
-    and not heartbeat/EOF/Event. Fault after pipe-worker setup must reverse-close
-    all acquired handles through that production seam.
+    Uses the real ``DefaultJobFactoryPrimitives`` class (method patches only) —
+    does not replace ``windows_job_factory_primitives`` with a wholly separate
+    recording factory while also mocking the closer (Sol R2).
     """
     closed_via_production: list[int] = []
 
@@ -1072,8 +1075,35 @@ def test_default_job_cleanup_independently_proven(
     monkeypatch.setattr(win32, "close_handle", _prod_close)
     monkeypatch.setattr(win32, "IS_WINDOWS", True)
 
-    factory = _RecordingJobFactory(closed=[])
-    monkeypatch.setattr(win32, "windows_job_factory_primitives", lambda: factory)
+    factory = win32.windows_job_factory_primitives()
+    assert type(factory).__name__ == "DefaultJobFactoryPrimitives"
+    acquired: list[int] = []
+    nxt = {"n": 100}
+
+    def _alloc() -> int:
+        nxt["n"] += 1
+        acquired.append(nxt["n"])
+        return nxt["n"]
+
+    monkeypatch.setattr(type(factory), "create_job", lambda self: _alloc())
+    monkeypatch.setattr(
+        type(factory),
+        "create_process_suspended",
+        lambda self, **kwargs: win32.ProcessThreadHandles(
+            process_handle=_alloc(), thread_handle=_alloc(), pid=1000
+        ),
+    )
+    monkeypatch.setattr(type(factory), "assign_process_to_job", lambda self, j, p: None)
+    monkeypatch.setattr(type(factory), "resume_thread", lambda self, t: None)
+    monkeypatch.setattr(type(factory), "query_process_image", lambda self, p: "img")
+    monkeypatch.setattr(
+        type(factory),
+        "setup_pipe_worker",
+        lambda self, **kwargs: win32.ProcessThreadHandles(
+            process_handle=_alloc(), thread_handle=_alloc(), pid=2000
+        ),
+    )
+    monkeypatch.setattr(type(factory), "terminate_process", lambda self, p: None)
 
     canary = threading.Event()
     canary.set()
@@ -1083,12 +1113,9 @@ def test_default_job_cleanup_independently_proven(
             inject_fault_after="pipe_worker_setup",
             factory=None,  # default path
         )
-    assert factory.acquired, "premise: default factory acquired handles"
-    assert closed_via_production == list(reversed(factory.acquired))
-    # Cleanup proof must not depend on clearing the canary Event.
+    assert acquired, "premise: default factory acquired handles"
+    assert closed_via_production == list(reversed(acquired))
     assert canary.is_set() is True
-    # Injected recording factory's private closed list is NOT the authority here.
-    assert factory.closed == []
 
 
 # Exact fault-boundary expectations for the injectable recording factory.

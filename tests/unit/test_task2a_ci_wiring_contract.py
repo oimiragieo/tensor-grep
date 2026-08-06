@@ -114,9 +114,10 @@ def test_task2a_ci_does_not_mask_expected_red_as_success() -> None:
         # Verifier non-zero must not be treated as success-by-inversion.
         assert 'vrc" -eq 0' not in run
         assert "verifier must not pass without a receipt" not in run
-        # After full census, RED remain visible.
+        # After full census, RED remain visible; verify path must be wired.
         assert "refusing green CI" in run
-        assert "NativeCiReceipt emit and verifier not implemented" in run
+        assert "verify_task2a_windows_nodes.py" in run
+        assert "NativeCiReceipt emit and verifier not implemented" not in run
         # Setup/census failure distinguishable.
         assert "SETUP/CENSUS FAILURE" in run or "SETUP FAILURE" in run
 

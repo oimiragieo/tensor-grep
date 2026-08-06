@@ -34,19 +34,32 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expected-attribution", default="source-tree")
     args = parser.parse_args(argv)
 
-    receipt = load_receipt(args.receipt)
     source = ArtifactSource(
         current_run_dir=args.current_run_dir,
         manifest_path=args.manifest,
         junit_path=args.junit,
         rust_list_path=args.rust_list,
-        environ=os.environ,
+        environ=dict(os.environ),
         expected_attribution=args.expected_attribution,
     )
+    if not args.receipt.is_file():
+        verdict = {
+            "ok": False,
+            "reason": "receipt_missing",
+            "note": (
+                "verify path exercised; real clearance still requires a live "
+                "Windows CI run with emitted NativeCiReceipt artifacts"
+            ),
+        }
+        print(json.dumps(verdict, sort_keys=True))
+        return 2
     try:
-        verdict = verify_native_ci_receipt(receipt, artifact_source=source)
-    except NotImplementedError as exc:
-        verdict = {"ok": False, "reason": "unimplemented", "detail": str(exc)}
+        receipt = load_receipt(args.receipt)
+    except (OSError, ValueError, NotImplementedError) as exc:
+        verdict = {"ok": False, "reason": "receipt_unreadable", "detail": str(exc)}
+        print(json.dumps(verdict, sort_keys=True))
+        return 2
+    verdict = verify_native_ci_receipt(receipt, artifact_source=source)
     print(json.dumps(verdict, sort_keys=True))
     return 0 if verdict.get("ok") else 2
 

@@ -190,14 +190,16 @@ def classify_pytest_node_phase(
 ) -> str:
     """A61 / HIGH#2: crash/setup/import errors are never behavioral RED.
 
-    ``executed_refused_receipt`` is reserved for arms that exercised the contract
-    (pass or assertion ``<failure>``). JUnit ``<error>``, negative exit (signal),
-    and pytest internal/usage exits are ``crash_or_setup``.
+    Fail-CLOSED: unknown/abnormal outcomes are ``crash_or_setup``.
+    ``executed_refused_receipt`` only when the contract was exercised
+    (JUnit ``<failure>`` assertion arm, or clean pass with exit 0).
     """
     if exit_code < 0 or exit_code in {3, 4}:
         return "crash_or_setup"
+    if not junit_path.is_file():
+        return "crash_or_setup"
     case = _junit_testcase_for_nodeid(junit_path, pytest_nodeid)
-    if case is None and junit_path.is_file():
+    if case is None:
         try:
             root = ET.parse(junit_path).getroot()
         except ET.ParseError:
@@ -207,9 +209,16 @@ def classify_pytest_node_phase(
             leaf = pytest_nodeid.split("::")[-1]
             if str(cases[0].attrib.get("name") or "") == leaf:
                 case = cases[0]
-    if case is not None and case.find("error") is not None:
+    if case is None:
         return "crash_or_setup"
-    return "executed_refused_receipt"
+    if case.find("error") is not None:
+        return "crash_or_setup"
+    if case.find("failure") is not None:
+        return "executed_refused_receipt"
+    if exit_code == 0 and case.find("skipped") is None:
+        return "executed_refused_receipt"
+    # Exit non-zero without failure/error = abnormal/setup — not behavioral RED.
+    return "crash_or_setup"
 
 
 def _emit_observation(

@@ -529,11 +529,23 @@ jobs:
             echo "task2a python census incomplete: $CENSUS_EXECUTED != $EXPECTED" >&2
             exit 1
           fi
+          # HIGH#1 Sol R2: exercise real verify path (fail closed on missing artifacts).
+          # Real immutable-SHA clearance still requires a live Windows CI run.
+          set +e
           if [ "$RECEIPT_SEEN" -ne 0 ]; then
-            echo "task2a unexpected NativeCiReceipt emit during RED phase" >&2
-            exit 1
+            FIRST_RECEIPT="$(find "$ART/python" -name receipt.json 2>/dev/null | head -1)"
+          else
+            FIRST_RECEIPT="$ART/missing-receipt.json"
           fi
-          echo "task2a RED: NativeCiReceipt emit and verifier not implemented after full python census; refusing green CI" >&2
+          uv run python scripts/verify_task2a_windows_nodes.py \
+            --receipt "${FIRST_RECEIPT}" \
+            --manifest tests/fixtures/task2a_windows_node_manifest.json \
+            --current-run-dir "$ART" \
+            --expected-attribution source-tree
+          VERIFY_RC=$?
+          set -e
+          echo "task2a verify path exercised verify_rc=$VERIFY_RC receipt_seen=$RECEIPT_SEEN; clearance still requires live Windows CI artifacts" >&2
+          echo "task2a RED: refusing green CI until immutable-SHA clearance artifacts verify ok" >&2
           exit 1
 
       - name: Upload Task 2A Python raw artifacts (Windows)
@@ -986,11 +998,23 @@ jobs:
             echo "task2a native census incomplete" >&2
             exit 1
           fi
+          # HIGH#1 Sol R2: exercise real verify path (fail closed on missing artifacts).
+          # Real immutable-SHA clearance still requires a live Windows CI run.
+          set +e
           if [ "$RECEIPT_SEEN" -ne 0 ]; then
-            echo "task2a unexpected NativeCiReceipt emit during RED phase" >&2
-            exit 1
+            FIRST_RECEIPT="$(find "$ART" -name receipt.json 2>/dev/null | head -1)"
+          else
+            FIRST_RECEIPT="$ART/missing-receipt.json"
           fi
-          echo "task2a RED: NativeCiReceipt emit and verifier not implemented after full native census; refusing green CI" >&2
+          uv run python scripts/verify_task2a_windows_nodes.py \
+            --receipt "${FIRST_RECEIPT}" \
+            --manifest tests/fixtures/task2a_windows_node_manifest.json \
+            --current-run-dir "$ART" \
+            --expected-attribution source-tree
+          VERIFY_RC=$?
+          set -e
+          echo "task2a verify path exercised verify_rc=$VERIFY_RC receipt_seen=$RECEIPT_SEEN; clearance still requires live Windows CI artifacts" >&2
+          echo "task2a RED: refusing green CI until immutable-SHA clearance artifacts verify ok" >&2
           exit 1
 
       - name: Upload Task 2A native raw artifacts (Windows)

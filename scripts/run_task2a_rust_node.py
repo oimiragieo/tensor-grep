@@ -316,6 +316,7 @@ def _emit_observation(
 def classify_rust_node_phase(*, exit_code: int, stdout: str, stderr: str) -> str:
     """A61 / HIGH#2: panic/abort/crash are not behavioral RED.
 
+    Fail-CLOSED: unknown/abnormal exits are ``crash_or_setup``.
     Assertion failures that exercise the contract remain ``executed_refused_receipt``.
     """
     if exit_code < 0:
@@ -327,16 +328,37 @@ def classify_rust_node_phase(*, exit_code: int, stdout: str, stderr: str) -> str
         "stack backtrace:",
         "SIGSEGV",
         "SIGABRT",
+        "SIGBUS",
+        "SIGILL",
+        "Aborted",
+        "Segmentation fault",
+        "memory allocation of",
+        "has overflowed its stack",
     )
     if any(marker in blob for marker in panic_markers):
-        # Distinguish assertion-failure paths that also print a backtrace: those
-        # still include libtest "assertion `left == right`" / "FAILED" without a
-        # true panic-at frame as the primary signal. Prefer panic language.
         if "panicked at" in blob or "fatal runtime error" in blob:
             return "crash_or_setup"
-        if "SIGSEGV" in blob or "SIGABRT" in blob:
+        if "SIGSEGV" in blob or "SIGABRT" in blob or "SIGBUS" in blob or "SIGILL" in blob:
             return "crash_or_setup"
-    return "executed_refused_receipt"
+        if "Aborted" in blob or "Segmentation fault" in blob:
+            return "crash_or_setup"
+        if "memory allocation of" in blob or "has overflowed its stack" in blob:
+            return "crash_or_setup"
+        # backtrace alone with no assertion evidence → crash_or_setup
+        if "assertion `left == right`" not in blob and "FAILED" not in blob:
+            return "crash_or_setup"
+    # Behavioral RED only with explicit assertion-failure evidence.
+    assertion_markers = (
+        "assertion `left == right`",
+        "assertion failed",
+        "FAILED",
+    )
+    if exit_code == 0:
+        return "executed_refused_receipt"
+    if any(m in blob for m in assertion_markers) and "panicked at" not in blob:
+        return "executed_refused_receipt"
+    # Unknown/abnormal non-zero without assertion evidence → fail closed.
+    return "crash_or_setup"
 
 
 def main(argv: list[str] | None = None) -> int:

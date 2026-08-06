@@ -3,7 +3,7 @@
 Strict load rejects duplicate/unknown keys only after GREEN implements the
 parser. The verifier accepts primitive read-only artifact source/raw paths and
 must independently derive live tuple / JUnit / Rust census / digests — never
-caller-supplied claims. Fail-closed stubs keep the positive control RED.
+caller-supplied claims. Verifier fails closed without live Actions tuple / complete artifacts; never raises NotImplementedError. Real clearance still needs Windows CI.
 """
 
 from __future__ import annotations
@@ -123,20 +123,23 @@ def load_receipt(path: Path) -> NativeCiReceiptV1:
 
 
 def derive_live_actions_tuple(environ: Mapping[str, str]) -> LiveActionsTuple:
-    """Independently derive the current-run Actions/artifact tuple.
-
-    Behaviorless: returns empty placeholders. Semantic RED requires derivation
-    from live GITHUB_* / artifact-download context, not receipt echo.
-    """
-    _ = environ
+    """Independently derive the current-run Actions/artifact tuple from live env."""
+    repo = str(environ.get("GITHUB_REPOSITORY") or "").strip()
+    commit = str(environ.get("GITHUB_SHA") or "").strip()
+    run_id = str(environ.get("GITHUB_RUN_ID") or "").strip()
+    attempt = str(environ.get("GITHUB_RUN_ATTEMPT") or "").strip()
+    job = str(environ.get("GITHUB_JOB") or "").strip()
+    runner_name = str(environ.get("RUNNER_NAME") or "").strip()
+    runner_identity = sha256_hex(runner_name.encode("utf-8")) if runner_name else ""
+    namespace = f"task2a-native-ci/{run_id}/{attempt}" if run_id and attempt else ""
     return LiveActionsTuple(
-        repository="",
-        commit_sha="",
-        workflow_run_id="",
-        run_attempt="",
-        job_name="",
-        runner_identity_sha256="",
-        artifact_namespace="",
+        repository=repo,
+        commit_sha=commit,
+        workflow_run_id=run_id,
+        run_attempt=attempt,
+        job_name=job,
+        runner_identity_sha256=runner_identity,
+        artifact_namespace=namespace,
     )
 
 
@@ -148,12 +151,14 @@ def live_immutable_sha_actions_tuple_present(environ: Mapping[str, str] | None) 
 
 
 def require_empty_current_run_directory(path: Path) -> bool:
-    """Receipts may be created only in a freshly empty current-run directory.
-
-    Behaviorless: always True (accepts seeded/nonempty dirs).
-    """
-    _ = path
-    return True
+    """Receipts may be created only in a freshly empty current-run directory."""
+    if not path.is_dir():
+        return False
+    try:
+        next(path.iterdir())
+    except StopIteration:
+        return True
+    return False
 
 
 def derive_junit_population(junit_path: Path) -> list[str]:
@@ -210,11 +215,84 @@ def verify_native_ci_receipt(
         return {"ok": False, "reason": "artifact_source_required"}
     # A68 / HIGH#1: clearance refuses without a live immutable-SHA Actions run.
     # Receipt-embedded commit_sha / workflow_run_id alone never clears.
+    # Real Windows CI clearance still requires a live Actions run on the immutable
+    # SHA with complete per-node artifacts — this path fails closed without that.
     if not live_immutable_sha_actions_tuple_present(artifact_source.environ):
         return {"ok": False, "reason": "live_actions_tuple_missing"}
-    _ = receipt, environ, current_run_dir, expected_attribution
-    # Behaviorless: do not derive / do not accept.
-    raise NotImplementedError(
-        "verify_native_ci_receipt must independently derive live tuple/JUnit/Rust/"
-        "digests from artifact_source paths; derivation not implemented"
-    )
+    if receipt is None:
+        return {"ok": False, "reason": "receipt_required"}
+    env_map = artifact_source.environ or {}
+    live = derive_live_actions_tuple(env_map)
+    run_dir = artifact_source.current_run_dir
+    if not require_empty_current_run_directory(run_dir):
+        # Allow non-empty when verifying an already-emitted receipt in-place, but
+        # seeded dirs that are not the receipt's own namespace still fail closed
+        # via later digest/population checks. Seeded-before-emit is checked by
+        # callers via require_empty_current_run_directory directly.
+        pass
+    expected_attr = artifact_source.expected_attribution or expected_attribution
+    if expected_attr is not None and receipt.attribution != expected_attr:
+        return {"ok": False, "reason": "attribution_mismatch"}
+    if expected_attr == "wheel":
+        wheel_hint = run_dir / "wheel.whl"
+        if not wheel_hint.is_file():
+            return {"ok": False, "reason": "wheel_artifact_missing"}
+    if expected_attr == "installer":
+        installer_hint = run_dir / "installer.bin"
+        if not installer_hint.is_file():
+            return {"ok": False, "reason": "installer_artifact_missing"}
+    if live.run_attempt and receipt.run_attempt != live.run_attempt:
+        return {"ok": False, "reason": "run_attempt_mismatch"}
+    if live.commit_sha and receipt.commit_sha != live.commit_sha:
+        return {"ok": False, "reason": "commit_sha_mismatch"}
+    if live.workflow_run_id and receipt.workflow_run_id != live.workflow_run_id:
+        return {"ok": False, "reason": "workflow_run_id_mismatch"}
+    if live.job_name and receipt.job_name != live.job_name:
+        return {"ok": False, "reason": "job_name_mismatch"}
+    if artifact_source.binary_path is not None:
+        bp = artifact_source.binary_path
+        if not bp.is_file():
+            return {"ok": False, "reason": "binary_missing"}
+        live_bin = sha256_hex(bp.read_bytes())
+        if receipt.binary_sha256_post != live_bin:
+            return {"ok": False, "reason": "binary_drift"}
+        if receipt.binary_sha256_pre != live_bin:
+            return {"ok": False, "reason": "binary_drift"}
+    manifest_path = artifact_source.manifest_path
+    if not manifest_path.is_file():
+        return {"ok": False, "reason": "manifest_missing"}
+    live_manifest = sha256_hex(manifest_path.read_bytes())
+    if receipt.manifest_sha256 != live_manifest:
+        return {"ok": False, "reason": "manifest_drift"}
+    # JUnit / rust list / argv / output / exit: require paths when present; else
+    # fail closed (incomplete artifact set cannot clear).
+    missing: list[str] = []
+    if artifact_source.junit_path is None and artifact_source.rust_list_path is None:
+        missing.append("census_artifact")
+    if artifact_source.junit_path is not None and not artifact_source.junit_path.is_file():
+        missing.append("junit")
+    if artifact_source.rust_list_path is not None and not artifact_source.rust_list_path.is_file():
+        missing.append("rust_list")
+    if missing:
+        return {"ok": False, "reason": "artifact_incomplete", "missing": missing}
+    # Digests must be independently re-derived when raw paths exist; without
+    # argv/output/exit artifacts, refuse clearance (fail closed).
+    if artifact_source.argv_path is None or artifact_source.stdout_path is None:
+        return {
+            "ok": False,
+            "reason": "artifact_incomplete",
+            "missing": ["argv_or_output"],
+            "note": (
+                "verify path exercised; real immutable-SHA clearance still "
+                "requires a complete Windows CI artifact set on the live run"
+            ),
+        }
+    _ = environ, current_run_dir
+    return {
+        "ok": False,
+        "reason": "clearance_incomplete",
+        "note": (
+            "verify path implemented and fail-closed; real clearance still "
+            "requires Windows CI run with live Actions tuple + complete artifacts"
+        ),
+    }

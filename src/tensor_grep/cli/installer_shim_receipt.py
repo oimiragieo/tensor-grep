@@ -346,15 +346,17 @@ def mutate_user_path_txr_only(
         )
     key_path = registry_key_path if registry_key_path is not None else "Environment"
     calls: list[str] = []
-    transaction = txr.create_transaction()
-    calls.append("CreateTransaction")
-    if call_log is not None:
-        call_log.record("CreateTransaction", transaction)
     key_handle: int | None = None
     key_closed = False
     txn_closed = False
     primary_error: BaseException | None = None
+    transaction: int | None = None
     try:
+        # HIGH#6: create_transaction inside try so call_log.record() cannot leak txn.
+        transaction = txr.create_transaction()
+        calls.append("CreateTransaction")
+        if call_log is not None:
+            call_log.record("CreateTransaction", transaction)
         key_handle = txr.transacted_registry_open(transaction, key_path)
         calls.append("transacted_open")
         if call_log is not None:
@@ -371,16 +373,17 @@ def mutate_user_path_txr_only(
             call_log.record("CommitTransaction", transaction)
     except BaseException as original:
         primary_error = original
-        try:
-            txr.rollback_transaction(transaction)
-            calls.append("RollbackTransaction")
-            if call_log is not None:
-                call_log.record("RollbackTransaction", transaction)
-        except BaseException as cleanup_err:
+        if transaction is not None:
             try:
-                original.add_note(f"cleanup also failed: {cleanup_err!r}")
-            except Exception:
-                pass
+                txr.rollback_transaction(transaction)
+                calls.append("RollbackTransaction")
+                if call_log is not None:
+                    call_log.record("RollbackTransaction", transaction)
+            except BaseException as cleanup_err:
+                try:
+                    original.add_note(f"cleanup also failed: {cleanup_err!r}")
+                except Exception:
+                    pass
         # Fall through to reverse close ownership, then re-raise.
     finally:
         # Exact-once reverse cleanup: key handle before transaction handle.
@@ -399,7 +402,7 @@ def mutate_user_path_txr_only(
                         pass
                 else:
                     primary_error = close_err
-        if not txn_closed:
+        if transaction is not None and not txn_closed:
             try:
                 txr.close_transaction(transaction)
                 txn_closed = True

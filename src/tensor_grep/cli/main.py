@@ -5088,14 +5088,17 @@ def _read_patterns_from_file_list(file_paths: list[str], *, json_mode: bool) -> 
     unbounded ``Path.read_text`` before the ledger/size guard.
     """
     from tensor_grep.cli.search_input_ledger import (
+        SearchInputLedger,
         SearchInputLimitExceeded,
         read_pattern_or_ignore_file_bounded,
     )
 
     patterns: list[str] = []
+    # HIGH#8 / A67: one shared no-refund ledger across all -f/--file inputs.
+    ledger = SearchInputLedger()
     for file_path in file_paths:
         try:
-            content = read_pattern_or_ignore_file_bounded(file_path)
+            content = read_pattern_or_ignore_file_bounded(file_path, ledger=ledger)
         except SearchInputLimitExceeded as exc:
             _exit_search_error(
                 "search_input_limit",
@@ -8166,15 +8169,24 @@ def search_command(
         # (only this specific, deliberate exception type), so a real bug still surfaces loudly.
         _exit_search_error("configuration_error", str(exc), json_mode=json)
         raise
-    _emit_child_start(
-        "cpu",
-        ["pipeline", pattern, *[str(p) for p in paths_to_search]],
-    )
+    # A62 / HIGH#7 (Sol R2): do NOT emit at Pipeline construction — only after
+    # actual search/backend start (see _ensure_cpu_child_start below).
     backend = pipeline.get_backend()
     selected_backend_name = getattr(pipeline, "selected_backend_name", backend.__class__.__name__)
     selected_backend_reason = getattr(pipeline, "selected_backend_reason", "unknown")
     selected_gpu_device_ids = list(getattr(pipeline, "selected_gpu_device_ids", []) or [])
     selected_gpu_chunk_plan_mb = list(getattr(pipeline, "selected_gpu_chunk_plan_mb", []) or [])
+    _cpu_child_start_emitted = False
+
+    def _ensure_cpu_child_start() -> None:
+        nonlocal _cpu_child_start_emitted
+        if _cpu_child_start_emitted:
+            return
+        _emit_child_start(
+            "cpu",
+            ["pipeline", pattern, *[str(p) for p in paths_to_search]],
+        )
+        _cpu_child_start_emitted = True
     if (
         can_passthrough_rg
         and stats
@@ -8187,6 +8199,7 @@ def search_command(
     ):
         passthrough_paths = [] if paths_defaulted else paths_to_search
         with nvtx_range("search.passthrough_rg", color="green"):
+            _ensure_cpu_child_start()
             exit_code = rg_backend.search_passthrough(passthrough_paths, pattern, config=config)
         sys.exit(exit_code)
 
@@ -8292,6 +8305,7 @@ def search_command(
                 span.set_attribute("backend", backend.__class__.__name__)
                 span.set_attribute("path_count", len(search_targets))
             try:
+                _ensure_cpu_child_start()
                 result = rg_backend.search(search_targets, pattern, config=rg_search_config)
             except Exception as exc:
                 if _is_invalid_regex_error(exc):
@@ -8350,6 +8364,7 @@ def search_command(
                     span.set_attribute("backend", backend.__class__.__name__)
                     span.set_attribute("path", current_file)
                 try:
+                    _ensure_cpu_child_start()
                     result = backend.search(current_file, pattern, config=config)
                 except BackendExecutionError as exc:
                     # A native backend failed at runtime; retry once on the always-

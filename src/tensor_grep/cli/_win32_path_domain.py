@@ -7,6 +7,7 @@ and never fabricate success handles or security verdicts. Green-phase replaces s
 
 from __future__ import annotations
 
+import secrets
 import sys
 import threading
 from collections.abc import Callable
@@ -41,6 +42,14 @@ _DESCENDANT_JOB_PIPE_HEARTBEAT_PREFIX = b"TG60-JOB-DESCENDANT-HB pid="
 _DESCENDANT_JOB_PIPE_HEARTBEAT_NONCE_MARK = b" nonce="
 _DESCENDANT_JOB_PIPE_HEARTBEAT_SUFFIX = b"\n"
 _MIN_WRITER_NONCE_LEN = 16
+
+
+def mint_writer_nonce() -> bytes:
+    """Factory-minted writer nonce (not caller-supplied-only).
+
+    Returns at least ``_MIN_WRITER_NONCE_LEN`` cryptographically strong bytes.
+    """
+    return secrets.token_bytes(_MIN_WRITER_NONCE_LEN)
 
 
 def descendant_job_pipe_heartbeat(descendant_pid: int, *, writer_nonce: bytes) -> bytes:
@@ -98,11 +107,16 @@ def parse_descendant_job_pipe_heartbeat_pid(
     suffix = _DESCENDANT_JOB_PIPE_HEARTBEAT_SUFFIX
     nonce_hex = nonce.hex().encode("ascii")
 
-    # Any second prefix is multiline ambiguity — even before shape checks.
-    first = raw.find(prefix)
-    if first < 0:
-        raise ValueError("descendant job pipe heartbeat prefix absent")
-    second = raw.find(prefix, first + len(prefix))
+    # Exact-frame: heartbeat must begin at offset 0 (no pre-framing garbage).
+    if not raw.startswith(prefix):
+        if prefix not in raw:
+            raise ValueError("descendant job pipe heartbeat prefix absent")
+        raise ValueError(
+            "descendant job pipe heartbeat framing garbage "
+            "(pre-framing bytes before heartbeat)"
+        )
+    first = 0
+    second = raw.find(prefix, len(prefix))
     if second >= 0:
         raise ValueError(
             "descendant job pipe heartbeat multiline ambiguity "
@@ -132,11 +146,11 @@ def parse_descendant_job_pipe_heartbeat_pid(
     line = prefix + digits + mark + nonce_hex + suffix
     if line != descendant_job_pipe_heartbeat(pid, writer_nonce=nonce):
         raise ValueError("descendant job pipe heartbeat failed round-trip")
-    # The unique line must appear exactly once as a contiguous match.
-    if raw.count(line) != 1:
+    # Exact-frame only: refuse pre/post framing garbage around the heartbeat.
+    if raw != line:
         raise ValueError(
-            "descendant job pipe heartbeat multiline ambiguity "
-            "(duplicate exact heartbeat lines)"
+            "descendant job pipe heartbeat framing garbage "
+            "(payload must be exactly one heartbeat line)"
         )
     return pid
 
@@ -556,17 +570,79 @@ def _close_job_handles(
                     pass
 
 
+class DefaultJobFactoryPrimitives:
+    """Default Job/process factory (production front door when factory=None).
+
+    Create/assign/resume primitives remain fail-closed until GREEN wires real
+    Win32 calls. ``close_handle`` delegates to the module production closer so
+    default-path cleanup is independently observable without a test-private
+    closer (A63 / HIGH#5).
+    """
+
+    def create_job(self) -> int:
+        raise NotImplementedError(
+            "DefaultJobFactoryPrimitives.create_job requires CreateJobObject"
+        )
+
+    def create_process_suspended(
+        self,
+        *,
+        canary_event: threading.Event | None,
+        canary_pipe_write_fd: int | None,
+    ) -> ProcessThreadHandles:
+        _ = canary_event, canary_pipe_write_fd
+        raise NotImplementedError(
+            "DefaultJobFactoryPrimitives.create_process_suspended requires CreateProcessW"
+        )
+
+    def assign_process_to_job(self, job_handle: int, process_handle: int) -> None:
+        _ = job_handle, process_handle
+        raise NotImplementedError(
+            "DefaultJobFactoryPrimitives.assign_process_to_job requires AssignProcessToJobObject"
+        )
+
+    def resume_thread(self, thread_handle: int) -> None:
+        _ = thread_handle
+        raise NotImplementedError(
+            "DefaultJobFactoryPrimitives.resume_thread requires ResumeThread"
+        )
+
+    def query_process_image(self, process_handle: int) -> str:
+        _ = process_handle
+        raise NotImplementedError(
+            "DefaultJobFactoryPrimitives.query_process_image requires QueryFullProcessImageNameW"
+        )
+
+    def setup_pipe_worker(
+        self,
+        *,
+        parent: ProcessThreadHandles,
+        canary_event: threading.Event | None,
+        canary_pipe_write_fd: int | None,
+        writer_nonce: bytes | None = None,
+    ) -> ProcessThreadHandles:
+        _ = parent, canary_event, canary_pipe_write_fd, writer_nonce
+        raise NotImplementedError(
+            "DefaultJobFactoryPrimitives.setup_pipe_worker requires real pipe worker"
+        )
+
+    def terminate_process(self, process_handle: int) -> None:
+        _ = process_handle
+        raise NotImplementedError(
+            "DefaultJobFactoryPrimitives.terminate_process requires TerminateProcess"
+        )
+
+    def close_handle(self, handle: int) -> None:
+        close_handle(handle)
+
+
 def windows_job_factory_primitives() -> JobFactoryPrimitives:
     """Default Windows Job/process factory seam.
 
-    Behaviorless until GREEN wires real CreateJobObject / CreateProcessW /
-    AssignProcessToJobObject / ResumeThread primitives. Tests call production
-    with ``factory=None`` so this seam is the only front door.
+    Returns ``DefaultJobFactoryPrimitives`` — the real default factory path.
+    Individual create primitives fail closed until GREEN wires Win32.
     """
-    raise NotImplementedError(
-        "windows_job_factory_primitives requires real Windows Job/process "
-        "CreateJobObject/CreateProcessW wiring; fake PIDs are insufficient"
-    )
+    return DefaultJobFactoryPrimitives()
 
 
 def create_suspended_job_with_descendant_breakaway(
@@ -629,11 +705,13 @@ def create_suspended_job_with_descendant_breakaway(
         _ = factory.query_process_image(parent.process_handle)
         if inject_fault_after == "image_query":
             raise BaseException("injected fault after image query")
+        # HIGH#4: factory path mints nonce when caller omits it (not caller-only).
+        effective_nonce = writer_nonce if writer_nonce is not None else mint_writer_nonce()
         descendant = factory.setup_pipe_worker(
             parent=parent,
             canary_event=canary_event,
             canary_pipe_write_fd=canary_pipe_write_fd,
-            writer_nonce=writer_nonce,
+            writer_nonce=effective_nonce,
         )
         opened.extend([descendant.process_handle, descendant.thread_handle])
         if inject_fault_after == "pipe_worker_setup":
@@ -649,7 +727,7 @@ def create_suspended_job_with_descendant_breakaway(
             create_flags=CREATE_SUSPENDED,
             canary_event=canary_event,
             canary_pipe_write_fd=canary_pipe_write_fd,
-            writer_nonce=writer_nonce,
+            writer_nonce=effective_nonce,
             _closer=closer,
         )
     except BaseException as original:

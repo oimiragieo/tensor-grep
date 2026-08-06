@@ -102,8 +102,27 @@ class SearchInputLedger:
         return None
 
     def admit_file(self, *, size_bytes: int, source: str = "explicit") -> None:
-        _ = size_bytes, source
-        raise NotImplementedError("SearchInputLedger.admit_file is not implemented")
+        """No-refund admit for a pattern/ignore file (aggregate caps)."""
+        if size_bytes < 0:
+            raise ValueError("size_bytes must be non-negative")
+        _ = source
+        next_files = self.file_count + 1
+        if next_files > MAX_COMBINED_PATTERN_IGNORE_FILES:
+            raise SearchInputLimitExceeded(
+                dimension="combined_pattern_ignore_files",
+                observed=next_files,
+                limit=MAX_COMBINED_PATTERN_IGNORE_FILES,
+            )
+        next_bytes = self.decoded_bytes + int(size_bytes)
+        if next_bytes > MAX_COMBINED_DECODED_BYTES:
+            raise SearchInputLimitExceeded(
+                dimension="combined_decoded_bytes",
+                observed=next_bytes,
+                limit=MAX_COMBINED_DECODED_BYTES,
+            )
+        self.file_count = next_files
+        self.decoded_bytes = next_bytes
+        self._charges.append(f"admit_file:{size_bytes}:{source}")
 
     def admit_rule_bytes(self, *, size_bytes: int, kind: str = "pattern") -> None:
         _ = size_bytes, kind

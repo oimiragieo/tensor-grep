@@ -532,25 +532,42 @@ def test_below_cap_non_pcre2_full_cli_starts_producer_once(
 ) -> None:
     """Below-cap normal positive: full_cli must start its producer exactly once.
 
-    Observation is after real Pipeline construction (A62), not a pre-start hook.
+    Observation is after actual search/backend start (A62 / Sol R2 HIGH#7), not
+    Pipeline construction alone.
     """
     counters = ledger_mod.RouteProcessCounters()
     starts: list[str] = []
 
-    class _FakePipeline:
-        def __init__(self, *args, **kwargs):
+    class _Backend:
+        def search(self, *args, **kwargs):  # noqa: ANN002, ANN003
             _ = args, kwargs
             starts.append("cpu")
             counters.record("cpu")
             raise RuntimeError("observed child start: cpu")
 
+        def search_many(self, *args, **kwargs):  # noqa: ANN002, ANN003
+            return self.search(*args, **kwargs)
+
+        def search_passthrough(self, *args, **kwargs):  # noqa: ANN002, ANN003
+            _ = args, kwargs
+            raise AssertionError("passthrough must not run in this arm")
+
+    class _FakePipeline:
+        selected_backend_name = "CPUBackend"
+        selected_backend_reason = "force_cpu"
+        selected_gpu_device_ids: list[int] = []
+        selected_gpu_chunk_plan_mb: list[int] = []
+        fallback_reason = None
+
+        def __init__(self, *args, **kwargs):
+            _ = args, kwargs
+
         def get_backend(self):
-            raise AssertionError("unreachable")
+            return _Backend()
 
     from tensor_grep.cli import main as main_mod
 
     monkeypatch.setattr(main_mod, "Pipeline", _FakePipeline, raising=False)
-    # Pipeline is imported inside the search function from core.pipeline — patch there.
     import tensor_grep.core.pipeline as pipeline_mod
 
     monkeypatch.setattr(pipeline_mod, "Pipeline", _FakePipeline)
@@ -673,9 +690,12 @@ def test_pattern_file_refuses_unbounded_read_before_ledger(tmp_path: Path) -> No
     text = ledger_mod.read_pattern_or_ignore_file_bounded(ok)
     assert len(text.encode("utf-8")) == ledger_mod.MAX_PATTERN_OR_IGNORE_FILE_BYTES
 
-    # Ledger admit is required BEFORE bytes when a ledger is supplied (fail-closed NI).
+    # Ledger admit is required BEFORE bytes when a ledger is supplied (no-refund).
     ledger = ledger_mod.SearchInputLedger()
     tiny = tmp_path / "tiny.txt"
     tiny.write_text("needle\n", encoding="utf-8")
-    with pytest.raises(NotImplementedError, match="admit_file"):
-        ledger_mod.read_pattern_or_ignore_file_bounded(tiny, ledger=ledger)
+    text2 = ledger_mod.read_pattern_or_ignore_file_bounded(tiny, ledger=ledger)
+    assert text2.replace("\r\n", "\n") == "needle\n"
+    assert ledger.file_count == 1
+    assert ledger.decoded_bytes == len(text2.encode("utf-8"))
+

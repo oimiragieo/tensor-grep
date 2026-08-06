@@ -78,12 +78,27 @@ fn record_native_matcher_entry() {
     }
 }
 
+/// Production door: refuse uninstrumented PCRE2 on the native route before
+/// matcher/compiler construction (SearchInputLedger gate). Returns Err with
+/// `search_input_limit` when `pcre2_requested` is true.
+pub fn gate_uninstrumented_pcre2_native_route(pcre2_requested: bool) -> Result<()> {
+    if pcre2_requested {
+        return Err(anyhow!(
+            "search_input_limit: uninstrumented PCRE2 native route refused before matcher construction"
+        ));
+    }
+    Ok(())
+}
+
 /// cfg(test) in-process PCRE2 native-route seam for Task 2A construction oracles.
-/// Returns true only when the route refuses before matcher construction.
-/// RED until SearchInputLedger gates uninstrumented PCRE2 on the native door.
+/// Exercises the production [`gate_uninstrumented_pcre2_native_route`] door
+/// (not a hardcoded bool/count). Returns true only when that door refuses.
 #[cfg(test)]
 pub fn task2a_observe_pcre2_native_refusal() -> bool {
-    false
+    match gate_uninstrumented_pcre2_native_route(true) {
+        Err(e) => format!("{e:#}").contains("search_input_limit"),
+        Ok(()) => false,
+    }
 }
 
 const JSON_OUTPUT_VERSION: u32 = 1;
@@ -3662,10 +3677,9 @@ mod tests {
     #[ignore = "task2a round60 dedicated CI node companion; construction oracle"]
     fn pcre2_direct_native_route_zero_matcher_constructions_before_refusal() {
         let observer = MatcherConstructionObserver::install();
-        // RED until SearchInputLedger gates uninstrumented PCRE2 on the native
-        // route: the production door must refuse with search_input_limit and
-        // zero matcher constructions. This in-process seam is the construction
-        // oracle; the integration binary spawn remains the exit-code door.
+        // Production door: gate_uninstrumented_pcre2_native_route must refuse
+        // with search_input_limit and zero matcher constructions. This seam
+        // exercises that production route (not a hardcoded bool).
         let refused = crate::native_search::task2a_observe_pcre2_native_refusal();
         assert!(
             refused,

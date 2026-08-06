@@ -7553,6 +7553,7 @@ fn resolve_search_request(args: &SearchArgs) -> anyhow::Result<ResolvedSearchReq
 /// Round-60 / A67 / HIGH#10: 1 MiB per pattern/ignore file — never unbounded
 /// `read_to_string` before the ledger/size gate.
 const MAX_PATTERN_OR_IGNORE_FILE_BYTES: u64 = 1 << 20;
+const MAX_COMBINED_DECODED_PATTERN_FILE_BYTES: u64 = 4 * 1024 * 1024; // 4 MiB aggregate
 
 fn read_pattern_file_bounded(path: &str) -> anyhow::Result<String> {
     use std::io::Read;
@@ -7593,10 +7594,22 @@ fn resolve_search_request_with_stdin(
     stdin_searches_implicit_path: bool,
 ) -> anyhow::Result<ResolvedSearchRequest> {
     let mut patterns = args.regexp.clone();
+    // HIGH#8 / A67: aggregate no-refund decoded-byte cap across multi -f files.
+    let mut aggregate_decoded: u64 = 0;
     for pattern_file in &args.pattern_file {
         // A67 / HIGH#10: bounded read + size gate before folding into patterns.
         // Never `std::fs::read_to_string` (unbounded) on the public `-f/--file` path.
         let text = read_pattern_file_bounded(pattern_file)?;
+        let file_bytes = text.len() as u64;
+        aggregate_decoded = aggregate_decoded.saturating_add(file_bytes);
+        if aggregate_decoded > MAX_COMBINED_DECODED_PATTERN_FILE_BYTES {
+            anyhow::bail!(
+                "search_input_limit: combined pattern files exceed {} bytes (observed {}): {}",
+                MAX_COMBINED_DECODED_PATTERN_FILE_BYTES,
+                aggregate_decoded,
+                pattern_file
+            );
+        }
         for line in text.lines() {
             // ripgrep `-f` includes every non-empty line; empty lines are skipped.
             if !line.is_empty() {
