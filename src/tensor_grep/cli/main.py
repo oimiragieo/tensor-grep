@@ -5335,7 +5335,14 @@ def _format_broad_workspace_scan_error(project_dirs: list[str]) -> str:
     )
 
 
-def _emit_broad_scan_refusal(message: str, *, json_output: bool, path: str) -> None:
+def _emit_broad_scan_refusal(
+    message: str,
+    *,
+    json_output: bool,
+    path: str,
+    incomplete_reason_class: str = "scan_limit",
+    error_code: str = "broad_scan_refused",
+) -> None:
     """Emit a scan-policy refusal on BOTH surfaces, then let the caller exit 2.
 
     An external dogfood asked for "the same exit-2 refuse for bare `--json` unscoped as the
@@ -5349,11 +5356,11 @@ def _emit_broad_scan_refusal(message: str, *, json_output: bool, path: str) -> N
     consumer into the inference this whole surface exists to prevent.
 
     The envelope MIRRORS the MCP `tg_search` refusal payload (`mcp_server.py`) field for field --
-    `truncated` + `result_incomplete` + `incomplete_reason` + `incomplete_reason_class:
-    "scan_limit"` + `error.code: "broad_scan_refused"` + `retryable: false`. Deliberately not a new
-    vocabulary: MCP already settled that a scan-policy ceiling classifies as `scan_limit` and that
-    `error.code` is the sibling signal for WHICH policy refused. Two surfaces refusing the same
-    thing in two different shapes is how CLI and MCP drift into contradicting each other.
+    `truncated` + `result_incomplete` + `incomplete_reason` + `incomplete_reason_class` +
+    `error.code` + `retryable: false`. Defaults stay ``scan_limit`` / ``broad_scan_refused`` for
+    generated/vendored/large-root ceilings (MCP already settled those as scan-policy ceilings).
+    The multi-project workspace-root guard passes ``workspace_root_refused`` for BOTH class and
+    code so agents do not confuse a parent-workspace refuse with a file-cap truncation.
 
     `total_matches: 0` is safe here ONLY because it travels with those flags: the zero is qualified
     on the same line it appears, which is the difference between a count and an absence claim.
@@ -5374,9 +5381,9 @@ def _emit_broad_scan_refusal(message: str, *, json_output: bool, path: str) -> N
                 "truncated": True,
                 "result_incomplete": True,
                 "incomplete_reason": message,
-                "incomplete_reason_class": "scan_limit",
+                "incomplete_reason_class": incomplete_reason_class,
                 "error": {
-                    "code": "broad_scan_refused",
+                    "code": error_code,
                     "message": message,
                     "retryable": False,
                 },
@@ -7879,6 +7886,8 @@ def search_command(
             _format_broad_workspace_scan_error(workspace_project_dirs),
             json_output=json,
             path=str(paths_to_search[0]) if paths_to_search else ".",
+            incomplete_reason_class="workspace_root_refused",
+            error_code="workspace_root_refused",
         )
         raise typer.Exit(2)
     refuse_vendored_scan, vendored_root_dirs = _should_refuse_unbounded_vendored_root_scan(
