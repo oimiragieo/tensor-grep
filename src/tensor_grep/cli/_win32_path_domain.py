@@ -383,6 +383,7 @@ class JobFactoryPrimitives(Protocol):
         *,
         canary_event: threading.Event | None,
         canary_pipe_write_fd: int | None,
+        writer_nonce: bytes | None = None,
     ) -> ProcessThreadHandles: ...
 
     def assign_process_to_job(self, job_handle: int, process_handle: int) -> None: ...
@@ -403,6 +404,170 @@ class JobFactoryPrimitives(Protocol):
     def terminate_process(self, process_handle: int) -> None: ...
 
     def close_handle(self, handle: int) -> None: ...
+
+
+def _descendant_writer_python_executable() -> str:
+    """Prefer the base interpreter so venv redirector stubs do not mismatch PIDs."""
+    base = getattr(sys, "_base_executable", None)
+    if isinstance(base, str) and base:
+        return base
+    return sys.executable
+
+
+def _descendant_pipe_heartbeat_child_code(writer_nonce: bytes) -> str:
+    """Python -c body: write OWN-pid heartbeat to stdout (inherited pipe), then sleep."""
+    nonce_hex = bytes(writer_nonce).hex()
+    # Inline format — child must not import tensor_grep (may lack PYTHONPATH).
+    # stdout is the inherited canary write handle (STARTF_USESTDHANDLES / dup2).
+    return (
+        "import os,sys,time;"
+        f"n=bytes.fromhex({nonce_hex!r});"
+        "p=os.getpid();"
+        "sys.stdout.buffer.write("
+        "b'TG60-JOB-DESCENDANT-HB pid='+str(p).encode()+b' nonce='+n.hex().encode()+b'\\n'"
+        ");"
+        "sys.stdout.buffer.flush();"
+        "time.sleep(3600)"
+    )
+
+
+def spawn_descendant_job_pipe_heartbeat_writer(
+    *,
+    canary_pipe_write_fd: int | None,
+    writer_nonce: bytes,
+) -> ProcessThreadHandles:
+    """Spawn a descendant that inherits the canary write fd and emits OWN-pid heartbeat.
+
+    The caller (parent) must not write the pipe or set a canary event — the
+    descendant alone authenticates writer provenance (Sol R5 / HIGH#5).
+    """
+    if canary_pipe_write_fd is None or canary_pipe_write_fd < 0:
+        raise ValueError("canary_pipe_write_fd required for descendant pipe heartbeat writer")
+    if not isinstance(writer_nonce, (bytes, bytearray)):
+        raise TypeError("writer_nonce must be bytes")
+    nonce = bytes(writer_nonce)
+    if len(nonce) < _MIN_WRITER_NONCE_LEN:
+        raise ValueError(
+            f"writer_nonce must be at least {_MIN_WRITER_NONCE_LEN} bytes "
+            "(parent-forgeable short secrets refused)"
+        )
+    if sys.platform == "win32":
+        return _spawn_descendant_pipe_heartbeat_writer_win32(
+            canary_pipe_write_fd=canary_pipe_write_fd,
+            writer_nonce=nonce,
+        )
+    return _spawn_descendant_pipe_heartbeat_writer_posix(
+        canary_pipe_write_fd=canary_pipe_write_fd,
+        writer_nonce=nonce,
+    )
+
+
+def _spawn_descendant_pipe_heartbeat_writer_posix(
+    *,
+    canary_pipe_write_fd: int,
+    writer_nonce: bytes,
+) -> ProcessThreadHandles:
+    import subprocess
+
+    child_code = _descendant_pipe_heartbeat_child_code(writer_nonce)
+    # Replace stdout with the canary write fd so the child inherits it as fd 1.
+    proc = subprocess.Popen(  # noqa: S603 — intentional descendant writer
+        [_descendant_writer_python_executable(), "-c", child_code],
+        stdin=subprocess.DEVNULL,
+        stdout=canary_pipe_write_fd,
+        stderr=subprocess.DEVNULL,
+        close_fds=False,
+        pass_fds=(canary_pipe_write_fd,),
+    )
+    # Synthesize handle slots from the real pid for platform-neutral tests.
+    return ProcessThreadHandles(
+        process_handle=int(proc.pid),
+        thread_handle=int(proc.pid),
+        pid=int(proc.pid),
+    )
+
+
+def _spawn_descendant_pipe_heartbeat_writer_win32(
+    *,
+    canary_pipe_write_fd: int,
+    writer_nonce: bytes,
+) -> ProcessThreadHandles:
+    """Spawn via subprocess so the returned PID is the writer process (not a launcher)."""
+    import ctypes
+    import msvcrt
+    import subprocess
+    from ctypes import wintypes
+
+    HANDLE_FLAG_INHERIT = 0x00000001
+    PROCESS_TERMINATE = 0x0001
+    PROCESS_QUERY_INFORMATION = 0x0400
+    SYNCHRONIZE = 0x00100000
+    PROCESS_ACCESS = PROCESS_TERMINATE | PROCESS_QUERY_INFORMATION | SYNCHRONIZE
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.SetHandleInformation.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD]
+    kernel32.SetHandleInformation.restype = wintypes.BOOL
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+
+    write_handle = msvcrt.get_osfhandle(canary_pipe_write_fd)
+    if not kernel32.SetHandleInformation(write_handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT):
+        raise OSError(f"SetHandleInformation(inherit) failed: {ctypes.get_last_error()}")
+
+    child_code = _descendant_pipe_heartbeat_child_code(writer_nonce)
+    # stdout=fd makes the canary write end the child's stdout (inherited).
+    # Use base executable so a venv redirector stub PID cannot diverge from getpid().
+    proc = subprocess.Popen(  # noqa: S603 — intentional descendant writer
+        [_descendant_writer_python_executable(), "-c", child_code],
+        stdin=subprocess.DEVNULL,
+        stdout=canary_pipe_write_fd,
+        stderr=subprocess.DEVNULL,
+        close_fds=False,
+    )
+    pid = int(proc.pid)
+    h_process = kernel32.OpenProcess(PROCESS_ACCESS, False, pid)
+    if not h_process:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        raise OSError(f"OpenProcess({pid}) failed: {ctypes.get_last_error()}")
+    # No separate thread handle from Popen; duplicate process handle for close accounting.
+    h_thread = kernel32.OpenProcess(PROCESS_ACCESS, False, pid)
+    if not h_thread:
+        kernel32.CloseHandle(h_process)
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        raise OSError(f"OpenProcess(thread-slot {pid}) failed: {ctypes.get_last_error()}")
+    return ProcessThreadHandles(
+        process_handle=int(h_process),
+        thread_handle=int(h_thread),
+        pid=pid,
+    )
+
+
+def terminate_spawned_descendant(pid: int) -> None:
+    """Best-effort terminate a spawn_descendant_* child by PID (test cleanup)."""
+    if pid <= 0:
+        return
+    if sys.platform == "win32":
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        PROCESS_TERMINATE = 0x0001
+        handle = kernel32.OpenProcess(PROCESS_TERMINATE, False, pid)
+        if handle:
+            try:
+                kernel32.TerminateProcess(handle, 1)
+            finally:
+                kernel32.CloseHandle(handle)
+        return
+    try:
+        os.kill(pid, 9)
+    except OSError:
+        pass
 
 
 def offline_wintrust_policy() -> WinTrustPolicy:
@@ -597,8 +762,16 @@ class DefaultJobFactoryPrimitives:
         *,
         canary_event: threading.Event | None,
         canary_pipe_write_fd: int | None,
+        writer_nonce: bytes | None = None,
     ) -> ProcessThreadHandles:
-        _ = canary_event, canary_pipe_write_fd
+        _ = canary_event
+        # Sol R5: pipe-worker path — real descendant inherits write fd and emits
+        # OWN-pid+nonce heartbeat. Parent must not forge the payload.
+        if writer_nonce is not None:
+            return spawn_descendant_job_pipe_heartbeat_writer(
+                canary_pipe_write_fd=canary_pipe_write_fd,
+                writer_nonce=writer_nonce,
+            )
         if not IS_WINDOWS:
             raise OSError("CreateProcessW requires Windows")
         import ctypes
@@ -651,7 +824,8 @@ class DefaultJobFactoryPrimitives:
         si = STARTUPINFOW()
         si.cb = ctypes.sizeof(STARTUPINFOW)
         pi = PROCESS_INFORMATION()
-        # Suspended cmd.exe placeholder — Job assignment/resume happen in orchestrator.
+        # Parent placeholder: suspended, no pipe inheritance (descendant writer is separate).
+        _ = canary_pipe_write_fd
         cmdline = ctypes.create_unicode_buffer("cmd.exe /c exit 0")
         ok = kernel32.CreateProcessW(
             None,
@@ -724,7 +898,8 @@ class DefaultJobFactoryPrimitives:
         canary_pipe_write_fd: int | None,
         writer_nonce: bytes | None = None,
     ) -> ProcessThreadHandles:
-        # Sol R4 HIGH#5: must use parent / pipe / event / nonce (not discard via `_ = ...`).
+        # Sol R5 HIGH#5: descendant inherits pipe and writes OWN pid+nonce.
+        # Parent must NOT write the canary pipe or signal the canary event.
         if not isinstance(parent, ProcessThreadHandles):
             raise TypeError("parent must be ProcessThreadHandles")
         if parent.pid <= 0:
@@ -739,18 +914,17 @@ class DefaultJobFactoryPrimitives:
                 f"writer_nonce must be at least {_MIN_WRITER_NONCE_LEN} bytes "
                 "(parent-forgeable short secrets refused)"
             )
+        if canary_pipe_write_fd is None or canary_pipe_write_fd < 0:
+            raise ValueError("canary_pipe_write_fd required for pipe worker setup")
+        # canary_event is caller-owned; parent must not signal it (Sol R5).
+        _ = canary_event
         worker = self.create_process_suspended(
             canary_event=canary_event,
             canary_pipe_write_fd=canary_pipe_write_fd,
+            writer_nonce=nonce,
         )
         if worker.pid == parent.pid or worker.process_handle == parent.process_handle:
             raise OSError("pipe worker must be a distinct process from parent")
-        # Authenticate writer provenance: heartbeat binds worker PID + nonce.
-        heartbeat = descendant_job_pipe_heartbeat(worker.pid, writer_nonce=nonce)
-        if canary_pipe_write_fd is not None:
-            os.write(canary_pipe_write_fd, heartbeat)
-        if canary_event is not None:
-            canary_event.set()
         return worker
 
     def terminate_process(self, process_handle: int) -> None:

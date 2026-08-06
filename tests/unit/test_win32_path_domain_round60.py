@@ -721,8 +721,9 @@ class _RecordingJobFactory:
         *,
         canary_event: threading.Event | None,
         canary_pipe_write_fd: int | None,
+        writer_nonce: bytes | None = None,
     ) -> win32.ProcessThreadHandles:
-        _ = canary_event, canary_pipe_write_fd
+        _ = canary_event, canary_pipe_write_fd, writer_nonce
         self._next_pid += 1
         return win32.ProcessThreadHandles(
             process_handle=self._alloc(),
@@ -1061,19 +1062,24 @@ def test_job_heartbeat_rejects_parent_forgeable_and_multiline_ambiguity() -> Non
 def test_default_job_cleanup_independently_proven(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """HIGH#5 / A63: default-factory cleanup via production ``close_handle``.
+    """HIGH#5 / A63 / Sol R5: descendant-written heartbeat; parent must not forge.
 
     Uses a subclass of real ``DefaultJobFactoryPrimitives`` that does NOT
-    override ``setup_pipe_worker`` (Sol R4 — prove real default pipe path).
+    override ``setup_pipe_worker``. Happy path exercises production spawn;
+    withhold arm proves parent does not fabricate pipe/event.
     """
     import inspect
     import os
+    import time
 
     src = inspect.getsource(win32.DefaultJobFactoryPrimitives)
     assert "CreateJobObjectW" in src or "CreateJobObject" in src
     pipe_body = src.split("def setup_pipe_worker", 1)[1].split("\n    def ", 1)[0]
     assert "_ = parent, canary_event, canary_pipe_write_fd, writer_nonce" not in pipe_body
-    assert "descendant_job_pipe_heartbeat" in pipe_body
+    assert "os.write(canary_pipe_write_fd" not in pipe_body
+    assert "canary_event.set()" not in pipe_body
+    create_susp = src.split("def create_process_suspended", 1)[1].split("\n    def ", 1)[0]
+    assert "spawn_descendant_job_pipe_heartbeat_writer" in create_susp
 
     closed_via_production: list[int] = []
 
@@ -1096,7 +1102,66 @@ def test_default_job_cleanup_independently_proven(
         pids["n"] += 1
         return pids["n"]
 
-    class _MinimalOsStubFactory(win32.DefaultJobFactoryPrimitives):
+    # Happy path: real DefaultJobFactoryPrimitives.setup_pipe_worker → spawn.
+    real_factory = win32.DefaultJobFactoryPrimitives()
+    assert type(real_factory) is win32.DefaultJobFactoryPrimitives
+    r_fd, w_fd = os.pipe()
+    worker_handles: win32.ProcessThreadHandles | None = None
+    try:
+        parent = win32.ProcessThreadHandles(process_handle=11, thread_handle=12, pid=7001)
+        nonce = b"\xab" * 16
+        ev = threading.Event()
+        worker_handles = real_factory.setup_pipe_worker(
+            parent=parent,
+            canary_event=ev,
+            canary_pipe_write_fd=w_fd,
+            writer_nonce=nonce,
+        )
+        worker = worker_handles
+        assert ev.is_set() is False
+        os.set_blocking(r_fd, False)
+        deadline = time.monotonic() + 5.0
+        payload = b""
+        while time.monotonic() < deadline:
+            try:
+                chunk = os.read(r_fd, 4096)
+            except BlockingIOError:
+                chunk = b""
+            if chunk:
+                payload += chunk
+                break
+            time.sleep(0.01)
+        assert payload
+        assert (
+            win32.parse_descendant_job_pipe_heartbeat_pid(payload, writer_nonce=nonce)
+            == worker.pid
+        )
+        assert worker.pid != parent.pid
+    finally:
+        if worker_handles is not None:
+            try:
+                real_factory.terminate_process(worker_handles.process_handle)
+            except Exception:
+                try:
+                    win32.terminate_spawned_descendant(worker_handles.pid)
+                except Exception:
+                    pass
+            for h in (worker_handles.process_handle, worker_handles.thread_handle):
+                try:
+                    real_factory.close_handle(h)
+                except Exception:
+                    pass
+        try:
+            os.close(r_fd)
+        except OSError:
+            pass
+        if w_fd >= 0:
+            try:
+                os.close(w_fd)
+            except OSError:
+                pass
+
+    class _AllocOnlyFactory(win32.DefaultJobFactoryPrimitives):
         def create_job(self) -> int:
             return _alloc()
 
@@ -1119,46 +1184,26 @@ def test_default_job_cleanup_independently_proven(
         def terminate_process(self, process_handle: int) -> None:
             _ = process_handle
 
-    factory = _MinimalOsStubFactory()
+    factory = _AllocOnlyFactory()
     assert "setup_pipe_worker" not in type(factory).__dict__
-
-    # Direct default setup_pipe_worker path: parent + nonce + pipe heartbeat.
-    r_fd, w_fd = os.pipe()
-    try:
-        parent = win32.ProcessThreadHandles(process_handle=11, thread_handle=12, pid=7001)
-        nonce = b"\xab" * 16
-        ev = threading.Event()
-        worker = factory.setup_pipe_worker(
-            parent=parent,
-            canary_event=ev,
-            canary_pipe_write_fd=w_fd,
-            writer_nonce=nonce,
-        )
-        os.close(w_fd)
-        w_fd = -1
-        payload = os.read(r_fd, 4096)
-        assert (
-            win32.parse_descendant_job_pipe_heartbeat_pid(payload, writer_nonce=nonce)
-            == worker.pid
-        )
-        assert worker.pid != parent.pid
-        assert ev.is_set() is True
-    finally:
-        os.close(r_fd)
-        if w_fd >= 0:
-            os.close(w_fd)
 
     acquired.clear()
     closed_via_production.clear()
     canary = threading.Event()
     canary.set()
-    with pytest.raises(BaseException, match="injected fault"):
-        win32.create_suspended_job_with_descendant_breakaway(
-            canary_event=canary,
-            inject_fault_after="pipe_worker_setup",
-            factory=factory,
-            writer_nonce=b"\xcd" * 16,
-        )
+    fault_r, fault_w = os.pipe()
+    try:
+        with pytest.raises(BaseException, match="injected fault"):
+            win32.create_suspended_job_with_descendant_breakaway(
+                canary_event=canary,
+                canary_pipe_write_fd=fault_w,
+                inject_fault_after="pipe_worker_setup",
+                factory=factory,
+                writer_nonce=b"\xcd" * 16,
+            )
+    finally:
+        os.close(fault_r)
+        os.close(fault_w)
     assert acquired, "premise: default factory acquired handles"
     assert closed_via_production == list(reversed(acquired))
     assert canary.is_set() is True
@@ -1178,17 +1223,26 @@ _FAULT_ARM_EXPECTATIONS: dict[str, tuple[int, int]] = {
 
 
 def _assert_job_fault_arm(fault_after: win32.JobInjectFaultAfter) -> None:
+    import os
+
     closed: list[int] = []
     terminated: list[int] = []
     factory = _RecordingJobFactory(closed=closed, terminated=terminated)
     canary = threading.Event()
     canary.set()
-    with pytest.raises(BaseException, match="injected fault") as exc_info:
-        win32.create_suspended_job_with_descendant_breakaway(
-            canary_event=canary,
-            inject_fault_after=fault_after,
-            factory=factory,
-        )
+    r_fd, w_fd = os.pipe()
+    try:
+        with pytest.raises(BaseException, match="injected fault") as exc_info:
+            win32.create_suspended_job_with_descendant_breakaway(
+                canary_event=canary,
+                canary_pipe_write_fd=w_fd,
+                inject_fault_after=fault_after,
+                factory=factory,
+                writer_nonce=b"\x11" * 16,
+            )
+    finally:
+        os.close(r_fd)
+        os.close(w_fd)
     expected_acq, expected_term = _FAULT_ARM_EXPECTATIONS[fault_after]
     acquired = list(factory.acquired)
     assert len(acquired) == expected_acq, (

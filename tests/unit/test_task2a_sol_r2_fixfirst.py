@@ -314,9 +314,15 @@ def test_sol_r2_heartbeat_factory_mints_nonce_and_refuses_framing_garbage() -> N
 def test_sol_r2_default_job_cleanup_uses_real_default_factory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """HIGH#5: real DefaultJobFactoryPrimitives; setup_pipe_worker uses parent/pipe/event/nonce."""
+    """HIGH#5 / Sol R5: descendant inherits pipe and writes OWN pid+nonce heartbeat.
+
+    Parent must NOT fabricate os.write / canary_event.set. Vacuous parent-written
+    payloads are refused. Adversarial withhold (child never executes) proves no
+    valid heartbeat or event appears.
+    """
     import inspect
     import os
+    import time
 
     # Production default factory must wire real Win32 (not NotImplemented stubs).
     src = inspect.getsource(win32.DefaultJobFactoryPrimitives)
@@ -327,8 +333,23 @@ def test_sol_r2_default_job_cleanup_uses_real_default_factory(
     pipe_body = src.split("def setup_pipe_worker", 1)[1].split("\n    def ", 1)[0]
     # Sol R4: must not discard parent/pipe/event/nonce with a blanket `_ = ...`.
     assert "_ = parent, canary_event, canary_pipe_write_fd, writer_nonce" not in pipe_body
-    assert "descendant_job_pipe_heartbeat" in pipe_body
     assert "writer_nonce" in pipe_body and "parent" in pipe_body
+    # Sol R5: parent must not fabricate heartbeat write or event signal.
+    assert "os.write(canary_pipe_write_fd" not in pipe_body, (
+        "setup_pipe_worker must not parent-write the canary pipe (descendant owns heartbeat)"
+    )
+    assert "canary_event.set()" not in pipe_body, (
+        "setup_pipe_worker must not parent-signal canary_event (descendant owns signal)"
+    )
+    assert "create_process_suspended" in pipe_body
+    create_susp = src.split("def create_process_suspended", 1)[1].split("\n    def ", 1)[0]
+    assert "writer_nonce" in create_susp, (
+        "create_process_suspended must accept writer_nonce for pipe-worker descendants"
+    )
+    assert "spawn_descendant_job_pipe_heartbeat_writer" in create_susp, (
+        "writer_nonce path must spawn a descendant pipe heartbeat writer "
+        "(not suspended inert cmd.exe with parent-forged heartbeat)"
+    )
 
     closed_via_production: list[int] = []
 
@@ -338,7 +359,6 @@ def test_sol_r2_default_job_cleanup_uses_real_default_factory(
     monkeypatch.setattr(win32, "close_handle", _spy_close)
     monkeypatch.setattr(win32, "IS_WINDOWS", True)
 
-    # Minimal OS stubs ONLY — do NOT override setup_pipe_worker (prove real default path).
     acquired: list[int] = []
     nxt = {"n": 100}
     pids = {"n": 1000}
@@ -352,7 +372,132 @@ def test_sol_r2_default_job_cleanup_uses_real_default_factory(
         pids["n"] += 1
         return pids["n"]
 
-    class _MinimalOsStubFactory(win32.DefaultJobFactoryPrimitives):
+    # Happy path: REAL DefaultJobFactoryPrimitives.setup_pipe_worker (no subclass override).
+    real_factory = win32.DefaultJobFactoryPrimitives()
+    assert type(real_factory) is win32.DefaultJobFactoryPrimitives
+    r_fd, w_fd = os.pipe()
+    worker_handles: win32.ProcessThreadHandles | None = None
+    try:
+        parent = win32.ProcessThreadHandles(process_handle=11, thread_handle=12, pid=7001)
+        nonce = b"\xab" * 16
+        ev = threading.Event()
+        worker_handles = real_factory.setup_pipe_worker(
+            parent=parent,
+            canary_event=ev,
+            canary_pipe_write_fd=w_fd,
+            writer_nonce=nonce,
+        )
+        worker = worker_handles
+        # Parent must not have signaled the event (descendant owns heartbeat/signal).
+        assert ev.is_set() is False, (
+            "parent must not set canary_event; fabrication refused"
+        )
+        # Non-blocking drain (select() does not accept pipe fds on Windows).
+        os.set_blocking(r_fd, False)
+        deadline = time.monotonic() + 5.0
+        payload = b""
+        while time.monotonic() < deadline:
+            try:
+                chunk = os.read(r_fd, 4096)
+            except BlockingIOError:
+                chunk = b""
+            if chunk:
+                payload += chunk
+                break
+            time.sleep(0.01)
+        assert payload, "descendant must write heartbeat to inherited pipe"
+        parsed = win32.parse_descendant_job_pipe_heartbeat_pid(payload, writer_nonce=nonce)
+        assert parsed == worker.pid
+        assert worker.pid != parent.pid
+    finally:
+        if worker_handles is not None:
+            try:
+                real_factory.terminate_process(worker_handles.process_handle)
+            except Exception:
+                try:
+                    win32.terminate_spawned_descendant(worker_handles.pid)
+                except Exception:
+                    pass
+            for h in (worker_handles.process_handle, worker_handles.thread_handle):
+                try:
+                    real_factory.close_handle(h)
+                except Exception:
+                    pass
+        try:
+            os.close(r_fd)
+        except OSError:
+            pass
+        if w_fd >= 0:
+            try:
+                os.close(w_fd)
+            except OSError:
+                pass
+
+    # --- Adversarial oracle: withhold child execution → no heartbeat / event ---
+    class _WithholdChildFactory(win32.DefaultJobFactoryPrimitives):
+        def create_job(self) -> int:
+            return _alloc()
+
+        def create_process_suspended(self, **kwargs):  # type: ignore[no-untyped-def]
+            # Return handles WITHOUT spawning a writer — withhold descendant execution.
+            _ = kwargs
+            return win32.ProcessThreadHandles(
+                process_handle=_alloc(), thread_handle=_alloc(), pid=_pid()
+            )
+
+        def assign_process_to_job(self, job_handle: int, process_handle: int) -> None:
+            _ = job_handle, process_handle
+
+        def resume_thread(self, thread_handle: int) -> None:
+            _ = thread_handle
+
+        def query_process_image(self, process_handle: int) -> str:
+            _ = process_handle
+            return "img"
+
+        def terminate_process(self, process_handle: int) -> None:
+            _ = process_handle
+
+    withhold = _WithholdChildFactory()
+    assert "setup_pipe_worker" not in type(withhold).__dict__
+    r2, w2 = os.pipe()
+    try:
+        parent = win32.ProcessThreadHandles(process_handle=21, thread_handle=22, pid=8001)
+        nonce = b"\xcd" * 16
+        ev2 = threading.Event()
+        worker = withhold.setup_pipe_worker(
+            parent=parent,
+            canary_event=ev2,
+            canary_pipe_write_fd=w2,
+            writer_nonce=nonce,
+        )
+        assert worker.pid != parent.pid
+        os.set_blocking(r2, False)
+        deadline = time.monotonic() + 0.3
+        forged = b""
+        while time.monotonic() < deadline:
+            try:
+                chunk = os.read(r2, 4096)
+            except BlockingIOError:
+                chunk = b""
+            if chunk:
+                forged += chunk
+                break
+            time.sleep(0.01)
+        assert forged == b"", (
+            f"withheld child must yield empty pipe; parent forged {forged!r}"
+        )
+        assert ev2.is_set() is False, (
+            "withheld child must not leave canary_event set (parent must not signal)"
+        )
+        with pytest.raises(ValueError):
+            win32.parse_descendant_job_pipe_heartbeat_pid(forged, writer_nonce=nonce)
+    finally:
+        os.close(r2)
+        os.close(w2)
+
+    # --- Cleanup arm: alloc-only stubs (no live spawn) prove close_handle order ---
+    class _AllocOnlyFactory(win32.DefaultJobFactoryPrimitives):
         def create_job(self) -> int:
             return _alloc()
 
@@ -375,49 +520,24 @@ def test_sol_r2_default_job_cleanup_uses_real_default_factory(
         def terminate_process(self, process_handle: int) -> None:
             _ = process_handle
 
-    factory = _MinimalOsStubFactory()
-    assert isinstance(factory, win32.DefaultJobFactoryPrimitives)
-    assert "setup_pipe_worker" not in type(factory).__dict__, (
-        "test must not override setup_pipe_worker — exercise DefaultJobFactoryPrimitives"
-    )
-
-    # Direct default-path proof: real setup_pipe_worker uses parent + nonce + pipe.
-    r_fd, w_fd = os.pipe()
-    try:
-        parent = win32.ProcessThreadHandles(process_handle=11, thread_handle=12, pid=7001)
-        nonce = b"\xab" * 16
-        ev = threading.Event()
-        worker = factory.setup_pipe_worker(
-            parent=parent,
-            canary_event=ev,
-            canary_pipe_write_fd=w_fd,
-            writer_nonce=nonce,
-        )
-        os.close(w_fd)
-        w_fd = -1
-        payload = os.read(r_fd, 4096)
-        assert (
-            win32.parse_descendant_job_pipe_heartbeat_pid(payload, writer_nonce=nonce)
-            == worker.pid
-        )
-        assert worker.pid != parent.pid
-        assert ev.is_set() is True
-    finally:
-        os.close(r_fd)
-        if w_fd >= 0:
-            os.close(w_fd)
-
-    # Orchestrator cleanup still uses production close_handle via default factory.
+    factory = _AllocOnlyFactory()
+    assert "setup_pipe_worker" not in type(factory).__dict__
     acquired.clear()
     closed_via_production.clear()
     canary = threading.Event()
-    with pytest.raises(BaseException, match="injected fault"):
-        win32.create_suspended_job_with_descendant_breakaway(
-            canary_event=canary,
-            inject_fault_after="pipe_worker_setup",
-            factory=factory,
-            writer_nonce=b"\xcd" * 16,
-        )
+    fault_r, fault_w = os.pipe()
+    try:
+        with pytest.raises(BaseException, match="injected fault"):
+            win32.create_suspended_job_with_descendant_breakaway(
+                canary_event=canary,
+                canary_pipe_write_fd=fault_w,
+                inject_fault_after="pipe_worker_setup",
+                factory=factory,
+                writer_nonce=b"\xef" * 16,
+            )
+    finally:
+        os.close(fault_r)
+        os.close(fault_w)
     assert acquired, "premise: factory acquired handles"
     assert closed_via_production == list(reversed(acquired))
 
