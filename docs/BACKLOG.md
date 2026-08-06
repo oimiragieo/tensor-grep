@@ -689,6 +689,43 @@ wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while 
 
 ---
 
+## ⭐ EXTERNAL — enterprise closeout campaign session findings (2026-08-06)
+
+Session closeout progress from the gotcontext-saddle / orchestrator seat. **Docs-only
+receipt — does not authorize GREEN, releases, or STOP lifts.**
+
+### START_NOW complete
+
+- **#963** + **#964** MERGED; tip carries wave-2 plan `PROCEED_D1_THEN_W4`.
+- Main CI for the #964 merge push completed success (docs merges; no publish lane).
+- **PyPI still `1.110.0`** — these were docs merges only; product version unchanged.
+
+### Task 2A W4 — in progress (NOT GREEN)
+
+- Local branch `task2a-round60-red` (**NOT pushed**).
+- Path: Sol R1 `FIX-FIRST` → repairs → Sol R2 `FIX-FIRST`.
+- Cleared HIGH **#4** and **#6**; **6 HIGH remain**.
+- **Do NOT claim GREEN.** No Sol exact-byte `SHIP`, no authorized Windows CI green phase.
+
+### Explicit STOP unchanged
+
+F5 / F6 / F8 / MCP / #169 / `CEO_GATED` — unchanged. Do not reopen or reclassify from this
+receipt.
+
+### Findings (session)
+
+1. **First-pass HIGH1–10 repairs were vacuous vs Sol** — local “fixed” marks did not survive
+   Sol re-audit; treat implementer-self-GREEN as non-evidence.
+2. **Production-path oracles required** — scaffold / helper-only controls do not discriminate
+   the defects Sol scores; oracles must exercise the real production path.
+3. **Worktree `gitdir` WSL path breaks Windows git** — a worktree whose `.git` gitdir points
+   at a WSL path is unusable from Windows `git`; create/manage Windows worktrees with
+   Windows git only.
+
+See also: `docs/audits/2026-08-06-enterprise-closeout-campaign-state.md`.
+
+---
+
 ## ⭐ EXTERNAL DOGFOOD — v1.108.2 on gotcontext-saddle (2026-08-05)
 
 Second external run on the same host, seven releases on from the 2026-08-02 one below. **Verdict:
