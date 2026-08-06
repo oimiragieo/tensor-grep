@@ -3,12 +3,10 @@
 Foundational scope (mirrors PATH A Stage 1's lang_go.py precedent, not the pre-registry
 Rust/JS/TS inline pattern): C# gets its own ``LanguageSpec`` entry + dedicated module providing
 ``defs``/``source``/``imports``/``agent`` support (classes/interfaces/structs/enums/records +
-methods/constructors, plus ``using`` directive extraction). The cross-file caller-graph
-(``references_and_calls``/``file_imports_symbol_from_definition``/``import_update_target``) is
-explicitly DEFERRED to a follow-up, exactly like Go's own ``import_update_target=None`` gap --
-`tg refs`/`tg callers`/`tg blast-radius` on a C# symbol fall through to the generic
-``_regex_references_and_calls`` text-heuristic path (never a crash, never a fabricated
-AST-verified match).
+methods/constructors, plus ``using`` directive extraction). Task 10B wires
+``references_and_calls`` (in-file). F7 Task 11 wave 2 wires
+``file_imports_symbol_from_definition`` (namespace/``using``). Remaining cross-file fields
+(``import_update_target`` / ``prime_repo_context``) stay deferred.
 
 Covered here:
 - ``defs``: class/interface/struct/enum/record declarations resolve with kind "class"; method/
@@ -108,6 +106,16 @@ def test_csharp_is_registered_with_tree_sitter_provenance() -> None:
     # Fail-closed (Stage 1 trap, mirrors Go): never "regex-heuristic" -- C# has no fallback.
     assert spec.provenance_when_missing == "grammar-missing"
     assert spec.parser_for_path is not None
+    # Task 10B: in-file references_and_calls. F7 Task 11 wave 2: file_imports_symbol_from_definition
+    # (namespace/using). Remaining cross-file fields stay deferred.
+    assert spec.references_and_calls is not None
+    assert spec.provider_alias_calls is None
+    assert spec.file_imports_symbol_from_definition is (
+        lang_csharp.csharp_file_imports_symbol_from_definition
+    )
+    assert spec.import_update_target is None
+    assert spec.prime_repo_context is None
+    assert spec.classify_ref_kind is None
 
 
 def test_target_language_for_path_reports_csharp() -> None:

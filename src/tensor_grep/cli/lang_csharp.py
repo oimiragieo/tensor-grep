@@ -15,13 +15,10 @@ dispatch site; a reverse import would cycle). The handful of tiny helpers this m
 FOUNDATIONAL SCOPE: this module lights up ``defs``/``source``/``imports``/``agent`` for ``.cs``
 files (symbols: class/interface/struct/enum/record declarations as kind "class", method/
 constructor declarations as kind "function"; imports: dotted ``using``-directive namespace
-names). The cross-file caller-graph (``references_and_calls`` / ``file_imports_symbol_from_
-definition`` / ``import_update_target`` / per-repo-root context priming for a `.csproj`/
-namespace-to-file resolver) is DEFERRED to a follow-up -- this module registers those
-``LanguageSpec`` fields as ``None``, exactly like Go's own ``import_update_target=None`` gap.
-``tg refs``/``tg callers``/`tg blast-radius`` on a C# symbol fall through to the generic
-``_regex_references_and_calls`` text-heuristic path in repo_map.py (never a crash, never a
-fabricated AST-verified match) -- unaffected by this module.
+names). Task 10B wires ``references_and_calls`` (in-file). F7 Task 11 wave 2 wires
+``file_imports_symbol_from_definition`` and cross-file confirmation via namespace/``using``
+(see below). ``import_update_target`` / ``prime_repo_context`` (``.csproj`` reverse map) stay
+deferred -- ``None`` on the ``LanguageSpec``.
 
 FAIL-CLOSED CONTRACT (Stage 0 honesty floor, extended here exactly as it was for Go): C# has NO
 regex-heuristic fallback. When the ``tree_sitter_c_sharp`` grammar package is not installed,
