@@ -74,6 +74,28 @@ Job heartbeat; unproven Job cleanup; weak SDDL; invalid CNG export; TxR close ow
 self-attest; `-f`/`--file` unbounded pre-ledger read). Not merge-ready. These are plan-gate /
 RED-scaffold findings, not separate shipped features or extra canonical top-level rows.
 
+### PHASE 0+1 LAUNCH RECEIPT — 2026-08-06
+
+Executed end-to-end (parent shell broken; execution agent owned git/gh/pytest). Hard stops held:
+no #169, no Task 2A GREEN, no local `rust_core` cargo, no CEO-gate flips.
+
+| packet | PR | result |
+|---|---|---|
+| A drain #951 | [#951](https://github.com/oimiragieo/tensor-grep/pull/951) | MERGED (squash) after full CI green |
+| B F7 wave 2 PHP | [#952](https://github.com/oimiragieo/tensor-grep/pull/952) | MERGED — `use`/namespace confirmation + blast_radius_floor |
+| C F7 wave 2 C# | [#955](https://github.com/oimiragieo/tensor-grep/pull/955) | MERGED — namespace/`using` confirmation + blast_radius_floor |
+| D workspace_root_refused | [#956](https://github.com/oimiragieo/tensor-grep/pull/956) | MERGED — class/code params on `_emit_broad_scan_refusal` |
+| E F10 + DD-004 DROP | [#953](https://github.com/oimiragieo/tensor-grep/pull/953) | MERGED — RETIRED with receipts |
+| F board reconcile + dogfood | this entry + TASK_BOARD snapshot | dogfood: `tg search needle C:\dev\projects --json` against main → exit 2, `incomplete_reason_class=workspace_root_refused`, `error.code=workspace_root_refused` |
+
+**PyPI / local:** live PyPI **v1.109.0** (index 200 + bogus 404 control). Phase 0+1 code is on
+`main` and awaits the next `feat:`/`fix:` publish; installed wheel remains pre-#956 until then
+(control: installed path still emitted `scan_limit`/`broad_scan_refused`; main source emits
+`workspace_root_refused`).
+
+**Next:** F7 Task 11 wave 3 = open PR #957 (C/C++). Draft #960 is a broader board reconcile that
+may supersede some READY→SHIPPED flips not in this launch's scope.
+
 ### RECONCILED 2026-08-05 -- what actually shipped, per row
 
 The list below this block still reads `READY` for rows that shipped today. Reconciling AT
@@ -618,9 +640,9 @@ agreement details; ledger Slice 1 + Slice 2; `evidence emit/verify` (`checks.dig
 
 | reported | disposition | receipt |
 |---|---|---|
-| **Parent-refuse class is generic `scan_limit`** — wants `workspace_root_refused` so agents do not confuse a refusal with file-cap truncation | **NEW, REAL, AI-doable** | four classes exist today (`deadline`, `scan_limit`, `timeout`, `unreadable_path`); a refusal to scan a workspace root and a cap-truncated scan are genuinely different consumer outcomes and currently share one class. The code already carries a comment requiring an `incomplete_reason_class` mapping decision before a new cause ships. Task created. |
-| **Caller-graph parity for Java/C#/C/C++/PHP** | **ALREADY IN FLIGHT** — independent confirmation of F7 Task 11 | Java shipped as **PR #950** (merged 2026-08-05). C# and PHP building; C/C++ queued. Sized by the parsed C# re-measure in PR #951. |
-| **Ship or forever-drop MaxSim** | **DROP is the measured answer; needs an explicit retirement receipt** | the MaxSim late-rerank bet was measured a DECISIVE NEGATIVE and is banked as such. F10 is `DEMAND_GATED` pending exactly this: a caller/installability census, then retire if unreachable. The reporter observing "no install path" from outside is evidence for retiring rather than shipping. Task created. |
+| **Parent-refuse class is generic `scan_limit`** — wants `workspace_root_refused` so agents do not confuse a refusal with file-cap truncation | **SHIPPED** — PR **#956** (merged 2026-08-06) | `_emit_broad_scan_refusal` gained `incomplete_reason_class`/`error_code` params; workspace guard emits `workspace_root_refused` for both. Dogfood on `C:\dev\projects` against main: exit 2 + class/code pair. Other ceilings keep `scan_limit`/`broad_scan_refused`. |
+| **Caller-graph parity for Java/C#/C/C++/PHP** | **IN FLIGHT** — F7 Task 11 waves 1–2 shipped | Java **#950**, PHP **#952**, C# **#955** merged. Wave 3 C/C++ open as **#957**. Sized by parsed C# re-measure in **#951**. |
+| **Ship or forever-drop MaxSim** | **RETIRED** — F10 DROP receipt in **#953** | Caller/installability census + decisive negative on golden set; MaxSim reachable only via undocumented `TG_LATE_RERANK=1`. DD-004 RETIRED in the same PR. |
 | Bare search exits 1, not 2 | **BY DESIGN — already retired as #22** | contract: exit 0 = complete with matches, exit 1 = complete with NO match, exit 2 = incomplete. The request (exit 2 + `missing_explicit_path`) is a CONTRACT CHANGE, not a bug fix — it would make "searched correctly, found nothing" indistinguishable from "could not search". Reopening needs an argument against that collapse. |
 | Anonymous `--claim` still allowed (hint only) | **BY DESIGN — already retired as F2** | legacy anonymous-agent compatibility deliberately retains the sentinel; reopen only with a caller-supplied stable identity contract and migration plan. |
 | GPU non-accelerative; `calibrate` exit 2 | **CEO-GATED (#169)** | the only mandatory financial stop; physical GPU proof environment or spend. |
