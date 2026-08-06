@@ -15,13 +15,10 @@ dispatch site; a reverse import would cycle). The handful of tiny helpers this m
 FOUNDATIONAL SCOPE: this module lights up ``defs``/``source``/``imports``/``agent`` for ``.cs``
 files (symbols: class/interface/struct/enum/record declarations as kind "class", method/
 constructor declarations as kind "function"; imports: dotted ``using``-directive namespace
-names). The cross-file caller-graph (``references_and_calls`` / ``file_imports_symbol_from_
-definition`` / ``import_update_target`` / per-repo-root context priming for a `.csproj`/
-namespace-to-file resolver) is DEFERRED to a follow-up -- this module registers those
-``LanguageSpec`` fields as ``None``, exactly like Go's own ``import_update_target=None`` gap.
-``tg refs``/``tg callers``/`tg blast-radius`` on a C# symbol fall through to the generic
-``_regex_references_and_calls`` text-heuristic path in repo_map.py (never a crash, never a
-fabricated AST-verified match) -- unaffected by this module.
+names). Task 10B wires ``references_and_calls`` (in-file). F7 Task 11 wave 2 wires
+``file_imports_symbol_from_definition`` and cross-file confirmation via namespace/``using``
+(see below). ``import_update_target`` / ``prime_repo_context`` (``.csproj`` reverse map) stay
+deferred -- ``None`` on the ``LanguageSpec``.
 
 FAIL-CLOSED CONTRACT (Stage 0 honesty floor, extended here exactly as it was for Go): C# has NO
 regex-heuristic fallback. When the ``tree_sitter_c_sharp`` grammar package is not installed,
@@ -76,9 +73,19 @@ and numbers):
   ``string``), and qualified/generic declared types are an accepted, documented gap, mirroring
   Java's requirement of a directly-readable ``type_identifier``.
 
-Cross-file caller confirmation (namespace/`.csproj` import resolution, matching Go's
-``go-import-resolution`` band) is still NOT implemented -- a cross-file caller today always lands
-in the demoted band, honestly labeled.
+F7 TASK 11 WAVE 2 (C#): cross-file caller confirmation via namespace / ``using`` evidence
+(NOT ``.csproj`` manifest mapping -- the design council ruled C# has no namespace-to-file
+manifest; resolution is namespace-index + path-suffix matching, sharing only the *reader*
+plumbing shape with PHP's wave-2b, not the PSR-4 strategy):
+
+- ``csharp_file_imports_symbol_from_definition`` answers whether a caller file can see a
+  definition via same-namespace visibility or a ``using`` that names the definition's FQN /
+  namespace.
+- When ``definition_dirs`` is supplied to ``csharp_references_and_calls``, a receiver whose
+  declared type resolves through namespace/``using`` into those directories earns the cross-file
+  confirmed band (``csharp-namespace-type-confirmation`` / 0.9).
+- ``import_update_target`` / ``prime_repo_context`` stay ``None`` (``.csproj`` reverse map still
+  deferred).
 """
 
 from __future__ import annotations
@@ -193,6 +200,21 @@ _CSHARP_DEMOTED_CONFIDENCE = 0.6
 _CSHARP_DEMOTED_PROVENANCE = "csharp-name-heuristic"
 _CSHARP_CONFIRMED_CONFIDENCE = 0.9
 _CSHARP_CONFIRMED_PROVENANCE = "csharp-infile-type-confirmation"
+_CSHARP_CROSS_FILE_CONFIRMED_PROVENANCE = "csharp-namespace-type-confirmation"
+
+# Namespace / using regex (Task 11 wave 2). File-scoped (`namespace X;`) and block
+# (`namespace X {`) forms both match; nested namespaces are accepted as dotted names.
+_CSHARP_NAMESPACE_RE = re.compile(
+    r"^\s*namespace\s+([A-Za-z_][\w.]*)\s*[;{]",
+    re.MULTILINE,
+)
+# Plain `using A.B;` / `global using A.B;` / `using static A.B;` / `using Alias = A.B.C;`
+# Capture groups: (alias_or_none, target_namespace_or_type).
+_CSHARP_USING_RE = re.compile(
+    r"^\s*(?:global\s+)?using\s+(?:static\s+)?(?:([A-Za-z_][\w]*)\s*=\s*)?"
+    r"([A-Za-z_][\w.]*)\s*;",
+    re.MULTILINE,
+)
 
 # Type-declaration node kinds whose own body (declaration_list) can directly declare a member --
 # the CONFIRMED band's "owner type" universe. Struct is a C#-specific addition beyond Java's
@@ -361,12 +383,158 @@ def _csharp_enclosing_type_name(node: Any, source_bytes: bytes) -> str | None:
     return None
 
 
+def _csharp_namespace_declaration(source: str) -> str | None:
+    match = _CSHARP_NAMESPACE_RE.search(source)
+    return match.group(1) if match else None
+
+
+def _csharp_using_specs(source: str) -> list[tuple[str | None, str]]:
+    """Return ``(alias_or_None, target)`` pairs from *source* (regex; no second parser)."""
+    return [(match.group(1), match.group(2)) for match in _CSHARP_USING_RE.finditer(source)]
+
+
+def _csharp_definition_fqn(definition_path: Path, definition_source: str) -> str | None:
+    """FQN of the top-level type in *definition_path*, or None if mapping fails closed.
+
+    Requires a namespace declaration AND that the file stem matches a declared type name in
+    source (``class/struct/interface/enum/record Stem``) -- without that 1:1 convention the
+    namespace-to-file mapping is unestablishable from this file alone, so demote rather than guess.
+    """
+    namespace = _csharp_namespace_declaration(definition_source)
+    if namespace is None:
+        return None
+    stem = definition_path.stem
+    if not _is_clean_symbol_name(stem):
+        return None
+    # Require the stem to appear as a type declaration name in this file.
+    type_decl = re.compile(
+        rf"^\s*(?:public\s+|internal\s+|private\s+|protected\s+|static\s+|partial\s+|abstract\s+|sealed\s+)*"
+        rf"(?:class|struct|interface|enum|record)\s+{re.escape(stem)}\b",
+        re.MULTILINE,
+    )
+    if type_decl.search(definition_source) is None:
+        return None
+    return f"{namespace}.{stem}"
+
+
+def csharp_file_imports_symbol_from_definition(
+    file_path: Path,
+    source: str,
+    symbol: str,
+    definition_path: str,
+    repo_root: Path | str | None = None,
+) -> bool:
+    """True iff *file_path* can see *symbol*'s definition via C# namespace/``using`` evidence.
+
+    Same-namespace visibility or a ``using`` that names the definition FQN / its namespace.
+    *symbol* unused (type/namespace scoped, like Java/PHP). *repo_root* signature parity only.
+    """
+    del repo_root
+    del symbol
+    try:
+        definition = Path(definition_path).expanduser().resolve()
+    except OSError:
+        return False
+    try:
+        definition_source = definition.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+
+    definition_fqn = _csharp_definition_fqn(definition, definition_source)
+    if definition_fqn is None:
+        return False
+    definition_namespace = definition_fqn.rsplit(".", 1)[0]
+
+    importer_namespace = _csharp_namespace_declaration(source)
+    if importer_namespace is not None and importer_namespace == definition_namespace:
+        return True
+
+    for alias, target in _csharp_using_specs(source):
+        if alias is not None:
+            # `using Alias = Namespace.Type;` -- target is the FQN of the type.
+            if target == definition_fqn:
+                return True
+            continue
+        # Plain/namespace using: `using Namespace;` or `using Namespace.Type;`
+        if target == definition_fqn or target == definition_namespace:
+            return True
+    return False
+
+
+def _csharp_type_fqns_visible_in_file(source: str, type_name: str) -> set[str]:
+    """FQNs *type_name* could denote in *source* via using / same-namespace / alias.
+
+    Mirrors ``_java_type_fqns_visible_in_file`` with C#'s ``using`` / alias mechanism:
+    - ``using Alias = Namespace.Type;`` binds *type_name* only when alias == *type_name*
+    - ``using Namespace.Type;`` (rare type import) binds when target ends with ``.Type``
+    - ``using Namespace;`` binds ``Namespace.Type``
+    - same-namespace bare reference when the file declares a namespace
+    """
+    if not type_name or not _is_clean_symbol_name(type_name):
+        return set()
+    fqns: set[str] = set()
+    for alias, target in _csharp_using_specs(source):
+        if alias is not None:
+            if alias == type_name:
+                fqns.add(target)
+            continue
+        if target == type_name or target.endswith(f".{type_name}"):
+            fqns.add(target)
+        else:
+            # Namespace import: `using Lib;` makes `Lib.Foo` visible as bare `Foo`.
+            fqns.add(f"{target}.{type_name}")
+    namespace = _csharp_namespace_declaration(source)
+    if namespace is not None:
+        fqns.add(f"{namespace}.{type_name}")
+    return fqns
+
+
+def _csharp_fqn_namespace_dir_matches(fqn: str, definition_dir: Path) -> bool:
+    parts = fqn.split(".")
+    if len(parts) < 2:
+        return False
+    ns_parts = tuple(parts[:-1])
+    dir_parts = definition_dir.parts
+    return len(dir_parts) >= len(ns_parts) and dir_parts[-len(ns_parts) :] == ns_parts
+
+
+def _csharp_type_resolves_into_definition_dirs(
+    type_name: str,
+    source: str,
+    definition_dirs: frozenset[str],
+) -> bool:
+    if not definition_dirs:
+        return False
+    fqns = _csharp_type_fqns_visible_in_file(source, type_name)
+    if not fqns:
+        return False
+    for fqn in fqns:
+        if fqn.rsplit(".", 1)[-1] != type_name:
+            continue
+        for directory in definition_dirs:
+            try:
+                resolved_dir = Path(directory).expanduser().resolve()
+            except OSError:
+                continue
+            if _csharp_fqn_namespace_dir_matches(fqn, resolved_dir):
+                return True
+    return False
+
+
 def csharp_references_and_calls(
-    path: Path, symbol: str
+    path: Path,
+    symbol: str,
+    repo_root: Path | str | None = None,
+    *,
+    definition_dirs: frozenset[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """In-file AST reference/call rows for *symbol* in *path* -- see the module docstring's
-    "TASK 10B" section for the full AST-shape mapping. Scope: single-file only, no cross-file
-    resolution (mirrors ``lang_java.java_references_and_calls`` exactly)."""
+    """In-file AST reference/call rows for *symbol* in *path* -- see the module docstring.
+
+    When *definition_dirs* is supplied (repo_map always supplies it from preferred definitions),
+    a receiver whose declared type resolves through namespace/``using`` into those directories
+    earns the cross-file confirmed band. *repo_root* is signature parity only.
+    """
+    del repo_root  # signature parity with the uniform registry adapter; unused by this resolver
     if path.suffix != ".cs":
         return [], []
 
@@ -429,12 +597,46 @@ def csharp_references_and_calls(
         enclosing = _csharp_enclosing_type_name(invocation_node, source_bytes)
         return enclosing is not None and enclosing in owner_types
 
+    def _cross_file_receiver_confirmation(object_node: Any | None) -> bool:
+        if object_node is None or not definition_dirs:
+            return False
+        candidate_types: set[str] = set()
+        if object_node.type == "identifier":
+            name = _node_text(object_node)
+            candidate_types.update(declared_types.get(name, set()))
+            candidate_types.add(name)
+        elif object_node.type == "this":
+            return False
+        for type_name in candidate_types:
+            if _csharp_type_resolves_into_definition_dirs(type_name, source, definition_dirs):
+                return True
+        return False
+
+    def _confirmation_for_member(
+        object_node: Any | None, owner_types: set[str]
+    ) -> tuple[bool, bool]:
+        if _receiver_confirmation(object_node, owner_types):
+            return True, False
+        if _cross_file_receiver_confirmation(object_node):
+            return True, True
+        return False, False
+
     def _emit(
-        bucket: list[dict[str, Any]], node: Any, *, kind: str, ref_kind: str, confirmed: bool
+        bucket: list[dict[str, Any]],
+        node: Any,
+        *,
+        kind: str,
+        ref_kind: str,
+        confirmed: bool,
+        cross_file: bool = False,
     ) -> None:
         if confirmed:
             confidence = _CSHARP_CONFIRMED_CONFIDENCE
-            provenance = _CSHARP_CONFIRMED_PROVENANCE
+            provenance = (
+                _CSHARP_CROSS_FILE_CONFIRMED_PROVENANCE
+                if cross_file
+                else _CSHARP_CONFIRMED_PROVENANCE
+            )
         else:
             confidence = _CSHARP_DEMOTED_CONFIDENCE
             provenance = _CSHARP_DEMOTED_PROVENANCE
@@ -486,7 +688,7 @@ def csharp_references_and_calls(
                     name_field = function.child_by_field_name("name")
                     if name_field is not None and _node_text(name_field) == symbol:
                         claimed_node_ids.add((name_field.start_byte, name_field.end_byte))
-                        confirmed = _receiver_confirmation(
+                        confirmed, cross_file = _confirmation_for_member(
                             function.child_by_field_name("expression"), method_owner_types
                         )
                         _emit(
@@ -495,8 +697,16 @@ def csharp_references_and_calls(
                             kind="reference",
                             ref_kind="call",
                             confirmed=confirmed,
+                            cross_file=cross_file,
                         )
-                        _emit(calls, name_field, kind="call", ref_kind="call", confirmed=confirmed)
+                        _emit(
+                            calls,
+                            name_field,
+                            kind="call",
+                            ref_kind="call",
+                            confirmed=confirmed,
+                            cross_file=cross_file,
+                        )
             elif node_type == "object_creation_expression":
                 type_identifier = _csharp_object_creation_type_identifier(node)
                 if type_identifier is not None and _node_text(type_identifier) == symbol:
@@ -525,7 +735,7 @@ def csharp_references_and_calls(
                     and _node_text(name_field) == symbol
                 ):
                     claimed_node_ids.add((name_field.start_byte, name_field.end_byte))
-                    confirmed = _receiver_confirmation(
+                    confirmed, cross_file = _confirmation_for_member(
                         node.child_by_field_name("expression"), field_owner_types
                     )
                     _emit(
@@ -534,6 +744,7 @@ def csharp_references_and_calls(
                         kind="reference",
                         ref_kind="field",
                         confirmed=confirmed,
+                        cross_file=cross_file,
                     )
 
             stack.extend(reversed(node.children))
@@ -768,6 +979,7 @@ def csharp_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]
 
 
 __all__ = [
+    "csharp_file_imports_symbol_from_definition",
     "csharp_imports_and_symbols",
     "csharp_parser_symbol_sources",
     "csharp_references_and_calls",
