@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "schema": "search_input_ledger_v1",
+  "incomplete_reason_class": "search_input_limit",
+  "caps": {
+    "max_pattern_or_ignore_file_bytes": 1048576,
+    "max_combined_pattern_ignore_files": 32,
+    "max_combined_decoded_bytes": 4194304,
+    "max_pattern_or_ignore_rule_bytes": 16384,
+    "max_combined_patterns": 65536,
+    "max_combined_ignore_rules": 65536,
+    "max_compiled_matcher_live_memory_bytes": 67108864,
+    "max_matcher_transitions": 10000000,
+    "request_deadline_seconds": 300
+  },
+  "route_doors": [
+    "bootstrap",
+    "full_cli",
+    "direct_native",
+    "native_to_rg",
+    "native_to_sidecar"
+  ],
+  "notes": {
+    "pattern_vs_ignore_caps": "positional/-e/-f patterns share one 65536 cap; explicit/generated ignores share a separate 65536 cap; never combine",
+    "aggregate_byte_cases": "each file individually <= 1 MiB so the per-file cap cannot fire first"
+  },
+  "boundary_cases": {
+    "file_bytes": {"cap_minus_1": 1048575, "cap": 1048576, "cap_plus_1": 1048577},
+    "combined_files": {"cap_minus_1": 31, "cap": 32, "cap_plus_1": 33},
+    "combined_decoded_bytes": {"cap_minus_1": 4194303, "cap": 4194304, "cap_plus_1": 4194305},
+    "rule_bytes": {"cap_minus_1": 16383, "cap": 16384, "cap_plus_1": 16385},
+    "combined_patterns": {"cap_minus_1": 65535, "cap": 65536, "cap_plus_1": 65537},
+    "combined_ignore_rules": {"cap_minus_1": 65535, "cap": 65536, "cap_plus_1": 65537},
+    "compiled_live_memory_bytes": {"cap_minus_1": 67108863, "cap": 67108864, "cap_plus_1": 67108865},
+    "matcher_transitions": {"cap_minus_1": 9999999, "cap": 10000000, "cap_plus_1": 10000001},
+    "deadline_seconds": {"cap_minus_1": 299.999, "cap": 300, "cap_plus_1": 300.001}
+  },
+  "uninstrumented_engines_must_refuse_before_child": ["pcre2", "backtracking"]
+}

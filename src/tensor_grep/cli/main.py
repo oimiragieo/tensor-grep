@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -3952,6 +3952,16 @@ def _build_native_tg_search_command(
     return command
 
 
+# Round-60 Task 2A: narrow child-start observation seam for full-CLI native delegation.
+_CHILD_START_HOOK: Callable[[str, list[str]], None] | None = None
+
+
+def _emit_child_start(kind: str, argv: Sequence[str]) -> None:
+    hook = _CHILD_START_HOOK
+    if hook is not None:
+        hook(kind, list(argv))
+
+
 def _delegate_to_native_tg_search(
     native_binary: Path,
     *,
@@ -3967,8 +3977,10 @@ def _delegate_to_native_tg_search(
         config=config,
         ndjson=ndjson,
     )
-    completed = subprocess.run(command, check=False)
-    return int(completed.returncode)
+    # A62 / HIGH#9: observe only after the real producer process has started.
+    completed = subprocess.Popen(command)
+    _emit_child_start("native", command)
+    return int(completed.wait())
 
 
 def _collect_candidate_files(
@@ -5070,11 +5082,34 @@ def _read_patterns_from_file_list(file_paths: list[str], *, json_mode: bool) -> 
     blank line is an EMPTY pattern that matches every line, so it is intentionally NOT
     filtered out here). A missing/unreadable file fails loud with exit 2 -- per the Backend
     Fail-Closed Contract -- instead of the pre-fix silent flood (an unread ``-f`` collapsed
-    to an empty ``pattern`` that matched every line in every file)."""
+    to an empty ``pattern`` that matched every line in every file).
+
+    A67 / HIGH#10: bounded read via ``read_pattern_or_ignore_file_bounded`` — never an
+    unbounded ``Path.read_text`` before the ledger/size guard.
+    """
+    from tensor_grep.cli.search_input_ledger import (
+        SearchInputLedger,
+        SearchInputLimitExceeded,
+        read_pattern_or_ignore_file_bounded,
+    )
+
     patterns: list[str] = []
+    # HIGH#8 / A67: one shared no-refund ledger across all -f/--file inputs.
+    ledger = SearchInputLedger()
     for file_path in file_paths:
         try:
-            content = Path(file_path).read_text(encoding="utf-8")
+            content = read_pattern_or_ignore_file_bounded(file_path, ledger=ledger)
+        except SearchInputLimitExceeded as exc:
+            _exit_search_error(
+                "search_input_limit",
+                (
+                    f"pattern file exceeds {exc.limit} bytes "
+                    f"(observed {exc.observed}): {file_path}"
+                ),
+                json_mode=json_mode,
+                exit_code=2,
+            )
+            return []  # pragma: no cover -- _exit_search_error always calls sys.exit
         except (OSError, UnicodeDecodeError) as exc:
             _exit_search_error(
                 "pattern_file_error",
@@ -8055,6 +8090,34 @@ def search_command(
             stats_mode=stats,
         )
     )
+    # HIGH#8 / A67: admit -f/--file pattern files through the shared ledger BEFORE any
+    # rg-passthrough early exit. Existing files are size/count gated here; missing
+    # paths are left for rg on the passthrough path (rg owns that diagnostic).
+    if file:
+        from tensor_grep.cli.search_input_ledger import (
+            SearchInputLedger,
+            SearchInputLimitExceeded,
+            read_pattern_or_ignore_file_bounded,
+        )
+
+        _pre_passthrough_ledger = SearchInputLedger()
+        for _pat_file in file:
+            if not Path(_pat_file).is_file():
+                continue
+            try:
+                read_pattern_or_ignore_file_bounded(
+                    _pat_file, ledger=_pre_passthrough_ledger
+                )
+            except SearchInputLimitExceeded as exc:
+                _exit_search_error(
+                    "search_input_limit",
+                    (
+                        f"pattern file exceeds {exc.limit} bytes "
+                        f"(observed {exc.observed}): {_pat_file}"
+                    ),
+                    json_mode=json,
+                    exit_code=2,
+                )
     if can_passthrough_rg:
         if not stats:
             passthrough_paths = [] if paths_defaulted else paths_to_search
@@ -8063,14 +8126,9 @@ def search_command(
             sys.exit(exit_code)
 
     if multi_pattern_source and not regexp_patterns:
-        # The `-f`-alone sub-case (see the comment above the earlier `combined_multi_patterns`
-        # assignment) is deferred until HERE, now that a real search is confirmed to not be
-        # rg-passthrough (the `if can_passthrough_rg: if not stats: ... sys.exit(...)` block
-        # just above already returned when it would have applied). Reading `-f` eagerly broke
-        # `test_python_search_treats_file_option_as_pattern_file_not_regex`, where real `rg`
-        # itself must read the pattern file on the passthrough path, never tg. This must land
-        # before `Pipeline(...)` below, which reads `config.query_pattern` to route (audit #69,
-        # re-do of #441).
+        # The `-f`-alone sub-case for non-passthrough combine. Ledger admission for
+        # existing -f files already ran above (before passthrough). This must land
+        # before `Pipeline(...)` below, which reads `config.query_pattern` to route.
         file_sourced_patterns = _read_patterns_from_file_list(file or [], json_mode=json)
         try:
             for regex_pattern in file_sourced_patterns:
@@ -8117,6 +8175,9 @@ def search_command(
     from tensor_grep.core.pipeline import ConfigurationError, Pipeline
     from tensor_grep.core.result import SearchResult, merge_runtime_routing
 
+    # Round-60 Task 2A: observation seam for the in-process full-CLI producer
+    # (CPU/Pipeline path). A62 / HIGH#9: emit ONLY after Pipeline construction
+    # (actual producer start) — never a pre-start self-attest.
     try:
         pipeline = Pipeline(force_cpu=effective_force_cpu, config=config)
     except ConfigurationError as exc:
@@ -8131,11 +8192,24 @@ def search_command(
         # (only this specific, deliberate exception type), so a real bug still surfaces loudly.
         _exit_search_error("configuration_error", str(exc), json_mode=json)
         raise
+    # A62 / HIGH#7 (Sol R2): do NOT emit at Pipeline construction — only after
+    # actual search/backend start (see _ensure_cpu_child_start below).
     backend = pipeline.get_backend()
     selected_backend_name = getattr(pipeline, "selected_backend_name", backend.__class__.__name__)
     selected_backend_reason = getattr(pipeline, "selected_backend_reason", "unknown")
     selected_gpu_device_ids = list(getattr(pipeline, "selected_gpu_device_ids", []) or [])
     selected_gpu_chunk_plan_mb = list(getattr(pipeline, "selected_gpu_chunk_plan_mb", []) or [])
+    _cpu_child_start_emitted = False
+
+    def _ensure_cpu_child_start() -> None:
+        nonlocal _cpu_child_start_emitted
+        if _cpu_child_start_emitted:
+            return
+        _emit_child_start(
+            "cpu",
+            ["pipeline", pattern, *[str(p) for p in paths_to_search]],
+        )
+        _cpu_child_start_emitted = True
     if (
         can_passthrough_rg
         and stats
@@ -8149,6 +8223,7 @@ def search_command(
         passthrough_paths = [] if paths_defaulted else paths_to_search
         with nvtx_range("search.passthrough_rg", color="green"):
             exit_code = rg_backend.search_passthrough(passthrough_paths, pattern, config=config)
+            _ensure_cpu_child_start()
         sys.exit(exit_code)
 
     # F6: at this point neither native delegation, the rg-passthrough fast path, nor the
@@ -8254,6 +8329,7 @@ def search_command(
                 span.set_attribute("path_count", len(search_targets))
             try:
                 result = rg_backend.search(search_targets, pattern, config=rg_search_config)
+                _ensure_cpu_child_start()
             except Exception as exc:
                 if _is_invalid_regex_error(exc):
                     _exit_invalid_regex(exc, json_mode=json)
@@ -8312,11 +8388,13 @@ def search_command(
                     span.set_attribute("path", current_file)
                 try:
                     result = backend.search(current_file, pattern, config=config)
+                    _ensure_cpu_child_start()
                 except BackendExecutionError as exc:
                     # A native backend failed at runtime; retry once on the always-
                     # available CPU backend so the search returns correct results instead
                     # of a false no-match or a crash (audit B2/I1).
                     result = _search_with_cpu_fallback(current_file, pattern, config, exc)
+                    _ensure_cpu_child_start()
                 except Exception as exc:
                     if _is_invalid_regex_error(exc):
                         _exit_invalid_regex(exc, json_mode=json)

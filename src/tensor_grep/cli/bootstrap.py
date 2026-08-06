@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import time
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from tensor_grep.cli.commands import KNOWN_COMMANDS as _KNOWN_COMMANDS
@@ -15,6 +16,17 @@ from tensor_grep.cli.runtime_paths import (
     resolve_ripgrep_binary,
 )
 from tensor_grep.cli.subprocess_policy import run_subprocess as run_subprocess
+
+# Round-60 Task 2A: narrow child-start observation seam (tests inject; production leaves None).
+# kind is one of: "rg" | "native" | "sidecar" | "compiler" | "matcher"
+_CHILD_START_HOOK: Callable[[str, list[str]], None] | None = None
+
+
+def _emit_child_start(kind: str, argv: Sequence[str]) -> None:
+    hook = _CHILD_START_HOOK
+    if hook is not None:
+        hook(kind, list(argv))
+
 
 # perf/#48: `tensor_grep.io.directory_scanner` is deliberately NOT imported at module level.
 # bootstrap.py only needs its 4 constants (BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD,
@@ -1228,7 +1240,10 @@ def _popen_child(argv: list[str]) -> subprocess.Popen[bytes]:
 
 
 def _streaming_passthrough_returncode(
-    argv: list[str], *, timeout_env_var: str | None = None
+    argv: list[str],
+    *,
+    timeout_env_var: str | None = None,
+    child_kind: str | None = None,
 ) -> int:
     """Run an interactive streaming passthrough, returning its exit code and converting
     a subprocess timeout into a clean exit 124 instead of an uncaught TimeoutExpired
@@ -1242,6 +1257,9 @@ def _streaming_passthrough_returncode(
     chain always terminates after a single child run.
 
     H3 fix: _popen_child retries on Windows sharing-violation before we even get here.
+
+    A62 / HIGH#9: optional ``child_kind`` observation fires ONLY after a successful
+    ``_popen_child`` (actual start) — never a pre-start self-attest.
 
     Backward-compat note: when run_subprocess has been monkey-patched by a test the
     function falls back to the old subprocess.run code-path so existing routing tests
@@ -1259,6 +1277,9 @@ def _streaming_passthrough_returncode(
                 result = run_subprocess(argv, check=False, timeout_env_var=timeout_env_var)
             else:
                 result = run_subprocess(argv, check=False)
+            # Patched run_subprocess has already started+finished the child; emit after.
+            if child_kind is not None:
+                _emit_child_start(child_kind, argv)
             return int(result.returncode)
         except subprocess.TimeoutExpired:
             sys.stderr.write(
@@ -1285,6 +1306,9 @@ def _streaming_passthrough_returncode(
         timeout_seconds = configured_subprocess_timeout_seconds()
 
     proc = _popen_child(argv)
+    # A62: attest only after the real producer process has started.
+    if child_kind is not None:
+        _emit_child_start(child_kind, argv)
 
     # C3 fix: Register an atexit handler that terminates the child if the parent exits
     # unexpectedly (e.g. SIGTERM / TerminateProcess received while waiting).  The
@@ -1327,11 +1351,12 @@ def _streaming_passthrough_returncode(
 
 
 def _run_native_tg_search(binary_name: str, search_args: list[str]) -> int:
-    return _streaming_passthrough_returncode([binary_name, "search", *search_args])
+    argv = [binary_name, "search", *search_args]
+    return _streaming_passthrough_returncode(argv, child_kind="native")
 
 
 def _run_native_tg_command(binary_name: str, argv: list[str]) -> int:
-    return _streaming_passthrough_returncode([binary_name, *argv])
+    return _streaming_passthrough_returncode(argv, child_kind="native")
 
 
 def _run_rg_passthrough(binary_name: str, search_args: list[str]) -> int:
@@ -1369,8 +1394,9 @@ def _run_rg_passthrough(binary_name: str, search_args: list[str]) -> int:
         no_ignore_dot="--no-ignore-dot" in search_args,
         unrestricted=int(_search_args_request_unrestricted(search_args)),
     )
+    argv = [binary_name, *ignore_file_ops, *search_args]
     return _streaming_passthrough_returncode(
-        [binary_name, *ignore_file_ops, *search_args], timeout_env_var="TG_RG_TIMEOUT_SECONDS"
+        argv, timeout_env_var="TG_RG_TIMEOUT_SECONDS", child_kind="rg"
     )
 
 

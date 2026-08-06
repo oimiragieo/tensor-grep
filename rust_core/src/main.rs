@@ -690,8 +690,20 @@ pub struct SearchArgs {
     #[arg(short = 'e', long = "regexp", allow_hyphen_values = true)]
     pub regexp: Vec<String>,
 
+    /// Read search patterns from one or more files (rg-compatible `-f/--file`).
+    /// Round-60: clap accepts the flag so the direct-native door owns the typed
+    /// pattern-file operand; SearchInputLedger admission stays GREEN-deferred.
+    #[arg(short = 'f', long = "file", value_name = "PATTERN_FILE")]
+    pub pattern_file: Vec<String>,
+
     /// The search pattern (regex or string)
-    #[arg(required_unless_present_any = ["regexp", "pcre2_version", "type_list", "version"])]
+    #[arg(required_unless_present_any = [
+        "regexp",
+        "pattern_file",
+        "pcre2_version",
+        "type_list",
+        "version"
+    ])]
     pub pattern: Option<String>,
 
     /// Paths to search
@@ -1332,8 +1344,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn main_inner() -> anyhow::Result<()> {
-    let raw_args: Vec<OsString> = std::env::args_os().collect();
-
+    let raw_args = std::env::args_os().collect();
     if raw_args.len() <= 1 {
         if let Some(exit_code) = try_public_help_passthrough(&raw_args)? {
             if exit_code != 0 {
@@ -2342,6 +2353,7 @@ fn search_args_allow_plain_text_native(args: &SearchArgs) -> bool {
         verbose: _,
         // QUERY-DEFINING -- cardinality is enforced by the predicate's pattern_count/path_count.
         regexp: _,
+        pattern_file: _,
         pattern: _,
         path: _,
         // EXCLUDED -- every one of these must be at its default for the request to stay eligible.
@@ -3137,6 +3149,7 @@ mod tests {
             color: None,
             no_ignore_vcs: false,
             path_was_implicit: false,
+            pcre2: false,
         }
     }
 
@@ -3538,6 +3551,7 @@ mod tests {
             ndjson: _,         // HONORED
             verbose: _,        // HONORED
             regexp: _,         // HONORED (folds into `request.patterns` -> `params.patterns`)
+            pattern_file: _,   // HONORED (Round-60 `-f/--file` folds into request.patterns)
             pattern: _,        // HONORED (ditto)
             path: _,           // HONORED (-> params.path / params.path_was_implicit)
             pcre2: _,          // MOOT-OR-UNREACHABLE (rg available -> routes to
@@ -6869,7 +6883,9 @@ mod tests {
         assert!(!walk_was_incomplete(Some(0)));
         assert!(walk_was_incomplete(Some(1)));
     }
-}
+
+    // Round-60 Task 2A direct-native process-level doors moved to
+    // rust_core/tests/task2a_direct_native_round60.rs so CARGO_BIN_EXE_tg is valid.
 
 fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
     match cli.command {
@@ -7230,6 +7246,7 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
             color: cli.color.clone(),
             no_ignore_vcs: cli.no_ignore_vcs,
             path_was_implicit: cli.path.is_empty(),
+            pcre2: cli.pcre2,
         })
         .is_none();
 
@@ -7313,6 +7330,7 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
                 color: cli.color.clone(),
                 no_ignore_vcs: cli.no_ignore_vcs,
                 path_was_implicit: cli.path.is_empty(),
+                pcre2: cli.pcre2,
             };
 
             #[cfg(feature = "cuda")]
@@ -7535,13 +7553,87 @@ fn resolve_search_request(args: &SearchArgs) -> anyhow::Result<ResolvedSearchReq
     resolve_search_request_with_stdin(args, stdin_should_search_implicit_path())
 }
 
+/// Round-60 / A67 / HIGH#10: 1 MiB per pattern/ignore file — never unbounded
+/// `read_to_string` before the ledger/size gate.
+const MAX_PATTERN_OR_IGNORE_FILE_BYTES: u64 = 1 << 20;
+const MAX_COMBINED_DECODED_PATTERN_FILE_BYTES: u64 = 4 * 1024 * 1024; // 4 MiB aggregate
+const MAX_COMBINED_PATTERN_IGNORE_FILES: usize = 32;
+
+fn read_pattern_file_bounded(path: &str) -> anyhow::Result<String> {
+    use std::io::Read;
+    let meta = std::fs::metadata(path).with_context(|| {
+        format!("failed to stat pattern file {}", path)
+    })?;
+    let len = meta.len();
+    if len > MAX_PATTERN_OR_IGNORE_FILE_BYTES {
+        anyhow::bail!(
+            "search_input_limit: pattern file exceeds {} bytes (observed {}): {}",
+            MAX_PATTERN_OR_IGNORE_FILE_BYTES,
+            len,
+            path
+        );
+    }
+    let file = std::fs::File::open(path).with_context(|| {
+        format!("failed to open pattern file {}", path)
+    })?;
+    // TOCTOU-safe: read at most cap+1 even if the file grew after metadata.
+    let mut limited = file.take(MAX_PATTERN_OR_IGNORE_FILE_BYTES + 1);
+    let mut buf = String::new();
+    limited.read_to_string(&mut buf).with_context(|| {
+        format!("failed to read pattern file {}", path)
+    })?;
+    if (buf.len() as u64) > MAX_PATTERN_OR_IGNORE_FILE_BYTES {
+        anyhow::bail!(
+            "search_input_limit: pattern file exceeds {} bytes (observed {}): {}",
+            MAX_PATTERN_OR_IGNORE_FILE_BYTES,
+            buf.len(),
+            path
+        );
+    }
+    Ok(buf)
+}
+
 fn resolve_search_request_with_stdin(
     args: &SearchArgs,
     stdin_searches_implicit_path: bool,
 ) -> anyhow::Result<ResolvedSearchRequest> {
     let mut patterns = args.regexp.clone();
+    // HIGH#8 / A67: aggregate no-refund decoded-byte + file-count caps across multi -f.
+    let mut aggregate_decoded: u64 = 0;
+    let mut pattern_file_count: usize = 0;
+    for pattern_file in &args.pattern_file {
+        pattern_file_count = pattern_file_count.saturating_add(1);
+        if pattern_file_count > MAX_COMBINED_PATTERN_IGNORE_FILES {
+            anyhow::bail!(
+                "search_input_limit: combined pattern file count exceeds {} (observed {}): {}",
+                MAX_COMBINED_PATTERN_IGNORE_FILES,
+                pattern_file_count,
+                pattern_file
+            );
+        }
+        // A67 / HIGH#10: bounded read + size gate before folding into patterns.
+        // Never `std::fs::read_to_string` (unbounded) on the public `-f/--file` path.
+        let text = read_pattern_file_bounded(pattern_file)?;
+        let file_bytes = text.len() as u64;
+        aggregate_decoded = aggregate_decoded.saturating_add(file_bytes);
+        if aggregate_decoded > MAX_COMBINED_DECODED_PATTERN_FILE_BYTES {
+            anyhow::bail!(
+                "search_input_limit: combined pattern files exceed {} bytes (observed {}): {}",
+                MAX_COMBINED_DECODED_PATTERN_FILE_BYTES,
+                aggregate_decoded,
+                pattern_file
+            );
+        }
+        for line in text.lines() {
+            // ripgrep `-f` includes every non-empty line; empty lines are skipped.
+            if !line.is_empty() {
+                patterns.push(line.to_string());
+            }
+        }
+    }
     let mut path_was_implicit = false;
-    let paths = if args.regexp.is_empty() {
+    let has_explicit_patterns = !args.regexp.is_empty() || !args.pattern_file.is_empty();
+    let paths = if !has_explicit_patterns {
         if let Some(pattern) = args.pattern.as_ref() {
             patterns.push(pattern.clone());
         }
@@ -7574,7 +7666,9 @@ fn resolve_search_request_with_stdin(
     };
 
     if patterns.is_empty() {
-        anyhow::bail!("search requires a pattern or at least one -e/--regexp pattern");
+        anyhow::bail!(
+            "search requires a pattern or at least one -e/--regexp / -f/--file pattern"
+        );
     }
 
     Ok(ResolvedSearchRequest {
@@ -7678,6 +7772,7 @@ fn index_flag_violations(args: &SearchArgs, request: &ResolvedSearchRequest) -> 
         ndjson: _,  // Honor.
         verbose: _, // Honor: emit_verbose_metadata is called from run_index_query.
         regexp: _,  // Honor: cardinality enforced via request.patterns.len() below.
+        pattern_file: _, // Honor: `-f/--file` folds into request.patterns (Round-60).
         pattern: _, // Honor: the query itself.
         path: _,    // Honor: cardinality enforced by handle_index_search's paths.len()!=1 bail.
         pcre2,
@@ -8400,6 +8495,9 @@ fn native_search_config_for_positional(
         // substitutes stdin/"." -- empty means the caller gave no explicit path (audit #105,
         // mirrors `positional_ripgrep_args`'s `path_was_implicit: cli.path.is_empty()`).
         path_was_implicit: cli.path.is_empty(),
+        // HIGH#3 Sol R4: thread -P/--pcre2 into NativeSearchConfig so
+        // gate_uninstrumented_pcre2_native_route(config.pcre2) is not forever-false.
+        pcre2: cli.pcre2,
         ..NativeSearchConfig::default()
     }
 }
@@ -8451,6 +8549,9 @@ fn native_search_config_for_command(
         // `--fixed-strings`/rg-unavailable routing, none of which pass through
         // `execute_ripgrep_search`'s #100 gate.
         path_was_implicit,
+        // HIGH#3 Sol R4: thread -P/--pcre2 into NativeSearchConfig so the production
+        // gate in run_native_search sees the CLI request (not Default false forever).
+        pcre2: args.pcre2,
         ..NativeSearchConfig::default()
     }
 }
@@ -8502,6 +8603,9 @@ fn native_search_config_for_gpu_params(
         // comment -- this is the explicit-`--gpu-device-ids`-fallback-to-CPU route, which used to
         // have no way to know whether the PATH was implicit at all).
         path_was_implicit: params.path_was_implicit,
+        // HIGH#3 Sol R4: thread -P/--pcre2 into NativeSearchConfig so the production
+        // gate in run_native_search sees the CLI request (not Default false forever).
+        pcre2: params.pcre2,
         ..NativeSearchConfig::default()
     }
 }
@@ -8929,7 +9033,24 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let request = resolve_search_request(&args)?;
+    let request = match resolve_search_request(&args) {
+        Ok(request) => request,
+        Err(err) => {
+            // A67 / HIGH#10: bounded `-f/--file` refusals must exit 2 with the
+            // literal search_input_limit reason — not an unbounded read then a
+            // generic anyhow exit 1.
+            let detail = format!("{err:#}");
+            if detail.contains("search_input_limit") {
+                exit_structured_search_error_if_needed(
+                    args.json,
+                    args.ndjson,
+                    "search_input_limit",
+                    detail,
+                );
+            }
+            return Err(err);
+        }
+    };
     exit_json_search_input_error_if_needed(
         args.json,
         args.ndjson,
@@ -9044,6 +9165,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
             color: args.color.clone(),
             no_ignore_vcs: args.no_ignore_vcs,
             path_was_implicit: request.path_was_implicit,
+            pcre2: args.pcre2,
         })
         .is_none();
 
@@ -9119,6 +9241,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                 color: args.color.clone(),
                 no_ignore_vcs: args.no_ignore_vcs,
                 path_was_implicit: request.path_was_implicit,
+                pcre2: args.pcre2,
             };
 
             #[cfg(feature = "cuda")]
@@ -12384,6 +12507,9 @@ struct GpuSearchParams<'a> {
     // explicit -- the implicit default is itself a single `["."]` root, so that check alone
     // cannot be used as a stand-in for this field.
     path_was_implicit: bool,
+    // HIGH#3 Sol R4: thread -P/--pcre2 into NativeSearchConfig on the GPU→CPU fallback
+    // path so gate_uninstrumented_pcre2_native_route is not forever-false.
+    pcre2: bool,
 }
 
 #[cfg(feature = "cuda")]
