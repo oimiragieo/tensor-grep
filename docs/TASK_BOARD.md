@@ -20,7 +20,7 @@
 
 ## Canonical status index
 
-Canonical status index version: 2026-08-03.3
+Canonical status index version: 2026-08-05.1
 - [x] **#22** — Status: RETIRED; PR: none; Trigger: exit 0 is complete with matches; exit 1 is complete with no match; exit 2 is incomplete; gpu_request_unhonoured stays in-band and does not independently force exit 2
 - [x] **F2** — Status: RETIRED; PR: none; Trigger: legacy anonymous-agent compatibility deliberately retains the sentinel; reopen only with a caller-supplied stable identity contract and migration plan
 - [x] **#36** — Status: SHIPPED; PR: PR #903; Trigger: all 27 topic skills audited and drift corrections merged; reopen on a new failing skill-drift receipt
@@ -42,8 +42,8 @@ Canonical status index version: 2026-08-03.3
 - [ ] **MCP-SURFACE** — Status: READY; PR: none; Trigger: Task 4 MCP surface disclosure; first implementation PR moves this row to IN_FLIGHT
 - [ ] **CPU-BACKEND** — Status: IN_FLIGHT; PR: PR #923; Trigger: Task 5 Rust and Python backend hardening; the PYTHON half shipped -- the TypeError retry that silently dropped invert_match and returned the opposite result set is gone, leaving one native adapter and zero compatibility retries; the RUST half (replace_in_place public-API hardening in rust_core) is NOT done and needs cargo, which is forbidden on the shared dev box, so it routes to CI or a cloud seat; row closes only when both halves land; Implementation PRs: PR #923
 - [ ] **REF-CALL-REGISTRY** — Status: IN_FLIGHT; PR: PR #915; Trigger: Task 9 prepare-service extraction; both hardcoded per-language reference and caller chains now resolve through one registry-backed seam, with byte-identical output proven in a same-directory arm against an untouched probe file; row closes when the implementation PR merges; Implementation PRs: PR #915
-- [ ] **F10** — Status: DEMAND_GATED; PR: none; Trigger: demand for a reviewed MaxSim activation or retirement plan
-- [ ] **DD-004** — Status: DEMAND_GATED; PR: none; Trigger: evidence of a stable typed backend error boundary
+- [x] **F10** — Status: RETIRED; PR: none; Trigger: 2026-08-05 caller/installability census (docs/BACKLOG.md dated entry) found MaxSim reachable only via an undocumented `TG_LATE_RERANK=1` env var + a manual `python -m tensor_grep.core.retrieval_late --fetch` (no `tg` command provisions it) AND decisively negative on the golden set even after the role-aware encoding fix (ndcg@10 0.068 vs 0.305 RRF, root cause model capacity); reopen only on both a `tg`-command install path and a stronger encoder clearing the golden-set gate
+- [x] **DD-004** — Status: RETIRED; PR: none; Trigger: 2026-08-05 retirement receipt (docs/BACKLOG.md dated entry) — INFO/WEAKENED loud `RuntimeError` re-raise at `cpu_backend.py:811` is not empty-success; typed boundary already banked in AGENTS.md Backend Fail-Closed Contract; reopen only if a backend path returns clean empty success on real failure or a consumer requires uniform `BackendExecutionError` typing across that site
 - [ ] **DD-006** — Status: DEMAND_GATED; PR: none; Trigger: measured concurrent daemon load or denial-of-service evidence
 - [ ] **AST-DSL-PARITY** — Status: DEMAND_GATED; PR: none; Trigger: demand for full structural DSL parity and a preprocessor-aware oracle
 - [ ] **MCP-LEAN-DEFAULT** — Status: DEMAND_GATED; PR: none; Trigger: client demand and compatibility evidence for changing the default surface
@@ -100,8 +100,8 @@ hashes `31D8E071...3D862B` / `AA64D0BA...0826B3`. Older PR #911 head
 `aiohttp>=3.14.3` / `cryptography>=50.0.0` plus a regenerated lock and requires new exact-head
 clearance. Task 2A RED is local only at
 `6367614960327b1a4e00301c8bfdb9b2e4bb453e` (unpushed, no Actions run, Sol `FIX-FIRST` with 10 HIGH
-blockers). Canonical rows stay 28 / 23 unfinished (10 READY, 5 CEO_GATED, 8 DEMAND_GATED);
-research recommendations are not silent reclassification.
+blockers). Canonical rows stay 28 / 20 unfinished (7 READY, 2 IN_FLIGHT, 5 CEO_GATED, 6 DEMAND_GATED)
+after F10 + DD-004 RETIRED 2026-08-05; research recommendations are not silent reclassification.
 
 **This has now gone stale THREE times in the same way, so the pattern is the finding.** The stamp
 once read "2026-07-28, post-v1.101.9" while PyPI had moved 13 releases on; then "2026-07-31,

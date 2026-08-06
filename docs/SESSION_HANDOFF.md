@@ -12,7 +12,7 @@ release_docs_current_tag: v1.109.0
 
 ## Current Backlog Closeout
 
-Canonical status index version: 2026-08-03.3
+Canonical status index version: 2026-08-05.1
 
 - `origin/main` at the campaign rebase point: `8024125612d5fb42481acde34d94ad39bbaa3c3e`.
 - PR #910 is merged. Its exact PR run `30777042942` completed 39 jobs with zero failure/unfinished
@@ -26,7 +26,8 @@ Canonical status index version: 2026-08-03.3
   constraint (Sol caught the original validator blind spot). Derive the live head and require new
   exact-head CI/security/CodeQL before merge. Open GitHub issues: #48 only.
 - Product healthy at `v1.102.1`; planning PR blocked on fresh exact-head security re-clearance;
-  backlog not done (23 unfinished: 10 READY, 5 CEO_GATED, 8 DEMAND_GATED); Task 2A correctly blocked.
+  backlog not done (20 unfinished: 7 READY, 2 IN_FLIGHT, 5 CEO_GATED, 6 DEMAND_GATED after F10 +
+  DD-004 RETIRED 2026-08-05); Task 2A correctly blocked.
 - Round-60 plan approval stands on hashes design `31D8E071...3D862B` / implementation
   `AA64D0BA...0826B3`. Task 2A RED is local only at exact SHA
   `6367614960327b1a4e00301c8bfdb9b2e4bb453e` (branch/HEAD match, unpushed, no Actions run, no GREEN).
@@ -39,7 +40,8 @@ Canonical status index version: 2026-08-03.3
 - The closeout campaign remains Tasks 2–15. Task 2 is the reconciliation checkpoint, Task 2A is
   plan-approved but RED-blocked, and Tasks 3–15 remain the ordered follow-on program.
 - The current closed-world CEO report is `docs/audits/2026-08-03-ceo-backlog-update.md`; it lists all
-  23 unfinished rows, terminal five, research recommendations (not reclassifications), the Task 2A
+  23 unfinished rows as of that dated snapshot (live index is now 20 unfinished after F10 + DD-004
+  RETIRED), terminal five-at-the-time, research recommendations (not reclassifications), the Task 2A
   FIX-FIRST blockers, and retained lessons including A61–A69.
 - Latest exact `main` CI run: `30793797849`, completed successfully on `8024125`. Public PyPI and
   GitHub Release remain `v1.102.1`; no spend was incurred or authorized. No question is asked for

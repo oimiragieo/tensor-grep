@@ -82,8 +82,6 @@ EXPECTED_IDS = {
 CEO_IDS = {"#48", "#72", "#77", "#131", "#169"}
 DEMAND_IDS = {
     "#255",
-    "F10",
-    "DD-004",
     "DD-006",
     "AST-DSL-PARITY",
     "MCP-LEAN-DEFAULT",
@@ -614,6 +612,28 @@ def test_legacy_agent_id_retirement() -> None:
     ledger_source = LEDGER_STORE_PATH.read_text(encoding="utf-8")
     assert "Refusing outright was also rejected" in ledger_source
     assert "return _DEFAULT_AGENT_ID" in ledger_source
+
+
+def test_f10_maxsim_retirement() -> None:
+    row = _board_index().rows["F10"]
+    assert row.status == "RETIRED"
+    assert "TG_LATE_RERANK=1" in row.trigger
+    assert "0.068" in row.trigger and "0.305" in row.trigger
+    backlog = BACKLOG_PATH.read_text(encoding="utf-8")
+    assert "F10 MaxSim: caller/installability census + RETIRE disposition" in backlog
+    assert "Disposition: RETIRE" in backlog
+    late = (ROOT / "src" / "tensor_grep" / "core" / "retrieval_late.py").read_text(encoding="utf-8")
+    assert "RETIRED 2026-08-05 (task F10" in late
+
+
+def test_dd004_typed_boundary_retirement() -> None:
+    row = _board_index().rows["DD-004"]
+    assert row.status == "RETIRED"
+    assert "Backend Fail-Closed Contract" in row.trigger
+    backlog = BACKLOG_PATH.read_text(encoding="utf-8")
+    assert "DD-004 typed backend-error boundary: RETIRE disposition" in backlog
+    agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    assert "## Backend Fail-Closed Contract" in agents
 
 
 def test_shipped_receipts() -> None:

@@ -1,6 +1,20 @@
 """Late-interaction (MaxSim / ColBERT-style) rerank stage for `tg search --semantic`
 (roadmap docs/plans/design-tensor-grep-late-rerank-2026-07-09.md).
 
+RETIRED 2026-08-05 (task F10, docs/BACKLOG.md dated entry "F10 MaxSim: caller/installability
+census + RETIRE disposition"): kept in place, not deleted (the wiring in ``core/reranker.py`` is
+too load-bearing to touch for a demand-gated feature), but this is a validated dead end, not a
+paused build. Reachable ONLY behind the undocumented ``TG_LATE_RERANK=1`` env var (no CLI flag,
+no `tg` command sets it) from two call sites in `cli/main.py`, and the required `rerank` extra is
+never installed by `tg install-dense` -- there is no `tg`-command install path at all. Even when
+reached, it is decisively negative on the golden set (ndcg@10 0.068 vs plain RRF 0.305,
+`docs/PAPER.md:469`), and the root cause is model capacity (the 17M-param int8
+`LateOn-Code-edge` model's raw MaxSim ranking is statistically indistinguishable from random on
+in-repo code) -- NOT the role-aware query/document encoding bug this module already fixed (see
+`load_late_reranker`'s docstring), so re-flipping the same encoder will not change the verdict.
+Reopen only on BOTH a real `tg`-command install path AND a different encoder clearing the design
+doc's T8 golden-set thresholds; do not re-enable by default off a partial win on either alone.
+
 T0-T2 (foundation): pure MaxSim math (:func:`maxsim_scores`, :func:`rank_by_maxsim`) plus the
 :class:`LateReranker` contract against an INJECTED token encoder.
 
@@ -15,9 +29,10 @@ T4 (this increment): a checksum-pinned fetch of the 3 required model files from 
 Face revision -- :func:`fetch_late_model` (importable) and ``python -m
 tensor_grep.core.retrieval_late --fetch`` (CLI). Never auto-downloads at query time.
 
-Still pending: the seam wiring into ``rerank_hybrid`` (T5), the latency-budget + bidirectional
-fail-closed invariant (T6), and the golden-set quality gate that decides ship/no-ship (T8) -- this
-module remains unreachable from `tg search` until those land.
+RETIRED status supersedes the older "still pending T5/T6/T8" roadmap note: T5/T6 wiring and the
+T8 golden gate DID land historically, then the measured quality was a decisive DROP and the
+product install path never shipped — see the module-header RETIRED block above. Do not treat
+this file as an unfinished feature build.
 
 Assumption: both :func:`maxsim_scores` inputs are ALREADY L2-normalized per token (each row a unit
 vector) -- this module does not normalize them there; the real encoder built by

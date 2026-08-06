@@ -10,8 +10,8 @@
 > **Current closed-world CEO snapshot: 2026-08-03 continuation, release `v1.102.1`, merged main
 > `8024125`, one open PR (#911), one open GitHub issue (#48).** Product healthy; planning PR
 > blocked on fresh exact-head security re-clearance; backlog not done; Task 2A correctly blocked. The complete
-> live disposition list is the canonical index in `docs/TASK_BOARD.md` (28 rows / 23 unfinished =
-> 10 READY, 5 CEO_GATED, 8 DEMAND_GATED); `docs/audits/2026-08-02-backlog-reconciliation.md` is its
+> live disposition list is the canonical index in `docs/TASK_BOARD.md` (28 rows / 20 unfinished =
+> 7 READY, 2 IN_FLIGHT, 5 CEO_GATED, 6 DEMAND_GATED after F10+DD-004 RETIRED 2026-08-05); `docs/audits/2026-08-02-backlog-reconciliation.md` is its
 > dated evidence packet, and `docs/audits/2026-08-03-ceo-backlog-update.md` is the current dumbed-down
 > closed-world update. Task 2 is reconciled; the amended #89/#90 path-domain program plus Tasks 3–15
 > are the current execution queue. Historical sections below remain append-only evidence and may
@@ -150,13 +150,9 @@ closure change may mark it `SHIPPED`.
   stays `CEO_GATED`.
 - **#169** physical GPU proof environment or spend — the only mandatory financial stop.
 
-### Demand/research-gated — exactly eight
+### Demand/research-gated — exactly six
 
 - **#255** many-pattern dedup/compression/native investment selection.
-- **F10** MaxSim supported-path activation or retirement. Recommendation only: caller/installability
-  census, then retire if unreachable. Status stays `DEMAND_GATED` until that census closes it.
-- **DD-004** stable typed backend-error boundary. Recommendation only: likely retire as standalone and
-  bank the typed-boundary rule. Status stays `DEMAND_GATED` until an explicit retirement receipt.
 - **DD-006** concurrent daemon load/DoS evidence.
 - **AST-DSL-PARITY** full structural DSL/preprocessor-aware parity.
 - **MCP-LEAN-DEFAULT** client demand and compatibility proof before a default flip.
@@ -169,6 +165,11 @@ closure change may mark it `SHIPPED`.
 - **#22/F1** `RETIRED`: exit `0` complete match, exit `1` complete no-match, exit `2` incomplete;
   unhonoured GPU routing stays an in-band disclosure and does not independently change the code.
 - **F2** `RETIRED`: legacy anonymous-agent compatibility deliberately retains the sentinel.
+- **F10** `RETIRED` 2026-08-05: MaxSim late-rerank — unreachable via any `tg` install/command path
+  and measured DROP on the golden set (ndcg@10 0.068 vs RRF 0.305); see dated census below.
+- **DD-004** `RETIRED` 2026-08-05: standalone typed backend-error boundary — bank the AGENTS.md
+  Backend Fail-Closed Contract; remaining `cpu_backend.py:811` `RuntimeError` is loud re-raise
+  hygiene (INFO/WEAKENED), not a empty-success defect; see dated receipt below.
 - **#109/#36/#37** `SHIPPED` in PR #605/#903/#908.
 
 There are no environment-blocked canonical rows at this snapshot. The raw GitHub/CI/release and WSL
@@ -761,7 +762,137 @@ GPU: already CEO-gated (#131/#169, deliberate HOLD). No change.
 | F7 | Caller-graph parity for C/C++ | **CLOSED (in-file scope) 2026-08-04 -- Task 10E shipped C++, the final wave.** `_symbol_navigation_descriptor()`: 10 registered / 10 parser-backed, foundational tier now EMPTY. Java (PR #927, Task 10A), C# (Task 10B), PHP (Task 10C), C (Task 10D), and C++ (Task 10E) all now ship in-file parser-backed refs/callers -- every registered language's `references_and_calls` is non-`None`. The REMAINING gap is narrower than this item originally scoped: cross-file caller confirmation for all ten languages still relies on the same text prefilter, so a `resolution_gaps` entry still names that reverse-import gap per language. C++'s confirmed band is deliberately narrower than PHP's/Java's/C#'s (bare-identifier + qualified calls + explicit `this->`, never an arbitrary receiver -- see `lang_cpp.py`'s TASK 10E docstring for the inheritance/`auto`/template reasoning). True cross-file forward+reverse resolution for any language is still open, tracked separately. |
 | F8 | Workspace federated `prepare` across multi-repo parents | Open; parent-refuse works today, federation does not exist. |
 | F9 | Ledger -> CI / review-bundle overlap gate | Open; composes `tg ledger` + `review-bundle`, both shipped. |
-| F10 | Ship or delete MaxSim | **Decision, not code.** Help now correctly says unreachable and the skills are fixed. Either add an install path or purge it from every doc. Do not leave it half-advertised. |
+| F10 | Ship or delete MaxSim | **RETIRED 2026-08-05 — see the dated census + disposition below.** Unreachable by any `tg` command and decisively negative on the golden set; code left in place (deprecation note added), not advertised anywhere. |
+
+### 2026-08-05 — F10 MaxSim: caller/installability census + RETIRE disposition
+
+**Gate (from the row above): run a caller/installability census, then retire if unreachable.**
+Nothing here re-runs the settled retrieval-quality experiment (`tensor-grep-maxsim-late-rerank-negative-2026-07-17`,
+banked so it is never re-chased) or any benchmark/eval harness — this is a static code/doc census
+only, per the shared-dev-box rule.
+
+**1. Implementation + entry point.** `src/tensor_grep/core/retrieval_late.py` — pure MaxSim math
+(`maxsim_scores`/`rank_by_maxsim`, :60-93), the `LateReranker` contract (:96-140), the real ONNX
+encoder behind the `rerank` extra (`late_available`/`load_late_model`/`build_late_encoder`,
+:171-356), and the checksum-pinned Hugging Face fetch (`fetch_late_model`, :430-484, plus the
+`python -m tensor_grep.core.retrieval_late --fetch` CLI at :487-519).
+
+**2. Callers — traced with an AST call-site count (`ast.Call`), not a substring/docstring grep,**
+because this module's own docstring is full of the phrase "MaxSim" and would otherwise
+self-confirm:
+  - `src/tensor_grep/core/reranker.py::rank_chunks` (:296-355) is the ONE place `late_reranker.rerank(...)`
+    is actually invoked (1 AST call site) — on a daemon thread joined against `TG_RERANK_BUDGET_MS`
+    (default 2000ms), so a hung encoder cannot block the CLI.
+  - `src/tensor_grep/cli/main.py` constructs it via `load_late_reranker()` at exactly 2 AST call
+    sites: `_apply_semantic_rerank` (`tg search --semantic`, :4243-4261) and `find` (`tg find`,
+    :4691-4708). Both are gated behind the SAME check, `os.environ.get("TG_LATE_RERANK") == "1"`
+    (:4160, :4692) — there is no `--rerank`/`--maxsim` CLI flag anywhere in `main.py` (confirmed:
+    `grep -c "TG_LATE_RERANK" src/tensor_grep/cli/main.py` → 4, all env-var reads/mentions;
+    `grep -c "late.*rerank.*Option\|Option.*late.*rerank" src/tensor_grep/cli/main.py` → 0).
+  - `src/tensor_grep/cli/mcp_server.py` has **zero** references to `late_reranker`/`LateReranker`/
+    `TG_LATE_RERANK`/`rerank_hybrid`/`rank_chunks` (positive control: the same grep against
+    `main.py` for `late_reranker` returns 10 hits, proving the pattern works — the MCP zero is a
+    real absence, not a blocked instrument). The MCP `tg_find`/`tg_search` tools cannot reach
+    MaxSim under any input.
+  - Net: reachable **only** from two CLI code paths, both requiring an undocumented env var with
+    no flag equivalent — never independently discoverable, and never reachable from the agent/MCP
+    surface at all.
+
+**3. Install path.** A real one exists in the strict pip-install sense: `pyproject.toml:634`
+declares `rerank = ["tensor-grep[semantic]", "onnxruntime>=1.20", "tokenizers>=0.21"]`, and
+`onnxruntime`/`tokenizers` are present and resolved in `uv.lock` (`grep -n "^name = \"onnxruntime\""
+uv.lock` → :2710). But no `tg` command installs it or fetches the model: `tg install-dense`
+(`main.py:15874`, `_run_install_dense` at :15805) installs only the `semantic` extra + the dense
+embedding model — it never touches `rerank` or `retrieval_late.py`. The model itself must be
+fetched by hand-running `python -m tensor_grep.core.retrieval_late --fetch` (no `tg` subcommand
+wraps it), after which the user must ALSO know to set `TG_LATE_RERANK=1` with no discovery path
+(not in `tg --help`, not a documented flag). This is the exact gap the external v1.108.2 dogfood
+(2026-08-05, gotcontext-saddle) independently reported as "unreachable, no install path" —
+confirmed correct in substance: a package-manager install path exists, a *product* install path
+does not.
+
+**4. Tests.** `tests/unit/test_retrieval_late.py` and `tests/unit/test_reranker.py` cover the pure
+math, the `LateReranker` contract, and the wiring (env-off no-op, env-on reorder, budget-exceeded
+degrade, malformed-shape degrade, hung-encoder non-block, `BackendExecutionError`/user-abort
+propagation) against an INJECTED stub encoder — these DO run in CI (no real model needed).
+`tests/unit/test_search_semantic_rerank.py` proves the CLI wiring end-to-end via `CliRunner`,
+including `test_rerank_env_off_is_noop`, which spies on `late_available` and asserts it is NEVER
+CALLED when the env var is unset (a genuine discriminating oracle, not a both-arms-pass check).
+`TestRealFetchedModel` in `test_retrieval_late.py` (:410-449) is `@pytest.mark.skipif`-gated on
+the real fetched model directory existing on disk (:409-415) — CI never fetches it, so those tests
+are always skipped in CI; they exist for local dev only.
+
+**5. Measured quality (already banked, not re-run here).** `docs/PAPER.md:469` records the
+DECISIVE NEGATIVE, measured AFTER the role-aware query/document encoding fix landed (`retrieval_late.py`'s
+`encode_query` param, #189 Item 1): rrf+maxsim ndcg@10 **0.068 vs plain rrf 0.305** on the 40-query
+golden set (`CHANGELOG.md:20003`), and it actively HARMS the two lexical slices it was measured
+against separately (`literal_golden.jsonl` / `identifier3_golden.jsonl`, delta -0.92/-0.97 vs bm25,
+`CHANGELOG.md:20009-20010`). Root cause is diagnosed, not merely observed: raw MaxSim's mean rank of
+the true answer is ~41 of 74 candidates, indistinguishable from the ~37.5 expected under a random
+ordering (`CHANGELOG.md:20013`) — the 17M-param int8 `LateOn-Code-edge` model carries near-random
+signal on in-repo code, a model-capacity ceiling the role-aware fix cannot address.
+
+**Disposition: RETIRE.** Both halves of the gate close in the same direction — unreachable by any
+`tg` command or documented path (§2-3) AND decisively negative even under the corrected encoding
+(§5) — so this is not a "wire it in" gap, it is a validated dead end. Full code removal is **not**
+done here: `reranker.py::rank_chunks`/`rerank_hybrid` thread the `late_reranker` param through the
+SAME shared core the shipped BM25+dense RRF fusion depends on, `retrieval_late.py` is ~520 lines
+with its own fetch/checksum/threading logic, and ~600 lines across three test files exercise it —
+removal at that width crosses the risk bar this task sets for "leave a deprecation note instead."
+The module docstring in `retrieval_late.py` now states RETIRED plainly (see the module-header edit
+in this PR) so the next reader does not have to re-derive this census from call sites. Sweeping
+`grep -rn -i maxsim README.md docs/harness_api.md AGENTS.md` plus the skill index found one live
+over-claim this census would otherwise have missed: `docs/harness_api.md:1514` still described the
+MCP `tg_find` tool as "(BM25 [+ dense [+ MaxSim]])" -- the exact advertised-but-unreachable pattern
+already fixed in the CLI's `find --help` and the skill index (Battle 28 in
+`tensor-grep-failure-archaeology`, #15 in `TASK_BOARD.md`), just missed there. Fixed in this PR
+(`docs/harness_api.md`'s tool listing now reads "BM25 [+ local CPU dense embedding]" and notes
+MaxSim is unreachable from the MCP surface). Every other MaxSim mention left in the repo now
+either omits it or states the hold/retirement explicitly, so there is nothing else to purge.
+
+**Reopen condition (both required, not either):** (a) a `tg` command provisions the `rerank` extra
++ fetches the model + flips the gate, so a user reaches it without reading source (e.g. folding it
+into `tg install-dense` behind a real `--rerank`/`--maxsim` flag), AND (b) a re-run of
+`benchmarks/eval_late_rerank_quality.py`'s T8 golden-set gate — on a DIFFERENT encoder, since this
+one's ceiling is architectural, not the role-aware bug already fixed — clears the design doc's
+original thresholds (`docs/plans/design-tensor-grep-late-rerank-2026-07-09.md`: nDCG@5 ≥ +0.03 abs
+over RRF beyond 3-run noise, no recall@5 regression, p50 latency ≤ 2000ms). Absent both, this stays
+RETIRED; do not re-flip `TG_LATE_RERANK` default or add a discovery path off a partial win on one
+of the two conditions.
+
+### 2026-08-05 — DD-004 typed backend-error boundary: RETIRE disposition
+
+**Gate (from CEO audit / Task 14):** likely retire as a standalone row and bank the typed-boundary
+rule as durable guidance — do not open a wrap campaign without a discriminating defect.
+
+**1. Finding (banked, not re-audited).** Deep-dive DD-004 (`docs/audits/2026-07-31-tensor-grep-deep-dive.md`)
+was INFO / wave2 WEAKENED: `cpu_backend.py` loud-re-raises a bare `RuntimeError` on search-loop
+failure (`cpu_backend.py:811`) instead of `BackendExecutionError`. Evidence trail named
+`cpu_backend.py:770-771` (now `:811` after intervening edits) and the search loop's catch site.
+False-positive check already ruled out empty-success: the path raises; it does not return a clean
+0-match `SearchResult`.
+
+**2. What already holds the rule.** `AGENTS.md` "Backend Fail-Closed Contract" already requires
+every `ComputeBackend` to raise `BackendExecutionError` on a real failure — never empty success,
+never a silent engine swap. New/changed backend failure paths must follow that contract. The
+standalone DD-004 row was a hygiene reminder sitting next to an already-documented law, not an
+unowned gap.
+
+**3. Why not wrap now.** The remaining bare `RuntimeError` is contract-hygiene only (severity INFO).
+Wrapping it without a consumer that keys on exception type is churn: the CLI search loop already
+treats non-`BackendExecutionError` exceptions as hard failures (`main.py` catch of
+`BackendExecutionError` for CPU fallback, then a separate path for invalid-regex / re-raise). A
+CPU-backend self-failure is not a native→CPU fallback candidate. No measured empty-success or
+wrong-fallback receipt exists for this site.
+
+**Disposition: RETIRE** the standalone row. Bank the rule in place (AGENTS.md Backend Fail-Closed
+Contract — do not duplicate a second copy here). Leave `cpu_backend.py:811` as-is until a
+discriminating reopen condition fires.
+
+**Reopen condition (either):** (a) a backend failure path returns clean empty / 0-match success on
+a real fault, or (b) a concrete consumer requires uniform `BackendExecutionError` typing at the
+`cpu_backend` search-loop site (with a bidirectional oracle showing the bare `RuntimeError` breaks
+that consumer). Absent either, do not reopen as a wrap-for-hygiene campaign.
 
 ### What the user fixed on their side
 
@@ -1271,7 +1402,7 @@ Full register: `docs/audits/2026-07-31-tensor-grep-deep-dive.md`. Remediation:
 | #863 | LOW | Daemon tokenless `is_authorized` fail-open | VERIFIED | **CLOSED** (2026-08-01 backlog campaign, PR-B: fails closed) |
 | DD-002 | — | Audit-manifest Rust `O_NOFOLLOW` “gap” | **KILLED** | Comment rot only |
 | #115/#125 | — | Listed open LOW | **KILLED** | Mark CLOSED |
-| DD-004 | INFO | `cpu_backend` `RuntimeError` hygiene | WEAKENED | Bank |
+| DD-004 | INFO | `cpu_backend` `RuntimeError` hygiene | WEAKENED | **RETIRED 2026-08-05** (bank AGENTS.md Fail-Closed Contract; see dated receipt above) |
 
 Do **not** reopen: #276, GPU HOLD, cAST, free-threading, MCP `<2` cap.
 
