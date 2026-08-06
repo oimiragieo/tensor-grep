@@ -392,11 +392,48 @@ concrete failure observed this session.
   pinned validator tests and user remediation strings, replay the affected feature, and obtain a
   new exact-head audit. Never add an ignore for a vulnerability that has a fixed release.
 
+
+- **A70 — Ambient default signing keys pollute `--sign` no-key REDs (2026-08-06).** Clearing
+  `TG_EVIDENCE_SIGNING_KEY` is not enough when `~/.tensor-grep/keys/evidence_ed25519.key` exists —
+  emit still signs and the NEG arm looks green. Isolate `HOME`/`USERPROFILE` (or remove the default
+  key) before claiming fail-closed. Receipt: W5 published-wheel dogfood / PR #962.
+- **A71 — Free-form bullets under `## Canonical status index` are illegal (2026-08-06).** The tracker
+  parser accepts only `Status:` / `PR:` / `Trigger:` checklist rows. A campaign note under that
+  heading reds `test_ceo_demand_duplication_is_rejected`. Put prose in a separate heading (e.g.
+  `## Campaign note`). Receipt: PR #962 first CI.
+- **A72 — Merged implementation with a stale `IN_FLIGHT` row is board debt (2026-08-06).** Feature
+  code on `main` is not tracker-closed until the row is `SHIPPED` with Implementation PRs + Closure
+  PR + Merged SHA (A50). F7 / CPU-BACKEND / REF-CALL-REGISTRY sat IN_FLIGHT after their impl PRs
+  merged until the 2026-08-06 CEO reconcile.
+- **A73 — Bare published wheel ≠ semantic/`tg find` surface (2026-08-06).** `uvx --from tensor-grep==X`
+  without `[semantic]` / `tg install-dense` has no `model2vec`; find degrades with
+  `rank_fallback_reason`. Enterprise CUJ dogfood uses prepare/search/evidence/review-bundle/ledger
+  unless dense extras are installed first.
+- **A74 — Quota-blocked Sol/Fable SHIP is provisional (2026-08-06).** An orchestrator substitute
+  verdict is not an independent vendor seat. Re-dispatch Sol/Fable when quota returns for
+  security/load-bearing claims; do not treat the substitute as durable clearance.
+- **A75 — Premise-check the ready-to-build queue before dispatch (2026-08-06, #935).** Six of six
+  “ready” items were already shipped. A plan against a fixed defect has perfectly resolving citations;
+  reproducing the defect (or proving absence on `origin/main`) is Step 0.
+- **A76 — Board freshness is ordinal CHANGELOG distance (2026-08-06, #933).** Patch subtraction and
+  major.minor sentinels false-red on minor bumps; no tolerance absorbs a sentinel of
+  `tolerance+1`. Measure ordinal distance in CHANGELOG.md.
+
+
 ## Current Handoff
 
 release_docs_current_tag: v1.110.0
 
 As of 2026-08-02, the current tagged release state is `v1.110.0`, and the latest complete public PyPI/release-asset distribution is also `v1.110.0`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.110.0` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
+
+
+**2026-08-06 CEO/backlog update (dumbed-down packet).** Public product is **`v1.110.0`**. Closed-world
+after tracker closeout: **28 rows / 17 unfinished** = 6 READY, 0 IN_FLIGHT, 5 CEO_GATED, 6
+DEMAND_GATED (7 SHIPPED + 4 RETIRED). F7 / CPU-BACKEND / REF-CALL-REGISTRY closed `SHIPPED` (impl
+already merged). Enterprise CUJ locked (#958) and published-wheel dogfood (#962). Task 2A remains
+correctly blocked. No spend; #169 only financial stop; nonfinancial CEO gates unchanged
+(recommendations only). New laws **A70–A76**. Detail:
+`docs/audits/2026-08-06-ceo-backlog-update.md`.
 
 **2026-08-03 CEO/backlog continuation.** Public product remains healthy at `v1.102.1` on
 `origin/main` `8024125612d5fb42481acde34d94ad39bbaa3c3e`. Planning PR #911 was merge-ready on exact

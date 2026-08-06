@@ -602,3 +602,10 @@ the three citations above were rewritten as `grep -n "<distinctive phrase>" AGEN
 the was→now drift kept as the receipt, rather than re-stamped with a fourth hardcoded number that will
 just as certainly go stale on the next `AGENTS.md` growth pass. Do not "fix" them back to bare
 `AGENTS.md:NNN` citations.
+
+## Tracker closeout (2026-08-06)
+
+- Premise-check READY items before dispatch (**A75** / #935) — already-shipped work looks actionable.
+- When implementation PRs merge, do not leave the row `IN_FLIGHT` “for next cycle” (**A72**). Same
+  turn: `SHIPPED` + Closure PR + Merged SHA, or the CEO snapshot lies.
+- Never put free-form bullets under `## Canonical status index` (**A71**).

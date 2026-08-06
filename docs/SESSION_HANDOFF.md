@@ -1,6 +1,6 @@
 # tensor-grep Session Handoff
 
-Last updated: 2026-08-03
+Last updated: 2026-08-06
 
 ## Current Release State
 
@@ -11,56 +11,17 @@ release_docs_current_tag: v1.110.0
 - GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.110.0>
 
 ## Current Backlog Closeout
+Canonical status index version: 2026-08-06.1
 
-Canonical status index version: 2026-08-05.1
-
-- `origin/main` at the campaign rebase point: `8024125612d5fb42481acde34d94ad39bbaa3c3e`.
-- PR #910 is merged. Its exact PR run `30777042942` completed 39 jobs with zero failure/unfinished
-  jobs; the focused board test passed 7/7 on the merged artifact.
-- Open PRs at the snapshot: PR #911 only. Head `01f276fa7c0d3d0e04fdb5feae78c29c1b194773`
-  was green, but that clearance expired. Pushed docs head
-  `fb99d2bce4ba722b724212282158bf6616b1ade2` passed CodeQL `30857839262` and failed security
-  `30857841901` on fresh fixable `aiohttp`/`cryptography` advisories. Its successor raises floors to
-  `aiohttp>=3.14.3` / `cryptography>=50.0.0` and regenerates `uv.lock`; derive the live head and
-  requires the cryptography floor in published `[project].dependencies` as well as the resolver
-  constraint (Sol caught the original validator blind spot). Derive the live head and require new
-  exact-head CI/security/CodeQL before merge. Open GitHub issues: #48 only.
-- Product healthy at `v1.102.1`; planning PR blocked on fresh exact-head security re-clearance;
-  backlog not done (20 unfinished: 7 READY, 2 IN_FLIGHT, 5 CEO_GATED, 6 DEMAND_GATED after F10 +
-  DD-004 RETIRED 2026-08-05); Task 2A correctly blocked.
-- Round-60 plan approval stands on hashes design `31D8E071...3D862B` / implementation
-  `AA64D0BA...0826B3`. Task 2A RED is local only at exact SHA
-  `6367614960327b1a4e00301c8bfdb9b2e4bb453e` (branch/HEAD match, unpushed, no Actions run, no GREEN).
-  Sol exact-byte verdict is `FIX-FIRST` with 10 HIGH blockers. Older rejects `4efcad9` / `8df269d`
-  are historical only. Do not call Task 2A merge-ready.
-- Task 2 reproduced both cross-domain items in WSL. Search returned `path_not_found` for an existing
-  `/mnt/c/...` root (#89). Scan passed that Linux spelling to Windows ast-grep, warned it was
-  unreadable, but emitted a clear zero-match exit-0 payload; the translated-path control found six
-  matches (#90). Both are `READY`.
-- The closeout campaign remains Tasks 2–15. Task 2 is the reconciliation checkpoint, Task 2A is
-  plan-approved but RED-blocked, and Tasks 3–15 remain the ordered follow-on program.
-- The current closed-world CEO report is `docs/audits/2026-08-03-ceo-backlog-update.md`; it lists all
-  23 unfinished rows as of that dated snapshot (live index is now 20 unfinished after F10 + DD-004
-  RETIRED), terminal five-at-the-time, research recommendations (not reclassifications), the Task 2A
-  FIX-FIRST blockers, and retained lessons including A61–A69.
-- Latest exact `main` CI run: `30793797849`, completed successfully on `8024125`. Public PyPI and
-  GitHub Release remain `v1.102.1`; no spend was incurred or authorized. No question is asked for
-  nonfinancial CEO gates; #169 remains the only mandatory financial stop.
-- Next action: finish exact-head CI/security/CodeQL for #911 and pause at merge. After human merge and
-  merged-base proof, Cursor repairs the ten RED blockers, Sol repeats until `SHIP`, then push draft
-  and obtain real Windows CI.
-- Durable machine/session resume state is in `MEMORY.md`; do not reconstruct the queue from this file's
-  historical release ledger.
-- Cross-OS environment receipt: a WSL `uv --project /mnt/c/...` probe replaced the Windows `.venv`.
-  The incompatible shell was moved to `%LOCALAPPDATA%\Temp\tensor-grep-venv-wsl-incompatible-20260803`;
-  Windows `uv sync --frozen` rebuilt and verified the canonical environment. Never point WSL `uv` at
-  the Windows project venv (AGENTS.md A60).
-- New retained laws A61–A69: behavioral RED pins exact reason; route/start evidence from real
-  producer/OS; containment authenticates provenance + alive→dead cleanup; crypto negatives need valid
-  API + positive control; security grammar rejects unknown/inherit-only; resource protocols name close
-  ownership; RED scaffolds cannot enable partial public/unbounded pre-guard work; immutable-SHA CI
-  needs a real run (no run = no clearance); fresh fixable advisories invalidate old security green
-  and must be upgraded across floors/lock/validators before a new exact-head audit.
+- Public product: `v1.110.0`. CEO packet: `docs/audits/2026-08-06-ceo-backlog-update.md`.
+- Closed-world: 28 rows / **17 unfinished** = 6 READY, 0 IN_FLIGHT, 5 CEO_GATED, 6 DEMAND_GATED
+  (7 SHIPPED + 4 RETIRED terminal). F7 / CPU-BACKEND / REF-CALL-REGISTRY closed SHIPPED this reconcile.
+- Task 2 is complete as the tracker checkpoint; **Task 2A RED remains correctly blocked** (historical
+  local SHA `6367614960327b1a4e00301c8bfdb9b2e4bb453e`, Sol `FIX-FIRST` / 10 HIGH unless superseded).
+- #89/#90 stay READY behind Task 2A. No spend. #169 is the only financial stop.
+- Enterprise CUJ locked (#958) and dogfooded on published wheel (#962).
+- New agent laws A70–A76 (ambient signing-key pollution; canonical-index free-form ban; tracker
+  closeout debt; bare-wheel find; quota substitute SHIP; premise-check queue; ordinal freshness).
 
 ## Historical Milestones
 
