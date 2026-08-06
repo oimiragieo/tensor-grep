@@ -464,7 +464,7 @@ is self-attestation, not anti-replay evidence.
 paragraph/invariant. Preserve severity and final-vendor validation. A no-verdict seat is recorded as
 failed and replaced; it is never inferred as `SHIP` and need not stall all progress indefinitely.
 
-**RED and CI evidence must discriminate (2026-08-03, AGENTS A61–A69).** Behavioral RED pins the exact
+**RED and CI evidence must discriminate (2026-08-03, AGENTS A61–A82).** Behavioral RED pins the exact
 expected reason — crash, import, panic, and setup errors are not RED. Route/start evidence comes from
 the actual producer/constructor and test-owned OS/raw proof, never a hardcoded bool or a production
 hook that self-attests before start. Containment authenticates writer/client provenance and proves
@@ -478,6 +478,10 @@ Immutable-SHA CI clearance needs a real run, expected per-node outcomes, raw art
 population — no run is no clearance. Security green is point-in-time: a fresh fixable advisory blocks
 merge and is upgraded across every live direct/constraint floor, the lock, validator tests, and user
 remediation text before a new exact-head audit; never ignore a vulnerability with a fixed release.
+**A77–A82 (2026-08-06 PM):** never pipe `gh pr checks` into a stdin-eating heredoc (false ALL_TERMINAL);
+usage-limit seats are FAILED not pending; READY→BLOCKED stamps retarget governance pins in the same PR;
+gate tip bytes under review not archaeological RED SHAs; HIGH receipts ≠ Sol SHIP; AMEND_SPINE when
+board READY contradicts reconcile BLOCKED (START_NOW = docs/R0/D1 only).
 
 **Search twins and respect public boundaries.** After retiring a defect shape, grep sibling adapters and
 helpers for the same pattern; a zero-retry fix in `RustCoreBackend` did not protect two copies in

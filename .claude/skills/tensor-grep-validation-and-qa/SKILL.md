@@ -143,6 +143,10 @@ family is MIRRORED — see `AGENTS.md`; adding a form is a two-file edit.)
 
 - A `--sign` no-key RED that only pops `TG_EVIDENCE_SIGNING_KEY` is **split from the default key
   path** (AGENTS.md **A70**) — same family as Form 8 / ambient-fixture pollution.
+  **Merge/poller twin (A77):** a `gh pr checks` pipe into a stdin-eating heredoc can empty the checklist
+  and read as ALL_TERMINAL while jobs are still pending — write checks to a file and require heavy
+  lanes present by name. **Quota twin (A78):** usage-limit seat errors are FAILED seats, not pending
+  Sol SHIP. **Status-stamp twin (A79):** READY→BLOCKED stamps must retarget tracker pins in the same PR.
 - A TASK_BOARD “campaign note” under the canonical index is not documentation; it is a **malformed
   row** to the tracker parser (**A71**).
 - Bare-wheel dogfood without semantic extras cannot grade `tg find` (**A73**).

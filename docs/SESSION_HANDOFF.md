@@ -11,7 +11,7 @@ release_docs_current_tag: v1.110.0
 - GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.110.0>
 
 ## Current Backlog Closeout
-Canonical status index version: 2026-08-06.2
+Canonical status index version: 2026-08-06.3
 
 - Public product: `v1.110.0`. CEO packet: `docs/audits/2026-08-06-ceo-backlog-update.md`.
 - Closed-world: 28 rows / **17 unfinished** = 6 READY, 0 IN_FLIGHT, 5 CEO_GATED, 6 DEMAND_GATED
