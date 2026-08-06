@@ -549,10 +549,12 @@ def c_imports_with_lines(path: Path) -> list[dict[str, Any]]:
                 path_field = node.child_by_field_name("path")
                 target = _c_include_target_text(path_field, source_bytes)
                 if target:
-                    entries.append({
-                        "module": target,
-                        "line": node.start_point[0] + 1,
-                    })
+                    entries.append(
+                        {
+                            "module": target,
+                            "line": node.start_point[0] + 1,
+                        }
+                    )
             stack.extend(reversed(node.children))
 
     _walk(tree.root_node)
@@ -591,14 +593,16 @@ def c_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
         block = _node_text(node)
         if block and not block.endswith("\n"):
             block = f"{block}\n"
-        sources.append({
-            "name": symbol,
-            "kind": kind,
-            "file": str(path),
-            "start_line": node.start_point[0] + 1,
-            "end_line": node.end_point[0] + 1,
-            "source": block,
-        })
+        sources.append(
+            {
+                "name": symbol,
+                "kind": kind,
+                "file": str(path),
+                "start_line": node.start_point[0] + 1,
+                "end_line": node.end_point[0] + 1,
+                "source": block,
+            }
+        )
 
     def _walk(root: Any) -> None:
         # Explicit-stack DFS -- see the identical comment on c_imports_and_symbols's `_walk`.
@@ -657,13 +661,15 @@ _C_CROSS_FILE_CONFIRMED_PROVENANCE = "c-include-path-confirmation"
 # _c_declarator_name_node) names a DEFINITION site -- excluded from the reference/call walk (a
 # symbol's own declaration site is not a reference to itself, the same rule every other language
 # in this registry follows).
-_C_DECLARATOR_DEFINING_NODE_TYPES = frozenset({
-    "function_definition",
-    "declaration",
-    "type_definition",
-    "parameter_declaration",
-    "field_declaration",
-})
+_C_DECLARATOR_DEFINING_NODE_TYPES = frozenset(
+    {
+        "function_definition",
+        "declaration",
+        "type_definition",
+        "parameter_declaration",
+        "field_declaration",
+    }
+)
 
 
 def _c_symbol_has_infile_function(root: Any, source_bytes: bytes, symbol: str) -> bool:
@@ -821,18 +827,20 @@ def c_references_and_calls(
         else:
             confidence = _C_DEMOTED_CONFIDENCE
             provenance = _C_DEMOTED_PROVENANCE
-        bucket.append({
-            "name": symbol,
-            "kind": kind,
-            "ref_kind": ref_kind,
-            "file": str(path),
-            "line": node.start_point[0] + 1,
-            "text": _line_text(node),
-            # PER-MATCH honesty band -- see the module docstring's RESOLUTION CONFIDENCE /
-            # PROVENANCE section for the full derivation.
-            "resolution_confidence": confidence,
-            "resolution_provenance": [provenance],
-        })
+        bucket.append(
+            {
+                "name": symbol,
+                "kind": kind,
+                "ref_kind": ref_kind,
+                "file": str(path),
+                "line": node.start_point[0] + 1,
+                "text": _line_text(node),
+                # PER-MATCH honesty band -- see the module docstring's RESOLUTION CONFIDENCE /
+                # PROVENANCE section for the full derivation.
+                "resolution_confidence": confidence,
+                "resolution_provenance": [provenance],
+            }
+        )
 
     # Nodes already claimed by the call_expression special case below are tracked here so the
     # generic identifier/type_identifier/field_identifier walk never double-emits them. Keyed on

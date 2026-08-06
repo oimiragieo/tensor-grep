@@ -152,9 +152,7 @@ def include_resolves_into_definition_dirs(
     if not definition_dirs:
         return False
     try:
-        resolved_dirs = {
-            Path(directory).expanduser().resolve() for directory in definition_dirs
-        }
+        resolved_dirs = {Path(directory).expanduser().resolve() for directory in definition_dirs}
     except OSError:
         return False
 

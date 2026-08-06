@@ -199,100 +199,102 @@ def _is_clean_symbol_name(name: str) -> bool:
 # -> function misparse (see the docstring), rejecting a reserved keyword has NO legitimate-code
 # false-negative cost, so it is a safe, zero-downside precision fix (found via the real-header
 # dogfood this module's originating PR required, not a hypothetical).
-_CPP_RESERVED_KEYWORDS = frozenset({
-    "alignas",
-    "alignof",
-    "and",
-    "and_eq",
-    "asm",
-    "auto",
-    "bitand",
-    "bitor",
-    "bool",
-    "break",
-    "case",
-    "catch",
-    "char",
-    "char8_t",
-    "char16_t",
-    "char32_t",
-    "class",
-    "compl",
-    "concept",
-    "const",
-    "consteval",
-    "constexpr",
-    "constinit",
-    "const_cast",
-    "continue",
-    "co_await",
-    "co_return",
-    "co_yield",
-    "decltype",
-    "default",
-    "delete",
-    "do",
-    "double",
-    "dynamic_cast",
-    "else",
-    "enum",
-    "explicit",
-    "export",
-    "extern",
-    "false",
-    "float",
-    "for",
-    "friend",
-    "goto",
-    "if",
-    "inline",
-    "int",
-    "long",
-    "mutable",
-    "namespace",
-    "new",
-    "noexcept",
-    "not",
-    "not_eq",
-    "nullptr",
-    "operator",
-    "or",
-    "or_eq",
-    "private",
-    "protected",
-    "public",
-    "register",
-    "reinterpret_cast",
-    "requires",
-    "return",
-    "short",
-    "signed",
-    "sizeof",
-    "static",
-    "static_assert",
-    "static_cast",
-    "struct",
-    "switch",
-    "template",
-    "this",
-    "thread_local",
-    "throw",
-    "true",
-    "try",
-    "typedef",
-    "typeid",
-    "typename",
-    "union",
-    "unsigned",
-    "using",
-    "virtual",
-    "void",
-    "volatile",
-    "wchar_t",
-    "while",
-    "xor",
-    "xor_eq",
-})
+_CPP_RESERVED_KEYWORDS = frozenset(
+    {
+        "alignas",
+        "alignof",
+        "and",
+        "and_eq",
+        "asm",
+        "auto",
+        "bitand",
+        "bitor",
+        "bool",
+        "break",
+        "case",
+        "catch",
+        "char",
+        "char8_t",
+        "char16_t",
+        "char32_t",
+        "class",
+        "compl",
+        "concept",
+        "const",
+        "consteval",
+        "constexpr",
+        "constinit",
+        "const_cast",
+        "continue",
+        "co_await",
+        "co_return",
+        "co_yield",
+        "decltype",
+        "default",
+        "delete",
+        "do",
+        "double",
+        "dynamic_cast",
+        "else",
+        "enum",
+        "explicit",
+        "export",
+        "extern",
+        "false",
+        "float",
+        "for",
+        "friend",
+        "goto",
+        "if",
+        "inline",
+        "int",
+        "long",
+        "mutable",
+        "namespace",
+        "new",
+        "noexcept",
+        "not",
+        "not_eq",
+        "nullptr",
+        "operator",
+        "or",
+        "or_eq",
+        "private",
+        "protected",
+        "public",
+        "register",
+        "reinterpret_cast",
+        "requires",
+        "return",
+        "short",
+        "signed",
+        "sizeof",
+        "static",
+        "static_assert",
+        "static_cast",
+        "struct",
+        "switch",
+        "template",
+        "this",
+        "thread_local",
+        "throw",
+        "true",
+        "try",
+        "typedef",
+        "typeid",
+        "typename",
+        "union",
+        "unsigned",
+        "using",
+        "virtual",
+        "void",
+        "volatile",
+        "wchar_t",
+        "while",
+        "xor",
+        "xor_eq",
+    }
+)
 
 
 def _is_clean_cpp_symbol_name(name: str) -> bool:
@@ -349,12 +351,14 @@ _CPP_SUFFIXES = frozenset({".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"})
 # class/struct/union/enum specifiers collapse to kind "class" -- the fail-closed cross-language
 # mapping this campaign's other struct-bearing languages already use (C's own struct/union/enum
 # and C#'s struct/interface/enum/record precedents).
-_CPP_CLASS_LIKE_KINDS = frozenset({
-    "class_specifier",
-    "struct_specifier",
-    "union_specifier",
-    "enum_specifier",
-})
+_CPP_CLASS_LIKE_KINDS = frozenset(
+    {
+        "class_specifier",
+        "struct_specifier",
+        "union_specifier",
+        "enum_specifier",
+    }
+)
 # Node types a C++ def can appear as -- informational/documentation only (mirrors
 # lang_c._C_DEF_NODE_KINDS' role), matching LanguageSpec.def_node_kinds' "Stage 0:
 # informational only" contract. `template_declaration` is listed even though the walker never
@@ -721,10 +725,12 @@ def cpp_imports_with_lines(path: Path) -> list[dict[str, Any]]:
                 path_field = node.child_by_field_name("path")
                 target = _cpp_include_target_text(path_field, source_bytes)
                 if target:
-                    entries.append({
-                        "module": target,
-                        "line": node.start_point[0] + 1,
-                    })
+                    entries.append(
+                        {
+                            "module": target,
+                            "line": node.start_point[0] + 1,
+                        }
+                    )
             stack.extend(reversed(node.children))
 
     _walk(tree.root_node)
@@ -762,14 +768,16 @@ def cpp_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
         block = _node_text(node)
         if block and not block.endswith("\n"):
             block = f"{block}\n"
-        sources.append({
-            "name": symbol,
-            "kind": kind,
-            "file": str(path),
-            "start_line": node.start_point[0] + 1,
-            "end_line": node.end_point[0] + 1,
-            "source": block,
-        })
+        sources.append(
+            {
+                "name": symbol,
+                "kind": kind,
+                "file": str(path),
+                "start_line": node.start_point[0] + 1,
+                "end_line": node.end_point[0] + 1,
+                "source": block,
+            }
+        )
 
     def _walk(root: Any) -> None:
         # Explicit-stack DFS -- see the identical comment on cpp_imports_and_symbols's `_walk`.
@@ -935,13 +943,15 @@ _CPP_CROSS_FILE_CONFIRMED_PROVENANCE = "cpp-include-path-confirmation"
 # _cpp_declarator_name_node) names a DEFINITION site -- excluded from the reference/call walk, the
 # same rule C's own module already follows, extended with `field_declaration` (C++'s in-class
 # prototype sibling of `declaration`, see the module docstring).
-_CPP_DECLARATOR_DEFINING_NODE_TYPES = frozenset({
-    "function_definition",
-    "declaration",
-    "field_declaration",
-    "type_definition",
-    "parameter_declaration",
-})
+_CPP_DECLARATOR_DEFINING_NODE_TYPES = frozenset(
+    {
+        "function_definition",
+        "declaration",
+        "field_declaration",
+        "type_definition",
+        "parameter_declaration",
+    }
+)
 
 
 def _cpp_symbol_has_infile_function(root: Any, source_bytes: bytes, symbol: str) -> bool:
@@ -1133,17 +1143,19 @@ def cpp_references_and_calls(
         else:
             confidence = _CPP_DEMOTED_CONFIDENCE
             provenance = _CPP_DEMOTED_PROVENANCE
-        bucket.append({
-            "name": symbol,
-            "kind": kind,
-            "ref_kind": ref_kind,
-            "file": str(path),
-            "line": node.start_point[0] + 1,
-            "text": _line_text(node),
-            # PER-MATCH honesty band -- see the module's TASK 10E docstring block above.
-            "resolution_confidence": confidence,
-            "resolution_provenance": [provenance],
-        })
+        bucket.append(
+            {
+                "name": symbol,
+                "kind": kind,
+                "ref_kind": ref_kind,
+                "file": str(path),
+                "line": node.start_point[0] + 1,
+                "text": _line_text(node),
+                # PER-MATCH honesty band -- see the module's TASK 10E docstring block above.
+                "resolution_confidence": confidence,
+                "resolution_provenance": [provenance],
+            }
+        )
 
     # Nodes already claimed by a special-case branch below are tracked here so the generic
     # identifier/type_identifier/field_identifier walk never double-emits them. Keyed on

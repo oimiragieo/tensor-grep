@@ -46,11 +46,7 @@ def _c_include_fixture(root: Path) -> dict[str, Path]:
 
     lib_c = root / "lib" / "lib.c"
     lib_c.write_text(
-        '#include "lib.h"\n'
-        "\n"
-        "int get_count(void) {\n"
-        "    return 1;\n"
-        "}\n",
+        '#include "lib.h"\n\nint get_count(void) {\n    return 1;\n}\n',
         encoding="utf-8",
     )
 
@@ -60,22 +56,14 @@ def _c_include_fixture(root: Path) -> dict[str, Path]:
 
     decoy_c = root / "decoy" / "decoy.c"
     decoy_c.write_text(
-        '#include "decoy.h"\n'
-        "\n"
-        "int get_count(void) {\n"
-        "    return 99;\n"
-        "}\n",
+        '#include "decoy.h"\n\nint get_count(void) {\n    return 99;\n}\n',
         encoding="utf-8",
     )
 
     caller = root / "app" / "caller.c"
     caller.parent.mkdir(parents=True, exist_ok=True)
     caller.write_text(
-        '#include "../lib/lib.h"\n'
-        "\n"
-        "int use_lib(void) {\n"
-        "    return get_count();\n"
-        "}\n",
+        '#include "../lib/lib.h"\n\nint use_lib(void) {\n    return get_count();\n}\n',
         encoding="utf-8",
     )
     return {"lib_c": lib_c, "lib_h": lib_h, "decoy_c": decoy_c, "caller": caller}
@@ -89,11 +77,7 @@ def _cpp_include_fixture(root: Path) -> dict[str, Path]:
 
     lib_cpp = root / "lib" / "lib.cpp"
     lib_cpp.write_text(
-        '#include "lib.hpp"\n'
-        "\n"
-        "int get_count() {\n"
-        "    return 1;\n"
-        "}\n",
+        '#include "lib.hpp"\n\nint get_count() {\n    return 1;\n}\n',
         encoding="utf-8",
     )
 
@@ -103,22 +87,14 @@ def _cpp_include_fixture(root: Path) -> dict[str, Path]:
 
     decoy_cpp = root / "decoy" / "decoy.cpp"
     decoy_cpp.write_text(
-        '#include "decoy.hpp"\n'
-        "\n"
-        "int get_count() {\n"
-        "    return 99;\n"
-        "}\n",
+        '#include "decoy.hpp"\n\nint get_count() {\n    return 99;\n}\n',
         encoding="utf-8",
     )
 
     caller = root / "app" / "caller.cpp"
     caller.parent.mkdir(parents=True, exist_ok=True)
     caller.write_text(
-        '#include "../lib/lib.hpp"\n'
-        "\n"
-        "int use_lib() {\n"
-        "    return get_count();\n"
-        "}\n",
+        '#include "../lib/lib.hpp"\n\nint use_lib() {\n    return get_count();\n}\n',
         encoding="utf-8",
     )
     return {"lib_cpp": lib_cpp, "lib_h": lib_h, "decoy_cpp": decoy_cpp, "caller": caller}
@@ -168,9 +144,7 @@ def test_c_file_imports_demotes_when_include_does_not_resolve(tmp_path: Path) ->
     definition.write_text("int get_count(void) { return 1; }\n", encoding="utf-8")
     caller = tmp_path / "caller.c"
     caller.write_text(
-        "#include <stdio.h>\n"
-        "\n"
-        "int use(void) { return get_count(); }\n",
+        "#include <stdio.h>\n\nint use(void) { return get_count(); }\n",
         encoding="utf-8",
     )
     assert not lang_c.c_file_imports_symbol_from_definition(
@@ -188,9 +162,7 @@ def test_c_cross_file_call_row_uses_confirmed_include_band(tmp_path: Path) -> No
     payload = repo_map.build_symbol_callers("get_count", tmp_path)
 
     assert not payload.get("no_match"), payload
-    caller_rows = [
-        row for row in payload["callers"] if Path(str(row["file"])).name == "caller.c"
-    ]
+    caller_rows = [row for row in payload["callers"] if Path(str(row["file"])).name == "caller.c"]
     assert caller_rows, payload["callers"]
     for row in caller_rows:
         assert row["resolution_confidence"] == 0.9, row
@@ -281,9 +253,7 @@ def test_cpp_cross_file_call_row_uses_confirmed_include_band(tmp_path: Path) -> 
     payload = repo_map.build_symbol_callers("get_count", tmp_path)
 
     assert not payload.get("no_match"), payload
-    caller_rows = [
-        row for row in payload["callers"] if Path(str(row["file"])).name == "caller.cpp"
-    ]
+    caller_rows = [row for row in payload["callers"] if Path(str(row["file"])).name == "caller.cpp"]
     assert caller_rows, payload["callers"]
     for row in caller_rows:
         assert row["resolution_confidence"] == 0.9, row
@@ -322,9 +292,7 @@ def test_cpp_cross_file_caller_appears_in_blast_radius_floor_bound_to_selected_d
 
     radius = repo_map.build_symbol_blast_radius_from_map(rm, "get_count")
     bound_rows = [
-        row
-        for row in (radius.get("callers") or [])
-        if Path(str(row["file"])).name == "caller.cpp"
+        row for row in (radius.get("callers") or []) if Path(str(row["file"])).name == "caller.cpp"
     ]
     assert bound_rows, radius
     for row in bound_rows:
