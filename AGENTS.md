@@ -418,6 +418,30 @@ concrete failure observed this session.
 - **A76 — Board freshness is ordinal CHANGELOG distance (2026-08-06, #933).** Patch subtraction and
   major.minor sentinels false-red on minor bumps; no tolerance absorbs a sentinel of
   `tolerance+1`. Measure ordinal distance in CHANGELOG.md.
+- **A77 — Stdin+heredoc merge pollers manufacture ALL_TERMINAL (2026-08-06 PM).** Piping
+  `gh pr checks` into a shell construct whose heredoc consumes stdin can yield an **empty** checklist
+  that a naive poller treats as “every check done.” Receipt: #963 squash-merged while ~10 PR checks
+  were still pending; main push CI later went green, but the merge gate had already lied. **Write
+  checks to a file** (or capture argv that cannot steal stdin), require heavy lanes **present by
+  name/count**, and never treat “0 pending over an empty rollup” as clearance (extends A43 / Form 8).
+- **A78 — Provider usage-limit / error seats are FAILED (2026-08-06 PM).** A Sol/Opus/Fable seat that
+  dies with “hit your usage limit” (or equivalent provider error) is a **failed seat**, not pending
+  approval and not a soft wait (extends A10/A58/A74). Record FAIL; do not promote substitute SHIP to
+  durable security clearance; re-dispatch when quota/Spend Limit restores (Pro cycle noted ~2026-08-14).
+- **A79 — Status-stamp PRs must retarget governance pins (2026-08-06 PM).** Stamping board READY→BLOCKED
+  without updating tracker tests that assert `Status: READY` (or that forbid BLOCKED on program owners)
+  reds CI on the truth-fix. Enumerate pins that name the old status in the **same** PR as the stamp.
+- **A80 — Gate the tip under review, not the archaeological RED SHA (2026-08-06 PM).** Docs and MEMORY
+  may still name historical RED `6367614…` while the repair branch tip has rebased and advanced. Sol,
+  CI, and merge clearance bind to the **exact tip bytes** (A51); citing the old SHA after rebase is an
+  artifact mismatch.
+- **A81 — Implementer HIGH receipts ≠ Sol SHIP (2026-08-06 PM).** Local commits, receipt files, and
+  “HIGH1–10 applied” self-reports are hypotheses. Task 2A stays FIX-FIRST until exact-byte Sol returns
+  `SHIP` on the named tip (extends Form 1 / A74 / never-trust-self-report).
+- **A82 — AMEND_SPINE when READY∩reconcile-BLOCKED (2026-08-06 PM).** Thinktank `AMEND_SPINE`: drop
+  MCP/F5–F8/#89/#90 from the build spine; START_NOW = docs/R0/D1 (board stamp + recommendation packets)
+  until Task 2A Sol SHIP + Windows CI. Board READY is not a build license when BACKLOG reconcile says
+  BLOCKED (pairs with A71/A75).
 
 
 ## Current Handoff
@@ -427,13 +451,17 @@ release_docs_current_tag: v1.110.7
 As of 2026-08-02, the current tagged release state is `v1.110.7`, and the latest complete public PyPI/release-asset distribution is also `v1.110.7`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.110.7` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
 
 
-**2026-08-06 CEO/backlog update (dumbed-down packet).** Public product is **`v1.110.0`**. Closed-world
-after tracker closeout: **28 rows / 17 unfinished** = 6 READY, 0 IN_FLIGHT, 5 CEO_GATED, 6
-DEMAND_GATED (7 SHIPPED + 4 RETIRED). F7 / CPU-BACKEND / REF-CALL-REGISTRY closed `SHIPPED` (impl
-already merged). Enterprise CUJ locked (#958) and published-wheel dogfood (#962). Task 2A remains
-correctly blocked. No spend; #169 only financial stop; nonfinancial CEO gates unchanged
-(recommendations only). New laws **A70–A76**. Detail:
-`docs/audits/2026-08-06-ceo-backlog-update.md`.
+**2026-08-06 PM CEO/backlog update (dumbed-down packet).** Public product is still **`v1.110.0`**.
+Closed-world after READY∩BLOCKED stamp + closeout docs: **28 rows / 17 unfinished** = **0 READY**,
+**6 BLOCKED**, 0 IN_FLIGHT, 5 CEO_GATED, 6 DEMAND_GATED (7 SHIPPED + 4 RETIRED). Index
+`2026-08-06.3`. Live packet: `docs/audits/2026-08-06-pm-ceo-backlog-update.md` (morning
+`2026-08-06-ceo-backlog-update.md` retained for A70–A76 + pre-stamp READY counts). Task 2A still
+not merge-ready (draft #966 FIX-FIRST lineage; Sol SHIP + Windows CI outstanding). No spend; #169
+only financial stop. New laws **A77–A82** (stdin poller; usage-limit FAILED seats; status-pin
+retarget; tip-vs-archaeology SHA; receipts≠Sol; AMEND_SPINE).
+
+**2026-08-06 AM CEO/backlog update (historical).** Introduced A70–A76 and briefly listed **6 READY**
+before #964 stamped those rows BLOCKED. Detail: `docs/audits/2026-08-06-ceo-backlog-update.md`.
 
 **2026-08-03 CEO/backlog continuation.** Public product remains healthy at `v1.102.1` on
 `origin/main` `8024125612d5fb42481acde34d94ad39bbaa3c3e`. Planning PR #911 was merge-ready on exact
