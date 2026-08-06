@@ -138,9 +138,48 @@ can NEVER confirm, which is correct and expected, not a bug):
   an accepted, documented gap (no confirmation attempted), mirroring Java's/C#'s identical
   "simple declared type only" requirement.
 
-Cross-file caller confirmation (PSR-4/``composer.json`` autoload-map resolution, matching Go's
-``go-import-resolution`` band) is still NOT implemented -- a cross-file caller today always lands
-in the demoted band, honestly labeled.
+F7 TASK 11 WAVE 2b: cross-file caller resolution via ``use``/namespace evidence, mirroring Task
+11A's Java landing (``lang_java.java_file_imports_symbol_from_definition`` /
+``_java_type_resolves_into_definition_dirs``) with PHP's own mechanism. PHP has NO
+compiler-enforced file/namespace mapping (unlike Java's javac-checked package/source-root, or C#'s
+assembly-checked namespace) -- PSR-4 autoload mapping lives in ``composer.json``, which this
+module deliberately does NOT read (parsing an arbitrary, possibly-absent, possibly-custom autoload
+map is out of scope; a missing or non-PSR-4-standard ``composer.json`` would silently degrade to
+guessing). Two independent mechanisms, both regex-based (no tree-sitter parser required -- mirrors
+``lang_java.py``'s own regex-only package/import scan) and both fail-closed:
+
+- ``php_file_imports_symbol_from_definition`` (the ``LanguageSpec`` field, used by
+  ``_preferred_definition_files`` / ``_should_scan_for_symbol_callers`` scoring): reads
+  *definition_path*'s own source directly, finds the class/interface/trait/enum whose NAME equals
+  the definition file's STEM (PSR-4's autoload contract requires this 1:1 filename/classname
+  match, or Composer's autoloader could never locate the class -- the same "public top-level type
+  == filename" convention ``_java_definition_fqn`` relies on, PHP's own equivalent guarantee),
+  computes that type's FQN from the definition file's own ``namespace`` declaration (or the bare
+  name when the definition has no namespace -- the PHP global namespace), then checks whether
+  *file_path*'s source imports that exact FQN via a simple ``use`` statement (alias-insensitive --
+  an alias renames the LOCAL binding, not the imported identity) OR shares the same declared
+  namespace (files in the same namespace see each other's classes without a ``use`` statement,
+  true PHP semantics) OR both files sit in the PHP global namespace (also directly visible,
+  no import needed). Returns ``False`` (demote, never guess) when the definition file's stem does
+  not match any declared type name in it (composer.json could remap this; a mismatch is an
+  honest "cannot confirm", not a hard error) or the FQN is not visible in the importer.
+- The CONFIRMED band inside ``php_references_and_calls`` (fired when a *definition_dirs* set is
+  supplied by ``repo_map``, matching Go's/Java's ``definition_dirs`` seam exactly): a receiver
+  variable's declared type-hint, OR a ``Foo::``/``self::``/``static::`` scope's literal class name,
+  resolves -- via *this file's* ``use``/namespace evidence -- to an FQN whose NAMESPACE portion is
+  a directory-path SUFFIX of one of *definition_dirs* (the real parent directory of the selected
+  definition file(s), already symbol-scoped by ``repo_map`` upstream). This directory-suffix check
+  mirrors ``_java_fqn_package_dir_matches`` exactly, and inherits the SAME honest limitation
+  Java's package check has, made WORSE by PHP's composer-root-prefix convention: a project whose
+  ``composer.json`` maps ``"App\\": "src/"`` (stripping the ``App`` namespace segment from the
+  physical path -- extremely common in Laravel/Symfony-style PSR-4 layouts) will NOT suffix-match
+  even for a genuinely-correct import, because the namespace has one MORE segment than the
+  directory has. This is a deliberate DEMOTE-not-guess trade-off (see the module docstring's
+  opening paragraph): without reading ``composer.json``'s actual autoload map, there is no way to
+  distinguish a root-prefix-stripped PSR-4 layout from a namespace that genuinely does not
+  correspond to any real directory, so this module never fabricates that mapping -- it only
+  confirms when the namespace-to-directory correspondence is directly OBSERVABLE, and leaves every
+  other real cross-file call honestly in the demoted band rather than guessing wrong.
 """
 
 from __future__ import annotations
@@ -438,6 +477,10 @@ _PHP_DEMOTED_CONFIDENCE = 0.6
 _PHP_DEMOTED_PROVENANCE = "php-name-heuristic"
 _PHP_CONFIRMED_CONFIDENCE = 0.9
 _PHP_CONFIRMED_PROVENANCE = "php-infile-type-confirmation"
+# F7 Task 11 wave 2b: same confidence, different provenance -- fires when the receiver/scope's
+# resolved FQN's namespace directory-suffix-matches a supplied `definition_dirs` entry (see the
+# module docstring's "F7 TASK 11 WAVE 2b" section).
+_PHP_CROSS_FILE_CONFIRMED_PROVENANCE = "php-use-namespace-confirmation"
 
 # Type-declaration node kinds whose own body (declaration_list) can directly declare a member --
 # the CONFIRMED band's "owner type" universe. Same set as _PHP_CLASS_LIKE_KINDS above (kept as a
@@ -645,19 +688,186 @@ def _php_enclosing_type_name(node: Any, source_bytes: bytes) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# F7 Task 11 wave 2b: cross-file caller resolution via `use`/namespace evidence -- regex-based (no
+# tree-sitter parser required), mirroring lang_java.py's identical regex-only package/import scan.
+# See the module docstring's "F7 TASK 11 WAVE 2b" section for the full derivation.
+# ---------------------------------------------------------------------------
+
+# `^\s*namespace X;` -- the simple (non-block) namespace-declaration form. `namespace Foo { ... }`
+# block form is not matched -- an accepted, documented gap (rare in modern PSR-4 code, which
+# always uses the simple form); a file using the block form is honestly treated as having no
+# readable namespace declaration (demote, never guess).
+_PHP_NAMESPACE_RE = re.compile(r"^\s*namespace\s+([A-Za-z_][\w\\]*)\s*;", re.MULTILINE)
+
+# `^\s*use X[ as Y];` -- a simple class-import `use` statement, capturing the imported FQN and an
+# optional alias. Deliberately excludes `use function ...`/`use const ...` (function/const
+# imports, not class imports -- see the negative lookahead) via the SAME exclusion
+# `_java_import_specs`'s `is_static` branch performs for Java's static imports. Group-use
+# (`use App\Group\{One, Two};`) and a closure's `use ($capture)` capture clause (unrelated PHP
+# meaning) both naturally fail this pattern (no bare FQN immediately followed by `;`/`as`), so
+# neither is ever misread as a class import -- verified, not assumed: a closure's `use (...)`
+# starts with `(`, outside this pattern's `[A-Za-z_][\w\\]*` character class, and a group-use's
+# FQN prefix is followed by `{`, not `;`/`as`/end-of-match.
+_PHP_USE_RE = re.compile(
+    r"^\s*use\s+(?!function\s|const\s)([A-Za-z_][\w\\]*)(?:\s+as\s+([A-Za-z_]\w*))?\s*;",
+    re.MULTILINE,
+)
+
+
+def _php_namespace_declaration(source: str) -> str | None:
+    match = _PHP_NAMESPACE_RE.search(source)
+    return match.group(1) if match else None
+
+
+def _php_use_specs(source: str) -> list[tuple[str, str | None]]:
+    """Return ``(imported_fqn, alias_or_none)`` pairs from every simple `use` statement in
+    *source* -- see ``_PHP_USE_RE``'s docstring comment for exactly which forms this covers."""
+    return [(match.group(1), match.group(2)) for match in _PHP_USE_RE.finditer(source)]
+
+
+def _php_definition_fqn(definition_path: Path, definition_source: str) -> str | None:
+    """FQN of the class/interface/trait/enum in *definition_path* whose NAME matches the file's
+    own stem, or ``None`` when no such declaration is found (fail closed, never guess -- see the
+    module docstring's "F7 TASK 11 WAVE 2b" section for the PSR-4 filename/classname rationale).
+    """
+    stem = definition_path.stem
+    if not _is_clean_symbol_name(stem):
+        return None
+    if not re.search(
+        r"\b(?:class|interface|trait|enum)\s+" + re.escape(stem) + r"\b", definition_source
+    ):
+        return None
+    namespace = _php_namespace_declaration(definition_source)
+    return f"{namespace}\\{stem}" if namespace else stem
+
+
+def php_file_imports_symbol_from_definition(
+    file_path: Path,
+    source: str,
+    symbol: str,
+    definition_path: str,
+    repo_root: Path | str | None = None,
+) -> bool:
+    """True iff *file_path* can see *symbol*'s definition via PHP namespace/`use` evidence.
+
+    Requires the definition file's declared type name to match its own filename stem (PSR-4's
+    autoload contract). *symbol* is unused -- like Java, PHP visibility here is type/namespace
+    scoped, not member-name scoped (member-name-specific confirmation lives in
+    ``php_references_and_calls``'s in-file CONFIRMED band). *repo_root* is accepted for
+    ``LanguageSpec`` signature parity with Go/Java; resolution is source-text local and does not
+    scan the repo or read `composer.json`.
+    """
+    del repo_root  # signature parity; unused by design
+    del symbol  # PHP visibility is type/namespace scoped; member name is not part of import proof
+    try:
+        definition = Path(definition_path).expanduser().resolve()
+    except OSError:
+        return False
+    try:
+        definition_source = definition.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+
+    definition_fqn = _php_definition_fqn(definition, definition_source)
+    if definition_fqn is None:
+        return False
+    definition_namespace = definition_fqn.rsplit("\\", 1)[0] if "\\" in definition_fqn else None
+
+    importer_namespace = _php_namespace_declaration(source)
+    if importer_namespace is not None and importer_namespace == definition_namespace:
+        return True
+    if importer_namespace is None and definition_namespace is None:
+        # Both files sit in the PHP global namespace -- directly visible to each other, no `use`
+        # statement required (true PHP semantics, not a guess).
+        return True
+
+    for imported_fqn, _alias in _php_use_specs(source):
+        if imported_fqn == definition_fqn:
+            return True
+    return False
+
+
+def _php_fqns_for_qualifier(source: str, qualifier: str) -> set[str]:
+    """FQNs *qualifier* (a bare class name or alias as it appears in code, e.g. ``Foo`` in
+    ``Foo::bar()`` or ``QAlias`` in ``QAlias::bar()``) could denote in *source*, via: (1) an
+    aliased ``use X as qualifier;`` -- exact alias match; (2) an unaliased ``use X;`` whose FQN's
+    trailing segment equals *qualifier*; (3) *source*'s own declared namespace (a bare same-
+    namespace reference needs no ``use``), or the PHP global namespace when *source* declares
+    none. Mirrors ``_java_type_fqns_visible_in_file``'s shape with PHP's own `use`/alias mechanism.
+    """
+    if not qualifier or not _is_clean_symbol_name(qualifier):
+        return set()
+    fqns: set[str] = set()
+    for imported_fqn, alias in _php_use_specs(source):
+        if alias is not None:
+            if alias == qualifier:
+                fqns.add(imported_fqn)
+            continue
+        if imported_fqn.rsplit("\\", 1)[-1] == qualifier:
+            fqns.add(imported_fqn)
+    namespace = _php_namespace_declaration(source)
+    fqns.add(f"{namespace}\\{qualifier}" if namespace else qualifier)
+    return fqns
+
+
+def _php_fqn_namespace_dir_matches(fqn: str, definition_dir: Path) -> bool:
+    if "\\" not in fqn:
+        return False
+    namespace_parts = tuple(fqn.rsplit("\\", 1)[0].split("\\"))
+    dir_parts = definition_dir.parts
+    return (
+        len(dir_parts) >= len(namespace_parts)
+        and dir_parts[-len(namespace_parts) :] == namespace_parts
+    )
+
+
+def _php_type_resolves_into_definition_dirs(
+    qualifier: str,
+    source: str,
+    definition_dirs: frozenset[str],
+) -> bool:
+    if not definition_dirs:
+        return False
+    fqns = _php_fqns_for_qualifier(source, qualifier)
+    if not fqns:
+        return False
+    for fqn in fqns:
+        if fqn.rsplit("\\", 1)[-1] != qualifier:
+            continue
+        for directory in definition_dirs:
+            try:
+                resolved_dir = Path(directory).expanduser().resolve()
+            except OSError:
+                continue
+            if _php_fqn_namespace_dir_matches(fqn, resolved_dir):
+                return True
+    return False
+
+
 def php_references_and_calls(
-    path: Path, symbol: str
+    path: Path,
+    symbol: str,
+    repo_root: Path | str | None = None,
+    *,
+    definition_dirs: frozenset[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """In-file AST reference/call rows for *symbol* in *path* -- see the module docstring's
-    "TASK 10C" section for the full AST-shape mapping. Scope: single-file only, no cross-file
-    resolution (mirrors ``lang_java.java_references_and_calls``/
-    ``lang_csharp.csharp_references_and_calls`` exactly). Owns its own parser factory
+    "TASK 10C" section for the full AST-shape mapping. Owns its own parser factory
     (``_php_parser()``, defined above), matching ``lang_csharp.py``'s shape rather than
     ``lang_java.py``'s externally-built-parser shape -- PHP already had its own grammar-probing
     factory before Task 10C (needed by ``php_imports_and_symbols``), so a second factory here
     would create two sources of truth for "is the PHP grammar installed"; this function reuses
     the SAME ``_php_parser()`` every other function in this module already calls.
+
+    As of F7 Task 11 wave 2b: when *definition_dirs* is supplied (``repo_map`` always supplies it
+    from the selected definition's directory), a receiver/scope whose resolved FQN's namespace
+    directory-suffix-matches one of those directories earns the cross-file CONFIRMED band -- see
+    the module docstring's "F7 TASK 11 WAVE 2b" section. *repo_root* is accepted for registry-
+    adapter signature parity (Go F25 shape); unused by the PHP resolver, which is source-text and
+    ``definition_dirs``-local.
     """
+    del repo_root  # signature parity with the uniform registry adapter; unused by this resolver
     if path.suffix != ".php":
         return [], []
 
@@ -731,12 +941,70 @@ def php_references_and_calls(
                 return enclosing is not None and enclosing in owner_types
         return False
 
+    def _cross_file_receiver_confirmation(object_node: Any | None) -> bool:
+        """F7 Task 11 wave 2b: True when *object_node* (a ``variable_name``) has a type-hint
+        readable from THIS file whose resolved FQN's namespace directory-suffix-matches a
+        ``definition_dirs`` entry -- see ``_php_type_resolves_into_definition_dirs``. A bare
+        ``$this`` never resolves this way (its type IS the enclosing file's own type, already
+        covered by the in-file band above, never a cross-file concern)."""
+        if object_node is None or not definition_dirs or object_node.type != "variable_name":
+            return False
+        bare_name = _php_variable_bare_text(object_node, source_bytes)
+        if bare_name == "this":
+            return False
+        for type_name in declared_types.get(bare_name, set()):
+            if _php_type_resolves_into_definition_dirs(type_name, source, definition_dirs):
+                return True
+        return False
+
+    def _cross_file_scope_confirmation(scope_node: Any | None) -> bool:
+        """F7 Task 11 wave 2b: True when *scope_node* is a literal class ``name``/``qualified_name``
+        (``Foo::``) whose resolved FQN's namespace directory-suffix-matches a ``definition_dirs``
+        entry. ``self``/``static``/``parent`` never resolve this way (they name the enclosing
+        file's own type, never a cross-file concern)."""
+        if (
+            scope_node is None
+            or not definition_dirs
+            or scope_node.type
+            not in (
+                "name",
+                "qualified_name",
+            )
+        ):
+            return False
+        class_name = _php_qualified_or_name_text(scope_node, source_bytes)
+        if class_name is None:
+            return False
+        return _php_type_resolves_into_definition_dirs(class_name, source, definition_dirs)
+
+    def _member_confirmation(object_node: Any | None, owner_types: set[str]) -> tuple[bool, bool]:
+        if _receiver_confirmation(object_node, owner_types):
+            return True, False
+        if _cross_file_receiver_confirmation(object_node):
+            return True, True
+        return False, False
+
+    def _scoped_confirmation(scope_node: Any | None, owner_types: set[str]) -> tuple[bool, bool]:
+        if _scope_confirmation(scope_node, owner_types):
+            return True, False
+        if _cross_file_scope_confirmation(scope_node):
+            return True, True
+        return False, False
+
     def _emit(
-        bucket: list[dict[str, Any]], node: Any, *, kind: str, ref_kind: str, confirmed: bool
+        bucket: list[dict[str, Any]],
+        node: Any,
+        *,
+        kind: str,
+        ref_kind: str,
+        confirmed: bool,
+        cross_file: bool = False,
     ) -> None:
         if confirmed:
             confidence = _PHP_CONFIRMED_CONFIDENCE
-            provenance = _PHP_CONFIRMED_PROVENANCE
+            provenance = (
+                _PHP_CROSS_FILE_CONFIRMED_PROVENANCE if cross_file else _PHP_CONFIRMED_PROVENANCE
+            )
         else:
             confidence = _PHP_DEMOTED_CONFIDENCE
             provenance = _PHP_DEMOTED_PROVENANCE
@@ -794,7 +1062,7 @@ def php_references_and_calls(
                 name_field = node.child_by_field_name("name")
                 if name_field is not None and _node_text(name_field) == symbol:
                     claimed_node_ids.add((name_field.start_byte, name_field.end_byte))
-                    confirmed = _receiver_confirmation(
+                    confirmed, cross_file = _member_confirmation(
                         node.child_by_field_name("object"), method_owner_types
                     )
                     _emit(
@@ -803,13 +1071,21 @@ def php_references_and_calls(
                         kind="reference",
                         ref_kind="call",
                         confirmed=confirmed,
+                        cross_file=cross_file,
                     )
-                    _emit(calls, name_field, kind="call", ref_kind="call", confirmed=confirmed)
+                    _emit(
+                        calls,
+                        name_field,
+                        kind="call",
+                        ref_kind="call",
+                        confirmed=confirmed,
+                        cross_file=cross_file,
+                    )
             elif node_type == "scoped_call_expression":
                 name_field = node.child_by_field_name("name")
                 if name_field is not None and _node_text(name_field) == symbol:
                     claimed_node_ids.add((name_field.start_byte, name_field.end_byte))
-                    confirmed = _scope_confirmation(
+                    confirmed, cross_file = _scoped_confirmation(
                         node.child_by_field_name("scope"), method_owner_types
                     )
                     _emit(
@@ -818,8 +1094,16 @@ def php_references_and_calls(
                         kind="reference",
                         ref_kind="call",
                         confirmed=confirmed,
+                        cross_file=cross_file,
                     )
-                    _emit(calls, name_field, kind="call", ref_kind="call", confirmed=confirmed)
+                    _emit(
+                        calls,
+                        name_field,
+                        kind="call",
+                        ref_kind="call",
+                        confirmed=confirmed,
+                        cross_file=cross_file,
+                    )
             elif node_type == "object_creation_expression":
                 type_node = _php_object_creation_type_node(node)
                 if type_node is not None:
@@ -849,7 +1133,7 @@ def php_references_and_calls(
                 name_field = node.child_by_field_name("name")
                 if name_field is not None and _node_text(name_field) == symbol:
                     claimed_node_ids.add((name_field.start_byte, name_field.end_byte))
-                    confirmed = _receiver_confirmation(
+                    confirmed, cross_file = _member_confirmation(
                         node.child_by_field_name("object"), field_owner_types
                     )
                     _emit(
@@ -858,6 +1142,7 @@ def php_references_and_calls(
                         kind="reference",
                         ref_kind="field",
                         confirmed=confirmed,
+                        cross_file=cross_file,
                     )
             elif node_type == "scoped_property_access_expression":
                 name_field = node.child_by_field_name("name")
@@ -865,7 +1150,7 @@ def php_references_and_calls(
                     bare_name = _php_variable_bare_text(name_field, source_bytes)
                     if bare_name == symbol:
                         claimed_node_ids.add((name_field.start_byte, name_field.end_byte))
-                        confirmed = _scope_confirmation(
+                        confirmed, cross_file = _scoped_confirmation(
                             node.child_by_field_name("scope"), field_owner_types
                         )
                         _emit(
@@ -874,6 +1159,7 @@ def php_references_and_calls(
                             kind="reference",
                             ref_kind="field",
                             confirmed=confirmed,
+                            cross_file=cross_file,
                         )
 
             stack.extend(reversed(node.children))
@@ -926,6 +1212,7 @@ def php_references_and_calls(
 
 
 __all__ = [
+    "php_file_imports_symbol_from_definition",
     "php_imports_and_symbols",
     "php_parser_symbol_sources",
     "php_references_and_calls",

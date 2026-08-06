@@ -6409,13 +6409,15 @@ def _php_references_and_calls_for_registry(
     *,
     definition_dirs: frozenset[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    # Task 10C: in-file AST extraction only -- no cross-file import resolution yet, so
-    # repo_root/definition_dirs are part of the uniform registry adapter signature (Go F25) but
-    # unused here, same as java's/csharp's own adapters above. lang_php.py already owns its whole
-    # extraction pipeline including `_php_parser()` (matching lang_go.py's/lang_csharp.py's
-    # shape -- PHP's parser factory predates Task 10C, built for php_imports_and_symbols), so this
-    # adapter forwards path/symbol only.
-    return lang_php.php_references_and_calls(path, symbol)
+    # F7 Task 11 wave 2b: forward definition_dirs so a PHP receiver/scope whose `use`/namespace-
+    # resolved FQN directory-suffix-matches the selected definition's directory earns the
+    # cross-file confirmed band (mirrors Java's Task 11A adapter above). lang_php.py already owns
+    # its whole extraction pipeline including `_php_parser()` (matching lang_go.py's/
+    # lang_csharp.py's shape -- PHP's parser factory predates Task 10C, built for
+    # php_imports_and_symbols), so this adapter forwards path/symbol/repo_root/definition_dirs.
+    return lang_php.php_references_and_calls(
+        path, symbol, repo_root, definition_dirs=definition_dirs
+    )
 
 
 def _c_references_and_calls_for_registry(
@@ -6660,13 +6662,17 @@ lang_registry.register_language(
 # `build_symbol_source_from_map` dispatch sites below. references_and_calls now points at
 # lang_php.php_references_and_calls (Task 10C: IN-FILE AST reference/call extraction, promoting
 # PHP from the foundational tier to the parser-backed-refs-callers tier, mirroring Task 10A's Java
-# landing and Task 10B's C# landing) via the registry adapter above. The remaining cross-file
-# caller-graph fields (file_imports_symbol_from_definition / import_update_target / repo-root
-# context priming for a future PSR-4/composer.json resolver) stay None, deferred to a follow-up --
-# same shape as Java's/C#'s own gap, so `tg refs`/`tg callers`/`tg blast-radius` on a PHP symbol
-# still fall through to the honest `resolution_gaps` reverse-import disclosure (never a crash,
-# never a fabricated cross-file match) rather than the generic `_regex_references_and_calls` text
-# heuristic, which PHP never reached anyway (no regex fallback -- see below).
+# landing and Task 10B's C# landing) via the registry adapter above.
+# F7 Task 11 wave 2b: file_imports_symbol_from_definition is now wired to
+# lang_php.php_file_imports_symbol_from_definition (regex-based `use`/namespace evidence -- see
+# that module's "F7 TASK 11 WAVE 2b" docstring section), and references_and_calls's confirmed band
+# elevates a receiver/scope whose resolved FQN directory-suffix-matches the selected definition's
+# directory. import_update_target / prime_repo_context (a future PSR-4/composer.json autoload-map
+# resolver) stay None, deferred to a follow-up -- same shape as Java's/C#'s own remaining gap, so
+# `tg refs`/`tg callers`/`tg blast-radius` on a PHP symbol still fall through to the honest
+# `resolution_gaps` reverse-import disclosure (never a crash, never a fabricated cross-file match)
+# rather than the generic `_regex_references_and_calls` text heuristic, which PHP never reached
+# anyway (no regex fallback -- see below).
 # _language_coverage_gaps_for_universe already treats import_update_target=None as an honest
 # resolution_gaps entry (see the "audit #81 #4" comment on that function, and lang_go.py's own
 # import_update_target=None precedent), so `tg callers`/`tg blast-radius` stay honest about PHP's
@@ -6693,7 +6699,7 @@ lang_registry.register_language(
         extract_imports_and_symbols=None,
         references_and_calls=_php_references_and_calls_for_registry,
         provider_alias_calls=None,
-        file_imports_symbol_from_definition=None,
+        file_imports_symbol_from_definition=lang_php.php_file_imports_symbol_from_definition,
         import_update_target=None,
         prime_repo_context=None,
         classify_ref_kind=None,
