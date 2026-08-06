@@ -112,13 +112,16 @@ def test_php_is_registered_with_tree_sitter_provenance() -> None:
     # fallback when the grammar is missing.
     assert spec.provenance_when_missing == "grammar-missing"
     assert spec.parser_for_path is not None
-    # Task 10C wired in-file references_and_calls (lang_php.php_references_and_calls). The
-    # remaining cross-file caller-graph fields stay DEFERRED (see lang_php.py's module
+    # Task 10C wired in-file references_and_calls (lang_php.php_references_and_calls). F7 Task 11
+    # wave 2b wires file_imports_symbol_from_definition (regex-based `use`/namespace resolver).
+    # The remaining cross-file caller-graph fields stay DEFERRED (see lang_php.py's module
     # docstring) -- pin this explicitly so a future PR that wires one of these in must
     # consciously update this test rather than silently drift.
     assert spec.references_and_calls is not None
     assert spec.provider_alias_calls is None
-    assert spec.file_imports_symbol_from_definition is None
+    assert spec.file_imports_symbol_from_definition is (
+        lang_php.php_file_imports_symbol_from_definition
+    )
     assert spec.import_update_target is None
     assert spec.prime_repo_context is None
     assert spec.classify_ref_kind is None
