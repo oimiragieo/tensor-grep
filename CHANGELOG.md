@@ -1,6 +1,204 @@
 # CHANGELOG
 
 
+## v1.110.0 (2026-08-06)
+
+### Bug Fixes
+
+- **cli**: Workspace-root refuse uses workspace_root_refused
+  ([#956](https://github.com/oimiragieo/tensor-grep/pull/956),
+  [`fdaf962`](https://github.com/oimiragieo/tensor-grep/commit/fdaf962e45956caa710c354718d50b2e78a2dd41))
+
+* fix(cli): workspace-root refuse uses workspace_root_refused class/code
+
+_emit_broad_scan_refusal gains incomplete_reason_class and error_code params; the multi-project
+  workspace guard opts into workspace_root_refused so agents do not confuse a parent refuse with
+  file-cap truncation.
+
+* fix(cli): emit budget_remediable on broad-scan refuse envelopes
+
+### Documentation
+
+- Phase 0+1 launch receipt + TASK_BOARD reconcile
+  ([#961](https://github.com/oimiragieo/tensor-grep/pull/961),
+  [`a6ceb7a`](https://github.com/oimiragieo/tensor-grep/commit/a6ceb7a27ec1bc4ae5f7cc0ebf978a354e20856e))
+
+* docs: Phase 0+1 launch receipt + TASK_BOARD reconcile
+
+Stamp the merged #951/#952/#953/#955/#956 set, mark F7 IN_FLIGHT, update the triage table, and
+  record the workspace_root_refused dogfood on the multi-project parent.
+
+* docs: Packet F EXTERNAL/Phase 0+1 receipt + IN FLIGHT reconcile
+
+Name honest shipped claims, keep Phase 2 (edit-ready/verify-edit/workspace) unavailable, leave CEO
+  gates untouched with recommendation packets, and derive IN FLIGHT from live gh pr list (#960
+  closed; #911 already merged).
+
+- Retire F10 MaxSim DROP and DD-004 typed-boundary with receipts
+  ([#953](https://github.com/oimiragieo/tensor-grep/pull/953),
+  [`a1d14ee`](https://github.com/oimiragieo/tensor-grep/commit/a1d14eeb6bb9a7b7b8dcdff05a91089225c5bd45))
+
+### Features
+
+- **lang-c,lang-cpp**: Cross-file caller resolution via include-path engine (F7 Task 11 wave 3)
+  ([#957](https://github.com/oimiragieo/tensor-grep/pull/957),
+  [`9f854d4`](https://github.com/oimiragieo/tensor-grep/commit/9f854d49c7625ec19a5c469f43544b980a0cddff))
+
+* feat(lang-c,lang-cpp): cross-file caller resolution via include-path engine (F7 Task 11 wave 3)
+
+Wire file_imports_symbol_from_definition for C and C++ through a shared #include resolver so
+  blast_radius_floor binds cross-file callers to the selected definition, matching the Java wave 1
+  seam.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+
+* style: ruff-format F7 Task 11 wave 3 C/C++ files
+
+* style: reformat C/C++ wave-3 files with ruff 0.15.20
+
+The prior style commit used a newer ruff that diverged from the CI pin (ruff==0.15.20). Re-run
+  format --preview with the pinned version so the Formatting & Linting gate matches.
+
+* test: audit lang_c_cpp_include fail-closed OSError sites into silent-loss ratchet
+
+The include-path confirmation helpers skip unreadable roots/siblings by design (return unresolved /
+  False, never fabricate a path). Pin the two detector hits so CI stops treating that fail-closed
+  shape as a new silent-loss regression.
+
+---------
+
+- **lang-csharp**: Cross-file caller resolution (F7 Task 11 wave 2)
+  ([#955](https://github.com/oimiragieo/tensor-grep/pull/955),
+  [`e99dc2f`](https://github.com/oimiragieo/tensor-grep/commit/e99dc2fce2e9ccd7961964ba4a77f1d6c6bbba26))
+
+* feat(lang-csharp): cross-file caller resolution via namespace/using confirmation (F7 Task 11 wave
+  2)
+
+Wire file_imports_symbol_from_definition for C# and elevate cross-file callers to the confirmed band
+  when a typed receiver resolves through namespace or using evidence into the selected definition
+  directory.
+
+* test(lang-csharp): harden F7 wave 2 fixture and registry pins
+
+Align the cross-file fixture with multi-segment namespaces, add fail-closed demote arms, and pin
+  LanguageSpec.file_imports to the new resolver.
+
+- **lang-php**: Cross-file caller resolution via use/namespace confirmation (F7 Task 11 wave 2)
+  ([#952](https://github.com/oimiragieo/tensor-grep/pull/952),
+  [`0476d17`](https://github.com/oimiragieo/tensor-grep/commit/0476d179ff622e600ab5209cbf6fe0996b54d730))
+
+Wire file_imports_symbol_from_definition for PHP and elevate cross-file callers to the confirmed
+  band when a typed receiver resolves through use or namespace evidence into the selected definition
+  directory.
+
+### Testing
+
+- Gate the backlog against contradicting itself + the parsed C# re-measure
+  ([#951](https://github.com/oimiragieo/tensor-grep/pull/951),
+  [`999dac8`](https://github.com/oimiragieo/tensor-grep/commit/999dac85b73aef270df0db7d1882d0bacd7a87e6))
+
+* docs: the parsed C# re-measure the council conditioned F7 Task 11 on
+
+The prior C++ number (63.1% of call sites invisible to an in-file-only extractor) was explicitly
+  labelled an upper bound with known regex inflation, and the disposition required parsing call
+  sites and repeating on another language before waves 2-3 were sized.
+
+Ran it on 70 real C# files (winsw, four projects, 0 parse failures) using the product's own
+  extractors rather than a regex, so prototypes, comments and strings are excluded by construction.
+
+Parsing did not shrink the number -- it came in HIGHER (68.4% vs 63.1%), on a different language and
+  an unrelated codebase, with the 46% symbol share reproducing to the percentage point. Regex
+  inflation was not what carried the C++ result.
+
+Java is recorded as a GAP, not a result: the largest Java corpus in this workspace is 3 files, which
+  cannot measure cross-file share. Wave 1 (#950) ships on the C++/C# direction plus Java's own
+  import semantics.
+
+Also records the four instrument failures that produced believable zeros before any number was real
+  -- a swallowed TypeError, an empty registry, a wrong name key, and a gh filter testing == null
+  against "".
+
+* docs: reconcile four rows that contradicted their own receipts
+
+#859 was recorded SHIPPED with full receipts (#937/#945/#946/#947, all merged) AND simultaneously
+  listed as Active/buildable 24 lines below, plus a "PARTIALLY DONE" row and a "Ready (with #858)"
+  row elsewhere in the same file. Three stale spots against one correct one.
+
+No gate we own compares a document to ITSELF, so this survived a day. Struck through rather than
+  deleted so the contradiction stays legible.
+
+Also flags an UNRESOLVED contradiction rather than silently picking a side: #89/#90 are called "now
+  READY, not environment-blocked" in one section and blocked-needs-cargo in another. Both cannot be
+  true. The row now states the likely reconciliation (reproducing needs WSL; the fix may be
+  pure-Python) and defers to a dispatched premise check instead of asserting an answer I do not
+  have.
+
+* test: gate the backlog against contradicting itself, and fix six rows
+
+The Active/buildable list offered ten rows as READY. The reconcile table twenty lines above it
+  recorded six of them SHIPPED or BLOCKED.
+
+Two were worse than stale: CPU-BACKEND and REF-CALL-REGISTRY were being offered as buildable work
+  with their own completion receipts in the same document. A session trusting the queue would have
+  rebuilt finished code. Only F7 Task 11 is genuinely active.
+
+No gate here compares a document to ITSELF, which is why this survived -- every citation in the
+  stale rows resolves perfectly, so anchor-checking and drift-checking gates are blind to it by
+  construction.
+
+The gate checks ONE property (an item recorded SHIPPED must not also be offered as buildable) rather
+  than trying to validate the document, and ships with a positive control: if either section fails
+  to parse, the test fails rather than passing vacuously on two empty sets.
+
+Strikethrough is the escape hatch, so corrections stay legible instead of being deleted.
+
+Mutation-proved: re-offering CPU-BACKEND un-struck turns it RED naming the item; reverting restores
+  green with BACKLOG.md byte-identical (360180b8... in both arms).
+
+* docs: reconcile the board to v1.108.2 -- margin was exactly zero
+
+The freshness gate reads the board stamp as an ordinal distance from the newest CHANGELOG release,
+  tolerance 5. The stamp sat at post-v1.106.0, which is exactly 5 behind v1.108.2: margin ZERO. PR
+  #950 is a feat: and would have published v1.109.0, taking it to 6 and reddening main on a test
+  that has nothing to do with #950's content.
+
+Reconciled genuinely rather than re-stamped: records the thirteen PRs that shipped since the
+  previous stamp, and narrows the headline from "F7 CAMPAIGN COMPLETE" to "F7 Task 10 complete" --
+  Task 11 is the live work, and calling the campaign complete is what invites a session to skip it.
+
+Auto-stamping at release time stays REJECTED. It would make `behind` identically 0 on every commit
+  that reaches CI, and a permanently-green freshness check reads to every future session as evidence
+  the board IS reconciled. The gate exists to force this reconcile.
+
+Also fixes a verification claim I nearly shipped: I carried the previous stamp's "PyPI verified via
+  a clean uvx install" wording onto v1.108.2 without running it. What I actually ran was the version
+  endpoint, with a negative control (1.108.2 -> HTTP 200, bogus 1.999.999 -> 404, so a 200
+  discriminates). The stamp now says which command produced it and states that the stronger install
+  check was NOT re-run.
+
+Gate re-read with its own extractor, not a hand-rolled regex: exactly one bold post-** stamp on the
+  board, v1.108.2, 0 behind, margin back to 5.
+
+* docs: triage the v1.108.2 external dogfood -- 2 of 7 asks already answered
+
+Second external run on gotcontext-saddle, seven releases on. Verdict is CUJ stable across 1.101.31
+  -> 1.108.2 with the agent contract unchanged.
+
+Triaged rather than queued verbatim, which is the point: of seven requested features, caller-graph
+  parity for Java/C#/C/C++/PHP is the campaign already in flight (Java merged as #950, C#/PHP
+  building), and "ship or forever-drop MaxSim" has a measured decisive negative sitting behind it --
+  the reporter observing no install path from OUTSIDE is evidence for retiring, not for building.
+
+Three reported items are already-settled contract decisions, not bugs: bare-search exit 1 (retired
+  as #22 -- exit 2 would make "searched correctly, found nothing" indistinguishable from "could not
+  search"), anonymous --claim (retired as F2), and GPU acceleration (CEO-gated #169).
+
+One is NEW and real: the multi-project parent refuse reports the generic `scan_limit`, so a consumer
+  cannot tell a workspace-root refusal from a file-cap truncation -- different outcomes, different
+  correct retry. Tasked, with a note to enumerate the consumers that switch on the class before
+  adding one.
+
+
 ## v1.109.0 (2026-08-06)
 
 ### Documentation
