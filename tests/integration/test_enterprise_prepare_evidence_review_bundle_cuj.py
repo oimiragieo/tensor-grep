@@ -38,11 +38,7 @@ _BILLING_MODULE = (
     '    account["balance"] += fee\n'
     "    return account\n"
 )
-_PYPROJECT = (
-    "[project]\n"
-    'name = "billing-fixture"\n'
-    'version = "0.1.0"\n'
-)
+_PYPROJECT = '[project]\nname = "billing-fixture"\nversion = "0.1.0"\n'
 
 
 def _run_tg(
