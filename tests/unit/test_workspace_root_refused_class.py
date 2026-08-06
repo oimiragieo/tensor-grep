@@ -48,6 +48,7 @@ def test_workspace_root_json_refuse_uses_workspace_root_refused_class_and_code(
     payload = json.loads(result.stdout[payload_start:])
     assert payload["incomplete_reason_class"] == "workspace_root_refused"
     assert payload["error"]["code"] == "workspace_root_refused"
+    assert payload["budget_remediable"] is False
     assert payload["result_incomplete"] is True
     assert payload["total_matches"] == 0
 
@@ -67,3 +68,5 @@ def test_emit_defaults_remain_scan_limit_for_non_workspace_ceilings(
     payload = json.loads(out)
     assert payload["incomplete_reason_class"] == "scan_limit"
     assert payload["error"]["code"] == "broad_scan_refused"
+    # File-cap / broad-root ceilings remain budget-remediable; workspace-root is not.
+    assert payload["budget_remediable"] is True

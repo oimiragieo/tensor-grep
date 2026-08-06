@@ -5364,8 +5364,13 @@ def _emit_broad_scan_refusal(
 
     `total_matches: 0` is safe here ONLY because it travels with those flags: the zero is qualified
     on the same line it appears, which is the difference between a count and an absence claim.
+
+    ``budget_remediable`` is derived from the shared allow-list in ``incompleteness.py`` so a
+    ``workspace_root_refused`` payload cannot be mistaken for a file-cap that wants
+    ``--max-repo-files`` raised (enterprise launch W2.a / dogfood ask).
     """
     from tensor_grep.cli.formatters.json_fmt import JSON_OUTPUT_VERSION
+    from tensor_grep.cli.incompleteness import budget_remediable as _budget_remediable
 
     typer.echo(message, err=True)
     if not json_output:
@@ -5382,6 +5387,7 @@ def _emit_broad_scan_refusal(
                 "result_incomplete": True,
                 "incomplete_reason": message,
                 "incomplete_reason_class": incomplete_reason_class,
+                "budget_remediable": _budget_remediable(incomplete_reason_class),
                 "error": {
                     "code": error_code,
                     "message": message,
