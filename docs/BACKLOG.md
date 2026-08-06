@@ -106,18 +106,34 @@ demand evidence. That is a measured state, not a stall.
   half is now reproducibly broken and `READY`: a raw `/mnt/c/...` file produced an unreadable-path
   warning plus false clear/zero matches, while the translated Windows-path control found six matches.
   Owner: the same amended typed-path program as #89, with scan-specific false-clear tests.
-- **#859** — class-level atomic-writer census/fix, Task 3. A codemap-only regression is not a class
-  ratchet.
-- **MCP-SURFACE** — MCP surface disclosure, Task 4.
-- **CPU-BACKEND** — Rust/Python backend error propagation, Task 5.
-- **F6** — edit-verification service and public CLI, Tasks 6–7.
-- **F5** — edit-ready plus claims fence, Task 8.
-- **REF-CALL-REGISTRY** — prepare-service extraction, Task 9.
-- **F7** — language registry and cross-file resolution, Tasks 10–11.
-- **F8** — workspace service and CLI, Tasks 12–13.
+- ~~**#859** — class-level atomic-writer census/fix, Task 3.~~ **SHIPPED 2026-08-05, removed from
+  this queue** — see the receipt row above (`#937` widened the census 3 -> 41 modules, `#945`
+  classified all 16 violating identities, `#946` closed the download TOCTOU, `#947` retired the
+  residual; all four MERGED). This row contradicted its own receipt row 24 lines above it for a full
+  day. Left struck through rather than deleted so the contradiction is legible.
+- **F7** — cross-file resolution, **Task 11 only**. Task 10 (language registry) SHIPPED in five
+  waves. Task 11 is IN_FLIGHT: wave 1 Java = PR #950, wave 2 C# dispatched, waves for C/C++ follow.
+- ~~**MCP-SURFACE** — Task 4.~~ **BLOCKED on Task 2C**, not buildable: Task 4 bumps the MCP contract
+  `1.8.0 -> 1.9.0` and the live value is `1.7.0`. Building it first bumps from a version that does
+  not exist.
+- ~~**CPU-BACKEND** — Task 5.~~ **SHIPPED** (#925 plus the `invert_match` retry fix) — see receipt row.
+- ~~**REF-CALL-REGISTRY** — Task 9.~~ **SHIPPED** — the dispatch ladders fell out of the F7 campaign;
+  the Step 2 guard shipped in #940.
+- ~~**F6** — Tasks 6–7.~~ **Step 0 SHIPPED (#939); the rest is multi-week**, not a ready row.
+- ~~**F5** — Task 8.~~ **Step 2 SHIPPED (#943); Steps 3-5 BLOCKED** on `rust_core/**` + `tests/e2e/**`.
+- ~~**F8** — Tasks 12–13.~~ **BLOCKED** on `rust_core/src/main.rs` + the e2e routing suite.
+- **#89 / #90** — path-domain defect. **State disputed inside this file**; see the dependency-map row.
+  A premise-checked build task was dispatched 2026-08-05 to settle it.
 
-Every row above starts `READY`. Its first draft implementation PR moves it to `IN_FLIGHT` with the
-real PR number; only a separate post-merge closure change may mark it `SHIPPED`.
+**CORRECTED 2026-08-05.** This list previously presented all ten rows as `READY`, while the
+reconcile table 20 lines above recorded six of them SHIPPED or BLOCKED. Two rows — CPU-BACKEND and
+REF-CALL-REGISTRY — were listed as buildable work with their own completion receipts in the same
+document. A session trusting this list would have rebuilt finished code. Struck through rather than
+deleted so the drift stays legible.
+
+A row here is `READY` only if the reconcile table does not record it SHIPPED or BLOCKED. Its first
+draft implementation PR moves it to `IN_FLIGHT` with the real PR number; only a separate post-merge
+closure change may mark it `SHIPPED`.
 
 ### CEO-gated — exactly five
 
@@ -584,6 +600,34 @@ Release done (safe once /simple lists it). A run `in_progress` on "Python Semant
 wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while >5 PRs undrained.**
 
 ---
+
+## ⭐ EXTERNAL DOGFOOD — v1.108.2 on gotcontext-saddle (2026-08-05)
+
+Second external run on the same host, seven releases on from the 2026-08-02 one below. **Verdict:
+CUJ stable across a big version jump (1.101.31 -> 1.108.2); the core agent contract is unchanged.**
+Artifact: `/tmp/tg-dogfood-11082.json` on that host. Skills stamped 1.108.2.
+
+Confirmed working: symbol ladder / blast (1.0 + mermaid) / imports / importers; orient / map / docs;
+`agent` scoped + lexical + root `--deadline 90` (conf 0.9, root ~58s non-partial); truncation
+hard-stop (conf 0.72 + `ask.required` + exit 2); `prepare --out/--claim` (~10s); `route-test`
+agreement details; ledger Slice 1 + Slice 2; `evidence emit/verify` (`checks.digest_valid`); bare
+`--json` search re-verifying `path_was_defaulted` + `scope_note`; GPU honesty; doctor autostart.
+
+### Triage — what is NEW versus already-decided
+
+| reported | disposition | receipt |
+|---|---|---|
+| **Parent-refuse class is generic `scan_limit`** — wants `workspace_root_refused` so agents do not confuse a refusal with file-cap truncation | **NEW, REAL, AI-doable** | four classes exist today (`deadline`, `scan_limit`, `timeout`, `unreadable_path`); a refusal to scan a workspace root and a cap-truncated scan are genuinely different consumer outcomes and currently share one class. The code already carries a comment requiring an `incomplete_reason_class` mapping decision before a new cause ships. Task created. |
+| **Caller-graph parity for Java/C#/C/C++/PHP** | **ALREADY IN FLIGHT** — independent confirmation of F7 Task 11 | Java shipped as **PR #950** (merged 2026-08-05). C# and PHP building; C/C++ queued. Sized by the parsed C# re-measure in PR #951. |
+| **Ship or forever-drop MaxSim** | **DROP is the measured answer; needs an explicit retirement receipt** | the MaxSim late-rerank bet was measured a DECISIVE NEGATIVE and is banked as such. F10 is `DEMAND_GATED` pending exactly this: a caller/installability census, then retire if unreachable. The reporter observing "no install path" from outside is evidence for retiring rather than shipping. Task created. |
+| Bare search exits 1, not 2 | **BY DESIGN — already retired as #22** | contract: exit 0 = complete with matches, exit 1 = complete with NO match, exit 2 = incomplete. The request (exit 2 + `missing_explicit_path`) is a CONTRACT CHANGE, not a bug fix — it would make "searched correctly, found nothing" indistinguishable from "could not search". Reopening needs an argument against that collapse. |
+| Anonymous `--claim` still allowed (hint only) | **BY DESIGN — already retired as F2** | legacy anonymous-agent compatibility deliberately retains the sentinel; reopen only with a caller-supplied stable identity contract and migration plan. |
+| GPU non-accelerative; `calibrate` exit 2 | **CEO-GATED (#169)** | the only mandatory financial stop; physical GPU proof environment or spend. |
+| No fail-closed `edit-ready` / `verify-edit` / `workspace` | **BLOCKED, not missed** | F5 Steps 3-5 and F8 Tasks 12-13 modify `rust_core/**` and `tests/e2e/**`; cargo and the e2e routing suite are forbidden on this shared box. Needs CI or a cloud seat. |
+
+**Two of seven "new features" were already built or already answered**, which is the value of running
+the triage rather than queueing the report verbatim: caller-graph parity is mid-campaign, and MaxSim
+has a measured negative sitting behind it. Queueing all seven would have re-litigated settled work.
 
 ## ⭐ EXTERNAL DOGFOOD — v1.101.31 on gotcontext-saddle (2026-08-02)
 
@@ -1216,7 +1260,7 @@ Full register: `docs/audits/2026-07-31-tensor-grep-deep-dive.md`. Remediation:
 | # | sev | finding | wave2 | status |
 |---|---|---|---|---|
 | #858 | LOW | `codemap._atomic_write_text` replaces symlink dest (integrity, not RCE) | VERIFIED (sev↓) | Ready-to-build |
-| #859 | MED | Form-1 writer ratchet missing | VERIFIED | Ready (with #858) |
+| #859 | MED | Form-1 writer ratchet missing | VERIFIED | **SHIPPED 2026-08-05** (#937/#945/#946/#947) |
 | #861 | INFO | Position bugs already fixed; shared-banner unify cosmetic | WEAKENED→INFO | Fold into #860; close as product gap |
 | #860 | LOW | Disclosure docstring lie + tip stamp lag + Slice-2 CONTRACTS lie (DD-003) | VERIFIED | Ready docs |
 | DD-001/#864 | LOW | Python relative `$file` can be dash-named; Rust absolute OK; MCP default-OFF | WEAKENED (sev↓) | LOW / Ready optional |
@@ -1328,6 +1372,50 @@ not merely imprecise -- which is exactly what the `blast_radius_floor` consumers
 sites rather than regex them) so the design is sized against a defensible number, and repeat on one
 Java and one C# corpus -- a single-language, single-corpus measurement is a direction, not a size.
 
+### FOLLOW-UP MEASURED 2026-08-05: the parsed C# re-measure (the council's wave-2/3 sizing ask)
+
+Both halves of that disposition, run. Call sites are now **parsed** by the product's own extractors
+(`lang_csharp.csharp_imports_and_symbols` for definitions, `LanguageSpec.references_and_calls` for
+call sites), so prototypes, comments and strings are excluded by construction rather than by caveat.
+
+**Corpus:** `reveng-main/external/ga_sources/winsw/src`, 70 real C# files across four projects
+(WinSW, WinSW.Core, WinSW.Plugins, WinSW.Tests). 0 parse failures.
+
+| measure | C# (parsed) | C++ (regex, above) |
+|---|---|---|
+| distinct method definitions | 289 | 1114 |
+| symbols with >= 1 CROSS-FILE call site | **134 / 289 (46%)** | 511 / 1114 (46%) |
+| call sites in-file / cross-file | 235 / **509** | 2731 / 4664 |
+| share invisible to an in-file-only extractor | **68.4%** | 63.1% |
+| cross:in ratio | **2.17:1** | ~1.7:1 |
+
+**The finding that matters: parsing did not shrink the number.** The C++ figure was labelled an
+UPPER BOUND with known regex inflation, and the honest expectation was that a parsed re-measure
+would come in materially lower. It came in **higher** (68.4% vs 63.1%), on a different language and
+an unrelated codebase, with the 46% symbol share reproducing to the percentage point. Regex
+inflation was therefore not what was carrying the C++ result, and the design's premise survives the
+tightening it was conditioned on. Wave 2 (C#) is sized and justified.
+
+**Java is NOT measured, and this is a gap rather than a result.** No adequate Java corpus exists in
+this workspace -- the largest is `repowise-main/tests/fixtures/sample_repo/java_pkg` at **3 files**.
+A 3-file corpus cannot measure cross-file call-site share; running it anyway would reproduce the
+trap where the probe's INPUT carries the property being measured. Wave 1 (Java, PR #950) therefore
+ships on the C++/C# direction plus the language's own import semantics, and a Java sizing number
+remains OPEN pending a real corpus.
+
+**Four instrument failures produced believable zeros before any of the above was true**, each
+caught by a control rather than by re-reading the probe:
+
+| the zero | cause |
+|---|---|
+| 0 definitions over 70 files | `except Exception: continue` swallowed 70 identical `TypeError`s -- C#'s `extract_imports_and_symbols` is `None`; symbols come from `lang_csharp` directly |
+| `KeyError: 'csharp'` | `LANGUAGE_REGISTRY` is empty without `import repo_map`; registration happens there |
+| 1 definition over 70 files | the name key is `name`, not `symbol` -- 392 functions collapsed into one `None`-keyed entry |
+| `pending: 0` on 17 running CI lanes | `gh` reports an unfinished check's conclusion as `""`, not `null`; the filter tested `== null` |
+
+The positive control that stopped it (`assert len(defs) > 100`) is the reason a number was reported
+at all instead of a fourth confident zero.
+
 ## MEASURED 2026-08-05: `refactor:` CUTS NO RELEASE -- the title gate and the publisher disagree
 
 CLAUDE.md warns that `scripts/validate_pr_title_semver.py` (the PR-title gate) and
@@ -1362,8 +1450,8 @@ row reading `READY` invites a session to start it and discover the blocker after
 |---|---|---|
 | **MCP-SURFACE** (Task 4) | depends on **Task 2C** | Task 4 is titled "bump contract 1.8.0 -> 1.9.0" but the live value is **1.7.0** (`mcp_server.py:138`, `_TG_MCP_SERVER_CONTRACT_VERSION`). Task 2C performs 1.7.0 -> 1.8.0. Building Task 4 first would bump from a version that does not exist. |
 | **Task 2C** (and 2B) | needs CI or a cloud seat | modifies `rust_core/src/main.rs`; verifying it requires `cargo`, which AGENTS.md forbids on this shared dev box. Also needs a real WSL host for the `/mnt/c/...` path-domain arms. |
-| **#89 / #90** | same as 2B/2C | the reproduced path-domain defect is owned by that typed-path program. |
-| **Task 3** (#859) | PARTIALLY DONE | the CLASS census gap is closed (PR #937, census 3 -> 41 modules). The plan's Task 3 also lists `src/tensor_grep/cli/main.py` as modified -- i.e. fixing the pinned VIOLATING sites. That half is open and is H2 above. |
+| **#89 / #90** | **CONTRADICTS the "Active / buildable" section — unresolved as of 2026-08-05** | this row files them as blocked "same as 2B/2C" (needs `cargo`/a real WSL host), while the Active/buildable rows call #89 "now `READY`, **not** environment-blocked". Both cannot be true. The distinction that likely reconciles them: REPRODUCING the defect needs a WSL host, but the FIX may be pure-Python path-domain handling on the Python side of the boundary — which would be buildable here. A build task dispatched 2026-08-05 carries a premise check as step 0 and is instructed to stop and report if the fix genuinely requires the Rust half. Its answer settles this row; do not act on either reading until then. |
+| **Task 3** (#859) | ~~PARTIALLY DONE~~ **DONE 2026-08-05** | the CLASS census gap closed in PR #937 (3 -> 41 modules); the VIOLATING-sites half this row called open closed too -- #945 classified all 16 identities, #946 closed the download TOCTOU, #947 retired the last deferral. H2 is closed. |
 
 **CORRECTED 2026-08-05 (same day).** The paragraph this replaces called F5 and F8 "unblocked and
 genuinely start-now". That was wrong, and reading the plan's own file lists is what showed it:
