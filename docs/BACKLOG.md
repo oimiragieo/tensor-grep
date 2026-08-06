@@ -74,6 +74,61 @@ Job heartbeat; unproven Job cleanup; weak SDDL; invalid CNG export; TxR close ow
 self-attest; `-f`/`--file` unbounded pre-ledger read). Not merge-ready. These are plan-gate /
 RED-scaffold findings, not separate shipped features or extra canonical top-level rows.
 
+### EXTERNAL / Phase 0+1 launch receipt — 2026-08-06 (Packet F)
+
+Docs-class reconcile after merges **#953** (F10/DD-004), **#952** (PHP), **#955** (C#),
+**#956** (`workspace_root_refused`) on `main`. Hard stops held: no #169, no Task 2A GREEN, no
+local `rust_core` cargo, **no CEO-gate flips**, no `world_class_readiness` claim (no fresh
+evidence packet for that label).
+
+| packet | PR | result |
+|---|---|---|
+| A drain #951 | [#951](https://github.com/oimiragieo/tensor-grep/pull/951) | MERGED (squash) after full CI green |
+| B F7 wave 2 PHP | [#952](https://github.com/oimiragieo/tensor-grep/pull/952) | MERGED — `use`/namespace confirmation + blast_radius_floor |
+| C F7 wave 2 C# | [#955](https://github.com/oimiragieo/tensor-grep/pull/955) | MERGED — namespace/`using` confirmation + blast_radius_floor |
+| D workspace_root_refused | [#956](https://github.com/oimiragieo/tensor-grep/pull/956) | MERGED — class/code params on `_emit_broad_scan_refusal` |
+| E F10 + DD-004 DROP | [#953](https://github.com/oimiragieo/tensor-grep/pull/953) | MERGED — RETIRED with receipts |
+| F board reconcile + dogfood | this entry + TASK_BOARD + #961 | dogfood: `tg search needle C:\dev\projects --json` against main → exit 2, `incomplete_reason_class=workspace_root_refused`, `error.code=workspace_root_refused` |
+
+**What shipped (honest claims only):**
+- F7 Task 11 waves 1–2: Java (#950), PHP (#952), C# (#955) cross-file caller confirmation on
+  `main`. Wave 3 C/C++ is **#957** (open / in flight — not claimed shipped).
+- Multi-project parent refuse now names itself: `incomplete_reason_class` /
+  `error.code` = `workspace_root_refused` (#956). Dogfood is against **main source**, not the
+  published wheel (see PyPI note).
+- F10 MaxSim and DD-004 typed-boundary rows are **RETIRED** with dated receipts (#953) — not
+  "fixed", not "still planned".
+
+**What did not ship / still unavailable (Phase 2):**
+- **edit-ready** (F5 Task 8 Steps 3–5), **verify-edit** (F6 Tasks 6–7 beyond Step 0), and
+  **workspace** (F8 Tasks 12–13) remain **unavailable** for launch claims. They still need
+  `rust_core/**` / `tests/e2e/**` work (cargo + e2e routing suite forbidden on the shared box →
+  CI/cloud). Do not advertise them as ready product surfaces.
+- CEO gates **#48 / #72 / #77 / #131 / #169** are untouched — recommendations only (short packets
+  below); status stays `CEO_GATED`.
+
+**PyPI / local:** live PyPI **v1.109.0** (index 200 + bogus 404 control). Phase 0+1 code is on
+`main` and awaits the next `feat:`/`fix:` publish; installed wheel remains pre-#956 until then
+(control: installed path still emitted `scan_limit`/`broad_scan_refused`; main source emits
+`workspace_root_refused`). Index check ≠ install.
+
+**Next:** F7 Task 11 wave 3 = open PR #957 (C/C++). Broader READY→SHIPPED board flips that lived
+in draft #960 were **not** absorbed here; #960 was **CLOSED** (superseded by this Packet F
+reconcile #961) rather than undrafted.
+
+#### Packet F — CEO recommendation packets (still CEO_GATED; do not implement)
+
+Recommendations only. No silent reclassification. No question asked for the non-financial gates.
+
+| id | topic | recommendation | status |
+|---|---|---|---|
+| **#48** | native front-door startup | Accept the shipped hybrid (native managed front door + Python sidecar). Retire a larger rewrite unless pip/uv parity is explicitly prioritized. | `CEO_GATED` |
+| **#72** | public benchmark claim | HOLD public 7.5× (conflicts with later 6.4×; no committed current harness). Only a zero-spend fresh six-repo/180-task quality-gated re-run is in scope, and public wording still needs approval. | `CEO_GATED` |
+| **#77** / F9 | ledger enforcement scope | Local opt-in advisory only; no auth/CI blocking. | `CEO_GATED` |
+| **#131** | GPU-flavor native assets | Optional experimental NVIDIA asset with CPU default/fallback and **no** speed claim. Physical proof/spend stays under **#169**. | `CEO_GATED` |
+
+**#169** remains the only mandatory financial stop (physical GPU proof environment or spend).
+
 ### RECONCILED 2026-08-05 -- what actually shipped, per row
 
 The list below this block still reads `READY` for rows that shipped today. Reconciling AT
@@ -112,7 +167,8 @@ demand evidence. That is a measured state, not a stall.
   residual; all four MERGED). This row contradicted its own receipt row 24 lines above it for a full
   day. Left struck through rather than deleted so the contradiction is legible.
 - **F7** — cross-file resolution, **Task 11 only**. Task 10 (language registry) SHIPPED in five
-  waves. Task 11 is IN_FLIGHT: wave 1 Java = PR #950, wave 2 C# dispatched, waves for C/C++ follow.
+  waves. Task 11 is IN_FLIGHT: waves 1–2 shipped (Java #950, PHP #952, C# #955); wave 3 C/C++ =
+  open PR #957.
 - ~~**MCP-SURFACE** — Task 4.~~ **BLOCKED on Task 2C**, not buildable: Task 4 bumps the MCP contract
   `1.8.0 -> 1.9.0` and the live value is `1.7.0`. Building it first bumps from a version that does
   not exist.
@@ -618,9 +674,9 @@ agreement details; ledger Slice 1 + Slice 2; `evidence emit/verify` (`checks.dig
 
 | reported | disposition | receipt |
 |---|---|---|
-| **Parent-refuse class is generic `scan_limit`** — wants `workspace_root_refused` so agents do not confuse a refusal with file-cap truncation | **NEW, REAL, AI-doable** | four classes exist today (`deadline`, `scan_limit`, `timeout`, `unreadable_path`); a refusal to scan a workspace root and a cap-truncated scan are genuinely different consumer outcomes and currently share one class. The code already carries a comment requiring an `incomplete_reason_class` mapping decision before a new cause ships. Task created. |
-| **Caller-graph parity for Java/C#/C/C++/PHP** | **ALREADY IN FLIGHT** — independent confirmation of F7 Task 11 | Java shipped as **PR #950** (merged 2026-08-05). C# and PHP building; C/C++ queued. Sized by the parsed C# re-measure in PR #951. |
-| **Ship or forever-drop MaxSim** | **DROP is the measured answer; needs an explicit retirement receipt** | the MaxSim late-rerank bet was measured a DECISIVE NEGATIVE and is banked as such. F10 is `DEMAND_GATED` pending exactly this: a caller/installability census, then retire if unreachable. The reporter observing "no install path" from outside is evidence for retiring rather than shipping. Task created. |
+| **Parent-refuse class is generic `scan_limit`** — wants `workspace_root_refused` so agents do not confuse a refusal with file-cap truncation | **SHIPPED** — PR **#956** (merged 2026-08-06) | `_emit_broad_scan_refusal` gained `incomplete_reason_class`/`error_code` params; workspace guard emits `workspace_root_refused` for both. Dogfood on `C:\dev\projects` against main: exit 2 + class/code pair. Other ceilings keep `scan_limit`/`broad_scan_refused`. |
+| **Caller-graph parity for Java/C#/C/C++/PHP** | **IN FLIGHT** — F7 Task 11 waves 1–2 shipped | Java **#950**, PHP **#952**, C# **#955** merged. Wave 3 C/C++ open as **#957**. Sized by parsed C# re-measure in **#951**. |
+| **Ship or forever-drop MaxSim** | **RETIRED** — F10 DROP receipt in **#953** | Caller/installability census + decisive negative on golden set; MaxSim reachable only via undocumented `TG_LATE_RERANK=1`. DD-004 RETIRED in the same PR. |
 | Bare search exits 1, not 2 | **BY DESIGN — already retired as #22** | contract: exit 0 = complete with matches, exit 1 = complete with NO match, exit 2 = incomplete. The request (exit 2 + `missing_explicit_path`) is a CONTRACT CHANGE, not a bug fix — it would make "searched correctly, found nothing" indistinguishable from "could not search". Reopening needs an argument against that collapse. |
 | Anonymous `--claim` still allowed (hint only) | **BY DESIGN — already retired as F2** | legacy anonymous-agent compatibility deliberately retains the sentinel; reopen only with a caller-supplied stable identity contract and migration plan. |
 | GPU non-accelerative; `calibrate` exit 2 | **CEO-GATED (#169)** | the only mandatory financial stop; physical GPU proof environment or spend. |

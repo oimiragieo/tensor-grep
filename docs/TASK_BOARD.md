@@ -37,7 +37,7 @@ Canonical status index version: 2026-08-05.1
 - [x] **#859** — Status: SHIPPED; PR: PR #913; Trigger: Task 3 class-level AST writer census and anchored publication fix; instance fix and class-level ratchet both merged, and the census found a 4th violation beyond the expected 3 (fixed in PR #918); Implementation PRs: PR #913; Closure PR: PR #920; Merged SHA: 211d850c7484f6e18d74e2d8ac712f118f3b82cf
 - [ ] **F5** — Status: READY; PR: none; Trigger: Task 8 edit-ready and claims-fence program; first implementation PR moves this row to IN_FLIGHT
 - [ ] **F6** — Status: READY; PR: none; Trigger: Tasks 6-7 edit-verification service and public CLI; first implementation PR moves this row to IN_FLIGHT
-- [ ] **F7** — Status: READY; PR: none; Trigger: Tasks 10-11 language-registry and cross-file resolution program; first implementation PR moves this row to IN_FLIGHT
+- [ ] **F7** — Status: IN_FLIGHT; PR: PR #957; Trigger: Tasks 10-11 language-registry and cross-file resolution; Task 10 complete (Java/C#/PHP/C/C++ in-file refs); Task 11 waves 1-2 shipped (Java #950, PHP #952, C# #955); wave 3 C/C++ in flight as #957; Implementation PRs: PR #950, PR #952, PR #955, PR #957
 - [ ] **F8** — Status: READY; PR: none; Trigger: Tasks 12-13 workspace service and CLI program; first implementation PR moves this row to IN_FLIGHT
 - [ ] **MCP-SURFACE** — Status: READY; PR: none; Trigger: Task 4 MCP surface disclosure; first implementation PR moves this row to IN_FLIGHT
 - [ ] **CPU-BACKEND** — Status: IN_FLIGHT; PR: PR #923; Trigger: Task 5 Rust and Python backend hardening; the PYTHON half shipped -- the TypeError retry that silently dropped invert_match and returned the opposite result set is gone, leaving one native adapter and zero compatibility retries; the RUST half (replace_in_place public-API hardening in rust_core) is NOT done and needs cargo, which is forbidden on the shared dev box, so it routes to CI or a cloud seat; row closes only when both halves land; Implementation PRs: PR #923
@@ -52,45 +52,39 @@ Canonical status index version: 2026-08-05.1
 
 ## Live campaign snapshot
 
-Last reconciled: **2026-08-05** (F7 Task 10 COMPLETE -- the symbol-graph caller tier went
-5/5 -> **10/0** in five waves: #927 Java, #928 C#, #930 PHP, #932 C, #934 C++. Also merged: #929
-findings G1-G7, #931 board reconcile, #933 the board-gate root-cause fix, #935 premise sweep.
+Last reconciled: **2026-08-06** (Phase 0+1 launch receipt — see `docs/BACKLOG.md` dated entry).
 
-**Shipped since the previous post-v1.106.0 stamp** (this reconcile): #936 instrument laws, #937
-atomic-writer census 3 -> 41 modules, #938/#941 findings + a dependency-claim correction, #939
-`prepare_service.py` extracted byte-identical, #940 the reference/caller seam pinned as
-registry-driven, #942 the symlink/junction staging fix (H1), #943 `PrepareSnapshotV1`, #944 the
-release-class measurement, #945 all 16 violating writer identities classified, #946 the
-native-frontdoor download TOCTOU closed, #947 H2 closed with the last deferral RETIRED, #948 the
-canonical queue reconciled, #949 the F7 Task 11 design (council-corrected 8/8).
+**Phase 0+1 launch (this reconcile), all merged:**
+- #951 backlog self-consistency gate + parsed C# re-measure (drained first)
+- #953 F10 MaxSim DROP + DD-004 typed-boundary RETIRED with receipts
+- #952 F7 Task 11 wave 2 PHP (`file_imports_symbol_from_definition` + blast_radius_floor)
+- #955 F7 Task 11 wave 2 C# (namespace/`using` confirmation, same product observable)
+- #956 `workspace_root_refused` class/code on multi-project parent refuse (dogfood: exit 2,
+  `incomplete_reason_class=workspace_root_refused`, `error.code=workspace_root_refused` on
+  `C:\dev\projects` against main at `fdaf962`)
 
-**F7 Task 11 is now the only genuinely active row.** Wave 1 (Java) = PR #950, in CI. Wave 2 (C#) is
-building, sized by a parsed re-measure (PR #951): 46% of C# methods have a cross-file caller,
-cross:in 2.17:1, 68.4% of call sites invisible to an in-file-only graph -- and parsing came in
-HIGHER than the regex bound it replaced, not lower.
+**F7 Task 11 status:** waves 1–2 shipped (Java/PHP/C#). Wave 3 (C/C++) is open as **PR #957**.
+Hard stops honored: no #169, no Task 2A GREEN, no local `rust_core` cargo, no CEO-gate flips.
+**Phase 2 still unavailable** for launch claims: edit-ready / verify-edit / workspace (F5 Steps
+3–5, F6 remainder, F8) — `rust_core` + e2e routing. No `world_class_readiness` claim without a
+fresh evidence packet.
 
-**Why this stamp moved:** it sat exactly AT the tolerance (5 releases behind, margin 0), so the next
-`feat:`/`fix:` publish would have reddened main on the freshness gate. Auto-stamping at release time
-was considered and REJECTED -- it would make `behind` identically 0 on every commit, and a
-permanently-green freshness check reads to every future session as evidence the board IS reconciled.
-The gate is supposed to force a real reconcile, which is what this is.
+**Also open (not Phase 0+1 code):** draft #958 (enterprise CUJ); this docs Packet F as #961.
+Draft #960 (broader READY→SHIPPED reconcile) was **CLOSED** 2026-08-06 — superseded by #961;
+not undrafted.
 
-post-**v1.108.2**, PyPI-verified 2026-08-05 by the **version endpoint**, WITH a negative control:
-`https://pypi.org/pypi/tensor-grep/1.108.2/json` -> **HTTP 200**, and a bogus `1.999.999` -> **404**,
-so a 200 distinguishes released from absent rather than reflecting a always-200 endpoint. Not
-inferred from a tag — `tag == PyPI` cannot tell *released* from *not started* from *died*.
+post-**v1.109.0**, PyPI-verified 2026-08-06 by the **version endpoint**, WITH a negative control:
+`https://pypi.org/pypi/tensor-grep/1.109.0/json` -> **HTTP 200**, and a bogus `1.999.999` -> **404**.
+Phase 0+1 code (#952/#955/#956) is on `main` and **not yet** a PyPI publish — live PyPI remains
+`v1.109.0` until the next `feat:`/`fix:` release publish drains. Index check ≠ install.
 
-**Scope of that claim, stated deliberately:** this is an INDEX check, not an install. The previous
-stamp claimed a clean `uvx` install of its exact version; that stronger check was NOT re-run here
-and is not being carried forward as if it had been. (v1.102.7 remains the last version dogfooded
-end-to-end: `tg search -v beta` returned the NON-matching lines with a control proving normal
-search still matched.) A verification sentence must say which command produced it — copying a
-prior stamp's wording onto a new version is how a receipt comes to quote a value nothing returned.
+**Shipped since the previous post-v1.106.0 stamp** (prior reconcile, retained): #936–#949 as listed
+in the 2026-08-05 stamp; plus #950 Java wave 1; plus the Phase 0+1 set above.
 
 **Current closed-world status:** this canonical index plus
-`docs/audits/2026-08-03-ceo-backlog-update.md`. Product healthy at `v1.102.7`; planning PR #911 is
-not merge-ready until its advisory-floor successor earns exact-head CI/security/CodeQL; backlog not
-done; Task 2A correctly blocked.
+`docs/audits/2026-08-03-ceo-backlog-update.md`. Product healthy at PyPI `v1.109.0`; Phase 0+1
+merged on main awaiting publish; #911 already MERGED 2026-08-04 (advisory-floor successor landed);
+backlog not done; Task 2A correctly blocked.
 Task 2 is complete as the reconciliation checkpoint; Task 2A implementation is not. Round-60 plan
 approval stands on named
 hashes `31D8E071...3D862B` / `AA64D0BA...0826B3`. Older PR #911 head
@@ -100,8 +94,8 @@ hashes `31D8E071...3D862B` / `AA64D0BA...0826B3`. Older PR #911 head
 `aiohttp>=3.14.3` / `cryptography>=50.0.0` plus a regenerated lock and requires new exact-head
 clearance. Task 2A RED is local only at
 `6367614960327b1a4e00301c8bfdb9b2e4bb453e` (unpushed, no Actions run, Sol `FIX-FIRST` with 10 HIGH
-blockers). Canonical rows stay 28 / 20 unfinished (7 READY, 2 IN_FLIGHT, 5 CEO_GATED, 6 DEMAND_GATED)
-after F10 + DD-004 RETIRED 2026-08-05; research recommendations are not silent reclassification.
+blockers). Canonical rows: F10 + DD-004 RETIRED; F7 IN_FLIGHT; research recommendations are not
+silent reclassification.
 
 **This has now gone stale THREE times in the same way, so the pattern is the finding.** The stamp
 once read "2026-07-28, post-v1.101.9" while PyPI had moved 13 releases on; then "2026-07-31,
@@ -133,6 +127,20 @@ were rejected:
   board edit into every unrelated PR. That is an over-eager rule, and an over-eager rule is worse
   than no rule.
 
+post-**v1.109.0**, PyPI-verified 2026-08-06 by the **version endpoint**, WITH a negative control:
+`https://pypi.org/pypi/tensor-grep/1.109.0/json` -> **HTTP 200**, and a bogus `1.999.999` -> **404**,
+so a 200 distinguishes released from absent rather than reflecting a always-200 endpoint. Not
+inferred from a tag — `tag == PyPI` cannot tell *released* from *not started* from *died*.
+
+**Scope of that claim, stated deliberately:** this is an INDEX check, not an install. The previous
+stamp claimed a clean `uvx` install of its exact version; that stronger check was NOT re-run here
+and is not being carried forward as if it had been. A verification sentence must say which command
+produced it — copying a prior stamp's wording onto a new version is how a receipt comes to quote a
+value nothing returned.
+
+**Current closed-world status (continued):** product healthy at PyPI `v1.109.0`; Phase 0+1 launch
+merged on main (awaiting next publish for the refuse-class + F7 wave-2 code).
+
 The rule stays DECLARED on purpose. What changed is the *routine* (reconcile inside the merge step)
 and the *affordance* (the two commands above, so nobody retypes a number from memory). Harden a
 rule when a violation is mechanically detectable without interpretation AND a false positive would
@@ -140,11 +148,17 @@ be rare; neither holds here.
 
 ---
 
-## IN FLIGHT (PRs open right now — derived from `gh pr list`, 2026-08-03)
+## IN FLIGHT (PRs open right now — derived from `gh pr list`, 2026-08-06)
 
 | PR | Title | Type | State |
 |---|---|---|---|
-| #911 | `test: pin live backlog truth and approved closeout plan` | non-release tracker/plan | last observed exact head CLEAN/MERGEABLE + green (CI/security/CodeQL); human may merge; derive live head before merge |
+| #957 | `feat(lang-c,lang-cpp): cross-file caller resolution via include-path engine (F7 Task 11 wave 3)` | feat | OPEN |
+| #958 | `test: lock prepare→evidence→review-bundle enterprise CUJ chain` | test | DRAFT |
+| #961 | `docs: Phase 0+1 launch receipt + TASK_BOARD reconcile` | docs | OPEN |
+
+*(Phase 0+1 launch PRs #951/#952/#953/#955/#956 all MERGED 2026-08-06. #911 MERGED 2026-08-04.
+#960 CLOSED 2026-08-06 — superseded by #961. Derive live `gh pr list` before treating this table
+as current.)*
 
 *(#872, #871 and #868 all MERGED — #871 on 2026-07-31, #872 and #868 on 2026-08-01. They sat in
 this table as "CI running" / "BLOCKED — do not merge" after landing, which is the exact failure mode
