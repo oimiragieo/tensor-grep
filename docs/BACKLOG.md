@@ -43,6 +43,15 @@
 >
 
 
+
+## Recent campaign notes (2026-08-06 CEO)
+
+- CEO dumbed-down packet: `docs/audits/2026-08-06-ceo-backlog-update.md`.
+- Closed-world after closeout: 28 / 17 unfinished (6 READY, 0 IN_FLIGHT, 5 CEO_GATED, 6 DEMAND_GATED).
+- F7 / CPU-BACKEND / REF-CALL-REGISTRY → SHIPPED (impl already on main).
+- Laws A70–A76 retained in AGENTS.md / MEMORY.md / skills.
+
+
 ## Recent campaign notes (2026-08-06)
 
 - **W5 published-wheel dogfood (`1.110.0`):** PASS on prepare / search± / evidence emit / signed emit /

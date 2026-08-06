@@ -99,7 +99,7 @@ Claude Code guidance for the **tensor-grep** repository.
   worktree campaign this file tells you to run. Keep WSL and Windows venv roots disjoint: never run
   WSL `uv --project /mnt/c/...` against the canonical checkout, because `uv` may replace the Windows
   `.venv` with an incompatible Linux environment (AGENTS.md A60).
-  **RED/CI evidence laws (A61–A69, 2026-08-03):** behavioral RED pins the exact expected reason
+  **RED/CI evidence laws (A61–A76, 2026-08-03):** behavioral RED pins the exact expected reason
   (crash/import/panic/setup ≠ RED); route/start evidence comes from the real producer plus test-owned
   OS/raw proof, never a hardcoded bool or production self-attest; containment authenticates
   writer/client provenance and proves alive-before→dead-after plus cleanup; crypto negatives need a

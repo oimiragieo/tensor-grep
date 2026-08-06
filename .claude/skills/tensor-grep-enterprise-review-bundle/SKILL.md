@@ -27,6 +27,18 @@ tg audit-history --json          # discover known manifests
 tg audit-verify MANIFEST --json  # MANIFEST is positional, no --manifest flag
 ```
 
+
+## Dogfood / RED probe traps (2026-08-06)
+
+- **`--sign` with “no key” is only a real RED when the default key path is empty.** Help text falls
+  back to `TG_EVIDENCE_SIGNING_KEY` then `~/.tensor-grep/keys/evidence_ed25519.key`. Clearing the
+  env var on an operator machine that already has the default key still signs (exit 0, receipt
+  written). Isolate `HOME`/`USERPROFILE` to an empty temp home, or temporarily move the default
+  key, before claiming fail-closed. AGENTS.md **A70**; receipt `docs/audits/2026-08-06-enterprise-w5-dogfood.md`.
+- **Bare `uvx --from tensor-grep==X` has no dense/`model2vec` extras.** Prefer
+  prepare/search/evidence/review-bundle/ledger for enterprise CUJ dogfood, or install
+  `tensor-grep[semantic]` / `tg install-dense` first (AGENTS.md **A73**).
+
 ## CI gate chain (shipped #681)
 
 `--receipt` (repeatable, `create`) embeds one or more signed `EvidenceReceipt`s directly in the bundle;

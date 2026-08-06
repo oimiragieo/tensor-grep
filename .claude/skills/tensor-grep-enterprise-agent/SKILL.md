@@ -101,3 +101,11 @@ tg prepare REPO/src "task" --out /tmp/prep.json --json
 # then edit from primary_target; run validation_commands; optionally:
 tg evidence emit REPO --capsule /tmp/prep.json --query "task" --json --agent-id "$AGENT_ID"
 ```
+
+## Published-wheel dogfood (2026-08-06)
+
+Bare `uvx --from tensor-grep==<ver>` does **not** include dense embeddings. `tg find` will warn and
+degrade (`rank_fallback_reason`). For enterprise launch-bar dogfood use prepare → evidence →
+review-bundle → ledger (and plain `tg search`), or install `tensor-grep[semantic]` /
+`tg install-dense` first. Isolate HOME when probing `tg evidence emit --sign` without a key
+(AGENTS.md **A70**, **A73**).

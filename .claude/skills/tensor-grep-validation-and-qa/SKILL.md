@@ -138,6 +138,16 @@ base has verified a tree nobody will ship. Merge is semantically live even when 
 shape you are changing: **the file you are editing is not the boundary of the blast radius.** (This
 family is MIRRORED — see `AGENTS.md`; adding a form is a two-file edit.)
 
+
+### Ambient keys and tracker prose are instruments too (2026-08-06)
+
+- A `--sign` no-key RED that only pops `TG_EVIDENCE_SIGNING_KEY` is **split from the default key
+  path** (AGENTS.md **A70**) — same family as Form 8 / ambient-fixture pollution.
+- A TASK_BOARD “campaign note” under the canonical index is not documentation; it is a **malformed
+  row** to the tracker parser (**A71**).
+- Bare-wheel dogfood without semantic extras cannot grade `tg find` (**A73**).
+
+
 ### Running the probe: the LOCATION trap (2026-07-26)
 
 A perturbation proves nothing if the thing you perturbed survives elsewhere. Verifying the

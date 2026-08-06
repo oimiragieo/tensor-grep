@@ -61,6 +61,17 @@ Full current list of governed prose files: `AGENTS.md`, `README.md`, `SKILL.md`,
 
 ---
 
+
+## TASK_BOARD canonical index (2026-08-06)
+
+Under `## Canonical status index`, **only** checklist rows of the form
+`- [ ] **ID** — Status: …; PR: …; Trigger: …` are legal. Free-form campaign bullets under that
+heading fail `tests/unit/test_backlog_tracker_truth.py` (AGENTS.md **A71**). Put session prose in a
+sibling heading such as `## Campaign note (YYYY-MM-DD)`. When closing `IN_FLIGHT` → `SHIPPED`,
+include `Implementation PRs:`, `Closure PR:`, and `Merged SHA:` for lifecycle IDs (AGENTS.md **A72** /
+A50). Bump `Canonical status index version:` and mirror it in `docs/SESSION_HANDOFF.md`.
+
+
 ## Part 2 — Two governance layers (and a fast gate)
 
 ### Layer A — Version stamping (automatic; do not hand-edit the stamped bits)
