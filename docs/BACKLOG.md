@@ -47,9 +47,14 @@
 ## Recent campaign notes (2026-08-06 CEO)
 
 - CEO dumbed-down packet: `docs/audits/2026-08-06-ceo-backlog-update.md`.
-- Closed-world after closeout: 28 / 17 unfinished (6 READY, 0 IN_FLIGHT, 5 CEO_GATED, 6 DEMAND_GATED).
-- F7 / CPU-BACKEND / REF-CALL-REGISTRY → SHIPPED (impl already on main).
+- Closed-world after READY∩BLOCKED stamp (index `2026-08-06.2`): 28 / 17 unfinished
+  (**0 READY**, 6 BLOCKED, 0 IN_FLIGHT, 5 CEO_GATED, 6 DEMAND_GATED).
+- F7 / CPU-BACKEND / REF-CALL-REGISTRY → SHIPPED (impl already on main; closure #963).
 - Laws A70–A76 retained in AGENTS.md / MEMORY.md / skills.
+- Closeout plan: `docs/plans/2026-08-06-enterprise-backlog-closeout-plan.md`
+  (Round-1 AMEND_SPINE absorbed; Round-2 orchestrator SHIP substitute — Opus/Sonnet quota until 2026-08-14).
+- R0 packets: `docs/audits/2026-08-06-ceo-gated-recommendation-packets.md`,
+  `docs/audits/2026-08-06-demand-gated-research-receipts.md`.
 
 
 ## Recent campaign notes (2026-08-06)
@@ -60,7 +65,12 @@
 - **Instrument note:** `--sign` with no key only fails closed when the default
   `~/.tensor-grep/keys/evidence_ed25519.key` is absent; ambient operator keys pollute the NEG arm.
 - **#958** merged `65d0195` — enterprise prepare→evidence→review-bundle CUJ integration lock on `main`.
-- Still STOP this wave: W3 rust/e2e, W4 Task 2A, MCP disclosure, #169, CEO_GATED.
+- **#963** merged `9bf38c2` — CEO update docs. **Finding:** squash-merge fired while ~10 PR checks were
+  still `pending` because a poller treated empty stdin counts as ALL_TERMINAL (broken pipe into a
+  heredoc). Recovery: watch main push CI run `31105687641` to `completed` before further merges.
+  Lesson candidate: never parse `gh pr checks` through a heredoc that consumes stdin; require
+  heavy-lane presence by name/count (A43).
+- Still STOP for product builds: W3 rust/e2e, W4 Task 2A, MCP-SURFACE (before Task 2C), #169, CEO_GATED.
 
 
 ## Current canonical closeout queue — status index `2026-08-03.3`
