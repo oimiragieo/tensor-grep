@@ -18,6 +18,10 @@
 >    `tag == PyPI` cannot distinguish *released* from *not started* from *died* and cost a release
 >    on 2026-07-28.
 
+## Campaign note (2026-08-06)
+
+#958 CUJ merged (`65d0195`). W5 `uvx` dogfood receipt: `docs/audits/2026-08-06-enterprise-w5-dogfood.md` (12/12 route arms PASS after isolated-HOME `--sign` control). STOP set unchanged (W3/W4/#169/CEO_GATED/MCP fence).
+
 ## Canonical status index
 
 Canonical status index version: 2026-08-05.1

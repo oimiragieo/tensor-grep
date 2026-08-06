@@ -42,6 +42,18 @@
 > No question is asked for nonfinancial gates; #169 remains the only mandatory financial stop.
 >
 
+
+## Recent campaign notes (2026-08-06)
+
+- **W5 published-wheel dogfood (`1.110.0`):** PASS on prepare / search± / evidence emit / signed emit /
+  review-bundle create+verify(`--min-receipts 1`) / wrong-`--against` RED / ledger claim+list.
+  Full verdict table: `docs/audits/2026-08-06-enterprise-w5-dogfood.md`.
+- **Instrument note:** `--sign` with no key only fails closed when the default
+  `~/.tensor-grep/keys/evidence_ed25519.key` is absent; ambient operator keys pollute the NEG arm.
+- **#958** merged `65d0195` — enterprise prepare→evidence→review-bundle CUJ integration lock on `main`.
+- Still STOP this wave: W3 rust/e2e, W4 Task 2A, MCP disclosure, #169, CEO_GATED.
+
+
 ## Current canonical closeout queue — status index `2026-08-03.3`
 
 `docs/TASK_BOARD.md` owns the machine-parsed rows. This is the human-readable mirror; older sections
