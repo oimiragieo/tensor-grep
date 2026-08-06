@@ -447,3 +447,293 @@ def install_ps1_uses_txr_only(content: str) -> bool:
     has_commit = "CommitTransaction" in content
     has_env = '[Environment]::SetEnvironmentVariable("Path"' in compact
     return has_create and has_commit and not has_env
+
+
+# ---------------------------------------------------------------------------
+# Pure SDDL DACL grammar (A65 / HIGH#6) — platform-neutral, fail-closed.
+# ---------------------------------------------------------------------------
+
+_ALLOWED_DACL_FLAG_TOKENS = frozenset({"P", "AR", "AI"})
+_KNOWN_ACE_TYPES = frozenset({"A", "D", "OA", "OD", "AU", "AL", "OU", "OL"})
+# Exact SDDL ACE flag tokens. Unknown flags reject the whole DACL.
+_KNOWN_ACE_FLAG_TOKENS = frozenset({"OI", "CI", "NP", "IO", "ID", "SA", "FA", "CR", "SR", "SI", "NS"})
+_INHERIT_ONLY_ACE_FLAG = "IO"
+
+_WRITE_FULL_RIGHT_TOKENS = frozenset({
+    "GA",
+    "GW",
+    "GX",
+    "FA",
+    "FW",
+    "WD",
+    "WO",
+    "SD",
+    "WA",
+    "WE",
+    "DC",
+    "LC",
+    "CR",
+    "SW",
+    "WP",
+    "DT",
+    "KA",
+    "KW",
+})
+_READ_LIKE_RIGHT_TOKENS = frozenset({
+    "GR",
+    "FR",
+    "FX",
+    "RC",
+    "RE",
+    "RA",
+    "RD",
+    "CC",
+    "RP",
+    "LO",
+    "AS",
+    "KR",
+    "KX",
+})
+_KNOWN_RIGHT_TOKENS = _WRITE_FULL_RIGHT_TOKENS | _READ_LIKE_RIGHT_TOKENS
+_RESTRICTED_WRITE_FULL = frozenset({
+    "GA",
+    "GW",
+    "FA",
+    "FW",
+    "WD",
+    "WO",
+    "SD",
+    "WA",
+    "WE",
+    "DC",
+    "CR",
+    "SW",
+    "WP",
+    "DT",
+    "KA",
+    "KW",
+})
+_ALLOWED_WRITE_TRUSTEE_ALIASES = {
+    "SY": "SY",
+    "S-1-5-18": "SY",
+    "BA": "BA",
+    "S-1-5-32-544": "BA",
+}
+
+
+def extract_sddl_dacl_body(sddl: str) -> str | None:
+    """Extract the DACL body after ``D:`` up to a top-level ``S:`` SACL or end.
+
+    Must NOT use ``D:([^S]*)`` — that truncates at the ``S`` inside ``SY``.
+    """
+    idx = sddl.find("D:")
+    if idx < 0:
+        return None
+    body_start = idx + 2
+    depth = 0
+    i = body_start
+    while i < len(sddl):
+        ch = sddl[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth < 0:
+                return None
+        elif depth == 0 and sddl.startswith("S:", i):
+            return sddl[body_start:i]
+        i += 1
+    if depth != 0:
+        return None
+    return sddl[body_start:]
+
+
+def _parse_dacl_flags(flags: str) -> set[str] | None:
+    """Parse DACL flags as exact ``P`` / ``AR`` / ``AI`` tokens only."""
+    if flags == "":
+        return set()
+    tokens: set[str] = set()
+    i = 0
+    while i < len(flags):
+        if i + 1 < len(flags) and flags[i : i + 2] in _ALLOWED_DACL_FLAG_TOKENS:
+            tokens.add(flags[i : i + 2])
+            i += 2
+            continue
+        if flags[i] in _ALLOWED_DACL_FLAG_TOKENS:
+            tokens.add(flags[i])
+            i += 1
+            continue
+        return None
+    return tokens
+
+
+def _parse_ace_flag_tokens(ace_flags: str) -> set[str] | None:
+    """Parse ACE flags as exact known 2-char tokens; unknown/garbage → None."""
+    if ace_flags == "":
+        return set()
+    if len(ace_flags) % 2 != 0:
+        return None
+    tokens = {ace_flags[i : i + 2] for i in range(0, len(ace_flags), 2)}
+    if not tokens <= _KNOWN_ACE_FLAG_TOKENS:
+        return None
+    return tokens
+
+
+def _parse_sddl_right_tokens(rights: str) -> set[str] | None:
+    """Tokenize SDDL rights into exact 2-char codes; unknown/numeric → None."""
+    if rights == "":
+        return set()
+    if rights.lower().startswith("0x") or any(ch.isdigit() for ch in rights):
+        return None
+    if len(rights) % 2 != 0:
+        return None
+    tokens = {rights[i : i + 2] for i in range(0, len(rights), 2)}
+    if not tokens <= _KNOWN_RIGHT_TOKENS:
+        return None
+    return tokens
+
+
+def evaluate_programdata_sddl_dacl(sddl: str) -> bool:
+    """Pure SDDL DACL evaluator for ProgramData protected-root authority.
+
+    Requires a protected DACL (exact ``P`` among only ``P``/``AR``/``AI``),
+    parses every ACE with exactly 6 semicolon fields, validates ACE types and
+    ACE flags against closed vocabularies, ignores inherit-only (``IO``) ACEs for
+    *effective* object authority, accepts write/full allow ACEs (including
+    ``KA``/``KW``) only for exact SYSTEM/BA, requires both trustees present with
+    effective write/full, and rejects unknown / inherit-only-only / garbage forms
+    (A65 / HIGH#6).
+    """
+    if not sddl or not isinstance(sddl, str):
+        return False
+    dacl_body = extract_sddl_dacl_body(sddl)
+    if dacl_body is None:
+        return False
+    paren = dacl_body.find("(")
+    flags = dacl_body if paren < 0 else dacl_body[:paren]
+    flag_tokens = _parse_dacl_flags(flags)
+    if flag_tokens is None or "P" not in flag_tokens:
+        return False
+    if paren < 0:
+        return False
+
+    ace_bodies: list[str] = []
+    i = paren
+    while i < len(dacl_body):
+        if dacl_body[i] != "(":
+            return False
+        depth = 0
+        start = i + 1
+        j = i
+        closed = False
+        while j < len(dacl_body):
+            ch = dacl_body[j]
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    ace_bodies.append(dacl_body[start:j])
+                    i = j + 1
+                    closed = True
+                    break
+                if depth < 0:
+                    return False
+            j += 1
+        if not closed:
+            return False
+    if not ace_bodies:
+        return False
+
+    write_trustees_seen: set[str] = set()
+    for ace in ace_bodies:
+        parts = ace.split(";")
+        if len(parts) != 6:
+            return False
+        ace_type, ace_flags, rights, _object_guid, _inherit_guid, trustee = parts
+        if ace_type not in _KNOWN_ACE_TYPES:
+            return False  # unknown ACE type = garbage
+        ace_flag_tokens = _parse_ace_flag_tokens(ace_flags)
+        if ace_flag_tokens is None:
+            return False  # unknown / garbage ACE flags
+        right_tokens = _parse_sddl_right_tokens(rights)
+        if right_tokens is None:
+            return False
+        # Inherit-only ACEs do not establish effective authority on this object.
+        if _INHERIT_ONLY_ACE_FLAG in ace_flag_tokens:
+            continue
+        if ace_type != "A":
+            continue
+        if not (right_tokens & _RESTRICTED_WRITE_FULL):
+            continue
+        trustee = trustee.strip()
+        alias = _ALLOWED_WRITE_TRUSTEE_ALIASES.get(trustee)
+        if alias is None:
+            return False
+        write_trustees_seen.add(alias)
+    return write_trustees_seen == {"SY", "BA"}
+
+
+# ---------------------------------------------------------------------------
+# CNG NCryptExportKey contract (A64 / HIGH#7)
+# ---------------------------------------------------------------------------
+
+# NCRYPT_ALLOW_EXPORT_FLAG is an NCRYPT_EXPORT_POLICY_PROPERTY *key* flag.
+# It is NOT a valid NCryptExportKey dwFlags bit — using it makes "any error"
+# look like non-exportability (invalid-parameter), which proves nothing.
+NCRYPT_SILENT_FLAG = 0x00000040
+NCRYPT_ALLOW_EXPORT_FLAG = 0x00000001
+
+NTE_BAD_KEY_STATE = 0x8009000B
+NTE_PERM = 0x80090010
+NTE_NOT_SUPPORTED = 0x80090029  # often wrong blob/alg — NOT exact non-exportable proof
+
+# Exact non-exportable refusal only. NTE_NOT_SUPPORTED is excluded because an
+# invalid blob type / alg on an *exportable* key also returns it (A64 / HIGH#7).
+EXACT_NON_EXPORTABLE_NCRYPT_STATUSES: frozenset[int] = frozenset(
+    {
+        NTE_BAD_KEY_STATE,
+        NTE_PERM,
+    }
+)
+
+# Key-creation export-policy bits (NCRYPT_EXPORT_POLICY_PROPERTY) — NOT export dwFlags.
+NCRYPT_ALLOW_PLAINTEXT_EXPORT_FLAG = 0x00000002
+
+
+def ncrypt_export_key_dwflags() -> int:
+    """Valid ``NCryptExportKey`` dwFlags — silent only; never allow-export."""
+    return NCRYPT_SILENT_FLAG
+
+
+def refuse_invalid_ncrypt_export_flags(dw_flags: int) -> None:
+    """Raise when ``dw_flags`` includes invalid export bits (A64 / HIGH#7)."""
+    if not isinstance(dw_flags, int) or isinstance(dw_flags, bool):
+        raise TypeError("dw_flags must be an int")
+    if dw_flags & NCRYPT_ALLOW_EXPORT_FLAG:
+        raise ValueError(
+            "NCRYPT_ALLOW_EXPORT_FLAG is not a valid NCryptExportKey dwFlags bit "
+            "(key export-policy property only; refuses any-error false proof)"
+        )
+    allowed = NCRYPT_SILENT_FLAG
+    if dw_flags & ~allowed:
+        raise ValueError(f"invalid NCryptExportKey dwFlags: 0x{dw_flags:08x}")
+
+
+def classify_ncrypt_private_export_status(status: int) -> str:
+    """Classify an ``NCryptExportKey`` status for non-exportability proof.
+
+    Returns:
+      - ``"exported"`` — status 0 (exportable positive control path)
+      - ``"non_exportable"`` — exact refusal class only
+      - ``"invalid_operation"`` — any other error (must NOT count as proof)
+    """
+    if not isinstance(status, int) or isinstance(status, bool):
+        raise TypeError("status must be an int")
+    # Normalize to unsigned 32-bit for HRESULT-style codes passed as signed.
+    code = status & 0xFFFFFFFF
+    if code == 0:
+        return "exported"
+    if code in {s & 0xFFFFFFFF for s in EXACT_NON_EXPORTABLE_NCRYPT_STATUSES}:
+        return "non_exportable"
+    return "invalid_operation"

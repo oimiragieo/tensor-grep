@@ -509,214 +509,10 @@ def test_windows_programdata_protected_root_integration() -> None:
         _ = receipt_mod.evaluate_protected_root_security_descriptor(sd)
 
 
-# --- Pure SDDL DACL parser (platform-neutral; Windows conversion is separate) ---
-
-# Exact DACL control flags only (SDDL control-flag grammar for this protected root).
-_ALLOWED_DACL_FLAG_TOKENS = frozenset({"P", "AR", "AI"})
-
-_WRITE_FULL_RIGHT_TOKENS = frozenset({
-    "GA",  # GENERIC_ALL
-    "GW",  # GENERIC_WRITE
-    "GX",  # GENERIC_EXECUTE (paired with write grants in some DACLs; not sole write)
-    "FA",  # FILE_ALL_ACCESS
-    "FW",  # FILE_GENERIC_WRITE
-    "WD",  # WRITE_DAC
-    "WO",  # WRITE_OWNER
-    "SD",  # DELETE
-    "WA",  # WRITE_ATTRIBUTES
-    "WE",  # WRITE_EXTENDED_ATTRIBUTES
-    "DC",  # Delete Child / directory write-class
-    "LC",  # List Children (kept known; not write/full alone)
-    "CR",  # Control Access
-    "SW",  # Standard Write
-    "WP",  # Write Property
-    "DT",  # Delete Tree
-    "KA",  # KEY_ALL_ACCESS — restricted write authority (never read-like)
-    "KW",  # KEY_WRITE — restricted write authority (never read-like)
-})
-# Rights that are NOT write/full by themselves (read/execute/control).
-_READ_LIKE_RIGHT_TOKENS = frozenset({
-    "GR",
-    "FR",
-    "FX",
-    "RC",
-    "RE",
-    "RA",
-    "RD",
-    "CC",
-    "RP",
-    "LO",
-    "AS",
-    "KR",  # KEY_READ — read-like only
-    "KX",  # KEY_EXECUTE — read-like only
-})
-_KNOWN_RIGHT_TOKENS = _WRITE_FULL_RIGHT_TOKENS | _READ_LIKE_RIGHT_TOKENS
-# Write/full authority tokens that must be restricted to SY+BA only.
-_RESTRICTED_WRITE_FULL = frozenset({
-    "GA",
-    "GW",
-    "FA",
-    "FW",
-    "WD",
-    "WO",
-    "SD",
-    "WA",
-    "WE",
-    "DC",
-    "CR",
-    "SW",
-    "WP",
-    "DT",
-    "KA",  # KEY_ALL_ACCESS
-    "KW",  # KEY_WRITE
-})
-_ALLOWED_WRITE_TRUSTEE_ALIASES = {
-    "SY": "SY",
-    "S-1-5-18": "SY",
-    "BA": "BA",
-    "S-1-5-32-544": "BA",
-}
-
-
-def _extract_sddl_dacl_body(sddl: str) -> str | None:
-    """Extract the DACL body after ``D:`` up to a top-level ``S:`` SACL or end.
-
-    Must NOT use ``D:([^S]*)`` — that truncates at the ``S`` inside ``SY``.
-    """
-    idx = sddl.find("D:")
-    if idx < 0:
-        return None
-    body_start = idx + 2
-    depth = 0
-    i = body_start
-    while i < len(sddl):
-        ch = sddl[i]
-        if ch == "(":
-            depth += 1
-        elif ch == ")":
-            depth -= 1
-            if depth < 0:
-                return None
-        elif depth == 0 and sddl.startswith("S:", i):
-            return sddl[body_start:i]
-        i += 1
-    if depth != 0:
-        return None
-    return sddl[body_start:]
-
-
-def _parse_dacl_flags(flags: str) -> set[str] | None:
-    """Parse DACL flags as exact ``P`` / ``AR`` / ``AI`` tokens only.
-
-    Unknown flags, spaces, or stray text return None (conservative reject).
-    """
-    if flags == "":
-        return set()
-    tokens: set[str] = set()
-    i = 0
-    while i < len(flags):
-        if i + 1 < len(flags) and flags[i : i + 2] in _ALLOWED_DACL_FLAG_TOKENS:
-            tokens.add(flags[i : i + 2])
-            i += 2
-            continue
-        if flags[i] in _ALLOWED_DACL_FLAG_TOKENS:
-            tokens.add(flags[i])
-            i += 1
-            continue
-        return None
-    return tokens
-
-
-def _parse_sddl_right_tokens(rights: str) -> set[str] | None:
-    """Tokenize SDDL rights into exact 2-char codes.
-
-    Rejects hex/numeric rights and any unknown token conservatively (returns None).
-    """
-    if rights == "":
-        return set()
-    if rights.lower().startswith("0x") or any(ch.isdigit() for ch in rights):
-        return None
-    if len(rights) % 2 != 0:
-        return None
-    tokens = {rights[i : i + 2] for i in range(0, len(rights), 2)}
-    if not tokens <= _KNOWN_RIGHT_TOKENS:
-        return None
-    return tokens
-
-
-def evaluate_programdata_sddl_dacl(sddl: str) -> bool:
-    """Pure SDDL DACL evaluator for ProgramData protected-root authority.
-
-    Requires a protected DACL (exact ``P`` flag token among only ``P``/``AR``/``AI``),
-    parses every ACE with exactly 6 semicolon fields, accepts write/full allow
-    ACEs (including ``KA``/``KW`` registry write authority) only for exact
-    SYSTEM (SY / S-1-5-18) and Builtin Administrators (BA / S-1-5-32-544),
-    requires both trustees present with write/full, and rejects stray text
-    outside flags/ACE records, unbalanced closes, malformed ACEs, numeric /
-    unknown rights conservatively.
-    """
-    if not sddl or not isinstance(sddl, str):
-        return False
-    dacl_body = _extract_sddl_dacl_body(sddl)
-    if dacl_body is None:
-        return False
-    # Flags prefix before the first ACE '('.
-    paren = dacl_body.find("(")
-    flags = dacl_body if paren < 0 else dacl_body[:paren]
-    flag_tokens = _parse_dacl_flags(flags)
-    if flag_tokens is None or "P" not in flag_tokens:
-        return False
-    if paren < 0:
-        return False
-
-    # Exact ACE scan: only consecutive ``(...)`` records; any stray text rejects.
-    ace_bodies: list[str] = []
-    i = paren
-    while i < len(dacl_body):
-        if dacl_body[i] != "(":
-            return False
-        depth = 0
-        start = i + 1
-        j = i
-        closed = False
-        while j < len(dacl_body):
-            ch = dacl_body[j]
-            if ch == "(":
-                depth += 1
-            elif ch == ")":
-                depth -= 1
-                if depth == 0:
-                    ace_bodies.append(dacl_body[start:j])
-                    i = j + 1
-                    closed = True
-                    break
-                if depth < 0:
-                    return False
-            j += 1
-        if not closed:
-            return False  # unmatched / unbalanced close
-    if not ace_bodies:
-        return False
-
-    write_trustees_seen: set[str] = set()
-    for ace in ace_bodies:
-        parts = ace.split(";")
-        if len(parts) != 6:
-            return False
-        ace_type, _flags, rights, _object_guid, _inherit_guid, trustee = parts
-        right_tokens = _parse_sddl_right_tokens(rights)
-        if right_tokens is None:
-            return False
-        if ace_type != "A":
-            continue
-        if not (right_tokens & _RESTRICTED_WRITE_FULL):
-            continue
-        trustee = trustee.strip()
-        alias = _ALLOWED_WRITE_TRUSTEE_ALIASES.get(trustee)
-        if alias is None:
-            return False
-        write_trustees_seen.add(alias)
-    return write_trustees_seen == {"SY", "BA"}
+# --- Pure SDDL DACL parser lives in production (A65 / HIGH#6) ---
+# Tests exercise the product grammar; do not re-implement acceptance here.
+evaluate_programdata_sddl_dacl = receipt_mod.evaluate_programdata_sddl_dacl
+_extract_sddl_dacl_body = receipt_mod.extract_sddl_dacl_body
 
 
 def _independently_inspect_programdata_sd(security_descriptor: bytes) -> bool:
@@ -767,8 +563,9 @@ def test_programdata_sddl_dacl_parser_platform_neutral_vectors() -> None:
     Proves S: SACL boundary with SY trustees (the ``D:([^S]*)`` trap), exact
     SY+BA acceptance (including ``KA``/``KW`` write authority), permissive /
     foreign write rejection, exact ``P``/``AR``/``AI`` flag parsing, stray text /
-    unmatched close / extra ACE fields rejection, missing-P rejection, and
-    malformed / numeric-rights / unknown-rights rejection.
+    unmatched close / extra ACE fields rejection, missing-P rejection,
+    malformed / numeric-rights / unknown-rights rejection, and HIGH#6
+    unknown / inherit-only / garbage ACE grammar rejection.
     """
     import re
 
@@ -822,6 +619,33 @@ def test_programdata_sddl_dacl_parser_platform_neutral_vectors() -> None:
     assert evaluate_programdata_sddl_dacl("D:P(A;;ZZ;;;SY)(A;;FA;;;BA)") is False
     assert evaluate_programdata_sddl_dacl("") is False
     assert evaluate_programdata_sddl_dacl("O:SYG:SY") is False
+
+    # HIGH#6: inherit-only ACEs do not establish effective object authority.
+    assert evaluate_programdata_sddl_dacl("D:P(A;IO;FA;;;SY)(A;IO;FA;;;BA)") is False
+    assert evaluate_programdata_sddl_dacl("D:P(A;OIIO;FA;;;SY)(A;OIIO;FA;;;BA)") is False
+    # Real SY+BA plus inherit-only foreign remains acceptable (IO not effective).
+    assert (
+        evaluate_programdata_sddl_dacl("D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;IO;FA;;;WD)") is True
+    )
+
+    # HIGH#6: unknown ACE flags / unknown ACE types / garbage flag length reject.
+    assert evaluate_programdata_sddl_dacl("D:P(A;ZZ;FA;;;SY)(A;;FA;;;BA)") is False
+    assert evaluate_programdata_sddl_dacl("D:P(A;X;FA;;;SY)(A;;FA;;;BA)") is False
+    assert evaluate_programdata_sddl_dacl("D:P(Q;;FA;;;SY)(A;;FA;;;BA)") is False
+    assert evaluate_programdata_sddl_dacl("D:P(A;IOZZ;FA;;;SY)(A;;FA;;;BA)") is False
+
+
+@task2a_owned
+def test_sddl_garbage_unknown_inherit_only_reject_contract() -> None:
+    """HIGH#6 focused contract: garbage / unknown / inherit-only fail closed."""
+    # Inherit-only-only SY+BA pair — no effective authority.
+    assert receipt_mod.evaluate_programdata_sddl_dacl("D:P(A;IO;KA;;;SY)(A;IO;KA;;;BA)") is False
+    # Unknown ACE flag token.
+    assert receipt_mod.evaluate_programdata_sddl_dacl("D:P(A;QQ;FA;;;SY)(A;;FA;;;BA)") is False
+    # Garbage ACE type.
+    assert receipt_mod.evaluate_programdata_sddl_dacl("D:P(Z;;FA;;;SY)(A;;FA;;;BA)") is False
+    # Positive control still holds for exact effective SY+BA.
+    assert receipt_mod.evaluate_programdata_sddl_dacl("D:P(A;;FA;;;SY)(A;;FA;;;BA)") is True
 
 
 @task2a_owned
@@ -1116,14 +940,20 @@ def test_txr_per_call_fault_isolation_event_gated() -> None:
 
 
 def _test_side_ncrypt_attempt_private_export(key_name: str) -> None:
-    """Test-owned NCrypt open + private export attempt (exact non-exportability)."""
+    """Test-owned NCrypt open + private export attempt (exact non-exportability).
+
+    Uses only valid ``NCryptExportKey`` dwFlags (silent). Refuses the invalid
+    ``NCRYPT_ALLOW_EXPORT_FLAG``-as-export-flag pattern. Accepts only the exact
+    non-exportable status class — never "any nonzero error" (A64 / HIGH#7).
+    """
     import ctypes
     from ctypes import wintypes
 
     ncrypt = ctypes.WinDLL("ncrypt", use_last_error=True)
-    NCRYPT_SILENT_FLAG = 0x00000040
-    NCRYPT_ALLOW_EXPORT_FLAG = 0x00000001
-    # NCryptOpenStorageProvider / NCryptOpenKey / NCryptExportKey
+    # Validate flags via production contract BEFORE the call.
+    dw_flags = receipt_mod.ncrypt_export_key_dwflags()
+    receipt_mod.refuse_invalid_ncrypt_export_flags(dw_flags)
+
     ncrypt.NCryptOpenStorageProvider.argtypes = [
         ctypes.POINTER(wintypes.HANDLE),
         wintypes.LPCWSTR,
@@ -1165,7 +995,7 @@ def _test_side_ncrypt_attempt_private_export(key_name: str) -> None:
             ctypes.byref(key),
             key_name,
             0,
-            NCRYPT_SILENT_FLAG,
+            receipt_mod.NCRYPT_SILENT_FLAG,
         )
         if status != 0:
             raise OSError(f"NCryptOpenKey failed: 0x{status:08x}")
@@ -1173,24 +1003,214 @@ def _test_side_ncrypt_attempt_private_export(key_name: str) -> None:
         status = ncrypt.NCryptExportKey(
             key,
             None,
-            "PRIVATEBLOB",
+            "RSAFULLPRIVATEBLOB",
             None,
             None,
             0,
             ctypes.byref(pcb),
-            NCRYPT_ALLOW_EXPORT_FLAG | NCRYPT_SILENT_FLAG,
+            dw_flags,
         )
-        # Non-exportable keys must refuse (NTE_BAD_KEY_STATE / NTE_PERM / similar).
-        if status == 0:
+        kind = receipt_mod.classify_ncrypt_private_export_status(int(status))
+        if kind == "exported":
             raise AssertionError(
                 f"NCryptExportKey succeeded for supposedly non-exportable key {key_name!r}"
             )
-        # Exact non-exportability: nonzero status is required.
+        if kind != "non_exportable":
+            raise AssertionError(
+                f"CNG export status 0x{status & 0xFFFFFFFF:08x} is {kind!r}, "
+                "not an exact non_exportable refusal (any-error is not proof)"
+            )
         raise PermissionError(
-            f"CNG key {key_name!r} refused private export (status=0x{status:08x})"
+            f"CNG key {key_name!r} refused private export (status=0x{status & 0xFFFFFFFF:08x})"
         )
     finally:
         if key.value:
+            ncrypt.NCryptFreeObject(key)
+        if provider.value:
+            ncrypt.NCryptFreeObject(provider)
+
+
+@task2a_owned
+def test_cng_export_positive_control_and_refuse_invalid_flag_any_error() -> None:
+    """HIGH#7 / A64: exportable positive control + invalid flag / any-error refuse."""
+    # Positive control path: status 0 classifies as exported.
+    assert receipt_mod.classify_ncrypt_private_export_status(0) == "exported"
+
+    # Exact non-exportable refusal class only.
+    assert (
+        receipt_mod.classify_ncrypt_private_export_status(receipt_mod.NTE_BAD_KEY_STATE)
+        == "non_exportable"
+    )
+    assert (
+        receipt_mod.classify_ncrypt_private_export_status(receipt_mod.NTE_PERM)
+        == "non_exportable"
+    )
+    # NTE_NOT_SUPPORTED is not exact non-exportable proof (wrong blob/alg).
+    assert (
+        receipt_mod.classify_ncrypt_private_export_status(receipt_mod.NTE_NOT_SUPPORTED)
+        == "invalid_operation"
+    )
+
+    # Any other error is NOT non-exportable proof (invalid flag fallout, etc.).
+    assert (
+        receipt_mod.classify_ncrypt_private_export_status(0x80090001)  # NTE_BAD_UID-ish
+        == "invalid_operation"
+    )
+    assert receipt_mod.classify_ncrypt_private_export_status(0xDEADBEEF) == "invalid_operation"
+    assert receipt_mod.classify_ncrypt_private_export_status(-1) == "invalid_operation"
+
+    # Valid export dwFlags are silent-only.
+    assert receipt_mod.ncrypt_export_key_dwflags() == receipt_mod.NCRYPT_SILENT_FLAG
+    receipt_mod.refuse_invalid_ncrypt_export_flags(receipt_mod.NCRYPT_SILENT_FLAG)
+    receipt_mod.refuse_invalid_ncrypt_export_flags(0)
+
+    # Invalid: NCRYPT_ALLOW_EXPORT_FLAG as an export dwFlags bit.
+    with pytest.raises(ValueError, match=r"NCRYPT_ALLOW_EXPORT_FLAG|not a valid"):
+        receipt_mod.refuse_invalid_ncrypt_export_flags(
+            receipt_mod.NCRYPT_ALLOW_EXPORT_FLAG | receipt_mod.NCRYPT_SILENT_FLAG
+        )
+    with pytest.raises(ValueError, match=r"NCRYPT_ALLOW_EXPORT_FLAG|not a valid"):
+        receipt_mod.refuse_invalid_ncrypt_export_flags(receipt_mod.NCRYPT_ALLOW_EXPORT_FLAG)
+
+
+@_windows_required
+def test_windows_cng_exportable_positive_control_then_non_exportable() -> None:
+    """HIGH#7 Windows: exportable key exports under valid silent-only flags.
+
+    Creates a temporary *exportable* CNG key and proves PRIVATEBLOB export
+    succeeds (positive control). Production non-exportable refusal remains in
+    ``test_windows_cng_sign_verify_integration`` via the exact status class.
+    Always deletes the temporary key.
+    """
+    _require_windows()
+    import ctypes
+    from ctypes import wintypes
+
+    ncrypt = ctypes.WinDLL("ncrypt", use_last_error=True)
+    NCRYPT_OVERWRITE_KEY_FLAG = 0x00000080
+    exportable_name = "TensorGrepTask2AExportablePositiveControlV1"
+
+    ncrypt.NCryptOpenStorageProvider.argtypes = [
+        ctypes.POINTER(wintypes.HANDLE),
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+    ]
+    ncrypt.NCryptOpenStorageProvider.restype = wintypes.LONG
+    ncrypt.NCryptCreatePersistedKey.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.HANDLE),
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+    ]
+    ncrypt.NCryptCreatePersistedKey.restype = wintypes.LONG
+    ncrypt.NCryptSetProperty.argtypes = [
+        wintypes.HANDLE,
+        wintypes.LPCWSTR,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+    ]
+    ncrypt.NCryptSetProperty.restype = wintypes.LONG
+    ncrypt.NCryptFinalizeKey.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    ncrypt.NCryptFinalizeKey.restype = wintypes.LONG
+    ncrypt.NCryptExportKey.argtypes = [
+        wintypes.HANDLE,
+        wintypes.HANDLE,
+        wintypes.LPCWSTR,
+        wintypes.LPVOID,
+        ctypes.POINTER(ctypes.c_ubyte),
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+        wintypes.DWORD,
+    ]
+    ncrypt.NCryptExportKey.restype = wintypes.LONG
+    ncrypt.NCryptDeleteKey.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    ncrypt.NCryptDeleteKey.restype = wintypes.LONG
+    ncrypt.NCryptFreeObject.argtypes = [wintypes.HANDLE]
+    ncrypt.NCryptFreeObject.restype = wintypes.LONG
+
+    dw_flags = receipt_mod.ncrypt_export_key_dwflags()
+    receipt_mod.refuse_invalid_ncrypt_export_flags(dw_flags)
+    # Control: the retired invalid-flag pattern must be refused by the contract.
+    with pytest.raises(ValueError, match=r"NCRYPT_ALLOW_EXPORT_FLAG|not a valid"):
+        receipt_mod.refuse_invalid_ncrypt_export_flags(
+            receipt_mod.NCRYPT_ALLOW_EXPORT_FLAG | receipt_mod.NCRYPT_SILENT_FLAG
+        )
+
+    provider = wintypes.HANDLE()
+    status = ncrypt.NCryptOpenStorageProvider(
+        ctypes.byref(provider), "Microsoft Software Key Storage Provider", 0
+    )
+    if status != 0:
+        raise OSError(f"NCryptOpenStorageProvider failed: 0x{status:08x}")
+    key = wintypes.HANDLE()
+    try:
+        status = ncrypt.NCryptCreatePersistedKey(
+            provider,
+            ctypes.byref(key),
+            "RSA",
+            exportable_name,
+            0,
+            NCRYPT_OVERWRITE_KEY_FLAG,
+        )
+        if status != 0:
+            raise OSError(f"NCryptCreatePersistedKey failed: 0x{status:08x}")
+        # Key length required before finalize for RSA.
+        length = wintypes.DWORD(2048)
+        status = ncrypt.NCryptSetProperty(
+            key,
+            "Length",
+            ctypes.byref(length),
+            ctypes.sizeof(length),
+            0,
+        )
+        if status != 0:
+            raise OSError(f"NCryptSetProperty Length failed: 0x{status:08x}")
+        # Export policy on the KEY (property) — not an NCryptExportKey dwFlags bit.
+        # Plaintext export required for PRIVATEBLOB/RSAFULLPRIVATEBLOB materialization.
+        policy = wintypes.DWORD(
+            receipt_mod.NCRYPT_ALLOW_EXPORT_FLAG
+            | receipt_mod.NCRYPT_ALLOW_PLAINTEXT_EXPORT_FLAG
+        )
+        status = ncrypt.NCryptSetProperty(
+            key,
+            "Export Policy",
+            ctypes.byref(policy),
+            ctypes.sizeof(policy),
+            0,
+        )
+        if status != 0:
+            raise OSError(f"NCryptSetProperty Export Policy failed: 0x{status:08x}")
+        status = ncrypt.NCryptFinalizeKey(key, 0)
+        if status != 0:
+            raise OSError(f"NCryptFinalizeKey failed: 0x{status:08x}")
+        pcb = wintypes.DWORD(0)
+        # RSAFULLPRIVATEBLOB is the valid private-material blob for CNG RSA keys.
+        status = ncrypt.NCryptExportKey(
+            key,
+            None,
+            "RSAFULLPRIVATEBLOB",
+            None,
+            None,
+            0,
+            ctypes.byref(pcb),
+            dw_flags,
+        )
+        assert (
+            receipt_mod.classify_ncrypt_private_export_status(int(status)) == "exported"
+        ), (
+            f"exportable positive control must export under silent flags; "
+            f"got status=0x{status & 0xFFFFFFFF:08x}"
+        )
+        assert pcb.value > 0
+    finally:
+        if key.value:
+            try:
+                ncrypt.NCryptDeleteKey(key, 0)
+            except Exception:
+                pass
             ncrypt.NCryptFreeObject(key)
         if provider.value:
             ncrypt.NCryptFreeObject(provider)

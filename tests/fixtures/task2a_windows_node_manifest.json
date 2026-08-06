@@ -328,6 +328,20 @@
       "required_non_skip": true
     },
     {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_sddl_garbage_unknown_inherit_only_reject_contract",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_sddl_garbage_unknown_inherit_only_reject_contract",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "959c2f6a86fbbe72fbcd537a2113975dee158a54fe2f571ac92a5734a479ec21",
+      "required_non_skip": true
+    },
+    {
       "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_protected_root_open_close_ownership_without_acl_bool",
       "workflow": "ci.yml",
       "job": "test-python",
@@ -451,6 +465,34 @@
         "--timeout=15"
       ],
       "command_digest": "c08fce93a98955a1093394ce1858337ea7f87e71e804300ca48ca25ef9e01c5d",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_cng_export_positive_control_and_refuse_invalid_flag_any_error",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_cng_export_positive_control_and_refuse_invalid_flag_any_error",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "40a29a202d0b3be970c180d46110e78fb348186e0406f76c547e0102e3478559",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_windows_cng_exportable_positive_control_then_non_exportable",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_windows_cng_exportable_positive_control_then_non_exportable",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "c3b3373dce456d6c7fa9d32af5cfebfd1fcb1e45b0cd590437390d37ba8ab780",
       "required_non_skip": true
     },
     {
@@ -1151,6 +1193,34 @@
         "--timeout=15"
       ],
       "command_digest": "908170e5157b53a3810d9e4b4db0e49039977dd19dd8bb61cc2f29a5eb835c9f",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_job_heartbeat_rejects_parent_forgeable_and_multiline_ambiguity",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_job_heartbeat_rejects_parent_forgeable_and_multiline_ambiguity",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "32cf50273a4c315cf2881bfc5c2f652a2a42649820ce48abec776a63e6afe595",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_default_job_cleanup_independently_proven",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_default_job_cleanup_independently_proven",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "ded623909a7b2a664b57fe3cf5221939b62998e1dd056a9b5af0d2f91613fe58",
       "required_non_skip": true
     },
     {

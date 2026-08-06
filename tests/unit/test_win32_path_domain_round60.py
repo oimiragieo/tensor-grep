@@ -746,8 +746,9 @@ class _RecordingJobFactory:
         parent: win32.ProcessThreadHandles,
         canary_event: threading.Event | None,
         canary_pipe_write_fd: int | None,
+        writer_nonce: bytes | None = None,
     ) -> win32.ProcessThreadHandles:
-        _ = parent, canary_event, canary_pipe_write_fd
+        _ = parent, canary_event, canary_pipe_write_fd, writer_nonce
         self._next_pid += 1
         return win32.ProcessThreadHandles(
             process_handle=self._alloc(),
@@ -900,13 +901,19 @@ def test_suspended_job_descendant_breakaway_orchestration() -> None:
             assert fixture.parent_pid != fixture.descendant_pid
             assert fixture.create_flags & win32.CREATE_SUSPENDED
             assert not (fixture.create_flags & win32.CREATE_BREAKAWAY_FROM_JOB)
-            # PID-bound heartbeat formatter: descendant payload ≠ parent; round-trip.
-            desc_hb = win32.descendant_job_pipe_heartbeat(fixture.descendant_pid)
-            parent_hb = win32.descendant_job_pipe_heartbeat(fixture.parent_pid)
-            assert desc_hb != parent_hb
-            assert win32.parse_descendant_job_pipe_heartbeat_pid(desc_hb) == (
-                fixture.descendant_pid
+            # PID+nonce heartbeat: descendant payload ≠ parent; round-trip;
+            # PID-only parent forgery refused.
+            nonce = b"\x11" * 16
+            desc_hb = win32.descendant_job_pipe_heartbeat(
+                fixture.descendant_pid, writer_nonce=nonce
             )
+            parent_hb = win32.descendant_job_pipe_heartbeat(
+                fixture.parent_pid, writer_nonce=nonce
+            )
+            assert desc_hb != parent_hb
+            assert win32.parse_descendant_job_pipe_heartbeat_pid(
+                desc_hb, writer_nonce=nonce
+            ) == (fixture.descendant_pid)
             assert fixture.canary_event is canary_event
             assert fixture.canary_pipe_write_fd == w_fd
             owned = fixture.owned_handles()
@@ -928,14 +935,14 @@ def test_suspended_job_descendant_breakaway_orchestration() -> None:
 
 @_windows_required
 def test_suspended_job_descendant_breakaway_windows_integration() -> None:
-    """Mandatory Windows Job integration: default factory + PID-bound heartbeat.
+    """Mandatory Windows Job integration: default factory + PID+nonce heartbeat.
 
     Calls production with no injected factory. Requires a test-owned exact
     descendant-bound pipe heartbeat from ``descendant_job_pipe_heartbeat``
-    (containing the actual descendant PID, written by the descendant worker)
-    before Job close — absence fails (no vacuous empty-pipe / parent-forged
-    fixed-token pass). Before ``close_job_only``, independently proves BOTH
-    retained process handles are ``STILL_ACTIVE`` via test-side
+    (containing the actual descendant PID + writer nonce, written by the
+    descendant worker) before Job close — absence fails (no vacuous empty-pipe
+    / parent-forged PID-only pass). Before ``close_job_only``, independently
+    proves BOTH retained process handles are ``STILL_ACTIVE`` via test-side
     ``GetExitCodeProcess`` and zero-time ``WaitForSingleObject``. Then closes
     Job only, proves both transition to exited / non-``STILL_ACTIVE``,
     boundedly drains buffered heartbeat data, and requires EOF. Never uses
@@ -943,12 +950,14 @@ def test_suspended_job_descendant_breakaway_windows_integration() -> None:
     """
     _require_windows()
     r_fd, w_fd = os.pipe()
+    nonce = os.urandom(16)
     try:
         # Inheritability: pass the writer fd into production; GREEN must duplicate
-        # into the child and have the descendant write the PID-bound heartbeat.
+        # into the child and have the descendant write the PID+nonce heartbeat.
         # On behaviorless RED this raises at the default factory.
         fixture = win32.create_suspended_job_with_descendant_breakaway(
             canary_pipe_write_fd=w_fd,
+            writer_nonce=nonce,
         )
         try:
             assert fixture.job_handle not in (0, 1, -1)
@@ -961,13 +970,17 @@ def test_suspended_job_descendant_breakaway_windows_integration() -> None:
             assert fixture.parent_pid != fixture.descendant_pid
             parent_proc = fixture.parent_process_handle
             descendant_proc = fixture.descendant_process_handle
-            # Exact heartbeat is a pure function of the real descendant PID —
-            # a fixed parent-writable token cannot satisfy this needle.
-            heartbeat = win32.descendant_job_pipe_heartbeat(fixture.descendant_pid)
+            # Exact heartbeat is a pure function of the real descendant PID +
+            # test-owned nonce — a parent-writable PID-only token cannot satisfy.
+            heartbeat = win32.descendant_job_pipe_heartbeat(
+                fixture.descendant_pid, writer_nonce=nonce
+            )
             assert heartbeat, "contract heartbeat must be non-empty"
-            assert heartbeat != win32.descendant_job_pipe_heartbeat(fixture.parent_pid)
+            assert heartbeat != win32.descendant_job_pipe_heartbeat(
+                fixture.parent_pid, writer_nonce=nonce
+            )
             # Pre-close: descendant must have inherited the writer and emitted
-            # the exact PID-bound heartbeat. Empty pipe / missing writer fails.
+            # the exact PID+nonce heartbeat. Empty pipe / missing writer fails.
             pre_close = _bounded_pipe_read_until_contains(
                 r_fd,
                 heartbeat,
@@ -975,7 +988,10 @@ def test_suspended_job_descendant_breakaway_windows_integration() -> None:
             )
             assert heartbeat in pre_close
             assert (
-                win32.parse_descendant_job_pipe_heartbeat_pid(pre_close) == fixture.descendant_pid
+                win32.parse_descendant_job_pipe_heartbeat_pid(
+                    pre_close, writer_nonce=nonce
+                )
+                == fixture.descendant_pid
             )
             # Before Job close: BOTH members must still be alive. If either
             # already exited, Job-kill proof is vacuous.
@@ -1008,6 +1024,71 @@ def test_suspended_job_descendant_breakaway_windows_integration() -> None:
                 os.close(fd)
             except OSError:
                 pass
+
+
+@task2a_owned
+def test_job_heartbeat_rejects_parent_forgeable_and_multiline_ambiguity() -> None:
+    """HIGH#4 / A63: nonce-bound heartbeat; PID-only forge + multiline reject."""
+    nonce = b"\xab" * 16
+    other = b"\xcd" * 16
+    pid = 4242
+    good = win32.descendant_job_pipe_heartbeat(pid, writer_nonce=nonce)
+    assert win32.parse_descendant_job_pipe_heartbeat_pid(good, writer_nonce=nonce) == pid
+
+    # Parent-forgeable PID-only legacy form (no nonce mark) must refuse.
+    pid_only = b"TG60-JOB-DESCENDANT-HB pid=4242\n"
+    with pytest.raises(ValueError, match=r"nonce mark|parent-forgeable|PID-only"):
+        win32.parse_descendant_job_pipe_heartbeat_pid(pid_only, writer_nonce=nonce)
+
+    # Wrong nonce (parent guessing PID but not the writer secret) must refuse.
+    with pytest.raises(ValueError, match=r"nonce mismatch"):
+        win32.parse_descendant_job_pipe_heartbeat_pid(good, writer_nonce=other)
+
+    # Multiline / multi-prefix ambiguity must refuse (not first-match win).
+    ambiguous = good + b"noise" + win32.descendant_job_pipe_heartbeat(9999, writer_nonce=nonce)
+    with pytest.raises(ValueError, match=r"multiline ambiguity"):
+        win32.parse_descendant_job_pipe_heartbeat_pid(ambiguous, writer_nonce=nonce)
+
+    # Short nonce is itself parent-forgeable — refused at format time.
+    with pytest.raises(ValueError, match=r"writer_nonce|forgeable"):
+        win32.descendant_job_pipe_heartbeat(pid, writer_nonce=b"short")
+
+
+@task2a_owned
+def test_default_job_cleanup_independently_proven(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HIGH#5 / A63: default-factory cleanup via production ``close_handle``.
+
+    Observes module ``close_handle`` independently — not a factory-private list
+    and not heartbeat/EOF/Event. Fault after pipe-worker setup must reverse-close
+    all acquired handles through that production seam.
+    """
+    closed_via_production: list[int] = []
+
+    def _prod_close(handle: int) -> None:
+        closed_via_production.append(handle)
+
+    monkeypatch.setattr(win32, "close_handle", _prod_close)
+    monkeypatch.setattr(win32, "IS_WINDOWS", True)
+
+    factory = _RecordingJobFactory(closed=[])
+    monkeypatch.setattr(win32, "windows_job_factory_primitives", lambda: factory)
+
+    canary = threading.Event()
+    canary.set()
+    with pytest.raises(BaseException, match="injected fault"):
+        win32.create_suspended_job_with_descendant_breakaway(
+            canary_event=canary,
+            inject_fault_after="pipe_worker_setup",
+            factory=None,  # default path
+        )
+    assert factory.acquired, "premise: default factory acquired handles"
+    assert closed_via_production == list(reversed(factory.acquired))
+    # Cleanup proof must not depend on clearing the canary Event.
+    assert canary.is_set() is True
+    # Injected recording factory's private closed list is NOT the authority here.
+    assert factory.closed == []
 
 
 # Exact fault-boundary expectations for the injectable recording factory.

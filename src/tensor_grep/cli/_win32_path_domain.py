@@ -33,57 +33,111 @@ CREATE_SUSPENDED = 0x00000004
 CREATE_BREAKAWAY_FROM_JOB = 0x01000000
 
 # Test-owned pipe heartbeat contract for SuspendedJobFixture Windows integration.
-# GREEN's inherited descendant pipe worker must write the exact PID-bound payload
-# from ``descendant_job_pipe_heartbeat(own_pid)`` before Job close. A fixed token
-# the parent could forge is insufficient. Clearing a threading.Event is never proof.
+# GREEN's inherited descendant pipe worker must write the exact PID+nonce payload
+# from ``descendant_job_pipe_heartbeat(own_pid, writer_nonce=...)`` before Job close.
+# A parent-forgeable PID-only / fixed token is insufficient (A63 / HIGH#4).
+# Clearing a threading.Event is never proof.
 _DESCENDANT_JOB_PIPE_HEARTBEAT_PREFIX = b"TG60-JOB-DESCENDANT-HB pid="
+_DESCENDANT_JOB_PIPE_HEARTBEAT_NONCE_MARK = b" nonce="
 _DESCENDANT_JOB_PIPE_HEARTBEAT_SUFFIX = b"\n"
+_MIN_WRITER_NONCE_LEN = 16
 
 
-def descendant_job_pipe_heartbeat(descendant_pid: int) -> bytes:
-    """Format the exact canary-pipe heartbeat bound to ``descendant_pid``.
+def descendant_job_pipe_heartbeat(descendant_pid: int, *, writer_nonce: bytes) -> bytes:
+    """Format the exact canary-pipe heartbeat bound to PID + writer nonce.
 
-    Deterministic and PID-specific so a parent-written constant cannot satisfy
-    the Windows integration. Rejects non-positive PIDs.
+    The nonce authenticates writer provenance: a parent that only knows the
+    descendant PID cannot forge acceptance. Rejects non-positive PIDs and
+    short/empty nonces.
     """
     if not isinstance(descendant_pid, int) or isinstance(descendant_pid, bool):
         raise TypeError("descendant_pid must be an int")
     if descendant_pid <= 0:
         raise ValueError("descendant_pid must be a positive int")
+    if not isinstance(writer_nonce, (bytes, bytearray)):
+        raise TypeError("writer_nonce must be bytes")
+    nonce = bytes(writer_nonce)
+    if len(nonce) < _MIN_WRITER_NONCE_LEN:
+        raise ValueError(
+            f"writer_nonce must be at least {_MIN_WRITER_NONCE_LEN} bytes "
+            "(parent-forgeable short secrets refused)"
+        )
     return (
         _DESCENDANT_JOB_PIPE_HEARTBEAT_PREFIX
         + str(descendant_pid).encode("ascii")
+        + _DESCENDANT_JOB_PIPE_HEARTBEAT_NONCE_MARK
+        + nonce.hex().encode("ascii")
         + _DESCENDANT_JOB_PIPE_HEARTBEAT_SUFFIX
     )
 
 
-def parse_descendant_job_pipe_heartbeat_pid(payload: bytes) -> int:
+def parse_descendant_job_pipe_heartbeat_pid(
+    payload: bytes,
+    *,
+    writer_nonce: bytes,
+) -> int:
     """Extract the bound descendant PID from an exact heartbeat line in ``payload``.
 
-    Requires the deterministic ``descendant_job_pipe_heartbeat`` line shape.
-    Rejects fixed-token / truncated / multi-ambiguous forgeries.
+    Requires the deterministic ``descendant_job_pipe_heartbeat`` line shape with
+    the exact ``writer_nonce``. Rejects PID-only parent forgeries, truncated
+    lines, and multiline / multi-match ambiguity (exactly one heartbeat line).
     """
     if not isinstance(payload, (bytes, bytearray)):
         raise TypeError("payload must be bytes")
+    if not isinstance(writer_nonce, (bytes, bytearray)):
+        raise TypeError("writer_nonce must be bytes")
+    nonce = bytes(writer_nonce)
+    if len(nonce) < _MIN_WRITER_NONCE_LEN:
+        raise ValueError(
+            f"writer_nonce must be at least {_MIN_WRITER_NONCE_LEN} bytes "
+            "(parent-forgeable short secrets refused)"
+        )
+    raw = bytes(payload)
     prefix = _DESCENDANT_JOB_PIPE_HEARTBEAT_PREFIX
+    mark = _DESCENDANT_JOB_PIPE_HEARTBEAT_NONCE_MARK
     suffix = _DESCENDANT_JOB_PIPE_HEARTBEAT_SUFFIX
-    start = bytes(payload).find(prefix)
-    if start < 0:
+    nonce_hex = nonce.hex().encode("ascii")
+
+    # Any second prefix is multiline ambiguity — even before shape checks.
+    first = raw.find(prefix)
+    if first < 0:
         raise ValueError("descendant job pipe heartbeat prefix absent")
-    rest = bytes(payload)[start + len(prefix) :]
-    end = rest.find(suffix)
+    second = raw.find(prefix, first + len(prefix))
+    if second >= 0:
+        raise ValueError(
+            "descendant job pipe heartbeat multiline ambiguity "
+            "(multiple heartbeat prefixes)"
+        )
+
+    rest = raw[first + len(prefix) :]
+    mark_at = rest.find(mark)
+    if mark_at < 0:
+        raise ValueError(
+            "descendant job pipe heartbeat missing nonce mark "
+            "(parent-forgeable PID-only form refused)"
+        )
+    digits = rest[:mark_at]
+    after_mark = rest[mark_at + len(mark) :]
+    end = after_mark.find(suffix)
     if end < 0:
         raise ValueError("descendant job pipe heartbeat suffix absent")
-    digits = rest[:end]
+    got_nonce_hex = after_mark[:end]
     if not digits or not digits.isdigit():
         raise ValueError("descendant job pipe heartbeat PID must be decimal digits")
+    if got_nonce_hex != nonce_hex:
+        raise ValueError("descendant job pipe heartbeat nonce mismatch")
     pid = int(digits)
     if pid <= 0:
         raise ValueError("descendant job pipe heartbeat PID must be positive")
-    # Round-trip: the extracted line must equal the deterministic formatter.
-    line = prefix + digits + suffix
-    if line != descendant_job_pipe_heartbeat(pid):
+    line = prefix + digits + mark + nonce_hex + suffix
+    if line != descendant_job_pipe_heartbeat(pid, writer_nonce=nonce):
         raise ValueError("descendant job pipe heartbeat failed round-trip")
+    # The unique line must appear exactly once as a contiguous match.
+    if raw.count(line) != 1:
+        raise ValueError(
+            "descendant job pipe heartbeat multiline ambiguity "
+            "(duplicate exact heartbeat lines)"
+        )
     return pid
 
 
@@ -234,6 +288,7 @@ class SuspendedJobFixture:
     notes: tuple[str, ...] = ()
     canary_event: threading.Event | None = None
     canary_pipe_write_fd: int | None = None
+    writer_nonce: bytes | None = None
     _closer: Callable[[int], None] | None = None
     _close_state: _HandleCloseState = field(
         default_factory=_HandleCloseState, compare=False, hash=False
@@ -327,6 +382,7 @@ class JobFactoryPrimitives(Protocol):
         parent: ProcessThreadHandles,
         canary_event: threading.Event | None,
         canary_pipe_write_fd: int | None,
+        writer_nonce: bytes | None = None,
     ) -> ProcessThreadHandles: ...
 
     def terminate_process(self, process_handle: int) -> None: ...
@@ -517,6 +573,7 @@ def create_suspended_job_with_descendant_breakaway(
     *,
     canary_event: threading.Event | None = None,
     canary_pipe_write_fd: int | None = None,
+    writer_nonce: bytes | None = None,
     inject_fault_after: JobInjectFaultAfter | None = None,
     factory: JobFactoryPrimitives | None = None,
 ) -> SuspendedJobFixture:
@@ -530,23 +587,29 @@ def create_suspended_job_with_descendant_breakaway(
     terminates opened processes, closes owned handles, and re-raises the
     original error (cleanup notes attached via ``add_note``).
 
-    GREEN must wire a real Windows factory and ``_closer``. Tests own the
-    Event/pipe canary and independently wait/query exit — production does not
-    mint authority booleans/dicts for those assertions. The default-factory
-    Windows integration requires the descendant worker to write
-    ``descendant_job_pipe_heartbeat(descendant_pid)`` (exact PID-bound bytes)
-    to the inherited canary pipe before Job close; Event clear is never proof.
+    Default-factory path always binds module ``close_handle`` as the fixture
+    closer so cleanup is independently observable (A63 / HIGH#5) — not only via
+    a test-owned factory private list, and not via heartbeat/EOF alone.
+
+    GREEN must wire a real Windows factory. Tests own the Event/pipe canary and
+    independently wait/query exit. The default-factory Windows integration
+    requires the descendant worker to write
+    ``descendant_job_pipe_heartbeat(descendant_pid, writer_nonce=...)``
+    (PID + nonce; never parent-forgeable PID-only text) before Job close;
+    Event clear is never proof.
     """
+    using_default_factory = factory is None
     if factory is None:
         if not IS_WINDOWS:
-            _ = canary_event, canary_pipe_write_fd, inject_fault_after
+            _ = canary_event, canary_pipe_write_fd, inject_fault_after, writer_nonce
             raise NotImplementedError(
                 "suspended Job + descendant breakaway fixture requires a real "
                 "Windows process/Job factory; fake PIDs are insufficient"
             )
         factory = windows_job_factory_primitives()
 
-    closer = factory.close_handle
+    # HIGH#5: default path cleanup goes through the production close_handle seam.
+    closer = close_handle if using_default_factory else factory.close_handle
     job_handle = factory.create_job()
     opened: list[int] = [job_handle]
     parent: ProcessThreadHandles | None = None
@@ -570,6 +633,7 @@ def create_suspended_job_with_descendant_breakaway(
             parent=parent,
             canary_event=canary_event,
             canary_pipe_write_fd=canary_pipe_write_fd,
+            writer_nonce=writer_nonce,
         )
         opened.extend([descendant.process_handle, descendant.thread_handle])
         if inject_fault_after == "pipe_worker_setup":
@@ -585,6 +649,7 @@ def create_suspended_job_with_descendant_breakaway(
             create_flags=CREATE_SUSPENDED,
             canary_event=canary_event,
             canary_pipe_write_fd=canary_pipe_write_fd,
+            writer_nonce=writer_nonce,
             _closer=closer,
         )
     except BaseException as original:
