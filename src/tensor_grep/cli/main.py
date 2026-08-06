@@ -8090,6 +8090,34 @@ def search_command(
             stats_mode=stats,
         )
     )
+    # HIGH#8 / A67: admit -f/--file pattern files through the shared ledger BEFORE any
+    # rg-passthrough early exit. Existing files are size/count gated here; missing
+    # paths are left for rg on the passthrough path (rg owns that diagnostic).
+    if file:
+        from tensor_grep.cli.search_input_ledger import (
+            SearchInputLedger,
+            SearchInputLimitExceeded,
+            read_pattern_or_ignore_file_bounded,
+        )
+
+        _pre_passthrough_ledger = SearchInputLedger()
+        for _pat_file in file:
+            if not Path(_pat_file).is_file():
+                continue
+            try:
+                read_pattern_or_ignore_file_bounded(
+                    _pat_file, ledger=_pre_passthrough_ledger
+                )
+            except SearchInputLimitExceeded as exc:
+                _exit_search_error(
+                    "search_input_limit",
+                    (
+                        f"pattern file exceeds {exc.limit} bytes "
+                        f"(observed {exc.observed}): {_pat_file}"
+                    ),
+                    json_mode=json,
+                    exit_code=2,
+                )
     if can_passthrough_rg:
         if not stats:
             passthrough_paths = [] if paths_defaulted else paths_to_search
@@ -8098,14 +8126,9 @@ def search_command(
             sys.exit(exit_code)
 
     if multi_pattern_source and not regexp_patterns:
-        # The `-f`-alone sub-case (see the comment above the earlier `combined_multi_patterns`
-        # assignment) is deferred until HERE, now that a real search is confirmed to not be
-        # rg-passthrough (the `if can_passthrough_rg: if not stats: ... sys.exit(...)` block
-        # just above already returned when it would have applied). Reading `-f` eagerly broke
-        # `test_python_search_treats_file_option_as_pattern_file_not_regex`, where real `rg`
-        # itself must read the pattern file on the passthrough path, never tg. This must land
-        # before `Pipeline(...)` below, which reads `config.query_pattern` to route (audit #69,
-        # re-do of #441).
+        # The `-f`-alone sub-case for non-passthrough combine. Ledger admission for
+        # existing -f files already ran above (before passthrough). This must land
+        # before `Pipeline(...)` below, which reads `config.query_pattern` to route.
         file_sourced_patterns = _read_patterns_from_file_list(file or [], json_mode=json)
         try:
             for regex_pattern in file_sourced_patterns:
@@ -8199,8 +8222,8 @@ def search_command(
     ):
         passthrough_paths = [] if paths_defaulted else paths_to_search
         with nvtx_range("search.passthrough_rg", color="green"):
-            _ensure_cpu_child_start()
             exit_code = rg_backend.search_passthrough(passthrough_paths, pattern, config=config)
+            _ensure_cpu_child_start()
         sys.exit(exit_code)
 
     # F6: at this point neither native delegation, the rg-passthrough fast path, nor the
@@ -8305,8 +8328,8 @@ def search_command(
                 span.set_attribute("backend", backend.__class__.__name__)
                 span.set_attribute("path_count", len(search_targets))
             try:
-                _ensure_cpu_child_start()
                 result = rg_backend.search(search_targets, pattern, config=rg_search_config)
+                _ensure_cpu_child_start()
             except Exception as exc:
                 if _is_invalid_regex_error(exc):
                     _exit_invalid_regex(exc, json_mode=json)
@@ -8364,13 +8387,14 @@ def search_command(
                     span.set_attribute("backend", backend.__class__.__name__)
                     span.set_attribute("path", current_file)
                 try:
-                    _ensure_cpu_child_start()
                     result = backend.search(current_file, pattern, config=config)
+                    _ensure_cpu_child_start()
                 except BackendExecutionError as exc:
                     # A native backend failed at runtime; retry once on the always-
                     # available CPU backend so the search returns correct results instead
                     # of a false no-match or a crash (audit B2/I1).
                     result = _search_with_cpu_fallback(current_file, pattern, config, exc)
+                    _ensure_cpu_child_start()
                 except Exception as exc:
                     if _is_invalid_regex_error(exc):
                         _exit_invalid_regex(exc, json_mode=json)

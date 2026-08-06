@@ -12,6 +12,7 @@ These tests MUST fail against unmodified / behaviorless seams. Do not weaken.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import stat
@@ -49,15 +50,19 @@ def _live_environ() -> dict[str, str]:
     }
 
 
+def _live_runner_identity() -> str:
+    return hashlib.sha256(b"GitHub Actions 100000").hexdigest()
+
+
 def _receipt_obj(**overrides: object) -> receipt_mod.NativeCiReceiptV1:
     base: dict[str, object] = {
         "version": 1,
-        "manifest_sha256": "aa" * 32,
+        "manifest_sha256": hashlib.sha256(MANIFEST.read_bytes()).hexdigest(),
         "commit_sha": "deadbeef" * 5,
         "workflow_run_id": "30793797849",
         "run_attempt": "1",
         "job_name": "native-build-smoke",
-        "runner_identity_sha256": "bb" * 32,
+        "runner_identity_sha256": _live_runner_identity(),
         "binary_path": "tg.exe",
         "binary_version": "1.102.1",
         "binary_sha256_pre": "cc" * 32,
@@ -518,8 +523,7 @@ def test_exact_current_run_positive_receipt(tmp_path: Path) -> None:
                 sys.exit(0)
             if "--exact" in argv and "--include-ignored" in argv:
                 # Exact-run arm after terse --list counted FQ by exact name equality once.
-                needle = next((a for a in argv if "::" in a), None)
-                assert needle == FQ, needle
+                assert FQ in argv, argv
                 print("ok")
                 sys.exit(0)
             print(
@@ -602,16 +606,16 @@ def test_exact_current_run_positive_receipt(tmp_path: Path) -> None:
     assert listed_names.count(rust_fq) == 1, rust_list_text
     # Bounded fixture protocol validation without cold cargo.
     list_proc = subprocess.run(
-        [str(rust_fixture), "--list", "--format", "terse"],
+        [sys.executable, str(rust_fixture), "--list", "--format", "terse"],
         capture_output=True,
         text=True,
         check=False,
     )
     assert list_proc.returncode == 0
-    assert list_proc.args == [str(rust_fixture), "--list", "--format", "terse"]
+    assert list_proc.args == [sys.executable, str(rust_fixture), "--list", "--format", "terse"]
     assert _fq_names_from_terse_list(list_proc.stdout).count(rust_fq) == 1
     exact_proc = subprocess.run(
-        [str(rust_fixture), rust_fq, "--exact", "--include-ignored"],
+        [sys.executable, str(rust_fixture), rust_fq, "--exact", "--include-ignored"],
         capture_output=True,
         text=True,
         check=False,

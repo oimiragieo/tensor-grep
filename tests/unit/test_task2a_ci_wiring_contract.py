@@ -115,11 +115,14 @@ def test_task2a_ci_does_not_mask_expected_red_as_success() -> None:
         assert 'vrc" -eq 0' not in run
         assert "verifier must not pass without a receipt" not in run
         # After full census, RED remain visible; verify path must be wired.
-        assert "refusing green CI" in run
+        assert "refusing green" in run
+        assert "VERIFY_RC" in run
         assert "verify_task2a_windows_nodes.py" in run
         assert "NativeCiReceipt emit and verifier not implemented" not in run
         # Setup/census failure distinguishable.
         assert "SETUP/CENSUS FAILURE" in run or "SETUP FAILURE" in run
+        # Unconditional forever-stub exit 1 (ignoring VERIFY_RC) is forbidden.
+        assert 'exit "$VERIFY_RC"' in run or "exit $VERIFY_RC" in run
 
 
 def test_task2a_ci_upload_steps_are_always() -> None:
@@ -210,7 +213,10 @@ def test_runners_do_not_classify_crash_or_setup_as_behavioral_red(tmp_path: Path
         rust_runner.classify_rust_node_phase(
             exit_code=101,
             stdout="test leaf ... FAILED\n",
-            stderr="assertion `left == right` failed",
+            stderr=(
+                "thread 'tests::leaf' panicked at src/x.rs:1:1:\n"
+                "assertion `left == right` failed"
+            ),
         )
         == "executed_refused_receipt"
     )

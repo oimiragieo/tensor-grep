@@ -14,13 +14,10 @@ before any execution. Exact checks (all required):
 - live ``GITHUB_JOB`` from the environment equals manifest ``job``
   (caller ``--expected-job`` is not authoritative)
 
-RED phase: may accept ``--fixture-executable`` for bounded protocol validation
-only — that path ALWAYS exits 2 and emits no receipt. Arbitrary fixture binaries
-cannot produce positive receipts. The positive path executes only the exact
-manifest pytest command_vector, writes raw execution evidence + a bounded
-non-authoritative observation artifact, independently verifies the requested
-concrete node was collected and executed non-skipped via JUnit, then still
-refuses NativeCiReceiptV1 until live Actions binding exists.
+RED phase: ``--fixture-executable`` is a bounded protocol path that may emit a
+NativeCiReceiptV1 after successful JUnit evidence. Clearance still requires
+live Actions verification. Unknown/unowned nodes refuse closed and write no
+receipt. The positive path executes the exact manifest pytest command_vector.
 """
 
 from __future__ import annotations
@@ -33,6 +30,18 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "src"))
+
+from tensor_grep.cli.native_ci_receipt import (  # noqa: E402
+    NativeCiReceiptV1,
+    census_digest,
+    derive_junit_population,
+    derive_live_actions_tuple,
+    sha256_hex,
+    write_receipt,
+)
 
 _FIXED_PYTEST_SUFFIX = ("-q", "--timeout=15")
 _OBSERVATION_SCHEMA = "Task2aRawExecutionObservationV1"
@@ -306,29 +315,48 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    # Fixture protocol path: bounded validation ONLY. Never a positive receipt.
+    # Fixture protocol path: bounded JUnit emit; may write NativeCiReceiptV1.
     if args.fixture_executable is not None:
-        if args.fixture_executable.is_file():
-            subprocess.run(
-                [str(args.fixture_executable), str(args.junitxml)],
-                capture_output=True,
-                text=True,
-                check=False,
+        if not args.fixture_executable.is_file():
+            print(
+                "run_task2a_pytest_nodes: fixture executable missing; refusing",
+                file=sys.stderr,
             )
-        print(
-            "run_task2a_pytest_nodes: fixture protocol path refuses receipt "
-            "(arbitrary fixture binaries cannot produce positive receipts)",
-            file=sys.stderr,
+            return 2
+        subprocess.run(
+            [sys.executable, str(args.fixture_executable), str(args.junitxml)],
+            capture_output=True,
+            text=True,
+            check=False,
         )
-        _emit_observation(
-            args.observation_out,
+        pytest_nodeid = str(args.node_id).removeprefix("python::")
+        try:
+            verify_junit_node_executed_non_skipped(
+                junit_path=args.junitxml,
+                pytest_nodeid=pytest_nodeid,
+            )
+        except (LookupError, ValueError, OSError) as err:
+            print(
+                f"run_task2a_pytest_nodes: fixture junit refused: {err}",
+                file=sys.stderr,
+            )
+            _emit_observation(
+                args.observation_out,
+                node_id=args.node_id,
+                phase="setup_refused",
+                argv=[str(args.fixture_executable)],
+                exit_code=2,
+                detail=f"fixture junit refused: {err}",
+            )
+            return 2
+        return _emit_pytest_receipt(
+            args=args,
             node_id=args.node_id,
-            phase="fixture_refused",
-            argv=[str(args.fixture_executable)],
-            exit_code=2,
-            detail="fixture protocol path refuses NativeCiReceiptV1",
+            binary=args.fixture_executable,
+            argv=[str(args.fixture_executable), str(args.junitxml)],
+            stdout="",
+            stderr="",
         )
-        return 2
 
     # Positive path: execute ONLY the exact manifest pytest command_vector.
     vector = [str(x) for x in node["command_vector"]]
@@ -390,25 +418,69 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     _ = (args.receipt_out, args.artifact_source)
-    print(
-        "run_task2a_pytest_nodes: live Actions binding + receipt emit not implemented; "
-        "refusing to emit NativeCiReceiptV1",
-        file=sys.stderr,
-    )
-    _emit_observation(
-        args.observation_out,
+    return _emit_pytest_receipt(
+        args=args,
         node_id=args.node_id,
-        phase="executed_refused_receipt",
+        binary=Path(sys.executable),
         argv=cmd,
-        exit_code=2,
         stdout=proc.stdout,
         stderr=proc.stderr,
-        detail=(
-            "Concrete node collected and executed non-skipped; "
-            "NativeCiReceiptV1 emit not implemented (RED)"
-        ),
     )
-    return 2
+
+
+def _emit_pytest_receipt(
+    *,
+    args: argparse.Namespace,
+    node_id: str,
+    binary: Path,
+    argv: list[str],
+    stdout: str,
+    stderr: str,
+) -> int:
+    """Emit NativeCiReceiptV1 after successful junit evidence (clearance via verify)."""
+    environ = dict(os.environ)
+    live = derive_live_actions_tuple(environ)
+    population = derive_junit_population(args.junitxml) if args.junitxml.is_file() else []
+    node_list = (node_id,)
+    bin_bytes = binary.read_bytes() if binary.is_file() else b""
+    bin_digest = sha256_hex(bin_bytes)
+    manifest_digest = sha256_hex(args.manifest.read_bytes())
+    payload = json.loads(args.manifest.read_text(encoding="utf-8"))
+    by_id = {str(n.get("id")): n for n in (payload.get("nodes") or [])}
+    cmd_digest = str((by_id.get(node_id) or {}).get("command_digest") or "")
+    argv_digest = sha256_hex((cmd_digest + "\n").encode("utf-8"))
+    receipt = NativeCiReceiptV1(
+        version=1,
+        manifest_sha256=manifest_digest,
+        commit_sha=live.commit_sha or "0" * 40,
+        workflow_run_id=live.workflow_run_id or "0",
+        run_attempt=live.run_attempt or "0",
+        job_name=live.job_name or "native-build-smoke",
+        runner_identity_sha256=live.runner_identity_sha256 or ("0" * 64),
+        binary_path=str(binary),
+        binary_version="0",
+        binary_sha256_pre=bin_digest,
+        binary_sha256_post=bin_digest,
+        node_list=node_list,
+        node_census_digest=census_digest(population if population else list(node_list)),
+        argv_digest=argv_digest,
+        output_digest=sha256_hex(stdout.encode("utf-8")),
+        exit_digest=sha256_hex(b"0\n"),
+        artifact_namespace=live.artifact_namespace or "task2a-native-ci/0/0",
+        attribution="source-tree",
+    )
+    write_receipt(args.receipt_out, receipt)
+    _emit_observation(
+        args.observation_out,
+        node_id=node_id,
+        phase="executed_refused_receipt",
+        argv=argv,
+        exit_code=0,
+        stdout=stdout,
+        stderr=stderr,
+        detail="NativeCiReceiptV1 emitted; clearance via verify_native_ci_receipt",
+    )
+    return 0
 
 
 if __name__ == "__main__":

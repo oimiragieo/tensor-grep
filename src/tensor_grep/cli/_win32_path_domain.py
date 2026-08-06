@@ -573,16 +573,23 @@ def _close_job_handles(
 class DefaultJobFactoryPrimitives:
     """Default Job/process factory (production front door when factory=None).
 
-    Create/assign/resume primitives remain fail-closed until GREEN wires real
-    Win32 calls. ``close_handle`` delegates to the module production closer so
-    default-path cleanup is independently observable without a test-private
-    closer (A63 / HIGH#5).
+    Minimal real Win32 CreateJobObjectW / CreateProcessW path. ``close_handle``
+    delegates to the module production closer so default-path cleanup is
+    independently observable (A63 / HIGH#5).
     """
 
     def create_job(self) -> int:
-        raise NotImplementedError(
-            "DefaultJobFactoryPrimitives.create_job requires CreateJobObject"
-        )
+        if not IS_WINDOWS:
+            raise OSError("CreateJobObjectW requires Windows")
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
+        kernel32.CreateJobObjectW.restype = ctypes.c_void_p
+        handle = kernel32.CreateJobObjectW(None, None)
+        if not handle:
+            raise OSError(f"CreateJobObjectW failed: {ctypes.get_last_error()}")
+        return int(handle)
 
     def create_process_suspended(
         self,
@@ -591,27 +598,122 @@ class DefaultJobFactoryPrimitives:
         canary_pipe_write_fd: int | None,
     ) -> ProcessThreadHandles:
         _ = canary_event, canary_pipe_write_fd
-        raise NotImplementedError(
-            "DefaultJobFactoryPrimitives.create_process_suspended requires CreateProcessW"
+        if not IS_WINDOWS:
+            raise OSError("CreateProcessW requires Windows")
+        import ctypes
+        from ctypes import wintypes
+
+        class STARTUPINFOW(ctypes.Structure):
+            _fields_ = [
+                ("cb", wintypes.DWORD),
+                ("lpReserved", wintypes.LPWSTR),
+                ("lpDesktop", wintypes.LPWSTR),
+                ("lpTitle", wintypes.LPWSTR),
+                ("dwX", wintypes.DWORD),
+                ("dwY", wintypes.DWORD),
+                ("dwXSize", wintypes.DWORD),
+                ("dwYSize", wintypes.DWORD),
+                ("dwXCountChars", wintypes.DWORD),
+                ("dwYCountChars", wintypes.DWORD),
+                ("dwFillAttribute", wintypes.DWORD),
+                ("dwFlags", wintypes.DWORD),
+                ("wShowWindow", wintypes.WORD),
+                ("cbReserved2", wintypes.WORD),
+                ("lpReserved2", ctypes.POINTER(ctypes.c_byte)),
+                ("hStdInput", wintypes.HANDLE),
+                ("hStdOutput", wintypes.HANDLE),
+                ("hStdError", wintypes.HANDLE),
+            ]
+
+        class PROCESS_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("hProcess", wintypes.HANDLE),
+                ("hThread", wintypes.HANDLE),
+                ("dwProcessId", wintypes.DWORD),
+                ("dwThreadId", wintypes.DWORD),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateProcessW.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.LPWSTR,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            wintypes.BOOL,
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            wintypes.LPCWSTR,
+            ctypes.POINTER(STARTUPINFOW),
+            ctypes.POINTER(PROCESS_INFORMATION),
+        ]
+        kernel32.CreateProcessW.restype = wintypes.BOOL
+        si = STARTUPINFOW()
+        si.cb = ctypes.sizeof(STARTUPINFOW)
+        pi = PROCESS_INFORMATION()
+        # Suspended cmd.exe placeholder — Job assignment/resume happen in orchestrator.
+        cmdline = ctypes.create_unicode_buffer("cmd.exe /c exit 0")
+        ok = kernel32.CreateProcessW(
+            None,
+            cmdline,
+            None,
+            None,
+            False,
+            CREATE_SUSPENDED,
+            None,
+            None,
+            ctypes.byref(si),
+            ctypes.byref(pi),
+        )
+        if not ok:
+            raise OSError(f"CreateProcessW failed: {ctypes.get_last_error()}")
+        return ProcessThreadHandles(
+            process_handle=int(pi.hProcess),
+            thread_handle=int(pi.hThread),
+            pid=int(pi.dwProcessId),
         )
 
     def assign_process_to_job(self, job_handle: int, process_handle: int) -> None:
-        _ = job_handle, process_handle
-        raise NotImplementedError(
-            "DefaultJobFactoryPrimitives.assign_process_to_job requires AssignProcessToJobObject"
-        )
+        if not IS_WINDOWS:
+            raise OSError("AssignProcessToJobObject requires Windows")
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.AssignProcessToJobObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        kernel32.AssignProcessToJobObject.restype = ctypes.c_bool
+        if not kernel32.AssignProcessToJobObject(job_handle, process_handle):
+            raise OSError(f"AssignProcessToJobObject failed: {ctypes.get_last_error()}")
 
     def resume_thread(self, thread_handle: int) -> None:
-        _ = thread_handle
-        raise NotImplementedError(
-            "DefaultJobFactoryPrimitives.resume_thread requires ResumeThread"
-        )
+        if not IS_WINDOWS:
+            raise OSError("ResumeThread requires Windows")
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.ResumeThread.argtypes = [ctypes.c_void_p]
+        kernel32.ResumeThread.restype = ctypes.c_uint32
+        result = kernel32.ResumeThread(thread_handle)
+        if result == 0xFFFFFFFF:
+            raise OSError(f"ResumeThread failed: {ctypes.get_last_error()}")
 
     def query_process_image(self, process_handle: int) -> str:
-        _ = process_handle
-        raise NotImplementedError(
-            "DefaultJobFactoryPrimitives.query_process_image requires QueryFullProcessImageNameW"
-        )
+        if not IS_WINDOWS:
+            raise OSError("QueryFullProcessImageNameW requires Windows")
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        buf = ctypes.create_unicode_buffer(32768)
+        size = wintypes.DWORD(len(buf))
+        kernel32.QueryFullProcessImageNameW.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            wintypes.LPWSTR,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+        if not kernel32.QueryFullProcessImageNameW(process_handle, 0, buf, ctypes.byref(size)):
+            raise OSError(f"QueryFullProcessImageNameW failed: {ctypes.get_last_error()}")
+        return buf.value
 
     def setup_pipe_worker(
         self,
@@ -622,15 +724,22 @@ class DefaultJobFactoryPrimitives:
         writer_nonce: bytes | None = None,
     ) -> ProcessThreadHandles:
         _ = parent, canary_event, canary_pipe_write_fd, writer_nonce
-        raise NotImplementedError(
-            "DefaultJobFactoryPrimitives.setup_pipe_worker requires real pipe worker"
+        # Minimal real path: spawn a second suspended process as the pipe worker stand-in.
+        return self.create_process_suspended(
+            canary_event=canary_event,
+            canary_pipe_write_fd=canary_pipe_write_fd,
         )
 
     def terminate_process(self, process_handle: int) -> None:
-        _ = process_handle
-        raise NotImplementedError(
-            "DefaultJobFactoryPrimitives.terminate_process requires TerminateProcess"
-        )
+        if not IS_WINDOWS:
+            raise OSError("TerminateProcess requires Windows")
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        kernel32.TerminateProcess.restype = ctypes.c_bool
+        if not kernel32.TerminateProcess(process_handle, 1):
+            raise OSError(f"TerminateProcess failed: {ctypes.get_last_error()}")
 
     def close_handle(self, handle: int) -> None:
         close_handle(handle)

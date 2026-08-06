@@ -318,6 +318,8 @@ pub struct NativeSearchConfig {
     pub parallel_large_files: bool,
     pub chunk_parallelism_threads: Option<usize>,
     pub output_target: NativeOutputTarget,
+    /// When true, the uninstrumented PCRE2 native route gate refuses before matcher build.
+    pub pcre2: bool,
 }
 
 impl Default for NativeSearchConfig {
@@ -360,6 +362,7 @@ impl Default for NativeSearchConfig {
             parallel_large_files: true,
             chunk_parallelism_threads: None,
             output_target: NativeOutputTarget::Stdout,
+            pcre2: false,
         }
     }
 }
@@ -1061,6 +1064,9 @@ struct NativeNdjsonMatch<'a> {
 }
 
 pub fn run_native_search(config: NativeSearchConfig) -> Result<SearchStats> {
+    // HIGH#3 / A67: refuse uninstrumented PCRE2 on the native production path
+    // before matcher construction (same door the Task 2A oracle exercises).
+    gate_uninstrumented_pcre2_native_route(config.pcre2)?;
     if config.json && config.ndjson {
         return Err(anyhow!(
             "native search cannot enable both JSON and NDJSON output simultaneously"

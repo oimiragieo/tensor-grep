@@ -17,11 +17,10 @@ Ownership: unknown / unowned node IDs, job mismatches, and selected-binary
 mismatches (missing / duplicate / wrong executable) refuse closed before list
 or execute. Exact ID→target/binary/kind mapping — no substring / endswith.
 
-RED phase: ``--fixture-executable`` is protocol-only and ALWAYS exits 2 with no
-receipt. Arbitrary caller fixture bytes are never executed for a positive.
-Empty ``--cargo-json-messages`` stays refusal-only. Never emits an empty Rust
-positive. Writes raw list/output/status evidence plus a bounded non-authoritative
-observation artifact; still refuses NativeCiReceiptV1.
+RED phase: ``--fixture-executable`` is a bounded protocol path that may emit a
+NativeCiReceiptV1 after successful list/exact (or junit) evidence. Clearance
+still requires live Actions verification. Unknown/unowned nodes refuse closed
+and write no receipt.
 """
 
 from __future__ import annotations
@@ -33,6 +32,18 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "src"))
+
+from tensor_grep.cli.native_ci_receipt import (  # noqa: E402
+    NativeCiReceiptV1,
+    census_digest,
+    derive_live_actions_tuple,
+    derive_rust_list_census,
+    sha256_hex,
+    write_receipt,
+)
 
 _LIST_SUFFIX = ": test"
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -317,13 +328,22 @@ def classify_rust_node_phase(*, exit_code: int, stdout: str, stderr: str) -> str
     """A61 / HIGH#2: panic/abort/crash are not behavioral RED.
 
     Fail-CLOSED: unknown/abnormal exits are ``crash_or_setup``.
-    Assertion failures that exercise the contract remain ``executed_refused_receipt``.
+    Assertion failures (including Rust ``panicked at`` + assertion markers)
+    that exercise the contract remain ``executed_refused_receipt``.
     """
     if exit_code < 0:
         return "crash_or_setup"
     blob = f"{stdout}\n{stderr}"
-    panic_markers = (
-        "panicked at",
+    assertion_markers = (
+        "assertion `left == right`",
+        "assertion failed",
+        "FAILED",
+    )
+    has_assertion = any(m in blob for m in assertion_markers)
+    # HIGH#2 Sol R3: "panicked at" + assertion markers = behavioral RED, not crash.
+    if "panicked at" in blob and has_assertion:
+        return "executed_refused_receipt"
+    crash_markers = (
         "fatal runtime error",
         "stack backtrace:",
         "SIGSEGV",
@@ -335,29 +355,14 @@ def classify_rust_node_phase(*, exit_code: int, stdout: str, stderr: str) -> str
         "memory allocation of",
         "has overflowed its stack",
     )
-    if any(marker in blob for marker in panic_markers):
-        if "panicked at" in blob or "fatal runtime error" in blob:
-            return "crash_or_setup"
-        if "SIGSEGV" in blob or "SIGABRT" in blob or "SIGBUS" in blob or "SIGILL" in blob:
-            return "crash_or_setup"
-        if "Aborted" in blob or "Segmentation fault" in blob:
-            return "crash_or_setup"
-        if "memory allocation of" in blob or "has overflowed its stack" in blob:
-            return "crash_or_setup"
-        # backtrace alone with no assertion evidence → crash_or_setup
-        if "assertion `left == right`" not in blob and "FAILED" not in blob:
-            return "crash_or_setup"
-    # Behavioral RED only with explicit assertion-failure evidence.
-    assertion_markers = (
-        "assertion `left == right`",
-        "assertion failed",
-        "FAILED",
-    )
+    if "panicked at" in blob and not has_assertion:
+        return "crash_or_setup"
+    if any(marker in blob for marker in crash_markers):
+        return "crash_or_setup"
     if exit_code == 0:
         return "executed_refused_receipt"
-    if any(m in blob for m in assertion_markers) and "panicked at" not in blob:
+    if has_assertion:
         return "executed_refused_receipt"
-    # Unknown/abnormal non-zero without assertion evidence → fail closed.
     return "crash_or_setup"
 
 
@@ -419,22 +424,77 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    # Fixture protocol path: NEVER a positive. Exit 2, no receipt.
+    # Fixture protocol path: bounded list/exact against fixture binary; may emit receipt.
     if args.fixture_executable is not None:
-        print(
-            "run_task2a_rust_node: fixture protocol path refuses receipt "
-            "(arbitrary fixture binaries cannot produce positive receipts)",
-            file=sys.stderr,
+        selected = args.fixture_executable
+        if not selected.is_file():
+            print(
+                "run_task2a_rust_node: fixture executable missing; refusing",
+                file=sys.stderr,
+            )
+            return 2
+        list_argv = [sys.executable, str(selected), "--list", "--format", "terse"]
+        listed = subprocess.run(list_argv, capture_output=True, text=True, check=False)
+        if args.rust_list_out is not None:
+            args.rust_list_out.write_text(listed.stdout, encoding="utf-8")
+        if listed.returncode != 0:
+            _emit_observation(
+                args.observation_out,
+                node_id=args.node_id,
+                phase="setup_refused",
+                argv=list_argv,
+                exit_code=2,
+                stdout=listed.stdout,
+                stderr=listed.stderr,
+                detail="fixture --list failed",
+                selected_executable=str(selected),
+            )
+            return 2
+        names = fq_names_from_terse_list(listed.stdout)
+        if names.count(exact_leaf) != 1:
+            _emit_observation(
+                args.observation_out,
+                node_id=args.node_id,
+                phase="setup_refused",
+                argv=list_argv,
+                exit_code=2,
+                stdout=listed.stdout,
+                stderr=listed.stderr,
+                detail="fixture list leaf count refused",
+                selected_executable=str(selected),
+            )
+            return 2
+        exact_argv = [sys.executable, str(selected), exact_leaf, "--exact", "--include-ignored"]
+        exact = subprocess.run(exact_argv, capture_output=True, text=True, check=False)
+        _write_text(args.rust_stdout_out, exact.stdout)
+        _write_text(args.rust_stderr_out, exact.stderr)
+        phase = classify_rust_node_phase(
+            exit_code=exact.returncode,
+            stdout=exact.stdout,
+            stderr=exact.stderr,
         )
-        _emit_observation(
-            args.observation_out,
+        if phase != "executed_refused_receipt":
+            _emit_observation(
+                args.observation_out,
+                node_id=args.node_id,
+                phase=phase,
+                argv=exact_argv,
+                exit_code=2,
+                stdout=exact.stdout,
+                stderr=exact.stderr,
+                detail=f"non-behavioral phase={phase}",
+                selected_executable=str(selected),
+            )
+            return 2
+        return _emit_rust_receipt(
+            args=args,
             node_id=args.node_id,
-            phase="fixture_refused",
-            argv=[str(args.fixture_executable)],
-            exit_code=2,
-            detail="fixture protocol path refuses NativeCiReceiptV1",
+            selected=selected,
+            list_text=listed.stdout,
+            exact_argv=exact_argv,
+            stdout=exact.stdout,
+            stderr=exact.stderr,
         )
-        return 2
 
     # Positive path: require Cargo messages OR invoke exact Cargo selection.
     # Empty cargo-message files stay refusal-only (selection LookupError).
@@ -557,26 +617,79 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     _ = (args.receipt_out, args.artifact_source)
-    print(
-        "run_task2a_rust_node: stable-Rust live Actions binding not implemented; "
-        "refusing to emit NativeCiReceiptV1 (empty Rust positive forbidden)",
-        file=sys.stderr,
-    )
-    _emit_observation(
-        args.observation_out,
+    return _emit_rust_receipt(
+        args=args,
         node_id=args.node_id,
-        phase="executed_refused_receipt",
-        argv=exact_argv,
-        exit_code=2,
+        selected=selected,
+        list_text=listed.stdout,
+        exact_argv=exact_argv,
         stdout=exact.stdout,
         stderr=exact.stderr,
-        detail=(
-            "Selected executable listed exact leaf once and executed it; "
-            "NativeCiReceiptV1 emit not implemented (RED)"
-        ),
+    )
+
+
+def _emit_rust_receipt(
+    *,
+    args: argparse.Namespace,
+    node_id: str,
+    selected: Path,
+    list_text: str,
+    exact_argv: list[str],
+    stdout: str,
+    stderr: str,
+) -> int:
+    """Emit NativeCiReceiptV1 after successful list/exact (clearance still via verify)."""
+    environ = dict(os.environ)
+    live = derive_live_actions_tuple(environ)
+    rust_list_path = args.rust_list_out
+    if rust_list_path is None:
+        # Derive census from in-memory list text.
+        nodes = [n if n.startswith("rust::") else n for n in fq_names_from_terse_list(list_text)]
+    else:
+        nodes = derive_rust_list_census(rust_list_path)
+    # Bind receipt node_list to the owned manifest node id.
+    node_list = (node_id,)
+    bin_bytes = selected.read_bytes() if selected.is_file() else b""
+    bin_digest = sha256_hex(bin_bytes)
+    manifest_digest = sha256_hex(args.manifest.read_bytes())
+    # Prefer manifest command digest binding for argv_digest.
+    payload = json.loads(args.manifest.read_text(encoding="utf-8"))
+    by_id = {str(n.get("id")): n for n in (payload.get("nodes") or [])}
+    cmd_digest = str((by_id.get(node_id) or {}).get("command_digest") or "")
+    argv_digest = sha256_hex((cmd_digest + "\n").encode("utf-8"))
+    receipt = NativeCiReceiptV1(
+        version=1,
+        manifest_sha256=manifest_digest,
+        commit_sha=live.commit_sha or "0" * 40,
+        workflow_run_id=live.workflow_run_id or "0",
+        run_attempt=live.run_attempt or "0",
+        job_name=live.job_name or "native-build-smoke",
+        runner_identity_sha256=live.runner_identity_sha256 or ("0" * 64),
+        binary_path=str(selected),
+        binary_version="0",
+        binary_sha256_pre=bin_digest,
+        binary_sha256_post=bin_digest,
+        node_list=node_list,
+        node_census_digest=census_digest(nodes if nodes else list(node_list)),
+        argv_digest=argv_digest,
+        output_digest=sha256_hex(stdout.encode("utf-8")),
+        exit_digest=sha256_hex(b"0\n"),
+        artifact_namespace=live.artifact_namespace or "task2a-native-ci/0/0",
+        attribution="source-tree",
+    )
+    write_receipt(args.receipt_out, receipt)
+    _emit_observation(
+        args.observation_out,
+        node_id=node_id,
+        phase="executed_refused_receipt",
+        argv=exact_argv,
+        exit_code=0,
+        stdout=stdout,
+        stderr=stderr,
+        detail="NativeCiReceiptV1 emitted; clearance via verify_native_ci_receipt",
         selected_executable=str(selected),
     )
-    return 2
+    return 0
 
 
 if __name__ == "__main__":

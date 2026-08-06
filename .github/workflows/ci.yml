@@ -544,9 +544,13 @@ jobs:
             --expected-attribution source-tree
           VERIFY_RC=$?
           set -e
-          echo "task2a verify path exercised verify_rc=$VERIFY_RC receipt_seen=$RECEIPT_SEEN; clearance still requires live Windows CI artifacts" >&2
-          echo "task2a RED: refusing green CI until immutable-SHA clearance artifacts verify ok" >&2
-          exit 1
+          echo "task2a verify path exercised verify_rc=$VERIFY_RC receipt_seen=$RECEIPT_SEEN; clearance still requires live Windows CI artifacts when verify is not ok" >&2
+          if [ "$VERIFY_RC" -eq 0 ]; then
+            echo "task2a verify ok (NativeCiReceipt cleared on live Actions tuple)" >&2
+            exit 0
+          fi
+          echo "task2a RED: verify failed (rc=$VERIFY_RC); refusing green until clearance artifacts verify ok" >&2
+          exit "$VERIFY_RC"
 
       - name: Upload Task 2A Python raw artifacts (Windows)
         if: runner.os == 'Windows' && always()
@@ -1013,9 +1017,13 @@ jobs:
             --expected-attribution source-tree
           VERIFY_RC=$?
           set -e
-          echo "task2a verify path exercised verify_rc=$VERIFY_RC receipt_seen=$RECEIPT_SEEN; clearance still requires live Windows CI artifacts" >&2
-          echo "task2a RED: refusing green CI until immutable-SHA clearance artifacts verify ok" >&2
-          exit 1
+          echo "task2a verify path exercised verify_rc=$VERIFY_RC receipt_seen=$RECEIPT_SEEN; clearance still requires live Windows CI artifacts when verify is not ok" >&2
+          if [ "$VERIFY_RC" -eq 0 ]; then
+            echo "task2a verify ok (NativeCiReceipt cleared on live Actions tuple)" >&2
+            exit 0
+          fi
+          echo "task2a RED: verify failed (rc=$VERIFY_RC); refusing green until clearance artifacts verify ok" >&2
+          exit "$VERIFY_RC"
 
       - name: Upload Task 2A native raw artifacts (Windows)
         if: runner.os == 'Windows' && always()

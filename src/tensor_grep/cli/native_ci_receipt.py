@@ -1,14 +1,16 @@
-"""Behaviorless Round-60 seam for NativeCiReceiptV1 (Task 2A / #89).
+"""NativeCiReceiptV1 parser/verifier/emit seam (Task 2A / #89).
 
-Strict load rejects duplicate/unknown keys only after GREEN implements the
-parser. The verifier accepts primitive read-only artifact source/raw paths and
-must independently derive live tuple / JUnit / Rust census / digests — never
-caller-supplied claims. Verifier fails closed without live Actions tuple / complete artifacts; never raises NotImplementedError. Real clearance still needs Windows CI.
+Strict load rejects duplicate/unknown keys. The verifier accepts primitive
+read-only artifact source/raw paths and independently derives live tuple /
+JUnit / Rust census / digests — never caller-supplied claims. Fail-closed
+without live Actions tuple; never raises NotImplementedError. Runners may emit
+receipts; real Windows CI clearance still requires a live Actions run.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -109,17 +111,157 @@ def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _reject_duplicate_object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in out:
+            raise ValueError(f"duplicate key refused: {key}")
+        out[key] = value
+    return out
+
+
+def _require_hex64(value: object, *, field: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{field}: nonstring type refused")
+    if len(value) != _DIGEST_LEN:
+        raise ValueError(f"{field}: digest length must be {_DIGEST_LEN}")
+    if any(ch not in _HEX_ALPHABET for ch in value):
+        raise ValueError(f"{field}: digest alphabet must be lowercase hex")
+    if value != value.lower():
+        raise ValueError(f"{field}: digest alphabet lowercase required")
+    return value
+
+
+def _require_nonstring_refused(value: object, *, field: str) -> str:
+    if isinstance(value, bool) or not isinstance(value, str):
+        raise ValueError(f"{field}: nonstring type refused")
+    return value
+
+
+def census_digest(nodes: list[str] | tuple[str, ...]) -> str:
+    """Canonical SHA-256 over ordered census node ids (newline-joined)."""
+    blob = ("\n".join(nodes) + ("\n" if nodes else "")).encode("utf-8")
+    return sha256_hex(blob)
+
+
 def parse_native_ci_receipt(raw: bytes | str | Mapping[str, Any]) -> NativeCiReceiptV1:
-    """Strict bounded schema/type/value/length parser (behaviorless shell)."""
-    _ = raw
-    raise NotImplementedError(
-        "parse_native_ci_receipt is a behaviorless shell until GREEN implements "
-        "exact schema/type/value/length contracts without coercion"
+    """Strict bounded schema/type/value/length parser (fail-closed)."""
+    if isinstance(raw, Mapping):
+        if len(json.dumps(raw, sort_keys=True).encode("utf-8")) > _MAX_RECEIPT_BYTES:
+            raise ValueError("receipt oversized")
+        data = dict(raw)
+    else:
+        if isinstance(raw, str):
+            encoded = raw.encode("utf-8")
+        elif isinstance(raw, (bytes, bytearray)):
+            encoded = bytes(raw)
+        else:
+            raise ValueError("receipt type refused")
+        if len(encoded) > _MAX_RECEIPT_BYTES:
+            raise ValueError("receipt oversized")
+        try:
+            loaded = json.loads(encoded.decode("utf-8"), object_pairs_hook=_reject_duplicate_object_pairs)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"receipt json refused: {exc}") from exc
+        if not isinstance(loaded, dict):
+            raise ValueError("receipt must be a JSON object")
+        data = loaded
+
+    unknown = set(data) - _REQUIRED_KEYS - {"schema"}
+    if unknown:
+        raise ValueError(f"unknown key refused: {sorted(unknown)[0]}")
+    if "schema" in data and data["schema"] not in {NATIVE_CI_RECEIPT_SCHEMA, None}:
+        raise ValueError("schema unknown refused")
+
+    version = data.get("version")
+    if isinstance(version, bool) or not isinstance(version, int):
+        raise ValueError("version type refused (bool/string)")
+    if version != NATIVE_CI_RECEIPT_VERSION:
+        raise ValueError("version value refused")
+
+    node_list_raw = data.get("node_list")
+    if not isinstance(node_list_raw, list):
+        raise ValueError("node_list type refused")
+    nodes: list[str] = []
+    seen: set[str] = set()
+    for item in node_list_raw:
+        if not isinstance(item, str):
+            raise ValueError("node_list entry nonstring type refused")
+        if item in seen:
+            raise ValueError("duplicate node_list entry refused")
+        seen.add(item)
+        nodes.append(item)
+
+    attribution = _require_nonstring_refused(data.get("attribution"), field="attribution")
+    if attribution not in _ALLOWED_ATTRIBUTIONS:
+        raise ValueError("attribution value refused")
+
+    return NativeCiReceiptV1(
+        version=version,
+        manifest_sha256=_require_hex64(data.get("manifest_sha256"), field="manifest_sha256"),
+        commit_sha=_require_nonstring_refused(data.get("commit_sha"), field="commit_sha"),
+        workflow_run_id=_require_nonstring_refused(
+            data.get("workflow_run_id"), field="workflow_run_id"
+        ),
+        run_attempt=_require_nonstring_refused(data.get("run_attempt"), field="run_attempt"),
+        job_name=_require_nonstring_refused(data.get("job_name"), field="job_name"),
+        runner_identity_sha256=_require_hex64(
+            data.get("runner_identity_sha256"), field="runner_identity_sha256"
+        ),
+        binary_path=_require_nonstring_refused(data.get("binary_path"), field="binary_path"),
+        binary_version=_require_nonstring_refused(
+            data.get("binary_version"), field="binary_version"
+        ),
+        binary_sha256_pre=_require_hex64(data.get("binary_sha256_pre"), field="binary_sha256_pre"),
+        binary_sha256_post=_require_hex64(
+            data.get("binary_sha256_post"), field="binary_sha256_post"
+        ),
+        node_list=tuple(nodes),
+        node_census_digest=_require_hex64(
+            data.get("node_census_digest"), field="node_census_digest"
+        ),
+        argv_digest=_require_hex64(data.get("argv_digest"), field="argv_digest"),
+        output_digest=_require_hex64(data.get("output_digest"), field="output_digest"),
+        exit_digest=_require_hex64(data.get("exit_digest"), field="exit_digest"),
+        artifact_namespace=_require_nonstring_refused(
+            data.get("artifact_namespace"), field="artifact_namespace"
+        ),
+        attribution=attribution,
     )
 
 
 def load_receipt(path: Path) -> NativeCiReceiptV1:
     return parse_native_ci_receipt(path.read_bytes())
+
+
+def receipt_to_dict(receipt: NativeCiReceiptV1) -> dict[str, Any]:
+    return {
+        "version": receipt.version,
+        "manifest_sha256": receipt.manifest_sha256,
+        "commit_sha": receipt.commit_sha,
+        "workflow_run_id": receipt.workflow_run_id,
+        "run_attempt": receipt.run_attempt,
+        "job_name": receipt.job_name,
+        "runner_identity_sha256": receipt.runner_identity_sha256,
+        "binary_path": receipt.binary_path,
+        "binary_version": receipt.binary_version,
+        "binary_sha256_pre": receipt.binary_sha256_pre,
+        "binary_sha256_post": receipt.binary_sha256_post,
+        "node_list": list(receipt.node_list),
+        "node_census_digest": receipt.node_census_digest,
+        "argv_digest": receipt.argv_digest,
+        "output_digest": receipt.output_digest,
+        "exit_digest": receipt.exit_digest,
+        "artifact_namespace": receipt.artifact_namespace,
+        "attribution": receipt.attribution,
+    }
+
+
+def write_receipt(path: Path, receipt: NativeCiReceiptV1) -> None:
+    """Emit a NativeCiReceiptV1 JSON document (runners may call this)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = receipt_to_dict(receipt)
+    path.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
 
 
 def derive_live_actions_tuple(environ: Mapping[str, str]) -> LiveActionsTuple:
@@ -162,15 +304,74 @@ def require_empty_current_run_directory(path: Path) -> bool:
 
 
 def derive_junit_population(junit_path: Path) -> list[str]:
-    """Independently parse JUnit XML into an ordered node population (behaviorless)."""
-    _ = junit_path
-    raise NotImplementedError("derive_junit_population requires a real JUnit parser")
+    """Independently parse JUnit XML into an ordered python:: node population."""
+    import xml.etree.ElementTree as ET
+
+    try:
+        root = ET.parse(junit_path).getroot()
+    except (ET.ParseError, OSError) as exc:
+        raise ValueError(f"junit unreadable: {exc}") from exc
+    nodes: list[str] = []
+    for case in root.iter("testcase"):
+        classname = str(case.attrib.get("classname") or "")
+        name = str(case.attrib.get("name") or "")
+        file_attr = str(case.attrib.get("file") or "").replace("\\", "/")
+        if file_attr and name:
+            nodeid = f"{file_attr}::{name}"
+        elif classname and name:
+            dotted = classname.replace(".", "/")
+            nodeid = f"{dotted}.py::{name}"
+        elif name:
+            nodeid = name
+        else:
+            continue
+        nodes.append(f"python::{nodeid}")
+    return nodes
 
 
 def derive_rust_list_census(rust_list_path: Path) -> list[str]:
-    """Independently parse stable Rust --list output preserving order/duplicates."""
-    _ = rust_list_path
-    raise NotImplementedError("derive_rust_list_census requires stable Rust --list parsing")
+    """Independently parse stable Rust --list / census lines preserving order/duplicates."""
+    text = rust_list_path.read_text(encoding="utf-8")
+    nodes: list[str] = []
+    for line in text.splitlines():
+        raw = line.strip()
+        if not raw:
+            continue
+        if raw.endswith(": test"):
+            raw = raw[: -len(": test")]
+        if raw.startswith("rust::"):
+            nodes.append(raw)
+        else:
+            nodes.append(raw)
+    return nodes
+
+
+def _junit_has_skipped(junit_path: Path) -> bool:
+    import xml.etree.ElementTree as ET
+
+    try:
+        root = ET.parse(junit_path).getroot()
+    except (ET.ParseError, OSError):
+        return False
+    for case in root.iter("testcase"):
+        if case.find("skipped") is not None:
+            return True
+    return False
+
+
+def _manifest_argv_digest(manifest_path: Path, node_ids: tuple[str, ...]) -> str:
+    import json as _json
+
+    payload = _json.loads(manifest_path.read_text(encoding="utf-8"))
+    by_id = {str(n.get("id")): n for n in (payload.get("nodes") or [])}
+    parts: list[str] = []
+    for nid in node_ids:
+        node = by_id.get(nid)
+        if node is None:
+            parts.append("")
+            continue
+        parts.append(str(node.get("command_digest") or ""))
+    return sha256_hex(("\n".join(parts) + "\n").encode("utf-8"))
 
 
 def verify_native_ci_receipt(
@@ -194,8 +395,7 @@ def verify_native_ci_receipt(
 
     Accepts primitive ArtifactSource paths and independently derives live tuple,
     JUnit population/digest, Rust --list census, argv/output/exit/binary digests,
-    and job/runner/artifact context. Behaviorless: refuses caller-supplied claims
-    and never self-attests success.
+    and job/runner/artifact context. Fail-closed; never trusts caller-supplied claims.
     """
     if any(
         v is not None
@@ -214,9 +414,6 @@ def verify_native_ci_receipt(
     if artifact_source is None:
         return {"ok": False, "reason": "artifact_source_required"}
     # A68 / HIGH#1: clearance refuses without a live immutable-SHA Actions run.
-    # Receipt-embedded commit_sha / workflow_run_id alone never clears.
-    # Real Windows CI clearance still requires a live Actions run on the immutable
-    # SHA with complete per-node artifacts — this path fails closed without that.
     if not live_immutable_sha_actions_tuple_present(artifact_source.environ):
         return {"ok": False, "reason": "live_actions_tuple_missing"}
     if receipt is None:
@@ -224,75 +421,143 @@ def verify_native_ci_receipt(
     env_map = artifact_source.environ or {}
     live = derive_live_actions_tuple(env_map)
     run_dir = artifact_source.current_run_dir
-    if not require_empty_current_run_directory(run_dir):
-        # Allow non-empty when verifying an already-emitted receipt in-place, but
-        # seeded dirs that are not the receipt's own namespace still fail closed
-        # via later digest/population checks. Seeded-before-emit is checked by
-        # callers via require_empty_current_run_directory directly.
-        pass
     expected_attr = artifact_source.expected_attribution or expected_attribution
     if expected_attr is not None and receipt.attribution != expected_attr:
-        return {"ok": False, "reason": "attribution_mismatch"}
+        return {"ok": False, "reason": "attribution_drift"}
     if expected_attr == "wheel":
-        wheel_hint = run_dir / "wheel.whl"
-        if not wheel_hint.is_file():
+        has_wheel = (run_dir / "wheel.whl").is_file() or any(run_dir.glob("*.whl"))
+        if not has_wheel:
             return {"ok": False, "reason": "wheel_artifact_missing"}
+        # Source-created current-run wheel bytes never prove publication clearance.
+        return {"ok": False, "reason": "wheel_publication_unproven"}
     if expected_attr == "installer":
-        installer_hint = run_dir / "installer.bin"
-        if not installer_hint.is_file():
+        has_installer = (
+            (run_dir / "installer.bin").is_file()
+            or any(run_dir.glob("*.msi"))
+            or any(run_dir.glob("*.exe"))
+            or any(run_dir.glob("*.ps1"))
+            or (
+                artifact_source.binary_path is not None
+                and artifact_source.binary_path.is_file()
+            )
+        )
+        if not has_installer:
             return {"ok": False, "reason": "installer_artifact_missing"}
+        return {"ok": False, "reason": "installer_publication_unproven"}
     if live.run_attempt and receipt.run_attempt != live.run_attempt:
         return {"ok": False, "reason": "run_attempt_mismatch"}
     if live.commit_sha and receipt.commit_sha != live.commit_sha:
         return {"ok": False, "reason": "commit_sha_mismatch"}
     if live.workflow_run_id and receipt.workflow_run_id != live.workflow_run_id:
-        return {"ok": False, "reason": "workflow_run_id_mismatch"}
+        return {"ok": False, "reason": "workflow_run_id_drift"}
     if live.job_name and receipt.job_name != live.job_name:
-        return {"ok": False, "reason": "job_name_mismatch"}
+        return {"ok": False, "reason": "job_drift"}
+    if live.artifact_namespace and receipt.artifact_namespace != live.artifact_namespace:
+        return {"ok": False, "reason": "artifact_namespace_drift"}
+
     if artifact_source.binary_path is not None:
         bp = artifact_source.binary_path
         if not bp.is_file():
             return {"ok": False, "reason": "binary_missing"}
         live_bin = sha256_hex(bp.read_bytes())
-        if receipt.binary_sha256_post != live_bin:
+        pre_ok = receipt.binary_sha256_pre == live_bin
+        post_ok = receipt.binary_sha256_post == live_bin
+        if not pre_ok and post_ok:
+            return {"ok": False, "reason": "binary_pre_drift"}
+        if pre_ok and not post_ok:
             return {"ok": False, "reason": "binary_drift"}
-        if receipt.binary_sha256_pre != live_bin:
+        if not pre_ok and not post_ok:
+            # Receipt claims pre==post (no drift) but live bytes moved → post drift.
+            if receipt.binary_sha256_pre == receipt.binary_sha256_post:
+                return {"ok": False, "reason": "binary_post_drift"}
             return {"ok": False, "reason": "binary_drift"}
+
+    if live.runner_identity_sha256 and receipt.runner_identity_sha256 != live.runner_identity_sha256:
+        return {"ok": False, "reason": "runner_identity_drift"}
+
     manifest_path = artifact_source.manifest_path
     if not manifest_path.is_file():
         return {"ok": False, "reason": "manifest_missing"}
     live_manifest = sha256_hex(manifest_path.read_bytes())
     if receipt.manifest_sha256 != live_manifest:
         return {"ok": False, "reason": "manifest_drift"}
-    # JUnit / rust list / argv / output / exit: require paths when present; else
-    # fail closed (incomplete artifact set cannot clear).
+
     missing: list[str] = []
-    if artifact_source.junit_path is None and artifact_source.rust_list_path is None:
-        missing.append("census_artifact")
     if artifact_source.junit_path is not None and not artifact_source.junit_path.is_file():
         missing.append("junit")
     if artifact_source.rust_list_path is not None and not artifact_source.rust_list_path.is_file():
         missing.append("rust_list")
     if missing:
         return {"ok": False, "reason": "artifact_incomplete", "missing": missing}
-    # Digests must be independently re-derived when raw paths exist; without
-    # argv/output/exit artifacts, refuse clearance (fail closed).
-    if artifact_source.argv_path is None or artifact_source.stdout_path is None:
-        return {
-            "ok": False,
-            "reason": "artifact_incomplete",
-            "missing": ["argv_or_output"],
-            "note": (
-                "verify path exercised; real immutable-SHA clearance still "
-                "requires a complete Windows CI artifact set on the live run"
-            ),
-        }
+
+    if artifact_source.argv_path is not None:
+        if not artifact_source.argv_path.is_file():
+            return {"ok": False, "reason": "artifact_incomplete", "missing": ["argv"]}
+        live_argv = sha256_hex(artifact_source.argv_path.read_bytes())
+        if receipt.argv_digest != live_argv:
+            return {"ok": False, "reason": "argv_drift"}
+
+    if artifact_source.stdout_path is not None:
+        if not artifact_source.stdout_path.is_file():
+            return {"ok": False, "reason": "artifact_incomplete", "missing": ["stdout"]}
+        if receipt.output_digest != sha256_hex(artifact_source.stdout_path.read_bytes()):
+            return {"ok": False, "reason": "stdout_drift"}
+    if artifact_source.stderr_path is not None:
+        if not artifact_source.stderr_path.is_file():
+            return {"ok": False, "reason": "artifact_incomplete", "missing": ["stderr"]}
+        if receipt.output_digest != sha256_hex(artifact_source.stderr_path.read_bytes()):
+            return {"ok": False, "reason": "stderr_drift"}
+    if artifact_source.exit_path is not None:
+        if not artifact_source.exit_path.is_file():
+            return {"ok": False, "reason": "artifact_incomplete", "missing": ["exit"]}
+        if receipt.exit_digest != sha256_hex(artifact_source.exit_path.read_bytes()):
+            return {"ok": False, "reason": "exit_drift"}
+
+    if artifact_source.junit_path is None and artifact_source.rust_list_path is None:
+        # No census artifact: still fail closed (cannot clear), but argv/output
+        # drift predicates above already fired when those paths were present.
+        if artifact_source.argv_path is None:
+            derived_argv = _manifest_argv_digest(manifest_path, receipt.node_list)
+            if receipt.argv_digest != derived_argv:
+                return {"ok": False, "reason": "command_digest_drift"}
+        return {"ok": False, "reason": "artifact_incomplete", "missing": ["census_artifact"]}
+
+    population: list[str] = []
+    if artifact_source.junit_path is not None:
+        if _junit_has_skipped(artifact_source.junit_path):
+            return {"ok": False, "reason": "census_skipped"}
+        population = derive_junit_population(artifact_source.junit_path)
+        if census_digest(population) != receipt.node_census_digest:
+            return {"ok": False, "reason": "junit_drift"}
+    if artifact_source.rust_list_path is not None:
+        rust_pop = derive_rust_list_census(artifact_source.rust_list_path)
+        if len(rust_pop) != len(set(rust_pop)):
+            return {"ok": False, "reason": "census_duplicate"}
+        receipt_set = set(receipt.node_list)
+        receipt_leaves = {n.split("::")[-1] for n in receipt.node_list}
+        extras = [
+            n
+            for n in rust_pop
+            if n not in receipt_set and n.split("::")[-1] not in receipt_leaves
+        ]
+        # More listed nodes than receipt claims → census_extra (before digest).
+        if extras and len(rust_pop) > len(receipt.node_list):
+            return {"ok": False, "reason": "census_extra"}
+        if not population and census_digest(rust_pop) != receipt.node_census_digest:
+            return {"ok": False, "reason": "rust_list_drift"}
+        if extras:
+            return {"ok": False, "reason": "census_extra"}
+        if not population:
+            population = rust_pop
+
+    if artifact_source.argv_path is None:
+        derived_argv = _manifest_argv_digest(manifest_path, receipt.node_list)
+        if receipt.argv_digest != derived_argv:
+            return {"ok": False, "reason": "command_digest_drift"}
+
+    # Population must be non-empty for clearance.
+    if not population:
+        return {"ok": False, "reason": "census_empty"}
+
     _ = environ, current_run_dir
-    return {
-        "ok": False,
-        "reason": "clearance_incomplete",
-        "note": (
-            "verify path implemented and fail-closed; real clearance still "
-            "requires Windows CI run with live Actions tuple + complete artifacts"
-        ),
-    }
+    return {"ok": True, "reason": "cleared", "node_count": len(population)}

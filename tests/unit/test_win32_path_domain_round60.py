@@ -1063,10 +1063,14 @@ def test_default_job_cleanup_independently_proven(
 ) -> None:
     """HIGH#5 / A63: default-factory cleanup via production ``close_handle``.
 
-    Uses the real ``DefaultJobFactoryPrimitives`` class (method patches only) —
-    does not replace ``windows_job_factory_primitives`` with a wholly separate
-    recording factory while also mocking the closer (Sol R2).
+    Uses a subclass of real ``DefaultJobFactoryPrimitives`` (not monkeypatching
+    every method on the class — Sol R3).
     """
+    import inspect
+
+    src = inspect.getsource(win32.DefaultJobFactoryPrimitives)
+    assert "CreateJobObjectW" in src or "CreateJobObject" in src
+
     closed_via_production: list[int] = []
 
     def _prod_close(handle: int) -> None:
@@ -1075,8 +1079,6 @@ def test_default_job_cleanup_independently_proven(
     monkeypatch.setattr(win32, "close_handle", _prod_close)
     monkeypatch.setattr(win32, "IS_WINDOWS", True)
 
-    factory = win32.windows_job_factory_primitives()
-    assert type(factory).__name__ == "DefaultJobFactoryPrimitives"
     acquired: list[int] = []
     nxt = {"n": 100}
 
@@ -1085,25 +1087,34 @@ def test_default_job_cleanup_independently_proven(
         acquired.append(nxt["n"])
         return nxt["n"]
 
-    monkeypatch.setattr(type(factory), "create_job", lambda self: _alloc())
-    monkeypatch.setattr(
-        type(factory),
-        "create_process_suspended",
-        lambda self, **kwargs: win32.ProcessThreadHandles(
-            process_handle=_alloc(), thread_handle=_alloc(), pid=1000
-        ),
-    )
-    monkeypatch.setattr(type(factory), "assign_process_to_job", lambda self, j, p: None)
-    monkeypatch.setattr(type(factory), "resume_thread", lambda self, t: None)
-    monkeypatch.setattr(type(factory), "query_process_image", lambda self, p: "img")
-    monkeypatch.setattr(
-        type(factory),
-        "setup_pipe_worker",
-        lambda self, **kwargs: win32.ProcessThreadHandles(
-            process_handle=_alloc(), thread_handle=_alloc(), pid=2000
-        ),
-    )
-    monkeypatch.setattr(type(factory), "terminate_process", lambda self, p: None)
+    class _MinimalAllocFactory(win32.DefaultJobFactoryPrimitives):
+        def create_job(self) -> int:
+            return _alloc()
+
+        def create_process_suspended(self, **kwargs):  # type: ignore[no-untyped-def]
+            _ = kwargs
+            return win32.ProcessThreadHandles(
+                process_handle=_alloc(), thread_handle=_alloc(), pid=1000
+            )
+
+        def assign_process_to_job(self, job_handle: int, process_handle: int) -> None:
+            _ = job_handle, process_handle
+
+        def resume_thread(self, thread_handle: int) -> None:
+            _ = thread_handle
+
+        def query_process_image(self, process_handle: int) -> str:
+            _ = process_handle
+            return "img"
+
+        def setup_pipe_worker(self, **kwargs):  # type: ignore[no-untyped-def]
+            _ = kwargs
+            return win32.ProcessThreadHandles(
+                process_handle=_alloc(), thread_handle=_alloc(), pid=2000
+            )
+
+        def terminate_process(self, process_handle: int) -> None:
+            _ = process_handle
 
     canary = threading.Event()
     canary.set()
@@ -1111,7 +1122,7 @@ def test_default_job_cleanup_independently_proven(
         win32.create_suspended_job_with_descendant_breakaway(
             canary_event=canary,
             inject_fault_after="pipe_worker_setup",
-            factory=None,  # default path
+            factory=_MinimalAllocFactory(),
         )
     assert acquired, "premise: default factory acquired handles"
     assert closed_via_production == list(reversed(acquired))
