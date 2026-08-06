@@ -133,6 +133,20 @@ def test_sol_r2_verify_never_raises_notimplemented_and_ci_wires_emit_verify(
         assert "exit \"$VERIFY_RC\"" in run or "exit $VERIFY_RC" in run or (
             "if [ \"$VERIFY_RC\"" in run and "exit" in run
         )
+        # Sol R4 HIGH#1: verify must receive census artifact paths the runners produce.
+        # Omitting --junit/--rust-list forever-stubs artifact_incomplete even when
+        # Actions tuple + receipt + junit.xml / rust-list.txt are present.
+        assert "--junit" in run, (
+            f"{job_name} verify must pass --junit (runners write NODE_DIR/junit.xml)"
+        )
+        if job_name == "native-build-smoke":
+            assert "--rust-list" in run, (
+                "native-build-smoke verify must pass --rust-list "
+                "(runners write NODE_DIR/rust-list.txt)"
+            )
+        assert "junit.xml" in run
+        if job_name == "native-build-smoke":
+            assert "rust-list.txt" in run
 
 
 @task2a_owned
@@ -177,8 +191,26 @@ def test_sol_r2_crash_classification_fail_closed(tmp_path: Path) -> None:
         rust.classify_rust_node_phase(exit_code=101, stdout="", stderr="something odd")
         == "crash_or_setup"
     )
-    # Positive control: Rust assertion panic carries canonical "panicked at"
-    # plus assertion markers → executed_refused_receipt (not crash).
+    # Sol R4 HIGH#2: bare "panicked at" (no real assertion marker) = crash_or_setup.
+    assert (
+        rust.classify_rust_node_phase(
+            exit_code=101,
+            stdout="",
+            stderr="thread 'tests::leaf' panicked at src/x.rs:1:1:\ncapacity overflow",
+        )
+        == "crash_or_setup"
+    )
+    # Sol R4 HIGH#2: generic cargo "FAILED" text is NOT assertion evidence.
+    # Ordinary panic + "... FAILED" must stay crash_or_setup (not behavioral RED).
+    assert (
+        rust.classify_rust_node_phase(
+            exit_code=101,
+            stdout="test leaf ... FAILED\n",
+            stderr="thread 'tests::leaf' panicked at src/x.rs:1:1:\ncapacity overflow",
+        )
+        == "crash_or_setup"
+    )
+    # Positive control: real assertion markers + "panicked at" → executed_refused_receipt.
     assert (
         rust.classify_rust_node_phase(
             exit_code=101,
@@ -189,6 +221,12 @@ def test_sol_r2_crash_classification_fail_closed(tmp_path: Path) -> None:
             ),
         )
         == "executed_refused_receipt"
+    )
+    # Classifier source must not treat bare "FAILED" as an assertion marker.
+    rust_src = (REPO_ROOT / "scripts" / "run_task2a_rust_node.py").read_text(encoding="utf-8")
+    markers_body = rust_src.split("assertion_markers", 1)[1].split(")", 1)[0]
+    assert '"FAILED"' not in markers_body and "'FAILED'" not in markers_body, (
+        "generic FAILED must not be assertion evidence (misclassifies ordinary panicked-at)"
     )
 
 
@@ -212,6 +250,39 @@ def test_sol_r2_pcre2_oracle_uses_production_route_hook() -> None:
     assert "gate_uninstrumented_pcre2_native_route" in run_body, (
         "PCRE2 production gate must be invoked from run_native_search, not only the test oracle"
     )
+    # Sol R4: CLI builders must thread pcre2 into NativeSearchConfig (positional/command/gpu).
+    # A gate call with config.pcre2 forever-default-false is a vacuous production door.
+    # Anchor on the production signatures (paren after name) — not cfg(test) helpers
+    # whose names start with the same prefix.
+    main_src = (REPO_ROOT / "rust_core" / "src" / "main.rs").read_text(encoding="utf-8")
+    cmd_marker = "fn native_search_config_for_command(\n"
+    pos_marker = "fn native_search_config_for_positional(\n"
+    gpu_marker = "fn native_search_config_for_gpu_params(\n"
+    assert cmd_marker in main_src, "production native_search_config_for_command missing"
+    assert pos_marker in main_src, "production native_search_config_for_positional missing"
+    assert gpu_marker in main_src, "production native_search_config_for_gpu_params missing"
+    cmd_body = main_src.split(cmd_marker, 1)[1].split("\nfn ", 1)[0]
+    pos_body = main_src.split(pos_marker, 1)[1].split("\nfn ", 1)[0]
+    gpu_body = main_src.split(gpu_marker, 1)[1].split("\nfn ", 1)[0]
+    assert "pcre2: args.pcre2" in cmd_body, (
+        "native_search_config_for_command must thread args.pcre2 into NativeSearchConfig "
+        "(not leave Default pcre2:false — vacuous gate)"
+    )
+    assert "pcre2: cli.pcre2" in pos_body, (
+        "native_search_config_for_positional must thread cli.pcre2 into NativeSearchConfig"
+    )
+    assert "pcre2: params.pcre2" in gpu_body, (
+        "native_search_config_for_gpu_params must thread params.pcre2 into NativeSearchConfig"
+    )
+    # Behavioral pin in native_search.rs: run_native_search({pcre2:true}) must refuse.
+    assert "fn run_native_search_refuses_pcre2_before_matcher" in src, (
+        "must ship a non-ignored behavioral test that run_native_search refuses pcre2:true"
+    )
+    refuse_body = src.split("fn run_native_search_refuses_pcre2_before_matcher", 1)[1].split(
+        "\n    #[", 1
+    )[0]
+    assert "pcre2: true" in refuse_body
+    assert "search_input_limit" in refuse_body
 
 
 @task2a_owned
@@ -243,8 +314,9 @@ def test_sol_r2_heartbeat_factory_mints_nonce_and_refuses_framing_garbage() -> N
 def test_sol_r2_default_job_cleanup_uses_real_default_factory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """HIGH#5: real DefaultJobFactoryPrimitives Win32 path; no full-method monkeypatch."""
+    """HIGH#5: real DefaultJobFactoryPrimitives; setup_pipe_worker uses parent/pipe/event/nonce."""
     import inspect
+    import os
 
     # Production default factory must wire real Win32 (not NotImplemented stubs).
     src = inspect.getsource(win32.DefaultJobFactoryPrimitives)
@@ -252,6 +324,11 @@ def test_sol_r2_default_job_cleanup_uses_real_default_factory(
     assert "CreateProcessW" in src
     create_job_body = src.split("def create_job", 1)[1].split("\n    def ", 1)[0]
     assert "raise NotImplementedError" not in create_job_body
+    pipe_body = src.split("def setup_pipe_worker", 1)[1].split("\n    def ", 1)[0]
+    # Sol R4: must not discard parent/pipe/event/nonce with a blanket `_ = ...`.
+    assert "_ = parent, canary_event, canary_pipe_write_fd, writer_nonce" not in pipe_body
+    assert "descendant_job_pipe_heartbeat" in pipe_body
+    assert "writer_nonce" in pipe_body and "parent" in pipe_body
 
     closed_via_production: list[int] = []
 
@@ -261,24 +338,28 @@ def test_sol_r2_default_job_cleanup_uses_real_default_factory(
     monkeypatch.setattr(win32, "close_handle", _spy_close)
     monkeypatch.setattr(win32, "IS_WINDOWS", True)
 
-    # Subclass of the REAL default factory — override only allocation + terminate.
-    # Do NOT monkeypatch every method on DefaultJobFactoryPrimitives.
+    # Minimal OS stubs ONLY — do NOT override setup_pipe_worker (prove real default path).
     acquired: list[int] = []
     nxt = {"n": 100}
+    pids = {"n": 1000}
 
     def _alloc() -> int:
         nxt["n"] += 1
         acquired.append(nxt["n"])
         return nxt["n"]
 
-    class _MinimalAllocFactory(win32.DefaultJobFactoryPrimitives):
+    def _pid() -> int:
+        pids["n"] += 1
+        return pids["n"]
+
+    class _MinimalOsStubFactory(win32.DefaultJobFactoryPrimitives):
         def create_job(self) -> int:
             return _alloc()
 
         def create_process_suspended(self, **kwargs):  # type: ignore[no-untyped-def]
             _ = kwargs
             return win32.ProcessThreadHandles(
-                process_handle=_alloc(), thread_handle=_alloc(), pid=1000
+                process_handle=_alloc(), thread_handle=_alloc(), pid=_pid()
             )
 
         def assign_process_to_job(self, job_handle: int, process_handle: int) -> None:
@@ -291,30 +372,53 @@ def test_sol_r2_default_job_cleanup_uses_real_default_factory(
             _ = process_handle
             return "img"
 
-        def setup_pipe_worker(self, **kwargs):  # type: ignore[no-untyped-def]
-            _ = kwargs
-            return win32.ProcessThreadHandles(
-                process_handle=_alloc(), thread_handle=_alloc(), pid=2000
-            )
-
         def terminate_process(self, process_handle: int) -> None:
             _ = process_handle
 
-    # Inject subclass instance via factory= — still proves DefaultJobFactoryPrimitives
-    # inheritance + module close_handle cleanup (not a wholly unrelated factory type).
-    factory = _MinimalAllocFactory()
+    factory = _MinimalOsStubFactory()
     assert isinstance(factory, win32.DefaultJobFactoryPrimitives)
+    assert "setup_pipe_worker" not in type(factory).__dict__, (
+        "test must not override setup_pipe_worker — exercise DefaultJobFactoryPrimitives"
+    )
+
+    # Direct default-path proof: real setup_pipe_worker uses parent + nonce + pipe.
+    r_fd, w_fd = os.pipe()
+    try:
+        parent = win32.ProcessThreadHandles(process_handle=11, thread_handle=12, pid=7001)
+        nonce = b"\xab" * 16
+        ev = threading.Event()
+        worker = factory.setup_pipe_worker(
+            parent=parent,
+            canary_event=ev,
+            canary_pipe_write_fd=w_fd,
+            writer_nonce=nonce,
+        )
+        os.close(w_fd)
+        w_fd = -1
+        payload = os.read(r_fd, 4096)
+        assert (
+            win32.parse_descendant_job_pipe_heartbeat_pid(payload, writer_nonce=nonce)
+            == worker.pid
+        )
+        assert worker.pid != parent.pid
+        assert ev.is_set() is True
+    finally:
+        os.close(r_fd)
+        if w_fd >= 0:
+            os.close(w_fd)
+
+    # Orchestrator cleanup still uses production close_handle via default factory.
+    acquired.clear()
+    closed_via_production.clear()
+    canary = threading.Event()
     with pytest.raises(BaseException, match="injected fault"):
         win32.create_suspended_job_with_descendant_breakaway(
-            canary_event=threading.Event(),
+            canary_event=canary,
             inject_fault_after="pipe_worker_setup",
             factory=factory,
-            writer_nonce=None,
+            writer_nonce=b"\xcd" * 16,
         )
     assert acquired, "premise: factory acquired handles"
-    # Default-factory closer path uses module close_handle when factory is the
-    # windows_job_factory_primitives() default; injected factory uses factory.close_handle
-    # which still delegates to module close_handle on DefaultJobFactoryPrimitives.
     assert closed_via_production == list(reversed(acquired))
 
 

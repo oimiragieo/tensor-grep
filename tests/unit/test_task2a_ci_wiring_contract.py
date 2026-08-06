@@ -123,6 +123,12 @@ def test_task2a_ci_does_not_mask_expected_red_as_success() -> None:
         assert "SETUP/CENSUS FAILURE" in run or "SETUP FAILURE" in run
         # Unconditional forever-stub exit 1 (ignoring VERIFY_RC) is forbidden.
         assert 'exit "$VERIFY_RC"' in run or "exit $VERIFY_RC" in run
+        # Sol R4 HIGH#1: pass census artifact paths runners actually write.
+        assert "--junit" in run
+        assert "junit.xml" in run
+        if job_name == "native-build-smoke":
+            assert "--rust-list" in run
+            assert "rust-list.txt" in run
 
 
 def test_task2a_ci_upload_steps_are_always() -> None:

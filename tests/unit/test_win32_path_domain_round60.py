@@ -1063,13 +1063,17 @@ def test_default_job_cleanup_independently_proven(
 ) -> None:
     """HIGH#5 / A63: default-factory cleanup via production ``close_handle``.
 
-    Uses a subclass of real ``DefaultJobFactoryPrimitives`` (not monkeypatching
-    every method on the class — Sol R3).
+    Uses a subclass of real ``DefaultJobFactoryPrimitives`` that does NOT
+    override ``setup_pipe_worker`` (Sol R4 — prove real default pipe path).
     """
     import inspect
+    import os
 
     src = inspect.getsource(win32.DefaultJobFactoryPrimitives)
     assert "CreateJobObjectW" in src or "CreateJobObject" in src
+    pipe_body = src.split("def setup_pipe_worker", 1)[1].split("\n    def ", 1)[0]
+    assert "_ = parent, canary_event, canary_pipe_write_fd, writer_nonce" not in pipe_body
+    assert "descendant_job_pipe_heartbeat" in pipe_body
 
     closed_via_production: list[int] = []
 
@@ -1081,20 +1085,25 @@ def test_default_job_cleanup_independently_proven(
 
     acquired: list[int] = []
     nxt = {"n": 100}
+    pids = {"n": 1000}
 
     def _alloc() -> int:
         nxt["n"] += 1
         acquired.append(nxt["n"])
         return nxt["n"]
 
-    class _MinimalAllocFactory(win32.DefaultJobFactoryPrimitives):
+    def _pid() -> int:
+        pids["n"] += 1
+        return pids["n"]
+
+    class _MinimalOsStubFactory(win32.DefaultJobFactoryPrimitives):
         def create_job(self) -> int:
             return _alloc()
 
         def create_process_suspended(self, **kwargs):  # type: ignore[no-untyped-def]
             _ = kwargs
             return win32.ProcessThreadHandles(
-                process_handle=_alloc(), thread_handle=_alloc(), pid=1000
+                process_handle=_alloc(), thread_handle=_alloc(), pid=_pid()
             )
 
         def assign_process_to_job(self, job_handle: int, process_handle: int) -> None:
@@ -1107,22 +1116,48 @@ def test_default_job_cleanup_independently_proven(
             _ = process_handle
             return "img"
 
-        def setup_pipe_worker(self, **kwargs):  # type: ignore[no-untyped-def]
-            _ = kwargs
-            return win32.ProcessThreadHandles(
-                process_handle=_alloc(), thread_handle=_alloc(), pid=2000
-            )
-
         def terminate_process(self, process_handle: int) -> None:
             _ = process_handle
 
+    factory = _MinimalOsStubFactory()
+    assert "setup_pipe_worker" not in type(factory).__dict__
+
+    # Direct default setup_pipe_worker path: parent + nonce + pipe heartbeat.
+    r_fd, w_fd = os.pipe()
+    try:
+        parent = win32.ProcessThreadHandles(process_handle=11, thread_handle=12, pid=7001)
+        nonce = b"\xab" * 16
+        ev = threading.Event()
+        worker = factory.setup_pipe_worker(
+            parent=parent,
+            canary_event=ev,
+            canary_pipe_write_fd=w_fd,
+            writer_nonce=nonce,
+        )
+        os.close(w_fd)
+        w_fd = -1
+        payload = os.read(r_fd, 4096)
+        assert (
+            win32.parse_descendant_job_pipe_heartbeat_pid(payload, writer_nonce=nonce)
+            == worker.pid
+        )
+        assert worker.pid != parent.pid
+        assert ev.is_set() is True
+    finally:
+        os.close(r_fd)
+        if w_fd >= 0:
+            os.close(w_fd)
+
+    acquired.clear()
+    closed_via_production.clear()
     canary = threading.Event()
     canary.set()
     with pytest.raises(BaseException, match="injected fault"):
         win32.create_suspended_job_with_descendant_breakaway(
             canary_event=canary,
             inject_fault_after="pipe_worker_setup",
-            factory=_MinimalAllocFactory(),
+            factory=factory,
+            writer_nonce=b"\xcd" * 16,
         )
     assert acquired, "premise: default factory acquired handles"
     assert closed_via_production == list(reversed(acquired))

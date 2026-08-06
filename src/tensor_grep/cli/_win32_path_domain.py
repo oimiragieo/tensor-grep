@@ -7,6 +7,7 @@ and never fabricate success handles or security verdicts. Green-phase replaces s
 
 from __future__ import annotations
 
+import os
 import secrets
 import sys
 import threading
@@ -723,12 +724,34 @@ class DefaultJobFactoryPrimitives:
         canary_pipe_write_fd: int | None,
         writer_nonce: bytes | None = None,
     ) -> ProcessThreadHandles:
-        _ = parent, canary_event, canary_pipe_write_fd, writer_nonce
-        # Minimal real path: spawn a second suspended process as the pipe worker stand-in.
-        return self.create_process_suspended(
+        # Sol R4 HIGH#5: must use parent / pipe / event / nonce (not discard via `_ = ...`).
+        if not isinstance(parent, ProcessThreadHandles):
+            raise TypeError("parent must be ProcessThreadHandles")
+        if parent.pid <= 0:
+            raise ValueError("parent pid must be positive")
+        if parent.process_handle in (0, -1) or parent.thread_handle in (0, -1):
+            raise OSError("parent handles invalid")
+        if writer_nonce is None:
+            raise ValueError("writer_nonce required for pipe worker setup")
+        nonce = bytes(writer_nonce)
+        if len(nonce) < _MIN_WRITER_NONCE_LEN:
+            raise ValueError(
+                f"writer_nonce must be at least {_MIN_WRITER_NONCE_LEN} bytes "
+                "(parent-forgeable short secrets refused)"
+            )
+        worker = self.create_process_suspended(
             canary_event=canary_event,
             canary_pipe_write_fd=canary_pipe_write_fd,
         )
+        if worker.pid == parent.pid or worker.process_handle == parent.process_handle:
+            raise OSError("pipe worker must be a distinct process from parent")
+        # Authenticate writer provenance: heartbeat binds worker PID + nonce.
+        heartbeat = descendant_job_pipe_heartbeat(worker.pid, writer_nonce=nonce)
+        if canary_pipe_write_fd is not None:
+            os.write(canary_pipe_write_fd, heartbeat)
+        if canary_event is not None:
+            canary_event.set()
+        return worker
 
     def terminate_process(self, process_handle: int) -> None:
         if not IS_WINDOWS:

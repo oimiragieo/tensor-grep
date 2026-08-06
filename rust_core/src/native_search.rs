@@ -3677,6 +3677,34 @@ mod tests {
         );
     }
 
+    /// Sol R4 / HIGH#3: `run_native_search` with `pcre2: true` must refuse via the
+    /// production gate before matcher construction (not a source-grep-only pin).
+    #[test]
+    fn run_native_search_refuses_pcre2_before_matcher() {
+        let observer = MatcherConstructionObserver::install();
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a.txt");
+        std::fs::write(&file, "needle\n").unwrap();
+        let config = NativeSearchConfig {
+            pattern: "needle".to_string(),
+            paths: vec![file],
+            pcre2: true,
+            path_was_implicit: false,
+            ..NativeSearchConfig::default()
+        };
+        let err = run_native_search(config).expect_err("pcre2:true must refuse");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("search_input_limit"),
+            "refusal must carry search_input_limit; got {msg}"
+        );
+        assert_eq!(
+            observer.count(),
+            0,
+            "PCRE2 refusal must not construct a matcher/compiler"
+        );
+    }
+
     /// In-process direct-native PCRE2 route seam: refusal must occur with zero
     /// matcher/compiler constructions (no production env canary).
     #[test]

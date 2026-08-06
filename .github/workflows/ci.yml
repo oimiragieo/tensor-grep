@@ -529,19 +529,25 @@ jobs:
             echo "task2a python census incomplete: $CENSUS_EXECUTED != $EXPECTED" >&2
             exit 1
           fi
-          # HIGH#1 Sol R2: exercise real verify path (fail closed on missing artifacts).
-          # Real immutable-SHA clearance still requires a live Windows CI run.
+          # HIGH#1 Sol R4: pass census artifact paths the runners actually wrote
+          # beside the receipt (never omit → permanent artifact_incomplete).
           set +e
           if [ "$RECEIPT_SEEN" -ne 0 ]; then
             FIRST_RECEIPT="$(find "$ART/python" -name receipt.json 2>/dev/null | head -1)"
           else
             FIRST_RECEIPT="$ART/missing-receipt.json"
           fi
+          RECEIPT_DIR="$(dirname "$FIRST_RECEIPT")"
+          JUNIT_ARGS=()
+          if [ -f "$RECEIPT_DIR/junit.xml" ]; then
+            JUNIT_ARGS=(--junit "$RECEIPT_DIR/junit.xml")
+          fi
           uv run python scripts/verify_task2a_windows_nodes.py \
             --receipt "${FIRST_RECEIPT}" \
             --manifest tests/fixtures/task2a_windows_node_manifest.json \
             --current-run-dir "$ART" \
-            --expected-attribution source-tree
+            --expected-attribution source-tree \
+            "${JUNIT_ARGS[@]}"
           VERIFY_RC=$?
           set -e
           echo "task2a verify path exercised verify_rc=$VERIFY_RC receipt_seen=$RECEIPT_SEEN; clearance still requires live Windows CI artifacts when verify is not ok" >&2
@@ -1002,19 +1008,30 @@ jobs:
             echo "task2a native census incomplete" >&2
             exit 1
           fi
-          # HIGH#1 Sol R2: exercise real verify path (fail closed on missing artifacts).
-          # Real immutable-SHA clearance still requires a live Windows CI run.
+          # HIGH#1 Sol R4: pass census artifact paths the runners actually wrote
+          # beside the receipt (never omit → permanent artifact_incomplete).
           set +e
           if [ "$RECEIPT_SEEN" -ne 0 ]; then
             FIRST_RECEIPT="$(find "$ART" -name receipt.json 2>/dev/null | head -1)"
           else
             FIRST_RECEIPT="$ART/missing-receipt.json"
           fi
+          RECEIPT_DIR="$(dirname "$FIRST_RECEIPT")"
+          JUNIT_ARGS=()
+          RUST_LIST_ARGS=()
+          if [ -f "$RECEIPT_DIR/junit.xml" ]; then
+            JUNIT_ARGS=(--junit "$RECEIPT_DIR/junit.xml")
+          fi
+          if [ -f "$RECEIPT_DIR/rust-list.txt" ]; then
+            RUST_LIST_ARGS=(--rust-list "$RECEIPT_DIR/rust-list.txt")
+          fi
           uv run python scripts/verify_task2a_windows_nodes.py \
             --receipt "${FIRST_RECEIPT}" \
             --manifest tests/fixtures/task2a_windows_node_manifest.json \
             --current-run-dir "$ART" \
-            --expected-attribution source-tree
+            --expected-attribution source-tree \
+            "${JUNIT_ARGS[@]}" \
+            "${RUST_LIST_ARGS[@]}"
           VERIFY_RC=$?
           set -e
           echo "task2a verify path exercised verify_rc=$VERIFY_RC receipt_seen=$RECEIPT_SEEN; clearance still requires live Windows CI artifacts when verify is not ok" >&2

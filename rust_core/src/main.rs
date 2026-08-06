@@ -3149,6 +3149,7 @@ mod tests {
             color: None,
             no_ignore_vcs: false,
             path_was_implicit: false,
+            pcre2: false,
         }
     }
 
@@ -7245,6 +7246,7 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
             color: cli.color.clone(),
             no_ignore_vcs: cli.no_ignore_vcs,
             path_was_implicit: cli.path.is_empty(),
+            pcre2: cli.pcre2,
         })
         .is_none();
 
@@ -7328,6 +7330,7 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
                 color: cli.color.clone(),
                 no_ignore_vcs: cli.no_ignore_vcs,
                 path_was_implicit: cli.path.is_empty(),
+                pcre2: cli.pcre2,
             };
 
             #[cfg(feature = "cuda")]
@@ -8492,6 +8495,9 @@ fn native_search_config_for_positional(
         // substitutes stdin/"." -- empty means the caller gave no explicit path (audit #105,
         // mirrors `positional_ripgrep_args`'s `path_was_implicit: cli.path.is_empty()`).
         path_was_implicit: cli.path.is_empty(),
+        // HIGH#3 Sol R4: thread -P/--pcre2 into NativeSearchConfig so
+        // gate_uninstrumented_pcre2_native_route(config.pcre2) is not forever-false.
+        pcre2: cli.pcre2,
         ..NativeSearchConfig::default()
     }
 }
@@ -8543,6 +8549,9 @@ fn native_search_config_for_command(
         // `--fixed-strings`/rg-unavailable routing, none of which pass through
         // `execute_ripgrep_search`'s #100 gate.
         path_was_implicit,
+        // HIGH#3 Sol R4: thread -P/--pcre2 into NativeSearchConfig so the production
+        // gate in run_native_search sees the CLI request (not Default false forever).
+        pcre2: args.pcre2,
         ..NativeSearchConfig::default()
     }
 }
@@ -8594,6 +8603,9 @@ fn native_search_config_for_gpu_params(
         // comment -- this is the explicit-`--gpu-device-ids`-fallback-to-CPU route, which used to
         // have no way to know whether the PATH was implicit at all).
         path_was_implicit: params.path_was_implicit,
+        // HIGH#3 Sol R4: thread -P/--pcre2 into NativeSearchConfig so the production
+        // gate in run_native_search sees the CLI request (not Default false forever).
+        pcre2: params.pcre2,
         ..NativeSearchConfig::default()
     }
 }
@@ -9153,6 +9165,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
             color: args.color.clone(),
             no_ignore_vcs: args.no_ignore_vcs,
             path_was_implicit: request.path_was_implicit,
+            pcre2: args.pcre2,
         })
         .is_none();
 
@@ -9228,6 +9241,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                 color: args.color.clone(),
                 no_ignore_vcs: args.no_ignore_vcs,
                 path_was_implicit: request.path_was_implicit,
+                pcre2: args.pcre2,
             };
 
             #[cfg(feature = "cuda")]
@@ -12493,6 +12507,9 @@ struct GpuSearchParams<'a> {
     // explicit -- the implicit default is itself a single `["."]` root, so that check alone
     // cannot be used as a stand-in for this field.
     path_was_implicit: bool,
+    // HIGH#3 Sol R4: thread -P/--pcre2 into NativeSearchConfig on the GPU→CPU fallback
+    // path so gate_uninstrumented_pcre2_native_route is not forever-false.
+    pcre2: bool,
 }
 
 #[cfg(feature = "cuda")]

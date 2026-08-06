@@ -337,7 +337,9 @@ def classify_rust_node_phase(*, exit_code: int, stdout: str, stderr: str) -> str
     assertion_markers = (
         "assertion `left == right`",
         "assertion failed",
-        "FAILED",
+        "assert_eq!",
+        "assert_ne!",
+        "Assertion failed",
     )
     has_assertion = any(m in blob for m in assertion_markers)
     # HIGH#2 Sol R3: "panicked at" + assertion markers = behavioral RED, not crash.
