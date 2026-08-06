@@ -117,3 +117,61 @@ def test_text_mode_stdout_is_byte_identical_to_before(capsys: pytest.CaptureFixt
     # assertion above while polluting the plain-text surface.
     out_text, _ = _emit(capsys, json_output=False)
     assert out_text == "", "text mode must print nothing to stdout"
+
+
+def test_emitter_accepts_override_class_and_error_code(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A workspace-root refusal must NOT share ``scan_limit`` with a file-cap truncation.
+
+    External dogfood (v1.108.2) filed this as a NEW real ask: agents retrying a workspace-parent
+    refuse with a bigger ``--max-repo-files`` are following the wrong knob because the class lied.
+    Defaults stay ``scan_limit`` / ``broad_scan_refused`` for the other policy ceilings; the
+    workspace call site opts into ``workspace_root_refused`` on both fields.
+    """
+    from tensor_grep.cli.main import _emit_broad_scan_refusal
+
+    _emit_broad_scan_refusal(
+        "Error: broad workspace-root scan refused as a safety guard",
+        json_output=True,
+        path="/ws",
+        incomplete_reason_class="workspace_root_refused",
+        error_code="workspace_root_refused",
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["incomplete_reason_class"] == "workspace_root_refused"
+    assert payload["error"]["code"] == "workspace_root_refused"
+
+
+def test_workspace_root_json_refuse_emits_workspace_root_refused_not_scan_limit(
+    tmp_path,
+) -> None:
+    """End-to-end: the workspace call site must wire the distinct class, not rely on defaults."""
+    from pathlib import Path
+
+    from typer.testing import CliRunner
+
+    from tensor_grep.cli.main import app
+
+    workspace = Path(tmp_path) / "projects"
+    workspace.mkdir()
+    for project_name, marker_name in (
+        ("alpha", "pyproject.toml"),
+        ("beta", "package.json"),
+        ("gamma", "Cargo.toml"),
+    ):
+        project = workspace / project_name
+        (project / "src").mkdir(parents=True)
+        (project / marker_name).write_text("", encoding="utf-8")
+        (project / "src" / "app.py").write_text("needle\n", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["search", "needle", str(workspace), "--json"])
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    assert payload["incomplete_reason_class"] == "workspace_root_refused", (
+        "workspace-root refuse must not masquerade as scan_limit "
+        f"(got {payload.get('incomplete_reason_class')!r})"
+    )
+    assert payload["error"]["code"] == "workspace_root_refused"
+    # CONTROL: a non-workspace refuse path still defaults to scan_limit — covered by
+    # test_the_zero_travels_with_its_qualifiers above on the bare emitter.
