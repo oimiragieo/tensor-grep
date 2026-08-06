@@ -178,6 +178,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from tensor_grep.cli import lang_c_cpp_include
+
 # ---------------------------------------------------------------------------
 # Duplicated tiny helpers -- see the module docstring: no import from repo_map.py, to avoid an
 # import cycle (repo_map.py imports THIS module). Keep byte-identical to repo_map.py's twins
@@ -649,6 +651,7 @@ _C_DEMOTED_CONFIDENCE = 0.6
 _C_DEMOTED_PROVENANCE = "c-name-heuristic"
 _C_CONFIRMED_CONFIDENCE = 0.9
 _C_CONFIRMED_PROVENANCE = "c-infile-function-declared"
+_C_CROSS_FILE_CONFIRMED_PROVENANCE = "c-include-path-confirmation"
 
 # Node types whose "declarator" field (possibly wrapped, resolved via
 # _c_declarator_name_node) names a DEFINITION site -- excluded from the reference/call walk (a
@@ -729,19 +732,37 @@ def _c_definition_site_positions(root: Any) -> set[tuple[int, int]]:
     return positions
 
 
+def c_file_imports_symbol_from_definition(
+    file_path: Path,
+    source: str,
+    symbol: str,
+    definition_path: str,
+    repo_root: Path | str | None = None,
+) -> bool:
+    """True iff *file_path* can see *symbol*'s definition via ``#include`` path evidence.
+
+    Delegates to the shared C/C++ include-path engine. *symbol* is accepted for LanguageSpec
+    signature parity; C include visibility is file-scoped, not symbol-scoped.
+    """
+    del symbol  # include proof is path-scoped; member name is not part of the import edge
+    return lang_c_cpp_include.file_includes_definition(
+        file_path, source, definition_path, repo_root
+    )
+
+
 def c_references_and_calls(
-    path: Path, symbol: str
+    path: Path,
+    symbol: str,
+    repo_root: Path | str | None = None,
+    *,
+    definition_dirs: frozenset[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """In-file AST reference/call rows for *symbol* in *path* -- see the module docstring's
-    "TASK 10D CALL/ACCESS NODE SHAPES" section for the full AST-shape mapping. Scope: single-file
-    only, no cross-file resolution (mirrors ``lang_java.java_references_and_calls``/
-    ``lang_csharp.csharp_references_and_calls``/``lang_php.php_references_and_calls`` exactly).
-    Owns its own parser factory (``_c_parser()``, defined above), matching ``lang_csharp.py``'s/
-    ``lang_php.py``'s shape rather than ``lang_java.py``'s externally-built-parser shape -- C
-    already had its own grammar-probing factory before Task 10D (needed by
-    ``c_imports_and_symbols``), so a second factory here would create two sources of truth for
-    "is the C grammar installed"; this function reuses the SAME ``_c_parser()`` every other
-    function in this module already calls.
+    """AST reference/call rows for *symbol* in *path*.
+
+    In-file confirmation (``c-infile-function-declared``) still fires when *symbol* names a real
+    function in THIS file. When *definition_dirs* is supplied (repo_map always supplies it from
+    preferred definitions), a bare call whose file ``#include``-resolves into those directories
+    earns the cross-file confirmed band (``c-include-path-confirmation``).
     """
     if path.suffix != ".c":
         return [], []
@@ -773,16 +794,30 @@ def c_references_and_calls(
 
     definition_positions = _c_definition_site_positions(tree.root_node)
     function_confirmed = _c_symbol_has_infile_function(tree.root_node, source_bytes, symbol)
+    include_confirmed = bool(
+        definition_dirs
+        and lang_c_cpp_include.include_resolves_into_definition_dirs(
+            path, source, definition_dirs, repo_root
+        )
+    )
 
     def _is_definition_site(node: Any) -> bool:
         return (node.start_byte, node.end_byte) in definition_positions
 
     def _emit(
-        bucket: list[dict[str, Any]], node: Any, *, kind: str, ref_kind: str, confirmed: bool
+        bucket: list[dict[str, Any]],
+        node: Any,
+        *,
+        kind: str,
+        ref_kind: str,
+        confirmed: bool,
+        cross_file: bool = False,
     ) -> None:
         if confirmed:
             confidence = _C_CONFIRMED_CONFIDENCE
-            provenance = _C_CONFIRMED_PROVENANCE
+            provenance = (
+                _C_CROSS_FILE_CONFIRMED_PROVENANCE if cross_file else _C_CONFIRMED_PROVENANCE
+            )
         else:
             confidence = _C_DEMOTED_CONFIDENCE
             provenance = _C_DEMOTED_PROVENANCE
@@ -817,19 +852,27 @@ def c_references_and_calls(
                 if function_field is not None and function_field.type == "identifier":
                     if _node_text(function_field) == symbol:
                         claimed_node_ids.add((function_field.start_byte, function_field.end_byte))
+                        if function_confirmed:
+                            confirmed, cross_file = True, False
+                        elif include_confirmed:
+                            confirmed, cross_file = True, True
+                        else:
+                            confirmed, cross_file = False, False
                         _emit(
                             references,
                             function_field,
                             kind="reference",
                             ref_kind="call",
-                            confirmed=function_confirmed,
+                            confirmed=confirmed,
+                            cross_file=cross_file,
                         )
                         _emit(
                             calls,
                             function_field,
                             kind="call",
                             ref_kind="call",
-                            confirmed=function_confirmed,
+                            confirmed=confirmed,
+                            cross_file=cross_file,
                         )
                 elif function_field is not None and function_field.type == "field_expression":
                     field_child = function_field.child_by_field_name("field")
@@ -890,6 +933,7 @@ def c_references_and_calls(
 
 
 __all__ = [
+    "c_file_imports_symbol_from_definition",
     "c_imports_and_symbols",
     "c_imports_with_lines",
     "c_parser_symbol_sources",

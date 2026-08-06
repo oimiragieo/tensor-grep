@@ -162,6 +162,19 @@ KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
     "ledger_store.py": 1,
     "runtime_paths.py": 1,
     "session_daemon.py": 1,
+    # AUDITED F7 Task 11 wave 3 (lang_c_cpp_include.py): two fail-closed confirmation
+    # helpers, not a completeness-claiming result set.
+    #   resolve_include_target -- `except OSError: continue` while resolving include search
+    #     roots into the `seen` dedup set. An unreadable root is skipped; the function returns
+    #     None (unresolved) rather than fabricating a path. The caller elevates a caller edge
+    #     to the include-confirmed band only on a successful resolve -- silence here is the
+    #     fail-closed contract, not a truncated answer.
+    #   file_includes_definition -- same shape over same-stem header siblings (`acceptable.add`).
+    #     An unreadable sibling is omitted from the match set; the predicate returns False
+    #     (do not elevate) rather than claiming the include graph is complete.
+    # No `_UnreadablePathFlag` path: this module deliberately does not import `repo_map`
+    # (cycle), and a boolean confirmation surface has no `unreadable_paths` consumer.
+    "lang_c_cpp_include.py": 2,
 }
 
 
