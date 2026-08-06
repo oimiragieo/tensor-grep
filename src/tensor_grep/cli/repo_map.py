@@ -6392,14 +6392,14 @@ def _csharp_references_and_calls_for_registry(
     *,
     definition_dirs: frozenset[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    # Task 10B: in-file AST extraction only -- no cross-file import resolution yet, so
-    # repo_root/definition_dirs are part of the uniform registry adapter signature (Go F25) but
-    # unused here, same as java's own adapter above. Unlike java_references_and_calls (which takes
-    # an externally-built parser to avoid a second grammar-presence source of truth --
-    # lang_java.py has no parser factory of its own), lang_csharp.py already owns its whole
-    # extraction pipeline including `_csharp_parser()` (matching lang_go.py/lang_php.py's shape),
-    # so this adapter forwards path/symbol only.
-    return lang_csharp.csharp_references_and_calls(path, symbol)
+    # F7 Task 11 wave 2: forward definition_dirs so a C# receiver whose namespace/`using`-
+    # resolved FQN directory-suffix-matches the selected definition's directory earns the
+    # cross-file confirmed band (mirrors Java's Task 11A adapter). lang_csharp.py already owns
+    # its whole extraction pipeline including `_csharp_parser()` (matching lang_go.py/
+    # lang_php.py's shape), so this adapter forwards path/symbol/repo_root/definition_dirs.
+    return lang_csharp.csharp_references_and_calls(
+        path, symbol, repo_root, definition_dirs=definition_dirs
+    )
 
 
 def _php_references_and_calls_for_registry(
@@ -6706,13 +6706,12 @@ lang_registry.register_language(
 # `build_symbol_source_from_map` dispatch sites below. references_and_calls now points at
 # lang_csharp.csharp_references_and_calls (Task 10B: IN-FILE AST reference/call extraction,
 # promoting C# from the foundational tier to the parser-backed-refs-callers tier, mirroring
-# Task 10A's Java landing) via the registry adapter above. The remaining cross-file caller-graph
-# fields (file_imports_symbol_from_definition / import_update_target / repo-root context priming
-# for a future .csproj/namespace resolver) stay None, deferred to a follow-up -- same shape as
-# Java's own Task 11A gap, so `tg refs`/`tg callers`/`tg blast-radius` on a C# symbol still fall
-# through to the honest `resolution_gaps` reverse-import disclosure (never a crash, never a
-# fabricated cross-file match) rather than the generic `_regex_references_and_calls` text
-# heuristic, which C# never reached anyway (no regex fallback -- see below).
+# Task 10A's Java landing) via the registry adapter above.
+# F7 Task 11 wave 2: file_imports_symbol_from_definition is now wired to
+# lang_csharp.csharp_file_imports_symbol_from_definition (namespace/`using` evidence -- see that
+# module's "F7 TASK 11 WAVE 2" docstring section). import_update_target / prime_repo_context (a
+# future .csproj reverse map) stay None -- C# has no namespace-to-file manifest, so wave 2 uses
+# namespace-index + path-suffix matching rather than a project-file reader.
 # provenance_when_missing="grammar-missing" (NOT "regex-heuristic") is what makes a
 # grammar-absent C# file a genuine `resolution_gaps` entry instead of a silent empty result (C#
 # has no regex fallback, unlike JS/TS/Rust).
@@ -6737,7 +6736,7 @@ lang_registry.register_language(
         extract_imports_and_symbols=None,
         references_and_calls=_csharp_references_and_calls_for_registry,
         provider_alias_calls=None,
-        file_imports_symbol_from_definition=None,
+        file_imports_symbol_from_definition=lang_csharp.csharp_file_imports_symbol_from_definition,
         import_update_target=None,
         prime_repo_context=None,
         classify_ref_kind=None,
