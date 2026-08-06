@@ -68,7 +68,7 @@ def test_task2a_ci_enumerates_all_owned_nodes_no_first_node_shortcut() -> None:
     ]
     assert len(test_python_ids) >= 1
     assert len(native_py_ids) >= 1
-    assert len(rust_ids) == 11
+    assert len(rust_ids) == 12
 
     py_steps = _task2a_steps("test-python")
     assert len(py_steps) == 1
@@ -85,7 +85,7 @@ def test_task2a_ci_enumerates_all_owned_nodes_no_first_node_shortcut() -> None:
     assert "native-python-node-ids.txt" in native_run
     assert "rust-node-ids.txt" in native_run
     assert "break" not in native_run
-    assert "len(rust) == 11" in native_run
+    assert "len(rust) == 12" in native_run
 
 
 def test_task2a_ci_generates_real_cargo_json_messages() -> None:
@@ -155,7 +155,9 @@ def test_runners_do_not_classify_crash_or_setup_as_behavioral_red(tmp_path: Path
         spec.loader.exec_module(mod)
         return mod
 
-    py_runner = _load("run_task2a_pytest_nodes", REPO_ROOT / "scripts" / "run_task2a_pytest_nodes.py")
+    py_runner = _load(
+        "run_task2a_pytest_nodes", REPO_ROOT / "scripts" / "run_task2a_pytest_nodes.py"
+    )
     rust_runner = _load("run_task2a_rust_node", REPO_ROOT / "scripts" / "run_task2a_rust_node.py")
 
     junit = tmp_path / "crash.xml"
@@ -234,7 +236,9 @@ def test_pcre2_construction_oracles_are_inside_closed_world_census() -> None:
 
     payload = json.loads(MANIFEST.read_text(encoding="utf-8"))
     rust = [n for n in payload["nodes"] if n["id"].startswith("rust::")]
-    assert len(rust) == 11, f"expected 11 rust census nodes after construction oracles, got {len(rust)}"
+    assert len(rust) == 12, (
+        f"expected 12 rust census nodes after file-bytes oracle, got {len(rust)}"
+    )
     for node_id in required:
         node = next(n for n in rust if n["id"] == node_id)
         vector = node["command_vector"]

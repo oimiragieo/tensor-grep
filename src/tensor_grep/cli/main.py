@@ -3977,9 +3977,10 @@ def _delegate_to_native_tg_search(
         config=config,
         ndjson=ndjson,
     )
+    # A62 / HIGH#9: observe only after the real producer process has started.
+    completed = subprocess.Popen(command)
     _emit_child_start("native", command)
-    completed = subprocess.run(command, check=False)
-    return int(completed.returncode)
+    return int(completed.wait())
 
 
 def _collect_candidate_files(
@@ -5081,11 +5082,31 @@ def _read_patterns_from_file_list(file_paths: list[str], *, json_mode: bool) -> 
     blank line is an EMPTY pattern that matches every line, so it is intentionally NOT
     filtered out here). A missing/unreadable file fails loud with exit 2 -- per the Backend
     Fail-Closed Contract -- instead of the pre-fix silent flood (an unread ``-f`` collapsed
-    to an empty ``pattern`` that matched every line in every file)."""
+    to an empty ``pattern`` that matched every line in every file).
+
+    A67 / HIGH#10: bounded read via ``read_pattern_or_ignore_file_bounded`` — never an
+    unbounded ``Path.read_text`` before the ledger/size guard.
+    """
+    from tensor_grep.cli.search_input_ledger import (
+        SearchInputLimitExceeded,
+        read_pattern_or_ignore_file_bounded,
+    )
+
     patterns: list[str] = []
     for file_path in file_paths:
         try:
-            content = Path(file_path).read_text(encoding="utf-8")
+            content = read_pattern_or_ignore_file_bounded(file_path)
+        except SearchInputLimitExceeded as exc:
+            _exit_search_error(
+                "search_input_limit",
+                (
+                    f"pattern file exceeds {exc.limit} bytes "
+                    f"(observed {exc.observed}): {file_path}"
+                ),
+                json_mode=json_mode,
+                exit_code=2,
+            )
+            return []  # pragma: no cover -- _exit_search_error always calls sys.exit
         except (OSError, UnicodeDecodeError) as exc:
             _exit_search_error(
                 "pattern_file_error",
@@ -8128,12 +8149,9 @@ def search_command(
     from tensor_grep.core.pipeline import ConfigurationError, Pipeline
     from tensor_grep.core.result import SearchResult, merge_runtime_routing
 
-    # Round-60 Task 2A: narrow observation seam for the in-process full-CLI producer
-    # (CPU/Pipeline path). No-op unless tests install `_CHILD_START_HOOK`.
-    _emit_child_start(
-        "cpu",
-        ["pipeline", pattern, *[str(p) for p in paths_to_search]],
-    )
+    # Round-60 Task 2A: observation seam for the in-process full-CLI producer
+    # (CPU/Pipeline path). A62 / HIGH#9: emit ONLY after Pipeline construction
+    # (actual producer start) — never a pre-start self-attest.
     try:
         pipeline = Pipeline(force_cpu=effective_force_cpu, config=config)
     except ConfigurationError as exc:
@@ -8148,6 +8166,10 @@ def search_command(
         # (only this specific, deliberate exception type), so a real bug still surfaces loudly.
         _exit_search_error("configuration_error", str(exc), json_mode=json)
         raise
+    _emit_child_start(
+        "cpu",
+        ["pipeline", pattern, *[str(p) for p in paths_to_search]],
+    )
     backend = pipeline.get_backend()
     selected_backend_name = getattr(pipeline, "selected_backend_name", backend.__class__.__name__)
     selected_backend_reason = getattr(pipeline, "selected_backend_reason", "unknown")

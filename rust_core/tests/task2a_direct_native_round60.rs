@@ -94,6 +94,60 @@ fn pattern_file_search_input_limit_direct_native() {
     );
 }
 
+/// HIGH#10 / A67: oversize *file* (1 MiB+1) must refuse before unbounded read /
+/// matcher start — distinct from the per-rule 16 KiB cap node above.
+#[test]
+#[ignore = "task2a round60 dedicated CI node; run via --exact --include-ignored"]
+fn pattern_file_bytes_search_input_limit_direct_native() {
+    const MAX_PATTERN_OR_IGNORE_FILE_BYTES: usize = 1 << 20;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("repo");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.txt"), "needle\n").unwrap();
+    let patterns_path = dir.path().join("patterns-huge.txt");
+    std::fs::write(
+        &patterns_path,
+        vec![b'y'; MAX_PATTERN_OR_IGNORE_FILE_BYTES + 1],
+    )
+    .unwrap();
+    let (rg_canary, rg_marker) = write_spawn_canary(dir.path(), "rg");
+    let (sidecar_canary, sidecar_marker) = write_spawn_canary(dir.path(), "sidecar");
+    let bin = env!("CARGO_BIN_EXE_tg");
+    let output = Command::new(bin)
+        .args([
+            "search",
+            "--json",
+            "-f",
+            patterns_path.to_str().unwrap(),
+            root.to_str().unwrap(),
+        ])
+        .env("TG_DISABLE_RG", "1")
+        .env("TG_RG_PATH", &rg_canary)
+        .env("TG_SIDECAR_PYTHON", &sidecar_canary)
+        .output()
+        .expect("spawn tg binary");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let blob = format!("{stdout}\n{stderr}");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "direct-native oversize-file refusal must exit 2; out={blob}"
+    );
+    assert!(
+        blob.contains("search_input_limit"),
+        "direct-native oversize-file refusal must emit literal search_input_limit; out={blob}"
+    );
+    assert!(
+        !rg_marker.exists(),
+        "oversize-file refusal must not start rg canary"
+    );
+    assert!(
+        !sidecar_marker.exists(),
+        "oversize-file refusal must not start sidecar canary"
+    );
+}
+
 /// Dedicated closed-world CI node: below-cap pattern-file direct-native JSON success.
 ///
 /// Proves NativeCpuBackend JSON success + zero rg/sidecar — not matcher

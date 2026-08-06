@@ -151,3 +151,43 @@ def on_public_route_entry(route: str) -> None:
     """
     _ = route
     return None
+
+
+def read_pattern_or_ignore_file_bounded(
+    path: str | Any,
+    *,
+    ledger: SearchInputLedger | None = None,
+    max_file_bytes: int = MAX_PATTERN_OR_IGNORE_FILE_BYTES,
+) -> str:
+    """Stat + optional ledger admit, then bounded read (A67 / HIGH#10).
+
+    Never performs an unbounded ``read_text`` / ``read_to_string`` before the
+    size guard. ``ledger`` when supplied is charged via ``admit_file`` before
+    bytes are materialised; when omitted, the size gate alone still bounds the
+    read (fail closed on cap+1).
+    """
+    from pathlib import Path
+
+    p = Path(path)
+    try:
+        size = p.stat().st_size
+    except OSError:
+        raise
+    if size > max_file_bytes:
+        raise SearchInputLimitExceeded(
+            dimension="pattern_or_ignore_file_bytes",
+            observed=int(size),
+            limit=max_file_bytes,
+        )
+    if ledger is not None:
+        ledger.admit_file(size_bytes=int(size), source="pattern_file")
+    # TOCTOU-safe: read at most max_file_bytes + 1, refuse if growth raced past cap.
+    with p.open("rb") as fh:
+        data = fh.read(max_file_bytes + 1)
+    if len(data) > max_file_bytes:
+        raise SearchInputLimitExceeded(
+            dimension="pattern_or_ignore_file_bytes",
+            observed=len(data),
+            limit=max_file_bytes,
+        )
+    return data.decode("utf-8")

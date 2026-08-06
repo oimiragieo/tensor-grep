@@ -7550,15 +7550,53 @@ fn resolve_search_request(args: &SearchArgs) -> anyhow::Result<ResolvedSearchReq
     resolve_search_request_with_stdin(args, stdin_should_search_implicit_path())
 }
 
+/// Round-60 / A67 / HIGH#10: 1 MiB per pattern/ignore file — never unbounded
+/// `read_to_string` before the ledger/size gate.
+const MAX_PATTERN_OR_IGNORE_FILE_BYTES: u64 = 1 << 20;
+
+fn read_pattern_file_bounded(path: &str) -> anyhow::Result<String> {
+    use std::io::Read;
+    let meta = std::fs::metadata(path).with_context(|| {
+        format!("failed to stat pattern file {}", path)
+    })?;
+    let len = meta.len();
+    if len > MAX_PATTERN_OR_IGNORE_FILE_BYTES {
+        anyhow::bail!(
+            "search_input_limit: pattern file exceeds {} bytes (observed {}): {}",
+            MAX_PATTERN_OR_IGNORE_FILE_BYTES,
+            len,
+            path
+        );
+    }
+    let file = std::fs::File::open(path).with_context(|| {
+        format!("failed to open pattern file {}", path)
+    })?;
+    // TOCTOU-safe: read at most cap+1 even if the file grew after metadata.
+    let mut limited = file.take(MAX_PATTERN_OR_IGNORE_FILE_BYTES + 1);
+    let mut buf = String::new();
+    limited.read_to_string(&mut buf).with_context(|| {
+        format!("failed to read pattern file {}", path)
+    })?;
+    if (buf.len() as u64) > MAX_PATTERN_OR_IGNORE_FILE_BYTES {
+        anyhow::bail!(
+            "search_input_limit: pattern file exceeds {} bytes (observed {}): {}",
+            MAX_PATTERN_OR_IGNORE_FILE_BYTES,
+            buf.len(),
+            path
+        );
+    }
+    Ok(buf)
+}
+
 fn resolve_search_request_with_stdin(
     args: &SearchArgs,
     stdin_searches_implicit_path: bool,
 ) -> anyhow::Result<ResolvedSearchRequest> {
     let mut patterns = args.regexp.clone();
     for pattern_file in &args.pattern_file {
-        let text = std::fs::read_to_string(pattern_file).with_context(|| {
-            format!("failed to read pattern file {}", pattern_file)
-        })?;
+        // A67 / HIGH#10: bounded read + size gate before folding into patterns.
+        // Never `std::fs::read_to_string` (unbounded) on the public `-f/--file` path.
+        let text = read_pattern_file_bounded(pattern_file)?;
         for line in text.lines() {
             // ripgrep `-f` includes every non-empty line; empty lines are skipped.
             if !line.is_empty() {
@@ -8959,7 +8997,24 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let request = resolve_search_request(&args)?;
+    let request = match resolve_search_request(&args) {
+        Ok(request) => request,
+        Err(err) => {
+            // A67 / HIGH#10: bounded `-f/--file` refusals must exit 2 with the
+            // literal search_input_limit reason — not an unbounded read then a
+            // generic anyhow exit 1.
+            let detail = format!("{err:#}");
+            if detail.contains("search_input_limit") {
+                exit_structured_search_error_if_needed(
+                    args.json,
+                    args.ndjson,
+                    "search_input_limit",
+                    detail,
+                );
+            }
+            return Err(err);
+        }
+    };
     exit_json_search_input_error_if_needed(
         args.json,
         args.ndjson,

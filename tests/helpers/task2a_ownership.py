@@ -61,6 +61,7 @@ TASK2A_OWNED_PYTHON_NODE_IDS: tuple[str, ...] = (
     "python::tests/unit/test_installer_shim_receipt_v1.py::test_txr_failure_arms_rollback_without_fallback[unsupported]",
     "python::tests/unit/test_installer_shim_receipt_v1.py::test_txr_failure_arms_rollback_without_fallback[race]",
     "python::tests/unit/test_installer_shim_receipt_v1.py::test_txr_failure_arms_rollback_without_fallback[commit]",
+    "python::tests/unit/test_installer_shim_receipt_v1.py::test_txr_exact_close_ownership_success_baseexc_cleanup_failure",
     "python::tests/unit/test_installer_shim_receipt_v1.py::test_install_ps1_path_mutation_is_txr_only_no_cas_fallback",
     "python::tests/unit/test_installer_shim_receipt_v1.py::test_windows_programdata_protected_root_integration",
     "python::tests/unit/test_installer_shim_receipt_v1.py::test_programdata_sddl_dacl_parser_platform_neutral_vectors",
@@ -114,6 +115,8 @@ TASK2A_OWNED_PYTHON_NODE_IDS: tuple[str, ...] = (
     "python::tests/unit/test_search_input_ledger_round60.py::test_uninstrumented_pcre2_refused_on_full_cli",
     "python::tests/unit/test_search_input_ledger_round60.py::test_below_cap_non_pcre2_bootstrap_starts_producer_once",
     "python::tests/unit/test_search_input_ledger_round60.py::test_below_cap_non_pcre2_full_cli_starts_producer_once",
+    "python::tests/unit/test_search_input_ledger_round60.py::test_producer_hook_does_not_self_attest_before_actual_start",
+    "python::tests/unit/test_search_input_ledger_round60.py::test_pattern_file_refuses_unbounded_read_before_ledger",
     "python::tests/unit/test_win32_path_domain_round60.py::test_offline_wintrust_flags_and_microsoft_root_policy",
     "python::tests/unit/test_win32_path_domain_round60.py::test_job_is_kill_on_close_and_non_breakaway",
     "python::tests/unit/test_win32_path_domain_round60.py::test_linux_must_not_fabricate_system32_handles",
@@ -202,6 +205,7 @@ TASK2A_OWNED_PYTHON_NODE_IDS: tuple[str, ...] = (
 TASK2A_OWNED_RUST_NODE_IDS: tuple[str, ...] = (
     # Integration process-level direct-native doors (CARGO_BIN_EXE_tg valid).
     "rust::task2a_direct_native_round60::pattern_file_search_input_limit_direct_native",
+    "rust::task2a_direct_native_round60::pattern_file_bytes_search_input_limit_direct_native",
     "rust::task2a_direct_native_round60::pattern_file_below_cap_native_json_success",
     "rust::task2a_direct_native_round60::pcre2_search_input_limit_direct_native",
     "rust::task2a_direct_native_round60::below_cap_non_pcre2_direct_native_json_success",

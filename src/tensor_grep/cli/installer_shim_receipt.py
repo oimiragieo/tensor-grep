@@ -171,6 +171,10 @@ class TxrPrimitives(Protocol):
 
     def rollback_transaction(self, transaction: int) -> None: ...
 
+    def close_registry_key(self, key_handle: int) -> None: ...
+
+    def close_transaction(self, transaction: int) -> None: ...
+
 
 def parse_installer_shim_receipt(raw: bytes | str | Mapping[str, Any]) -> InstallerShimReceiptV1:
     """Strict bounded schema/type/value/length parser.
@@ -325,9 +329,12 @@ def mutate_user_path_txr_only(
     When ``txr`` is supplied (test adapter), runs CreateTransaction →
     transacted open/write → optional per-call ``post_write_fault`` (scoped to
     this call only) → CommitTransaction, or RollbackTransaction on failure
-    with no non-TxR fallback. When ``txr`` is omitted, fails closed until GREEN
-    wires real Kernel Transaction Manager ops — there is no production-global
-    TXR fault hook or public setter.
+    with no non-TxR fallback. Exact-once reverse close ownership (A66):
+    ``close_registry_key`` then ``close_transaction`` on success, BaseException,
+    and cleanup-failure paths (primary error preserved via ``add_note``).
+    When ``txr`` is omitted, fails closed until GREEN wires real Kernel
+    Transaction Manager ops — there is no production-global TXR fault hook or
+    public setter.
     """
     _ = path_preimage, remove_token_identity
     if call_log is not None:
@@ -343,6 +350,10 @@ def mutate_user_path_txr_only(
     calls.append("CreateTransaction")
     if call_log is not None:
         call_log.record("CreateTransaction", transaction)
+    key_handle: int | None = None
+    key_closed = False
+    txn_closed = False
+    primary_error: BaseException | None = None
     try:
         key_handle = txr.transacted_registry_open(transaction, key_path)
         calls.append("transacted_open")
@@ -359,8 +370,10 @@ def mutate_user_path_txr_only(
         if call_log is not None:
             call_log.record("CommitTransaction", transaction)
     except BaseException as original:
+        primary_error = original
         try:
             txr.rollback_transaction(transaction)
+            calls.append("RollbackTransaction")
             if call_log is not None:
                 call_log.record("RollbackTransaction", transaction)
         except BaseException as cleanup_err:
@@ -368,7 +381,41 @@ def mutate_user_path_txr_only(
                 original.add_note(f"cleanup also failed: {cleanup_err!r}")
             except Exception:
                 pass
-        raise original
+        # Fall through to reverse close ownership, then re-raise.
+    finally:
+        # Exact-once reverse cleanup: key handle before transaction handle.
+        if key_handle is not None and not key_closed:
+            try:
+                txr.close_registry_key(key_handle)
+                key_closed = True
+                calls.append("close_registry_key")
+                if call_log is not None:
+                    call_log.record("close_registry_key", key_handle)
+            except BaseException as close_err:
+                if primary_error is not None:
+                    try:
+                        primary_error.add_note(f"cleanup also failed: {close_err!r}")
+                    except Exception:
+                        pass
+                else:
+                    primary_error = close_err
+        if not txn_closed:
+            try:
+                txr.close_transaction(transaction)
+                txn_closed = True
+                calls.append("close_transaction")
+                if call_log is not None:
+                    call_log.record("close_transaction", transaction)
+            except BaseException as close_err:
+                if primary_error is not None:
+                    try:
+                        primary_error.add_note(f"cleanup also failed: {close_err!r}")
+                    except Exception:
+                        pass
+                else:
+                    primary_error = close_err
+    if primary_error is not None:
+        raise primary_error
     return TxrPrimitiveTrace(calls=tuple(calls))
 
 
@@ -456,7 +503,19 @@ def install_ps1_uses_txr_only(content: str) -> bool:
 _ALLOWED_DACL_FLAG_TOKENS = frozenset({"P", "AR", "AI"})
 _KNOWN_ACE_TYPES = frozenset({"A", "D", "OA", "OD", "AU", "AL", "OU", "OL"})
 # Exact SDDL ACE flag tokens. Unknown flags reject the whole DACL.
-_KNOWN_ACE_FLAG_TOKENS = frozenset({"OI", "CI", "NP", "IO", "ID", "SA", "FA", "CR", "SR", "SI", "NS"})
+_KNOWN_ACE_FLAG_TOKENS = frozenset({
+    "OI",
+    "CI",
+    "NP",
+    "IO",
+    "ID",
+    "SA",
+    "FA",
+    "CR",
+    "SR",
+    "SI",
+    "NS",
+})
 _INHERIT_ONLY_ACE_FLAG = "IO"
 
 _WRITE_FULL_RIGHT_TOKENS = frozenset({
@@ -690,12 +749,10 @@ NTE_NOT_SUPPORTED = 0x80090029  # often wrong blob/alg — NOT exact non-exporta
 
 # Exact non-exportable refusal only. NTE_NOT_SUPPORTED is excluded because an
 # invalid blob type / alg on an *exportable* key also returns it (A64 / HIGH#7).
-EXACT_NON_EXPORTABLE_NCRYPT_STATUSES: frozenset[int] = frozenset(
-    {
-        NTE_BAD_KEY_STATE,
-        NTE_PERM,
-    }
-)
+EXACT_NON_EXPORTABLE_NCRYPT_STATUSES: frozenset[int] = frozenset({
+    NTE_BAD_KEY_STATE,
+    NTE_PERM,
+})
 
 # Key-creation export-policy bits (NCRYPT_EXPORT_POLICY_PROPERTY) — NOT export dwFlags.
 NCRYPT_ALLOW_PLAINTEXT_EXPORT_FLAG = 0x00000002

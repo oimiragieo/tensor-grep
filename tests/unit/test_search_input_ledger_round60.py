@@ -479,17 +479,19 @@ def test_below_cap_non_pcre2_bootstrap_starts_producer_once(
     """Below-cap normal positive: bootstrap must start rg exactly once, non-incomplete.
 
     A reject-all SearchInputLedger implementation must fail this control.
+    Observation is via the real ``_popen_child`` producer start (A62), not a
+    pre-start production self-attest.
     """
     counters = ledger_mod.RouteProcessCounters()
     starts: list[str] = []
 
-    def _hook(kind: str, argv: list[str]) -> None:
+    def _popen(argv: list[str]):
+        kind = "rg" if "rg" in Path(argv[0]).name or argv[0] == "rg" else "native"
         starts.append(kind)
         counters.record(kind)
-        # Allow observation without OS spawn: raise after count.
         raise RuntimeError(f"observed child start: {kind} {argv[:3]}")
 
-    monkeypatch.setattr(bootstrap_mod, "_CHILD_START_HOOK", _hook)
+    monkeypatch.setattr(bootstrap_mod, "_popen_child", _popen)
     monkeypatch.setattr(bootstrap_mod, "resolve_native_tg_binary", lambda: None)
     monkeypatch.setattr(bootstrap_mod, "resolve_ripgrep_binary", lambda: "rg")
     monkeypatch.setattr(
@@ -510,7 +512,7 @@ def test_below_cap_non_pcre2_bootstrap_starts_producer_once(
     except SystemExit as se:
         code = int(se.code or 0)
     except RuntimeError as err_rt:
-        # Child-start hook fired — count that as the observed start.
+        # Child-start popen fired — count that as the observed start.
         assert "observed child start" in str(err_rt)
         code = 0
     envelope = _extract_envelope(out.getvalue(), err.getvalue(), code)
@@ -528,20 +530,30 @@ def test_below_cap_non_pcre2_bootstrap_starts_producer_once(
 def test_below_cap_non_pcre2_full_cli_starts_producer_once(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Below-cap normal positive: full_cli must start its producer exactly once."""
+    """Below-cap normal positive: full_cli must start its producer exactly once.
+
+    Observation is after real Pipeline construction (A62), not a pre-start hook.
+    """
     counters = ledger_mod.RouteProcessCounters()
     starts: list[str] = []
 
-    def _hook(kind: str, argv: list[str]) -> None:
-        _ = argv
-        starts.append(kind)
-        counters.record(kind)
-        raise RuntimeError(f"observed child start: {kind}")
+    class _FakePipeline:
+        def __init__(self, *args, **kwargs):
+            _ = args, kwargs
+            starts.append("cpu")
+            counters.record("cpu")
+            raise RuntimeError("observed child start: cpu")
+
+        def get_backend(self):
+            raise AssertionError("unreachable")
 
     from tensor_grep.cli import main as main_mod
 
-    monkeypatch.setattr(bootstrap_mod, "_CHILD_START_HOOK", _hook)
-    monkeypatch.setattr(main_mod, "_CHILD_START_HOOK", _hook)
+    monkeypatch.setattr(main_mod, "Pipeline", _FakePipeline, raising=False)
+    # Pipeline is imported inside the search function from core.pipeline — patch there.
+    import tensor_grep.core.pipeline as pipeline_mod
+
+    monkeypatch.setattr(pipeline_mod, "Pipeline", _FakePipeline)
     monkeypatch.setattr(bootstrap_mod, "resolve_native_tg_binary", lambda: None)
     root = tmp_path / "repo"
     root.mkdir()
@@ -568,3 +580,102 @@ def test_below_cap_non_pcre2_full_cli_starts_producer_once(
         )
     assert envelope.get("result_incomplete") is not True
     assert envelope.get("incomplete_reason_class") != ledger_mod.SEARCH_INPUT_LIMIT_REASON
+
+
+@task2a_owned
+def test_producer_hook_does_not_self_attest_before_actual_start(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """HIGH#9 / A62: production emit must fire only after real producer start."""
+    order: list[str] = []
+
+    def _hook(kind: str, argv: list[str]) -> None:
+        _ = argv
+        order.append(f"hook:{kind}")
+
+    def _popen(argv: list[str]):
+        order.append("popen")
+        # Minimal stand-in so wait() is never reached (hook may raise).
+        raise RuntimeError(f"blocked after start: {argv[0]}")
+
+    monkeypatch.setattr(bootstrap_mod, "_CHILD_START_HOOK", _hook)
+    monkeypatch.setattr(bootstrap_mod, "_popen_child", _popen)
+    monkeypatch.setattr(bootstrap_mod, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(bootstrap_mod, "resolve_ripgrep_binary", lambda: "rg")
+    monkeypatch.setattr(
+        bootstrap_mod,
+        "_run_full_cli",
+        lambda: (_ for _ in ()).throw(RuntimeError("full_cli should not run")),
+    )
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "a.txt").write_text("needle\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "needle", str(root)])
+    try:
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            bootstrap_mod.main_entry()
+    except (SystemExit, RuntimeError):
+        pass
+    assert order == ["popen"], (
+        f"pre-start self-attest forbidden; expected popen-only before hook "
+        f"(hook must not fire when popen raises); order={order!r}"
+    )
+    # Positive control: when popen succeeds, hook fires AFTER popen.
+    order.clear()
+
+    class _Proc:
+        def poll(self):
+            return 0
+
+        def wait(self, timeout=None):
+            _ = timeout
+            return 0
+
+        def terminate(self):
+            return None
+
+        def kill(self):
+            return None
+
+    def _popen_ok(argv: list[str]):
+        _ = argv
+        order.append("popen")
+        return _Proc()
+
+    monkeypatch.setattr(bootstrap_mod, "_popen_child", _popen_ok)
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "needle", str(root)])
+    try:
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            bootstrap_mod.main_entry()
+    except SystemExit:
+        pass
+    assert order[:2] == ["popen", "hook:rg"], (
+        f"hook must fire only after actual popen start; order={order!r}"
+    )
+
+
+@task2a_owned
+def test_pattern_file_refuses_unbounded_read_before_ledger(tmp_path: Path) -> None:
+    """HIGH#10 / A67: -f/--file must not unbounded-read before ledger/size gate."""
+    oversize = tmp_path / "patterns.txt"
+    # Cap+1 bytes — refuse without materialising via unbounded read_text.
+    oversize.write_bytes(b"x" * (ledger_mod.MAX_PATTERN_OR_IGNORE_FILE_BYTES + 1))
+    with pytest.raises(ledger_mod.SearchInputLimitExceeded) as ei:
+        ledger_mod.read_pattern_or_ignore_file_bounded(oversize)
+    assert ei.value.dimension == "pattern_or_ignore_file_bytes"
+    assert ei.value.observed == ledger_mod.MAX_PATTERN_OR_IGNORE_FILE_BYTES + 1
+    assert ei.value.limit == ledger_mod.MAX_PATTERN_OR_IGNORE_FILE_BYTES
+    assert ei.value.incomplete_reason_class == ledger_mod.SEARCH_INPUT_LIMIT_REASON
+
+    # Positive control: at-cap file reads after size gate.
+    ok = tmp_path / "ok.txt"
+    ok.write_bytes(b"a" * ledger_mod.MAX_PATTERN_OR_IGNORE_FILE_BYTES)
+    text = ledger_mod.read_pattern_or_ignore_file_bounded(ok)
+    assert len(text.encode("utf-8")) == ledger_mod.MAX_PATTERN_OR_IGNORE_FILE_BYTES
+
+    # Ledger admit is required BEFORE bytes when a ledger is supplied (fail-closed NI).
+    ledger = ledger_mod.SearchInputLedger()
+    tiny = tmp_path / "tiny.txt"
+    tiny.write_text("needle\n", encoding="utf-8")
+    with pytest.raises(NotImplementedError, match="admit_file"):
+        ledger_mod.read_pattern_or_ignore_file_bounded(tiny, ledger=ledger)

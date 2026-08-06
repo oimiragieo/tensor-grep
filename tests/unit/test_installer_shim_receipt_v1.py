@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
@@ -176,6 +176,10 @@ class _RecordingNoFollow:
 @dataclass
 class _RecordingTxr:
     fail_mode: str | None = None
+    closed_keys: list[int] = field(default_factory=list)
+    closed_txns: list[int] = field(default_factory=list)
+    close_key_fault: BaseException | None = None
+    close_txn_fault: BaseException | None = None
 
     def create_transaction(self) -> int:
         return 1
@@ -198,6 +202,16 @@ class _RecordingTxr:
 
     def rollback_transaction(self, transaction: int) -> None:
         _ = transaction
+
+    def close_registry_key(self, key_handle: int) -> None:
+        if self.close_key_fault is not None:
+            raise self.close_key_fault
+        self.closed_keys.append(key_handle)
+
+    def close_transaction(self, transaction: int) -> None:
+        if self.close_txn_fault is not None:
+            raise self.close_txn_fault
+        self.closed_txns.append(transaction)
 
 
 @task2a_owned
@@ -453,6 +467,8 @@ def test_txr_happy_path_sequence_create_open_write_commit() -> None:
         "transacted_open",
         "transacted_write",
         "CommitTransaction",
+        "close_registry_key",
+        "close_transaction",
     )
     assert [name for name, _ in log.entries if name.startswith(("Create", "transacted", "Commit"))]
 
@@ -461,17 +477,67 @@ def test_txr_happy_path_sequence_create_open_write_commit() -> None:
 @pytest.mark.parametrize("fail_mode", ["unsupported", "race", "commit"])
 def test_txr_failure_arms_rollback_without_fallback(fail_mode: str) -> None:
     log = receipt_mod.PrimitiveCallLog()
+    txr = _RecordingTxr(fail_mode=fail_mode)
     # Behaviorless orchestration must fail today; GREEN must RollbackTransaction
-    # with no non-TxR fallback.
+    # with no non-TxR fallback, then exact-once reverse closes.
     with pytest.raises(OSError):
         receipt_mod.mutate_user_path_txr_only(
             path_preimage=r"C:\old;C:\managed",
             intended_image=r"C:\old",
             remove_token_identity=RETAINED_ID,
-            txr=_RecordingTxr(fail_mode=fail_mode),
+            txr=txr,
             call_log=log,
         )
     assert any(name == "RollbackTransaction" for name, _ in log.entries)
+    assert "close_transaction" in [name for name, _ in log.entries]
+    assert txr.closed_txns == [1]
+
+
+@task2a_owned
+def test_txr_exact_close_ownership_success_baseexc_cleanup_failure() -> None:
+    """HIGH#8 / A66: TxR names close primitives; exact-once reverse cleanup.
+
+    Success, BaseException, and cleanup-failure arms must close registry key
+    then transaction exactly once each, preserving the primary error.
+    """
+    # Success path.
+    ok = _RecordingTxr()
+    trace = receipt_mod.mutate_user_path_txr_only(
+        path_preimage=r"C:\old",
+        intended_image=r"C:\old;C:\managed",
+        remove_token_identity=RETAINED_ID,
+        txr=ok,
+    )
+    assert trace.calls[-2:] == ("close_registry_key", "close_transaction")
+    assert ok.closed_keys == [2]
+    assert ok.closed_txns == [1]
+
+    # BaseException after open: rollback + reverse closes.
+    boom = _RecordingTxr(fail_mode="race")
+    with pytest.raises(OSError, match="concurrent"):
+        receipt_mod.mutate_user_path_txr_only(
+            path_preimage=r"C:\old",
+            intended_image=r"C:\x",
+            remove_token_identity=RETAINED_ID,
+            txr=boom,
+        )
+    assert boom.closed_keys == [2]
+    assert boom.closed_txns == [1]
+
+    # Cleanup failure on close preserves primary write error.
+    dirty = _RecordingTxr(fail_mode="race")
+    dirty.close_key_fault = RuntimeError("close key boom")
+    with pytest.raises(OSError, match="concurrent") as ei:
+        receipt_mod.mutate_user_path_txr_only(
+            path_preimage=r"C:\old",
+            intended_image=r"C:\x",
+            remove_token_identity=RETAINED_ID,
+            txr=dirty,
+        )
+    notes = getattr(ei.value, "__notes__", [])
+    assert any("close key boom" in n for n in notes), f"expected close note; notes={notes!r}"
+    # Transaction close still attempted after key-close failure.
+    assert dirty.closed_txns == [1]
 
 
 @task2a_owned
@@ -624,9 +690,7 @@ def test_programdata_sddl_dacl_parser_platform_neutral_vectors() -> None:
     assert evaluate_programdata_sddl_dacl("D:P(A;IO;FA;;;SY)(A;IO;FA;;;BA)") is False
     assert evaluate_programdata_sddl_dacl("D:P(A;OIIO;FA;;;SY)(A;OIIO;FA;;;BA)") is False
     # Real SY+BA plus inherit-only foreign remains acceptable (IO not effective).
-    assert (
-        evaluate_programdata_sddl_dacl("D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;IO;FA;;;WD)") is True
-    )
+    assert evaluate_programdata_sddl_dacl("D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;IO;FA;;;WD)") is True
 
     # HIGH#6: unknown ACE flags / unknown ACE types / garbage flag length reject.
     assert evaluate_programdata_sddl_dacl("D:P(A;ZZ;FA;;;SY)(A;;FA;;;BA)") is False
@@ -1042,8 +1106,7 @@ def test_cng_export_positive_control_and_refuse_invalid_flag_any_error() -> None
         == "non_exportable"
     )
     assert (
-        receipt_mod.classify_ncrypt_private_export_status(receipt_mod.NTE_PERM)
-        == "non_exportable"
+        receipt_mod.classify_ncrypt_private_export_status(receipt_mod.NTE_PERM) == "non_exportable"
     )
     # NTE_NOT_SUPPORTED is not exact non-exportable proof (wrong blob/alg).
     assert (
@@ -1171,8 +1234,7 @@ def test_windows_cng_exportable_positive_control_then_non_exportable() -> None:
         # Export policy on the KEY (property) — not an NCryptExportKey dwFlags bit.
         # Plaintext export required for PRIVATEBLOB/RSAFULLPRIVATEBLOB materialization.
         policy = wintypes.DWORD(
-            receipt_mod.NCRYPT_ALLOW_EXPORT_FLAG
-            | receipt_mod.NCRYPT_ALLOW_PLAINTEXT_EXPORT_FLAG
+            receipt_mod.NCRYPT_ALLOW_EXPORT_FLAG | receipt_mod.NCRYPT_ALLOW_PLAINTEXT_EXPORT_FLAG
         )
         status = ncrypt.NCryptSetProperty(
             key,
@@ -1198,9 +1260,7 @@ def test_windows_cng_exportable_positive_control_then_non_exportable() -> None:
             ctypes.byref(pcb),
             dw_flags,
         )
-        assert (
-            receipt_mod.classify_ncrypt_private_export_status(int(status)) == "exported"
-        ), (
+        assert receipt_mod.classify_ncrypt_private_export_status(int(status)) == "exported", (
             f"exportable positive control must export under silent flags; "
             f"got status=0x{status & 0xFFFFFFFF:08x}"
         )
@@ -1378,6 +1438,8 @@ def test_windows_txr_registry_integration() -> None:
             "transacted_open",
             "transacted_write",
             "CommitTransaction",
+            "close_registry_key",
+            "close_transaction",
         )
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, disposable, 0, winreg.KEY_READ) as rk:
             value, _regtype = winreg.QueryValueEx(rk, "Path")

@@ -286,6 +286,20 @@
       "required_non_skip": true
     },
     {
+      "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_txr_exact_close_ownership_success_baseexc_cleanup_failure",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_installer_shim_receipt_v1.py::test_txr_exact_close_ownership_success_baseexc_cleanup_failure",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "235f5e1f2b8ebc931aed01b861cba1e2a2e7de6e53a98aa45a1e35ba8d222b22",
+      "required_non_skip": true
+    },
+    {
       "id": "python::tests/unit/test_installer_shim_receipt_v1.py::test_install_ps1_path_mutation_is_txr_only_no_cas_fallback",
       "workflow": "ci.yml",
       "job": "test-python",
@@ -1025,6 +1039,34 @@
         "--timeout=15"
       ],
       "command_digest": "9b0e8d7a1d9b6d7be90943a9f0af9255d1dce7ce0be82668306914112db0f53a",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_producer_hook_does_not_self_attest_before_actual_start",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_producer_hook_does_not_self_attest_before_actual_start",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "18fb7783e5ec7c7046995a6d3f3d44392f900af5ed311dca4c884f1041090bd1",
+      "required_non_skip": true
+    },
+    {
+      "id": "python::tests/unit/test_search_input_ledger_round60.py::test_pattern_file_refuses_unbounded_read_before_ledger",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_search_input_ledger_round60.py::test_pattern_file_refuses_unbounded_read_before_ledger",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "0a2cbcbdd56b3cb3757bad331105bafddd1a65045657793f2a764da0efba9c8c",
       "required_non_skip": true
     },
     {
@@ -2186,6 +2228,32 @@
       "binary": "task2a_direct_native_round60",
       "rust_kind": "test",
       "command_digest": "9630e3c4dba68fde6a22dc23efebb87ebc1a245b9ecd057b8bc0d7f0910ef37c"
+    },
+    {
+      "id": "rust::task2a_direct_native_round60::pattern_file_bytes_search_input_limit_direct_native",
+      "workflow": "ci.yml",
+      "job": "native-build-smoke",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "rust_core/Cargo.toml",
+        "-p",
+        "tensor_grep_rs",
+        "--test",
+        "task2a_direct_native_round60",
+        "pattern_file_bytes_search_input_limit_direct_native",
+        "--",
+        "--exact",
+        "--include-ignored",
+        "--nocapture"
+      ],
+      "required_non_skip": true,
+      "rust_test_target": "pattern_file_bytes_search_input_limit_direct_native",
+      "binary": "task2a_direct_native_round60",
+      "rust_kind": "test",
+      "command_digest": "9c4e20bfc9f47f7838be72afe066dad6ec919444139c886666406f2689fba31a"
     },
     {
       "id": "rust::task2a_direct_native_round60::pattern_file_below_cap_native_json_success",

@@ -262,9 +262,10 @@ def test_manifest_is_static_without_live_run_ids() -> None:
     ]
     assert len(ledger_py) == 2
     rust_routes = [n for n in payload["nodes"] if n["id"].startswith("rust::")]
-    assert len(rust_routes) == 11
+    assert len(rust_routes) == 12
     expected_rust_targets = {
         "pattern_file_search_input_limit_direct_native",
+        "pattern_file_bytes_search_input_limit_direct_native",
         "pattern_file_below_cap_native_json_success",
         "pcre2_search_input_limit_direct_native",
         "below_cap_non_pcre2_direct_native_json_success",
