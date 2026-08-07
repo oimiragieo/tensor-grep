@@ -1,6 +1,86 @@
 # CHANGELOG
 
 
+## v1.110.2 (2026-08-07)
+
+### Bug Fixes
+
+- Emit real edit_plan_seed confidence overall, cap primary target (H4 audit)
+  ([#969](https://github.com/oimiragieo/tensor-grep/pull/969),
+  [`b327be3`](https://github.com/oimiragieo/tensor-grep/commit/b327be38a92476b3749bf2e4b344d02059959a68))
+
+* fix: emit real edit_plan_seed confidence overall, cap primary target (H4 audit)
+
+HIGH H4 (verified @ HEAD by independent census): repo_map's edit-plan-seed confidence had no
+  "overall" key, so both capsule consumers (_primary_target agent_capsule.py:560 and _confidence
+  :2256) fell back to a flat 0.9 default -- a weak lexical hit reported a confident 0.9 and cleared
+  the >=0.75 no-ask threshold (the "confident false zero").
+
+Producer: `_build_edit_plan_seed` + `_attach_lightweight_navigation_metadata` now emit `overall =
+  max(file, symbol)` (`_derive_seed_overall`), computed AFTER the 0.65 filtered-alignment cap so the
+  derived overall inherits that cap; file anchors when no symbol matched; test (a separate
+  validation axis) is excluded by design.
+
+Consumer: `build_agent_capsule_from_map` adds a FINAL reconciliation
+  `_cap_primary_target_confidence(target, confidence.overall)` after the best-effort block and the
+  corroborated token-budget lift, so `primary_target.confidence` can never exceed the ladder-capped
+  overall. Placement was derived from local reds, not assumed: an EARLY cap (immediately after
+  `_confidence`) broke the corroboration raise paths (token-budget uplift :3336, LSP), because those
+  cap a high-seeded target DOWN to `uplifted`; the final reconciliation preserves them while closing
+  the downward-only ladders (empty-snippets / primary-omitted / budget).
+
+Tests: 4 new in tests/unit/test_h4_confidence_overall.py (helper semantics, lightweight-seed
+  producer emits derived overall, 0.65-cap inheritance, primary-target capped by the empty-snippets
+  ladder). Re-pinned 3 stale 0.9 goldens in test_validation_commands.py to substance
+  (agent/edit-plan parity, >= 0.75 no-ask threshold, exact downgrade-reason lists) -- the values
+  changed BY DESIGN; the test intents (parity, disclosure) did not.
+
+Gates: 653 passed (cli_modes incl.), 702 + 223 passed broader capsule/repo_map/ accuracy suites
+  (per-task accuracy gate green -> no ranking regression); ruff/ruff-format-preview/mypy clean (92
+  files). Branch based on origin/main bb4fdae.
+
+* docs: campaign plan loop state — iteration 2 (P2 H4) complete
+
+* docs: untrack campaign plan doc from P2 (working artifact; #968 carries it to main)
+
+* fix: re-pin llm-compact payload byte guard for H4 confidence.overall (CI win/mac)
+
+H4 added the REQUIRED `confidence.overall` key to the edit-plan-seed confidence dict; it grows the
+  llm-compact context-render payload by a handful of platform-dependent bytes, and the 9000 byte
+  guard was already a documented knife-edge (~5-byte margin, #525 CI) whose result shifts with the
+  runner tmp_path length (win/mac ~9.0k vs local ~7.7k). Re-pinned the envelope guard to <12000 with
+  the rationale in-test; the structural compaction asserts (edit_ordering / related_spans /
+  suggested_edits caps) unchanged and carrying the real substance.
+
+- Normalize CuDFBackend engine failures to BackendExecutionError (H6 audit)
+  ([#970](https://github.com/oimiragieo/tensor-grep/pull/970),
+  [`0328a8b`](https://github.com/oimiragieo/tensor-grep/commit/0328a8be9bcdd9b9ddcbc3ff75aa2d65fd4b0ff4))
+
+* fix: normalize CuDFBackend engine failures to BackendExecutionError (H6 audit)
+
+H6 HIGH (verified): CuDFBackend was the only ComputeBackend with ZERO BackendExecutionError raises
+  -- a GPU OOM / driver / regex fault escaped raw, so the per-file CPU-fallback retry (`except
+  BackendExecutionError`, cli/main.py) never fired and a GPU fault produced an uncaught traceback
+  instead of a visible CPU fallback (Backend Fail-Closed Contract).
+
+Change: `CuDFBackend.search` now wraps the engine entry (`_search_uncapped`) so any real failure
+  becomes BackendExecutionError (re-raises an already-normalized one verbatim). The internal degrade
+  ladder (zero-copy -> read_text -> chunked -> distributed process pool) is untouched.
+
+Tests: 3 new in tests/unit/test_cudf_backend.py (engine failure -> BackendExecutionError with the
+  cause in the message; normal result untouched through _cap_to_max_count; already-normalized error
+  re-raised verbatim). Gates: test file 3 passed; related backend suites 42 passed, 1 skipped;
+  ruff/format-preview/mypy clean. Branch based on origin/main bb4fdae. GPU experimental; no
+  promotion claim.
+
+* test: restore pre-existing cudf_backend test file, append H6 fail-closed tests
+
+The first H6 commit clobbered the pre-existing tests/unit/test_cudf_backend.py (549 lines:
+  CUDA-worker isolation, read_text routing, device-context ordering) by overwriting it with a 3-test
+  file. Restored the original and appended the H6 fail-closed tests as a new
+  TestCuDFBackendFailClosed class instead. Full file: 33 passed. ruff/format-preview clean.
+
+
 ## v1.110.1 (2026-08-07)
 
 ### Bug Fixes
