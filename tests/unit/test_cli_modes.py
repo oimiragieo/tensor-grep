@@ -8119,6 +8119,15 @@ def test_query_language_hints_are_token_bounded() -> None:
         "rust",
     ]
     assert repo_map._query_language_hints("cryptography typescriptish") == []
+    # M13 audit: all 10 registered languages are now aliasable so the capsule's mismatch-cap /
+    # candidate filter can fire for them (previously go/java/php/csharp/c/cpp -> [] = fail-open).
+    assert repo_map._query_language_hints("go function name") == ["go"]
+    assert repo_map._query_language_hints("golang handler") == ["go"]
+    assert repo_map._query_language_hints("java class builder") == ["java"]
+    assert repo_map._query_language_hints("php array map") == ["php"]
+    assert repo_map._query_language_hints("csharp record type") == ["csharp"]
+    assert repo_map._query_language_hints("cpp template class") == ["cpp"]
+    assert repo_map._query_language_hints("c struct pointer") == ["c"]
 
 
 def test_context_render_filters_pytest_only_validation_for_typescript_primary(tmp_path):
