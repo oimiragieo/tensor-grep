@@ -3967,7 +3967,28 @@ def _delegate_to_native_tg_search(
         config=config,
         ndjson=ndjson,
     )
-    completed = subprocess.run(command, check=False)
+    # Bound the native-delegation subprocess the same way the bootstrap passthrough twin does
+    # (bootstrap.py `_streaming_passthrough_returncode`): a hung native search must not hang the
+    # CLI forever, and `TimeoutExpired` must become a clean exit 124 (coreutils `timeout`
+    # convention), not an uncaught traceback (H5 audit).
+    from tensor_grep.cli.subprocess_policy import configured_ripgrep_timeout_seconds
+
+    try:
+        completed = subprocess.run(
+            command, check=False, timeout=configured_ripgrep_timeout_seconds()
+        )
+    except subprocess.TimeoutExpired:
+        sys.stderr.write(
+            "tensor-grep: native search exceeded the configured timeout and was stopped. For a "
+            "large repo, scope the search to a path (e.g. `tg search PATTERN src/`), or raise "
+            "TG_RG_TIMEOUT_SECONDS (or TG_SIDECAR_TIMEOUT_MS when set).\n"
+        )
+        return 124
+    except OSError as exc:
+        sys.stderr.write(
+            f"tensor-grep: could not start native search ({exc}); output cannot be trusted.\n"
+        )
+        return 2
     return int(completed.returncode)
 
 
