@@ -1,6 +1,103 @@
 # CHANGELOG
 
 
+## v1.110.1 (2026-08-07)
+
+### Bug Fixes
+
+- Bound native-delegation search subprocess timeout (H5 audit)
+  ([#968](https://github.com/oimiragieo/tensor-grep/pull/968),
+  [`2aa3bb7`](https://github.com/oimiragieo/tensor-grep/commit/2aa3bb76a49d329ee513f688db15fc50f0433321))
+
+* docs: agentic-cli + deep-dive-audit campaign plan (P1 H5 in flight)
+
+* fix: bound native-delegation search subprocess timeout (H5 audit)
+
+The second native-delegation route (cli/main.py _delegate_to_native_tg_search, reachable via `tg
+  search PAT --cpu` / `--json`) ran subprocess.run with NO timeout, so a hung native search hung the
+  CLI forever (fail-open). Now: - bounded with timeout=configured_ripgrep_timeout_seconds()
+  (subprocess_policy.py:63) - TimeoutExpired -> exit 124 + stderr hint (the bootstrap twin contract)
+  - spawn OSError (missing/unexecutable native binary) -> exit 2 + stderr "output cannot be trusted"
+  (fail-closed, not a traceback)
+
+Adversarial audit folded in: - MED: hint names BOTH knobs (TG_RG_TIMEOUT_SECONDS, and
+  TG_SIDECAR_TIMEOUT_MS when set -- that knob takes precedence in
+  configured_ripgrep_timeout_seconds) - MED: test_native_delegation_uses_configured_timeout pins the
+  configured knob is threaded (42.0 sentinel), not a hardcoded literal - MED: OSError -> exit 2
+  Cleared: timeout edge values, fake-module binding, exit-124 consistency.
+
+Banked NITs: CONTRACTS.md 124 documentation; upstream inf-timeout fail-open.
+
+Tests: 6 new in tests/unit/test_native_delegation_timeout.py; full tests/unit/test_cli_modes.py
+  passes (530; test doubles updated to accept timeout -- class sweep of 8 _fake_run doubles, audit
+  A27 twin rule); 58 pass related delegation/rg suite; ruff/ruff-format-preview/mypy clean.
+
+* docs: ruff --preview format campaign plan markdown (CI Formatting & Linting)
+
+### Documentation
+
+- 2026-08-06 CEO backlog update + A70–A76 lesson retention
+  ([#963](https://github.com/oimiragieo/tensor-grep/pull/963),
+  [`9bf38c2`](https://github.com/oimiragieo/tensor-grep/commit/9bf38c23d433121ea98cd5f6063f4b7b1278d17d))
+
+* docs: 2026-08-06 CEO update + retain A70–A76 lessons
+
+Dumbed-down closed-world packet, close F7/CPU-BACKEND/REF-CALL-REGISTRY to SHIPPED, and bank ambient
+  signing-key / tracker / bare-wheel / quota lessons in AGENTS, MEMORY, and skills.
+
+* docs: stamp Closure PR #963 on F7/CPU-BACKEND/REF-CALL-REGISTRY rows
+
+* docs: restore Tasks 3–15 pin in SESSION_HANDOFF current closeout
+
+- Closeout campaign findings + Task2A Sol R2 status
+  ([#965](https://github.com/oimiragieo/tensor-grep/pull/965),
+  [`bb4fdae`](https://github.com/oimiragieo/tensor-grep/commit/bb4fdaeaf8fc616ace3cfdb583f377f7c2b359e2))
+
+- Stamp READY∩BLOCKED board truth + closeout plan
+  ([#964](https://github.com/oimiragieo/tensor-grep/pull/964),
+  [`ac68e62`](https://github.com/oimiragieo/tensor-grep/commit/ac68e62da1b4f23b96b195640ce764160eb66e61))
+
+* docs: stamp READY∩BLOCKED truth + closeout plan/R0 packets
+
+Align the canonical index with the BACKLOG reconcile so MCP-SURFACE/F5/F6/F8/#89/#90 are not false
+  build licenses, and record the #963 early-merge instrument finding.
+
+* docs: refresh closeout campaign state with PR #964 pointer
+
+* docs: wave-2 closeout plan PROCEED_D1_THEN_W4 (Fable+Sol reconcile)
+
+EOF
+
+* fix(test): pin READY→BLOCKED board stamp for program-owned rows
+
+Governance tests still expected READY for #89/#90 and forbade BLOCKED on program owners; align pins
+  with Task 2A ownership so D1 CI can go green.
+
+- W5 enterprise published-wheel dogfood receipt (1.110.0)
+  ([#962](https://github.com/oimiragieo/tensor-grep/pull/962),
+  [`5341754`](https://github.com/oimiragieo/tensor-grep/commit/5341754567c2b4b33e7d00f4d60bd1b8717394d1))
+
+* docs: record W5 1.110.0 enterprise published-wheel dogfood
+
+Capture the prepare/search/evidence/review-bundle/ledger verdict table and the ambient default
+  signing-key instrument note after #958 landed.
+
+* docs: keep W5 campaign note out of TASK_BOARD canonical rows
+
+The tracker parser requires Status/PR/Trigger rows; a free-form campaign bullet under the index
+  failed test_ceo_demand_duplication_is_rejected.
+
+### Testing
+
+- Lock prepare→evidence→review-bundle enterprise CUJ chain
+  ([#958](https://github.com/oimiragieo/tensor-grep/pull/958),
+  [`65d0195`](https://github.com/oimiragieo/tensor-grep/commit/65d0195703c14d71a62e6b7dd193b44798101398))
+
+* test: lock prepare→evidence→review-bundle enterprise CUJ chain
+
+* test: ruff format --preview for enterprise CUJ lock
+
+
 ## v1.110.0 (2026-08-06)
 
 ### Bug Fixes
