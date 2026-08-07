@@ -1,6 +1,62 @@
 # CHANGELOG
 
 
+## v1.110.4 (2026-08-07)
+
+### Bug Fixes
+
+- Backend_cpu fail-closed error propagation (H1 audit)
+  ([#972](https://github.com/oimiragieo/tensor-grep/pull/972),
+  [`b5d89ff`](https://github.com/oimiragieo/tensor-grep/commit/b5d89ff2327ed3a9e276cdb0c298ce39c13cff97))
+
+* fix: backend_cpu fail-closed error propagation (H1 audit)
+
+H1 HIGH (verified): `backend_cpu.rs::search_with_paths` + the count path swallowed EVERY file and
+  walk error -- `if let Ok(x) = self.search_file_*(...) { extend }` dropped File::open/mmap errors
+  and `WalkDir::into_iter().filter_map(|e| e.ok())` dropped every walk error -- so an unreadable
+  file yielded Ok(empty) (a "trustworthy no matches" on a real failure). rust_backend.py's
+  try/except could never fire because the error was already swallowed (Backend Fail-Closed Contract
+  violation, the engine most users hit).
+
+Change: all ~16 swallow sites now propagate with `?` -- a per-file open/read/mmap failure or an
+  unreadable walk entry surfaces as an error that rust_backend.py converts to BackendExecutionError
+  (visible CPU fallback), never a silent 0-match. The walk iterator is collected into Result so a
+  walk error aborts fail-closed.
+
+Tests: 2 new Rust unit tests -- (unix) a walk hitting an unreadable dir entry returns Err,
+
+not Ok(empty) (discriminates on the ubuntu test-rust-core leg: pre-fix filter_map swallowed it);
+  happy-path single-file search still matches. rustfmt --check clean. Compile+test oracle is CI
+  (test-rust-core), per local CPU-safe policy.
+
+* test: lower walk-discard ratchet backend_cpu 4 -> 0 (H1 fixed all sites)
+
+The ratchet (`test_native_walk_error_ratchet.py`) fired on the H1 PR: backend_cpu.rs recorded 4
+  error-discarding walk sites, and the H1 fix replaced all four with
+  `collect::<Result<Vec<_>,_>>()?` propagation (actual 0). Lowering the recorded count in the SAME
+  PR, per the ratchet's own rule ("leaving it high would let a future regression slip back in
+  unnoticed"). Re-verified: the ratchet test passes with backend_cpu.rs at 0.
+
+- Cover all 10 registered languages in query-language hints (M13 audit)
+  ([#973](https://github.com/oimiragieo/tensor-grep/pull/973),
+  [`8a8ec2c`](https://github.com/oimiragieo/tensor-grep/commit/8a8ec2c51d33dbcf21042ef06403e53ba97b2990))
+
+M13 MED (verified): `repo_map._QUERY_LANGUAGE_ALIASES` covered only 4 of 10 registered languages
+  (python/typescript/javascript/rust), so a query naming go/java/php/csharp/c/cpp yielded
+  `query_language_hints: []` -- silently DISABLING the capsule's mismatch-confidence-cap and the
+  language candidate filter for those 6 targets (a fail-open honesty gap; the target side
+  `_target_language_for_path` already handled all 10).
+
+Change: extended the alias map to all 10 registered languages (incl. golang/c_sharp/cplusplus
+  abbreviations; bare one-letter "c" included -- a spurious hint errs toward the conservative
+  ask/filter, never a confident-wrong, consistent with the repo's honesty-over-speed posture).
+
+Tests: extended `test_query_language_hints_are_token_bounded` with the 6 newly-covered
+
+languages + aliases. Verification: 34 passed (incl. capsule hardcases + best_effort); per-task
+  accuracy gate (`tests/eval/test_agent_accuracy.py`) 2/2 passed -- no ranking regression.
+
+
 ## v1.110.3 (2026-08-07)
 
 ### Bug Fixes
