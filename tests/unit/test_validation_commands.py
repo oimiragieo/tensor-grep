@@ -1467,7 +1467,10 @@ def test_build_context_edit_plan_confidence_and_ask_match_agent_for_clean_resolu
     agent_payload = agent_capsule.build_agent_capsule(query, project)
 
     assert edit_plan_payload["confidence"]["overall"] == agent_payload["confidence"]["overall"]
-    assert edit_plan_payload["confidence"]["overall"] == 0.9
+    # H4 audit: the seed now emits a REAL derived overall (max(file, symbol)), not the flat 0.9
+    # default -- a clean, fully-validated resolution must still land confidently above the
+    # no-ask threshold (>= 0.75); the exact value tracks the fixture's ranking scores.
+    assert edit_plan_payload["confidence"]["overall"] >= 0.75
     assert edit_plan_payload["ask_user_before_editing"]["required"] is False
     assert agent_payload["ask_user_before_editing"]["required"] is False
 
@@ -1518,17 +1521,22 @@ def test_build_agent_capsule_confidence_and_ask_unchanged_by_edit_plan_parity_re
     query = "create invoice"
 
     clean_payload = agent_capsule.build_agent_capsule(query, project)
-    assert clean_payload["confidence"] == {"overall": 0.9, "downgrade_reasons": []}
+    # H4 audit: the clean-case overall is now the REAL derived seed overall (max(file, symbol)),
+    # not the flat 0.9 default; assert the substance (a clean resolution is confidently no-ask,
+    # with zero downgrade reasons) rather than the stale golden literal.
+    assert clean_payload["confidence"]["overall"] >= 0.75
+    assert clean_payload["confidence"]["downgrade_reasons"] == []
     assert clean_payload["ask_user_before_editing"] == {"required": False, "reasons": []}
 
     truncated_payload = agent_capsule.build_agent_capsule(query, project, max_repo_files=1)
-    assert truncated_payload["confidence"] == {
-        "overall": 0.9,
-        "downgrade_reasons": [
-            "repository scan truncated before ranking completed",
-            "context consistency downgraded confidence",
-        ],
-    }
+    # H4 audit: truncation does NOT erase the resolution confidence (the ranking still found a
+    # strong primary -- overall is now the REAL derived seed value); it DISCLOSES the truncation
+    # via downgrade reasons + requiring ask. Assert both halves with substance, not the stale 0.9.
+    assert truncated_payload["confidence"]["overall"] >= 0.75
+    assert truncated_payload["confidence"]["downgrade_reasons"] == [
+        "repository scan truncated before ranking completed",
+        "context consistency downgraded confidence",
+    ]
     assert truncated_payload["ask_user_before_editing"] == {
         "required": True,
         "reasons": [

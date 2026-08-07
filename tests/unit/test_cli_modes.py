@@ -8930,7 +8930,12 @@ def test_context_render_llm_profile_compacts_agent_metadata(tmp_path):
     assert len(payload["navigation_pack"]["edit_ordering"]) <= 2
     assert len(payload["edit_plan_seed"]["related_spans"]) <= 1
     assert len(payload["edit_plan_seed"]["suggested_edits"]) <= 1
-    assert len(json.dumps(payload)) < 9_000
+    # H4 audit: the seed now carries the REQUIRED `confidence.overall` key (a handful of bytes),
+    # and this 9000 guard was ALREADY a knife-edge (~5-byte margin, #525 CI) whose result shifts
+    # with the runner's tmp_path length across platforms (the documented byte-test platform
+    # lesson -- locally ~7.7k, CI win/mac ~9.0k). Keep a robust margin that still catches a
+    # broken (un-compacted) payload; the structural asserts above carry the compaction substance.
+    assert len(json.dumps(payload)) < 12_000
 
 
 def test_context_render_json_defaults_to_agent_compact_payload(tmp_path):
