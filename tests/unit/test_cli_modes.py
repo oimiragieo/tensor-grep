@@ -4049,9 +4049,10 @@ def test_cli_should_delegate_force_cpu_search_to_native_binary(monkeypatch):
         lambda *args, **kwargs: True,
     )
 
-    def _fake_run(cmd, check=False):
+    def _fake_run(cmd, check=False, timeout=None):
         seen["cmd"] = list(cmd)
         seen["check"] = check
+        seen["timeout"] = timeout
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
@@ -4077,6 +4078,7 @@ def test_cli_should_delegate_force_cpu_search_to_native_binary(monkeypatch):
         ".",
     ]
     assert seen["check"] is False
+    assert isinstance(seen["timeout"], float) and seen["timeout"] > 0
 
 
 def test_cli_should_force_cpu_pipeline_when_env_override_is_enabled(monkeypatch):
@@ -4264,7 +4266,7 @@ def test_cli_invalid_regex_is_rejected_before_native_delegation(monkeypatch):
         lambda *args, **kwargs: True,
     )
 
-    def _fake_run(cmd, check=False):
+    def _fake_run(cmd, check=False, timeout=None):
         seen["cmd"] = list(cmd)
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
@@ -4288,7 +4290,7 @@ def test_cli_invalid_regex_reports_json_error_before_native_delegation(monkeypat
         lambda *args, **kwargs: True,
     )
 
-    def _fake_run(cmd, check=False):
+    def _fake_run(cmd, check=False, timeout=None):
         seen["cmd"] = list(cmd)
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
@@ -4332,7 +4334,7 @@ def test_cli_later_invalid_regexp_is_rejected_before_native_delegation(monkeypat
         lambda *args, **kwargs: True,
     )
 
-    def _fake_run(cmd, check=False):
+    def _fake_run(cmd, check=False, timeout=None):
         seen["cmd"] = list(cmd)
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
@@ -4372,7 +4374,7 @@ def test_cli_broad_claude_json_uses_python_guardrails_before_native(monkeypatch)
         lambda *args, **kwargs: True,
     )
 
-    def _fake_run(cmd, check=False):
+    def _fake_run(cmd, check=False, timeout=None):
         raise AssertionError("broad .claude JSON search needs Python scanner guardrails")
 
     monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
@@ -4537,8 +4539,9 @@ def test_cli_should_delegate_ndjson_search_to_native_binary_and_preserve_exit_co
         lambda *args, **kwargs: True,
     )
 
-    def _fake_run(cmd, check=False):
+    def _fake_run(cmd, check=False, timeout=None):
         seen["cmd"] = list(cmd)
+        seen["timeout"] = timeout
         return subprocess.CompletedProcess(cmd, 2, stdout="", stderr="")
 
     monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
@@ -4548,6 +4551,7 @@ def test_cli_should_delegate_ndjson_search_to_native_binary_and_preserve_exit_co
 
     assert result.exit_code == 2
     assert seen["cmd"] == ["tg.exe", "search", "--ndjson", "--", "ERROR", "."]
+    assert isinstance(seen["timeout"], float) and seen["timeout"] > 0
 
 
 def test_cli_should_emit_ndjson_without_native_binary(monkeypatch):
@@ -4617,7 +4621,7 @@ def test_cli_should_delegate_json_search_to_native_binary(monkeypatch):
     _patch_cli_dependencies(monkeypatch)
     monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: Path("tg.exe"))
 
-    def _fake_run(cmd, check=False):
+    def _fake_run(cmd, check=False, timeout=None):
         seen["cmd"] = list(cmd)
         seen["check"] = check
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
@@ -4637,7 +4641,7 @@ def test_cli_should_delegate_native_rg_output_flags(monkeypatch):
     _patch_cli_dependencies(monkeypatch)
     monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: Path("tg.exe"))
 
-    def _fake_run(cmd, check=False):
+    def _fake_run(cmd, check=False, timeout=None):
         seen["cmd"] = list(cmd)
         seen["check"] = check
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
@@ -5178,7 +5182,7 @@ def test_cli_should_delegate_explicit_gpu_device_ids_to_native_binary(monkeypatc
     _patch_cli_dependencies(monkeypatch)
     monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: Path("tg.exe"))
 
-    def _fake_run(cmd, check=False):
+    def _fake_run(cmd, check=False, timeout=None):
         seen["cmd"] = list(cmd)
         seen["check"] = check
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
