@@ -336,21 +336,22 @@ impl CpuBackend {
         if fixed_strings && !ignore_case {
             let pat_bytes = pattern.as_bytes();
             if path_obj.is_file() {
-                if let Ok(file_results) =
-                    self.search_file_memmem(pat_bytes, &path_obj.to_path_buf(), invert_match)
-                {
-                    results.extend(file_results);
-                }
+                results.extend(self.search_file_memmem(
+                    pat_bytes,
+                    &path_obj.to_path_buf(),
+                    invert_match,
+                )?);
             } else if path_obj.is_dir() {
-                for entry in WalkDir::new(path_obj).into_iter().filter_map(|e| e.ok()) {
+                for entry in WalkDir::new(path_obj)
+                    .into_iter()
+                    .collect::<Result<Vec<_>, _>>()?
+                {
                     if entry.file_type().is_file() {
-                        if let Ok(file_results) = self.search_file_memmem(
+                        results.extend(self.search_file_memmem(
                             pat_bytes,
                             &entry.path().to_path_buf(),
                             invert_match,
-                        ) {
-                            results.extend(file_results);
-                        }
+                        )?);
                     }
                 }
             }
@@ -368,19 +369,18 @@ impl CpuBackend {
         };
 
         if path_obj.is_file() {
-            if let Ok(file_results) =
-                self.search_file_regex(&re, &path_obj.to_path_buf(), invert_match)
-            {
-                results.extend(file_results);
-            }
+            results.extend(self.search_file_regex(&re, &path_obj.to_path_buf(), invert_match)?);
         } else if path_obj.is_dir() {
-            for entry in WalkDir::new(path_obj).into_iter().filter_map(|e| e.ok()) {
+            for entry in WalkDir::new(path_obj)
+                .into_iter()
+                .collect::<Result<Vec<_>, _>>()?
+            {
                 if entry.file_type().is_file() {
-                    if let Ok(file_results) =
-                        self.search_file_regex(&re, &entry.path().to_path_buf(), invert_match)
-                    {
-                        results.extend(file_results);
-                    }
+                    results.extend(self.search_file_regex(
+                        &re,
+                        &entry.path().to_path_buf(),
+                        invert_match,
+                    )?);
                 }
             }
         }
@@ -790,21 +790,19 @@ impl CpuBackend {
         if fixed_strings && !ignore_case {
             let pat_bytes = pattern.as_bytes();
             if path_obj.is_file() {
-                if let Ok(count) =
-                    self.count_file_memmem(pat_bytes, &path_obj.to_path_buf(), invert_match)
-                {
-                    total_count += count;
-                }
+                total_count +=
+                    self.count_file_memmem(pat_bytes, &path_obj.to_path_buf(), invert_match)?;
             } else if path_obj.is_dir() {
-                for entry in WalkDir::new(path_obj).into_iter().filter_map(|e| e.ok()) {
+                for entry in WalkDir::new(path_obj)
+                    .into_iter()
+                    .collect::<Result<Vec<_>, _>>()?
+                {
                     if entry.file_type().is_file() {
-                        if let Ok(count) = self.count_file_memmem(
+                        total_count += self.count_file_memmem(
                             pat_bytes,
                             &entry.path().to_path_buf(),
                             invert_match,
-                        ) {
-                            total_count += count;
-                        }
+                        )?;
                     }
                 }
             }
@@ -822,17 +820,15 @@ impl CpuBackend {
         };
 
         if path_obj.is_file() {
-            if let Ok(count) = self.count_file_regex(&re, &path_obj.to_path_buf(), invert_match) {
-                total_count += count;
-            }
+            total_count += self.count_file_regex(&re, &path_obj.to_path_buf(), invert_match)?;
         } else if path_obj.is_dir() {
-            for entry in WalkDir::new(path_obj).into_iter().filter_map(|e| e.ok()) {
+            for entry in WalkDir::new(path_obj)
+                .into_iter()
+                .collect::<Result<Vec<_>, _>>()?
+            {
                 if entry.file_type().is_file() {
-                    if let Ok(count) =
-                        self.count_file_regex(&re, &entry.path().to_path_buf(), invert_match)
-                    {
-                        total_count += count;
-                    }
+                    total_count +=
+                        self.count_file_regex(&re, &entry.path().to_path_buf(), invert_match)?;
                 }
             }
         }
@@ -1430,6 +1426,47 @@ mod tests {
         assert!(
             message.contains(child.to_str().unwrap()),
             "error should carry the failing child path, got: {message}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests_h1 {
+    use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn unreadable_walk_entry_is_an_error_not_a_silent_empty_match() {
+        // H1 audit: a walk that hits an unreadable directory entry must surface as an error
+        // (which rust_backend.py converts to BackendExecutionError -> visible CPU fallback),
+        // never as a silent Ok(empty) 0-match from `filter_map(|e| e.ok())`.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("tg_h1_err_{}", std::process::id()));
+        let blocked = dir.join("blocked");
+        std::fs::create_dir_all(&blocked).unwrap();
+        std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let backend = CpuBackend::default();
+        let result = backend.search_with_paths("needle", dir.to_str().unwrap(), false, true, false);
+        let _ = std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o755));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            result.is_err(),
+            "an unreadable walk entry must surface as Err, never a silent Ok(empty) 0-match"
+        );
+    }
+
+    #[test]
+    fn happy_path_still_matches() {
+        let file = std::env::temp_dir().join(format!("tg_h1_ok_{}.txt", std::process::id()));
+        std::fs::write(&file, "some needle text\n").unwrap();
+        let backend = CpuBackend::default();
+        let result = backend
+            .search_with_paths("needle", file.to_str().unwrap(), false, true, false)
+            .unwrap();
+        let _ = std::fs::remove_file(&file);
+        assert!(
+            !result.is_empty(),
+            "a readable file containing the pattern must still match after the fail-closed fix"
         );
     }
 }
