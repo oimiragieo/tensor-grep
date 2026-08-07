@@ -138,20 +138,18 @@ Run → expected FAIL: `TimeoutExpired` propagates uncaught (because `subprocess
 **[ ] Step 2 — GREEN** (minimal): in `_delegate_to_native_tg_search`, replace `subprocess.run(command, check=False)` with a bounded call + catch:
 
 ```python
-    from tensor_grep.cli.subprocess_policy import configured_ripgrep_timeout_seconds
+from tensor_grep.cli.subprocess_policy import configured_ripgrep_timeout_seconds
 
-    try:
-        completed = subprocess.run(
-            command, check=False, timeout=configured_ripgrep_timeout_seconds()
-        )
-    except subprocess.TimeoutExpired:
-        sys.stderr.write(
-            "tensor-grep: native search exceeded the configured timeout and was stopped. "
-            "For a large repo, scope the search to a path (e.g. `tg search PATTERN src/`), "
-            "or raise TG_RG_TIMEOUT_SECONDS.\n"
-        )
-        return 124
-    return int(completed.returncode)
+try:
+    completed = subprocess.run(command, check=False, timeout=configured_ripgrep_timeout_seconds())
+except subprocess.TimeoutExpired:
+    sys.stderr.write(
+        "tensor-grep: native search exceeded the configured timeout and was stopped. "
+        "For a large repo, scope the search to a path (e.g. `tg search PATTERN src/`), "
+        "or raise TG_RG_TIMEOUT_SECONDS.\n"
+    )
+    return 124
+return int(completed.returncode)
 ```
 
 **[ ] Step 3 — GREEN tests (2 more):**
