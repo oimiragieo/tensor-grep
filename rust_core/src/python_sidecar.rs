@@ -755,26 +755,15 @@ fn resolve_python_command() -> OsString {
 }
 
 fn command_for_executable(program: &OsStr) -> Command {
-    #[cfg(windows)]
-    {
-        let path = Path::new(program);
-        if is_windows_batch_script(path) {
-            let mut command = Command::new("cmd");
-            command.arg("/d").arg("/c").arg(path);
-            return command;
-        }
-    }
+    // H3 audit (A27/A39 class twin of `rg_passthrough.rs::command_for_executable`): do NOT
+    // manually wrap a .cmd/.bat interpreter via `cmd /d /c <program> <args>` -- that makes
+    // cmd.exe the program, so std applies plain CreateProcess quoting and cmd.exe RE-PARSES
+    // the sidecar args, letting a `&`/`|`/`%` in a caller-supplied pattern inject an
+    // additional command when the resolved Python interpreter is a .cmd/.bat shim (CWE-88 /
+    // BatBadBut CVE-2024-24576 class). Since Rust 1.77.2 (pinned 1.96.0) std detects a
+    // .bat/.cmd program and spawns it through cmd.exe WITH the CVE-fixed per-arg escaping, so
+    // plain `Command::new(program)` is both correct and injection-safe on every platform.
     Command::new(program)
-}
-
-#[cfg(windows)]
-fn is_windows_batch_script(program: &Path) -> bool {
-    program
-        .extension()
-        .and_then(OsStr::to_str)
-        .is_some_and(|extension| {
-            extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
-        })
 }
 
 fn resolve_python_command_for_context(
@@ -1495,5 +1484,36 @@ mod tests {
             &["create".to_string()]
         ));
         assert!(!is_long_running_passthrough_command("upgrade", &[]));
+    }
+}
+
+#[cfg(test)]
+mod tests_h3 {
+    use super::command_for_executable;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn command_for_executable_never_wraps_batch_shim_in_cmd() {
+        // H3 audit: a resolved .bat/.cmd Python interpreter must be launched via Command::new
+        // so std applies the CVE-fixed per-arg escaping -- never `cmd /d /c <path>`, which would
+        // let a caller-supplied &/|/% re-parse as an injected command (BatBadBut CVE-2024-24576).
+        let shim: &OsStr = if cfg!(windows) {
+            OsStr::new("C:\\py\\python.bat")
+        } else {
+            OsStr::new("python.bat")
+        };
+        let command = command_for_executable(shim);
+        let program = command.get_program().to_string_lossy().to_lowercase();
+        assert!(
+            program.ends_with("python.bat"),
+            "expected the shim as the program, got {program}"
+        );
+        assert_ne!(program, "cmd", "must not wrap the shim in cmd.exe");
+    }
+
+    #[test]
+    fn command_for_executable_plain_program_untouched() {
+        let program = OsStr::new("python");
+        assert_eq!(command_for_executable(program).get_program(), program);
     }
 }
