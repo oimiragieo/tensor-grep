@@ -1,6 +1,33 @@
 # CHANGELOG
 
 
+## v1.110.3 (2026-08-07)
+
+### Bug Fixes
+
+- Remove Cmd/BatBadBut batch-shim wrap in python_sidecar (H3 audit)
+  ([#971](https://github.com/oimiragieo/tensor-grep/pull/971),
+  [`af458b7`](https://github.com/oimiragieo/tensor-grep/commit/af458b7e445152d9c536f7e03fc99e00d4c90bcb))
+
+H3 HIGH (verified): `python_sidecar.rs::command_for_executable` (3 call sites -- all resolved
+  Python-interpreter launches) manually wrapped a `.cmd`/`.bat` interpreter as `cmd /d /c <path>`
+  with sidecar args appended after it. That makes cmd.exe the program: std applies plain
+  CreateProcess quoting and cmd.exe RE-PARSES the sidecar args, so a caller-supplied `&`/`|`/`%`
+  injects an additional command when the resolved Python is a .cmd/.bat shim (CWE-88 / BatBadBut
+  CVE-2024-24576 class). This is the exact pattern the rg twin bans (`rg_passthrough.rs:729-736`,
+  A27/A39 class fix that never crossed).
+
+Change: `command_for_executable` now returns plain `Command::new(program)` on every platform (after
+  removing the now-dead `is_windows_batch_script` helper). Since Rust 1.77.2 (pinned 1.96.0) std
+  detects a .bat/.cmd program and spawns it through cmd.exe WITH the CVE-fixed per-arg escaping, so
+  this is both correct and injection-safe.
+
+Tests: 2 new Rust unit tests in python_sidecar.rs `mod tests_h3` -- a .bat shim must be the launched
+  program (never `cmd`) -- discriminating on the Windows test-rust-core CI leg (pre-fix it launches
+  cmd; post-fix the shim), and a plain program stays untouched. rustfmt --check clean. CI
+  (test-rust-core windows) is the compile+test oracle per CPU-safe local policy.
+
+
 ## v1.110.2 (2026-08-07)
 
 ### Bug Fixes
