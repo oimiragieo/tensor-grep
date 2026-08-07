@@ -8099,6 +8099,19 @@ _QUERY_LANGUAGE_ALIASES = {
     "js": "javascript",
     "rust": "rust",
     "rs": "rust",
+    # M13 audit: cover the remaining 6 registered languages so query_language_hints no longer
+    # silently degrades to [] for them (fail-open: the capsule's mismatch-cap and candidate
+    # filter never fire for go/java/php/csharp/c/cpp targets). A spurious hint errs toward the
+    # conservative ask/filter, never a confident-wrong (the repo's honesty-over-speed posture).
+    "go": "go",
+    "golang": "go",
+    "java": "java",
+    "php": "php",
+    "csharp": "csharp",
+    "c_sharp": "csharp",
+    "c": "c",
+    "cpp": "cpp",
+    "cplusplus": "cpp",
 }
 
 
