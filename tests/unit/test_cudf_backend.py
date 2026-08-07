@@ -1,54 +1,736 @@
-"""H6 audit: CuDFBackend was the only backend with ZERO BackendExecutionError raises --
-GPU OOM / driver / regex faults escaped raw, so main's per-file CPU-fallback retry
-(`except BackendExecutionError`, cli/main.py:8300-8308) never fired and a GPU fault
-raised an uncaught traceback instead of degrading to CPU. The Backend Fail-Closed
-Contract (AGENTS.md) requires every backend to raise BackendExecutionError on a real
-engine failure. RED first: each test targets a pre-fix failure.
-"""
-
-from __future__ import annotations
+import os
+import sys
+import types
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tensor_grep.backends.base import BackendExecutionError
-from tensor_grep.backends.cudf_backend import CuDFBackend
-from tensor_grep.core.config import SearchConfig
+WINDOWS_WORKER_ISOLATION_TESTS = (
+    "test_worker_isolation_sets_cuda_visible_devices_before_worker_imports",
+    "test_worker_isolation_uses_fresh_process_pool_children_on_windows",
+)
+WINDOWS_ONLY_WORKER_ISOLATION = pytest.mark.skipif(
+    os.name != "nt",
+    reason="Windows-specific CUDA worker isolation assertions",
+)
 
 
-def test_engine_failure_becomes_backend_execution_error(monkeypatch) -> None:
-    """A raw engine failure (e.g. cuDF regex fault / OOM) must surface as
-    BackendExecutionError (so the CPU-fallback retry can fire), never escape raw."""
+class TestCuDFBackend:
+    """Unit tests: mock cuDF so no GPU needed."""
 
-    def _boom(*_args, **_kwargs):
-        raise RuntimeError("cudf CUDA out of memory")
+    @patch.dict("sys.modules", {"cudf": MagicMock()})
+    @patch("os.path.getsize", return_value=1024)
+    def test_should_use_cudf_read_text(self, mock_getsize, sample_log_file):
+        import cudf
 
-    monkeypatch.setattr(CuDFBackend, "_search_uncapped", _boom)
-    backend = CuDFBackend()
-    with pytest.raises(BackendExecutionError) as excinfo:
-        backend.search("a.log", "foo")
-    assert "cudf" in str(excinfo.value).lower() or "memory" in str(excinfo.value).lower()
+        mock_series = MagicMock()
+        mock_series.str.contains.return_value = MagicMock()
+        cudf.read_text.return_value = mock_series
+
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        backend = CuDFBackend()
+
+        # We need to make the rust_core import fail specifically within this test
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": None}):
+            backend.search(str(sample_log_file), "ERROR")
+
+        cudf.read_text.assert_called_once()
+
+    @patch.dict("sys.modules", {"cudf": MagicMock()})
+    @patch("os.path.getsize", return_value=1024)
+    def test_should_route_single_file_cudf_fallback_through_reader_helper(
+        self, mock_getsize, sample_log_file
+    ):
+        import cudf
+
+        mock_series = MagicMock()
+        mock_series.str.contains.return_value = MagicMock()
+        mock_matched = MagicMock()
+        mock_matched.index.to_pandas.return_value = []
+        mock_matched.to_pandas.return_value = []
+        mock_series.__getitem__.return_value = mock_matched
+        cudf.read_text.return_value = mock_series
+
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        backend = CuDFBackend()
+
+        with patch.object(
+            CuDFBackend, "_read_text_series", create=True, return_value=mock_series
+        ) as mock_read_text_series:
+            with patch.dict("sys.modules", {"tensor_grep.rust_core": None}):
+                backend.search(str(sample_log_file), "ERROR")
+
+        mock_read_text_series.assert_called_once_with(str(sample_log_file))
+
+    def test_should_use_cudf_reader_before_raw_cudf_read_text(self, sample_log_file):
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        backend = CuDFBackend()
+        mock_series = MagicMock()
+        cudf_reader = MagicMock()
+        cudf_reader.read_to_gpu.return_value = mock_series
+        cudf_module = types.ModuleType("cudf")
+        cudf_module.read_text = MagicMock()
+
+        with patch.dict("sys.modules", {"cudf": cudf_module}):
+            with patch("tensor_grep.io.reader_cudf.CuDFReader", return_value=cudf_reader):
+                series = backend._read_text_series(str(sample_log_file))
+
+        assert series is mock_series
+        cudf_reader.read_to_gpu.assert_called_once_with(str(sample_log_file))
+        cudf_module.read_text.assert_not_called()
+
+    def test_should_fall_back_to_raw_cudf_read_text_when_cudf_reader_unavailable(
+        self, sample_log_file
+    ):
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        backend = CuDFBackend()
+        mock_series = MagicMock()
+        cudf_module = types.ModuleType("cudf")
+        cudf_module.read_text = MagicMock(return_value=mock_series)
+
+        with patch.dict("sys.modules", {"cudf": cudf_module}):
+            with patch("tensor_grep.io.reader_cudf.CuDFReader", side_effect=ImportError):
+                series = backend._read_text_series(str(sample_log_file))
+
+        assert series is mock_series
+        cudf_module.read_text.assert_called_once_with(
+            str(sample_log_file),
+            delimiter="\n",
+            strip_delimiters=True,
+        )
+
+    def test_should_raise_cudf_reader_runtime_errors_instead_of_silently_falling_back(
+        self, sample_log_file
+    ):
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        backend = CuDFBackend()
+        cudf_reader = MagicMock()
+        cudf_reader.read_to_gpu.side_effect = AttributeError("broken reader seam")
+        cudf_module = types.ModuleType("cudf")
+        cudf_module.read_text = MagicMock()
+
+        with patch.dict("sys.modules", {"cudf": cudf_module}):
+            with patch("tensor_grep.io.reader_cudf.CuDFReader", return_value=cudf_reader):
+                with pytest.raises(AttributeError, match="broken reader seam"):
+                    backend._read_text_series(str(sample_log_file))
+
+        cudf_module.read_text.assert_not_called()
+
+    def test_should_use_byte_range_for_large_files(self, tmp_path):
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        backend = CuDFBackend(chunk_sizes_mb=[256])
+        assert backend.chunk_sizes_mb == [256]
+        assert backend.device_ids == [0]
+
+    @patch.dict("sys.modules", {"cudf": MagicMock()})
+    @patch("os.path.getsize", return_value=1024)
+    def test_should_use_str_contains_for_regex(self, mock_getsize):
+        import cudf
+
+        mock_series = MagicMock()
+        cudf.read_text.return_value = mock_series
+
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        backend = CuDFBackend()
+        backend.search("test.log", r"ERROR.*timeout")
+
+        mock_series.str.contains.assert_called_once()
+
+    @patch.dict("sys.modules", {"cudf": MagicMock()})
+    @patch("os.path.getsize", return_value=1024)
+    def test_should_report_zero_total_files_when_single_gpu_path_has_no_matches(self, mock_getsize):
+        import cudf
+
+        mock_series = MagicMock()
+        mock_series.str.contains.return_value = MagicMock()
+        mock_matched = MagicMock()
+        mock_matched.index.to_pandas.return_value = []
+        mock_matched.to_pandas.return_value = []
+        mock_series.__getitem__.return_value = mock_matched
+        cudf.read_text.return_value = mock_series
+
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        backend = CuDFBackend()
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": None}):
+            result = backend.search("test.log", "ERROR")
+
+        assert result.total_matches == 0
+        assert result.total_files == 0
+
+    @patch.dict("sys.modules", {"cudf": MagicMock()})
+    @patch("os.path.getsize", return_value=1024)
+    def test_should_ignoreCase_when_usingCudfBackend(self, mock_getsize):
+        import re
+
+        import cudf
+
+        mock_series = MagicMock()
+        cudf.read_text.return_value = mock_series
+
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+        from tensor_grep.core.config import SearchConfig
+
+        backend = CuDFBackend()
+        config = SearchConfig(ignore_case=True)
+        backend.search("test.log", r"error", config=config)
+
+        mock_series.str.contains.assert_called_with(r"error", regex=True, flags=re.IGNORECASE)
+
+    @patch.dict("sys.modules", {"cudf": MagicMock()})
+    @patch("os.path.getsize", return_value=1024)
+    def test_should_invertMatch_when_usingCudfBackend(self, mock_getsize):
+        import cudf
+
+        mock_series = MagicMock()
+
+        # We need to mock the ~ operator for the mask
+        mock_mask = MagicMock()
+        mock_inverted_mask = MagicMock()
+        mock_mask.__invert__.return_value = mock_inverted_mask
+        mock_series.str.contains.return_value = mock_mask
+        cudf.read_text.return_value = mock_series
+
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+        from tensor_grep.core.config import SearchConfig
+
+        backend = CuDFBackend()
+        config = SearchConfig(invert_match=True)
+        backend.search("test.log", r"error", config=config)
+
+        mock_series.__getitem__.assert_called_with(mock_inverted_mask)
+
+    @patch.dict("sys.modules", {"cudf": MagicMock(), "rmm": MagicMock(), "re": MagicMock()})
+    @patch("os.path.getsize", return_value=1024 * 1024 * 10)  # 10 MB file
+    @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
+    def test_should_shardDataAcrossGPUs_when_multiGpuDetected(self, mock_pool, mock_getsize):
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        # Setup backend with 2 GPUs, each gets a 2MB chunk capacity
+        backend = CuDFBackend(chunk_sizes_mb=[2, 2])
+
+        # We mock the executor to just run the function synchronously to test mapping
+        mock_executor = MagicMock()
+        mock_pool.return_value.__enter__.return_value = mock_executor
+
+        # Ensure that as_completed returns something iterable but empty for now
+        with patch("tensor_grep.backends.cudf_backend.as_completed", return_value=[]):
+            backend.search("test.log", "ERROR")
+
+        # It should have mapped chunks across the pool
+        mock_executor.submit.assert_called()
+
+    @patch.dict("sys.modules", {"cudf": MagicMock(), "rmm": MagicMock(), "re": MagicMock()})
+    @patch("os.path.getsize", return_value=1024 * 1024 * 10)  # 10 MB file
+    @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
+    def test_should_report_zero_total_files_when_distributed_path_has_no_matches(
+        self, mock_pool, mock_getsize
+    ):
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        backend = CuDFBackend(chunk_sizes_mb=[2, 2], device_ids=[3, 7])
+        mock_executor = MagicMock()
+        mock_pool.return_value.__enter__.return_value = mock_executor
+
+        with patch("tensor_grep.backends.cudf_backend.as_completed", return_value=[]):
+            result = backend.search("test.log", "ERROR")
+
+        assert result.total_matches == 0
+        assert result.total_files == 0
+
+    @patch("os.path.getsize", return_value=1024 * 1024 * 10)
+    @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
+    def test_should_return_after_chunked_path_without_process_pool(self, mock_pool, mock_getsize):
+        import types
+
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        backend = CuDFBackend(chunk_sizes_mb=[1])
+
+        mock_series = MagicMock()
+        mock_series.__len__.return_value = 1
+        mock_mask = MagicMock()
+        mock_series.str.contains.return_value = mock_mask
+
+        mock_matched = MagicMock()
+        mock_matched.index.to_pandas.return_value = [0]
+        mock_matched.to_pandas.return_value = ["ERROR line"]
+        mock_series.__getitem__.return_value = mock_matched
+
+        cudf_mod = types.ModuleType("cudf")
+        cudf_mod.Series = MagicMock()
+        cudf_mod.Series.from_arrow.return_value = mock_series
+        cudf_mod.core = types.SimpleNamespace(
+            buffer=types.SimpleNamespace(acquire_spill_lock=MagicMock())
+        )
+
+        pa_mod = types.ModuleType("pyarrow")
+        pa_mod.array = MagicMock(return_value=object())
+
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+        rust_mod.read_mmap_to_arrow_chunked = MagicMock(return_value=[object()])
+
+        mem_mgr_mod = types.ModuleType("tensor_grep.core.hardware.memory_manager")
+        mem_mgr_mod.MemoryManager = MagicMock()
+        mem_mgr_mod.MemoryManager.return_value.get_vram_budget_mb.return_value = 1
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "cudf": cudf_mod,
+                "pyarrow": pa_mod,
+                "tensor_grep.rust_core": rust_mod,
+                "tensor_grep.core.hardware.memory_manager": mem_mgr_mod,
+            },
+        ):
+            result = backend.search("test.log", "ERROR")
+
+        mock_pool.assert_not_called()
+        assert result.total_matches == 1
+        assert result.routing_backend == "CuDFBackend"
+        assert result.routing_reason == "cudf_chunked_zero_copy"
+        assert result.routing_gpu_device_ids == [0]
+        assert result.routing_gpu_chunk_plan_mb == [(0, 1)]
+        assert result.routing_distributed is False
+        assert result.routing_worker_count == 1
+
+    def test_should_build_execution_plan_with_explicit_device_ids(self):
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        plan = CuDFBackend._build_execution_plan(
+            file_size=10 * 1024 * 1024,
+            device_chunks_mb=[(3, 2), (7, 2)],
+        )
+        assert plan[0][0] == 3
+        assert plan[1][0] == 7
+        assert plan[2][0] == 3
+
+    @patch.dict("sys.modules", {"cudf": MagicMock(), "rmm": MagicMock(), "re": MagicMock()})
+    @patch("os.path.getsize", return_value=1024 * 1024 * 10)  # 10 MB file
+    @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
+    def test_should_submit_chunks_using_configured_device_ids(self, mock_pool, mock_getsize):
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        backend = CuDFBackend(chunk_sizes_mb=[2, 2], device_ids=[3, 7])
+        mock_executor = MagicMock()
+        mock_pool.return_value.__enter__.return_value = mock_executor
+
+        with patch("tensor_grep.backends.cudf_backend.as_completed", return_value=[]):
+            result = backend.search("test.log", "ERROR")
+
+        submitted_device_ids = [call.args[1] for call in mock_executor.submit.call_args_list]
+        assert submitted_device_ids[:2] == [3, 7]
+        assert result.routing_backend == "CuDFBackend"
+        assert result.routing_reason == "cudf_distributed_fanout"
+        assert result.routing_gpu_device_ids == [3, 7]
+        assert result.routing_gpu_chunk_plan_mb == [(3, 2), (7, 2)]
+        assert result.routing_distributed is True
+        assert result.routing_worker_count == 2
+
+    @patch.dict("sys.modules", {"cudf": MagicMock(), "rmm": MagicMock(), "re": MagicMock()})
+    @patch("os.path.getsize", return_value=1024 * 1024 * 2)
+    @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
+    def test_should_not_claim_distributed_fanout_when_duplicate_device_ids_collapse_to_one_worker(
+        self, mock_pool, mock_getsize
+    ):
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        backend = CuDFBackend(chunk_sizes_mb=[1, 1], device_ids=[3, 3])
+        mock_executor = MagicMock()
+        mock_pool.return_value.__enter__.return_value = mock_executor
+
+        with patch(
+            "tensor_grep.backends.cudf_backend._process_chunk_on_device",
+            return_value=([MagicMock(line_number=1, text="3", file="test.log")], 1),
+        ):
+            result = backend.search("test.log", "ERROR")
+
+        mock_pool.assert_not_called()
+        assert result.routing_reason == "cudf_single_worker_plan"
+        assert result.routing_gpu_device_ids == [3]
+        assert result.routing_gpu_chunk_plan_mb == [(3, 1)]
+        assert result.routing_distributed is False
+        assert result.routing_worker_count == 1
+
+    @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
+    @patch("tensor_grep.backends.cudf_backend._process_chunk_on_device")
+    def test_should_not_spawn_process_pool_when_multi_gpu_plan_has_single_chunk(
+        self, mock_process_chunk, mock_pool
+    ):
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+        from tensor_grep.core.result import MatchLine
+
+        backend = CuDFBackend(chunk_sizes_mb=[512, 512], device_ids=[3, 7])
+        mock_process_chunk.return_value = (
+            [MatchLine(line_number=1, text="ERROR", file="test.log")],
+            1,
+        )
+
+        matches, worker_count = backend._search_distributed(
+            file_path="test.log",
+            pattern="ERROR",
+            file_size=1 * 1024 * 1024,  # small enough to produce exactly one chunk
+            device_chunks_mb=[(3, 512), (7, 512)],
+            config=None,
+        )
+
+        mock_pool.assert_not_called()
+        mock_process_chunk.assert_called_once()
+        assert len(matches) == 1
+        assert matches[0].line_number == 1
+        assert worker_count == 1
+
+    @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
+    @patch("tensor_grep.backends.cudf_backend._process_chunk_on_device")
+    def test_should_not_spawn_process_pool_when_plan_uses_single_worker_across_many_chunks(
+        self, mock_process_chunk, mock_pool
+    ):
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+        from tensor_grep.core.result import MatchLine
+
+        backend = CuDFBackend(chunk_sizes_mb=[1, 1], device_ids=[3, 3])
+        # 3 chunks: lines should be offset by returned chunk line counts.
+        mock_process_chunk.side_effect = [
+            ([MatchLine(line_number=1, text="a", file="test.log")], 2),
+            ([MatchLine(line_number=1, text="b", file="test.log")], 2),
+            ([MatchLine(line_number=1, text="c", file="test.log")], 2),
+        ]
+
+        matches, worker_count = backend._search_distributed(
+            file_path="test.log",
+            pattern="ERROR",
+            file_size=3 * 1024 * 1024,
+            device_chunks_mb=[(3, 1), (3, 1)],
+            config=None,
+        )
+
+        mock_pool.assert_not_called()
+        assert [m.line_number for m in matches] == [1, 3, 5]
+        assert [m.text for m in matches] == ["a", "b", "c"]
+        assert worker_count == 1
+
+    @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
+    @patch("tensor_grep.backends.cudf_backend.as_completed", return_value=[])
+    def test_should_cap_process_pool_workers_to_execution_plan_size(
+        self, _mock_as_completed, mock_pool
+    ):
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        backend = CuDFBackend(chunk_sizes_mb=[512, 512, 512, 512], device_ids=[0, 1, 2, 3])
+        mock_pool.return_value.__enter__.return_value = MagicMock()
+
+        # 700MB file with 512MB chunking => exactly 2 planned tasks
+        backend._search_distributed(
+            file_path="test.log",
+            pattern="ERROR",
+            file_size=700 * 1024 * 1024,
+            device_chunks_mb=[(0, 512), (1, 512), (2, 512), (3, 512)],
+            config=None,
+        )
+
+        assert mock_pool.call_args.kwargs["max_workers"] == 2
+        if os.name == "nt":
+            assert mock_pool.call_args.kwargs["max_tasks_per_child"] == 1
+        else:
+            assert "max_tasks_per_child" not in mock_pool.call_args.kwargs
+
+    @patch("tensor_grep.backends.cudf_backend._process_chunk_on_device")
+    @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
+    @patch("tensor_grep.backends.cudf_backend.as_completed", return_value=[])
+    def test_should_deduplicate_duplicate_device_ids_before_worker_sizing(
+        self, _mock_as_completed, mock_pool, mock_process_chunk
+    ):
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        backend = CuDFBackend(chunk_sizes_mb=[256, 512], device_ids=[3, 3])
+        mock_pool.return_value.__enter__.return_value = MagicMock()
+        mock_process_chunk.return_value = ([], 0)
+
+        backend._search_distributed(
+            file_path="test.log",
+            pattern="ERROR",
+            file_size=700 * 1024 * 1024,
+            device_chunks_mb=[(3, 256), (3, 512)],
+            config=None,
+        )
+
+        mock_pool.assert_not_called()
+        assert all(call.args[0] == 3 for call in mock_process_chunk.call_args_list)
+
+    def test_worker_isolation_tests_are_guarded_for_windows_only(self):
+        for test_name in WINDOWS_WORKER_ISOLATION_TESTS:
+            test_func = getattr(type(self), test_name)
+            skipif_marks = [
+                mark for mark in getattr(test_func, "pytestmark", []) if mark.name == "skipif"
+            ]
+
+            assert skipif_marks, f"{test_name} should skip on non-Windows platforms"
+            assert any(mark.args == (os.name != "nt",) for mark in skipif_marks)
+
+    def test_configure_cuda_worker_environment_sets_env_vars_on_all_platforms(self, monkeypatch):
+        """_configure_cuda_worker_environment pins CUDA_VISIBLE_DEVICES on every platform."""
+        from tensor_grep.backends import cudf_backend
+
+        monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+        monkeypatch.delenv("CUDA_DEVICE_ORDER", raising=False)
+
+        local_device_id = cudf_backend._configure_cuda_worker_environment(7)
+
+        assert local_device_id == 0
+        assert os.environ["CUDA_VISIBLE_DEVICES"] == "7"
+        assert os.environ["CUDA_DEVICE_ORDER"] == "PCI_BUS_ID"
+
+    def test_strip_line_ending_matches_rg_parity(self):
+        """Audit MEDIUM: cuDF zero-copy line text must not carry the Arrow delimiter byte
+        (rust mmap offsets are idx+1), so it matches ripgrep/CPU parity."""
+        from tensor_grep.backends.cudf_backend import _strip_line_ending
+
+        assert _strip_line_ending("ERROR boom\n") == "ERROR boom"
+        assert _strip_line_ending("ERROR boom\r\n") == "ERROR boom"
+        assert _strip_line_ending("ERROR boom") == "ERROR boom"
+        assert _strip_line_ending("") == ""
+        # only ONE terminator is stripped (a line cannot contain the delimiter itself)
+        assert _strip_line_ending("ab\r") == "ab"
+
+    @WINDOWS_ONLY_WORKER_ISOLATION
+    def test_worker_isolation_sets_cuda_visible_devices_before_worker_imports(self, monkeypatch):
+        from tensor_grep.backends import cudf_backend
+
+        observed_env: dict[str, str | None] = {}
+        fake_series = MagicMock()
+        fake_series.str.contains.return_value = MagicMock()
+        fake_matched = MagicMock()
+        fake_matched.index.to_pandas.return_value = []
+        fake_matched.to_pandas.return_value = []
+        fake_series.__getitem__.return_value = fake_matched
+
+        fake_cudf = types.SimpleNamespace(read_text=MagicMock(return_value=fake_series))
+        fake_rmm = types.SimpleNamespace(reinitialize=MagicMock())
+
+        real_import = __import__
+
+        def import_with_env_capture(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "cudf":
+                observed_env["cudf"] = os.environ.get("CUDA_VISIBLE_DEVICES")
+                return fake_cudf
+            if name == "rmm":
+                observed_env["rmm"] = os.environ.get("CUDA_VISIBLE_DEVICES")
+                return fake_rmm
+            return real_import(name, globals, locals, fromlist, level)
+
+        monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+        monkeypatch.delenv("CUDA_DEVICE_ORDER", raising=False)
+        monkeypatch.setattr("builtins.__import__", import_with_env_capture)
+        monkeypatch.delitem(sys.modules, "cudf", raising=False)
+        monkeypatch.delitem(sys.modules, "rmm", raising=False)
+
+        cudf_backend._process_chunk_on_device(
+            7,
+            "test.log",
+            0,
+            1024,
+            "ERROR",
+        )
+
+        assert observed_env == {"cudf": "7", "rmm": "7"}
+        fake_rmm.reinitialize.assert_called_once_with(devices=[0])
+
+    @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
+    @patch("tensor_grep.backends.cudf_backend.as_completed", return_value=[])
+    @WINDOWS_ONLY_WORKER_ISOLATION
+    def test_worker_isolation_uses_fresh_process_pool_children_on_windows(
+        self, _mock_as_completed, mock_pool
+    ):
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        backend = CuDFBackend(chunk_sizes_mb=[512, 512, 512, 512], device_ids=[0, 1, 2, 3])
+        mock_pool.return_value.__enter__.return_value = MagicMock()
+
+        backend._search_distributed(
+            file_path="test.log",
+            pattern="ERROR",
+            file_size=700 * 1024 * 1024,
+            device_chunks_mb=[(0, 512), (1, 512), (2, 512), (3, 512)],
+            config=None,
+        )
+
+        assert mock_pool.call_args.kwargs["max_workers"] == 2
+        assert mock_pool.call_args.kwargs["max_tasks_per_child"] == 1
+
+    # ------------------------------------------------------------------
+    # _device_context tests (CPU-only, no GPU required, no importorskip)
+    # ------------------------------------------------------------------
+
+    def test_device_context_returns_cupy_device_for_configured_id(self):
+        """_device_context() constructs cupy.cuda.Device with device_ids[0]."""
+        mock_cupy = MagicMock()
+        with patch.dict("sys.modules", {"cupy": mock_cupy}):
+            from tensor_grep.backends.cudf_backend import CuDFBackend
+
+            backend = CuDFBackend(device_ids=[5])
+            ctx = backend._device_context()
+
+        mock_cupy.cuda.Device.assert_called_once_with(5)
+        assert ctx is mock_cupy.cuda.Device.return_value
+
+    def test_device_context_falls_back_to_device_0_when_device_ids_empty(self):
+        """_device_context() uses device 0 when self.device_ids is empty."""
+        mock_cupy = MagicMock()
+        with patch.dict("sys.modules", {"cupy": mock_cupy}):
+            from tensor_grep.backends.cudf_backend import CuDFBackend
+
+            backend = CuDFBackend()
+            # Force empty list to exercise the guard (init normally populates it).
+            backend.device_ids = []
+            backend._device_context()
+
+        mock_cupy.cuda.Device.assert_called_once_with(0)
+
+    def test_device_context_degrades_to_nullcontext_when_device_unusable(self):
+        """cupy installed but GPU unusable (probe raises, e.g. cudaErrorInsufficientDriver on a CI
+        runner) → _device_context degrades to a no-op rather than crashing every search."""
+        import contextlib
+        from unittest.mock import PropertyMock
+
+        mock_cupy = MagicMock()
+        type(mock_cupy.cuda.Device.return_value).compute_capability = PropertyMock(
+            side_effect=RuntimeError("cudaErrorInsufficientDriver")
+        )
+        with patch.dict("sys.modules", {"cupy": mock_cupy}):
+            from tensor_grep.backends.cudf_backend import CuDFBackend
+
+            backend = CuDFBackend(device_ids=[0])
+            ctx = backend._device_context()
+
+        assert isinstance(ctx, contextlib.nullcontext)
+
+    def test_is_available_enters_device_context_before_cudf_probe(self):
+        """cupy.cuda.Device(device_ids[0]) must be entered before cudf.Series is probed."""
+        import importlib.util
+
+        call_order: list[str] = []
+
+        mock_cupy = MagicMock()
+        mock_device = MagicMock()
+        mock_device.__enter__ = MagicMock(side_effect=lambda *_a: call_order.append("device_enter"))
+        mock_device.__exit__ = MagicMock(return_value=False)
+        mock_cupy.cuda.Device.return_value = mock_device
+
+        mock_cudf = MagicMock()
+
+        def track_series(*args, **kwargs):
+            call_order.append("series_probe")
+
+        mock_cudf.Series.side_effect = track_series
+
+        with patch.dict("sys.modules", {"cupy": mock_cupy, "cudf": mock_cudf}):
+            with patch.object(importlib.util, "find_spec", return_value=object()):
+                from tensor_grep.backends.cudf_backend import CuDFBackend
+
+                backend = CuDFBackend(device_ids=[2])
+                backend.is_available()
+
+        mock_cupy.cuda.Device.assert_called_with(2)
+        assert "device_enter" in call_order, "device context was never entered"
+        assert "series_probe" in call_order, "cudf.Series probe was never called"
+        assert call_order.index("device_enter") < call_order.index("series_probe"), (
+            "device context must be entered before any cuDF allocation"
+        )
+
+    @patch("os.path.getsize", return_value=1024)
+    def test_search_enters_device_context_before_gpu_allocation(self, _mock_getsize):
+        """_device_context() must be entered before _read_text_series allocates GPU memory."""
+        call_order: list[str] = []
+
+        mock_cupy = MagicMock()
+        mock_device = MagicMock()
+        mock_device.__enter__ = MagicMock(side_effect=lambda *_a: call_order.append("device_enter"))
+        mock_device.__exit__ = MagicMock(return_value=False)
+        mock_cupy.cuda.Device.return_value = mock_device
+
+        mock_series = MagicMock()
+        mock_matched = MagicMock()
+        mock_matched.index.to_pandas.return_value = []
+        mock_matched.to_pandas.return_value = []
+        mock_series.__getitem__.return_value = mock_matched
+        mock_series.str.contains.return_value = MagicMock()
+
+        def track_allocation(*_args, **_kwargs):
+            call_order.append("gpu_alloc")
+            return mock_series
+
+        mock_cudf = MagicMock()
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "cupy": mock_cupy,
+                "cudf": mock_cudf,
+                # Force ImportError on the Rust bridge so code falls through to
+                # _read_text_series, which we can intercept below.
+                "tensor_grep.rust_core": None,
+            },
+        ):
+            from tensor_grep.backends import cudf_backend
+            from tensor_grep.backends.cudf_backend import CuDFBackend
+
+            with patch.object(
+                cudf_backend.CuDFBackend, "_read_text_series", side_effect=track_allocation
+            ):
+                backend = CuDFBackend(device_ids=[4])
+                backend.search("test.log", "ERROR")
+
+        mock_cupy.cuda.Device.assert_called_with(4)
+        assert "device_enter" in call_order, "device context was never entered"
+        assert "gpu_alloc" in call_order, "GPU allocation (_read_text_series) was never made"
+        assert call_order.index("device_enter") < call_order.index("gpu_alloc"), (
+            "device context must be entered before any cuDF GPU allocation"
+        )
 
 
-def test_normal_result_untouched(monkeypatch) -> None:
-    from tensor_grep.core.result import SearchResult
+class TestCuDFBackendFailClosed:
+    """H6 audit: engine failures MUST surface as BackendExecutionError so the per-file
+    CPU-fallback retry (`except BackendExecutionError`, cli/main.py) can fire -- a raw
+    GPU OOM/driver/regex fault must never escape as an uncaught traceback."""
 
-    def _ok(*_args, **_kwargs):
-        return SearchResult(matches=[], total_files=0, total_matches=0)
+    def test_engine_failure_becomes_backend_execution_error(self, monkeypatch) -> None:
+        from tensor_grep.backends.base import BackendExecutionError
+        from tensor_grep.backends.cudf_backend import CuDFBackend
 
-    monkeypatch.setattr(CuDFBackend, "_search_uncapped", _ok)
-    result = CuDFBackend().search("a.log", "foo", SearchConfig(max_count=5))
-    assert result.total_matches == 0  # still wrapped through _cap_to_max_count
+        def _boom(*_args, **_kwargs) -> None:
+            raise RuntimeError("cudf CUDA out of memory")
 
+        monkeypatch.setattr(CuDFBackend, "_search_uncapped", _boom)
+        with pytest.raises(BackendExecutionError) as excinfo:
+            CuDFBackend().search("a.log", "foo")
+        assert "cudf" in str(excinfo.value).lower() or "memory" in str(excinfo.value).lower()
 
-def test_backend_execution_error_re_raised_verbatim(monkeypatch) -> None:
-    """An already-normalized BackendExecutionError from the engine must pass through
-    unchanged (not double-wrapped in a new message)."""
+    def test_normal_result_untouched(self, monkeypatch) -> None:
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+        from tensor_grep.core.result import SearchResult
 
-    def _raise(*_args, **_kwargs):
-        raise BackendExecutionError("engine-specific")
+        def _ok(*_args, **_kwargs) -> SearchResult:
+            return SearchResult(matches=[], total_files=0, total_matches=0)
 
-    monkeypatch.setattr(CuDFBackend, "_search_uncapped", _raise)
-    backend = CuDFBackend()
-    with pytest.raises(BackendExecutionError) as excinfo:
-        backend.search("a.log", "foo")
-    assert str(excinfo.value) == "engine-specific"
+        monkeypatch.setattr(CuDFBackend, "_search_uncapped", _ok)
+        result = CuDFBackend().search("a.log", "foo")
+        assert result.total_matches == 0
+
+    def test_backend_execution_error_re_raised_verbatim(self, monkeypatch) -> None:
+        from tensor_grep.backends.base import BackendExecutionError
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        def _raise(*_args, **_kwargs) -> None:
+            raise BackendExecutionError("engine-specific")
+
+        monkeypatch.setattr(CuDFBackend, "_search_uncapped", _raise)
+        with pytest.raises(BackendExecutionError) as excinfo:
+            CuDFBackend().search("a.log", "foo")
+        assert str(excinfo.value) == "engine-specific"
