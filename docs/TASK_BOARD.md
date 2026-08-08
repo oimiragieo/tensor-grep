@@ -18,18 +18,19 @@
 >    `tag == PyPI` cannot distinguish *released* from *not started* from *died* and cost a release
 >    on 2026-07-28.
 
-## Campaign note (2026-08-06)
+## Campaign note (2026-08-08)
 
-CEO update: `docs/audits/2026-08-06-ceo-backlog-update.md`. Public product `v1.110.0`. #958 CUJ + #962
-wheel dogfood + #963 CEO docs landed. Index `2026-08-06.2` stamps former false READY rows
-(#89/#90/F5/F6/F8/MCP-SURFACE) as **BLOCKED**. STOP unchanged: Task 2A, W3 rust/e2e shared-box ban,
-MCP wire fence, #169, CEO_GATED. R0 packets:
+CEO update: `docs/audits/2026-08-06-ceo-backlog-update.md`. Public product `v1.110.6` (2026-08-08).
+2026-08-08 drain: M7 (#975 → v1.110.6), M8 (#976 → v1.110.7 in flight); execution plan
+`docs/plans/2026-08-08-backlog-completion-plan.md` (thinktank-approved); P5·H2 → draft #979
+(codex R5 APPROVE-WITH-NITS); next buildable M1/M3/M16/M17/M14. Index `2026-08-08.1`. STOP
+unchanged: Task 2A, W3 rust/e2e shared-box ban, MCP wire fence, #169, CEO_GATED. R0 packets:
 `docs/audits/2026-08-06-ceo-gated-recommendation-packets.md`,
 `docs/audits/2026-08-06-demand-gated-research-receipts.md`.
 
 ## Canonical status index
 
-Canonical status index version: 2026-08-06.2
+Canonical status index version: 2026-08-08.1
 - [x] **#22** — Status: RETIRED; PR: none; Trigger: exit 0 is complete with matches; exit 1 is complete with no match; exit 2 is incomplete; gpu_request_unhonoured stays in-band and does not independently force exit 2
 - [x] **F2** — Status: RETIRED; PR: none; Trigger: legacy anonymous-agent compatibility deliberately retains the sentinel; reopen only with a caller-supplied stable identity contract and migration plan
 - [x] **#36** — Status: SHIPPED; PR: PR #903; Trigger: all 27 topic skills audited and drift corrections merged; reopen on a new failing skill-drift receipt
@@ -61,17 +62,33 @@ Canonical status index version: 2026-08-06.2
 
 ## Live campaign snapshot
 
-Last reconciled: **2026-08-06** (CEO update + READY∩BLOCKED stamp). canonical index `2026-08-06.2`.
+Last reconciled: **2026-08-08** (backlog-completion campaign). canonical index `2026-08-08.1`.
 Task 2 is complete as the reconciliation checkpoint; Task 2A RED remains correctly blocked.
-Closeout plan: `docs/plans/2026-08-06-enterprise-backlog-closeout-plan.md` (Round-2 SHIP substitute).
+Execution plan: `docs/plans/2026-08-08-backlog-completion-plan.md` (three-lens thinktank-approved,
+Round 3).
 
-**Public product:** `v1.110.0` on PyPI/GitHub. Tip includes #958 CUJ lock + #962 wheel dogfood + #963 CEO docs.
+**Public product:** `v1.110.6` on PyPI/GitHub (2026-08-08, version endpoint + release asset check);
+v1.110.7 in flight (#976 M8). Tip includes #958 CUJ lock + #962 wheel dogfood + #963 CEO docs + the
+2026-08-08 drain (#975 M7 → v1.110.6, #976 M8 → v1.110.7) and the P5·H2 fail-closed PR (#979, draft).
 **CEO packet:** `docs/audits/2026-08-06-ceo-backlog-update.md` (supersedes counts in
 `docs/audits/2026-08-03-ceo-backlog-update.md` for live unfinished totals; keep the 2026-08-03 file
 as historical). Also cite `docs/audits/2026-08-03-ceo-backlog-update.md` for continuity links.
 
 **Closed this reconcile (impl already merged; closure #963):** F7 (#950/#952/#955/#957),
 CPU-BACKEND (#923/#925), REF-CALL-REGISTRY (#915/#940).
+**Closed in the 2026-08-08 drain:** M7 (#975 → v1.110.6), M8 (#976 → v1.110.7 in flight).
+
+**Unfinished 17:** 0 READY, 6 BLOCKED (#89 #90 F5 F6 F8 MCP-SURFACE), 5 CEO_GATED (#48 #72 #77 #131 #169),
+6 DEMAND_GATED (#255 DD-006 AST-DSL-PARITY MCP-LEAN-DEFAULT CONTINUOUS-REFRESH RUST-REPLACE-SYMLINK).
+Plus the 2026-08-08 buildable audit queue (P5·H2 → draft #979; then M1, M3, M16, M17, M14) per
+`docs/plans/2026-08-08-backlog-completion-plan.md` — audit-queue TDD slices, distinct from the
+board's READY rows (which stay 0). Board READY is not a build license when BACKLOG reconcile says
+BLOCKED (A71/A76).
+
+**Hard stops:** Task 2A not merge-ready; no #169 spend; no silent CEO-gate flips; MCP wire-contract
+fence; no local `rust_core` cargo on the shared box for W3 halves.
+
+post-**v1.110.6**, PyPI-verified 2026-08-08 by the version endpoint (`tensor-grep 1.110.6`).
 
 **Unfinished 17:** 0 READY, 6 BLOCKED (#89 #90 F5 F6 F8 MCP-SURFACE), 5 CEO_GATED (#48 #72 #77 #131 #169),
 6 DEMAND_GATED (#255 DD-006 AST-DSL-PARITY MCP-LEAN-DEFAULT CONTINUOUS-REFRESH RUST-REPLACE-SYMLINK).
@@ -80,19 +97,22 @@ CPU-BACKEND (#923/#925), REF-CALL-REGISTRY (#915/#940).
 **Hard stops:** Task 2A not merge-ready; no #169 spend; no silent CEO-gate flips; MCP wire-contract
 fence; no local `rust_core` cargo on the shared box for W3 halves.
 
-post-**v1.110.0**, PyPI-verified 2026-08-06 by the version endpoint (`tensor-grep 1.110.0`).
+post-**v1.110.6**, PyPI-verified 2026-08-08 by the version endpoint (`tensor-grep 1.110.6`).
 
-## IN FLIGHT (PRs open right now — derived from `gh pr list`, 2026-08-06)
+## IN FLIGHT (PRs open right now — derived from `gh pr list`, 2026-08-08)
 
 | PR | Title | Type | State |
 |---|---|---|---|
-| #957 | `feat(lang-c,lang-cpp): cross-file caller resolution via include-path engine (F7 Task 11 wave 3)` | feat | OPEN |
-| #958 | `test: lock prepare→evidence→review-bundle enterprise CUJ chain` | test | DRAFT |
-| #961 | `docs: Phase 0+1 launch receipt + TASK_BOARD reconcile` | docs | OPEN |
+| #966 | `test: Task 2A FIX-FIRST Sol R3 (not GREEN)` | test | DRAFT — do-not-merge (RED by design) |
+| #967 | `docs: 2026-08-06 PM CEO update + A77–A82 lesson retention` | docs | OPEN (rebased onto current main 2026-08-08) |
+| #977 | `ci: spend-smart CI — PR-only code-touch gate for expensive jobs` | ci | DRAFT (rebased onto current main 2026-08-08) |
+| #978 | `docs: complete-backlog completion plan (2026-08-08)` | docs | DRAFT (plan PR, thinktank-approved) |
+| #979 | `fix: fail closed count-matches/files-* native structured route (H2)` | fix | DRAFT (codex R5 APPROVE-WITH-NITS) |
 
-*(Phase 0+1 launch PRs #951/#952/#953/#955/#956 all MERGED 2026-08-06. #911 MERGED 2026-08-04.
-#960 CLOSED 2026-08-06 — superseded by #961. Derive live `gh pr list` before treating this table
-as current.)*
+*(Derive live `gh pr list` before treating this table as current. #975/#976 MERGED 2026-08-08 — M7
+→ v1.110.6, M8 → v1.110.7 in flight. #967/#977 were found STALE-BASED 2026-08-08 (their labeled
+"ready"/"green" heads predated #969-#976); both rebased and re-pushed onto current main. #957/#958/#961
+merged/closed via the Phase-0/1 launch reconcile.)*
 
 *(#872, #871 and #868 all MERGED — #871 on 2026-07-31, #872 and #868 on 2026-08-01. They sat in
 this table as "CI running" / "BLOCKED — do not merge" after landing, which is the exact failure mode
@@ -376,3 +396,4 @@ None at this snapshot. #109 shipped in PR #605. WSL path bugs above are program-
 - Historical ledger: `docs/BACKLOG.md` · Contracts: `docs/CONTRACTS.md` · Laws: `AGENTS.md`
 - Release mechanics + positioning rules: `.claude/skills/tensor-grep-release-and-positioning`
 - What counts as proof: `.claude/skills/tensor-grep-validation-and-qa` (oracle forms 1–10)
+
