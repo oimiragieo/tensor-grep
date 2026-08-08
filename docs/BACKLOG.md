@@ -7,15 +7,14 @@
 > nonfinancial decision-gated, financial/spend-gated, demand/research-gated, and mixed/terminal
 > corrections—not merely SHIPPING or P0/P1. Update whenever a PR opens/merges or the queue changes.
 > Task-store IDs (`#NNN`) are cross-referenced.
-> **Current closed-world CEO snapshot: 2026-08-03 continuation, release `v1.102.1`, merged main
-> `8024125`, one open PR (#911), one open GitHub issue (#48).** Product healthy; planning PR
-> blocked on fresh exact-head security re-clearance; backlog not done; Task 2A correctly blocked. The complete
-> live disposition list is the canonical index in `docs/TASK_BOARD.md` (28 rows / 20 unfinished =
-> 7 READY, 2 IN_FLIGHT, 5 CEO_GATED, 6 DEMAND_GATED after F10+DD-004 RETIRED 2026-08-05); `docs/audits/2026-08-02-backlog-reconciliation.md` is its
-> dated evidence packet, and `docs/audits/2026-08-03-ceo-backlog-update.md` is the current dumbed-down
-> closed-world update. Task 2 is reconciled; the amended #89/#90 path-domain program plus Tasks 3–15
-> are the current execution queue. Historical sections below remain append-only evidence and may
-> describe old status.
+> **Current closed-world CEO snapshot: 2026-08-06 PM, release `v1.110.0`, tip `bb4fdae` (re-derive).**
+> Live disposition is the canonical index in `docs/TASK_BOARD.md` (28 rows / 17 unfinished =
+> **0 READY**, 6 BLOCKED, 0 IN_FLIGHT, 5 CEO_GATED, 6 DEMAND_GATED). Live dumbed-down packet:
+> `docs/audits/2026-08-06-pm-ceo-backlog-update.md`. Morning receipt (A70–A76 / pre-stamp READY):
+> `docs/audits/2026-08-06-ceo-backlog-update.md`. Task 2A remains correctly blocked (draft #966
+> FIX-FIRST lineage; Sol SHIP + Windows CI outstanding). No spend; #169 only financial stop.
+> Historical header text below this block may still describe older READY counts — trust the
+> canonical index + PM CEO packet, not stale prose in this ledger's opening paragraph.
 > Recovered local-environment incident (historical): `ENV-VENV-DRIFT` occurred when a WSL `uv`
 > probe replaced the canonical Windows `.venv`. The incompatible environment was moved aside and
 > Windows `uv sync --frozen` rebuilt and verified the canonical environment; this is not an active
@@ -43,6 +42,15 @@
 >
 
 
+
+## Recent campaign notes (2026-08-06 PM CEO)
+
+- Live CEO packet: `docs/audits/2026-08-06-pm-ceo-backlog-update.md` (A77–A82).
+- Closed-world index `2026-08-06.3`: **0 READY**, 6 BLOCKED, 5 CEO_GATED, 6 DEMAND_GATED
+  (17 unfinished / 28 rows). Morning file retained for A70–A76 + pre-stamp READY receipt.
+- Task 2A: draft #966 FIX-FIRST only — tip under review, not archaeological RED alone (A80/A81).
+- Findings this wave: stdin+heredoc poller false ALL_TERMINAL (#963); usage-limit seats FAILED;
+  status-stamp must retarget tracker pins (#964); AMEND_SPINE held (no MCP/F5–F8 product builds).
 
 ## Recent campaign notes (2026-08-06 CEO)
 

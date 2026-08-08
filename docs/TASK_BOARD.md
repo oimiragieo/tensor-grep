@@ -18,7 +18,16 @@
 >    `tag == PyPI` cannot distinguish *released* from *not started* from *died* and cost a release
 >    on 2026-07-28.
 
-## Campaign note (2026-08-06)
+## Campaign note (2026-08-06 PM)
+
+CEO update: `docs/audits/2026-08-06-pm-ceo-backlog-update.md` (morning receipt retained). Public
+product `v1.110.0`. Index `2026-08-06.3`. Unfinished: **0 READY / 6 BLOCKED / 5 CEO / 6 DEMAND**.
+Laws A77–A82. Task 2A draft #966 FIX-FIRST only — no GREEN. STOP unchanged: W3 rust/e2e shared-box,
+MCP wire fence (`1.7.0`), #169, CEO_GATED. R0 packets unchanged under
+`docs/audits/2026-08-06-ceo-gated-recommendation-packets.md` /
+`docs/audits/2026-08-06-demand-gated-research-receipts.md`.
+
+## Campaign note (2026-08-06 AM)
 
 CEO update: `docs/audits/2026-08-06-ceo-backlog-update.md`. Public product `v1.110.0`. #958 CUJ + #962
 wheel dogfood + #963 CEO docs landed. Index `2026-08-06.2` stamps former false READY rows
@@ -29,7 +38,7 @@ MCP wire fence, #169, CEO_GATED. R0 packets:
 
 ## Canonical status index
 
-Canonical status index version: 2026-08-06.2
+Canonical status index version: 2026-08-06.3
 - [x] **#22** — Status: RETIRED; PR: none; Trigger: exit 0 is complete with matches; exit 1 is complete with no match; exit 2 is incomplete; gpu_request_unhonoured stays in-band and does not independently force exit 2
 - [x] **F2** — Status: RETIRED; PR: none; Trigger: legacy anonymous-agent compatibility deliberately retains the sentinel; reopen only with a caller-supplied stable identity contract and migration plan
 - [x] **#36** — Status: SHIPPED; PR: PR #903; Trigger: all 27 topic skills audited and drift corrections merged; reopen on a new failing skill-drift receipt
@@ -61,21 +70,20 @@ Canonical status index version: 2026-08-06.2
 
 ## Live campaign snapshot
 
-Last reconciled: **2026-08-06** (CEO update + READY∩BLOCKED stamp). canonical index `2026-08-06.2`.
-Task 2 is complete as the reconciliation checkpoint; Task 2A RED remains correctly blocked.
+Last reconciled: **2026-08-06 PM** (CEO PM packet + A77–A82). canonical index `2026-08-06.3`.
+Task 2 is complete as the reconciliation checkpoint; Task 2A RED/repair remains correctly blocked.
 Closeout plan: `docs/plans/2026-08-06-enterprise-backlog-closeout-plan.md` (Round-2 SHIP substitute).
 
-**Public product:** `v1.110.0` on PyPI/GitHub. Tip includes #958 CUJ lock + #962 wheel dogfood + #963 CEO docs.
-**CEO packet:** `docs/audits/2026-08-06-ceo-backlog-update.md` (supersedes counts in
-`docs/audits/2026-08-03-ceo-backlog-update.md` for live unfinished totals; keep the 2026-08-03 file
-as historical). Also cite `docs/audits/2026-08-03-ceo-backlog-update.md` for continuity links.
+**Public product:** `v1.110.0` on PyPI/GitHub. Tip includes #958 CUJ + #962 wheel dogfood + #963–#965 docs.
+**CEO packet:** `docs/audits/2026-08-06-pm-ceo-backlog-update.md` (live); morning
+`docs/audits/2026-08-06-ceo-backlog-update.md` retained for A70–A76 / pre-stamp READY counts.
 
 **Closed this reconcile (impl already merged; closure #963):** F7 (#950/#952/#955/#957),
 CPU-BACKEND (#923/#925), REF-CALL-REGISTRY (#915/#940).
 
 **Unfinished 17:** 0 READY, 6 BLOCKED (#89 #90 F5 F6 F8 MCP-SURFACE), 5 CEO_GATED (#48 #72 #77 #131 #169),
 6 DEMAND_GATED (#255 DD-006 AST-DSL-PARITY MCP-LEAN-DEFAULT CONTINUOUS-REFRESH RUST-REPLACE-SYMLINK).
-0 IN_FLIGHT. Board READY is not a build license when BACKLOG reconcile says BLOCKED (A71/A76).
+0 IN_FLIGHT. Board READY is not a build license when BACKLOG reconcile says BLOCKED (A71/A76/A82).
 
 **Hard stops:** Task 2A not merge-ready; no #169 spend; no silent CEO-gate flips; MCP wire-contract
 fence; no local `rust_core` cargo on the shared box for W3 halves.

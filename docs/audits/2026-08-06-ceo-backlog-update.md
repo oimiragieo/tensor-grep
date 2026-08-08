@@ -150,3 +150,9 @@ rows (**#89**, **#90**, **F5**, **F6**, **F8**, **MCP-SURFACE**) to **BLOCKED** 
 (Task 2A / Tasks 4–13). Live unfinished disposition after that stamp: **0 READY** + **6 BLOCKED** +
 **5 CEO_GATED** + **6 DEMAND_GATED** (still **17 unfinished** / **28 rows**). This appendix is the
 correction; the dated counts above stay as the receipt.
+
+## SUPERSEDED — live packet moved 2026-08-06 PM
+
+The **live** dumbed-down CEO packet is now
+`docs/audits/2026-08-06-pm-ceo-backlog-update.md` (index `2026-08-06.3`, laws A77–A82). Keep this
+morning file as the A70–A76 / pre-stamp READY receipt — do not rewrite the body counts above.
