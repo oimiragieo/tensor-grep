@@ -70,7 +70,10 @@ def test_ci_workflow_should_run_smoke_gate_before_expensive_jobs() -> None:
         "test-gpu-linux",
         "benchmark-regression",
     ]:
-        assert "needs: smoke" in _job_section(workflow, job_name)
+        # CI-cost gate: gated jobs now declare `needs: [smoke, changes]`. Assert the SUBSTANCE
+        # (smoke still gates every expensive job) rather than the literal old `needs: smoke`
+        # spelling, so the cost-smart `changes` dependency cannot silently drop the smoke gate.
+        assert re.search(r"needs:\s*\[?[^\]]*\bsmoke\b", _job_section(workflow, job_name))
 
     assert "needs: [smoke," in _job_section(workflow, "release")
 
@@ -188,7 +191,7 @@ def test_ci_workflow_should_run_agent_readiness_gate() -> None:
     assert "scripts/agent_readiness.py" in agent_section
     assert "--no-shell-probes" in agent_section
     assert "--no-wsl-probe" in agent_section
-    assert "needs: smoke" in agent_section
+    assert re.search(r"needs:\s*\[?[^\]]*\bsmoke\b", agent_section)
     assert "agent-readiness" in _job_section(workflow, "release")
 
 
@@ -196,7 +199,7 @@ def test_ci_workflow_should_run_windows_agent_readiness_shell_probes() -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     windows_section = _job_section(workflow, "windows-agent-readiness")
     assert "runs-on: windows-latest" in windows_section
-    assert "needs: smoke" in windows_section
+    assert re.search(r"needs:\s*\[?[^\]]*\bsmoke\b", windows_section)
     assert "scripts/agent_readiness.py" in windows_section
     assert "--only-shell-probes" in windows_section
     assert "--no-wsl-probe" in windows_section
