@@ -187,3 +187,12 @@ asset must be built on an Intel macOS runner, currently `macos-15-intel`; `macos
 PyPI visibility alone is not enough evidence when installer or package-manager URLs depend on
 GitHub release assets. Non-release main pushes must leave the semantic-release version output empty
 so these asset jobs do not mutate an older GitHub release.
+
+## CI cost gate (2026-08-08)
+
+A `changes` job computes whether a pull_request's diff touches CODE (`src/`, `rust_core/`, `tests/`, `.github/workflows/`, `pyproject.toml`, `Cargo.toml`, `Cargo.lock`, `uv.lock`). The expensive/cross-platform jobs (`agent-readiness`, `windows-agent-readiness`, `static-analysis`, `test-python`, `test-rust-core`, `cuda-feature-check`, `search-golden-parity`, `native-build-smoke`, `test-gpu-linux`, `benchmark-regression`) gate on
+`if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'`.
+- MAIN pushes always run the full matrix, so `release` (which `needs:` them) is never skipped.
+- A docs-only PR skips those jobs; a skipped required job counts as SUCCESS for branch protection (never use trigger-level `paths-ignore` — no status => deadlock).
+- `test-rust-core` drops the macOS x nightly leg (continue-on-error signal at ~10x the linux rate; nightly still runs on linux/windows every PR and all channels weekly via cron).
+- Gated jobs declare `needs: [smoke, changes]`; the smoke gate is still enforced (see the release-workflow-configuration validator).
