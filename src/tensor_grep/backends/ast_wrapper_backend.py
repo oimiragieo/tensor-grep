@@ -402,6 +402,15 @@ class AstGrepWrapperBackend(ComputeBackend):
                 "AstGrepWrapperBackend requires the 'ast-grep' binary to be installed."
             )
 
+        if config and (config.invert_match or config.word_regexp):
+            # M8 audit (twin of ast_backend): the ast-grep wrapper implements no inverted /
+            # whole-word MATCH semantics -- silently dropping `-v`/`-w` returned the wrong set.
+            # Fail closed instead of silently returning the non-inverted matches.
+            raise BackendExecutionError(
+                "invert-match (-v) / word-regexp (-w) are not supported for AST structural "
+                "search; use plain `tg search` for inverted or whole-word matching."
+            )
+
         try:
             cmd, context = self._build_command(pattern, file_paths, config=config)
             with context:
@@ -424,6 +433,15 @@ class AstGrepWrapperBackend(ComputeBackend):
         if not self.is_available():
             raise BackendExecutionError(
                 "AstGrepWrapperBackend requires the 'ast-grep' binary to be installed."
+            )
+
+        if config and (config.invert_match or config.word_regexp):
+            # M8 audit (twin of ast_backend): the ast-grep wrapper implements no inverted /
+            # whole-word MATCH semantics -- silently dropping `-v`/`-w` returned the wrong set.
+            # Fail closed instead of silently returning the non-inverted matches.
+            raise BackendExecutionError(
+                "invert-match (-v) / word-regexp (-w) are not supported for AST structural "
+                "search; use plain `tg search` for inverted or whole-word matching."
             )
 
         try:
