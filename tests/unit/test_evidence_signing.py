@@ -69,6 +69,24 @@ def test_sign_then_verify_roundtrip(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_verify_receipt_malformed_embedded_public_key_never_raises(tmp_path: Path) -> None:
+    """M7 audit: a malformed EMBEDDED public key used to escape verify_receipt as an uncaught
+    EvidenceSigningError (from `key_id_from_public_b64`, called outside the guarded try), which
+    aborted a whole review-bundle verify. It must degrade to a normal invalid result."""
+    key_path = tmp_path / "key"
+    evidence_signing.generate_keypair(key_path)
+    signed = evidence_signing.sign_receipt(_sample_receipt(), private_key_path=key_path)
+
+    signed["signing"] = dict(signed["signing"])
+    signed["signing"]["public_key"] = "!!!not-base64!!!"
+
+    result = evidence_signing.verify_receipt(signed)
+
+    assert result["valid"] is False
+    assert result["checks"]["signature_valid"] is False
+    assert any("public key" in error.lower() for error in result["errors"])
+
+
 def test_tampered_field_is_rejected(tmp_path: Path) -> None:
     key_path = tmp_path / "key"
     evidence_signing.generate_keypair(key_path)

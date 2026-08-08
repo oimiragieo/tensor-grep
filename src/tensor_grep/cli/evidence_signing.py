@@ -468,14 +468,19 @@ def verify_receipt(
             signature_valid = False
             errors.append("Signature block is missing a value.")
         else:
-            fingerprint = key_id_from_public_b64(public_key_field)
+            # M7 audit: `key_id_from_public_b64` raises EvidenceSigningError on a malformed
+            # embedded public key, and it used to sit OUTSIDE this try -- one corrupt receipt
+            # aborted a whole review-bundle verify as a raw error instead of recording a normal
+            # invalid result. Move it inside + catch it so verify_receipt keeps its
+            # never-raises contract.
             try:
+                fingerprint = key_id_from_public_b64(public_key_field)
                 public_key = Ed25519PublicKey.from_public_bytes(
                     base64.b64decode(public_key_field, validate=True)
                 )
                 public_key.verify(base64.b64decode(signature_value, validate=True), canonical_bytes)
                 signature_valid = True
-            except (InvalidSignature, ValueError, TypeError) as exc:
+            except (InvalidSignature, ValueError, TypeError, EvidenceSigningError) as exc:
                 signature_valid = False
                 errors.append(f"Signature does not verify against the embedded public key: {exc}")
 
