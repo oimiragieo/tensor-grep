@@ -317,19 +317,43 @@ class AstBackend(ComputeBackend):
         digest = hashlib.sha256(f"{Path(file_path).resolve()}::{lang}".encode()).hexdigest()
         return self._get_persistent_cache_dir() / lang / "node-index" / f"{digest}.json"
 
-    def _get_result_cache_path(self, file_path: str, lang: str, pattern: str) -> Path:
+    def _get_result_cache_path(
+        self,
+        file_path: str,
+        lang: str,
+        pattern: str,
+        *,
+        invert_match: bool = False,
+        word_regexp: bool = False,
+    ) -> Path:
+        # M8 audit: the persistent cache key must include the match-semantics flags so a cached
+        # non-inverted result can never be served to an inverted query (and vice versa).
         digest = hashlib.sha256(
-            f"{Path(file_path).resolve()}::{lang}::{pattern}".encode()
+            (
+                f"{Path(file_path).resolve()}::{lang}::{pattern}::v={invert_match}::w={word_regexp}"
+            ).encode()
         ).hexdigest()
         return self._get_persistent_cache_dir() / lang / f"{digest}.json"
 
     def _load_persistent_cached_result(
-        self, file_path: str, lang: str, pattern: str
+        self,
+        file_path: str,
+        lang: str,
+        pattern: str,
+        *,
+        invert_match: bool = False,
+        word_regexp: bool = False,
     ) -> SearchResult | None:
         if not self._is_persistent_cache_enabled():
             return None
 
-        cache_path = self._get_result_cache_path(file_path, lang, pattern)
+        cache_path = self._get_result_cache_path(
+            file_path,
+            lang,
+            pattern,
+            invert_match=invert_match,
+            word_regexp=word_regexp,
+        )
         if not cache_path.exists():
             return None
 
@@ -366,12 +390,25 @@ class AstBackend(ComputeBackend):
         )
 
     def _persist_result_cache(
-        self, file_path: str, lang: str, pattern: str, result: SearchResult
+        self,
+        file_path: str,
+        lang: str,
+        pattern: str,
+        result: SearchResult,
+        *,
+        invert_match: bool = False,
+        word_regexp: bool = False,
     ) -> None:
         if not self._is_persistent_cache_enabled():
             return
 
-        cache_path = self._get_result_cache_path(file_path, lang, pattern)
+        cache_path = self._get_result_cache_path(
+            file_path,
+            lang,
+            pattern,
+            invert_match=invert_match,
+            word_regexp=word_regexp,
+        )
         payload = {
             "file_signature": list(self._build_file_signature(file_path)),
             "total_files": result.total_files,
@@ -625,13 +662,28 @@ class AstBackend(ComputeBackend):
             # BackendExecutionError, never fall through to a silent-empty result.
             raise BackendExecutionError("AstBackend requires tree-sitter to be installed.")
 
+        if config and (config.invert_match or config.word_regexp):
+            # M8 audit: neither AST backend implements inverted (`-v`) / whole-word (`-w`)
+            # MATCH semantics -- silently ignoring them returned the WRONG (non-inverted) match
+            # set as if it were inverted. Fail closed: raise, never silently drop.
+            raise BackendExecutionError(
+                "invert-match (-v) / word-regexp (-w) are not supported for AST structural "
+                "search; use plain `tg search` for inverted or whole-word matching."
+            )
+
         lang = "python"
         if config and hasattr(config, "lang") and config.lang:
             lang = config.lang
         elif file_path.endswith(".js") or file_path.endswith(".ts"):
             lang = "javascript"
 
-        persistent_cached_result = self._load_persistent_cached_result(file_path, lang, pattern)
+        persistent_cached_result = self._load_persistent_cached_result(
+            file_path,
+            lang,
+            pattern,
+            invert_match=bool(config.invert_match if config else False),
+            word_regexp=bool(config.word_regexp if config else False),
+        )
         if persistent_cached_result is not None:
             return self._cap_to_max_count(persistent_cached_result, config)
 
@@ -648,7 +700,14 @@ class AstBackend(ComputeBackend):
                     "ast_structural_index_cache",
                 )
                 if result.total_matches > 0:
-                    self._persist_result_cache(file_path, lang, pattern, result)
+                    self._persist_result_cache(
+                        file_path,
+                        lang,
+                        pattern,
+                        result,
+                        invert_match=bool(config.invert_match if config else False),
+                        word_regexp=bool(config.word_regexp if config else False),
+                    )
                     return self._cap_to_max_count(result, config)
 
         parser = self._get_parser(lang)
@@ -663,7 +722,14 @@ class AstBackend(ComputeBackend):
                 "ast_structural_index",
             )
             if result.total_matches > 0:
-                self._persist_result_cache(file_path, lang, pattern, result)
+                self._persist_result_cache(
+                    file_path,
+                    lang,
+                    pattern,
+                    result,
+                    invert_match=bool(config.invert_match if config else False),
+                    word_regexp=bool(config.word_regexp if config else False),
+                )
                 return self._cap_to_max_count(result, config)
 
         try:
@@ -739,5 +805,12 @@ class AstBackend(ComputeBackend):
             routing_distributed=False,
             routing_worker_count=1,
         )
-        self._persist_result_cache(file_path, lang, pattern, result)
+        self._persist_result_cache(
+            file_path,
+            lang,
+            pattern,
+            result,
+            invert_match=bool(config.invert_match if config else False),
+            word_regexp=bool(config.word_regexp if config else False),
+        )
         return self._cap_to_max_count(result, config)
