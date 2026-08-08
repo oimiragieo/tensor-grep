@@ -1,6 +1,32 @@
 # CHANGELOG
 
 
+## v1.110.5 (2026-08-08)
+
+### Bug Fixes
+
+- Mark ast-grep partial scans result_incomplete (M10 audit)
+  ([#974](https://github.com/oimiragieo/tensor-grep/pull/974),
+  [`8c04a01`](https://github.com/oimiragieo/tensor-grep/commit/8c04a014328bf49ecd64e80f3d8f4faf0eb19c17))
+
+M10 MED (verified): `ast_wrapper_backend._raise_for_nonzero` waives an ast-grep scan that skipped
+  unreadable paths (per-path access failure; findings still on stdout), but the result carried NO
+  incompleteness marker -- so a consumer treats the found-rows as complete. The rg twin sets
+  `result_incomplete=True` + `incomplete_reason_class="unreadable_path"` (ripgrep_backend.py).
+  Pre-fix, `result_incomplete` was NEVER written in ast_wrapper_backend (grepped: 0 matches on
+  origin/main) -- the structural RED proof for the new assertions.
+
+Change: `_raise_for_nonzero` now returns a bool (True = non-fatal partial scan; False on exit 0 /
+  clean JSON waive; genuine failures still raise BackendExecutionError), threaded into
+  `_parse_result(..., partial=...)` which marks the SearchResult `result_incomplete=True` +
+  `incomplete_reason_class="unreadable_path"` (mirroring the rg twin). All 3 call sites (`search`,
+  `search_many`, `search_project`) wired.
+
+Tests: extended `test_ast_wrapper_backend_tolerates_per_path_access_warnings_with_findings` to
+  assert `result_incomplete is True` + `incomplete_reason_class == "unreadable_path"` (the existing
+  37-test file passes). Mypy/ruff clean.
+
+
 ## v1.110.4 (2026-08-07)
 
 ### Bug Fixes
