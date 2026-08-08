@@ -1,6 +1,29 @@
 # CHANGELOG
 
 
+## v1.110.6 (2026-08-08)
+
+### Bug Fixes
+
+- Verify_receipt malformed embedded key never-raises (M7 audit)
+  ([#975](https://github.com/oimiragieo/tensor-grep/pull/975),
+  [`2cafa29`](https://github.com/oimiragieo/tensor-grep/commit/2cafa290431950d1b107103bbf8cad6044579cff))
+
+M7 MED (verified): `verify_receipt` computed `fingerprint =
+  key_id_from_public_b64(public_key_field)` OUTSIDE the guarded try. On a malformed embedded public
+  key (valid str, invalid base64), `key_id_from_public_b64` raises `EvidenceSigningError` -- which
+  escaped and aborted a whole review-bundle verify as a raw error instead of recording a normal
+  invalid result, violating verify_receipt's documented "never raises" contract (methods in this
+  family return an `errors` list instead).
+
+Change: moved the fingerprint derivation INSIDE the try and added `EvidenceSigningError` to the
+  except tuple, so a corrupt receipt now degrades to `valid=False` + a malformed-key error.
+
+Tests: new `test_verify_receipt_malformed_embedded_public_key_never_raises` (a signed receipt with a
+  corrupted embedded public key must return an invalid result, never raise). The existing
+  sign/tamper tests still pass. ruff/format-preview/mypy clean.
+
+
 ## v1.110.5 (2026-08-08)
 
 ### Bug Fixes
