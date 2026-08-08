@@ -1467,6 +1467,99 @@ def test_count_matches_refuses_cleanly_when_rg_unresolvable_json(monkeypatch, tm
     assert "rg" in payload["detail"].lower() or "ripgrep" in payload["detail"].lower()
 
 
+def test_files_with_matches_refused_when_combined_with_json(monkeypatch, tmp_path: Path):
+    """P5·H2 (codex Finding 1): `-l`/`--files-with-matches` is a RAW PATH-output mode the
+    tensor-grep aggregate `--json` envelope cannot express. Before the fix, `tg search --json -l`
+    silently printed plain paths with exit 0 (JSON contract dropped -- verified live). It must
+    refuse fail-closed with a structured exit 2, mirroring the native
+    `exit_native_structured_flag_dropped` refusal (rust_core/src/main.rs)."""
+    _patch_cli_dependencies(monkeypatch)
+    target = tmp_path / "sample.txt"
+    target.write_text("foo bar foo baz foo\nanother line\nfoo\n", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["search", "foo", str(target), "--json", "-l"])
+
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["error"] == "unsupported_flag"
+    assert "files-with-matches" in payload["detail"]
+    # No plain path masquerading as the structured answer.
+    assert target.name not in result.stdout
+
+
+def test_files_without_match_refused_when_combined_with_ndjson(monkeypatch, tmp_path: Path):
+    """P5·H2: `--files-without-match` under `--ndjson` is the same raw-path-vs-structured
+    contract drop; refuse it identically. (ndjson emits a text error via `_exit_search_error`,
+    matching the native/JSON refusal style.)"""
+    _patch_cli_dependencies(monkeypatch)
+    target = tmp_path / "sample.txt"
+    target.write_text("foo bar foo baz foo\nanother line\nfoo\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app, ["search", "foo", str(target), "--ndjson", "--files-without-match"]
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "files-without-match" in result.output
+    assert "refusing" in result.output
+
+
+def test_files_with_matches_plain_still_works_without_json(monkeypatch, tmp_path: Path):
+    """Bidirectional half of P5·H2: plain `-l` (no `--json`/`--ndjson`) is a legitimate raw
+    path output and must NOT be refused. Guards the new guard's own negative arm; the broader
+    `test_files_with_matches_*` suite pins the honoring behavior itself."""
+    _patch_cli_dependencies(monkeypatch)
+    target = tmp_path / "sample.txt"
+    target.write_text("foo bar foo baz foo\nanother line\nfoo\n", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["search", "foo", str(target), "-l"])
+
+    assert result.exit_code != 2, result.output
+    assert "unsupported_flag" not in result.output
+
+
+def test_files_with_matches_refused_when_json_ndjson_and_format_rg_combine(monkeypatch, tmp_path):
+    """P5·H2 (codex round-3 finding): the `--format rg --json` passthrough exemption must
+    REQUIRE `not ndjson`. `--json --ndjson --format rg -l` has no rg-passthrough twin for the
+    ndjson side (rg's `--json` events are not the tensor-grep ndjson schema), so it must
+    refuse fail-closed instead of emitting a raw path with exit 0 (ndjson contract dropped).
+
+    CliRunner does not set `sys.argv`, and `_explicit_rg_format_requested()` reads `sys.argv`
+    (it deliberately discards `format_value`) -- so without stubbing argv here the search
+    command would see `explicit_rg_format=False` and the test would pass even if the `not
+    ndjson` term were reverted (a vacuous oracle). Stub `sys.argv` to the real invocation so
+    `explicit_rg_format=True` is genuinely exercised, and add the bidirectional control."""
+    _patch_cli_dependencies(monkeypatch)
+    target = tmp_path / "sample.txt"
+    target.write_text("foo bar foo baz foo\nanother line\nfoo\n", encoding="utf-8")
+
+    # The tiger: --json AND --ndjson AND --format rg. `_explicit_rg_format_requested()` reads
+    # sys.argv (discarding the typer-parsed format_value), so mirror the real invocation there.
+    monkeypatch.setattr(
+        "sys.argv",
+        ["tg", "search", str(target), "--json", "--ndjson", "--format", "rg", "-l"],
+    )
+    result = CliRunner().invoke(
+        app, ["search", "foo", str(target), "--json", "--ndjson", "--format", "rg", "-l"]
+    )
+    assert result.exit_code == 2, result.output
+    assert "unsupported_flag" in result.output
+    assert "files-with-matches" in result.output
+
+    # Bidirectional control: pure `--json --format rg -l` (explicit rg format, NO ndjson) is
+    # the legitimately-exempt rg-passthrough case -- it must NOT be refused here.
+    monkeypatch.setattr(
+        "sys.argv",
+        ["tg", "search", str(target), "--json", "--format", "rg", "-l"],
+    )
+    control = CliRunner().invoke(
+        app, ["search", "foo", str(target), "--json", "--format", "rg", "-l"]
+    )
+    assert control.exit_code != 2, control.output
+    assert "unsupported_flag" not in control.output
+
+
 def test_count_matches_still_uses_ripgrep_when_available(tmp_path: Path):
     """Bidirectional half of task #121: when rg genuinely IS available, `--count-matches`
     must keep working exactly as before (real occurrence count via rg), never refuse.

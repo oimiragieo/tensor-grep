@@ -3473,6 +3473,12 @@ mod tests {
     ///     has no field for it either. This is a general native-engine limitation, not specific to
     ///     `--gpu-device-ids`, discovered while building #131 F3 and explicitly OUT OF SCOPE for
     ///     it -- flagged here (not silently left "safe") so it isn't lost, pending its own task.
+    ///     P5·H2 (2026-08-08) CLOSED the count/files trio of OUT_OF_SCOPE_GAPs below
+    ///     (`count_matches`/`files_with_matches`/`files_without_match`): the native-route
+    ///     refusals (`validate_search_native_structured_refusals` /
+    ///     `validate_positional_native_structured_refusals`) now HARD-REFUSE them (exit 2) before
+    ///     the GPU/CPU branches are reached, so on the GPU branch they are re-classified
+    ///     MOOT-OR-UNREACHABLE. Their OUT_OF_SCOPE_GAP siblings here keep that bucket.
     #[cfg(test)]
     fn assert_search_args_gpu_field_classification_is_exhaustive(args: &SearchArgs) {
         let SearchArgs {
@@ -3482,13 +3488,14 @@ mod tests {
             invert_match: _,     // HONORED
             no_invert_match: _,  // NO-OP (ditto)
             count: _,            // HONORED
-            count_matches: _,    // OUT_OF_SCOPE_GAP
-            line_number: _,      // HONORED (`line_number && !no_line_number`, task #131 F3)
-            no_line_number: _,   // HONORED (see line_number)
-            column: _,           // OUT_OF_SCOPE_GAP
-            no_column: _,        // NO-OP (moot: `column` itself is never emitted by this engine)
-            replace: _,          // HONORED (task #131 F3)
-            format: _,           // OUT_OF_SCOPE_GAP (only `format=="rg"` is independently
+            count_matches: _,    // MOOT-OR-UNREACHABLE (P5·H2: the native-route gate refuses
+            // this before the GPU branch is reached)
+            line_number: _, // HONORED (`line_number && !no_line_number`, task #131 F3)
+            no_line_number: _, // HONORED (see line_number)
+            column: _,      // OUT_OF_SCOPE_GAP
+            no_column: _,   // NO-OP (moot: `column` itself is never emitted by this engine)
+            replace: _,     // HONORED (task #131 F3)
+            format: _,      // OUT_OF_SCOPE_GAP (only `format=="rg"` is independently
             // verified unreachable here -- forces rg passthrough
             // unconditionally; any OTHER non-`rg` value's routing was NOT
             // independently traced through the Python front door in this
@@ -3519,8 +3526,8 @@ mod tests {
             no_hidden: _,           // NO-OP (restates the default)
             follow: _,              // OUT_OF_SCOPE_GAP
             text: _,                // HONORED
-            files_with_matches: _,  // OUT_OF_SCOPE_GAP
-            files_without_match: _, // OUT_OF_SCOPE_GAP
+            files_with_matches: _,  // MOOT-OR-UNREACHABLE (P5·H2: refused before this branch)
+            files_without_match: _, // MOOT-OR-UNREACHABLE (P5·H2: refused before this branch)
             file_type: _,           // OUT_OF_SCOPE_GAP
             index: _,               // MOOT-OR-UNREACHABLE (route_search checks explicit_index
             // BEFORE explicit_gpu_device_ids -- TrigramIndex always wins)
@@ -3574,14 +3581,17 @@ mod tests {
     /// `search_requires_ripgrep_passthrough`-equivalent gate at all, so its OUT_OF_SCOPE_GAP
     /// fields are reachable via `--gpu-device-ids` unconditionally (not only combined with
     /// `--json`/`--ndjson` as for `SearchArgs`) -- a strictly broader exposure of the same
-    /// pre-existing, out-of-scope gap.
+    /// pre-existing, out-of-scope gap. P5·H2 (2026-08-08) closed the `count_matches` member of
+    /// that gap: `validate_positional_native_structured_refusals` now HARD-REFUSES it (exit 2)
+    /// at the top of both native positional arms (the structured doors and, unconditionally, the
+    /// `--gpu-device-ids` door), so on the GPU branch it is MOOT-OR-UNREACHABLE.
     #[cfg(test)]
     fn assert_positional_cli_gpu_field_classification_is_exhaustive(cli: &PositionalCli) {
         let PositionalCli {
             pattern: _,           // HONORED
             path: _,              // HONORED
             count: _,             // HONORED
-            count_matches: _,     // OUT_OF_SCOPE_GAP
+            count_matches: _,     // MOOT-OR-UNREACHABLE (P5·H2: refused before this branch)
             line_number: _,       // HONORED (task #131 F3)
             no_line_number: _,    // HONORED (task #131 F3)
             column: _,            // OUT_OF_SCOPE_GAP
@@ -3618,6 +3628,321 @@ mod tests {
     fn positional_cli_gpu_field_classification_covers_a_real_parsed_instance() {
         let cli = parse_positional_cli(&["tg", "PATTERN"]);
         assert_positional_cli_gpu_field_classification_is_exhaustive(&cli);
+    }
+
+    /// P5·H2 coverage ratchet (modeled on `assert_search_args_gpu_field_classification_is_exhaustive`
+    /// above). An EXHAUSTIVE destructure (no `..`) of every `SearchArgs` field: adding a field to
+    /// that struct stops THIS function from compiling until a human classifies it for the NATIVE
+    /// STRUCTURED route (`--json`/`--ndjson` -> `BackendSelection::NativeCpu`/`NativeGpu`, minus
+    /// the `--format rg --json` passthrough that `search_requires_ripgrep_passthrough` honors).
+    /// Disposition bucket per field, for that route specifically:
+    ///   - HONORED: threaded into `NativeSearchConfig` / the structured emitter (or, for
+    ///     `format`/`pcre2`-class fields, routed to an rg passthrough that carries them).
+    ///   - HARD-REFUSED: THIS PR's class -- the native engine silently dropped it pre-fix
+    ///     (`native_structed_dropped_search_flags` now lists it and the native arms exit 2).
+    ///   - NO-OP: restates a default the native engine already behaves as on this route.
+    ///   - MOOT-OR-UNREACHABLE: an earlier, verified gate (early return or routing precedence)
+    ///     makes it impossible to reach a native structured branch, or impossible to matter once
+    ///     there.
+    ///   - IRRELEVANT-TO-THIS-CLASS: not a native-engine drop; its disposition is the GPU/plain-
+    ///     text ratchets' business (cross-referenced, this function does not re-litigate it).
+    #[cfg(test)]
+    fn assert_search_args_native_structured_field_classification_is_exhaustive(args: &SearchArgs) {
+        let SearchArgs {
+            ignore_case: _,      // HONORED (NativeSearchConfig)
+            fixed_strings: _,    // HONORED
+            no_fixed_strings: _, // NO-OP (hardcoded false in every rg-passthrough builder too)
+            invert_match: _,     // HONORED
+            no_invert_match: _,  // NO-OP (ditto)
+            count: _,            // HONORED (line-granular contract, credentialed for -c)
+            count_matches: _,    // HARD-REFUSED (P5·H2 -- THIS PR)
+            line_number: _,      // HONORED
+            no_line_number: _,   // HONORED (see line_number)
+            column: _,           // IRRELEVANT-TO-THIS-CLASS (neither a silent native drop fix nor
+            // an honored native field; see the GPU ratchet's OUT_OF_SCOPE_GAP)
+            no_column: _, // NO-OP (moot: `column` is never emitted by this engine)
+            replace: _,   // HONORED (task #131 F3)
+            format: _,    // ROUTE SELECTOR: `"rg"` => honored rg passthrough (carries the
+            // refused flags through `command_ripgrep_args`, so it is excluded from the refusal
+            // predicate); any other value reaches native structured only via the json gate and is
+            // not a silent drop of THIS class (no native field for it to drop)
+            sort: _,                // IRRELEVANT-TO-THIS-CLASS (GPU ratchet OUT_OF_SCOPE_GAP)
+            sort_reverse: _,        // IRRELEVANT-TO-THIS-CLASS
+            sort_files: _,          // IRRELEVANT-TO-THIS-CLASS
+            null: _,                // IRRELEVANT-TO-THIS-CLASS
+            null_data: _,           // IRRELEVANT-TO-THIS-CLASS
+            multiline: _,           // IRRELEVANT-TO-THIS-CLASS
+            multiline_dotall: _,    // IRRELEVANT-TO-THIS-CLASS
+            context: _,             // HONORED
+            after_context: _,       // HONORED
+            before_context: _,      // HONORED
+            max_count: _,           // HONORED
+            max_depth: _,           // HONORED
+            word_regexp: _,         // HONORED
+            smart_case: _,          // HONORED
+            globs: _,               // HONORED
+            no_ignore: _,           // HONORED
+            ignore: _,              // NO-OP (restates the no_ignore default)
+            no_ignore_dot: _,       // IRRELEVANT-TO-THIS-CLASS
+            no_ignore_exclude: _,   // IRRELEVANT-TO-THIS-CLASS
+            no_ignore_files: _,     // IRRELEVANT-TO-THIS-CLASS
+            no_ignore_global: _,    // IRRELEVANT-TO-THIS-CLASS
+            no_ignore_parent: _,    // IRRELEVANT-TO-THIS-CLASS
+            hidden: _,              // HONORED
+            no_hidden: _,           // NO-OP
+            follow: _,              // IRRELEVANT-TO-THIS-CLASS
+            text: _,                // HONORED
+            files_with_matches: _,  // HARD-REFUSED (P5·H2 -- THIS PR)
+            files_without_match: _, // HARD-REFUSED (P5·H2 -- THIS PR)
+            file_type: _,           // IRRELEVANT-TO-THIS-CLASS
+            index: _,               // MOOT-OR-UNREACHABLE (route_search checks explicit_index
+            // BEFORE json/ndjson -> the index path, which itself Refuses count/files flags
+            // (IndexFlagPolicy::Refuse) with its own message; a structured index search never
+            // reaches these native arms)
+            force_cpu: _, // MOOT-OR-UNREACHABLE (structured output + force_cpu routes to
+            // native_cpu_force, whose arms below refuse identically; a structured request can
+            // never be served exclusively by rg)
+            gpu_device_ids: _, // HONORED (the field that selects the whole path; refusal predicate
+            // fires on the positional twin for it, see below)
+            color: _,          // HONORED (task #131 F3)
+            path_separator: _, // IRRELEVANT-TO-THIS-CLASS
+            only_matching: _,  // HONORED (task #131 F3 -- do NOT extend the refusal to `-o`)
+            vimgrep: _,        // IRRELEVANT-TO-THIS-CLASS
+            passthru: _,       // IRRELEVANT-TO-THIS-CLASS
+            json: _,           // ROUTE SELECTOR (native structured trigger; honored as the
+            // emitter mode -- the refusal predicate makes the *combination* json + refused flag
+            // exit 2, never both silently)
+            ndjson: _,  // ROUTE SELECTOR (ditto)
+            verbose: _, // HONORED
+            regexp: _,  // HONORED
+            pattern: _, // HONORED
+            path: _,    // HONORED
+            pcre2: _,   // MOOT-OR-UNREACHABLE (rg available -> routed to ripgrep_pcre2
+            // before the native branches; rg unavailable -> require_ripgrep_or_exit hard-exits)
+            auto_hybrid_regex: _, // IRRELEVANT-TO-THIS-CLASS
+            unicode: _,           // NO-OP (restates the Unicode default)
+            pcre2_unicode: _,     // NO-OP (alias of unicode)
+            max_filesize: _,      // HONORED (task #131 F3)
+            no_ignore_vcs: _,     // HONORED (task #131 F3)
+            require_git: _,       // IRRELEVANT-TO-THIS-CLASS
+            messages: _,          // NO-OP (this engine emits no diagnostic-message mode)
+            no_config: _,         // NO-OP (this backend never reads an rg config file either)
+            pcre2_version: _,     // MOOT-OR-UNREACHABLE (early return at the top of
+            // handle_ripgrep_search)
+            type_list: _, // MOOT-OR-UNREACHABLE (ditto)
+            version: _,   // MOOT-OR-UNREACHABLE (ditto)
+        } = args;
+    }
+
+    #[test]
+    fn search_args_native_structured_field_classification_covers_a_real_parsed_instance() {
+        // Exercising against real clap-parsed instances keeps the ratchet from being vacuous; the
+        // recurrence guard is the destructure compiling at all.
+        let args = parse_search_args(&["tg", "search", "PATTERN"]);
+        assert_search_args_native_structured_field_classification_is_exhaustive(&args);
+        let args = parse_search_args(&["tg", "search", "--json", "--count-matches", "PATTERN"]);
+        assert_search_args_native_structured_field_classification_is_exhaustive(&args);
+    }
+
+    #[test]
+    fn native_structured_route_hard_refuses_count_and_files_flags() {
+        // P5·H2 behavioral arm (the refusal predicate): pre-fix, `search_requires_ripgrep_passthrough`'s
+        // hard-flag list is gated behind !json&&!ndjson, so on `--json`/`--ndjson` these flags fell
+        // through to the native engine and were SILENTLY DROPPED (No `NativeSearchConfig` field;
+        // verified live on the shipped native front door: exit 0 with a plain match list). Each
+        // combinator must now resolve to the EXACT refusal set, not an empty/green ok.
+        for tokens in [
+            ["tg", "search", "--json", "--count-matches", "needle", "."].as_slice(),
+            ["tg", "search", "--count-matches", "--json", "needle", "."].as_slice(),
+            ["tg", "search", "--ndjson", "--count-matches", "needle", "."].as_slice(),
+        ] {
+            let args = parse_search_args(tokens);
+            assert_eq!(
+                native_structured_dropped_search_flags(&args),
+                vec!["--count-matches"],
+                "structured native route must list --count-matches as refused: {tokens:?}"
+            );
+        }
+        let args = parse_search_args(&[
+            "tg",
+            "search",
+            "--json",
+            "--files-with-matches",
+            "--files-without-match",
+            "needle",
+            ".",
+        ]);
+        assert_eq!(
+            native_structured_dropped_search_flags(&args),
+            vec!["--files-with-matches", "--files-without-match"],
+            "both files flags must be listed, in argv order"
+        );
+        let args = parse_search_args(&["tg", "search", "--json", "needle", "."]);
+        assert!(
+            native_structured_dropped_search_flags(&args).is_empty(),
+            "a plain --json search must NOT be refused"
+        );
+    }
+
+    #[test]
+    fn format_rg_json_passthrough_stays_honored_not_refused() {
+        // `--format rg --json` is an rg PASSTHROUGH (search_requires_ripgrep_passthrough returns
+        // true), and `command_ripgrep_args` carries count/files flags into rg's own argv. The
+        // refusal predicate must NOT fire there, or it would break a currently-honored route.
+        let args = parse_search_args(&[
+            "tg",
+            "search",
+            "--format",
+            "rg",
+            "--json",
+            "--count-matches",
+            "needle",
+            ".",
+        ]);
+        assert!(
+            search_requires_ripgrep_passthrough(&args),
+            "--format rg --json must stay an rg passthrough (not native)"
+        );
+        assert!(
+            native_structured_dropped_search_flags(&args).is_empty(),
+            "--format rg --json + --count-matches is honored via rg passthrough -- never refused"
+        );
+    }
+
+    #[test]
+    fn non_json_count_matches_is_not_refused_by_the_structured_gate() {
+        // The ALREADY-FINE path (locked by bootstrap test_rust_first_count_matches_refuses_via_native_self_guard):
+        // without --json/--ndjson, `search_requires_ripgrep_passthrough`'s non-json hard list makes
+        // count/files flags route to rg (honored) or self-refuse when rg is missing. The new refusal
+        // predicate must keep its hands off, or it would double-refuse a route a later gate already
+        // owns correctly.
+        let args = parse_search_args(&["tg", "search", "--count-matches", "needle", "."]);
+        assert!(
+            search_requires_ripgrep_passthrough(&args),
+            "non-json --count-matches still requires rg passthrough"
+        );
+        assert!(native_structured_dropped_search_flags(&args).is_empty());
+    }
+
+    #[test]
+    fn positional_gpu_and_structured_doors_hard_refuse_count_matches() {
+        // P5·H2 positional twin: `run_positional_cli` has no json/ndjson gate, so `--count-matches`
+        // reaches the native engine via the structured doors AND, unconditionally, the explicit
+        // `--gpu-device-ids` door (`native_search_config_for_positional` maps `count`, not
+        // `count_matches`). The predicate must name it there.
+        let cli = parse_positional_cli(&[
+            "tg",
+            "needle",
+            ".",
+            "--gpu-device-ids",
+            "0",
+            "--count-matches",
+        ]);
+        assert_eq!(
+            positional_native_dropped_search_flags(&cli),
+            vec!["--count-matches"],
+            "positional --gpu-device-ids + --count-matches is a native silent drop -> refuse"
+        );
+        let cli = parse_positional_cli(&["tg", "needle", ".", "--json", "--count-matches"]);
+        assert_eq!(
+            positional_native_dropped_search_flags(&cli),
+            vec!["--count-matches"],
+            "positional --json + --count-matches is a native silent drop -> refuse"
+        );
+        let cli = parse_positional_cli(&["tg", "needle", ".", "--count-matches"]);
+        assert!(
+            positional_native_dropped_search_flags(&cli).is_empty(),
+            "bare positional --count-matches routes to the Ripgrep arm (front-door-shielded); \
+             not this gate's class"
+        );
+        let cli = parse_positional_cli(&["tg", "needle", ".", "--gpu-device-ids", "0"]);
+        assert!(
+            positional_native_dropped_search_flags(&cli).is_empty(),
+            "no flag, no refuse"
+        );
+    }
+
+    #[test]
+    fn only_matching_and_count_stay_honored_not_refused() {
+        // Scoped-out must stay honored: `-o`/`--only-matching` is carried by NativeSearchConfig
+        // (task #131 F3) and `-c`/`--count` has the line-count contract the engine provides. They
+        // must never join the refusal set.
+        let args = parse_search_args(&["tg", "search", "--json", "-o", "-c", "needle", "."]);
+        assert!(native_structured_dropped_search_flags(&args).is_empty());
+    }
+
+    #[test]
+    fn native_structured_refusal_validator_returns_refusal_set() {
+        // P5·H2 audit Finding 3: the PREDICATE tests above inspect `native_structured_dropped_search_flags`
+        // directly, so deleting every validator CALL SITE would leave them green. These assert the
+        // refusers themselves -- the functions the (source-wired) call sites run -- return the
+        // exact refusal set for each newly-refused combo, and None for every honored one. The
+        // validators are PURE (they return the set instead of exiting), so this runs in-process
+        // without `exit(2)` killing the test binary; the exit is applied only at the call sites,
+        // covered end-to-end by `rust_core/tests/test_h2_native_structured_refusal.rs` against
+        // the real built `tg` binary (CARGO_BIN_EXE_tg) plus this in-process grid.
+        let cases: &[(&[&str], Option<Vec<&'static str>>)] = &[
+            // search-command structured doors
+            (
+                &["tg", "search", "--json", "--count-matches", "needle", "."],
+                Some(vec!["--count-matches"]),
+            ),
+            (
+                &["tg", "search", "--ndjson", "--count-matches", "needle", "."],
+                Some(vec!["--count-matches"]),
+            ),
+            (
+                &[
+                    "tg",
+                    "search",
+                    "--json",
+                    "--files-with-matches",
+                    "--files-without-match",
+                    "needle",
+                    ".",
+                ],
+                Some(vec!["--files-with-matches", "--files-without-match"]),
+            ),
+            // honored search-command routes
+            (&["tg", "search", "--json", "needle", "."], None),
+            (&["tg", "search", "--count-matches", "needle", "."], None),
+            // positional doors
+            (
+                &[
+                    "tg",
+                    "needle",
+                    ".",
+                    "--gpu-device-ids",
+                    "0",
+                    "--count-matches",
+                ],
+                Some(vec!["--count-matches"]),
+            ),
+            (
+                &["tg", "needle", ".", "--json", "--count-matches"],
+                Some(vec!["--count-matches"]),
+            ),
+            // positional honored routes
+            (&["tg", "needle", ".", "--count-matches"], None),
+            (&["tg", "needle", ".", "--gpu-device-ids", "0"], None),
+        ];
+        for (tokens, expected) in cases {
+            if tokens[1..].contains(&"search") {
+                let args = parse_search_args(tokens);
+                assert_eq!(
+                    validate_search_native_structured_refusals(&args).as_ref(),
+                    expected.as_ref(),
+                    "search validator mismatch for {tokens:?}"
+                );
+            } else {
+                let cli = parse_positional_cli(tokens);
+                assert_eq!(
+                    validate_positional_native_structured_refusals(&cli).as_ref(),
+                    expected.as_ref(),
+                    "positional validator mismatch for {tokens:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -7177,6 +7502,17 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
     if cli.pcre2 {
         require_ripgrep_or_exit(rg_available, "--pcre2");
     }
+    // P5·H2 (audit Finding 2 hoist): refuse the positional native count/files combos HERE, before
+    // `count_search_corpus_bytes` walks the whole tree on CUDA builds. `PositionalCli` has no
+    // `index` field, so there is no index-path refusal message to preserve -- a single,
+    // unconditional choke point covering both the `--json`/`--ndjson` doors and the `--gpu-device-ids`
+    // door (the in-arm calls in the NativeGpu/NativeCpu arms below were the original landing
+    // spots; removed as redundant). The bare positional `--count-matches` (no json/ndjson/gpu)
+    // routes to the Ripgrep arm and is NOT this gate's class (see
+    // `positional_native_dropped_search_flags`).
+    if let Some(dropped) = validate_positional_native_structured_refusals(&cli) {
+        exit_native_structured_flag_dropped(&dropped, cli.json || cli.ndjson);
+    }
     #[cfg_attr(not(feature = "cuda"), allow(unused_variables))]
     let structured_output = cli.json || cli.ndjson;
     let explicit_gpu = !cli.gpu_device_ids.is_empty();
@@ -8321,6 +8657,117 @@ fn search_requires_ripgrep_passthrough(args: &SearchArgs) -> bool {
                 || !args.file_type.is_empty()))
 }
 
+/// P5·H2 (Backend Fail-Closed Contract): `search_requires_ripgrep_passthrough`'s whole hard-flag
+/// list is gated behind `!args.json && !args.ndjson`, so on the STRUCTURED routes
+/// (`--json`/`--ndjson`) the count/files flags fall through to the native engine -- and neither
+/// `NativeSearchConfig` nor `GpuSearchParams` has a field for them
+/// (`native_search_config_for_command` maps `count`/`only_matching`, not these), so they were
+/// SILENTLY DROPPED (exit 0, wrong output; verified live on the shipped native front door:
+/// `tg search ... --json --count-matches` prints a match list, not occurrence counts). This
+/// predicate returns every such flag whose only ride to the native engine on this request would
+/// be that drop -- the HARD-REFUSAL set. `--format rg --json` is DELIBERATELY excluded: that is
+/// an rg PASSTHROUGH (`search_requires_ripgrep_passthrough` returns true), and
+/// `command_ripgrep_args` threads all three flags into rg's own argv, so that route is honored,
+/// not dropped -- refusing it would break working behavior.
+fn native_structured_dropped_search_flags(args: &SearchArgs) -> Vec<&'static str> {
+    let native_structured = args.ndjson || (args.json && args.format.as_deref() != Some("rg"));
+    if !native_structured {
+        return Vec::new();
+    }
+    let mut dropped = Vec::new();
+    if args.count_matches {
+        dropped.push("--count-matches");
+    }
+    if args.files_with_matches {
+        dropped.push("--files-with-matches");
+    }
+    if args.files_without_match {
+        dropped.push("--files-without-match");
+    }
+    dropped
+}
+
+/// P5·H2 positional twin. `run_positional_cli` has NO `search_requires_ripgrep_passthrough`-
+/// equivalent gate at all, so `--count-matches` reaches the native engine through the `--json`/
+/// `--ndjson` structured doors AND, unconditionally (no json/ndjson needed), the explicit
+/// `--gpu-device-ids` door -- and `native_search_config_for_positional` maps `count`, not
+/// `count_matches`. A NON--json/--ndjson/--gpu-device-ids positional `--count-matches` routes to
+/// `BackendSelection::Ripgrep` instead; it is NOT refused here -- the Python front door excludes
+/// it from native dispatch (bootstrap fast-path unsupported set + `count_matches` in
+/// `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`), so the published `tg PAT --count-matches`
+/// path is served by Python->rg and stays honored (the already-fine case locked by
+/// `test_cli_bootstrap.py::test_rust_first_count_matches_refuses_via_native_self_guard`).
+fn positional_native_dropped_search_flags(cli: &PositionalCli) -> Vec<&'static str> {
+    if !cli.count_matches {
+        return Vec::new();
+    }
+    if cli.json || cli.ndjson || !cli.gpu_device_ids.is_empty() {
+        vec!["--count-matches"]
+    } else {
+        Vec::new()
+    }
+}
+
+/// Fail closed (exit 2, mirrors `exit_gpu_cpu_fallback_flag_unhonorable`) when a request the
+/// native engine is about to serve carries a flag that engine silently drops. Names every dropped
+/// flag and the remedy. The `structured` half makes the remedy text honest: only a
+/// `--json`/`--ndjson` route can be redirected to `tg search ... --format rg --json` (rg's raw
+/// passthrough output, described as raw paths/counts -- not "JSON Lines", which this native
+/// refusal never emits); a bare `--gpu-device-ids` door gets the drop-the-flag/route-to-rg
+/// remedy. Positional users have no `--format` flag, so the structured remedy always points at
+/// the `tg search` command (which does have one) or at dropping the flags -- both work for both
+/// front doors.
+fn exit_native_structured_flag_dropped(flag_names: &[&'static str], structured: bool) {
+    let flags = flag_names.join(", ");
+    if structured {
+        eprintln!(
+            "error: {flags} is a raw path/count output mode that native structured \
+             --json/--ndjson search output cannot express and would be silently dropped; \
+             refusing rather than silently ignoring it. Drop --json/--ndjson (or {flags}), or \
+             rerun as `tg search ... --format rg --json` to request ripgrep's raw passthrough \
+             output, which carries {flags}."
+        );
+    } else {
+        eprintln!(
+            "error: {flags} is not supported by native GPU/CPU search output and would be \
+             silently dropped; refusing rather than silently ignoring it. Drop {flags}, or drop \
+             --gpu-device-ids/--json/--ndjson so the search is routed to the ripgrep backend, \
+             which carries {flags}."
+        );
+    }
+    std::process::exit(2);
+}
+
+/// Native-routing entrypoint gate for the `tg search` command (P5·H2). Pure: returns `Some(flags)`
+/// when this request carries flags the native structured engine would silently drop (the caller
+/// maps it to `exit_native_structured_flag_dropped`; keeping it pure makes it unit-testable
+/// without the `exit(2)` killing the test binary -- see
+/// `native_structured_refusal_validator_returns_refusal_set`). The `--format rg --json` passthrough
+/// and the trigram index (which has its own `IndexFlagPolicy::Refuse` for these flags) never reach
+/// it.
+fn validate_search_native_structured_refusals(args: &SearchArgs) -> Option<Vec<&'static str>> {
+    let dropped = native_structured_dropped_search_flags(args);
+    if dropped.is_empty() {
+        None
+    } else {
+        Some(dropped)
+    }
+}
+
+/// Native-routing entrypoint gate for the positional CLI (P5·H2), same pure contract. The exit
+/// wrapper is applied at the call site so both the `--json`/`--ndjson` doors and the
+/// unconditional `--gpu-device-ids` door refuse identically.
+fn validate_positional_native_structured_refusals(
+    cli: &PositionalCli,
+) -> Option<Vec<&'static str>> {
+    let dropped = positional_native_dropped_search_flags(cli);
+    if dropped.is_empty() {
+        None
+    } else {
+        Some(dropped)
+    }
+}
+
 fn search_prefers_ripgrep_passthrough(
     args: &SearchArgs,
     request: &ResolvedSearchRequest,
@@ -8987,6 +9434,24 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
             std::process::exit(exit_code.max(1));
         }
         return Ok(());
+    }
+
+    // P5·H2 (audit Finding 2 hoist): refuse the structured-native count/files combos HERE, before
+    // `count_search_corpus_bytes` walks the whole tree on CUDA builds (an invalid request used to
+    // traverse every byte before the in-arm refusal, later in this match, exited). The predicate
+    // returns empty for every HONORED route (non-JSON count/files go to rg passthrough above;
+    // `--format rg --json`'s passthrough is caught by `search_requires_ripgrep_passthrough`), so
+    // hoisting changes no honored path. `!args.index` keeps the explicit-index path's OWN refusal:
+    // `route_search` routes `index == true` to `TrigramIndex` unconditionally, where
+    // `handle_index_search`'s `IndexFlagPolicy::Refuse` for count/files (message pinned) fires --
+    // reaching past that here would shadow its message. The in-arm calls this replaces were the
+    // ORIGINAL landing spot and are removed as redundant; the wiring is covered end-to-end by
+    // `rust_core/tests/test_h2_native_structured_refusal.rs` (CARGO_BIN_EXE_tg: each refused
+    // combo must exit 2) and in-process by `native_structured_refusal_validator_returns_refusal_set`.
+    if !args.index {
+        if let Some(dropped) = validate_search_native_structured_refusals(&args) {
+            exit_native_structured_flag_dropped(&dropped, args.json || args.ndjson);
+        }
     }
 
     if request.paths.len() != 1 && !args.gpu_device_ids.is_empty() {
