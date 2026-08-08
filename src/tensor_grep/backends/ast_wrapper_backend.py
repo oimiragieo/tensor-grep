@@ -184,11 +184,14 @@ class AstGrepWrapperBackend(ComputeBackend):
         cmd = [self._get_binary_name(), "scan", "--json", "--rule", str(rule_file), "--", *paths]
         return cmd, context
 
-    def _raise_for_nonzero(self, result: subprocess.CompletedProcess[str]) -> None:
+    def _raise_for_nonzero(self, result: subprocess.CompletedProcess[str]) -> bool:
+        """Return True when the nonzero exit was a NON-FATAL partial scan (ast-grep skipped
+        unreadable paths but still emitted findings); False on exit 0 / clean JSON waive. A
+        genuine failure raises BackendExecutionError. See M10 audit."""
         raw_returncode = getattr(result, "returncode", 0)
         returncode = raw_returncode if isinstance(raw_returncode, int) else 0
         if returncode == 0:
-            return
+            return False
 
         stderr = (result.stderr or "").strip()
         stdout = (result.stdout or "").strip()
@@ -198,7 +201,7 @@ class AstGrepWrapperBackend(ComputeBackend):
         # downstream). Require a COMPLETE, parseable JSON list before waiving — a truncated
         # payload fails the parse and falls through to raise BackendExecutionError.
         if not stderr and _stdout_is_json_payload(stdout):
-            return
+            return False
 
         # ast-grep exits nonzero when it cannot read an individual path (a
         # permission-denied directory, a locked/vanished file) even though it
@@ -212,7 +215,7 @@ class AstGrepWrapperBackend(ComputeBackend):
                 f"tg: warning: skipped unreadable paths during ast scan: {stderr.splitlines()[0]}",
                 file=sys.stderr,
             )
-            return
+            return True
 
         detail = stderr or stdout or "no error output"
         detail = detail.splitlines()[0]
@@ -227,7 +230,13 @@ class AstGrepWrapperBackend(ComputeBackend):
             )
         raise BackendExecutionError(f"ast-grep failed with exit code {returncode}: {detail}")
 
-    def _parse_result(self, stdout: str, fallback_file: str | None = None) -> SearchResult:
+    def _parse_result(
+        self,
+        stdout: str,
+        fallback_file: str | None = None,
+        *,
+        partial: bool = False,
+    ) -> SearchResult:
         matches: list[MatchLine] = []
         matched_files: list[str] = []
         seen_files: set[str] = set()
@@ -271,7 +280,7 @@ class AstGrepWrapperBackend(ComputeBackend):
                 seen_files.add(file_path)
                 matched_files.append(file_path)
 
-        return SearchResult(
+        result = SearchResult(
             matches=matches,
             matched_file_paths=matched_files,
             total_files=len(matched_files),
@@ -281,6 +290,15 @@ class AstGrepWrapperBackend(ComputeBackend):
             routing_distributed=False,
             routing_worker_count=1,
         )
+        if partial:
+            # M10 audit: an ast-grep scan that skipped unreadable paths (per-path access
+            # failure) is an INCOMPLETE result -- mark it exactly like the rg twin
+            # (ripgrep_backend.py: result_incomplete=True + class "unreadable_path") so no
+            # consumer trusts it as exhaustive.
+            result.result_incomplete = True
+            result.incomplete_reason = "ast-grep skipped unreadable paths during the scan"
+            result.incomplete_reason_class = "unreadable_path"
+        return result
 
     @staticmethod
     def _cap_to_max_count(result: SearchResult, config: SearchConfig | None) -> SearchResult:
@@ -363,7 +381,7 @@ class AstGrepWrapperBackend(ComputeBackend):
         except Exception as e:
             raise BackendExecutionError(f"AstGrepWrapperBackend failed: {e}") from e
 
-        self._raise_for_nonzero(result)
+        partial = self._raise_for_nonzero(result)
         grouped_matches: dict[str, list[dict[str, Any]]] = {}
         for item in self._parse_json_items(result.stdout):
             rule_id = item.get("ruleId") or item.get("rule_id")
@@ -373,7 +391,7 @@ class AstGrepWrapperBackend(ComputeBackend):
 
         grouped_results: dict[str, SearchResult] = {}
         for rule_id, items in grouped_matches.items():
-            grouped_results[rule_id] = self._parse_result(json.dumps(items))
+            grouped_results[rule_id] = self._parse_result(json.dumps(items), partial=partial)
         return grouped_results
 
     def search_many(
@@ -391,8 +409,10 @@ class AstGrepWrapperBackend(ComputeBackend):
                     cmd,
                     input_text=config.ast_stdin_input if config and config.ast_stdin else None,
                 )
-                self._raise_for_nonzero(result)
-                return self._cap_to_max_count(self._parse_result(result.stdout), config)
+                partial = self._raise_for_nonzero(result)
+                return self._cap_to_max_count(
+                    self._parse_result(result.stdout, partial=partial), config
+                )
         except BackendExecutionError:
             raise
         except Exception as e:
@@ -413,9 +433,10 @@ class AstGrepWrapperBackend(ComputeBackend):
                     cmd,
                     input_text=config.ast_stdin_input if config and config.ast_stdin else None,
                 )
-                self._raise_for_nonzero(result)
+                partial = self._raise_for_nonzero(result)
                 return self._cap_to_max_count(
-                    self._parse_result(result.stdout, fallback_file=file_path), config
+                    self._parse_result(result.stdout, fallback_file=file_path, partial=partial),
+                    config,
                 )
         except BackendExecutionError:
             raise
