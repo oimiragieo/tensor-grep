@@ -11,11 +11,14 @@ release_docs_current_tag: v1.110.6
 - GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.110.6>
 
 ## Current Backlog Closeout
-Canonical status index version: 2026-08-06.2
+Canonical status index version: 2026-08-08.1
 
-- Public product: `v1.110.0`. CEO packet: `docs/audits/2026-08-06-ceo-backlog-update.md`.
-- Closed-world: 28 rows / **17 unfinished** = 6 READY, 0 IN_FLIGHT, 5 CEO_GATED, 6 DEMAND_GATED
+- Public product: `v1.110.6`. CEO packet: `docs/audits/2026-08-06-ceo-backlog-update.md`.
+- Closed-world: 28 rows / **17 unfinished** = 0 READY, 6 BLOCKED, 0 IN_FLIGHT, 5 CEO_GATED, 6 DEMAND_GATED
   (7 SHIPPED + 4 RETIRED terminal). F7 / CPU-BACKEND / REF-CALL-REGISTRY closed SHIPPED this reconcile.
+- 2026-08-08 drain: M7 (#975 → v1.110.6), M8 (#976 → v1.110.7 in flight); P5·H2 → draft #979
+  (codex R5 APPROVE-WITH-NITS); execution plan `docs/plans/2026-08-08-backlog-completion-plan.md`
+  (thinktank-approved Round 3); next buildable: M1, M3, M16, M17, M14 (one per iteration).
 - Task 2 is complete as the tracker checkpoint; **Task 2A RED remains correctly blocked** (historical
   local SHA `6367614960327b1a4e00301c8bfdb9b2e4bb453e`, Sol `FIX-FIRST` / 10 HIGH unless superseded).
 - #89/#90 stay READY behind Task 2A. No spend. #169 is the only financial stop.

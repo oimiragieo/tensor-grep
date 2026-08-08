@@ -18,12 +18,13 @@
 >    `tag == PyPI` cannot distinguish *released* from *not started* from *died* and cost a release
 >    on 2026-07-28.
 
-## Campaign note (2026-08-06)
+## Campaign note (2026-08-08)
 
-CEO update: `docs/audits/2026-08-06-ceo-backlog-update.md`. Public product `v1.110.0`. #958 CUJ + #962
-wheel dogfood + #963 CEO docs landed. Index `2026-08-06.2` stamps former false READY rows
-(#89/#90/F5/F6/F8/MCP-SURFACE) as **BLOCKED**. STOP unchanged: Task 2A, W3 rust/e2e shared-box ban,
-MCP wire fence, #169, CEO_GATED. R0 packets:
+CEO update: `docs/audits/2026-08-06-ceo-backlog-update.md`. Public product `v1.110.6` (2026-08-08).
+2026-08-08 drain: M7 (#975 → v1.110.6), M8 (#976 → v1.110.7 in flight); execution plan
+`docs/plans/2026-08-08-backlog-completion-plan.md` (thinktank-approved); P5·H2 → draft #979
+(codex R5 APPROVE-WITH-NITS); next buildable M1/M3/M16/M17/M14. Index `2026-08-08.1`. STOP
+unchanged: Task 2A, W3 rust/e2e shared-box ban, MCP wire fence, #169, CEO_GATED. R0 packets:
 `docs/audits/2026-08-06-ceo-gated-recommendation-packets.md`,
 `docs/audits/2026-08-06-demand-gated-research-receipts.md`.
 
