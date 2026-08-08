@@ -1,6 +1,56 @@
 # CHANGELOG
 
 
+## v1.110.7 (2026-08-08)
+
+### Bug Fixes
+
+- Fail closed on --ast -v/-w + fix AST cache key (M8 audit)
+  ([#976](https://github.com/oimiragieo/tensor-grep/pull/976),
+  [`18fad0f`](https://github.com/oimiragieo/tensor-grep/commit/18fad0ff0ba2f99cfa681017f693867f7b52aabb))
+
+M8 MED (verified): `--ast -v` / `--ast -w` SILENTLY DROPPED invert-match / word-regexp on BOTH AST
+  backends -- `tg search --ast -v PAT` returned the non-inverted match set as if it were inverted (a
+  wrong result that reads as absence), and ast_backend's persistent cache key
+  (`file::lang::pattern`) omitted the flags, so a cached non-inverted result could be served to an
+  inverted query. No guard existed anywhere (grepped pipeline/main/ast routes).
+
+Change (fail-closed, per the Backend Fail-Closed Contract + the audit's refusal recommendation): -
+  `ast_backend.search` and `ast_wrapper_backend.{search,search_many}` now raise a clear
+  BackendExecutionError when `invert_match` (`-v`) or `word_regexp` (`-w`) is set, directing to
+  plain `tg search` for inverted/whole-word matching. Never silently return the wrong set. -
+  `ast_backend`'s persistent result-cache key now includes both flags
+  (`...::v={invert_match}::w={word_regexp}`), threaded through the 3 cache fns + all 4 call sites,
+  so a non-inverted and inverted query can never share a cache entry (belt+braces). -
+  `search_project` (config-file project scan, no match-semantics config) intentionally untouched.
+
+Tests: new `tests/unit/test_ast_invert_match_fail_closed.py` (both AST backends refuse -v and
+
+-w; cache key digests differ across invert/word/no-flag). Full ast suite: 78 passed, 1 xfailed; ruff
+  / ruff format --preview / mypy clean.
+
+### Documentation
+
+- Reconcile TASK_BOARD to v1.110.6 (unblocks board-freshness release gate)
+  ([#980](https://github.com/oimiragieo/tensor-grep/pull/980),
+  [`255a4c9`](https://github.com/oimiragieo/tensor-grep/commit/255a4c95862f9accac0f38e81f7c9bdf00f25742))
+
+* docs: reconcile TASK_BOARD to v1.110.6 (unblocks the board-freshness release gate)
+
+The reconcile stamp sat at v1.110.0 while pyproject shipped v1.110.6 -- 6 releases behind tolerance
+  5 -- so test_task_board_freshness.py failed in EVERY test-python job and, because the test matrix
+  gates the release train, v1.110.7 (#976 M8) could not publish.
+
+Reconciled live (derived, not retyped): snapshot to v1.110.6 (PyPI endpoint), IN FLIGHT table
+  replaced with gh pr list 2026-08-08 state (#966/#967/#977/#978/#979), campaign note added:
+  2026-08-08 drain (M7 #975 -> v1.110.6, M8 #976 -> v1.110.7 in flight) + P5 H2 draft #979 + the
+  M1/M3/M16/M17/M14 audit queue per docs/plans/2026-08-08-backlog-completion-plan.md. Also flags
+  that #967/#977 were found STALE-BASED (labeled ready/green heads predated #969-#976) and were
+  rebased onto current main the same day.
+
+* docs: sync SESSION_HANDOFF + campaign note to index 2026-08-08.1
+
+
 ## v1.110.6 (2026-08-08)
 
 ### Bug Fixes
