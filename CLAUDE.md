@@ -99,7 +99,7 @@ Claude Code guidance for the **tensor-grep** repository.
   worktree campaign this file tells you to run. Keep WSL and Windows venv roots disjoint: never run
   WSL `uv --project /mnt/c/...` against the canonical checkout, because `uv` may replace the Windows
   `.venv` with an incompatible Linux environment (AGENTS.md A60).
-  **RED/CI evidence laws (A61–A82):** behavioral RED pins the exact expected reason
+  **RED/CI evidence laws (A61–A86):** behavioral RED pins the exact expected reason
   (crash/import/panic/setup ≠ RED); route/start evidence comes from the real producer plus test-owned
   OS/raw proof, never a hardcoded bool or production self-attest; containment authenticates
   writer/client provenance and proves alive-before→dead-after plus cleanup; crypto negatives need a
@@ -114,6 +114,7 @@ Claude Code guidance for the **tensor-grep** repository.
   ALL_TERMINAL); usage-limit seats are FAILED not pending; READY→BLOCKED stamps must retarget
   governance pins; gate tip bytes not archaeological RED SHAs; HIGH receipts ≠ Sol SHIP;
   AMEND_SPINE when board READY contradicts reconcile BLOCKED (START_NOW = docs/R0/D1 only).
+  **A83–A86 (2026-08-09):** the argv-rewrite shadow — census the normalizer's rewrite list + target parser, not just the guarded door (SEARCH_OPTION_FIRST_FLAGS → search form, where RipgrepSearchArgs drops gpu_device_ids; #979); platform-gate the drive-absolute strip on `os.name == "nt"` and pin both arms, because an unconditional strip recreates the escape on POSIX (#983); gated tests must be env-independent BY CONSTRUCTION — force the optional-engine seam (dense-unavailable force / AstBackend shim), never env-detect, and mutation-control REDs on a deleted member, missing stamp, or unexpected exception type (#984); "ready"/"green" labels must cite the head SHA's own completed run (A44/A51) — rebase before re-labeling a long-lived branch (#967/#977).
 - **Campaign Orchestration Disciplines (2026-07-08, extended 2026-07-16, 2026-07-22)** — running a
   multi-PR drain+build campaign so fixes *land*: the WIP cap, the self-firing drain-cron (beats a
   long-lived background drain), the mandatory adversarial security gate before merge,
