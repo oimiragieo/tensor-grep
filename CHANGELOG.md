@@ -1,6 +1,89 @@
 # CHANGELOG
 
 
+## v1.110.8 (2026-08-09)
+
+### Bug Fixes
+
+- **checkpoint**: Refuse symlinked/junctioned ancestor dirs on create-side copy (M1 audit)
+  ([#982](https://github.com/oimiragieo/tensor-grep/pull/982),
+  [`e3feaf5`](https://github.com/oimiragieo/tensor-grep/commit/e3feaf502b5d9ce1fc2bb4c131141431871758c8))
+
+M1 HIGH (verified): create_checkpoint's copy loop copied with follow_symlinks=False, which refuses
+  only a link AT THE LEAF. A symlinked or (Windows) junctioned ANCESTOR directory under root is
+  traversed transparently by the OS, so shutil.copy2(root/a/b.txt, ...) copied OUT-OF-ROOT file
+  content into the checkpoint snapshot (create-side disclosure; e.g. root/a junctioned to
+  C:\Users\...\evil). The undo side already refused this class for its snapshot source (audit H3);
+  the create side did not (A27/A39 twin).
+
+Fix: _resolve_parent_within_root resolves ONLY the parent chain and asserts containment; the copy
+  loop composes source = resolved_parent / leaf and still copies with follow_symlinks=False -- a
+  legitimately tracked out-of-root-pointing LEAF symlink is stored AS A LINK (never followed, never
+  refused; law A38 -- this is NOT the leaf-following _resolve_within_root). Fail closed (ValueError
+  -> cleanup + raises) on a planted ancestor.
+
+Tests: 4 new (junction ancestor refused; symlinked ancestor refused; normal tree ok;
+
+tracked leaf symlink stored as link), RED confirmed pre-fix (junction disclosure probe:
+  SECRET-OUT-OF-ROOT-VIA-JUNCTION landed in the snapshot), GREEN post-fix; 88 checkpoint tests pass;
+  ruff/format/mypy clean. Security gate (A3, codex): SHIP. R1 FIX-BEFORE-MERGE 4 findings -> all
+  resolved: 3 = the A48 opened-parent-handle class, pre-scoped out by the approved plan and now
+  recorded canonically as deferred rows M1-FU1 CHECKPOINT-A48-HANDLES (owner M1 change-control;
+  reopen: attacker able to race a parent swap in the snapshot window) and M1-FU2
+  CHECKPOINT-UNDO-LEAF-RESIDUAL (undo leaf-following; owner undo-change-control) with dispositions +
+  reopen triggers; R2 SHIP, no new findings.
+
+### Continuous Integration
+
+- Spend-smart CI — PR-only code-touch gate for expensive jobs (CI-cost)
+  ([#977](https://github.com/oimiragieo/tensor-grep/pull/977),
+  [`f764b08`](https://github.com/oimiragieo/tensor-grep/commit/f764b08dc445bc9e222b151f056d28396f955a19))
+
+Thinktank-ratified, verified against the governance suite. Full matrix still runs on every main push
+  (so `release`'s `needs:` are never skipped and the publish is never lost); on a docs-only
+  pull_request the expensive/cross-platform jobs are SKIPPED (a skipped required job counts as
+  success for branch protection — never trigger-level paths-ignore, which deadlocks).
+
+- Add a cheap `changes` job computing whether the PR diff touches code (src/ rust_core/ tests/
+  .github/workflows/ pyproject.toml Cargo.toml Cargo.lock uv.lock). - Gate the 10 expensive jobs
+  (agent-readiness, windows-agent-readiness, static-analysis, test-python, test-rust-core,
+  cuda-feature-check, search-golden-parity, native-build-smoke, test-gpu-linux,
+  benchmark-regression) with `if: github.event_name != 'pull_request' || needs.changes.outputs.code
+  == 'true'` and `needs: [smoke, changes]` (keeps the smoke gate). - Drop the macOS x nightly
+  `test-rust-core` leg (continue-on-error signal at ~10x the Linux rate, zero release-gating value;
+  nightly still runs on linux/windows every PR and all channels weekly via the cron).
+
+Validator updates (same PR): the 3 release-workflow-configuration pins that asserted the literal
+  `needs: smoke` now assert the substance (a `needs:` line referencing `smoke`).
+  `docs/CI_PIPELINE.md` updated. Verified locally: test_release_workflow_configuration.py +
+  test_release_assets_validation.py (173 passed) + test_native_e2e_ci_coverage_contract.py (5
+  passed) against the edited workflow; YAML parse clean.
+
+### Documentation
+
+- 2026-08-06 PM CEO update + A77–A82 lesson retention
+  ([#967](https://github.com/oimiragieo/tensor-grep/pull/967),
+  [`49f68a9`](https://github.com/oimiragieo/tensor-grep/commit/49f68a9fcb20e8efe8fc1835f754b0ef3a944e8a))
+
+Stamp live closed-world (0 READY / 6 BLOCKED), list all 28 backlog rows, research still needed, and
+  retain stdin-poller / quota-FAILED / tip-bytes / receipts≠Sol / AMEND_SPINE laws across AGENTS,
+  CLAUDE, MEMORY, and skills.
+
+- Complete-backlog completion plan (2026-08-08) through thinktank round 2
+  ([#978](https://github.com/oimiragieo/tensor-grep/pull/978),
+  [`5500b88`](https://github.com/oimiragieo/tensor-grep/commit/5500b889f915829923939cd859cd296379f0743b))
+
+Refreshed, three-lens (evidence/process/security) thinktank-audited execution plan for the remaining
+  buildable audit fixes (P5 H2, M1, M3, M16, M17, M14), the Part-0 open-PR drain
+  (#975/#976/#977/#967), and the gated research features (R1-R8), with honest closed-world
+  dispositions for CEO/blocked/demand-gated items. Round 2 folded in every security HIGH and process
+  MUST finding.
+
+- Record 2026-08-08 campaign findings (stale-ready labels, board-freshness release gate, H2
+  residual) ([#981](https://github.com/oimiragieo/tensor-grep/pull/981),
+  [`39b3ea3`](https://github.com/oimiragieo/tensor-grep/commit/39b3ea38e169cdafe7105f1007ae242066527398))
+
+
 ## v1.110.7 (2026-08-08)
 
 ### Bug Fixes
