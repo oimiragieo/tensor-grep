@@ -47,19 +47,43 @@ so tg_find's success reach is identical whether the ambient dense model is absen
 installed, or corrupt; and every allowlist/fixture (tool, family) key is validated
 against the generated probe-family set (F3). A NEW tool added later without the
 stamp fails this census.
+
+ENVIRONMENT MATRIX (CI-round fix): the census must produce the SAME verdict on the
+developer desktop and the CI pytest env. Two engine classes differ between them:
+
+- tg_find's DENSE leg (model2vec present/absent/corrupt): force-disabled for the
+  census duration -- the deterministic BM25-only fallback success arm fires
+  everywhere (see _force_dense_unavailable).
+- the AST tools (tg_ast_search, tg_ruleset_scan, tg_scan): their success arms
+  require a real engine (tree-sitter grammar via the native-shaped AstBackend path,
+  or the ast-grep wrapper binary) that the CI pytest env does NOT install; on CI the
+  real probes can only raise an absent-dep exception or return the 'unavailable'
+  envelope, so SUCCESS reach is impossible. The census therefore drives those
+  (tool, family) probes through a CONTROLLED engine seam (_controlled_ast_engine:
+  Pipeline.get_backend -> a fixed 'AstBackend' stub, _run_ast_scan_payload -> a
+  deterministic empty-findings payload), so the tool's REAL success return site
+  (the _inject_mcp_contract_fields envelope) is exercised and value-checked on both
+  envs. Which arm proves the stamp per tool: SUCCESS arm (controlled engine) +
+  ERROR arm (real out-of-root confinement refusals, always engine-free) on BOTH
+  envs. The real-engine success paths themselves are covered by the repo's own AST
+  unit tests (test_mcp_server.py::test_tg_ast_search_* et al.); the census's job is
+  stamping, not engine correctness.
 """
 
 import asyncio
+import contextlib
 import importlib.util
 import json
 import sys
 import types
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
 
 from tensor_grep.core.pipeline import ConfigurationError
+from tensor_grep.core.result import SearchResult
 
 # The confinement ratchet's closed-world per-tool reach map, REUSED not duplicated
 # (A22): pytest runs with --import-mode=importlib (pyproject.toml), so a plain cross-
@@ -81,9 +105,12 @@ _CONFINEMENT_RATCHET_CASES: list[tuple[str, str]] = _REACH_MAP_MODULE._CONFINEME
 
 # Tool probes that raise when the OPTIONAL ast-grep/tree-sitter deps are absent on a
 # minimal runner (documented in the confinement ratchet's own notes: "Linux CI
-# without ast-grep ... raises a wrapped ToolError BEFORE it would run"). On a runner
-# WITH the deps these probe families return stamped JSON and are value-checked; the
-# allowlist only excuses the absent-dep raise. tg_scan's curated family delegates to
+# without ast-grep ... raises a wrapped ToolError BEFORE it would run"). These
+# families normally never raise inside the census anymore -- the census drives them
+# through the CONTROLLED ast engine seam (see _controlled_ast_engine), so they
+# return stamped success JSON on every env. The allowlist is the backstop for any
+# probe path that bypasses the shim (or a future refactor that removes it): it
+# excuses ONLY the absent-dep raise. tg_scan's curated family delegates to
 # tg_ruleset_scan.
 #
 # F1-tightened: each entry names the EXPECTED exception types (the types the code
@@ -272,6 +299,105 @@ def _probe_family_keys(tool) -> list[str]:
     return keys
 
 
+# (tool, family) probes that need the CONTROLLED ast engine seam (CI-round fix,
+# mirroring the tg_find dense force): the SUCCESS arm of these tools requires a real
+# AST engine (tree-sitter grammar via the native-shaped AstBackend path, or the
+# ast-grep wrapper binary / ruleset machinery), which the CI pytest env does not
+# install -- there the real probes can only raise an absent-dep exception or return
+# the stamped 'unavailable' envelope, so success reach would flip the census verdict
+# between desktop (engine present) and CI (engine absent). The census drives exactly
+# these families through a fixed engine seam instead; every other family (incl. the
+# engine-free out-of-root confinement error probes) runs the real code.
+_AST_ENGINE_SHIM_FAMILIES: dict[str, frozenset[str]] = {
+    "tg_ast_search": frozenset({"curated", "schema"}),
+    "tg_ruleset_scan": frozenset({"curated"}),
+    "tg_scan": frozenset({"curated"}),
+}
+
+
+class _ControlledAstBackendShim:
+    """Stand-in for the Pipeline AST backend: fixed 'AstBackend' identity, empty
+    results, no engine dependency. `type(backend).__name__` is load-bearing --
+    tg_ast_search refuses any backend not named AstBackend/AstGrepWrapperBackend,
+    so the class's OWN __name__ is overwritten below."""
+
+    def search(
+        self, current_file: str, pattern: str, *, config: object | None = None
+    ) -> SearchResult:
+        return SearchResult(matches=[], total_files=0, total_matches=0)
+
+
+_ControlledAstBackendShim.__name__ = "AstBackend"  # type: ignore[attr-defined]
+
+
+class _ControlledAstPipelineShim:
+    """Deterministic Pipeline stand-in providing the same `get_backend()` seam.
+
+    The REAL Pipeline(ast=True) raises ConfigurationError when neither a tree-sitter
+    grammar nor the ast-grep binary is present (CI pytest env), so real probes there
+    can never reach the tool's success return site. This stub returns the fixed
+    backend above, letting the probe flow through the tool's REAL success path
+    (_inject_mcp_contract_fields-wrapped JSON) on every env.
+    """
+
+    def __init__(self, config: object) -> None:
+        self.config = config
+        self.selected_backend_name = "AstBackend"
+        self.selected_backend_reason = "ast-native-census-controlled"
+        self.selected_gpu_device_ids: list[int] = []
+        self.selected_gpu_chunk_plan_mb: list[int] = []
+        self.fallback_reason = None
+
+    def get_backend(self) -> _ControlledAstBackendShim:
+        return _ControlledAstBackendShim()
+
+
+def _controlled_ast_scan_payload(
+    project_cfg: dict[str, object],
+    rules: list[dict[str, str]],
+    *,
+    routing_reason: str,
+    **kwargs: object,
+) -> dict[str, object]:
+    """Deterministic stand-in for _run_ast_scan_payload (the tg_ruleset_scan/tg_scan
+    engine seam): returns a minimal empty-findings payload in the real function's
+    shape, exercising the tools' real success return site (`_inject_mcp_contract_fields`
+    over the payload) without the ast-grep engine."""
+    return {
+        "version": 1,
+        "schema_version": 1,
+        "routing_backend": "AstBackend",
+        "routing_reason": routing_reason,
+        "sidecar_used": False,
+        "config_path": str(project_cfg.get("config_path", "census-controlled")),
+        "path": str(project_cfg.get("root_dir", ".")),
+        "ruleset": kwargs.get("ruleset_name"),
+        "rule_count": len(rules),
+        "matched_rules": [],
+        "total_matches": 0,
+        "files_scanned": 0,
+        "findings": [],
+    }
+
+
+@contextlib.contextmanager
+def _controlled_ast_engine() -> Iterator[None]:
+    """Temporarily swap the two AST engine seams (Pipeline + _run_ast_scan_payload)
+    for their controlled stand-ins; restored in a finally."""
+
+    from tensor_grep.cli import mcp_server
+
+    original_pipeline = mcp_server.Pipeline
+    original_run_scan = mcp_server._run_ast_scan_payload
+    mcp_server.Pipeline = _ControlledAstPipelineShim  # type: ignore[assignment]
+    mcp_server._run_ast_scan_payload = _controlled_ast_scan_payload  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        mcp_server.Pipeline = original_pipeline
+        mcp_server._run_ast_scan_payload = original_run_scan
+
+
 def _probe_families(
     tool,
     outside_dir: Path,
@@ -358,7 +484,15 @@ def _mcp_census_run(
         text_fams: list[str] = []
         for family_key, kwargs in _probe_families(tool, outside_dir, fixtures):
             try:
-                out = getattr(mcp_server, tool.name)(**kwargs)
+                if family_key in _AST_ENGINE_SHIM_FAMILIES.get(tool.name, frozenset()):
+                    # Controlled engine seam: the ast trio's success arms are
+                    # unreachable on CI (no tree-sitter/ast-grep), so drive the real
+                    # tool code with a fixed engine to exercise the real success
+                    # return site; verdict identical on desktop and CI.
+                    with _controlled_ast_engine():
+                        out = getattr(mcp_server, tool.name)(**kwargs)
+                else:
+                    out = getattr(mcp_server, tool.name)(**kwargs)
             except Exception as exc:
                 allow = _RAISE_ALLOWLIST.get((tool.name, family_key))
                 if allow is None or not isinstance(exc, allow[0]):
@@ -835,3 +969,66 @@ def test_contract_stamp_ratchet_census_is_independent_of_ambient_dense_model_sta
     # (test-patched) availability probe is what the module sees again.
     ok, _reason = retrieval_dense.dense_available()
     assert ok is True, "census hermetic force leaked past its finally-restore"
+
+
+def test_contract_stamp_ratchet_census_is_independent_of_ambient_ast_engine_state(
+    tmp_path, tmp_path_factory, monkeypatch
+) -> None:
+    """CI-round env proof, mirroring the dense-model test: simulate the CI pytest env
+    where NO ast engine exists -- Pipeline(ast=True) construction and
+    _run_ast_scan_payload both raise ConfigurationError ("no AST backend is
+    available"). A shim-less census on such an env can only reach the stamped
+    'unavailable'/error arms; the controlled engine seam must kick in so the three
+    AST tools still reach their SUCCESS return sites, keeping the census verdict
+    identical to the desktop (where the real engine exists)."""
+    monkeypatch.delenv("TG_MCP_ROOT", raising=False)
+    monkeypatch.chdir(tmp_path)
+    outside_dir = tmp_path_factory.mktemp("m14_ratchet_outside")
+
+    from tensor_grep.cli import mcp_server
+
+    real_pipeline = mcp_server.Pipeline
+
+    class _NoAstEnginePipeline:
+        """Faithful CI simulation: the REAL Pipeline's ast branch raises
+        ConfigurationError when no tree-sitter grammar/ast-grep binary exists, but its
+        NON-ast branch (tg_search's regex path) still works. Mirror exactly that:
+        ast configs raise, everything else delegates to the real Pipeline."""
+
+        def __new__(cls, config: object = None, **kwargs: object) -> object:
+            if getattr(config, "ast", False):
+                raise ConfigurationError("no AST backend is available (simulated CI env)")
+            return real_pipeline(config, **kwargs)  # type: ignore[call-arg]
+
+    def _no_ast_engine_scan(*args: object, **kwargs: object) -> dict[str, object]:
+        raise ConfigurationError("no AST backend is available (simulated CI env)")
+
+    monkeypatch.setattr(mcp_server, "Pipeline", _NoAstEnginePipeline)
+    monkeypatch.setattr(mcp_server, "_run_ast_scan_payload", _no_ast_engine_scan)
+
+    result = _mcp_census(
+        mcp_server._TG_MCP_SERVER_CONTRACT_VERSION,
+        root=tmp_path,
+        outside_dir=outside_dir,
+    )
+    assert not result.violations, "no-ast-engine census violations:\n- " + "\n- ".join(
+        sorted(result.violations)
+    )
+    for tool_name in ("tg_ast_search", "tg_ruleset_scan", "tg_scan"):
+        assert result.coverage[tool_name]["success"] >= 1, (
+            f"{tool_name} success family not reached under the simulated no-ast-engine "
+            "env -- the controlled engine seam is not engaging"
+        )
+        assert result.coverage[tool_name]["error"] >= 1, (
+            f"{tool_name} error family not reached under the simulated no-ast-engine env"
+        )
+        assert result.coverage[tool_name]["raised"] == [], (
+            f"{tool_name} still produced raises under the simulated no-ast-engine env: "
+            f"{result.coverage[tool_name]['raised']}"
+        )
+    # No leak: the ambient (engine-less-for-ast) Pipeline is what the module sees again
+    # after the census's internal shim restores it.
+    from tensor_grep.core.config import SearchConfig
+
+    with pytest.raises(ConfigurationError):
+        mcp_server.Pipeline(config=SearchConfig(ast=True, lang="python", no_messages=True))
