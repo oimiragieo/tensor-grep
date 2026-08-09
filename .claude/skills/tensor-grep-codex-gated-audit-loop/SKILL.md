@@ -77,8 +77,14 @@ in full at every merge; it is the loop that produces the diff the gates judge.
 The 2026-08-08/09 receipts for what "SHIP" actually took: H2 = R1(4)→R2(2)→R3(1)→R4(1)→R5
 APPROVE-WITH-NITS; M1 = R1 FIX-BEFORE-MERGE(4)→R2 SHIP; M3 = R1(3)→R2(3)→R3(1)→R4 seat FAILED
 (A10/A74, substituted with the orchestrator's own probes)→SHIP; M14 =
-R1(3)→R2(3 harness defects)→R3 SHIP. Plan on 2–5 codex rounds per security-surface fix; a
+R1(3)→R2(3 harness defects)→R3 SHIP; M16/M17 = 3 rounds each, and **the first CI run still
+found real Rust compile errors after repeated static "no compile defect found" verdicts**
+(E0599 on `&OsStr`, E0308, E0382 borrow-of-moved — law A87). Plan on 2–5 codex rounds per
+security-surface fix; a
 round that returns zero findings on round 1 is the outlier, and is itself worth a second look.
+**A87 hardens Step 6 for Rust PRs: "SHIP" from static codex review is NOT durable clearance
+until the first real CI `cargo test` run compiles the PR** — static review cannot typecheck.
+Track CI compile as part of the gate, not after it.
 
 ---
 

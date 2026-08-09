@@ -98,6 +98,27 @@
   MCP-native ext tests remain CI-oracle (worktree venv limitation; failures proven pre-existing on
   origin/main).
 
+## Recent campaign notes (2026-08-09) — audit fixes SHIPPED, M16/M17 in PR, lessons A87–A89
+
+- **ALL buildable Python audit fixes SHIPPED:** H2 (#979 → **v1.110.8**), M1 (#982 → v1.110.8),
+  M3 (#983 → **v1.110.9**), M14 (#984 → **v1.110.10**). Published-wheel dogfood (v1.110.10): H2
+  `--json -l` structured refusal PASS; M1 junction containment PASS (verified the fixture BITED —
+  first dogfood junction silently failed, A88).
+- **Skills/docs/agents retained:** 28-skill accuracy audit → 6 substance drifts fixed (#986); new
+  skill `tensor-grep-codex-gated-audit-loop`; laws A83–A89; `/tg-audit-fix-loop` workflow; session
+  receipts (#985).
+- **In PR (drafts, CI-oracle):** #987 (M16 Rust scan composite — 3 codex rounds, incl. a live
+  wire-format fix: ast-grep `byteOffset` not `range.start.index`, A89) and #988 (M17 index stored-
+  root — 3 codex rounds, fingerprint + entry confinement). **Both red on first CI: real Rust
+  COMPILE errors (E0599/E0308/E0382) after repeated static "no compile defect found" verdicts —
+  law A87: CI cargo run is the only compile oracle; static review ≠ typecheck.**
+- **Lesson laws:** A87 (static-review ≠ typecheck — hold SHIP until first CI compiles), A88 (dogfood
+  fixtures must bite — verify the hostile setup applied, form-6 beyond tests), A89 (real-artifact
+  test arms beat fakes in parity oracles).
+- **Backlog remaining:** #987/#988 in PR; #966 Task2A parked (FIX-FIRST); CEO gates
+  #48/#72/#77/#131/#169; blocked F5/F6/F8/MCP-SURFACE; demand gates #255/DD-006/AST-DSL-PARITY/
+  MCP-LEAN-DEFAULT/CONTINUOUS-REFRESH/RUST-REPLACE-SYMLINK; research R1–R8 per plan.
+
 ## Recent campaign notes (2026-08-06 PM CEO)
 
 - Live CEO packet: `docs/audits/2026-08-06-pm-ceo-backlog-update.md` (A77–A82).

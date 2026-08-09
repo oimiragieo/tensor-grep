@@ -12,20 +12,27 @@ release_docs_current_tag: v1.110.10
 
 ## Current Backlog Closeout
 Canonical status index version: 2026-08-08.1
-- Public product: `v1.110.6`. CEO packet: `docs/audits/2026-08-06-ceo-backlog-update.md`.
-- Closed-world: 28 rows / **17 unfinished** = 0 READY, 6 BLOCKED, 0 IN_FLIGHT, 5 CEO_GATED, 6 DEMAND_GATED
-  (7 SHIPPED + 4 RETIRED terminal). F7 / CPU-BACKEND / REF-CALL-REGISTRY closed SHIPPED this reconcile.
-- 2026-08-08 drain: M7 (#975 → v1.110.6), M8 (#976 → v1.110.7 in flight); P5·H2 → draft #979
-  (codex R5 APPROVE-WITH-NITS); execution plan `docs/plans/2026-08-08-backlog-completion-plan.md`
-  (thinktank-approved Round 3); next buildable: M1, M3, M16, M17, M14 (one per iteration).
-- Task 2 is complete as the tracker checkpoint; **Task 2A RED remains correctly blocked** (historical
-  local SHA `6367614960327b1a4e00301c8bfdb9b2e4bb453e`, Sol `FIX-FIRST` / 10 HIGH unless superseded).
-- #89/#90 stay READY behind Task 2A. No spend. #169 is the only financial stop.
-- Enterprise CUJ locked (#958) and dogfooded on published wheel (#962).
-- New agent laws A70–A76 (ambient signing-key pollution; canonical-index free-form ban; tracker
-  closeout debt; bare-wheel find; quota substitute SHIP; premise-check queue; ordinal freshness).
-- The closeout campaign remains **Tasks 3–15** (edit/verify/workspace/MCP disclosure and gated
-  follow-ons); Task 2A security RED stays blocked ahead of #89/#90 product GREEN.
+- Public product: `v1.110.10` (2026-08-09). All buildable Python audit fixes SHIPPED: H2 (#979,
+  count/files fail-closed) → v1.110.8, M1 (#982, checkpoint junction containment) → v1.110.8,
+  M3 (#983, LSP file-op confinement) → v1.110.9, M14 (#984, MCP stamp ratchet, 58 tools / 0
+  violations) → v1.110.10. Published-wheel dogfood: H2 `--json -l` refusal PASS; M1 junction
+  containment PASS (fixture-bites verified — the first dogfood junction didn't bite).
+- Skills/docs: 28-skill accuracy audit → 6 substance drifts fixed (#986); new skill
+  `tensor-grep-codex-gated-audit-loop` + laws A83–A89 + `/tg-audit-fix-loop` workflow; session
+  receipts (#985).
+- In-PR: #987 (M16 Rust scan composite, 3 codex rounds) + #988 (M17 index stored-root, 3 codex
+  rounds) — both DRAFTS, both red on first CI (compile errors: A87 — static review missed them);
+  CI = compile oracle, then drain.
+- Task 2A RED remains correctly blocked (historical local SHA `6367614…`, Sol FIX-FIRST / 10 HIGH
+  unless superseded). #89/#90 stay blocked behind it. No spend; #169 is the only financial stop.
+- Execution plan: `docs/plans/2026-08-08-backlog-completion-plan.md` (thinktank-approved).
+- Remaining: M16/M17 in PR; research R1–R8 per plan; CEO gates #48/#72/#77/#131/#169; blocked
+  F5/F6/F8/MCP-SURFACE; demand gates #255/DD-006/AST-DSL-PARITY/MCP-LEAN-DEFAULT/
+  CONTINUOUS-REFRESH/RUST-REPLACE-SYMLINK. The closeout campaign remains **Tasks 3–15**
+  (edit/verify/workspace/MCP disclosure and gated follow-ons); Task 2A security RED stays blocked
+  ahead of #89/#90 product GREEN.
+- New laws A83–A89 (argv-rewrite shadow; cross-platform path gate; env-independent gated tests;
+  stale-ready labels; static-review-≠-typecheck; dogfood fixture-bites; real-artifact parity arms).
 
 ## Historical Milestones
 
