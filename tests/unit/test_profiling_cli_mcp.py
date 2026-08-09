@@ -315,7 +315,13 @@ def test_mcp_session_edit_plan_exposes_and_forwards_max_repo_files(
         )
     )
 
-    assert payload == {"ok": True}
+    # M14: every tool envelope carries the centralized contract stamps by value. Assert
+    # SUBSTANCE (ok + both stamps), never the exact envelope shape -- the stamps are
+    # additive and central-const-derived, so an exact-shape pin reds on every legitimate
+    # envelope growth (A19/C-nit: re-pin to substance, not the empty shape).
+    assert payload["ok"] is True
+    assert payload["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
+    assert payload["schema_version"] == mcp_server._json_output_version()
     assert captured["session_id"] == "session-1"
     assert captured["query"] == "create invoice"
     # round-8 (audit #95): path="." is now confined+resolved to an absolute cwd path before
