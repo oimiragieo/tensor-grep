@@ -136,7 +136,16 @@ struct PostingEntry {
 
 #[derive(Debug, Clone)]
 pub struct TrigramIndex {
+    /// The root this index was built from, in the spelling the build was CALLED with. The
+    /// per-file entries are rooted in this spelling, so search results keep the user's
+    /// path form. NOT the reuse identity -- see `canonical_root`.
     root: PathBuf,
+    /// The canonicalized (symlink-resolved, absolute) form of `root`, persisted so a
+    /// REUSE only serves when the QUERY root canonicalizes to the same tree (audit M17):
+    /// a `.tg_index` copied across trees, renamed along with its tree, or reached through
+    /// a symlink whose target is elsewhere must never serve the wrong tree's entries.
+    /// `root_servability_reason` is the only reader; the walk/entry root stays untouched.
+    canonical_root: PathBuf,
     files: Vec<FileEntry>,
     file_trigrams: Vec<FileTrigramHits>,
     postings: HashMap<[u8; 3], Vec<PostingEntry>>,
@@ -185,6 +194,9 @@ impl TrigramIndex {
         let file_trigrams = rebuild_file_trigrams(s.files.len(), &postings)?;
         Ok(Self {
             root: PathBuf::new(),
+            // The legacy JSON format never persisted a root; an empty canonical root makes
+            // `root_servability_reason` fail CLOSED (refuse -> rebuild), never serve.
+            canonical_root: PathBuf::new(),
             files: s.files,
             file_trigrams,
             postings,
@@ -194,12 +206,12 @@ impl TrigramIndex {
 }
 
 const INDEX_MAGIC: &[u8; 4] = b"TGI\x00";
-// Bumped 3 -> 4 (audit H1d) to add the `no_ignore` build-mode byte below; any index
-// written by an older binary fails the version check in bincode_deserialize and is
-// rebuilt from scratch by every caller of TrigramIndex::load (main.rs's
-// detect_warm_index_state and handle_index_search both already treat a load error as
-// "stale, rebuild"), so the bump is safe.
-const INDEX_FORMAT_VERSION: u8 = 4;
+// Bumped 4 -> 5 (audit M17) to add the `canonical_root` length-prefixed bytes below; any index
+// written by an older binary fails the version check in bincode_deserialize and is rebuilt from
+// scratch by every caller of TrigramIndex::load (main.rs's detect_warm_index_state and
+// handle_index_search both already treat a load error as "stale, rebuild"), so the bump is safe.
+// Previous bump 3 -> 4 (audit H1d) added the `no_ignore` build-mode byte with the same rationale.
+const INDEX_FORMAT_VERSION: u8 = 5;
 
 fn normalize_postings(postings: &mut HashMap<[u8; 3], Vec<PostingEntry>>) {
     for entries in postings.values_mut() {
@@ -272,6 +284,13 @@ fn bincode_serialize(index: &TrigramIndex) -> Result<Vec<u8>> {
     let root_bytes = index.root.to_string_lossy().as_bytes().to_vec();
     buf.extend_from_slice(&(root_bytes.len() as u32).to_le_bytes());
     buf.extend_from_slice(&root_bytes);
+
+    // M17 (audit-m17): persist the canonical root so a reuse can prove it was built for
+    // the tree being queried. Written AFTER the walk root and before the file list; the
+    // version bump (5) makes any older index fail the version gate instead of misparsing.
+    let canonical_root_bytes = index.canonical_root.to_string_lossy().as_bytes().to_vec();
+    buf.extend_from_slice(&(canonical_root_bytes.len() as u32).to_le_bytes());
+    buf.extend_from_slice(&canonical_root_bytes);
 
     let files_count = index.files.len() as u32;
     buf.extend_from_slice(&files_count.to_le_bytes());
@@ -355,6 +374,10 @@ fn bincode_deserialize(data: &[u8]) -> Result<TrigramIndex> {
     let root_len = read_u32_le(data, &mut pos)? as usize;
     let root_str = String::from_utf8_lossy(read_exact(data, &mut pos, root_len)?).to_string();
 
+    let canonical_root_len = read_u32_le(data, &mut pos)? as usize;
+    let canonical_root_str =
+        String::from_utf8_lossy(read_exact(data, &mut pos, canonical_root_len)?).to_string();
+
     let files_count = read_u32_le(data, &mut pos)? as usize;
 
     let mut files = Vec::with_capacity(bounded_capacity(files_count, data, pos));
@@ -411,6 +434,7 @@ fn bincode_deserialize(data: &[u8]) -> Result<TrigramIndex> {
 
     Ok(TrigramIndex {
         root: PathBuf::from(root_str),
+        canonical_root: PathBuf::from(canonical_root_str),
         files,
         file_trigrams,
         postings,
@@ -433,12 +457,26 @@ pub struct IndexQueryResult {
     pub text: String,
 }
 
+/// Best-effort canonicalization of an index root (audit M17). `Path::canonicalize` resolves
+/// symlinks and produces an absolute form, giving every alias of the SAME tree one identity;
+/// that identity is what a reuse decision compares (`root_servability_reason`). Falls back to
+/// the raw spelling when the root cannot be canonicalized (e.g. it no longer exists) so a
+/// build still succeeds -- a root that cannot be canonicalized then compares by its raw form,
+/// which is no worse than the pre-M17 behavior of comparing nothing at all.
+fn canonical_root_of(root: &Path) -> PathBuf {
+    root.canonicalize().unwrap_or_else(|_| root.to_path_buf())
+}
+
 impl TrigramIndex {
     pub fn build(root: &Path) -> Result<Self> {
         Self::build_with_options(root, false)
     }
 
     pub fn build_with_options(root: &Path, no_ignore: bool) -> Result<Self> {
+        // M17 (audit-m17): canonicalize ONCE at build time and persist that identity. The walk
+        // itself stays rooted at the caller's spelling so entry paths / results are unchanged;
+        // only the reuse comparison uses the canonical form.
+        let canonical_root = canonical_root_of(root);
         let file_entries = collect_file_entries(root, no_ignore);
 
         let per_file: Vec<(u32, FileTrigramHits)> = file_entries
@@ -465,6 +503,7 @@ impl TrigramIndex {
 
         Ok(Self {
             root: root.to_path_buf(),
+            canonical_root,
             files: file_entries,
             file_trigrams,
             postings,
@@ -583,6 +622,9 @@ impl TrigramIndex {
 
         normalize_affected_postings(&mut self.postings, &affected_trigrams);
         self.root = root.to_path_buf();
+        // M17 (audit-m17): the rebuild's new root is a new identity -- record its canonical
+        // form or a subsequent reuse of the rebuilt index would refuse the tree it just built.
+        self.canonical_root = canonical_root_of(root);
         // H1d: persist the query's no_ignore mode onto the rebuilt index so a subsequent
         // staleness check compares against what this rebuild actually walked with, not a
         // stale build-time value.
@@ -857,6 +899,45 @@ impl TrigramIndex {
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    pub fn canonical_root(&self) -> &Path {
+        &self.canonical_root
+    }
+
+    /// M17 (audit-m17): can this LOADED index serve a query rooted at `query_root`?
+    ///
+    /// `None` means serving is safe; `Some(reason)` means it must NOT serve -- the caller
+    /// rebuilds from the current `query_root` tree instead. The comparison is canonicalize-
+    /// vs-canonicalize: `canonical_root` records what `build_with_options` /
+    /// `rebuild_incremental_with_options` actually walked (in canonical form), and the query
+    /// root is canonicalized the same way, so every alias of the SAME tree still matches
+    /// while a `.tg_index` reached from a DIFFERENT tree -- copied in, renamed with its
+    /// tree, or resolved through a symlink whose target is elsewhere -- never serves.
+    ///
+    /// This check must run BEFORE `staleness_reason` / any incremental update: the per-file
+    /// identity walk asks the STORED root for its health, i.e. on a mismatched tree it asks
+    /// the WRONG tree and can pass against an index that must not be served.
+    ///
+    /// Fail-closed: an index without a stored canonical root (legacy JSON form) and a query
+    /// root that cannot be canonicalized both resolve to a rebuild, never a serve.
+    pub fn root_servability_reason(&self, query_root: &Path) -> Option<String> {
+        if self.canonical_root.as_os_str().is_empty() {
+            return Some(format!(
+                "index has no stored canonical root (legacy format); refusing to serve query root {}",
+                query_root.display()
+            ));
+        }
+        let query_canonical = canonical_root_of(query_root);
+        if query_canonical != self.canonical_root {
+            return Some(format!(
+                "index root mismatch: index was built for {}, but query root {} resolves to {}",
+                self.canonical_root.display(),
+                query_root.display(),
+                query_canonical.display()
+            ));
+        }
+        None
     }
 
     /// Persists the bincode-serialized index atomically -- see [`atomic_write_bytes`]. Audit
@@ -1659,7 +1740,10 @@ mod tests {
 
         let data = fs::read(&index_path).unwrap();
         assert_eq!(&data[0..4], b"TGI\x00", "magic bytes");
-        assert_eq!(data[4], 4, "format version should be 4");
+        // M17 (audit-m17): 5 adds the persisted canonical_root bytes; an old index written
+        // with version 4 fails the version gate and is rebuilt from scratch (safe, by the
+        // same rationale the 3->4 no_ignore bump used).
+        assert_eq!(data[4], 5, "format version should be 5");
     }
 
     #[test]
@@ -1681,6 +1765,101 @@ mod tests {
         assert!(
             reason.contains("no_ignore"),
             "staleness reason should name the no_ignore mismatch: reason={reason}"
+        );
+    }
+
+    #[test]
+    fn test_m17_stored_canonical_root_matches_canonicalized_build_root() {
+        // M17 (audit-m17): the identity a reuse compares is the CANONICALIZED build root,
+        // persisted through save/load. Pre-fix the `canonical_root()` accessor does not
+        // exist at all -- this test is a compile-time RED on the old code. Post-fix it
+        // pins the canonical identity end to end.
+        let dir = tempdir().unwrap();
+        write_test_file(dir.path(), "a.txt", "hello world\n");
+
+        let index = TrigramIndex::build(dir.path()).unwrap();
+        let canonical = dir.path().canonicalize().unwrap();
+        assert_eq!(
+            index.canonical_root(),
+            canonical.as_path(),
+            "the stored identity must be the canonicalized build root"
+        );
+
+        // The persisted form round-trips: a reuse decision after load compares against it.
+        let index_path = dir.path().join(".tg_index");
+        index.save(&index_path).unwrap();
+        let loaded = TrigramIndex::load(&index_path).unwrap();
+        assert_eq!(
+            loaded.canonical_root(),
+            canonical.as_path(),
+            "canonical root must survive the save/load round trip"
+        );
+
+        // A rebuild (incremental path) must re-record the identity of the tree it rebuilt
+        // from, or the rebuilt index would refuse the very tree it just built.
+        let updated = loaded
+            .rebuild_incremental_with_options(dir.path(), false)
+            .unwrap();
+        assert_eq!(
+            updated.index.canonical_root(),
+            canonical.as_path(),
+            "an incremental rebuild must re-record the canonical root"
+        );
+    }
+
+    #[test]
+    fn test_m17_root_servability_refuses_different_tree_but_serves_same_tree() {
+        // M17 (audit-m17) decision seam. Pre-fix `root_servability_reason` does not exist
+        // -- the reuse path in main.rs has no root comparison at all, so calling it is a
+        // compile-time RED on the old code (the strongest possible failure: the seam is a
+        // structural absence). Post-fix:
+        //   - a DIFFERENT tree's index must refuse to serve (caller rebuilds);
+        //   - the SAME tree via the same spelling, and via the canonicalized spelling (the
+        //     aliased-form control), must serve -- canonicalize-vs-canonicalize is what
+        //     keeps legitimate re-spellings of one tree from looking like mismatches.
+        let tree_a = tempdir().unwrap();
+        let tree_b = tempdir().unwrap();
+        write_test_file(tree_a.path(), "a.txt", "hello from tree A\n");
+        write_test_file(tree_b.path(), "b.txt", "hello from tree B\n");
+
+        let index = TrigramIndex::build(tree_a.path()).unwrap();
+
+        assert!(
+            index.root_servability_reason(tree_a.path()).is_none(),
+            "same root, same spelling must serve"
+        );
+        assert!(
+            index
+                .root_servability_reason(&tree_a.path().canonicalize().unwrap())
+                .is_none(),
+            "the canonicalized spelling of the SAME tree must still serve (alias control)"
+        );
+
+        let reason = index
+            .root_servability_reason(tree_b.path())
+            .expect("a different tree's index must never serve");
+        assert!(
+            reason.contains("root mismatch"),
+            "the refusal must disclose the rebuild reason: reason={reason}"
+        );
+    }
+
+    #[test]
+    fn test_m17_empty_canonical_root_fails_closed() {
+        // M17 (audit-m17): an index without a stored canonical root (the legacy JSON form
+        // never persisted one) must refuse to serve rather than guess -- fail-closed
+        // toward a rebuild.
+        let dir = tempdir().unwrap();
+        write_test_file(dir.path(), "a.txt", "hello world\n");
+        let mut index = TrigramIndex::build(dir.path()).unwrap();
+        index.canonical_root = PathBuf::new(); // same-module field access, test-only reach
+
+        let reason = index
+            .root_servability_reason(dir.path())
+            .expect("an empty stored canonical root must refuse to serve");
+        assert!(
+            reason.contains("no stored canonical root"),
+            "reason={reason}"
         );
     }
 
