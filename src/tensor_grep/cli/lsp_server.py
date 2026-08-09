@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections import OrderedDict
 from collections.abc import Callable
 from pathlib import Path
@@ -72,13 +73,56 @@ class TensorGrepLSPServer(LanguageServer):  # type: ignore
 server = TensorGrepLSPServer("tensor-grep-lsp", "v0.3.0")
 
 
+_WINDOWS_DRIVE_SCHEME_RE = re.compile(r"^[a-zA-Z]:[\\/]")
+_URI_SCHEME_TOKEN_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
+
+
+def _uri_scheme(uri: str) -> str | None:
+    """Return the lowercased URI scheme of *uri*, or None if it is not URI-shaped.
+
+    URI-shaped: starts with a scheme token (``[a-zA-Z][a-zA-Z0-9+.-]*:``) that is NOT a
+    Windows drive prefix (``C:\\...`` / ``c:/...`` — a single-letter colon form). So
+    ``file:/C:/x`` and ``file:///C:/x`` are URIs while ``C:/x`` and ``C:\\x`` stay bare
+    local paths (audit-M3 gate finding 3). ``untitled:`` and other non-file schemes ARE
+    scheme-shaped and are refused by ``_uri_to_path`` (fail closed).
+    """
+    if _WINDOWS_DRIVE_SCHEME_RE.match(uri):
+        return None
+    if _URI_SCHEME_TOKEN_RE.match(uri):
+        return urlparse(uri).scheme.lower()
+    return None
+
+
 def _uri_to_path(uri: str) -> Path:
-    if uri.startswith("file://"):
+    """Resolve a URI — or a bare local path handed in by an in-process caller — to a Path.
+
+    Only URI-shaped strings (a ``scheme:`` token that is not a Windows drive prefix) are
+    URI-parsed, and the scheme is matched case-insensitively — ``file://`` and ``FILE://`` are
+    both valid file targets. Any NON-file scheme (``http://``, ``ftp://``, ``untitled:``,
+    unknown schemes) raises ``ValueError`` fail-closed instead of being silently resolved as a
+    relative filesystem path: an ``http://`` string previously resolved relative to the process
+    CWD and could land INSIDE the workspace root, so the confinement check compared the wrong
+    thing (audit-M3 gate finding 1). All RFC-8089 ``file:`` forms parse to a local Path
+    (``file:///``, single-slash ``file:/``, ``file:``, and UNC ``file://host/share``) — the
+    single-slash form previously fell through to drive-relative path resolution and could
+    escape the root (gate finding 3). Bare relative/absolute local paths (no scheme token,
+    e.g. ``C:\\...``, ``c:/...``, ``repo/mod.py``) keep their path semantics for the
+    in-process callers that pass paths.
+    """
+    if _uri_scheme(uri) is not None:
         parsed = urlparse(uri)
+        if parsed.scheme.lower() != "file":
+            raise ValueError(f"non-file URI scheme {parsed.scheme!r} is not a confined edit target")
         path = unquote(parsed.path)
         if parsed.netloc:
             path = f"//{parsed.netloc}{path}"
-        if len(path) >= 3 and path[0] == "/" and path[2] == ":":
+        # Drive-absolute strip, WINDOWS ONLY: ``/C:/...`` is a Windows drive-absolute path
+        # (``file:/C:/Windows/evil`` -> ``C:\Windows\evil``). On POSIX that leading ``/`` is
+        # ROOT-ANCHORED and must stay — stripping it produces a RELATIVE path (``C:/Windows/
+        # evil``) that resolves inside the process CWD, recreating the drive-relative escape
+        # the contract forbids (caught on Linux CI by test_uri_to_path_handles_single_slash_
+        # file_uri: `assert True is False`).
+        if os.name == "nt" and len(path) >= 3 and path[0] == "/" and path[2] == ":":
             path = path[1:]
         return Path(path).resolve()
     return Path(uri).expanduser().resolve()
@@ -86,6 +130,43 @@ def _uri_to_path(uri: str) -> Path:
 
 def _path_to_uri(path: str | Path) -> str:
     return Path(path).resolve().as_uri()
+
+
+def _valid_external_document_uri(uri: object) -> bool:
+    """Whether a provider-supplied target is a syntactically valid ABSOLUTE ``file:`` URI.
+
+    External (untrusted) WorkspaceEdit targets must be full ``file:`` DocumentUris — never
+    bare paths or server-local forms — because the original string is FORWARDED UNCHANGED
+    to the LSP client, so the path proven safe here must be exactly the path the client
+    applies (audit-M3 gate round-3 HIGH: path-rootless/malformed forms such as ``file:C:evil``,
+    ``file:relative.py``, `` file:///C:/x`` or ``+file://...`` resolved against the server's
+    per-drive CWD and PASSED as in-root). Rejects:
+
+    - non-string values,
+    - leading/trailing whitespace (a DocumentUri never starts/ends with a space),
+    - a non-``file`` scheme (and Windows-drive bare paths, which are not URIs at all),
+    - decoded control characters in the path (``%00`` NUL and friends),
+    - path-rootless forms: after stripping the scheme the path component must be absolute
+      (``/``-leading, an UNC share path under a netloc, or a drive-absolute ``C:/...`` form).
+
+    Trusted in-process bare-path callers do NOT go through this validator — only external
+    provider responses do (``_workspace_edit_refused`` / ``_document_change_member_targets``).
+    """
+    if not isinstance(uri, str):
+        return False
+    if uri != uri.strip():
+        return False
+    if _WINDOWS_DRIVE_SCHEME_RE.match(uri) or not _URI_SCHEME_TOKEN_RE.match(uri):
+        return False
+    parsed = urlparse(uri)
+    if parsed.scheme.lower() != "file":
+        return False
+    decoded_path = unquote(parsed.path)
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in decoded_path):
+        return False
+    if parsed.netloc:
+        return parsed.path.startswith("/")
+    return parsed.path.startswith("/") or bool(_WINDOWS_DRIVE_SCHEME_RE.match(parsed.path))
 
 
 def _resolve_repo_root(path: Path) -> Path:
@@ -113,9 +194,70 @@ def _uri_within_root(uri: str, root: Path) -> bool:
         return False
 
 
+_LSP_FILE_OP_KINDS = frozenset({"create", "rename", "delete"})
+
+
+def _document_change_member_targets(entry: object) -> tuple[list[str], bool]:
+    """Classify ONE ``documentChanges`` member as exactly one recognized shape.
+
+    Returns ``(target_uris, opaque)``: a text edit (``kind`` absent, ``textDocument.uri`` a
+    non-empty string) or a file-op (``kind`` create/delete with a non-empty string ``uri``, or
+    rename with non-empty string ``oldUri``+``newUri``). EVERYTHING else is opaque — both shapes
+    at once (a hybrid member), neither, an unknown ``kind``, wrong value types — and cannot be
+    proven within-root, so the whole edit must be refused (A53 no-weaker-fallback; audit-M3 gate
+    finding 2).
+    """
+    if not isinstance(entry, dict):
+        return [], True
+    kind = entry.get("kind")
+    if "kind" not in entry:
+        # Text-edit shape: the kind key must be ABSENT. A present-but-null ``"kind": null``
+        # is an opaque member, not a text edit (gate finding 2a).
+        text_document = entry.get("textDocument")
+        if isinstance(text_document, dict):
+            uri = text_document.get("uri")
+            if isinstance(uri, str) and uri and _valid_external_document_uri(uri):
+                return [uri], False
+        return [], True
+    # A file-op member carrying a textDocument key is a hybrid: neither shape alone, refuse.
+    if "textDocument" in entry:
+        return [], True
+    if kind == "rename":
+        old_uri = entry.get("oldUri")
+        new_uri = entry.get("newUri")
+        if (
+            isinstance(old_uri, str)
+            and old_uri
+            and _valid_external_document_uri(old_uri)
+            and isinstance(new_uri, str)
+            and new_uri
+            and _valid_external_document_uri(new_uri)
+        ):
+            return [old_uri, new_uri], False
+        return [], True
+    if kind in _LSP_FILE_OP_KINDS:  # create / delete
+        uri = entry.get("uri")
+        if isinstance(uri, str) and uri and _valid_external_document_uri(uri):
+            return [uri], False
+        return [], True
+    return [], True
+
+
 def _workspace_edit_target_uris(result: dict[str, Any]) -> list[str]:
     """Collect every edited document URI from an external provider's WorkspaceEdit response
-    (both the ``changes`` map and the ``documentChanges`` list) so they can be confined."""
+    (the ``changes`` map AND every recognized ``documentChanges`` shape — text edits plus the
+    CreateFile / RenameFile / DeleteFile file-operation members) so they can be confined.
+
+    Audit M3: the file-op members carry no ``textDocument`` key, so they were previously
+    invisible and a file-op-only edit collected zero URIs — the enforcement guard then
+    passed vacuously and out-of-root file-ops were not confined.
+
+    Relay residual (relay-only TOCTOU): tg resolves each target here at relay time while the
+    IDE applies the edit later, so a filesystem swap between check and apply is an inherent
+    relay-only TOCTOU (tg never opens the file). ``_path_within_root`` canonicalizes
+    junctions/case/8.3 aliases at CHECK time, so the alias-escape class is covered there;
+    confinement is NOT an opened-identity guarantee.
+    """
     uris: list[str] = []
     changes = result.get("changes")
     if isinstance(changes, dict):
@@ -123,11 +265,56 @@ def _workspace_edit_target_uris(result: dict[str, Any]) -> list[str]:
     document_changes = result.get("documentChanges")
     if isinstance(document_changes, list):
         for entry in document_changes:
-            if isinstance(entry, dict):
-                text_document = entry.get("textDocument")
-                if isinstance(text_document, dict) and text_document.get("uri"):
-                    uris.append(str(text_document["uri"]))
+            targets, _opaque = _document_change_member_targets(entry)
+            uris.extend(targets)
     return uris
+
+
+def _workspace_edit_has_opaque_member(result: dict[str, Any]) -> bool:
+    """Whether a WorkspaceEdit has a ``documentChanges`` value tg cannot confine.
+
+    Fail closed (A53 no-weaker-fallback): a present ``document_changes`` (snake_case) key in a
+    RAW provider response is opaque — the confinement paths read only the wire form
+    ``documentChanges``, so its value can never be enumerated, yet ``WorkspaceEdit(**result)``
+    accepts that field name and serializes it outbound (gate finding 2b); a
+    present-but-non-list ``documentChanges`` value can never be enumerated either (gate
+    finding 2); and any member that is not EXACTLY one recognized shape — text edit,
+    CreateFile, RenameFile, DeleteFile — cannot be proven within-root. In every such case the
+    whole edit is refused rather than passed through an empty confinement guarantee.
+    """
+    if "document_changes" in result:
+        return True
+    document_changes = result.get("documentChanges")
+    if document_changes is None:
+        return False
+    if not isinstance(document_changes, list):
+        return True
+    return any(
+        opaque
+        for _, opaque in (_document_change_member_targets(entry) for entry in document_changes)
+    )
+
+
+def _workspace_edit_refused(result: dict[str, Any], workspace_root: Path) -> bool:
+    """Fail-closed confinement decision for an external provider WorkspaceEdit.
+
+    Returns True (refuse the WHOLE edit) if any collected target is not a syntactically valid
+    absolute ``file:`` URI (gate round-3 HIGH: path-rootless/malformed forms such as
+    ``file:C:evil`` or `` file:///C:/x`` resolve against the server's per-drive CWD and pass as
+    in-root, yet the ORIGINAL string is forwarded unchanged), OR resolves outside
+    ``workspace_root``, OR any ``documentChanges`` member is opaque (unrecognized shape /
+    missing required URI) — i.e. it cannot be proven within-root. Replaces the old vacuous
+    ``if edit_uris and all(...)`` guard, which collected nothing for the file-op shape and so
+    passed silently: an empty guarantee that read as a check.
+    """
+    if _workspace_edit_has_opaque_member(result):
+        return True
+    for uri in _workspace_edit_target_uris(result):
+        if not _valid_external_document_uri(uri):
+            return True
+        if not _uri_within_root(uri, workspace_root):
+            return True
+    return False
 
 
 def _invalidate_repo_map_cache(ls: TensorGrepLSPServer, uri: str) -> None:
@@ -756,10 +943,22 @@ def _workspace_edit_for_symbol(
             except LSPTransportError:
                 result = None
             if isinstance(result, dict) and result:
-                edit_uris = _workspace_edit_target_uris(result)
-                if edit_uris and all(
-                    _uri_within_root(edit_uri, workspace_root) for edit_uri in edit_uris
-                ):
+                # Audit M3 (file-op confinement): refuse the WHOLE edit fail-closed if any of
+                # the five target fields (textDocument.uri, CreateFile.uri, RenameFile.oldUri/
+                # newUri, DeleteFile.uri, changes-map keys) resolves outside the workspace root,
+                # OR any documentChanges member is opaque. The old `edit_uris and all(...)`
+                # guard collected nothing for file-ops and passed vacuously.
+                if not _workspace_edit_refused(result, workspace_root):
+                    # LSP-EDIT-CONSTRUCTION mismatch (pre-existing, NOT fixed in the M3
+                    # confinement PR): lsprotocol 2025.0.0's WorkspaceEdit field is the
+                    # snake_case `document_changes`, so `WorkspaceEdit(**result)` rejects the
+                    # standard camelCase `documentChanges` a provider actually sends and the
+                    # edit falls through to the native branch. Owner: lsp-change-control.
+                    # Disposition: pre-existing. Reopen trigger: an external provider actually
+                    # sending documentChanges to tg's edit-forward path. An all-in-root
+                    # confined edit is NOT refused by this — it just flows through the
+                    # existing native fallback (pinned by test_fileop_all_in_root_edit_is_
+                    # not_refused_and_still_returns_an_edit).
                     try:
                         return WorkspaceEdit(**result)
                     except Exception:
