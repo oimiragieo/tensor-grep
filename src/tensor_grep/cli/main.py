@@ -6569,7 +6569,11 @@ def _run_ast_scan_payload(
     max_evidence_snippet_chars: int = 120,
 ) -> dict[str, object]:
     from tensor_grep.backends.ast_backend import normalize_ast_language
-    from tensor_grep.cli.ast_workflows import _match_node_identity, _rule_member_patterns
+    from tensor_grep.cli.ast_workflows import (
+        _match_node_identity,
+        _rule_member_patterns,
+        _select_ast_backend_for_rule,
+    )
     from tensor_grep.cli.scan_guardrails import ensure_scan_not_broad
     from tensor_grep.core.config import SearchConfig
     from tensor_grep.core.result import SearchResult
@@ -6690,7 +6694,10 @@ def _run_ast_scan_payload(
             regex_rules.append(rule)
             continue
         rule_cfg = replace(cfg, lang=rule["language"])
-        backend = _select_ast_backend_for_pattern(rule_cfg, rule["pattern"], backend_cache)
+        # M16 F3: rule-aware selection — a composite with non-native members
+        # must reach a backend that serves ALL members (or fail closed), never
+        # a backend selected from only the first member's shape.
+        backend = _select_ast_backend_for_rule(rule_cfg, rule, backend_cache)
         if (
             project_scan_fast_path
             and not scan_has_discovery_filter

@@ -280,14 +280,51 @@ def _precompute_orchestration_hints(
     backend_hints = {}
 
     for rule in rule_specs:
-        backend_name = _select_ast_backend_name_for_pattern(
-            rule["pattern"], project_cfg["language"]
-        )
+        # M16 F3: composite-aware — a rule whose members need the ast-grep
+        # wrapper must never be hinted to a backend that serves only the first
+        # member (e.g. bare `alpha` -> native, which cannot serve `alpha(1)`).
+        backend_name = _select_ast_backend_name_for_rule(rule, project_cfg["language"])
         backend_hints[rule["id"]] = backend_name
 
     return {
         "backend_hints": backend_hints,
     }
+
+
+def _pattern_is_native_shaped(pattern: str) -> bool:
+    """Shape-only native-query check (M16 F3): a bare identifier or a
+    parenthesised s-expression is native-shaped; anything else (ast-grep DSL,
+    metavariables, calls like `alpha(1)`) needs the ast-grep wrapper.
+    Language/availability are deliberately NOT consulted here."""
+    stripped = pattern.strip()
+    if not stripped:
+        return False
+    if stripped.startswith("("):
+        return True
+    global _SUPPORTED_NATIVE_PATTERN_RE
+    if _SUPPORTED_NATIVE_PATTERN_RE is None:
+        _SUPPORTED_NATIVE_PATTERN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+    return bool(_SUPPORTED_NATIVE_PATTERN_RE.fullmatch(stripped))
+
+
+def _rule_needs_ast_grep_wrapper(rule: Mapping[str, object]) -> bool:
+    """M16 F3: True when a rule has MULTIPLE member patterns and ANY member is
+    not native-shaped. A composite rule must never be routed through a backend
+    that only serves its first member (e.g. a bare `alpha` first member routed
+    to tree-sitter native, which cannot serve a DSL member like `alpha(1)`).
+    Single-pattern rules keep the legacy single-pattern routing."""
+    members = _rule_member_patterns(rule)
+    return len(members) > 1 and any(not _pattern_is_native_shaped(m) for m in members)
+
+
+def _select_ast_backend_name_for_rule(rule: Mapping[str, object], language: str) -> str:
+    """Composite-aware backend NAME (M16 F3): a composite with any non-native
+    member always names the ast-grep wrapper; an all-native composite is served
+    by the same backend as its first member; single-pattern rules keep the
+    legacy `_select_ast_backend_name_for_pattern` decision."""
+    if _rule_needs_ast_grep_wrapper(rule):
+        return "AstGrepWrapperBackend"
+    return _select_ast_backend_name_for_pattern(_rule_member_patterns(rule)[0], language)
 
 
 def _select_ast_backend_name_for_pattern(pattern: str, language: str) -> str:
@@ -1222,6 +1259,32 @@ def _select_ast_backend_for_pattern(
     return backend
 
 
+def _select_ast_backend_for_rule(
+    base_config: SearchConfig,
+    rule: Mapping[str, object],
+    backend_cache: dict[tuple[str | None, str, bool, bool], Any] | None = None,
+) -> Any:
+    """Composite-aware backend selection (M16 F3): a rule's backend must serve
+    EVERY member. A composite with any non-native-shaped member routes to the
+    ast-grep wrapper, and FAILS CLOSED (ConfigurationError) when the wrapper is
+    unavailable — never routed through a backend that only serves the first
+    member. All-native composites and single-pattern rules delegate to the
+    single-pattern selection on the first member.
+    """
+    if _rule_needs_ast_grep_wrapper(rule):
+        if _check_backend_available("AstGrepWrapperBackend"):
+            return _get_cached_backend("AstGrepWrapperBackend")
+        from tensor_grep.core.pipeline import ConfigurationError
+
+        raise ConfigurationError(
+            "Explicit AST search requires AST dependencies: ast-grep wrapper "
+            "backend is required for composite rule members but is not available"
+        )
+    return _select_ast_backend_for_pattern(
+        base_config, _rule_member_patterns(rule)[0], backend_cache
+    )
+
+
 def scan_command(
     config: str | None = "sgconfig.yml",
     ruleset: str | None = None,
@@ -1381,7 +1444,9 @@ def scan_command(
         if backend_name and _check_backend_available(backend_name):
             backend = _get_cached_backend(backend_name)
         else:
-            backend = _select_ast_backend_for_pattern(rule_cfg, rule["pattern"])
+            # M16 F3: rule-aware fallback — a composite with non-native members
+            # must reach a backend that serves ALL members (or fail closed).
+            backend = _select_ast_backend_for_rule(rule_cfg, rule)
 
         if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(backend, "search_project"):
             wrapper_rules.append(rule)
