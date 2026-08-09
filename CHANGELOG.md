@@ -1,6 +1,63 @@
 # CHANGELOG
 
 
+## v1.110.10 (2026-08-09)
+
+### Bug Fixes
+
+- **mcp**: Central mcp_contract_version always wins + value ratchet over all 58 tools (M14 audit)
+  ([#984](https://github.com/oimiragieo/tensor-grep/pull/984),
+  [`27775b3`](https://github.com/oimiragieo/tensor-grep/commit/27775b3894014cb492caec5be000374cbe882519))
+
+* fix(mcp): central mcp_contract_version always wins + value ratchet over all 58 tools (M14 audit)
+
+M14 (census-corrected): the central stamp helpers (_envelope_base / _inject_mcp_contract_fields)
+  existed but setdefault let a tool payload's OWN mcp_contract_version literal (stale/forked) WIN
+  and skirt the const; tg_classify_logs + 15-22 actual sites were unstamped on success paths. Live
+  census correction: 58 tools, 19 sites / 11 tools unstamped on success (the original '15/58 approx'
+  was overstated; the masked-success arm is the real class).
+
+Fix: _inject_mcp_contract_fields hard-assigns mcp_contract_version (const always wins; A49
+  retired-behavior comment); schema_version stays setdefault so tg_doctor's documented v2 schema
+  survives (harness_api.md-pinned); 11 tools' success returns wrapped through the injector
+  (tg_audit_manifest_verify, tg_review_bundle_create/verify, tg_session_refresh +
+  tg_session_blast_radius/_plan/_render + tg_session_context_render + tg_session_edit_plan +
+  tg_session_file_importers + the shared _broad_root_scan_refusal_result helper). Const untouched
+  (1.7.0 -- stamping uniformity only; fifth-registration-site law). Value ratchet: LIVE registry
+  census (mcp.list_tools, never a hand list) asserting every tool's SUCCESS + ERROR families carry
+  mcp_contract_version == const by VALUE; mutation-control (any other exception type / non-str
+  return REDs; an independent stamp-deletion mutation REDs both probes); dense-model-forced hermetic
+  tg_find reach (env-independent); (tool,family) full-key parity.
+
+Security gate: codex R1 FIX-BEFORE-MERGE (3 HIGH: 4 more unstamped success paths + schema contract
+  break + path-incomplete census) -> fixed + widened to 11 tools; R2 FIX-BEFORE-MERGE (3 harness
+  defects: exception-allowlist masking, env-dependence, partial-key parity) -> fixed; R3 SHIP, no
+  new findings, mutation-proof re-verified independently. 26 ratchet tests + 578 MCP tests green
+  locally (4 *rewrite*embedded* env failures proven pre-existing on origin/main: worktree lacks
+  compiled rust_core ext); ruff/format/mypy clean.
+
+* test(mcp): make the M14 contract-stamp census environment-independent
+
+The census failed on all CI test-python lanes because the AST tools (tg_ast_search, tg_ruleset_scan,
+  tg_scan) could not reach a SUCCESS arm there: their success requires the tree-sitter grammar or
+  ast-grep wrapper the CI pytest env does not install. Mirror the existing tg_find dense-model
+  hermetic force: probe exactly those (tool, family) families through a controlled AST engine seam
+  (Pipeline.get_backend -> a fixed 'AstBackend' stub, _run_ast_scan_payload -> deterministic
+  empty-findings payload), so the tools' real success return sites are exercised and value-checked
+  on every env. Error arms stay real (engine-free out-of-root confinement refusals) and remain
+  value-checked. Proof tests simulate the no-ast-engine and corrupt-dense envs and assert the census
+  verdict is unchanged; allowlist/fixture keys validated against the generated probe-family set.
+
+* test(mcp): re-pin session-edit-plan envelope assertion to substance (M14 stamps)
+
+test_profiling_cli_mcp asserts payload == {"ok": True}; M14's centralized mcp_contract_version +
+  schema_version stamps now (correctly) appear in every tool envelope. An exact-shape pin reds on
+  legitimate envelope growth -- re-pin to substance: ok is True + both stamps equal the central
+  const / json output version by value. Same class as the doctor payload re-pin (A19/C-nit). Swept
+  the whole unit suite for sibling exact-envelope pins: none other touch an MCP tool envelope
+  (test_session_cli retry payload is daemon-internal, unstamped).
+
+
 ## v1.110.9 (2026-08-09)
 
 ### Bug Fixes
