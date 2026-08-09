@@ -18,12 +18,13 @@
 >    `tag == PyPI` cannot distinguish *released* from *not started* from *died* and cost a release
 >    on 2026-07-28.
 
-## Campaign note (2026-08-08)
-CEO update: `docs/audits/2026-08-06-ceo-backlog-update.md`. Public product `v1.110.6` (2026-08-08).
-2026-08-08 drain: M7 (#975 → v1.110.6), M8 (#976 → v1.110.7 in flight); execution plan
-`docs/plans/2026-08-08-backlog-completion-plan.md` (thinktank-approved); P5·H2 → draft #979
-(codex R5 APPROVE-WITH-NITS); next buildable M1/M3/M16/M17/M14. Index `2026-08-08.1`. STOP
-unchanged: Task 2A, W3 rust/e2e shared-box ban, MCP wire fence, #169, CEO_GATED. R0 packets:
+## Campaign note (2026-08-09)
+
+Phase 0+1 (Prepare-First Cross-Language + Honest Refusal) complete on published **v1.110.10**:
+#951–#957/#961 path + wheel dogfood `workspace_root_refused` exit 2. Prior 2026-08-08 drain
+notes (M7/M8, plan `docs/plans/2026-08-08-backlog-completion-plan.md`) remain historical.
+Index `2026-08-08.1`. STOP unchanged: Task 2A not GREEN, W3 rust/e2e shared-box ban, MCP wire
+fence, #169, CEO_GATED. R0 packets:
 `docs/audits/2026-08-06-ceo-gated-recommendation-packets.md`,
 `docs/audits/2026-08-06-demand-gated-research-receipts.md`.
 
@@ -95,22 +96,18 @@ post-**v1.110.6**, PyPI-verified 2026-08-08 by the version endpoint (`tensor-gre
 **Hard stops:** Task 2A not merge-ready; no #169 spend; no silent CEO-gate flips; MCP wire-contract
 fence; no local `rust_core` cargo on the shared box for W3 halves.
 
-post-**v1.110.6**, PyPI-verified 2026-08-08 by the version endpoint (`tensor-grep 1.110.6`).
+post-**v1.110.10**, PyPI-verified 2026-08-09 (`tensor-grep 1.110.10`).
 
-## IN FLIGHT (PRs open right now — derived from `gh pr list`, 2026-08-08)
+## IN FLIGHT (PRs open right now — derived from `gh pr list`, 2026-08-09)
 
 | PR | Title | Type | State |
 |---|---|---|---|
-| #966 | `test: Task 2A FIX-FIRST Sol R3 (not GREEN)` | test | DRAFT — do-not-merge (RED by design) |
-| #967 | `docs: 2026-08-06 PM CEO update + A77–A82 lesson retention` | docs | OPEN (rebased onto current main 2026-08-08) |
-| #977 | `ci: spend-smart CI — PR-only code-touch gate for expensive jobs` | ci | DRAFT (rebased onto current main 2026-08-08) |
-| #978 | `docs: complete-backlog completion plan (2026-08-08)` | docs | DRAFT (plan PR, thinktank-approved) |
-| #979 | `fix: fail closed count-matches/files-* native structured route (H2)` | fix | DRAFT (codex R5 APPROVE-WITH-NITS) |
+| #966 | `test: Task 2A FIX-FIRST Sol R3 (not GREEN)` | test | DRAFT — do-not-merge (RED by design; not Phase 0+1) |
+| #987 | `fix(scan): Rust tg scan keeps composite rules + severity/message (M16 audit)` | fix | DRAFT |
+| #988 | `fix(index): reused index never serves a mismatched stored root (M17 audit)` | fix | DRAFT |
 
-*(Derive live `gh pr list` before treating this table as current. #975/#976 MERGED 2026-08-08 — M7
-→ v1.110.6, M8 → v1.110.7 in flight. #967/#977 were found STALE-BASED 2026-08-08 (their labeled
-"ready"/"green" heads predated #969-#976); both rebased and re-pushed onto current main. #957/#958/#961
-merged/closed via the Phase-0/1 launch reconcile.)*
+*(Derive live `gh pr list` before treating this table as current. Phase 0+1 PRs #951–#957/#961
+MERGED; F7 Task 11 waves 1–3 SHIPPED. Do not read draft #966 as Task 2A GREEN.)*
 
 *(#872, #871 and #868 all MERGED — #871 on 2026-07-31, #872 and #868 on 2026-08-01. They sat in
 this table as "CI running" / "BLOCKED — do not merge" after landing, which is the exact failure mode
