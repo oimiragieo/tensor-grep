@@ -32,8 +32,27 @@ fn default_language() -> String {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AstRuleSpec {
     pub id: String,
+    /// Primary member pattern. For a composite (multi-pattern `any`-of) rule
+    /// this is the FIRST member; for a single-pattern rule it is the only one.
     pub pattern: String,
+    /// Additional member patterns for composite (multi-pattern `any`-of) rules.
+    /// Empty for single-pattern rules. Pre-M16 caches serialize without this
+    /// field, hence `#[serde(default)]`.
+    #[serde(default)]
+    pub patterns: Vec<String>,
+    /// Finding severity, mirrored from the Python project-scan twin
+    /// (`cli/ast_workflows.py:_load_rule_specs_and_meta`): item -> payload ->
+    /// "warning".
+    #[serde(default = "default_rule_severity")]
+    pub severity: String,
+    /// Finding message (item -> payload -> "").
+    #[serde(default)]
+    pub message: String,
     pub language: String,
+}
+
+fn default_rule_severity() -> String {
+    "warning".to_string()
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -228,26 +247,31 @@ pub fn execute_ast_scan_core(
 
         backends_used.insert(backend_name.to_string());
 
-        let mut rule_matches_count = 0;
-        let mut matched_files_count = 0;
+        // M16: a composite (multi-pattern any-of) rule matches when ANY member
+        // matches. Aggregate per-file match counts across members: matches sum,
+        // files are DISTINCT (a file matching two members counts once), matching
+        // the Python twin's per-rule file accounting (`matched_files` is a set).
+        let mut per_file_counts: HashMap<PathBuf, usize> = HashMap::new();
 
-        let file_matches = if backend_name == "AstBackend" {
-            if let Some(files) = lang_to_files.get(&rule.language.to_lowercase()) {
-                backend.search_many_for_cli(&rule.pattern, &rule.language, files)?
+        for member_pattern in ast_rule_member_patterns(rule) {
+            let file_matches = if backend_name == "AstBackend" {
+                if let Some(files) = lang_to_files.get(&rule.language.to_lowercase()) {
+                    backend.search_many_for_cli(&member_pattern, &rule.language, files)?
+                } else {
+                    Vec::new()
+                }
             } else {
-                Vec::new()
-            }
-        } else {
-            let root_dir_str = orchestrator.root_dir.to_string_lossy().into_owned();
-            backend.search_for_cli(&rule.pattern, &rule.language, &root_dir_str)?
-        };
+                let root_dir_str = orchestrator.root_dir.to_string_lossy().into_owned();
+                backend.search_for_cli(&member_pattern, &rule.language, &root_dir_str)?
+            };
 
-        for file_match in file_matches {
-            rule_matches_count += file_match.matches.len();
-            if !file_match.matches.is_empty() {
-                matched_files_count += 1;
+            for file_match in file_matches {
+                *per_file_counts.entry(file_match.file).or_insert(0) += file_match.matches.len();
             }
         }
+
+        let rule_matches_count: usize = per_file_counts.values().sum();
+        let matched_files_count = per_file_counts.len();
 
         total_matches += rule_matches_count;
         if rule_matches_count > 0 {
@@ -876,7 +900,7 @@ impl AstWorkflowOrchestrator {
         path: &Path,
         idx: Option<usize>,
     ) -> Option<AstRuleSpec> {
-        let pattern = self.extract_rule_pattern(item)?;
+        let members = self.extract_rule_member_patterns(item)?;
         let id = item
             .get("id")
             .and_then(|v| v.as_str())
@@ -896,9 +920,24 @@ impl AstWorkflowOrchestrator {
             .map(|s| s.to_string())
             .unwrap_or_else(|| config.language.clone());
 
+        // Item -> payload -> default fallback, mirroring the Python project-scan
+        // twin (`cli/ast_workflows.py:328-329`: `item.get(...) or payload.get(...)
+        // or "warning"` / `or ""`). Empty strings fall through exactly like the
+        // Python `or`.
+        let severity =
+            rule_metadata_string(item, payload, "severity").unwrap_or_else(default_rule_severity);
+        let message = rule_metadata_string(item, payload, "message").unwrap_or_default();
+
         Some(AstRuleSpec {
             id,
-            pattern,
+            pattern: members[0].clone(),
+            patterns: if members.len() > 1 {
+                members
+            } else {
+                Vec::new()
+            },
+            severity,
+            message,
             language,
         })
     }
@@ -1072,15 +1111,51 @@ impl AstWorkflowOrchestrator {
     }
 
     pub fn extract_rule_pattern(&self, item: &serde_yaml::Value) -> Option<String> {
-        if let Some(p) = item.get("pattern").and_then(|v| v.as_str()) {
-            return Some(p.trim().to_string());
+        self.extract_rule_member_patterns(item)
+            .map(|mut members| members.swap_remove(0))
+    }
+
+    /// Extract the member patterns of a rule item (M16).
+    ///
+    /// Supported shapes, matching ast-grep rule YAML as the Python project-scan
+    /// twin consumes it:
+    /// - a flat `pattern:` STRING,
+    /// - a `pattern:` LIST of strings,
+    /// - a `rule:` mapping whose `pattern` is a string,
+    /// - a `rule:` mapping whose `any:` sequence lists sub-rules (each
+    ///   sub-rule's `pattern` string, or its nested `rule.pattern` string).
+    ///
+    /// A composite member that does not carry exactly one extractable pattern
+    /// fails the WHOLE rule closed (None) rather than under-matching. `all:` /
+    /// `not:` composite bodies require same-node intersection semantics the
+    /// native per-pattern matcher cannot express; they also return None, which
+    /// keeps them dropped exactly as the Python twin drops them.
+    pub fn extract_rule_member_patterns(&self, item: &serde_yaml::Value) -> Option<Vec<String>> {
+        if let Some(p) = item.get("pattern") {
+            if let Some(s) = p.as_str() {
+                let trimmed = s.trim();
+                if !trimmed.is_empty() {
+                    return Some(vec![trimmed.to_string()]);
+                }
+            } else if let Some(seq) = p.as_sequence() {
+                return collect_pattern_strings(seq);
+            }
         }
         if let Some(rule) = item.get("rule").and_then(|v| v.as_mapping()) {
-            if let Some(p) = rule
+            if let Some(s) = rule
                 .get(serde_yaml::Value::String("pattern".to_string()))
                 .and_then(|v| v.as_str())
             {
-                return Some(p.trim().to_string());
+                let trimmed = s.trim();
+                if !trimmed.is_empty() {
+                    return Some(vec![trimmed.to_string()]);
+                }
+            }
+            if let Some(any_seq) = rule
+                .get(serde_yaml::Value::String("any".to_string()))
+                .and_then(|v| v.as_sequence())
+            {
+                return collect_any_member_patterns(any_seq);
             }
         }
         None
@@ -1107,6 +1182,82 @@ impl AstWorkflowOrchestrator {
                 .collect(),
             _ => Vec::new(),
         }
+    }
+}
+
+/// Item -> payload metadata fallback, mirroring the Python project-scan twin
+/// (`item.get(key) or payload.get(key)`; empty strings are falsy there too).
+fn rule_metadata_string(
+    item: &serde_yaml::Value,
+    payload: &serde_yaml::Value,
+    key: &str,
+) -> Option<String> {
+    item.get(key)
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            payload
+                .get(key)
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+        })
+        .map(|s| s.to_string())
+}
+
+/// Collect non-empty trimmed strings from a `pattern:` LIST. A member that is
+/// not a non-empty string fails the whole rule closed (None).
+fn collect_pattern_strings(seq: &[serde_yaml::Value]) -> Option<Vec<String>> {
+    let mut out = Vec::with_capacity(seq.len());
+    for v in seq {
+        let trimmed = v.as_str()?.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        out.push(trimmed.to_string());
+    }
+    if out.is_empty() {
+        return None;
+    }
+    Some(out)
+}
+
+/// Collect member patterns from a `rule: { any: [...] }` sequence. Each member
+/// must carry exactly one extractable pattern (string `pattern` or nested
+/// `rule.pattern`); a member that cannot (e.g. an `all:`/`not:` body) fails the
+/// whole rule closed rather than under-matching.
+fn collect_any_member_patterns(any_seq: &[serde_yaml::Value]) -> Option<Vec<String>> {
+    let mut out = Vec::with_capacity(any_seq.len());
+    for member in any_seq {
+        let m = member.as_mapping()?;
+        let pattern_value = m
+            .get(serde_yaml::Value::String("pattern".to_string()))
+            .and_then(|v| v.as_str())
+            .or_else(|| {
+                m.get(serde_yaml::Value::String("rule".to_string()))
+                    .and_then(|v| v.as_mapping())
+                    .and_then(|r| r.get(serde_yaml::Value::String("pattern".to_string())))
+                    .and_then(|v| v.as_str())
+            });
+        let trimmed = pattern_value?.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        out.push(trimmed.to_string());
+    }
+    if out.is_empty() {
+        return None;
+    }
+    Some(out)
+}
+
+/// The member patterns a rule must be matched against. For a composite rule
+/// (`patterns` non-empty) the members are authoritative and `pattern` is the
+/// first member; a single-pattern rule yields exactly one member.
+fn ast_rule_member_patterns(rule: &AstRuleSpec) -> Vec<String> {
+    if rule.patterns.is_empty() {
+        vec![rule.pattern.clone()]
+    } else {
+        rule.patterns.clone()
     }
 }
 
@@ -1336,4 +1487,284 @@ pub fn handle_ast_worker_tcp(port: u16) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    // M16 audit: Rust `tg scan` (handle_ast_scan, config route) DROPPED composite
+    // rules (`rule: { any: [...] }` and `pattern:` LIST shapes) and custom
+    // severity/message. Pre-fix, `parse_rule_item` (`:879`) early-returns None
+    // via `extract_rule_pattern(item)?` whenever the item has no flat string
+    // `pattern`/`rule.pattern` (`:1074-1087`), and `AstRuleSpec` carried only
+    // `{id, pattern, language}` so severity/message could not survive discovery.
+    // The Python project-scan twin (`cli/ast_workflows.py:_load_rule_specs_and_meta`)
+    // already threads severity/message into rule specs and findings; the Rust
+    // route is the gap this module closes. CI is the compile/test oracle; the
+    // structural RED arguments are recorded per test so a regression is
+    // attributable without a local compile.
+    use super::*;
+    use tempfile::tempdir;
+
+    fn orchestrator_for_tests() -> AstWorkflowOrchestrator {
+        AstWorkflowOrchestrator {
+            root_dir: PathBuf::from("."),
+            config_path: PathBuf::from("sgconfig.yml"),
+        }
+    }
+
+    fn config_for_tests() -> AstProjectConfig {
+        AstProjectConfig {
+            rule_dirs: vec!["rules".to_string()],
+            test_dirs: vec!["tests".to_string()],
+            language: "python".to_string(),
+        }
+    }
+
+    /// RED (pre-fix): `extract_rule_pattern` only reads flat string
+    /// `pattern` / `rule.pattern`, so a `rule: { any: [...] }` item yields None
+    /// at `parse_rule_item:879` and the rule is DROPPED (`discover_rules` skips
+    /// None entries). GREEN (post-fix): `extract_rule_member_patterns` reads the
+    /// `any:` sequence, so one spec is produced whose `pattern` is the FIRST
+    /// member and whose `patterns` carries ALL members.
+    #[test]
+    fn composite_any_rule_parses_with_all_members_kept() {
+        let item: serde_yaml::Value = serde_yaml::from_str(
+            "id: no-print\n\
+             language: python\n\
+             severity: high\n\
+             message: Avoid print calls.\n\
+             rule:\n\
+             \x20 any:\n\
+             \x20   - pattern: print($A)\n\
+             \x20   - pattern: println($A)\n",
+        )
+        .unwrap();
+        let payload = item.clone();
+        let spec = orchestrator_for_tests()
+            .parse_rule_item(
+                &item,
+                &payload,
+                &config_for_tests(),
+                Path::new("no-print.yml"),
+                Some(0),
+            )
+            .expect("composite any-of rule must be parsed, not dropped");
+        assert_eq!(spec.id, "no-print");
+        assert_eq!(spec.pattern, "print($A)");
+        assert_eq!(spec.patterns, vec!["print($A)", "println($A)"]);
+        assert_eq!(spec.language, "python");
+    }
+
+    /// RED (pre-fix): a `pattern:` LIST has no `as_str`, so
+    /// `extract_rule_pattern` returns None and the rule is dropped.
+    /// GREEN (post-fix): the sequence is collected into member patterns.
+    #[test]
+    fn pattern_list_rule_parses_with_all_members_kept() {
+        let item: serde_yaml::Value = serde_yaml::from_str(
+            "id: multi-pattern\n\
+             language: python\n\
+             pattern:\n\
+             \x20 - alpha(x)\n\
+             \x20 - beta(x)\n",
+        )
+        .unwrap();
+        let payload = item.clone();
+        let spec = orchestrator_for_tests()
+            .parse_rule_item(
+                &item,
+                &payload,
+                &config_for_tests(),
+                Path::new("multi-pattern.yml"),
+                Some(0),
+            )
+            .expect("pattern-list rule must be parsed, not dropped");
+        assert_eq!(spec.id, "multi-pattern");
+        assert_eq!(spec.pattern, "alpha(x)");
+        assert_eq!(spec.patterns, vec!["alpha(x)", "beta(x)"]);
+        assert_eq!(spec.language, "python");
+    }
+
+    /// RED (pre-fix): `AstRuleSpec` has no `severity`/`message` fields, so this
+    /// test does not COMPILE against the pre-fix struct — the fields (and thus
+    /// the drop of the metadata) are the defect. GREEN (post-fix): the custom
+    /// severity/message from the rule item round-trip into the emitted spec.
+    #[test]
+    fn custom_severity_and_message_survive_rule_parsing() {
+        let item: serde_yaml::Value = serde_yaml::from_str(
+            "id: sev-msg\n\
+             language: python\n\
+             severity: error\n\
+             message: Custom message text.\n\
+             pattern: danger(x)\n",
+        )
+        .unwrap();
+        let payload = item.clone();
+        let spec = orchestrator_for_tests()
+            .parse_rule_item(
+                &item,
+                &payload,
+                &config_for_tests(),
+                Path::new("sev-msg.yml"),
+                Some(0),
+            )
+            .expect("rule with severity/message must be parsed");
+        assert_eq!(spec.severity, "error");
+        assert_eq!(spec.message, "Custom message text.");
+    }
+
+    /// Mirrors the Python twin `_load_rule_specs_and_meta`
+    /// (`cli/ast_workflows.py:328-329`): severity/message fall back item ->
+    /// payload -> default ("warning" / ""). RED (pre-fix) at compile time (fields
+    /// absent); GREEN (post-fix) with identical fallback order.
+    #[test]
+    fn severity_and_message_fall_back_to_payload_then_defaults() {
+        let payload: serde_yaml::Value = serde_yaml::from_str(
+            "id: top\n\
+             language: python\n\
+             severity: critical\n\
+             message: Payload message.\n\
+             rules:\n\
+             \x20 - pattern: toprule(x)\n",
+        )
+        .unwrap();
+        let item = payload.get("rules").unwrap().get(0).unwrap().clone();
+
+        let spec = orchestrator_for_tests()
+            .parse_rule_item(
+                &item,
+                &payload,
+                &config_for_tests(),
+                Path::new("top.yml"),
+                None,
+            )
+            .expect("payload-level metadata must apply to bare rule items");
+        assert_eq!(spec.severity, "critical");
+        assert_eq!(spec.message, "Payload message.");
+
+        let bare: serde_yaml::Value = serde_yaml::from_str(
+            "id: no-meta\n\
+             language: python\n\
+             pattern: plain(x)\n",
+        )
+        .unwrap();
+        let bare_payload = bare.clone();
+        let defaulted = orchestrator_for_tests()
+            .parse_rule_item(
+                &bare,
+                &bare_payload,
+                &config_for_tests(),
+                Path::new("no-meta.yml"),
+                None,
+            )
+            .expect("metadata-less rule must still parse");
+        assert_eq!(defaulted.severity, "warning");
+        assert_eq!(defaulted.message, "");
+    }
+
+    /// Fail-closed scope pin for M16: an `all:`-only composite body needs
+    /// same-node intersection semantics the native per-pattern matcher cannot
+    /// express, so it MUST stay dropped (None) on both pre- and post-fix code.
+    /// This is a behavior pin, not a red-green arm: it passes in BOTH arms and
+    /// exists to prevent a future half-implementation that would under-match.
+    #[test]
+    fn all_only_composite_rule_stays_dropped_fail_closed() {
+        let item: serde_yaml::Value = serde_yaml::from_str(
+            "id: all-only\n\
+             language: python\n\
+             rule:\n\
+             \x20 all:\n\
+             \x20   - pattern: a(x)\n\
+             \x20   - pattern: b(x)\n",
+        )
+        .unwrap();
+        let payload = item.clone();
+        assert!(
+            orchestrator_for_tests()
+                .parse_rule_item(
+                    &item,
+                    &payload,
+                    &config_for_tests(),
+                    Path::new("all-only.yml"),
+                    Some(0),
+                )
+                .is_none(),
+            "all:-only composite rules must be dropped, never under-matched"
+        );
+    }
+
+    /// Cache-compatibility pin: `ProjectDataV6` is persisted to
+    /// `.tg_cache/ast/project_data_v6.json`; a cache written by a pre-M16 build
+    /// serializes `AstRuleSpec` WITHOUT the new fields, so the new fields must
+    /// carry `serde(default)` and deserialize to the defaults. RED (pre-fix) at
+    /// compile time (fields absent); GREEN (post-fix) with the defaults.
+    #[test]
+    fn stale_cache_rule_spec_json_without_new_fields_deserializes_with_defaults() {
+        let json = r#"{"id":"r1","pattern":"foo(x)","language":"python"}"#;
+        let spec: AstRuleSpec = serde_json::from_str(json).unwrap();
+        assert_eq!(spec.patterns, Vec::<String>::new());
+        assert_eq!(spec.severity, "warning");
+        assert_eq!(spec.message, "");
+        assert_eq!(spec.pattern, "foo(x)");
+    }
+
+    /// End-to-end union counting: a composite rule (two member patterns) must
+    /// match when EITHER member matches, count distinct files once, and sum
+    /// member matches — proven through the REAL AstBackend (tree-sitter) over a
+    /// temp fixture, so no rg/ast-grep binary is involved. RED (pre-fix) at
+    /// compile time: `AstRuleSpec` had no `patterns` field and there was no
+    /// member-union path in `execute_ast_scan_core` (it consumed only
+    /// `rule.pattern`, `:236/:242`). GREEN (post-fix): members are unioned.
+    #[test]
+    fn scan_core_counts_composite_rule_as_union_across_members() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("sample.py");
+        fs::write(
+            &file_path,
+            "alpha_result = alpha(1)\nbeta_result = beta(2)\n",
+        )
+        .unwrap();
+
+        let orchestrator = AstWorkflowOrchestrator {
+            root_dir: dir.path().to_path_buf(),
+            config_path: dir.path().join("sgconfig.yml"),
+        };
+        let rule_spec = AstRuleSpec {
+            id: "composite".to_string(),
+            pattern: "alpha".to_string(),
+            patterns: vec!["alpha".to_string(), "beta".to_string()],
+            severity: "high".to_string(),
+            message: "avoid alpha and beta".to_string(),
+            language: "python".to_string(),
+        };
+        let data = ProjectDataV6 {
+            project_cfg: serde_json::json!({}),
+            rule_specs: vec![rule_spec.clone()],
+            candidate_files: vec![file_path.to_string_lossy().into_owned()],
+            test_data: Vec::new(),
+            orchestration_hints: orchestrator.precompute_orchestration_hints(&[rule_spec]),
+            validation_metadata: ValidationMetadata {
+                rule_files: HashMap::new(),
+                test_files: HashMap::new(),
+                tree_dirs: HashMap::new(),
+            },
+        };
+        let mut lang_to_files: HashMap<String, Vec<PathBuf>> = HashMap::new();
+        lang_to_files.insert("python".to_string(), vec![file_path]);
+
+        let backend = AstBackend::new();
+        let mut output = Vec::new();
+        let success =
+            execute_ast_scan_core(&orchestrator, &data, &backend, &lang_to_files, &mut output)
+                .unwrap();
+        assert!(success);
+        let stdout = String::from_utf8(output).unwrap();
+        assert!(
+            stdout.contains("[scan] rule=composite lang=python matches=2 files=1"),
+            "unexpected scan line in: {stdout}"
+        );
+        assert!(
+            stdout.contains("Scan completed. rules=1 matched_rules=1 total_matches=2"),
+            "unexpected summary in: {stdout}"
+        );
+    }
 }
