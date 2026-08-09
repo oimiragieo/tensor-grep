@@ -265,13 +265,26 @@ class AstGrepWrapperBackend(ComputeBackend):
             start = match_range.get("start", {}) if match_range is not None else {}
             if not isinstance(start, dict):
                 start = {}
+            end = match_range.get("end", {}) if match_range is not None else {}
+            if not isinstance(end, dict):
+                end = {}
             line_num = int(start.get("line", 0)) + 1  # 0-indexed to 1-indexed
+            # M16 F1: ast-grep's JSON positions carry the node's byte offset in
+            # `index`; keep them so composite-rule accounting can dedupe by
+            # NODE SPAN (two distinct nodes on one line are distinct matches).
+            start_byte = start.get("index")
+            end_byte = end.get("index")
+            if not isinstance(start_byte, int) or not isinstance(end_byte, int):
+                start_byte = None
+                end_byte = None
 
             matches.append(
                 MatchLine(
                     line_number=line_num,
                     text=text,
                     file=file_path,
+                    start_byte=start_byte,
+                    end_byte=end_byte,
                     range=match_range,
                     meta_variables=meta_variables,
                 )

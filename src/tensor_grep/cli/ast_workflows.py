@@ -492,6 +492,23 @@ def _rule_member_patterns(rule: Mapping[str, object]) -> list[str]:
     return [str(rule["pattern"])]
 
 
+def _match_node_identity(
+    match: MatchLine, fallback_file: str | None = None
+) -> tuple[str, int, int]:
+    """Stable AST-node identity for composite-rule union dedupe (M16 F1): the
+    node BYTE SPAN (file, start_byte, end_byte) when the backend supplied one,
+    else a per-(file, line) fallback (-1 sentinel). Only the SAME node matched
+    by multiple members may be deduplicated — two distinct nodes on one line
+    are distinct matches, matching whole-config ast-grep's per-node `any`
+    semantics. Rust twin: the `(start_byte, end_byte)` spans the scan core
+    unions per file.
+    """
+    file_path = match.file or fallback_file or ""
+    if match.start_byte is not None and match.end_byte is not None:
+        return (file_path, match.start_byte, match.end_byte)
+    return (file_path, -1, match.line_number)
+
+
 def _suffix_for_language(language: str) -> str:
     return _SUFFIX_CACHE.get(language.lower(), ".py")
 
@@ -1472,14 +1489,15 @@ def scan_command(
         backend_names_used.add(type(backend).__name__)
         matched_files: set[str] = set()
 
-        # M16: composite (multi-pattern any-of) rules scan EVERY member and
-        # count each matched (file, line) once across members (union identity
-        # — the same key the Rust scan core uses, since `MatchLine` exposes
-        # (file, line) and both languages must agree). Single-pattern rules
-        # keep the legacy per-node total accounting unchanged.
+        # M16 F1: composite (multi-pattern any-of) rules scan EVERY member and
+        # count each matched AST NODE once across members, deduplicating by
+        # node SPAN via `_match_node_identity` (file, start_byte, end_byte; the
+        # same key the Rust scan core unions) — two distinct nodes on one line
+        # each count, matching whole-config ast-grep's per-node `any` count.
+        # Single-pattern rules keep the legacy per-node total accounting.
         member_patterns = _rule_member_patterns(rule)
         composite = len(member_patterns) > 1
-        seen_identities: set[tuple[str, int]] = set()
+        seen_identities: set[tuple[str, int, int]] = set()
         rule_matches = 0
         composite_ev_data: dict[str, list[dict[str, Any]]] = {}
         use_wrapper_many = type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(
@@ -1497,7 +1515,7 @@ def scan_command(
                     return 1
                 if composite:
                     seen_identities.update(
-                        (match.file, match.line_number) for match in result.matches if match.file
+                        _match_node_identity(match) for match in result.matches if match.file
                     )
                 else:
                     rule_matches += result.total_matches
@@ -1513,7 +1531,7 @@ def scan_command(
                         return 1
                     if composite:
                         seen_identities.update(
-                            (match.file or current_file, match.line_number)
+                            _match_node_identity(match, fallback_file=current_file)
                             for match in result.matches
                         )
                     else:

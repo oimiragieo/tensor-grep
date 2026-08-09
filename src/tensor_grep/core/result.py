@@ -56,6 +56,12 @@ class MatchLine:
     line_number: int
     text: str
     file: str
+    # M16 F1: byte span of the matched AST node (start_byte inclusive,
+    # end_byte exclusive). Populated by the AST backends; used by composite-
+    # rule scan accounting to deduplicate by NODE SPAN (two distinct nodes on
+    # one line are distinct matches). None when the backend only has the line.
+    start_byte: int | None = None
+    end_byte: int | None = None
     range: dict[str, object] | None = None
     meta_variables: dict[str, object] | None = None
     # rg's authoritative per-occurrence byte offsets for a multi-match line (each entry is an rg

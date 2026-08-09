@@ -789,7 +789,15 @@ class AstBackend(ComputeBackend):
             if line_num not in seen_lines and line_num <= len(lines):
                 seen_lines.add(line_num)
                 matches.append(
-                    MatchLine(line_number=line_num, text=lines[line_num - 1], file=file_path)
+                    MatchLine(
+                        line_number=line_num,
+                        text=lines[line_num - 1],
+                        file=file_path,
+                        # M16 F1: byte span of the matched node so composite-rule
+                        # accounting can dedupe by NODE SPAN, not line.
+                        start_byte=node.start_byte,
+                        end_byte=node.end_byte,
+                    )
                 )
 
         logger.debug("AST search completed for %s with %d matches", file_path, len(matches))

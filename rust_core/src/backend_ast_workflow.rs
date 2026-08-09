@@ -267,18 +267,19 @@ pub fn execute_ast_scan_core(
 
         backends_used.insert(backend_name.to_string());
 
-        // M16: a composite (multi-pattern any-of) rule matches when ANY member
-        // matches, and each matched line counts ONCE even when several members
-        // match it (F2) -- Python's `MatchLine` identity surface is (file, line),
-        // so (file, line) is the dedupe key on BOTH sides and the counts stay
-        // cross-language identical. Files are DISTINCT (a file matching two
-        // members counts once), matching the Python twin's set accounting.
+        // M16 F1: a composite (multi-pattern any-of) rule matches when ANY member
+        // matches, and the union is deduplicated by AST NODE SPAN
+        // (file, start_byte, end_byte) — the same node matched by several
+        // members counts once, but two distinct nodes on the SAME line each
+        // count, matching whole-config ast-grep's per-node `any` semantics
+        // (measured: `alpha(1); alpha(2)` with members `alpha` + `alpha(1)` =
+        // 2 identifier nodes + 1 call node = 3). Files are DISTINCT.
         // Single-pattern rules keep the pre-M16 per-node count exactly
         // (legacy output parity; nothing was dropped there, so nothing changes).
         let members = ast_rule_member_patterns(rule);
         let composite = members.len() > 1;
         let mut per_file_counts: HashMap<PathBuf, usize> = HashMap::new();
-        let mut per_file_lines: HashMap<PathBuf, HashSet<usize>> = HashMap::new();
+        let mut per_file_spans: HashMap<PathBuf, HashSet<(usize, usize)>> = HashMap::new();
 
         for member_pattern in members {
             let file_matches = if backend_name == "AstBackend" {
@@ -295,10 +296,10 @@ pub fn execute_ast_scan_core(
             for file_match in file_matches {
                 let AstCliFileMatches { file, matches } = file_match;
                 if composite {
-                    per_file_lines
+                    per_file_spans
                         .entry(file)
                         .or_default()
-                        .extend(matches.into_iter().map(|m| m.line));
+                        .extend(matches.into_iter().map(|m| (m.start_byte, m.end_byte)));
                 } else {
                     *per_file_counts.entry(file).or_insert(0) += matches.len();
                 }
@@ -306,8 +307,8 @@ pub fn execute_ast_scan_core(
         }
 
         let (rule_matches_count, matched_files_count) = if composite {
-            let matches: usize = per_file_lines.values().map(|lines| lines.len()).sum();
-            (matches, per_file_lines.len())
+            let matches: usize = per_file_spans.values().map(|spans| spans.len()).sum();
+            (matches, per_file_spans.len())
         } else {
             (per_file_counts.values().sum(), per_file_counts.len())
         };
@@ -1255,6 +1256,9 @@ fn rule_metadata_string(
 }
 
 /// Truthy-scalar conversion for a single YAML value (see `rule_metadata_string`).
+/// Non-finite floats are special-cased to Python's `str(float)` spellings
+/// (`nan` / `inf` / `-inf`) instead of serde_yaml's `.nan` / `.inf` / `-.inf`
+/// (F3); all are truthy in Python like here.
 fn rule_metadata_scalar_string(value: Option<&serde_yaml::Value>) -> Option<String> {
     let value = value?;
     match value {
@@ -1262,11 +1266,24 @@ fn rule_metadata_scalar_string(value: Option<&serde_yaml::Value>) -> Option<Stri
         serde_yaml::Value::Bool(true) => Some("True".to_string()),
         serde_yaml::Value::Bool(false) => None,
         serde_yaml::Value::Number(n) => {
+            if let Some(f) = n.as_f64() {
+                if f.is_nan() {
+                    return Some("nan".to_string());
+                }
+                if f.is_infinite() {
+                    return Some(if f.is_sign_negative() {
+                        "-inf".to_string()
+                    } else {
+                        "inf".to_string()
+                    });
+                }
+                let truthy = f != 0.0;
+                return truthy.then(|| n.to_string());
+            }
             let truthy = n
                 .as_i64()
                 .map(|i| i != 0)
                 .or_else(|| n.as_u64().map(|u| u != 0))
-                .or_else(|| n.as_f64().map(|f| f != 0.0))
                 .unwrap_or(true);
             truthy.then(|| n.to_string())
         }
@@ -1839,19 +1856,21 @@ mod tests {
         );
     }
 
-    /// F2 RED (pre-fix of THIS commit): the first M16 cut summed member
-    /// matches per file, so a line matched by TWO members counted twice (a
-    /// summed multiset, not a union), and a single-pattern rule's per-NODE
-    /// count was the only counting mode. GREEN (post-fix): the composite
-    /// counts each matched (file, line) ONCE across members (the identity
-    /// surface Python's `MatchLine` exposes, so both languages agree), while a
-    /// single-pattern rule keeps the legacy per-node count — two nodes on one
-    /// line still count as 2, so nothing pre-M16 changes.
+    /// F1 RED (pre-fix of THIS commit): the round-1 union deduplicated by
+    /// (file, line), so `alpha(1); alpha(2)` with members `alpha` + `alpha(1)`
+    /// counted 1 — but whole-config ast-grep counts 3 (two DISTINCT identifier
+    /// nodes and one call node all on the same line; measured against real
+    /// ast-grep by the codex gate). GREEN (post-fix): the union identity is the
+    /// AST SPAN (file, start_byte, end_byte) — each node counts once; only the
+    /// SAME node matched by several members deduplicates. A single-pattern rule
+    /// keeps the legacy per-node count (2), and a duplicate-member composite
+    /// (same span twice) counts 1, not 2.
     #[test]
-    fn scan_core_deduplicates_composite_members_by_line_and_keeps_single_pattern_node_counts() {
+    fn scan_core_counts_composite_span_union_and_keeps_single_pattern_node_counts() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("sample.py");
-        // One line, two `alpha` identifier nodes and one `alpha(1)` call node.
+        // One line: two `alpha` identifier nodes (at bytes [0,5) and [9,14))
+        // and one `alpha(1)` call node ([0,8)) — three distinct AST spans.
         fs::write(&file_path, "alpha(1); alpha(2)\n").unwrap();
 
         let orchestrator = AstWorkflowOrchestrator {
@@ -1874,12 +1893,24 @@ mod tests {
             message: String::new(),
             language: "python".to_string(),
         };
+        let duplicate_member = AstRuleSpec {
+            id: "duplicate-member".to_string(),
+            pattern: "alpha(1)".to_string(),
+            patterns: vec!["alpha(1)".to_string(), "alpha(1)".to_string()],
+            severity: "medium".to_string(),
+            message: String::new(),
+            language: "python".to_string(),
+        };
         let data = ProjectDataV6 {
             project_cfg: serde_json::json!({}),
-            rule_specs: vec![single.clone(), composite.clone()],
+            rule_specs: vec![single.clone(), composite.clone(), duplicate_member.clone()],
             candidate_files: vec![file_path.to_string_lossy().into_owned()],
             test_data: Vec::new(),
-            orchestration_hints: orchestrator.precompute_orchestration_hints(&[single, composite]),
+            orchestration_hints: orchestrator.precompute_orchestration_hints(&[
+                single,
+                composite.clone(),
+                duplicate_member,
+            ]),
             validation_metadata: ValidationMetadata {
                 rule_files: HashMap::new(),
                 test_files: HashMap::new(),
@@ -1896,14 +1927,18 @@ mod tests {
         let stdout = String::from_utf8(output).unwrap();
         assert!(
             stdout.contains("[scan] rule=single lang=python matches=2 files=1"),
-            "single-pattern node count must be preserved: {stdout}"
+            "single-pattern per-node count must be preserved: {stdout}"
         );
         assert!(
-            stdout.contains("[scan] rule=composite lang=python matches=1 files=1"),
-            "composite must count the matched line once (union identity): {stdout}"
+            stdout.contains("[scan] rule=composite lang=python matches=3 files=1"),
+            "composite must count each distinct AST span (2 identifiers + 1 call): {stdout}"
         );
         assert!(
-            stdout.contains("Scan completed. rules=2 matched_rules=2 total_matches=3"),
+            stdout.contains("[scan] rule=duplicate-member lang=python matches=1 files=1"),
+            "the same node matched by two members must count once: {stdout}"
+        );
+        assert!(
+            stdout.contains("Scan completed. rules=3 matched_rules=3 total_matches=6"),
             "unexpected summary in: {stdout}"
         );
     }
@@ -2045,5 +2080,30 @@ mod tests {
             .expect("falsy metadata must still parse");
         assert_eq!(spec.severity, "warning");
         assert_eq!(spec.message, "7");
+    }
+
+    /// F3 RED (pre-fix of THIS commit): serde_yaml's `Number` display emits
+    /// `.nan` / `.inf` / `-.inf` while Python's `str(float)` emits `nan` /
+    /// `inf` / `-inf`. GREEN (post-fix): non-finite floats are special-cased to
+    /// the Python spellings (all truthy, so they pass through like Python).
+    #[test]
+    fn nonfinite_float_metadata_uses_python_spellings() {
+        let orch = orchestrator_for_tests();
+        let cfg = config_for_tests();
+
+        for (yaml_scalar, expected) in [(".nan", "nan"), (".inf", "inf"), ("-.inf", "-inf")] {
+            let item: serde_yaml::Value = serde_yaml::from_str(&format!(
+                "id: floatmeta\n\
+                 language: python\n\
+                 severity: {yaml_scalar}\n\
+                 pattern: danger(x)\n"
+            ))
+            .unwrap();
+            let payload = item.clone();
+            let spec = orch
+                .parse_rule_item(&item, &payload, &cfg, Path::new("floatmeta.yml"), None)
+                .expect("non-finite float severity must parse");
+            assert_eq!(spec.severity, expected);
+        }
     }
 }
