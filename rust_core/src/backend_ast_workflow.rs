@@ -1,4 +1,4 @@
-use crate::backend_ast::AstBackend;
+use crate::backend_ast::{AstBackend, AstCliFileMatches};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -27,6 +27,23 @@ fn default_test_dirs() -> Vec<String> {
 
 fn default_language() -> String {
     "python".to_string()
+}
+
+/// Schema discriminator for the persisted project cache
+/// (`.tg_cache/ast/project_data_v6.json`). Bumped to 2 by M16: a legacy cache
+/// carries `AstRuleSpec` records WITHOUT `patterns`/`severity`/`message`
+/// (composites were dropped at discovery and metadata never survived), so an
+/// mtime-fresh legacy cache would keep serving rule truths that disagree with
+/// the source YAML. Any cache whose discriminator is absent/old is REBUILT from
+/// source (`load_cache` returns None -> `load_project_data` rediscovers),
+/// following the index.rs INDEX_FORMAT_VERSION bump precedent (format 4 -> 5).
+const PROJECT_DATA_V6_SCHEMA_VERSION: u32 = 2;
+
+/// Version of caches written before the M16 schema bump (or by anything that
+/// omits the field). Deliberately NOT the current version, so a legacy cache
+/// fails the read-time version gate instead of silently serving stale rules.
+fn default_project_data_schema_version() -> u32 {
+    1
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -70,6 +87,9 @@ pub struct ProjectDataV6 {
     pub test_data: Vec<serde_json::Value>,
     pub orchestration_hints: serde_json::Value,
     pub validation_metadata: ValidationMetadata,
+    /// Cache schema discriminator; see `PROJECT_DATA_V6_SCHEMA_VERSION`.
+    #[serde(default = "default_project_data_schema_version")]
+    pub cache_schema_version: u32,
 }
 
 pub struct AstWorkflowOrchestrator {
@@ -248,12 +268,19 @@ pub fn execute_ast_scan_core(
         backends_used.insert(backend_name.to_string());
 
         // M16: a composite (multi-pattern any-of) rule matches when ANY member
-        // matches. Aggregate per-file match counts across members: matches sum,
-        // files are DISTINCT (a file matching two members counts once), matching
-        // the Python twin's per-rule file accounting (`matched_files` is a set).
+        // matches, and each matched line counts ONCE even when several members
+        // match it (F2) -- Python's `MatchLine` identity surface is (file, line),
+        // so (file, line) is the dedupe key on BOTH sides and the counts stay
+        // cross-language identical. Files are DISTINCT (a file matching two
+        // members counts once), matching the Python twin's set accounting.
+        // Single-pattern rules keep the pre-M16 per-node count exactly
+        // (legacy output parity; nothing was dropped there, so nothing changes).
+        let members = ast_rule_member_patterns(rule);
+        let composite = members.len() > 1;
         let mut per_file_counts: HashMap<PathBuf, usize> = HashMap::new();
+        let mut per_file_lines: HashMap<PathBuf, HashSet<usize>> = HashMap::new();
 
-        for member_pattern in ast_rule_member_patterns(rule) {
+        for member_pattern in members {
             let file_matches = if backend_name == "AstBackend" {
                 if let Some(files) = lang_to_files.get(&rule.language.to_lowercase()) {
                     backend.search_many_for_cli(&member_pattern, &rule.language, files)?
@@ -266,12 +293,24 @@ pub fn execute_ast_scan_core(
             };
 
             for file_match in file_matches {
-                *per_file_counts.entry(file_match.file).or_insert(0) += file_match.matches.len();
+                let AstCliFileMatches { file, matches } = file_match;
+                if composite {
+                    per_file_lines
+                        .entry(file)
+                        .or_default()
+                        .extend(matches.into_iter().map(|m| m.line));
+                } else {
+                    *per_file_counts.entry(file).or_insert(0) += matches.len();
+                }
             }
         }
 
-        let rule_matches_count: usize = per_file_counts.values().sum();
-        let matched_files_count = per_file_counts.len();
+        let (rule_matches_count, matched_files_count) = if composite {
+            let matches: usize = per_file_lines.values().map(|lines| lines.len()).sum();
+            (matches, per_file_lines.len())
+        } else {
+            (per_file_counts.values().sum(), per_file_counts.len())
+        };
 
         total_matches += rule_matches_count;
         if rule_matches_count > 0 {
@@ -788,7 +827,18 @@ impl AstWorkflowOrchestrator {
         }
 
         let content = fs::read_to_string(&cache_file)?;
-        let data: ProjectDataV6 = serde_json::from_str(&content)?;
+        let data: ProjectDataV6 = match serde_json::from_str(&content) {
+            Ok(data) => data,
+            Err(_) => return Ok(None),
+        };
+
+        // M16 (F3): a legacy-schema cache (field absent/old) must not be served
+        // even when mtime-validation passes -- its rule_specs lack composite
+        // members and severity/message. Rebuild from source (callers treat
+        // Ok(None) as a cache miss).
+        if data.cache_schema_version != PROJECT_DATA_V6_SCHEMA_VERSION {
+            return Ok(None);
+        }
 
         let cache_mtime = fs::metadata(&cache_file)?.modified()?;
         let config_mtime = fs::metadata(&self.config_path)?.modified()?;
@@ -1076,6 +1126,7 @@ impl AstWorkflowOrchestrator {
                 test_files: test_files_meta,
                 tree_dirs: tree_dirs_meta,
             },
+            cache_schema_version: PROJECT_DATA_V6_SCHEMA_VERSION,
         };
 
         self.save_cache(&data)?;
@@ -1185,23 +1236,42 @@ impl AstWorkflowOrchestrator {
     }
 }
 
-/// Item -> payload metadata fallback, mirroring the Python project-scan twin
-/// (`item.get(key) or payload.get(key)`; empty strings are falsy there too).
+/// Item -> payload metadata fallback mirroring the Python project-scan twin:
+/// `str(item.get(key) or payload.get(key) or "warning" / "")`. Python converts
+/// TRUTHY scalars with str(): `"high"` -> `"high"`, `5` -> `"5"`, `true` ->
+/// `"True"`; falsy values (`""`, `0`, `0.0`, `false`, `null`) fall through to
+/// the payload and then the default — reproduced here. Structural values
+/// (sequences/mappings) are FAILED CLOSED (treated as unresolvable, so the
+/// default wins) instead of being repr-converted like Python's str(); a
+/// severity/message that is a list is malformed input and the safe direction
+/// is the default.
 fn rule_metadata_string(
     item: &serde_yaml::Value,
     payload: &serde_yaml::Value,
     key: &str,
 ) -> Option<String> {
-    item.get(key)
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            payload
-                .get(key)
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-        })
-        .map(|s| s.to_string())
+    rule_metadata_scalar_string(item.get(key))
+        .or_else(|| rule_metadata_scalar_string(payload.get(key)))
+}
+
+/// Truthy-scalar conversion for a single YAML value (see `rule_metadata_string`).
+fn rule_metadata_scalar_string(value: Option<&serde_yaml::Value>) -> Option<String> {
+    let value = value?;
+    match value {
+        serde_yaml::Value::String(s) if !s.is_empty() => Some(s.clone()),
+        serde_yaml::Value::Bool(true) => Some("True".to_string()),
+        serde_yaml::Value::Bool(false) => None,
+        serde_yaml::Value::Number(n) => {
+            let truthy = n
+                .as_i64()
+                .map(|i| i != 0)
+                .or_else(|| n.as_u64().map(|u| u != 0))
+                .or_else(|| n.as_f64().map(|f| f != 0.0))
+                .unwrap_or(true);
+            truthy.then(|| n.to_string())
+        }
+        _ => None,
+    }
 }
 
 /// Collect non-empty trimmed strings from a `pattern:` LIST. A member that is
@@ -1747,6 +1817,7 @@ mod tests {
                 test_files: HashMap::new(),
                 tree_dirs: HashMap::new(),
             },
+            cache_schema_version: PROJECT_DATA_V6_SCHEMA_VERSION,
         };
         let mut lang_to_files: HashMap<String, Vec<PathBuf>> = HashMap::new();
         lang_to_files.insert("python".to_string(), vec![file_path]);
@@ -1766,5 +1837,213 @@ mod tests {
             stdout.contains("Scan completed. rules=1 matched_rules=1 total_matches=2"),
             "unexpected summary in: {stdout}"
         );
+    }
+
+    /// F2 RED (pre-fix of THIS commit): the first M16 cut summed member
+    /// matches per file, so a line matched by TWO members counted twice (a
+    /// summed multiset, not a union), and a single-pattern rule's per-NODE
+    /// count was the only counting mode. GREEN (post-fix): the composite
+    /// counts each matched (file, line) ONCE across members (the identity
+    /// surface Python's `MatchLine` exposes, so both languages agree), while a
+    /// single-pattern rule keeps the legacy per-node count — two nodes on one
+    /// line still count as 2, so nothing pre-M16 changes.
+    #[test]
+    fn scan_core_deduplicates_composite_members_by_line_and_keeps_single_pattern_node_counts() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("sample.py");
+        // One line, two `alpha` identifier nodes and one `alpha(1)` call node.
+        fs::write(&file_path, "alpha(1); alpha(2)\n").unwrap();
+
+        let orchestrator = AstWorkflowOrchestrator {
+            root_dir: dir.path().to_path_buf(),
+            config_path: dir.path().join("sgconfig.yml"),
+        };
+        let single = AstRuleSpec {
+            id: "single".to_string(),
+            pattern: "alpha".to_string(),
+            patterns: Vec::new(),
+            severity: "warning".to_string(),
+            message: String::new(),
+            language: "python".to_string(),
+        };
+        let composite = AstRuleSpec {
+            id: "composite".to_string(),
+            pattern: "alpha".to_string(),
+            patterns: vec!["alpha".to_string(), "alpha(1)".to_string()],
+            severity: "high".to_string(),
+            message: String::new(),
+            language: "python".to_string(),
+        };
+        let data = ProjectDataV6 {
+            project_cfg: serde_json::json!({}),
+            rule_specs: vec![single.clone(), composite.clone()],
+            candidate_files: vec![file_path.to_string_lossy().into_owned()],
+            test_data: Vec::new(),
+            orchestration_hints: orchestrator.precompute_orchestration_hints(&[single, composite]),
+            validation_metadata: ValidationMetadata {
+                rule_files: HashMap::new(),
+                test_files: HashMap::new(),
+                tree_dirs: HashMap::new(),
+            },
+            cache_schema_version: PROJECT_DATA_V6_SCHEMA_VERSION,
+        };
+        let mut lang_to_files: HashMap<String, Vec<PathBuf>> = HashMap::new();
+        lang_to_files.insert("python".to_string(), vec![file_path]);
+
+        let backend = AstBackend::new();
+        let mut output = Vec::new();
+        execute_ast_scan_core(&orchestrator, &data, &backend, &lang_to_files, &mut output).unwrap();
+        let stdout = String::from_utf8(output).unwrap();
+        assert!(
+            stdout.contains("[scan] rule=single lang=python matches=2 files=1"),
+            "single-pattern node count must be preserved: {stdout}"
+        );
+        assert!(
+            stdout.contains("[scan] rule=composite lang=python matches=1 files=1"),
+            "composite must count the matched line once (union identity): {stdout}"
+        );
+        assert!(
+            stdout.contains("Scan completed. rules=2 matched_rules=2 total_matches=3"),
+            "unexpected summary in: {stdout}"
+        );
+    }
+
+    /// F3 RED (pre-fix of THIS commit): a pre-M16 cache (no `cache_schema_version`,
+    /// specs without severity/message) deserialized via serde defaults and was
+    /// SERVED on mtime freshness, keeping stale rule truths forever. GREEN
+    /// (post-fix): `load_cache` rejects the legacy discriminator and returns
+    /// None so `load_project_data` rebuilds from source YAML.
+    #[test]
+    fn load_cache_rejects_legacy_schema_cache() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("sgconfig.yml");
+        fs::write(&config_path, "language: python\n").unwrap();
+        let orchestrator = AstWorkflowOrchestrator {
+            root_dir: dir.path().to_path_buf(),
+            config_path,
+        };
+        let cache_file = orchestrator.get_cache_file();
+        fs::create_dir_all(cache_file.parent().unwrap()).unwrap();
+        fs::write(
+            &cache_file,
+            r#"{"project_cfg":{},"rule_specs":[{"id":"r1","pattern":"foo(x)","language":"python"}],"candidate_files":[],"test_data":[],"orchestration_hints":{},"validation_metadata":{"rule_files":{},"test_files":{},"tree_dirs":{}}}"#,
+        )
+        .unwrap();
+        assert!(
+            orchestrator.load_cache().unwrap().is_none(),
+            "legacy-schema cache must be rejected and rebuilt from source"
+        );
+    }
+
+    /// F3 pin: a CURRENT-schema cache (with the discriminator) is still served
+    /// on mtime freshness, carrying composite members and severity/message.
+    #[test]
+    fn load_cache_accepts_current_schema_cache() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("sgconfig.yml");
+        fs::write(&config_path, "language: python\n").unwrap();
+        let orchestrator = AstWorkflowOrchestrator {
+            root_dir: dir.path().to_path_buf(),
+            config_path,
+        };
+        let data = ProjectDataV6 {
+            project_cfg: serde_json::json!({"language": "python"}),
+            rule_specs: vec![AstRuleSpec {
+                id: "r1".to_string(),
+                pattern: "foo(x)".to_string(),
+                patterns: vec!["foo(x)".to_string(), "bar(x)".to_string()],
+                severity: "high".to_string(),
+                message: "custom message".to_string(),
+                language: "python".to_string(),
+            }],
+            candidate_files: Vec::new(),
+            test_data: Vec::new(),
+            orchestration_hints: serde_json::json!({}),
+            validation_metadata: ValidationMetadata {
+                rule_files: HashMap::new(),
+                test_files: HashMap::new(),
+                tree_dirs: HashMap::new(),
+            },
+            cache_schema_version: PROJECT_DATA_V6_SCHEMA_VERSION,
+        };
+        let cache_file = orchestrator.get_cache_file();
+        fs::create_dir_all(cache_file.parent().unwrap()).unwrap();
+        fs::write(&cache_file, serde_json::to_string(&data).unwrap()).unwrap();
+        let loaded = orchestrator
+            .load_cache()
+            .unwrap()
+            .expect("current-schema cache must be served");
+        assert_eq!(loaded.rule_specs[0].patterns.len(), 2);
+        assert_eq!(loaded.rule_specs[0].severity, "high");
+        assert_eq!(loaded.rule_specs[0].message, "custom message");
+    }
+
+    /// F4 RED (pre-fix of THIS commit): `as_str()` discarded truthy non-string
+    /// scalars, so `severity: 5` / `severity: true` fell back to "warning"
+    /// while Python's `str(...)` produced "5" / "True". GREEN (post-fix): the
+    /// conversion mirrors Python's truthiness + str().
+    #[test]
+    fn severity_message_accept_truthy_nonstring_scalars_like_python() {
+        let orch = orchestrator_for_tests();
+        let cfg = config_for_tests();
+
+        let int_item: serde_yaml::Value = serde_yaml::from_str(
+            "id: nummeta\n\
+             language: python\n\
+             severity: 5\n\
+             pattern: danger(x)\n",
+        )
+        .unwrap();
+        let int_payload = int_item.clone();
+        let spec = orch
+            .parse_rule_item(
+                &int_item,
+                &int_payload,
+                &cfg,
+                Path::new("nummeta.yml"),
+                None,
+            )
+            .expect("numeric severity must parse");
+        assert_eq!(spec.severity, "5");
+
+        let bool_item: serde_yaml::Value = serde_yaml::from_str(
+            "id: boolmeta\n\
+             language: python\n\
+             severity: true\n\
+             pattern: danger(x)\n",
+        )
+        .unwrap();
+        let bool_payload = bool_item.clone();
+        let spec = orch
+            .parse_rule_item(
+                &bool_item,
+                &bool_payload,
+                &cfg,
+                Path::new("boolmeta.yml"),
+                None,
+            )
+            .expect("boolean severity must parse");
+        assert_eq!(spec.severity, "True");
+
+        let falsy_item: serde_yaml::Value = serde_yaml::from_str(
+            "id: falsymeta\n\
+             language: python\n\
+             severity: 0\n\
+             message: 7\n\
+             pattern: danger(x)\n",
+        )
+        .unwrap();
+        let falsy_payload = falsy_item.clone();
+        let spec = orch
+            .parse_rule_item(
+                &falsy_item,
+                &falsy_payload,
+                &cfg,
+                Path::new("falsymeta.yml"),
+                None,
+            )
+            .expect("falsy metadata must still parse");
+        assert_eq!(spec.severity, "warning");
+        assert_eq!(spec.message, "7");
     }
 }

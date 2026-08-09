@@ -6574,6 +6574,7 @@ def _run_ast_scan_payload(
     max_evidence_snippet_chars: int = 120,
 ) -> dict[str, object]:
     from tensor_grep.backends.ast_backend import normalize_ast_language
+    from tensor_grep.cli.ast_workflows import _rule_member_patterns
     from tensor_grep.cli.scan_guardrails import ensure_scan_not_broad
     from tensor_grep.core.config import SearchConfig
     from tensor_grep.core.result import SearchResult
@@ -6760,6 +6761,16 @@ def _run_ast_scan_payload(
         resolved_match_counts_by_file: dict[str, int] = {}
         resolved_snippets_by_file: dict[str, list[dict[str, object]]] = {}
         resolved_rule_occurrences: list[dict[str, object]] = []
+
+        # M16: composite (multi-pattern any-of) rules scan EVERY member and
+        # count each matched (file, line) once across members (union identity —
+        # the same key the Rust scan core uses, since `MatchLine` exposes
+        # (file, line) and the two implementations must agree). Single-pattern
+        # rules keep the legacy per-node total accounting unchanged.
+        member_patterns = _rule_member_patterns(rule)
+        composite = len(member_patterns) > 1
+        resolved_identities: set[tuple[str, int]] = set()
+
         if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
             backend_scan_paths = (
                 _candidate_files_for_filtered_scan()
@@ -6767,34 +6778,47 @@ def _run_ast_scan_payload(
                 else resolved_scan_paths
             )
             if backend_scan_paths:
-                result = backend.search_many(backend_scan_paths, rule["pattern"], config=rule_cfg)
-                rule_matches = result.total_matches
-                resolved_matched_files.update(result.matched_file_paths)
-                for file_path, count in result.match_counts_by_file.items():
-                    resolved_match_counts_by_file[file_path] = (
-                        resolved_match_counts_by_file.get(file_path, 0) + count
+                rule_matches = 0
+                for member_pattern in member_patterns:
+                    result = backend.search_many(
+                        backend_scan_paths, member_pattern, config=rule_cfg
                     )
-                for match in result.matches:
-                    if match.file:
-                        resolved_match_counts_by_file[match.file] = (
-                            resolved_match_counts_by_file.get(match.file, 0) + 1
+                    if composite:
+                        resolved_identities.update(
+                            (match.file, match.line_number)
+                            for match in result.matches
+                            if match.file
                         )
-                        resolved_rule_occurrences.append({
-                            "file": match.file,
-                            "line": match.line_number,
-                        })
-                        if (
-                            include_evidence_snippets
-                            and len(resolved_snippets_by_file.get(match.file, []))
-                            < max_evidence_snippets_per_file
-                        ):
-                            resolved_snippets_by_file.setdefault(match.file, []).append(
-                                _truncate_evidence_snippet(match.text, max_evidence_snippet_chars)
+                    else:
+                        rule_matches += result.total_matches
+                    resolved_matched_files.update(result.matched_file_paths)
+                    for file_path, count in result.match_counts_by_file.items():
+                        resolved_match_counts_by_file[file_path] = (
+                            resolved_match_counts_by_file.get(file_path, 0) + count
+                        )
+                    for match in result.matches:
+                        if match.file:
+                            resolved_match_counts_by_file[match.file] = (
+                                resolved_match_counts_by_file.get(match.file, 0) + 1
                             )
-                if not resolved_matched_files and result.total_files > 0:
-                    resolved_matched_files.update(
-                        match.file for match in result.matches if match.file
-                    )
+                            resolved_rule_occurrences.append({
+                                "file": match.file,
+                                "line": match.line_number,
+                            })
+                            if (
+                                include_evidence_snippets
+                                and len(resolved_snippets_by_file.get(match.file, []))
+                                < max_evidence_snippets_per_file
+                            ):
+                                resolved_snippets_by_file.setdefault(match.file, []).append(
+                                    _truncate_evidence_snippet(
+                                        match.text, max_evidence_snippet_chars
+                                    )
+                                )
+                    if not resolved_matched_files and result.total_files > 0:
+                        resolved_matched_files.update(
+                            match.file for match in result.matches if match.file
+                        )
             else:
                 rule_matches = 0
         else:
@@ -6803,27 +6827,53 @@ def _run_ast_scan_payload(
             if resolved_candidate_files is None:
                 resolved_candidate_files, _ = _collect_candidate_files(scanner, resolved_scan_paths)
             rule_matches = 0
-            for current_file in resolved_candidate_files:
-                result = backend.search(current_file, rule["pattern"], config=rule_cfg)
-                rule_matches += result.total_matches
-                if result.total_files > 0 or result.total_matches > 0:
-                    resolved_matched_files.add(current_file)
-                    resolved_match_counts_by_file[current_file] = (
-                        resolved_match_counts_by_file.get(current_file, 0) + result.total_matches
-                    )
-                    for match in result.matches:
-                        resolved_rule_occurrences.append({
-                            "file": match.file or current_file,
-                            "line": match.line_number,
-                        })
-                    if include_evidence_snippets:
-                        file_snippets = resolved_snippets_by_file.setdefault(current_file, [])
+            for member_pattern in member_patterns:
+                for current_file in resolved_candidate_files:
+                    result = backend.search(current_file, member_pattern, config=rule_cfg)
+                    if composite:
+                        resolved_identities.update(
+                            (match.file or current_file, match.line_number)
+                            for match in result.matches
+                        )
+                    else:
+                        rule_matches += result.total_matches
+                    if result.total_files > 0 or result.total_matches > 0:
+                        resolved_matched_files.add(current_file)
+                        resolved_match_counts_by_file[current_file] = (
+                            resolved_match_counts_by_file.get(current_file, 0)
+                            + result.total_matches
+                        )
                         for match in result.matches:
-                            if len(file_snippets) >= max_evidence_snippets_per_file:
-                                break
-                            file_snippets.append(
-                                _truncate_evidence_snippet(match.text, max_evidence_snippet_chars)
-                            )
+                            resolved_rule_occurrences.append({
+                                "file": match.file or current_file,
+                                "line": match.line_number,
+                            })
+                        if include_evidence_snippets:
+                            file_snippets = resolved_snippets_by_file.setdefault(current_file, [])
+                            for match in result.matches:
+                                if len(file_snippets) >= max_evidence_snippets_per_file:
+                                    break
+                                file_snippets.append(
+                                    _truncate_evidence_snippet(
+                                        match.text, max_evidence_snippet_chars
+                                    )
+                                )
+
+        if composite:
+            # F2: count the union identity — never the summed multiset — and
+            # rebuild the per-file counts/occurrences from the identities so no
+            # member overlap double-counts.
+            rule_matches = len(resolved_identities)
+            resolved_match_counts_by_file = {}
+            for file_path, _line in resolved_identities:
+                resolved_match_counts_by_file[file_path] = (
+                    resolved_match_counts_by_file.get(file_path, 0) + 1
+                )
+            resolved_rule_occurrences = [
+                {"file": file_path, "line": line_number}
+                for file_path, line_number in sorted(resolved_identities)
+            ]
+
         _append_finding(
             rule=rule,
             rule_matches=rule_matches,

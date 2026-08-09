@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any, cast
@@ -116,6 +117,15 @@ def _get_cache_dir(root_dir: Path) -> Path:
     return root_dir / ".tg_cache" / "ast"
 
 
+# M16 (F3): twin of PROJECT_DATA_V6_SCHEMA_VERSION in
+# rust_core/src/backend_ast_workflow.rs. Python is a compatibility READER of the
+# Rust-written `project_data_v6.json` cache; a legacy-schema cache carries
+# `rule_specs` WITHOUT composite members and severity/message even when
+# mtime-fresh, so both sides reject (rebuild from source) on mismatch. Bump
+# BOTH constants together whenever the persisted rule-spec schema changes.
+_PROJECT_DATA_CACHE_SCHEMA_VERSION = 2
+
+
 def _load_ast_project_data(
     config_path: str | None,
 ) -> tuple[dict[str, Any], list[dict[str, str]], list[str], list[dict[str, Any]], dict[str, Any]]:
@@ -143,6 +153,13 @@ def _load_ast_project_data(
                 cached_data = json.loads(cache_file.read_text(encoding="utf-8"))
                 validation = cached_data.get("validation_metadata", {})
                 still_valid = True
+
+                # Validation 1a (M16/F3): reject legacy-schema caches. Their
+                # rule_specs lack composite members and severity/message even
+                # when mtime-fresh; treat as a cache miss and rebuild from
+                # source (same gate as the Rust writer, which owns this file).
+                if cached_data.get("cache_schema_version") != _PROJECT_DATA_CACHE_SCHEMA_VERSION:
+                    still_valid = False
 
                 # Validation 2: Rule files
                 rule_files = validation.get("rule_files", {})
@@ -316,30 +333,40 @@ def _load_rule_specs_and_meta(
             for idx, item in enumerate(raw_rules):
                 if not isinstance(item, dict):
                     continue
-                pattern = _extract_rule_pattern(item)
-                if not pattern:
+                member_patterns = _extract_rule_member_patterns(item)
+                if not member_patterns:
                     continue
-                specs.append({
+                spec = {
                     "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
-                    "pattern": pattern,
+                    "pattern": member_patterns[0],
                     "language": normalize_ast_language(
                         item.get("language") or payload.get("language") or default_language
                     ),
                     "severity": str(item.get("severity") or payload.get("severity") or "warning"),
                     "message": str(item.get("message") or payload.get("message") or ""),
-                })
+                }
+                if len(member_patterns) > 1:
+                    # M16: composite (multi-pattern any-of) rules carry ALL
+                    # members; `pattern` stays the FIRST member so existing
+                    # single-pattern consumers keep working.
+                    spec["patterns"] = member_patterns  # type: ignore[assignment]
+                specs.append(spec)
             continue
 
-        pattern = _extract_rule_pattern(payload)
-        if not pattern:
+        member_patterns = _extract_rule_member_patterns(payload)
+        if not member_patterns:
             continue
-        specs.append({
+        spec = {
             "id": str(payload.get("id") or rule_file.stem),
-            "pattern": pattern,
+            "pattern": member_patterns[0],
             "language": normalize_ast_language(payload.get("language") or default_language),
             "severity": str(payload.get("severity") or "warning"),
             "message": str(payload.get("message") or ""),
-        })
+        }
+        if len(member_patterns) > 1:
+            # M16: composite members (see the rules-sequence branch above).
+            spec["patterns"] = member_patterns  # type: ignore[assignment]
+        specs.append(spec)
 
     return specs, meta
 
@@ -393,6 +420,76 @@ def _extract_rule_pattern(rule_data: dict[str, object]) -> str | None:
             return nested.strip()
 
     return None
+
+
+def _extract_rule_member_patterns(rule_data: dict[str, object]) -> list[str] | None:
+    """Extract the member patterns of a rule item (M16; Rust twin:
+    `AstWorkflowOrchestrator::extract_rule_member_patterns` in
+    `rust_core/src/backend_ast_workflow.rs`).
+
+    Supported ast-grep rule-YAML shapes:
+    - a flat ``pattern:`` STRING,
+    - a ``pattern:`` LIST of strings,
+    - a ``rule:`` mapping whose ``pattern`` is a string,
+    - a ``rule:`` mapping whose ``any:`` sequence lists sub-rules (each
+      sub-rule's ``pattern`` string, or its nested ``rule.pattern`` string).
+
+    A composite member that does not carry exactly one extractable pattern
+    fails the WHOLE rule closed (None) rather than under-matching. ``all:`` /
+    ``not:`` composite bodies require same-node intersection semantics the
+    per-pattern matchers cannot express; they also return None and the rule is
+    dropped, exactly as the Rust twin drops them.
+    """
+    direct = rule_data.get("pattern")
+    if isinstance(direct, str):
+        trimmed = direct.strip()
+        if trimmed:
+            return [trimmed]
+    elif isinstance(direct, list):
+        members: list[str] = []
+        for item in direct:
+            if not isinstance(item, str) or not item.strip():
+                return None
+            members.append(item.strip())
+        if members:
+            return members
+
+    rule_node = rule_data.get("rule")
+    if isinstance(rule_node, dict):
+        nested = rule_node.get("pattern")
+        if isinstance(nested, str) and nested.strip():
+            return [nested.strip()]
+        any_members = rule_node.get("any")
+        if isinstance(any_members, list) and any_members:
+            members = []
+            for member in any_members:
+                if not isinstance(member, dict):
+                    return None
+                member_pattern: object = member.get("pattern")
+                if not isinstance(member_pattern, str) or not member_pattern.strip():
+                    inner_rule = member.get("rule")
+                    if isinstance(inner_rule, dict):
+                        member_pattern = inner_rule.get("pattern")
+                    else:
+                        member_pattern = None
+                if not isinstance(member_pattern, str) or not member_pattern.strip():
+                    return None
+                members.append(member_pattern.strip())
+            if members:
+                return members
+    return None
+
+
+def _rule_member_patterns(rule: Mapping[str, object]) -> list[str]:
+    """The member patterns a rule scans with (M16): `patterns` (composite
+    any-of members, set by `_load_rule_specs_and_meta` when a rule carries more
+    than one) when present, else the single `pattern`. Mirrors
+    `ast_rule_member_patterns` in the Rust scan core.
+    """
+    patterns = rule.get("patterns")
+    if isinstance(patterns, list) and patterns:
+        return [str(pattern) for pattern in patterns]
+    return [str(rule["pattern"])]
 
 
 def _suffix_for_language(language: str) -> str:
@@ -1375,29 +1472,72 @@ def scan_command(
         backend_names_used.add(type(backend).__name__)
         matched_files: set[str] = set()
 
-        if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
-            try:
-                result = cast(Any, backend).search_many(
-                    [str(root_dir)], rule["pattern"], config=rule_cfg
-                )
-            except RuntimeError as exc:
-                print(f"Error: {exc}", file=sys.stderr)
-                return 1
-            rule_matches = result.total_matches
-            matched_files.update(result.matched_file_paths)
-            if not matched_files and result.total_files > 0:
-                matched_files.update(match.file for match in result.matches if match.file)
-        else:
-            rule_matches = 0
-            for current_file in candidate_files:
+        # M16: composite (multi-pattern any-of) rules scan EVERY member and
+        # count each matched (file, line) once across members (union identity
+        # — the same key the Rust scan core uses, since `MatchLine` exposes
+        # (file, line) and both languages must agree). Single-pattern rules
+        # keep the legacy per-node total accounting unchanged.
+        member_patterns = _rule_member_patterns(rule)
+        composite = len(member_patterns) > 1
+        seen_identities: set[tuple[str, int]] = set()
+        rule_matches = 0
+        composite_ev_data: dict[str, list[dict[str, Any]]] = {}
+        use_wrapper_many = type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(
+            backend, "search_many"
+        )
+
+        for member_pattern in member_patterns:
+            if use_wrapper_many:
                 try:
-                    result = backend.search(current_file, rule["pattern"], config=rule_cfg)
+                    result = cast(Any, backend).search_many(
+                        [str(root_dir)], member_pattern, config=rule_cfg
+                    )
                 except RuntimeError as exc:
                     print(f"Error: {exc}", file=sys.stderr)
                     return 1
-                rule_matches += result.total_matches
-                if result.total_files > 0 or result.total_matches > 0:
-                    matched_files.add(current_file)
+                if composite:
+                    seen_identities.update(
+                        (match.file, match.line_number) for match in result.matches if match.file
+                    )
+                else:
+                    rule_matches += result.total_matches
+                matched_files.update(result.matched_file_paths)
+                if not matched_files and result.total_files > 0:
+                    matched_files.update(match.file for match in result.matches if match.file)
+            else:
+                for current_file in candidate_files:
+                    try:
+                        result = backend.search(current_file, member_pattern, config=rule_cfg)
+                    except RuntimeError as exc:
+                        print(f"Error: {exc}", file=sys.stderr)
+                        return 1
+                    if composite:
+                        seen_identities.update(
+                            (match.file or current_file, match.line_number)
+                            for match in result.matches
+                        )
+                    else:
+                        rule_matches += result.total_matches
+                    if result.total_files > 0 or result.total_matches > 0:
+                        matched_files.add(current_file)
+
+            member_ev: dict[str, list[dict[str, Any]]] = {}
+            for m in result.matches:
+                if m.file:
+                    member_ev.setdefault(m.file, []).append({
+                        "line_number": m.line_number,
+                        "text": m.text[:max_evidence_snippet_chars],
+                    })
+            if composite:
+                for f, snips in member_ev.items():
+                    composite_ev_data.setdefault(f, []).extend(snips)
+            else:
+                # Legacy single-pattern semantics: evidence comes from the
+                # (single) member result exactly as before.
+                composite_ev_data = member_ev
+
+        if composite:
+            rule_matches = len(seen_identities)
 
         total_matches += rule_matches
         if rule_matches > 0:
@@ -1420,17 +1560,9 @@ def scan_command(
             ).encode("utf-8")
         ).hexdigest()
 
-        ev_data = {}
-        for m in result.matches:
-            if m.file:
-                ev_data.setdefault(m.file, []).append({
-                    "line_number": m.line_number,
-                    "text": m.text[:max_evidence_snippet_chars],
-                })
-
         evidence = []
-        if ev_data:
-            for f, snips in ev_data.items():
+        if composite_ev_data:
+            for f, snips in composite_ev_data.items():
                 item = {"file": f, "match_count": len(snips)}
                 if include_evidence:
                     item["snippets"] = snips[:max_evidence_snippets_per_file]
