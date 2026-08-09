@@ -73,6 +73,11 @@
             "priority": "medium",
             "minKeywordHits": 1,
             "keywords": ["deadline", "hang", "large repo", "timeout", "scandir", "unscoped search", "workspace scale"]
+        },
+        "tensor-grep-codex-gated-audit-loop": {
+            "priority": "medium",
+            "minKeywordHits": 1,
+            "keywords": ["codex-gated", "audit loop", "audit-fix", "adversarial gate", "re-audit", "FIX-BEFORE-MERGE"]
         }
     }
 }
