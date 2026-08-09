@@ -116,7 +116,13 @@ def _uri_to_path(uri: str) -> Path:
         path = unquote(parsed.path)
         if parsed.netloc:
             path = f"//{parsed.netloc}{path}"
-        if len(path) >= 3 and path[0] == "/" and path[2] == ":":
+        # Drive-absolute strip, WINDOWS ONLY: ``/C:/...`` is a Windows drive-absolute path
+        # (``file:/C:/Windows/evil`` -> ``C:\Windows\evil``). On POSIX that leading ``/`` is
+        # ROOT-ANCHORED and must stay — stripping it produces a RELATIVE path (``C:/Windows/
+        # evil``) that resolves inside the process CWD, recreating the drive-relative escape
+        # the contract forbids (caught on Linux CI by test_uri_to_path_handles_single_slash_
+        # file_uri: `assert True is False`).
+        if os.name == "nt" and len(path) >= 3 and path[0] == "/" and path[2] == ":":
             path = path[1:]
         return Path(path).resolve()
     return Path(uri).expanduser().resolve()
