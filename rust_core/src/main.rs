@@ -3946,6 +3946,107 @@ mod tests {
     }
 
     #[test]
+    fn rg_passthrough_gpu_dropped_search_flags_returns_count_files_only_with_gpu() {
+        // P5·H2 extension predicate (audit/h2 follow-up): the rg-passthrough route honors the
+        // count/files flags but has no `--gpu-device-ids` field, so the SEARCH-form refusal set is
+        // non-empty ONLY when explicit GPU ids are present AND a count/files flag rides the
+        // request. Pure `--count-matches`/`-l` (no gpu), gpu alone, and the native-mapped
+        // `--count` stay EMPTY -- they keep their honored routes. This is the predicate the
+        // source-wired call site in `handle_ripgrep_search` runs; the exit wiring is covered
+        // end-to-end by `rust_core/tests/test_h2_native_structured_refusal.rs`.
+        let cases: &[(&[&str], Vec<&'static str>)] = &[
+            // refused: gpu + each count/files spelling, and a combined pair
+            (
+                &[
+                    "tg",
+                    "search",
+                    "--gpu-device-ids",
+                    "0",
+                    "--count-matches",
+                    "needle",
+                    ".",
+                ],
+                vec!["--count-matches"],
+            ),
+            (
+                &["tg", "search", "--gpu-device-ids", "0", "-l", "needle", "."],
+                vec!["--files-with-matches"],
+            ),
+            (
+                &[
+                    "tg",
+                    "search",
+                    "--gpu-device-ids",
+                    "0",
+                    "--files-with-matches",
+                    "needle",
+                    ".",
+                ],
+                vec!["--files-with-matches"],
+            ),
+            (
+                &[
+                    "tg",
+                    "search",
+                    "--gpu-device-ids",
+                    "0",
+                    "--files-without-match",
+                    "needle",
+                    ".",
+                ],
+                vec!["--files-without-match"],
+            ),
+            (
+                &[
+                    "tg",
+                    "search",
+                    "--gpu-device-ids",
+                    "0",
+                    "--count-matches",
+                    "--files-without-match",
+                    "needle",
+                    ".",
+                ],
+                vec!["--count-matches", "--files-without-match"],
+            ),
+            // honored: pure count/files without gpu, gpu without a count/files flag, and --count
+            (
+                &["tg", "search", "--count-matches", "needle", "."],
+                Vec::new(),
+            ),
+            (&["tg", "search", "-l", "needle", "."], Vec::new()),
+            (
+                &["tg", "search", "--files-without-match", "needle", "."],
+                Vec::new(),
+            ),
+            (
+                &["tg", "search", "--gpu-device-ids", "0", "needle", "."],
+                Vec::new(),
+            ),
+            (
+                &[
+                    "tg",
+                    "search",
+                    "--gpu-device-ids",
+                    "0",
+                    "--count",
+                    "needle",
+                    ".",
+                ],
+                Vec::new(),
+            ),
+        ];
+        for (tokens, expected) in cases {
+            let args = parse_search_args(tokens);
+            assert_eq!(
+                &rg_passthrough_gpu_dropped_search_flags(&args),
+                expected,
+                "predicate mismatch for {tokens:?}"
+            );
+        }
+    }
+
+    #[test]
     fn validation_command_argv_keeps_malicious_path_in_one_token_no_shell_injection() {
         // A maliciously named file with shell metacharacters must land in a SINGLE argv element so a
         // direct spawn cannot interpret it as a pipeline/command-substitution (SECURITY regression).
@@ -8768,6 +8869,50 @@ fn validate_positional_native_structured_refusals(
     }
 }
 
+/// P5·H2 extension (audit/h2 follow-up): the rg-passthrough route carries the count/files flags
+/// (`search_requires_ripgrep_passthrough`'s hard-flag list; `command_ripgrep_args` threads them
+/// into rg's argv) but `RipgrepSearchArgs` has NO `--gpu-device-ids` field (zero gpu refs), so a
+/// gpu + count/files request silently drops the explicit GPU request (wrong output, exit 0). The
+/// front-door rewrite makes this a SEARCH-FORM class, not just the positional one:
+/// `SEARCH_OPTION_FIRST_FLAGS` includes `--count-matches`, so `tg PAT . --gpu-device-ids 0
+/// --count-matches` normalizes into `tg search PAT . --gpu-device-ids 0 --count-matches` and
+/// never reaches `validate_positional_native_structured_refusals`. This predicate returns every
+/// count/files flag whose rg-passthrough would drop the GPU request; empty when no explicit GPU
+/// ids are present (pure `--count-matches`/`-l` keep their HONORED rg passthrough).
+/// P5·H2 "never silently drop" (Backend Fail-Closed Contract). Pure so the call site can map it
+/// to the exit wrapper while in-process tests drive it directly.
+fn rg_passthrough_gpu_dropped_search_flags(args: &SearchArgs) -> Vec<&'static str> {
+    if args.gpu_device_ids.is_empty() {
+        return Vec::new();
+    }
+    let mut dropped = Vec::new();
+    if args.count_matches {
+        dropped.push("--count-matches");
+    }
+    if args.files_with_matches {
+        dropped.push("--files-with-matches");
+    }
+    if args.files_without_match {
+        dropped.push("--files-without-match");
+    }
+    dropped
+}
+
+/// Fail closed (exit 2) when the rg-passthrough route would silently drop an explicit
+/// `--gpu-device-ids` request (`command_ripgrep_args` has no GPU field). Names the combined
+/// flags and the remedy; message style mirrors `exit_native_structured_flag_dropped`'s
+/// non-structured arm.
+fn exit_gpu_dropped_on_rg_passthrough(flag_names: &[&'static str]) {
+    let flags = flag_names.join(", ");
+    eprintln!(
+        "error: --gpu-device-ids combined with {flags} cannot be honored: the ripgrep passthrough \
+         that carries {flags} has no GPU field, so the explicit GPU request would be silently \
+         dropped; refusing rather than silently ignoring it. Drop --gpu-device-ids, or drop \
+         {flags}."
+    );
+    std::process::exit(2);
+}
+
 fn search_prefers_ripgrep_passthrough(
     args: &SearchArgs,
     request: &ResolvedSearchRequest,
@@ -9403,6 +9548,34 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
         if !generated_dirs.is_empty() {
             eprintln!("{}", format_broad_generated_scan_error(&generated_dirs));
             std::process::exit(2);
+        }
+    }
+
+    // P5·H2 extension (audit/h2 follow-up): refuse gpu + count/files combos on the SEARCH form
+    // BEFORE the rg-passthrough early return, so this gate fires in EVERY environment.
+    // `search_requires_ripgrep_passthrough`'s hard-flag list diverts all three flags to
+    // `command_ripgrep_args`, which threads them into rg's own argv but has NO
+    // `--gpu-device-ids` field -- with rg present the combo silently dropped the explicit GPU
+    // request (exit 0, the defect), and with rg absent the passthrough block's own
+    // `require_ripgrep_or_exit` exited 2 with the generic "requires the ripgrep (`rg`) backend"
+    // wording. Airtight-ordering argument: this statement sits BEFORE that block, so for these
+    // combos it is the first gate to fire in BOTH environments and the "refusing" message below
+    // is deterministic -- CI's rg-absent test-rust-core lanes NEVER reach the rg-required gate
+    // for them. The gate also closes the front-door-rewrite shadow: `SEARCH_OPTION_FIRST_FLAGS`
+    // includes `--count-matches`, so the positional `tg PAT . --gpu-device-ids 0 --count-matches`
+    // normalizes into `tg search ...` and never reaches `run_positional_cli`'s validator.
+    // Positional behavior is otherwise UNCHANGED by this commit: `--files-without-match` /
+    // `--files-with-matches` long forms are in neither rewrite list and `PositionalCli` has no
+    // `-l` spelling, so those positional file-flag routes stay exactly as pre-existing P5·H2 left
+    // them (the positional validator refuses `--count-matches` only); they are a separate,
+    // unchanged boundary, not silently claimed as covered here. `!args.index` preserves the
+    // explicit-index path's OWN `IndexFlagPolicy::Refuse` message for these flags (mirrors the
+    // structured validator's carve-out below). Pure `--count-matches`/`-l` without
+    // `--gpu-device-ids` stays on its honored rg passthrough (the predicate returns empty).
+    if !args.index {
+        let dropped = rg_passthrough_gpu_dropped_search_flags(&args);
+        if !dropped.is_empty() {
+            exit_gpu_dropped_on_rg_passthrough(&dropped);
         }
     }
 

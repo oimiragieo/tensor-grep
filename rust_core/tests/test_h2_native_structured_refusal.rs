@@ -8,11 +8,12 @@
 //! fail-closed replacement: each of those combinations must now exit 2 (not 0) with a
 //! refusal message naming the flag, and the honored controls must still exit 0.
 //!
-//! The positional `--gpu-device-ids` + `--count-matches` arm accepts EITHER fail-closed
-//! gate: the P5·H2 "refusing" message, or -- on environments where rg is unavailable (CI's
-//! test-rust-core lanes) -- the PRE-EXISTING rg-required passthrough gate, which pre-empts
-//! it and exits 2 with "this search's flag combination requires the ripgrep (`rg`) backend".
-//! See `assert_positional_gpu_refused` for the exact dual-env contract.
+//! The positional `--gpu-device-ids` + `--count-matches` arm is NOW deterministic in BOTH
+//! environments: the front door rewrites it into the search-subcommand form (`--count-matches`
+//! is in `SEARCH_OPTION_FIRST_FLAGS`), and the search-form GPU gate in `handle_ripgrep_search`
+//! (fired before the rg-passthrough early return) refuses it with the "refusing" message BEFORE
+//! the rg-required gate can fire -- rg present (where the combo used to silently drop the GPU
+//! request at exit 0, the defect) or rg absent (CI), the same exit 2 + "refusing" + flag names.
 //!
 //! CI runs this file via `cargo test` (integration tests get `CARGO_BIN_EXE_tg` at compile
 //! time); it cannot run on the desktop (CPU-safe forbids `cargo` locally).
@@ -113,22 +114,13 @@ fn structured_search_hard_refuses_count_and_files_flags() {
 
 /// P5·H2 fail-closed contract for the positional `--gpu-device-ids` + `--count-matches` door.
 ///
-/// Which gate fires depends on whether ripgrep is available in the test environment (it is
-/// NOT on CI's test-rust-core lanes):
-///
-/// 1. With rg UNAVAILABLE (CI), the front door normalizes the combination into the
-///    `tg search` subcommand (`--count-matches` is in `SEARCH_OPTION_FIRST_FLAGS`), where
-///    the PRE-EXISTING rg-required passthrough gate
-///    (`search_prefers_ripgrep_passthrough` -> `require_ripgrep_or_exit` in
-///    `handle_ripgrep_search`) fires FIRST and exits 2 with "this search's flag combination
-///    requires the ripgrep (`rg`) backend" -- BEFORE the P5·H2 validator's "refusing"
-///    message runs. Fail-closed (exit 2), different wording.
-///
-/// 2. On environments where that rg-required gate does not pre-empt, the P5·H2 validator
-///    fires instead: exit 2 with "refusing" and the `--count-matches` flag named.
-///
-/// The property pinned here is FAIL-CLOSED: exit 2 (never a silent empty/plain match list),
-/// with stderr carrying either gate's refusal or the flag name.
+/// Deterministic in every environment: `--count-matches` is in `SEARCH_OPTION_FIRST_FLAGS`, so
+/// the front door normalizes the combination into the `tg search` subcommand form, where the
+/// search-form GPU gate (`rg_passthrough_gpu_dropped_search_flags` in `handle_ripgrep_search`)
+/// fires BEFORE the rg-passthrough early return -- and therefore before that block's
+/// `require_ripgrep_or_exit` "requires the ripgrep (`rg`) backend" exit -- so the "refusing"
+/// message is the only one reachable, with rg present (the old silent-GPU-drop exit 0) or
+/// rg absent (CI's test-rust-core lanes).
 fn assert_positional_gpu_refused(output: &Output) {
     let code = output.status.code();
     assert_eq!(
@@ -139,15 +131,14 @@ fn assert_positional_gpu_refused(output: &Output) {
         String::from_utf8_lossy(&output.stderr)
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let lower = stderr.to_ascii_lowercase();
     assert!(
-        lower.contains("refusing")
-            || lower.contains("requires the ripgrep")
-            || stderr.contains("--count-matches"),
-        "positional --gpu-device-ids + --count-matches must fail closed (exit 2) via the \
-         P5·H2 refusal ('refusing' + flag name) or the pre-existing rg-required gate \
-         ('requires the ripgrep', which fires before it when rg is unavailable on CI); \
-         stderr: {stderr}"
+        stderr.to_ascii_lowercase().contains("refusing"),
+        "refusal must say 'refusing' (the search-form GPU gate fires before the rg-required \
+         gate in every environment); stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("--count-matches") && stderr.contains("--gpu-device-ids"),
+        "refusal must name both --count-matches and --gpu-device-ids; stderr: {stderr}"
     );
 }
 
@@ -156,7 +147,10 @@ fn positional_doors_hard_refuse_count_matches() {
     let (dir, path) = fixture_dir();
     let cwd = dir.path();
     // positional argv shape: `PATTERN PATH [flags]`. --gpu-device-ids door (reachable
-    // unconditionally, no json needed) and the positional --json structured door.
+    // unconditionally, no json needed). The front door rewrites this into the search form
+    // (--count-matches is in SEARCH_OPTION_FIRST_FLAGS), where the search-form GPU gate fires
+    // deterministically -- strict assertion, no environment split (see
+    // assert_positional_gpu_refused).
     let out = run_tg(
         &["needle", &path, "--gpu-device-ids", "0", "--count-matches"],
         cwd,
@@ -166,6 +160,58 @@ fn positional_doors_hard_refuse_count_matches() {
     // validator is the ONLY gate for this arm in every environment: keep the strict form.
     let out = run_tg(&["needle", &path, "--json", "--count-matches"], cwd);
     assert_refused(&out, &["--count-matches"]);
+}
+
+#[test]
+fn search_form_gpu_count_files_combos_hard_refuse() {
+    let (dir, path) = fixture_dir();
+    let cwd = dir.path();
+    // Direct search-form combos (no front-door rewrite needed): an explicit --gpu-device-ids
+    // request combined with any count/files flag must refuse, because the rg-passthrough route
+    // that honors the count/files flag has no GPU field -- the old shape silently dropped the
+    // GPU request at exit 0. Deterministic with rg present or absent: the gate fires before the
+    // passthrough block's rg-required exit.
+    let out = run_tg(
+        &[
+            "search",
+            "needle",
+            &path,
+            "--gpu-device-ids",
+            "0",
+            "--count-matches",
+        ],
+        cwd,
+    );
+    assert_refused(&out, &["--count-matches", "--gpu-device-ids"]);
+    let out = run_tg(
+        &["search", "needle", &path, "--gpu-device-ids", "0", "-l"],
+        cwd,
+    );
+    assert_refused(&out, &["--files-with-matches", "--gpu-device-ids"]);
+    let out = run_tg(
+        &[
+            "search",
+            "needle",
+            &path,
+            "--gpu-device-ids",
+            "0",
+            "--files-with-matches",
+        ],
+        cwd,
+    );
+    assert_refused(&out, &["--files-with-matches", "--gpu-device-ids"]);
+    let out = run_tg(
+        &[
+            "search",
+            "needle",
+            &path,
+            "--gpu-device-ids",
+            "0",
+            "--files-without-match",
+        ],
+        cwd,
+    );
+    assert_refused(&out, &["--files-without-match", "--gpu-device-ids"]);
 }
 
 #[test]
@@ -181,4 +227,27 @@ fn honored_controls_still_exit_zero() {
     // A matching bare positional search still succeeds.
     let out = run_tg(&["needle", &path], cwd);
     assert_not_refused(&out);
+    // Pure --count-matches / -l WITHOUT --gpu-device-ids must NOT hit the new GPU gate: they
+    // keep their honored rg-passthrough route (exit 0 when rg is present; on rg-absent CI the
+    // PRE-EXISTING rg-required passthrough gate exits 2 with "requires the ripgrep" -- never
+    // the new GPU-refusal message, whose fingerprint is naming --gpu-device-ids). This control
+    // proves the new predicate requires the GPU flag.
+    for args in [
+        ["search", "needle", path.as_str(), "--count-matches"].as_slice(),
+        ["search", "needle", path.as_str(), "-l"].as_slice(),
+    ] {
+        let out = run_tg(args, cwd);
+        let code = out.status.code();
+        assert!(
+            code == Some(0) || code == Some(2),
+            "pure count/files without --gpu-device-ids must stay on rg passthrough (exit 0 with \
+             rg present; pre-existing rg-required exit 2 with rg absent), got {code:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !stderr.contains("--gpu-device-ids"),
+            "the new GPU-refusal gate must NOT fire without --gpu-device-ids; stderr: {stderr}"
+        );
+    }
 }
