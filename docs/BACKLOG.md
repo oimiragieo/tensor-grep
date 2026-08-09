@@ -43,6 +43,31 @@
 
 
 
+## Recent campaign notes (2026-08-08)
+
+- **Drain landed:** #975 (M7 verify_receipt never-raises → **v1.110.6**), #976 (M8 AST -v/-w
+  fail-closed → **v1.110.7**), #980 (TASK_BOARD reconcile → unblocked the meat-gate), #967 (docs
+  A77–A82 retention), #977 (spend-smart CI gate). #978 plan PR + #979 P5·H2 draft PR open.
+- **Published-wheel dogfood (v1.110.7):** M8 PASS (visible CPU fallback honors `-v`, rg-identical
+  inverted set, correct JSON envelope); M7 PASS (corrupt embedded key → structured `valid=False`,
+  exit 1, no crash); H2 pre-fix baseline confirmed (`--json -l` → raw path exit 0 on the wheel; the
+  fix is #979, unmerged).
+- **FINDING (stale-ready labels):** #967 (docs) and #977 (ci) were labeled ready/mergeable but their
+  heads predated #969–#976 — each had 7 failing tracker-freshness jobs that were base-staleness, not
+  content. Both rebased onto real main, re-CI'd green, then merged. Charge: any "ready" label must
+  cite the head SHA's own completed run (A44/A51).
+- **FINDING (release-gate incident):** v1.110.7 (#976) could not publish because TASK_BOARD's
+  reconcile stamp lagged 6 releases (tolerance 5) → `test_task_board_freshness` failed in all 7
+  test-python/gpu jobs → the matrix gate blocked the release train. Fixed by #980 (board reconcile
+  + SESSION_HANDOFF index sync), which re-ran Semantic Release and published the orphaned M8 fix as
+  v1.110.7. The freshness gate is ordinal-CHANGELOG-distance (A76) and its mirror
+  (`test_backlog_tracker_truth` index-version equality) must ride the same commit.
+- **H2 residual (recorded, not fixed):** `--format rg --json -l` keeps rg-parity raw paths (rg
+  itself emits plain paths for `--json -l`). Tracked as a named follow-up; #979 deliberately does
+  not refuse it.
+- Execution plan: `docs/plans/2026-08-08-backlog-completion-plan.md` (three-lens thinktank-approved
+  Round 3). Next buildable per plan: M1 (checkpoint create-side symlink/junction containment).
+
 ## Recent campaign notes (2026-08-06 PM CEO)
 
 - Live CEO packet: `docs/audits/2026-08-06-pm-ceo-backlog-update.md` (A77–A82).
