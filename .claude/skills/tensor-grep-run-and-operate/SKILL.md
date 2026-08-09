@@ -226,8 +226,11 @@ by its enclosing class (`main.py:11251`).
 **Truncation contract (read §11 before scripting an exit code):** when a `callers`/`refs`/`impact`/
 `blast-radius` JSON payload carries `"result_incomplete": true` (a scan cap) or `"partial": true`
 (a `--deadline` cutoff), the scan did **not** finish — treat the list as a floor, never as proof of
-zero callers. The exit code encodes this too: an **empty** truncated result exits `2`, a found result
-exits `0` even when flagged incomplete (§11). The full audit decision procedure (P2 = truncation,
+zero callers. The exit code encodes this too, and truncation **trumps** found:
+`main.py:11467-11470` raises `typer.Exit(2)` on ANY `partial`/`result_incomplete`
+(found OR empty) BEFORE the not-found check, and the comment at `main.py:11457-11466`
+records #399's "found-but-truncated exits 0" as tried and overturned by a unanimous
+design council (§11). The full audit decision procedure (P2 = truncation,
 P7 = "zero callers != dead code") lives in `tensor-grep-code-audit`; this skill covers how to invoke
 the command and how to branch on its exit/flags.
 

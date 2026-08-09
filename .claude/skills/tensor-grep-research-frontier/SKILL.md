@@ -266,7 +266,7 @@ build_doc_drift("docs", code_path="src")  ->  20,072 findings / 2,727 "high conf
 
 ---
 
-## Problem 6 — Symbol-graph tier: registry 10/10 SHIPPED; cross-file C/C++ graph still open (added 2026-07-24, STATUS-UPDATED 2026-07-27)
+## Problem 6 — Symbol-graph tier: full 10/10 parser-backed tier SHIPPED (Tasks 10D/10E + F7 Task 11 wave #957); cross-file caller confirmation is the remaining tail (added 2026-07-24, STATUS-UPDATED 2026-07-27, SUPERSEDED 2026-08-09)
 
 **STATUS: the build described here SHIPPED. Do not re-do it.** `lang_c.py` and `lang_cpp.py` both
 exist (`ls src/tensor_grep/cli/lang_*.py`), and `grep -c "lang_registry.register_language(" src/tensor_grep/cli/repo_map.py`
@@ -276,24 +276,54 @@ rebuilt shipped code — the most expensive class of skill error, which is why t
 with its status. (Caught 2026-07-27 by a skills-accuracy audit.)
 
 **What actually shipped:** per-file symbol extraction for C and C++ behind the same
-`lang_registry.register_language(LanguageSpec(...))` pattern the other module-shaped languages use,
-self-labelled FOUNDATIONAL-TIER in `repo_map.py` — `defs` and `imports` are real; the deeper
-call-graph seams are deliberately unwired.
+`lang_registry.register_language(LanguageSpec(...))` pattern the other module-shaped languages use
+— and, as of the Task 10D/10E waves plus the F7 Task 11 wave #957, the in-file call-graph seams are
+wired too: `references_and_calls` points at `lang_c.c_references_and_calls` /
+`lang_cpp.cpp_references_and_calls` (dispatch `repo_map.py:6433/:6446`; LanguageSpec hook sites
+`:6752/:6790/:6804/:6846`), and `file_imports_symbol_from_definition` is wired to the shared C/C++
+include engine, giving C/C++ a `c-include-path-confirmation` cross-file confirmed band
+(`lang_c_cpp_include.py`: `resolve_include_target` / `file_includes_definition` /
+`include_resolves_into_definition_dirs`, used from `lang_c.py:748/:799`). The
+"self-labelled FOUNDATIONAL-TIER" framing this section used to carry in `repo_map.py` was the
+pre-10D/10E state — the descriptor is now **10 parser-backed / 0 foundational, the tier EMPTY**
+(2026-08-09 audit vs origin/main `e3feaf5`; the docstring's own "As of Task 10E ... this tier is
+EMPTY" note is at `repo_map.py:590-597`). Only `provider_alias_calls`, `import_update_target`,
+`prime_repo_context` and `classify_ref_kind` remain `None` on the C/C++ specs
+(`repo_map.py:6789-6793`, `:6845-6849`), reported by `_language_coverage_gaps_for_universe` as
+honest `resolution_gaps` entries.
 
 **What is GENUINELY still open** (scope any new work here, not at the registration layer):
 
-1. **Cross-file caller graph for c/cpp.** `references_and_calls`, `provider_alias_calls`,
+1. **Cross-file caller confirmation for c/cpp — now the SAME gap all ten languages share.** The
+   pre-wave claim that "`references_and_calls`, `provider_alias_calls`,
    `file_imports_symbol_from_definition`, `import_update_target`, `prime_repo_context` and
    `classify_ref_kind` are all `None` on both specs, so `tg refs`/`callers`/`blast-radius` fall
-   through to the regex heuristic path for C/C++ rather than the AST path. Verify before starting:
-   read the two `LanguageSpec` literals and confirm which hooks are still `None`.
-2. **`#include`-graph resolution.** Still unbuilt, and still hard for the reasons the original
-   scoping gave: `#include` is textual not semantic, tree-sitter has no preprocessor, and there is
-   no compiler-enforced module system to lean on (no `go.mod` analogue). A `compile_commands.json`
-   ingest is the obvious lever and has not been attempted.
+   through to the regex heuristic path for C/C++" is FALSE since Tasks 10D/10E: the in-file AST
+   refs/callers path is wired for both (dispatch `repo_map.py:6433/:6446`), and cross-file edges
+   that the `#include`-path engine confirms carry the `c-include-path-confirmation` band rather
+   than the regex heuristic. What remains open is cross-file caller confirmation BEYOND that
+   include-confirmed band, which falls back to the text prefilter pending a per-language
+   package/source-root resolver — the same within-tier gap every parser-backed language has.
+   C++ additionally keeps a deliberately narrower confirmable population: an arbitrary receiver
+   call (`w.method()`, `p->method()`) NEVER confirms (C++'s inheritance and `auto` make a general
+   receiver-type walk unsound); read `lang_cpp.py`'s TASK 10E docstring block for the reasoning.
+2. **`#include`-graph resolution — a first engine EXISTS; the general form does not.** The
+   include-path engine shipped with the 10D/10E/F7 wave (`lang_c_cpp_include.py`, 176 lines:
+   `iter_include_directives`, `resolve_include_target`, `definition_header_siblings`,
+   `file_includes_definition`, `include_resolves_into_definition_dirs`; provenance constant
+   `_C_CROSS_FILE_CONFIRMED_PROVENANCE = "c-include-path-confirmation"`, `lang_c.py:654`) — it
+   resolves `#include` targets against repo include roots and definition-header siblings. What
+   remains open is the GENERAL form the original scoping called hard, for the same reasons:
+   `#include` is textual not semantic, tree-sitter has no preprocessor, and there is no
+   compiler-enforced module system to lean on (no `go.mod` analogue) — true `#include` -> file
+   resolution beyond definition-dirs evidence stays deferred (see the `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES`
+   comment at `repo_map.py:17548-17553` and `docs/BACKLOG.md`). A `compile_commands.json` ingest is
+   still the obvious lever and has not been attempted.
 3. **Header/definition duality.** A C/C++ function appears twice (prototype + body). Per-file
-   extraction handles this by name-dedup; a cross-file graph has to pick a canonical site, and that
-   decision is still unmade.
+   extraction handles this by name-dedup (plus `_c_definition_site_positions` in-file
+   definition/prototype confirmation), and the include engine knows sibling headers
+   (`definition_header_siblings`, `lang_c_cpp_include.py:101`) — but a full cross-file graph's
+   canonical-site decision beyond the include-confirmed band is still unmade: genuinely open.
 
 **Honest framing of the coverage number -- CORRECTED 2026-08-01, do not re-invent a third tier;
 counts UPDATED 2026-08-04 by PR #927 (Java promoted foundational -> parser-backed, Task 10A), then
@@ -325,7 +355,9 @@ the same split.
 **You have a result when (falsifiable):** for a representative multi-file C/C++ fixture, `tg callers`
 returns AST-derived call sites (not regex-heuristic ones) and `tg imports` resolves at least
 same-directory `#include`s, with every unresolved edge reported in `resolution_gaps` rather than
-silently counted as zero.
+silently counted as zero. -- the in-file half of this bar is MET since Tasks 10D/10E/F7 (wired
+hooks + include engine; descriptor 10/0), so the still-untested remainder is full cross-file
+parity beyond the include-confirmed band on a canonical multi-file fixture.
 
 ---
 ## Beyond-SOTA: the fused thesis (candidate, not proven)
