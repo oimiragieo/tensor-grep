@@ -12,7 +12,6 @@ release_docs_current_tag: v1.110.7
 
 ## Current Backlog Closeout
 Canonical status index version: 2026-08-08.1
-
 - Public product: `v1.110.6`. CEO packet: `docs/audits/2026-08-06-ceo-backlog-update.md`.
 - Closed-world: 28 rows / **17 unfinished** = 0 READY, 6 BLOCKED, 0 IN_FLIGHT, 5 CEO_GATED, 6 DEMAND_GATED
   (7 SHIPPED + 4 RETIRED terminal). F7 / CPU-BACKEND / REF-CALL-REGISTRY closed SHIPPED this reconcile.

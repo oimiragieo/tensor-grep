@@ -19,7 +19,6 @@
 >    on 2026-07-28.
 
 ## Campaign note (2026-08-08)
-
 CEO update: `docs/audits/2026-08-06-ceo-backlog-update.md`. Public product `v1.110.6` (2026-08-08).
 2026-08-08 drain: M7 (#975 → v1.110.6), M8 (#976 → v1.110.7 in flight); execution plan
 `docs/plans/2026-08-08-backlog-completion-plan.md` (thinktank-approved); P5·H2 → draft #979
@@ -70,10 +69,9 @@ Round 3).
 **Public product:** `v1.110.6` on PyPI/GitHub (2026-08-08, version endpoint + release asset check);
 v1.110.7 in flight (#976 M8). Tip includes #958 CUJ lock + #962 wheel dogfood + #963 CEO docs + the
 2026-08-08 drain (#975 M7 → v1.110.6, #976 M8 → v1.110.7) and the P5·H2 fail-closed PR (#979, draft).
-**CEO packet:** `docs/audits/2026-08-06-ceo-backlog-update.md` (supersedes counts in
+**CEO packet:** `docs/audits/2026-08-06-pm-ceo-backlog-update.md` (live, 2026-08-06 PM, A77–A82); morning `docs/audits/2026-08-06-ceo-backlog-update.md` retained as historical (supersedes counts in
 `docs/audits/2026-08-03-ceo-backlog-update.md` for live unfinished totals; keep the 2026-08-03 file
 as historical). Also cite `docs/audits/2026-08-03-ceo-backlog-update.md` for continuity links.
-
 **Closed this reconcile (impl already merged; closure #963):** F7 (#950/#952/#955/#957),
 CPU-BACKEND (#923/#925), REF-CALL-REGISTRY (#915/#940).
 **Closed in the 2026-08-08 drain:** M7 (#975 → v1.110.6), M8 (#976 → v1.110.7 in flight).
@@ -92,7 +90,7 @@ post-**v1.110.6**, PyPI-verified 2026-08-08 by the version endpoint (`tensor-gre
 
 **Unfinished 17:** 0 READY, 6 BLOCKED (#89 #90 F5 F6 F8 MCP-SURFACE), 5 CEO_GATED (#48 #72 #77 #131 #169),
 6 DEMAND_GATED (#255 DD-006 AST-DSL-PARITY MCP-LEAN-DEFAULT CONTINUOUS-REFRESH RUST-REPLACE-SYMLINK).
-0 IN_FLIGHT. Board READY is not a build license when BACKLOG reconcile says BLOCKED (A71/A76).
+0 IN_FLIGHT. Board READY is not a build license when BACKLOG reconcile says BLOCKED (A71/A76/A82).
 
 **Hard stops:** Task 2A not merge-ready; no #169 spend; no silent CEO-gate flips; MCP wire-contract
 fence; no local `rust_core` cargo on the shared box for W3 halves.
@@ -396,4 +394,5 @@ None at this snapshot. #109 shipped in PR #605. WSL path bugs above are program-
 - Historical ledger: `docs/BACKLOG.md` · Contracts: `docs/CONTRACTS.md` · Laws: `AGENTS.md`
 - Release mechanics + positioning rules: `.claude/skills/tensor-grep-release-and-positioning`
 - What counts as proof: `.claude/skills/tensor-grep-validation-and-qa` (oracle forms 1–10)
+
 
