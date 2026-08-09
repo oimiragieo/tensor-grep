@@ -164,6 +164,38 @@ def _resolve_within_root(root: Path, root_resolved: Path, rel_path: str) -> Path
     return resolved
 
 
+def _resolve_parent_within_root(root: Path, root_resolved: Path, rel_path: str) -> tuple[Path, str]:
+    """Resolve ONLY the parent chain of ``root / rel_path`` and assert containment.
+
+    Create-side twin of the undo-side snapshot-source guard in ``_resolve_within_root``
+    (audit H3, A27/A39 class-crossing): the create-side copy loop copies with
+    ``follow_symlinks=False``, which refuses only a link AT THE LEAF. A symlinked or
+    (Windows) junctioned ANCESTOR directory under root is traversed transparently by
+    the OS, so ``shutil.copy2(root/a/b.txt, ...)`` would copy OUT-OF-ROOT file content
+    into the checkpoint snapshot (create-side disclosure). Resolve and assert ONLY the
+    parent chain; return ``(resolved_parent, leaf_name)`` so the caller composes the
+    source from the RESOLVED parent plus the RAW leaf name and copies it with
+    ``follow_symlinks=False`` -- a legitimately tracked out-of-root-pointing LEAF
+    symlink is still stored AS A LINK, never followed and never refused (law A38; this
+    helper must NOT copy ``_resolve_within_root``'s leaf-following ``resolve()``).
+    """
+    candidate = Path(rel_path)
+    if candidate.is_absolute() or any(part == ".." for part in candidate.parts):
+        raise ValueError(f"Refusing checkpoint entry outside root: {rel_path!r}")
+    parent_resolved = (root / candidate).parent.resolve()
+    if parent_resolved != root_resolved and root_resolved not in parent_resolved.parents:
+        raise ValueError(
+            "Refusing checkpoint entry outside root: "
+            f"{rel_path!r} (its ancestor directory {str((root / candidate).parent)!r} "
+            "resolves outside the checkpoint root)"
+        )
+    leaf = candidate.name
+    # lstat the leaf: a symlink at the leaf is SEEN as a link here and never followed;
+    # a vanished leaf is an honest missing-source OSError (the copy below would fail too).
+    os.lstat(parent_resolved / leaf)
+    return parent_resolved, leaf
+
+
 @dataclass
 class CheckpointRecord:
     version: int
@@ -882,10 +914,33 @@ def create_checkpoint(path: str = ".") -> CheckpointCreateResult:
     snapshot_dir.mkdir(parents=True, exist_ok=True)
 
     try:
+        # M1 (A38 class fix, A27/A39 twin-crossing): guard the create-side SOURCE the same
+        # way the undo side guards its snapshot source (audit H3). follow_symlinks=False
+        # below refuses only a link AT THE LEAF; a symlinked or (Windows) junctioned
+        # ANCESTOR under root would otherwise be traversed transparently by the OS,
+        # copying OUT-OF-ROOT file content into the snapshot. Resolve ONLY the parent
+        # chain and refuse escapes; the leaf keeps its raw identity, so a legitimately
+        # tracked out-of-root-pointing LEAF symlink is still stored AS a link.
+        # Named follow-ups (A49 governance, recorded canonically):
+        # (a) M1-FU1 ``CHECKPOINT-A48-HANDLES`` -- A48 opened-parent-handle anchoring for the
+        #     create-side copy (Event-gated parent swap between resolve and copy, Unix +
+        #     Windows) is NOT closed by this resolve-then-copy shape; this PR's source-side
+        #     parent-containment guard covers pre-planted chains. OWNER: M1 change-control.
+        #     DISPOSITION: DEFERRED, not claimed. REOPEN TRIGGER: a concrete attacker able to
+        #     race a parent swap inside a repo-checkout snapshot window (a junction written
+        #     between resolve() and copy2()), or a consumer requiring handle-anchored writes.
+        # (b) M1-FU2 ``CHECKPOINT-UNDO-LEAF-RESIDUAL`` -- the undo side's leaf-following
+        #     residual (``_resolve_within_root`` resolves the full leaf at :161, so an
+        #     out-of-root-pointing STORED leaf symlink is refused instead of restored as a
+        #     link). OWNER: undo-change-control. DISPOSITION: DEFERRED. REOPEN TRIGGER: a
+        #     checkpoint containing a tracked out-of-root-pointing leaf symlink that undo
+        #     must restore as a link (cannot today).
+        root_resolved = root.resolve()
         for rel_path, exists in entries.items():
             if not exists:
                 continue
-            source = root / rel_path
+            resolved_parent, leaf = _resolve_parent_within_root(root, root_resolved, rel_path)
+            source = resolved_parent / leaf
             destination = snapshot_dir / rel_path
             destination.parent.mkdir(parents=True, exist_ok=True)
             # follow_symlinks=False: store a symlink AS a link, never copy its (possibly
