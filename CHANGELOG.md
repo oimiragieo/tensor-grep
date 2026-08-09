@@ -1,6 +1,152 @@
 # CHANGELOG
 
 
+## v1.110.9 (2026-08-09)
+
+### Bug Fixes
+
+- Fail closed on count-matches/files-with-matches/files-without-match native structured route (H2
+  audit) ([#979](https://github.com/oimiragieo/tensor-grep/pull/979),
+  [`f95998a`](https://github.com/oimiragieo/tensor-grep/commit/f95998a955b41f000c77a6c83c53d6a369b653d5))
+
+* P5 H2 (2026-08-08): fail-close --count-matches/--files-with-matches/--files-without-match on
+  native structured and positional GPU routes
+
+H2 audit (PARTIAL): on the native structured route (--json/--ndjson) the count/files flags fell
+  through search_requires_ripgrep_passthrough's !json&&!ndjson gate and were SILENTLY DROPPED
+  (OUT_OF_SCOPE_GAP at main.rs:3485/3522/3523/3584); the positional --gpu-device-ids door had no
+  json gate at all. The Python full-CLI route silently printed plain paths for --json -l (verified
+  live: exit 0).
+
+- Rust: native_structured_dropped_search_flags/positional_native_dropped_search_flags predicates;
+  pure validate_* refusers; exit_native_structured_flag_dropped (exit 2, names every dropped flag +
+  remedy); hoisted before count_search_corpus_bytes (CUDA census) with !args.index preserving the
+  trigram-index path's own pinned IndexFlagPolicy::Refuse message; --format rg --json rg passthrough
+  and -o/-c stay honored; ratchet =
+  assert_search_args_native_structured_field_classification_is_exhaustive (all 68 SearchArgs fields,
+  compile-time exhaustive) + in-process grid + integration tests against the real binary
+  (tests/test_h2_native_structured_refusal.rs). - Python: search_command refuses json/ndjson +
+  files-with-matches/files-without-match (exemption requires explicit --format rg AND not ndjson;
+  codex round-3 finding closed); count_matches_requires_ripgrep + _can_passthrough_rg pins
+  re-verified unchanged. - Tests: 4 new Python (incl. the --json --ndjson --format rg -l repro), 27
+  affected test_cli_modes + 9 bootstrap compile/subset green locally; ruff+format+mypy clean;
+  rustfmt --check clean (Rust parses; full compile + cargo tests are CI-oracle per cpu-safe).
+
+Codex audit loop: R1 FIX-BEFORE-MERGE (4 findings; fixed) -> R2 FIX-BEFORE-MERGE (2 broken new
+  tests: self-matching census + integration-file cwd; fixed: census removed as
+  self-matching/fragile, behavioral coverage via CARGO_BIN_EXE_tg integration, cwd fixed) -> R3
+  FIX-BEFORE-MERGE (1 MEDIUM: --json --ndjson --format rg -l slipped the exemption; fixed: exemption
+  requires not ndjson + pinning test) -> R4 FIX-BEFORE-MERGE (1 MEDIUM:
+
+the pinning test was vacuous under CliRunner sys.argv; fixed: stub sys.argv + bidirectional control)
+  -> R5 APPROVE-WITH-NITS (only nit: this audit-loop line; refreshed).
+
+* test: make h2 native structured refusal dual-env for rg-present and rg-absent
+
+The positional --gpu-device-ids + --count-matches arm previously required stderr to contain
+  "refusing", which is only produced by the P5·H2 validator. On CI's test-rust-core lanes rg is
+  UNAVAILABLE, so the front door normalizes the argv into the `tg search` subcommand
+  (--count-matches is in SEARCH_OPTION_FIRST_FLAGS) where the PRE-EXISTING rg-required passthrough
+  gate (search_prefers_ripgrep_passthrough -> require_ripgrep_or_exit in handle_ripgrep_search,
+  main.rs:9414) fires FIRST and exits 2 with "this search's flag combination requires the ripgrep
+  (`rg`) backend" -- before the P5·H2 validator's "refusing" message runs.
+
+The exit-2 fail-closed contract holds in both environments; only the wording differs. New
+  assert_positional_gpu_refused accepts exit 2 + (stderr contains "refusing" OR "requires the
+  ripgrep" OR the flag name --count-matches). The --json positional arm and all four
+  structured-search arms are env-independent (json short-circuits the rg-required predicate), so
+  they keep the strict "refusing" + flag-name assertion.
+
+* fix: refuse gpu + count/files combos on the native search form before rg passthrough
+
+SEARCH_OPTION_FIRST_FLAGS includes --count-matches, so the positional `tg PAT . --gpu-device-ids 0
+  --count-matches` is REWRITTEN into the search-subcommand form (normalize_top_level_search_args)
+  and never reaches run_positional_cli's P5·H2 validator -- the front-door-rewrite shadow. On the
+  search path, --count-matches / -l / --files-with-matches / --files-without-match all sit in
+  search_requires_ripgrep_passthrough's hard-flag list, so they route to command_ripgrep_args, which
+  threads them into rg's argv but carries NO --gpu-device-ids field (RipgrepSearchArgs has zero gpu
+  refs): with rg present the explicit GPU request was SILENTLY DROPPED (exit 0, wrong output); with
+  rg absent the pre-existing rg-required passthrough gate exited 2 by accident (wrong wording).
+
+New search-form gate in handle_ripgrep_search BEFORE the rg-passthrough early return:
+  !gpu_device_ids.is_empty() && any count/files flag -> exit 2 with a "refusing" message naming both
+  the GPU flag and the count/files flag, mirrored on exit_native_structured_flag_dropped.
+  Airtight-ordering argument: the gate sits before the passthrough block whose
+  require_ripgrep_or_exit would otherwise fire when rg is absent, so for these combos it is the
+  FIRST gate in BOTH environments -- the rg-absent CI arm now hits this deterministic message, and
+  the rg-present arm no longer drops the GPU request. !args.index preserves the explicit-index
+  path's own IndexFlagPolicy::Refuse message (mirrors the structured validator's carve-out). Pure
+  --count-matches/-l without --gpu-device-ids keeps its HONORED rg passthrough (the predicate
+  returns empty).
+
+Positional behavior otherwise unchanged: --files-without-match / --files-with-matches long forms are
+  in neither rewrite list and PositionalCli has no -l spelling, so those positional file-flag routes
+  stay exactly as pre-existing P5·H2 left them (the positional validator refuses --count-matches
+  only) -- a separate, unchanged boundary, not silently claimed as covered.
+
+Coverage: in-process unit grid drives the pure predicate (rg_passthrough_gpu_dropped_ search_flags)
+  over the refused set plus honored controls; the integration test pins the rewritten positional
+  door AND the direct search-form combos to a STRICT exit-2 + "refusing" + both-flag-names assertion
+  (no more dual-env tolerance: the ordering argument makes the message deterministic), and adds a
+  discriminating control proving pure count/files (no gpu) never fires the new gate.
+
+Rust authored blind under CPU-SAFE (no local cargo): rustfmt --check clean on both files; CI's cargo
+  test is the oracle. This is the P5·H2 never-silently-drop (Backend Fail-Closed Contract) closure
+  for the SEARCH form.
+
+- **lsp**: Confine documentChanges CreateFile/RenameFile/DeleteFile file-ops (M3 audit)
+  ([#983](https://github.com/oimiragieo/tensor-grep/pull/983),
+  [`2252fc3`](https://github.com/oimiragieo/tensor-grep/commit/2252fc38368c6dbe14aa9ffbc92aabe09059aff8))
+
+* fix(lsp): confine documentChanges CreateFile/Rename/DeleteFile file-ops (M3 audit)
+
+M3 HIGH (verified): _workspace_edit_target_uris collected only changes-map keys + textDocument.uri,
+  so file-op members (CreateFile/RenameFile/DeleteFile carry uri/ oldUri/newUri, no textDocument)
+  yielded [] and the guard 'if edit_uris and all(...)' passed VACUOUSLY -- out-of-root file-ops were
+  forwarded to the IDE (rename-in plants content, rename-out exfiltrates, delete of an out-of-root
+  uri passed). Worse than not checked: an empty guarantee that read as a check.
+
+Fix (thinktank-audited, codex-gated): - Enumerate all five target fields (textDocument.uri + rename
+  oldUri/newUri + create/ delete uri + changes keys) via _document_change_member_targets -- each
+  member is EXACTLY ONE shape; hybrid/unknown/null-kind members are opaque. -
+  _workspace_edit_has_opaque_member: present-but-non-list documentChanges or any snake_case
+  document_changes key (accepted by the lsprotocol constructor -> outbound bypass) or an opaque
+  member -> refuse the WHOLE edit (A53 no-weaker-fallback). - _valid_external_document_uri: external
+  targets must be syntactically valid absolute file: URIs -- reject whitespace/control chars (incl.
+  %00 NUL), path-rootless
+
+(file:C:evil), non-file schemes (http://, uppercase FILE://, +file://) fail closed (round-2/round-3
+  HIGHs: malformed forms previously resolved against the server's per-drive CWD and passed in-root
+  while the original string was forwarded unchanged). - _workspace_edit_refused = opaque OR
+  (per-target validator AND resolve-containment); TWO independent nets -- the
+  trailing-space/dot-adjacent forms I probed in round 4 are caught by the resolve+containment arm
+  even where the form validator accepts the absolute shape. - Relay residual documented inline: tg
+  resolves at check time, the IDE applies later (relay-only TOCTOU; not an opened-identity
+  guarantee).
+
+Tests: 31 in test_lsp_server_confinement.py (per-op refusals, hybrid/opaque, snake_case
+
+bypass, %00, file:/ RFC-8089, malformed-form cluster, in-root controls, percent-encoding + UNC
+  edges); 178 LSP-subset tests pass; ruff/format/mypy clean. Security gate: codex R1
+  FIX-BEFORE-MERGE (3) -> fixed; R2 FIX-BEFORE-MERGE (2: kind-null, snake_case, file:/ HIGH) ->
+  fixed; R3 FIX-BEFORE-MERGE (1: path-rootless HIGH) -> fixed; R4 seat FAILED on its content filter
+  (A10/A74: failed seat, substitute verified by the orchestrator's own probes -- all seven hostile
+  forms resolve out-of-root and refuse). Known remaining (separate tracked item
+  LSP-EDIT-CONSTRUCTION): lsprotocol's document_changes-vs-documentChanges constructor mismatch
+  means confined all-in-root file-op edits flow through the existing native fallback; construction
+  fix deferred.
+
+* fix(lsp): gate drive-absolute URI strip on Windows (cross-platform M3)
+
+Linux CI reddened test_uri_to_path_handles_single_slash_file_uri (assert True is False): the
+  drive-absolute strip (path[1:] for /C:/...) ran unconditionally, so on POSIX the root-anchored
+  /C:/Windows/evil became a RELATIVE C:/Windows/evil that resolved INSIDE the process cwd --
+  recreating the drive-relative escape the fix was meant to close, on Linux instead of Windows. Gate
+  on os.name == 'nt': Windows keeps the strip (C:\\Windows\\evil absolute, outside root); POSIX
+  keeps the leading '/' (path stays root-anchored, outside any cwd). Verified locally 31/31
+  test_lsp_server_confinement; the Linux CI assertion now holds both arms.
+
+
 ## v1.110.8 (2026-08-09)
 
 ### Bug Fixes
