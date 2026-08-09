@@ -184,12 +184,11 @@ evidence packet for that label).
 | E F10 + DD-004 DROP | [#953](https://github.com/oimiragieo/tensor-grep/pull/953) | MERGED — RETIRED with receipts |
 | F board reconcile + dogfood | this entry + TASK_BOARD + #961 | dogfood: `tg search needle C:\dev\projects --json` against main → exit 2, `incomplete_reason_class=workspace_root_refused`, `error.code=workspace_root_refused` |
 
-**What shipped (honest claims only):**
+**What shipped (honest claims only) — as of this 2026-08-06 receipt:**
 - F7 Task 11 waves 1–2: Java (#950), PHP (#952), C# (#955) cross-file caller confirmation on
-  `main`. Wave 3 C/C++ is **#957** (open / in flight — not claimed shipped).
+  `main`. (Wave 3 C/C++ **#957** was still open at this receipt; see 2026-08-09 refresh below.)
 - Multi-project parent refuse now names itself: `incomplete_reason_class` /
-  `error.code` = `workspace_root_refused` (#956). Dogfood is against **main source**, not the
-  published wheel (see PyPI note).
+  `error.code` = `workspace_root_refused` (#956).
 - F10 MaxSim and DD-004 typed-boundary rows are **RETIRED** with dated receipts (#953) — not
   "fixed", not "still planned".
 
@@ -201,14 +200,34 @@ evidence packet for that label).
 - CEO gates **#48 / #72 / #77 / #131 / #169** are untouched — recommendations only (short packets
   below); status stays `CEO_GATED`.
 
-**PyPI / local:** live PyPI **v1.109.0** (index 200 + bogus 404 control). Phase 0+1 code is on
-`main` and awaits the next `feat:`/`fix:` publish; installed wheel remains pre-#956 until then
-(control: installed path still emitted `scan_limit`/`broad_scan_refused`; main source emits
-`workspace_root_refused`). Index check ≠ install.
+**PyPI / local (2026-08-06):** live PyPI was **v1.109.0**; Phase 0+1 code was on `main` awaiting
+publish (installed wheel still pre-#956 at that moment). See 2026-08-09 refresh for published
+wheel dogfood.
 
-**Next:** F7 Task 11 wave 3 = open PR #957 (C/C++). Broader READY→SHIPPED board flips that lived
-in draft #960 were **not** absorbed here; #960 was **CLOSED** (superseded by this Packet F
-reconcile #961) rather than undrafted.
+**Next (2026-08-06):** F7 Task 11 wave 3 = open PR #957 (C/C++). Broader READY→SHIPPED board flips
+that lived in draft #960 were **not** absorbed here; #960 was **CLOSED** (superseded by this
+Packet F reconcile #961) rather than undrafted.
+
+### EXTERNAL / Phase 0+1 closeout refresh — 2026-08-09
+
+Campaign packets A–F are complete on `main` and published. Hard stops held: no #169 spend, no
+Task 2A / #89 / #90 GREEN claim, no silent CEO_GATED flips, no local shared-box `rust_core` cargo
+for F5/F8 product builds, no Phase 2 edit/workspace launch claims.
+
+| packet | PR | live disposition |
+|---|---|---|
+| A | [#951](https://github.com/oimiragieo/tensor-grep/pull/951) | MERGED |
+| B wave 2 PHP | [#952](https://github.com/oimiragieo/tensor-grep/pull/952) | MERGED |
+| B wave 2 C# | [#955](https://github.com/oimiragieo/tensor-grep/pull/955) | MERGED |
+| C wave 3 C/C++ | [#957](https://github.com/oimiragieo/tensor-grep/pull/957) | MERGED — include-path engine + adapters |
+| D refuse taxonomy | [#956](https://github.com/oimiragieo/tensor-grep/pull/956) | MERGED |
+| E F10 + DD-004 | [#953](https://github.com/oimiragieo/tensor-grep/pull/953) | MERGED / RETIRED |
+| F receipt + board | [#961](https://github.com/oimiragieo/tensor-grep/pull/961) + this refresh | claim matrix + CEO packets remain `CEO_GATED` |
+
+**Published-wheel dogfood (2026-08-09):** `uvx --from tensor-grep==1.110.10 tg search needle C:\dev\projects --json`
+→ exit **2**, `incomplete_reason_class=workspace_root_refused`, `error.code=workspace_root_refused`.
+Live PyPI **1.110.10**. F7 Task 11 waves 1–3 are SHIPPED on the board (closure #963). Draft #966
+(Task 2A) stays DRAFT / not GREEN.
 
 #### Packet F — CEO recommendation packets (still CEO_GATED; do not implement)
 
@@ -233,7 +252,7 @@ finished work -- which is exactly how six queued items were found already-shippe
 |---|---|---|
 | **#859** class-level atomic-writer census | **SHIPPED** | #937 widened the census 3 -> 41 modules; #945 classified all 16 violating identities; #946 closed the download TOCTOU; #947 retired the residual. Violating 16 -> 1, and that one is retired with a reopen condition. |
 | **F7** language registry (Task 10) | **SHIPPED** | five waves: #927 Java, #928 C#, #930 PHP, #932 C, #934 C++. `_symbol_navigation_descriptor()` now reports 10 parser-backed / 0 foundational. Verified on the published wheels. |
-| **F7** cross-file resolution (Task 11) | **OPEN, justified** | measured on a real 269-file C++ repo: cross-file call sites outnumber in-file ~1.7:1 and 46% of defined symbols have a caller in another file. Tighten ground truth (parse, do not regex) and repeat on Java/C# before sizing. |
+| **F7** cross-file resolution (Task 11) | **SHIPPED** | waves 1–3 merged: Java #950, PHP #952, C# #955, C/C++ #957; board closure #963. (2026-08-05 row below was the sizing justification that preceded the build.) |
 | **REF-CALL-REGISTRY** (Task 9) | **SHIPPED** | the dispatch ladders were removed as a side effect of the F7 campaign; `_references_and_calls_for_path` is four statements with zero language branching. Its missing Step 2 guard shipped in #940. NOTE: this row's description mislabels Task 9 as "prepare-service extraction" -- that is Task 6 Step 0. |
 | **CPU-BACKEND** (Task 5) | **SHIPPED** | #925 (Rust `replace_in_place` discarded directory-mode failures and reported success) plus the CPU-backend TypeError retry that silently dropped `invert_match` and inverted results. |
 | **F6** edit-verification (Tasks 6-7) | **Step 0 SHIPPED, rest multi-week** | #939 extracted `prepare_service.py` byte-identical. The remainder is ~10 versioned schemas, WSL path-domain extension, evidence signing and a 5 MiB bounded reader. |
@@ -260,9 +279,8 @@ demand evidence. That is a measured state, not a stall.
   classified all 16 violating identities, `#946` closed the download TOCTOU, `#947` retired the
   residual; all four MERGED). This row contradicted its own receipt row 24 lines above it for a full
   day. Left struck through rather than deleted so the contradiction is legible.
-- **F7** — cross-file resolution, **Task 11 only**. Task 10 (language registry) SHIPPED in five
-  waves. Task 11 is IN_FLIGHT: waves 1–2 shipped (Java #950, PHP #952, C# #955); wave 3 C/C++ =
-  open PR #957.
+- ~~**F7** — cross-file resolution, Task 11.~~ **SHIPPED** — waves 1–3: Java #950, PHP #952, C#
+  #955, C/C++ #957; closure #963.
 - ~~**MCP-SURFACE** — Task 4.~~ **BLOCKED on Task 2C**, not buildable: Task 4 bumps the MCP contract
   `1.8.0 -> 1.9.0` and the live value is `1.7.0`. Building it first bumps from a version that does
   not exist.
@@ -806,7 +824,7 @@ agreement details; ledger Slice 1 + Slice 2; `evidence emit/verify` (`checks.dig
 | reported | disposition | receipt |
 |---|---|---|
 | **Parent-refuse class is generic `scan_limit`** — wants `workspace_root_refused` so agents do not confuse a refusal with file-cap truncation | **SHIPPED** — PR **#956** (merged 2026-08-06) | `_emit_broad_scan_refusal` gained `incomplete_reason_class`/`error_code` params; workspace guard emits `workspace_root_refused` for both. Dogfood on `C:\dev\projects` against main: exit 2 + class/code pair. Other ceilings keep `scan_limit`/`broad_scan_refused`. |
-| **Caller-graph parity for Java/C#/C/C++/PHP** | **IN FLIGHT** — F7 Task 11 waves 1–2 shipped | Java **#950**, PHP **#952**, C# **#955** merged. Wave 3 C/C++ open as **#957**. Sized by parsed C# re-measure in **#951**. |
+| **Caller-graph parity for Java/C#/C/C++/PHP** | **SHIPPED** — F7 Task 11 waves 1–3 | Java **#950**, PHP **#952**, C# **#955**, C/C++ **#957** merged. Sized by parsed C# re-measure in **#951**. |
 | **Ship or forever-drop MaxSim** | **RETIRED** — F10 DROP receipt in **#953** | Caller/installability census + decisive negative on golden set; MaxSim reachable only via undocumented `TG_LATE_RERANK=1`. DD-004 RETIRED in the same PR. |
 | Bare search exits 1, not 2 | **BY DESIGN — already retired as #22** | contract: exit 0 = complete with matches, exit 1 = complete with NO match, exit 2 = incomplete. The request (exit 2 + `missing_explicit_path`) is a CONTRACT CHANGE, not a bug fix — it would make "searched correctly, found nothing" indistinguishable from "could not search". Reopening needs an argument against that collapse. |
 | Anonymous `--claim` still allowed (hint only) | **BY DESIGN — already retired as F2** | legacy anonymous-agent compatibility deliberately retains the sentinel; reopen only with a caller-supplied stable identity contract and migration plan. |
@@ -814,8 +832,9 @@ agreement details; ledger Slice 1 + Slice 2; `evidence emit/verify` (`checks.dig
 | No fail-closed `edit-ready` / `verify-edit` / `workspace` | **BLOCKED, not missed** | F5 Steps 3-5 and F8 Tasks 12-13 modify `rust_core/**` and `tests/e2e/**`; cargo and the e2e routing suite are forbidden on this shared box. Needs CI or a cloud seat. |
 
 **Two of seven "new features" were already built or already answered**, which is the value of running
-the triage rather than queueing the report verbatim: caller-graph parity is mid-campaign, and MaxSim
-has a measured negative sitting behind it. Queueing all seven would have re-litigated settled work.
+the triage rather than queueing the report verbatim: caller-graph parity later closed via F7 Task 11
+waves 1–3, and MaxSim has a measured negative sitting behind it. Queueing all seven would have
+re-litigated settled work.
 
 ## ⭐ EXTERNAL DOGFOOD — v1.101.31 on gotcontext-saddle (2026-08-02)
 
