@@ -2202,3 +2202,91 @@ fn test_tg_search_explicit_index_default_line_number_behavior_matches_native() {
         "default (no -n/-N) output via --index must byte-match the no-index route"
     );
 }
+
+/// M17 F2 (audit-m17 gate): an index built from a RELATIVE root must never be dereferenced
+/// against a LATER query's cwd. Build from cwd A with a relative `tree` root; a decoy tree
+/// with IDENTICAL name/size/mtime lives at cwd B. Query A's tree BY ITS ABSOLUTE PATH from
+/// cwd B: the canonical-root check legitimately passes (same tree), so the only thing
+/// standing between the query and B's decoy is the deref-through-verified-canonical-root
+/// rule. Pre-fix, stored entries kept the raw relative spelling (`tree/a.txt`), staleness
+/// and search resolved it against cwd B, read the metadata-identical decoy, found no match,
+/// and exited 1; post-fix everything dereferences through the canonical root, reads A's real
+/// file, and exits 0 with the match. Structural argument: the decoy is byte-for-byte
+/// metadata-identical (same size, same mtime via FileTimes), so the ONLY discriminator is
+/// which root the entry paths are joined to.
+#[test]
+fn test_m17_f2_relative_root_index_never_reads_other_cwd_tree() {
+    let outer = tempdir().unwrap();
+    let cwd_a = outer.path().join("A");
+    let cwd_b = outer.path().join("B");
+    fs::create_dir(&cwd_a).unwrap();
+    fs::create_dir(&cwd_b).unwrap();
+    fs::create_dir(cwd_a.join("tree")).unwrap();
+    fs::create_dir(cwd_b.join("tree")).unwrap();
+
+    fs::write(cwd_a.join("tree/a.txt"), "hello world\n").unwrap();
+    fs::write(cwd_b.join("tree/a.txt"), "yyyyyyyyyyy\n").unwrap(); // same 12 bytes, no match
+
+    let mtime_a = fs::metadata(cwd_a.join("tree/a.txt"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    let decoy = std::fs::OpenOptions::new()
+        .write(true)
+        .open(cwd_b.join("tree/a.txt"))
+        .unwrap();
+    decoy
+        .set_times(std::fs::FileTimes::new().set_modified(mtime_a))
+        .unwrap();
+    drop(decoy);
+    assert_eq!(
+        fs::metadata(cwd_b.join("tree/a.txt"))
+            .unwrap()
+            .modified()
+            .unwrap(),
+        mtime_a,
+        "decoy premise: B's tree must be metadata-identical to A's tree"
+    );
+    assert_eq!(
+        fs::metadata(cwd_b.join("tree/a.txt")).unwrap().len(),
+        fs::metadata(cwd_a.join("tree/a.txt")).unwrap().len(),
+        "decoy premise: sizes must match"
+    );
+
+    // Build the index with a RELATIVE root from cwd A.
+    let build = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("hello")
+        .arg("tree")
+        .current_dir(&cwd_a)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "build stderr={}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    // Query A's tree by ABSOLUTE path FROM cwd B -- the cross-cwd deref test.
+    let query = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("hello")
+        .arg(cwd_a.join("tree"))
+        .current_dir(&cwd_b)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&query.stdout);
+    assert!(
+        query.status.success(),
+        "cross-cwd index search must exit 0; stderr={} stdout={stdout}",
+        String::from_utf8_lossy(&query.stderr)
+    );
+    assert!(
+        stdout.contains("hello world"),
+        "the index must read the REAL tree through the canonical root, not cwd B's decoy: stdout={stdout}"
+    );
+}

@@ -9,6 +9,7 @@ use regex_syntax::{
     parse as parse_regex_hir,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Write as _};
@@ -18,6 +19,11 @@ use std::time::SystemTime;
 const TRIGRAM_LEN: usize = 3;
 const MAX_REGEX_CLASS_LITERALS: usize = 10;
 const MAX_REGEX_PREFILTER_LITERALS: usize = 64;
+/// M17 F1: how many DIRECT children of the canonical root the tree fingerprint samples, and
+/// how many content bytes per file. Deliberately bounded -- the fingerprint is a
+/// representative-identity check, not a full re-hash.
+const TREE_FINGERPRINT_TOP_LEVEL_CAP: usize = 32;
+const TREE_FINGERPRINT_SAMPLE_BYTES: usize = 4096;
 
 type FileTrigramHits = Vec<([u8; 3], u32)>;
 
@@ -121,6 +127,11 @@ impl SearchMatcher {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FileEntry {
+    /// Canonical-root-RELATIVE path (audit M17 F2). Never a raw spelling: the build walks
+    /// the canonical root and strips it, so re-joining with `canonical_root` is the only
+    /// way an entry is ever dereferenced -- a relative spelling stored verbatim would
+    /// resolve against the QUERY process's cwd and read a different tree's files while
+    /// the canonical-root check passes. UTF-8-validated at build (M17 F5).
     path: PathBuf,
     mtime_ns: u128,
     size: u64,
@@ -136,16 +147,24 @@ struct PostingEntry {
 
 #[derive(Debug, Clone)]
 pub struct TrigramIndex {
-    /// The root this index was built from, in the spelling the build was CALLED with. The
-    /// per-file entries are rooted in this spelling, so search results keep the user's
-    /// path form. NOT the reuse identity -- see `canonical_root`.
+    /// The spelling of the tree this index was built from. Since audit M17 F2 this is the
+    /// CANONICALIZED root (the raw caller spelling is never kept): the build walks the
+    /// canonical root, entries are stored canonical-root-relative, and every on-disk
+    /// dereference goes through [`Self::canonical_root`]. For loaded indices this equals
+    /// `canonical_root` (the wire carries only the canonical form). Display/context only.
     root: PathBuf,
-    /// The canonicalized (symlink-resolved, absolute) form of `root`, persisted so a
-    /// REUSE only serves when the QUERY root canonicalizes to the same tree (audit M17):
-    /// a `.tg_index` copied across trees, renamed along with its tree, or reached through
-    /// a symlink whose target is elsewhere must never serve the wrong tree's entries.
-    /// `root_servability_reason` is the only reader; the walk/entry root stays untouched.
+    /// The canonicalized (symlink-resolved, absolute) form of the tree this index was built
+    /// from, persisted so a REUSE only serves when the QUERY root canonicalizes to the same
+    /// tree (audit M17): a `.tg_index` copied across trees, renamed along with its tree, or
+    /// reached through a symlink whose target is elsewhere must never serve the wrong tree's
+    /// entries. This is the SOLE dereference base for every stored file entry (M17 F2) and the
+    /// only reader is `root_servability_reason` / the deref helper.
     canonical_root: PathBuf,
+    /// M17 F1: representative-set identity of the tree (SHA-256 over a bounded sample of the
+    /// canonical root's direct children). Compared in `staleness_reason` so a wholesale
+    /// same-path metadata-preserving tree swap is detected even when every per-file
+    /// name/size/mtime matches. See `compute_tree_fingerprint`.
+    tree_fingerprint: u64,
     files: Vec<FileEntry>,
     file_trigrams: Vec<FileTrigramHits>,
     postings: HashMap<[u8; 3], Vec<PostingEntry>>,
@@ -194,9 +213,13 @@ impl TrigramIndex {
         let file_trigrams = rebuild_file_trigrams(s.files.len(), &postings)?;
         Ok(Self {
             root: PathBuf::new(),
-            // The legacy JSON format never persisted a root; an empty canonical root makes
-            // `root_servability_reason` fail CLOSED (refuse -> rebuild), never serve.
+            // The legacy JSON format never persisted a root; an empty canonical root marks
+            // the index UNVERIFIED: `root_servability_reason` refuses it and the search
+            // surface errors (M17 F4) -- it can never serve.
             canonical_root: PathBuf::new(),
+            // No persisted identity; the empty canonical root already refuses serving, and
+            // staleness would report the fingerprint mismatch on any attempt to reuse it.
+            tree_fingerprint: 0,
             files: s.files,
             file_trigrams,
             postings,
@@ -206,12 +229,14 @@ impl TrigramIndex {
 }
 
 const INDEX_MAGIC: &[u8; 4] = b"TGI\x00";
-// Bumped 4 -> 5 (audit M17) to add the `canonical_root` length-prefixed bytes below; any index
-// written by an older binary fails the version check in bincode_deserialize and is rebuilt from
-// scratch by every caller of TrigramIndex::load (main.rs's detect_warm_index_state and
-// handle_index_search both already treat a load error as "stale, rebuild"), so the bump is safe.
-// Previous bump 3 -> 4 (audit H1d) added the `no_ignore` build-mode byte with the same rationale.
-const INDEX_FORMAT_VERSION: u8 = 5;
+// Bumped 5 -> 6 (audit M17 gate): the wire no longer carries the build-spelling `root` (loaded
+// indices carry only the canonical root -- M17 F2), it adds the `tree_fingerprint` u64 (F1),
+// and the canonical root is strict UTF-8 in both directions (F5). Any index written by an older
+// binary fails the version gate in bincode_deserialize and is rebuilt from scratch by every
+// caller of TrigramIndex::load (main.rs's detect_warm_index_state and handle_index_search both
+// already treat a load error as "stale, rebuild"), so the bump is safe. Previous bump 4 -> 5
+// (audit M17) added the canonical root itself; 3 -> 4 (audit H1d) added the no_ignore byte.
+const INDEX_FORMAT_VERSION: u8 = 6;
 
 fn normalize_postings(postings: &mut HashMap<[u8; 3], Vec<PostingEntry>>) {
     for entries in postings.values_mut() {
@@ -281,16 +306,16 @@ fn bincode_serialize(index: &TrigramIndex) -> Result<Vec<u8>> {
     buf.push(INDEX_FORMAT_VERSION);
     buf.push(u8::from(index.no_ignore));
 
-    let root_bytes = index.root.to_string_lossy().as_bytes().to_vec();
-    buf.extend_from_slice(&(root_bytes.len() as u32).to_le_bytes());
-    buf.extend_from_slice(&root_bytes);
-
-    // M17 (audit-m17): persist the canonical root so a reuse can prove it was built for
-    // the tree being queried. Written AFTER the walk root and before the file list; the
-    // version bump (5) makes any older index fail the version gate instead of misparsing.
+    // M17 (audit-m17): the canonical root is the serve identity (F2: entries are stored
+    // relative to it; F5: it is UTF-8-validated at build, so a lossless write here never
+    // collapses distinct paths). The build-spelling `root` is deliberately NOT persisted --
+    // it is display-only, and a loaded index reconstructs it as the canonical root.
     let canonical_root_bytes = index.canonical_root.to_string_lossy().as_bytes().to_vec();
     buf.extend_from_slice(&(canonical_root_bytes.len() as u32).to_le_bytes());
     buf.extend_from_slice(&canonical_root_bytes);
+
+    // M17 F1: representative-set tree identity (u64 digest).
+    buf.extend_from_slice(&index.tree_fingerprint.to_le_bytes());
 
     let files_count = index.files.len() as u32;
     buf.extend_from_slice(&files_count.to_le_bytes());
@@ -371,12 +396,17 @@ fn bincode_deserialize(data: &[u8]) -> Result<TrigramIndex> {
 
     let no_ignore = read_u8(data, &mut pos)? != 0;
 
-    let root_len = read_u32_le(data, &mut pos)? as usize;
-    let root_str = String::from_utf8_lossy(read_exact(data, &mut pos, root_len)?).to_string();
-
+    // M17 F5: the canonical root is strict UTF-8 on the read side too -- from_utf8_lossy
+    // would collapse distinct non-UTF-8 paths into one identity. Writers only ever persist
+    // build-validated UTF-8 roots, so this fails closed on anything else (crafted file,
+    // cross-version hand-rolled writer) rather than serving a guessed identity.
     let canonical_root_len = read_u32_le(data, &mut pos)? as usize;
-    let canonical_root_str =
-        String::from_utf8_lossy(read_exact(data, &mut pos, canonical_root_len)?).to_string();
+    let canonical_root_bytes = read_exact(data, &mut pos, canonical_root_len)?;
+    let canonical_root_str = std::str::from_utf8(canonical_root_bytes)
+        .with_context(|| "stored canonical root is not valid UTF-8")?;
+    let canonical_root = PathBuf::from(canonical_root_str);
+
+    let tree_fingerprint = read_u64_le(data, &mut pos)?;
 
     let files_count = read_u32_le(data, &mut pos)? as usize;
 
@@ -433,8 +463,11 @@ fn bincode_deserialize(data: &[u8]) -> Result<TrigramIndex> {
     let file_trigrams = rebuild_file_trigrams(files.len(), &postings)?;
 
     Ok(TrigramIndex {
-        root: PathBuf::from(root_str),
-        canonical_root: PathBuf::from(canonical_root_str),
+        // M17 F2: the wire carries only the canonical root; the display spelling of a
+        // loaded index IS its canonical spelling.
+        root: canonical_root.clone(),
+        canonical_root,
+        tree_fingerprint,
         files,
         file_trigrams,
         postings,
@@ -457,14 +490,125 @@ pub struct IndexQueryResult {
     pub text: String,
 }
 
-/// Best-effort canonicalization of an index root (audit M17). `Path::canonicalize` resolves
-/// symlinks and produces an absolute form, giving every alias of the SAME tree one identity;
-/// that identity is what a reuse decision compares (`root_servability_reason`). Falls back to
-/// the raw spelling when the root cannot be canonicalized (e.g. it no longer exists) so a
-/// build still succeeds -- a root that cannot be canonicalized then compares by its raw form,
-/// which is no worse than the pre-M17 behavior of comparing nothing at all.
-fn canonical_root_of(root: &Path) -> PathBuf {
-    root.canonicalize().unwrap_or_else(|_| root.to_path_buf())
+/// Canonicalization of an index root (audit M17). `Path::canonicalize` resolves symlinks and
+/// produces an absolute form, giving every alias of the SAME tree one identity; that identity
+/// is what the reuse decision compares.
+///
+/// M17 F3: this FAILS CLOSED -- a root that cannot be canonicalized is an error, never a raw
+/// fallback. The query side (`root_servability_reason`) refuses on the same condition, so an
+/// uncanonicalizable path can never match "by raw spelling coincidence".
+///
+/// M17 F5: the canonical identity must be valid UTF-8 -- the index serializes it losslessly
+/// (strict on both read and write), so a non-UTF-8 root is rejected here at BUILD time instead
+/// of colliding with a different non-UTF-8 root after a lossy round trip.
+fn canonical_root_of(root: &Path) -> Result<PathBuf> {
+    let canonical = root.canonicalize().with_context(|| {
+        format!(
+            "index root cannot be canonicalized (fail closed): {}",
+            root.display()
+        )
+    })?;
+    if canonical.to_str().is_none() {
+        anyhow::bail!(
+            "index root is not valid UTF-8 (fail closed): {}",
+            canonical.display()
+        );
+    }
+    Ok(canonical)
+}
+
+/// M17 F2 (audit-m17 gate): converts a walked entry path to the canonical-root-RELATIVE form
+/// the index persists. Builds walk the canonical root, so every walked path is
+/// `canonical_root`-joined by construction and the strip always succeeds; failing closed on an
+/// entry that somehow lacks the prefix keeps a bad root from storing an out-of-tree path that
+/// a later deref would mis-root. Rel paths are validated UTF-8 here (M17 F5): the lossy
+/// serializer would otherwise collapse distinct non-UTF-8 names into one identity -- either
+/// aliasing two files or dereferencing a mangled name -- so such trees refuse to be indexed
+/// (plain text search is unaffected).
+fn relativize_entry(walked: &Path, canonical_root: &Path) -> Result<PathBuf> {
+    let rel = walked.strip_prefix(canonical_root).with_context(|| {
+        format!(
+            "index walk produced a path outside the canonical root: {} (root {})",
+            walked.display(),
+            canonical_root.display()
+        )
+    })?;
+    let rel = rel.to_path_buf();
+    if rel.to_str().is_none() {
+        anyhow::bail!(
+            "index entry is not valid UTF-8 (fail closed): {}",
+            walked.display()
+        );
+    }
+    Ok(rel)
+}
+
+/// M17 F1 (audit-m17 gate): representative-set identity of the tree this index was built
+/// from. SHA-256 over the DIRECT children of the canonical root: each entry's name, and for
+/// each file its size, mtime and first `TREE_FINGERPRINT_SAMPLE_BYTES` of content, in
+/// deterministic (sorted) order. `.tg_index` itself is excluded so an index's own
+/// persistence never trips its identity.
+///
+/// This closes the wholesale SAME-PATH tree swap that per-file mtime/size checks cannot see
+/// (a replacement tree whose names/sizes/mtimes match passes them and serves the old
+/// postings against the new tree). It is NOT a full content hash: a swap that changes only
+/// subtree-INTERNAL files, without touching any top-level name/size/mtime/content-prefix,
+/// can still pass -- per-file granular identity (dev+ino on unix; the Windows file index,
+/// which std does not expose) is tracked as follow-up M17-FU1.
+fn compute_tree_fingerprint(canonical_root: &Path) -> u64 {
+    let mut hasher = Sha256::new();
+    let mut names: Vec<PathBuf> = match std::fs::read_dir(canonical_root) {
+        Ok(dir) => dir
+            .filter_map(|entry| entry.ok())
+            .map(|e| e.path())
+            .collect(),
+        // An unreadable root degrades to a constant identity; the per-file checks in
+        // staleness_reason still fail closed (they cannot read files either).
+        Err(_) => return 0,
+    };
+    // Deterministic across runs: read_dir order is unspecified.
+    names.sort();
+    for entry in names.into_iter().take(TREE_FINGERPRINT_TOP_LEVEL_CAP) {
+        let name = entry.file_name();
+        if name == ".tg_index" {
+            continue;
+        }
+        hasher.update(name.to_string_lossy().as_bytes());
+        let meta = match std::fs::metadata(&entry) {
+            Ok(meta) => meta,
+            Err(_) => continue,
+        };
+        if !meta.is_file() {
+            continue;
+        }
+        hasher.update(meta.len().to_le_bytes());
+        if let Ok(modified) = meta.modified() {
+            if let Ok(duration) = modified.duration_since(SystemTime::UNIX_EPOCH) {
+                hasher.update(duration.as_nanos().to_le_bytes());
+            }
+        }
+        let mut sample = vec![0u8; TREE_FINGERPRINT_SAMPLE_BYTES];
+        if let Ok(mut file) = File::open(&entry) {
+            use std::io::Read as _;
+            let mut read = 0usize;
+            while read < sample.len() {
+                match file.read(&mut sample[read..]) {
+                    Ok(0) => break,
+                    Ok(n) => read += n,
+                    Err(_) => break,
+                }
+            }
+            if read > 0 {
+                hasher.update(&sample[..read]);
+            }
+        }
+    }
+    let digest = hasher.finalize();
+    u64::from_le_bytes(
+        digest[..8]
+            .try_into()
+            .expect("SHA-256 digest has >= 8 bytes"),
+    )
 }
 
 impl TrigramIndex {
@@ -473,17 +617,33 @@ impl TrigramIndex {
     }
 
     pub fn build_with_options(root: &Path, no_ignore: bool) -> Result<Self> {
-        // M17 (audit-m17): canonicalize ONCE at build time and persist that identity. The walk
-        // itself stays rooted at the caller's spelling so entry paths / results are unchanged;
-        // only the reuse comparison uses the canonical form.
-        let canonical_root = canonical_root_of(root);
-        let file_entries = collect_file_entries(root, no_ignore);
+        // M17 (audit-m17): the walk root is the CANONICALIZED root, never the caller's raw
+        // spelling -- a relative spelling would dereference from a LATER query's cwd and
+        // walk/read a different tree (F2, the relative-root escape). Entries are stored
+        // canonical-root-relative; every read dereferences through the verified canonical
+        // root, so a built or loaded index is cwd-independent. F3: canonicalize failure
+        // fails the build (no raw fallback); F5: non-UTF-8 roots/entries are rejected.
+        let canonical_root = canonical_root_of(root)?;
+        let file_entries = collect_file_entries(&canonical_root, no_ignore);
+
+        let file_entries: Vec<FileEntry> = file_entries
+            .iter()
+            .map(|entry| {
+                Ok(FileEntry {
+                    path: relativize_entry(&entry.path, &canonical_root)?,
+                    mtime_ns: entry.mtime_ns,
+                    size: entry.size,
+                    deleted: false,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
 
         let per_file: Vec<(u32, FileTrigramHits)> = file_entries
             .par_iter()
             .enumerate()
             .map(|(file_id, entry)| {
-                let trigrams = extract_file_trigrams(&entry.path).unwrap_or_default();
+                let trigrams =
+                    extract_file_trigrams(&canonical_root.join(&entry.path)).unwrap_or_default();
                 (file_id as u32, trigrams)
             })
             .collect();
@@ -502,8 +662,9 @@ impl TrigramIndex {
         normalize_postings(&mut postings);
 
         Ok(Self {
-            root: root.to_path_buf(),
+            root: canonical_root.clone(),
             canonical_root,
+            tree_fingerprint: compute_tree_fingerprint(&canonical_root),
             files: file_entries,
             file_trigrams,
             postings,
@@ -516,7 +677,22 @@ impl TrigramIndex {
         root: &Path,
         no_ignore: bool,
     ) -> Result<IncrementalUpdateResult> {
-        let current_entries = collect_file_entries(root, no_ignore);
+        // M17: same canonical-walk discipline as the build (F2) and the same fail-closed
+        // canonicalization (F3/F5); the incremental caller is only ever reached after the
+        // same-root check, so this root canonicalizes to the stored identity.
+        let canonical_root = canonical_root_of(root)?;
+        let current_entries = collect_file_entries(&canonical_root, no_ignore);
+        let current_entries: Vec<FileEntry> = current_entries
+            .iter()
+            .map(|entry| {
+                Ok(FileEntry {
+                    path: relativize_entry(&entry.path, &canonical_root)?,
+                    mtime_ns: entry.mtime_ns,
+                    size: entry.size,
+                    deleted: false,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
         let current_paths: HashMap<&Path, &FileEntry> = current_entries
             .iter()
             .map(|entry| (entry.path.as_path(), entry))
@@ -581,7 +757,7 @@ impl TrigramIndex {
                 (
                     *file_id,
                     entry.clone(),
-                    extract_file_trigrams(&entry.path).unwrap_or_default(),
+                    extract_file_trigrams(&canonical_root.join(&entry.path)).unwrap_or_default(),
                 )
             })
             .collect();
@@ -608,7 +784,7 @@ impl TrigramIndex {
             .map(|entry| {
                 (
                     entry.clone(),
-                    extract_file_trigrams(&entry.path).unwrap_or_default(),
+                    extract_file_trigrams(&canonical_root.join(&entry.path)).unwrap_or_default(),
                 )
             })
             .collect();
@@ -621,10 +797,12 @@ impl TrigramIndex {
         }
 
         normalize_affected_postings(&mut self.postings, &affected_trigrams);
-        self.root = root.to_path_buf();
-        // M17 (audit-m17): the rebuild's new root is a new identity -- record its canonical
-        // form or a subsequent reuse of the rebuilt index would refuse the tree it just built.
-        self.canonical_root = canonical_root_of(root);
+        // M17: the rebuilt index re-records the canonical identity of the tree it rebuilt
+        // from and re-computes the tree fingerprint -- otherwise a subsequent reuse would
+        // refuse the tree it just built (root) or falsely report it stale (fingerprint).
+        self.root = canonical_root.clone();
+        self.canonical_root = canonical_root;
+        self.tree_fingerprint = compute_tree_fingerprint(&self.canonical_root);
         // H1d: persist the query's no_ignore mode onto the rebuilt index so a subsequent
         // staleness check compares against what this rebuild actually walked with, not a
         // stale build-time value.
@@ -637,20 +815,28 @@ impl TrigramIndex {
         &self,
         pattern: &str,
         ignore_case: bool,
-    ) -> Vec<(PathBuf, usize)> {
+    ) -> Result<Vec<(PathBuf, usize)>> {
+        self.ensure_searchable()?;
         let pat = if ignore_case {
             pattern.to_lowercase()
         } else {
             pattern.to_string()
         };
-        self.query_with_trigrams(&extract_trigrams(pat.as_bytes()))
+        Ok(self.query_with_trigrams(&extract_trigrams(pat.as_bytes())))
     }
 
-    pub fn query_candidates(&self, pattern: &str, ignore_case: bool) -> Vec<(PathBuf, usize)> {
-        match self.regex_candidate_selection(pattern, ignore_case) {
-            RegexCandidateSelection::Indexed(candidates) => candidates,
-            RegexCandidateSelection::FullScan => Vec::new(),
-        }
+    pub fn query_candidates(
+        &self,
+        pattern: &str,
+        ignore_case: bool,
+    ) -> Result<Vec<(PathBuf, usize)>> {
+        self.ensure_searchable()?;
+        Ok(
+            match self.regex_candidate_selection(pattern, ignore_case)? {
+                RegexCandidateSelection::Indexed(candidates) => candidates,
+                RegexCandidateSelection::FullScan => Vec::new(),
+            },
+        )
     }
 
     fn query_with_trigrams(&self, trigrams: &[[u8; 3]]) -> Vec<(PathBuf, usize)> {
@@ -687,7 +873,10 @@ impl TrigramIndex {
             .into_iter()
             .filter_map(|(file_id, line)| {
                 let entry = self.files.get(file_id as usize)?;
-                (!entry.deleted).then_some((entry.path.clone(), line as usize))
+                // M17 F2: candidates are DEREFERENCED through the verified canonical root --
+                // never returned in their stored relative form, which a consumer would
+                // resolve against its own cwd.
+                (!entry.deleted).then_some((self.deref_path(&entry.path), line as usize))
             })
             .collect()
     }
@@ -698,10 +887,11 @@ impl TrigramIndex {
         ignore_case: bool,
         fixed_strings: bool,
     ) -> Result<Vec<IndexQueryResult>> {
+        self.ensure_searchable()?;
         let candidate_selection = if fixed_strings {
-            self.fixed_string_candidate_selection(pattern, ignore_case)
+            self.fixed_string_candidate_selection(pattern, ignore_case)?
         } else {
-            self.regex_candidate_selection(pattern, ignore_case)
+            self.regex_candidate_selection(pattern, ignore_case)?
         };
 
         let mut all_results = match candidate_selection {
@@ -757,9 +947,9 @@ impl TrigramIndex {
         &self,
         pattern: &str,
         ignore_case: bool,
-    ) -> RegexCandidateSelection {
+    ) -> Result<RegexCandidateSelection> {
         if ignore_case && !pattern.is_ascii() {
-            return RegexCandidateSelection::FullScan;
+            return Ok(RegexCandidateSelection::FullScan);
         }
 
         let normalized_len = if ignore_case {
@@ -768,19 +958,21 @@ impl TrigramIndex {
             pattern.len()
         };
         if normalized_len < TRIGRAM_LEN {
-            return RegexCandidateSelection::FullScan;
+            return Ok(RegexCandidateSelection::FullScan);
         }
 
-        RegexCandidateSelection::Indexed(self.query_candidates_fixed(pattern, ignore_case))
+        Ok(RegexCandidateSelection::Indexed(
+            self.query_candidates_fixed(pattern, ignore_case)?,
+        ))
     }
 
     fn regex_candidate_selection(
         &self,
         pattern: &str,
         ignore_case: bool,
-    ) -> RegexCandidateSelection {
+    ) -> Result<RegexCandidateSelection> {
         let Some(plan) = select_regex_prefilter_literals(pattern, ignore_case) else {
-            return RegexCandidateSelection::FullScan;
+            return Ok(RegexCandidateSelection::FullScan);
         };
 
         let mut candidates = Vec::new();
@@ -790,7 +982,7 @@ impl TrigramIndex {
 
         candidates.sort();
         candidates.dedup();
-        RegexCandidateSelection::Indexed(candidates)
+        Ok(RegexCandidateSelection::Indexed(candidates))
     }
 
     fn search_all_files(
@@ -805,7 +997,8 @@ impl TrigramIndex {
             .files
             .par_iter()
             .filter(|entry| !entry.deleted)
-            .map(|entry| collect_matches(&entry.path, None, &matcher))
+            // M17 F2: reads go through the verified canonical root, never a stored spelling.
+            .map(|entry| collect_matches(&self.deref_path(&entry.path), None, &matcher))
             .collect();
 
         let mut matches = Vec::new();
@@ -843,7 +1036,10 @@ impl TrigramIndex {
             .collect();
 
         for entry in self.files.iter().filter(|entry| !entry.deleted) {
-            match entry.path.metadata() {
+            // M17 F2: per-entry checks dereference through the verified canonical root --
+            // a stored (relative) spelling must never be resolved against this process's cwd.
+            let absolute = self.deref_path(&entry.path);
+            match absolute.metadata() {
                 Ok(meta) => {
                     let current_mtime = meta
                         .modified()
@@ -852,29 +1048,31 @@ impl TrigramIndex {
                         .map(|d| d.as_nanos())
                         .unwrap_or(0);
                     if current_mtime != entry.mtime_ns {
-                        return Some(format!("file modified: {}", entry.path.display()));
+                        return Some(format!("file modified: {}", absolute.display()));
                     }
                     if meta.len() != entry.size {
-                        return Some(format!("file size changed: {}", entry.path.display()));
+                        return Some(format!("file size changed: {}", absolute.display()));
                     }
                 }
                 Err(_) => {
-                    return Some(format!("file deleted: {}", entry.path.display()));
+                    return Some(format!("file deleted: {}", absolute.display()));
                 }
             }
         }
 
-        if self.root.is_dir() {
+        if self.canonical_root.is_dir() {
             // Mirror collect_file_entries' walk semantics exactly -- this was hardcoded
             // .git_ignore(true) regardless of no_ignore (audit H1d), so the new-file scan
             // could disagree with how this index would actually be rebuilt. #127: also mirror
             // collect_file_entries' add_ignore trio so this scan agrees with it outside a git
-            // repo too (see that function for the require_git(false) rationale).
-            let mut builder = ignore::WalkBuilder::new(&self.root);
+            // repo too (see that function for the require_git(false) rationale). M17 F2: the
+            // scan walks the CANONICAL root (never a stored spelling, which would resolve
+            // against the query cwd) and compares relativized paths.
+            let mut builder = ignore::WalkBuilder::new(&self.canonical_root);
             builder.hidden(true).git_ignore(!self.no_ignore);
             if !self.no_ignore {
                 for ignore_name in [".ignore", ".gitignore", ".rgignore"] {
-                    let ignore_path = self.root.join(ignore_name);
+                    let ignore_path = self.canonical_root.join(ignore_name);
                     if ignore_path.is_file() {
                         builder.add_ignore(ignore_path);
                     }
@@ -888,10 +1086,23 @@ impl TrigramIndex {
                 .collect();
 
             for file in &current_files {
-                if !indexed_paths.contains(file.as_path()) {
+                let Some(rel) = file.strip_prefix(&self.canonical_root) else {
+                    continue;
+                };
+                if !indexed_paths.contains(rel) {
                     return Some(format!("new file: {}", file.display()));
                 }
             }
+        }
+
+        // M17 F1: representative-set identity. Runs AFTER the per-file loop so a normal
+        // modification reports the precise file-level reason; a wholesale same-path swap
+        // that preserved every name/size/mtime (and thus passed every check above) is
+        // caught here -- the only detector that sees it.
+        if self.tree_fingerprint != compute_tree_fingerprint(&self.canonical_root) {
+            return Some(
+                "tree fingerprint changed (representative top-level identity mismatch)".to_string(),
+            );
         }
 
         None
@@ -903,6 +1114,30 @@ impl TrigramIndex {
 
     pub fn canonical_root(&self) -> &Path {
         &self.canonical_root
+    }
+
+    /// M17 F2 (audit-m17 gate): the ONLY way a stored file entry is turned into an on-disk
+    /// path. `canonical_root` has been verified to be the queried tree (or is being rebuilt
+    /// from it), so joining keeps every read cwd-independent; results carry canonical
+    /// absolute paths.
+    fn deref_path(&self, rel: &Path) -> PathBuf {
+        self.canonical_root.join(rel)
+    }
+
+    /// M17 F4 (audit-m17 gate): an index without a verified canonical root must not be
+    /// searchable. `load_json` (legacy form) and a crafted load produce one with an empty
+    /// canonical root; refusing here closes the library-consumer bypass of
+    /// `root_servability_reason` -- consumers cannot search an unverified index directly.
+    /// The CLI already routes every serve through `root_servability_reason` and rebuilds on
+    /// mismatch, so this never fires on any in-tree path.
+    fn ensure_searchable(&self) -> Result<()> {
+        if self.canonical_root.as_os_str().is_empty() {
+            anyhow::bail!(
+                "index has no verified root (legacy or unverifiable form); refusing to serve \
+                 -- rebuild or verify root_servability first"
+            );
+        }
+        Ok(())
     }
 
     /// M17 (audit-m17): can this LOADED index serve a query rooted at `query_root`?
@@ -919,8 +1154,10 @@ impl TrigramIndex {
     /// identity walk asks the STORED root for its health, i.e. on a mismatched tree it asks
     /// the WRONG tree and can pass against an index that must not be served.
     ///
-    /// Fail-closed: an index without a stored canonical root (legacy JSON form) and a query
-    /// root that cannot be canonicalized both resolve to a rebuild, never a serve.
+    /// Fail-closed (M17 F3): an index without a stored canonical root (legacy JSON form) and
+    /// a query root that CANNOT BE CANONICALIZED both resolve to a refusal -- there is no
+    /// raw-spelling fallback comparison on either side, so nothing can ever pass "by spelling
+    /// coincidence" without a verified identity.
     pub fn root_servability_reason(&self, query_root: &Path) -> Option<String> {
         if self.canonical_root.as_os_str().is_empty() {
             return Some(format!(
@@ -928,7 +1165,15 @@ impl TrigramIndex {
                 query_root.display()
             ));
         }
-        let query_canonical = canonical_root_of(query_root);
+        let query_canonical = match query_root.canonicalize() {
+            Ok(canonical) => canonical,
+            Err(_) => {
+                return Some(format!(
+                    "query root cannot be canonicalized: {}; refusing to serve",
+                    query_root.display()
+                ));
+            }
+        };
         if query_canonical != self.canonical_root {
             return Some(format!(
                 "index root mismatch: index was built for {}, but query root {} resolves to {}",
@@ -1365,6 +1610,15 @@ mod tests {
         fs::write(dir.join(name), content).unwrap();
     }
 
+    /// Sets a file's modified time to an exact `SystemTime` via std (stable FileTimes API).
+    /// Used by the M17 F1 metadata-preserving-swap test to make a swapped-in file
+    /// byte-for-byte identical in mtime (and size, by construction) to the indexed original.
+    fn set_modified_time(path: &Path, time: SystemTime) {
+        let file = fs::OpenOptions::new().write(true).open(path).unwrap();
+        file.set_times(std::fs::FileTimes::new().set_modified(time))
+            .unwrap();
+    }
+
     #[test]
     fn bincode_deserialize_rejects_hostile_length_prefix_without_oom() {
         // A crafted index declaring ~4 billion file entries but supplying no data must fail
@@ -1643,7 +1897,7 @@ mod tests {
         write_test_file(dir.path(), "a.txt", "ab\n");
 
         let index = TrigramIndex::build(dir.path()).unwrap();
-        let candidates = index.query_candidates("ab", false);
+        let candidates = index.query_candidates("ab", false).unwrap();
         assert!(
             candidates.is_empty(),
             "patterns shorter than 3 bytes cannot use trigram index"
@@ -1740,10 +1994,10 @@ mod tests {
 
         let data = fs::read(&index_path).unwrap();
         assert_eq!(&data[0..4], b"TGI\x00", "magic bytes");
-        // M17 (audit-m17): 5 adds the persisted canonical_root bytes; an old index written
-        // with version 4 fails the version gate and is rebuilt from scratch (safe, by the
-        // same rationale the 3->4 no_ignore bump used).
-        assert_eq!(data[4], 5, "format version should be 5");
+        // M17 gate (audit): 6 adds the tree_fingerprint u64 and drops the build-spelling root
+        // byte; an older index fails the version gate and is rebuilt from scratch (safe, by the
+        // same rationale the 3->4 no_ignore bump and the 4->5 canonical-root bump used).
+        assert_eq!(data[4], 6, "format version should be 6");
     }
 
     #[test]
@@ -1860,6 +2114,185 @@ mod tests {
         assert!(
             reason.contains("no stored canonical root"),
             "reason={reason}"
+        );
+    }
+
+    #[test]
+    fn test_m17_f1_tree_fingerprint_detects_metadata_preserving_swap() {
+        // M17 F1 (audit-m17 gate): per-file mtime/size checks cannot see a wholesale tree swap
+        // at the SAME path whose names/sizes/mtimes are preserved -- the boundary check the
+        // gate found missing. This test builds an index, then replaces every file with a
+        // SAME-NAME, SAME-SIZE, SAME-MTIME, DIFFERENT-CONTENT version (the metadata-preserving
+        // swap) and asserts staleness_reason reports the FINGERPRINT, not a file-level reason.
+        //
+        // Structural argument: the swap defeats the mtime/size loop BY CONSTRUCTION (equal
+        // values), it leaves the file set exactly as indexed (no new/deleted names), so the
+        // ONLY remaining detector is `tree_fingerprint`; the replacement content bytes differ,
+        // so the SHA-256 digest differs. Pre-fix (gate's F1), no fingerprint existed and the
+        // swap read as fresh -- the index served the old postings against the new tree.
+        let dir = tempdir().unwrap();
+        write_test_file(dir.path(), "a.txt", "hello world\n"); // 12 bytes
+        write_test_file(dir.path(), "b.txt", "another line\n"); // 13 bytes
+        let index = TrigramIndex::build(dir.path()).unwrap();
+        assert!(
+            index.staleness_reason(false).is_none(),
+            "a fresh index must not be stale"
+        );
+
+        let mtime_a = fs::metadata(dir.path().join("a.txt"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        let mtime_b = fs::metadata(dir.path().join("b.txt"))
+            .unwrap()
+            .modified()
+            .unwrap();
+
+        fs::remove_file(dir.path().join("a.txt")).unwrap();
+        fs::remove_file(dir.path().join("b.txt")).unwrap();
+        write_test_file(dir.path(), "a.txt", "swapped out\n"); // 12 bytes, different content
+        write_test_file(dir.path(), "b.txt", "fresh sender\n"); // 13 bytes, different content
+        set_modified_time(&dir.path().join("a.txt"), mtime_a);
+        set_modified_time(&dir.path().join("b.txt"), mtime_b);
+
+        let reason = index
+            .staleness_reason(false)
+            .expect("the metadata-preserving swap must be detected");
+        assert!(
+            reason.contains("fingerprint"),
+            "the swap must be reported as a tree-identity change: reason={reason}"
+        );
+        assert!(
+            !reason.contains("modified") && !reason.contains("deleted") && !reason.contains("new file"),
+            "the per-file checks must not be the detector here (they were defeated by design): reason={reason}"
+        );
+    }
+
+    #[test]
+    fn test_m17_f2_entries_relative_and_deref_through_canonical_root() {
+        // M17 F2 (audit-m17 gate): entries must be stored canonical-root-RELATIVE and every
+        // result path must dereference through the verified canonical root. This is the
+        // invariant that makes the cross-cwd escape structurally impossible: nothing in the
+        // index is ever a cwd-dependent spelling, so no query process can re-root a stored
+        // path at its own working directory.
+        let dir = tempdir().unwrap();
+        write_test_file(dir.path(), "a.txt", "hello world\n");
+        fs::create_dir(dir.path().join("sub")).unwrap();
+        write_test_file(dir.path(), "sub/b.txt", "nested content\n");
+
+        let index = TrigramIndex::build(dir.path()).unwrap();
+        let canonical = dir.path().canonicalize().unwrap();
+
+        assert!(
+            index.files.iter().all(|entry| entry.path.is_relative()),
+            "entries must be stored canonical-root-relative; got {:?}",
+            index
+                .files
+                .iter()
+                .map(|e| e.path.display().to_string())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            index.root(),
+            index.canonical_root(),
+            "the build-spelling root is retired; a built index's root IS its canonical root"
+        );
+
+        let results = index.search("hello", false, true).unwrap();
+        assert_eq!(results.len(), 1, "deref must find the real file content");
+        for result in &results {
+            assert!(
+                result.file.is_absolute(),
+                "results must carry canonical absolute paths: {}",
+                result.file.display()
+            );
+            assert!(
+                result.file.starts_with(&canonical),
+                "results must be rooted at the canonical root: {} vs {}",
+                result.file.display(),
+                canonical.display()
+            );
+        }
+
+        // Round trip: a loaded index dereferences identically (no stored spelling survives).
+        let index_path = dir.path().join(".tg_index");
+        index.save(&index_path).unwrap();
+        let loaded = TrigramIndex::load(&index_path).unwrap();
+        let loaded_results = loaded.search("hello", false, true).unwrap();
+        assert_eq!(loaded_results[0].file, results[0].file);
+        assert!(loaded.files.iter().all(|entry| entry.path.is_relative()));
+    }
+
+    #[test]
+    fn test_m17_f3_uncanonicalizable_query_root_is_unconditional_refusal() {
+        // M17 F3 (audit-m17 gate): a query root that cannot be canonicalized must be refused
+        // UNCONDITIONALLY -- the earlier raw-spelling fallback comparison would let an
+        // unverifiable spelling pass "by coincidence". A nonexistent path cannot be
+        // canonicalized on any platform.
+        let dir = tempdir().unwrap();
+        write_test_file(dir.path(), "a.txt", "hello world\n");
+        let index = TrigramIndex::build(dir.path()).unwrap();
+
+        let missing = dir.path().join("does-not-exist");
+        let reason = index
+            .root_servability_reason(&missing)
+            .expect("an uncanonicalizable query root must never serve");
+        assert!(
+            reason.contains("cannot be canonicalized"),
+            "the refusal must name the canonicalize failure: reason={reason}"
+        );
+    }
+
+    #[test]
+    fn test_m17_f4_legacy_json_loaded_index_is_not_searchable() {
+        // M17 F4 (audit-m17 gate): `load_json` returns an index with NO verified canonical
+        // root; a library consumer must not be able to search it directly, bypassing
+        // `root_servability_reason`. The public serving surface refuses with an error.
+        let dir = tempdir().unwrap();
+        write_test_file(dir.path(), "a.txt", "hello world\n");
+        let index = TrigramIndex::build(dir.path()).unwrap();
+        let json_path = dir.path().join("legacy.json");
+        index.save_json(&json_path).unwrap();
+        let legacy = TrigramIndex::load_json(&json_path).unwrap();
+
+        let err = legacy.search("hello", false, true).unwrap_err();
+        assert!(
+            err.to_string().contains("no verified root"),
+            "search must refuse an unverified index: {err}"
+        );
+        assert!(
+            legacy.query_candidates("hello", false).is_err(),
+            "candidate surfaces must refuse too"
+        );
+        assert!(
+            legacy.root_servability_reason(dir.path()).is_some(),
+            "root_servability already refuses the legacy form"
+        );
+    }
+
+    #[test]
+    fn test_m17_f5_non_utf8_canonical_root_fails_load_closed() {
+        // M17 F5 (audit-m17 gate): to_string_lossy/from_utf8_lossy collapse DISTINCT non-UTF-8
+        // paths into one identity (the alias collision). Build rejects non-UTF-8 roots (the
+        // build-side arm; a non-UTF-8 tempdir is not portable to create), and the load side
+        // rejects a hand-crafted wire format whose canonical root bytes are invalid UTF-8 --
+        // fail closed in both directions, never a lossy identity.
+        let mut data = Vec::new();
+        data.extend_from_slice(INDEX_MAGIC);
+        data.push(INDEX_FORMAT_VERSION);
+        data.push(0); // no_ignore
+        data.extend_from_slice(&1u32.to_le_bytes()); // canonical_root_len = 1
+        data.push(0xFF); // invalid UTF-8 canonical root byte
+                         // (no files / postings follow; the root check must fire first)
+
+        // write the crafted payload to a file and load it
+        let dir = tempdir().unwrap();
+        let index_path = dir.path().join("crafted.tg_index");
+        fs::write(&index_path, &data).unwrap();
+        let err = TrigramIndex::load(&index_path).unwrap_err();
+        assert!(
+            err.to_string().contains("not valid UTF-8"),
+            "a lossy identity must never be accepted: {err}"
         );
     }
 
