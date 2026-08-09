@@ -591,11 +591,29 @@ fn validate_entry_rel_path(rel: &Path) -> Result<()> {
     Ok(())
 }
 
+/// M17 F2 (gate round 3): is this top-level entry one the tg INDEX OWNS, i.e. part of the
+/// persisted-index machinery rather than the user's tree? These must never be sampled into
+/// `compute_tree_fingerprint` -- a leftover artifact would consume a sample slot and flip
+/// the digest, producing a FALSE staleness transition on a healthy tree. Covered:
+///  - `.tg_index` itself;
+///  - the atomic-save temp namespace `..tg_index.<token>.tmp` (`atomic_write_bytes`,
+///    index.rs) -- a temp left behind by a crash between write and rename persists on disk;
+///  - the write-lock file `..tg_index.lock` (`index_lock::lock_path_for`) -- removed on
+///    release, but a hard crash leaves it behind like any lock.
+/// Both artifacts are also invisible to the per-file loop and the new-file walk (they are
+/// never indexed and are `.`-hidden to the walker), so the fingerprint is the only surface
+/// that could see them.
+fn is_tg_index_owned_entry(name: &std::ffi::OsStr) -> bool {
+    name == std::ffi::OsStr::new(".tg_index")
+        || name.starts_with(std::ffi::OsStr::new("..tg_index."))
+}
+
 /// M17 F1 (audit-m17 gate): representative-set identity of the tree this index was built
 /// from. SHA-256 over the DIRECT children of the canonical root: each entry's name, and for
-/// each file its FULL content, size and mtime, in deterministic (sorted) order. `.tg_index`
-/// is excluded BEFORE the sampling cap (the index's own persistence must never consume one
-/// of the sampled slots).
+/// each file its FULL content, size and mtime, in deterministic (sorted) order. The tg
+/// index's OWN top-level namespace is excluded BEFORE the sampling cap (the index's own
+/// persistence must never consume one of the sampled slots) -- see
+/// `is_tg_index_owned_entry`.
 ///
 /// Round-2 gate: the initial 4 KiB-per-file byte cap let a same-size/same-mtime edit past
 /// offset 4096 in a sampled file evade detection, and inode identity would not catch that
@@ -618,7 +636,11 @@ fn compute_tree_fingerprint(canonical_root: &Path) -> u64 {
     names.sort();
     for entry in names
         .into_iter()
-        .filter(|path| path.file_name() != Some(std::ffi::OsStr::new(".tg_index")))
+        .filter(|path| {
+            !path
+                .file_name()
+                .is_some_and(|name| is_tg_index_owned_entry(name))
+        })
         .take(TREE_FINGERPRINT_TOP_LEVEL_CAP)
     {
         let name = entry.file_name();
@@ -2333,6 +2355,50 @@ mod tests {
         assert!(
             index.staleness_reason(false).is_none(),
             "the persisted .tg_index must not consume a fingerprint slot"
+        );
+    }
+
+    #[test]
+    fn test_m17_f2_fingerprint_ignores_leftover_index_machinery_files() {
+        // M17 F2 (gate round 3): the atomic-save temp namespace `..tg_index.<token>.tmp`
+        // (`atomic_write_bytes`) and the write-lock file `..tg_index.lock`
+        // (`index_lock::lock_path_for`) live in the index's own top-level namespace. A
+        // leftover temp (crash between write and rename) or lock (hard crash) persists on
+        // disk; WITHOUT exclusion it sorts first (`.` < `f`) and consumes one of the 32
+        // sample slots, flipping the digest into a FALSE staleness transition on a healthy
+        // tree. With exclusion the sampled set is unchanged.
+        //
+        // Structural argument: the artifacts are never indexed (so the per-file loop skips
+        // them) and are `.`-hidden (so the new-file walk skips them) -- the fingerprint is
+        // the ONLY check that could see them, and this test isolates exactly that surface.
+        let dir = tempdir().unwrap();
+        for i in 0..40 {
+            write_test_file(dir.path(), &format!("f{i:03}.txt"), "same content\n");
+        }
+        let index = TrigramIndex::build(dir.path()).unwrap();
+        let digest_before = compute_tree_fingerprint(dir.path());
+
+        // Fixture premise: the leftover artifacts must actually be visible to read_dir.
+        write_test_file(dir.path(), "..tg_index.deadbeef.tmp", "crash leftover\n");
+        write_test_file(dir.path(), "..tg_index.lock", "stale token\n");
+        let names: Vec<String> = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            names.iter().any(|n| n.starts_with("..tg_index.")),
+            "fixture premise: the leftover temp/lock must be present in the top-level listing"
+        );
+
+        assert_eq!(
+            compute_tree_fingerprint(dir.path()),
+            digest_before,
+            "the leftover index-machinery files must not change the fingerprint digest"
+        );
+        assert!(
+            index.staleness_reason(false).is_none(),
+            "a leftover atomic-save temp or lock must not produce a false stale transition"
         );
     }
 

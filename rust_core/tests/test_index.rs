@@ -2294,7 +2294,7 @@ fn test_m17_f2_relative_root_index_never_reads_other_cwd_tree() {
 /// M17 F3 (gate round 2): index output must carry the QUERY's path SPELLING, not the
 /// canonical absolute path -- dereference stays canonical (sound), but emission
 /// re-projects through the query root's original spelling. A relative `tree` root must
-/// emit `tree\a.txt` (Windows separator), never `X:\...\A\tree\a.txt`.
+/// emit `tree<sep>a.txt` (platform separator), never the canonical absolute path.
 #[test]
 fn test_m17_f3_index_output_uses_query_root_spelling() {
     let outer = tempdir().unwrap();
@@ -2338,9 +2338,15 @@ fn test_m17_f3_index_output_uses_query_root_spelling() {
         stdout.contains("hello world"),
         "the match content must be present: stdout={stdout}"
     );
+    // Portable separator: Path::new("tree").join("a.txt") yields `tree\a.txt` on Windows
+    // and `tree/a.txt` on POSIX, so this assertion holds on every platform if any.
+    let relative_spelling = Path::new("tree")
+        .join("a.txt")
+        .to_string_lossy()
+        .to_string();
     assert!(
-        stdout.contains("tree\\a.txt"),
-        "the emitted path must use the QUERY's relative spelling: stdout={stdout}"
+        stdout.contains(&relative_spelling),
+        "the emitted path must use the QUERY's relative spelling ({relative_spelling}): stdout={stdout}"
     );
     assert!(
         !stdout.contains(&cwd.join("tree").to_string_lossy().to_string()),
