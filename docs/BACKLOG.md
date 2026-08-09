@@ -68,6 +68,36 @@
 - Execution plan: `docs/plans/2026-08-08-backlog-completion-plan.md` (three-lens thinktank-approved
   Round 3). Next buildable per plan: M1 (checkpoint create-side symlink/junction containment).
 
+## Recent campaign notes (2026-08-08 late) — audit-fix wave receipts
+
+- **Buildable audit fixes TDD'd this wave (all draft PRs, codex-gated):**
+  - P5·H2 (#979): fail-closed refusal of `--count-matches`/`--files-with-matches`/`--files-without-match`
+    on the native structured + positional GPU routes (compile-exhaustive 68-field ratchet; `-o`/`-c`/
+    `--format rg --json` stay honored). Codex R1(4)→R2(2)→R3(1)→R4(1)→R5 APPROVE-WITH-NITS.
+  - M1 (#982): checkpoint create-side junction/symlink-ancestor containment — parent-chain-only resolve,
+    raw-leaf identity (A38), Windows junction fixtures (no privilege needed), 4 new tests RED→GREEN;
+    A48 handle-anchoring + undo leaf-following recorded canonically as M1-FU1/M1-FU2 (owners +
+    reopen triggers). Codex R1 FIX-BEFORE-MERGE(4)→R2 SHIP.
+  - M3 (#983): LSP `documentChanges` CreateFile/RenameFile/DeleteFile confinement — was VACUOUS
+    (file-ops invisible; `all()` over empty set). Five-field enumeration + opaque-member fail-closed +
+    strict external-DocumentUri validator (absolute file: URI only; rejects %00, whitespace,
+    path-rootless `file:C:evil`, non-file schemes). Relay-only TOCTOU documented. Codex
+    R1(3)→R2(3: kind-null, snake_case bypass, file:/ RFC-8089)→R3(1: path-rootless)→R4 seat FAILED on
+    content filter (A10/A74 — substitute probes verified; draft-PR gate + CI are the durable arbiter).
+    LSP-EDIT-CONSTRUCTION (lsprotocol documentChanges construction) named as separate tracked item.
+  - M14 (#984): MCP `mcp_contract_version` central-const hard-assign (was setdefault → tool's own
+    stale/forked literal won) + LIVE-registry VALUE ratchet over all 58 tools × success+error
+    families; 11 tools' masked success paths wrapped; `schema_version` stays setdefault so doctor's
+    v2 survives (harness_api-pinned); const untouched (1.7.0). Census corrected the "15/58 approx"
+    to a live 19 sites / 11 tools. Codex R1(3)→R2(3 harness: exception-allowlist masking,
+    env-dependence on dense model, partial-key parity)→R3 SHIP (independent mutation re-verified).
+- **Session receipts (2026-08-08):** origin/main `5500b88`; v1.110.6 + v1.110.7 published (PyPI
+  verified); open at session end: #979/#982/#983/#984 drafts + #966 (Task2A RED, parked by design).
+  Remaining per plan: M16 (Rust `tg scan` composite rules + severity — CI-oracle), M17 (index stored-
+  root check — CI-oracle), then research R1–R8 (each design-council-gated). All shared-box cargo and
+  MCP-native ext tests remain CI-oracle (worktree venv limitation; failures proven pre-existing on
+  origin/main).
+
 ## Recent campaign notes (2026-08-06 PM CEO)
 
 - Live CEO packet: `docs/audits/2026-08-06-pm-ceo-backlog-update.md` (A77–A82).
