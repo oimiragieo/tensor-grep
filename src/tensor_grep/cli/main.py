@@ -8059,6 +8059,45 @@ def search_command(
             ),
             json_mode=json,
         )
+    # P5·H2 (audit verdict / codex Finding 1): `-l`/`--files-with-matches`/`--files-without-match`
+    # are RAW PATH-OUTPUT modes. The tensor-grep aggregate `--json`/`--ndjson` envelope has no
+    # place for a bare path list, and the files emitters below (main.py ~the `if files_with_matches:`
+    # / `if files_without_match:` blocks) would print plain paths with exit 0 while the caller asked
+    # for structured output -- the JSON contract silently dropped (verified live:
+    # `tg search --json -l PAT DIR` emits the path, exit 0). Fail closed, mirroring the native
+    # `exit_native_structured_flag_dropped` refusal (rust_core/src/main.rs) and the
+    # `count_matches_requires_ripgrep` refusal above (same `_exit_search_error` contract).
+    # `--format rg --json` (rg passthrough) is deliberately excluded: `_can_passthrough_rg` returns
+    # False for files + rg_json_passthrough, so that route never reaches these emitters as an
+    # additive same-JSON contract issue (its raw-paths behavior is pre-existing and tracked
+    # separately). The exemption REQUIRES `not ndjson`: `--ndjson` has no rg-passthrough twin
+    # (rg's `--json` events are not the tensor-grep ndjson schema), so `--json --ndjson --format rg
+    # -l` must still refuse rather than drop the ndjson contract (codex round-3 finding). Plain
+    # `-l`/`--files-with-matches` WITHOUT --json/--ndjson keeps working (it
+    # routes to rg passthrough below; pinned by test_cli_modes.py::test_files_with_matches_*).
+    if (
+        (json or ndjson)
+        and not (json and explicit_rg_format and not ndjson)
+        and (files_with_matches or files_without_match)
+    ):
+        flag_list = ", ".join(
+            spelling
+            for present, spelling in (
+                (files_with_matches, "-l/--files-with-matches"),
+                (files_without_match, "--files-without-match"),
+            )
+            if present
+        )
+        _exit_search_error(
+            "unsupported_flag",
+            (
+                f"{flag_list} is a raw path-output mode that cannot be expressed inside the "
+                "tensor-grep aggregate --json/--ndjson envelope and would be silently dropped; "
+                f"refusing rather than silently ignoring it. Drop --json/--ndjson (or {flag_list}) "
+                "to get the raw path list."
+            ),
+            json_mode=json,
+        )
     can_passthrough_rg = (
         not guarded_broad_root
         and not explicit_hidden_search_root
