@@ -2290,3 +2290,60 @@ fn test_m17_f2_relative_root_index_never_reads_other_cwd_tree() {
         "the index must read the REAL tree through the canonical root, not cwd B's decoy: stdout={stdout}"
     );
 }
+
+/// M17 F3 (gate round 2): index output must carry the QUERY's path SPELLING, not the
+/// canonical absolute path -- dereference stays canonical (sound), but emission
+/// re-projects through the query root's original spelling. A relative `tree` root must
+/// emit `tree\a.txt` (Windows separator), never `X:\...\A\tree\a.txt`.
+#[test]
+fn test_m17_f3_index_output_uses_query_root_spelling() {
+    let outer = tempdir().unwrap();
+    let cwd = outer.path().join("A");
+    fs::create_dir(&cwd).unwrap();
+    fs::create_dir(cwd.join("tree")).unwrap();
+    fs::write(cwd.join("tree/a.txt"), "hello world\n").unwrap();
+
+    // Build and query with the SAME relative `tree` root, all from one cwd.
+    let build = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("hello")
+        .arg("tree")
+        .current_dir(&cwd)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "build stderr={}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let query = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("hello")
+        .arg("tree")
+        .current_dir(&cwd)
+        .output()
+        .unwrap();
+    assert!(
+        query.status.success(),
+        "query stderr={}",
+        String::from_utf8_lossy(&query.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&query.stdout);
+    assert!(
+        stdout.contains("hello world"),
+        "the match content must be present: stdout={stdout}"
+    );
+    assert!(
+        stdout.contains("tree\\a.txt"),
+        "the emitted path must use the QUERY's relative spelling: stdout={stdout}"
+    );
+    assert!(
+        !stdout.contains(&cwd.join("tree").to_string_lossy().to_string()),
+        "the canonical absolute tree path must not leak into output: stdout={stdout}"
+    );
+}

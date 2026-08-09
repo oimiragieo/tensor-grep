@@ -10111,8 +10111,16 @@ fn run_index_query(
         // than this fix's scope (the shared native walk emitter).
         matches.extend(results.into_iter().map(|result| {
             let (text, bytes, raw) = guaranteed_utf8_match_fields(result.text);
+            // M17 F3: the index dereferenced through the canonical root (sound), but the
+            // EMITTED path re-projects back through the QUERY's original spelling so a
+            // relative / differently-spelled query sees its own path space (tree/a.txt),
+            // matching what the native/rg routes emit for the same invocation.
+            let file = index
+                .display_path(Path::new(request.primary_path()), &result.file)
+                .to_string_lossy()
+                .into_owned();
             SearchMatchJson {
-                file: result.file.to_string_lossy().into_owned(),
+                file,
                 line: result.line,
                 text,
                 bytes,

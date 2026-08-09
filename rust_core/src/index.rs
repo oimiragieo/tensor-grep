@@ -19,11 +19,13 @@ use std::time::SystemTime;
 const TRIGRAM_LEN: usize = 3;
 const MAX_REGEX_CLASS_LITERALS: usize = 10;
 const MAX_REGEX_PREFILTER_LITERALS: usize = 64;
-/// M17 F1: how many DIRECT children of the canonical root the tree fingerprint samples, and
-/// how many content bytes per file. Deliberately bounded -- the fingerprint is a
-/// representative-identity check, not a full re-hash.
+/// M17 F1 (gate round 2): how many DIRECT children of the canonical root the tree
+/// fingerprint samples. Deliberately bounded in FILE COUNT (32); each sampled file is
+/// FULLY content-hashed (the old 4 KiB byte cap let a same-size/same-mtime edit past
+/// byte 4096 evade the fingerprint -- closed; see `compute_tree_fingerprint`). The honest
+/// remaining boundary is the files NOT sampled (33rd+ top-level files, and non-top-level
+/// files, whose per-file loop sees only mtime/size) -- tracked as follow-up M17-FU1.
 const TREE_FINGERPRINT_TOP_LEVEL_CAP: usize = 32;
-const TREE_FINGERPRINT_SAMPLE_BYTES: usize = 4096;
 
 type FileTrigramHits = Vec<([u8; 3], u32)>;
 
@@ -208,6 +210,11 @@ impl TrigramIndex {
             }
             let bytes = hex_to_trigram(&key)?;
             postings.insert(bytes, value);
+        }
+        // M17 F2 gate: the JSON form is untrusted input too -- an absolute or `..` entry
+        // would break `canonical_root.join(rel)` confinement. Reject before building.
+        for entry in &s.files {
+            validate_entry_rel_path(&entry.path)?;
         }
         normalize_postings(&mut postings);
         let file_trigrams = rebuild_file_trigrams(s.files.len(), &postings)?;
@@ -413,12 +420,19 @@ fn bincode_deserialize(data: &[u8]) -> Result<TrigramIndex> {
     let mut files = Vec::with_capacity(bounded_capacity(files_count, data, pos));
     for _ in 0..files_count {
         let path_len = read_u32_le(data, &mut pos)? as usize;
-        let path_str = String::from_utf8_lossy(read_exact(data, &mut pos, path_len)?).to_string();
+        // M17 F5 gate: STRICT UTF-8 on entry paths too (from_utf8, never from_utf8_lossy) --
+        // a lossy decode collapses distinct non-UTF-8 names into one identity.
+        let path_str = std::str::from_utf8(read_exact(data, &mut pos, path_len)?)
+            .with_context(|| "index entry path is not valid UTF-8")?;
+        let path = PathBuf::from(path_str);
+        // M17 F2 gate: reject absolute / prefix / `..` entries on load so
+        // `canonical_root.join(rel)` is provably confined to the verified root.
+        validate_entry_rel_path(&path)?;
         let mtime_ns = read_u128_le(data, &mut pos)?;
         let size = read_u64_le(data, &mut pos)?;
         let deleted = read_u8(data, &mut pos)? != 0;
         files.push(FileEntry {
-            path: PathBuf::from(path_str),
+            path,
             mtime_ns,
             size,
             deleted,
@@ -543,18 +557,52 @@ fn relativize_entry(walked: &Path, canonical_root: &Path) -> Result<PathBuf> {
     Ok(rel)
 }
 
+/// M17 F2 (gate round 2): a loaded entry path must be STRICTLY RELATIVE and confined --
+/// `canonical_root.join(rel)` is only provably inside the verified root when `rel` has no
+/// absolute/root/prefix component and no `..` escape. A crafted or corrupt index carrying an
+/// absolute or escaping entry must be REJECTED (fail closed), never dereferenced outside the
+/// root. An empty path is allowed (a file-rooted index stores its single entry as the empty
+/// relative path; join("") is the root itself).
+fn validate_entry_rel_path(rel: &Path) -> Result<()> {
+    use std::path::Component;
+    if !rel.is_relative() {
+        anyhow::bail!(
+            "index entry path is not relative (fail closed): {}",
+            rel.display()
+        );
+    }
+    for component in rel.components() {
+        match component {
+            Component::ParentDir => {
+                anyhow::bail!(
+                    "index entry path escapes the canonical root (fail closed): {}",
+                    rel.display()
+                );
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                anyhow::bail!(
+                    "index entry path contains an absolute component (fail closed): {}",
+                    rel.display()
+                );
+            }
+            Component::CurDir | Component::Normal(_) => {}
+        }
+    }
+    Ok(())
+}
+
 /// M17 F1 (audit-m17 gate): representative-set identity of the tree this index was built
 /// from. SHA-256 over the DIRECT children of the canonical root: each entry's name, and for
-/// each file its size, mtime and first `TREE_FINGERPRINT_SAMPLE_BYTES` of content, in
-/// deterministic (sorted) order. `.tg_index` itself is excluded so an index's own
-/// persistence never trips its identity.
+/// each file its FULL content, size and mtime, in deterministic (sorted) order. `.tg_index`
+/// is excluded BEFORE the sampling cap (the index's own persistence must never consume one
+/// of the sampled slots).
 ///
-/// This closes the wholesale SAME-PATH tree swap that per-file mtime/size checks cannot see
-/// (a replacement tree whose names/sizes/mtimes match passes them and serves the old
-/// postings against the new tree). It is NOT a full content hash: a swap that changes only
-/// subtree-INTERNAL files, without touching any top-level name/size/mtime/content-prefix,
-/// can still pass -- per-file granular identity (dev+ino on unix; the Windows file index,
-/// which std does not expose) is tracked as follow-up M17-FU1.
+/// Round-2 gate: the initial 4 KiB-per-file byte cap let a same-size/same-mtime edit past
+/// offset 4096 in a sampled file evade detection, and inode identity would not catch that
+/// either -- so this hashes sampled files in FULL (bounded by the 32-file cap, not by
+/// bytes). The honest remaining boundary is the files NOT sampled: 33rd+ top-level files
+/// and every non-top-level file are covered only by the per-file mtime/size loop -- per-file
+/// FULL content identity for those is tracked as follow-up M17-FU1.
 fn compute_tree_fingerprint(canonical_root: &Path) -> u64 {
     let mut hasher = Sha256::new();
     let mut names: Vec<PathBuf> = match std::fs::read_dir(canonical_root) {
@@ -568,11 +616,12 @@ fn compute_tree_fingerprint(canonical_root: &Path) -> u64 {
     };
     // Deterministic across runs: read_dir order is unspecified.
     names.sort();
-    for entry in names.into_iter().take(TREE_FINGERPRINT_TOP_LEVEL_CAP) {
+    for entry in names
+        .into_iter()
+        .filter(|path| path.file_name() != Some(std::ffi::OsStr::new(".tg_index")))
+        .take(TREE_FINGERPRINT_TOP_LEVEL_CAP)
+    {
         let name = entry.file_name();
-        if name == ".tg_index" {
-            continue;
-        }
         hasher.update(name.to_string_lossy().as_bytes());
         let meta = match std::fs::metadata(&entry) {
             Ok(meta) => meta,
@@ -587,19 +636,17 @@ fn compute_tree_fingerprint(canonical_root: &Path) -> u64 {
                 hasher.update(duration.as_nanos().to_le_bytes());
             }
         }
-        let mut sample = vec![0u8; TREE_FINGERPRINT_SAMPLE_BYTES];
+        // FULL content -- a modification anywhere in a sampled file changes the digest,
+        // even when size and mtime are preserved.
         if let Ok(mut file) = File::open(&entry) {
             use std::io::Read as _;
-            let mut read = 0usize;
-            while read < sample.len() {
-                match file.read(&mut sample[read..]) {
+            let mut chunk = [0u8; 64 * 1024];
+            loop {
+                match file.read(&mut chunk) {
                     Ok(0) => break,
-                    Ok(n) => read += n,
+                    Ok(n) => hasher.update(&chunk[..n]),
                     Err(_) => break,
                 }
-            }
-            if read > 0 {
-                hasher.update(&sample[..read]);
             }
         }
     }
@@ -811,7 +858,10 @@ impl TrigramIndex {
         Ok(IncrementalUpdateResult { index: self, stats })
     }
 
-    pub fn query_candidates_fixed(
+    /// CHECKED candidate selection (M17 F4): fails closed with an error when the index has
+    /// no verified canonical root (legacy JSON / crafted load) and dereferences every
+    /// candidate through the verified canonical root.
+    pub fn query_candidates_fixed_checked(
         &self,
         pattern: &str,
         ignore_case: bool,
@@ -825,7 +875,8 @@ impl TrigramIndex {
         Ok(self.query_with_trigrams(&extract_trigrams(pat.as_bytes())))
     }
 
-    pub fn query_candidates(
+    /// CHECKED candidate selection (M17 F4) -- see `query_candidates_fixed_checked`.
+    pub fn query_candidates_checked(
         &self,
         pattern: &str,
         ignore_case: bool,
@@ -837,6 +888,32 @@ impl TrigramIndex {
                 RegexCandidateSelection::FullScan => Vec::new(),
             },
         )
+    }
+
+    /// Legacy compatibility wrapper (law A40 disposition, M17 F4): preserves the pre-M17
+    /// `Vec` return shape so downstream rlib consumers outside this repository's census
+    /// keep compiling while the checked variants own the fail-closed behavior.
+    ///
+    /// DELIBERATE API-SHAPE DECISION (A49-style record): `query_candidates*_checked` are
+    /// the future of this surface -- an unverified index must be reported, not silently
+    /// emptied. This wrapper exists ONLY for the transition; for an unverified index it
+    /// returns an empty candidate set (the old code could not express the failure either,
+    /// and no candidate set is the honest closest-to-old behavior: nothing is served).
+    /// Migration: new consumers should call `query_candidates*_checked` and handle the
+    /// error; delete this wrapper in a future breaking release.
+    pub fn query_candidates_fixed(
+        &self,
+        pattern: &str,
+        ignore_case: bool,
+    ) -> Vec<(PathBuf, usize)> {
+        self.query_candidates_fixed_checked(pattern, ignore_case)
+            .unwrap_or_default()
+    }
+
+    /// Legacy compatibility wrapper -- see `query_candidates_fixed` (law A40 disposition).
+    pub fn query_candidates(&self, pattern: &str, ignore_case: bool) -> Vec<(PathBuf, usize)> {
+        self.query_candidates_checked(pattern, ignore_case)
+            .unwrap_or_default()
     }
 
     fn query_with_trigrams(&self, trigrams: &[[u8; 3]]) -> Vec<(PathBuf, usize)> {
@@ -962,7 +1039,7 @@ impl TrigramIndex {
         }
 
         Ok(RegexCandidateSelection::Indexed(
-            self.query_candidates_fixed(pattern, ignore_case)?,
+            self.query_candidates_fixed_checked(pattern, ignore_case)?,
         ))
     }
 
@@ -1122,6 +1199,22 @@ impl TrigramIndex {
     /// absolute paths.
     fn deref_path(&self, rel: &Path) -> PathBuf {
         self.canonical_root.join(rel)
+    }
+
+    /// M17 F3 (gate round 2): DISPLAY projection. `search` dereferences canonically (see
+    /// `deref_path`), which is sound but changes the path SPELLING a user sees: a query
+    /// typed as `tree/` used to emit `tree/a.txt` and now emits the canonical absolute
+    /// path. This re-projects a canonical result path back through the QUERY's original
+    /// (non-canonical) spelling for EMISSION ONLY -- `query_spelling.join(rel)` -- so a
+    /// relative or differently-spelled query sees its own path space while every READ
+    /// stays confined to the verified canonical root. A path that does not project (e.g.
+    /// the file-rooted empty-relative case) is emitted as canonical. Dereference and
+    /// display are deliberately separate contracts: `deref_path` for I/O, this for output.
+    pub fn display_path(&self, query_spelling: &Path, canonical_file: &Path) -> PathBuf {
+        match canonical_file.strip_prefix(&self.canonical_root) {
+            Ok(rel) if !rel.as_os_str().is_empty() => query_spelling.join(rel),
+            _ => canonical_file.to_path_buf(),
+        }
     }
 
     /// M17 F4 (audit-m17 gate): an index without a verified canonical root must not be
@@ -1897,7 +1990,7 @@ mod tests {
         write_test_file(dir.path(), "a.txt", "ab\n");
 
         let index = TrigramIndex::build(dir.path()).unwrap();
-        let candidates = index.query_candidates("ab", false).unwrap();
+        let candidates = index.query_candidates("ab", false);
         assert!(
             candidates.is_empty(),
             "patterns shorter than 3 bytes cannot use trigram index"
@@ -2169,12 +2262,91 @@ mod tests {
     }
 
     #[test]
+    fn test_m17_f1_fingerprint_detects_change_beyond_4096_bytes() {
+        // M17 F1 (gate round 2): the initial fingerprint sampled only the first 4 KiB of each
+        // file, so a same-size/same-mtime edit PAST offset 4096 in a sampled file was
+        // invisible to every check (per-file loop sees size/mtime only; the walk sees the
+        // same names). With full-content hashing of the sampled files this closes: bytes
+        // beyond 4096 are part of the digest.
+        //
+        // Structural argument: the first 4096 bytes are IDENTICAL (so the old 4 KiB sample
+        // digest would have been unchanged -- the exact old evasion), size and mtime are
+        // preserved (so the per-file loop passes), the file set is unchanged (so the walk
+        // passes) -- only FULL-content hashing can see the tail change.
+        let dir = tempdir().unwrap();
+        let content_before = format!("{}OLD_TAIL_MARKER", "x".repeat(7000));
+        let content_after = format!("{}NEW_TAIL_MARKER", "x".repeat(7000));
+        assert_eq!(content_before.len(), content_after.len());
+
+        write_test_file(dir.path(), "big.txt", &content_before);
+        let index = TrigramIndex::build(dir.path()).unwrap();
+        assert!(
+            index.staleness_reason(false).is_none(),
+            "a fresh index must not be stale"
+        );
+
+        let mtime = fs::metadata(dir.path().join("big.txt"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        write_test_file(dir.path(), "big.txt", &content_after);
+        set_modified_time(&dir.path().join("big.txt"), mtime);
+
+        let reason = index
+            .staleness_reason(false)
+            .expect("a change beyond byte 4096 must be detected");
+        assert!(
+            reason.contains("fingerprint"),
+            "the beyond-4096 change must be reported via the tree fingerprint: reason={reason}"
+        );
+        assert!(
+            !reason.contains("modified")
+                && !reason.contains("deleted")
+                && !reason.contains("new file"),
+            "size/mtime/name checks were all preserved by construction: reason={reason}"
+        );
+    }
+
+    #[test]
+    fn test_m17_f1_fingerprint_slots_not_consumed_by_tg_index() {
+        // M17 F1 (gate round 2): `.tg_index` must be excluded BEFORE the sampling cap --
+        // if it counted toward the 32 sampled slots, an index persisted into a root with
+        // exactly 32 other top-level entries would displace one REAL file from the sample,
+        // so a change to that displaced file would evade the fingerprint. Structurally:
+        // persistence happens after build, so the fingerprint computed at build (no
+        // `.tg_index`) would be recomputed at staleness WITH `.tg_index` present; the
+        // pre-cap exclusion makes both digest inputs identical.
+        let dir = tempdir().unwrap();
+        for i in 0..40 {
+            write_test_file(dir.path(), &format!("f{i:03}.txt"), "same content\n");
+        }
+        let index = TrigramIndex::build(dir.path()).unwrap();
+        assert!(
+            index.staleness_reason(false).is_none(),
+            "a fresh 40-file index must not be reported stale by its own persisted index file"
+        );
+
+        // Save into the tree, then re-check: the just-written `.tg_index` must not trip the
+        // fingerprint (it is filtered before sampling, so the sampled set is unchanged).
+        let index_path = dir.path().join(".tg_index");
+        index.save(&index_path).unwrap();
+        assert!(
+            index.staleness_reason(false).is_none(),
+            "the persisted .tg_index must not consume a fingerprint slot"
+        );
+    }
+
+    #[test]
     fn test_m17_f2_entries_relative_and_deref_through_canonical_root() {
         // M17 F2 (audit-m17 gate): entries must be stored canonical-root-RELATIVE and every
         // result path must dereference through the verified canonical root. This is the
         // invariant that makes the cross-cwd escape structurally impossible: nothing in the
         // index is ever a cwd-dependent spelling, so no query process can re-root a stored
         // path at its own working directory.
+        //
+        // M17 F3 (gate round 2): DEREFERENCE is canonical (asserted below); DISPLAY is a
+        // separate contract -- `display_path` re-projects through the QUERY's original
+        // spelling so relative queries see relative output (asserted at the end).
         let dir = tempdir().unwrap();
         write_test_file(dir.path(), "a.txt", "hello world\n");
         fs::create_dir(dir.path().join("sub")).unwrap();
@@ -2203,16 +2375,43 @@ mod tests {
         for result in &results {
             assert!(
                 result.file.is_absolute(),
-                "results must carry canonical absolute paths: {}",
+                "search must dereference canonically: {}",
                 result.file.display()
             );
             assert!(
                 result.file.starts_with(&canonical),
-                "results must be rooted at the canonical root: {} vs {}",
+                "search results must be rooted at the canonical root: {} vs {}",
                 result.file.display(),
                 canonical.display()
             );
         }
+
+        // M17 F3: the DISPLAY projection uses the QUERY's spelling while reads stay
+        // canonical -- a query typed as a relative `tree` emits `tree/a.txt`, not the
+        // canonical absolute path.
+        let displayed = index.display_path(Path::new("tree"), &results[0].file);
+        assert!(
+            displayed.is_relative(),
+            "display must re-project through the query spelling: {}",
+            displayed.display()
+        );
+        assert_eq!(
+            displayed,
+            Path::new("tree").join("a.txt"),
+            "display = query_spelling.join(rel)"
+        );
+        // The same spelling-but-different-casing/full query form still emits the user's form.
+        let displayed_abs = index.display_path(Path::new("TREE"), &results[0].file);
+        assert_eq!(
+            displayed_abs,
+            Path::new("TREE").join("a.txt"),
+            "display preserves the caller's spelling even when it differs from canonical"
+        );
+        // Dereference is untouched by the display projection.
+        assert_eq!(
+            index.deref_path(Path::new("a.txt")),
+            index.canonical_root().join("a.txt")
+        );
 
         // Round trip: a loaded index dereferences identically (no stored spelling survives).
         let index_path = dir.path().join(".tg_index");
@@ -2261,8 +2460,12 @@ mod tests {
             "search must refuse an unverified index: {err}"
         );
         assert!(
-            legacy.query_candidates("hello", false).is_err(),
-            "candidate surfaces must refuse too"
+            legacy.query_candidates_checked("hello", false).is_err(),
+            "the checked candidate surface must refuse an unverified index"
+        );
+        assert!(
+            legacy.query_candidates("hello", false).is_empty(),
+            "the legacy compatibility wrapper degrades to an empty candidate set (documented)"
         );
         assert!(
             legacy.root_servability_reason(dir.path()).is_some(),
@@ -2277,23 +2480,94 @@ mod tests {
         // build-side arm; a non-UTF-8 tempdir is not portable to create), and the load side
         // rejects a hand-crafted wire format whose canonical root bytes are invalid UTF-8 --
         // fail closed in both directions, never a lossy identity.
-        let mut data = Vec::new();
-        data.extend_from_slice(INDEX_MAGIC);
-        data.push(INDEX_FORMAT_VERSION);
-        data.push(0); // no_ignore
-        data.extend_from_slice(&1u32.to_le_bytes()); // canonical_root_len = 1
-        data.push(0xFF); // invalid UTF-8 canonical root byte
-                         // (no files / postings follow; the root check must fire first)
-
-        // write the crafted payload to a file and load it
         let dir = tempdir().unwrap();
         let index_path = dir.path().join("crafted.tg_index");
-        fs::write(&index_path, &data).unwrap();
+        let (mut buf, root_pos) = craft_v6_index_header(1);
+        buf[root_pos] = 0xFF; // invalid UTF-8 canonical root byte
+        fs::write(&index_path, &buf).unwrap();
         let err = TrigramIndex::load(&index_path).unwrap_err();
         assert!(
             err.to_string().contains("not valid UTF-8"),
             "a lossy identity must never be accepted: {err}"
         );
+    }
+
+    /// Crafts the header of a v6 index file with ONE declared file entry. Returns
+    /// `(buffer, canonical_root_bytes_pos)`; the buffer is
+    /// magic + version + no_ignore + canonical_root_len + canonical_root("X")
+    /// + tree_fingerprint(0) + files_count(1), with the entry payload appended separately.
+    fn craft_v6_index_header(canonical_root_len: u32) -> (Vec<u8>, usize) {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(INDEX_MAGIC);
+        buf.push(INDEX_FORMAT_VERSION);
+        buf.push(0); // no_ignore
+        buf.extend_from_slice(&canonical_root_len.to_le_bytes());
+        let root_pos = buf.len();
+        buf.extend_from_slice(b"X"); // canonical root placeholder byte
+        buf.extend_from_slice(&0u64.to_le_bytes()); // tree_fingerprint = 0
+        buf.extend_from_slice(&1u32.to_le_bytes()); // files_count = 1
+        (buf, root_pos)
+    }
+
+    /// Appends one file entry (path + mtime + size + deleted) to a crafted v6 buffer.
+    fn append_crafted_entry(buf: &mut Vec<u8>, path_bytes: &[u8]) {
+        buf.extend_from_slice(&(path_bytes.len() as u32).to_le_bytes());
+        buf.extend_from_slice(path_bytes);
+        buf.extend_from_slice(&0u128.to_le_bytes()); // mtime_ns
+        buf.extend_from_slice(&0u64.to_le_bytes()); // size
+        buf.push(0); // deleted
+    }
+
+    #[test]
+    fn test_m17_f2_load_rejects_unconfined_entry_paths() {
+        // M17 F2 (gate round 2): loaded entries must be strictly relative and confined --
+        // absolute, prefix, and `..` paths must REJECT the whole index so
+        // `canonical_root.join(rel)` is provably inside the verified root. The per-entry
+        // decode is also STRICT UTF-8 (round-2 F5 extension for entry paths).
+        let dir = tempdir().unwrap();
+        let index_path = dir.path().join("crafted.tg_index");
+
+        // (a) non-UTF-8 entry name: reject, never a lossy decode.
+        let (mut buf, _) = craft_v6_index_header(1);
+        append_crafted_entry(&mut buf, &[0xFF]);
+        fs::write(&index_path, &buf).unwrap();
+        let err = TrigramIndex::load(&index_path).unwrap_err();
+        assert!(
+            err.to_string().contains("not valid UTF-8"),
+            "a non-UTF-8 entry name must reject the index: {err}"
+        );
+
+        // (b) absolute/rooted entry path: reject (join would escape the canonical root by root).
+        // Note: on Windows `/etc/passwd` is rooted-but-"relative" (no drive prefix), so the
+        // refusal can fire on EITHER check -- accept both stable halves of the message.
+        let (mut buf, _) = craft_v6_index_header(1);
+        append_crafted_entry(&mut buf, b"/etc/passwd");
+        fs::write(&index_path, &buf).unwrap();
+        let err = TrigramIndex::load(&index_path).unwrap_err().to_string();
+        assert!(
+            err.contains("not relative") || err.contains("absolute component"),
+            "a rooted/absolute entry must reject the index: {err}"
+        );
+
+        // (c) `..` escape component: reject.
+        let (mut buf, _) = craft_v6_index_header(1);
+        append_crafted_entry(&mut buf, b"../outside.txt");
+        fs::write(&index_path, &buf).unwrap();
+        let err = TrigramIndex::load(&index_path).unwrap_err();
+        assert!(
+            err.to_string().contains("escapes the canonical root"),
+            "a `..` entry must reject the index: {err}"
+        );
+
+        // (d) a confined relative entry loads fine (the control arm), with the empty
+        // postings section (trigram_count = 0) that the success path requires.
+        let (mut buf, _) = craft_v6_index_header(1);
+        append_crafted_entry(&mut buf, b"sub/a.txt");
+        buf.extend_from_slice(&0u32.to_le_bytes()); // trigram_count = 0
+        fs::write(&index_path, &buf).unwrap();
+        let loaded = TrigramIndex::load(&index_path).unwrap();
+        assert_eq!(loaded.file_count(), 1);
+        assert_eq!(loaded.files[0].path, PathBuf::from("sub/a.txt"));
     }
 
     #[test]
