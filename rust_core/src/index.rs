@@ -600,6 +600,7 @@ fn validate_entry_rel_path(rel: &Path) -> Result<()> {
 ///    index.rs) -- a temp left behind by a crash between write and rename persists on disk;
 ///  - the write-lock file `..tg_index.lock` (`index_lock::lock_path_for`) -- removed on
 ///    release, but a hard crash leaves it behind like any lock.
+///
 /// Both artifacts are also invisible to the per-file loop and the new-file walk (they are
 /// never indexed and are `.`-hidden to the walker), so the fingerprint is the only surface
 /// that could see them.
@@ -620,18 +621,40 @@ fn is_tg_index_owned_entry(name: &std::ffi::OsStr) -> bool {
 /// bytes). The honest remaining boundary is the files NOT sampled: 33rd+ top-level files
 /// and every non-top-level file are covered only by the per-file mtime/size loop -- per-file
 /// FULL content identity for those is tracked as follow-up M17-FU1.
-fn compute_tree_fingerprint(canonical_root: &Path) -> u64 {
+///
+/// Gate 3a (fingerprint-vs-walk agreement): the fingerprint must sample the SAME top-level
+/// file set the index walk would produce, or a gitignored file (added after build) flips
+/// the digest and falsely reports staleness -- disagreeing with the new-file walk, which
+/// correctly ignores it. The population is therefore derived from `ignore::WalkBuilder`
+/// with the SAME config as `collect_file_entries` (hidden=true, git_ignore=!no_ignore,
+/// add_ignore trio, capped to depth 1), so agreement holds by construction. The tg index's
+/// OWN dot-namespace (.tg_index, ..tg_index.*) is hidden and thus excluded by the same
+/// filter the walk applies.
+fn compute_tree_fingerprint(canonical_root: &Path, no_ignore: bool) -> u64 {
     let mut hasher = Sha256::new();
-    let mut names: Vec<PathBuf> = match std::fs::read_dir(canonical_root) {
-        Ok(dir) => dir
-            .filter_map(|entry| entry.ok())
-            .map(|e| e.path())
-            .collect(),
-        // An unreadable root degrades to a constant identity; the per-file checks in
-        // staleness_reason still fail closed (they cannot read files either).
-        Err(_) => return 0,
-    };
-    // Deterministic across runs: read_dir order is unspecified.
+    let mut builder = ignore::WalkBuilder::new(canonical_root);
+    builder
+        .hidden(true)
+        .git_ignore(!no_ignore)
+        .max_depth(Some(1));
+    if !no_ignore {
+        for ignore_name in [".ignore", ".gitignore", ".rgignore"] {
+            let ignore_path = canonical_root.join(ignore_name);
+            if ignore_path.is_file() {
+                builder.add_ignore(ignore_path);
+            }
+        }
+    }
+    let mut names: Vec<PathBuf> = builder
+        .build()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.depth() == 1)
+        .map(|entry| entry.into_path())
+        .collect();
+    // An unreadable root walks nothing -> the digest of the empty set (a constant
+    // identity); the per-file checks in staleness_reason still fail closed (they cannot
+    // read files either).
+    // Deterministic across runs: walk order is unspecified.
     names.sort();
     for entry in names
         .into_iter()
@@ -730,7 +753,7 @@ impl TrigramIndex {
         }
         normalize_postings(&mut postings);
 
-        let tree_fingerprint = compute_tree_fingerprint(&canonical_root);
+        let tree_fingerprint = compute_tree_fingerprint(&canonical_root, no_ignore);
 
         Ok(Self {
             root: canonical_root.clone(),
@@ -873,7 +896,7 @@ impl TrigramIndex {
         // refuse the tree it just built (root) or falsely report it stale (fingerprint).
         self.root = canonical_root.clone();
         self.canonical_root = canonical_root;
-        self.tree_fingerprint = compute_tree_fingerprint(&self.canonical_root);
+        self.tree_fingerprint = compute_tree_fingerprint(&self.canonical_root, no_ignore);
         // H1d: persist the query's no_ignore mode onto the rebuilt index so a subsequent
         // staleness check compares against what this rebuild actually walked with, not a
         // stale build-time value.
@@ -1200,7 +1223,7 @@ impl TrigramIndex {
         // modification reports the precise file-level reason; a wholesale same-path swap
         // that preserved every name/size/mtime (and thus passed every check above) is
         // caught here -- the only detector that sees it.
-        if self.tree_fingerprint != compute_tree_fingerprint(&self.canonical_root) {
+        if self.tree_fingerprint != compute_tree_fingerprint(&self.canonical_root, self.no_ignore) {
             return Some(
                 "tree fingerprint changed (representative top-level identity mismatch)".to_string(),
             );
@@ -2378,7 +2401,7 @@ mod tests {
             write_test_file(dir.path(), &format!("f{i:03}.txt"), "same content\n");
         }
         let index = TrigramIndex::build(dir.path()).unwrap();
-        let digest_before = compute_tree_fingerprint(dir.path());
+        let digest_before = compute_tree_fingerprint(dir.path(), false);
 
         // Fixture premise: the leftover artifacts must actually be visible to read_dir.
         write_test_file(dir.path(), "..tg_index.deadbeef.tmp", "crash leftover\n");
@@ -2394,7 +2417,7 @@ mod tests {
         );
 
         assert_eq!(
-            compute_tree_fingerprint(dir.path()),
+            compute_tree_fingerprint(dir.path(), false),
             digest_before,
             "the leftover index-machinery files must not change the fingerprint digest"
         );
