@@ -649,6 +649,11 @@ fn compute_tree_fingerprint(canonical_root: &Path, no_ignore: bool) -> u64 {
         .build()
         .filter_map(|entry| entry.ok())
         .filter(|entry| entry.depth() == 1)
+        // Select FILES first (matching collect_file_entries and the new-file scan) so a
+        // directory or symlink can neither flip the digest nor consume a fingerprint slot
+        // before the cap -- otherwise 32 early-sorting directories could displace every
+        // real file from the sample (codex audit, M17 round-3).
+        .filter(|entry| entry.file_type().is_some_and(|ft| ft.is_file()))
         .map(|entry| entry.into_path())
         .collect();
     // An unreadable root walks nothing -> the digest of the empty set (a constant
@@ -2425,6 +2430,56 @@ mod tests {
             index.staleness_reason(false).is_none(),
             "a leftover atomic-save temp or lock must not produce a false stale transition"
         );
+    }
+
+    #[test]
+    fn fingerprint_ignores_top_level_directories_and_symlinks() {
+        // M17 round-3 (codex audit): the fingerprint must select FILES first -- a top-level
+        // directory (or symlink) added after build must neither flip the digest (the walks
+        // only ever see files) nor consume one of the 32 sampled slots (which would displace
+        // a real file and weaken F1 coverage).
+        let dir = tempdir().unwrap();
+        write_test_file(dir.path(), "keep.txt", "kept\n");
+        let index = TrigramIndex::build(dir.path()).unwrap();
+        let digest_before = compute_tree_fingerprint(dir.path(), false);
+
+        fs::create_dir(dir.path().join("added_dir")).unwrap();
+        assert_eq!(
+            compute_tree_fingerprint(dir.path(), false),
+            digest_before,
+            "an added empty directory must not change the fingerprint"
+        );
+        assert!(
+            index.staleness_reason(false).is_none(),
+            "an added empty directory must not trigger staleness"
+        );
+    }
+
+    #[test]
+    fn fingerprint_cap_not_consumed_by_early_sorting_directories() {
+        // M17 round-3 (codex audit): 32 directories that sort before the sampled files must
+        // not displace every real file from the 32-slot representative sample -- otherwise a
+        // metadata-preserving swap in the displaced file would evade the fingerprint.
+        let dir = tempdir().unwrap();
+        for i in 0..32 {
+            fs::create_dir(dir.path().join(format!("zdir{i:02}"))).unwrap();
+        }
+        write_test_file(dir.path(), "aaa_target.txt", "before\n");
+        let index = TrigramIndex::build(dir.path()).unwrap();
+        assert!(index.staleness_reason(false).is_none());
+
+        // Metadata-preserving swap on the only real file: same size, same mtime.
+        let mtime = fs::metadata(dir.path().join("aaa_target.txt"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        write_test_file(dir.path(), "aaa_target.txt", "after!\n"); // 7 bytes, same as "before\n"
+        set_modified_time(&dir.path().join("aaa_target.txt"), mtime);
+
+        let reason = index
+            .staleness_reason(false)
+            .expect("the swap must be detected via the fingerprint");
+        assert!(reason.contains("fingerprint"), "reason={reason}");
     }
 
     #[test]
