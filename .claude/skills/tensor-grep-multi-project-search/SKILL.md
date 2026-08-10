@@ -7,7 +7,7 @@ description: Use when searching across a multi-project workspace root (many sibl
 
 Use this when the cwd is a **workspace parent** (e.g. `/mnt/c/dev/projects`) containing many unrelated repos, not a single git root.
 
-Verified against **tg 1.95.0** (2026-07-24; prior full dogfood 2026-07-21 WSL sweep at v1.91.0).
+Verified against **tg 1.110.10** (2026-08-09 Windows `uvx`; prior stamps 1.95.0 / 1.91.0 WSL).
 
 ## Do this
 
@@ -65,8 +65,15 @@ scoping the walk.
 | Exit | Meaning in this CUJ |
 | --- | --- |
 | `0` | Complete enough for the scoped ask |
+| `1` | Complete with **zero** matches (not a refuse) — common on scoped parent walks |
 | `2` | Incomplete / refused / deadline partial — parse JSON; do not treat as full coverage |
 | timeout / empty | Prefer narrower PATH or explicit `--deadline`; skip `codemap` |
+
+**Parent-root refuse class (1.110.x):** unscoped
+`tg search needle C:\dev\projects --json` → exit 2 with
+`incomplete_reason_class=workspace_root_refused` and `error.code=workspace_root_refused`
+(not generic `scan_limit`). Scoped `--glob`/`--max-depth` on an explicit parent PATH should
+**not** emit that refuse class.
 
 ## Related
 
