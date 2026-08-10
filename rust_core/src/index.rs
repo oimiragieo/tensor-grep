@@ -649,7 +649,16 @@ fn compute_tree_fingerprint(canonical_root: &Path, no_ignore: bool) -> u64 {
     }
     let mut names: Vec<PathBuf> = builder
         .build()
-        .filter_map(|entry| entry.ok())
+        // Walk errors are LOGGED, not silently dropped (task #276 / the
+        // walk-error-discard ratchet): a truncated walk must not read as a clean
+        // fingerprint. The discard is deliberate (a stale-fingerprint signal is
+        // best-effort; the per-file checks in staleness_reason still fail closed),
+        // but it is never silent.
+        .filter_map(|entry| {
+            entry
+                .map_err(|e| eprintln!("tg index: fingerprint walk error: {e}"))
+                .ok()
+        })
         .filter(|entry| entry.depth() == 1)
         // Select FILES first (matching collect_file_entries and the new-file scan) so a
         // directory or symlink can neither flip the digest nor consume a fingerprint slot
@@ -2407,12 +2416,15 @@ mod tests {
         let digest_before = compute_tree_fingerprint(dir.path(), false);
 
         // Fixture premise: the leftover artifacts must actually be visible to read_dir.
+        // This is a read_dir enumeration, not a walk -- the walk-error-discard ratchet
+        // (task #276) counts WALK sites, so use the non-ratcheted binding here to keep the
+        // census at the audited walk sites only.
         write_test_file(dir.path(), "..tg_index.deadbeef.tmp", "crash leftover\n");
         write_test_file(dir.path(), "..tg_index.lock", "stale token\n");
         let names: Vec<String> = fs::read_dir(dir.path())
             .unwrap()
-            .filter_map(|e| e.ok())
-            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
             .collect();
         assert!(
             names.iter().any(|n| n.starts_with("..tg_index.")),
