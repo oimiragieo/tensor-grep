@@ -2433,11 +2433,11 @@ mod tests {
     }
 
     #[test]
-    fn fingerprint_ignores_top_level_directories_and_symlinks() {
+    fn fingerprint_ignores_top_level_directories() {
         // M17 round-3 (codex audit): the fingerprint must select FILES first -- a top-level
-        // directory (or symlink) added after build must neither flip the digest (the walks
-        // only ever see files) nor consume one of the 32 sampled slots (which would displace
-        // a real file and weaken F1 coverage).
+        // directory added after build must neither flip the digest (the walks only ever see
+        // files) nor consume one of the 32 sampled slots (which would displace a real file
+        // and weaken F1 coverage). The symlink variant is Unix-gated separately below.
         let dir = tempdir().unwrap();
         write_test_file(dir.path(), "keep.txt", "kept\n");
         let index = TrigramIndex::build(dir.path()).unwrap();
@@ -2460,26 +2460,53 @@ mod tests {
         // M17 round-3 (codex audit): 32 directories that sort before the sampled files must
         // not displace every real file from the 32-slot representative sample -- otherwise a
         // metadata-preserving swap in the displaced file would evade the fingerprint.
+        // The directories sort FIRST (adir* < zzz_target.txt), so the pre-fix fingerprint
+        // (raw path sort + take(32)) would sample the 32 dirs and drop the real file --
+        // making this test genuinely RED on the pre-fix code.
         let dir = tempdir().unwrap();
         for i in 0..32 {
-            fs::create_dir(dir.path().join(format!("zdir{i:02}"))).unwrap();
+            fs::create_dir(dir.path().join(format!("adir{i:02}"))).unwrap();
         }
-        write_test_file(dir.path(), "aaa_target.txt", "before\n");
+        write_test_file(dir.path(), "zzz_target.txt", "before\n");
         let index = TrigramIndex::build(dir.path()).unwrap();
         assert!(index.staleness_reason(false).is_none());
 
         // Metadata-preserving swap on the only real file: same size, same mtime.
-        let mtime = fs::metadata(dir.path().join("aaa_target.txt"))
+        let mtime = fs::metadata(dir.path().join("zzz_target.txt"))
             .unwrap()
             .modified()
             .unwrap();
-        write_test_file(dir.path(), "aaa_target.txt", "after!\n"); // 7 bytes, same as "before\n"
-        set_modified_time(&dir.path().join("aaa_target.txt"), mtime);
+        write_test_file(dir.path(), "zzz_target.txt", "after!\n"); // 7 bytes, same as "before\n"
+        set_modified_time(&dir.path().join("zzz_target.txt"), mtime);
 
         let reason = index
             .staleness_reason(false)
             .expect("the swap must be detected via the fingerprint");
         assert!(reason.contains("fingerprint"), "reason={reason}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fingerprint_ignores_top_level_symlink() {
+        // M17 round-3 (codex audit): a top-level symlink must not flip the fingerprint (the
+        // walks only ever yield files). Unix-gated: creating a symlink needs privileges on
+        // Windows CI, so the symlink arm only runs where std::os::unix::fs::symlink exists.
+        use std::os::unix::fs::symlink;
+        let dir = tempdir().unwrap();
+        write_test_file(dir.path(), "keep.txt", "kept\n");
+        let index = TrigramIndex::build(dir.path()).unwrap();
+        let digest_before = compute_tree_fingerprint(dir.path(), false);
+
+        symlink(dir.path().join("keep.txt"), dir.path().join("link.txt")).unwrap();
+        assert_eq!(
+            compute_tree_fingerprint(dir.path(), false),
+            digest_before,
+            "an added top-level symlink must not change the fingerprint"
+        );
+        assert!(
+            index.staleness_reason(false).is_none(),
+            "an added top-level symlink must not trigger staleness"
+        );
     }
 
     #[test]
