@@ -8392,11 +8392,22 @@ fn detect_warm_index_state(
 
     match TrigramIndex::load(&index_path) {
         Ok(index) => {
-            // H1d (audit): a query's --no-ignore mode that disagrees with the mode this
-            // index was built under must be treated as stale so auto-routing does not
-            // silently serve gitignored content the query didn't ask for (or silently
-            // omit gitignored content a --no-ignore query did ask for).
-            let is_stale = index.is_stale(args.no_ignore);
+            // M17 (audit-m17): the ROOT check runs FIRST, before any staleness work -- a
+            // `.tg_index` reached from a DIFFERENT tree than it was built for must never be
+            // warm-served (copied index, renamed tree, symlink alias). `is_stale` then also
+            // covers the ordinary same-root staleness cases (H1d no_ignore mode flip,
+            // per-file mtime/size, new files). A mismatch is disclosed via the same verbose
+            // "[index]" channel as every other rebuild decision; routing then declines the
+            // index (serving the query correctly through the fallback engine) and any actual
+            // rebuild happens in `handle_index_search`, which repeats the check at its own
+            // load sites.
+            let root_reason = index.root_servability_reason(Path::new(request.primary_path()));
+            if args.verbose {
+                if let Some(reason) = &root_reason {
+                    eprintln!("[index] refusing to serve cached index: {reason}");
+                }
+            }
+            let is_stale = root_reason.is_some() || index.is_stale(args.no_ignore);
             (
                 IndexRoutingState {
                     exists: true,
@@ -9935,7 +9946,17 @@ fn handle_index_search(
 
     let index_path = resolve_index_path(request.primary_path());
 
-    let index = if let Some(loaded) = preloaded_index {
+    // M17 (audit-m17): never serve a mismatched root. The preloaded index arrived via
+    // `detect_warm_index_state`'s routing gate, which now marks a root-mismatched index
+    // stale (so this arm is normally never reached with one); the filter is the
+    // defense-in-depth invariant that `handle_index_search` itself never serves a wrong
+    // tree even if a future caller bypasses that gate. A filtered-out index falls through
+    // to the disk-load branch below, which repeats the check and full-rebuilds.
+    let index = if let Some(loaded) = preloaded_index.filter(|loaded| {
+        loaded
+            .root_servability_reason(Path::new(request.primary_path()))
+            .is_none()
+    }) {
         // audit #138 item #3 (load-once): `detect_warm_index_state` already loaded this index
         // (and, by construction, only ever hands one to us via the `should_route_to_index()` /
         // warm_index() routing arm, which requires `!is_stale`) -- reuse it instead of reading
@@ -9971,6 +9992,33 @@ fn handle_index_search(
                 return run_index_query(args, request, query, &fresh);
             }
         };
+        // M17 (audit-m17): the ROOT check runs BEFORE `staleness_reason`/incremental
+        // update -- the per-file walk asks the STORED root for its health, so on a
+        // mismatched tree it must not be the decision maker. A mismatch full-rebuilds from
+        // the QUERY root (never incremental: file identity from a different tree makes
+        // incremental both wasteful and semantically confusing), disclosing the reason
+        // through the same "[index] stale" channel as every other rebuild decision.
+        if let Some(reason) = loaded.root_servability_reason(Path::new(request.primary_path())) {
+            if args.verbose {
+                eprintln!("[index] stale: {reason}");
+            }
+            let started = Instant::now();
+            let fresh = TrigramIndex::build_with_options(
+                Path::new(request.primary_path()),
+                args.no_ignore,
+            )?;
+            save_index_locked(&fresh, &index_path, args.verbose);
+            if args.verbose {
+                eprintln!(
+                    "[index] full rebuild complete in {:?}: {} files, {} trigrams, {} postings",
+                    started.elapsed(),
+                    fresh.file_count(),
+                    fresh.trigram_count(),
+                    fresh.total_postings()
+                );
+            }
+            return run_index_query(args, request, query, &fresh);
+        }
         if let Some(reason) = loaded.staleness_reason(args.no_ignore) {
             if args.verbose {
                 eprintln!("[index] stale: {reason}");
@@ -10063,8 +10111,16 @@ fn run_index_query(
         // than this fix's scope (the shared native walk emitter).
         matches.extend(results.into_iter().map(|result| {
             let (text, bytes, raw) = guaranteed_utf8_match_fields(result.text);
+            // M17 F3: the index dereferenced through the canonical root (sound), but the
+            // EMITTED path re-projects back through the QUERY's original spelling so a
+            // relative / differently-spelled query sees its own path space (tree/a.txt),
+            // matching what the native/rg routes emit for the same invocation.
+            let file = index
+                .display_path(Path::new(request.primary_path()), &result.file)
+                .to_string_lossy()
+                .into_owned();
             SearchMatchJson {
-                file: result.file.to_string_lossy().into_owned(),
+                file,
                 line: result.line,
                 text,
                 bytes,
