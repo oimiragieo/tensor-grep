@@ -663,11 +663,7 @@ fn compute_tree_fingerprint(canonical_root: &Path, no_ignore: bool) -> u64 {
     names.sort();
     for entry in names
         .into_iter()
-        .filter(|path| {
-            !path
-                .file_name()
-                .is_some_and(|name| is_tg_index_owned_entry(name))
-        })
+        .filter(|path| !path.file_name().is_some_and(is_tg_index_owned_entry))
         .take(TREE_FINGERPRINT_TOP_LEVEL_CAP)
     {
         if let Some(name) = entry.file_name() {
