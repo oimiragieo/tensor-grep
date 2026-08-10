@@ -604,8 +604,7 @@ fn validate_entry_rel_path(rel: &Path) -> Result<()> {
 /// never indexed and are `.`-hidden to the walker), so the fingerprint is the only surface
 /// that could see them.
 fn is_tg_index_owned_entry(name: &std::ffi::OsStr) -> bool {
-    name == std::ffi::OsStr::new(".tg_index")
-        || name.starts_with(std::ffi::OsStr::new("..tg_index."))
+    name == std::ffi::OsStr::new(".tg_index") || name.to_string_lossy().starts_with("..tg_index.")
 }
 
 /// M17 F1 (audit-m17 gate): representative-set identity of the tree this index was built
@@ -643,8 +642,9 @@ fn compute_tree_fingerprint(canonical_root: &Path) -> u64 {
         })
         .take(TREE_FINGERPRINT_TOP_LEVEL_CAP)
     {
-        let name = entry.file_name();
-        hasher.update(name.to_string_lossy().as_bytes());
+        if let Some(name) = entry.file_name() {
+            hasher.update(name.to_string_lossy().as_bytes());
+        }
         let meta = match std::fs::metadata(&entry) {
             Ok(meta) => meta,
             Err(_) => continue,
@@ -730,10 +730,12 @@ impl TrigramIndex {
         }
         normalize_postings(&mut postings);
 
+        let tree_fingerprint = compute_tree_fingerprint(&canonical_root);
+
         Ok(Self {
             root: canonical_root.clone(),
             canonical_root,
-            tree_fingerprint: compute_tree_fingerprint(&canonical_root),
+            tree_fingerprint,
             files: file_entries,
             file_trigrams,
             postings,
@@ -1185,7 +1187,7 @@ impl TrigramIndex {
                 .collect();
 
             for file in &current_files {
-                let Some(rel) = file.strip_prefix(&self.canonical_root) else {
+                let Ok(rel) = file.strip_prefix(&self.canonical_root) else {
                     continue;
                 };
                 if !indexed_paths.contains(rel) {
