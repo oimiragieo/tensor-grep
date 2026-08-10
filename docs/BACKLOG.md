@@ -78,6 +78,24 @@
     raw-leaf identity (A38), Windows junction fixtures (no privilege needed), 4 new tests RED→GREEN;
     A48 handle-anchoring + undo leaf-following recorded canonically as M1-FU1/M1-FU2 (owners +
     reopen triggers). Codex R1 FIX-BEFORE-MERGE(4)→R2 SHIP.
+- **Named M-follow-up rows (A49, recorded beside M1-FU1/M1-FU2 in this same campaign note):**
+  - **M16-FU1 `SCAN-ALL-NOT-SAME-NODE`** — `all:`/`not:` composite rule bodies (nested/intersection
+    shapes) stay DROPPED fail-closed today (both the Rust twin `backend_ast_workflow.rs:1181-1184`
+    and Python `ast_workflows.py:475-478` release only `any`-of member semantics; an intersection
+    body requires same-node semantics the native matcher cannot express and would be
+    under-matched, not served). OWNER: M16 change-control (Rust `tg scan`). DISPOSITION: DEFERRED,
+    not claimed. REOPEN TRIGGER: a consumer configuration whose composite rules use
+    `all:`/`not:` bodies and needs them evaluated (currently they drop fail-closed rather than
+    under-match).
+  - **M17-FU1 `INDEX-FINGERPRINT-SAMPLE-CAP`** — the `tree_fingerprint` (u64 full-content digest of
+    the top-32 top-level files, index-machinery namespace excluded) closes same-path
+    metadata-preserving swaps only for the sampled files; files NOT sampled (33rd+ top-level and
+    every non-top-level file) are covered only by the per-file mtime/size identity loop
+    (`rust_core/src/index.rs` `compute_tree_fingerprint` / `staleness_reason` — the honest boundary
+    is named in the code as "tracked as follow-up M17-FU1"). OWNER: M17 index change-control.
+    DISPOSITION: DEFERRED, not claimed. REOPEN TRIGGER: a same-path metadata-preserving swap
+    landing in an unsampled file (below the 32-file sampling cap) that the mtime/size loop cannot
+    detect, or a consumer requiring full-content identity for every entry.
   - M3 (#983): LSP `documentChanges` CreateFile/RenameFile/DeleteFile confinement — was VACUOUS
     (file-ops invisible; `all()` over empty set). Five-field enumeration + opaque-member fail-closed +
     strict external-DocumentUri validator (absolute file: URI only; rejects %00, whitespace,
