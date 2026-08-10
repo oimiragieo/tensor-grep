@@ -18,11 +18,15 @@ import pytest
 
 
 class _FakeNode:
-    """Minimal tree-sitter node stub."""
+    """Minimal tree-sitter node stub (with the byte span real nodes carry)."""
 
     def __init__(self, node_type: str, line: int, children: list[_FakeNode] | None = None):
         self.type = node_type
         self.start_point = (line, 0)
+        # M16: _build_node_type_index indexes by (line, start_byte, end_byte) span;
+        # synthetic nodes must carry a deterministic byte span or they are skipped.
+        self.start_byte = line * 4
+        self.end_byte = line * 4 + 1
         self.children: list[_FakeNode] = children or []
 
 
@@ -53,7 +57,7 @@ def test_build_node_type_index_deep_tree_does_not_raise_recursion_error() -> Non
 
 
 def test_build_node_type_index_correct_line_mapping() -> None:
-    """Line numbers in the index must match node.start_point[0] + 1."""
+    """The line + byte span in the index must match the node's own span (line+1)."""
     from tensor_grep.backends.ast_backend import AstBackend
 
     backend = AstBackend()
@@ -72,10 +76,11 @@ def test_build_node_type_index_correct_line_mapping() -> None:
     )
     index = backend._build_node_type_index(root)
 
-    assert index["root"] == [1]
-    assert index["child_a"] == [2]
-    assert index["child_b"] == [3]
-    assert index["grandchild"] == [4]
+    # M16: NodeSpan = (line, start_byte, end_byte); _FakeNode derives byte spans from line.
+    assert index["root"] == [(1, 0, 1)]
+    assert index["child_a"] == [(2, 4, 5)]
+    assert index["child_b"] == [(3, 8, 9)]
+    assert index["grandchild"] == [(4, 12, 13)]
 
 
 # ---------------------------------------------------------------------------
