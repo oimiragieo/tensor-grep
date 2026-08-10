@@ -325,6 +325,9 @@ honest `resolution_gaps` entries.
    (`definition_header_siblings`, `lang_c_cpp_include.py:101`) — but a full cross-file graph's
    canonical-site decision beyond the include-confirmed band is still unmade: genuinely open.
 
+**SUPERSEDED 2026-08-09 (Tasks 10D/10E): now 10 parser-backed / 0 foundational, tier EMPTY — the
+2-residue split below is retired.**
+
 **Honest framing of the coverage number -- CORRECTED 2026-08-01, do not re-invent a third tier;
 counts UPDATED 2026-08-04 by PR #927 (Java promoted foundational -> parser-backed, Task 10A), then
 again the same day by the Task 10B C# wave and the Task 10C PHP wave.**
@@ -332,8 +335,8 @@ again the same day by the Task 10B C# wave and the Task 10C PHP wave.**
 split is a strict BINARY, not a hand-counted list. `_symbol_navigation_descriptor()`
 (`grep -n "_symbol_navigation_descriptor" src/tensor_grep/cli/repo_map.py` -- was `:562`, now `:570`) partitions
 `LANGUAGE_REGISTRY` on exactly one field -- `LanguageSpec.references_and_calls is not None` -- into
-**parser-backed** (csharp, go, java, javascript, php, python, rust, typescript -- 8) vs
-**foundational** (c, cpp -- 2). Java's/C#'s/PHP's refs/callers are AST-verified only in-file so far; cross-file caller
+**parser-backed** (c, cpp, csharp, go, java, javascript, php, python, rust, typescript -- 10) vs
+**foundational** (-- 0). Java's/C#'s/PHP's refs/callers are AST-verified only in-file so far; cross-file caller
 confirmation still falls back to the text prefilter pending a package/source-root resolver, so it
 belongs in the parser-backed tier without yet having full cross-file parity within it -- a real,
 citable WITHIN-tier gap, same shape as go's. Go belongs in the parser-backed tier: the descriptor's

@@ -3,8 +3,8 @@ export const meta = {
   description: 'Run the codex-gated adversarial audit-fix loop on a verified H/M finding: behavioral RED -> minimal fix -> independent codex gate -> verify every finding with your own probes -> re-audit until SHIP. Loads the tensor-grep-codex-gated-audit-loop skill.',
   whenToUse: 'Fixing a verified audit finding (H/M) that needs a draft PR; writing a gated test that must pass identically on the desktop AND CI pytest env; any security-surface change needing an adversarial gate before merge (A3); or a fix to a finding a prior fix already shipped wrong (the twin law).',
   phases: [
-    { title: 'Seam', detail: 're-verify the finding on origin/main with git-show (never the dirty local tree); census the argv-rewrite doors (A83)' },
-    { title: 'RED', detail: 'behavioral test that fails pre-fix; for env-gated tests, make hermetic by construction (A85)' },
+    { title: 'Seam', detail: 're-verify the finding on origin/main with git-show (never the dirty local tree); census the argv-rewrite doors (A83) — see skills tensor-grep-argv-normalization-and-shadowing (front-door rewrites, shape-monotonic routing) and tensor-grep-cross-platform-path-confinement (junction/drive-absolute confinement) for the seam-phase census' },
+    { title: 'RED', detail: 'behavioral test that fails pre-fix; for env-gated tests, make hermetic by construction (A85); hostile fixtures must BITE — see skill tensor-grep-hermetic-hostile-tests (env-independent seams, fixture-BITES precheck, mutation asserted-applied)' },
     { title: 'GREEN', detail: 'minimal fix; platform-gate path-shape transforms (A84)' },
     { title: 'Gate', detail: 'independent codex audit (fresh context, try to BREAK it, cite file:line)' },
     { title: 'Verify', detail: 're-probe every finding with YOUR OWN commands; re-audit until SHIP; record rounds in the commit message' },
@@ -17,9 +17,13 @@ export const meta = {
 // re-derive every run: (1) a finding's file:line drifts release-to-release, so
 // re-verify the SYMBOL on origin/main; (2) a front-door argv normalizer
 // (SEARCH_OPTION_FIRST_FLAGS -> `tg search ...`) can SHADOW the door a fix
-// guards, so census every door the rewritten argv can reach (A83); (3) a
+// guards, so census every door the rewritten argv can reach (A83) -- see
+// tensor-grep-argv-normalization-and-shadowing; (3) a
 // Windows-only path transform applied unconditionally flips a confinement
-// check on POSIX (A84). The seam phase is the anti-drift ledger: it derives
+// check on POSIX (A84) -- see tensor-grep-cross-platform-path-confinement.
+// For RED-phase hostile fixtures, tensor-grep-hermetic-hostile-tests carries
+// the env-independent seam + fixture-BITES construction discipline. The seam
+// phase is the anti-drift ledger: it derives
 // the ground-truth facts by running git-show, then the RED/GREEN/Gate/Verify
 // phases work against that ledger -- never against a frozen citation.
 // ---------------------------------------------------------------------------
