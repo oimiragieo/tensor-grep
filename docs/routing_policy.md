@@ -133,7 +133,9 @@ itself, *after* routing, before running the query:
   exit 0). Covers both explicit `--index` and warm auto-routing, since both reach
   `run_index_query`.
 - **`--no-ignore` mode tracking:** the on-disk index format records the `no_ignore` mode it was
-  built with (`INDEX_FORMAT_VERSION` 4). A query whose `--no-ignore` request disagrees with the
+  built with (the `no_ignore` byte was introduced in `INDEX_FORMAT_VERSION` 4; the current format
+  version is higher -- readers/writers derive it from the constant, never a literal). A query whose
+  `--no-ignore` request disagrees with the
   stored build mode is treated as stale and triggers a rebuild under the query's requested mode --
   this closes both an information-disclosure gap (an index built with `--no-ignore` silently
   leaking gitignored content into a later default query) and a false-negative gap (an index built
