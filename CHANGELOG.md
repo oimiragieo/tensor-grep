@@ -1,6 +1,291 @@
 # CHANGELOG
 
 
+## v1.110.12 (2026-08-10)
+
+### Bug Fixes
+
+- **index**: Reused index never serves a mismatched stored root (M17 audit)
+  ([#988](https://github.com/oimiragieo/tensor-grep/pull/988),
+  [`855939b`](https://github.com/oimiragieo/tensor-grep/commit/855939b0f730d45ddc72f428334ecc28a97d1a01))
+
+* fix(index): never serve a .tg_index whose stored root != query root (M17 audit)
+
+Pre-fix gap: the reuse path had NO root comparison at all. The stored root was recorded verbatim
+  (build_with_options wrote root.to_path_buf(), index.rs build literal) and staleness_reason
+  (index.rs) only checked no_ignore mode + per-file mtime/size + a new-file walk OVER SELF.ROOT --
+  if the query path resolves to a different tree than the index was built for (copied .tg_index,
+  renamed tree, symlink alias), the per-file checks ask the WRONG tree for its health and can pass,
+  serving a wrong tree's entries with exit 0.
+
+Fix: - index.rs: TrigramIndex gains a persisted canonical_root (Path::canonicalize at build, once,
+  via canonical_root_of); format version 4 -> 5 (old indices fail the version gate -> rebuild, same
+  established pattern as the H1d no_ignore bump). rebuild_incremental_with_options re-records it.
+  New public seam root_servability_reason(query_root): canonicalize-vs-canonicalize compare;
+  Some(reason) = refuse/rebuild, None = serve; empty stored root (legacy JSON form) fails closed
+  toward rebuild. - main.rs detect_warm_index_state: root check runs BEFORE is_stale/staleness work;
+  mismatch marks the routing state stale (warm routing declines, query served correctly by the
+  fallback engine) with a verbose disclosure. - main.rs handle_index_search: the preloaded_index arm
+  filters through the check (defense in depth: never serve a mismatched root even if a future caller
+  bypasses the routing gate), and the fresh disk-load branch checks root BEFORE staleness_reason --
+  mismatch full-rebuilds from the QUERY root (never incremental: file identity from a different tree
+  is semantically wrong), disclosing via the existing "[index] stale" verbose channel. -
+  staleness_reason's per-file identity walk is kept as the same-tree backstop, unchanged.
+
+Tests (rust_core/src/index.rs unit tests, CI is the compile/test oracle): -
+  test_m17_stored_canonical_root_matches_canonicalized_build_root: stored canonical root ==
+  canonicalize(build root), survives save/load round trip, re-recorded by incremental rebuild. -
+  test_m17_root_servability_refuses_different_tree_but_serves_same_tree: different tree ->
+  Some("root mismatch") (rebuild); same tree via same spelling and via canonicalized spelling ->
+  None (serve control). - test_m17_empty_canonical_root_fails_closed: legacy-form empty root ->
+  refuse. - test_format_version_in_binary updated: pins version 5.
+
+RED argument: pre-fix, root_servability_reason() and canonical_root() do not exist -- the tests are
+  compile-time failures on the old code (the seam is a structural absence); main.rs behavior changes
+  are verified by CI only.
+
+rustfmt --check (edition 2021): clean on both touched files.
+
+* fix(index): close all 5 M17 gate findings on index-root reuse (F1-F5)
+
+Follow-up to bec8f38 (root comparison at reuse). Each finding is closed in index.rs; main.rs needs
+  no change (its call sites pass the query path raw, and every seam now canonicalizes/derefs
+  internally).
+
+F1 HIGH - tree identity backstop. staleness_reason's per-file name/mtime/size loop cannot see a
+  wholesale same-path swap that preserves metadata. Added tree_fingerprint (SHA-256 over a BOUNDED
+  representative set: direct children of the canonical root, name+size+mtime+first 4KiB per file,
+  .tg_index excluded, deterministic order; 32-entry / 4KiB caps), persisted (format v6) and compared
+  in staleness_reason AFTER the per-file loop, so a metadata-preserving swap is detected while a
+  normal edit still reports the precise file-level reason. Bounded by design, not a full re-hash;
+  per-file granular platform IDs (unix dev+ino / Windows file index) recorded as follow-up M17-FU1
+  (owner: future audit; reopen: same-path swap reported stale-served, or Windows per-file identity
+  needed).
+
+F2 HIGH - relative-root escape. Builds now walk the CANONICALIZED root, file entries are stored
+  canonical-root-RELATIVE, and the ONLY dereference is canonical_root.join(rel) (deref_path), used
+  by query candidates, both search paths, incremental update, and every staleness probe (including
+  the new-file scan, which now walks the canonical root and compares relativized paths). The
+  build-spelling root is display-only and no longer serialized (loaded indices carry root ==
+  canonical root). Nothing in an index is ever a cwd-dependent spelling, so a later query from a
+  different cwd cannot re-root a stored path at its own working directory.
+
+F3 MEDIUM - canonicalization fail-open. canonical_root_of now returns Result: build/rebuild FAIL on
+  uncanonicalizable roots (no raw fallback), and root_servability_reason refuses UNCONDITIONALLY
+  when the QUERY root cannot be canonicalized. No side of the comparison can ever pass "by raw
+  spelling coincidence".
+
+F4 MEDIUM - unenforced public invariant. The public serving surface now requires a verified root:
+  search() and query_candidates/query_candidates_fixed (error out on an empty canonical root -- the
+  legacy load_json form and any crafted load). query_candidates* changed to Result<Vec<..>>
+  (breaking API change, deliberate: silent empty was the fail-open). The CLI already routes every
+  serve through root_servability_reason, so this never fires in-tree.
+
+F5 MEDIUM - lossy-path alias collision. Canonical root is strict UTF-8 in both directions: build
+  rejects non-UTF-8 roots (canonical_root_of) and entry rel-paths (relativize_entry), and bincode
+  load rejects non-UTF-8 stored roots (from_utf8, not from_utf8_lossy). Distinct non-UTF-8 paths can
+  no longer collapse into one identity at any point on the wire.
+
+Format: INDEX_FORMAT_VERSION 5 -> 6 (canonical root only, no build-spelling root; tree_fingerprint
+  u64). Old indices fail the version gate and rebuild (the established H1d pattern).
+  staleness_reason's per-file walk is retained as the documented same-tree backstop on top of the
+  new identity checks.
+
+Tests (CI is the compile/test oracle; none run locally - rustfmt only): - unit
+  test_m17_f1_tree_fingerprint_detects_metadata_preserving_swap:
+  same-name/same-size/same-mtime/different-content swap (mtimes pinned via std FileTimes) must
+  report "fingerprint", not a per-file reason. RED pre-fix: no fingerprint existed, the swap read as
+  fresh (serve).
+
+- unit test_m17_f2_entries_relative_and_deref_through_canonical_root: stored entries relative;
+  results absolute canonical-root-prefixed; survives save/load round trip. RED pre-fix: entries kept
+  the raw (cwd-relative) spelling. - integration
+  test_m17_f2_relative_root_index_never_reads_other_cwd_tree (windows-gated suite): build with
+  relative root from cwd A, query by ABSOLUTE path from cwd B whose decoy tree is byte-for-byte
+  metadata- identical; must exit 0 with the real match. RED pre-fix: staleness+search read cwd B's
+  decoy (exit 1/no match). - unit test_m17_f3_uncanonicalizable_query_root_is_unconditional_refusal:
+  nonexistent query root -> refusal naming the canonicalize failure. - unit
+  test_m17_f4_legacy_json_loaded_index_is_not_searchable: load_json then search()/query_candidates()
+  error "no verified root". - unit test_m17_f5_non_utf8_canonical_root_fails_load_closed:
+  hand-crafted wire format with invalid-UTF-8 canonical root bytes -> load error. -
+  test_format_version_in_binary pinned 5 -> 6; hostile-length-prefix and future-version tests
+  unaffected (still error by construction).
+
+rustfmt --check (edition 2021): clean on index.rs + tests/test_index.rs (main.rs untouched this
+  round).
+
+* fix(index): close all 4 M17 round-2 gate findings (F1-F4)
+
+Follow-up to 848661e. CI is the compile/test oracle; rustfmt-only locally.
+
+F1 HIGH - fingerprint evasion + underscoped FU1 + .tg_index slot bug. (a) compute_tree_fingerprint
+  now hashes FULL content of every sampled file (no 4 KiB byte cap; bounded by the 32-file
+  TREE_FINGERPRINT_TOP_LEVEL_CAP), so a same-size/same-mtime edit past offset 4096 in a sampled file
+  is detected -- inode identity would NOT have caught in-place modification, so M17-FU1 is re-scoped
+  (below). (b) `.tg_index` is now excluded BEFORE the sampling cap (filter before take(32)); the
+  index's own persisted file can no longer displace a real top-level file from the sample and
+  false-trip staleness. FU1 re-scope (A49 record): "per-file FULL content identity (or per-file
+  digest) for every file OUTSIDE the 32-file top-level sample -- 33rd+ top-level files and all
+  non-top-level files, which today are covered only by the mtime/size loop. Note inode/dev IDs do
+  NOT close this: in-place modification keeps the inode." Owner: future index audit; reopen trigger:
+  a same-path metadata-preserving modification outside the top-32 sample serves stale postings, or a
+  user indexes a tree with >32 top-level entries.
+
+F2 HIGH - F5 not strict for entry paths + unvalidated loaded entries. (a) bincode entry decode is
+  now strict from_utf8 (never from_utf8_lossy) -- a non-UTF-8 name rejects the whole index. (b)
+  every loaded entry (bincode AND the legacy JSON from_serializable path) is validated by
+  validate_entry_rel_path: must be strictly relative with no RootDir/Prefix component and no `..`
+  escape, so canonical_root.join(rel) is provably confined to the verified root; any violation
+  rejects the index (fail closed). Empty rel (file-rooted index) is allowed: join("") is the root
+  itself.
+
+F3 MEDIUM - user-visible path-spelling regression. Dereference keeps canonical storage (sound), but
+  DISPLAY is now a separate contract: new TrigramIndex::display_path(query_spelling, canonical_file)
+  re-projects the emitted path as query_spelling.join(rel), and run_index_query emits through it --
+  a relative `tree` query emits tree/a.txt (its own path space), a differently-spelled absolute
+  query emits its own spelling, and reads stay confined to the canonical root. main.rs:10112-10124
+  is the single projection point (covers text/json/ndjson/count emitters); parity tests with
+  absolute roots are byte-unchanged (projection is a no-op there).
+
+F4 MEDIUM - rlib API break without A40 disposition. query_candidates*_checked (Result, fail-closed)
+  are now the primary surface; query_candidates / query_candidates_fixed are restored as
+  Vec-returning legacy compatibility wrappers (internal callers moved to the checked variants), so
+  downstream rlib consumers outside the in-repo census keep compiling. The deliberate API-shape
+  decision + migration note is recorded in the wrapper's doc comment (A49 style): checked variants
+  are the future; wrappers empty-degrade on an unverified index and are the deletion target of a
+  future breaking release.
+
+Tests added/updated (all structural; none run locally): -
+  test_m17_f1_fingerprint_detects_change_beyond_4096_bytes: first 4096 bytes identical, size+mtime
+  preserved, tail byte changed -> fingerprint reason; RED on the old 4 KiB-capped sampler (identical
+  digest), GREEN on full content hashing. - test_m17_f1_fingerprint_slots_not_consumed_by_tg_index:
+  40 top-level files + persisted .tg_index -> not stale; RED pre-filter (`.tg_index` sorted first
+  displaces f031 from the sample -> digest flip), GREEN post-filter. -
+  test_m17_f2_load_rejects_unconfined_entry_paths: crafted wire with (a) non-UTF-8 entry name
+  (reject), (b) rooted/absolute entry (reject; platform- tolerant message assert: Windows treats
+  /foo as rooted-but-relative so the component check fires), (c) `..` entry (reject "escapes the
+  canonical root"), (d) confined relative entry loads (control). - test_m17_f3 (unit, in F2 test) +
+  integration test_m17_f3_index_output_uses_query_root_spelling (windows suite): relative `tree`
+  root emits tree\a.txt and never the canonical absolute path; unit side asserts display_path ==
+  query_spelling.join(rel) while search results stay canonical-absolute. -
+  test_m17_f4_legacy_json_loaded_index_is_not_searchable extended: checked variant errors on the
+  legacy form, legacy wrapper degrades to empty.
+
+rustfmt --check (edition 2021): clean on all three touched files (index.rs, main.rs,
+  tests/test_index.rs).
+
+* fix(index): M17 round-3 -- portable display-spelling test + index-machinery namespace exclusion
+
+Follow-up to 75b7314. Two real round-3 gate issues, fixed. CI is the compile/test oracle;
+  rustfmt-only locally.
+
+F1 FIXED -- Windows-only separator literal in the display-spelling integration test.
+  test_m17_f3_index_output_uses_query_root_spelling asserted the literal "tree\\a.txt" (backslash).
+  The expected path is now constructed portably (Path::new("tree").join("a.txt").to_string_lossy()),
+  which yields `tree\a.txt` on Windows and `tree/a.txt` on POSIX, so the assertion discriminates on
+  every platform; the doc comment was made platform-neutral. Audited the other M17-added tests for
+  the same class: the cross-cwd test uses cwd_a.join("tree") (Portable), the unit tests use
+  Path::new joins (portable) -- no other hardcoded separators remain (grep confirms zero backslash
+  escapes in both files).
+
+F2 FIXED -- fingerprint sampled the index's OWN leftover machinery namespace. The atomic-save temp
+  is `..tg_index.<token>.tmp` (atomic_write_bytes: parent joined with format!(".{file_name}.{}.tmp")
+  where file_name = ".tg_index", so the temp is `..tg_index.<token>.tmp`) and the write lock is
+  `..tg_index.lock` (index_lock::lock_path_for). A leftover temp (crash between write and rename) or
+  lock (hard crash) persists at the top level; it sorts first (`.` < letters) and consumed one of
+  the 32 sample slots, flipping the digest into a FALSE staleness transition on a healthy tree.
+  compute_tree_fingerprint now excludes the whole OWNED namespace via is_tg_index_owned_entry BEFORE
+  sorting/sampling: `.tg_index`, `..tg_index.*` (covers the temp and lock families). The artifacts
+  were already invisible to the per-file loop (never indexed) and the new-file walk (`.`-hidden), so
+  the fingerprint was the only affected surface.
+
+Test (structural): test_m17_f2_fingerprint_ignores_leftover_index_machinery_files -- 40 top-level
+  files, then create `..tg_index.deadbeef.tmp` and `..tg_index.lock`, with a fixture-premise assert
+  that read_dir sees them (name starts_with "..tg_index."); asserts the fingerprint digest is
+  unchanged and staleness_reason stays None. RED pre-fix: the leftover sorts into slot 1, displacing
+  a real file from the 32-cap, flipping the digest -> false stale. GREEN post-fix: excluded before
+  the cap, sampled set unchanged.
+
+Re-check of the round-3 "passed by inspection" claims (all hold on inspection): - Windows
+  drive/UNC/backslash-parent confinement: `C:\x` / `\\server\share\x` are !is_relative() -> "not
+  relative" bail; `a\..\b` yields Component::ParentDir on Windows -> "escapes" bail; on POSIX
+  backslash is a normal filename char, not an escape. validate_entry_rel_path covers all three via
+  Prefix/RootDir/ ParentDir (index.rs:566-592). - `..` in the query spelling: display_path is
+  EMISSION-only (query_spelling.join(rel) with rel pre-validated no-`..`); reads never use the
+  spelling, so a `..`-containing user spelling cannot redirect I/O. - Legacy-JSON unsearchability:
+  from_serializable sets an empty canonical root; ensure_searchable refuses search/candidates on it
+  (round-2 F4 test). - mtime precision consistency: the fingerprint hashes the SAME
+  metadata().modified() values in compute and staleness recompute (same clock, same filesystem
+  granularity); FileTimes-pinned tests round-trip exactly on NTFS/ext4.
+
+* fix(index): repair 4 M17 compile errors so the reused-root guard builds (gate)
+
+- is_tg_index_owned_entry: OsStr has no starts_with; compare via to_string_lossy -
+  compute_tree_fingerprint: file_name() returns Option<&OsStr>; guard the hash update -
+  Index::build: compute tree_fingerprint before moving canonical_root into the struct -
+  staleness_reason: strip_prefix returns Result, not Option; match Ok(rel)
+
+* fix(index): fingerprint must use the walk's ignore semantics for agreement (M17 gate)
+
+The staleness fingerprint (F1) ran raw read_dir over the canonical root, so a gitignored file added
+  after build flipped the digest and falsely reported staleness -- disagreeing with the new-file
+  walk, which correctly ignored it.
+
+Fix: derive the fingerprint's top-level file set from ignore::WalkBuilder with the SAME config as
+  collect_file_entries (hidden=true, git_ignore=!no_ignore, max_depth=1, add_ignore trio), so
+  agreement holds by construction. The walk's hidden filter also excludes the tg-index dot-namespace
+  (.tg_index, ..tg_index.*), replacing the old is_tg_index_owned_entry filter for the fingerprint
+  (kept as defense-in-depth).
+
+Also fixes the doc_lazy_continuation clippy warning (blank doc line after list). Closes: A87 (M17
+  compile -> re-gate), M17 gate 3a (fingerprint-vs-walk).
+
+* fix(index): fingerprint selects FILES first (codex M17 round-3 audit)
+
+The fingerprint's depth-1 walk collected every entry then applied the 32-slot cap before is_file()
+  rejection, so a top-level directory or symlink could both flip the digest (the walks never see
+  non-files) and consume a slot, displacing a real file from the representative sample. Filter
+  walker entries to regular files BEFORE sort/cap -- matching collect_file_entries and the new-file
+  scan by construction (codex audit finding, M17 round-3).
+
+Regression tests (each RED on the pre-fix fingerprint): -
+  fingerprint_ignores_top_level_directories_and_symlinks -
+  fingerprint_cap_not_consumed_by_early_sorting_directories
+
+* fix(index): make fingerprint regression tests genuinely RED pre-fix + symlink arm (codex round-3)
+
+Codex re-audit: the cap regression named dirs zdir* which sort AFTER the target file, so pre-fix the
+  target still landed in the 32-slot sample and the test passed on the bug (not a real guard).
+  Rename dirs to adir* (sort FIRST) and target to zzz_target.txt (sort after), making the test RED
+  pre-fix. Add a Unix-gated top-level-symlink regression (std::os::unix::fs::symlink); Windows CI
+  cannot create symlinks without privilege, so that arm is #[cfg(unix)].
+
+* fix(index): clippy redundant-closure on is_some_and (M17 round-3 gate)
+
+* fix(index): pin wire-format version in the Windows rebuild test (M17 gate)
+
+test_tg_search_index_old_format_triggers_rebuild (cfg(windows) only -- the platform divergence that
+  hid this) hardcoded rebuilt[4] == 4, but M17 bumped INDEX_FORMAT_VERSION 4 -> 5 -> 6 (canonical
+  root, then tree_fingerprint), so on Windows the rebuilt index carries 6 and the stale literal
+  failed. Export INDEX_FORMAT_VERSION as pub and pin the test to the constant, so the next bump
+  cannot silently go wrong again (cite-the-symbol provenance rule).
+
+* fix(index): log fingerprint walk errors instead of silent discard (M17 gate)
+
+test_known_discard_sites_never_grow (task #276 ratchet) flagged the new fingerprint walk's silent
+  .filter_map(|e| e.ok()) as a count-rising regression on the python legs. The fingerprint is a
+  best-effort staleness signal, but a truncated walk must not read as clean: log the walk error (the
+  ratchet's own oracle test blesses the map_err(log).ok() shape), and use the non-ratcheted binding
+  in the leftover-machinery fixture's read_dir enumeration (not a walk site) so the census stays at
+  the audited walk sites only.
+
+* docs: drop stale INDEX_FORMAT_VERSION literal in routing_policy (codex final-note)
+
+The doc claimed the on-disk format is INDEX_FORMAT_VERSION 4; the current format is 6 (canonical
+  root + tree_fingerprint). State the no_ignore byte was introduced at v4 and that the current
+  version derives from the constant, never a literal.
+
+
 ## v1.110.11 (2026-08-10)
 
 ### Bug Fixes
