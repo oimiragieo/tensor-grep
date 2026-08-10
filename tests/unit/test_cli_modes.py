@@ -14482,7 +14482,7 @@ def test_scan_supports_inline_rules_text(monkeypatch, tmp_path: Path) -> None:
             )
 
     monkeypatch.setattr(
-        "tensor_grep.cli.main._select_ast_backend_for_pattern",
+        "tensor_grep.cli.ast_workflows._select_ast_backend_for_pattern",
         lambda *_args, **_kwargs: AstGrepWrapperBackend(),
     )
 
@@ -14539,7 +14539,7 @@ def test_scan_supports_single_rule_file_and_positional_path(monkeypatch, tmp_pat
             )
 
     monkeypatch.setattr(
-        "tensor_grep.cli.main._select_ast_backend_for_pattern",
+        "tensor_grep.cli.ast_workflows._select_ast_backend_for_pattern",
         lambda *_args, **_kwargs: AstGrepWrapperBackend(),
     )
 
@@ -14585,7 +14585,7 @@ def test_scan_filter_limits_project_rules(monkeypatch, tmp_path: Path) -> None:
             )
 
     monkeypatch.setattr(
-        "tensor_grep.cli.main._select_ast_backend_for_pattern",
+        "tensor_grep.cli.ast_workflows._select_ast_backend_for_pattern",
         lambda *_args, **_kwargs: AstGrepWrapperBackend(),
     )
 
@@ -14639,8 +14639,8 @@ def test_scan_project_filter_respects_positional_scan_paths(monkeypatch, tmp_pat
             )
 
     monkeypatch.setattr(
-        "tensor_grep.cli.main._select_ast_backend_for_pattern",
-        lambda *_args, **_kwargs: CountingAstBackend(),
+        "tensor_grep.cli.ast_workflows._select_ast_backend_for_pattern",
+        lambda *_args, **_kwargs: AstGrepWrapperBackend(),
     )
 
     src_dir = tmp_path / "src"
@@ -14719,7 +14719,7 @@ def test_scan_inline_rules_json_preserves_rule_metadata(monkeypatch, tmp_path: P
             )
 
     monkeypatch.setattr(
-        "tensor_grep.cli.main._select_ast_backend_for_pattern",
+        "tensor_grep.cli.ast_workflows._select_ast_backend_for_pattern",
         lambda *_args, **_kwargs: AstGrepWrapperBackend(),
     )
 
@@ -14783,7 +14783,7 @@ def test_scan_inline_rules_normalizes_ast_grep_language_names(
             )
 
     monkeypatch.setattr(
-        "tensor_grep.cli.main._select_ast_backend_for_pattern",
+        "tensor_grep.cli.ast_workflows._select_ast_backend_for_pattern",
         lambda *_args, **_kwargs: AstGrepWrapperBackend(),
     )
 
@@ -14856,7 +14856,7 @@ def test_scan_wrapper_runtime_errors_do_not_show_traceback(monkeypatch, tmp_path
             raise RuntimeError("ast-grep failed with exit code 8: invalid language")
 
     monkeypatch.setattr(
-        "tensor_grep.cli.main._select_ast_backend_for_pattern",
+        "tensor_grep.cli.ast_workflows._select_ast_backend_for_pattern",
         lambda *_args, **_kwargs: AstGrepWrapperBackend(),
     )
     inline_rules = "\n".join([

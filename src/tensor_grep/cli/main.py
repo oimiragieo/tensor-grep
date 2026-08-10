@@ -5960,26 +5960,13 @@ def _load_sg_project_config(config_path: str | None) -> dict[str, object]:
     }
 
 
-def _extract_rule_pattern(rule_data: dict[str, object]) -> str | None:
-    direct = rule_data.get("pattern")
-    if isinstance(direct, str) and direct.strip():
-        return direct.strip()
-
-    rule_node = rule_data.get("rule")
-    if isinstance(rule_node, dict):
-        nested = rule_node.get("pattern")
-        if isinstance(nested, str) and nested.strip():
-            return nested.strip()
-
-    return None
-
-
 def _load_inline_rule_specs(
     inline_rules_text: str, *, default_language: str | None = None
 ) -> list[dict[str, str]]:
     import yaml
 
     from tensor_grep.backends.ast_backend import normalize_ast_language
+    from tensor_grep.cli.ast_workflows import _extract_rule_member_patterns
 
     class _NoAliasSafeLoader(yaml.SafeLoader):
         """SafeLoader that REJECTS YAML aliases. Inline ast-grep rules never legitimately
@@ -6030,12 +6017,16 @@ def _load_inline_rule_specs(
             for rule_index, item in enumerate(raw_rules, start=1):
                 if not isinstance(item, dict):
                     continue
-                pattern = _extract_rule_pattern(item)
-                if not pattern:
+                # M16 F2: composite (multi-pattern any-of) rules are carried by
+                # the SAME member extraction the project-config path uses, so
+                # `--rule`/`--inline-rules` no longer silently drop rule.any /
+                # pattern-list members. pattern = FIRST member; patterns = ALL.
+                member_patterns = _extract_rule_member_patterns(item)
+                if not member_patterns:
                     continue
                 spec = {
                     "id": str(item.get("id") or f"inline-rule-{document_index}-{rule_index}"),
-                    "pattern": pattern,
+                    "pattern": member_patterns[0],
                     "language": normalize_ast_language(
                         item.get("language")
                         or payload.get("language")
@@ -6048,15 +6039,17 @@ def _load_inline_rule_specs(
                         spec[metadata_key] = str(item[metadata_key])
                     elif payload.get(metadata_key) is not None:
                         spec[metadata_key] = str(payload[metadata_key])
+                if len(member_patterns) > 1:
+                    spec["patterns"] = member_patterns  # type: ignore[assignment]
                 specs.append(spec)
             continue
 
-        pattern = _extract_rule_pattern(payload)
-        if not pattern:
+        member_patterns = _extract_rule_member_patterns(payload)
+        if not member_patterns:
             continue
         spec = {
             "id": str(payload.get("id") or f"inline-rule-{document_index}"),
-            "pattern": pattern,
+            "pattern": member_patterns[0],
             "language": normalize_ast_language(
                 str(payload.get("language") or default_language or "python")
             ),
@@ -6064,6 +6057,8 @@ def _load_inline_rule_specs(
         for metadata_key in ("severity", "message"):
             if payload.get(metadata_key) is not None:
                 spec[metadata_key] = str(payload[metadata_key])
+        if len(member_patterns) > 1:
+            spec["patterns"] = member_patterns  # type: ignore[assignment]
         specs.append(spec)
 
     return specs
@@ -6574,6 +6569,11 @@ def _run_ast_scan_payload(
     max_evidence_snippet_chars: int = 120,
 ) -> dict[str, object]:
     from tensor_grep.backends.ast_backend import normalize_ast_language
+    from tensor_grep.cli.ast_workflows import (
+        _match_node_identity,
+        _rule_member_patterns,
+        _select_ast_backend_for_rule,
+    )
     from tensor_grep.cli.scan_guardrails import ensure_scan_not_broad
     from tensor_grep.core.config import SearchConfig
     from tensor_grep.core.result import SearchResult
@@ -6694,7 +6694,10 @@ def _run_ast_scan_payload(
             regex_rules.append(rule)
             continue
         rule_cfg = replace(cfg, lang=rule["language"])
-        backend = _select_ast_backend_for_pattern(rule_cfg, rule["pattern"], backend_cache)
+        # M16 F3: rule-aware selection — a composite with non-native members
+        # must reach a backend that serves ALL members (or fail closed), never
+        # a backend selected from only the first member's shape.
+        backend = _select_ast_backend_for_rule(rule_cfg, rule, backend_cache)
         if (
             project_scan_fast_path
             and not scan_has_discovery_filter
@@ -6760,6 +6763,17 @@ def _run_ast_scan_payload(
         resolved_match_counts_by_file: dict[str, int] = {}
         resolved_snippets_by_file: dict[str, list[dict[str, object]]] = {}
         resolved_rule_occurrences: list[dict[str, object]] = []
+
+        # M16 F1: composite (multi-pattern any-of) rules scan EVERY member and
+        # count each matched AST NODE once across members, deduplicating by
+        # node SPAN via `_match_node_identity` (file, start_byte, end_byte; the
+        # same key the Rust scan core unions) — two distinct nodes on one line
+        # each count, matching whole-config ast-grep's per-node `any` count.
+        # Single-pattern rules keep the legacy per-node total accounting.
+        member_patterns = _rule_member_patterns(rule)
+        composite = len(member_patterns) > 1
+        resolved_identities: set[tuple[str, int, int]] = set()
+
         if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
             backend_scan_paths = (
                 _candidate_files_for_filtered_scan()
@@ -6767,34 +6781,45 @@ def _run_ast_scan_payload(
                 else resolved_scan_paths
             )
             if backend_scan_paths:
-                result = backend.search_many(backend_scan_paths, rule["pattern"], config=rule_cfg)
-                rule_matches = result.total_matches
-                resolved_matched_files.update(result.matched_file_paths)
-                for file_path, count in result.match_counts_by_file.items():
-                    resolved_match_counts_by_file[file_path] = (
-                        resolved_match_counts_by_file.get(file_path, 0) + count
+                rule_matches = 0
+                for member_pattern in member_patterns:
+                    result = backend.search_many(
+                        backend_scan_paths, member_pattern, config=rule_cfg
                     )
-                for match in result.matches:
-                    if match.file:
-                        resolved_match_counts_by_file[match.file] = (
-                            resolved_match_counts_by_file.get(match.file, 0) + 1
+                    if composite:
+                        resolved_identities.update(
+                            _match_node_identity(match) for match in result.matches if match.file
                         )
-                        resolved_rule_occurrences.append({
-                            "file": match.file,
-                            "line": match.line_number,
-                        })
-                        if (
-                            include_evidence_snippets
-                            and len(resolved_snippets_by_file.get(match.file, []))
-                            < max_evidence_snippets_per_file
-                        ):
-                            resolved_snippets_by_file.setdefault(match.file, []).append(
-                                _truncate_evidence_snippet(match.text, max_evidence_snippet_chars)
+                    else:
+                        rule_matches += result.total_matches
+                    resolved_matched_files.update(result.matched_file_paths)
+                    for file_path, count in result.match_counts_by_file.items():
+                        resolved_match_counts_by_file[file_path] = (
+                            resolved_match_counts_by_file.get(file_path, 0) + count
+                        )
+                    for match in result.matches:
+                        if match.file:
+                            resolved_match_counts_by_file[match.file] = (
+                                resolved_match_counts_by_file.get(match.file, 0) + 1
                             )
-                if not resolved_matched_files and result.total_files > 0:
-                    resolved_matched_files.update(
-                        match.file for match in result.matches if match.file
-                    )
+                            resolved_rule_occurrences.append({
+                                "file": match.file,
+                                "line": match.line_number,
+                            })
+                            if (
+                                include_evidence_snippets
+                                and len(resolved_snippets_by_file.get(match.file, []))
+                                < max_evidence_snippets_per_file
+                            ):
+                                resolved_snippets_by_file.setdefault(match.file, []).append(
+                                    _truncate_evidence_snippet(
+                                        match.text, max_evidence_snippet_chars
+                                    )
+                                )
+                    if not resolved_matched_files and result.total_files > 0:
+                        resolved_matched_files.update(
+                            match.file for match in result.matches if match.file
+                        )
             else:
                 rule_matches = 0
         else:
@@ -6803,27 +6828,50 @@ def _run_ast_scan_payload(
             if resolved_candidate_files is None:
                 resolved_candidate_files, _ = _collect_candidate_files(scanner, resolved_scan_paths)
             rule_matches = 0
-            for current_file in resolved_candidate_files:
-                result = backend.search(current_file, rule["pattern"], config=rule_cfg)
-                rule_matches += result.total_matches
-                if result.total_files > 0 or result.total_matches > 0:
-                    resolved_matched_files.add(current_file)
-                    resolved_match_counts_by_file[current_file] = (
-                        resolved_match_counts_by_file.get(current_file, 0) + result.total_matches
-                    )
-                    for match in result.matches:
-                        resolved_rule_occurrences.append({
-                            "file": match.file or current_file,
-                            "line": match.line_number,
-                        })
-                    if include_evidence_snippets:
-                        file_snippets = resolved_snippets_by_file.setdefault(current_file, [])
+            for member_pattern in member_patterns:
+                for current_file in resolved_candidate_files:
+                    result = backend.search(current_file, member_pattern, config=rule_cfg)
+                    if composite:
+                        resolved_identities.update(
+                            _match_node_identity(match, fallback_file=current_file)
+                            for match in result.matches
+                        )
+                    else:
+                        rule_matches += result.total_matches
+                    if result.total_files > 0 or result.total_matches > 0:
+                        resolved_matched_files.add(current_file)
+                        resolved_match_counts_by_file[current_file] = (
+                            resolved_match_counts_by_file.get(current_file, 0)
+                            + result.total_matches
+                        )
                         for match in result.matches:
-                            if len(file_snippets) >= max_evidence_snippets_per_file:
-                                break
-                            file_snippets.append(
-                                _truncate_evidence_snippet(match.text, max_evidence_snippet_chars)
-                            )
+                            resolved_rule_occurrences.append({
+                                "file": match.file or current_file,
+                                "line": match.line_number,
+                            })
+                        if include_evidence_snippets:
+                            file_snippets = resolved_snippets_by_file.setdefault(current_file, [])
+                            for match in result.matches:
+                                if len(file_snippets) >= max_evidence_snippets_per_file:
+                                    break
+                                file_snippets.append(
+                                    _truncate_evidence_snippet(
+                                        match.text, max_evidence_snippet_chars
+                                    )
+                                )
+
+        if composite:
+            # F1: count the span-union — never the summed multiset — and
+            # rebuild the per-file counts from the identities so no member
+            # overlap double-counts. Occurrences were appended per member above
+            # (file, line) and are deduplicated downstream in `_append_finding`.
+            rule_matches = len(resolved_identities)
+            resolved_match_counts_by_file = {}
+            for file_path, _start_byte, _end_byte in resolved_identities:
+                resolved_match_counts_by_file[file_path] = (
+                    resolved_match_counts_by_file.get(file_path, 0) + 1
+                )
+
         _append_finding(
             rule=rule,
             rule_matches=rule_matches,

@@ -769,6 +769,10 @@ class TestAstBackend:
             def __init__(self, node_type, line_number, children=()):
                 self.type = node_type
                 self.start_point = (line_number, 0)
+                # M16 F2: the node-type index is now span-based; synthetic
+                # nodes need deterministic byte spans.
+                self.start_byte = line_number * 4
+                self.end_byte = self.start_byte + 4
                 self.children = children
 
         class FakeQuery:
@@ -845,6 +849,10 @@ class TestAstBackend:
             def __init__(self, node_type, line_number, children=()):
                 self.type = node_type
                 self.start_point = (line_number, 0)
+                # M16 F2: the node-type index is now span-based; synthetic
+                # nodes need deterministic byte spans.
+                self.start_byte = line_number * 4
+                self.end_byte = self.start_byte + 4
                 self.children = children
 
         class FakeQuery:
@@ -1103,6 +1111,10 @@ class TestAstBackend:
             def __init__(self, node_type, line_number, children=()):
                 self.type = node_type
                 self.start_point = (line_number, 0)
+                # M16 F2: the node-type index is now span-based; synthetic nodes
+                # need deterministic byte spans.
+                self.start_byte = line_number * 4
+                self.end_byte = self.start_byte + 4
                 self.children = children
 
         class FakeQuery:
