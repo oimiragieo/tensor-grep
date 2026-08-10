@@ -1,6 +1,327 @@
 # CHANGELOG
 
 
+## v1.110.11 (2026-08-10)
+
+### Bug Fixes
+
+- **scan**: Rust tg scan keeps composite rules + severity/message (M16 audit)
+  ([#987](https://github.com/oimiragieo/tensor-grep/pull/987),
+  [`d4db8a6`](https://github.com/oimiragieo/tensor-grep/commit/d4db8a685b4cd22af82de4e2b11e5a93545f3354))
+
+* fix(scan): Rust tg scan keeps composite rules + severity/message (M16 audit)
+
+Pre-fix gap (audit VERIFIED, backend_ast_workflow.rs:871-904 + :1074-1099): Rust tg scan (config
+  route) built AstRuleSpec{id, pattern, language} only and extracted a single flat string pattern
+  (pattern / rule.pattern), so composite ast-grep rule bodies (rule: { any: [...] }, pattern: LIST)
+  returned None and the rule was DROPPED, and severity/message never survived discovery. The Python
+  project-scan twin (cli/ast_workflows.py:_load_rule_specs_and_meta:319-342) already threads
+  severity/message into rule specs and findings.
+
+Fix: - AstRuleSpec gains patterns (composite members; serde default), severity (item -> payload ->
+  'warning', matching Python), message (item -> payload -> ''). - extract_rule_member_patterns
+  handles pattern-string, pattern-list, rule.pattern and rule.any members; unresolvable members /
+  all:/not: bodies fail closed (dropped), matching the Python twin's drop behavior - never
+  under-match. rule.pattern stays the FIRST member so hints/test-linking keep working. -
+  execute_ast_scan_core unions members per rule: matches sum, files are distinct, matching the
+  Python twin's set-based file accounting. [scan] text lines and Scan completed. summary stay
+  byte-parity with the Python emitter. - Two public single-pattern helpers (extract_rule_pattern /
+  _json) retained (A40: no in-repo caller does not authorize deletion).
+
+CI will verify: 7 new unit tests (composite any-of parse, pattern-list parse, severity/message
+  round-trip + payload/default fallback, fail-closed all: pin, stale-cache serde-default pin,
+  real-AstBackend union counting in execute_ast_scan_core), plus cargo test/clippy/rustfmt on the
+  touched file.
+
+* fix(scan): close codex F1-F4 on M16 composite/severity parity (M16)
+
+Codex gate FIX-BEFORE-MERGE findings, all verified against the real code:
+
+F1 (HIGH) Python/Rust twin divergence on composites — FIXED by (b), the plan-intended direction: the
+  Python project-scan loader now carries the SAME member semantics as the Rust scan.
+  ast_workflows.py gains _extract_rule_member_patterns (pattern-string / pattern-LIST / rule.pattern
+  / rule.any members; any unresolvable member or all:/not: body fails the whole rule closed ->
+  dropped, mirroring rust extract_rule_member_patterns) and _load_rule_specs_and_meta emits
+  pattern=FIRST member + patterns=ALL members. Both Python scan loops (ast_workflows.scan_command
+  and main.py _run_ast_scan_payload non-fast paths) scan every member; the ast-grep whole-config
+  fast path already unions natively.
+
+F2 (HIGH) summed-multiset instead of union — FIXED: composite rules dedupe matches by (file, line)
+  identity (the identity surface MatchLine exposes, so Rust and Python count identically); each
+  matched line counts ONCE across members. Single-pattern rules keep the legacy per-node count
+  byte-identically (nothing was dropped there pre-fix).
+
+F3 (HIGH) stale-cache correctness — FIXED: ProjectDataV6 gains cache_schema_version (u32, serde
+  default = legacy 1, current = 2) and load_cache REJECTS absent/old discriminators (rebuild from
+  source), following the index.rs INDEX_FORMAT_VERSION bump precedent; the Python reader
+  (_load_ast_project_data) applies the same gate to the Rust-written cache
+  (_PROJECT_DATA_CACHE_SCHEMA_VERSION twin).
+
+F4 (MEDIUM) metadata scalar parity — FIXED: rule metadata now converts TRUTHY non-string scalars
+  like Python str(): 5 -> '5', true -> 'True'; falsy ('', 0, 0.0, false, null) falls through to
+  payload then default. Structural values (lists/mappings) fail closed to the default (documented
+  divergence).
+
+Tests: rust — composite any-of parse, pattern-list parse, severity/message round-trip +
+  payload/default fallback + truthy-scalar conversion, fail-closed all: pin, stale AstRuleSpec JSON
+  default pin, legacy cache rejected + current cache served, union line-dedupe vs single-pattern
+  node counts through the real AstBackend. Python (tests/unit/test_scan_composite_rules_m16.py, run
+  locally 8/8 + test_ast_workflows 46/46 + test_cli_modes scan surface 62/62) — member extraction
+  shapes + fail-closed, loader carries members and metadata, schema-gate parametrized
+  rebuild-vs-serve, composite union CLI count + JSON severity/message.
+
+CI will verify: cargo test/clippy/rustfmt on backend_ast_workflow.rs, ruff + ruff format --preview +
+  mypy (all pass locally), and the full Python suite.
+
+* fix(scan): span-based composite union + inline loader parity + float spelling (M16 round-2 gate)
+
+Codex round-2 findings, verified against real ast-grep 0.42.1 + source.
+
+F1 (HIGH) - (file,line) union identity WRONG; whole-config ast-grep counts 3 for 'alpha(1);
+  alpha(2)' with members alpha + alpha(1) (two distinct identifier nodes + one call node, same
+  line): the union dedupe identity is now the AST SPAN (file, start_byte, end_byte) on ALL
+  node-granular paths. - Rust: AstCliMatch gains start_byte/end_byte (node range; fallback arm uses
+  candidate.byte_range); execute_ast_scan_core unions HashSet<(start,end)> per file. Single-pattern
+  rules keep legacy per-node counts. - Python: MatchLine gains optional start_byte/end_byte
+  (ast_backend populates from tree-sitter node; ast_wrapper_backend from ast-grep JSON range.index);
+  _match_node_identity lowers to (file,start,end) with a (file,-1,line) fallback for span-less
+  backends; both scan loops union spans. - Parity pins: Rust test counts 3 (composite), 2
+  (single-pattern per-node), 1 (same span matched by two members); Python span-fake CLI test pins 3
+  on the iterative path (scan_paths given -> fast path off) + 2 for inline; whole-config arm is
+  ast-grep native (authoritative 3, verified by the gate).
+
+F2 (MEDIUM) - _load_inline_rule_specs dropped rule.any/pattern-lists for --rule/--inline-rules: now
+  routed through the SAME _extract_rule_member_patterns helper (pattern=first member, patterns=all);
+  the now-orphaned flat-string _extract_rule_pattern copy in main.py is deleted. Tests: loader unit
+  (two members carried, list form too) + CLI --inline-rules scan of both members.
+
+F3 (LOW) - NaN/inf scalar spelling: rule_metadata_scalar_string special-cases non-finite floats to
+  Python's str() spellings (nan/inf/-inf instead of serde_yaml's .nan/.inf/-.inf); test pins all
+  three.
+
+Local (this machine, run): tests/unit/test_scan_composite_rules_m16.py 11/11, test_ast_workflows
+  46/46, test_cli_modes -k scan 62/62, ruff check clean, ruff format --check --preview clean, mypy
+  success (92 files), rustfmt --check clean on both touched rust files. Rust test OUTCOMES are
+  structural-argument only (CI is the compile oracle); pre/post-fix reasoning is in each test
+  docstring.
+
+* fix(scan): real ast-grep spans, span caches, member-aware routing (M16 round-3 gate)
+
+Codex round-3 findings, all verified against real ast-grep 0.42.1 + source.
+
+F1 (HIGH) - spans read from the WRONG wire fields. Live probe of ast-grep 0.42.1 on this box:
+  "range": {"byteOffset": {"start": 0, "end": 5}, "start": {"line": 0, "column": 0}, "end": {...}}
+  range.start/end carry NO index field, so round-2's index reads always produced spanless matches
+  and (file,-1,line) collapsed same-line nodes. FIXED: ast_wrapper_backend now reads
+  range.byteOffset.start/end (probe-verified); REAL (non-fake) wrapper test asserts two same-line
+  matches carry distinct spans (0,5)/(10,15) through the actual subprocess path.
+
+F2 (HIGH) - caches erased node identity. (a) persistent result cache: writer now stamps format=2 +
+  per-match start_byte/end_byte; reader rejects discriminator-less (legacy) payloads as a
+  miss/rebuild. (b) node-type index: indexed by (line, start, end) SPAN with format=2 on disk
+  (legacy -> miss); capture path dedupes by node span instead of line (only exact same-span
+  duplicates suppressed). Real native verification: pattern 'call' over 'alpha(1); alpha(2)' on ONE
+  line now reports two spans (0,8)/(10,18) on both the node-type path and the query-capture path
+  (pre-fix: 1). Legacy fake-node fixtures gained deterministic spans; test_cli_modes selection-patch
+  targets moved to the implementation the F3 loop now reaches.
+
+F3 (HIGH) - composite routed by first member only. Orchestration hints and both scan loops now use
+  composite-aware selection (_pattern_is_native_shaped / _rule_needs_ast_grep_wrapper /
+  _select_ast_backend_name_for_rule / _select_ast_backend_for_rule): a composite with ANY non-native
+  member routes to the ast-grep wrapper (or fails closed with ConfigurationError when unavailable);
+  all-native composites and single rules keep legacy routing. Tests: member-aware name unit, hints
+  unit (mixed -> wrapper), CLI mixed-shape routing (wrapper path, both members scanned, 3 counted,
+  backends=wrapper).
+
+Parity pins (all three arms, count=3 for alpha(1);alpha(2) with members alpha+alpha(1)):
+  whole-config ast-grep (authoritative, gate-verified), Python iterative wrapper (REAL subprocess
+  span test + span-fake CLI test routed to the wrapper), Rust scan core (CI). Local: M16 file 18/18,
+  ast_backend 36+xfailed, ast_workflows full, test_cli_modes FULL 534 passed, ruff/format
+  --preview/mypy (92 files)/rustfmt clean. Rust test OUTCOMES are structural-argument only (CI is
+  the compile oracle).
+
+* test(scan): give _FakeNode byte spans for the span-based node-type index (M16)
+
+M16 changed _build_node_type_index to index by (line, start_byte, end_byte) spans, but the _FakeNode
+  fixture only carried start_point, so every synthetic node hit the defensive 'no byte span' skip
+  and produced an EMPTY index. This regressed two pre-existing tests (deep-tree recursion + line
+  mapping) that passed on origin/main:
+
+deep_tree: AssertionError: assert 'expr' in {} (RED, verified)
+
+correct_line_mapping: KeyError: 'root' (RED, verified)
+
+Fixture-first fix (council-approved): teach _FakeNode a deterministic byte span derived from line,
+  and update correct_line_mapping to assert the new NodeSpan tuple shape. Production ast_backend.py
+  span machinery is untouched.
+
+### Documentation
+
+- Consolidate 24h session capture — A87-A89 mirror, 4 new skills, drift fixes
+  ([#992](https://github.com/oimiragieo/tensor-grep/pull/992),
+  [`62cd29e`](https://github.com/oimiragieo/tensor-grep/commit/62cd29ef6a4a51122251e65ab8308453f2d79820))
+
+* docs: retain A87-A89 lessons + session-capture date + M16/M17 follow-up rows
+
+A-law mirror (C-A87-A89): - AGENTS.md: add A87 (static review != typecheck; CI is the only compile
+  oracle for Rust, #987/#988), A88 (dogfood fixtures must BITE - mklink /J silent-fails on non-empty
+  target, M1), A89 (real-artifact test arms beat fake-backed ones in parity oracles - ast-grep
+  byteOffset vs range.start.index, #987) to the A-law list. - CLAUDE.md: extend the A-law summary
+  A61-A86 -> A61-A89 and the A83-A86 bullet to A83-A89 (the three new legs folded in).
+
+Capture fixes: - docs/SESSION_HANDOFF.md: Last updated 2026-08-06 -> 2026-08-09. - docs/BACKLOG.md:
+  add named A49-style follow-up rows M16-FU1 SCAN-ALL-NOT-SAME-NODE (all:/not: composite bodies stay
+  dropped fail-closed) and M17-FU1 INDEX-FINGERPRINT-SAMPLE-CAP (files below the tree_fingerprint
+  32-file cap get only mtime/size), each with owner/disposition/reopen trigger, beside the
+  M1-FU1/M1-FU2 record.
+
+* docs(skills): fix skills-substance drift + workflow cross-reference note
+
+- tensor-grep-research-frontier: the "Honest framing of the coverage number" block contradicted its
+  own 10/0 claim and origin/main (it still said parser-backed 8 / foundational c,cpp 2). Prepend a
+  SUPERSEDED 2026-08-09 note (Tasks 10D/10E: now 10 parser-backed / 0 foundational, tier EMPTY) and
+  correct the split to the real 10/0. - tensor-grep-architecture-contract: re-anchor
+  `_TG_ONLY_SEARCH_FLAGS` from bootstrap.py:72 (stale) to bootstrap.py:50 (matches its own :88/:338
+  and the real def). - workflows/tg-audit-fix-loop.js: add cross-reference comments to the four new
+  skills (hermetic-hostile-tests in the RED phase; argv-normalization and
+  cross-platform-path-confinement in the Seam phase).
+
+* docs(skills): add 4 retention skills + registry wiring (library 28 -> 32)
+
+Four Exa-researched skills written in the repo's sibling-skill style (150-300 lines, checked-item
+  steps, external anchors, repo receipts cited by symbol + grep per the never-re-stamp law):
+
+- tensor-grep-hermetic-hostile-tests: env-independent gated tests BY CONSTRUCTION (forced seams,
+  mutation-control REDs), the fixture-BITES precondition (Form 6 / #281), mutation-asserted-applied,
+  positive controls. - tensor-grep-argv-normalization-and-shadowing: front-door normalizer topology,
+  the A83 rewritten-argv door census, CWE-88 `--` hygiene (POSIX Guideline 10), shared-builder
+  stream-vs-parse consumers (-q). - tensor-grep-cross-platform-path-confinement: junction vs symlink
+  vs hardlink table, the A84 drive-absolute escape, A38/A48/A53 handle anchoring +
+  canonicalize-or-fail-closed, M17 alias/swap REPRO shape. -
+  tensor-grep-index-fingerprint-freshness: identity-anchor-first (M17 canonical root), the
+  alias/swap RED shape, the fingerprint ladder (mtime+size -> ctime -> full-content -> whole-tree),
+  bounded 32-file sampling with the M17-FU1 named boundary.
+
+Registry wiring (the 28 -> 32 bump): - AGENTS.md + CLAUDE.md: "**28 skills**" -> "**32 skills**" in
+  both bucket sentences; the CLAUDE.md VERIFIED CORRECT note (33 folders; re-derive arithmetic 27 ->
+  31 tensor-grep-*); both bucket lists gain the 4 new skills (Change safely + Understand)
+  byte-identically. - .claude/skill_rules.json: 4 trigger entries in the existing shape. -
+  tests/unit/test_skill_library_drift.py: anchor the stated-count regex to the DEFINING index
+  sentence (code-search-and-retrieval-reference`, **N skills**) instead of the whole-file leftmost
+  match, so dated historical narratives mentioning an old count (never rewrite a dated receipt)
+  cannot masquerade as the index's count.
+
+* style: ruff format --preview on test_skill_library_drift.py (Fix lint gate)
+
+- Fix skill accuracy drifts (language-tier census, run-and-operate exit contract, change-control
+  seams) ([#986](https://github.com/oimiragieo/tensor-grep/pull/986),
+  [`c390af1`](https://github.com/oimiragieo/tensor-grep/commit/c390af1847086b5ce1b903d0b3ed85cef1dd3446))
+
+* docs(skills): fix six documented SKILL accuracy drifts (2026-08-09 audit vs origin/main e3feaf5)
+
+Per-file claim repairs, anchored to the live descriptor
+  (parser-backed-refs-callers:c-cpp-csharp-go-java-javascript-php-python-rust-typescript +
+  foundational-defs-imports-only:, 10 parser-backed / 0 foundational, tier EMPTY) and verified
+  origin/main code sites (repo_map.py:590-597, :6433/:6446, :6752/:6790/:6804/:6846, :6789-6793,
+  :6845-6849, :7089-7116, :17530-17556; lang_c.py:654/:748/:799; lang_c_cpp_include.py;
+  main.py:11457-11470):
+
+- enterprise-agent: row opening "REGISTRY 10/10; CALLER-GRAPH 7/10 ... FOUNDATIONAL-TIER for
+  c,cpp,php" -> 10 parser-backed / 0 foundational, no Y tier, cross-file confirmation the remaining
+  gap; aligned the "today prints 7/3" descriptor with the 10/0 state; dated snapshot chain kept
+  intact. - code-search-and-retrieval-reference: "nine parser-backed + one foundational (cpp)", "9
+  parser-backed + 1 foundational", quick-ref "6+4 as of PR #927" -> all 10 parser-backed,
+  foundational tier EMPTY (Task 10E final wave); grammar-missing field-count note corrected;
+  consistent with the file's own correct 10/0 block. - tensor-grep: "7 of the top-10 languages ...
+  C/C++ still deferred" -> all 10 registered AND parser-backed (C/C++ via lang_c/lang_cpp, Tasks
+  10D/10E + F7 Task 11 wave #957); self-hedge to re-check retained. - research-frontier Problem 6:
+  header SUPERSEDED 2026-08-09; "all hooks None / regex heuristic fallthrough" and "#include
+  resolution not attempted" claims replaced with the shipped state (wired references_and_calls +
+  file_imports_symbol_from_definition, c-include-path-confirmation engine); genuine remaining tails
+  kept honest (beyond-band cross-file confirmation, general #include->file resolution,
+  header/definition canonical-site decision). - change-control: seams 2/5 "dispatches only 5 /
+  frozenset of 5" -> all 10 (repo_map.py:7089-7116, :17530-17556); Part 8 "refactor -> patch
+  release" -> publishes NOTHING (measured, PR #915, PyPI stayed 1.102.4; default angular parser
+  fix/perf only), mirroring tensor-grep-release-and-positioning. - run-and-operate: "empty truncated
+  exits 2, found truncated exits 0" -> truncation trumps found (main.py:11467-11470 Exit(2) on any
+  partial/result_incomplete before not-found; #399 overturned), aligned with the file's own 11a.
+
+No anchors re-stamped; skill_anchor_audit.py finding set unchanged (AMBIGUOUS_PATH=15,
+  SYMBOL_MOVED=53, identical to baseline e3feaf5); test_skill_index_sync + test_skill_library_drift
+  green (9 passed); test_public_docs_governance -k skill green (3 passed).
+
+* docs(skills): add tensor-grep-codex-gated-audit-loop skill (codex-gated audit loop, 2026-08-09
+  receipts)
+
+* docs: wire codex-gated-audit-loop skill into indexes + registry
+
+* docs: capture session laws A83-A86 (argv-rewrite shadow, platform path gate, env-independent
+  tests, stale-ready labels)
+
+* docs(workflow): add tg-audit-fix-loop slash-command (codex-gated audit loop)
+
+Mirrors tg-skill-audit.js structure; drives the tensor-grep-codex-gated-audit-loop skill: Seam
+  (git-show symbol re-verify + argv-rewrite door census, A83/A44) -> RED (hermetic by construction,
+  A85) -> GREEN (platform-gate path transforms, A84) -> Gate (independent codex, try-to-BREAK) ->
+  Verify (own probes, re-audit to SHIP). Rides the docs/skill-accuracy-2026-08-09 branch with the
+  new skill + laws.
+
+- Phase 0+1 closeout refresh (wave3 + PyPI 1.110.10 dogfood)
+  ([#989](https://github.com/oimiragieo/tensor-grep/pull/989),
+  [`2bd6b91`](https://github.com/oimiragieo/tensor-grep/commit/2bd6b918d8cd5291ebd145f76ea9a90bb0144a10))
+
+Stamp packets A-F complete on the ledger and board; record published-wheel refuse dogfood.
+
+- Record 2026-08-08 late audit-fix wave receipts (H2/M1/M3/M14)
+  ([#985](https://github.com/oimiragieo/tensor-grep/pull/985),
+  [`5ed5a92`](https://github.com/oimiragieo/tensor-grep/commit/5ed5a9270486148da908895e19cbdc5561e4061e))
+
+- Retain lessons A90-A93 (unknown-command, native-touch, escrowed-evidence, premise-check) +
+  SESSION_HANDOFF refresh ([#994](https://github.com/oimiragieo/tensor-grep/pull/994),
+  [`6f912ad`](https://github.com/oimiragieo/tensor-grep/commit/6f912add8b2f770d0c6da830370930ac05073cba))
+
+A90 — fail closed on unknown subcommands; never fall through to search (bootstrap.py
+  _normalize_search_invocation prints search help for unknown top-level commands exit 0 — both front
+  doors must refuse with nearest[]). A91 — 'no core-Rust logic' never means 'no native touch' —
+  every Python/ sidecar feature slice must enroll both front doors + 4-site parity test. A92 —
+  executed evidence must be escrowed to a key the verified principal does NOT hold (CI-held;
+  stdout-hash+exit+duration; absent = UNVERIFIED never PASS); verification fails closed on tree
+  drift (ticket carries base_sha+fingerprint). A93 — self-dogfood is self-consistency, not demand;
+  premise-check a plan's 'banked/shipped' claims against origin/main before the design council reads
+  it.
+
+Governance/pin tests: 63 passed. Mirrored in CLAUDE.md A61-A93 range. SESSION_HANDOFF refreshed to
+  v1.110.10 + world-class roadmap + A90-A93.
+
+- World-class roadmap — edit-control plane (council-amended)
+  ([#993](https://github.com/oimiragieo/tensor-grep/pull/993),
+  [`7ca96bf`](https://github.com/oimiragieo/tensor-grep/commit/7ca96bf6949a9aa9ad2c3d0573cff04165c9e872))
+
+Design + prioritization doc grounded in the 2026-08-09 published dogfood (22/22 CUJ). Thesis
+  (council-endorsed): tg's moat is the agentic edit-control plane (what to touch, what else breaks,
+  what to run, when to stop, with receipts) — not faster grep.
+
+Spine (amended): H1 unknown-command fail-closed + PATH honesty (prerequisite hotfix, separated from
+  the feature spine); S1+S5 fail-closed edit tickets + verify-edit + escrowed head-bound evidence
+  chain (the moat bundle, re-scoped: both front doors + tree-fingerprint tickets + UNVERIFIED state
+  + un-apply via checkpoint); S2 registration-aware impact-diff (the tier-3 differentiator); S4 warm
+  session resume (premise CORRECTED: session prepare/resume are unbuilt); S6 semantic default +
+  why_ranked; S7 federated workspace (object, Python slice first).
+
+Council corrections folded: escrowed evidence signed by a CI-held key (never the editing principal);
+  touched-files-subset demoted to table stakes (an agent sandbox already enforces it); 'no core-rust
+  logic' never means 'no native touch' (4-site registration parity in every slice); base/head/merge
+  SHA attribution on the evidence chain; run envelopes carry deadline/max_output_bytes/allow_network
+  budgets; resolution_gaps inherit the registration census's blind spots.
+
+- **skills**: Refresh dogfood evidence for tg 1.110.10
+  ([#991](https://github.com/oimiragieo/tensor-grep/pull/991),
+  [`e0015f7`](https://github.com/oimiragieo/tensor-grep/commit/e0015f776d00d102290c67918eb2207da2273168))
+
+Stamp workspace_root_refused, 10/10 parser-backed coverage, unknown-command search fallthrough trap,
+  and prepare timings from the 2026-08-09 Windows uvx CUJ.
+
+
 ## v1.110.10 (2026-08-09)
 
 ### Bug Fixes
