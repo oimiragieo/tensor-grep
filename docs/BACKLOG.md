@@ -43,6 +43,53 @@
 
 
 
+## Recent campaign notes (2026-08-10) — M16/M17 first-CI-row drain (plan Round 3)
+
+- **Drain landed:** #993 (docs world-class roadmap), #994 (docs A90–A93), #992 (docs 24h capture,
+  incl. A87–A89; one `ruff format --preview` lint fix on `test_skill_library_drift.py`; rebased onto
+  post-#993/#994 main with union-resolved conflicts), **#987 (M16 Rust scan composite/severity →
+  v1.110.11)**, **#988 (M17 index root/format → v1.110.12)**. Open at session end: #966 (Task 2A RED
+  scaffold, parked by design). Full matrix green on every merged head; PyPI verified serving
+  1.110.11 + 1.110.12 (4 files each, cache-bypassed). #993/#994/#992 are docs (no release); #987 and
+  #988 serialized one-per-publish.
+- **FINDING (A87 made real, twice):** both Rust PRs (#987/#988) had "passed" codex static audits,
+  then the FIRST real CI run found genuine compile errors — #988 survived three audit rounds and
+  still failed E0599/E0308/E0382 on first compile; #987's regression only surfaced on the full
+  matrix (its author's self-gate never ran `tests/unit/test_backend_bug_fixes.py`). The first-compile
+  gate IS the Rust gate; static SHIP is not durable until cargo builds and the matrix runs (A87).
+- **FINDING (first-CI regression: fingerprint vs walk disagreement, #988):** the M17-added
+  `compute_tree_fingerprint` ran RAW `read_dir` over the canonical root, so a gitignored file added
+  after build flipped the digest and falsely reported staleness — disagreeing with the new-file walk
+  that correctly ignores it (the code's own "walkers must not disagree" doctrine). Fix: derive the
+  fingerprint population from `ignore::WalkBuilder` with the SAME config as `collect_file_entries`
+  (`hidden`, `git_ignore(!no_ignore)`, `max_depth(1)`, add_ignore trio), `file`-only before sort/cap,
+  and thread `no_ignore` through all call sites. The two `staleness_new_file_scan_honors_root_gitignore_*`
+  tests had passed on main (no fingerprint there) and were the honest REDs.
+- **FINDING (Windows-only test hid a format-pin break, #988):** `test_tg_search_index_old_format_triggers_rebuild`
+  is `#![cfg(windows)]` — the M17 wire-format bump 4→6 (canonical root, then tree_fingerprint) broke
+  its hardcoded `rebuilt[4] == 4` assertion on Windows only; all other legs ran the same branch and
+  passed, so the break was invisible until the Windows leg ran. Fix: export `INDEX_FORMAT_VERSION`
+  `pub` and pin the test to the constant (next bump cannot silently re-break). The `#![cfg(windows)]`
+  gate is a platform-divergence hiding-spot worth a census.
+- **FINDING (ratchet caught the new walk, #988):** `test_known_discard_sites_never_grow` (#276
+  walk-error-discard ratchet) redded because the new fingerprint walk used the silent
+  `.filter_map(|e| e.ok())` idiom — exactly the class the ratchet exists to forbid. Fix: log the
+  discard (`map_err(|e| eprintln!(...)).ok()`, the shape the ratchet's own oracle test blesses) and
+  keep the test-fixture `read_dir` enumeration on the non-ratcheted binding. Lesson: every new walk
+  site must join the #276 doctrine (log, never silent) even in a best-effort staleness signal.
+- **FINDING (comment satisfies the census — reversed):** the initial fix rewrote the fixture comment
+  TO CONTAIN the literal `.filter_map(|e| e.ok())`, and the raw-text census counted the comment as a
+  site (count stayed 2). The census regex is text-based; never write the ratcheted idiom in a
+  comment near a ratcheted file (mirror of the "census satisfied by a comment" trap, reversed).
+- **Codex rounds:** #987 fixture-first fix — clean. #988 — R1 FIX-FIRST (fingerprint select-FILES-
+  first before cap; empty-dir + cap-displacement + symlink regressions) → R2 FIX-FIRST (cap test's
+  `zdir*` sorted AFTER the target, so it passed on the bug; renamed to `adir*` + Unix-gated symlink
+  arm) → R3 SHIP → final-head SHIP (one LOW: `docs/routing_policy.md` hardcoded format 4; folded
+  in-PR). Independent-gate SHIP was re-earned after every CI-surfaced fix (A18).
+- Execution plan: `docs/plans/2026-08-10-backlog-completion-plan.md` (2-seat thinktank-approved
+  Round 3: codex-sol + agy unanimous APPROVED, no MUST-FIX). Next buildable per plan: none — the two
+  Rust rows are closed; remaining rows are CEO/demand/research-gated (see header snapshot).
+
 ## Recent campaign notes (2026-08-08)
 
 - **Drain landed:** #975 (M7 verify_receipt never-raises → **v1.110.6**), #976 (M8 AST -v/-w
