@@ -243,7 +243,9 @@ const INDEX_MAGIC: &[u8; 4] = b"TGI\x00";
 // caller of TrigramIndex::load (main.rs's detect_warm_index_state and handle_index_search both
 // already treat a load error as "stale, rebuild"), so the bump is safe. Previous bump 4 -> 5
 // (audit M17) added the canonical root itself; 3 -> 4 (audit H1d) added the no_ignore byte.
-const INDEX_FORMAT_VERSION: u8 = 6;
+// pub so the wire-format tests (tests/test_index.rs) pin the CURRENT version, not a stale
+// hardcoded literal that silently goes wrong on the next bump (A27-twin / provenance rules).
+pub const INDEX_FORMAT_VERSION: u8 = 6;
 
 fn normalize_postings(postings: &mut HashMap<[u8; 3], Vec<PostingEntry>>) {
     for entries in postings.values_mut() {

@@ -691,8 +691,9 @@ fn test_tg_search_index_old_format_triggers_rebuild() {
     let rebuilt = fs::read(dir.path().join(".tg_index")).unwrap();
     assert_eq!(&rebuilt[0..4], b"TGI\x00");
     assert_eq!(
-        rebuilt[4], 4,
-        "expected rebuilt index to use the new format"
+        rebuilt[4],
+        tensor_grep_rs::index::INDEX_FORMAT_VERSION,
+        "expected rebuilt index to use the current format"
     );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
