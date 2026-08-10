@@ -55,9 +55,7 @@ _PLACEHOLDER_HINTS = ("path/to/", "path/file", "<", "example.com", "your-", "foo
 # count (e.g. a 2026-08-01 audit that read "`**28 skills**`" when that was true), and the never-
 # rewrite-a-dated-receipt law forbids editing them, so a whole-file leftmost match would read the
 # historical number instead of the index's.
-_STATED_COUNT_RE = re.compile(
-    r"code-search-and-retrieval-reference`, \*\*(\d+) skills\*\*"
-)
+_STATED_COUNT_RE = re.compile(r"code-search-and-retrieval-reference`, \*\*(\d+) skills\*\*")
 
 
 def _library_skill_folders() -> set[str]:
