@@ -77,9 +77,11 @@ tg doctor                        # same payload, human-readable field dump (no P
 `--no-lsp` explicitly for a fast check, which is what `scripts/agent_readiness.py` and the
 `AGENTS.md` release checklist both do (`tg doctor --json --no-lsp`).
 
-`tg doctor`'s own human-readable renderer (`_render_doctor_payload`) is a **straight field dump** —
-it does not compute PASS/FAIL/WARN. The bundled `doctor_traffic_light.py` script (below) fills that
-gap.
+`tg doctor`'s own human-readable renderer (`_render_doctor_payload`) is a field dump that
+appends a prominent `warning: installation_health=...` line (with remediation) whenever
+`installation_health != "ok"` (v1.110.14, #1000) — so a foreign/version-mismatch/stale
+installation is unmissable in human output. The bundled `doctor_traffic_light.py` script
+(below) still provides a richer PASS/FAIL/WARN summary on top.
 
 ### Load-bearing fields
 
@@ -102,6 +104,9 @@ gap.
 | `native_frontdoor_flavor` / `native_frontdoor_requested_flavor` / `native_frontdoor_asset_name` / `native_frontdoor_metadata_status` / `native_frontdoor_flavor_mismatch_note` | populated strings when a managed native front door is installed | surfaces "you asked for `nvidia` but got `cpu`" (`_doctor_native_frontdoor_flavor_mismatch_note` — `grep -n "^def _doctor_native_frontdoor_flavor_mismatch_note" src/tensor_grep/cli/main.py`, was `:3121`, now `:3206`) -- previously only a benchmark script could see this; now visible in plain `tg doctor`. **A14/#708 (v1.93.1):** `_agent_gpu_tg_command` (`agent_capsule.py:1522` — re-verified unchanged this pass) now pre-resolves a bare `"tg"` via `shutil.which` before it reaches the WSL cross-domain gate, closing a residual case where an unresolved bare command name skipped the check entirely; field semantics here are unchanged by that fix. |
 | `lsp.enabled` / `lsp.providers[].health_status` | `health_status` in `{ready, available_unverified, unhealthy, missing}` | **provider availability is not navigation proof.** A provider counts as real LSP evidence only when a completed request set `lsp_provider_response = true` — `provenance = "lsp-*"` alone is not enough (`AGENTS.md` LSP rules). |
 | `ast_grep.available` / `ast_grep.binary` | `true` / a resolved path | `false` degrades `tg run`'s semantic (`--selector`/`--strictness`) options; AST structural search itself still works via the native backend |
+| `pypi_latest` / `installed_behind_pypi` | a `pypi_latest` version string, `installed_behind_pypi` `false` (or `null` when the probe is disabled) | schema-3 freshness fields (v1.110.14, #1000): `installed_behind_pypi: true` means the installed version is older than PyPI's latest; the public `tg doctor` telemetry bundle sends this to the health endpoint. When `TG_DOCTOR_OFFLINE=1` is set, `pypi_latest` is `None` and `installation_health` reports `unknown_pypi` - a deliberately disclosed offline mode, never a silent network skip. |
+| `shadow_launchers` | `[]` (empty list) | each entry is a tensor-grep launcher registered on PATH behind the primary one (`path` + `kind` + `version` + `version_matches` inside) - an entry here whose `version_matches` is `false` is a real problem: a stale/foreign `tg` will win for some calling pattern even though the primary launcher is fine (v1.110.14, #1000) |
+| `installation_health` | `"ok"` | aggregate of launcher/version/shadow checks: `"ok"`, `foreign_tg_on_path`, `version_mismatch`, `stale_installation`, or `unknown_pypi` (offline). The human renderer appends a loud `warning:` line with remediation when this is not `"ok"` - read it before trusting any other doctor row. |
 | `session_daemon.running` | informational | `true` means a warm localhost daemon is serving cached repo-map/session state for this root |
 
 ### Live example (this repo, this box, 2026-07-02)
@@ -285,10 +290,10 @@ Source: `scripts/dogfood/dogfood_features.py`, `scripts/dogfood/README.md`,
 
 ```bash
 # after a version actually publishes to PyPI:
-docker build --build-arg TG_VERSION=1.17.25 -f scripts/dogfood/Dockerfile -t tg-dogfood scripts/dogfood
+docker build --build-arg TG_VERSION=1.110.14 -f scripts/dogfood/Dockerfile -t tg-dogfood scripts/dogfood
 docker run --rm tg-dogfood
 # or, without Docker, against any installed tg:
-pip install "tensor-grep==1.17.25"
+pip install "tensor-grep==1.110.14"
 python scripts/dogfood/dogfood_features.py         # or TG_BIN=/path/to/tg python ...
 ```
 

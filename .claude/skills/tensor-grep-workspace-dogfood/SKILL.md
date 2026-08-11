@@ -9,13 +9,13 @@ description: Use when stress-testing tensor-grep against a multi-project workspa
 
 ```bash
 # Prefer an explicit published pin when comparing skills to product:
-uvx --from tensor-grep==1.110.13 tg --version
+uvx --from tensor-grep==1.110.14 tg --version
 # Bare `uvx --from tensor-grep tg` / a shadowed `C:\Users\...\bin\tg` can report a stale version.
 tg doctor --json ROOT
 tg devices
 ```
 
-## Recommended sweep (v1.110.13)
+## Recommended sweep (v1.110.14)
 
 ```bash
 cd /path/to/workspace
@@ -41,7 +41,7 @@ tg agent agent-studio/.claude/lib/routing "task" --json
 tg dogfood --root . --output /tmp/dogfood-ws.json
 ```
 
-## Latest sweep (2026-08-11, tg 1.110.13, Windows uvx)
+## Latest sweep (2026-08-11, tg 1.110.14, Windows uvx)
 
 | Category | Result | Notes |
 | --- | --- | --- |

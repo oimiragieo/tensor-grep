@@ -43,6 +43,29 @@
 
 
 
+## Recent campaign notes (2026-08-11) — skill-library audit + freshness mechanism
+
+- **Skill-library audit (all 33 in-repo `.claude/skills/*/SKILL.md` files, 3 parallel subagent waves):**
+  library found stale ONE release after the last refresh — 21 version stamps below the v1.110.14
+  current tag, 7 language-tier contradictions (foundational-vs-parser-backed surviving the C/C++
+  promotion; ground truth now 10 parser-backed / 0 foundational via `_symbol_navigation_descriptor()`),
+  2 stale state facts (M17 index-fingerprint, doctor schema-3), 1 dangling prose contradiction.
+- **Fixes:** mechanical stamp bumps (generated edit scripts, byte-safe); append-only dated SUPERSEDED
+  blocks in `code-search-and-retrieval-reference` + `tensor-grep-add-language` for the retired tier
+  claims; doctor-3 fields (`pypi_latest`/`installed_behind_pypi`/`shadow_launchers`/
+  `installation_health` + `TG_DOCTOR_OFFLINE`) added to `tensor-grep-config-and-flags` +
+  `tensor-grep-diagnostics-and-tooling`; index count re-derived 32 → 33 (new folder) in AGENTS.md +
+  CLAUDE.md; `.claude/skill_rules.json` now 21 entries.
+- **Standing mechanism created: `tensor-grep-release-drift-check` skill** — mechanical post-release
+  governance sweep (stamps ≥ current tag, derived counts, known-state facts, SUPERSEDED discipline).
+  Deliberately NOT a pytest (numbers drift by design; a hard gate reddens every PR) — a maintenance
+  command like `.claude/skill_anchor_audit.py`. Run it after every release.
+- **Laws A94–A96** captured (stamp rot is a maintenance sweep; a "verified correct" note is part of
+  the contract it guards and must be updated in the same change; non-ASCII punctuation defeats
+  byte-exact edit-tool matches — splice by line index from a python script).
+- **Ledgers:** `docs/audits/2026-08-11-skill-audit-findings.md` (27-item fix list +
+  new-skill decision, Exa-grounded) and `docs/audits/2026-08-11-skill-audit-facts.md` (ground truth).
+
 ## Recent campaign notes (2026-08-10) — M16/M17 first-CI-row drain (plan Round 3)
 
 - **Drain landed:** #993 (docs world-class roadmap), #994 (docs A90–A93), #992 (docs 24h capture,

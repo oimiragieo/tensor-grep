@@ -40,7 +40,7 @@ prefer the canonical path-first form.
    - `tg source REPO_PATH/src SYMBOL`
 4. Symbol navigation — prefer `src/`:
    - `tg callers REPO_PATH/src SYMBOL --deadline 15 --json`
-5. Edit readiness — **prefer `tg prepare REPO/src`** (~5–22s PASS on gotcontext-saddle / tg `src` @ 1.110.13; ~27s on larger src @ 1.91.0):
+5. Edit readiness — **prefer `tg prepare REPO/src`** (~5–22s PASS on gotcontext-saddle / tg `src` @ 1.110.14+; ~27s on larger src @ 1.91.0):
    - `tg prepare REPO_PATH/src "task" --json`  # primary + blast floor + validation + coordination hooks
    - `tg prepare REPO_PATH/src "task" --out capsule.json --json`  # also persists the full capsule to FILE (byte-identical to stdout JSON; symlink/dangling-symlink/dir refused; feeds `tg evidence emit --capsule FILE` directly, no manual redirect)
    - `tg prepare REPO_PATH/src "task" --claim --json`  # also submit advisory ledger claim; anonymous claims stamp `coordination.claim.agent_id_hint` unless `TG_LEDGER_AGENT_ID` is set
@@ -101,7 +101,7 @@ A resolved zero-caller result is NOT dead code either — the call graph can't s
 
 ## Known Issues
 
-**Latest CUJ dogfood: v1.110.13** (2026-08-11, Windows `uvx`, artifact
+**Latest CUJ dogfood: v1.110.14** (2026-08-11, Windows `uvx`, artifact
 `C:\Users\Public\tg-dogfood-111013.json` — **21/21 PASS**). Core CUJ + M16/M17 still green.
 **A90 shipped:** reserved Phase-2 names `edit-ready` / `verify-edit` / `workspace` with a flag
 (`--help`/`--json`) fail closed — exit **2**, stderr `unknown_command` (JSON on stderr for
@@ -134,6 +134,7 @@ alone do NOT bypass the defaulted-PATH ceiling. Prefer per-repo for deep `--type
 `context-render` needs absolute session-root PATH; reserved+flag refuses (A90); bare unknown tokens may still search.
 
 ## GPU (experimental) — verified on v1.91.0, no change through v1.93.2
+SUPERSEDED stamp (2026-08-11, append-only): unchanged through v1.110.14 -- GPU remains experimental/unpromoted (no crossover proven; see `tensor-grep-gpu` + `docs/gpu_crossover.md`). Re-verify every release.
 
 Hardware visible (2× ~12GB). Build without CUDA: calibrate FAIL; search GPU → CPU fallback; doctor `search_ready=false`. v1.93.0 (A11) fixed the WSL bare-shim cross-domain misclassification that produced a bogus `path_not_found`; full detail in `tensor-grep-gpu`.
 

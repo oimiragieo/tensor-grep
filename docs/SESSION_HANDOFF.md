@@ -33,6 +33,26 @@ Canonical status index version: 2026-08-08.1
 
 ## Historical Milestones
 
+**2026-08-11 skill-library audit + freshness mechanism (v1.110.14):** a full 3-wave parallel-agent audit
+of all 33 in-repo `.claude/skills/*/SKILL.md` files found the library stale ONE release after the last
+refresh: 21 version-stamp mismatches (stamps below the v1.110.14 current tag), 7 language-tier
+contradictions (foundational-vs-parser-backed claims surviving the C/C++ promotion to parser-backed,
+now 10/0 — verified via `repo_map._symbol_navigation_descriptor()`), 2 stale state facts (M17
+index-fingerprint claim, doctor schema), and 1 dangling prose contradiction. Fix discipline: mechanical
+stamp bumps via generated edit scripts; append-only dated SUPERSEDED blocks (never silent rewrites) for
+tier claims in `code-search-and-retrieval-reference` and `tensor-grep-add-language`; doctor schema-3
+fields (`pypi_latest`/`installed_behind_pypi`/`shadow_launchers`/`installation_health`, `TG_DOCTOR_OFFLINE`)
+added to `tensor-grep-config-and-flags` + `tensor-grep-diagnostics-and-tooling`; the `**32 skills**` index
+count re-derived and raised to 33 in both AGENTS.md and CLAUDE.md (with a new folder). Standing mechanism
+created: the `tensor-grep-release-drift-check` skill — a mechanical post-release governance sweep (version
+stamps vs current tag, derived counts via the product, known-state facts, SUPERSEDED fix discipline),
+deliberately NOT a pytest gate (numbers drift; a hard gate would red every PR), registered as the 21st
+entry in `.claude/skill_rules.json`. A-laws **A94–A96** captured (stamp rot is a maintenance sweep; a
+"verified correct" note is part of the contract it guards; non-ASCII punctuation defeats byte-exact
+`edit`-tool matches — splice by line index from a python script). Full ledger:
+`docs/audits/2026-08-11-skill-audit-findings.md`; ground truth:
+`docs/audits/2026-08-11-skill-audit-facts.md`.
+
 **Historical shipped milestones (the v1.45.x line — 2026-07-07):** a correctness + agent-trust cluster from a multi-model (Fable-designed, Sonnet-built, verified-in-real-venv) audit blitz. `tg callers --provider lsp` now unions native and LSP callers instead of masking one behind the other (H1); the `tg agent` confidence signal reflects graph corroboration (T2) and the flagship command honors the exit-2-on-scan-truncation contract, so a `--max-repo-files`-capped scan can no longer emit a confident capsule at exit 0 (1D); StringZilla honors `--invert-match` and `--max-count` (H5/H6); an apply-policy phantom-rollback fix plus a self-healing index-lock and atomic-write/retention hardening (reliability H8/H9/M6/M8); the MCP surface received the same walk-deadline and refusal guards as the CLI (H3/H4); the Rust bridge passes ripgrep args by keyword to prevent silent flag-scrambling (R1); `merge_runtime_routing` surfaces mixed-backend routing instead of reporting only the last engine used (M9); and `tg search --count` / `-l` recover partial results on a subprocess timeout instead of hard-crashing (L7). The number-one product-latency fix landed as a parse-product cache: one tree-sitter parse per (path, mtime) shared across the symbol, reference, and caller extractors, golden-parity-locked (the oracle suites pass byte-identical) and measured at roughly -25% cold render / -45% parse time on this repo, larger on TypeScript-heavy trees (PERF). A 2026-07-07 competitive analysis (codanna, Gortex, Serena, Sourcegraph) plus a dogfood of the cross-tool caller-graph edge cases confirmed tensor-grep's name-based `tg callers` has stronger recall than resolved-edge rivals (it catches module-alias and virtual-dispatch call sites they miss and would otherwise mark as dead code) while carrying the mirror precision gap (a same-named local function's calls can be over-attributed to the queried symbol); the recall-preserving three-tier resolution-confidence fix is designed and queued (C-EDGE-1).
 
 **Recent shipped milestones (round-4, through the v1.19.x line — 2026-07-03):** the rg-parse correctness moat (non-UTF-8 `lines.bytes` decode, `-u`/`-uu`/`-uuu` forwarding, `--vimgrep`/`--column` per-occurrence byte columns, and rg exit-2 partial-results with rg-parity exit codes); the `tg inventory` walk-only repository manifest; a roughly 4.8x `tg blast-radius` speedup from memoizing the pure `_module_aliases_for_path` (the reported cross-version latency delta was separately confirmed to be measurement noise, not a code regression); the native-delegation deny-by-default guard so `--rank`/`--sort-files` no longer silently drop through delegation to the native front door; a `MatchLine` hashability fix; and `tg blast-radius --mermaid`. `tg diff-docs` was prototyped and deliberately deferred pending a precision rebuild — naive doc-drift detection floods false positives (documented follow-up).

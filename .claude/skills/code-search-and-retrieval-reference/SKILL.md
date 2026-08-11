@@ -805,6 +805,16 @@ own Task 10A/10B/10C landings). `_symbol_navigation_descriptor()` now returns **
 defs/imports-only (cpp) -- re-run the one-liner below rather than trust any of the three dated
 snapshots above.
 
+**SUPERSEDED FINAL (append-only, do not edit the paragraphs above) -- 2026-08-11, Task 10E (the
+C++ final wave).** C++ (cpp) moved from foundational to parser-backed, completing the top-10
+milestone: `_symbol_navigation_descriptor()` now returns **10 parser-backed** (c, cpp, csharp, go,
+java, javascript, php, python, rust, typescript) + **0 foundational** defs/imports-only (the
+foundational tier is EMPTY). Verified live on origin/main a6242bb (v1.110.14):
+`parser-backed-refs-callers:c-cpp-csharp-go-java-javascript-php-python-rust-typescript
++foundational-defs-imports-only:`. Do not "fix" the dated snapshots above — they are accurate-as-
+dated history; the CURRENT tier count is 10/0. Cross-checked by
+`tests/unit/test_lang_registry.py` (10 registrations) and the re-verification one-liner below.
+
 Re-verification commands:
 
 ```bash

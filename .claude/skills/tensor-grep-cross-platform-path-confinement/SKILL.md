@@ -139,7 +139,7 @@ Windows the alias is a **junction**, exactly the primitive of Part 1.
 **Repo receipts to cite by symbol, not line:** `checkpoint_store.py` `_resolve_within_root` + the
 create-side parent-chain resolve (M1); `lsp_server.py` `_uri_to_path` / `_valid_external_document_uri`
 / `_workspace_edit_refused` (M3 documentChanges confinement); `index.rs` `staleness_reason` /
-`canonical_root_of` / `root_servability_reason` (M17, currently on the `audit/m17-*` PR head); AGENTS.md
+`canonical_root_of` / `root_servability_reason` (M17, merged on origin/main as v1.110.12; current tag v1.110.14); AGENTS.md
 A38/A48/A53/A55/A84. Grep the symbol, never a hardcoded line number.
 
 ---

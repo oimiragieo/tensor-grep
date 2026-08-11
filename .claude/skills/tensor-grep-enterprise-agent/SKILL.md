@@ -5,7 +5,7 @@ description: Use when designing or evaluating tensor-grep as an enterprise agent
 
 # tensor-grep for enterprise agents
 
-Verified against **tg 1.98.25** (2026-07-26 refresh of the gap table only; the WSL workspace+GPU
+Verified against **tg 1.110.14** (2026-07-26 refresh of the gap table only; the WSL workspace+GPU
 rows still date from the 2026-07-21 v1.91.0 dogfood and are marked as such. Individual gaps are
 re-verified by source inspection against the shipped line, not a re-run whole-workspace sweep — see
 the native-scale dogfood bullet below for a fresh large-repo data point).
