@@ -798,9 +798,9 @@ A90_MATRIX = [
     (["verify-edit", "--json"], True, None),
     (["workspace", "--json"], True, None),
     (["hello", "--json"], False, None),
-    (["hello", "sample.txt", "--json"], False, None),
-    (["edit-ready", "docs/", "--json"], True, None),
-    (["edit-ready", "docs/"], False, None),
+    (["hello", "target.txt", "--json"], False, None),
+    (["edit-ready", "target.txt", "--json"], True, None),
+    (["edit-ready", "target.txt"], False, None),
     (["qqq", "--json"], False, None),
     (["qqq", "--help"], True, None),
     (["search", "workspace", "--json"], False, None),
@@ -820,7 +820,6 @@ def test_unknown_command_refusal_parity_across_launchers(
     (a nonexistent command has no help); `tg search workspace --json` (explicit command) stays
     search (escape hatch). Third column pins the EXACT nearest[] (via the human help line, which
     carries 'did you mean ...?' when non-empty and omits it when [])."""
-    outcomes = []
     parsed_json_by_launcher = {}
     help_nearest_by_launcher = {}
     for launcher in LAUNCHERS:
@@ -865,10 +864,18 @@ def test_unknown_command_refusal_parity_across_launchers(
                         f"stderr={result.stderr[:160]!r}"
                     )
         else:
-            assert result.returncode != 2, (
-                f"{launcher} {args}: search must not exit 2 with unknown_command"
+            # A search shape must NOT be refused as an unknown command. Legit search outcomes
+            # (match exit 0/1, or a search-path/broad-scan error at exit 2) are fine — what is
+            # forbidden is the unknown_command refusal shape. Assert its ABSENCE on both streams.
+            combined = result.stdout + result.stderr
+            assert "unknown_command" not in combined, (
+                f"{launcher} {args}: search must not emit unknown_command "
+                f"stdout={result.stdout[:120]!r} stderr={result.stderr[:120]!r}"
             )
-        outcomes.append((launcher, result.returncode))
+            assert "unknown command" not in combined, (
+                f"{launcher} {args}: search must not emit 'unknown command' "
+                f"stdout={result.stdout[:120]!r} stderr={result.stderr[:120]!r}"
+            )
     if parsed_json_by_launcher:
         # Cross-launcher parity: EVERY door must emit the SAME structured refusal (code + nearest).
         first = next(iter(parsed_json_by_launcher.values()))
@@ -887,6 +894,3 @@ def test_unknown_command_refusal_parity_across_launchers(
             assert actual == first_help, (
                 f"{launcher} {args}: help-form nearest diverged {actual} vs {first_help}"
             )
-    if not expect_refusal:
-        returncodes = {rc for _, rc in outcomes}
-        assert 2 not in returncodes, f"no launcher may refuse a search shape: {outcomes}"
