@@ -62,52 +62,54 @@ Canonical status index version: 2026-08-08.1
 
 ## Live campaign snapshot
 
-Last reconciled: **2026-08-08** (backlog-completion campaign). canonical index `2026-08-08.1`.
+Last reconciled: **2026-08-10** (M16/M17 first-CI row drain + A90). canonical index `2026-08-10.1`.
 Task 2 is complete as the reconciliation checkpoint; Task 2A RED remains correctly blocked.
-Execution plan: `docs/plans/2026-08-08-backlog-completion-plan.md` (three-lens thinktank-approved,
-Round 3).
+Execution plan: `docs/plans/2026-08-10-a90-unknown-command-fail-closed.md` (council + codex-approved,
+Round 3) and `docs/plans/2026-08-08-backlog-completion-plan.md`.
 
-**Public product:** `v1.110.6` on PyPI/GitHub (2026-08-08, version endpoint + release asset check);
-v1.110.7 in flight (#976 M8). Tip includes #958 CUJ lock + #962 wheel dogfood + #963 CEO docs + the
-2026-08-08 drain (#975 M7 → v1.110.6, #976 M8 → v1.110.7) and the P5·H2 fail-closed PR (#979, draft).
+**Public product:** `v1.110.12` on PyPI/GitHub (2026-08-10, version endpoint + release asset check;
+PyPI serves 1.110.11 and 1.110.12). Tip includes the docs drain (#993 roadmap, #994 A90–A93, #992
+A87–A89 capture, #995 BACKLOG receipts) and the Rust first-CI drain (#987 M16 → v1.110.11, #988 M17 →
+v1.110.12) and the current draft (#997 A90 unknown-command fail-closed).
 **CEO packet:** `docs/audits/2026-08-06-pm-ceo-backlog-update.md` (live, 2026-08-06 PM, A77–A82); morning `docs/audits/2026-08-06-ceo-backlog-update.md` retained as historical (supersedes counts in
 `docs/audits/2026-08-03-ceo-backlog-update.md` for live unfinished totals; keep the 2026-08-03 file
 as historical). Also cite `docs/audits/2026-08-03-ceo-backlog-update.md` for continuity links.
-**Closed this reconcile (impl already merged; closure #963):** F7 (#950/#952/#955/#957),
-CPU-BACKEND (#923/#925), REF-CALL-REGISTRY (#915/#940).
+**Closed this reconcile (impl already merged; closure #963/#995):** F7 (#950/#952/#955/#957),
+CPU-BACKEND (#923/#925), REF-CALL-REGISTRY (#915/#940), M16 (#987 → v1.110.11), M17 (#988 → v1.110.12).
 **Closed in the 2026-08-08 drain:** M7 (#975 → v1.110.6), M8 (#976 → v1.110.7 in flight).
 
-**Unfinished 17:** 0 READY, 6 BLOCKED (#89 #90 F5 F6 F8 MCP-SURFACE), 5 CEO_GATED (#48 #72 #77 #131 #169),
+**Unfinished (buildable queue after this reconcile):** the READY board rows are 0; the remaining
+buildable/audit and roadmap work is the A90-family edit-control plane (#997 draft in flight), then
+the world-class roadmap items (edit-ready/verify-edit, impact-diff, next_action, workspace federation,
+CI evidence chain, default hybrid find) per `docs/plans/2026-08-09-worldclass-roadmap.md`. Blocked/CEO/
+demand rows unchanged: 6 BLOCKED (#89 #90 F5 F6 F8 MCP-SURFACE), 5 CEO_GATED (#48 #72 #77 #131 #169),
 6 DEMAND_GATED (#255 DD-006 AST-DSL-PARITY MCP-LEAN-DEFAULT CONTINUOUS-REFRESH RUST-REPLACE-SYMLINK).
-Plus the 2026-08-08 buildable audit queue (P5·H2 → draft #979; then M1, M3, M16, M17, M14) per
-`docs/plans/2026-08-08-backlog-completion-plan.md` — audit-queue TDD slices, distinct from the
-board's READY rows (which stay 0). Board READY is not a build license when BACKLOG reconcile says
-BLOCKED (A71/A76).
+Board READY is not a build license when BACKLOG reconcile says BLOCKED (A71/A76).
 
 **Hard stops:** Task 2A not merge-ready; no #169 spend; no silent CEO-gate flips; MCP wire-contract
 fence; no local `rust_core` cargo on the shared box for W3 halves.
 
-post-**v1.110.6**, PyPI-verified 2026-08-08 by the version endpoint (`tensor-grep 1.110.6`).
+post-**v1.110.12**, PyPI-verified 2026-08-10 (`tensor-grep 1.110.12`).
 
 **Unfinished 17:** 0 READY, 6 BLOCKED (#89 #90 F5 F6 F8 MCP-SURFACE), 5 CEO_GATED (#48 #72 #77 #131 #169),
 6 DEMAND_GATED (#255 DD-006 AST-DSL-PARITY MCP-LEAN-DEFAULT CONTINUOUS-REFRESH RUST-REPLACE-SYMLINK).
-0 IN_FLIGHT. Board READY is not a build license when BACKLOG reconcile says BLOCKED (A71/A76/A82).
+0 IN_FLIGHT (the A90 #997 draft is in review, not an implementation in flight). Board READY is not a
+build license when BACKLOG reconcile says BLOCKED (A71/A76/A82).
 
 **Hard stops:** Task 2A not merge-ready; no #169 spend; no silent CEO-gate flips; MCP wire-contract
 fence; no local `rust_core` cargo on the shared box for W3 halves.
 
-post-**v1.110.10**, PyPI-verified 2026-08-09 (`tensor-grep 1.110.10`).
+post-**v1.110.12**, PyPI-verified 2026-08-10 (`tensor-grep 1.110.12`).
 
-## IN FLIGHT (PRs open right now — derived from `gh pr list`, 2026-08-09)
+## IN FLIGHT (PRs open right now — derived from `gh pr list`, 2026-08-10)
 
 | PR | Title | Type | State |
 |---|---|---|---|
 | #966 | `test: Task 2A FIX-FIRST Sol R3 (not GREEN)` | test | DRAFT — do-not-merge (RED by design; not Phase 0+1) |
-| #987 | `fix(scan): Rust tg scan keeps composite rules + severity/message (M16 audit)` | fix | DRAFT |
-| #988 | `fix(index): reused index never serves a mismatched stored root (M17 audit)` | fix | DRAFT |
+| #997 | `fix(cli): fail closed on unknown flag-bearing top-level commands (A90)` | fix | DRAFT — council + codex-approved, awaiting human review |
 
-*(Derive live `gh pr list` before treating this table as current. Phase 0+1 PRs #951–#957/#961
-MERGED; F7 Task 11 waves 1–3 SHIPPED. Do not read draft #966 as Task 2A GREEN.)*
+*(Derive live `gh pr list` before treating this table as current. M16 #987 → v1.110.11 and M17 #988
+→ v1.110.12 are MERGED; #992/#993/#994/#995 docs merged. Do not read draft #966 as Task 2A GREEN.)*
 
 *(#872, #871 and #868 all MERGED — #871 on 2026-07-31, #872 and #868 on 2026-08-01. They sat in
 this table as "CI running" / "BLOCKED — do not merge" after landing, which is the exact failure mode
