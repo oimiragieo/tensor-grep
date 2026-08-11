@@ -421,7 +421,14 @@ def _top_level_command_refusal(argv: list[str]) -> tuple[str, list[str]] | None:
     if not argv:
         return None
     first_arg = argv[0]
-    if first_arg in _KNOWN_COMMANDS or first_arg.startswith("--typer-") or first_arg == "search":
+    if (
+        first_arg in _KNOWN_COMMANDS
+        or first_arg == "search"
+        or first_arg.startswith("--typer-")
+        or first_arg.startswith("-")
+    ):
+        # Dash-first invocations (--help, --json, -V, --anything) are their own surface,
+        # never an unknown-command refusal -- mirror the native door exactly (parity).
         return None
     from tensor_grep.cli.commands import RESERVED_TOP_LEVEL_COMMANDS
 

@@ -5162,11 +5162,12 @@ mod tests {
                 !member.ends_with(','),
                 "member leaked a trailing comma: {member:?}"
             );
-            assert!(
-                !member.starts_with("__"),
-                "internal __ name leaked into known members: {member:?}"
-            );
         }
+        // Internal hidden commands are legitimate members and must be recognized by membership
+        // (so hidden-command dispatch still works); nearest hides them from suggestions.
+        assert!(is_known_python_command("__gpu-native-stats"));
+        assert!(members.contains(&"__gpu-native-stats".to_string()));
+        assert!(!nearest_commands("__gpu-native-stats").contains(&"__gpu-native-stats".to_string()));
 
         // Reserved names are parsed from THEIR OWN block, not KNOWN_COMMANDS.
         let reserved = python_set_members("RESERVED_TOP_LEVEL_COMMANDS");
@@ -8059,7 +8060,7 @@ fn python_set_members(set_name: &str) -> Vec<String> {
                 } else if c == '\\' {
                     in_str_esc = true;
                 } else if c == '"' {
-                    if depth >= 1 && !current.trim().starts_with("__") {
+                    if depth >= 1 {
                         collected.push(current.clone());
                     }
                     current.clear();

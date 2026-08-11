@@ -806,6 +806,7 @@ A90_MATRIX = [
     (["search", "workspace", "--json"], False, None),
     (["searhc", "--help"], True, ["search"]),
     (["qqqqzzzz", "--help"], True, []),
+    (["--bogus", "--help"], False, None),
 ]
 
 
