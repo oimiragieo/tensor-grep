@@ -17012,7 +17012,8 @@ def test_doctor_installation_health_ok_when_clean_semantically_newer() -> None:
 
 def test_doctor_installed_behind_pypi_semantic() -> None:
     # Semantic, NOT lexicographic: 1.110.10 < 1.110.9 is False (1.110.9 has fewer patch digits
-    # but packaging compares numerically: 1.110.10 > 1.110.9). Use a clear numeric case.
+    # but the strict padded dotted-numeric comparison yields 1.110.10 > 1.110.9). Use a clear
+    # numeric case. (No `packaging` dependency — a strict padded tuple parser per plan REV 6.)
     assert cli_main._doctor_installed_behind_pypi("1.110.9", "1.110.10") is True
     assert cli_main._doctor_installed_behind_pypi("1.110.10", "1.110.10") is False
     assert cli_main._doctor_installed_behind_pypi("2.0.0", "1.110.13") is False
@@ -17101,9 +17102,14 @@ def test_doctor_route_version_matches_padded_equivalence() -> None:
     assert cli_main._doctor_route_version_matches("1.110.13", "junk") is None
     # Absent route -> None.
     assert cli_main._doctor_route_version_matches("1.110.13", None) is None
-    # Registry-looking / prerelease forms are unverifiable, not truncated.
+    # Registry-looking / prerelease / local / epoch forms are unverifiable, not truncated
+    # (plan REV 6: strict dotted-numeric, rejected = None):
     assert cli_main._doctor_version_tuple("1.110.13+dev") is None
     assert cli_main._doctor_version_tuple("1.110.13rc1") is None
+    assert cli_main._doctor_version_tuple("1.110.13.dev0") is None
+    assert cli_main._doctor_version_tuple("1.110.13+local") is None
+    assert cli_main._doctor_version_tuple("1!2.0.0") is None
+    assert cli_main._doctor_version_tuple("v1.110.13") is None
 
 
 def test_doctor_shadow_launchers_absent_route_not_listed() -> None:
