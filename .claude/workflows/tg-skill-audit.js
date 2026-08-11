@@ -66,11 +66,11 @@ const AUDIT_SCHEMA = {
 }
 
 const CLUSTERS = [
-  { key: 'change-safely', skills: ['tensor-grep-change-control', 'tensor-grep-debugging-playbook', 'tensor-grep-failure-archaeology', 'tensor-grep-validation-and-qa'] },
-  { key: 'understand', skills: ['tensor-grep-architecture-contract', 'code-search-and-retrieval-reference', 'tensor-grep-config-and-flags', 'tensor-grep'] },
+  { key: 'change-safely', skills: ['tensor-grep-change-control', 'tensor-grep-debugging-playbook', 'tensor-grep-failure-archaeology', 'tensor-grep-validation-and-qa', 'tensor-grep-hermetic-hostile-tests', 'tensor-grep-cross-platform-path-confinement', 'tensor-grep-release-drift-check'] },
+  { key: 'understand', skills: ['tensor-grep-architecture-contract', 'code-search-and-retrieval-reference', 'tensor-grep-config-and-flags', 'tensor-grep-argv-normalization-and-shadowing', 'tensor-grep-index-fingerprint-freshness', 'tensor-grep'] },
   { key: 'operate-a', skills: ['tensor-grep-build-and-env', 'tensor-grep-run-and-operate', 'tensor-grep-diagnostics-and-tooling', 'tensor-grep-docs-and-writing', 'tensor-grep-release-and-positioning'] },
   { key: 'operate-b', skills: ['tensor-grep-workspace-dogfood', 'tensor-grep-enterprise-agent', 'tensor-grep-prepare', 'tensor-grep-ledger', 'tensor-grep-find-and-route'] },
-  { key: 'operate-c', skills: ['tensor-grep-multi-project-search', 'tensor-grep-enterprise-review-bundle', 'tensor-grep-gpu', 'tensor-grep-add-language', 'tensor-grep-backlog-campaign'] },
+  { key: 'operate-c', skills: ['tensor-grep-multi-project-search', 'tensor-grep-enterprise-review-bundle', 'tensor-grep-gpu', 'tensor-grep-add-language', 'tensor-grep-backlog-campaign', 'tensor-grep-codex-gated-audit-loop'] },
   { key: 'advance', skills: ['tensor-grep-semantic-search-campaign', 'tensor-grep-benchmark-and-proof-toolkit', 'tensor-grep-research-frontier', 'tensor-grep-research-methodology', 'tensor-grep-large-repo-scale-campaign'] },
 ]
 
