@@ -11,7 +11,7 @@ description: >
   and never silently lie (return an empty/partial result as if it were complete) on
   a customer-scale repo. Gives the reproduce -> phase-instrument (cProfile) -> ranked
   solution menu -> fail-closed build -> change-control promotion runbook with exact
-  commands, expected numbers, and branch-on-mismatch forks. Verified against v1.96.0
+  commands, expected numbers, and branch-on-mismatch forks. Verified against v1.110.14 (2026-08-11)
   on 2026-07-24 (#400/#413/#428/#702 fully shipped; #52 and #390 both CLOSED; the
   exit-code contract is exit-2-regardless-of-found, per #401; every S1 `file:line`
   anchor plus the `CALLER_SCAN_FILE_CEILING`/`DEFAULT_AGENT_REPO_MAP_LIMIT` unification

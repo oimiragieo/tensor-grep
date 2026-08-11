@@ -5,7 +5,7 @@ description: Use when coordinating multiple agents on the same repo with tg ledg
 
 # tensor-grep ledger (EXPERIMENTAL, ADVISORY-tier)
 
-Verified against **tg 1.101.31** (LIVE 2026-08-02 gotcontext-saddle — Slice 1 rollup
+Verified against **tg 1.110.14** (LIVE 2026-08-11 gotcontext-saddle — Slice 1 rollup
 + Slice 2 `find` repo-visibility reconfirmed; prior 1.101.22 / 1.93.0 #706).
 
 `tg ledger` is **ADVISORY-tier**, not MANDATORY or OPTIONAL, in the vocabulary a multi-agent-coordination

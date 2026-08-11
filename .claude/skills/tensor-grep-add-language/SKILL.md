@@ -27,7 +27,7 @@ backend contract.
 | Drain several language PRs that all touch `test_lang_registry.py` / `uv.lock` / the pyproject `ast` extra | `tensor-grep-change-control`'s Campaign Orchestration cross-ref (AGENTS.md A22) |
 | Use `tg` as a consumer (search/orient/callers flags) | `code-search-and-retrieval-reference` |
 
-## Current status (verified against tg v1.98.2, `origin/main` @ `ba63aa0`)
+## Current status (verified against tg v1.110.14, `origin/main` @ `a6242bb`)
 
 `repo_map.py` currently carries **10** `lang_registry.register_language(...)` call sites
 (`grep -n "register_language(" src/tensor_grep/cli/repo_map.py`): `python`, `javascript`,
@@ -39,10 +39,16 @@ registered — the "C/C++ deferred" framing below this line in earlier passes of
 STALE; C landed via PR #731 (v1.97.0) and C++ via PR #732 (v1.98.0), each a self-contained
 module (`lang_c.py`/`lang_cpp.py`, mirroring `lang_go.py`'s shape), both at the same
 foundational tier as Java/PHP/C# (defs/imports only, no `references_and_calls`).** A
-follow-up C fix (#736, v1.98.2) corrected a file-scope function-pointer-variable mis-kind —
+follow-up C fix (#736, v1.98.2) corrected a file-scope function-pointer-variable mis-kind -
 see B5's declarator-shape addendum below before writing similar C/C++ declarator-walking
-logic. **Re-run the grep above before trusting any "N of top-10" count** — it is a snapshot,
-not a promise; this count has changed on every pass of this skill so far.
+logic. **SUPERSEDED (append-only, do not edit the paragraph above) - 2026-08-11, Task 10E
+final wave:** C and C++ are now PARSER-BACKED too; `_symbol_navigation_descriptor()` returns
+**10 parser-backed** (c, cpp, csharp, go, java, javascript, php, python, rust, typescript)
+and the **foundational tier is EMPTY**. The "same foundational tier as Java/PHP/C#" claim
+above is accurate-as-dated (v1.98.x) history; the tier split has since moved to 10/0 and is
+pinned by `tests/unit/test_lang_registry.py`. **Re-run the grep above before trusting any
+"N of top-10" count** - it is a snapshot, not a promise; this count has changed on every pass
+of this skill so far.
 
 **SUPERSEDED 2026-08-04 by Task 10E (C++, the final wave of the top-10 language-support
 campaign):** the "foundational tier" claim two sentences up is now STALE for every language

@@ -7,7 +7,7 @@ description: Use when searching across a multi-project workspace root (many sibl
 
 Use this when the cwd is a **workspace parent** (e.g. `/mnt/c/dev/projects`) containing many unrelated repos, not a single git root.
 
-Verified against **tg 1.110.13** (2026-08-11 Windows `uvx`; prior stamps 1.95.0 / 1.91.0 WSL).
+Verified against **tg 1.110.14** (2026-08-11 Windows `uvx`; prior stamps 1.95.0 / 1.91.0 WSL).
 
 ## Do this
 

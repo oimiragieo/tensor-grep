@@ -27,7 +27,7 @@ asks "is the stored root the queried root, canonically?".
 
 ## Part 1 — Identity-anchor-first: canonical root, never a raw path string
 
-The M17 structural fix (`index.rs` on the `audit/m17-*` PR head) is the model:
+The M17 structural fix (merged on origin/main as v1.110.12; current tag v1.110.14) is the model:
 
 - [ ] Persist a **canonical** root at build: `canonical_root_of()` recorded once (format v6) —
       lexical AND canonical, so later path-spelling differences (case, `..`, junctions in the

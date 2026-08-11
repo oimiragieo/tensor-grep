@@ -98,6 +98,11 @@
             "priority": "medium",
             "minKeywordHits": 1,
             "keywords": ["index reuse", "staleness", "tree_fingerprint", "wrong tree", "stored root", "canonical_root_of", "mtime size", "fingerprint", "sample cap", "M17"]
+        },
+        "tensor-grep-release-drift-check": {
+            "priority": "medium",
+            "minKeywordHits": 1,
+            "keywords": ["skill drift", "version stamp", "superseded", "stale stamp"]
         }
     }
 }

@@ -5,7 +5,7 @@ description: Use when exercising tensor-grep experimental GPU paths — devices/
 
 # tensor-grep GPU (experimental)
 
-Verified against **tg 1.95.0** (2026-07-24).
+Verified against **tg 1.110.14** (2026-08-11).
 
 ## Verdict, up front (do not bury this under the honesty table)
 

@@ -292,7 +292,7 @@ Encode these honestly; the dogfood report itself emits `world_class_readiness.st
 
 ```powershell
 # Front door + version identity
-uv run tg --version                                  # expect: tensor-grep 1.95.0 (or current)
+uv run tg --version                                  # expect: tensor-grep 1.110.14 (or current)
 # The published entry point (must be bootstrap.main_entry, not a Typer callback)
 uv run python -c "import tensor_grep.cli.bootstrap as b; print(b.main_entry)"
 # Routing / launcher observability

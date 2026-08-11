@@ -5,8 +5,7 @@ description: Use when an agent needs one-call edit readiness before changing cod
 
 # tensor-grep prepare (one-call edit readiness)
 
-Verified against **tg 1.110.13** (LIVE 2026-08-11 Windows `uvx` — saddle ~5s; tg `src` `--out`/`--claim` ~22s; prior 1.110.12 CUJ still representative).
-tensor-grep `src` `--out`/`--claim` ~14s; prior 1.101.31 / 1.101.22 CUJ still representative).
+Verified against **tg 1.110.14** (LIVE 2026-08-11 Windows `uvx` — saddle ~5s; tg `src` `--out`/`--claim` ~22s; prior 1.110.12 CUJ still representative).
 
 Note: anonymous `--claim` `agent_id_hint` remains strong (“NOT attributable…” until
 `TG_LEDGER_AGENT_ID` / `TG_EVIDENCE_AGENT_ID` is set).

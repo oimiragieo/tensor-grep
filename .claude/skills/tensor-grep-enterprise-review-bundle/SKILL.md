@@ -5,7 +5,7 @@ description: Use when packaging tensor-grep outputs for enterprise change review
 
 # tensor-grep enterprise review bundle
 
-Verified against **tg 1.95.0** (2026-07-23).
+Verified against **tg 1.110.14** (2026-08-11).
 
 `tg review-bundle` is the enterprise packaging surface for change review. It is **not** a substitute for `tg agent` / `tg evidence emit`.
 

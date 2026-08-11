@@ -70,6 +70,7 @@ Boolean env vars in tg follow one convention everywhere (`env_flag_enabled`,
 | `TG_RESIDENT_AST` | off | Enables the resident AST worker path (see `docs/runbooks/resident-worker.md`); reported by `tg doctor --json`. | `main.py:2759`, `main.rs` (search `TG_RESIDENT_AST`) |
 | `TG_DISABLE_NATIVE_TG` | off | Kill-switch: forces `resolve_native_tg_binary()` to return `None`, fully bypassing the native `tg` binary front door (Python-backed commands fall back to pure-Python routing even if a compatible native binary is resolvable). | `runtime_paths.py:234` |
 | `TG_DISABLE_RG` | off | Kill-switch: forces the native binary's ripgrep resolver to return `None`, so the native front door treats `rg` as unavailable regardless of `TG_RG_PATH`/PATH. | `rust_core/src/rg_passthrough.rs:13,477` |
+| `TG_DOCTOR_OFFLINE` | off | Disables `tg doctor`'s PyPI latest-version probe: `pypi_latest` becomes `None` and `installation_health` reports `unknown_pypi` instead of a network result. Test/offline escape hatch for the v1.110.14 doctor schema-3 freshness fields; deliberately disclosed (never a silent clean). | `main.py:489-492` |
 
 ### Timeouts
 
