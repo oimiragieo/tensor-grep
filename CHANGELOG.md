@@ -1,6 +1,48 @@
 # CHANGELOG
 
 
+## v1.110.14 (2026-08-11)
+
+### Bug Fixes
+
+- **doctor**: Surface pypi_latest + shadow launchers + installation health (PATH honesty)
+  ([#1000](https://github.com/oimiragieo/tensor-grep/pull/1000),
+  [`e69d82c`](https://github.com/oimiragieo/tensor-grep/commit/e69d82c9ebbe451d18389b0970fd6695f0658109))
+
+* fix(doctor): close codex audit findings — semantic versions, absent routes, route order
+
+Folds all 5 codex findings + the plan REV-6 PEP-440-prefix amendment:
+
+- HIGH: invalid NON-NULL pypi_latest now lands on unverifiable_version (health parses pypi_latest),
+  never a wrong confident ok. - HIGH: shadow_launchers[].version_matches is now SEMANTIC (strict
+  padded dotted-numeric: 1.0 == 1.0.0; invalid route version -> None, never a confident False via
+  the substring matcher). - HIGH: _doctor_version_tuple is STRICT — any suffix (1.110.13rc1, +dev,
+  1!2.0.0), leading/ trailing dot, "..", or single segment returns None (unverifiable, fail-closed),
+  never silently truncated into a stable tuple. Deliberate PEP-440-prefix deviation documented in
+  the plan REV 6 with a reopen trigger (tg's release line emits only clean X.Y.Z; full PEP 440 would
+  require declaring the `packaging` transitive dep and churn ~260 uv.lock lines). - MEDIUM: absent
+  routes (path=None) filtered BEFORE the inclusion predicate (absent != unparseable). - LOW:
+  deterministic spec route order path/fresh_shell_path/python_subprocess_path via explicit
+  _ROUTE_ORDER rank (was alphabetical). - installed_behind_pypi computed independently of route
+  versions (junk route must not nullify installed-vs-pypi), pinned by test.
+
+13 new doctor tests (70 doctor tests, 547 total in test_cli_modes); ruff/mypy/format clean.
+
+* test(doctor): codex R3 LOWs — stale packaging comment + full REV-6 rejection pins
+
+- Drop the stale 'packaging compares numerically' comment (no dependency; strict padded
+  dotted-numeric tuple parser per plan REV 6). - Pin the documented rejection contract: +dev, rc1,
+  .dev0, +local, epoch (1!2.0.0), v-prefix all -> None (unverifiable), not truncated.
+
+### Documentation
+
+- **skills**: Dogfood refresh for tg 1.110.13 (A90)
+  ([#999](https://github.com/oimiragieo/tensor-grep/pull/999),
+  [`a125e1a`](https://github.com/oimiragieo/tensor-grep/commit/a125e1afed7c3313e2ff4d525c6d6052de3ca97c))
+
+Stamp fail-closed unknown_command for reserved Phase-2 names; CUJ 21/21 on Windows uvx.
+
+
 ## v1.110.13 (2026-08-11)
 
 ### Bug Fixes
