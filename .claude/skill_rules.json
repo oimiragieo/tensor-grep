@@ -103,6 +103,11 @@
             "priority": "medium",
             "minKeywordHits": 1,
             "keywords": ["skill drift", "version stamp", "superseded", "stale stamp"]
+        },
+        "tensor-grep-worldclass-roadmap": {
+            "priority": "medium",
+            "minKeywordHits": 1,
+            "keywords": ["edit-control plane", "verify-edit", "escrowed evidence", "edit tickets", "next_action", "why_ranked", "federated workspace", "S1-S7"]
         }
     }
 }

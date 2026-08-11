@@ -43,6 +43,12 @@
 
 
 
+## Recent campaign notes (2026-08-11 late) — skill coverage wave (post-#1001)
+
+- **Post-merge coverage audit** of the 34-skill library vs the A83-A96 / M16-M17 / doctor-3 / world-class wave: 6 gaps found (A87 static-SHIP-provisional, A89 real-artifact parity, A92 escrowed evidence, A96 byte-exact-edit, M16 scan rule preservation, world-class roadmap).
+- **Five lesson-gaps folded into existing skills; one NEW skill: `tensor-grep-worldclass-roadmap`** (S1-S7 edit-control-plane spine, Exa-grounded: Occasio OIDC attestation / AET evidence-freshness / Anthropic harness papers). Index 33 -> 34; skill_rules.json 22; workflow 35/35; gates 16/16.
+- Laws A94-A96 were captured in #1001; this wave converts the remaining audit finding into skill coverage so `tg-skill-audit` and future sessions find the disciplines without re-deriving from AGENTS.md.
+
 ## Recent campaign notes (2026-08-11) — skill-library audit + freshness mechanism
 
 - **Skill-library audit (all 33 in-repo `.claude/skills/*/SKILL.md` files, 3 parallel subagent waves):**

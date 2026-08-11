@@ -302,3 +302,24 @@ Step 6  commit message records each round (severity + mechanism) -> normal gates
 
 The endpoint is always a **draft PR** a human merges; the codex gate is an addition to the
 change-control gates, never a substitute for them.
+
+## Static SHIP is provisional until the first CI compile (A87, 2026-08-08/09 receipts)
+
+For Rust slices, a codex SHIP is a PROVISIONAL verdict: static review cannot typecheck, and three
+real receipts reddened CI on first compile despite prior audit SHIPs — #987 (M16 scan
+composite/severity) failed its regression only on the full matrix, #988 (M17 index root/format)
+survived three audit rounds then failed E0599/E0308/E0382 on first compile, and the A87 wave
+itself. The first `cargo` compile / CI matrix run IS the Rust typecheck gate.
+
+- Hold "SHIP" as `SHIP-PROVISIONAL` for any Rust-touching PR until the first real CI compile of the
+  head SHA completes (A87: static review ≠ typecheck).
+- The fix author's self-gate is a hypothesis until the matrix runs: #987's regression lived in
+  `tests/unit/test_backend_bug_fixes.py`, which its author's scoped suite never ran.
+- Report "static SHIP, awaiting first compile" in the round record — never "SHIP" alone for Rust.
+
+## Rust scan must not drop composite rules or custom severity (M16, 2026-08-10)
+
+`tg scan`'s Rust path must preserve composite multi-pattern rules and per-rule custom
+severity/message (`docs/plans/2026-08-08-backlog-completion-plan.md`): a scan that silently strips a
+composite rule or downgrades severity to defaults is the fail-open shape. CI is the compile oracle;
+the workspace-dogfood rows pin the green, the rule semantics live here.
