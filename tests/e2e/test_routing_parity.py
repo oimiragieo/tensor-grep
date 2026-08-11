@@ -809,7 +809,7 @@ A90_MATRIX = [
 ]
 
 
-@pytest.mark.parametrize("args,expect_refusal,_unused", A90_MATRIX)
+@pytest.mark.parametrize("args,expect_refusal,expected_nearest", A90_MATRIX)
 def test_unknown_command_refusal_parity_across_launchers(
     parity_env, args, expect_refusal, expected_nearest
 ):
@@ -821,6 +821,7 @@ def test_unknown_command_refusal_parity_across_launchers(
     carries 'did you mean ...?' when non-empty and omits it when [])."""
     outcomes = []
     parsed_json_by_launcher = {}
+    help_nearest_by_launcher = {}
     for launcher in LAUNCHERS:
         result = run_command(launcher, args, cwd=parity_env)
         if expect_refusal:
@@ -841,11 +842,22 @@ def test_unknown_command_refusal_parity_across_launchers(
                 assert "unknown command" in result.stderr, (
                     f"{launcher} {args}: human diagnostic missing, stderr={result.stderr[:120]!r}"
                 )
+                # Exact help-form nearest parity: parse the complete 'did you mean' list and
+                # compare EXACTLY (a substring assert would accept "search" matching
+                # "search, serve"). Collect across launchers for cross-door equality below.
                 if expected_nearest:
-                    assert f"did you mean {', '.join(expected_nearest)}" in result.stderr, (
-                        f"{launcher} {args}: expected 'did you mean {expected_nearest}' in "
-                        f"stderr={result.stderr[:160]!r}"
+                    import re as _re
+
+                    m = _re.search(r"\(did you mean (.+?)\?\)", result.stderr)
+                    assert m is not None, (
+                        f"{launcher} {args}: 'did you mean' missing, stderr={result.stderr[:160]!r}"
                     )
+                    actual = [part.strip() for part in m.group(1).split(",")]
+                    assert actual == expected_nearest, (
+                        f"{launcher} {args}: exact nearest mismatch, actual={actual} "
+                        f"expected={expected_nearest}"
+                    )
+                    help_nearest_by_launcher[launcher] = actual
                 else:
                     assert "did you mean" not in result.stderr, (
                         f"{launcher} {args}: empty nearest must omit the suggestion, "
@@ -866,6 +878,13 @@ def test_unknown_command_refusal_parity_across_launchers(
             assert parsed["error"]["nearest"] == first["error"]["nearest"], (
                 f"{launcher} {args}: nearest[] diverged {parsed['error']['nearest']} vs "
                 f"{first['error']['nearest']}"
+            )
+    if help_nearest_by_launcher:
+        # Help-form cross-launcher nearest parity: every door must suggest the SAME list.
+        first_help = next(iter(help_nearest_by_launcher.values()))
+        for launcher, actual in help_nearest_by_launcher.items():
+            assert actual == first_help, (
+                f"{launcher} {args}: help-form nearest diverged {actual} vs {first_help}"
             )
     if not expect_refusal:
         returncodes = {rc for _, rc in outcomes}

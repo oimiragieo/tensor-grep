@@ -5134,6 +5134,47 @@ mod tests {
     }
 
     #[test]
+    fn scoped_parser_member_surface_is_robust() {
+        // A90 codex R2 MEDIUM pins: the scoped set extractor must be quote/escape aware,
+        // comment aware, brace-aware inside strings, and trailing-comma tolerant. Real
+        // commands.py members are all plain identifiers; these pins protect the parser against
+        // future edits (e.g. a member containing '#' or braces, or an escaped quote).
+        let members = python_set_members("KNOWN_COMMANDS");
+        // The authoritative set must parse completely and losslessly.
+        assert!(members.contains(&"search".to_string()));
+        assert!(members.contains(&"blast-radius".to_string()));
+        assert!(members.contains(&"install-dense".to_string()));
+        // Known members are exactly the quoted literals in the block, none come from comments
+        // or the PYTHON_FULL_HELP_COMMANDS block (e.g. the docstring/comment lines mention
+        // "ripgrep" and "Rust" in prose that must not parse as members).
+        assert!(!members.contains(&"ripgrep".to_string()));
+        assert!(!members.contains(&"Rust".to_string()));
+        // Structure pin: every parsed member must be a CLEAN identifier — no backslash, no
+        // quote, no trailing comma smuggled into the name. A leak here means the scanner's
+        // escape/quote handling regressed (codex R2 MEDIUM).
+        for member in &members {
+            assert!(
+                !member.contains('\\'),
+                "member leaked a backslash: {member:?}"
+            );
+            assert!(!member.contains('"'), "member leaked a quote: {member:?}");
+            assert!(
+                !member.ends_with(','),
+                "member leaked a trailing comma: {member:?}"
+            );
+            assert!(
+                !member.starts_with("__"),
+                "internal __ name leaked into known members: {member:?}"
+            );
+        }
+
+        // Reserved names are parsed from THEIR OWN block, not KNOWN_COMMANDS.
+        let reserved = python_set_members("RESERVED_TOP_LEVEL_COMMANDS");
+        assert!(reserved.contains(&"edit-ready".to_string()));
+        assert!(!reserved.contains(&"orient".to_string()));
+    }
+
+    #[test]
     fn unknown_top_level_command_refusal_fires_on_reserved_flag_shapes() {
         // A90: `tg edit-ready --json` / `--help` refuse; unreserved pattern+flag stays search.
         let reserved_json = ["tg", "edit-ready", "--json"]
@@ -8001,10 +8042,21 @@ fn python_set_members(set_name: &str) -> Vec<String> {
         while let Some(c) = chars.next() {
             if in_str {
                 if in_str_esc {
-                    current.push(c);
+                    // Decode the two escapes that can appear INSIDE a double-quoted Python
+                    // string literal between the outer quotes: `\"` -> `"` and `\\` -> `\`.
+                    // Any other escape is copied verbatim (commands.py set members are plain
+                    // identifiers today; this only guards future edits — Python would decode
+                    // e.g. `\n` to a newline, which cannot occur in a command name).
+                    match c {
+                        '"' => current.push('"'),
+                        '\\' => current.push('\\'),
+                        other => {
+                            current.push('\\');
+                            current.push(other);
+                        }
+                    }
                     in_str_esc = false;
                 } else if c == '\\' {
-                    current.push(c);
                     in_str_esc = true;
                 } else if c == '"' {
                     if depth >= 1 && !current.trim().starts_with("__") {
