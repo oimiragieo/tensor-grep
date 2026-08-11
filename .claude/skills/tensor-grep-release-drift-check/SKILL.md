@@ -110,6 +110,13 @@ goes red and future readers never find it:
 5. Keep the folder set, the two docs' indices, and the count mutually consistent; the sweep in
    Part 1 is exactly how a future session re-verifies all three.
 
+6. **A "**N skills** is VERIFIED CORRECT — do not fix it" note is itself one of the contract sites
+   (A95, 2026-08-11).** It carries a re-derivation echo (e.g. "31 `tensor-grep-*` + 1") that must
+   change in the SAME change that breaks it: adding a folder means updating the count, the note's
+   re-derivation echo, the bucket list, and the AGENTS.md mirror together. A fix-note that outlives
+   its own stated number is the deny-list failure mode wearing a confident hat — it tells the next
+   agent the count is right when it is stale. Grep for the note's number before trusting it.
+
 ## Receipts
 
 - 2026-08-11 sweep (v1.110.14): 21 stale stamps, 7 tier contradictions, 2 stale state facts

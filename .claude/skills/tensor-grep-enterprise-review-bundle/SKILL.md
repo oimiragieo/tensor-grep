@@ -96,3 +96,18 @@ tg review-bundle verify bundle.json --against "$GITHUB_SHA"
 ## Related
 
 - `tensor-grep-enterprise-agent`, `tensor-grep-code-audit`, `tensor-grep-run-and-operate`, `tensor-grep-ledger` (advisory claim/finding-reuse — a sibling coordination primitive; `review-bundle`'s receipts are the audit trail, `ledger` is the live-coordination layer, and neither substitutes for the other)
+
+## Escrowed verification evidence (A92 — verify-edit, S1 spine, 2026-08-09)
+
+This skill's trusted-key/verify surface is the SHIPPED family that the roadmap's S1 verify-edit
+contract extends. The existing mechanism (`--expect-key --require-trusted --trusted-key`) proves a
+receipt's signing key; A92 adds the load-bearing half for the edit loop: **executed evidence must be
+escrowed to a key the verified principal does NOT hold** (CI-held, pinned via `TG_EVIDENCE_TRUSTED_KEYS`
+— the editing agent can produce validation runs, but a PASS it self-attested is Oracle Form 8
+self-report, never verification). A verify-edit PASS therefore requires: validation subprocess
+stdout-hash + exit code + duration, signed by the escrowed key; and the ticket's `base_sha` +
+working-tree fingerprint unchanged (fail closed on drift — a rebase or sibling edit cannot
+retroactively certify state nobody prepared). External precedent (Exa, 2026-08-11): Occasio's
+GitHub-Actions OIDC-signed agent attestations (Sigstore/Rekor, offline-verifiable) are the same
+CI-held-key escrow pattern at product scale; `docs/plans/2026-08-09-worldclass-roadmap.md` S1 is the
+repo's contract. See `tensor-grep-worldclass-roadmap` for the full S1 spine.
