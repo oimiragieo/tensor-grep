@@ -1335,6 +1335,35 @@ fn main_inner() -> anyhow::Result<()> {
     let raw_args: Vec<OsString> = std::env::args_os().collect();
 
     if raw_args.len() <= 1 {
+        if top_level_unknown_command_refusal(&raw_args) {
+            let first = &raw_args[1].to_string_lossy();
+            let nearest = nearest_commands(first);
+            let has_help = raw_args.iter().skip(2).any(|a| {
+                let t = a.to_string_lossy();
+                t == "--help" || t == "-h"
+            });
+            if has_help {
+                if nearest.is_empty() {
+                    eprintln!("error: unknown command '{first}'");
+                } else {
+                    eprintln!(
+                        "error: unknown command '{first}' (did you mean {}?)",
+                        nearest.join(", ")
+                    );
+                }
+            } else {
+                let payload = serde_json::json!({
+                    "error": {
+                        "code": "unknown_command",
+                        "nearest": nearest,
+                        "command": first,
+                    },
+                });
+                eprintln!("{payload}");
+            }
+            std::process::exit(2);
+        }
+
         if let Some(exit_code) = try_public_help_passthrough(&raw_args)? {
             if exit_code != 0 {
                 std::process::exit(exit_code.max(1));
@@ -5083,6 +5112,78 @@ mod tests {
     }
 
     #[test]
+    fn scoped_parser_keeps_known_and_reserved_disjoint() {
+        // A90 lifecycle invariant: a reserved name must read `reserved == true` AND
+        // `known == false` (the unscoped include_str parser leaked reserved names into
+        // "known", which would have made the not-known gate never fire). Both directions:
+        // known names must still read reserved == false.
+        for reserved in ["edit-ready", "verify-edit", "workspace"] {
+            assert!(
+                is_reserved_python_command(reserved),
+                "{reserved} must be reserved"
+            );
+            assert!(
+                !is_known_python_command(reserved),
+                "{reserved} must NOT be known (disjointness)"
+            );
+        }
+        assert!(!is_reserved_python_command("orient"));
+        assert!(is_known_python_command("orient"));
+        assert!(is_known_python_command("search"));
+        assert!(!is_reserved_python_command("search"));
+    }
+
+    #[test]
+    fn unknown_top_level_command_refusal_fires_on_reserved_flag_shapes() {
+        // A90: `tg edit-ready --json` / `--help` refuse; unreserved pattern+flag stays search.
+        let reserved_json = ["tg", "edit-ready", "--json"]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        let reserved_help = ["tg", "edit-ready", "--help"]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        let unknown_help = ["tg", "qqq", "--help"]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        let pattern_flag = ["tg", "hello", "--json"]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        let pattern_path = ["tg", "hello", "docs/"]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        let reserved_positional = ["tg", "edit-ready", "docs/"]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        let known = ["tg", "orient", "--json"]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+
+        assert!(top_level_unknown_command_refusal(&reserved_json));
+        assert!(top_level_unknown_command_refusal(&reserved_help));
+        assert!(top_level_unknown_command_refusal(&unknown_help));
+        assert!(!top_level_unknown_command_refusal(&pattern_flag));
+        assert!(!top_level_unknown_command_refusal(&pattern_path));
+        assert!(!top_level_unknown_command_refusal(&reserved_positional));
+        assert!(!top_level_unknown_command_refusal(&known));
+    }
+
+    #[test]
+    fn nearest_commands_is_bounded_and_deterministic() {
+        let near = nearest_commands("searhc");
+        assert!(near.contains(&"search".to_string()), "near={near:?}");
+        assert!(near.len() <= 5);
+        assert!(nearest_commands("qqqqzzzz").is_empty());
+        assert_eq!(near, nearest_commands("searhc"));
+    }
+
+    #[test]
     fn top_level_search_format_python_passthrough_args_detects_non_rg_formats() {
         let raw_args = ["tg", "--format=json", "ERROR", "bench_data"]
             .iter()
@@ -7823,14 +7924,193 @@ fn should_use_positional_cli(raw_args: &[OsString]) -> bool {
     false
 }
 
-fn is_known_python_command(token: &str) -> bool {
+/// A90: unknown-command-shaped refusal on the NATIVE door. Mirrors the Python
+/// `_top_level_command_refusal` contract exactly (parity-pinned):
+/// - first arg is a RESERVED (roadmap, not-yet-registered) name AND any later token starts with
+///   '-'  -> refusal; or
+/// - first arg is unknown (not known, not reserved) AND any later token is `--help`/`-h`
+///   (a nonexistent command has no help) -> refusal.
+/// Everything else (bare patterns, pattern+path, unreserved pattern+flag) stays search.
+fn top_level_unknown_command_refusal(raw_args: &[OsString]) -> bool {
+    let Some(first) = raw_args.get(1).map(|a| a.to_string_lossy()) else {
+        return false;
+    };
+    if first == "search" || is_known_python_command(&first) || first.starts_with('-') {
+        return false;
+    }
+    let rest: Vec<String> = raw_args
+        .iter()
+        .skip(2)
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    if rest.is_empty() {
+        return false;
+    }
+    let has_flag = rest.iter().any(|t| t.starts_with('-'));
+    if !has_flag {
+        return false;
+    }
+    let is_reserved = is_reserved_python_command(&first);
+    let has_help = rest.iter().any(|t| t == "--help" || t == "-h");
+    is_reserved || has_help
+}
+
+/// A90 nearest[]: normalized, max distance 3, excludes internal `__` names, cap 5, stable
+/// (alphabetical) order, empty when nothing is close. Mirrors `_nearest_commands`.
+fn nearest_commands(token: &str) -> Vec<String> {
     const RAW_PY: &str = include_str!("../../src/tensor_grep/cli/commands.py");
-    RAW_PY.lines().any(|line| {
+    let mut names: Vec<String> = Vec::new();
+    let mut in_block = false;
+    let mut depth: i32 = 0;
+    for line in RAW_PY.lines() {
         let t = line.trim();
-        t.starts_with('"')
-            && (t.ends_with(r#"","#) || t.ends_with(r#"""#))
-            && t.contains(&format!("\"{token}\""))
-    })
+        if !in_block {
+            if t.starts_with("KNOWN_COMMANDS = {") {
+                in_block = true;
+                depth = 1;
+            }
+            continue;
+        }
+        let stripped = match t.find('#') {
+            Some(idx) => &t[..idx],
+            None => t,
+        };
+        for ch in stripped.chars() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        in_block = false;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !in_block {
+            break;
+        }
+        if stripped.starts_with('"') && stripped.ends_with('"') {
+            let name = stripped[1..stripped.len() - 1].to_string();
+            if !name.starts_with("__") {
+                names.push(name);
+            }
+        }
+    }
+
+    let norm = token.to_lowercase();
+    let mut matches: Vec<String> = Vec::new();
+    for name in names {
+        if abs_diff(norm.chars().count(), name.chars().count()) > 3 {
+            continue;
+        }
+        let ratio = sequence_matcher_ratio(&norm, &name);
+        if ratio < 0.5 {
+            continue;
+        }
+        matches.push(name);
+    }
+    matches.sort();
+    matches.truncate(5);
+    matches
+}
+
+fn abs_diff(a: usize, b: usize) -> usize {
+    if a > b {
+        a - b
+    } else {
+        b - a
+    }
+}
+
+fn sequence_matcher_ratio(a: &str, b: &str) -> f64 {
+    // Simple Ratcliff/Obershelp-style similarity over the common subsequence length, matching
+    // difflib.SequenceMatcher.ratio() semantics closely enough for a bounded nearest[] gate.
+    let aa: Vec<char> = a.chars().collect();
+    let bb: Vec<char> = b.chars().collect();
+    if aa.is_empty() && bb.is_empty() {
+        return 1.0;
+    }
+    if aa.is_empty() || bb.is_empty() {
+        return 0.0;
+    }
+    let matches = common_subsequence_len(&aa, &bb);
+    (2.0 * matches as f64) / (aa.len() + bb.len()) as f64
+}
+
+fn common_subsequence_len(a: &[char], b: &[char]) -> usize {
+    // LCS on two short command-name strings — bounded, deterministic.
+    let mut table = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+    for i in 1..=a.len() {
+        for j in 1..=b.len() {
+            table[i][j] = if a[i - 1] == b[j - 1] {
+                table[i - 1][j - 1] + 1
+            } else {
+                table[i - 1][j].max(table[i][j - 1])
+            };
+        }
+    }
+    table[a.len()][b.len()]
+}
+
+fn is_known_python_command(token: &str) -> bool {
+    scoped_python_set_member("KNOWN_COMMANDS", token)
+}
+
+/// A90: is `token` in the RESERVED (roadmap, not-yet-registered) top-level command set?
+/// Parsed from the RESERVED_TOP_LEVEL_COMMANDS block of commands.py — SCOPED to that block,
+/// never a bare quoted-literal scan (the unscoped `include_str!` match made every quoted
+/// literal line look "known", which would have made reserved names pass the NOT-known gate).
+fn is_reserved_python_command(token: &str) -> bool {
+    scoped_python_set_member("RESERVED_TOP_LEVEL_COMMANDS", token)
+}
+
+/// Extract a single top-level set literal block from commands.py by its variable name
+/// (`KNOWN_COMMANDS = { ... }` / `RESERVED_TOP_LEVEL_COMMANDS = { ... }`), brace-depth aware
+/// and comment-insensitive, then test membership. The existing unscoped `include_str!` line
+/// scan was wrong for A90 precisely because it matches ANY quoted literal anywhere in the file
+/// (e.g. PYTHON_FULL_HELP_COMMANDS or a docstring), so a reserved name added to commands.py
+/// would read as "known" and the not-known-gate would never fire.
+fn scoped_python_set_member(set_name: &str, token: &str) -> bool {
+    const RAW_PY: &str = include_str!("../../src/tensor_grep/cli/commands.py");
+    let needle_open = format!("{set_name} = {{");
+    let mut depth: i32 = 0;
+    let mut in_block = false;
+    for line in RAW_PY.lines() {
+        let t = line.trim();
+        if !in_block {
+            if t.starts_with(&needle_open) {
+                in_block = true;
+                depth += 1;
+                continue;
+            }
+            continue;
+        }
+        // Inside the target block: track braces; skip comments.
+        let stripped = match t.find('#') {
+            Some(idx) => &t[..idx],
+            None => t,
+        };
+        for ch in stripped.chars() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        in_block = false;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if t.contains(&format!("\"{token}\"")) {
+            return true;
+        }
+        if !in_block {
+            break;
+        }
+    }
+    false
 }
 
 fn stdin_should_search_implicit_path() -> bool {

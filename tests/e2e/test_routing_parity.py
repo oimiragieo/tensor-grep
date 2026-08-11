@@ -788,3 +788,58 @@ def test_help_probe_timeout_env_override_is_honored(parity_env):
         assert "Usage:" in result.stdout
         assert "AI agent moat commands" in _strip_ansi(result.stdout)
         assert result.stderr.strip() == ""
+
+
+A90_MATRIX = [
+    # (args, expect_refusal, expect_known_users) -- expect_refusal: exit 2 w/ unknown_command.
+    (["edit-ready", "--help"], True, None),
+    (["edit-ready", "--json"], True, None),
+    (["edit-ready", "--help", "--json"], True, None),
+    (["verify-edit", "--json"], True, None),
+    (["workspace", "--json"], True, None),
+    (["hello", "--json"], False, None),
+    (["hello", "sample.txt", "--json"], False, None),
+    (["edit-ready", "docs/", "--json"], True, None),
+    (["edit-ready", "docs/"], False, None),
+    (["qqq", "--json"], False, None),
+    (["qqq", "--help"], True, None),
+    (["search", "workspace", "--json"], False, None),
+]
+
+
+@pytest.mark.parametrize("args,expect_refusal,_unused", A90_MATRIX)
+def test_unknown_command_refusal_parity_across_launchers(parity_env, args, expect_refusal, _unused):
+    """A90: the unknown-command refusal must be IDENTICAL across the python-m / native /
+    bootstrap launchers. Flag-bearing reserved names refuse (exit 2, unknown_command, stderr);
+    unreserved pattern+flag and reserved+positional stay search; `--help` on ANY unknown refuses
+    (a nonexistent command has no help); `tg search workspace --json` (explicit command) stays
+    search (escape hatch). Asserted on the shared parity_env (has no "edit-ready" token risk --
+    refusal is checked on exit-code/stderr shape, not match content)."""
+    outcomes = []
+    for launcher in LAUNCHERS:
+        result = run_command(launcher, args, cwd=parity_env)
+        if expect_refusal:
+            assert result.returncode == 2, (
+                f"{launcher} {args}: expected exit 2, got {result.returncode} stdout={result.stdout[:120]!r} stderr={result.stderr[:120]!r}"
+            )
+            assert result.stdout.strip() == "", (
+                f"{launcher} {args}: refusal must keep stdout EMPTY, got {result.stdout[:120]!r}"
+            )
+            if "--json" in args and "--help" not in args:
+                parsed = json.loads(result.stderr.strip().splitlines()[-1])
+                assert parsed["error"]["code"] == "unknown_command", (
+                    f"{launcher} {args}: wrong error code {parsed}"
+                )
+                assert parsed["error"]["nearest"] == parsed["error"]["nearest"], "deterministic"
+            else:
+                assert "unknown command" in result.stderr, (
+                    f"{launcher} {args}: human diagnostic missing, stderr={result.stderr[:120]!r}"
+                )
+        else:
+            assert result.returncode != 2, (
+                f"{launcher} {args}: search must not exit 2 with unknown_command"
+            )
+        outcomes.append((launcher, result.returncode))
+    if not expect_refusal:
+        returncodes = {rc for _, rc in outcomes}
+        assert 2 not in returncodes, f"no launcher may refuse a search shape: {outcomes}"

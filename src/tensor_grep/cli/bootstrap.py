@@ -385,6 +385,74 @@ def _normalize_search_invocation(argv: list[str]) -> list[str] | None:
     return argv
 
 
+def _nearest_commands(token: str) -> list[str]:
+    """A90 nearest[]: normalized (lowercase), max edit distance 3, no internal `__`-prefixed
+    names, capped at 5, deterministic tie-break (alphabetical), empty when nothing is close."""
+    import difflib
+
+    norm = token.lower()
+    candidates = sorted(name for name in _KNOWN_COMMANDS if not name.startswith("__"))
+    matches: list[str] = []
+    for name in candidates:
+        if difflib.SequenceMatcher(None, norm, name).ratio() < 0.5:
+            continue
+        if abs(len(norm) - len(name)) > 3:
+            continue
+        matches.append(name)
+    bounded = matches[:5]
+    return sorted(bounded)
+
+
+def _top_level_command_refusal(argv: list[str]) -> tuple[str, list[str]] | None:
+    """A90: returns (first_arg, nearest[]) when `argv` is an unknown-command-shaped refusal:
+    - a RESERVED (roadmap, not-yet-registered) top-level command followed by ANY flag token, or
+    - ANY unknown first arg followed by `--help`/`-h` (a nonexistent command has no help).
+    Returns None for everything else (bare patterns, pattern+path, pattern+flag on unreserved
+    names, known commands) so the search front door is untouched."""
+    if not argv:
+        return None
+    first_arg = argv[0]
+    if first_arg in _KNOWN_COMMANDS or first_arg.startswith("--typer-") or first_arg == "search":
+        return None
+    from tensor_grep.cli.commands import RESERVED_TOP_LEVEL_COMMANDS
+
+    rest = argv[1:]
+    if any(token.startswith("-") for token in rest):
+        if first_arg in RESERVED_TOP_LEVEL_COMMANDS or any(
+            token in {"--help", "-h"} for token in rest
+        ):
+            return (first_arg, _nearest_commands(first_arg))
+    return None
+
+
+def _emit_unknown_command_human(first_arg: str, nearest: list[str]) -> None:
+    """A90 human diagnostic (stderr, stdout EMPTY, exit 2) for an unknown-command refusal."""
+    if nearest:
+        sys.stderr.write(
+            f"error: unknown command '{first_arg}' (did you mean {', '.join(nearest)}?)\n"
+        )
+    else:
+        sys.stderr.write(f"error: unknown command '{first_arg}'\n")
+
+
+def _emit_unknown_command_json(first_arg: str, nearest: list[str]) -> None:
+    """A90 structured diagnostic: exactly ONE JSON object on stderr (stdout EMPTY, exit 2).
+
+    `json` is imported FUNCTION-LOCALLY, not at module top: the `tg --version` fast path must
+    never pay for the stdlib json module (pinned by
+    test_bootstrap_fast_path_imports::test_version_fast_path_does_not_import_json_via_runtime_paths
+    -- the same F2.5 discipline runtime_paths.py applies to its own metadata reader)."""
+    import json
+
+    sys.stderr.write(
+        json.dumps(
+            {"error": {"code": "unknown_command", "nearest": nearest, "command": first_arg}},
+            sort_keys=True,
+        )
+        + "\n"
+    )
+
+
 def _is_public_help_invocation(argv: list[str]) -> bool:
     if len(argv) == 1 and argv[0] in {"--help", "-h"}:
         return True
@@ -1495,6 +1563,20 @@ def main_entry() -> None:
             return
         _run_ast_workflow_cli(argv)
         return
+
+    refusal = _top_level_command_refusal(argv)
+    if refusal is not None:
+        # A90: an unknown top-level command must never be swallowed into a search (which
+        # would fake a nonexistent command's existence at exit 0). stdout is EMPTY; the
+        # diagnostic goes to stderr. `--help`-shaped refusals get the human line only
+        # (a nonexistent command has no help); `--json`-shaped refusals get exactly one
+        # structured JSON object on stderr. The help/JSON-precedence rule: help wins.
+        first_arg, nearest = refusal
+        if any(token in {"--help", "-h"} for token in argv[1:]):
+            _emit_unknown_command_human(first_arg, nearest)
+        else:
+            _emit_unknown_command_json(first_arg, nearest)
+        raise SystemExit(2)
 
     search_args = _normalize_search_invocation(argv)
     if search_args is not None:

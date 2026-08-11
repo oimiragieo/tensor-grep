@@ -14,6 +14,7 @@ from tensor_grep.cli import bootstrap
 from tensor_grep.cli import main as cli_main
 from tensor_grep.cli.bootstrap import _KNOWN_COMMANDS
 from tensor_grep.cli.commands import KNOWN_COMMANDS
+from tensor_grep.cli.commands import RESERVED_TOP_LEVEL_COMMANDS as _RESERVED_COMMANDS
 from tensor_grep.cli.main import app
 
 
@@ -115,6 +116,55 @@ def test_codemap_argv_does_not_forward_to_search() -> None:
     assert bootstrap._normalize_search_invocation(["codemap"]) is None
     assert bootstrap._normalize_search_invocation(["codemap", "--json"]) is None
     assert bootstrap._normalize_search_invocation(["codemap", "--check"]) is None
+
+
+def test_reserved_unknown_flag_bearing_command_is_refused_not_searched() -> None:
+    """A90: `tg edit-ready --json` / `--help` are roadmap commands that do not exist yet and
+    must exit non-zero with unknown_command -- never fall through to a search for "edit-ready"
+    (which would fake a command's existence at exit 0). RED: today the reserved names are not
+    known, so `_top_level_command_refusal` (new) must detect the reserved+flag shape."""
+    refusal = bootstrap._top_level_command_refusal(["edit-ready", "--json"])
+    assert refusal is not None, "reserved+flag must be a refusal"
+    first, nearest = refusal
+    assert first == "edit-ready"
+    assert "edit-plan" in nearest or "prepare" in nearest or "evidence" in nearest
+
+
+def test_reserved_unknown_help_is_refused_not_searched() -> None:
+    """A90 help shape: `tg edit-ready --help` is refused with unknown_command (a nonexistent
+    command has no help), never routed to search help."""
+    refusal = bootstrap._top_level_command_refusal(["edit-ready", "--help"])
+    assert refusal is not None, "reserved + --help must be a refusal"
+
+
+def test_unreserved_pattern_with_flag_still_searches() -> None:
+    """A90 regression pin: `tg hello --json` (unreserved pattern + flag) is a LEGAL search and
+    must not be a refusal -- flag-bearing unreserved unknowns are pattern+flag searches."""
+    assert bootstrap._top_level_command_refusal(["hello", "--json"]) is None
+    assert bootstrap._top_level_command_refusal(["hello"]) is None
+    assert bootstrap._top_level_command_refusal(["helloworlddocs", "--json"]) is None
+
+
+def test_nearest_commands_bounded_and_deterministic() -> None:
+    """A90 nearest[] contract: normalized, max distance 3, no internal __ names, capped,
+    deterministic, empty when nothing close."""
+    near = bootstrap._nearest_commands("searhc")
+    assert "search" in near
+    assert len(near) <= 5
+    assert bootstrap._nearest_commands("qqqqzzzz") == []
+    assert near == bootstrap._nearest_commands("searhc")  # deterministic
+
+
+def test_reserved_and_known_commands_are_disjoint() -> None:
+    """A90 lifecycle invariant: a roadmap-reserved name must never also be a registered
+    KNOWN_COMMAND (and vice versa). The native door parses BOTH sets scoped from commands.py;
+    if a name lands in both, the not-known gate could never refuse it (reserved reads known)."""
+    assert _RESERVED_COMMANDS, "reserved set must be non-empty (edit-ready/verify-edit/workspace)"
+    assert _RESERVED_COMMANDS.isdisjoint(_KNOWN_COMMANDS), (
+        f"reserved ∩ known must be empty: {_RESERVED_COMMANDS & _KNOWN_COMMANDS}"
+    )
+    assert {"edit-ready", "verify-edit", "workspace"}.issubset(_RESERVED_COMMANDS)
+    assert "edit-ready" not in _KNOWN_COMMANDS
 
 
 def test_vendored_root_dir_names_match_source_of_truth() -> None:
