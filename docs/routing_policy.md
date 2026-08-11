@@ -183,3 +183,29 @@ That applies to:
 | Auto GPU execution + CPU fallback | `handle_auto_gpu_search` |
 | Explicit GPU sidecar fallback | `handle_gpu_sidecar_search` |
 | AST routing execution | `handle_ast_run` |
+| Unknown top-level command refusal (A90) | Python `bootstrap._top_level_command_refusal` / native `top_level_unknown_command_refusal` + shared `python_set_members` |
+
+## Unknown top-level commands (A90) — the dispatch contract
+
+An unknown top-level command must **never** be swallowed into `tg search` (which would fake a
+nonexistent command's existence at exit 0). The refusal surface and its boundaries:
+
+- **Refuses (exit 2, stderr-only, `error.code=unknown_command` on the JSON path):**
+  - a RESERVED (roadmap, not-yet-registered) top-level command followed by any flag
+    (`tg edit-ready --json`), and
+  - any unknown first arg followed by `--help`/`-h` (a nonexistent command has no help).
+- **Stays search:** bare `tg PATTERN`, `tg PATTERN PATH`, unreserved pattern+flag
+  (`tg hello --json`), reserved+positional with no flag (`tg edit-ready docs/`), and any
+  dash-first invocation (`tg -V`, `tg --bogus --help`). The escape hatch is the explicit
+  `tg search <pattern> ...` form.
+- The reserved set (`RESERVED_TOP_LEVEL_COMMANDS` in `src/tensor_grep/cli/commands.py`:
+  `edit-ready`, `verify-edit`, `workspace`) is roadmap-owned; a reserved name is NOT a registered
+  command (`RESERVED ∩ KNOWN == ∅`, lifecycle-pinned), and is removed from reserved when the
+  command is registered.
+- Known/nearest membership is extracted SCOPED to each set block, quote/escape-aware, by the
+  shared `python_set_members` helper (native) — never a bare quoted-literal scan. `nearest[]`
+  uses Levenshtein distance <= 3, hides internal `__` names, caps at 5.
+
+This policy is enforced by `tests/e2e/test_routing_parity.py`
+(`test_unknown_command_refusal_parity_across_launchers`, 15 rows), the Python unit
+`_top_level_command_refusal` tests, and the native `top_level_unknown_command_refusal` tests.

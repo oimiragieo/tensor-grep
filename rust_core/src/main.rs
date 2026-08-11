@@ -1344,6 +1344,35 @@ fn main_inner() -> anyhow::Result<()> {
         return print_native_top_level_help();
     }
 
+    if top_level_unknown_command_refusal(&raw_args) {
+        let first = &raw_args[1].to_string_lossy();
+        let nearest = nearest_commands(first);
+        let has_help = raw_args.iter().skip(2).any(|a| {
+            let t = a.to_string_lossy();
+            t == "--help" || t == "-h"
+        });
+        if has_help {
+            if nearest.is_empty() {
+                eprintln!("error: unknown command '{first}'");
+            } else {
+                eprintln!(
+                    "error: unknown command '{first}' (did you mean {}?)",
+                    nearest.join(", ")
+                );
+            }
+        } else {
+            let payload = serde_json::json!({
+                "error": {
+                    "code": "unknown_command",
+                    "nearest": nearest,
+                    "command": first,
+                },
+            });
+            eprintln!("{payload}");
+        }
+        std::process::exit(2);
+    }
+
     if is_top_level_version_invocation(&raw_args) || is_search_version_invocation(&raw_args) {
         println!("tg {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
@@ -5083,6 +5112,120 @@ mod tests {
     }
 
     #[test]
+    fn scoped_parser_keeps_known_and_reserved_disjoint() {
+        // A90 lifecycle invariant: a reserved name must read `reserved == true` AND
+        // `known == false` (the unscoped include_str parser leaked reserved names into
+        // "known", which would have made the not-known gate never fire). Both directions:
+        // known names must still read reserved == false.
+        for reserved in ["edit-ready", "verify-edit", "workspace"] {
+            assert!(
+                is_reserved_python_command(reserved),
+                "{reserved} must be reserved"
+            );
+            assert!(
+                !is_known_python_command(reserved),
+                "{reserved} must NOT be known (disjointness)"
+            );
+        }
+        assert!(!is_reserved_python_command("orient"));
+        assert!(is_known_python_command("orient"));
+        assert!(is_known_python_command("search"));
+        assert!(!is_reserved_python_command("search"));
+    }
+
+    #[test]
+    fn scoped_parser_member_surface_is_robust() {
+        // A90 codex R2 MEDIUM pins: the scoped set extractor must be quote/escape aware,
+        // comment aware, brace-aware inside strings, and trailing-comma tolerant. Real
+        // commands.py members are all plain identifiers; these pins protect the parser against
+        // future edits (e.g. a member containing '#' or braces, or an escaped quote).
+        let members = python_set_members("KNOWN_COMMANDS");
+        // The authoritative set must parse completely and losslessly.
+        assert!(members.contains(&"search".to_string()));
+        assert!(members.contains(&"blast-radius".to_string()));
+        assert!(members.contains(&"install-dense".to_string()));
+        // Known members are exactly the quoted literals in the block, none come from comments
+        // or the PYTHON_FULL_HELP_COMMANDS block (e.g. the docstring/comment lines mention
+        // "ripgrep" and "Rust" in prose that must not parse as members).
+        assert!(!members.contains(&"ripgrep".to_string()));
+        assert!(!members.contains(&"Rust".to_string()));
+        // Structure pin: every parsed member must be a CLEAN identifier — no backslash, no
+        // quote, no trailing comma smuggled into the name. A leak here means the scanner's
+        // escape/quote handling regressed (codex R2 MEDIUM).
+        for member in &members {
+            assert!(
+                !member.contains('\\'),
+                "member leaked a backslash: {member:?}"
+            );
+            assert!(!member.contains('"'), "member leaked a quote: {member:?}");
+            assert!(
+                !member.ends_with(','),
+                "member leaked a trailing comma: {member:?}"
+            );
+        }
+        // Internal hidden commands are legitimate members and must be recognized by membership
+        // (so hidden-command dispatch still works); nearest hides them from suggestions.
+        assert!(is_known_python_command("__gpu-native-stats"));
+        assert!(members.contains(&"__gpu-native-stats".to_string()));
+        assert!(!nearest_commands("__gpu-native-stats").contains(&"__gpu-native-stats".to_string()));
+
+        // Reserved names are parsed from THEIR OWN block, not KNOWN_COMMANDS.
+        let reserved = python_set_members("RESERVED_TOP_LEVEL_COMMANDS");
+        assert!(reserved.contains(&"edit-ready".to_string()));
+        assert!(!reserved.contains(&"orient".to_string()));
+    }
+
+    #[test]
+    fn unknown_top_level_command_refusal_fires_on_reserved_flag_shapes() {
+        // A90: `tg edit-ready --json` / `--help` refuse; unreserved pattern+flag stays search.
+        let reserved_json = ["tg", "edit-ready", "--json"]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        let reserved_help = ["tg", "edit-ready", "--help"]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        let unknown_help = ["tg", "qqq", "--help"]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        let pattern_flag = ["tg", "hello", "--json"]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        let pattern_path = ["tg", "hello", "docs/"]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        let reserved_positional = ["tg", "edit-ready", "docs/"]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        let known = ["tg", "orient", "--json"]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+
+        assert!(top_level_unknown_command_refusal(&reserved_json));
+        assert!(top_level_unknown_command_refusal(&reserved_help));
+        assert!(top_level_unknown_command_refusal(&unknown_help));
+        assert!(!top_level_unknown_command_refusal(&pattern_flag));
+        assert!(!top_level_unknown_command_refusal(&pattern_path));
+        assert!(!top_level_unknown_command_refusal(&reserved_positional));
+        assert!(!top_level_unknown_command_refusal(&known));
+    }
+
+    #[test]
+    fn nearest_commands_is_bounded_and_deterministic() {
+        let near = nearest_commands("searhc");
+        assert!(near.contains(&"search".to_string()), "near={near:?}");
+        assert!(near.len() <= 5);
+        assert!(nearest_commands("qqqqzzzz").is_empty());
+        assert_eq!(near, nearest_commands("searhc"));
+    }
+
+    #[test]
     fn top_level_search_format_python_passthrough_args_detects_non_rg_formats() {
         let raw_args = ["tg", "--format=json", "ERROR", "bench_data"]
             .iter()
@@ -7823,14 +7966,181 @@ fn should_use_positional_cli(raw_args: &[OsString]) -> bool {
     false
 }
 
+/// A90: unknown-command-shaped refusal on the NATIVE door. Mirrors the Python
+/// `_top_level_command_refusal` contract exactly (parity-pinned):
+/// - first arg is a RESERVED (roadmap, not-yet-registered) name AND any later token starts with
+///   '-'  -> refusal; or
+/// - first arg is unknown (not known, not reserved) AND any later token is `--help`/`-h`
+///   (a nonexistent command has no help) -> refusal.
+///
+/// Everything else (bare patterns, pattern+path, unreserved pattern+flag) stays search.
+fn top_level_unknown_command_refusal(raw_args: &[OsString]) -> bool {
+    let Some(first) = raw_args.get(1).map(|a| a.to_string_lossy()) else {
+        return false;
+    };
+    if first == "search" || is_known_python_command(&first) || first.starts_with('-') {
+        return false;
+    }
+    let rest: Vec<String> = raw_args
+        .iter()
+        .skip(2)
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    if rest.is_empty() {
+        return false;
+    }
+    let has_flag = rest.iter().any(|t| t.starts_with('-'));
+    if !has_flag {
+        return false;
+    }
+    let is_reserved = is_reserved_python_command(&first);
+    let has_help = rest.iter().any(|t| t == "--help" || t == "-h");
+    is_reserved || has_help
+}
+
 fn is_known_python_command(token: &str) -> bool {
+    python_set_members("KNOWN_COMMANDS")
+        .iter()
+        .any(|name| name == token)
+}
+
+/// A90: is `token` in the RESERVED (roadmap, not-yet-registered) top-level command set?
+/// Parsed from the RESERVED_TOP_LEVEL_COMMANDS block of commands.py — SCOPED to that block,
+/// never a bare quoted-literal scan (the unscoped `include_str!` match made every quoted
+/// literal line look "known", which would have made reserved names pass the NOT-known gate).
+fn is_reserved_python_command(token: &str) -> bool {
+    python_set_members("RESERVED_TOP_LEVEL_COMMANDS")
+        .iter()
+        .any(|name| name == token)
+}
+
+/// Extract the members of one top-level set literal block from commands.py by its variable
+/// name (`KNOWN_COMMANDS = { ... }` / `RESERVED_TOP_LEVEL_COMMANDS = { ... }`). Bracedepth
+/// aware, quote/escape aware (a `#` inside a string is NOT a comment; braces inside strings do
+/// not count), and trailing-comma tolerant — `"agent",` is a member named `agent`. Returns the
+/// parsed string literals in block order, or an empty Vec if the block is absent.
+fn python_set_members(set_name: &str) -> Vec<String> {
     const RAW_PY: &str = include_str!("../../src/tensor_grep/cli/commands.py");
-    RAW_PY.lines().any(|line| {
+    let needle_open = format!("{set_name} = {{");
+    let mut members: Vec<String> = Vec::new();
+    let mut depth: i32 = 0;
+    let mut in_block = false;
+    for line in RAW_PY.lines() {
         let t = line.trim();
-        t.starts_with('"')
-            && (t.ends_with(r#"","#) || t.ends_with(r#"""#))
-            && t.contains(&format!("\"{token}\""))
-    })
+        if !in_block {
+            if t.starts_with(&needle_open) {
+                in_block = true;
+                depth += 1;
+            }
+            continue;
+        }
+        // Inside the target block: tokenize char-by-char with a small quote-aware scanner so a
+        // '#' inside a string is data, not a comment, and braces inside strings are data too.
+        let mut in_str = false;
+        let mut in_str_esc = false;
+        let mut current: String = String::new();
+        let mut collected: Vec<String> = Vec::new();
+        for c in t.chars() {
+            if in_str {
+                if in_str_esc {
+                    // Decode the two escapes that can appear INSIDE a double-quoted Python
+                    // string literal between the outer quotes: `\"` -> `"` and `\\` -> `\`.
+                    // Any other escape is copied verbatim (commands.py set members are plain
+                    // identifiers today; this only guards future edits — Python would decode
+                    // e.g. `\n` to a newline, which cannot occur in a command name).
+                    match c {
+                        '"' => current.push('"'),
+                        '\\' => current.push('\\'),
+                        other => {
+                            current.push('\\');
+                            current.push(other);
+                        }
+                    }
+                    in_str_esc = false;
+                } else if c == '\\' {
+                    in_str_esc = true;
+                } else if c == '"' {
+                    if depth >= 1 {
+                        collected.push(current.clone());
+                    }
+                    current.clear();
+                    in_str = false;
+                } else {
+                    current.push(c);
+                }
+                continue;
+            }
+            match c {
+                '"' => {
+                    in_str = true;
+                    current.clear();
+                }
+                '#' => break, // comment to end of line
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        in_block = false;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !collected.is_empty() {
+            members.extend(collected);
+        }
+        if !in_block {
+            break;
+        }
+    }
+    members
+}
+
+/// A90 nearest[]: normalized, max edit distance 3, excludes internal `__` names, cap 5, stable
+/// (alphabetical) order, empty when nothing is close. Mirrors `_nearest_commands`. Uses the
+/// same scoped member extractor as membership so nearest and known can never disagree.
+fn nearest_commands(token: &str) -> Vec<String> {
+    let candidates: Vec<String> = python_set_members("KNOWN_COMMANDS")
+        .into_iter()
+        .filter(|name| !name.starts_with("__"))
+        .collect();
+    let norm = token.to_lowercase();
+    let mut matches: Vec<String> = Vec::new();
+    for name in candidates {
+        // Genuine Levenshtein edit distance — the honest "max distance 3" bound. Length-diff
+        // alone is not edit distance (a 1-char substitution changes nothing about length); the
+        // plan/council contract and the Python sibling both mean edit distance, so enforce it.
+        if levenshtein_distance(&norm, &name) <= 3 {
+            matches.push(name);
+        }
+    }
+    matches.sort();
+    matches.truncate(5);
+    matches
+}
+
+/// Classic Wagner–Fischer Levenshtein distance over chars. Deterministic, bounded — the
+/// command names and the input token are short, so the O(n*m) DP is trivial here.
+fn levenshtein_distance(a: &str, b: &str) -> usize {
+    let aa: Vec<char> = a.chars().collect();
+    let bb: Vec<char> = b.chars().collect();
+    if aa.is_empty() {
+        return bb.len();
+    }
+    if bb.is_empty() {
+        return aa.len();
+    }
+    let mut prev: Vec<usize> = (0..=bb.len()).collect();
+    let mut curr: Vec<usize> = vec![0; bb.len() + 1];
+    for (i, ca) in aa.iter().enumerate() {
+        curr[0] = i + 1;
+        for (j, cb) in bb.iter().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            curr[j + 1] = (prev[j + 1] + 1).min(curr[j] + 1).min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[bb.len()]
 }
 
 fn stdin_should_search_implicit_path() -> bool {
