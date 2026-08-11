@@ -802,7 +802,7 @@ A90_MATRIX = [
     (["edit-ready", "target.txt", "--json"], True, None),
     (["edit-ready", "target.txt"], False, None),
     (["qqq", "--json"], False, None),
-    (["qqq", "--help"], True, None),
+    (["qqq", "--help"], True, ["lsp", "map", "mcp", "new", "run"]),
     (["search", "workspace", "--json"], False, None),
     (["searhc", "--help"], True, ["search"]),
     (["qqqqzzzz", "--help"], True, []),
