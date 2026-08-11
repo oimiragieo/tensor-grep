@@ -5,7 +5,7 @@ description: Use when an agent needs one-call edit readiness before changing cod
 
 # tensor-grep prepare (one-call edit readiness)
 
-Verified against **tg 1.110.12** (LIVE 2026-08-10 Windows `uvx` — saddle prepare ~6.5s; tg `src` `--out`/`--claim` ~20s; prior 1.110.10 CUJ still representative).
+Verified against **tg 1.110.13** (LIVE 2026-08-11 Windows `uvx` — saddle ~5s; tg `src` `--out`/`--claim` ~22s; prior 1.110.12 CUJ still representative).
 tensor-grep `src` `--out`/`--claim` ~14s; prior 1.101.31 / 1.101.22 CUJ still representative).
 
 Note: anonymous `--claim` `agent_id_hint` remains strong (“NOT attributable…” until
@@ -36,6 +36,8 @@ Dogfood:
 
 | Case | Result |
 | --- | --- |
+| `prepare …` saddle (**1.110.13**) | PASS ~5s |
+| `prepare … --out/--claim` tg `src` (**1.110.13**) | PASS ~22s |
 | `prepare …` saddle (**1.110.12**) | PASS ~6.5s |
 | `prepare … --out/--claim` tg `src` (**1.110.12**) | PASS ~20s |
 | `prepare …` saddle (**1.110.10**) | PASS ~6s |

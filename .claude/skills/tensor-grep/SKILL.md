@@ -40,7 +40,7 @@ prefer the canonical path-first form.
    - `tg source REPO_PATH/src SYMBOL`
 4. Symbol navigation — prefer `src/`:
    - `tg callers REPO_PATH/src SYMBOL --deadline 15 --json`
-5. Edit readiness — **prefer `tg prepare REPO/src`** (~6–20s PASS on gotcontext-saddle / tg `src` @ 1.110.12; ~27s on larger src @ 1.91.0):
+5. Edit readiness — **prefer `tg prepare REPO/src`** (~5–22s PASS on gotcontext-saddle / tg `src` @ 1.110.13; ~27s on larger src @ 1.91.0):
    - `tg prepare REPO_PATH/src "task" --json`  # primary + blast floor + validation + coordination hooks
    - `tg prepare REPO_PATH/src "task" --out capsule.json --json`  # also persists the full capsule to FILE (byte-identical to stdout JSON; symlink/dangling-symlink/dir refused; feeds `tg evidence emit --capsule FILE` directly, no manual redirect)
    - `tg prepare REPO_PATH/src "task" --claim --json`  # also submit advisory ledger claim; anonymous claims stamp `coordination.claim.agent_id_hint` unless `TG_LEDGER_AGENT_ID` is set
@@ -101,28 +101,21 @@ A resolved zero-caller result is NOT dead code either — the call graph can't s
 
 ## Known Issues
 
-**Latest CUJ dogfood: v1.110.12** (2026-08-10, Windows `uvx`, artifact
-`C:\Users\Public\tg-dogfood-111012.json` — **21/21 PASS**). Core
-prepare→search→callers→evidence CUJ PASS. New since 1.110.10: **M16**
-`tg scan --ruleset secrets-basic --json` retains `severity`+`message` on findings;
-**M17 surface** `tg search PATH --index` routes `TrigramIndex`/`index-accelerated` and did not
-leak foreign-tree paths in the saddle isolation probe. Live callers coverage:
-`parser-backed-refs-callers:c-cpp-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:`
-(**10/10 parser-backed**, foundational empty). Parent refuse:
-`incomplete_reason_class`/`error.code`=`workspace_root_refused` (exit 2). See
-`tensor-grep-workspace-dogfood` for the table.
-
-**CLI trap — unknown subcommands fall through to `tg search`:** `tg edit-ready`, `tg verify-edit`,
-and `tg workspace` are **not** shipped (Phase 2). Invoking them (even `--help`) does **not** fail
-as unknown — the front door treats the token as a search pattern and prints `Usage: tg search …`
-with exit 0. Do not treat that as evidence the feature exists; use `tg --help` → `Commands:`.
+**Latest CUJ dogfood: v1.110.13** (2026-08-11, Windows `uvx`, artifact
+`C:\Users\Public\tg-dogfood-111013.json` — **21/21 PASS**). Core CUJ + M16/M17 still green.
+**A90 shipped:** reserved Phase-2 names `edit-ready` / `verify-edit` / `workspace` with a flag
+(`--help`/`--json`) fail closed — exit **2**, stderr `unknown_command` (JSON on stderr for
+`--json`, `nearest: []`). Typo + `--help` suggests nearest (`searhc` → search). Bare
+`tg edit-ready` *without* a flag still searches that token by design (escape: `tg search edit-ready`).
+Live callers coverage still 10/10 parser-backed. Parent refuse still `workspace_root_refused`.
+See `tensor-grep-workspace-dogfood`.
 
 **Parent refuse vs scoped empty:** unscoped `tg search needle C:\dev\projects --json` → exit 2 +
 `workspace_root_refused`. Scoped `… --glob "*.py" --max-depth N` does **not** hard-refuse (may
 exit 1 with zero matches = complete empty). Skill text that said parent class=`scan_limit` is stale.
 
 **Historical:** last full workspace+GPU sweep was v1.91.0 (WSL). Language campaign closed through
-Task 10E + F7 Task 11 (#957). Prefer the 1.110.12 CUJ table over older 1.95.0 “7 of 10” prose.
+Task 10E + F7 Task 11 (#957). Prefer the 1.110.13 CUJ table over older 1.95.0 “7 of 10” prose.
 
 **Prefer `tg prepare REPO/src`** over the multi-step agent loop for routine edits. Whole-repo prepare/agent with `--deadline` still partial/null-symbol; bare agent TIMEOUT empty @75s.
 
@@ -138,7 +131,7 @@ alone do NOT bypass the defaulted-PATH ceiling. Prefer per-repo for deep `--type
 **`tg codemap` still TIMEOUT on WSL** (90s). Importers/callers-at-root may be deadline-partial.
 
 **CLI traps:** `tg classify` has no `--json`; scan ruleset names from `tg rulesets`; session
-`context-render` needs absolute session-root PATH; unknown tokens may route to `search` (above).
+`context-render` needs absolute session-root PATH; reserved+flag refuses (A90); bare unknown tokens may still search.
 
 ## GPU (experimental) — verified on v1.91.0, no change through v1.93.2
 
