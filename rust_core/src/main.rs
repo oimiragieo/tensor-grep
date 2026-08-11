@@ -7972,6 +7972,7 @@ fn should_use_positional_cli(raw_args: &[OsString]) -> bool {
 ///   '-'  -> refusal; or
 /// - first arg is unknown (not known, not reserved) AND any later token is `--help`/`-h`
 ///   (a nonexistent command has no help) -> refusal.
+///
 /// Everything else (bare patterns, pattern+path, unreserved pattern+flag) stays search.
 fn top_level_unknown_command_refusal(raw_args: &[OsString]) -> bool {
     let Some(first) = raw_args.get(1).map(|a| a.to_string_lossy()) else {
@@ -8035,12 +8036,11 @@ fn python_set_members(set_name: &str) -> Vec<String> {
         }
         // Inside the target block: tokenize char-by-char with a small quote-aware scanner so a
         // '#' inside a string is data, not a comment, and braces inside strings are data too.
-        let mut chars = t.chars().peekable();
         let mut in_str = false;
         let mut in_str_esc = false;
         let mut current: String = String::new();
         let mut collected: Vec<String> = Vec::new();
-        while let Some(c) = chars.next() {
+        for c in t.chars() {
             if in_str {
                 if in_str_esc {
                     // Decode the two escapes that can appear INSIDE a double-quoted Python
