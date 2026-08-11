@@ -93,7 +93,7 @@ _DEFAULT_SYMBOL_MAX_TESTS = 25
 _DOCTOR_LSP_PROBE_TIMEOUT_SECONDS = 15.0
 _DOCTOR_LSP_WINDOWS_PROBE_TIMEOUT_SECONDS = 15.0
 _DOCTOR_LSP_PROBE_TIMEOUT_ENV = "TG_DOCTOR_LSP_PROBE_TIMEOUT_SECONDS"
-_DOCTOR_SCHEMA_VERSION = 2
+_DOCTOR_SCHEMA_VERSION = 3
 _DOCTOR_LSP_SCHEMA_VERSION = 2
 _GUARDED_BROAD_SEARCH_ROOTS = {".claude", ".claude/context"}
 _BROAD_GENERATED_SCAN_DIR_NAMES = {
@@ -484,7 +484,13 @@ def _candidate_versions_from_pip_index(timeout_seconds: float) -> list[str]:
 
 
 def _latest_pypi_tensor_grep_version(timeout_seconds: float = 15.0) -> str | None:
-    """Best-effort latest-version probe that avoids trusting one stale PyPI cache surface."""
+    """Best-effort latest-version probe that avoids trusting one stale PyPI cache surface.
+
+    `TG_DOCTOR_OFFLINE=1` short-circuits to None (a documented escape hatch: forces doctor's
+    freshness signal to 'unknown_pypi' instead of making a network call — used by tests and
+    genuinely-offline runs; it is NOT a silent 'clean', it disables the probe)."""
+    if os.environ.get("TG_DOCTOR_OFFLINE") == "1":
+        return None
     import urllib.request
 
     candidates: list[str] = []
@@ -2584,6 +2590,159 @@ def _doctor_rust_binary_remediation(
     return None
 
 
+def _doctor_version_tuple(version_text: str | None) -> tuple[int, ...] | None:
+    """Semantic version comparison key (A90 PATH-honesty). Strips a 'tg '/'tensor-grep '
+    prefix if present, then parses a PURE dotted-numeric release (`1.110.13` -> (1,110,13) so
+    1.110.9 < 1.110.10 numerically). STRICT by design (codex HIGH): ANY trailing/embedded
+    non-dotted-numeric content — `+dev`, `-rc1`, `rc1`, `.post1`, a `v` prefix — is REJECTED and
+    yields None, so a prerelease/local build is treated as UNVERIFIABLE (fail-closed), never
+    silently truncated into a stable-looking tuple. Returns None on any unparseable value;
+    callers MUST treat None as 'unverifiable', never as a confident comparison."""
+    if not version_text:
+        return None
+    stripped = version_text.strip()
+    for prefix in ("tensor-grep ", "tg "):
+        if stripped.startswith(prefix):
+            stripped = stripped[len(prefix) :].strip()
+            break
+    if not stripped:
+        return None
+    if not all(ch.isdigit() or ch == "." for ch in stripped):
+        return None
+    if stripped.startswith(".") or stripped.endswith(".") or ".." in stripped:
+        return None
+    if stripped.count(".") > 8:
+        return None
+    parts: list[int] = []
+    for segment in stripped.split("."):
+        if not segment:
+            return None
+        try:
+            parts.append(int(segment))
+        except ValueError:
+            return None
+    if len(parts) < 2:
+        # A single-segment "version" is not a real release tuple (e.g. "9", "0"); the harness
+        # always emits X.Y(.Z...) — treat short forms as unverifiable rather than comparable.
+        return None
+    return tuple(parts)
+
+
+def _doctor_version_compare(a: tuple[int, ...], b: tuple[int, ...]) -> int:
+    """PEP-440-style padded comparison: `1.0` equals `1.0.0` (missing trailing segments are 0).
+    Returns -1/0/1. Both tuples must already be valid (non-None)."""
+    width = max(len(a), len(b))
+    av = a + (0,) * (width - len(a))
+    bv = b + (0,) * (width - len(b))
+    if av < bv:
+        return -1
+    if av > bv:
+        return 1
+    return 0
+
+
+def _doctor_installed_behind_pypi(installed_version: str, pypi_latest: str | None) -> bool | None:
+    """Semantic `installed < pypi_latest` (padded: 1.0 == 1.0.0). None when either version is
+    unparseable OR pypi_latest is unavailable (probe failed) — never a confident False on an
+    unverifiable comparison (A90 plan REV 5, codex must-fix: no fallthrough to ok)."""
+    if pypi_latest is None:
+        return None
+    installed_t = _doctor_version_tuple(installed_version)
+    pypi_t = _doctor_version_tuple(pypi_latest)
+    if installed_t is None or pypi_t is None:
+        return None
+    return _doctor_version_compare(installed_t, pypi_t) < 0
+
+
+def _doctor_route_version_matches(installed_version: str, route_version: str | None) -> bool | None:
+    """Semantic twin for shadow_launchers[].version_matches (A90 codex HIGH): returns
+    - None when the route version is ABSENT (no route binary) or UNPARSEABLE (invalid) —
+      never a confident False on an invalid version;
+    - True when the padded semantic tuples are equal (1.0 == 1.0.0);
+    - False when they differ (e.g. a shadowed old 1.110.10 vs installed 1.110.13).
+    Does NOT reuse the substring matcher (which would call an invalid version a confident
+    mismatch and treat 1.0 != 1.0.0 as a mismatch)."""
+    if route_version is None:
+        return None
+    installed_t = _doctor_version_tuple(installed_version)
+    route_t = _doctor_version_tuple(route_version)
+    if installed_t is None or route_t is None:
+        return None
+    return _doctor_version_compare(installed_t, route_t) == 0
+
+
+_ROUTE_ORDER = {"path": 0, "fresh_shell_path": 1, "python_subprocess_path": 2}
+
+
+def _doctor_shadow_launchers(
+    routes: list[dict[str, str | bool | None]],
+) -> list[dict[str, str | bool | None]]:
+    """Consolidated list of launcher routes where the resolved tg is foreign, its version does
+    not match the installed wheel, or its version is unverifiable. A route is listed iff
+    `foreign OR version_matches is False OR version_matches is None`; the null contract == the
+    inclusion predicate (codex REV-4/5). ABSENT ROUTES are filtered out BEFORE the inclusion
+    predicate (a path=None route is NOT 'unparseable', it simply is not listed). Deterministic
+    order: path, fresh_shell_path, python_subprocess_path (codex REV-5 LOW, explicit rank)."""
+    listed: list[dict[str, str | bool | None]] = []
+    for entry in routes:
+        if not entry.get("path"):
+            continue
+        foreign = bool(entry.get("foreign"))
+        version_matches = entry.get("version_matches")
+        if foreign or version_matches is False or version_matches is None:
+            listed.append(entry)
+    listed.sort(key=lambda e: _ROUTE_ORDER.get(str(e.get("route", "")), 99))
+    return listed
+
+
+def _doctor_installation_health(
+    shadow_launchers: list[dict[str, str | bool | None]],
+    *,
+    installed_version: str,
+    installed_behind_pypi: bool | None,
+    pypi_unavailable: bool,
+    pypi_latest: str | None = None,
+) -> str:
+    """Aggregate installation health (A90 PATH-honesty). Precedence:
+    foreign_launcher > unverifiable_version > launcher_version_mismatch > stale_install >
+    unknown_pypi > ok. ANY unverifiable version (invalid installed, invalid pypi_latest, or
+    invalid present-route version) lands on unverifiable_version, never ok (codex must-fix
+    REV-4: an invalid NON-NULL pypi_latest must not fall through to ok — hence pypi_latest is
+    parsed here when provided)."""
+    if any(bool(entry.get("foreign")) for entry in shadow_launchers):
+        return "foreign_launcher"
+    if _doctor_version_tuple(installed_version) is None or _any_route_unverifiable(
+        shadow_launchers
+    ):
+        return "unverifiable_version"
+    if pypi_latest is not None and _doctor_version_tuple(pypi_latest) is None:
+        # An invalid NON-NULL pypi_latest: pypi_unavailable is False (the probe returned a
+        # value), but that value is unparseable — cannot certify freshness -> unverifiable.
+        return "unverifiable_version"
+    if any(entry.get("version_matches") is False for entry in shadow_launchers):
+        return "launcher_version_mismatch"
+    if installed_behind_pypi is True:
+        return "stale_install"
+    if pypi_unavailable:
+        return "unknown_pypi"
+    return "ok"
+
+
+def _any_route_unverifiable(
+    shadow_launchers: list[dict[str, str | bool | None]],
+) -> bool:
+    """True when any listed route carries an unparseable version (version_matches is None), or
+    the route's own raw version fails to parse. Used to force unverifiable_version when we
+    cannot certify health."""
+    for entry in shadow_launchers:
+        if entry.get("version_matches") is None:
+            return True
+        raw = str(entry.get("version") or "")
+        if raw and _doctor_version_tuple(raw) is None:
+            return True
+    return False
+
+
 def _doctor_rust_binary_warning(
     *,
     expected_version: str,
@@ -3593,6 +3752,55 @@ def _build_doctor_payload(
         "session_daemon": _doctor_session_daemon_status(str(root)),
         "dense_model": _doctor_dense_model_status(),
     }
+
+    # A90 PATH-honesty (docs/plans/2026-08-11-doctor-path-honesty.md): surface the resolved
+    # `tg`-vs-expected-wheel mismatch and the wheel-vs-PyPI drift as an aggregate health signal
+    # so a foreign 0.32.0 shadow or a stale install is UNMISSABLE, not just scattered booleans.
+    pypi_latest = _latest_pypi_tensor_grep_version()
+    payload["pypi_latest"] = pypi_latest
+    installed_behind_pypi = _doctor_installed_behind_pypi(installed_version, pypi_latest)
+    payload["installed_behind_pypi"] = installed_behind_pypi
+    route_entries = [
+        {
+            "route": "path",
+            "path": path_tg_first_path,
+            "version": path_tg_first_version,
+            "kind": path_tg_first_launcher_kind,
+            "foreign": path_tg_first_launcher_kind == "foreign",
+            "version_matches": _doctor_route_version_matches(
+                installed_version, path_tg_first_version
+            ),
+        },
+        {
+            "route": "fresh_shell_path",
+            "path": fresh_shell_path_tg_first_path,
+            "version": fresh_shell_path_tg_first_version,
+            "kind": fresh_shell_path_tg_first_launcher_kind,
+            "foreign": fresh_shell_path_tg_first_launcher_kind == "foreign",
+            "version_matches": _doctor_route_version_matches(
+                installed_version, fresh_shell_path_tg_first_version
+            ),
+        },
+        {
+            "route": "python_subprocess_path",
+            "path": python_subprocess_path_tg_first_path,
+            "version": python_subprocess_path_tg_first_version,
+            "kind": python_subprocess_path_tg_first_launcher_kind,
+            "foreign": python_subprocess_path_tg_first_launcher_kind == "foreign",
+            "version_matches": _doctor_route_version_matches(
+                installed_version, python_subprocess_path_tg_first_version
+            ),
+        },
+    ]
+    shadow_launchers = _doctor_shadow_launchers(route_entries)
+    payload["shadow_launchers"] = shadow_launchers
+    payload["installation_health"] = _doctor_installation_health(
+        shadow_launchers,
+        installed_version=installed_version,
+        installed_behind_pypi=installed_behind_pypi,
+        pypi_unavailable=pypi_latest is None,
+        pypi_latest=pypi_latest,
+    )
     if with_lsp:
         lsp_providers = _doctor_apply_lsp_missing_component_remediation(
             _doctor_apply_lsp_workspace_warnings(_doctor_lsp_provider_statuses(str(root)))
@@ -3629,6 +3837,33 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
         f"invoked_as: {payload['invoked_as']}",
         f"root: {payload['root']}",
     ]
+    # A90 PATH-honesty: scream loudly when the aggregate installation health is not ok, so a
+    # foreign 0.32.0 shadow or a stale install can never be missed in human output. This line is
+    # human-only (never touches the --json envelope).
+    health = payload.get("installation_health")
+    if health and health != "ok":
+        lines.append(f"warning: installation_health={health}")
+        if health == "foreign_launcher" or health == "launcher_version_mismatch":
+            lines.append(
+                "  one or more resolved `tg` launchers are foreign or not the installed wheel "
+                "version (see shadow_launchers); pin the wheel: uvx --from "
+                f"tensor-grep=={payload['version']} tg ..."
+            )
+        elif health == "stale_install":
+            lines.append(
+                "  the installed wheel is behind the latest PyPI release "
+                f"(pypi_latest={payload.get('pypi_latest')}); run `tg upgrade`"
+            )
+        elif health == "unknown_pypi":
+            lines.append(
+                "  could not reach PyPI to verify freshness (offline?); install state is "
+                "unverified, not clean"
+            )
+        elif health == "unverifiable_version":
+            lines.append(
+                "  one or more versions could not be parsed; install state is unverifiable, "
+                "not clean"
+            )
     native_tg_binary = payload.get("native_tg_binary")
     lines.append(f"native_tg_binary: {native_tg_binary or 'missing'}")
     lines.append(f"native_tg_binary_kind: {payload.get('native_tg_binary_kind', 'unknown')}")

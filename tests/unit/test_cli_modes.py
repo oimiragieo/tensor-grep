@@ -40,6 +40,16 @@ from tensor_grep.core.hardware.device_inventory import DeviceInventory
 from tensor_grep.core.result import MatchLine, SearchResult
 
 
+@pytest.fixture(autouse=True)
+def _doctor_offline(monkeypatch):
+    """A90 PATH-honesty: `tg doctor` now probes PyPI for pypi_latest (bounded 15s). That network
+    call must NOT run in unit tests. `TG_DOCTOR_OFFLINE=1` (a documented escape hatch on
+    _latest_pypi_tensor_grep_version) short-circuits to None (unknown_pypi), which is fast and
+    offline-deterministic. The test that exercises the REAL probe (test_latest_pypi_probe_*)
+    deletes this env var so it hits the network-mock path."""
+    monkeypatch.setenv("TG_DOCTOR_OFFLINE", "1")
+
+
 def _strip_ansi(text: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
@@ -2208,8 +2218,8 @@ def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Pat
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["version"] == "9.9.9"
-    assert payload["schema_version"] == 2
-    assert payload["doctor_schema_version"] == 2
+    assert payload["schema_version"] == 3
+    assert payload["doctor_schema_version"] == 3
     assert payload["root"] == str(tmp_path.resolve())
     assert payload["native_tg_binary_exists"] is True
     assert payload["env"]["TG_RUST_EARLY_RG"] == "1"
@@ -2259,8 +2269,8 @@ def test_doctor_json_no_lsp_keeps_empty_schema_compatibility(monkeypatch, tmp_pa
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["schema_version"] == 2
-    assert payload["doctor_schema_version"] == 2
+    assert payload["schema_version"] == 3
+    assert payload["doctor_schema_version"] == 3
     assert payload["lsp"]["enabled"] is False
     assert payload["lsp"]["schema_version"] == 2
     assert payload["lsp"]["providers"] == []
@@ -2353,8 +2363,8 @@ def test_doctor_json_reports_cold_daemon_autostart_hint(monkeypatch, tmp_path: P
     # Additive-only: doctor's own top-level schema_version must NOT need a bump for a nested,
     # conditionally-present diagnostic field (CONTRACTS.md section 5: "Individual diagnostic
     # fields may grow as new probes are added").
-    assert payload["schema_version"] == 2
-    assert payload["doctor_schema_version"] == 2
+    assert payload["schema_version"] == 3
+    assert payload["doctor_schema_version"] == 3
 
 
 def test_doctor_text_reports_ast_grep_availability(monkeypatch, tmp_path: Path) -> None:
@@ -11034,6 +11044,9 @@ def test_latest_pypi_probe_uses_pip_index_when_json_and_simple_are_stale(monkeyp
 
     monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
     monkeypatch.setattr(cli_main.subprocess, "run", _fake_run)
+    # The autouse _doctor_offline fixture sets TG_DOCTOR_OFFLINE=1; this test exercises the REAL
+    # probe, so clear it (raising=False: absent in some collection orders).
+    monkeypatch.delenv("TG_DOCTOR_OFFLINE", raising=False)
 
     assert cli_main._latest_pypi_tensor_grep_version(timeout_seconds=1.0) == "0.34.0"
     assert calls
@@ -16921,3 +16934,244 @@ def test_evidence_group_does_not_hint_emit_for_a_non_path_subcommand() -> None:
     combined = result.output
     assert "No such command" in combined
     assert "tg evidence emit" not in combined
+
+
+# ---------------------------------------------------------------------------
+# A90 PATH-honesty: doctor installation-health + shadow launchers + pypi drift
+# (docs/plans/2026-08-11-doctor-path-honesty.md, plan REV 5, council-approved)
+# ---------------------------------------------------------------------------
+
+
+def test_doctor_installation_health_foreign_wins() -> None:
+    routes = [
+        {
+            "route": "path",
+            "path": "/c/bin/tg.exe",
+            "version": "tg 0.32.0",
+            "foreign": True,
+            "version_matches": False,
+        },
+    ]
+    assert (
+        cli_main._doctor_installation_health(
+            routes, installed_version="9.9.9", installed_behind_pypi=False, pypi_unavailable=False
+        )
+        == "foreign_launcher"
+    )
+
+
+def test_doctor_installation_health_version_mismatch_affects_health() -> None:
+    # A shadowed OLD tg (foreign already False here, but version_matches False) must NOT read ok.
+    routes = [
+        {
+            "route": "path",
+            "path": "/c/bin/tg.exe",
+            "version": "tg 1.110.10",
+            "foreign": False,
+            "version_matches": False,
+        },
+    ]
+    assert (
+        cli_main._doctor_installation_health(
+            routes,
+            installed_version="1.110.13",
+            installed_behind_pypi=False,
+            pypi_unavailable=False,
+        )
+        == "launcher_version_mismatch"
+    )
+
+
+def test_doctor_installation_health_stale_install() -> None:
+    assert (
+        cli_main._doctor_installation_health(
+            [], installed_version="1.110.10", installed_behind_pypi=True, pypi_unavailable=False
+        )
+        == "stale_install"
+    )
+
+
+def test_doctor_installation_health_unknown_pypi_when_probe_unavailable() -> None:
+    assert (
+        cli_main._doctor_installation_health(
+            [], installed_version="1.110.13", installed_behind_pypi=None, pypi_unavailable=True
+        )
+        == "unknown_pypi"
+    )
+
+
+def test_doctor_installation_health_ok_when_clean_semantically_newer() -> None:
+    # Clean routes + installed equal or newer than pypi -> ok.
+    assert (
+        cli_main._doctor_installation_health(
+            [], installed_version="1.110.13", installed_behind_pypi=False, pypi_unavailable=False
+        )
+        == "ok"
+    )
+
+
+def test_doctor_installed_behind_pypi_semantic() -> None:
+    # Semantic, NOT lexicographic: 1.110.10 < 1.110.9 is False (1.110.9 has fewer patch digits
+    # but packaging compares numerically: 1.110.10 > 1.110.9). Use a clear numeric case.
+    assert cli_main._doctor_installed_behind_pypi("1.110.9", "1.110.10") is True
+    assert cli_main._doctor_installed_behind_pypi("1.110.10", "1.110.10") is False
+    assert cli_main._doctor_installed_behind_pypi("2.0.0", "1.110.13") is False
+
+
+def test_doctor_installed_behind_pypi_null_on_invalid_or_unavailable() -> None:
+    assert cli_main._doctor_installed_behind_pypi("junk", "1.110.13") is None
+    assert cli_main._doctor_installed_behind_pypi("1.110.13", "junk") is None
+    assert cli_main._doctor_installed_behind_pypi("1.110.13", None) is None
+
+
+def test_doctor_shadow_launchers_inclusion_and_nulls() -> None:
+    # foreign True -> listed; version_matches False -> listed; None (invalid route version) ->
+    # listed; expected-version route -> NOT listed; absent route -> not present at all.
+    routes = [
+        {
+            "route": "path",
+            "path": "/c/bin/other.tg",
+            "version": "tg 0.32.0",
+            "foreign": True,
+            "version_matches": False,
+        },
+        {
+            "route": "fresh_shell_path",
+            "path": "/c/bin/old-tg.exe",
+            "version": "tg 1.110.10",
+            "foreign": False,
+            "version_matches": False,
+        },
+        {
+            "route": "python_subprocess_path",
+            "path": "/c/bin/junk.tg",
+            "version": "??",
+            "foreign": False,
+            "version_matches": None,
+        },
+    ]
+    # Include a good route that must NOT be listed.
+    good = {
+        "route": "path",
+        "path": "/c/.tensor-grep/bin/tg.exe",
+        "version": "tg 1.110.13",
+        "foreign": False,
+        "version_matches": True,
+    }
+    shadow = cli_main._doctor_shadow_launchers([*routes, good])
+    listed_routes = {entry["route"] for entry in shadow}
+    assert listed_routes == {"path", "fresh_shell_path", "python_subprocess_path"}
+    assert all(entry["version_matches"] is not True for entry in shadow)
+    assert all(
+        entry["foreign"] is not False or entry["version_matches"] is not True for entry in shadow
+    )
+    assert [entry["route"] for entry in shadow] == [
+        "path",
+        "fresh_shell_path",
+        "python_subprocess_path",
+    ]  # deterministic spec order (codex REV-5 LOW)
+
+
+# ---------------------------------------------------------------------------
+# codex audit fixes: invalid-pypi, padded compare, absent route, route order
+# ---------------------------------------------------------------------------
+
+
+def test_doctor_health_invalid_pypi_latest_is_unverifiable_not_ok() -> None:
+    # codex HIGH 1: an invalid NON-NULL pypi_latest must land on unverifiable_version, never ok.
+    assert (
+        cli_main._doctor_installation_health(
+            [],
+            installed_version="1.110.13",
+            installed_behind_pypi=None,
+            pypi_unavailable=False,
+            pypi_latest="not-a-version",
+        )
+        == "unverifiable_version"
+    )
+
+
+def test_doctor_route_version_matches_padded_equivalence() -> None:
+    assert cli_main._doctor_route_version_matches("1.110.13", "tg 1.110.13") is True
+    # PEP-440 padded: 1.0 == 1.0.0.
+    assert cli_main._doctor_route_version_matches("1.0.0", "tg 1.0") is True
+    # Semantic mismatch: old shadow vs installed.
+    assert cli_main._doctor_route_version_matches("1.110.13", "tg 1.110.10") is False
+    # Invalid route version -> None, never a confident False.
+    assert cli_main._doctor_route_version_matches("1.110.13", "junk") is None
+    # Absent route -> None.
+    assert cli_main._doctor_route_version_matches("1.110.13", None) is None
+    # Registry-looking / prerelease forms are unverifiable, not truncated.
+    assert cli_main._doctor_version_tuple("1.110.13+dev") is None
+    assert cli_main._doctor_version_tuple("1.110.13rc1") is None
+
+
+def test_doctor_shadow_launchers_absent_route_not_listed() -> None:
+    # codex MEDIUM: a route with path=None (absent) must not be listed as unverifiable.
+    routes = [
+        {"route": "path", "path": None, "version": None, "foreign": False, "version_matches": None},
+        {
+            "route": "fresh_shell_path",
+            "path": "/c/bin/old.tg",
+            "version": "tg 1.110.10",
+            "foreign": False,
+            "version_matches": False,
+        },
+    ]
+    shadow = cli_main._doctor_shadow_launchers(routes)
+    assert [e["route"] for e in shadow] == ["fresh_shell_path"]
+
+
+def test_doctor_shadow_launchers_order_is_spec() -> None:
+    # codex LOW: deterministic order must be path, fresh_shell_path, python_subprocess_path.
+    routes = [
+        {
+            "route": "python_subprocess_path",
+            "path": "/c/bin/p3.tg",
+            "version": "tg 0.32.0",
+            "foreign": True,
+            "version_matches": False,
+        },
+        {
+            "route": "path",
+            "path": "/c/bin/path.tg",
+            "version": "tg 0.32.0",
+            "foreign": True,
+            "version_matches": False,
+        },
+        {
+            "route": "fresh_shell_path",
+            "path": "/c/bin/fresh.tg",
+            "version": "tg 0.32.0",
+            "foreign": True,
+            "version_matches": False,
+        },
+    ]
+    shadow = cli_main._doctor_shadow_launchers(routes)
+    assert [e["route"] for e in shadow] == ["path", "fresh_shell_path", "python_subprocess_path"]
+
+
+def test_doctor_behind_pypi_independent_of_route_versions() -> None:
+    # codex REV-6: installed_behind_pypi depends ONLY on installed+pypi. A junk ROUTE version
+    # (shadow presence) must not nullify the comparison.
+    routes_with_junk = [
+        {
+            "route": "path",
+            "path": "/c/bin/junk.tg",
+            "version": "??",
+            "foreign": False,
+            "version_matches": None,
+        },
+    ]
+    behind = cli_main._doctor_installed_behind_pypi("1.110.9", "1.110.13")
+    assert behind is True  # route junk did not affect it
+    assert (
+        cli_main._doctor_installation_health(
+            routes_with_junk,
+            installed_version="1.110.9",
+            installed_behind_pypi=behind,
+            pypi_unavailable=False,
+            pypi_latest="1.110.13",
+        )
+        == "unverifiable_version"
+    )  # but health still surfaces the junk route
