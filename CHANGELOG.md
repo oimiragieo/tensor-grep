@@ -1,6 +1,124 @@
 # CHANGELOG
 
 
+## v1.110.13 (2026-08-11)
+
+### Bug Fixes
+
+- **cli**: Fail closed on unknown flag-bearing top-level commands (A90)
+  ([#997](https://github.com/oimiragieo/tensor-grep/pull/997),
+  [`baef00b`](https://github.com/oimiragieo/tensor-grep/commit/baef00b28322680cbd1ba6cf681d1316444cab27))
+
+* fix(cli): fail closed on unknown flag-bearing top-level commands (A90)
+
+An unknown top-level command (tg edit-ready, tg verify-edit) fell through to search on both front
+  doors: --help printed search help exit 0 (an agent could conclude the nonexistent command exists),
+  and flag-bearing unknowns (--json) became search patterns. This is world-class blocker #1 (roadmap
+  H1).
+
+Fix (council-approved ARM A, REV 4): - commands.py: RESERVED_TOP_LEVEL_COMMANDS = {edit-ready,
+  verify-edit, workspace}, lifecycle-invariant with KNOWN_COMMANDS (disjoint,
+  remove-on-registration). - Python door (bootstrap.py): _top_level_command_refusal detects
+  reserved+flag and unknown+--help shapes; main_entry renders stderr-only exit-2 (human for --help,
+  single JSON unknown_command + nearest on stderr for --json; help wins on conflict). stdlib json
+  stays FUNCTION-LOCAL (F2.5 fast-path import contract). - Native door (main.rs):
+  scoped_python_set_member parses KNOWN_COMMANDS / RESERVED_TOP_LEVEL_COMMANDS blocks independently
+  (the old unscoped include_str parser leaked reserved names into 'known' and could never refuse
+  them); same refusal predicate + nearest_commands + stderr render, exit 2. - Bare tg PATTERN /
+  PATTERN PATH / unreserved pattern+flag and reserved+positional (no flag) all STAY search -- pinned
+  both doors. Escape hatch: tg search workspace --json. - parity matrix (12 rows x 3 launchers) +
+  native unit tests + Python unit tests (nearest bounded/deterministic; reserved/known disjoint;
+  registry lifecycle).
+
+* fix(cli): address codex A90 implementation audit (CRITICAL/HIGH/MEDIUM)
+
+- CRITICAL: native refusal block was nested inside the raw_args.len()<=1 branch (unreachable for any
+  command-bearing invocation); moved it after the no-argument help branch and before
+  version/help/search dispatch. - HIGH: nearest_commands extracted members via ends_with(quote)
+  which every trailing-comma KNOWN_COMMANDS entry fails ("agent",); replaced with a single
+  quote/escape-aware, brace-depth scoped member extractor (python_set_members) shared by
+  known/reserved membership and nearest. - MEDIUM: scoped parser was not comment/string aware (a
+  hash inside a string, or braces inside strings, mis-parsed); the new extractor tokenizes properly.
+  - MEDIUM: nearest[] now enforces a genuine Levenshtein edit distance <= 3 in BOTH doors (not
+  length-diff + ratio), deterministically identical (parity-pinned); honest empty [] for distant
+  tokens like edit-ready (no registered command is within 3 edits). - MEDIUM: e2e parity test no
+  longer compares a value to itself; pins EXACT nearest via the human "did you mean" line
+  (searhc->search, distant->[]) and asserts cross-launcher identical structured refusals. - Python
+  door nearest mirrored with _levenshtein (Wagner-Fischer), function-local json import preserved
+  (F2.5 fast-path contract).
+
+* fix(cli): codex R2 audit fixes — collection + escape decode + exact help parity
+
+- HIGH: e2e parametrize name _unused mismatched the signature's expected_nearest, so the full A90
+  matrix never collected; renamed to expected_nearest (14 rows now collect). - MEDIUM: Rust scoped
+  set scanner now DECODES the escapes that can appear inside a double-quoted Python string member
+  (\" and \\\\ -> bare char); any other escape is copied verbatim, matching Python's decoding for
+  identifier-shaped members. Structure pin added: every parsed member must be a clean identifier (no
+  backslash/quote/trailing comma/__ leak). - MEDIUM: help-form nearest parity is now EXACT — the
+  full 'did you mean' list is parsed and compared for equality to the expected pins
+  (searhc->[search], distant->[]), and identical across all launchers, not a substring assert.
+
+* fix(cli): codex R3 audit fixes — __ membership retention + dash-first parity
+
+- HIGH: python_set_members no longer drops __-prefixed internal commands at EXTRACTION (__gpu-* are
+  legitimate KNOWN_COMMANDS members whose hidden-command dispatch must keep working); the __ filter
+  now lives only in nearest_commands (hide from suggestions, not from membership). Bidirectional pin
+  added: is_known_python_command("__gpu-native-stats") true, members contains it, nearest excludes
+  it. - MEDIUM: Python _top_level_command_refusal now exempts ALL dash-first first args
+  (first_arg.startswith('-')), mirroring the native door so 'tg --bogus --help' routes identically
+  (never an unknown-command refusal); added as a cross-launcher parity row.
+
+* docs(routing): document the A90 unknown-command dispatch contract
+
+* fix(cli): clippy doc-lazy-continuation + while-let-on-iterator in A90 native code
+
+* test(cli): fix A90 parity matrix — use parity_env paths + assert refusal-shape absence
+
+- Rows used sample.txt/docs/ which parity_env does not create; path_not_found is a LEGIT search
+  error (exit 2), so the 'search must not exit 2' assertion was wrong. Rows now use parity_env's
+  real target.txt. - Not-refusal assertion checks the unknown_command REFUSAL SHAPE is absent on
+  both streams (a legit search error at exit 2 is fine), instead of exit-code != 2. - Removed the
+  redundant returncodes accumulator.
+
+* test(cli): qqq --help nearest pin — it IS close to lsp/map/mcp/new/run
+
+The 'omit suggestion for distant tokens' assertion was wrong for qqq: it is within Levenshtein 3 of
+  lsp/map/mcp/new/run (genuine typo-adjacent commands), so the honest suggestion list is
+  ['lsp','map','mcp','new','run']. Pinned exactly.
+
+### Documentation
+
+- Reconcile TASK_BOARD to v1.110.12 (M16/M17 drain + A90 in flight)
+  ([#998](https://github.com/oimiragieo/tensor-grep/pull/998),
+  [`644c2a7`](https://github.com/oimiragieo/tensor-grep/commit/644c2a70fb442397fb800d53eeb1734252e4dfa8))
+
+The board's reconcile stamp was v1.110.6 (2026-08-08) while the shipped product advanced to
+  v1.110.12 — 6 releases behind tolerance 5, reddening
+  test_task_board_reconcile_stamp_is_not_many_releases_stale on every PR.
+
+Reconciled against reality (not a bare bump): - Public product v1.110.11 / v1.110.12
+  (PyPI-verified), M16 #987 / M17 #988 closed. - Docs drain #992/#993/#994/#995 merged; A90 #997 in
+  draft (council+codex approved). - Removed stale duplicated snapshot lines (v1.110.6 / v1.110.10
+  stragglers). - IN FLIGHT table refreshed from live gh pr list. All 11 freshness + 52
+  docs-governance tests pass.
+
+- Record 2026-08-10 M16/M17 first-CI drain receipts (BACKLOG campaign note)
+  ([#995](https://github.com/oimiragieo/tensor-grep/pull/995),
+  [`641dc31`](https://github.com/oimiragieo/tensor-grep/commit/641dc31c588f5db7c7e1267f58badbe4d05708a8))
+
+Captures the Round-3 completion of the previous backlog-completion plan: - #993/#994/#992 (docs),
+  #987 (M16 -> v1.110.11), #988 (M17 -> v1.110.12) drained; all green, PyPI verified. - Four new
+  durable findings: A87 confirmed twice; fingerprint-vs-walk disagreement fix; the cfg(windows)-only
+  test hiding a format-version pin break; the #276 ratchet catching the new walk site + the
+  comment-satisfies-census reversed trap.
+
+- **skills**: Dogfood refresh for tg 1.110.12 (M16/M17)
+  ([#996](https://github.com/oimiragieo/tensor-grep/pull/996),
+  [`4fd9b9e`](https://github.com/oimiragieo/tensor-grep/commit/4fd9b9ecd7f6e52dd40f4fd134694fb5bc3a1f24))
+
+Stamp 21/21 Windows uvx CUJ; scan severity/message; --index TrigramIndex isolation surface.
+
+
 ## v1.110.12 (2026-08-10)
 
 ### Bug Fixes
