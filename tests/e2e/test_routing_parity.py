@@ -804,18 +804,23 @@ A90_MATRIX = [
     (["qqq", "--json"], False, None),
     (["qqq", "--help"], True, None),
     (["search", "workspace", "--json"], False, None),
+    (["searhc", "--help"], True, ["search"]),
+    (["qqqqzzzz", "--help"], True, []),
 ]
 
 
 @pytest.mark.parametrize("args,expect_refusal,_unused", A90_MATRIX)
-def test_unknown_command_refusal_parity_across_launchers(parity_env, args, expect_refusal, _unused):
+def test_unknown_command_refusal_parity_across_launchers(
+    parity_env, args, expect_refusal, expected_nearest
+):
     """A90: the unknown-command refusal must be IDENTICAL across the python-m / native /
     bootstrap launchers. Flag-bearing reserved names refuse (exit 2, unknown_command, stderr);
     unreserved pattern+flag and reserved+positional stay search; `--help` on ANY unknown refuses
     (a nonexistent command has no help); `tg search workspace --json` (explicit command) stays
-    search (escape hatch). Asserted on the shared parity_env (has no "edit-ready" token risk --
-    refusal is checked on exit-code/stderr shape, not match content)."""
+    search (escape hatch). Third column pins the EXACT nearest[] (via the human help line, which
+    carries 'did you mean ...?' when non-empty and omits it when [])."""
     outcomes = []
+    parsed_json_by_launcher = {}
     for launcher in LAUNCHERS:
         result = run_command(launcher, args, cwd=parity_env)
         if expect_refusal:
@@ -830,16 +835,38 @@ def test_unknown_command_refusal_parity_across_launchers(parity_env, args, expec
                 assert parsed["error"]["code"] == "unknown_command", (
                     f"{launcher} {args}: wrong error code {parsed}"
                 )
-                assert parsed["error"]["nearest"] == parsed["error"]["nearest"], "deterministic"
+                assert isinstance(parsed["error"]["nearest"], list), parsed
+                parsed_json_by_launcher[launcher] = parsed
             else:
                 assert "unknown command" in result.stderr, (
                     f"{launcher} {args}: human diagnostic missing, stderr={result.stderr[:120]!r}"
                 )
+                if expected_nearest:
+                    assert f"did you mean {', '.join(expected_nearest)}" in result.stderr, (
+                        f"{launcher} {args}: expected 'did you mean {expected_nearest}' in "
+                        f"stderr={result.stderr[:160]!r}"
+                    )
+                else:
+                    assert "did you mean" not in result.stderr, (
+                        f"{launcher} {args}: empty nearest must omit the suggestion, "
+                        f"stderr={result.stderr[:160]!r}"
+                    )
         else:
             assert result.returncode != 2, (
                 f"{launcher} {args}: search must not exit 2 with unknown_command"
             )
         outcomes.append((launcher, result.returncode))
+    if parsed_json_by_launcher:
+        # Cross-launcher parity: EVERY door must emit the SAME structured refusal (code + nearest).
+        first = next(iter(parsed_json_by_launcher.values()))
+        for launcher, parsed in parsed_json_by_launcher.items():
+            assert parsed["error"]["code"] == first["error"]["code"], (
+                f"{launcher} {args}: refusal code diverged {parsed} vs {first}"
+            )
+            assert parsed["error"]["nearest"] == first["error"]["nearest"], (
+                f"{launcher} {args}: nearest[] diverged {parsed['error']['nearest']} vs "
+                f"{first['error']['nearest']}"
+            )
     if not expect_refusal:
         returncodes = {rc for _, rc in outcomes}
         assert 2 not in returncodes, f"no launcher may refuse a search shape: {outcomes}"

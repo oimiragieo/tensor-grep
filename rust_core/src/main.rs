@@ -1335,35 +1335,6 @@ fn main_inner() -> anyhow::Result<()> {
     let raw_args: Vec<OsString> = std::env::args_os().collect();
 
     if raw_args.len() <= 1 {
-        if top_level_unknown_command_refusal(&raw_args) {
-            let first = &raw_args[1].to_string_lossy();
-            let nearest = nearest_commands(first);
-            let has_help = raw_args.iter().skip(2).any(|a| {
-                let t = a.to_string_lossy();
-                t == "--help" || t == "-h"
-            });
-            if has_help {
-                if nearest.is_empty() {
-                    eprintln!("error: unknown command '{first}'");
-                } else {
-                    eprintln!(
-                        "error: unknown command '{first}' (did you mean {}?)",
-                        nearest.join(", ")
-                    );
-                }
-            } else {
-                let payload = serde_json::json!({
-                    "error": {
-                        "code": "unknown_command",
-                        "nearest": nearest,
-                        "command": first,
-                    },
-                });
-                eprintln!("{payload}");
-            }
-            std::process::exit(2);
-        }
-
         if let Some(exit_code) = try_public_help_passthrough(&raw_args)? {
             if exit_code != 0 {
                 std::process::exit(exit_code.max(1));
@@ -1371,6 +1342,35 @@ fn main_inner() -> anyhow::Result<()> {
             return Ok(());
         }
         return print_native_top_level_help();
+    }
+
+    if top_level_unknown_command_refusal(&raw_args) {
+        let first = &raw_args[1].to_string_lossy();
+        let nearest = nearest_commands(first);
+        let has_help = raw_args.iter().skip(2).any(|a| {
+            let t = a.to_string_lossy();
+            t == "--help" || t == "-h"
+        });
+        if has_help {
+            if nearest.is_empty() {
+                eprintln!("error: unknown command '{first}'");
+            } else {
+                eprintln!(
+                    "error: unknown command '{first}' (did you mean {}?)",
+                    nearest.join(", ")
+                );
+            }
+        } else {
+            let payload = serde_json::json!({
+                "error": {
+                    "code": "unknown_command",
+                    "nearest": nearest,
+                    "command": first,
+                },
+            });
+            eprintln!("{payload}");
+        }
+        std::process::exit(2);
     }
 
     if is_top_level_version_invocation(&raw_args) || is_search_version_invocation(&raw_args) {
@@ -7955,106 +7955,10 @@ fn top_level_unknown_command_refusal(raw_args: &[OsString]) -> bool {
     is_reserved || has_help
 }
 
-/// A90 nearest[]: normalized, max distance 3, excludes internal `__` names, cap 5, stable
-/// (alphabetical) order, empty when nothing is close. Mirrors `_nearest_commands`.
-fn nearest_commands(token: &str) -> Vec<String> {
-    const RAW_PY: &str = include_str!("../../src/tensor_grep/cli/commands.py");
-    let mut names: Vec<String> = Vec::new();
-    let mut in_block = false;
-    let mut depth: i32 = 0;
-    for line in RAW_PY.lines() {
-        let t = line.trim();
-        if !in_block {
-            if t.starts_with("KNOWN_COMMANDS = {") {
-                in_block = true;
-                depth = 1;
-            }
-            continue;
-        }
-        let stripped = match t.find('#') {
-            Some(idx) => &t[..idx],
-            None => t,
-        };
-        for ch in stripped.chars() {
-            match ch {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        in_block = false;
-                    }
-                }
-                _ => {}
-            }
-        }
-        if !in_block {
-            break;
-        }
-        if stripped.starts_with('"') && stripped.ends_with('"') {
-            let name = stripped[1..stripped.len() - 1].to_string();
-            if !name.starts_with("__") {
-                names.push(name);
-            }
-        }
-    }
-
-    let norm = token.to_lowercase();
-    let mut matches: Vec<String> = Vec::new();
-    for name in names {
-        if abs_diff(norm.chars().count(), name.chars().count()) > 3 {
-            continue;
-        }
-        let ratio = sequence_matcher_ratio(&norm, &name);
-        if ratio < 0.5 {
-            continue;
-        }
-        matches.push(name);
-    }
-    matches.sort();
-    matches.truncate(5);
-    matches
-}
-
-fn abs_diff(a: usize, b: usize) -> usize {
-    if a > b {
-        a - b
-    } else {
-        b - a
-    }
-}
-
-fn sequence_matcher_ratio(a: &str, b: &str) -> f64 {
-    // Simple Ratcliff/Obershelp-style similarity over the common subsequence length, matching
-    // difflib.SequenceMatcher.ratio() semantics closely enough for a bounded nearest[] gate.
-    let aa: Vec<char> = a.chars().collect();
-    let bb: Vec<char> = b.chars().collect();
-    if aa.is_empty() && bb.is_empty() {
-        return 1.0;
-    }
-    if aa.is_empty() || bb.is_empty() {
-        return 0.0;
-    }
-    let matches = common_subsequence_len(&aa, &bb);
-    (2.0 * matches as f64) / (aa.len() + bb.len()) as f64
-}
-
-fn common_subsequence_len(a: &[char], b: &[char]) -> usize {
-    // LCS on two short command-name strings — bounded, deterministic.
-    let mut table = vec![vec![0usize; b.len() + 1]; a.len() + 1];
-    for i in 1..=a.len() {
-        for j in 1..=b.len() {
-            table[i][j] = if a[i - 1] == b[j - 1] {
-                table[i - 1][j - 1] + 1
-            } else {
-                table[i - 1][j].max(table[i][j - 1])
-            };
-        }
-    }
-    table[a.len()][b.len()]
-}
-
 fn is_known_python_command(token: &str) -> bool {
-    scoped_python_set_member("KNOWN_COMMANDS", token)
+    python_set_members("KNOWN_COMMANDS")
+        .iter()
+        .any(|name| name == token)
 }
 
 /// A90: is `token` in the RESERVED (roadmap, not-yet-registered) top-level command set?
@@ -8062,18 +7966,20 @@ fn is_known_python_command(token: &str) -> bool {
 /// never a bare quoted-literal scan (the unscoped `include_str!` match made every quoted
 /// literal line look "known", which would have made reserved names pass the NOT-known gate).
 fn is_reserved_python_command(token: &str) -> bool {
-    scoped_python_set_member("RESERVED_TOP_LEVEL_COMMANDS", token)
+    python_set_members("RESERVED_TOP_LEVEL_COMMANDS")
+        .iter()
+        .any(|name| name == token)
 }
 
-/// Extract a single top-level set literal block from commands.py by its variable name
-/// (`KNOWN_COMMANDS = { ... }` / `RESERVED_TOP_LEVEL_COMMANDS = { ... }`), brace-depth aware
-/// and comment-insensitive, then test membership. The existing unscoped `include_str!` line
-/// scan was wrong for A90 precisely because it matches ANY quoted literal anywhere in the file
-/// (e.g. PYTHON_FULL_HELP_COMMANDS or a docstring), so a reserved name added to commands.py
-/// would read as "known" and the not-known-gate would never fire.
-fn scoped_python_set_member(set_name: &str, token: &str) -> bool {
+/// Extract the members of one top-level set literal block from commands.py by its variable
+/// name (`KNOWN_COMMANDS = { ... }` / `RESERVED_TOP_LEVEL_COMMANDS = { ... }`). Bracedepth
+/// aware, quote/escape aware (a `#` inside a string is NOT a comment; braces inside strings do
+/// not count), and trailing-comma tolerant — `"agent",` is a member named `agent`. Returns the
+/// parsed string literals in block order, or an empty Vec if the block is absent.
+fn python_set_members(set_name: &str) -> Vec<String> {
     const RAW_PY: &str = include_str!("../../src/tensor_grep/cli/commands.py");
     let needle_open = format!("{set_name} = {{");
+    let mut members: Vec<String> = Vec::new();
     let mut depth: i32 = 0;
     let mut in_block = false;
     for line in RAW_PY.lines() {
@@ -8082,17 +7988,41 @@ fn scoped_python_set_member(set_name: &str, token: &str) -> bool {
             if t.starts_with(&needle_open) {
                 in_block = true;
                 depth += 1;
-                continue;
             }
             continue;
         }
-        // Inside the target block: track braces; skip comments.
-        let stripped = match t.find('#') {
-            Some(idx) => &t[..idx],
-            None => t,
-        };
-        for ch in stripped.chars() {
-            match ch {
+        // Inside the target block: tokenize char-by-char with a small quote-aware scanner so a
+        // '#' inside a string is data, not a comment, and braces inside strings are data too.
+        let mut chars = t.chars().peekable();
+        let mut in_str = false;
+        let mut in_str_esc = false;
+        let mut current: String = String::new();
+        let mut collected: Vec<String> = Vec::new();
+        while let Some(c) = chars.next() {
+            if in_str {
+                if in_str_esc {
+                    current.push(c);
+                    in_str_esc = false;
+                } else if c == '\\' {
+                    current.push(c);
+                    in_str_esc = true;
+                } else if c == '"' {
+                    if depth >= 1 && !current.trim().starts_with("__") {
+                        collected.push(current.clone());
+                    }
+                    current.clear();
+                    in_str = false;
+                } else {
+                    current.push(c);
+                }
+                continue;
+            }
+            match c {
+                '"' => {
+                    in_str = true;
+                    current.clear();
+                }
+                '#' => break, // comment to end of line
                 '{' => depth += 1,
                 '}' => {
                     depth -= 1;
@@ -8103,14 +8033,61 @@ fn scoped_python_set_member(set_name: &str, token: &str) -> bool {
                 _ => {}
             }
         }
-        if t.contains(&format!("\"{token}\"")) {
-            return true;
+        if !collected.is_empty() {
+            members.extend(collected);
         }
         if !in_block {
             break;
         }
     }
-    false
+    members
+}
+
+/// A90 nearest[]: normalized, max edit distance 3, excludes internal `__` names, cap 5, stable
+/// (alphabetical) order, empty when nothing is close. Mirrors `_nearest_commands`. Uses the
+/// same scoped member extractor as membership so nearest and known can never disagree.
+fn nearest_commands(token: &str) -> Vec<String> {
+    let candidates: Vec<String> = python_set_members("KNOWN_COMMANDS")
+        .into_iter()
+        .filter(|name| !name.starts_with("__"))
+        .collect();
+    let norm = token.to_lowercase();
+    let mut matches: Vec<String> = Vec::new();
+    for name in candidates {
+        // Genuine Levenshtein edit distance — the honest "max distance 3" bound. Length-diff
+        // alone is not edit distance (a 1-char substitution changes nothing about length); the
+        // plan/council contract and the Python sibling both mean edit distance, so enforce it.
+        if levenshtein_distance(&norm, &name) <= 3 {
+            matches.push(name);
+        }
+    }
+    matches.sort();
+    matches.truncate(5);
+    matches
+}
+
+/// Classic Wagner–Fischer Levenshtein distance over chars. Deterministic, bounded — the
+/// command names and the input token are short, so the O(n*m) DP is trivial here.
+fn levenshtein_distance(a: &str, b: &str) -> usize {
+    let aa: Vec<char> = a.chars().collect();
+    let bb: Vec<char> = b.chars().collect();
+    if aa.is_empty() {
+        return bb.len();
+    }
+    if bb.is_empty() {
+        return aa.len();
+    }
+    let mut prev: Vec<usize> = (0..=bb.len()).collect();
+    let mut curr: Vec<usize> = vec![0; bb.len() + 1];
+    for (i, ca) in aa.iter().enumerate() {
+        curr[0] = i + 1;
+        for (j, cb) in bb.iter().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            curr[j + 1] = (prev[j + 1] + 1).min(curr[j] + 1).min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[bb.len()]
 }
 
 fn stdin_should_search_implicit_path() -> bool {

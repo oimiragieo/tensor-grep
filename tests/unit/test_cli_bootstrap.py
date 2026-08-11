@@ -121,13 +121,16 @@ def test_codemap_argv_does_not_forward_to_search() -> None:
 def test_reserved_unknown_flag_bearing_command_is_refused_not_searched() -> None:
     """A90: `tg edit-ready --json` / `--help` are roadmap commands that do not exist yet and
     must exit non-zero with unknown_command -- never fall through to a search for "edit-ready"
-    (which would fake a command's existence at exit 0). RED: today the reserved names are not
-    known, so `_top_level_command_refusal` (new) must detect the reserved+flag shape."""
+    (which would fake a command's existence at exit 0). nearest[] is thresholded: edit-ready is
+    not typo-near ANY known command, so [] is the HONEST suggestion set -- the refusal itself is
+    what matters."""
     refusal = bootstrap._top_level_command_refusal(["edit-ready", "--json"])
     assert refusal is not None, "reserved+flag must be a refusal"
     first, nearest = refusal
     assert first == "edit-ready"
-    assert "edit-plan" in nearest or "prepare" in nearest or "evidence" in nearest
+    assert isinstance(nearest, list)
+    # Honest thresholded nearest: edit-ready is distance > 3 from every registered command.
+    assert bootstrap._nearest_commands("edit-ready") == []
 
 
 def test_reserved_unknown_help_is_refused_not_searched() -> None:

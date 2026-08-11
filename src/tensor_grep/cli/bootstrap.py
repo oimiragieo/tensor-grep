@@ -386,21 +386,30 @@ def _normalize_search_invocation(argv: list[str]) -> list[str] | None:
 
 
 def _nearest_commands(token: str) -> list[str]:
-    """A90 nearest[]: normalized (lowercase), max edit distance 3, no internal `__`-prefixed
-    names, capped at 5, deterministic tie-break (alphabetical), empty when nothing is close."""
-    import difflib
-
+    """A90 nearest[]: normalized (lowercase), max Levenshtein edit distance 3, no internal
+    `__`-prefixed names, capped at 5, deterministic tie-break (alphabetical), empty when
+    nothing is close. Mirrors `nearest_commands` in rust_core/src/main.rs (parity-pinned)."""
     norm = token.lower()
     candidates = sorted(name for name in _KNOWN_COMMANDS if not name.startswith("__"))
-    matches: list[str] = []
-    for name in candidates:
-        if difflib.SequenceMatcher(None, norm, name).ratio() < 0.5:
-            continue
-        if abs(len(norm) - len(name)) > 3:
-            continue
-        matches.append(name)
-    bounded = matches[:5]
-    return sorted(bounded)
+    matches = [name for name in candidates if _levenshtein(norm, name) <= 3]
+    return sorted(matches[:5])
+
+
+def _levenshtein(a: str, b: str) -> int:
+    """Wagner-Fischer Levenshtein distance. Deterministic twin of the Rust implementation so
+    nearest[] is byte-identical across the two front doors."""
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        curr = [i]
+        for j, cb in enumerate(b, 1):
+            cost = 0 if ca == cb else 1
+            curr.append(min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost))
+        prev = curr
+    return prev[-1]
 
 
 def _top_level_command_refusal(argv: list[str]) -> tuple[str, list[str]] | None:
