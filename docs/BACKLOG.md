@@ -7,12 +7,16 @@
 > nonfinancial decision-gated, financial/spend-gated, demand/research-gated, and mixed/terminal
 > corrections—not merely SHIPPING or P0/P1. Update whenever a PR opens/merges or the queue changes.
 > Task-store IDs (`#NNN`) are cross-referenced.
-> **Current closed-world CEO snapshot: 2026-08-06 PM, release `v1.110.0`, tip `bb4fdae` (re-derive).**
+> **Current closed-world CEO snapshot: 2026-08-12, release `v1.110.14`, tip `b6dc0a6` (re-derive).**
 > Live disposition is the canonical index in `docs/TASK_BOARD.md` (28 rows / 17 unfinished =
-> **0 READY**, 6 BLOCKED, 0 IN_FLIGHT, 5 CEO_GATED, 6 DEMAND_GATED). Live dumbed-down packet:
-> `docs/audits/2026-08-06-pm-ceo-backlog-update.md`. Morning receipt (A70–A76 / pre-stamp READY):
-> `docs/audits/2026-08-06-ceo-backlog-update.md`. Task 2A remains correctly blocked (draft #966
-> FIX-FIRST lineage; Sol SHIP + Windows CI outstanding). No spend; #169 only financial stop.
+> **1 READY** (RUST-REPLACE-SYMLINK, design-council-first), 6 BLOCKED, 0 IN_FLIGHT, 5 CEO_GATED,
+> 5 DEMAND_GATED). Campaign receipts: `docs/plans/2026-08-12-backlog-closeout-campaign.md` +
+> `docs/audits/2026-08-12-stale-branch-reconciliation.md`. Prior packets:
+> `docs/audits/2026-08-11-ceo-backlog-update.md` (A83–A96),
+> `docs/audits/2026-08-06-pm-ceo-backlog-update.md` (A77-A82 / pre-stamp READY):
+> `docs/audits/2026-08-06-ceo-backlog-update.md`. Task 2A ADVANCED 2026-08-12 (#966
+> CONFLICTING→MERGEABLE, first Actions evidence chain, five repair rounds) and remains correctly
+> blocked (Sol SHIP + Windows census outstanding). No spend; #169 only financial stop.
 > Historical header text below this block may still describe older READY counts — trust the
 > canonical index + PM CEO packet, not stale prose in this ledger's opening paragraph.
 > Recovered local-environment incident (historical): `ENV-VENV-DRIFT` occurred when a WSL `uv`
@@ -42,6 +46,42 @@
 >
 
 
+
+## Recent campaign notes (2026-08-12) - backlog-closeout campaign: Task 2A resume + reconciliation + research receipts
+
+- **Plan:** `docs/plans/2026-08-12-backlog-closeout-campaign.md`, rev 6 - 6 revisions through a
+  3-seat council (ground-truth all-TRUE; adversarial seat CHANGES_REQUIRED->APPROVED; codex Sol
+  seat 4 rounds `REVISE H1-H3/M1-M4` -> `REVISE M5-M8` -> `REVISE M5,M6` -> **APPROVE** on hash
+  `892B0B70...BC3FFF`). 21 findings folded; every finding verified against the artifacts before
+  folding (codex census corrections H1/H2 re-derived by parsing the manifest + re-running the
+  baseline).
+- **Task 2A resumed (#966, #89/#90 program):** A22 union-MERGE of `b6dc0a6` into
+  `task2a-round60-red` (only `cli/main.py` textually conflicted; the union preserves main's H5
+  timeout contract AND the branch's A62 emit-after-start - 5/5 + 158-node 0-delta per-node
+  oracle). PR #966 flipped CONFLICTING->MERGEABLE and got its FIRST-EVER Actions runs. Five
+  repair rounds landed off real CI receipts: `mod tests` closing brace (unclosed since the
+  `c550a84` scaffold - the branch never compiled anywhere; A87), `raw_args` E0282, lib-test
+  imports in `python_sidecar` tests (11x E0425/E0433) + a 14-error ruff sweep, and R1 - the
+  blanket `Run Pytest` step now excludes the 4 census-owned suites so the Task 2A Windows
+  collector is REACHABLE (codex H3; RED-proven 3-arm ratchet: bidirectional
+  ignore-list<->manifest, collector order/condition, live-collection<->manifest closed world).
+  Live census corrected to **169 nodes (157 py + 12 rust)**; the #9d receipt is demoted to
+  historical (ERRATUM-1). **Still NOT GREEN:** Sol exact-byte SHIP + Windows census evidence
+  outstanding; board stays BLOCKED. Receipts:
+  `docs/audits/2026-08-12-stale-branch-reconciliation.md` sections 3-4.
+- **Stale-checkout reconciliation:** the main checkout's `audit/h6-cudf-backend` branch + 21
+  dirty files contain ZERO unlanded product work (H3/H6 shipped; blob-identity receipts in the
+  audit doc). The `nul` artifact was removed; all other cleanup PROPOSED only.
+- **Research receipts** (`docs/audits/2026-08-12-research-receipts.md`, 17 Exa queries, 47
+  sources): frontier scan CONFIRMS the edit-control-plane thesis (retrieval commoditizing;
+  receipts/verification is where 2025-26 activity is; nearest neighbor arXiv:2606.04193 is
+  generic-agent, not repo-edit - whitespace remains). Demand rows: #255/DD-006/AST-DSL-PARITY
+  LEAVE (receipts in row triggers); MCP-LEAN-DEFAULT direction-confirmed but Task-2C-fenced;
+  CONTINUOUS-REFRESH scoping-pass trigger; **RUST-REPLACE-SYMLINK flipped DEMAND_GATED->READY**
+  (2026 CVE class: sed CVE-2026-5958, uutils GHSA-239g-2685-54x3, Capgo CVE-2026-56236;
+  design-council pass required before build).
+- Board: canonical index `2026-08-12.1` - 17 unfinished = 1 READY, 6 BLOCKED, 5 CEO_GATED,
+  5 DEMAND_GATED; 0 IN_FLIGHT. No release this campaign; no spend; CEO gates untouched.
 
 ## Recent campaign notes (2026-08-11 late) — skill coverage wave (post-#1001)
 

@@ -1,6 +1,6 @@
 # tensor-grep Session Handoff
 
-Last updated: 2026-08-11
+Last updated: 2026-08-12
 
 ## Current Release State
 
@@ -11,7 +11,19 @@ release_docs_current_tag: v1.110.14
 - GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.110.14>
 
 ## Current Backlog Closeout
-Canonical status index version: 2026-08-11.1
+Canonical status index version: 2026-08-12.1
+- 2026-08-12 backlog-closeout campaign (no release): plan
+  `docs/plans/2026-08-12-backlog-closeout-campaign.md` rev 6 (3-seat council; codex Sol APPROVE
+  after 4 rounds / 21 folded findings). Task 2A ADVANCED: A22 union-merge of `b6dc0a6` flipped
+  PR #966 CONFLICTING→MERGEABLE; five repair rounds off first-ever real CI receipts (mod-tests
+  brace unclosed since `c550a84`, E0282, python_sidecar lib-test imports + ruff sweep, R1
+  collector-reachability + RED-proven 3-arm ratchet); live census corrected to 169 nodes
+  (157 py + 12 rust). STILL NOT GREEN — Sol exact-byte SHIP + Windows census evidence
+  outstanding; #89/#90 stay BLOCKED. Stale-checkout reconciliation: `audit/h6-cudf-backend` +
+  21 dirty files = ZERO unlanded work (`docs/audits/2026-08-12-stale-branch-reconciliation.md`).
+  Research receipts (47 sources): thesis CONFIRMED; RUST-REPLACE-SYMLINK → READY
+  (design-council-first, 2026 CVE-class evidence); MCP-LEAN-DEFAULT/CONTINUOUS-REFRESH triggers
+  refreshed; board 17 unfinished = 1 READY / 6 BLOCKED / 5 CEO_GATED / 5 DEMAND_GATED.
 - Public product: `v1.110.14` (2026-08-11). Since the 2026-08-10 snapshot: v1.110.11 (M16 #987
   composite/severity), v1.110.12 (M17 #988 index root/format), v1.110.13 (A90 #997 unknown-command
   fail-closed), v1.110.14 (doctor #1000 PATH honesty: pypi_latest/installed_behind_pypi/

@@ -18,7 +18,25 @@
 >    `tag == PyPI` cannot distinguish *released* from *not started* from *died* and cost a release
 >    on 2026-07-28.
 
-## Campaign note (2026-08-11)
+## Campaign note (2026-08-12)
+
+Public product is **`v1.110.14`** (unchanged; no release this campaign). The 2026-08-12
+backlog-closeout campaign (plan `docs/plans/2026-08-12-backlog-closeout-campaign.md`, rev 6,
+codex-APPROVED after 4 audit rounds + adversarial-seat APPROVED) landed: (1) **Task 2A resumed**
+— A22 union-merge of `b6dc0a6` into `task2a-round60-red` flipped PR #966 CONFLICTING→MERGEABLE
+and opened the first-ever Actions evidence chain; five repair rounds pushed (mod-tests brace
+unclosed since `c550a84`, E0282, lib-test imports + ruff sweep, R1 collector-reachability with a
+RED-proven 3-arm ratchet) — receipts in `docs/audits/2026-08-12-stale-branch-reconciliation.md`
+§3–4; **still NOT GREEN** (Sol exact-byte SHIP + Windows census evidence outstanding). (2)
+**Stale-checkout reconciliation**: the `audit/h6-cudf-backend` branch + 21-file dirty tree
+contain ZERO unlanded work (all shipped via #975/#976/#987 etc.). (3) **Fresh Exa research
+receipts** (`docs/audits/2026-08-12-research-receipts.md`, 47 sources): frontier scan CONFIRMS
+the edit-control-plane thesis; demand rows re-dispositioned below — RUST-REPLACE-SYMLINK flips
+to READY on 2026 CVE-class evidence. STOP set unchanged otherwise: W3 rust/e2e shared-box ban,
+MCP wire fence, #169, CEO_GATED. R0 packets:
+`docs/audits/2026-08-06-ceo-gated-recommendation-packets.md`.
+
+## Campaign note (2026-08-11, historical)
 
 Public product is **`v1.110.14`** (tag + PyPI + GitHub assets, 2026-08-11). This session shipped the
 rest of the closeout audit wave (H2/M1/M3/M14), M16/M17 (v1.110.11/.12), A90 unknown-command fail-closed
@@ -32,7 +50,7 @@ unchanged: Task 2A not GREEN (#966 drafted, RED by design), W3 rust/e2e shared-b
 
 ## Canonical status index
 
-Canonical status index version: 2026-08-11.1
+Canonical status index version: 2026-08-12.1
 - [x] **#22** — Status: RETIRED; PR: none; Trigger: exit 0 is complete with matches; exit 1 is complete with no match; exit 2 is incomplete; gpu_request_unhonoured stays in-band and does not independently force exit 2
 - [x] **F2** — Status: RETIRED; PR: none; Trigger: legacy anonymous-agent compatibility deliberately retains the sentinel; reopen only with a caller-supplied stable identity contract and migration plan
 - [x] **#36** — Status: SHIPPED; PR: PR #903; Trigger: all 27 topic skills audited and drift corrections merged; reopen on a new failing skill-drift receipt
@@ -40,15 +58,15 @@ Canonical status index version: 2026-08-11.1
 - [ ] **#48** — Status: CEO_GATED; PR: none; Trigger: CEO decision on native-front-door startup architecture
 - [ ] **#72** — Status: CEO_GATED; PR: none; Trigger: CEO approval for a fresh public benchmark claim
 - [ ] **#77** — Status: CEO_GATED; PR: none; Trigger: CEO decision on the #77/F9 ledger-enforcement scope
-- [ ] **#89** — Status: BLOCKED; PR: none; Trigger: WSL-to-Windows path-domain reproduction (path_not_found on existing /mnt/c); owned by Task 2A→2B typed-path; Task 2A RED still Sol FIX-FIRST unpushed (no Actions); do not product-GREEN until Sol SHIP + Windows CI
-- [ ] **#90** — Status: BLOCKED; PR: none; Trigger: WSL raw-path scan matched_rules=0 while translated-path control total_matches=6; doctor half shipped PR #571; same Task 2A→2B/2C program as #89; scan half waits typed-path + real WSL CI
+- [ ] **#89** — Status: BLOCKED; PR: none; Trigger: WSL-to-Windows path-domain reproduction (path_not_found on existing /mnt/c); owned by Task 2A→2B typed-path; ADVANCED 2026-08-12 — union-merge onto b6dc0a6 flipped draft PR #966 CONFLICTING→MERGEABLE and five repair rounds opened the first Actions evidence chain (docs/audits/2026-08-12-stale-branch-reconciliation.md §4); do not product-GREEN until Sol exact-byte SHIP + Windows census run
+- [ ] **#90** — Status: BLOCKED; PR: none; Trigger: WSL raw-path scan matched_rules=0 while translated-path control total_matches=6; doctor half shipped PR #571; same Task 2A→2B/2C program as #89 via draft PR #966 (see #89's 2026-08-12 advancement); scan half waits typed-path + real WSL CI
 - [x] **#109** — Status: SHIPPED; PR: PR #605; Trigger: CUDA implicit-walk ceiling merged; reopen on a current parity regression
 - [ ] **#131** — Status: CEO_GATED; PR: none; Trigger: CEO decision on publishing GPU-flavor native assets
 - [ ] **#169** — Status: CEO_GATED; PR: none; Trigger: CEO approval for physical GPU proof or spend
-- [ ] **#255** — Status: DEMAND_GATED; PR: none; Trigger: demand for a bounded many-pattern dedup parity experiment or approved compression/native investment
+- [ ] **#255** — Status: DEMAND_GATED; PR: none; Trigger: demand for a bounded many-pattern dedup parity experiment or approved compression/native investment; evidence refreshed 2026-08-12 (docs/audits/2026-08-12-research-receipts.md — AC workloads confirmed real but scanner-internal; LEAVE)
 - [x] **#859** — Status: SHIPPED; PR: PR #913; Trigger: Task 3 class-level AST writer census and anchored publication fix; instance fix and class-level ratchet both merged, and the census found a 4th violation beyond the expected 3 (fixed in PR #918); Implementation PRs: PR #913; Closure PR: PR #920; Merged SHA: 211d850c7484f6e18d74e2d8ac712f118f3b82cf
 - [ ] **F5** — Status: BLOCKED; PR: none; Trigger: Task 8 edit-ready Steps 3–5 blocked on rust_core/** + tests/e2e/** (shared-box cargo/e2e ban → CI/cloud); Step 2 shipped #943
-- [ ] **F6** — Status: BLOCKED; PR: none; Trigger: Tasks 6-7 edit-verification remainder blocked (multi-week schemas, evidence signing, WSL path-domain, native verify-edit + e2e); Step 0 shipped #939
+- [ ] **F6** — Status: BLOCKED; PR: none; Trigger: Tasks 6-7 edit-verification remainder BLOCKED with a MIXED disposition (A41, corrected 2026-08-12 per the roadmap ground-truth): Python/schema/evidence-signing slices are buildable-first (S1 de-block move), while native verify-edit + e2e halves stay blocked to CI/cloud under the shared-box ban; Step 0 shipped #939
 - [x] **F7** — Status: SHIPPED; PR: PR #957; Trigger: Tasks 10-11 language-registry and cross-file resolution; Task 10 complete (Java/C#/PHP/C/C++ in-file refs); Task 11 waves 1-3 shipped (Java #950, PHP #952, C# #955, C/C++ #957); Implementation PRs: PR #950, PR #952, PR #955, PR #957; Closure PR: PR #963; Merged SHA: 9f854d49c7625ec19a5c469f43544b980a0cddff
 - [ ] **F8** — Status: BLOCKED; PR: none; Trigger: Tasks 12-13 workspace program blocked on rust_core/src/main.rs + path_domain.rs + tests/e2e routing parity (shared-box ban → CI/cloud)
 - [ ] **MCP-SURFACE** — Status: BLOCKED; PR: none; Trigger: Task 4 MCP surface disclosure blocked on Task 2C; live `_TG_MCP_SERVER_CONTRACT_VERSION` is 1.7.0; Task 4 plans 1.8.0→1.9.0 and must not bump from a nonexistent base
@@ -56,17 +74,17 @@ Canonical status index version: 2026-08-11.1
 - [x] **REF-CALL-REGISTRY** — Status: SHIPPED; PR: PR #940; Trigger: Task 9 registry-driven refs/callers; implementation #915 plus seam pin #940; Implementation PRs: PR #915, PR #940; Closure PR: PR #963; Merged SHA: 3dbe85b127003ee0464ac3cbe1ba6831bd49fdcc
 - [x] **F10** — Status: RETIRED; PR: none; Trigger: 2026-08-05 caller/installability census (docs/BACKLOG.md dated entry) found MaxSim reachable only via an undocumented `TG_LATE_RERANK=1` env var + a manual `python -m tensor_grep.core.retrieval_late --fetch` (no `tg` command provisions it) AND decisively negative on the golden set even after the role-aware encoding fix (ndcg@10 0.068 vs 0.305 RRF, root cause model capacity); reopen only on both a `tg`-command install path and a stronger encoder clearing the golden-set gate
 - [x] **DD-004** — Status: RETIRED; PR: none; Trigger: 2026-08-05 retirement receipt (docs/BACKLOG.md dated entry) — INFO/WEAKENED loud `RuntimeError` re-raise at `cpu_backend.py:811` is not empty-success; typed boundary already banked in AGENTS.md Backend Fail-Closed Contract; reopen only if a backend path returns clean empty success on real failure or a consumer requires uniform `BackendExecutionError` typing across that site
-- [ ] **DD-006** — Status: DEMAND_GATED; PR: none; Trigger: measured concurrent daemon load or denial-of-service evidence
-- [ ] **AST-DSL-PARITY** — Status: DEMAND_GATED; PR: none; Trigger: demand for full structural DSL parity and a preprocessor-aware oracle
-- [ ] **MCP-LEAN-DEFAULT** — Status: DEMAND_GATED; PR: none; Trigger: client demand and compatibility evidence for changing the default surface
-- [ ] **CONTINUOUS-REFRESH** — Status: DEMAND_GATED; PR: none; Trigger: measured warm-session demand and an approved search-index service design
-- [ ] **RUST-REPLACE-SYMLINK** — Status: DEMAND_GATED; PR: none; Trigger: concrete untrusted-destination threat model or downstream compatibility decision
+- [ ] **DD-006** — Status: DEMAND_GATED; PR: none; Trigger: measured concurrent daemon load or denial-of-service evidence; evidence refreshed 2026-08-12 (receipts: local-socket DoS is an active 2025-26 CVE class in adjacent daemons, but no dev-tool-daemon demand signal and tg's bounded-pre-auth-read posture already matches the mitigation; LEAVE)
+- [ ] **AST-DSL-PARITY** — Status: DEMAND_GATED; PR: none; Trigger: demand for full structural DSL parity and a preprocessor-aware oracle; evidence refreshed 2026-08-12 (ast-grep ecosystem growing, zero metavariable-performance demand; LEAVE)
+- [ ] **MCP-LEAN-DEFAULT** — Status: DEMAND_GATED; PR: none; Trigger: client demand and compatibility evidence for changing the default surface; evidence refreshed 2026-08-12 (industry converged on lean/deferred tool loading — Claude Code tool-search, 25k-token doctor warning, AWS guidance; direction confirmed but STILL SEQUENCED AFTER Task 2C per the MCP-SURFACE ladder)
+- [ ] **CONTINUOUS-REFRESH** — Status: DEMAND_GATED; PR: none; Trigger: approved scoping/design pass for a warm search-index service (not a build); evidence refreshed 2026-08-12 (warm code-index daemons trending to table stakes across agent tooling — Cursor secure-indexing, zoekt-mcp/TriSeek/codescope wave; the banked big-refactor note stands)
+- [ ] **RUST-REPLACE-SYMLINK** — Status: READY; PR: none; Trigger: reopen condition SATISFIED 2026-08-12 — the concrete untrusted-destination threat model is now evidenced by fresh 2026 CVEs in peer tools' in-place replace (GNU sed `-i --follow-symlinks` TOCTOU CVE-2026-5958; uutils coreutils GHSA-239g-2685-54x3 / CVE-2026-35356/35359; Capgo CLI CVE-2026-56236; receipts in docs/audits/2026-08-12-research-receipts.md), so the deferred `replace_in_place` leaf-symlink behavior (A49) gets a deliberate close: design-council pass FIRST, then TDD build resolving the downstream compatibility decision (no-follow-by-default or a documented boundary + Event-gated swap test per A38/A48)
 
 ## Live campaign snapshot
 
-Last reconciled: **2026-08-11** (skill-library evolution waves + CEO update to v1.110.14).
-canonical index `2026-08-11.1`. Task 2 is complete as the reconciliation checkpoint; Task 2A RED
-remains correctly blocked.
+Last reconciled: **2026-08-12** (backlog-closeout campaign: Task 2A resume + reconciliation +
+research receipts). canonical index `2026-08-12.1`. Task 2A RED remains correctly blocked
+(advanced, not GREEN).
 Execution plans (historical, all shipped): `docs/plans/2026-08-10-a90-unknown-command-fail-closed.md`
 (#997 → v1.110.13) and `docs/plans/2026-08-08-backlog-completion-plan.md` (M16/M17 wave).
 
@@ -78,21 +96,23 @@ v1.110.14. Docs: #993 (roadmap), #994 (A90–A93), #992 (A87–A89 capture), #99
 **CEO packet:** `docs/audits/2026-08-11-ceo-backlog-update.md` (live, 2026-08-11); 2026-08-06 PM and
 morning packets retained as historical (A77–A82 receipts + pre-ship counts).
 
-**Unfinished (buildable queue):** 0 READY rows. The remaining forward work is the world-class roadmap
-spine (edit-ready/verify-edit escrow S1, impact-diff S2, next_action S3, workspace federation,
-CI evidence chain, default hybrid find) per `docs/plans/2026-08-09-worldclass-roadmap.md` — F6-scoped,
-rust/e2e blocked → CI/cloud. Blocked/CEO/demand rows unchanged: 6 BLOCKED (#89 #90 F5 F6 F8 MCP-SURFACE),
-5 CEO_GATED (#48 #72 #77 #131 #169), 6 DEMAND_GATED (#255 DD-006 AST-DSL-PARITY MCP-LEAN-DEFAULT
-CONTINUOUS-REFRESH RUST-REPLACE-SYMLINK). Board READY is not a build license when BACKLOG reconcile
+**Unfinished (buildable queue):** **1 READY row — RUST-REPLACE-SYMLINK** (design-council pass
+first; flipped 2026-08-12 on CVE-class evidence carried in the row). The rest of the forward work
+is the world-class roadmap spine per `docs/plans/2026-08-09-worldclass-roadmap.md` — F6-scoped,
+with the 2026-08-12 correction that F6 is MIXED (Python/schema/signing slices buildable-first;
+rust/e2e halves CI/cloud). Blocked/CEO/demand rows: 6 BLOCKED (#89 #90 F5 F6 F8 MCP-SURFACE),
+5 CEO_GATED (#48 #72 #77 #131 #169), 5 DEMAND_GATED (#255 DD-006 AST-DSL-PARITY
+MCP-LEAN-DEFAULT CONTINUOUS-REFRESH). Board READY is not a build license when BACKLOG reconcile
 says BLOCKED (A71/A76).
 
 **Hard stops:** Task 2A not merge-ready (#966 RED by design); no #169 spend; no silent CEO-gate flips;
 MCP wire-contract fence; no local `rust_core` cargo on the shared box for W3 halves.
 
-**Unfinished 17:** 0 READY, 6 BLOCKED (#89 #90 F5 F6 F8 MCP-SURFACE), 5 CEO_GATED (#48 #72 #77 #131 #169),
-6 DEMAND_GATED (#255 DD-006 AST-DSL-PARITY MCP-LEAN-DEFAULT CONTINUOUS-REFRESH RUST-REPLACE-SYMLINK).
-0 IN_FLIGHT (#966 is a parked RED scaffold, not an implementation in flight). Board READY is not a
-build license when BACKLOG reconcile says BLOCKED (A71/A76/A82).
+**Unfinished 17:** 1 READY (RUST-REPLACE-SYMLINK, design-council-first), 6 BLOCKED (#89 #90 F5 F6
+F8 MCP-SURFACE), 5 CEO_GATED (#48 #72 #77 #131 #169), 5 DEMAND_GATED (#255 DD-006 AST-DSL-PARITY
+MCP-LEAN-DEFAULT CONTINUOUS-REFRESH). 0 IN_FLIGHT (#966 is a parked RED scaffold — advanced
+2026-08-12 to MERGEABLE with a live evidence chain, still not an implementation in flight). Board
+READY is not a build license when BACKLOG reconcile says BLOCKED (A71/A76/A82).
 
 post-**v1.110.14**, PyPI-verified 2026-08-11 (`tensor-grep 1.110.14`).
 
