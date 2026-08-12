@@ -29,7 +29,7 @@ CONTRACTS_PATH = ROOT / "docs" / "CONTRACTS.md"
 MAIN_PATH = ROOT / "src" / "tensor_grep" / "cli" / "main.py"
 LEDGER_STORE_PATH = ROOT / "src" / "tensor_grep" / "cli" / "ledger_store.py"
 AUDIT_859_PATH = ROOT / "docs" / "audits" / "2026-08-01-backlog-verification-receipts.md"
-CEO_AUDIT_PATH = ROOT / "docs" / "audits" / "2026-08-06-pm-ceo-backlog-update.md"
+CEO_AUDIT_PATH = ROOT / "docs" / "audits" / "2026-08-11-ceo-backlog-update.md"
 
 STATUS_HEADING = "## Canonical status index"
 VERSION_PREFIX = "Canonical status index version:"
