@@ -465,19 +465,27 @@ jobs:
         # `pyo3/extension-module` cdylib) -- IN DISPUTE as of the task 22 investigation: see the
         # diagnostic step immediately above, which measures whether that is still true on THIS
         # job rather than repeating the claim as settled.
-        # Task 2A census-owned suites are excluded from this blanket run: their
+        # Task 2A census-owned suites are excluded from this blanket run ON WINDOWS: their
         # intended-RED nodes abort the step (pyproject's -x fail-fast) BEFORE the
         # "Task 2A Round-60 Python runner discovery" collector below can run, so the
         # Windows census was unreachable (codex H3; CI run 31631927863). The collector
         # owns EVERY node of these files individually with expected-outcome receipts;
         # tests/unit/test_task2a_ci_wiring_contract.py pins ignore-list == manifest
         # files (both directions) plus collector reachability/order.
+        # F3 (Sol round 1): the exclusion is WINDOWS-ONLY. On non-Windows there is no
+        # collector, so the suites must run via the blanket (most skip; the Linux-only
+        # `test_linux_must_not_fabricate_system32_handles` node executes here).
+        if: runner.os == 'Windows'
         run: >-
           uv run pytest tests -v --tb=short -m "not eval"
           --ignore=tests/unit/test_installer_shim_receipt_v1.py
           --ignore=tests/unit/test_native_ci_receipt_v1.py
           --ignore=tests/unit/test_search_input_ledger_round60.py
           --ignore=tests/unit/test_win32_path_domain_round60.py
+
+      - name: Run Pytest (non-Windows blanket)
+        if: runner.os != 'Windows'
+        run: uv run pytest tests -v --tb=short -m "not eval"
 
       - name: Task 2A Round-60 Python runner discovery (Windows)
         if: runner.os == 'Windows'

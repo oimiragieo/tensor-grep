@@ -207,6 +207,30 @@ def test_runners_do_not_classify_crash_or_setup_as_behavioral_red(tmp_path: Path
     )
     assert fail_phase == "executed_refused_receipt"
 
+    # F1 mutation control (Sol round 1): a non-AssertionError failure type is a
+    # crash/setup error, NOT behavioral RED — an uncaught NotImplementedError from a
+    # behaviorless stub must not earn a receipt.
+    nie_junit = tmp_path / "nie.xml"
+    nie_junit.write_text(
+        """<?xml version="1.0" encoding="utf-8"?>
+<testsuite tests="1" errors="0" failures="1" skipped="0">
+  <testcase classname="tests.unit.test_x" name="test_leaf" file="tests/unit/test_x.py">
+    <failure type="NotImplementedError" message="stub">NotImplementedError</failure>
+  </testcase>
+</testsuite>
+""",
+        encoding="utf-8",
+    )
+    nie_phase = py_runner.classify_pytest_node_phase(
+        junit_path=nie_junit,
+        pytest_nodeid="tests/unit/test_x.py::test_leaf",
+        exit_code=1,
+    )
+    assert nie_phase != "executed_refused_receipt", (
+        "NotImplementedError failure must classify as crash_or_setup, not behavioral RED"
+    )
+    assert nie_phase in {"crash_or_setup", "non_behavioral"}
+
     panic_phase = rust_runner.classify_rust_node_phase(
         exit_code=101,
         stdout="",
@@ -271,16 +295,22 @@ def _test_python_steps() -> list[dict]:
 
 
 def test_task2a_blanket_pytest_excludes_exactly_the_census_owned_files() -> None:
-    """codex H3 / R1: the blanket `Run Pytest` step must --ignore exactly the
+    """codex H3 / R1: the WINDOWS blanket `Run Pytest` step must --ignore exactly the
     manifest-owned suite files — their intended-RED nodes otherwise abort the step
     (pyproject -x) before the Task 2A collector runs, making the census unreachable
     (receipt: CI run 31631927863, every test-python leg red at `Run Pytest`, collector
     never executed). Both directions: every owned file ignored; no extra --ignore
-    smuggles an unowned file out of the blanket run."""
+    smuggles an unowned file out of the blanket run.
+    F3 (Sol round 1): the exclusion is WINDOWS-ONLY — a non-Windows blanket step must
+    exist WITHOUT the ignores so the Linux-only Win32 node still executes there."""
     steps = _test_python_steps()
     blanket = [s for s in steps if str(s.get("name") or "") == "Run Pytest"]
-    assert len(blanket) == 1, "exactly one blanket Run Pytest step expected"
-    run = str(blanket[0]["run"])
+    assert len(blanket) == 1, "exactly one Windows blanket Run Pytest step expected"
+    win_step = blanket[0]
+    assert " ".join(str(win_step.get("if") or "").split()) == "runner.os == 'Windows'", (
+        f"Windows blanket must be gated to Windows, got {win_step.get('if')!r}"
+    )
+    run = str(win_step["run"])
     ignored = {
         part.split("=", 1)[1].strip() for part in run.split() if part.startswith("--ignore=")
     }
@@ -290,8 +320,22 @@ def test_task2a_blanket_pytest_excludes_exactly_the_census_owned_files() -> None
     extra = sorted(ignored - owned)
     assert not missing, f"census-owned files NOT ignored by the blanket run: {missing}"
     assert not extra, f"blanket run ignores files the manifest does not own: {extra}"
-    assert blanket[0].get("continue-on-error") is None, (
+    assert win_step.get("continue-on-error") is None, (
         "the blanket run must gate the job; continue-on-error would mask real regressions"
+    )
+    # F3: a non-Windows blanket step must exist and must NOT carry the census ignores.
+    non_win = [
+        s
+        for s in steps
+        if str(s.get("name") or "").startswith("Run Pytest")
+        and str(s.get("name") or "") != "Run Pytest"
+    ]
+    assert len(non_win) == 1, "exactly one non-Windows blanket step expected"
+    assert " ".join(str(non_win[0].get("if") or "").split()) == "runner.os != 'Windows'", (
+        f"non-Windows blanket must be gated to non-Windows, got {non_win[0].get('if')!r}"
+    )
+    assert "--ignore=" not in str(non_win[0]["run"]), (
+        "non-Windows blanket must not ignore the census suites (Linux-only nodes run here)"
     )
 
 
@@ -308,9 +352,11 @@ def test_task2a_collector_step_is_reachable_after_green_blanket() -> None:
         "collector must follow the blanket run (env-install ordering)"
     )
     collector_if = str(steps[collector_idx].get("if") or "")
-    assert "runner.os == 'Windows'" in collector_if
-    assert "success" not in collector_if and "failure" not in collector_if, (
-        f"collector condition must stay OS-only, got {collector_if!r}"
+    # F6 (Sol round 1): require EXACT equality, not substring membership — a substring
+    # check lets `runner.os == 'Windows' && false` pass while silently disabling the
+    # collector. Normalize whitespace and demand the documented gate verbatim.
+    assert " ".join(collector_if.split()) == "runner.os == 'Windows'", (
+        f"collector condition must be exactly the OS gate, got {collector_if!r}"
     )
 
 

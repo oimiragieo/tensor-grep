@@ -1098,20 +1098,6 @@
       "required_non_skip": true
     },
     {
-      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_linux_must_not_fabricate_system32_handles",
-      "workflow": "ci.yml",
-      "job": "test-python",
-      "runner_class": "windows-latest",
-      "command_vector": [
-        "pytest",
-        "tests/unit/test_win32_path_domain_round60.py::test_linux_must_not_fabricate_system32_handles",
-        "-q",
-        "--timeout=15"
-      ],
-      "command_digest": "bdec631177394e90c8301a81ed0d39db0f2b8987e50baec06d00464944e2de42",
-      "required_non_skip": true
-    },
-    {
       "id": "python::tests/unit/test_win32_path_domain_round60.py::test_system32_identity_rejects_systemroot_poison",
       "workflow": "ci.yml",
       "job": "test-python",
@@ -2506,6 +2492,20 @@
       "binary": "tensor_grep_rs",
       "rust_kind": "lib",
       "command_digest": "2fc51e76fe78ab5bf9d844515e0f72730075d166f3bfc87c44a38534cea0ef13"
+    },
+    {
+      "id": "python::tests/unit/test_win32_path_domain_round60.py::test_linux_must_not_fabricate_system32_handles",
+      "workflow": "ci.yml",
+      "job": "test-python",
+      "runner_class": "windows-latest",
+      "command_vector": [
+        "pytest",
+        "tests/unit/test_win32_path_domain_round60.py::test_linux_must_not_fabricate_system32_handles",
+        "-q",
+        "--timeout=15"
+      ],
+      "command_digest": "bdec631177394e90c8301a81ed0d39db0f2b8987e50baec06d00464944e2de42",
+      "required_non_skip": false
     }
   ]
 }

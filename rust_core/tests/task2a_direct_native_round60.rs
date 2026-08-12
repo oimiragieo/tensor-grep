@@ -148,10 +148,9 @@ fn pattern_file_bytes_search_input_limit_direct_native() {
     );
 }
 
-/// Dedicated closed-world CI node: below-cap pattern-file direct-native JSON success.
-///
-/// Proves NativeCpuBackend JSON success + zero rg/sidecar — not matcher
-/// construction exactly-once (that is the separate native_search leaf).
+/// Dedicated closed-world CI node: `-f/--file` fails closed until the SearchInputLedger
+/// is installed (F4 / A67, Sol round 1). The premature below-cap GREEN success path is
+/// disabled; re-enable this node as a success control only with the complete ledger.
 #[test]
 #[ignore = "task2a round60 dedicated CI node; run via --exact --include-ignored"]
 fn pattern_file_below_cap_native_json_success() {
@@ -180,44 +179,29 @@ fn pattern_file_below_cap_native_json_success() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let blob = format!("{stdout}\n{stderr}");
-    let code = output.status.code().unwrap_or(2);
-    assert!(
-        code == 0 || code == 1,
-        "below-cap direct-native must exit 0 or 1 (non-incomplete), got {code}; out={blob}"
-    );
-    assert!(
-        !blob.contains("search_input_limit"),
-        "below-cap must not emit search_input_limit; out={blob}"
-    );
-    let payload: Value = serde_json::from_str(stdout.trim()).unwrap_or_else(|err| {
-        panic!("below-cap direct-native must emit aggregate JSON stdout: {err}; out={blob}")
-    });
+    let code = output.status.code().unwrap_or(0);
+    // F4 / A67: -f/--file must fail closed (exit 2) with the exact ledger-admission
+    // reason and zero child/matcher starts until the ledger is installed.
     assert_eq!(
-        payload.get("routing_backend").and_then(|v| v.as_str()),
-        Some("NativeCpuBackend"),
-        "below-cap must route through NativeCpuBackend; out={blob}"
+        code, 2,
+        "-f/--file must fail closed (exit 2) until ledger admission; got {code}; out={blob}"
     );
-    let total = payload
-        .get("total_matches")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
     assert!(
-        total >= 1,
-        "below-cap must report successful match semantics (total_matches>=1); out={blob}"
+        blob.contains("search_input_limit"),
+        "-f/--file fail-closed must emit search_input_limit; out={blob}"
     );
-    let matches = payload
-        .get("matches")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
     assert!(
-        !matches.is_empty(),
-        "below-cap must include at least one match row; out={blob}"
+        blob.contains("SearchInputLedger"),
+        "-f/--file fail-closed must name the SearchInputLedger; out={blob}"
     );
-    assert!(!rg_marker.exists(), "below-cap must not start rg canary");
+    // Zero child/matcher starts: neither rg nor the sidecar may have been spawned.
+    assert!(
+        !rg_marker.exists(),
+        "-f/--file fail-closed must not spawn rg; out={blob}"
+    );
     assert!(
         !sidecar_marker.exists(),
-        "below-cap must not start sidecar canary"
+        "-f/--file fail-closed must not spawn the sidecar; out={blob}"
     );
 }
 

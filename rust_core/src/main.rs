@@ -8346,6 +8346,16 @@ fn resolve_search_request_with_stdin(
     stdin_searches_implicit_path: bool,
 ) -> anyhow::Result<ResolvedSearchRequest> {
     let mut patterns = args.regexp.clone();
+    // F4 (Sol round 1) / A67: the public `-f/--file` flag must FAIL CLOSED until the
+    // SearchInputLedger is installed before reading/routing. Completing a search here
+    // would enable a public behavior before its guard is active. Refuse with an exact
+    // reason and zero child/matcher starts.
+    if !args.pattern_file.is_empty() {
+        anyhow::bail!(
+            "search_input_limit: -f/--file is not yet admitted by the SearchInputLedger \
+             (Round-60 RED scaffold; ledger admission GREEN-deferred)"
+        );
+    }
     // HIGH#8 / A67: aggregate no-refund decoded-byte + file-count caps across multi -f.
     let mut aggregate_decoded: u64 = 0;
     let mut pattern_file_count: usize = 0;
