@@ -571,7 +571,6 @@ def terminate_spawned_descendant(pid: int) -> None:
     if pid <= 0:
         return
     if sys.platform == "win32":
-
         kernel32 = _win_dll("kernel32", use_last_error=True)
         PROCESS_TERMINATE = 0x0001
         handle = kernel32.OpenProcess(PROCESS_TERMINATE, False, pid)
