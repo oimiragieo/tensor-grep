@@ -10,6 +10,7 @@ import importlib.util
 import io
 import sys
 import threading
+import typing
 from pathlib import Path
 
 import pytest
@@ -605,22 +606,22 @@ def test_sol_r2_child_start_after_search_not_pipeline_ctor(
     from tensor_grep.core.result import SearchResult
 
     class _Backend:
-        def search(self, *args, **kwargs):  # noqa: ANN002, ANN003
+        def search(self, *args, **kwargs):
             order.append("search")
             return SearchResult(matches=[], total_files=0, total_matches=0)
 
-        def search_many(self, *args, **kwargs):  # noqa: ANN002, ANN003
+        def search_many(self, *args, **kwargs):
             return self.search(*args, **kwargs)
 
-        def search_passthrough(self, *args, **kwargs):  # noqa: ANN002, ANN003
+        def search_passthrough(self, *args, **kwargs):
             _ = args, kwargs
             raise AssertionError("passthrough must not run")
 
     class _FakePipeline:
         selected_backend_name = "CPUBackend"
         selected_backend_reason = "force_cpu"
-        selected_gpu_device_ids: list[int] = []
-        selected_gpu_chunk_plan_mb: list[int] = []
+        selected_gpu_device_ids: typing.ClassVar[list[int]] = []
+        selected_gpu_chunk_plan_mb: typing.ClassVar[list[int]] = []
         fallback_reason = None
 
         def __init__(self, *args, **kwargs) -> None:

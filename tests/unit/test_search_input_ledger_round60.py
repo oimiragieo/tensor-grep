@@ -16,6 +16,7 @@ from __future__ import annotations
 import io
 import json
 import sys
+import typing
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -539,24 +540,24 @@ def test_below_cap_non_pcre2_full_cli_starts_producer_once(
     starts: list[str] = []
 
     class _Backend:
-        def search(self, *args, **kwargs):  # noqa: ANN002, ANN003
+        def search(self, *args, **kwargs):
             _ = args, kwargs
             starts.append("cpu")
             counters.record("cpu")
             raise RuntimeError("observed child start: cpu")
 
-        def search_many(self, *args, **kwargs):  # noqa: ANN002, ANN003
+        def search_many(self, *args, **kwargs):
             return self.search(*args, **kwargs)
 
-        def search_passthrough(self, *args, **kwargs):  # noqa: ANN002, ANN003
+        def search_passthrough(self, *args, **kwargs):
             _ = args, kwargs
             raise AssertionError("passthrough must not run in this arm")
 
     class _FakePipeline:
         selected_backend_name = "CPUBackend"
         selected_backend_reason = "force_cpu"
-        selected_gpu_device_ids: list[int] = []
-        selected_gpu_chunk_plan_mb: list[int] = []
+        selected_gpu_device_ids: typing.ClassVar[list[int]] = []
+        selected_gpu_chunk_plan_mb: typing.ClassVar[list[int]] = []
         fallback_reason = None
 
         def __init__(self, *args, **kwargs):

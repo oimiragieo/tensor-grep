@@ -1169,16 +1169,18 @@ fn map_python_spawn_error(python: &OsStr, err: io::Error) -> SidecarError {
 #[cfg(test)]
 mod tests {
     use super::{
-        gpu_device_ids_env_value, is_long_running_passthrough_command,
+        execute_python_passthrough_command, gpu_device_ids_env_value,
+        is_long_running_passthrough_command, last_sidecar_search_input_limit_reason,
         managed_install_native_binary_from_home, managed_install_python_from_home,
         merged_pythonpath, native_tg_binary_env_override,
-        native_tg_binary_env_override_for_context, read_all_thread,
+        native_tg_binary_env_override_for_context, read_all_thread, reset_sidecar_spawn_starts,
         resolve_python_command_for_context, resolve_repo_source_root_relative_to_exe,
-        SidecarRequest, MAX_CAPTURED_OUTPUT_BYTES, WINDOWS_EXE_BRIDGE_MARKER,
-        WINDOWS_EXE_BRIDGE_MARKER_CONTENT,
+        sidecar_spawn_starts, SidecarRequest, TestPythonCommandOverrideGuard,
+        MAX_CAPTURED_OUTPUT_BYTES, WINDOWS_EXE_BRIDGE_MARKER, WINDOWS_EXE_BRIDGE_MARKER_CONTENT,
     };
     use serde_json::json;
     use std::env;
+    use std::path::PathBuf;
     // `OsStr`'s only use in this module is inside a `#[cfg(windows)]` test (:1344), so an
     // unconditional import is dead on Linux and warns there. `OsString` stays ungated -- the
     // compiler named only `OsStr`, which is the tell that the other symbol is used on both.

@@ -685,16 +685,10 @@ def test_clearance_refuses_without_live_immutable_sha_actions_run(tmp_path: Path
     for environ in (
         None,
         {},
-        {
-            k: ""
-            for k in (
-                "GITHUB_SHA",
-                "GITHUB_RUN_ID",
-                "GITHUB_RUN_ATTEMPT",
-                "GITHUB_WORKFLOW",
-                "GITHUB_JOB",
-            )
-        },
+        dict.fromkeys(
+            ("GITHUB_SHA", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_WORKFLOW", "GITHUB_JOB"),
+            "",
+        ),
     ):
         source = receipt_mod.ArtifactSource(
             current_run_dir=current,

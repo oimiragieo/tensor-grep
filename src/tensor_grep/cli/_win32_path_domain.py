@@ -469,7 +469,7 @@ def _spawn_descendant_pipe_heartbeat_writer_posix(
 
     child_code = _descendant_pipe_heartbeat_child_code(writer_nonce)
     # Replace stdout with the canary write fd so the child inherits it as fd 1.
-    proc = subprocess.Popen(  # noqa: S603 — intentional descendant writer
+    proc = subprocess.Popen(
         [_descendant_writer_python_executable(), "-c", child_code],
         stdin=subprocess.DEVNULL,
         stdout=canary_pipe_write_fd,
@@ -515,7 +515,7 @@ def _spawn_descendant_pipe_heartbeat_writer_win32(
     child_code = _descendant_pipe_heartbeat_child_code(writer_nonce)
     # stdout=fd makes the canary write end the child's stdout (inherited).
     # Use base executable so a venv redirector stub PID cannot diverge from getpid().
-    proc = subprocess.Popen(  # noqa: S603 — intentional descendant writer
+    proc = subprocess.Popen(
         [_descendant_writer_python_executable(), "-c", child_code],
         stdin=subprocess.DEVNULL,
         stdout=canary_pipe_write_fd,

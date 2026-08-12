@@ -646,7 +646,7 @@ def _emit_rust_receipt(
     rust_list_path = args.rust_list_out
     if rust_list_path is None:
         # Derive census from in-memory list text.
-        nodes = [n if n.startswith("rust::") else n for n in fq_names_from_terse_list(list_text)]
+        nodes = list(fq_names_from_terse_list(list_text))
     else:
         nodes = derive_rust_list_census(rust_list_path)
     # Bind receipt node_list to the owned manifest node id.
