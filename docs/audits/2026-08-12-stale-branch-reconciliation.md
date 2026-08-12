@@ -82,3 +82,23 @@ evidence (head+base+merge-ref SHAs, 169-node census) are still outstanding.
 Known non-defect flake: `test_manifest_command_digests_recompute_and_closed_world_nodes` asserts
 batched collect <12.0s and measures 13.6–14.2s on the loaded /mnt/c box (passes solo at 13.59s;
 bound is CI-sized). Not touched; noted for the Sol round.
+
+## 5. Sol exact-byte audit, round 1 (head `8181762`) — FIX-FIRST, 4/6 repaired
+
+Codex Sol (`gpt-5.6-sol`, read-only, `model_reasoning_effort=high`) returned
+`VERDICT: FIX-FIRST — F1,F2,F3,F4,F5,F6` on the union+repair head. Disposition:
+
+| ID | sev | subject | disposition |
+|---|---|---|---|
+| F1 | HIGH | runner classifies every JUnit `<failure>` as behavioral RED (A61) | **FIXED** `bcf2c06` — `<failure type=…>` must end in `AssertionError` else `crash_or_setup`; mutation control added (`NotImplementedError` → not RED) |
+| F2 | HIGH | one valid node can clear the whole manifest | **DEFERRED** to workflow-level receipt aggregation — a verifier-level exact-population match breaks the single-receipt positive control; the durable fix verifies every per-node receipt beneath `current_run_dir` and requires their union == the job's manifest population. Tracked as a remaining RED item |
+| F3 | HIGH | blanket excludes Win32 suite on every OS but collector is Windows-only; Linux-only node orphaned | **FIXED** `bcf2c06` — exclusion is now Windows-only (`if: runner.os == 'Windows'`); a non-Windows blanket lane runs the suites in-blanket; the Linux-only node restored with `required_non_skip: false`; ratchet asserts both lanes |
+| F4 | HIGH | A67 — public `-f/--file` completes a search before SearchInputLedger admission | **FIXED** `bcf2c06` — `-f/--file` fails closed (exit 2, `search_input_limit`, names the ledger, zero child/matcher starts) until the ledger is installed; the below-cap success node repurposed as the fail-closed control |
+| F5 | HIGH | A38 — atomic `write_receipt` lacks parent-handle anchoring | **REMAINS** — deep RED-by-design security item (Event-gated parent-swap + identity-verified parent handle); part of the Task 2A program, not a repair-round fix |
+| F6 | MED | collector-condition ratchet used substring membership (`&& false` passes) | **FIXED** `bcf2c06` — exact-equality on `runner.os == 'Windows'` |
+
+Sol's disproven-concerns list independently confirmed the union preserved main's H5 timeout /
+exit-124 / spawn-OSError-exit-2 / emit-only-after-start contract, the `_run_native_tg_command`
+binary prefix, the ignore-list/order/collection ratchet arms, the bounded `-f` reader, the static
+heartbeat payload, and the win32 mypy seam. **Board stays BLOCKED** — the scaffold is RED by
+design and F2/F5 remain. Round 2 (re-audit of `8181762`) is the next gate before any GREEN claim.
