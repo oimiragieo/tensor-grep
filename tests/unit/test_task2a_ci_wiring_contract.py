@@ -257,3 +257,94 @@ def test_pcre2_construction_oracles_are_inside_closed_world_census() -> None:
         assert "--include-ignored" in vector, f"{node_id} must run via --include-ignored"
         assert "--lib" in vector
         assert node.get("rust_test_target") in node_id
+
+
+def _manifest_python_files() -> set[str]:
+    import json
+
+    payload = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    return {n["id"].split("::")[1] for n in payload["nodes"] if n["id"].startswith("python::")}
+
+
+def _test_python_steps() -> list[dict]:
+    return _workflow()["jobs"]["test-python"]["steps"]
+
+
+def test_task2a_blanket_pytest_excludes_exactly_the_census_owned_files() -> None:
+    """codex H3 / R1: the blanket `Run Pytest` step must --ignore exactly the
+    manifest-owned suite files — their intended-RED nodes otherwise abort the step
+    (pyproject -x) before the Task 2A collector runs, making the census unreachable
+    (receipt: CI run 31631927863, every test-python leg red at `Run Pytest`, collector
+    never executed). Both directions: every owned file ignored; no extra --ignore
+    smuggles an unowned file out of the blanket run."""
+    steps = _test_python_steps()
+    blanket = [s for s in steps if str(s.get("name") or "") == "Run Pytest"]
+    assert len(blanket) == 1, "exactly one blanket Run Pytest step expected"
+    run = str(blanket[0]["run"])
+    ignored = {
+        part.split("=", 1)[1].strip() for part in run.split() if part.startswith("--ignore=")
+    }
+    owned = _manifest_python_files()
+    assert owned, "manifest must own at least one python suite file"
+    missing = sorted(owned - ignored)
+    extra = sorted(ignored - owned)
+    assert not missing, f"census-owned files NOT ignored by the blanket run: {missing}"
+    assert not extra, f"blanket run ignores files the manifest does not own: {extra}"
+    assert blanket[0].get("continue-on-error") is None, (
+        "the blanket run must gate the job; continue-on-error would mask real regressions"
+    )
+
+
+def test_task2a_collector_step_is_reachable_after_green_blanket() -> None:
+    """codex H3 / R1 reachability ratchet: the Windows collector must sit AFTER the
+    blanket run in step order (it depends on the installed env) and carry no condition
+    beyond the documented runner.os gate — a `success()`-style inversion or an
+    accidental extra gate would silently drop the census again."""
+    steps = _test_python_steps()
+    names = [str(s.get("name") or "") for s in steps]
+    blanket_idx = names.index("Run Pytest")
+    collector_idx = names.index("Task 2A Round-60 Python runner discovery (Windows)")
+    assert blanket_idx < collector_idx, (
+        "collector must follow the blanket run (env-install ordering)"
+    )
+    collector_if = str(steps[collector_idx].get("if") or "")
+    assert "runner.os == 'Windows'" in collector_if
+    assert "success" not in collector_if and "failure" not in collector_if, (
+        f"collector condition must stay OS-only, got {collector_if!r}"
+    )
+
+
+def test_task2a_census_owned_files_have_no_node_outside_manifest() -> None:
+    """Closed-world containment: excluding the owned files from the blanket run is only
+    safe if EVERY collectable node in them is census-owned — otherwise a node escapes
+    both surfaces and silently loses coverage. Compare live pytest collection against
+    the manifest (both directions)."""
+    import json
+    import subprocess
+    import sys
+
+    payload = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    manifest_ids = {
+        n["id"].removeprefix("python::") for n in payload["nodes"] if n["id"].startswith("python::")
+    }
+    files = sorted(_manifest_python_files())
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", "--no-header", *files],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    collected = {
+        line.strip().replace("\\", "/")
+        for line in proc.stdout.splitlines()
+        if "::" in line and not line.startswith(("=", " ", "<"))
+    }
+    assert collected, (
+        f"collection returned nothing (exit {proc.returncode}); instrument failure, "
+        f"stderr tail: {proc.stderr[-500:]}"
+    )
+    unowned = sorted(collected - manifest_ids)
+    ghost = sorted(manifest_ids - collected)
+    assert not unowned, f"nodes collectable but NOT census-owned (coverage escape): {unowned}"
+    assert not ghost, f"census nodes no longer collectable (stale manifest): {ghost}"
