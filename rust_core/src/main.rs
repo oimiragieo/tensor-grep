@@ -7455,6 +7455,7 @@ mod tests {
 
     // Round-60 Task 2A direct-native process-level doors moved to
     // rust_core/tests/task2a_direct_native_round60.rs so CARGO_BIN_EXE_tg is valid.
+}
 
 fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
     match cli.command {
@@ -8308,9 +8309,8 @@ const MAX_COMBINED_PATTERN_IGNORE_FILES: usize = 32;
 
 fn read_pattern_file_bounded(path: &str) -> anyhow::Result<String> {
     use std::io::Read;
-    let meta = std::fs::metadata(path).with_context(|| {
-        format!("failed to stat pattern file {}", path)
-    })?;
+    let meta =
+        std::fs::metadata(path).with_context(|| format!("failed to stat pattern file {}", path))?;
     let len = meta.len();
     if len > MAX_PATTERN_OR_IGNORE_FILE_BYTES {
         anyhow::bail!(
@@ -8320,15 +8320,14 @@ fn read_pattern_file_bounded(path: &str) -> anyhow::Result<String> {
             path
         );
     }
-    let file = std::fs::File::open(path).with_context(|| {
-        format!("failed to open pattern file {}", path)
-    })?;
+    let file = std::fs::File::open(path)
+        .with_context(|| format!("failed to open pattern file {}", path))?;
     // TOCTOU-safe: read at most cap+1 even if the file grew after metadata.
     let mut limited = file.take(MAX_PATTERN_OR_IGNORE_FILE_BYTES + 1);
     let mut buf = String::new();
-    limited.read_to_string(&mut buf).with_context(|| {
-        format!("failed to read pattern file {}", path)
-    })?;
+    limited
+        .read_to_string(&mut buf)
+        .with_context(|| format!("failed to read pattern file {}", path))?;
     if (buf.len() as u64) > MAX_PATTERN_OR_IGNORE_FILE_BYTES {
         anyhow::bail!(
             "search_input_limit: pattern file exceeds {} bytes (observed {}): {}",
@@ -8413,9 +8412,7 @@ fn resolve_search_request_with_stdin(
     };
 
     if patterns.is_empty() {
-        anyhow::bail!(
-            "search requires a pattern or at least one -e/--regexp / -f/--file pattern"
-        );
+        anyhow::bail!("search requires a pattern or at least one -e/--regexp / -f/--file pattern");
     }
 
     Ok(ResolvedSearchRequest {
@@ -8515,13 +8512,13 @@ fn index_flag_violations(args: &SearchArgs, request: &ResolvedSearchRequest) -> 
         only_matching,
         vimgrep,
         passthru,
-        json: _,    // Honor.
-        ndjson: _,  // Honor.
-        verbose: _, // Honor: emit_verbose_metadata is called from run_index_query.
-        regexp: _,  // Honor: cardinality enforced via request.patterns.len() below.
+        json: _,         // Honor.
+        ndjson: _,       // Honor.
+        verbose: _,      // Honor: emit_verbose_metadata is called from run_index_query.
+        regexp: _,       // Honor: cardinality enforced via request.patterns.len() below.
         pattern_file: _, // Honor: `-f/--file` folds into request.patterns (Round-60).
-        pattern: _, // Honor: the query itself.
-        path: _,    // Honor: cardinality enforced by handle_index_search's paths.len()!=1 bail.
+        pattern: _,      // Honor: the query itself.
+        path: _, // Honor: cardinality enforced by handle_index_search's paths.len()!=1 bail.
         pcre2,
         auto_hybrid_regex: _, // PassthroughSafe: only affects behavior once rg is actually invoked.
         unicode: _,           // PassthroughSafe: restates the Unicode-mode default (on).

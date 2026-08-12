@@ -89,7 +89,6 @@ fn record_sidecar_spawn_start() {
 #[cfg(not(test))]
 fn record_sidecar_spawn_start() {}
 
-
 const DEFAULT_SIDECAR_MODULE: &str = "tensor_grep.sidecar";
 const DEFAULT_TENSOR_GREP_MODULE: &str = "tensor_grep";
 const TG_SIDECAR_PYTHON_ENV: &str = "TG_SIDECAR_PYTHON";
@@ -1630,9 +1629,9 @@ mod tests {
         // Require an intentional Ok(2) refusal — do not treat arbitrary SidecarError as success.
         let code = match result {
             Ok(c) => c,
-            Err(err) => panic!(
-                "PCRE2 search_input_limit refusal must return Ok(2), not Err({err:?})"
-            ),
+            Err(err) => {
+                panic!("PCRE2 search_input_limit refusal must return Ok(2), not Err({err:?})")
+            }
         };
         assert_eq!(code, 2, "sidecar PCRE2 refusal must exit 2");
         assert_eq!(

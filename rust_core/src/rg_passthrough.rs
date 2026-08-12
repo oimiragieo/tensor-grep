@@ -93,7 +93,6 @@ fn record_rg_spawn_start() {
 #[cfg(not(test))]
 fn record_rg_spawn_start() {}
 
-
 #[derive(Debug, Clone, Default)]
 pub struct RipgrepSearchArgs {
     pub files: bool,
@@ -1321,7 +1320,11 @@ mod tests {
 
     fn write_rg_canary(dir: &std::path::Path) -> (PathBuf, PathBuf) {
         let marker = dir.join("rg-started");
-        let canary = dir.join(if cfg!(windows) { "rg-canary.cmd" } else { "rg-canary" });
+        let canary = dir.join(if cfg!(windows) {
+            "rg-canary.cmd"
+        } else {
+            "rg-canary"
+        });
         #[cfg(windows)]
         {
             std::fs::write(
@@ -1370,9 +1373,8 @@ mod tests {
         };
         let result = execute_ripgrep_search(&args);
         // Require an intentional exit-2 refusal — do not treat arbitrary Err as success.
-        let code = result.expect(
-            "PCRE2 search_input_limit refusal must return Ok(exit_code), not an Err",
-        );
+        let code =
+            result.expect("PCRE2 search_input_limit refusal must return Ok(exit_code), not an Err");
         assert_eq!(code, 2, "PCRE2 refusal must exit 2");
         assert_eq!(
             rg_spawn_starts(),

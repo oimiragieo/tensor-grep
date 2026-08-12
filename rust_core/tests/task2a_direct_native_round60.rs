@@ -305,9 +305,8 @@ fn below_cap_non_pcre2_direct_native_json_success() {
         !blob.contains("search_input_limit"),
         "below-cap must not emit search_input_limit; out={blob}"
     );
-    let payload: Value = serde_json::from_str(stdout.trim()).unwrap_or_else(|err| {
-        panic!("below-cap must emit aggregate JSON: {err}; out={blob}")
-    });
+    let payload: Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|err| panic!("below-cap must emit aggregate JSON: {err}; out={blob}"));
     assert_eq!(
         payload.get("routing_backend").and_then(|v| v.as_str()),
         Some("NativeCpuBackend"),
