@@ -16,6 +16,27 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+# mypy on the Linux CI leg has no `ctypes.WinDLL` / `ctypes.get_last_error` attributes
+# (Windows-only stdlib surface), so every direct call site red the Formatting job
+# (17x attr-defined; CI run 31635590757). These aliases are the single mypy-visible
+# seam: on win32 they ARE the real ctypes attributes; off Windows they raise if ever
+# reached (every caller sits behind a runtime win32 gate; the win32 arms are pinned
+# by the round-60 suites on Windows CI).
+_win_dll: Any
+_win_last_error: Any
+if sys.platform == "win32":
+    import ctypes as _win_ctypes
+
+    _win_dll = _win_ctypes.WinDLL
+    _win_last_error = _win_ctypes.get_last_error
+else:  # pragma: no cover - analysis stub; win32-only paths are unreachable off Windows
+
+    def _win32_only(*_args: object, **_kwargs: object) -> Any:
+        raise OSError("win32-only kernel32 API invoked off Windows")
+
+    _win_dll = _win32_only
+    _win_last_error = _win32_only
+
 # WinTrust / provider flags required by Round-60 offline policy.
 WTD_UI_NONE = 2
 WTD_REVOKE_WHOLECHAIN = 1
@@ -491,7 +512,6 @@ def _spawn_descendant_pipe_heartbeat_writer_win32(
     writer_nonce: bytes,
 ) -> ProcessThreadHandles:
     """Spawn via subprocess so the returned PID is the writer process (not a launcher)."""
-    import ctypes
     import msvcrt
     import subprocess
     from ctypes import wintypes
@@ -502,7 +522,7 @@ def _spawn_descendant_pipe_heartbeat_writer_win32(
     SYNCHRONIZE = 0x00100000
     PROCESS_ACCESS = PROCESS_TERMINATE | PROCESS_QUERY_INFORMATION | SYNCHRONIZE
 
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32 = _win_dll("kernel32", use_last_error=True)
     kernel32.SetHandleInformation.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD]
     kernel32.SetHandleInformation.restype = wintypes.BOOL
     kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
@@ -510,7 +530,7 @@ def _spawn_descendant_pipe_heartbeat_writer_win32(
 
     write_handle = msvcrt.get_osfhandle(canary_pipe_write_fd)
     if not kernel32.SetHandleInformation(write_handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT):
-        raise OSError(f"SetHandleInformation(inherit) failed: {ctypes.get_last_error()}")
+        raise OSError(f"SetHandleInformation(inherit) failed: {_win_last_error()}")
 
     child_code = _descendant_pipe_heartbeat_child_code(writer_nonce)
     # stdout=fd makes the canary write end the child's stdout (inherited).
@@ -529,7 +549,7 @@ def _spawn_descendant_pipe_heartbeat_writer_win32(
             proc.kill()
         except Exception:
             pass
-        raise OSError(f"OpenProcess({pid}) failed: {ctypes.get_last_error()}")
+        raise OSError(f"OpenProcess({pid}) failed: {_win_last_error()}")
     # No separate thread handle from Popen; duplicate process handle for close accounting.
     h_thread = kernel32.OpenProcess(PROCESS_ACCESS, False, pid)
     if not h_thread:
@@ -538,7 +558,7 @@ def _spawn_descendant_pipe_heartbeat_writer_win32(
             proc.kill()
         except Exception:
             pass
-        raise OSError(f"OpenProcess(thread-slot {pid}) failed: {ctypes.get_last_error()}")
+        raise OSError(f"OpenProcess(thread-slot {pid}) failed: {_win_last_error()}")
     return ProcessThreadHandles(
         process_handle=int(h_process),
         thread_handle=int(h_thread),
@@ -551,9 +571,8 @@ def terminate_spawned_descendant(pid: int) -> None:
     if pid <= 0:
         return
     if sys.platform == "win32":
-        import ctypes
 
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32 = _win_dll("kernel32", use_last_error=True)
         PROCESS_TERMINATE = 0x0001
         handle = kernel32.OpenProcess(PROCESS_TERMINATE, False, pid)
         if handle:
@@ -747,12 +766,12 @@ class DefaultJobFactoryPrimitives:
             raise OSError("CreateJobObjectW requires Windows")
         import ctypes
 
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32 = _win_dll("kernel32", use_last_error=True)
         kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
         kernel32.CreateJobObjectW.restype = ctypes.c_void_p
         handle = kernel32.CreateJobObjectW(None, None)
         if not handle:
-            raise OSError(f"CreateJobObjectW failed: {ctypes.get_last_error()}")
+            raise OSError(f"CreateJobObjectW failed: {_win_last_error()}")
         return int(handle)
 
     def create_process_suspended(
@@ -805,7 +824,7 @@ class DefaultJobFactoryPrimitives:
                 ("dwThreadId", wintypes.DWORD),
             ]
 
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32 = _win_dll("kernel32", use_last_error=True)
         kernel32.CreateProcessW.argtypes = [
             wintypes.LPCWSTR,
             wintypes.LPWSTR,
@@ -838,7 +857,7 @@ class DefaultJobFactoryPrimitives:
             ctypes.byref(pi),
         )
         if not ok:
-            raise OSError(f"CreateProcessW failed: {ctypes.get_last_error()}")
+            raise OSError(f"CreateProcessW failed: {_win_last_error()}")
         return ProcessThreadHandles(
             process_handle=int(pi.hProcess),
             thread_handle=int(pi.hThread),
@@ -850,23 +869,23 @@ class DefaultJobFactoryPrimitives:
             raise OSError("AssignProcessToJobObject requires Windows")
         import ctypes
 
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32 = _win_dll("kernel32", use_last_error=True)
         kernel32.AssignProcessToJobObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
         kernel32.AssignProcessToJobObject.restype = ctypes.c_bool
         if not kernel32.AssignProcessToJobObject(job_handle, process_handle):
-            raise OSError(f"AssignProcessToJobObject failed: {ctypes.get_last_error()}")
+            raise OSError(f"AssignProcessToJobObject failed: {_win_last_error()}")
 
     def resume_thread(self, thread_handle: int) -> None:
         if not IS_WINDOWS:
             raise OSError("ResumeThread requires Windows")
         import ctypes
 
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32 = _win_dll("kernel32", use_last_error=True)
         kernel32.ResumeThread.argtypes = [ctypes.c_void_p]
         kernel32.ResumeThread.restype = ctypes.c_uint32
         result = kernel32.ResumeThread(thread_handle)
         if result == 0xFFFFFFFF:
-            raise OSError(f"ResumeThread failed: {ctypes.get_last_error()}")
+            raise OSError(f"ResumeThread failed: {_win_last_error()}")
 
     def query_process_image(self, process_handle: int) -> str:
         if not IS_WINDOWS:
@@ -874,7 +893,7 @@ class DefaultJobFactoryPrimitives:
         import ctypes
         from ctypes import wintypes
 
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32 = _win_dll("kernel32", use_last_error=True)
         buf = ctypes.create_unicode_buffer(32768)
         size = wintypes.DWORD(len(buf))
         kernel32.QueryFullProcessImageNameW.argtypes = [
@@ -885,7 +904,7 @@ class DefaultJobFactoryPrimitives:
         ]
         kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
         if not kernel32.QueryFullProcessImageNameW(process_handle, 0, buf, ctypes.byref(size)):
-            raise OSError(f"QueryFullProcessImageNameW failed: {ctypes.get_last_error()}")
+            raise OSError(f"QueryFullProcessImageNameW failed: {_win_last_error()}")
         return buf.value
 
     def setup_pipe_worker(
@@ -930,11 +949,11 @@ class DefaultJobFactoryPrimitives:
             raise OSError("TerminateProcess requires Windows")
         import ctypes
 
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32 = _win_dll("kernel32", use_last_error=True)
         kernel32.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint]
         kernel32.TerminateProcess.restype = ctypes.c_bool
         if not kernel32.TerminateProcess(process_handle, 1):
-            raise OSError(f"TerminateProcess failed: {ctypes.get_last_error()}")
+            raise OSError(f"TerminateProcess failed: {_win_last_error()}")
 
     def close_handle(self, handle: int) -> None:
         close_handle(handle)

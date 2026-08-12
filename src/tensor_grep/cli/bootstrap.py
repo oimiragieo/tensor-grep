@@ -1440,7 +1440,11 @@ def _run_native_tg_search(binary_name: str, search_args: list[str]) -> int:
 
 
 def _run_native_tg_command(binary_name: str, argv: list[str]) -> int:
-    return _streaming_passthrough_returncode(argv, child_kind="native")
+    # The child argv MUST be prefixed with the native binary itself; the R2-era A62
+    # refactor forwarded the bare tg-args here, so `Popen(['run','--help'])` raised
+    # FileNotFoundError('run') on any box where a native binary resolves (first caught
+    # by CI run 31635590757 e2e test_run_help_exposes_native_diff_contract_on_public_routes).
+    return _streaming_passthrough_returncode([binary_name, *argv], child_kind="native")
 
 
 def _run_rg_passthrough(binary_name: str, search_args: list[str]) -> int:
