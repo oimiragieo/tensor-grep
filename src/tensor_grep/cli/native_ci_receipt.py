@@ -568,5 +568,12 @@ def verify_native_ci_receipt(
     if not population:
         return {"ok": False, "reason": "census_empty"}
 
+    # F2 (Sol round 1, DEFERRED to workflow-level fix): a single per-node receipt must
+    # not clear the whole manifest. The durable fix is workflow-level aggregation — verify
+    # EVERY per-node receipt beneath current_run_dir and require their union to equal the
+    # job's manifest population (reject missing/duplicate/extra). A verifier-level exact
+    # match here breaks the single-receipt positive control; tracked as the remaining RED
+    # item alongside F5 (A38 parent-handle anchoring). See docs/audits/2026-08-12-
+    # stale-branch-reconciliation.md §5.
     _ = environ, current_run_dir
     return {"ok": True, "reason": "cleared", "node_count": len(population)}
