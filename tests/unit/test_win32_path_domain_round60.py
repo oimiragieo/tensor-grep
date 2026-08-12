@@ -911,13 +911,11 @@ def test_suspended_job_descendant_breakaway_orchestration() -> None:
             desc_hb = win32.descendant_job_pipe_heartbeat(
                 fixture.descendant_pid, writer_nonce=nonce
             )
-            parent_hb = win32.descendant_job_pipe_heartbeat(
-                fixture.parent_pid, writer_nonce=nonce
-            )
+            parent_hb = win32.descendant_job_pipe_heartbeat(fixture.parent_pid, writer_nonce=nonce)
             assert desc_hb != parent_hb
-            assert win32.parse_descendant_job_pipe_heartbeat_pid(
-                desc_hb, writer_nonce=nonce
-            ) == (fixture.descendant_pid)
+            assert win32.parse_descendant_job_pipe_heartbeat_pid(desc_hb, writer_nonce=nonce) == (
+                fixture.descendant_pid
+            )
             assert fixture.canary_event is canary_event
             assert fixture.canary_pipe_write_fd == w_fd
             owned = fixture.owned_handles()
@@ -992,9 +990,7 @@ def test_suspended_job_descendant_breakaway_windows_integration() -> None:
             )
             assert heartbeat in pre_close
             assert (
-                win32.parse_descendant_job_pipe_heartbeat_pid(
-                    pre_close, writer_nonce=nonce
-                )
+                win32.parse_descendant_job_pipe_heartbeat_pid(pre_close, writer_nonce=nonce)
                 == fixture.descendant_pid
             )
             # Before Job close: BOTH members must still be alive. If either
@@ -1133,8 +1129,7 @@ def test_default_job_cleanup_independently_proven(
             time.sleep(0.01)
         assert payload
         assert (
-            win32.parse_descendant_job_pipe_heartbeat_pid(payload, writer_nonce=nonce)
-            == worker.pid
+            win32.parse_descendant_job_pipe_heartbeat_pid(payload, writer_nonce=nonce) == worker.pid
         )
         assert worker.pid != parent.pid
     finally:

@@ -160,7 +160,9 @@ def parse_native_ci_receipt(raw: bytes | str | Mapping[str, Any]) -> NativeCiRec
         if len(encoded) > _MAX_RECEIPT_BYTES:
             raise ValueError("receipt oversized")
         try:
-            loaded = json.loads(encoded.decode("utf-8"), object_pairs_hook=_reject_duplicate_object_pairs)
+            loaded = json.loads(
+                encoded.decode("utf-8"), object_pairs_hook=_reject_duplicate_object_pairs
+            )
         except json.JSONDecodeError as exc:
             raise ValueError(f"receipt json refused: {exc}") from exc
         if not isinstance(loaded, dict):
@@ -436,10 +438,7 @@ def verify_native_ci_receipt(
             or any(run_dir.glob("*.msi"))
             or any(run_dir.glob("*.exe"))
             or any(run_dir.glob("*.ps1"))
-            or (
-                artifact_source.binary_path is not None
-                and artifact_source.binary_path.is_file()
-            )
+            or (artifact_source.binary_path is not None and artifact_source.binary_path.is_file())
         )
         if not has_installer:
             return {"ok": False, "reason": "installer_artifact_missing"}
@@ -472,7 +471,10 @@ def verify_native_ci_receipt(
                 return {"ok": False, "reason": "binary_post_drift"}
             return {"ok": False, "reason": "binary_drift"}
 
-    if live.runner_identity_sha256 and receipt.runner_identity_sha256 != live.runner_identity_sha256:
+    if (
+        live.runner_identity_sha256
+        and receipt.runner_identity_sha256 != live.runner_identity_sha256
+    ):
         return {"ok": False, "reason": "runner_identity_drift"}
 
     manifest_path = artifact_source.manifest_path
@@ -536,9 +538,7 @@ def verify_native_ci_receipt(
         receipt_set = set(receipt.node_list)
         receipt_leaves = {n.split("::")[-1] for n in receipt.node_list}
         extras = [
-            n
-            for n in rust_pop
-            if n not in receipt_set and n.split("::")[-1] not in receipt_leaves
+            n for n in rust_pop if n not in receipt_set and n.split("::")[-1] not in receipt_leaves
         ]
         # More listed nodes than receipt claims → census_extra (before digest).
         if extras and len(rust_pop) > len(receipt.node_list):

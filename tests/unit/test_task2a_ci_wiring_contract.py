@@ -220,8 +220,7 @@ def test_runners_do_not_classify_crash_or_setup_as_behavioral_red(tmp_path: Path
             exit_code=101,
             stdout="test leaf ... FAILED\n",
             stderr=(
-                "thread 'tests::leaf' panicked at src/x.rs:1:1:\n"
-                "assertion `left == right` failed"
+                "thread 'tests::leaf' panicked at src/x.rs:1:1:\nassertion `left == right` failed"
             ),
         )
         == "executed_refused_receipt"

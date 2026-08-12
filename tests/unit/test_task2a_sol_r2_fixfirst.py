@@ -96,7 +96,11 @@ def test_sol_r2_verify_never_raises_notimplemented_and_ci_wires_emit_verify(
         getattr(receipt_mod.parse_native_ci_receipt, "__doc__", ""), NotImplementedError
     )
     parse_src = Path(receipt_mod.__file__).read_text(encoding="utf-8")
-    for name in ("def parse_native_ci_receipt", "def derive_junit_population", "def derive_rust_list_census"):
+    for name in (
+        "def parse_native_ci_receipt",
+        "def derive_junit_population",
+        "def derive_rust_list_census",
+    ):
         assert name in parse_src
     parse_body = parse_src.split("def parse_native_ci_receipt", 1)[1].split("\ndef ", 1)[0]
     assert "raise NotImplementedError" not in parse_body
@@ -130,8 +134,10 @@ def test_sol_r2_verify_never_raises_notimplemented_and_ci_wires_emit_verify(
         assert "NativeCiReceipt emit and verifier not implemented" not in run
         assert "VERIFY_RC" in run
         # Unconditional `exit 1` after verify (ignoring VERIFY_RC) is forbidden.
-        assert "exit \"$VERIFY_RC\"" in run or "exit $VERIFY_RC" in run or (
-            "if [ \"$VERIFY_RC\"" in run and "exit" in run
+        assert (
+            'exit "$VERIFY_RC"' in run
+            or "exit $VERIFY_RC" in run
+            or ('if [ "$VERIFY_RC"' in run and "exit" in run)
         )
         # Sol R4 HIGH#1: verify must receive census artifact paths the runners produce.
         # Omitting --junit/--rust-list forever-stubs artifact_incomplete even when
@@ -155,7 +161,9 @@ def test_sol_r2_crash_classification_fail_closed(tmp_path: Path) -> None:
     py = _load_script(
         "run_task2a_pytest_nodes_r2", REPO_ROOT / "scripts" / "run_task2a_pytest_nodes.py"
     )
-    rust = _load_script("run_task2a_rust_node_r2", REPO_ROOT / "scripts" / "run_task2a_rust_node.py")
+    rust = _load_script(
+        "run_task2a_rust_node_r2", REPO_ROOT / "scripts" / "run_task2a_rust_node.py"
+    )
 
     # Exit 2 with empty/missing junit case must NOT be behavioral RED.
     missing = tmp_path / "missing.xml"
@@ -216,8 +224,7 @@ def test_sol_r2_crash_classification_fail_closed(tmp_path: Path) -> None:
             exit_code=101,
             stdout="test leaf ... FAILED\n",
             stderr=(
-                "thread 'tests::leaf' panicked at src/x.rs:1:1:\n"
-                "assertion `left == right` failed"
+                "thread 'tests::leaf' panicked at src/x.rs:1:1:\nassertion `left == right` failed"
             ),
         )
         == "executed_refused_receipt"
@@ -298,16 +305,10 @@ def test_sol_r2_heartbeat_factory_mints_nonce_and_refuses_framing_garbage() -> N
     pid = 4242
     good = win32.descendant_job_pipe_heartbeat(pid, writer_nonce=monkey_nonce)
     with pytest.raises(ValueError, match=r"framing|garbage|exact"):
-        win32.parse_descendant_job_pipe_heartbeat_pid(
-            b"PRE" + good, writer_nonce=monkey_nonce
-        )
+        win32.parse_descendant_job_pipe_heartbeat_pid(b"PRE" + good, writer_nonce=monkey_nonce)
     with pytest.raises(ValueError, match=r"framing|garbage|exact"):
-        win32.parse_descendant_job_pipe_heartbeat_pid(
-            good + b"POST", writer_nonce=monkey_nonce
-        )
-    assert (
-        win32.parse_descendant_job_pipe_heartbeat_pid(good, writer_nonce=monkey_nonce) == pid
-    )
+        win32.parse_descendant_job_pipe_heartbeat_pid(good + b"POST", writer_nonce=monkey_nonce)
+    assert win32.parse_descendant_job_pipe_heartbeat_pid(good, writer_nonce=monkey_nonce) == pid
 
 
 @task2a_owned
@@ -389,9 +390,7 @@ def test_sol_r2_default_job_cleanup_uses_real_default_factory(
         )
         worker = worker_handles
         # Parent must not have signaled the event (descendant owns heartbeat/signal).
-        assert ev.is_set() is False, (
-            "parent must not set canary_event; fabrication refused"
-        )
+        assert ev.is_set() is False, "parent must not set canary_event; fabrication refused"
         # Non-blocking drain (select() does not accept pipe fds on Windows).
         os.set_blocking(r_fd, False)
         deadline = time.monotonic() + 5.0
@@ -484,9 +483,7 @@ def test_sol_r2_default_job_cleanup_uses_real_default_factory(
                 forged += chunk
                 break
             time.sleep(0.01)
-        assert forged == b"", (
-            f"withheld child must yield empty pipe; parent forged {forged!r}"
-        )
+        assert forged == b"", f"withheld child must yield empty pipe; parent forged {forged!r}"
         assert ev2.is_set() is False, (
             "withheld child must not leave canary_event set (parent must not signal)"
         )
@@ -705,9 +702,9 @@ def test_sol_r2_multi_pattern_file_threads_aggregate_ledger(tmp_path: Path) -> N
     # Rust aggregate file-count admission (not bytes-only).
     rust_src = (REPO_ROOT / "rust_core" / "src" / "main.rs").read_text(encoding="utf-8")
     assert "MAX_COMBINED_PATTERN" in rust_src or "MAX_COMBINED_PATTERN_IGNORE_FILES" in rust_src
-    resolve_body = rust_src.split("fn resolve_search_request_with_stdin", 1)[1].split(
-        "\nfn ", 1
-    )[0]
-    assert "file_count" in resolve_body or "aggregate_files" in resolve_body or "pattern_file_count" in resolve_body, (
-        "rust multi -f path must admit aggregate file-count, not only decoded bytes"
-    )
+    resolve_body = rust_src.split("fn resolve_search_request_with_stdin", 1)[1].split("\nfn ", 1)[0]
+    assert (
+        "file_count" in resolve_body
+        or "aggregate_files" in resolve_body
+        or "pattern_file_count" in resolve_body
+    ), "rust multi -f path must admit aggregate file-count, not only decoded bytes"

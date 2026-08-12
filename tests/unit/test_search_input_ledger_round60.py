@@ -698,4 +698,3 @@ def test_pattern_file_refuses_unbounded_read_before_ledger(tmp_path: Path) -> No
     assert text2.replace("\r\n", "\n") == "needle\n"
     assert ledger.file_count == 1
     assert ledger.decoded_bytes == len(text2.encode("utf-8"))
-

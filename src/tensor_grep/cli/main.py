@@ -5365,10 +5365,7 @@ def _read_patterns_from_file_list(file_paths: list[str], *, json_mode: bool) -> 
         except SearchInputLimitExceeded as exc:
             _exit_search_error(
                 "search_input_limit",
-                (
-                    f"pattern file exceeds {exc.limit} bytes "
-                    f"(observed {exc.observed}): {file_path}"
-                ),
+                (f"pattern file exceeds {exc.limit} bytes (observed {exc.observed}): {file_path}"),
                 json_mode=json_mode,
                 exit_code=2,
             )
@@ -8455,9 +8452,7 @@ def search_command(
             if not Path(_pat_file).is_file():
                 continue
             try:
-                read_pattern_or_ignore_file_bounded(
-                    _pat_file, ledger=_pre_passthrough_ledger
-                )
+                read_pattern_or_ignore_file_bounded(_pat_file, ledger=_pre_passthrough_ledger)
             except SearchInputLimitExceeded as exc:
                 _exit_search_error(
                     "search_input_limit",
@@ -8560,6 +8555,7 @@ def search_command(
             ["pipeline", pattern, *[str(p) for p in paths_to_search]],
         )
         _cpu_child_start_emitted = True
+
     if (
         can_passthrough_rg
         and stats

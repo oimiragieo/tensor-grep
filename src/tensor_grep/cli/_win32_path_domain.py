@@ -113,15 +113,13 @@ def parse_descendant_job_pipe_heartbeat_pid(
         if prefix not in raw:
             raise ValueError("descendant job pipe heartbeat prefix absent")
         raise ValueError(
-            "descendant job pipe heartbeat framing garbage "
-            "(pre-framing bytes before heartbeat)"
+            "descendant job pipe heartbeat framing garbage (pre-framing bytes before heartbeat)"
         )
     first = 0
     second = raw.find(prefix, len(prefix))
     if second >= 0:
         raise ValueError(
-            "descendant job pipe heartbeat multiline ambiguity "
-            "(multiple heartbeat prefixes)"
+            "descendant job pipe heartbeat multiline ambiguity (multiple heartbeat prefixes)"
         )
 
     rest = raw[first + len(prefix) :]

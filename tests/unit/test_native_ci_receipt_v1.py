@@ -682,13 +682,20 @@ def test_clearance_refuses_without_live_immutable_sha_actions_run(tmp_path: Path
     current = tmp_path / "run"
     current.mkdir()
     receipt = _receipt_obj()  # caller-shaped SHA/run fields present in JSON
-    for environ in (None, {}, {k: "" for k in (
-        "GITHUB_SHA",
-        "GITHUB_RUN_ID",
-        "GITHUB_RUN_ATTEMPT",
-        "GITHUB_WORKFLOW",
-        "GITHUB_JOB",
-    )}):
+    for environ in (
+        None,
+        {},
+        {
+            k: ""
+            for k in (
+                "GITHUB_SHA",
+                "GITHUB_RUN_ID",
+                "GITHUB_RUN_ATTEMPT",
+                "GITHUB_WORKFLOW",
+                "GITHUB_JOB",
+            )
+        },
+    ):
         source = receipt_mod.ArtifactSource(
             current_run_dir=current,
             manifest_path=MANIFEST,
